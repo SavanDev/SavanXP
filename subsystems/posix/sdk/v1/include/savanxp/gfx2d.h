@@ -9,10 +9,10 @@
 extern "C" {
 #endif
 
-/* Presenter de pixel art de resolucion fija: escala entera con vecino mas
- * cercano, centra en la superficie cliente y presenta solo la banda minima de
- * filas fuente que cambio. El SDK mantiene la copia anterior y la fila expandida;
- * la app solo entrega su frame original. */
+/* Fixed-resolution pixel-art presenter: integer nearest-neighbour scaling,
+ * centred on the client surface, presenting only the smallest band of source
+ * rows that changed. The SDK keeps the previous copy and the expanded row; the
+ * app only hands in its original frame. */
 struct savanxp_gfx_context;
 struct sx_scaled_presenter {
     struct savanxp_gfx_context* gfx;
@@ -28,9 +28,9 @@ struct sx_scaled_presenter {
     int force_surface_present;
 };
 
-/* Inicializa un presenter 320x200-style. `source_pixels` es un frame BGRX
- * contiguo de `source_width * source_height` pixeles. Devuelve 0 o un error
- * negativo. El presenter no adquiere ni libera el contexto gfx. */
+/* Initialises a 320x200-style presenter. `source_pixels` is a contiguous BGRX
+ * frame of `source_width * source_height` pixels. Returns 0 or a negative
+ * error. The presenter neither acquires nor releases the gfx context. */
 int sx_scaled_presenter_init(
     struct sx_scaled_presenter* presenter,
     struct savanxp_gfx_context* gfx,
@@ -38,14 +38,16 @@ int sx_scaled_presenter_init(
     uint32_t source_height,
     uint32_t* source_pixels,
     uint32_t background);
-/* Reaplica el layout tras un RESIZED, limpia el fondo y fuerza el proximo frame
- * completo. El buffer destino conservado por el runtime gfx puede ser mayor que
- * el nuevo width/height; por eso se informa el rect visible, no su capacidad. */
+/* Reapplies the layout after a RESIZED, clears the background and forces the
+ * next frame to be complete. The target buffer the gfx runtime keeps may be
+ * larger than the new width/height, which is why the visible rect is reported,
+ * not its capacity. */
 int sx_scaled_presenter_retarget(
     struct sx_scaled_presenter* presenter,
     uint32_t background);
-/* 1 si hubo damage y present, 0 si el frame no cambio, negativo si el present
- * fallo. Solo se confirma la copia anterior despues de un present exitoso. */
+/* 1 if there was damage and a present, 0 if the frame did not change,
+ * negative if the present failed. The previous copy is committed only after a
+ * successful present. */
 long sx_scaled_presenter_present(
     struct sx_scaled_presenter* presenter,
     const uint32_t* source_pixels);

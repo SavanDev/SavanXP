@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-/* Por sx_bitmap_create/destroy: es lo unico de gfx2d que reserva memoria. */
+/* For sx_bitmap_create/destroy: the only part of gfx2d that allocates. */
 #include <stdlib.h>
 
 static uint32_t sx_blend_bgra8888_over_rgb(uint32_t destination, uint32_t source)
@@ -84,13 +84,14 @@ static struct sx_rect sx_apply_painter_clip(const struct sx_painter* painter, st
     return sx_rect_intersect(rect, painter->clip_rect);
 }
 
-/* Recorre los pedazos de dispositivo que sobreviven al clip: el rect pedido,
- * intersecado con el clip_rect y con la region si hay, y recortado al bitmap.
+/* Walks the device pieces that survive the clip: the requested rect,
+ * intersected with clip_rect and with the region if there is one, and cut to
+ * the bitmap.
  *
- * Sin region rinde un solo pedazo, que es el caso de siempre. Con region rinde
- * uno por tramo, y los tramos son DISJUNTOS -- eso es lo que hace seguro que
- * cada primitiva se dibuje por pedazos: ningun pixel se toca dos veces, asi que
- * el texto antialiased no se re-mezcla ni los bordes se duplican. */
+ * Without a region it yields a single piece, the usual case. With a region it
+ * yields one per span, and the spans are DISJOINT -- that is what makes it
+ * safe to draw each primitive in pieces: no pixel is touched twice, so
+ * antialiased text is not blended again and borders are not doubled. */
 struct sx_clip_iter {
     const struct sx_painter* painter;
     struct sx_rect rect;
@@ -167,10 +168,10 @@ static int sx_clip_iter_next(struct sx_clip_iter* it, struct sx_rect* out)
     return 0;
 }
 
-/* Coordenadas del llamador -> coordenadas de dispositivo. Toda funcion publica
- * que recibe posiciones pasa por aca una sola vez; de ahi para adentro el
- * codigo trabaja en coordenadas de dispositivo, que es donde viven el clip, el
- * bitmap y el anclaje de las tramas. */
+/* Caller coordinates -> device coordinates. Every public function that takes
+ * positions goes through here exactly once; from there inwards the code works
+ * in device coordinates, where the clip, the bitmap and the pattern anchoring
+ * live. */
 static struct sx_rect sx_to_device_rect(const struct sx_painter* painter, struct sx_rect rect)
 {
     if (painter == 0)
@@ -230,9 +231,9 @@ struct sx_brush sx_brush_with_rop(struct sx_brush brush, int rop)
     return brush;
 }
 
-/* Combina origen y destino segun la operacion raster. Solo los 24 bits de color
- * importan: el byte alto del destino no es alpha en BGRX y dejarlo entrar en un
- * XOR pintaria basura. */
+/* Combines source and destination by raster operation. Only the 24 colour bits
+ * matter: the destination's high byte is not alpha in BGRX, and letting it into
+ * an XOR would paint garbage. */
 static uint32_t sx_apply_rop(int rop, uint32_t destination, uint32_t source)
 {
     switch (rop)
@@ -250,9 +251,9 @@ static uint32_t sx_apply_rop(int rop, uint32_t destination, uint32_t source)
     }
 }
 
-/* 1 si la trama pinta en esa celda de la grilla de dispositivo. El AND con 7
- * mantiene el anclaje absoluto incluso para coordenadas negativas, porque las
- * posiciones ya vienen clipeadas al bitmap y son no negativas. */
+/* 1 if the pattern paints that cell of the device grid. The AND with 7 keeps
+ * the anchoring absolute, and positions arrive already clipped to the bitmap,
+ * so they are never negative. */
 static int sx_brush_covers(const struct sx_brush* brush, int device_x, int device_y)
 {
     return (brush->pattern[device_y & 7] >> (7 - (device_x & 7))) & 1u;
@@ -367,10 +368,10 @@ int sx_bitmap_create(struct sx_bitmap* bitmap, int width, int height, uint32_t f
     {
         return 0;
     }
-    /* Tope defensivo: el producto tiene que entrar en size_t sin dar la vuelta.
-     * 16384 por lado deja el area muy por debajo de cualquier desborde y no
-     * limita nada real (la pantalla mas grande que soporta el sistema es
-     * ordenes de magnitud menor). */
+    /* Defensive cap: the product has to fit in size_t without wrapping. 16384
+     * per side keeps the area far below any overflow and limits nothing real
+     * (the largest screen the system supports is orders of magnitude
+     * smaller). */
     if (width > 16384 || height > 16384)
     {
         return 0;
@@ -402,8 +403,8 @@ void sx_bitmap_destroy(struct sx_bitmap* bitmap)
     {
         return;
     }
-    /* Sobre un bitmap de wrap esto no hace nada: los pixeles son del llamador.
-     * Poder llamarlo igual es lo que deja escribir codigo que no distingue. */
+    /* On a wrapped bitmap this does nothing: the pixels are the caller's. Being
+     * able to call it anyway is what lets code not tell the two apart. */
     if (bitmap->owns_pixels && bitmap->pixels != 0)
     {
         free(bitmap->pixels);
@@ -551,14 +552,14 @@ int sx_painter_push_clip_region(struct sx_painter* painter, const struct sx_regi
     }
     if (region == 0 || sx_region_is_empty(region))
     {
-        /* Region vacia = no se dibuja nada. Un clip degenerado lo expresa sin
-         * necesidad de un flag aparte. */
+        /* Empty region = nothing is drawn. A degenerate clip says so without a
+         * separate flag. */
         return sx_painter_push_clip(painter, sx_rect_make(0, 0, 0, 0));
     }
 
-    /* El bounding box va al clip_rect: asi el descarte rapido de cada primitiva
-     * sigue siendo una interseccion de rects y solo se recorren bandas cuando
-     * el rect pedido de verdad cae adentro. */
+    /* The bounding box goes to clip_rect: that way each primitive's fast reject
+     * is still a rect intersection, and bands are walked only when the
+     * requested rect really falls inside. */
     bounds = sx_region_bounds(region);
     if (!sx_painter_push_clip(painter, bounds))
     {
@@ -582,9 +583,9 @@ void sx_painter_pop_clip(struct sx_painter* painter)
     painter->clip_region_origin = painter->saved_clip_region_origin[painter->clip_depth];
 }
 
-/* Rellena un rect que YA esta en coordenadas de dispositivo. Es el punto por el
- * que pasa todo relleno solido: las funciones publicas traducen por el origen y
- * delegan aca, asi el origen se aplica exactamente una vez. */
+/* Fills a rect ALREADY in device coordinates. Every solid fill goes through
+ * here: the public functions translate by the origin and delegate here, so the
+ * origin is applied exactly once. */
 static void sx_fill_rect_device(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
 {
     struct sx_clip_iter iter;
@@ -596,16 +597,16 @@ static void sx_fill_rect_device(struct sx_painter* painter, struct sx_rect rect,
     }
 }
 
-/* Igual que la anterior pero con brush. El recorrido por pixel solo se paga
- * cuando el brush tiene trama; el caso solido cae al relleno de rects de una. */
+/* Like the above but with a brush. The per-pixel walk is paid only when the
+ * brush has a pattern; the solid case goes straight to the rect fill. */
 static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
 {
     struct sx_clip_iter iter;
     struct sx_rect piece;
     uint32_t stride;
 
-    /* Solido y COPY: el camino de siempre, un relleno de rects sin tocar pixel
-     * por pixel. Cualquier otra cosa necesita leer el destino. */
+    /* Solid and COPY: the usual path, a rect fill without touching pixel by
+     * pixel. Anything else needs to read the destination. */
     if (!brush->has_pattern && brush->rop == SX_ROP_COPY)
     {
         sx_fill_rect_device(painter, rect, brush->colour);
@@ -647,11 +648,11 @@ static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect
     }
 }
 
-/* Las cuatro tiras del borde del rect ORIGINAL, cada una clipeada por separado.
- * Clipear el rect primero y enmarcar el resultado trazaria un borde espurio
- * alrededor de cada fragmento de repintado parcial (por ejemplo la huella de
- * daño del cursor sobre un dialogo), que es justo el bug de residuos. Pintar
- * los bordes verdaderos solo toca pixeles de borde que existen de verdad. */
+/* The four edge strips of the ORIGINAL rect, each clipped on its own. Clipping
+ * the rect first and framing the result would trace a spurious border around
+ * every fragment of a partial repaint (the cursor's damage footprint over a
+ * dialog, for example), which is exactly the leftovers bug. Painting the true
+ * edges only touches edge pixels that really exist. */
 static void sx_draw_frame_device(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
 {
     sx_fill_rect_device_brush(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), brush);
@@ -675,7 +676,7 @@ void sx_painter_fill(struct sx_painter* painter, uint32_t colour)
     {
         return;
     }
-    /* El target entero, no el area del origen actual: es un clear. */
+    /* The whole target, not the area at the current origin: it is a clear. */
     sx_fill_rect_device(
         painter,
         sx_rect_make(0, 0, (int)painter->target->info.width, (int)painter->target->info.height),
@@ -742,9 +743,9 @@ void sx_painter_draw_frame_brush(struct sx_painter* painter, struct sx_rect rect
     sx_draw_frame_device(painter, sx_to_device_rect(painter, rect), brush);
 }
 
-/* Copia el pedazo `dst_rect` (dispositivo, ya clipeado) tomando del origen la
- * zona correspondiente. La separacion existe para que el clip por region pueda
- * llamarla una vez por tramo sin duplicar la logica de copia. */
+/* Copies the piece `dst_rect` (device, already clipped) from the matching
+ * area of the source. It is separate so the region clip can call it once per
+ * span without duplicating the copy logic. */
 static void sx_blit_bitmap_piece(
     struct sx_painter* painter,
     const struct sx_bitmap* source,
@@ -780,10 +781,11 @@ static void sx_blit_bitmap_piece(
 
     row_bytes = (size_t)dst_rect.width * sizeof(uint32_t);
 
-    /* Filas pegadas de los dos lados (el blit cubre el ancho completo de origen
-     * y destino): el rectangulo es un solo tramo lineal y va en una sola copia
-     * en vez de una llamada por fila. Pega en el blit de una superficie entera
-     * -- fondo, cliente a pantalla completa -- no en los rects sucios chicos. */
+    /* Rows contiguous on both sides (the blit covers the full width of source
+     * and destination): the rectangle is one linear run and goes in a single
+     * copy instead of one call per row. It pays off when blitting a whole
+     * surface -- the background, a full-screen client --, not small dirty
+     * rects. */
     if (dst_rect.x == 0 && src_rect.x == 0 &&
         (uint32_t)dst_rect.width == dst_stride && (uint32_t)dst_rect.width == src_stride)
     {
@@ -824,14 +826,14 @@ void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* 
     }
 }
 
-/* Muestreo bilineal: los cuatro texels vecinos ponderados por la parte
- * fraccionaria de la posicion. Se trabaja en punto fijo de 8 bits porque el
- * userland no tiene punto flotante salvo que la app se compile con -Sse, y esta
- * capa la linkean TODOS los binarios.
+/* Bilinear sampling: the four neighbouring texels weighted by the fractional
+ * part of the position. It works in 8-bit fixed point because this layer is
+ * linked by EVERY binary, and it was written when userland had no floating
+ * point unless the app was built with -Sse.
  *
- * Los vecinos se acotan al source_rect (no al bitmap): en el borde eso repite el
- * ultimo texel en vez de sangrar el de al lado, que en un atlas de iconos seria
- * traer pixeles de otro icono. */
+ * Neighbours are clamped to source_rect (not to the bitmap): at the edge that
+ * repeats the last texel instead of bleeding the next one, which in an icon
+ * atlas would pull in pixels from another icon. */
 static uint32_t sx_sample_bilinear(
     const struct sx_bitmap* source,
     uint32_t src_stride,
@@ -856,9 +858,9 @@ static uint32_t sx_sample_bilinear(
     uint32_t result = 0;
     int shift;
 
-    /* Canal por canal, incluido el byte alto: en BGRA ese es el alpha y tiene
-     * que interpolar igual que el color, si no los bordes de un icono quedan
-     * con halo. */
+    /* Channel by channel, the high byte included: in BGRA that is the alpha,
+     * and it has to interpolate like the colour, or an icon's edges get a
+     * halo. */
     for (shift = 0; shift <= 24; shift += 8)
     {
         const unsigned int c00 = (p00 >> shift) & 0xffu;
@@ -893,10 +895,10 @@ void sx_painter_draw_scaled_bitmap(
         return;
     }
 
-    /* El origen del muestreo lo provee el llamador: acotarlo al bitmap fuente es
-     * lo unico que impide que un source_rect fuera de rango lea fuera del
-     * buffer, porque las coordenadas de muestreo se derivan de el y no se
-     * vuelven a validar en el bucle. */
+    /* The caller provides the sampling source: clamping it to the source bitmap
+     * is the only thing that keeps an out-of-range source_rect from reading
+     * past the buffer, because the sample coordinates derive from it and are
+     * not validated again in the loop. */
     source_rect = sx_rect_intersect(
         source_rect,
         sx_rect_make(0, 0, (int)source->info.width, (int)source->info.height));
@@ -909,9 +911,9 @@ void sx_painter_draw_scaled_bitmap(
     src_stride = gfx_stride_pixels(&source->info);
     dst_stride = gfx_stride_pixels(&painter->target->info);
 
-    /* El muestreo se calcula siempre contra `destination` entera, no contra el
-     * pedazo: asi cada pixel toma exactamente el mismo texel lo pinte de una o
-     * partido en tramos por la region. */
+    /* Sampling is always computed against the whole `destination`, not the
+     * piece: that way each pixel takes exactly the same texel whether it is
+     * painted in one go or split into spans by the region. */
     for (sx_clip_iter_init(&iter, painter, destination); sx_clip_iter_next(&iter, &target_rect); )
     {
         for (y = target_rect.y; y < sx_rect_bottom(target_rect); ++y)
@@ -922,8 +924,8 @@ void sx_painter_draw_scaled_bitmap(
 
                 if (filter == SX_SCALE_BILINEAR)
                 {
-                    /* Centro del texel: el medio pixel de correccion es lo que
-                     * evita que la imagen se corra medio pixel al escalar. */
+                    /* Texel centre: the half-pixel correction is what keeps
+                     * the image from shifting half a pixel when scaled. */
                     const int fx = (int)((((long)(x - destination.x) * 2 + 1) * source_rect.width * 128)
                                           / destination.width) + (source_rect.x << 8) - 128;
                     const int fy = (int)((((long)(y - destination.y) * 2 + 1) * source_rect.height * 128)
@@ -1016,9 +1018,9 @@ int sx_painter_text_height(const struct sx_painter* painter)
     return gfx_text_height();
 }
 
-/* Un blit de texto con clip explicito, ya en coordenadas de dispositivo. Es el
- * unico punto donde se elige la fuente: de ahi para arriba, draw_text solo se
- * ocupa del clip y de los pedazos. */
+/* A text blit with an explicit clip, already in device coordinates. It is the
+ * only place where the font is chosen: above it, draw_text deals only with the
+ * clip and the pieces. */
 static void sx_blit_text_clipped(
     struct sx_painter* painter, int x, int y, const char* text, uint32_t colour, struct sx_rect clip)
 {
@@ -1038,11 +1040,11 @@ static void sx_blit_text_clipped(
                         clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
 }
 
-/* ---- Geometria ----------------------------------------------------------
+/* ---- Geometry -----------------------------------------------------------
  *
- * Todo se apoya en hline/vline/set_pixel del painter, asi que el clip, la region
- * y el origen salen gratis y correctos: ninguna de estas funciones toca el
- * bitmap directamente. */
+ * Everything rests on the painter's hline/vline/set_pixel, so the clip, the
+ * region and the origin come free and correct: none of these functions touches
+ * the bitmap directly. */
 
 void sx_painter_draw_line(struct sx_painter* painter, int x0, int y0, int x1, int y1, uint32_t colour)
 {
@@ -1056,8 +1058,8 @@ void sx_painter_draw_line(struct sx_painter* painter, int x0, int y0, int x1, in
     {
         return;
     }
-    /* Los casos rectos valen su atajo: son la mayoria de las lineas de un
-     * toolkit y un relleno de rect gana lejos contra ir pixel por pixel. */
+    /* The straight cases earn their shortcut: they are most of a toolkit's
+     * lines, and a rect fill beats going pixel by pixel by far. */
     if (y0 == y1)
     {
         const int left = x0 < x1 ? x0 : x1;
@@ -1120,9 +1122,9 @@ void sx_painter_draw_polyline(struct sx_painter* painter, const struct sx_point*
     }
 }
 
-/* Cruces del poligono con la scanline `y`, ya ordenados. Devuelve cuantos hubo.
- * Lo comparten fill_polygon y sx_region_from_polygon: es la unica forma de
- * garantizar que la region y el dibujo describan exactamente la misma forma. */
+/* The polygon's crossings with scanline `y`, sorted. Returns how many there
+ * were. fill_polygon and sx_region_from_polygon share it: it is the only way to
+ * guarantee that the region and the drawing describe exactly the same shape. */
 static int sx_polygon_crossings(const struct sx_point* points, int count, int y, int* crossings)
 {
     int found = 0;
@@ -1133,34 +1135,34 @@ static int sx_polygon_crossings(const struct sx_point* points, int count, int y,
     {
         const struct sx_point* a = &points[index];
         const struct sx_point* b = &points[(index + 1) % count];
-        /* La arista se recorre SIEMPRE de arriba hacia abajo, sin importar como
-         * la guardo el llamador. Si no, la misma diagonal compartida por dos
-         * poligonos da una x distinta segun el sentido y los dos se solapan o
-         * dejan costura -- que es justo lo que pasa al teselar. */
+        /* The edge is ALWAYS walked top to bottom, however the caller stored
+         * it. Otherwise the same diagonal shared by two polygons gives a
+         * different x depending on direction, and the two overlap or leave a
+         * seam -- exactly what happens when tessellating. */
         const struct sx_point* top_point = a->y < b->y ? a : b;
         const struct sx_point* bottom_point = a->y < b->y ? b : a;
 
-        /* Arista semiabierta en Y ([top, bottom)) para que un vertice compartido
-         * cuente UNA sola vez: contarlo dos veces abriria y cerraria el span en
-         * el mismo x y dejaria agujeros justo en los vertices. */
+        /* Half-open edge in Y ([top, bottom)) so a shared vertex counts ONCE:
+         * counting it twice would open and close the span at the same x and
+         * leave holes right at the vertices. */
         if (a->y == b->y || y < top_point->y || y >= bottom_point->y)
         {
             continue;
         }
-        /* La division de C trunca hacia cero, y eso es justo lo que hace falta:
-         * el truncamiento es impar-simetrico (trunc(-u) == -trunc(u)), asi que un
-         * poligono y su espejo cubren la misma area. Piso y techo NO lo son --
-         * con cualquiera de los dos el espejo sale con area distinta, porque el
-         * borde izquierdo y el derecho redondean para lados opuestos cuando los
-         * spans son semiabiertos. */
+        /* C division truncates towards zero, which is exactly what is needed:
+         * truncation is odd-symmetric (trunc(-u) == -trunc(u)), so a polygon
+         * and its mirror cover the same area. Floor and ceiling are NOT -- with
+         * either one the mirror comes out with a different area, because the
+         * left and right edges round to opposite sides when spans are
+         * half-open. */
         crossings[found] = top_point->x +
             ((y - top_point->y) * (bottom_point->x - top_point->x)) /
             (bottom_point->y - top_point->y);
         ++found;
     }
 
-    /* Insercion: `found` no pasa de la cantidad de vertices, y los poligonos de
-     * un toolkit tienen un punado. */
+    /* Insertion sort: `found` never exceeds the vertex count, and a toolkit's
+     * polygons have a handful. */
     for (sorted = 1; sorted < found; ++sorted)
     {
         const int value = crossings[sorted];
@@ -1175,7 +1177,7 @@ static int sx_polygon_crossings(const struct sx_point* points, int count, int y,
     return found;
 }
 
-/* Extremos verticales del poligono. 0 si la entrada no sirve. */
+/* Vertical extent of the polygon. 0 if the input is unusable. */
 static int sx_polygon_y_range(const struct sx_point* points, int count, int* min_y, int* max_y)
 {
     int index;
@@ -1241,9 +1243,9 @@ void sx_region_from_polygon(struct sx_region* region, const struct sx_point* poi
         return;
     }
 
-    /* Fila por fila, uniendo cada tramo como un rect de alto 1. Las bandas
-     * contiguas con los mismos tramos las fusiona la propia region, asi que los
-     * lados rectos no cuestan una banda por fila -- solo las partes inclinadas. */
+    /* Row by row, adding each span as a rect one pixel high. The region itself
+     * merges adjacent bands with the same spans, so straight sides do not cost
+     * a band per row -- only the slanted parts do. */
     for (y = min_y; y <= max_y; ++y)
     {
         const int found = sx_polygon_crossings(points, count, y, crossings);
@@ -1261,8 +1263,8 @@ void sx_region_from_polygon(struct sx_region* region, const struct sx_point* poi
     }
 }
 
-/* Elipse por punto medio, en cuadrantes simetricos. `fill` decide si se traza el
- * contorno o se rellenan los spans entre los lados espejados. */
+/* Midpoint ellipse, in symmetric quadrants. `fill` chooses between tracing the
+ * outline and filling the spans between the mirrored sides. */
 static void sx_ellipse_impl(struct sx_painter* painter, struct sx_rect rect, uint32_t colour, int fill)
 {
     int a;
@@ -1283,13 +1285,13 @@ static void sx_ellipse_impl(struct sx_painter* painter, struct sx_rect rect, uin
     }
     if (rect.width <= 2 || rect.height <= 2)
     {
-        /* Demasiado chica para que la curva se distinga: el rect ES la figura. */
+        /* Too small for the curve to show: the rect IS the shape. */
         sx_painter_fill_rect(painter, rect, colour);
         return;
     }
 
-    /* Con lado par el centro cae entre pixeles: se trabaja con el radio hacia
-     * abajo y se corre el lado opuesto un pixel (odd_*). */
+    /* With an even side the centre falls between pixels: the radius is rounded
+     * down and the opposite side is moved by one pixel (odd_*). */
     a = (rect.width - 1) / 2;
     b = (rect.height - 1) / 2;
     odd_width = (rect.width - 1) % 2;
@@ -1368,8 +1370,8 @@ void sx_painter_fill_ellipse(struct sx_painter* painter, struct sx_rect rect, ui
     sx_ellipse_impl(painter, rect, colour, 1);
 }
 
-/* Acota el radio a lo que el rect puede sostener: mas de la mitad del lado mas
- * corto haria que dos esquinas se pisen. */
+/* Caps the radius at what the rect can hold: more than half the shorter side
+ * would make two corners overlap. */
 static int sx_round_rect_radius(struct sx_rect rect, int radius)
 {
     const int shortest = rect.width < rect.height ? rect.width : rect.height;
@@ -1380,7 +1382,7 @@ static int sx_round_rect_radius(struct sx_rect rect, int radius)
     return radius < 0 ? 0 : radius;
 }
 
-/* Cuanto se mete la esquina en la fila `y` (0 = la de mas arriba del arco). */
+/* How far the corner cuts into row `y` (0 = the topmost row of the arc). */
 static int sx_round_rect_inset(int radius, int y)
 {
     const int dy = radius - y;
@@ -1407,9 +1409,9 @@ void sx_painter_fill_round_rect(struct sx_painter* painter, struct sx_rect rect,
         return;
     }
 
-    /* La franja del medio es un rect; arriba y abajo cada fila se acorta segun el
-     * circulo de la esquina. Se resuelve por fila y no componiendo elipses para
-     * no pintar dos veces el mismo pixel, que con un ROP no seria inocuo. */
+    /* The middle strip is a rect; above and below, each row is shortened by the
+     * corner's circle. It is done per row rather than by composing ellipses so
+     * no pixel is painted twice, which with a ROP would not be harmless. */
     sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + radius, rect.width, rect.height - 2 * radius), colour);
     for (y = 0; y < radius; ++y)
     {
@@ -1440,9 +1442,9 @@ void sx_painter_draw_round_rect(struct sx_painter* painter, struct sx_rect rect,
     sx_painter_vline(painter, rect.x, rect.y + radius, rect.height - 2 * radius, colour);
     sx_painter_vline(painter, rect.x + rect.width - 1, rect.y + radius, rect.height - 2 * radius, colour);
 
-    /* Esquinas: por fila se pinta el tramo que va del inset de la fila anterior
-     * al de esta. Sin ese tramo el contorno queda cortado donde el circulo
-     * avanza mas de un pixel en x entre dos filas. */
+    /* Corners: each row paints the span from the previous row's inset to this
+     * one's. Without that span the outline breaks where the circle moves more
+     * than one pixel in x between two rows. */
     for (y = 0; y < radius; ++y)
     {
         const int inset = sx_round_rect_inset(radius, y);
@@ -1474,9 +1476,9 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
 
     if (painter->clip_region != 0)
     {
-        /* Un blit por tramo. Los tramos son disjuntos, asi que ningun pixel de
-         * glifo se mezcla dos veces -- que es exactamente lo que advierte el
-         * comentario de gfx_blit_text_impl sobre repintar por fragmentos. */
+        /* One blit per span. The spans are disjoint, so no glyph pixel is
+         * blended twice -- exactly what the comment on gfx_blit_text_impl
+         * (pixels.c) warns about repainting in fragments. */
         struct sx_clip_iter iter;
         struct sx_rect piece;
 
@@ -1510,15 +1512,15 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
     gfx_blit_text(painter->target->pixels, &painter->target->info, x, y, text, colour);
 }
 
-/* ---- Regiones por bandas ------------------------------------------------
+/* ---- Banded regions -----------------------------------------------------
  *
- * Invariante canonico, mantenido por construccion en cada operacion:
- *   - bandas ordenadas por y, disjuntas y no vacias;
- *   - dentro de cada banda, tramos ordenados, disjuntos y NO adyacentes
- *     (dos tramos que se tocan se fusionan);
- *   - bandas consecutivas que se tocan y tienen tramos identicos se fusionan.
- * Sin eso la misma forma tendria varias representaciones y comparar o iterar
- * dejaria de ser predecible. */
+ * Canonical invariant, kept by construction in every operation:
+ *   - bands sorted by y, disjoint and non-empty;
+ *   - within each band, spans sorted, disjoint and NOT adjacent
+ *     (two spans that touch are merged);
+ *   - consecutive bands that touch and have identical spans are merged.
+ * Without it the same shape would have several representations, and comparing
+ * or iterating would stop being predictable. */
 
 enum sx_region_op {
     SX_REGION_OP_UNION = 0,
@@ -1608,10 +1610,10 @@ size_t sx_region_rect_count(const struct sx_region* region)
     return total;
 }
 
-/* Recorre las bandas acumulando tramos hasta pasar el indice pedido. Lineal en
- * la cantidad de bandas, que es lo que hay: quien enumere la region entera paga
- * O(bandas x rects), y con 32 bandas como techo eso no vale un iterador con
- * estado. */
+/* Walks the bands adding up spans until it passes the requested index. Linear
+ * in the number of bands, which is all there is: enumerating the whole region
+ * costs O(bands x rects), and with 32 bands as the ceiling that is not worth a
+ * stateful iterator. */
 int sx_region_rect_at(const struct sx_region* region, size_t index, struct sx_rect* out)
 {
     size_t seen = 0;
@@ -1627,9 +1629,9 @@ int sx_region_rect_at(const struct sx_region* region, size_t index, struct sx_re
         const struct sx_region_band* band = &region->bands[band_index];
         const size_t span_count = (size_t)band->span_count;
 
-        /* Invariante del lazo: index >= seen, porque solo se sigue de largo
-         * cuando el indice cae mas alla de esta banda. La resta no se va abajo
-         * de cero. */
+        /* Loop invariant: index >= seen, because the loop only moves on when the
+         * index falls beyond this band. The subtraction never goes below
+         * zero. */
         if (index < seen + span_count)
         {
             const struct sx_region_span* span = &band->spans[index - seen];
@@ -1656,7 +1658,7 @@ int sx_region_contains_point(const struct sx_region* region, int x, int y)
 
         if (y < band->y0)
         {
-            return 0; /* bandas ordenadas: ya lo pasamos */
+            return 0; /* bands are sorted: we are past it */
         }
         if (y >= band->y1)
         {
@@ -1674,9 +1676,8 @@ int sx_region_contains_point(const struct sx_region* region, int x, int y)
     return 0;
 }
 
-/* Colapsa a bounding box y marca. Lo llaman los caminos que se quedaron sin
- * bandas o sin tramos: preferimos un superset marcado antes que perder area en
- * silencio. */
+/* Collapses to the bounding box and marks it. The paths that ran out of bands
+ * or spans call it: a marked superset is better than silently losing area. */
 static void sx_region_collapse(struct sx_region* region)
 {
     struct sx_rect bounds = sx_region_bounds(region);
@@ -1695,8 +1696,8 @@ static void sx_region_collapse(struct sx_region* region)
     region->bands[0].spans[0].x1 = sx_rect_right(bounds);
 }
 
-/* Agrega un tramo a una lista ORDENADA fusionando lo que toque. Devuelve 0 si
- * no entraba. */
+/* Adds a span to a SORTED list, merging whatever it touches. Returns 0 if it
+ * did not fit. */
 static int sx_span_list_add(struct sx_region_span* spans, int* count, int x0, int x1)
 {
     int index = 0;
@@ -1707,7 +1708,7 @@ static int sx_span_list_add(struct sx_region_span* spans, int* count, int x0, in
         return 1;
     }
 
-    /* Absorbe todo lo que solape o toque, quedandose con la envolvente. */
+    /* Absorbs everything that overlaps or touches, keeping the hull. */
     while (index < *count)
     {
         if (spans[index].x1 < x0)
@@ -1751,8 +1752,8 @@ static int sx_span_list_add(struct sx_region_span* spans, int* count, int x0, in
     return 1;
 }
 
-/* Aplica la operacion de una fila: los tramos de la banda contra el tramo
- * [rx0, rx1) del rect. Escribe en `out` y devuelve 0 si no entro. */
+/* Applies the operation to one row: the band's spans against the rect's span
+ * [rx0, rx1). Writes to `out` and returns 0 if it did not fit. */
 static int sx_span_list_apply(
     const struct sx_region_span* spans,
     int count,
@@ -1787,7 +1788,7 @@ static int sx_span_list_apply(
     {
         if (!rect_covers_row)
         {
-            return 1; /* fuera del rect no queda nada */
+            return 1; /* nothing is left outside the rect */
         }
         for (index = 0; index < count; ++index)
         {
@@ -1801,7 +1802,7 @@ static int sx_span_list_apply(
         return 1;
     }
 
-    /* SUBTRACT: cada tramo puede sobrevivir entero, partirse en dos o morir. */
+    /* SUBTRACT: each span may survive whole, split in two or vanish. */
     for (index = 0; index < count; ++index)
     {
         const int x0 = spans[index].x0;
@@ -1846,8 +1847,8 @@ static int sx_bands_equal(const struct sx_region_band* left, const struct sx_reg
     return 1;
 }
 
-/* Anexa una banda al resultado, fusionandola con la anterior si son contiguas y
- * tienen los mismos tramos (eso es lo que mantiene canonica la forma). */
+/* Appends a band to the result, merging it with the previous one if they are
+ * adjacent and have the same spans (that is what keeps the shape canonical). */
 static int sx_region_append_band(
     struct sx_region* out,
     int y0,
@@ -1899,16 +1900,16 @@ static int sx_region_append_band(
     return 1;
 }
 
-/* Motor unico de las tres operaciones contra un rect.
+/* The single engine behind the three operations against a rect.
  *
- * Reconstruye la region cortando en Y por todos los bordes que importan (los de
- * cada banda y los del rect), y para cada franja resultante aplica la operacion
- * de tramos. Hacerlo asi -- en vez de una rutina por operacion -- es lo que
- * mantiene el invariante canonico en un solo lugar. */
+ * It rebuilds the region by cutting in Y at every edge that matters (each
+ * band's and the rect's), and applies the span operation to each resulting
+ * strip. Doing it this way -- rather than one routine per operation -- is what
+ * keeps the canonical invariant in one place. */
 static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, int op)
 {
-    /* El resultado se arma aparte y recien al final se copia: las franjas leen
-     * la region original mientras se construye la nueva. */
+    /* The result is built apart and copied only at the end: the strips read
+     * the original region while the new one is built. */
     static struct sx_region scratch;
     const int ry0 = rect.y;
     const int ry1 = sx_rect_bottom(rect);
@@ -1925,7 +1926,7 @@ static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, 
     }
     if (rect_empty)
     {
-        /* Union y resta con un rect vacio no hacen nada; intersecar, todo. */
+        /* Union and subtraction with an empty rect do nothing; intersection does everything. */
         if (op == SX_REGION_OP_INTERSECT)
         {
             sx_region_clear(region);
@@ -1945,8 +1946,8 @@ static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, 
     scratch.band_count = 0;
     scratch.overflowed = region->overflowed;
 
-    /* Barrido por Y: en cada vuelta, `cut` es el tope de lo ya emitido y se
-     * calcula el proximo borde relevante. */
+    /* Sweep in Y: on each turn, `cut` is the top of what has been emitted and
+     * the next relevant edge is computed. */
     cut = region->bands[0].y0;
     if (op == SX_REGION_OP_UNION && ry0 < cut)
     {
@@ -1962,7 +1963,7 @@ static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, 
         struct sx_region_span out_spans[SX_REGION_MAX_SPANS_PER_BAND];
         int out_count = 0;
 
-        /* Banda que cubre `cut`, y proximo borde por delante. */
+        /* The band covering `cut`, and the next edge ahead. */
         for (band_index = 0; band_index < region->band_count; ++band_index)
         {
             const struct sx_region_band* band = &region->bands[band_index];
@@ -2028,8 +2029,9 @@ static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, 
 
     if (!ok)
     {
-        /* No entro: quedarse con el superset. Para union y resta el bounding box
-         * de lo que habia ya cubre; para union hay que incluir tambien el rect. */
+        /* It did not fit: keep the superset. For union and subtraction the
+         * bounding box of what was there already covers it; for union the rect
+         * has to be included too. */
         if (op == SX_REGION_OP_UNION)
         {
             struct sx_rect merged = sx_rect_union(sx_region_bounds(region), rect);

@@ -20,10 +20,10 @@ extern "C" {
 
 /* Classic 3D system palette.
  *
- * VIVE EN savanxp/sxchrome.h: no es del toolkit, es del sistema -- el marco de
- * ventana del WM y una app que pinta contenido propio tienen que dar con los
- * mismos tonos que un boton. Estos nombres siguen siendo los que usa el codigo
- * del toolkit y de las apps, asi que se quedan como alias. */
+ * IT LIVES IN sxgfx/sxchrome.h: it is not the toolkit's, it is the system's --
+ * the WM's window frame and an app that paints its own content have to hit
+ * the same tones as a button. These names are still the ones the toolkit's and
+ * the apps' code use, so they stay as aliases. */
 #define SXGUI_COLOR_FACE          SXCHROME_COLOR_FACE
 #define SXGUI_COLOR_SHADOW        SXCHROME_COLOR_SHADOW
 #define SXGUI_COLOR_DARK          SXCHROME_COLOR_DARK
@@ -36,31 +36,32 @@ extern "C" {
 #define SXGUI_COLOR_SELECT_TEXT   SXCHROME_COLOR_SELECT_TEXT
 #define SXGUI_COLOR_WINDOW        SXCHROME_COLOR_WINDOW
 
-/* ---- metricas -------------------------------------------------------------
+/* ---- metrics --------------------------------------------------------------
  *
- * Las medidas que una app necesita para ubicar sus controles. Estan aca y no
- * cada una en su .c porque el punto es que dos ventanas distintas caigan en la
- * MISMA grilla: si files usa un margen y notepad otro, las dos se ven bien por
- * separado y mal uno al lado del otro.
+ * The measurements an app needs to place its controls. They are here rather
+ * than in each .c because the point is for two different windows to fall on
+ * the SAME grid: if files uses one margin and notepad another, each looks
+ * right alone and wrong next to the other.
  *
- * El grosor del bisel entra en la cuenta de cualquiera que reparta el ancho de
- * un listbox entre columnas: el area util es el rect menos SXGUI_BORDER_SUNKEN
- * de cada lado, y menos SXGUI_SCROLLBAR_THICKNESS si aparece la barra. */
-/* El espesor de cada bisel lo define quien lo dibuja (savanxp/sxchrome.h). */
+ * The bevel thickness enters the arithmetic of anything that divides a
+ * listbox's width into columns: the usable area is the rect minus
+ * SXGUI_BORDER_SUNKEN on each side, and minus SXGUI_SCROLLBAR_THICKNESS if the
+ * bar shows. */
+/* Each bevel's thickness is defined by whoever draws it (sxgfx/sxchrome.h). */
 #define SXGUI_BORDER_RAISED       SXCHROME_BORDER_RAISED
 #define SXGUI_BORDER_SUNKEN       SXCHROME_BORDER_SUNKEN
 #define SXGUI_BORDER_INSET        SXCHROME_BORDER_INSET
 #define SXGUI_SCROLLBAR_THICKNESS 16
-/* Icono de fila de listbox. El tamano es fijo y no sale del bitmap para que la
- * sangria del texto sea la misma en todas las filas, tenga icono o no. */
+/* Listbox row icon. The size is fixed, not taken from the bitmap, so the text
+ * indent is the same on every row, with an icon or without. */
 #define SXGUI_LISTBOX_ICON_SIZE   16
 #define SXGUI_LISTBOX_ICON_GAP    3
-/* Separacion del texto al borde interno de un control. Una etiqueta suelta que
- * quiera alinear con el texto de un campo se corre BORDER + TEXT_PAD. */
+/* Gap between the text and a control's inner edge. A loose label that wants
+ * to line up with a field's text moves by BORDER + TEXT_PAD. */
 #define SXGUI_TEXT_PAD            3
 
-#define SXGUI_MARGIN              4   /* del borde del cliente al control */
-#define SXGUI_GAP                 6   /* entre controles vecinos */
+#define SXGUI_MARGIN              4   /* from the client edge to the control */
+#define SXGUI_GAP                 6   /* between neighbouring controls */
 #define SXGUI_BUTTON_WIDTH        84
 #define SXGUI_BUTTON_HEIGHT       26
 #define SXGUI_FIELD_HEIGHT        24
@@ -97,23 +98,23 @@ enum sxgui_action {
     SXGUI_ACTION_ACTIVATE     /* listbox: double click or Enter on a row */
 };
 
-/* ---- listbox columns (vista "detalles") -----------------------------------
+/* ---- listbox columns ("details" view) -------------------------------------
  *
- * Tabla caller-owned. Con `columns` puesto, el listbox dibuja una cabecera
- * fija arriba y parte cada item por TAB, una celda por columna: es la lista de
- * detalles clasica (Nombre | Tamano | Tipo). Sin `columns` se comporta igual
- * que siempre, asi que es opt-in y no toca a los listbox existentes.
+ * Caller-owned table. With `columns` set, the listbox draws a fixed header on
+ * top and splits each item at TAB, one cell per column: the classic details
+ * list (Name | Size | Type). Without `columns` it behaves as always, so it is
+ * opt-in and leaves existing listboxes alone.
  */
 
-#define SXGUI_COLUMN_RIGHT (1u << 0)  /* celda alineada a la derecha */
+#define SXGUI_COLUMN_RIGHT (1u << 0)  /* right-aligned cell */
 
 struct sxgui_column {
     const char *title;
-    int width;        /* ancho en pixeles */
+    int width;        /* width in pixels */
     uint32_t flags;
 };
 
-/* Separador de celdas dentro de un item con columnas. */
+/* Cell separator inside an item with columns. */
 #define SXGUI_COLUMN_SEPARATOR '	'
 
 struct sxgui_widget {
@@ -134,35 +135,35 @@ struct sxgui_widget {
     int item_count;
 
     /*
-     * listbox: icono opcional por fila, paralelo a `items` (NULL = ninguno, y
-     * una entrada NULL deja esa fila sin icono pero conserva la sangria, para
-     * que los nombres no queden en zigzag).
+     * listbox: optional per-row icon, parallel to `items` (NULL = none, and a
+     * NULL entry leaves that row without an icon but keeps the indent, so the
+     * names do not zigzag).
      *
-     * El icono va en la PRIMERA columna y corre solo el texto de esa columna:
-     * el rotulo de la cabecera se queda donde esta, como en la vista de
-     * detalles clasica. Se dibuja a SXGUI_LISTBOX_ICON_SIZE sin escalar, asi
-     * que un bitmap de otro tamano se recorta en vez de deformarse.
+     * The icon goes in the FIRST column and only moves that column's text:
+     * the header label stays where it is, as in the classic details view. It
+     * is drawn at SXGUI_LISTBOX_ICON_SIZE without scaling, so a bitmap of
+     * another size is cropped instead of distorted.
      */
     const struct sx_bitmap *const *item_icons;
 
-    /* listbox: cabecera de columnas opcional (NULL = lista simple) */
+    /* listbox: optional column header (NULL = plain list) */
     const struct sxgui_column *columns;
     int column_count;
 
-    /* textfield y textedit (caller-provided editable storage). En textedit el
-     * buffer es el documento entero, con lineas separadas por '\n'. */
+    /* textfield and textedit (caller-provided editable storage). In textedit
+     * the buffer is the whole document, with lines separated by '\n'. */
     char *edit_buffer;
     int edit_capacity;
     int caret;
 
-    /* textedit: ancla de la seleccion, o -1 si no hay nada seleccionado. El
-     * rango es [min(anchor, caret), max(anchor, caret)): el ancla se queda
-     * donde empezo la seleccion y el caret es el extremo movil, que es lo que
-     * hace que shift+flecha crezca y se achique por donde uno espera. */
+    /* textedit: the selection anchor, or -1 when nothing is selected. The
+     * range is [min(anchor, caret), max(anchor, caret)): the anchor stays where
+     * the selection started and the caret is the moving end, which is what
+     * makes shift+arrow grow and shrink it on the expected side. */
     int sel_anchor;
 
-    /* textedit: se pone en 1 cada vez que el contenido cambia. El toolkit
-     * nunca lo baja -- es el llamador el que decide que significa "guardado". */
+    /* textedit: set to 1 whenever the content changes. The toolkit never
+     * clears it -- the caller decides what "saved" means. */
     int modified;
 
     /* textfield: horizontal scroll in pixels to keep the caret visible;
@@ -236,14 +237,14 @@ struct sxgui_dialog {
     const char *title;
     struct sxgui_widget *widgets;   /* rects relative to the client area */
     int widget_count;
-    /* Widget que arranca con el foco, en indices de `widgets`. 0 lo deja sin
-     * foco (el default historico), que solo sirve si el dialogo es de botones:
-     * uno cuyo objeto es escribir algo tiene que poner aca su campo, o el
-     * teclado no llega a ningun lado. */
+    /* Widget that starts with the focus, as an index into `widgets`. 0 leaves
+     * no focus (the historical default), which only works for a dialog of
+     * buttons: one whose purpose is typing something has to put its field
+     * here, or the keyboard goes nowhere. */
     int initial_focus;
-    /* Boton que dispara Enter, en indices de `widgets`. 0 = ninguno. Se dibuja
-     * con el borde doble del boton por defecto, como en los dialogos de la
-     * epoca, asi que se ve cual va a responder antes de apretarlo. */
+    /* Button that Enter triggers, as an index into `widgets`. 0 = none. It is
+     * drawn with the default button's double border, as in the dialogs of the
+     * era, so you can see which one will respond before pressing it. */
     int default_button;
     int saved_focus;                /* owned by the toolkit */
     int result;
@@ -342,28 +343,28 @@ int sxgui_cursor_shape(const struct sxgui_context *ctx);
 
 /* Paint every visible widget into the backbuffer. */
 void sxgui_paint(struct sxgui_context *ctx);
-/* Las dos mitades de sxgui_paint, para apps que pintan contenido propio: el
- * chrome (menu bar, popups, dialogo modal) va SIEMPRE por encima, asi que el
- * dibujo propio se intercala entre ambas. sxgui_app lo hace por vos:
+/* The two halves of sxgui_paint, for apps that paint their own content: the
+ * chrome (menu bar, popups, modal dialog) ALWAYS goes on top, so the app's own
+ * drawing goes between them. sxgui_app does it for you:
  * content -> on_paint -> overlay. */
 void sxgui_paint_content(struct sxgui_context *ctx);
 void sxgui_paint_overlay(struct sxgui_context *ctx);
 
-/* ---- chrome para contenido propio ----------------------------------------
+/* ---- chrome for the app's own content --------------------------------------
  *
- * Los dos biseles del esquema 3D, para la app que pinta su propio contenido y
- * necesita que se vea como el resto del sistema: un tablero de celdas, una
- * grilla, un visor. Son LOS MISMOS que usan los widgets, no una copia -- que es
- * lo que evita que una app dibuje un borde de un pixel al lado de un boton de
- * dos, o que use el gris equivocado de los cuatro del esquema.
+ * The two bevels of the 3D scheme, for the app that paints its own content
+ * and needs it to look like the rest of the system: a board of cells, a grid,
+ * a viewer. They are THE SAME ones the widgets use, not a copy -- which keeps
+ * an app from drawing a one-pixel border next to a two-pixel button, or from
+ * picking the wrong one of the scheme's four greys.
  *
- * Pintan solo el borde, SXGUI_BORDER_RAISED / SXGUI_BORDER_SUNKEN pixeles de
- * espesor por lado; el relleno del interior es del llamador.
+ * They paint only the border, SXGUI_BORDER_RAISED / SXGUI_BORDER_SUNKEN pixels
+ * thick per side; filling the interior is the caller's.
  *
- * Son alias de savanxp/sxchrome.h, que es donde vive el dibujo desde que el WM
- * tambien lo consume. Una app que ya linkea el toolkit puede seguir usando
- * estos nombres; una que necesite el bisel de UN pixel, la cara de un control o
- * el relieve de deshabilitado va directo a sxchrome, que no pide el toolkit. */
+ * They are aliases of sxgfx/sxchrome.h, where the drawing lives since the WM
+ * uses it too. An app that already links the toolkit can keep these names;
+ * one that needs the ONE-pixel bevel, a control's face or the disabled relief
+ * goes straight to sxchrome, which does not need the toolkit. */
 void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect);
 void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect);
 
@@ -383,56 +384,56 @@ struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines
 
 /* ---- tabs -----------------------------------------------------------------
  *
- * Control de pestanias clasico: la fila de pestanias arriba y la pagina abajo,
- * unidas en una sola pieza. La pestania activa se dibuja mas alta y mas ancha
- * que las demas y TAPA el borde superior de la pagina: por ese hueco las dos
- * partes se leen como una sola hoja, que es lo que distingue una pestania de
- * un boton. Las inactivas quedan hundidas contra el borde.
+ * Classic tab control: the row of tabs on top and the page below, joined in
+ * one piece. The active tab is drawn taller and wider than the others and
+ * COVERS the page's top edge: through that gap the two parts read as a single
+ * sheet, which is what tells a tab from a button. Inactive tabs stay sunk
+ * against the edge.
  *
- * `rect` cubre las dos partes -- la fila Y la pagina --, no solo la fila. El
- * contenido de la pagina NO son widgets hijos: sxgui no tiene jerarquia. La
- * app pregunta por `sxgui_tabs_page()` donde puede dibujar y ubica ahi sus
- * propios controles, o pinta a mano si su contenido no son widgets.
+ * `rect` covers both parts -- the row AND the page --, not just the row. The
+ * page's content is NOT child widgets: sxgui has no hierarchy. The app asks
+ * `sxgui_tabs_page()` where it may draw and places its own controls there, or
+ * paints by hand if its content is not widgets.
  *
- * Reusa `items`/`item_count` para los rotulos y `value` para la pestania
- * activa; cambiarla dispara `SXGUI_ACTION_CHANGE`. Con el foco puesto, las
- * flechas izquierda y derecha se mueven entre pestanias. */
+ * It reuses `items`/`item_count` for the labels and `value` for the active
+ * tab; changing it fires `SXGUI_ACTION_CHANGE`. With the focus on it, the left
+ * and right arrows move between tabs. */
 struct sxgui_widget sxgui_tabs(struct sx_rect rect, const char *const *labels, int label_count, int selected);
-/* Alto de la fila de pestanias sola, para quien necesite reservar el espacio
- * antes de tener el widget armado. */
+/* Height of the tab row alone, for code that needs to reserve the space
+ * before the widget is built. */
 int sxgui_tabs_height(void);
-/* Area util de la pagina: el rect del widget menos la fila y menos el bisel.
- * Es donde va el contenido de la pestania activa. */
+/* Usable area of the page: the widget's rect minus the row and minus the
+ * bevel. It is where the active tab's content goes. */
 struct sx_rect sxgui_tabs_page(const struct sxgui_widget *widget);
-/* Ancho que necesita la fila para mostrar todos los rotulos enteros. Una app
- * que calcula el tamano de su ventana lo necesita ANTES de tener el widget
- * armado, y adivinarlo con la formula copiada a mano es como se desincroniza. */
+/* Width the row needs to show every label in full. An app that computes its
+ * window size needs it BEFORE the widget is built, and guessing it with a
+ * hand-copied formula is how the two drift apart. */
 int sxgui_tabs_preferred_width(const char *const *labels, int label_count);
-/* Editor multilinea: el documento vive en `buffer` (terminado en NUL, lineas
- * separadas por '\n') y lo posee el llamador. Sin word wrap: las lineas largas
- * se recortan al ancho y el scroll horizontal sigue al caret. */
+/* Multi-line editor: the document lives in `buffer` (NUL-terminated, lines
+ * separated by '\n') and the caller owns it. No word wrap: long lines are
+ * clipped to the width and the horizontal scroll follows the caret. */
 struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capacity);
 
-/* Pone el foco en un widget por indice (-1 = ninguno). Lo normal es que el foco
- * lo mueva el usuario con Tab o el click, pero una app cuyo contenido ES un
- * control -- un editor, una lista -- quiere arrancar con el foco ahi. */
+/* Puts the focus on a widget by index (-1 = none). Normally the user moves
+ * the focus with Tab or a click, but an app whose content IS a control -- an
+ * editor, a list -- wants to start with the focus there. */
 void sxgui_focus(struct sxgui_context *ctx, int index);
 
-/* Portapapeles sobre un widget de texto -- `SXGUI_TEXTEDIT` o `SXGUI_TEXTFIELD`
- * --, para colgar de un menu Edicion. Son las mismas operaciones que hacen
- * Ctrl+C/X/V/A, expuestas porque el atajo de teclado no puede ser la unica via:
- * un menu tiene que poder dispararlas. Devuelven 1 si cambiaron algo, de modo
- * que el llamador puede avisar cuando no habia nada seleccionado. `cut` y
- * `paste` marcan el widget modificado; el llamador decide que significa
- * "guardado". Conservan el nombre `textedit_` aunque sirvan a los dos widgets,
- * para no romper a quien ya los llama. */
+/* Clipboard on a text widget -- `SXGUI_TEXTEDIT` or `SXGUI_TEXTFIELD` --, to
+ * hang from an Edit menu. They are the same operations as Ctrl+C/X/V/A,
+ * exposed because the keyboard shortcut cannot be the only way: a menu has to
+ * be able to trigger them. They return 1 if they changed something, so the
+ * caller can tell the user when nothing was selected. `cut` and `paste` mark
+ * the widget modified; the caller decides what "saved" means. They keep the
+ * `textedit_` name although they serve both widgets, so as not to break their
+ * callers. */
 int sxgui_textedit_copy(struct sxgui_widget *widget);
 int sxgui_textedit_cut(struct sxgui_widget *widget);
 int sxgui_textedit_paste(struct sxgui_widget *widget);
 void sxgui_textedit_select_all(struct sxgui_widget *widget);
-/* 1 si hay algo seleccionado. Para una app que quiera reflejar el estado por
- * su cuenta -- una barra de estado, por ejemplo. El menu no lo necesita: las
- * operaciones ya devuelven 0 cuando no hay nada que cortar o copiar. */
+/* 1 if something is selected. For an app that wants to show the state itself
+ * -- a status bar, for instance. The menu does not need it: the operations
+ * already return 0 when there is nothing to cut or copy. */
 int sxgui_textedit_has_selection(const struct sxgui_widget *widget);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 

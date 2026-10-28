@@ -340,8 +340,8 @@ int gfx_text_width_mono(const char* text) {
     if (text == 0) {
         return 0;
     }
-    /* Celdas, no bytes: en UTF-8 un caracter acentuado ocupa dos bytes pero una
-     * sola celda de la grilla monospace. */
+    /* Cells, not bytes: in UTF-8 an accented character takes two bytes but a
+     * single cell of the monospace grid. */
     while (*text != '\0') {
         (void)sx_utf8_next(&text);
         ++count;
@@ -349,12 +349,12 @@ int gfx_text_width_mono(const char* text) {
     return count * SX_CONSOLE_GLYPH_W;
 }
 
-/* El clip efectivo es la interseccion del clip del llamador con la superficie:
- * calculado una sola vez, el loop interno no vuelve a validar nada. La version
- * anterior llamaba gfx_pixel() por pixel encendido, y gfx_pixel revalida los
- * cuatro bordes y recalcula info->pitch / 4 -- una division -- en cada pixel.
- * Una grilla de 80x24 son ~245k iteraciones por repintado, asi que esa division
- * por pixel era el costo dominante de dibujar texto monospace. */
+/* The effective clip is the caller's clip intersected with the surface:
+ * computed once, so the inner loop validates nothing again. The previous
+ * version called gfx_pixel() for every lit pixel, and gfx_pixel rechecks the
+ * four edges and recomputes info->pitch / 4 -- a division -- on each one. An
+ * 80x24 grid is ~245k iterations per repaint, so that per-pixel division was
+ * the dominant cost of drawing monospace text. */
 static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                                      int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
     int clip_left = 0;
@@ -402,8 +402,8 @@ static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_in
         if (column_end > SX_CONSOLE_GLYPH_W) {
             column_end = SX_CONSOLE_GLYPH_W;
         }
-        /* La celda entera cayo fuera del clip: el pen igual avanza, porque la
-         * grilla tiene que seguir alineada con el texto que si se dibuja. */
+        /* The whole cell fell outside the clip: the pen still advances, because
+         * the grid has to stay aligned with the text that is drawn. */
         if (column_begin >= column_end) {
             pen_x += SX_CONSOLE_GLYPH_W;
             continue;

@@ -32,10 +32,10 @@ extern "C" {
 
 /* Classic 3D system palette.
  *
- * Son los cuatro tonos del esquema "Windows Standard" y en ese orden se leen:
- * DARK y SHADOW hunden, BEVEL y LIGHT levantan. Un borde 3D de la epoca usa
- * los CUATRO -- dos pixeles por lado, no uno -- y BEVEL es el que faltaba: sin
- * el, el bisel queda de un solo pixel y los controles se ven planos. */
+ * These are the four tones of the "Windows Standard" scheme, read in this
+ * order: DARK and SHADOW sink, BEVEL and LIGHT raise. A 3D border of the era
+ * uses all FOUR -- two pixels per side, not one -- and BEVEL was the missing
+ * one: without it the bevel is a single pixel and controls look flat. */
 #define SXCHROME_COLOR_FACE          SXCHROME_RGB(192, 192, 192)  /* 3DFACE */
 #define SXCHROME_COLOR_SHADOW        SXCHROME_RGB(128, 128, 128)  /* 3DSHADOW */
 #define SXCHROME_COLOR_DARK          SXCHROME_RGB(0, 0, 0)        /* 3DDKSHADOW */
@@ -59,28 +59,29 @@ extern "C" {
 #define SXCHROME_COLOR_CAPTION_TEXT              SXCHROME_RGB(255, 255, 255)
 #define SXCHROME_COLOR_CAPTION_INACTIVE_TEXT     SXCHROME_RGB(192, 192, 192)
 
-/* Espesor de cada bisel. Entra en la cuenta de cualquiera que reparta el area
- * util de un control: el interior es el rect menos esto de cada lado. */
-#define SXCHROME_BORDER_RAISED 2 /* botones, cabeceras, popups */
-#define SXCHROME_BORDER_SUNKEN 2 /* campos, listas, editores */
-#define SXCHROME_BORDER_INSET  1 /* paneles de barra de estado */
+/* Thickness of each bevel. It enters the arithmetic of anything that divides
+ * up a control's usable area: the interior is the rect minus this on each
+ * side. */
+#define SXCHROME_BORDER_RAISED 2 /* buttons, headers, popups */
+#define SXCHROME_BORDER_SUNKEN 2 /* fields, lists, editors */
+#define SXCHROME_BORDER_INSET  1 /* status bar panels */
 
 /*
- * El primitivo: DOS anillos de un pixel, cada uno con su tono arriba-izquierda
- * y abajo-derecha. Cuatro colores en total. El anillo externo separa el control
- * del fondo y el interno le da el espesor.
+ * The primitive: TWO one-pixel rings, each with its own top-left and
+ * bottom-right tone. Four colours in all. The outer ring separates the control
+ * from the background and the inner one gives it thickness.
  *
- * Todo el resto del chrome sale de aca cambiando el ORDEN de los cuatro, que es
- * lo que hace que hundido y levantado sean exactamente el reverso uno del otro
- * y no dos dibujos parecidos.
+ * All the rest of the chrome comes from here by changing the ORDER of the
+ * four, which is what makes sunken and raised exactly the reverse of each
+ * other rather than two similar drawings.
  *
- * Se exporta con los cuatro tonos abiertos, y no solo con los envoltorios de
- * abajo, porque el WM compone superficies que pueden necesitar ordenar los tonos
- * de otra manera. Compartir la primitiva permite que toda superficie del sistema
- * conserve la misma construccion de dos pixeles sin copiarla.
+ * It is exported with the four tones open, not only through the wrappers
+ * below, because the WM composes surfaces that may need the tones in another
+ * order. Sharing the primitive lets every surface of the system keep the same
+ * two-pixel construction without copying it.
  *
- * No dibuja nada si el rect es vacio; con ancho o alto <= 2 dibuja solo el
- * anillo externo, que es donde el interno ya no entra.
+ * It draws nothing for an empty rect; with a width or height <= 2 it draws
+ * only the outer ring, since the inner one no longer fits.
  */
 void sxchrome_draw_edge(
     struct sx_painter *painter,
@@ -90,41 +91,40 @@ void sxchrome_draw_edge(
     uint32_t inner_light,
     uint32_t inner_dark);
 
-/* Borde levantado (botones, cara de ventana) con la paleta del sistema. */
+/* Raised border (buttons, window face) in the system palette. */
 void sxchrome_draw_raised(struct sx_painter *painter, struct sx_rect rect);
 
-/* Su reverso exacto: lo comparten el boton apretado y los campos, que es lo que
- * hace que un boton hundido y una caja de texto tengan el mismo espesor. */
+/* Its exact reverse, shared by the pressed button and the fields: that is
+ * what gives a sunken button and a text box the same thickness. */
 void sxchrome_draw_sunken(struct sx_painter *painter, struct sx_rect rect);
 
-/* Bisel de UN pixel, para lo que no lleva espesor: los paneles de la barra de
- * estado, los medidores y las cajas que solo separan del fondo. */
+/* ONE-pixel bevel, for what has no thickness: status bar panels, meters and
+ * boxes that only separate from the background. */
 void sxchrome_draw_inset(struct sx_painter *painter, struct sx_rect rect);
 
-/* Linea "grabada": el marco oscuro y el claro corridos un pixel en diagonal.
- * Es el borde del group box y el de los separadores de menu. */
+/* "Etched" line: the dark and light frames offset one pixel diagonally. It is
+ * the border of the group box and of menu separators. */
 void sxchrome_draw_etched(struct sx_painter *painter, struct sx_rect rect);
 
-/* Cara + borde de un control: rellena con `face` y le pone el bisel levantado o
- * el hundido. Es el boton entero menos su rotulo. */
+/* Face + border of a control: fills with `face` and adds the raised or the
+ * sunken bevel. It is the whole button minus its label. */
 void sxchrome_fill_raised(struct sx_painter *painter, struct sx_rect rect, uint32_t face, int pressed);
 
 /*
- * Rotulo de un control deshabilitado: gris con una copia blanca corrida un
- * pixel abajo a la derecha. Es el texto "grabado" de la epoca -- se lee apagado
- * sin desaparecer, que es justo lo que un gris plano sobre gris no logra.
+ * Label of a disabled control: grey with a white copy offset one pixel down
+ * and to the right. It is the "etched" text of the era -- it reads as off
+ * without disappearing, which is exactly what flat grey on grey fails to do.
  */
 void sxchrome_draw_text_disabled(struct sx_painter *painter, int x, int y, const char *text);
 
 /*
- * La misma copia blanca corrida, para un glifo que no es texto: la flecha de un
- * combo, el cuadrado de un maximizar. El llamador pasa la funcion que lo dibuja
- * y se la llama DOS veces, primero el realce y despues el gris.
+ * The same offset white copy, for a glyph that is not text: a combo's arrow, a
+ * maximize square. The caller passes the function that draws it, and it is
+ * called TWICE, first the highlight and then the grey.
  *
- * Existe porque el relieve grabado es lo que distingue un control apagado de uno
- * mal pintado, y hasta ahora solo lo tenia el texto: cualquier glifo que
- * quisiera apagarse tenia que reimplementarlo, que es el problema que este
- * archivo cierra.
+ * It exists because the etched relief is what tells a disabled control from a
+ * badly painted one, and until then only text had it: any glyph that wanted to
+ * look disabled had to reimplement it, which is the problem this file closes.
  */
 typedef void (*sxchrome_glyph_fn)(struct sx_painter *painter, struct sx_rect rect, uint32_t colour);
 void sxchrome_draw_glyph_disabled(struct sx_painter *painter, struct sx_rect rect, sxchrome_glyph_fn draw);

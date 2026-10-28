@@ -29,20 +29,20 @@ struct sxgui_app {
 
     /* optional hooks; leave NULL to skip */
     int (*on_key)(struct sxgui_app *app, const struct savanxp_input_event *event); /* pre-toolkit; non-zero = consumed */
-    /* pre-toolkit pointer hook, simetrico a on_key; non-zero = consumed. Para
-     * apps que hacen su propio hit-testing (grids, lienzos) en vez de widgets. */
+    /* pre-toolkit pointer hook, symmetric to on_key; non-zero = consumed. For
+     * apps that do their own hit-testing (grids, canvases) instead of widgets. */
     int (*on_pointer)(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event);
     void (*on_paint)(struct sxgui_app *app);  /* extra painting after sxgui_paint */
     void (*on_resize)(struct sxgui_app *app); /* widget relayout after RESIZED */
 
-    /* Refresco periodico, para una ventana que muestra datos que cambian solos
-     * -- un monitor, un reloj. Se llama cada `tick_interval_ms` mientras la app
-     * corre; con el hook en NULL o el intervalo en 0 no pasa nada y el loop se
-     * comporta como siempre.
+    /* Periodic refresh, for a window showing data that changes on its own --
+     * a monitor, a clock. Called every `tick_interval_ms` while the app runs;
+     * with the hook NULL or the interval 0 nothing happens and the loop
+     * behaves as always.
      *
-     * No es un temporizador preciso: el loop lo mira entre frames, asi que un
-     * repintado largo corre el siguiente tick. Para contar tiempo hay que medir
-     * el reloj adentro del hook, no contar llamadas. */
+     * It is not a precise timer: the loop checks it between frames, so a long
+     * repaint delays the next tick. To measure time, read the clock inside
+     * the hook; do not count calls. */
     unsigned long tick_interval_ms;
     void (*on_tick)(struct sxgui_app *app);
 
@@ -55,43 +55,44 @@ struct sxgui_app {
     int dialog_last_cursor_shape;
 };
 
-/* Margen que sxgui_app_autosize deja a la derecha y abajo del bounding box de
- * los widgets al pedirle su tamano a la ventana. Para que la ventana quede
- * simetrica, la app tiene que arrancar sus widgets en este mismo margen.
+/* Margin sxgui_app_autosize leaves to the right of and below the widgets'
+ * bounding box when it asks the window for its size. For the window to look
+ * symmetric, the app has to start its widgets at this same margin.
  *
- * Vale SXGUI_DIALOG_MARGIN porque quien autodimensiona es una ventana de
- * controles sueltos sobre la cara -- un Acerca de, una galeria --, que se lee
- * como un dialogo grande. Una ventana cuyo contenido es UN control grande
- * (el editor de notepad, la lista de files) usa SXGUI_MARGIN y calcula su
- * layout a partir del tamano de la ventana, no al reves. */
+ * It is SXGUI_DIALOG_MARGIN because the windows that autosize hold loose
+ * controls on the face -- an About box, a gallery --, which read as a large
+ * dialog. A window whose content is ONE large control (notepad's editor, the
+ * files list) uses SXGUI_MARGIN and computes its layout from the window size,
+ * not the other way round. */
 #define SXGUI_CONTENT_MARGIN SXGUI_DIALOG_MARGIN
 
-/* Bounding box de los widgets: el borde derecho e inferior mas lejano. Es el
- * tamano que ocupa el contenido de una app de layout fijo. Devuelve 0 en
- * ambos si no hay ningun rect util (apps que calculan su layout a partir del
- * tamano de la ventana arrancan con todos los rects en cero). */
+/* Bounding box of the widgets: the farthest right and bottom edges. It is the
+ * size a fixed-layout app's content takes. Returns 0 for both if there is no
+ * usable rect (apps that compute their layout from the window size start with
+ * every rect at zero). */
 void sxgui_content_bounds(const struct sxgui_widget *widgets, int widget_count, int *width, int *height);
 
 /* Open the gfx session and bind the widget array. On failure writes
  * "<name>: ..." to fd 2, leaves everything closed and returns < 0.
  *
- * No toca el tamano de la ventana: el WM la abre con su superficie generica y
- * es la app la que pide el suyo -- el tamano natural de una ventana lo sabe la
- * app, que conoce su layout, no el WM. Elegir UNA de las dos:
+ * It does not touch the window size: the WM opens the window with its generic
+ * surface and the app asks for its own -- the natural size of a window is
+ * known to the app, which knows its layout, not to the WM. Pick ONE of:
  *
- *   sxgui_app_autosize()          layout fijo: el bounding box de los widgets
- *   sxgui_app_set_content_size()  cualquier otro tamano que la app decida
+ *   sxgui_app_autosize()          fixed layout: the widgets' bounding box
+ *   sxgui_app_set_content_size()  any other size the app decides
  *
- * La segunda existe justamente porque el bounding box no siempre es la
- * respuesta: progman es un launcher y quiere lugar para crecer, filesapp
- * estira sus paneles con la ventana y arranca con los rects en cero. */
+ * The second exists precisely because the bounding box is not always the
+ * answer: progman is a launcher and wants room to grow, filesapp stretches its
+ * panes with the window and starts with every rect at zero. */
 int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget *widgets, int widget_count);
-/* Pide un area util de width x height y espera brevemente a que el WM la
- * aplique, para no mostrar un primer frame con el tamano viejo. Devuelve 1 si
- * el WM ya la aplico, 0 si no llego a tiempo (llega despues como RESIZED). */
+/* Asks for a usable area of width x height and waits briefly for the WM to
+ * apply it, so the first frame is not shown at the old size. Returns 1 if the
+ * WM has applied it, 0 if it did not arrive in time (it arrives later as
+ * RESIZED). */
 int sxgui_app_set_content_size(struct sxgui_app *app, int width, int height);
-/* Pide el bounding box de los widgets + SXGUI_CONTENT_MARGIN. No hace nada si
- * los widgets todavia no tienen layout (todos los rects en cero). */
+/* Asks for the widgets' bounding box + SXGUI_CONTENT_MARGIN. Does nothing if
+ * the widgets have no layout yet (every rect at zero). */
 int sxgui_app_autosize(struct sxgui_app *app);
 void sxgui_app_request_repaint(struct sxgui_app *app);
 void sxgui_app_quit(struct sxgui_app *app, int exit_code);

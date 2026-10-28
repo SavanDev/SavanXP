@@ -46,11 +46,11 @@ static int sxgui_clipboard_set(const char *text)
 
 /* ---- low level chrome helpers ------------------------------------------- */
 
-/* EL DIBUJO DE LOS BISELES NO ESTA ACA: vive en savanxp/sxchrome.h, porque el
- * toolkit no es el unico que pinta chrome del sistema -- el marco de ventana de
- * windowd y una app que pinta contenido propio dan con los mismos bordes, y
- * antes cada uno tenia su copia. Lo que queda aca son los nombres internos que
- * usa el resto del archivo, como envoltorios que el compilador inlinea. */
+/* THE BEVEL DRAWING IS NOT HERE: it lives in sxgfx/sxchrome.h, because the
+ * toolkit is not the only thing that paints the system's chrome -- windowd's
+ * window frame and an app that paints its own content hit the same borders,
+ * and each used to have its own copy. What stays here are the internal names
+ * the rest of the file uses, as wrappers the compiler inlines. */
 
 static void sxgui_draw_raised(struct sx_painter *painter, struct sx_rect rect)
 {
@@ -67,7 +67,7 @@ static void sxgui_draw_pressed(struct sx_painter *painter, struct sx_rect rect)
     sxchrome_draw_sunken(painter, rect);
 }
 
-/* Publicos para la app que pinta contenido propio (ver savanxp/sxgui.h). */
+/* Public, for the app that paints its own content (see sxgfx/sxgui.h). */
 void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect)
 {
     sxchrome_draw_raised(painter, rect);
@@ -88,20 +88,20 @@ static void sxgui_draw_etched(struct sx_painter *painter, struct sx_rect rect)
     sxchrome_draw_etched(painter, rect);
 }
 
-/* Rectangulo de foco punteado. El marco lleno que habia antes competia con el
- * borde del control; el punteado se lee como foco y no como otro bisel. */
+/* Dotted focus rectangle. The solid frame it replaced competed with the
+ * control's border; a dotted one reads as focus, not as another bevel. */
 static void sxgui_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect)
 {
-    /* La paridad es de la posicion ABSOLUTA, no del rect: asi los puntos de dos
-     * controles vecinos caen en la misma grilla en vez de bailar segun donde
-     * arranque cada uno. Eso es exactamente el anclaje a dispositivo de la
-     * trama del brush, que ademas deja pasar el fondo entre punto y punto. */
+    /* The parity is of the ABSOLUTE position, not the rect: that way the dots
+     * of two neighbouring controls fall on the same grid instead of shifting
+     * with where each one starts. That is exactly the brush pattern's device
+     * anchoring, which also lets the background show between the dots. */
     struct sx_brush brush = sx_brush_pattern_transparent(sx_pattern_checker_50, SXGUI_COLOR_TEXT);
     sx_painter_draw_frame_brush(painter, rect, &brush);
 }
 
-/* Trama al 50% de dos colores. Es el fondo del canal de las barras de scroll:
- * un gris plano se ve como una caja vacia, la trama se ve como un riel. */
+/* Two-colour 50% pattern. It is the background of the scroll bars' trough:
+ * flat grey looks like an empty box, the pattern looks like a rail. */
 static void sxgui_fill_checker(struct sx_painter *painter, struct sx_rect rect, uint32_t base, uint32_t dots)
 {
     struct sx_brush brush = sx_brush_pattern(sx_pattern_checker_50, dots, base);
@@ -120,8 +120,8 @@ static int sxgui_row_height(void)
 
 /* ---- scrollbar machinery (shared by the widget and the listbox) --------- */
 
-/* SXGUI_SCROLLBAR_THICKNESS vive en el header: una app que reparte el ancho de
- * un listbox entre columnas necesita descontarlo. */
+/* SXGUI_SCROLLBAR_THICKNESS lives in the header: an app that divides a
+ * listbox's width into columns needs to subtract it. */
 #define SXGUI_SCROLLBAR_MIN_THUMB 8
 
 enum sxgui_scroll_part {
@@ -351,8 +351,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
 
 /* ---- painting ----------------------------------------------------------- */
 
-/* Rotulo de un control: el relieve grabado del deshabilitado lo pone sxchrome,
- * que es de donde lo saca tambien cualquier glifo apagado fuera del toolkit. */
+/* A control's label: sxchrome provides the etched relief of the disabled
+ * state, which is also where any disabled glyph outside the toolkit gets it. */
 static void sxgui_draw_control_text(struct sx_painter *painter, int x, int y, const char *text, int enabled)
 {
     if (text == 0)
@@ -458,9 +458,9 @@ static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_wi
     }
 }
 
-/* El tilde clasico: siete columnas de tres pixeles que bajan y vuelven a subir.
- * El anterior estampaba cuadrados de 2x2 y salia un borron de 10 pixeles de
- * ancho que no entraba en la caja de 13. */
+/* The classic check mark: seven columns of three pixels going down and back
+ * up. The previous one stamped 2x2 squares and came out as a 10-pixel-wide
+ * smudge that did not fit the 13-pixel box. */
 #define SXGUI_CHECK_BOX_SIZE 13
 
 static void sxgui_paint_check_glyph(struct sx_painter *painter, struct sx_rect box, uint32_t colour)
@@ -489,8 +489,8 @@ static void sxgui_paint_checkbox(struct sx_painter *painter, const struct sxgui_
     uint32_t colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
 
-    /* Deshabilitado la caja se pinta del color de la ventana, no de campo: un
-     * fondo blanco se lee como editable por mas gris que este el texto. */
+    /* Disabled, the box is painted in the window colour, not the field
+     * colour: a white background reads as editable however grey the text. */
     sx_painter_fill_rect(painter, box, enabled ? SXGUI_COLOR_FIELD : SXGUI_COLOR_FACE);
     sxgui_draw_sunken(painter, box);
     if (widget->value)
@@ -585,9 +585,9 @@ static void sxgui_popup_open(struct sxgui_context *ctx, int index)
 #define SXGUI_MENU_TITLE_PAD 8
 #define SXGUI_MENU_SEPARATOR_HEIGHT 8
 #define SXGUI_MENU_GUTTER 22
-/* Aire entre el borde levantado del popup y la primera fila. Lo comparten el
- * calculo del rect, el hit-test y el pintado: si se separan, el item que se
- * ilumina deja de ser el que esta abajo del puntero. */
+/* Space between the popup's raised border and the first row. The rect
+ * computation, the hit-test and the painting share it: if they drift apart,
+ * the highlighted item stops being the one under the pointer. */
 #define SXGUI_MENU_POPUP_PAD (SXGUI_BORDER_RAISED + 1)
 
 int sxgui_menubar_height(void)
@@ -744,8 +744,8 @@ static void sxgui_menu_fire(struct sxgui_menubar *bar, const struct sxgui_menu *
 
 /* ---- listbox scrolling helpers ------------------------------------------ */
 
-/* Alto de la cabecera de columnas; 0 cuando el listbox no tiene columnas, que
- * es lo que hace que todo lo de abajo siga valiendo para una lista simple. */
+/* Height of the column header; 0 when the listbox has no columns, which is
+ * what keeps everything below valid for a plain list. */
 static int sxgui_listbox_header_height(const struct sxgui_widget *widget)
 {
     if (widget->kind != SXGUI_LISTBOX || widget->columns == 0 || widget->column_count <= 0)
@@ -773,9 +773,9 @@ static int sxgui_listbox_max_scroll(const struct sxgui_widget *widget)
     return max_scroll > 0 ? max_scroll : 0;
 }
 
-/* text area inside the sunken border, minus the embedded scrollbar column y la
- * cabecera de columnas. Como el pintado y el hit-test de filas parten los dos
- * de aca, correr el origen alcanza para que la cabecera no se solape. */
+/* text area inside the sunken border, minus the embedded scrollbar column and
+ * the column header. Since row painting and row hit-testing both start from
+ * here, moving the origin is enough to keep the header from overlapping. */
 static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
@@ -793,8 +793,8 @@ static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
     return inner;
 }
 
-/* La cabecera ocupa el ancho util menos la columna del scrollbar, que corre de
- * punta a punta al costado -- igual que en la lista de detalles clasica. */
+/* The header spans the usable width minus the scrollbar column, which runs
+ * end to end along the side -- as in the classic details list. */
 static struct sx_rect sxgui_listbox_header_rect(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
@@ -806,13 +806,13 @@ static struct sx_rect sxgui_listbox_header_rect(const struct sxgui_widget *widge
     return inner;
 }
 
-/* Sangria del texto de una celda: el bisel de la cabecera mas el aire normal.
- * La usan la cabecera y las filas, que es lo que las mantiene alineadas. */
+/* Indent of a cell's text: the header's bevel plus the normal padding. The
+ * header and the rows both use it, which is what keeps them aligned. */
 #define SXGUI_CELL_PAD (SXGUI_BORDER_RAISED + SXGUI_TEXT_PAD)
 
-/* Copia la celda `index` de un item separado por SXGUI_COLUMN_SEPARATOR.
- * Devuelve siempre buffer (cadena vacia si esa columna no existe en el item),
- * asi el llamador no necesita distinguir el caso. */
+/* Copies cell `index` of an item separated by SXGUI_COLUMN_SEPARATOR. Always
+ * returns buffer (an empty string if the item has no such column), so the
+ * caller does not need to tell the case apart. */
 static const char *sxgui_column_cell(const char *text, int index, char *buffer, int capacity)
 {
     int cell = 0;
@@ -845,8 +845,8 @@ static const char *sxgui_column_cell(const char *text, int index, char *buffer, 
     return buffer;
 }
 
-/* Una fila partida en celdas, cada una recortada a su columna para que un
- * nombre largo no se derrame sobre la de al lado. */
+/* A row split into cells, each clipped to its column so a long name does not
+ * spill into the next one. */
 static void sxgui_paint_columns_row(
     struct sx_painter *painter,
     const struct sxgui_widget *widget,
@@ -874,17 +874,17 @@ static void sxgui_paint_columns_row(
         (void)sxgui_column_cell(label, column, cell, (int)sizeof(cell));
         if (cell[0] != 0 && sx_painter_push_clip(painter, cell_rect))
         {
-            /* Misma sangria que el titulo de la cabecera: el bisel de la
-             * celda de cabecera come dos pixeles y la fila tiene que quedar a
-             * plomo con el rotulo de arriba, no con el borde de la lista. */
+            /* Same indent as the header's title: the header cell's bevel
+             * takes two pixels, and the row has to line up with the label
+             * above it, not with the list's border. */
             if ((spec->flags & SXGUI_COLUMN_RIGHT) != 0)
             {
                 text_x = cell_x + spec->width - gfx_text_width(cell) - SXGUI_CELL_PAD;
             }
             else
             {
-                /* La sangria del icono corre SOLO la primera columna: las
-                 * demas siguen a plomo con su rotulo de cabecera. */
+                /* The icon's indent moves ONLY the first column: the others
+                 * stay aligned with their header labels. */
                 text_x = cell_x + SXGUI_CELL_PAD + (column == 0 ? first_column_indent : 0);
             }
             sx_painter_draw_text(painter, text_x, row_y + 2, cell, text_colour);
@@ -923,8 +923,8 @@ static void sxgui_paint_listbox_header(struct sx_painter *painter, const struct 
         }
         cell_x += spec->width;
     }
-    /* Relleno hasta el borde: sin esto lo que sobra a la derecha de la ultima
-     * columna queda del color del campo y se lee como una cabecera rota. */
+    /* Fill to the edge: without it, what is left right of the last column
+     * keeps the field colour and reads as a broken header. */
     if (cell_x < header.x + header.width)
     {
         struct sx_rect rest = sx_rect_make(cell_x, header.y, header.x + header.width - cell_x, header.height);
@@ -1009,15 +1009,15 @@ static int sxgui_listbox_scrollbar_press(
     return 1;
 }
 
-/* Circulo de 12x12 en tres anillos concentricos, cada uno partido por la
- * diagonal: arriba-izquierda hunde (SHADOW afuera, DARK adentro) y
- * abajo-derecha levanta (LIGHT afuera, BEVEL adentro). Es el mismo bisel de
- * dos pixeles que el resto del chrome, doblado en redondo.
+/* A 12x12 circle in three concentric rings, each split along the diagonal:
+ * the top-left sinks (SHADOW outside, DARK inside) and the bottom-right rises
+ * (LIGHT outside, BEVEL inside). It is the same two-pixel bevel as the rest of
+ * the chrome, bent into a circle.
  *
- * A este tamano un circulo no se calcula, se dibuja: las tres tablas SON el
- * glifo. Antes solo se marcaban los extremos de cada fila con un unico tono, y
- * como abajo ese tono era blanco igual que el relleno, el control se veia como
- * una mancha blanca sin borde. */
+ * At this size a circle is not computed, it is drawn: the three tables ARE the
+ * glyph. Before, only each row's ends were marked, in a single tone, and since
+ * at the bottom that tone was white like the fill, the control looked like a
+ * white blot with no border. */
 #define SXGUI_RADIO_BOX_SIZE 12
 
 static void sxgui_paint_radio_glyph(struct sx_painter *painter, struct sx_rect box, int checked, int enabled)
@@ -1033,8 +1033,8 @@ static void sxgui_paint_radio_glyph(struct sx_painter *painter, struct sx_rect b
     {
         for (column = 0; column < SXGUI_RADIO_BOX_SIZE; ++column)
         {
-            /* La luz entra por arriba a la izquierda: la anti-diagonal parte el
-             * anillo en la mitad oscura y la clara. */
+            /* Light comes from the top left: the anti-diagonal splits the ring
+             * into its dark half and its light half. */
             int lit = (column + row) >= (SXGUI_RADIO_BOX_SIZE - 1);
             uint32_t colour;
 
@@ -1096,9 +1096,9 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
     struct sx_rect inner = sxgui_listbox_inner(widget);
     int row_height = sxgui_row_height();
     int icon_indent = widget->item_icons != 0 ? SXGUI_LISTBOX_ICON_SIZE + SXGUI_LISTBOX_ICON_GAP : 0;
-    /* El icono arranca donde arrancaria el texto, y el texto se corre detras.
-     * La sangria base depende de si hay columnas, porque la celda de cabecera
-     * come dos pixeles mas que una lista simple. */
+    /* The icon starts where the text would, and the text moves after it. The
+     * base indent depends on whether there are columns, because the header
+     * cell takes two pixels more than a plain list. */
     int icon_x = inner.x + (sxgui_listbox_header_height(widget) > 0 ? SXGUI_CELL_PAD : SXGUI_TEXT_PAD);
     int index;
 
@@ -1128,8 +1128,8 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
         {
             const struct sx_bitmap *icon = widget->item_icons[index];
 
-            /* Una fila sin icono conserva igual la sangria: es lo que evita
-             * que los nombres queden en zigzag cuando falta un tipo. */
+            /* A row without an icon keeps the indent anyway: it is what
+             * keeps the names from zigzagging when a type is missing. */
             if (icon != 0 && icon->pixels != 0)
             {
                 sx_painter_blit_bitmap(
@@ -1288,9 +1288,9 @@ static void sxgui_paint_menubar(struct sxgui_context *ctx)
     int text_y = (height - gfx_text_height()) / 2;
     int index;
 
-    /* Sin linea separadora: en el original la barra de menu es la misma cara
-     * que el cliente y lo que la despega es el borde hundido del control que
-     * viene abajo, no un subrayado. */
+    /* No separator line: in the original the menu bar is the same face as
+     * the client, and what sets it apart is the sunken border of the control
+     * below, not an underline. */
     sx_painter_fill_rect(painter, sx_rect_make(0, 0, width, height), SXGUI_COLOR_FACE);
 
     for (index = 0; index < bar->menu_count; ++index)
@@ -1433,14 +1433,14 @@ static void sxgui_textfield_scroll_to_caret(struct sxgui_widget *widget)
     }
 }
 
-/* ---- seleccion de texto (textfield y textedit) --------------------------------------
+/* ---- text selection (textfield and textedit) --------------------------------------
  *
- * Los comparten los dos widgets de texto: trabajan sobre edit_buffer, caret y
- * sel_anchor, y no saben de que widget son.
+ * Shared by both text widgets: they work on edit_buffer, caret and sel_anchor,
+ * and do not know which widget they belong to.
  *
- * El rango vive en dos enteros: sel_anchor (donde empezo) y caret (donde esta
- * ahora). Sin un buffer aparte, asi que no hay nada que mantener sincronizado
- * con las ediciones -- lo unico que hay que hacer al editar es soltar el ancla.
+ * The range lives in two integers: sel_anchor (where it started) and caret
+ * (where it is now). There is no separate buffer, so nothing has to be kept in
+ * sync with edits -- the only thing an edit has to do is drop the anchor.
  */
 
 static int sxgui_sel_active(const struct sxgui_widget *widget)
@@ -1463,8 +1463,9 @@ static void sxgui_sel_clear(struct sxgui_widget *widget)
     widget->sel_anchor = -1;
 }
 
-/* Antes de mover el caret: con shift se ancla (si no habia ancla) para que el
- * movimiento extienda; sin shift se suelta, que colapsa la seleccion. */
+/* Before moving the caret: with shift it anchors (if there was no anchor) so
+ * the move extends; without shift it lets go, which collapses the
+ * selection. */
 static void sxgui_sel_begin_move(struct sxgui_widget *widget, int extend)
 {
     if (!extend)
@@ -1501,9 +1502,9 @@ static int sxgui_sel_delete(struct sxgui_widget *widget)
     return 1;
 }
 
-/* Copiar al portapapeles sin buffer intermedio: se corta la cadena en el final
- * de la seleccion, se copia, y se repone el byte. El sistema es de un solo
- * hilo, asi que nadie puede ver el buffer truncado en el medio. */
+/* Copy to the clipboard without an intermediate buffer: the string is cut at
+ * the end of the selection, copied, and the byte put back. The toolkit runs on
+ * a single thread, so nobody can see the buffer truncated in between. */
 static int sxgui_sel_copy(struct sxgui_widget *widget)
 {
     int start;
@@ -1524,9 +1525,9 @@ static int sxgui_sel_copy(struct sxgui_widget *widget)
     return result >= 0;
 }
 
-/* El pegado necesita si o si una copia intermedia: el texto tiene que entrar en
- * el medio del buffer que se esta editando. Es estatica y no del stack porque
- * son 8 KiB; el costo es una vez por proceso, no por pegado. */
+/* Pasting does need an intermediate copy: the text has to go into the middle
+ * of the buffer being edited. It is static rather than on the stack because it
+ * is 8 KiB; the cost is once per process, not per paste. */
 static char g_sxgui_paste[SAVANXP_CLIPBOARD_CAPACITY];
 
 static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
@@ -1542,8 +1543,8 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
     }
     if (single_line)
     {
-        /* Un campo de una linea se queda con la primera. Meter el salto crudo
-         * dejaria un caracter que el widget no sabe dibujar ni navegar. */
+        /* A single-line field keeps the first line. Inserting the raw newline
+         * would leave a character the widget can neither draw nor navigate. */
         int index;
         for (index = 0; g_sxgui_paste[index] != '\0'; ++index)
         {
@@ -1559,8 +1560,8 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
     pasted = (int)strlen(g_sxgui_paste);
     length = (int)strlen(widget->edit_buffer);
     room = widget->edit_capacity - 1 - length;
-    /* Lo que no entra se recorta en vez de rechazar el pegado entero: a
-     * diferencia de un write al portapapeles, aca el usuario VE lo que quedo. */
+    /* What does not fit is cut off instead of rejecting the whole paste:
+     * unlike a write to the clipboard, here the user SEES what is left. */
     insert = pasted < room ? pasted : room;
     if (insert <= 0)
     {
@@ -1577,8 +1578,8 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
     return 1;
 }
 
-/* Espejo de sxgui_textedit_caret_from_point para el campo de una linea. Misma
- * razon: click y arrastre tienen que calcular identico. */
+/* Mirror of sxgui_textedit_caret_from_point for the single-line field. Same
+ * reason: click and drag have to compute identically. */
 static int sxgui_textfield_caret_from_point(const struct sxgui_widget *widget, int x)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
@@ -1613,8 +1614,8 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     {
         sx_painter_draw_text(painter, text_x, text_y, widget->edit_buffer, SXGUI_COLOR_TEXT);
     }
-    /* Igual que en textedit: primero la linea entera y DESPUES el tramo
-     * resaltado, o el texto normal lo taparia. */
+    /* As in textedit: first the whole line and THEN the highlighted span, or
+     * the normal text would cover it. */
     if (widget->edit_buffer != 0 && sxgui_sel_active(widget))
     {
         int from = sxgui_sel_start(widget);
@@ -1643,12 +1644,12 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     sx_painter_pop_clip(painter);
 }
 
-/* ---- textedit (editor multilinea) ----------------------------------------
+/* ---- textedit (multi-line editor) ----------------------------------------
  *
- * El documento es el buffer del llamador, con lineas separadas por '\n'. No hay
- * indice de lineas: se recorre el buffer cada vez. Para los tamanos que maneja
- * un bloc de notas alcanza de sobra y evita mantener estructura duplicada que
- * se pueda desincronizar del texto.
+ * The document is the caller's buffer, with lines separated by '\n'. There is
+ * no line index: the buffer is walked each time. For the sizes a notepad
+ * handles that is plenty, and it avoids keeping a duplicate structure that
+ * could drift out of sync with the text.
  */
 
 static int sxgui_textedit_line_count(const char *text)
@@ -1670,7 +1671,7 @@ static int sxgui_textedit_line_count(const char *text)
     return count;
 }
 
-/* Indice del primer caracter de `line`; si la linea no existe, el final. */
+/* Index of the first character of `line`; the end if the line does not exist. */
 static int sxgui_textedit_line_start(const char *text, int line)
 {
     int index = 0;
@@ -1808,8 +1809,8 @@ static int sxgui_textedit_scrollbar_press(
     return 1;
 }
 
-/* `value` es la primera linea visible y `scroll` el desplazamiento horizontal
- * en pixeles -- el mismo reparto que usa el textfield para su scroll. */
+/* `value` is the first visible line and `scroll` the horizontal offset in
+ * pixels -- the same split the textfield uses for its scroll. */
 static void sxgui_textedit_reveal_caret(struct sxgui_widget *widget)
 {
     int line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
@@ -1850,9 +1851,9 @@ static void sxgui_textedit_reveal_caret(struct sxgui_widget *widget)
     }
 }
 
-/* Posicion del caret para un punto de pantalla. Lo usan el click (que ancla) y
- * el arrastre (que extiende), y tienen que coincidir exactamente: si el
- * arrastre calculara distinto, soltar el boton moveria la seleccion. */
+/* Caret position for a screen point. The click (which anchors) and the drag
+ * (which extends) use it, and they have to agree exactly: if the drag computed
+ * differently, releasing the button would move the selection. */
 static int sxgui_textedit_caret_from_point(const struct sxgui_widget *widget, int x, int y)
 {
     struct sx_rect inner = sxgui_textedit_inner(widget);
@@ -1920,10 +1921,10 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
         {
             sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD - widget->scroll, row_y + 2, text, SXGUI_COLOR_TEXT);
         }
-        /* Resaltado: la interseccion de la seleccion con esta linea. Se pinta
-         * la caja y se REDIBUJA solo ese tramo en el color invertido, en vez de
-         * dibujar la linea en tres pedazos -- asi el texto de afuera conserva
-         * el mismo kerning que tendria sin seleccion. */
+        /* Highlight: the intersection of the selection with this line. The box
+         * is painted and only that span is REDRAWN in the inverted colour,
+         * instead of drawing the line in three pieces -- that way the text
+         * outside keeps the kerning it would have without a selection. */
         if (sxgui_sel_active(widget))
         {
             int sel_from = sxgui_sel_start(widget);
@@ -1981,31 +1982,30 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
 
 /* ---- tabs -----------------------------------------------------------------
  *
- * La fila mide como la barra de menu -- una linea de texto con aire arriba y
- * abajo -- y la activa sobresale SXGUI_TAB_LIFT por los cuatro costados menos
- * el de abajo, por donde se derrama sobre la pagina.
+ * The row is as tall as the menu bar -- one line of text with space above and
+ * below -- and the active tab sticks out SXGUI_TAB_LIFT on every side but the
+ * bottom, where it flows into the page.
  */
 
-#define SXGUI_TAB_PAD 10   /* aire a cada lado del rotulo */
-#define SXGUI_TAB_LIFT 2   /* cuanto sobresale la pestania activa */
+#define SXGUI_TAB_PAD 10   /* space on each side of the label */
+#define SXGUI_TAB_LIFT 2   /* how far the active tab sticks out */
 
 int sxgui_tabs_height(void)
 {
     return gfx_text_height() + 8;
 }
 
-/* Ancho de una pestania: el rotulo mas su aire. Cada una mide lo suyo, como en
- * el original -- pestanias de ancho fijo obligarian a cortar los nombres. */
+/* Width of a tab: the label plus its padding. Each one is as wide as it needs,
+ * as in the original -- fixed-width tabs would force cutting the names. */
 static int sxgui_tab_width(const struct sxgui_widget *widget, int index)
 {
     const char *label = (widget->items != 0 && index < widget->item_count) ? widget->items[index] : "";
     return gfx_text_width(label != 0 ? label : "") + SXGUI_TAB_PAD * 2;
 }
 
-/* Rect de una pestania, ya con el crecimiento de la activa aplicado. Las
- * pestanias se TOCAN: el borde derecho de una es el izquierdo de la siguiente,
- * que es como se ven en el original -- separarlas las devuelve al aspecto de
- * fila de botones. */
+/* Rect of a tab, with the active tab's growth already applied. Tabs TOUCH:
+ * one's right edge is the next one's left edge, which is how they look in the
+ * original -- separating them turns them back into a row of buttons. */
 static struct sx_rect sxgui_tab_rect(const struct sxgui_widget *widget, int index)
 {
     int strip = sxgui_tabs_height();
@@ -2033,7 +2033,7 @@ static struct sx_rect sxgui_tab_rect(const struct sxgui_widget *widget, int inde
     return sx_rect_make(0, 0, 0, 0);
 }
 
-/* Pestania bajo el punto, o -1. */
+/* Tab under the point, or -1. */
 static int sxgui_tab_at(const struct sxgui_widget *widget, int x, int y)
 {
     int index;
@@ -2061,8 +2061,8 @@ static struct sx_rect sxgui_tabs_page_frame(const struct sxgui_widget *widget)
 
 int sxgui_tabs_preferred_width(const char *const *labels, int label_count)
 {
-    /* El LIFT de cada punta: la activa sobresale para los dos lados y sin ese
-     * aire la primera y la ultima quedarian pegadas al borde. */
+    /* The LIFT at each end: the active tab sticks out on both sides, and
+     * without that space the first and last would touch the edge. */
     int width = SXGUI_TAB_LIFT * 2;
     int index;
 
@@ -2083,10 +2083,10 @@ struct sx_rect sxgui_tabs_page(const struct sxgui_widget *widget)
     return sxgui_inset(sxgui_tabs_page_frame(widget), SXGUI_BORDER_RAISED);
 }
 
-/* Los dos anillos de siempre pero SIN el lado de abajo, y con las esquinas de
- * arriba comidas un pixel: eso es lo que le da forma de pestania en vez de
- * caja. La activa se dibuja despues de la pagina justamente para que su relleno
- * borre el borde de esta y las dos queden abiertas una sobre la otra. */
+/* The usual two rings but WITHOUT the bottom side, and with the top corners
+ * cut by a pixel: that is what makes it a tab rather than a box. The active
+ * tab is drawn after the page precisely so its fill erases the page's border
+ * and the two stay open into each other. */
 static void sxgui_paint_one_tab(struct sx_painter *painter, const struct sxgui_widget *widget, int index)
 {
     struct sx_rect rect = sxgui_tab_rect(widget, index);
@@ -2138,8 +2138,8 @@ static void sxgui_paint_tabs(struct sx_painter *painter, const struct sxgui_widg
         sxgui_draw_raised(painter, page);
     }
 
-    /* Las inactivas primero: la activa va ultima porque se monta sobre el borde
-     * de la pagina y sobre el costado de sus vecinas. */
+    /* The inactive ones first: the active one goes last because it overlaps
+     * the page's border and the sides of its neighbours. */
     for (index = 0; index < widget->item_count; ++index)
     {
         if (index != widget->value)
@@ -2211,8 +2211,8 @@ static int sxgui_dialog_title_height(void)
 static struct sx_point sxgui_dialog_client_origin(const struct sxgui_dialog *dialog)
 {
     struct sx_point origin;
-    /* En su propia ventana el marco y el titulo los dibuja el WM: la superficie
-     * entera es el area util. */
+    /* In its own window the WM draws the frame and the title: the whole
+     * surface is the usable area. */
     if (dialog->windowed)
     {
         origin.x = 0;
@@ -2254,8 +2254,8 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
         }
     }
 
-    /* El borde doble va DEBAJO del boton: se dibuja el marco alrededor de su
-     * rect y despues el boton encima, que es como se veia el default. */
+    /* The double border goes UNDER the button: the frame is drawn around its
+     * rect and then the button on top, which is how the default one looked. */
     if (dialog->default_button > 0 && dialog->default_button < dialog->widget_count)
     {
         const struct sxgui_widget *target = &dialog->widgets[dialog->default_button];
@@ -2338,16 +2338,16 @@ void sxgui_paint_dialog_window(struct sxgui_context *ctx, uint32_t *pixels, cons
     {
         return;
     }
-    /* Los widgets pintan con el painter del contexto: se lo apunta un momento a
-     * la superficie del dialogo en vez de duplicar el camino de pintado. */
+    /* Widgets paint with the context's painter: it is pointed at the dialog's
+     * surface for a moment instead of duplicating the paint path. */
     saved_target = ctx->target;
     saved_painter = ctx->painter;
     sx_bitmap_wrap(&ctx->target, pixels, info, SX_PIXEL_FORMAT_BGRX8888);
     sx_painter_init(&ctx->painter, &ctx->target);
     ctx->modal->rect = sx_rect_make(0, 0, (int)info->width, (int)info->height);
     sxgui_paint_dialog(ctx);
-    /* El painter guardado apunta a &ctx->target, que vuelve a ser el bitmap de
-     * la app en el lugar de siempre. */
+    /* The saved painter points at &ctx->target, which is again the app's
+     * bitmap in its usual place. */
     ctx->target = saved_target;
     ctx->painter = saved_painter;
 }
@@ -2374,8 +2374,8 @@ void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, 
     {
         return;
     }
-    /* Un dialogo sobre otro reemplaza al primero, como siempre; lo nuevo es que
-     * el primero puede tener una ventana, y esa hay que cerrarla. */
+    /* A dialog over another replaces the first, as always; what is new is that
+     * the first may have a window, and that has to be closed. */
     if (ctx->modal != 0)
     {
         sxgui_dialog_end(ctx, 0);
@@ -2406,8 +2406,8 @@ void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, 
     dialog->result = 0;
     dialog->saved_focus = ctx->focus_index;
     ctx->modal = dialog;
-    /* Mientras hay modal, focus_index indexa el array del dialogo: el despacho
-     * de teclado intercambia ctx->widgets por dialog->widgets. */
+    /* While a modal is up, focus_index indexes the dialog's array: keyboard
+     * dispatch swaps ctx->widgets for dialog->widgets. */
     ctx->focus_index = -1;
     if (dialog->initial_focus > 0 && dialog->initial_focus < dialog->widget_count)
     {
@@ -2465,9 +2465,9 @@ static int sxgui_hit(const struct sxgui_widget *widget, int x, int y)
 {
     if (widget->kind == SXGUI_TABS)
     {
-        /* El rect incluye la pagina, pero ahi adentro manda el contenido: si el
-         * control se diera por tocado, un click en la pagina le robaria el foco
-         * a lo que la app haya puesto abajo. Solo responde la fila. */
+        /* The rect includes the page, but inside it the content rules: if the
+         * control counted as hit, a click on the page would steal the focus
+         * from whatever the app put there. Only the row responds. */
         return sx_rect_contains_point(
             sx_rect_make(widget->rect.x, widget->rect.y, widget->rect.width, sxgui_tabs_height()), x, y);
     }
@@ -2550,8 +2550,8 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
     }
     if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0)
     {
-        /* Arrastrar mueve el caret y deja el ancla quieta: eso ES extender la
-         * seleccion, sin ningun estado extra. */
+        /* Dragging moves the caret and leaves the anchor still: that IS
+         * extending the selection, with no extra state. */
         int caret = sxgui_textedit_caret_from_point(widget, event->x, event->y);
         if (caret == widget->caret)
         {
@@ -2618,10 +2618,11 @@ int sxgui_cursor_shape(const struct sxgui_context *ctx)
 
 /* ---- wheel ---------------------------------------------------------------
  *
- * Un tick mueve tres filas, la convencion de Win9x. El destino es el widget
- * BAJO EL PUNTERO y no el que tiene el foco: es lo que ya decidio el WM al
- * rutear el evento al cliente bajo el cursor, y es lo que espera cualquiera
- * que apoye el mouse sobre una lista sin haberla clickeado antes. */
+ * One tick moves three rows, the Win9x convention. The target is the widget
+ * UNDER THE POINTER, not the one with the focus: it is what the WM already
+ * decided when routing the event to the client under the cursor, and what
+ * anyone expects when resting the mouse over a list without clicking it
+ * first. */
 #define SXGUI_WHEEL_ROWS_PER_TICK 3
 
 static int sxgui_wheel_scroll_widget(struct sxgui_widget *widget, int rows)
@@ -2669,20 +2670,20 @@ static int sxgui_handle_wheel(struct sxgui_context *ctx, const struct savanxp_gu
         return 0;
     }
 
-    /* Un menu abierto se come la rueda sin scrollear nada: mientras esta
-     * desplegado es el duenio del puntero, y dejar que el scroll se filtre a
-     * lo que quedo debajo mueve contenido que el usuario ni siquiera ve. */
+    /* An open menu swallows the wheel without scrolling anything: while it is
+     * down it owns the pointer, and letting the scroll leak to what is
+     * underneath moves content the user cannot even see. */
     if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0)
     {
         return 0;
     }
 
-    /* wheel positivo = lejos del usuario = el contenido sube = baja el indice
-     * de la primera fila visible. */
+    /* positive wheel = away from the user = the content moves up = the index
+     * of the first visible row goes down. */
     rows = -event->wheel * SXGUI_WHEEL_ROWS_PER_TICK;
 
-    /* Un dropdown abierto se queda con la rueda, igual que se queda con el
-     * click, este el puntero sobre el o no. */
+    /* An open dropdown takes the wheel, as it takes the click, whether the
+     * pointer is over it or not. */
     if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
     {
         const struct sxgui_widget *owner = &ctx->widgets[ctx->popup_owner];
@@ -2694,8 +2695,8 @@ static int sxgui_handle_wheel(struct sxgui_context *ctx, const struct savanxp_gu
         return ctx->popup_scroll != before;
     }
 
-    /* El ultimo widget que da hit es el de mas arriba: mismo orden que usa el
-     * barrido de foco del click. */
+    /* The last widget hit is the topmost: the same order the click's focus
+     * sweep uses. */
     for (index = 0; index < ctx->widget_count; ++index)
     {
         struct sxgui_widget *widget = &ctx->widgets[index];
@@ -2762,9 +2763,10 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
         return changed;
     }
 
-    /* La rueda se despacha antes que todo lo demas porque no depende del
-     * estado de los botones ni del foco, solo de que hay debajo del puntero.
-     * El evento sigue su camino: trae posicion y botones como cualquier otro. */
+    /* The wheel is dispatched before anything else because it depends on
+     * neither the buttons nor the focus, only on what is under the pointer.
+     * The event goes on its way: it carries position and buttons like any
+     * other. */
     if (sxgui_handle_wheel(ctx, event))
     {
         changed = 1;
@@ -3074,17 +3076,16 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                     {
                         break;
                     }
-                    /* Shift+click extiende desde el ancla que ya habia, como en
-                     * cualquier editor; un click pelado ancla donde se hizo y
-                     * deja lista una seleccion vacia que el arrastre estira. */
+                    /* Shift+click extends from the existing anchor, as in any
+                     * editor; a plain click anchors where it lands and leaves
+                     * an empty selection ready for the drag to stretch. */
                     if (!ctx->shift_down || widget->sel_anchor < 0)
                     {
                         widget->sel_anchor = sxgui_textedit_caret_from_point(widget, event->x, event->y);
                     }
                     widget->caret = sxgui_textedit_caret_from_point(widget, event->x, event->y);
-                    /* Captura: sin esto el movimiento con el boton apretado no
-                     * llega a este widget y no se puede arrastrar para
-                     * seleccionar. */
+                    /* Capture: without it, movement with the button held does
+                     * not reach this widget and dragging cannot select. */
                     ctx->capture_index = index;
                     sxgui_textedit_reveal_caret(widget);
                     changed = 1;
@@ -3173,11 +3174,11 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         ctx->shift_down = 1;
         return 0;
     }
-    /* Las teclas modificadoras no llegan a los widgets. Parece obvio y no lo
-     * es: una tecla modificadora produce su propio evento, con ascii 0, y los
-     * editores de texto tratan "cualquier otra tecla" como motivo para soltar
-     * la seleccion. Sin este corte, apretar Ctrl borraba la seleccion ANTES de
-     * que llegara la letra, y Ctrl+C nunca tenia nada que copiar. */
+    /* Modifier keys do not reach the widgets. It seems obvious and is not: a
+     * modifier key produces its own event, with ascii 0, and the text editors
+     * treat "any other key" as a reason to drop the selection. Without this
+     * cut, pressing Ctrl cleared the selection BEFORE the letter arrived, and
+     * Ctrl+C never had anything to copy. */
     if (event->key == SAVANXP_KEY_CTRL || event->key == SAVANXP_KEY_ALT ||
         event->key == SAVANXP_KEY_ALT_GR || event->key == SAVANXP_KEY_CAPSLOCK ||
         event->key == SAVANXP_KEY_NUMLOCK || event->key == SAVANXP_KEY_SCROLLLOCK ||
@@ -3198,9 +3199,9 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             sxgui_dialog_end(ctx, 0);
             return 1;
         }
-        /* Enter dispara el boton por defecto, salvo que el foco ya este sobre
-         * OTRO boton -- ahi gana el que el usuario eligio con Tab, que es lo
-         * que uno espera despues de haberse movido a proposito. */
+        /* Enter triggers the default button, unless the focus is already on
+         * ANOTHER button -- then the one the user chose with Tab wins, which is
+         * what one expects after moving there on purpose. */
         if (event->key == SAVANXP_KEY_ENTER)
         {
             int target = dialog->default_button;
@@ -3472,8 +3473,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         {
             return 0;
         }
-        /* Sin dar la vuelta: en una fila de pestanias el extremo es el extremo,
-         * y saltar de la ultima a la primera desorienta mas de lo que ayuda. */
+        /* No wrap-around: in a row of tabs the end is the end, and jumping from
+         * the last to the first confuses more than it helps. */
         {
             int target = sxgui_clamp_int(widget->value + step, 0, widget->item_count - 1);
             if (target == widget->value)
@@ -3530,8 +3531,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         sxgui_textfield_clamp_caret(widget);
         length = (int)strlen(widget->edit_buffer);
 
-        /* Misma maquinaria que textedit: los helpers de seleccion trabajan
-         * sobre edit_buffer/caret/sel_anchor y no saben de que widget son. */
+        /* The same machinery as textedit: the selection helpers work on
+         * edit_buffer/caret/sel_anchor and do not know which widget is which. */
         if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
             (event->modifiers & SAVANXP_KEY_MOD_ALT_GR) == 0)
         {
@@ -3702,9 +3703,9 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         {
             widget->caret = length;
         }
-        /* Atajos de portapapeles. AltGr llega como Ctrl+Alt en varias
-         * distribuciones, asi que se exige Ctrl SIN AltGr para no comerse una
-         * tecla que el usuario quiso escribir. */
+        /* Clipboard shortcuts. AltGr arrives as Ctrl+Alt on several layouts,
+         * so Ctrl WITHOUT AltGr is required, to avoid swallowing a key the user
+         * meant to type. */
         if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
             (event->modifiers & SAVANXP_KEY_MOD_ALT_GR) == 0)
         {
@@ -3744,17 +3745,17 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             default:
                 break;
             }
-            /* Cualquier Ctrl+imprimible se consume aunque no lo manejemos: sin
-             * esto un Ctrl+B terminaria escribiendo una 'b' en el documento. */
+            /* Any Ctrl+printable is consumed even when unhandled: without
+             * this a Ctrl+B would end up typing a 'b' into the document. */
             if (done || (event->ascii >= 32 && event->ascii < 127))
             {
                 return 1;
             }
         }
 
-        /* Editar con algo seleccionado lo reemplaza, que es lo que hace
-         * cualquier editor. Borrar cambia el largo, asi que hay que recalcular
-         * todo lo que se dedujo de el. */
+        /* Editing with something selected replaces it, as any editor does.
+         * Deleting changes the length, so everything derived from it has to be
+         * recomputed. */
         if (sxgui_sel_active(widget))
         {
             int destructive =
@@ -3769,9 +3770,9 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                 length = (int)strlen(widget->edit_buffer);
                 sxgui_textedit_reveal_caret(widget);
                 sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                /* Backspace y Delete ya hicieron lo suyo: borrar la seleccion
-                 * ES la operacion. Enter y los imprimibles siguen de largo para
-                 * insertarse donde quedo el caret. */
+                /* Backspace and Delete are done: deleting the selection IS
+                 * the operation. Enter and the printables carry on, to be
+                 * inserted where the caret ended up. */
                 if (event->key == SAVANXP_KEY_BACKSPACE || event->key == SAVANXP_KEY_DELETE)
                 {
                     return 1;
@@ -3779,9 +3780,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             }
         }
 
-        /* Shift + movimiento extiende; el movimiento pelado colapsa. Se decide
-         * antes de mover porque el ancla tiene que quedar donde ESTABA el
-         * caret. */
+        /* Shift + movement extends; plain movement collapses. It is decided
+         * before moving because the anchor has to stay where the caret WAS. */
         switch (event->key)
         {
         case SAVANXP_KEY_LEFT:
@@ -3795,8 +3795,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             sxgui_sel_begin_move(widget, (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0);
             break;
         default:
-            /* Un ancla vieja sobre un buffer que se acaba de editar puede
-             * pintar una seleccion fantasma. */
+            /* A stale anchor over a buffer that was just edited can paint
+             * a phantom selection. */
             sxgui_sel_clear(widget);
             break;
         }
@@ -3827,8 +3827,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         case SAVANXP_KEY_UP:
         case SAVANXP_KEY_DOWN:
         {
-            /* Subir y bajar conservan la columna hasta donde llegue la linea
-             * destino, que es lo que hace cualquier editor. */
+            /* Up and down keep the column as far as the target line
+             * reaches, as any editor does. */
             int target = event->key == SAVANXP_KEY_UP ? line - 1 : line + 1;
             int target_start;
             int target_length;
@@ -3904,8 +3904,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             break;
         }
 
-        /* Enter parte la linea; el resto de los imprimibles se insertan. Ambos
-         * son la misma operacion sobre el buffer. */
+        /* Enter splits the line; the other printables are inserted. Both are
+         * the same operation on the buffer. */
         {
             int inserted = 0;
             if (event->key == SAVANXP_KEY_ENTER)
@@ -3931,8 +3931,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             }
             if (inserted != 0)
             {
-                /* Buffer lleno: se consume igual, para no dejar que la tecla
-                 * caiga al manejador global de la app (ESC-como-cerrar y demas). */
+                /* Buffer full: consumed anyway, so the key does not fall
+                 * through to the app's global handler (ESC-to-close and so on). */
                 return 1;
             }
         }
@@ -3984,8 +3984,8 @@ static struct sxgui_widget sxgui_make(int kind, struct sx_rect rect, const char 
     widget.rect = rect;
     widget.text = text;
     widget.flags = SXGUI_FLAG_VISIBLE;
-    /* El memset dejaria sel_anchor en 0, que significaria "seleccionado desde
-     * el principio del buffer" en vez de "sin seleccion". */
+    /* The memset would leave sel_anchor at 0, which would mean "selected from
+     * the start of the buffer" instead of "no selection". */
     widget.sel_anchor = -1;
     return widget;
 }

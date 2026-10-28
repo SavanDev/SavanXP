@@ -1,7 +1,7 @@
 #include "sxgfx/sxchrome.h"
 
-/* Las lineas de 1px las pone el painter (sx_painter_hline/vline): el chrome ya
- * no las arma con rects de altura 1. */
+/* The painter draws the 1px lines (sx_painter_hline/vline): the chrome no
+ * longer builds them out of rects one pixel high. */
 
 void sxchrome_draw_edge(
     struct sx_painter *painter,
@@ -19,7 +19,7 @@ void sxchrome_draw_edge(
         return;
     }
 
-    /* anillo externo: la L clara arriba-izquierda y la oscura abajo-derecha */
+    /* outer ring: the light L at the top left and the dark one at the bottom right */
     sx_painter_hline(painter, rect.x, rect.y, rect.width, outer_light);
     sx_painter_vline(painter, rect.x, rect.y, rect.height, outer_light);
     sx_painter_hline(painter, rect.x, bottom, rect.width, outer_dark);
@@ -30,7 +30,7 @@ void sxchrome_draw_edge(
         return;
     }
 
-    /* anillo interno, corrido un pixel hacia adentro por los cuatro lados */
+    /* inner ring, one pixel inwards on all four sides */
     sx_painter_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, inner_light);
     sx_painter_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, inner_light);
     sx_painter_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, inner_dark);

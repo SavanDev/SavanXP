@@ -1,22 +1,22 @@
-/* Decodificador UTF-8 compartido por los caminos de texto.
+/* The UTF-8 decoder of the text paths.
  *
- * Vive en un .inc y no en un .c porque los dos consumidores son runtimes
- * distintos que no se linkean entre si -- el SDK posix (gfx_impl.inc) y el
- * subsistema nativo (sx_text.c) -- exactamente como ya comparten los datos de
- * la fuente. Una sola copia del algoritmo, dos binarios.
+ * It is a .inc rather than a .c so that its consumers include it the way they
+ * include the font tables: the platform's text primitives (pixels.c) and the
+ * host tests (tests/host/gfx2d_test.cpp), which compile it without linking the
+ * runtime. One copy of the algorithm, however many binaries.
  *
- * Existe porque las tablas de glifos se indexan por CODEPOINT (sx_noto_glyph,
- * sx_console_glyph) mientras que las cadenas del sistema son UTF-8. Sin esto
- * cada byte se tomaba como un glifo y una "o" acentuada salia como dos.
+ * It exists because the glyph tables are indexed by CODEPOINT (sx_noto_glyph,
+ * sx_console_glyph) while the system's strings are UTF-8. Without it every
+ * byte was taken as a glyph and an accented "o" came out as two.
  */
 #ifndef SX_GFX_UTF8_INC
 #define SX_GFX_UTF8_INC
 
-/* Devuelve el codepoint en *cursor y avanza el cursor mas alla de el.
+/* Returns the codepoint at *cursor and moves the cursor past it.
  *
- * Una secuencia invalida consume UN solo byte y devuelve U+FFFD. Consumir uno
- * es lo que garantiza que todo bucle sobre la cadena avance: con texto basura
- * se ven caracteres de reemplazo, nunca un cuelgue. */
+ * An invalid sequence consumes ONE byte and returns U+FFFD. Consuming one is
+ * what guarantees that every loop over the string advances: garbage text shows
+ * replacement characters, never a hang. */
 static unsigned int sx_utf8_next(const char** cursor) {
     const unsigned char* s = (const unsigned char*)*cursor;
     unsigned int cp;
@@ -33,8 +33,8 @@ static unsigned int sx_utf8_next(const char** cursor) {
     else { *cursor += 1; return 0xFFFDu; }
 
     for (i = 1; i <= extra; ++i) {
-        /* Un continuador que no lo es corta la secuencia acá. No se consume:
-         * puede ser el arranque legitimo del proximo caracter. */
+        /* A continuation byte that is not one ends the sequence here. It is
+         * not consumed: it may be the legitimate start of the next character. */
         if ((s[i] & 0xC0u) != 0x80u) {
             *cursor += 1;
             return 0xFFFDu;
