@@ -35,6 +35,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **`taskbar-smoke` passes again.** It compares the muted speaker with its icon file instead of a colour
+  from before the Windows 2000 icon redraw, and `--virtio` is refused up front: the smoke needs a
+  relative pointer.
+
 - **CMake uses the `python3` on `PATH`**, so a versioned interpreter earlier in `PATH` without Pillow
   (uv, pyenv) no longer breaks a fresh configure or `tools/verify_doom_persistence.sh`. Override with
   `-DPython3_EXECUTABLE`.

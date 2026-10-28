@@ -23,6 +23,12 @@ SHADOW = (128, 128, 128)
 # spans x=505..830 at y=308 on the 1280x800 screen.
 CALC_CAPTION = (600, 308)
 
+ROOT = Path(__file__).resolve().parent.parent
+# The taskbar's muted speaker is this asset (tools/gen_start_logo.py bakes it
+# into k_volume_muted). Compared pixel by pixel, so a redraw of the icon set
+# does not need the smoke edited.
+VOLUME_MUTED_ICON = ROOT / "subsystems/posix/userland/mediaplayer/icons/audio-volume-muted.png"
+
 
 def _wait_screenshot(path: Path, timeout: float = 8.0) -> Image.Image:
     deadline = time.monotonic() + timeout
@@ -118,6 +124,21 @@ def _expect_clock_popup(image: Image.Image, state: str) -> None:
     grid = [_pixel(image, x, y) for x in range(1103, 1271, 4) for y in range(640, 744, 4)]
     if (0, 0, 128) not in grid:
         raise TaskbarSmokeError(f"{state}: clock popup today highlight missing")
+
+
+def _expect_icon(image: Image.Image, icon_path: Path, left: int, top: int, state: str) -> None:
+    icon = Image.open(icon_path).convert("RGBA")
+    screen = image.convert("RGB")
+    for y in range(icon.height):
+        for x in range(icon.width):
+            red, green, blue, alpha = icon.getpixel((x, y))
+            if alpha != 255:
+                continue
+            actual = screen.getpixel((left + x, top + y))
+            if actual != (red, green, blue):
+                raise TaskbarSmokeError(
+                    f"{state}: at ({left + x},{top + y}) expected {(red, green, blue)} "
+                    f"from {icon_path.name}, got {actual}")
 
 
 def _click(client: QmpClient) -> None:
@@ -394,9 +415,8 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         screenshots.append(output_dir / "11-volumen-mute.png")
         if _pixel(ninth, 1144, 644) != (0, 0, 0):
             raise TaskbarSmokeError("mute: checkbox mark missing")
-        # La cruz roja del icono muteado: glifo 16x16 en el boton (1146..1178,
-        # centro 1162, pantalla y=778..794).
-        if _pixel(ninth, 1164, 784) != (190, 40, 32):
-            raise TaskbarSmokeError("mute: taskbar glyph did not switch")
+        # The muted speaker, 16x16, centred in the button (1146..1178), so at
+        # x=1154..1170, y=778..794.
+        _expect_icon(ninth, VOLUME_MUTED_ICON, 1154, 778, "mute: taskbar glyph did not switch")
 
     return screenshots

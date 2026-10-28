@@ -197,6 +197,10 @@ def main() -> int:
         parser.error(f"unsupported QMP driver: {args.qmp_driver}")
     if args.requires_virtio and not args.virtio:
         parser.error("this scenario needs the virtio machine: pass --virtio")
+    if args.qmp_driver == "taskbar" and args.virtio:
+        # The taskbar driver walks a relative pointer (taskbar_smoke._move_to);
+        # the virtio machine's pointer is an absolute tablet that ignores it.
+        parser.error("the taskbar driver needs a relative pointer: run without --virtio")
     if args.completion == "host" and args.qmp_driver != "taskbar":
         parser.error("host completion requires the taskbar QMP driver")
     if args.host_action == "visual" and not args.visual_scenario:
