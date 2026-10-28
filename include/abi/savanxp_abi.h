@@ -48,6 +48,7 @@
  * KERNEL_NATIVE_API.md, slice E).
  */
 enum sx_status {
+    SX_EPERM = 1,
     SX_EIO = 5,
     SX_ENOEXEC = 8,
     SX_EACCES = 13,
@@ -79,6 +80,7 @@ enum sx_status {
 // escribe esto.
 typedef enum sx_status savanxp_error_code;
 
+#define SAVANXP_EPERM SX_EPERM
 #define SAVANXP_EIO SX_EIO
 #define SAVANXP_ENOEXEC SX_ENOEXEC
 #define SAVANXP_EACCES SX_EACCES
@@ -107,6 +109,28 @@ typedef enum sx_status savanxp_error_code;
 struct savanxp_stat {
     uint32_t st_mode;
     uint32_t st_size;
+};
+
+/* SAVANXP_SYS_STAT_EX / FSTAT_EX: what STAT says, plus ownership and the
+ * modification time. STAT and FSTAT keep the 8-byte struct above, because
+ * binaries built before ownership pass a buffer that size. */
+struct savanxp_stat_ex {
+    uint32_t st_mode;
+    uint32_t st_size;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint64_t st_mtime; /* seconds since 1970 UTC; 0 if unknown */
+    uint32_t st_nlink;
+    uint32_t reserved;
+};
+
+/* SAVANXP_SYS_GET_IDENTITY. uid is who the person is, euid whom the process
+ * acts as; they differ in an elevated process. */
+struct savanxp_identity {
+    uint32_t uid;
+    uint32_t euid;
+    uint32_t gid;
+    uint32_t reserved;
 };
 
 
@@ -1274,6 +1298,10 @@ enum savanxp_open_flags {
     SAVANXP_OPEN_TRUNCATE = 1u << 3,
     SAVANXP_OPEN_APPEND = 1u << 4,
     SAVANXP_OPEN_NONBLOCK = 1u << 5,
+    /* The third argument of OPEN is the mode a created file gets (permission
+     * bits, the umask already applied). Without it a created file is 0644:
+     * binaries built before modes existed leave that register undefined. */
+    SAVANXP_OPEN_MODE = 1u << 6,
 };
 
 enum savanxp_poll_events {

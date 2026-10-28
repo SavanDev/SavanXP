@@ -125,6 +125,14 @@ seconds. It preserves whatever mode the chip is in (BCD or binary, 12 or 24
 hour) instead of forcing one. The year is two digits plus 2000, which is why
 the writable range below ends where it does.
 
+### File times read it once
+
+`rtc::epoch_seconds()` gives seconds since 1970 for file modification times.
+It reads the chip the first time it is asked and lets the monotonic clock
+carry it from there, because a read waits out the chip's update cycle and a
+write path cannot pay that on every call. `write_time()` makes the next call
+read the chip again, so `date` and `ntpsync` reach file times too.
+
 ## Setting it: `date` and `SET_REALTIME`
 
 `SAVANXP_SYS_REALTIME` (37) reads the date into a `struct savanxp_realtime`

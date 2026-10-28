@@ -25,11 +25,12 @@ disk image are trusted at this boundary. Until verified boot or UEFI Secure Boot
 is integrated, physical or boot-media modification is outside the mitigation
 set below.
 
-SavanXP also has no users, UIDs, credentials or general capability model yet.
-Processes run with the same authority. Protecting init and classifying device
-I/O access reduce accidental or confused-deputy behavior, but do not create
-security isolation between applications. The planned model is in
-[`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md).
+Every process carries credentials (uid, euid, gid) and the VFS checks them on
+every path operation, but every process still runs as the system: nothing yet
+starts one as the user. Until the desktop does (phase 4 of
+[`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)), protecting init and
+classifying device I/O access reduce accidental or confused-deputy behavior,
+but do not create security isolation between applications.
 
 ## Existing structural defenses
 

@@ -81,6 +81,8 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     # pasaria sin probar nada.
     for name in names:
         (seed / f"{name}.bin").write_bytes(b"savanxp-compaction-payload\n" * 9200)
+    # A date apart from "now", so the check below cannot pass by accident.
+    os.utime(seed / "grown_b.bin", (1600000000, 1600000000))
     (source / "added.bin").write_bytes(b"new-build-file\n" * 42858)
     manifest = root / "grow.manifest"
     manifest.write_text(
@@ -160,6 +162,9 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     run([str(cli), "extract", str(image), str(root / "grow-owners-tree"), str(owners)], root)
     if "owner\tgrown_b.bin\t1000\t100\t100600\n" not in owners.read_text(encoding="utf-8"):
         raise RuntimeError("compaction lost the ownership a file carried")
+    carried = int((root / "grow-owners-tree" / "grown_b.bin").stat().st_mtime)
+    if carried != 1600000000:
+        raise RuntimeError(f"compaction lost the modification time a file carried: {carried}")
 
 
 # Offsets into the v2 layout (include/sxfs/sxfs_format.h).

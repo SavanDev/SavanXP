@@ -75,28 +75,41 @@ uint32_t exported_open_flags(const object::IoObject& file) {
     return flags;
 }
 
-void fill_stat_for_vnode(const vfs::Vnode& node, savanxp_stat& stat) {
+// The vnode's recorded permissions with its kind's type bits (a device is a
+// character device to POSIX, whatever the VFS stores). A volume mounted
+// read-only drops the write bits, as before ownership existed.
+void fill_stat_for_vnode(const vfs::Vnode& node, savanxp_stat_ex& stat) {
     memset(&stat, 0, sizeof(stat));
+    const vfs::Ownership owner = vfs::ownership_of(node);
+    uint32_t permissions = owner.mode & vfs::kModePermissions;
+    if (node.backend == vfs::Backend::volume && !node.writable) {
+        permissions &= ~0222u;
+    }
     if (node.backend == vfs::Backend::device) {
-        stat.st_mode = SAVANXP_S_IFCHR | 0666u;
-        return;
+        stat.st_mode = SAVANXP_S_IFCHR | permissions;
+    } else if (node.type == vfs::NodeType::directory) {
+        stat.st_mode = SAVANXP_S_IFDIR | permissions;
+    } else {
+        stat.st_mode = SAVANXP_S_IFREG | permissions;
+        stat.st_size = static_cast<uint32_t>(node.size);
     }
-
-    if (node.type == vfs::NodeType::directory) {
-        stat.st_mode = SAVANXP_S_IFDIR | (node.writable ? 0755u : 0555u);
-        return;
-    }
-
-    stat.st_mode = SAVANXP_S_IFREG | (node.writable ? 0644u : 0444u);
-    stat.st_size = static_cast<uint32_t>(node.size);
+    stat.st_uid = owner.uid;
+    stat.st_gid = owner.gid;
+    stat.st_mtime = node.mtime;
+    stat.st_nlink = 1;
 }
 
-void fill_stat_for_io_object(const object::IoObject& file, savanxp_stat& stat) {
+void fill_stat_for_io_object(const object::IoObject& file, savanxp_stat_ex& stat) {
     memset(&stat, 0, sizeof(stat));
+    stat.st_nlink = 1;
     switch (file.kind) {
         case process::HandleKind::tty:
         case process::HandleKind::device:
-            stat.st_mode = SAVANXP_S_IFCHR | 0666u;
+            if (file.node != nullptr) {
+                fill_stat_for_vnode(*file.node, stat);
+            } else {
+                stat.st_mode = SAVANXP_S_IFCHR | 0666u;
+            }
             return;
         case process::HandleKind::pipe:
             stat.st_mode = SAVANXP_S_IFIFO | 0666u;
@@ -112,6 +125,11 @@ void fill_stat_for_io_object(const object::IoObject& file, savanxp_stat& stat) {
         default:
             return;
     }
+}
+
+// The 8 bytes STAT and FSTAT have always written.
+savanxp_stat short_stat(const savanxp_stat_ex& stat) {
+    return {stat.st_mode, stat.st_size};
 }
 
 
@@ -213,6 +231,8 @@ process::Process* fork_process(process::Thread& parent_thread, const process::Sa
     }
 
     child->parent_pid = parent.pid;
+    // A fork acts as its parent did (USERS_AND_PERMISSIONS.md, "The token").
+    child->credentials = parent.credentials;
     memcpy(child->name, parent.name, sizeof(child->name));
     // fork hereda el estado privado, cwd incluido: lo copia el nucleo, que no
     // sabe que hay un cwd dentro.
@@ -324,8 +344,8 @@ int close_fd(process::Process& proc, uint64_t fd) {
     return 0;
 }
 
-int open_node(process::Process& proc, const char* path, uint32_t flags) {
-    vfs::Vnode* node = vfs::open(path, flags);
+int open_node(process::Process& proc, const char* path, uint32_t flags, uint16_t create_permissions) {
+    vfs::Vnode* node = vfs::open(proc.credentials, path, flags, create_permissions);
     if (node == nullptr) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
@@ -495,7 +515,7 @@ int seek_fd(process::Process& proc, uint64_t fd, int64_t offset, uint64_t whence
     return static_cast<int>(file->offset);
 }
 
-int unlink_path(const char* path) {
+int unlink_path(process::Process& proc, const char* path) {
     const vfs::Vnode* node = vfs::resolve(path);
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
@@ -506,23 +526,23 @@ int unlink_path(const char* path) {
     if (detail::vnode_has_open_references(*node)) {
         return sx::negative_error(SAVANXP_EBUSY);
     }
-    if (!vfs::unlink(path)) {
+    if (!vfs::unlink(proc.credentials, path)) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     return 0;
 }
 
-int mkdir_path(const char* path) {
+int mkdir_path(process::Process& proc, const char* path, uint16_t permissions) {
     if (path == nullptr || *path == '\0') {
         return sx::negative_error(SAVANXP_EINVAL);
     }
-    if (vfs::mkdir(path) == nullptr) {
+    if (vfs::mkdir(proc.credentials, path, permissions) == nullptr) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     return 0;
 }
 
-int rmdir_path(const char* path) {
+int rmdir_path(process::Process& proc, const char* path) {
     const vfs::Vnode* node = vfs::resolve(path);
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
@@ -533,13 +553,13 @@ int rmdir_path(const char* path) {
     if (detail::vnode_has_open_references(*node)) {
         return sx::negative_error(SAVANXP_EBUSY);
     }
-    if (!vfs::rmdir(path)) {
+    if (!vfs::rmdir(proc.credentials, path)) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     return 0;
 }
 
-int truncate_path(const char* path, uint64_t size) {
+int truncate_path(process::Process& proc, const char* path, uint64_t size) {
     const vfs::Vnode* node = vfs::resolve(path);
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
@@ -547,13 +567,13 @@ int truncate_path(const char* path, uint64_t size) {
     if (node->type != vfs::NodeType::file) {
         return sx::negative_error(SAVANXP_EISDIR);
     }
-    if (!vfs::truncate(path, static_cast<size_t>(size))) {
+    if (!vfs::truncate(proc.credentials, path, static_cast<size_t>(size))) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     return 0;
 }
 
-int rename_path(const char* old_path, const char* new_path) {
+int rename_path(process::Process& proc, const char* old_path, const char* new_path) {
     const vfs::Vnode* node = vfs::resolve(old_path);
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
@@ -561,43 +581,53 @@ int rename_path(const char* old_path, const char* new_path) {
     if (node->type == vfs::NodeType::directory && detail::vnode_has_open_references(*node)) {
         return sx::negative_error(SAVANXP_EBUSY);
     }
-    if (!vfs::rename(old_path, new_path)) {
+    if (!vfs::rename(proc.credentials, old_path, new_path)) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     return 0;
 }
 
-int stat_path(process::Process& proc, const char* path, uint64_t user_stat_address) {
-    if (!vm::is_user_range_accessible(proc.address_space, user_stat_address, sizeof(savanxp_stat), true)) {
+namespace {
+
+// STAT writes the short struct, STAT_EX the whole one.
+int write_stat(process::Process& proc, uint64_t user_stat_address, const savanxp_stat_ex& stat, bool extended) {
+    const savanxp_stat short_form = short_stat(stat);
+    const void* source = extended ? static_cast<const void*>(&stat) : static_cast<const void*>(&short_form);
+    const size_t size = extended ? sizeof(stat) : sizeof(short_form);
+    if (!vm::is_user_range_accessible(proc.address_space, user_stat_address, size, true)) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
-
-    const vfs::Vnode* node = vfs::resolve(path);
-    if (node == nullptr) {
-        return sx::negative_error(SAVANXP_ENOENT);
-    }
-
-    savanxp_stat stat = {};
-    fill_stat_for_vnode(*node, stat);
-    return write_to_process_memory(proc, user_stat_address, &stat, sizeof(stat))
+    return write_to_process_memory(proc, user_stat_address, source, size)
         ? 0
         : sx::negative_error(SAVANXP_EINVAL);
 }
 
-int fstat_fd(process::Process& proc, uint64_t fd, uint64_t user_stat_address) {
+} // namespace
+
+int stat_path(process::Process& proc, const char* path, uint64_t user_stat_address, bool extended) {
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return sx::negative_error(SAVANXP_ENOENT);
+    }
+    // stat needs no permission on the file, only to reach it.
+    if (!vfs::may_access(proc.credentials, path, 0)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+
+    savanxp_stat_ex stat = {};
+    fill_stat_for_vnode(*node, stat);
+    return write_stat(proc, user_stat_address, stat, extended);
+}
+
+int fstat_fd(process::Process& proc, uint64_t fd, uint64_t user_stat_address, bool extended) {
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_query);
     if (file == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
-    if (!vm::is_user_range_accessible(proc.address_space, user_stat_address, sizeof(savanxp_stat), true)) {
-        return sx::negative_error(SAVANXP_EINVAL);
-    }
 
-    savanxp_stat stat = {};
+    savanxp_stat_ex stat = {};
     fill_stat_for_io_object(*file, stat);
-    return write_to_process_memory(proc, user_stat_address, &stat, sizeof(stat))
-        ? 0
-        : sx::negative_error(SAVANXP_EINVAL);
+    return write_stat(proc, user_stat_address, stat, extended);
 }
 
 int chdir_path(process::Process& proc, const char* path) {
@@ -607,6 +637,9 @@ int chdir_path(process::Process& proc, const char* path) {
     }
     if (node->type != vfs::NodeType::directory) {
         return sx::negative_error(SAVANXP_ENOTDIR);
+    }
+    if (!vfs::may_access(proc.credentials, path, vfs::kAccessExecute)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     posix::ProcessState* const owned = posix::state(proc);
     if (owned == nullptr) {
@@ -618,6 +651,76 @@ int chdir_path(process::Process& proc, const char* path) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
     strcpy(owned->cwd, path);
+    return 0;
+}
+
+// Lowering only (USERS_AND_PERMISSIONS.md, "POSIX, as a consequence"). Acting
+// as the system, setuid becomes the user for good and seteuid takes any euid;
+// otherwise the only move is back to the real uid (dropping elevation).
+int set_identity(process::Process& proc, uint32_t field, uint32_t value) {
+    cred::Credentials& who = proc.credentials;
+    const bool system = cred::acts_as_system(who);
+    switch (field) {
+        case SAVANXP_IDENTITY_UID:
+            if (system) {
+                who.uid = value;
+                who.euid = value;
+                return 0;
+            }
+            if (value == who.uid) {
+                who.euid = value;
+                return 0;
+            }
+            return sx::negative_error(SAVANXP_EPERM);
+        case SAVANXP_IDENTITY_EUID:
+            if (system || value == who.uid) {
+                who.euid = value;
+                return 0;
+            }
+            return sx::negative_error(SAVANXP_EPERM);
+        case SAVANXP_IDENTITY_GID:
+            if (system || value == who.gid) {
+                who.gid = value;
+                return 0;
+            }
+            return sx::negative_error(SAVANXP_EPERM);
+        default:
+            return sx::negative_error(SAVANXP_EINVAL);
+    }
+}
+
+int chmod_path(process::Process& proc, const char* path, uint16_t permissions) {
+    if (!vfs::chmod(proc.credentials, path, permissions)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int chown_path(process::Process& proc, const char* path, uint32_t uid, uint32_t gid) {
+    if (!vfs::chown(proc.credentials, path, uid, gid)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int fchmod_fd(process::Process& proc, uint64_t fd, uint16_t permissions) {
+    object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_query);
+    if (file == nullptr || file->node == nullptr) {
+        return sx::negative_error(SAVANXP_EBADF);
+    }
+    if (!vfs::chmod_node(proc.credentials, *file->node, permissions)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int access_path(process::Process& proc, const char* path, uint32_t want) {
+    if ((want & ~(vfs::kAccessRead | vfs::kAccessWrite | vfs::kAccessExecute)) != 0) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
+    if (!vfs::may_access(cred::as_real(proc.credentials), path, want)) {
+        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
     return 0;
 }
 

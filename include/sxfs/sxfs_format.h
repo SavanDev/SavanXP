@@ -150,7 +150,12 @@ struct sxfs_inode {
     struct sxfs_extent extents[SXFS_MAX_EXTENTS];
     uint32_t uid;
     uint32_t gid;
-    uint8_t reserved[36];
+    uint32_t reserved1;
+    /* Last modification, in seconds since 1970-01-01 UTC. 0 means unknown: an
+     * inode written before the field existed, or by a driver that does not
+     * keep it. */
+    uint64_t mtime;
+    uint8_t reserved[24];
 };
 
 struct sxfs_superblock {

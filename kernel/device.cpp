@@ -24,11 +24,20 @@ bool ready() {
     return g_ready;
 }
 
-bool register_node(const char* path, Device* device, bool writable) {
+bool register_node(const char* path, Device* device, bool writable, uint16_t permissions) {
     if (!g_ready || path == nullptr || device == nullptr) {
         return false;
     }
-    return vfs::install_external_file(path, vfs::Backend::device, device, 0, writable) != nullptr;
+    vfs::Vnode* node = vfs::install_external_file(path, vfs::Backend::device, device, 0, writable);
+    if (node == nullptr) {
+        return false;
+    }
+    if (permissions == 0) {
+        permissions = writable ? 0666 : 0444;
+    }
+    vfs::set_ownership(*node, cred::kSystemUid, cred::kSystemGid,
+                       static_cast<uint16_t>(vfs::kModeFile | (permissions & vfs::kModePermissions)));
+    return true;
 }
 
 int read(Device* device, uint64_t user_buffer, size_t count) {

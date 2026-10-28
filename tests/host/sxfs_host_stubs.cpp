@@ -1,6 +1,7 @@
 #include "sxfs_host_stubs.hpp"
 
 #include "kernel/block.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 
 // Las funciones de kernel/string.hpp que usa este TU las pone
@@ -292,6 +293,17 @@ void report_health(bool) {
 
 } // namespace block
 
+// --- rtc:: ------------------------------------------------------------------
+// A fixed date: the volume tests compare metadata, not times.
+
+namespace rtc {
+
+uint64_t epoch_seconds() {
+    return 1700000000u;
+}
+
+} // namespace rtc
+
 // --- vfs:: ------------------------------------------------------------------
 
 namespace vfs {
@@ -326,6 +338,12 @@ Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* dat
         node->volume_driver = &driver;
     }
     return node;
+}
+
+void set_ownership(Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
+    node.uid = uid;
+    node.gid = gid;
+    node.mode = mode;
 }
 
 } // namespace vfs

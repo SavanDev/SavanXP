@@ -1,7 +1,9 @@
 # Users and permissions: one user, and elevation when it is needed
 
-> **Status: phase 1 (the format) is built; phases 2–4 are design.** SxFS records
-> an owner, a group and a mode on every inode, and nothing enforces them yet.
+> **Status: phases 1 (the format) and 2 (tokens and the check) are built;
+> phases 3–4 are design.** Every process carries an identity and the VFS checks
+> it on every operation, but everything still runs as the system, so nothing
+> is refused yet outside the tests.
 > This document fixed the model before the code, because it moves three things
 > that are expensive to move twice: the SxFS inode, the `stat` ABI, and who is
 > allowed to talk to `/dev/input0`. The phases at the end are the order to build
@@ -30,31 +32,29 @@ and a mode cannot, and costs far more on disk and in the VFS.
 So: NT's experience on top, Unix's owner/group/mode underneath. The second is
 also what POSIX programs already expect.
 
-## What exists today
+## What existed before
 
-`KERNEL_SECURITY.md` states it: there are no users, UIDs or credentials, and every
-process runs with the same authority.
+Before phase 1 there were no users, UIDs or credentials, and every process ran
+with the same authority. What changed, and what is still true:
 
-- **Processes** carry no identity. Init and idle cannot be killed; a mutating
-  `ioctl` needs a descriptor opened for writing. That prevents accidents, not
-  one application acting on another.
-- **SxFS** records uid, gid and mode on every inode (phase 1, below), and
-  nothing reads them except `fscheck`. `struct savanxp_stat` still carries only
-  `st_mode` (the file type) and `st_size`.
-- **The POSIX layer** answers 0 to `getuid`/`geteuid`/`getgid`/`getegid`, keeps
-  `umask` without applying it, and `getpwuid` returns a made-up `root`.
+- **Processes** carry a token (phase 2, `kernel/credentials.hpp`), and every
+  one is the system's: init is, and nothing lowers anything outside `idtest`.
+  So no application is yet kept from another.
+- **SxFS** records uid, gid, mode and modification time on every inode, and the
+  VFS publishes them on the vnode it checks.
+- **The POSIX layer** answers with the token, applies `umask` on create, and
+  `stat` reports ownership and `st_mtime`.
 - **The in-memory tree** (`/dev`, and the initramfs under `/rescue`; the
   system itself runs from the disk at `/`, see
   [`FILESYSTEMS.md`](FILESYSTEMS.md#the-root-is-the-system-disk)) is writable in
-  RAM. Opening an initramfs file for writing copies it into one of 32 dynamic
-  files of 16 KiB; the change lasts until reboot. Any process can do it,
-  `/rescue/bin/init` included.
-- **Devices** under `/dev` are open to every process. `/dev/input0` in particular:
-  any program can read the keyboard, which matters for the elevation prompt below.
+  RAM, by the system only: opening an initramfs file for writing copies it into
+  one of 32 dynamic files of 16 KiB, and the change lasts until reboot.
+- **Devices** under `/dev` are 0666 (0444 when read-only), except
+  `/dev/input0` and `/dev/mouse0`, which are the system's only (0600).
 - **`/system/programs.txt`** is the build's list of the programs it shipped, and
   Add or Remove Programs trusts it to tell the system from what was installed
-  ([`SXE_FORMAT.md`](../userland/SXE_FORMAT.md)). Any process can rewrite it
-  today, and with it make a system program look removable.
+  ([`SXE_FORMAT.md`](../userland/SXE_FORMAT.md)). It is the system's, so only
+  the system can rewrite it -- which, until phase 4, is every process.
 - **Settings live at the root of the disk**: `progman.ini`, `assoc.ini`,
   `desktop.cfg`, `mines.ini`, `audio.cfg`, `keyboard.cfg`. Some are the user's
   and some are the machine's, and nothing tells them apart yet.
@@ -218,7 +218,7 @@ clipboard, `/dev/power` for shutting down). The ones that must not be:
 
 ### The check
 
-One function in the VFS, `vfs::check_access(token, vnode, want)`, called before a
+One function in the VFS, `vfs::permits(credentials, vnode, want)`, called before a
 driver is reached. It belongs with the rules `FILESYSTEMS.md` already lists as
 "enforced for every driver", so a FAT or ISO driver inherits it without
 repeating it. The semantics are Unix's: owner bits, else group bits, else other
@@ -276,16 +276,48 @@ while it is elevated, into `/system`, and belongs with that phase too.
 | call | becomes |
 | --- | --- |
 | `getuid`, `geteuid`, `getgid`, `getegid` | the token |
-| `stat` | `st_uid`, `st_gid`, full `st_mode`, `st_mtime` (an ABI change to `savanxp_stat`) |
+| `stat` | `st_uid`, `st_gid`, full `st_mode`, `st_mtime`, through `STAT_EX`/`FSTAT_EX` (`struct savanxp_stat_ex`). `STAT` keeps the 8-byte `savanxp_stat`, now with the real permission bits: a binary built before passes a buffer that size |
 | `chmod`, `fchmod`, `chown` | implemented; `chown` needs effective uid 0 |
 | `access` | answers with the real uid, as POSIX says |
 | `umask` | applied on create |
-| `getpwuid`, `getpwnam` | the two identities above, from a fixed table at first |
+| `getpwuid`, `getpwnam` | the two identities, from a fixed table: `root` (0) and `user` (1000, `/users/user`), the second name provisional |
 | `setuid`, `seteuid` | lowering only (an elevated process may drop to the user); raising is `EPERM` |
 
-`struct stat` changing is the reason this has to come before
-[`libposix.so`](SHARED_LIBRARIES.md): once it is shared, that change breaks every
-installed binary instead of being fixed by a rebuild.
+`struct stat` already had room for the new fields, so its layout did not
+change; the kernel's `savanxp_stat` did, which is why it got new calls instead
+of growing. A binary that creates a file passes its mode through
+`SAVANXP_OPEN_MODE` (the third argument of OPEN) and `MKDIR_MODE`; one built
+before them leaves that register undefined, so without the flag a file is 0644
+and a directory 0755.
+
+### What the check covers
+
+| operation | needs |
+| --- | --- |
+| reaching any path | search (`x`) on every directory above it |
+| `open` | `r` and/or `w` on the file, by the flags |
+| create, `mkdir` | `w` and `x` on the parent; in the in-memory tree, the system |
+| `unlink`, `rmdir`, `rename` | `w` and `x` on the parent (both parents for a rename); in a sticky directory (`/tmp`), also being the entry's owner, the directory's or the system |
+| `truncate` | `w` on the file |
+| spawn, `exec` | `x` on the file, for the caller (the child inherits its token) |
+| `chdir` | `x` on the directory |
+| `stat` | only reaching it |
+| `chmod`, `fchmod` | being the owner, or the system |
+| `chown` | being the system |
+
+A refusal is `EACCES`, and `EPERM` for `chmod`, `chown` and raising an
+identity. `set_identity` in `posix_translation.cpp` is the only place a token
+changes, and it only lowers.
+
+### Modification times
+
+Kept in the inode in seconds, from `rtc::epoch_seconds()`: the CMOS is read
+once and the monotonic clock carries it, because a read waits out the chip's
+update cycle. Creating, growing, truncating and writing set it. An overwrite
+in place commits it only when the second changed, so a burst of writes costs
+one commit a second, not one a write; the core smoke's `bytes_per_commit` did
+not move (4237 against 4328). `sxfs-cli apply` takes the host file's time, and
+`extract` puts it back on the host file, so a compaction keeps it.
 
 ## Phases
 
@@ -297,12 +329,13 @@ installed binary instead of being fixed by a rebuild.
    (`sxfs_compaction_test.py`: stamping, the default table, a non-default owner
    surviving compaction, a mode refused for the wrong type), and
    `verify_doom_persistence.sh`.
-2. **Tokens and the check.** The token in the process, inheritance,
-   `vfs::check_access`, device owners, the POSIX calls above, and the
-   modification time in the inode that `stat` needs. **Everything
-   still runs as system**, so behaviour does not change. *Done when* the smokes
-   pass, and a test process spawned as uid 1000 is refused a write to `/bin`
-   and allowed one in its profile.
+2. **Tokens and the check — done.** The token in the process, inheritance,
+   the check in the VFS (`vfs::permits`, `may_access`), device owners, the
+   POSIX calls above, and the modification time in the inode. Everything still
+   runs as the system. Verified by `idtest` in the core `smoke`: a fork lowered
+   to uid 1000 is refused `/bin`, `/system/programs.txt`, `/dev/input0`,
+   `chmod` and `chown` of what is not its own, and raising itself back, and is
+   allowed its profile and its own files in `/tmp`, but not the system's.
 3. **The broker and the prompt.** The service, the `windowd` layer, input
    ownership. *Done when* a scenario asks for elevation, answers through real
    input, and gets an elevated child; and a client that synthesizes the answer

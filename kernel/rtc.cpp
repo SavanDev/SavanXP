@@ -4,6 +4,7 @@
 
 #include "arch/x86/io.hpp"
 #include "kernel/string.hpp"
+#include "kernel/timer.hpp"
 
 namespace {
 
@@ -164,6 +165,21 @@ bool convert_raw(const RtcRaw& raw, savanxp_realtime& value) {
     return true;
 }
 
+// epoch_seconds(): the chip's date at one moment, and the monotonic clock then.
+bool g_epoch_known = false;
+uint64_t g_epoch_base = 0;
+uint64_t g_epoch_base_ms = 0;
+
+// Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
+int64_t days_from_civil(int64_t year, uint32_t month, uint32_t day) {
+    year -= month <= 2 ? 1 : 0;
+    const int64_t era = (year >= 0 ? year : year - 399) / 400;
+    const uint32_t year_of_era = static_cast<uint32_t>(year - era * 400);
+    const uint32_t day_of_year = (153u * (month + (month > 2 ? static_cast<uint32_t>(-3) : 9u)) + 2u) / 5u + day - 1u;
+    const uint32_t day_of_era = year_of_era * 365u + year_of_era / 4u - year_of_era / 100u + day_of_year;
+    return era * 146097 + static_cast<int64_t>(day_of_era) - 719468;
+}
+
 } // namespace
 
 namespace rtc {
@@ -219,6 +235,8 @@ bool write_time(const savanxp_realtime& value) {
     if (!valid_time(value)) {
         return false;
     }
+    // The next epoch_seconds() reads the new date.
+    g_epoch_known = false;
 
     // Esperar a que termine un ciclo en curso: escribir encima de el se
     // pierde. Acotado para que un chip atascado falle en vez de colgar.
@@ -277,6 +295,20 @@ bool write_time(const savanxp_realtime& value) {
     }
     write_register(kRegisterStatusB, status_b);
     return true;
+}
+
+uint64_t epoch_seconds() {
+    if (!g_epoch_known) {
+        savanxp_realtime now = {};
+        if (!read_time(&now) || now.valid == 0) {
+            return 0;
+        }
+        const int64_t days = days_from_civil(now.year, now.month, now.day);
+        g_epoch_base = static_cast<uint64_t>(days) * 86400u + now.hour * 3600u + now.minute * 60u + now.second;
+        g_epoch_base_ms = timer::monotonic_ms();
+        g_epoch_known = true;
+    }
+    return g_epoch_base + (timer::monotonic_ms() - g_epoch_base_ms) / 1000u;
 }
 
 } // namespace rtc

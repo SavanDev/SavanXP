@@ -4,10 +4,9 @@
 
 #include <time.h>
 
-/* El kernel solo reporta tipo y tamano (struct savanxp_stat). El resto de los
- * campos existe porque el codigo de terceros los nombra, y sx_stat los deja en
- * cero: SxFS todavia no guarda duenio ni marcas de tiempo. Que esten en cero
- * es visible y consistente; no tenerlos rompia la compilacion. */
+/* Filled from struct savanxp_stat_ex: type, permissions, size, owner, group
+ * and the modification time (0 when the file system recorded none). atime and
+ * ctime repeat mtime; nothing keeps them apart. */
 struct stat {
     unsigned long st_dev;
     unsigned long st_ino;
@@ -36,8 +35,11 @@ struct stat {
 #define S_ISFIFO(mode) (((mode) & S_IFMT) == S_IFIFO)
 #define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
 
-/* mode se acepta y se ignora: SxFS no tiene permisos. */
+/* mode, less the umask, is what the directory gets
+ * (docs/kernel/USERS_AND_PERMISSIONS.md). */
 int mkdir(const char* path, mode_t mode);
+int chmod(const char* path, mode_t mode);
+int fchmod(int fd, mode_t mode);
 int stat(const char* path, struct stat* info);
 int fstat(int fd, struct stat* info);
 int lstat(const char* path, struct stat* info);

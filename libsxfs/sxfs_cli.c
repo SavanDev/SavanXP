@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <sys/types.h>
 
 #define SXFS_MKDIR(path) mkdir(path, 0755)
@@ -300,6 +301,14 @@ static int extract_file(struct extract_context* context, const char* host_path,
     if (fclose(output) != 0) {
         remove(host_path);
         return SXFS_ERR_IO;
+    }
+    /* The extracted file carries the inode's modification time, so an apply
+     * of it -- the compaction's rebuild -- records the same one. 0 (unknown)
+     * leaves the host's. */
+    const uint64_t mtime = context->image->inodes[inode_id - 1].mtime;
+    if (mtime != 0) {
+        const struct timespec times[2] = {{(time_t)mtime, 0}, {(time_t)mtime, 0}};
+        (void)utimensat(AT_FDCWD, host_path, times, 0);
     }
     context->file_count += 1;
     context->byte_count += size;
@@ -685,6 +694,11 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
             }
             rc = sxfs_write_file(&ctx, relpath, data, size);
             free(data);
+            /* The host file's modification time becomes the inode's. */
+            struct stat host_info;
+            if (rc == SXFS_OK && stat(host_path, &host_info) == 0 && host_info.st_mtime > 0) {
+                rc = sxfs_set_mtime(&ctx, relpath, (uint64_t)host_info.st_mtime);
+            }
             if (rc != SXFS_OK) {
                 fprintf(stderr, "sxfs-cli: file '%s' fallo: %s.\n", relpath, sxfs_strerror(rc));
                 status = exit_code_for(rc);

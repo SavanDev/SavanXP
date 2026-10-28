@@ -144,7 +144,10 @@ int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
     const uint32_t open_flags =
         ((access & SXN_DEVICE_READ) != 0 ? SAVANXP_OPEN_READ : 0u) |
         ((access & SXN_DEVICE_WRITE) != 0 ? SAVANXP_OPEN_WRITE : 0u);
-    vfs::Vnode* node = vfs::open(path, open_flags);
+    vfs::Vnode* node = vfs::open(proc.credentials, path, open_flags, 0);
+    if (node == nullptr && vfs::last_error() == SX_EACCES) {
+        return sx::negative_error(SX_EACCES);
+    }
     if (node == nullptr || node->backend != vfs::Backend::device) {
         return sx::negative_error(SX_ENOENT);
     }

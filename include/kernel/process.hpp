@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/credentials.hpp"
 #include "kernel/object.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/vfs.hpp"
@@ -157,6 +158,9 @@ struct Process {
     // memory.
     uint8_t* subsystem_state;
     size_t subsystem_state_bytes;
+    // Whom it acts as (kernel/credentials.hpp). Zero, which is the system, for
+    // init and anything spawned from it until something lowers it.
+    cred::Credentials credentials;
     vm::VmSpace address_space;
     HandleEntry handles[kMaxFileHandles];
 };
@@ -256,6 +260,9 @@ enum class ImageFailure : uint8_t {
     none = 0,
     not_found,
     not_a_file,
+    // The caller's credentials do not allow executing it (no x bit for them,
+    // or a directory on the way they cannot search).
+    permission_denied,
     read_failed,
     bad_image,
     no_staging_memory,
@@ -320,7 +327,9 @@ int kill_process(Process& sender, int pid, int signal_number);
 int duplicate_fd(Process& proc, uint64_t oldfd);
 int duplicate_fd_to(Process& proc, uint64_t oldfd, uint64_t newfd);
 int close_fd(Process& proc, uint64_t fd);
-int open_node(Process& proc, const char* path, uint32_t flags);
+// The caller's credentials decide (vfs:: permission checks). A file it
+// creates gets `create_permissions` (07777 bits).
+int open_node(Process& proc, const char* path, uint32_t flags, uint16_t create_permissions);
 int create_socket_fd(Process& proc, uint64_t domain, uint64_t type, uint64_t protocol);
 int bind_fd(Process& proc, uint64_t fd, uint64_t user_address);
 int setsockopt_fd(Process& proc, uint64_t fd, uint64_t option, uint64_t value);
@@ -328,13 +337,22 @@ int connect_fd(Process& proc, uint64_t fd, uint64_t user_address, uint32_t timeo
 int sendto_fd(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address);
 int recvfrom_fd(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms);
 int seek_fd(Process& proc, uint64_t fd, int64_t offset, uint64_t whence);
-int unlink_path(const char* path);
-int mkdir_path(const char* path);
-int rmdir_path(const char* path);
-int truncate_path(const char* path, uint64_t size);
-int rename_path(const char* old_path, const char* new_path);
-int stat_path(Process& proc, const char* path, uint64_t user_stat_address);
-int fstat_fd(Process& proc, uint64_t fd, uint64_t user_stat_address);
+int unlink_path(Process& proc, const char* path);
+int mkdir_path(Process& proc, const char* path, uint16_t permissions);
+int rmdir_path(Process& proc, const char* path);
+int truncate_path(Process& proc, const char* path, uint64_t size);
+int rename_path(Process& proc, const char* old_path, const char* new_path);
+// access(2), with the real uid. 0 or a negative errno.
+int access_path(Process& proc, const char* path, uint32_t want);
+// SAVANXP_SYS_SET_IDENTITY: lowers the caller's credentials. 0 or -EPERM.
+int set_identity(Process& proc, uint32_t field, uint32_t value);
+int chmod_path(Process& proc, const char* path, uint16_t permissions);
+int chown_path(Process& proc, const char* path, uint32_t uid, uint32_t gid);
+int fchmod_fd(Process& proc, uint64_t fd, uint16_t permissions);
+// `extended`: a struct savanxp_stat_ex (STAT_EX) instead of the 8-byte
+// savanxp_stat (STAT).
+int stat_path(Process& proc, const char* path, uint64_t user_stat_address, bool extended);
+int fstat_fd(Process& proc, uint64_t fd, uint64_t user_stat_address, bool extended);
 int chdir_path(Process& proc, const char* path);
 int getcwd_path(Process& proc, uint64_t user_buffer, size_t capacity);
 // POSIX-only path resolution: relative to the process's current directory,

@@ -117,6 +117,7 @@ static void cleanup_smoke_directory(void) {
 int main(void) {
     const char* forktest_argv[] = {"/bin/forktest", 0};
     const char* cwdtest_argv[] = {"/bin/cwdtest", 0};
+    const char* idtest_argv[] = {"/bin/idtest", 0};
     const char* smptest_argv[] = {"/bin/smptest", 0};
     const char* polltest_argv[] = {"/bin/polltest", 0};
     const char* sigtest_argv[] = {"/bin/sigtest", 0};
@@ -199,6 +200,7 @@ int main(void) {
         !file_exists("/bin/seltest") ||
         !file_exists("/bin/mmaptest") ||
         !file_exists("/bin/heaptest") ||
+        !file_exists("/bin/idtest") ||
         !file_exists("/bin/sh") ||
         !file_exists("/bin/ls") ||
         !file_exists("/bin/cat") ||
@@ -217,6 +219,8 @@ int main(void) {
     if (!run_and_expect("/bin/forktest", forktest_argv, 1, 0) ||
         /* cwd, herencia por fork y conservacion por exec (isolation slice B). */
         !run_and_expect("/bin/cwdtest", cwdtest_argv, 1, 0) ||
+        /* Identities and the VFS permission check (USERS_AND_PERMISSIONS.md, phase 2). */
+        !run_and_expect("/bin/idtest", idtest_argv, 1, 0) ||
         !run_and_expect("/bin/smptest", smptest_argv, 1, 0) ||
         !run_and_expect("/bin/polltest", polltest_argv, 1, 0) ||
         !run_and_expect("/bin/sigtest", sigtest_argv, 1, 0) ||

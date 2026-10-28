@@ -138,6 +138,8 @@ int sxfs_set_ownership(struct sxfs_ctx* ctx, const char* relpath,
                        uint32_t uid, uint32_t gid, uint16_t mode);
 int sxfs_get_ownership(const struct sxfs_ctx* ctx, uint32_t inode_id,
                        uint32_t* uid, uint32_t* gid, uint16_t* mode);
+/* The modification time (seconds since 1970 UTC) of an existing path. */
+int sxfs_set_mtime(struct sxfs_ctx* ctx, const char* relpath, uint64_t mtime);
 
 #ifdef __cplusplus
 }

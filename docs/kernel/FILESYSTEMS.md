@@ -106,6 +106,12 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
   `EINVAL`.
 - Type, writability and range are checked before a driver is called, and
   `rmdir` checks the directory is empty first.
+- Permissions are checked before a driver is called, on the vnode, with the
+  caller's credentials: every operation that can change the tree takes them
+  (`vfs::open`, `mkdir`, `unlink`, ...). The driver publishes uid, gid, mode
+  and mtime on its vnodes, receives the owner of what it creates, and records
+  `chmod`/`chown` through `set_ownership`. See
+  [`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md#what-the-check-covers).
 
 ## What a driver provides
 

@@ -18,6 +18,12 @@ Cut-off notes:
   `unowned_inodes`; `sxfs-cli extract` and `apply` carry ownership (`owner` lines) through a
   compaction. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
 
+- **Every process carries an identity, and the VFS checks it** on every path operation; everything
+  still runs as the system. `setuid`/`seteuid`/`setgid` only lower, `chmod`/`fchmod`/`chown`/
+  `access` work, `umask` applies, and `stat` reports owner, mode and `st_mtime` (new `STAT_EX`,
+  `FSTAT_EX`, `OPEN_MODE`, `MKDIR_MODE`). `/dev/input0` and `/dev/mouse0` are 0600. New `idtest`
+  in the core smoke. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
+
 ### Changed
 
 - **The system runs from its disk, mounted at `/`**: `/bin`, `/lib` and `/games` are the SxFS

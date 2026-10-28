@@ -1071,3 +1071,21 @@ int sxfs_get_ownership(const struct sxfs_ctx* ctx, uint32_t inode_id,
     *mode = inode->mode;
     return SXFS_OK;
 }
+
+int sxfs_set_mtime(struct sxfs_ctx* ctx, const char* relpath, uint64_t mtime) {
+    uint32_t inode_id = 0;
+    uint16_t type = 0;
+    if (!sxfs_path_valid(relpath)) {
+        return SXFS_ERR_INVALID;
+    }
+    const int rc = resolve_path(ctx, relpath, &inode_id, &type);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    struct sxfs_inode* inode = inode_at(ctx, inode_id);
+    if (inode == NULL) {
+        return SXFS_ERR_INVALID;
+    }
+    inode->mtime = mtime;
+    return SXFS_OK;
+}

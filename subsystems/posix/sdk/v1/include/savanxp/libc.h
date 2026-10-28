@@ -13,6 +13,8 @@ long savanxp_read(int fd, void* buffer, size_t count);
 long savanxp_write(int fd, const void* buffer, size_t count);
 long savanxp_open(const char* path);
 long savanxp_open_mode(const char* path, unsigned long flags);
+/* OPEN that creates with `permissions` (07777 bits, umask already applied). */
+long savanxp_open_create(const char* path, unsigned long flags, unsigned long permissions);
 long savanxp_close(int fd);
 long savanxp_readdir(int fd, char* buffer, size_t count);
 long spawn(const char* path, const char* const* argv, int argc);
@@ -25,6 +27,15 @@ long savanxp_dup2(int oldfd, int newfd);
 long seek(int fd, long offset, int whence);
 long savanxp_unlink(const char* path);
 long savanxp_mkdir(const char* path);
+long savanxp_mkdir_mode(const char* path, unsigned long permissions);
+/* docs/kernel/USERS_AND_PERMISSIONS.md: whom the caller acts as, lowering it,
+ * and access(2) by the real uid. */
+long savanxp_get_identity(struct savanxp_identity* out);
+long savanxp_set_identity(unsigned long field, unsigned long value);
+long savanxp_access(const char* path, unsigned long want);
+long savanxp_chmod(const char* path, unsigned long permissions);
+long savanxp_chown(const char* path, unsigned long uid, unsigned long gid);
+long savanxp_fchmod(int fd, unsigned long permissions);
 long savanxp_rmdir(const char* path);
 long savanxp_truncate(const char* path, unsigned long size);
 long savanxp_rename(const char* old_path, const char* new_path);
@@ -137,6 +148,9 @@ long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, u
 long savanxp_getpid(void);
 long savanxp_stat(const char* path, struct savanxp_stat* info);
 long savanxp_fstat(int fd, struct savanxp_stat* info);
+/* With ownership and mtime (struct savanxp_stat_ex). */
+long savanxp_stat_ex(const char* path, struct savanxp_stat_ex* info);
+long savanxp_fstat_ex(int fd, struct savanxp_stat_ex* info);
 long savanxp_chdir(const char* path);
 long savanxp_getcwd(char* buffer, size_t count);
 void exit(int code) __attribute__((noreturn));

@@ -5,6 +5,7 @@
 
 namespace vfs {
 struct Vnode;
+struct Ownership;
 }
 
 /* The filesystem registry (docs/kernel/FILESYSTEMS.md), same pattern as
@@ -73,11 +74,16 @@ struct Driver {
 
     // Path operations, on absolute normalized paths under the volume's mount
     // point. Create returns the published vnode, or nullptr when the volume
-    // is full or read-only.
-    vfs::Vnode* (*create_file)(VolumeId volume, const char* path);
-    vfs::Vnode* (*create_directory)(VolumeId volume, const char* path);
+    // is full or read-only. `owner` is who creates it and the mode it gets;
+    // the VFS has already checked the caller may.
+    vfs::Vnode* (*create_file)(VolumeId volume, const char* path, const vfs::Ownership& owner);
+    vfs::Vnode* (*create_directory)(VolumeId volume, const char* path, const vfs::Ownership& owner);
     // Both paths are on this volume (the VFS refuses a cross-volume rename).
     bool (*rename)(VolumeId volume, const char* old_path, const char* new_path);
+    // Records new ownership for a vnode the driver published (chmod, chown);
+    // the VFS has checked the caller may. nullptr: the format has none, and the
+    // change is refused.
+    bool (*set_ownership)(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode);
 
     bool (*stats)(VolumeId volume, VolumeStats& out);
     // Makes the volume's metadata durable and marks it clean. May be nullptr.

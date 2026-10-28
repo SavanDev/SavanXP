@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "kernel/block.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
 #include "sxfs/sxfs_format.h"
@@ -73,6 +74,8 @@ struct Volume {
     // that enters through the public API is resolved against it, so a second
     // volume at "/mnt/target" does not take over the first one's paths.
     char mount_point[sxfs::kMountPointCapacity];
+    // The vnode that publishes the root directory, which has no record.
+    vfs::Vnode* root_vnode;
     Superblock superblock;
     uint8_t block_bitmap[kBlockBitmapBytes];
     uint8_t inode_bitmap[kInodeBitmapBytes];
@@ -1172,6 +1175,16 @@ void refresh_record_size(Volume& volume, uint32_t inode_id) {
     }
 }
 
+// The inode's ownership on the vnode that publishes it, which is where the
+// VFS checks permissions.
+void publish_ownership(Volume& volume, uint32_t inode_id, vfs::Vnode* node) {
+    const Inode* inode = inode_for_id(volume, inode_id);
+    if (node != nullptr && inode != nullptr) {
+        vfs::set_ownership(*node, inode->uid, inode->gid, inode->mode);
+        node->mtime = inode->mtime;
+    }
+}
+
 void mount_record(Volume& volume, sxfs::FileRecord& record) {
     char absolute[262] = {};
     if (!make_absolute_path(volume, record.path, absolute, sizeof(absolute))) {
@@ -1188,12 +1201,16 @@ void mount_record(Volume& volume, sxfs::FileRecord& record) {
             record.size,
             volume.status != sxfs::MountStatus::read_only);
     }
+    publish_ownership(volume, record.inode_id, record.vnode);
 }
 
 bool initialize_record_mounts(Volume& volume) {
-    if (vfs::ensure_directory(volume.mount_point) == nullptr) {
+    vfs::Vnode* root = vfs::ensure_directory(volume.mount_point);
+    if (root == nullptr) {
         return false;
     }
+    volume.root_vnode = root;
+    publish_ownership(volume, kRootInodeId, root);
 
     for (sxfs::FileRecord& record : volume.records) {
         if (record.in_use && record.directory) {
@@ -1228,15 +1245,22 @@ bool record_is_ancestor(Volume& volume, uint32_t ancestor_inode, uint32_t inode_
     return ancestor_inode == kRootInodeId;
 }
 
-// `relative` is where the inode is being created. There are no tokens yet to
-// say who creates it (USERS_AND_PERMISSIONS.md, phase 2), so it gets the
-// default ownership of its path.
-bool prepare_new_inode(Inode& inode, uint32_t inode_id, uint16_t type, const char* relative) {
+// `relative` is where the inode is being created and `owner` who creates it.
+// Without an owner it gets the default ownership of its path.
+bool prepare_new_inode(Inode& inode, uint32_t inode_id, uint16_t type, const char* relative,
+                       const vfs::Ownership* owner) {
     memset(&inode, 0, sizeof(inode));
     inode.inode_id = inode_id;
     inode.type = type;
     inode.link_count = 1;
-    sxfs_default_ownership(relative, type, &inode.uid, &inode.gid, &inode.mode);
+    inode.mtime = rtc::epoch_seconds();
+    if (owner != nullptr && sxfs_mode_matches_type(owner->mode, type)) {
+        inode.uid = owner->uid;
+        inode.gid = owner->gid;
+        inode.mode = owner->mode;
+    } else {
+        sxfs_default_ownership(relative, type, &inode.uid, &inode.gid, &inode.mode);
+    }
     return true;
 }
 
@@ -1748,11 +1772,13 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
         written = count;
     }
 
+    const uint64_t now = rtc::epoch_seconds();
     if (needs_metadata) {
         const size_t new_size = count == 0
             ? inode->size
             : ((offset + written) > inode->size ? (offset + written) : inode->size);
         inode->size = static_cast<uint32_t>(new_size);
+        inode->mtime = now;
         if (!commit_metadata(*volume)) {
             restore_metadata(*volume);
             return false;
@@ -1762,6 +1788,15 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
         // ordering point after its data.
         written = 0;
         return false;
+    } else if (count != 0 && inode->mtime != now) {
+        // The modification time of an overwrite in place. Only when the second
+        // changed: a burst of small writes commits once a second, not once a
+        // write. A failure here loses the time, not the data, which is down.
+        snapshot_metadata(*volume);
+        inode->mtime = now;
+        if (!commit_metadata(*volume)) {
+            restore_metadata(*volume);
+        }
     }
 
     refresh_record_size(*volume, file.inode_id);
@@ -1798,6 +1833,7 @@ bool truncate_file(FileRecord& file, size_t size) {
     }
 
     inode->size = static_cast<uint32_t>(size);
+    inode->mtime = rtc::epoch_seconds();
     if (!commit_metadata(*volume)) {
         restore_metadata(*volume);
         return false;
@@ -1806,7 +1842,7 @@ bool truncate_file(FileRecord& file, size_t size) {
     return true;
 }
 
-FileRecord* create_file(const char* path) {
+FileRecord* create_file(const char* path, const vfs::Ownership* owner) {
     Volume* volume = volume_for_path(path);
     if (volume == nullptr || volume->status != MountStatus::mounted) {
         return nullptr;
@@ -1831,7 +1867,7 @@ FileRecord* create_file(const char* path) {
 
     const uint32_t inode_id = allocate_inode_id(*volume);
     Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeFile, relative) ||
+    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeFile, relative, owner) ||
         !add_directory_entry(*volume, *parent, inode_id, kInodeTypeFile, leaf) ||
         !commit_metadata(*volume)) {
         restore_metadata(*volume);
@@ -1854,7 +1890,7 @@ FileRecord* create_file(const char* path) {
     return record;
 }
 
-FileRecord* create_directory(const char* path) {
+FileRecord* create_directory(const char* path, const vfs::Ownership* owner) {
     Volume* volume = volume_for_path(path);
     if (volume == nullptr || volume->status != MountStatus::mounted) {
         return nullptr;
@@ -1879,7 +1915,7 @@ FileRecord* create_directory(const char* path) {
 
     const uint32_t inode_id = allocate_inode_id(*volume);
     Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeDirectory, relative) ||
+    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeDirectory, relative, owner) ||
         !add_directory_entry(*volume, *parent, inode_id, kInodeTypeDirectory, leaf) ||
         !commit_metadata(*volume)) {
         restore_metadata(*volume);
@@ -2042,6 +2078,7 @@ void refresh_vnode(vfs::Vnode& node) {
 
     record->vnode = &node;
     node.writable = volume->status == MountStatus::mounted;
+    publish_ownership(*volume, record->inode_id, &node);
     if (record->directory) {
         return;
     }
@@ -2106,24 +2143,64 @@ bool driver_remove_directory(vfs::Vnode& node) {
 
 // Paths carry their volume (volume_for_path), so the id fs:: hands in is not
 // needed here.
-vfs::Vnode* driver_create_file(VolumeId, const char* path) {
-    FileRecord* file = create_file(path);
+vfs::Vnode* driver_create_file(VolumeId, const char* path, const vfs::Ownership& owner) {
+    FileRecord* file = create_file(path, &owner);
     if (file == nullptr) {
         return nullptr;
     }
-    if (file->vnode != nullptr) {
-        return file->vnode;
+    if (file->vnode == nullptr) {
+        file->vnode = vfs::install_volume_file(path, driver(), file, file->size, true);
     }
-    file->vnode = vfs::install_volume_file(path, driver(), file, file->size, true);
+    if (file->vnode != nullptr) {
+        vfs::set_ownership(*file->vnode, owner.uid, owner.gid, owner.mode);
+    }
     return file->vnode;
 }
 
-vfs::Vnode* driver_create_directory(VolumeId, const char* path) {
-    FileRecord* directory = create_directory(path);
+vfs::Vnode* driver_create_directory(VolumeId, const char* path, const vfs::Ownership& owner) {
+    FileRecord* directory = create_directory(path, &owner);
     if (directory == nullptr) {
         return nullptr;
     }
-    return directory->vnode != nullptr ? directory->vnode : vfs::ensure_directory(path);
+    vfs::Vnode* node = directory->vnode != nullptr ? directory->vnode : vfs::ensure_directory(path);
+    if (node != nullptr) {
+        vfs::set_ownership(*node, owner.uid, owner.gid, owner.mode);
+    }
+    return node;
+}
+
+// chmod and chown: the new ownership in the inode, in one journalled commit.
+bool driver_set_ownership(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
+    Volume* volume = nullptr;
+    uint32_t inode_id = 0;
+    if (FileRecord* record = file_from_vnode(node)) {
+        volume = volume_for_id(record->volume);
+        inode_id = record->inode_id;
+    } else {
+        for (Volume& candidate : g_volumes) {
+            if (candidate.in_use && candidate.root_vnode == &node) {
+                volume = &candidate;
+                inode_id = kRootInodeId;
+            }
+        }
+    }
+    if (volume == nullptr || volume->status != MountStatus::mounted) {
+        return false;
+    }
+    MutationGuard guard(*volume);
+    Inode* inode = inode_for_id(*volume, inode_id);
+    if (inode == nullptr || !sxfs_mode_matches_type(mode, inode->type)) {
+        return false;
+    }
+    snapshot_metadata(*volume);
+    inode->uid = uid;
+    inode->gid = gid;
+    inode->mode = mode;
+    if (!commit_metadata(*volume)) {
+        restore_metadata(*volume);
+        return false;
+    }
+    return true;
 }
 
 bool driver_rename(VolumeId, const char* old_path, const char* new_path) {
@@ -2160,6 +2237,7 @@ const fs::Driver kDriver = {
     .create_file = &driver_create_file,
     .create_directory = &driver_create_directory,
     .rename = &driver_rename,
+    .set_ownership = &driver_set_ownership,
     .stats = &driver_stats,
     .sync = &sync,
 };

@@ -48,6 +48,10 @@ long savanxp_open_mode(const char* path, unsigned long flags) {
     return syscall2(SAVANXP_SYS_OPEN, (unsigned long)path, flags);
 }
 
+long savanxp_open_create(const char* path, unsigned long flags, unsigned long permissions) {
+    return syscall3(SAVANXP_SYS_OPEN, (unsigned long)path, flags | SAVANXP_OPEN_MODE, permissions);
+}
+
 long savanxp_close(int fd) {
     return syscall1(SAVANXP_SYS_CLOSE, (unsigned long)fd);
 }
@@ -133,6 +137,34 @@ long savanxp_unlink(const char* path) {
 
 long savanxp_mkdir(const char* path) {
     return syscall1(SAVANXP_SYS_MKDIR, (unsigned long)path);
+}
+
+long savanxp_mkdir_mode(const char* path, unsigned long permissions) {
+    return syscall2(SAVANXP_SYS_MKDIR_MODE, (unsigned long)path, permissions);
+}
+
+long savanxp_get_identity(struct savanxp_identity* out) {
+    return syscall1(SAVANXP_SYS_GET_IDENTITY, (unsigned long)out);
+}
+
+long savanxp_set_identity(unsigned long field, unsigned long value) {
+    return syscall2(SAVANXP_SYS_SET_IDENTITY, field, value);
+}
+
+long savanxp_access(const char* path, unsigned long want) {
+    return syscall2(SAVANXP_SYS_ACCESS, (unsigned long)path, want);
+}
+
+long savanxp_chmod(const char* path, unsigned long permissions) {
+    return syscall2(SAVANXP_SYS_CHMOD, (unsigned long)path, permissions);
+}
+
+long savanxp_chown(const char* path, unsigned long uid, unsigned long gid) {
+    return syscall3(SAVANXP_SYS_CHOWN, (unsigned long)path, uid, gid);
+}
+
+long savanxp_fchmod(int fd, unsigned long permissions) {
+    return syscall2(SAVANXP_SYS_FCHMOD, (unsigned long)fd, permissions);
 }
 
 long savanxp_rmdir(const char* path) {
@@ -668,6 +700,14 @@ long savanxp_stat(const char* path, struct savanxp_stat* info) {
 
 long savanxp_fstat(int fd, struct savanxp_stat* info) {
     return syscall2(SAVANXP_SYS_FSTAT, (unsigned long)fd, (unsigned long)info);
+}
+
+long savanxp_stat_ex(const char* path, struct savanxp_stat_ex* info) {
+    return syscall2(SAVANXP_SYS_STAT_EX, (unsigned long)path, (unsigned long)info);
+}
+
+long savanxp_fstat_ex(int fd, struct savanxp_stat_ex* info) {
+    return syscall2(SAVANXP_SYS_FSTAT_EX, (unsigned long)fd, (unsigned long)info);
 }
 
 long savanxp_chdir(const char* path) {

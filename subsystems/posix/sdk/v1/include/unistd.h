@@ -39,6 +39,11 @@ uid_t getuid(void);
 uid_t geteuid(void);
 gid_t getgid(void);
 gid_t getegid(void);
+/* Lowering only: nothing raises an identity (docs/kernel/USERS_AND_PERMISSIONS.md). */
+int setuid(uid_t uid);
+int seteuid(uid_t uid);
+int setgid(gid_t gid);
+int chown(const char* path, uid_t owner, gid_t group);
 mode_t umask(mode_t mask);
 unsigned sleep(unsigned seconds);
 int usleep(unsigned long microseconds);

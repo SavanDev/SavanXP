@@ -91,6 +91,40 @@ enum savanxp_syscall_number {
      * 2000..2099, the day must exist in its month. Returns 0, -EINVAL for a
      * bad date or address, -EIO if the chip never goes idle. */
     SAVANXP_SYS_SET_REALTIME = 63,
+    /* Whom the caller acts as: a struct savanxp_identity
+     * (docs/kernel/USERS_AND_PERMISSIONS.md, "The token"). */
+    SAVANXP_SYS_GET_IDENTITY = 64,
+    /* Lowers the caller's identity: (SAVANXP_IDENTITY_*, value). setuid with
+     * euid 0 sets uid and euid; otherwise it may only set euid back to uid.
+     * seteuid may set euid to uid; with euid 0, to anything, for good.
+     * setgid with euid 0 sets gid; otherwise only to the gid it has. Nothing
+     * raises: -EPERM. */
+    SAVANXP_SYS_SET_IDENTITY = 65,
+    /* MKDIR with the permission bits the directory gets (umask applied).
+     * MKDIR alone gives 0755. */
+    SAVANXP_SYS_MKDIR_MODE = 66,
+    /* access(2): whether the caller's REAL uid may (path, SAVANXP_ACCESS_*
+     * bits); 0, -EACCES or -ENOENT. */
+    SAVANXP_SYS_ACCESS = 67,
+    /* chmod(path, permissions): the owner or the system; -EPERM otherwise. */
+    SAVANXP_SYS_CHMOD = 68,
+    /* chown(path, uid, gid): the system only; 0xffffffff keeps that id. */
+    SAVANXP_SYS_CHOWN = 69,
+    /* fchmod(fd, permissions), same rule as CHMOD. */
+    SAVANXP_SYS_FCHMOD = 70,
+    /* STAT and FSTAT with ownership and mtime: struct savanxp_stat_ex. */
+    SAVANXP_SYS_STAT_EX = 71,
+    SAVANXP_SYS_FSTAT_EX = 72,
+};
+enum savanxp_identity_field {
+    SAVANXP_IDENTITY_UID = 0,
+    SAVANXP_IDENTITY_EUID = 1,
+    SAVANXP_IDENTITY_GID = 2,
+};
+enum savanxp_access_bits {
+    SAVANXP_ACCESS_EXECUTE = 1,
+    SAVANXP_ACCESS_WRITE = 2,
+    SAVANXP_ACCESS_READ = 4,
 };
 enum savanxp_mode_bits {
     SAVANXP_S_IFMT = 0170000u,

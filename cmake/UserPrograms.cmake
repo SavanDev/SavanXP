@@ -451,6 +451,9 @@ savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
 # Directorio actual: cwd, su herencia por fork y su conservacion por exec
 # (isolation slice B). El binario esta en /disk porque se reejecuta a si mismo.
 savanxp_program(NAME cwdtest TEST SOURCES subsystems/posix/userland/cwdtest.c)
+# Identities and permissions: a process lowered to uid 1000 is refused the
+# system's files and allowed its own (docs/kernel/USERS_AND_PERMISSIONS.md).
+savanxp_program(NAME idtest TEST SOURCES subsystems/posix/userland/idtest.c)
 savanxp_program(NAME smptest TEST SOURCES subsystems/posix/userland/smptest.c)
 savanxp_program(NAME pthreadtest TEST SOURCES subsystems/posix/userland/pthreadtest.c)
 savanxp_program(NAME polltest TEST SOURCES subsystems/posix/userland/polltest.c)

@@ -476,6 +476,8 @@ const char* image_failure_string(process::ImageFailure failure) {
             return "path not found";
         case process::ImageFailure::not_a_file:
             return "not a regular file";
+        case process::ImageFailure::permission_denied:
+            return "permission denied";
         case process::ImageFailure::read_failed:
             return "image read failed";
         case process::ImageFailure::bad_image:
@@ -1760,6 +1762,7 @@ sx_status image_failure_errno(process::ImageFailure failure) {
         case process::ImageFailure::not_found:
             return SX_ENOENT;
         case process::ImageFailure::not_a_file:
+        case process::ImageFailure::permission_denied:
             return SX_EACCES;
         case process::ImageFailure::read_failed:
             return SX_EIO;
@@ -1796,6 +1799,11 @@ bool prepare_exec_image(
     }
     if (image->type != vfs::NodeType::file) {
         failure = process::ImageFailure::not_a_file;
+        report_image_failure("exec", path, failure, image->size);
+        return false;
+    }
+    if (!vfs::may_execute(proc.credentials, path)) {
+        failure = process::ImageFailure::permission_denied;
         report_image_failure("exec", path, failure, image->size);
         return false;
     }
@@ -1893,6 +1901,14 @@ process::Process* create_process_internal(
         report_image_failure("spawn", path, failure, image->size);
         return nullptr;
     }
+    // Whoever spawns has to be allowed to run it; the first process (init) is
+    // the kernel's, and the kernel may.
+    const cred::Credentials spawner = parent != nullptr ? parent->credentials : cred::system();
+    if (!vfs::may_execute(spawner, path)) {
+        failure = process::ImageFailure::permission_denied;
+        report_image_failure("spawn", path, failure, image->size);
+        return nullptr;
+    }
 
     const size_t reported_size = image->size;
     ImageSource image_source = {};
@@ -1911,6 +1927,7 @@ process::Process* create_process_internal(
 
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
     proc->subsystem_id = parent != nullptr ? parent->subsystem_id : subsystem::Id::posix;
+    proc->credentials = spawner;
     set_process_name(*proc, path);
     if (parent != nullptr) {
         // El hijo hereda el estado privado del padre, que para POSIX incluye

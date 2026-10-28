@@ -300,7 +300,13 @@ static struct sigaction g_signal_actions[NSIG] = {};
 static sigset_t g_signal_mask = 0;
 static char g_passwd_root_name[] = "root";
 static char g_passwd_root_dir[] = "/";
-static struct passwd g_passwd_root = { g_passwd_root_name, g_passwd_root_dir };
+static char g_passwd_user_name[] = "user";
+static char g_passwd_user_dir[] = "/users/user";
+static char g_passwd_shell[] = "/bin/sh";
+static struct passwd g_passwd_table[] = {
+    { g_passwd_root_name, g_passwd_root_dir, 0, 0, g_passwd_shell },
+    { g_passwd_user_name, g_passwd_user_dir, 1000, 100, g_passwd_shell },
+};
 
 FILE* stdin = &g_stdin_file;
 FILE* stdout = &g_stdout_file;
@@ -1945,7 +1951,16 @@ int sx_open(const char* path, int flags, ...) {
     if ((flags & O_NONBLOCK) != 0) {
         raw_flags |= SAVANXP_OPEN_NONBLOCK;
     }
-    result = savanxp_open_mode(path, raw_flags);
+    if ((flags & O_CREAT) != 0) {
+        /* The mode is the third argument only with O_CREAT, as in POSIX. */
+        va_list arguments;
+        va_start(arguments, flags);
+        const mode_t mode = (mode_t)va_arg(arguments, int);
+        va_end(arguments);
+        result = savanxp_open_create(path, raw_flags, (unsigned long)(mode & ~g_umask_value & 07777u));
+    } else {
+        result = savanxp_open_mode(path, raw_flags);
+    }
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1972,9 +1987,7 @@ int sx_unlink(const char* path) {
 }
 
 int sx_mkdir(const char* path, mode_t mode) {
-    long result = 0;
-    (void)mode; /* SxFS no tiene permisos */
-    result = savanxp_mkdir(path);
+    long result = savanxp_mkdir_mode(path, (unsigned long)(mode & ~g_umask_value & 07777u));
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2209,8 +2222,8 @@ int sx_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, st
 }
 
 int sx_stat(const char* path, struct stat* info) {
-    struct savanxp_stat raw = {};
-    long result = savanxp_stat(path, &raw);
+    struct savanxp_stat_ex raw = {};
+    long result = savanxp_stat_ex(path, &raw);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2221,16 +2234,21 @@ int sx_stat(const char* path, struct stat* info) {
         info->st_ino = sx_hash_text(path);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
-        info->st_nlink = 1;
+        info->st_uid = raw.st_uid;
+        info->st_gid = raw.st_gid;
+        info->st_nlink = raw.st_nlink;
         info->st_blksize = 512;
         info->st_blocks = (raw.st_size + 511u) / 512u;
+        info->st_mtime = (time_t)raw.st_mtime;
+        info->st_atime = info->st_mtime;
+        info->st_ctime = info->st_mtime;
     }
     return 0;
 }
 
 int sx_fstat(int fd, struct stat* info) {
-    struct savanxp_stat raw = {};
-    long result = savanxp_fstat(fd, &raw);
+    struct savanxp_stat_ex raw = {};
+    long result = savanxp_fstat_ex(fd, &raw);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2241,9 +2259,14 @@ int sx_fstat(int fd, struct stat* info) {
         info->st_ino = (unsigned long)(fd + 1);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
-        info->st_nlink = 1;
+        info->st_uid = raw.st_uid;
+        info->st_gid = raw.st_gid;
+        info->st_nlink = raw.st_nlink;
         info->st_blksize = 512;
         info->st_blocks = (raw.st_size + 511u) / 512u;
+        info->st_mtime = (time_t)raw.st_mtime;
+        info->st_atime = info->st_mtime;
+        info->st_ctime = info->st_mtime;
     }
     return 0;
 }
@@ -2253,16 +2276,10 @@ int sx_lstat(const char* path, struct stat* info) {
 }
 
 int sx_access(const char* path, int mode) {
-    struct stat info = {};
-    if (sx_stat(path, &info) < 0) {
-        return -1;
-    }
-    if ((mode & W_OK) != 0 && (info.st_mode & 0222u) == 0) {
-        errno = SAVANXP_EACCES;
-        return -1;
-    }
-    if ((mode & X_OK) != 0 && (info.st_mode & 0111u) == 0) {
-        errno = SAVANXP_EACCES;
+    /* R_OK, W_OK and X_OK are the kernel's SAVANXP_ACCESS_* bits. */
+    long result = savanxp_access(path, (unsigned long)(mode & (R_OK | W_OK | X_OK)));
+    if (result < 0) {
+        sx_set_errno_from_result(result);
         return -1;
     }
     return 0;
@@ -3968,20 +3985,71 @@ void sx__exit(int code) {
     exit(code);
 }
 
+/* Whom this process acts as (docs/kernel/USERS_AND_PERMISSIONS.md). Asked of
+ * the kernel each time: setuid in another thread changes it for all. */
+static struct savanxp_identity sx_identity(void) {
+    struct savanxp_identity identity = {0, 0, 0, 0};
+    (void)savanxp_get_identity(&identity);
+    return identity;
+}
+
 uid_t sx_getuid(void) {
-    return 0;
+    return (uid_t)sx_identity().uid;
 }
 
 uid_t sx_geteuid(void) {
-    return 0;
+    return (uid_t)sx_identity().euid;
 }
 
 gid_t sx_getgid(void) {
+    return (gid_t)sx_identity().gid;
+}
+
+/* There is one gid, effective and real alike. */
+gid_t sx_getegid(void) {
+    return (gid_t)sx_identity().gid;
+}
+
+static int sx_set_identity(unsigned long field, unsigned long value) {
+    long result = savanxp_set_identity(field, value);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
     return 0;
 }
 
-gid_t sx_getegid(void) {
+int sx_setuid(uid_t uid) {
+    return sx_set_identity(SAVANXP_IDENTITY_UID, (unsigned long)uid);
+}
+
+int sx_seteuid(uid_t uid) {
+    return sx_set_identity(SAVANXP_IDENTITY_EUID, (unsigned long)uid);
+}
+
+int sx_setgid(gid_t gid) {
+    return sx_set_identity(SAVANXP_IDENTITY_GID, (unsigned long)gid);
+}
+
+static int sx_result_or_errno(long result) {
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
     return 0;
+}
+
+int sx_chmod(const char* path, mode_t mode) {
+    return sx_result_or_errno(savanxp_chmod(path, (unsigned long)(mode & 07777u)));
+}
+
+int sx_fchmod(int fd, mode_t mode) {
+    return sx_result_or_errno(savanxp_fchmod(fd, (unsigned long)(mode & 07777u)));
+}
+
+/* (uid_t)-1 and (gid_t)-1 keep that id, as POSIX says. */
+int sx_chown(const char* path, uid_t owner, gid_t group) {
+    return sx_result_or_errno(savanxp_chown(path, (unsigned long)(uint32_t)owner, (unsigned long)(uint32_t)group));
 }
 
 mode_t sx_umask(mode_t mask) {
@@ -4377,8 +4445,19 @@ struct passwd* sx_getpwnam(const char* name) {
         errno = SAVANXP_EINVAL;
         return 0;
     }
-    if (sx_strcmp(name, "root") == 0) {
-        return &g_passwd_root;
+    for (size_t index = 0; index < sizeof(g_passwd_table) / sizeof(g_passwd_table[0]); ++index) {
+        if (sx_strcmp(name, g_passwd_table[index].pw_name) == 0) {
+            return &g_passwd_table[index];
+        }
+    }
+    return 0;
+}
+
+struct passwd* sx_getpwuid(uid_t uid) {
+    for (size_t index = 0; index < sizeof(g_passwd_table) / sizeof(g_passwd_table[0]); ++index) {
+        if (g_passwd_table[index].pw_uid == uid) {
+            return &g_passwd_table[index];
+        }
     }
     return 0;
 }
@@ -5097,6 +5176,7 @@ __attribute__((weak, alias("sx_fcntl"))) int fcntl(int fd, int command, ...);
 __attribute__((weak, alias("sx_fnmatch"))) int fnmatch(const char* pattern, const char* string, int flags);
 __attribute__((weak, alias("sx_poll"))) int poll(struct pollfd* fds, unsigned long count, int timeout_ms);
 __attribute__((weak, alias("sx_getpwnam"))) struct passwd* getpwnam(const char* name);
+__attribute__((weak, alias("sx_getpwuid"))) struct passwd* getpwuid(uid_t uid);
 __attribute__((weak, alias("sx_kill"))) int kill(pid_t pid, int signal_number);
 __attribute__((weak, alias("sx_signal"))) sighandler_t signal(int signal_number, sighandler_t handler);
 __attribute__((weak, alias("sx_sigaction"))) int sigaction(int signal_number, const struct sigaction* action, struct sigaction* old_action);
@@ -5198,6 +5278,12 @@ __attribute__((weak, alias("sx_geteuid"))) uid_t geteuid(void);
 __attribute__((weak, alias("sx_getgid"))) gid_t getgid(void);
 __attribute__((weak, alias("sx_getegid"))) gid_t getegid(void);
 __attribute__((weak, alias("sx_umask"))) mode_t umask(mode_t mask);
+__attribute__((weak, alias("sx_setuid"))) int setuid(uid_t uid);
+__attribute__((weak, alias("sx_seteuid"))) int seteuid(uid_t uid);
+__attribute__((weak, alias("sx_setgid"))) int setgid(gid_t gid);
+__attribute__((weak, alias("sx_chmod"))) int chmod(const char* path, mode_t mode);
+__attribute__((weak, alias("sx_fchmod"))) int fchmod(int fd, mode_t mode);
+__attribute__((weak, alias("sx_chown"))) int chown(const char* path, uid_t owner, gid_t group);
 __attribute__((weak, alias("sx_sleep"))) unsigned sleep(unsigned seconds);
 __attribute__((weak, alias("sx_usleep"))) int usleep(unsigned long microseconds);
 __attribute__((weak, alias("sx_htonl"))) unsigned long htonl(unsigned long value);

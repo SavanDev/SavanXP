@@ -153,8 +153,11 @@ bool check(VolumeId volume, CheckReport& report);
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count);
 bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written);
 bool truncate_file(FileRecord& file, size_t size);
-FileRecord* create_file(const char* path);
-FileRecord* create_directory(const char* path);
+// `owner` is who creates it and its mode. Without one (the host tests, and
+// anything with no caller to name) it gets the default of its path
+// (sxfs/sxfs_ownership.h).
+FileRecord* create_file(const char* path, const vfs::Ownership* owner = nullptr);
+FileRecord* create_directory(const char* path, const vfs::Ownership* owner = nullptr);
 bool remove_directory(FileRecord& file);
 bool rename_path(const char* old_path, const char* new_path);
 bool unlink_file(FileRecord& file);

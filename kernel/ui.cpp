@@ -224,11 +224,14 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_mouse_device.read = read_mouse_device;
     g_mouse_device.can_read = mouse_device_can_read;
     g_mouse_device.close = nullptr;
-    if (!device::register_node("/dev/input0", &g_input_device, false)) {
+    // The system's only (docs/kernel/USERS_AND_PERMISSIONS.md, "Devices"): a
+    // process that can read the keyboard can read a password, and one that can
+    // write input can answer the elevation prompt. windowd reads them.
+    if (!device::register_node("/dev/input0", &g_input_device, false, 0600)) {
         return;
     }
     if (input::pointer_available()) {
-        if (!device::register_node("/dev/mouse0", &g_mouse_device, false)) {
+        if (!device::register_node("/dev/mouse0", &g_mouse_device, false, 0600)) {
             return;
         }
         g_mouse_available = true;

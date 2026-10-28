@@ -104,7 +104,9 @@ int ensure_directory_node(int parent, const char* name) {
 }
 
 // Adds an initramfs entry below `parent`, creating the directories on the way.
-bool add_entry(int parent, const char* path, vfs::NodeType type, const void* data, size_t size) {
+// The CPIO header's uid, gid and mode become the entry's ownership.
+bool add_entry(int parent, const char* path, vfs::NodeType type, const void* data, size_t size,
+               uint32_t uid, uint32_t gid, uint32_t mode, uint32_t mtime) {
     char component[kMaxNameLength] = {};
     const char* cursor = path;
 
@@ -146,6 +148,12 @@ bool add_entry(int parent, const char* path, vfs::NodeType type, const void* dat
         g_nodes[node].vnode.data = const_cast<void*>(data);
         g_nodes[node].vnode.size = size;
         g_nodes[node].vnode.writable = false;
+        g_nodes[node].vnode.uid = uid;
+        g_nodes[node].vnode.gid = gid;
+        g_nodes[node].vnode.mode = static_cast<uint16_t>(
+            (type == vfs::NodeType::directory ? vfs::kModeDirectory : vfs::kModeFile) |
+            (mode & vfs::kModePermissions));
+        g_nodes[node].vnode.mtime = mtime;
         return true;
     }
 }
@@ -390,9 +398,94 @@ void invalidate_node(vfs::Vnode& node) {
     node.writable = false;
 }
 
+// Every directory above `index` lets `who` search it.
+bool ancestors_searchable(const cred::Credentials& who, int index) {
+    int ancestor = g_nodes[index].vnode.parent;
+    while (ancestor >= 0) {
+        if (!vfs::permits(who, g_nodes[ancestor].vnode, vfs::kAccessExecute)) {
+            return false;
+        }
+        ancestor = g_nodes[ancestor].vnode.parent;
+    }
+    return true;
+}
+
+// `who` may add or remove an entry in directory `parent`: search on the way
+// there, then write and search on the directory itself.
+bool may_change_directory(const cred::Credentials& who, int parent) {
+    return ancestors_searchable(who, parent) &&
+        vfs::permits(who, g_nodes[parent].vnode, vfs::kAccessWrite | vfs::kAccessExecute);
+}
+
+// The sticky bit (/tmp is 1777): in such a directory only the entry's owner,
+// the directory's owner or the system may remove or rename an entry.
+bool sticky_allows(const cred::Credentials& who, int parent, const vfs::Vnode& entry) {
+    const vfs::Ownership directory = vfs::ownership_of(g_nodes[parent].vnode);
+    if ((directory.mode & vfs::kModeSticky) == 0 || cred::acts_as_system(who)) {
+        return true;
+    }
+    return who.euid == vfs::ownership_of(entry).uid || who.euid == directory.uid;
+}
+
 } // namespace
 
 namespace vfs {
+
+Ownership ownership_of(const Vnode& node) {
+    if (node.mode != 0) {
+        return {node.uid, node.gid, node.mode};
+    }
+    const bool directory = node.type == NodeType::directory;
+    return {cred::kSystemUid, cred::kSystemGid,
+            static_cast<uint16_t>(directory ? (kModeDirectory | kDefaultDirectoryPermissions)
+                                            : (kModeFile | kDefaultFilePermissions))};
+}
+
+void set_ownership(Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
+    node.uid = uid;
+    node.gid = gid;
+    node.mode = mode;
+}
+
+bool permits(const cred::Credentials& who, const Vnode& node, uint32_t want) {
+    const Ownership owner = ownership_of(node);
+    if (cred::acts_as_system(who)) {
+        // The system reads and writes anything, and runs only what something
+        // marked runnable; a directory is always searchable to it.
+        return (want & kAccessExecute) == 0 || node.type == NodeType::directory ||
+            (owner.mode & 0111) != 0;
+    }
+    uint32_t granted = owner.mode & 07;
+    if (who.euid == owner.uid) {
+        granted = (owner.mode >> 6) & 07;
+    } else if (who.gid == owner.gid) {
+        granted = (owner.mode >> 3) & 07;
+    }
+    return (granted & want) == want;
+}
+
+bool may_access(const cred::Credentials& who, const char* path, uint32_t want) {
+    char normalized[kMaxPathLength] = {};
+    if (path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+        g_last_error = SX_EINVAL;
+        return false;
+    }
+    const int index = resolve_index(normalized);
+    if (index < 0) {
+        g_last_error = SX_ENOENT;
+        return false;
+    }
+    refresh_external_node(g_nodes[index].vnode);
+    if (!ancestors_searchable(who, index) || !permits(who, g_nodes[index].vnode, want)) {
+        g_last_error = SX_EACCES;
+        return false;
+    }
+    return true;
+}
+
+bool may_execute(const cred::Credentials& who, const char* path) {
+    return may_access(who, path, kAccessExecute);
+}
 
 bool normalize_path(const char* cwd, const char* input, char* output, size_t capacity) {
     if (cwd == nullptr || input == nullptr || output == nullptr || capacity < 2) {
@@ -527,9 +620,15 @@ void initialize(const void* archive, size_t size) {
         }
 
         uint32_t mode = 0;
+        uint32_t uid = 0;
+        uint32_t gid = 0;
+        uint32_t mtime = 0;
         uint32_t file_size = 0;
         uint32_t name_size = 0;
         if (!parse_hex_u32(header + 14, 8, mode) ||
+            !parse_hex_u32(header + 22, 8, uid) ||
+            !parse_hex_u32(header + 30, 8, gid) ||
+            !parse_hex_u32(header + 46, 8, mtime) ||
             !parse_hex_u32(header + 54, 8, file_size) ||
             !parse_hex_u32(header + 94, 8, name_size)) {
             return;
@@ -583,7 +682,7 @@ void initialize(const void* archive, size_t size) {
             return;
         }
         const NodeType type = file_type == 0040000u ? NodeType::directory : NodeType::file;
-        if (!add_entry(rescue, name, type, data, file_size)) {
+        if (!add_entry(rescue, name, type, data, file_size, uid, gid, mode, mtime)) {
             return;
         }
     }
@@ -614,7 +713,7 @@ const Vnode* resolve(const char* path) {
     return &g_nodes[index].vnode;
 }
 
-Vnode* open(const char* path, uint32_t flags) {
+Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint16_t create_permissions) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
         g_last_error = SX_EINVAL;
@@ -635,6 +734,12 @@ Vnode* open(const char* path, uint32_t flags) {
     if (index >= 0) {
         Vnode& node = g_nodes[index].vnode;
         refresh_external_node(node);
+        const uint32_t want = ((flags & SAVANXP_OPEN_READ) != 0 ? kAccessRead : 0u) |
+            ((wants_write || wants_truncate) ? kAccessWrite : 0u);
+        if (!ancestors_searchable(who, index) || !permits(who, node, want)) {
+            g_last_error = SX_EACCES;
+            return nullptr;
+        }
         if ((wants_write || wants_truncate) && node.backend == Backend::memory) {
             if (!attach_dynamic_storage(node, wants_truncate)) {
                 g_last_error = SX_ENOMEM;
@@ -678,16 +783,27 @@ Vnode* open(const char* path, uint32_t flags) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
+    if (!may_change_directory(who, index)) {
+        g_last_error = SX_EACCES;
+        return nullptr;
+    }
 
+    const Ownership owner = {who.euid, who.gid,
+                             static_cast<uint16_t>(kModeFile | (create_permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        Vnode* node = volume.driver->create_file(volume.volume, normalized);
+        Vnode* node = volume.driver->create_file(volume.volume, normalized, owner);
         if (node == nullptr) {
             g_last_error = SX_ENOSPC;
         }
         return node;
     }
 
+    // The in-memory tree is /dev and /rescue: the system's in every case.
+    if (!cred::acts_as_system(who)) {
+        g_last_error = SX_EACCES;
+        return nullptr;
+    }
     const int node_index = add_node(NodeType::file, leaf_name, index);
     if (node_index < 0) {
         g_last_error = SX_ENOMEM;
@@ -699,6 +815,7 @@ Vnode* open(const char* path, uint32_t flags) {
         g_last_error = SX_ENOMEM;
         return nullptr;
     }
+    set_ownership(node, owner.uid, owner.gid, owner.mode);
 
     return &node;
 }
@@ -756,7 +873,7 @@ Vnode* ensure_directory(const char* path) {
     }
 }
 
-Vnode* mkdir(const char* path) {
+Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permissions) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
         g_last_error = SX_EINVAL;
@@ -779,16 +896,42 @@ Vnode* mkdir(const char* path) {
         return nullptr;
     }
 
+    char parent_path[kMaxPathLength] = {};
+    char leaf_name[kMaxNameLength] = {};
+    if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+        g_last_error = SX_EINVAL;
+        return nullptr;
+    }
+    const int parent = resolve_index(parent_path);
+    if (parent < 0 || g_nodes[parent].vnode.type != NodeType::directory) {
+        g_last_error = SX_ENOENT;
+        return nullptr;
+    }
+    if (!may_change_directory(who, parent)) {
+        g_last_error = SX_EACCES;
+        return nullptr;
+    }
+
+    const Ownership owner = {who.euid, who.gid,
+                             static_cast<uint16_t>(kModeDirectory | (permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        Vnode* directory = volume.driver->create_directory(volume.volume, normalized);
+        Vnode* directory = volume.driver->create_directory(volume.volume, normalized, owner);
         if (directory == nullptr) {
             g_last_error = SX_EINVAL;
         }
         return directory;
     }
 
-    return ensure_directory(normalized);
+    if (!cred::acts_as_system(who)) {
+        g_last_error = SX_EACCES;
+        return nullptr;
+    }
+    Vnode* directory = ensure_directory(normalized);
+    if (directory != nullptr) {
+        set_ownership(*directory, owner.uid, owner.gid, owner.mode);
+    }
+    return directory;
 }
 
 Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable) {
@@ -849,7 +992,7 @@ Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* dat
     return node;
 }
 
-bool unlink(const char* path) {
+bool unlink(const cred::Credentials& who, const char* path) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
         g_last_error = SX_EINVAL;
@@ -872,6 +1015,10 @@ bool unlink(const char* path) {
         g_last_error = SX_EISDIR;
         return false;
     }
+    if (!may_change_directory(who, node.parent) || !sticky_allows(who, node.parent, node)) {
+        g_last_error = SX_EACCES;
+        return false;
+    }
 
     switch (node.backend) {
         case Backend::memory:
@@ -890,7 +1037,7 @@ bool unlink(const char* path) {
     }
 }
 
-bool rmdir(const char* path) {
+bool rmdir(const cred::Credentials& who, const char* path) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
         g_last_error = SX_EINVAL;
@@ -917,6 +1064,10 @@ bool rmdir(const char* path) {
         g_last_error = SX_ENOTEMPTY;
         return false;
     }
+    if (!may_change_directory(who, node.parent) || !sticky_allows(who, node.parent, node)) {
+        g_last_error = SX_EACCES;
+        return false;
+    }
 
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
@@ -932,7 +1083,7 @@ bool rmdir(const char* path) {
     return true;
 }
 
-bool truncate(const char* path, size_t size) {
+bool truncate(const cred::Credentials& who, const char* path, size_t size) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
         g_last_error = SX_EINVAL;
@@ -953,6 +1104,10 @@ bool truncate(const char* path, size_t size) {
     Vnode& node = g_nodes[index].vnode;
     if (node.type != NodeType::file) {
         g_last_error = SX_EISDIR;
+        return false;
+    }
+    if (!ancestors_searchable(who, index) || !permits(who, node, kAccessWrite)) {
+        g_last_error = SX_EACCES;
         return false;
     }
     if (!node.writable) {
@@ -988,7 +1143,7 @@ bool truncate(const char* path, size_t size) {
     }
 }
 
-bool rename(const char* old_path, const char* new_path) {
+bool rename(const cred::Credentials& who, const char* old_path, const char* new_path) {
     g_last_error = SX_ENOENT;
     if (!g_ready || old_path == nullptr || new_path == nullptr ||
         *old_path == '\0' || *new_path == '\0' ||
@@ -1040,6 +1195,11 @@ bool rename(const char* old_path, const char* new_path) {
     Vnode& node = g_nodes[node_index].vnode;
     if (node.type == NodeType::directory && node_is_ancestor(node_index, new_parent)) {
         g_last_error = SX_EINVAL;
+        return false;
+    }
+    if (!may_change_directory(who, node.parent) || !sticky_allows(who, node.parent, node) ||
+        !may_change_directory(who, new_parent)) {
+        g_last_error = SX_EACCES;
         return false;
     }
 
@@ -1134,6 +1294,115 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             g_last_error = SX_EINVAL;
             return 0;
     }
+}
+
+namespace {
+
+// The absolute path of a node, rebuilt from its parents. False if it does not
+// fit or the node is not in the table.
+bool path_of_node(const Vnode& node, char* out, size_t capacity) {
+    const NodeSlot* slot = reinterpret_cast<const NodeSlot*>(&node);
+    if (slot < g_nodes || slot >= g_nodes + g_node_count || capacity < 2) {
+        return false;
+    }
+    const char* names[kMaxNormalizedPathComponents];
+    size_t depth = 0;
+    for (int index = static_cast<int>(slot - g_nodes); index > 0; index = g_nodes[index].vnode.parent) {
+        if (depth == kMaxNormalizedPathComponents) {
+            return false;
+        }
+        names[depth++] = g_nodes[index].name;
+    }
+    size_t written = 0;
+    out[written++] = '/';
+    for (size_t level = depth; level > 0; --level) {
+        const size_t length = strlen(names[level - 1]);
+        if (written + length + 2 > capacity) {
+            return false;
+        }
+        if (written > 1) {
+            out[written++] = '/';
+        }
+        memcpy(out + written, names[level - 1], length);
+        written += length;
+    }
+    out[written] = '\0';
+    return true;
+}
+
+// Records ownership on `node`, through the driver of the volume it is on when
+// it is on one (a volume's directories are in-memory vnodes, found by path).
+bool store_ownership(Vnode& node, const Ownership& owner) {
+    char path[kMaxPathLength] = {};
+    if (!path_of_node(node, path, sizeof(path))) {
+        g_last_error = SX_EINVAL;
+        return false;
+    }
+    VolumeRef volume = {};
+    if (volume_for_path(path, volume)) {
+        if (volume.driver->set_ownership == nullptr ||
+            !volume.driver->set_ownership(node, owner.uid, owner.gid, owner.mode)) {
+            g_last_error = SX_EINVAL;
+            return false;
+        }
+    }
+    set_ownership(node, owner.uid, owner.gid, owner.mode);
+    return true;
+}
+
+int resolve_reachable(const cred::Credentials& who, const char* path) {
+    char normalized[kMaxPathLength] = {};
+    if (path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+        g_last_error = SX_EINVAL;
+        return -1;
+    }
+    const int index = resolve_index(normalized);
+    if (index < 0) {
+        g_last_error = SX_ENOENT;
+        return -1;
+    }
+    if (!ancestors_searchable(who, index)) {
+        g_last_error = SX_EACCES;
+        return -1;
+    }
+    return index;
+}
+
+} // namespace
+
+bool chmod_node(const cred::Credentials& who, Vnode& node, uint16_t permissions) {
+    Ownership owner = ownership_of(node);
+    if (!cred::acts_as_system(who) && who.euid != owner.uid) {
+        g_last_error = SX_EPERM;
+        return false;
+    }
+    owner.mode = static_cast<uint16_t>((owner.mode & kModeTypeMask) | (permissions & kModePermissions));
+    return store_ownership(node, owner);
+}
+
+bool chmod(const cred::Credentials& who, const char* path, uint16_t permissions) {
+    const int index = resolve_reachable(who, path);
+    return index >= 0 && chmod_node(who, g_nodes[index].vnode, permissions);
+}
+
+bool chown(const cred::Credentials& who, const char* path, uint32_t uid, uint32_t gid) {
+    const int index = resolve_reachable(who, path);
+    if (index < 0) {
+        return false;
+    }
+    if (!cred::acts_as_system(who)) {
+        g_last_error = SX_EPERM;
+        return false;
+    }
+    Vnode& node = g_nodes[index].vnode;
+    Ownership owner = ownership_of(node);
+    if (uid != kKeepId) {
+        owner.uid = uid;
+    }
+    if (gid != kKeepId) {
+        owner.gid = gid;
+    }
+    return store_ownership(node, owner);
 }
 
 const Vnode* child_at(const Vnode& directory, size_t index) {
