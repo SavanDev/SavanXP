@@ -88,6 +88,27 @@ and installs through `tools/sxfs_sync.py` unless `--no-install` is selected.
 `tools/run-user.sh` builds, installs, and boots an external application in one
 step.
 
+### The runtime's units: one manifest
+
+Which source files make up the POSIX userland runtime is written once, in
+`subsystems/posix/sdk/v1/runtime/units.txt`: one `<group> <path>` line per
+unit, the path from the repository root. Every build reads it:
+
+| Consumer | Groups |
+|---|---|
+| CMake (`SAVANXP_USER_RUNTIME_SOURCES`) | `core math gui audio midi` |
+| `tools/build-user.sh` | `core setjmp`, plus `math` (`--sse`), `audio` (`--audio`), `gui` (`--gui`) |
+| `ports/doomgeneric/build.sh` | `core math audio setjmp` |
+| `ports/ccleste/build.sh` | `core audio math setjmp` |
+| `ports/ffmpeg/runtime.sh` | `core math setjmp` into `libsavanxp.a`, `gui` into `libsxgui.a` |
+
+The scripts read it through `tools/lib/runtime_units.sh`
+(`savanxp_runtime_units ROOT GROUP...`), which fails on an unknown group;
+CMake re-configures when the manifest changes. Moving or adding a runtime unit
+is an edit to the manifest and nothing else. Per-unit compile flags (the
+`-fno-builtin` on `math.c`, `--heap-mib` on `posix.c`) stay in the script
+that needs them, keyed by file name.
+
 ## Layout
 
 - `CMakeLists.txt` defines the target graph and host-tool requirements.
@@ -106,6 +127,8 @@ step.
 - `tools/smoke_catalog.py` keeps commands, tokens, and callbacks declarative.
 - `tools/build-user.sh` builds optional external applications: POSIX, or SUN
   with `--native`, installed as `/disk/bin/<name>.sxe`.
+- `tools/lib/runtime_units.sh` reads the runtime manifest for the builds
+  outside CMake.
 - `tools/new-user-app.sh` creates a new application from the SDK template.
 - `tools/sxfs_sync.py` creates or additively updates `build/disk.img` under a
   lock, validates both sides, compacts when needed, and atomically retries.

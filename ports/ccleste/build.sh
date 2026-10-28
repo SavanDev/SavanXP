@@ -156,18 +156,21 @@ if ((SKIP_PORT == 0)); then
         OBJECTS+=("$OBJ/$name.o")
     done
 
-    echo "== compilando el runtime del SDK"
-    compile_asm "$SDK/runtime/crt0.S" "$OBJ/crt0.o"
-    compile_asm "$SDK/runtime/setjmp.S" "$OBJ/setjmp.o"
-    # sxe: the window runtime publishes its title and icon from its own .sxe.
-    for unit in libc posix pthread gfx gfx_scaled sxe audio math; do
-        compile_c "$SDK/runtime/$unit.c" "$OBJ/$unit.o" \
-            -fno-builtin "${INCLUDE_FLAGS[@]}"
-    done
-    # The platform's pixel primitives and painter (system/gfx).
-    for unit in pixels gfx2d; do
-        compile_c "$REPO/system/gfx/$unit.c" "$OBJ/$unit.o" \
-            -fno-builtin "${INCLUDE_FLAGS[@]}"
+    echo "== compiling the SDK runtime"
+    # The units come from the runtime's manifest
+    # (subsystems/posix/sdk/v1/runtime/units.txt); core brings sxe, which the
+    # window runtime uses to publish its title and icon from its own .sxe.
+    RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$REPO" core audio math setjmp)
+    mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
+    RUNTIME_OBJECTS=()
+    for unit in "${RUNTIME_UNITS[@]}"; do
+        object=$(savanxp_runtime_object "$OBJ" "$unit")
+        if [[ "$unit" == *.S ]]; then
+            compile_asm "$unit" "$object"
+        else
+            compile_c "$unit" "$object" -fno-builtin "${INCLUDE_FLAGS[@]}"
+        fi
+        RUNTIME_OBJECTS+=("$object")
     done
 
     echo "== compilando el cargador (ldso va dentro del programa, como en mediaplayer)"
@@ -176,8 +179,7 @@ if ((SKIP_PORT == 0)); then
 
     echo "== linkeando ccleste"
     LINK_ARGS=(
-        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/pthread.o" "$OBJ/gfx.o" "$OBJ/pixels.o" "$OBJ/gfx_scaled.o" "$OBJ/sxe.o" "$OBJ/gfx2d.o"
-        "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
+        "${RUNTIME_OBJECTS[@]}" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
     )
     # DT_NEEDED por soname: el cargador mapea libffmpeg.so.0.4 de /disk/lib y

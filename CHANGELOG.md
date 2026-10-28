@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The userland runtime's units are listed once**, in `subsystems/posix/sdk/v1/runtime/units.txt`;
+  CMake, `tools/build-user.sh` and the Doom, ccleste and FFmpeg ports read it
+  (`tools/lib/runtime_units.sh`). See `docs/build/BUILD_CMAKE.md`.
+
 - **x86 code lives only under `arch/x86_64` and `include/arch/x86_64`**: drivers share one port I/O
   header (`arch/x86_64/io.hpp`) and call named CPU operations (`memory_barrier`, `cpu_relax`,
   `load_page_table_root`, ...) instead of inline assembly; `kernel/cpu.hpp` became
@@ -43,6 +47,9 @@ Cut-off notes:
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
 ### Fixed
+
+- `ports/ffmpeg/runtime.sh` builds again: it still compiled SXGFX and SXGUI-C from the POSIX runtime
+  directory they left for `system/gfx`.
 
 - **`taskbar-smoke` passes again.** It compares the muted speaker with its icon file instead of a colour
   from before the Windows 2000 icon redraw, and `--virtio` is refused up front: the smoke needs a

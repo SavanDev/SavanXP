@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+# shellcheck source=../../tools/lib/runtime_units.sh
+. "$ROOT/tools/lib/runtime_units.sh"
 PORT_DIR="$SCRIPT_DIR"
 OUTPUT_ROOT="${SAVANXP_OUTPUT_ROOT:-$ROOT/build}"
 BUILD_ROOT="${SAVANXP_DOOM_BUILD_ROOT:-$OUTPUT_ROOT/ports/doomgeneric}"
@@ -195,40 +197,30 @@ for source in "${APP_SOURCES[@]}"; do
     index=$((index + 1))
 done
 
-crt0="$OBJ/crt0.o"
-libc="$OBJ/libc.o"
-posix="$OBJ/posix.o"
-pthread_object="$OBJ/pthread.o"
-gfx="$OBJ/gfx.o"
-# The window runtime reads the program's own .sxe to publish its title and
-# icon (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along.
-sxe="$OBJ/sxe.o"
-gfx2d="$OBJ/gfx2d.o"
-gfx_scaled="$OBJ/gfx_scaled.o"
-pixels="$OBJ/pixels.o"
-math="$OBJ/math.o"
-setjmp_object="$OBJ/setjmp.o"
-audio="$OBJ/audio.o"
+# The runtime's units come from its manifest
+# (subsystems/posix/sdk/v1/runtime/units.txt). The window runtime reads the
+# program's own .sxe to publish its title and icon
+# (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along in core.
+RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$ROOT" core math audio setjmp)
+mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
+RUNTIME_OBJECTS=()
+for unit in "${RUNTIME_UNITS[@]}"; do
+    object=$(savanxp_runtime_object "$OBJ" "$unit")
+    if [[ "$unit" == *.S ]]; then
+        compile_asm "$unit" "$object"
+    else
+        compile_c "$unit" "$object"
+    fi
+    RUNTIME_OBJECTS+=("$object")
+done
 ldso_object="$OBJ/ldso.o"
-compile_asm "$SDK/runtime/crt0.S" "$crt0"
-compile_c "$SDK/runtime/libc.c" "$libc"
-compile_c "$SDK/runtime/posix.c" "$posix"
-compile_c "$SDK/runtime/pthread.c" "$pthread_object"
-compile_c "$SDK/runtime/gfx.c" "$gfx"
-compile_c "$ROOT/system/gfx/pixels.c" "$pixels"
-compile_c "$SDK/runtime/sxe.c" "$sxe"
-compile_c "$ROOT/system/gfx/gfx2d.c" "$gfx2d"
-compile_c "$SDK/runtime/gfx_scaled.c" "$gfx_scaled"
-compile_c "$SDK/runtime/math.c" "$math"
-compile_asm "$SDK/runtime/setjmp.S" "$setjmp_object"
-compile_c "$SDK/runtime/audio.c" "$audio"
-# El cargador va dentro del programa (como mediaplayer): crt0 lo corre por el
-# hook debil sx_run_interpreter, y sin el DT_NEEDED se ignora en silencio.
+# The loader goes inside the program (like mediaplayer): crt0 runs it through
+# the weak sx_run_interpreter hook, and without a DT_NEEDED it stays silent.
 compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
 
 "$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
-    "$crt0" "$libc" "$posix" "$pthread_object" "$gfx" "$pixels" "$sxe" "$gfx2d" "$gfx_scaled" "$math" "$setjmp_object" "$audio" \
+    "${RUNTIME_OBJECTS[@]}" \
     "$ldso_object" \
     "${APP_OBJECTS[@]}" \
     "$SX_MIDI_LIB"

@@ -6,6 +6,8 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SDK="$ROOT/subsystems/posix/sdk/v1"
+# shellcheck source=lib/runtime_units.sh
+. "$ROOT/tools/lib/runtime_units.sh"
 BUILD_ROOT=${SAVANXP_OUTPUT_ROOT:-"$ROOT/build"}
 EXTERNAL_ROOT="$BUILD_ROOT/external"
 NAME=""
@@ -202,41 +204,36 @@ for source in "${SOURCE_FILES[@]}"; do
     index=$((index + 1))
 done
 
-compile_c "$SDK/runtime/libc.c" "$OBJ_ROOT/libc.o"
-POSIX_EXTRA=()
-if ((HEAP_MIB > 0)); then
-    POSIX_EXTRA=("-DSX_HEAP_SIZE=(${HEAP_MIB}u*1024u*1024u)")
-fi
-compile_c "$SDK/runtime/posix.c" "$OBJ_ROOT/posix.o" "${POSIX_EXTRA[@]}"
-compile_c "$SDK/runtime/pthread.c" "$OBJ_ROOT/pthread.o"
-compile_c "$SDK/runtime/gfx.c" "$OBJ_ROOT/gfx.o"
-compile_c "$ROOT/system/gfx/pixels.c" "$OBJ_ROOT/pixels.o"
-# gfx.c publishes the window's presentation from its own .sxe.
-compile_c "$SDK/runtime/sxe.c" "$OBJ_ROOT/sxe.o"
-compile_c "$ROOT/system/gfx/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
-compile_c "$SDK/runtime/gfx_scaled.c" "$OBJ_ROOT/gfx_scaled.o"
-compile_asm "$SDK/runtime/setjmp.S" "$OBJ_ROOT/setjmp.o"
-compile_asm "$SDK/runtime/crt0.S" "$OBJ_ROOT/crt0.o"
-RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/pthread.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/pixels.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/gfx_scaled.o" "$OBJ_ROOT/setjmp.o")
+# The runtime's units come from its manifest
+# (subsystems/posix/sdk/v1/runtime/units.txt); this script names groups only.
+RUNTIME_GROUPS=(core setjmp)
+((SSE)) && RUNTIME_GROUPS+=(math)
+((AUDIO)) && RUNTIME_GROUPS+=(audio)
+((GUI)) && RUNTIME_GROUPS+=(gui)
+RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$ROOT" "${RUNTIME_GROUPS[@]}")
+mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
+RUNTIME_OBJECTS=()
+for unit in "${RUNTIME_UNITS[@]}"; do
+    object=$(savanxp_runtime_object "$OBJ_ROOT" "$unit")
+    case "${unit##*/}" in
+        *.S) compile_asm "$unit" "$object" ;;
+        posix.c)
+            if ((HEAP_MIB > 0)); then
+                compile_c "$unit" "$object" "-DSX_HEAP_SIZE=(${HEAP_MIB}u*1024u*1024u)"
+            else
+                compile_c "$unit" "$object"
+            fi
+            ;;
+        math.c) compile_c "$unit" "$object" -fno-builtin ;;
+        *) compile_c "$unit" "$object" ;;
+    esac
+    RUNTIME_OBJECTS+=("$object")
+done
 if ((NATIVE)); then
     # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
     # on SXN, replacing the runtime's weak POSIX one.
     compile_c "$ROOT/system/runtime/sxn_runtime.c" "$OBJ_ROOT/sxn_runtime.o"
     RUNTIME_OBJECTS+=("$OBJ_ROOT/sxn_runtime.o")
-fi
-if ((SSE)); then
-    compile_c "$SDK/runtime/math.c" "$OBJ_ROOT/math.o" -fno-builtin
-    RUNTIME_OBJECTS+=("$OBJ_ROOT/math.o")
-fi
-if ((AUDIO)); then
-    compile_c "$SDK/runtime/audio.c" "$OBJ_ROOT/audio.o"
-    RUNTIME_OBJECTS+=("$OBJ_ROOT/audio.o")
-fi
-if ((GUI)); then
-    compile_c "$ROOT/system/gfx/sxchrome.c" "$OBJ_ROOT/sxchrome.o"
-    compile_c "$ROOT/system/gfx/sxgui.c" "$OBJ_ROOT/sxgui.o"
-    compile_c "$SDK/runtime/sxgui_app.c" "$OBJ_ROOT/sxgui_app.o"
-    RUNTIME_OBJECTS+=("$OBJ_ROOT/sxchrome.o" "$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
 fi
 
 "$LD" -nostdlib -static -T "$SDK/linker.ld" \

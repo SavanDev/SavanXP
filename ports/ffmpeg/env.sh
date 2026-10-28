@@ -12,6 +12,8 @@ case "$OUTPUT_ROOT" in
     *) OUTPUT_ROOT="$REPO/$OUTPUT_ROOT" ;;
 esac
 SDK="$REPO/subsystems/posix/sdk/v1"
+# shellcheck source=../../tools/lib/runtime_units.sh
+. "$REPO/tools/lib/runtime_units.sh"
 UPSTREAM_FILE="$PORT/UPSTREAM"
 
 metadata() {

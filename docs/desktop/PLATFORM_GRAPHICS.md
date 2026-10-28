@@ -85,10 +85,11 @@ the native services include `wm/` directly; the POSIX SDK keeps
 `savanxp/wm_protocol.h` and `savanxp/wm_shell_protocol.h` as forwarding
 headers.
 
-## Builds that list the units by hand
+## Builds outside CMake
 
-CMake builds the static runtime and the shared libraries from one list
-(`SAVANXP_USER_RUNTIME_SOURCES`, `SAVANXP_LIBRARY_REPLACES_*`, whose entries
-are repository paths). Three scripts outside CMake compile runtime units one by
-one and have to follow any move: `tools/build-user.sh`,
-`ports/doomgeneric/build.sh` and `ports/ccleste/build.sh`.
+CMake and the builds outside it (`tools/build-user.sh`, the Doom, ccleste and
+FFmpeg ports) take the runtime's units from one manifest,
+`subsystems/posix/sdk/v1/runtime/units.txt`, whose entries are repository
+paths ([BUILD_CMAKE.md](../build/BUILD_CMAKE.md#the-runtimes-units-one-manifest)).
+Moving a unit between `system/gfx` and the POSIX runtime changes that file and
+the matching `SAVANXP_LIBRARY_REPLACES_*` entry, nothing else.

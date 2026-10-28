@@ -14,17 +14,32 @@ cp "$SDK/linker.ld" "$SYSROOT/linker.ld"
 mkdir -p "$RUNTIME"
 cd "$RUNTIME"
 
-echo "== compilando el runtime con $($CLANG --version | head -1)"
-$SX_CC -c -x assembler-with-cpp "$SDK/runtime/crt0.S" -o crt0.o $SX_TARGET_CFLAGS
-$SX_CC -c -x assembler-with-cpp "$SDK/runtime/setjmp.S" -o setjmp.o $SX_TARGET_CFLAGS
-for unit in libc posix pthread gfx gfx2d sxgui sxgui_app sxchrome; do
-    $SX_CC -c -x c "$SDK/runtime/$unit.c" -o "$unit.o" $SX_TARGET_CFLAGS
-done
-$SX_CC -c -x c "$SDK/runtime/math.c" -o math.o -fno-builtin $SX_TARGET_CFLAGS
-
-rm -f libsavanxp.a libsxgui.a
-$AR_CMD rcs libsavanxp.a libc.o posix.o pthread.o gfx.o gfx2d.o math.o setjmp.o
-$AR_CMD rcs libsxgui.a sxgui.o sxgui_app.o sxchrome.o
+echo "== compiling the runtime with $($CLANG --version | head -1)"
+# The units come from the runtime's manifest
+# (subsystems/posix/sdk/v1/runtime/units.txt). libsavanxp.a carries what every
+# program links; the toolkit goes in its own archive.
+compile_units() {
+    local archive=$1 unit object
+    shift
+    local units_text
+    units_text=$(savanxp_runtime_units "$REPO" "$@")
+    local -a units objects=()
+    mapfile -t units <<<"$units_text"
+    for unit in "${units[@]}"; do
+        object=$(savanxp_runtime_object "$RUNTIME" "$unit")
+        case "${unit##*/}" in
+            *.S) $SX_CC -c -x assembler-with-cpp "$unit" -o "$object" $SX_TARGET_CFLAGS ;;
+            math.c) $SX_CC -c -x c "$unit" -o "$object" -fno-builtin $SX_TARGET_CFLAGS ;;
+            *) $SX_CC -c -x c "$unit" -o "$object" $SX_TARGET_CFLAGS ;;
+        esac
+        # crt0 stays loose: configure and the final link name it first.
+        [[ "$unit" == */crt0.S ]] || objects+=("$object")
+    done
+    rm -f "$archive"
+    $AR_CMD rcs "$archive" "${objects[@]}"
+}
+compile_units libsavanxp.a core math setjmp
+compile_units libsxgui.a gui
 $RANLIB_CMD libsavanxp.a libsxgui.a
 
 # El cargador va SUELTO, no dentro de libsavanxp.a.
@@ -41,7 +56,7 @@ echo "== compilando el cargador"
 $SX_CC -c -x c "$REPO/subsystems/posix/userland/ldso.c" -o ldso.o $SX_TARGET_CFLAGS
 
 sdk_fingerprint=$( {
-    find "$SDK/include" "$REPO/include" "$SDK/runtime" -type f -exec sha256sum {} +
+    find "$SDK/include" "$REPO/include" "$SDK/runtime" "$REPO/system/gfx" -type f -exec sha256sum {} +
     sha256sum "$SDK/linker.ld"
     sha256sum "$REPO/subsystems/posix/userland/ldso.c"
 } | sort | sha256sum | cut -d' ' -f1 )

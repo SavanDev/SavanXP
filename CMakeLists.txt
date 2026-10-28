@@ -296,36 +296,39 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 # The freestanding userland runtime is shared by every in-tree executable. The
 # final link still uses --gc-sections, so each program only retains the runtime
 # pieces it references.
-# Las unidades del runtime del usuario. UNA sola lista para los tres targets:
-# el normal, el PIC y el PIC sin math.
 #
-# Antes cada uno tenia la suya y no coincidian: el PIC traia sxgui, sxe y audio,
-# el normal no. Un programa.funcional bajo STATIC tiene que listar a mano las
-# unidades que el runtime no trae, y en cuanto se migra a PIE esas mismas
-# unidades dan simbolo duplicado. Eso hacia que cambiar de perfil no fuera un
-# cambio de una linea sino una reedicion de fuentes, que es justo lo que el
-# perfil deberia evitar.
+# The units come from one manifest, subsystems/posix/sdk/v1/runtime/units.txt,
+# which the builds outside CMake (tools/build-user.sh and the ports) read too.
+# In-tree there is ONE list for the three targets: the normal one, the PIC one
+# and the PIC one without math.
 #
-# Sobran unidades en un programa que no las use no cuesta nada: las opciones de
-# compilacion llevan -ffunction-sections/-fdata-sections y el perfil STATIC
-# pasa --gc-sections, asi que lo no referenciado se descarta en el enlace.
-set(SAVANXP_USER_RUNTIME_SOURCES
-    subsystems/posix/sdk/v1/runtime/crt0.S
-    subsystems/posix/sdk/v1/runtime/libc.c
-    subsystems/posix/sdk/v1/runtime/posix.c
-    subsystems/posix/sdk/v1/runtime/pthread.c
-    subsystems/posix/sdk/v1/runtime/math.c
-    subsystems/posix/sdk/v1/runtime/gfx.c
-    system/gfx/pixels.c
-    subsystems/posix/sdk/v1/runtime/gfx_scaled.c
-    system/gfx/gfx2d.c
-    system/gfx/sxchrome.c
-    system/gfx/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c
-    subsystems/posix/sdk/v1/runtime/sxe.c
-    subsystems/posix/sdk/v1/runtime/audio.c
-    subsystems/posix/sdk/v1/runtime/sxmidi.c
-)
+# Each target used to have its own list and they did not match: the PIC one
+# carried sxgui, sxe and audio, the normal one did not. A program that worked
+# under STATIC had to list by hand the units the runtime did not bring, and as
+# soon as it moved to PIE those same units became duplicate symbols. Switching
+# profiles was then not a one-line change but an edit of sources, which is
+# exactly what the profile should avoid.
+#
+# Extra units in a program that does not use them cost nothing: the compile
+# options carry -ffunction-sections/-fdata-sections and the STATIC profile
+# passes --gc-sections, so whatever is not referenced is dropped at link time.
+# setjmp is left out: only the ports use sx_setjmp.
+function(savanxp_runtime_units out_var)
+    set(manifest "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime/units.txt")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${manifest}")
+    file(STRINGS "${manifest}" lines REGEX "^[a-z]")
+    set(units)
+    foreach(line IN LISTS lines)
+        if(NOT line MATCHES "^([a-z]+)[ \t]+([^ \t]+)$")
+            message(FATAL_ERROR "${manifest}: malformed line '${line}'")
+        endif()
+        if(CMAKE_MATCH_1 IN_LIST ARGN)
+            list(APPEND units "${CMAKE_MATCH_2}")
+        endif()
+    endforeach()
+    set(${out_var} ${units} PARENT_SCOPE)
+endfunction()
+savanxp_runtime_units(SAVANXP_USER_RUNTIME_SOURCES core math gui audio midi)
 add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime PRIVATE
     "${CMAKE_SOURCE_DIR}/include"

@@ -28,6 +28,7 @@ tools/*
 !tools/qmp_client.py
 !tools/taskbar_smoke.py
 !tools/build-user.sh
+!tools/lib/
 !tools/run-user.sh
 !tools/new-user-app.sh
 !tools/restore_doom.sh

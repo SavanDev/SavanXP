@@ -1,0 +1,32 @@
+# The POSIX userland runtime: every unit, once (docs/build/BUILD_CMAKE.md).
+#
+# Read by CMake (SAVANXP_USER_RUNTIME_SOURCES) and by the builds outside it
+# (tools/build-user.sh, ports/doomgeneric/build.sh, ports/ccleste/build.sh)
+# through tools/lib/runtime_units.sh. A unit that moves or appears changes
+# here and nowhere else.
+#
+# Each line is "<group> <path from the repository root>". Each consumer asks
+# for the groups it links; the order is the link order (crt0 first).
+#
+#   core    what every program links
+#   math    libm (needs SSE)
+#   gui     the SXGUI toolkit and the POSIX application frame
+#   audio   PCM audio
+#   midi    the MIDI synthesizer
+#   setjmp  sx_setjmp/sx_longjmp, for the ports that use them
+core    subsystems/posix/sdk/v1/runtime/crt0.S
+core    subsystems/posix/sdk/v1/runtime/libc.c
+core    subsystems/posix/sdk/v1/runtime/posix.c
+core    subsystems/posix/sdk/v1/runtime/pthread.c
+core    subsystems/posix/sdk/v1/runtime/gfx.c
+core    system/gfx/pixels.c
+core    subsystems/posix/sdk/v1/runtime/gfx_scaled.c
+core    system/gfx/gfx2d.c
+core    subsystems/posix/sdk/v1/runtime/sxe.c
+math    subsystems/posix/sdk/v1/runtime/math.c
+gui     system/gfx/sxchrome.c
+gui     system/gfx/sxgui.c
+gui     subsystems/posix/sdk/v1/runtime/sxgui_app.c
+audio   subsystems/posix/sdk/v1/runtime/audio.c
+midi    subsystems/posix/sdk/v1/runtime/sxmidi.c
+setjmp  subsystems/posix/sdk/v1/runtime/setjmp.S
