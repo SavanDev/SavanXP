@@ -1,7 +1,7 @@
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/process.hpp"
@@ -10,10 +10,10 @@
 
 namespace {
 
-using namespace arch::x86_64::port_io;
-using arch::x86_64::read_msr;
-using arch::x86_64::read_timestamp_counter;
-using arch::x86_64::write_msr;
+using namespace arch::x86::port_io;
+using arch::read_msr;
+using arch::read_timestamp_counter;
+using arch::write_msr;
 
 constexpr uint16_t kKernelCodeSelector = 0x08;
 constexpr uint16_t kKernelDataSelector = 0x10;
@@ -109,8 +109,8 @@ struct InterruptFrame {
 };
 
 using InterruptHandler = void (*)();
-using arch::x86_64::InterruptEoi;
-using arch::x86_64::IrqHandler;
+using arch::InterruptEoi;
+using arch::IrqHandler;
 
 // Una linea de interrupcion puede tener mas de un dueño legitimo: el SCI lo
 // piden la ACPI hand-rolled y uACPI, y varios links PCI pueden caer en la misma
@@ -128,10 +128,10 @@ struct ExternalHandlerSlot {
 // usuario -- y despues un descriptor de TSS por core. La GDT es una sola y la
 // comparten todos los cores; lo que es de cada core es su TSS.
 constexpr uint32_t kGdtFixedEntries = 5;
-static_assert(kGdtFixedEntries * 8 == arch::x86_64::kTssSelectorBase,
+static_assert(kGdtFixedEntries * 8 == arch::kTssSelectorBase,
               "el primer TSS tiene que caer justo despues de las entradas fijas");
 
-uint64_t g_gdt[kGdtFixedEntries + 2 * arch::x86_64::kMaxCpus] = {
+uint64_t g_gdt[kGdtFixedEntries + 2 * arch::kMaxCpus] = {
     0x0000000000000000ULL,
     0x00af9a000000ffffULL,
     0x00af92000000ffffULL,
@@ -139,7 +139,7 @@ uint64_t g_gdt[kGdtFixedEntries + 2 * arch::x86_64::kMaxCpus] = {
     0x00affa000000ffffULL,
 };
 
-Tss g_tss[arch::x86_64::kMaxCpus] = {};
+Tss g_tss[arch::kMaxCpus] = {};
 GdtDescriptor g_gdt_descriptor = {
     .limit = static_cast<uint16_t>(sizeof(g_gdt) - 1),
     .base = reinterpret_cast<uint64_t>(&g_gdt[0]),
@@ -291,8 +291,8 @@ uint64_t read_cr2() {
         console::printf("rsp: 0x%llx ss: 0x%llx\n", frame->rsp, frame->ss);
     }
 
-    arch::x86_64::disable_interrupts();
-    arch::x86_64::halt_forever();
+    arch::disable_interrupts();
+    arch::halt_forever();
 }
 
 void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code, bool has_error_code) {
@@ -353,7 +353,7 @@ void dispatch_external_vector(uint8_t vector) {
     // kernel: van con el lock. Los IPI no -- el ping llega mientras el BSP,
     // que lo mando, esta corriendo el arranque y espera el acuse. Estos
     // handlers no cambian de contexto, asi que soltar el lock aca es seguro.
-    const bool takes_kernel_lock = vector < arch::x86_64::kIpiPingVector;
+    const bool takes_kernel_lock = vector < arch::kIpiPingVector;
     if (takes_kernel_lock) {
         smp::lock_kernel();
     }
@@ -414,7 +414,7 @@ void install_tss_descriptor(uint32_t index) {
 // escritura posterior es la del propio procesador, que al hacer `ltr` prende el
 // bit Busy del descriptor que carga -- cada core el suyo, sin carrera.
 void install_tss_descriptors() {
-    for (uint32_t index = 0; index < arch::x86_64::kMaxCpus; ++index) {
+    for (uint32_t index = 0; index < arch::kMaxCpus; ++index) {
         install_tss_descriptor(index);
     }
 }
@@ -446,7 +446,7 @@ void load_gdt_without_tss() {
 
 void load_task_register_for(uint32_t index) {
     const uint16_t selector = static_cast<uint16_t>(
-        arch::x86_64::kTssSelectorBase + index * arch::x86_64::kTssDescriptorSize);
+        arch::kTssSelectorBase + index * arch::kTssDescriptorSize);
     asm volatile("ltr %0" : : "r"(selector) : "memory");
 }
 
@@ -490,7 +490,7 @@ void run_breakpoint_probe() {
 
     if (g_breakpoint_probe_hits != 1) {
         console::printf("cpu: breakpoint probe failed (%llu)\n", g_breakpoint_probe_hits);
-        arch::x86_64::halt_forever();
+        arch::halt_forever();
     }
 }
 
@@ -665,14 +665,14 @@ void initialize_idt() {
     set_idt_gate(62, reinterpret_cast<InterruptHandler>(vector_62), kInterruptGate);
     set_idt_gate(63, reinterpret_cast<InterruptHandler>(vector_63), kInterruptGate);
     set_idt_gate(64, reinterpret_cast<InterruptHandler>(vector_64), kInterruptGate);
-    set_idt_gate(arch::x86_64::kIpiRescheduleVector, reinterpret_cast<InterruptHandler>(x86_64_reschedule_entry), kInterruptGate);
+    set_idt_gate(arch::kIpiRescheduleVector, reinterpret_cast<InterruptHandler>(x86_64_reschedule_entry), kInterruptGate);
     set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }
 
 } // namespace
 
-namespace arch::x86_64 {
+namespace arch {
 
 __attribute__((no_stack_protector))
 void initialize_stack_chk_guard() {
@@ -1206,4 +1206,4 @@ void enable_interrupts_and_halt() {
     }
 }
 
-} // namespace arch::x86_64
+} // namespace arch

@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
@@ -16,7 +16,7 @@
 namespace fb_gpu {
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr uint32_t kImportedSurfaceCount = 8u;
 
@@ -208,10 +208,10 @@ bool remap_vram_aperture() {
     const uint32_t saved = firmware_pixels[0];
     const uint32_t probe = saved ^ 0xA5A5A5A5u;
     aperture_pixels[0] = probe;
-    arch::x86_64::store_barrier();
+    arch::store_barrier();
     const bool aliases_same_memory = firmware_pixels[0] == probe;
     firmware_pixels[0] = saved;
-    arch::x86_64::store_barrier();
+    arch::store_barrier();
 
     if (!aliases_same_memory) {
         (void)vm::unmap_kernel_pages(

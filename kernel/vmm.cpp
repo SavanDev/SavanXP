@@ -1,6 +1,6 @@
 #include "kernel/vmm.hpp"
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/object.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
@@ -14,8 +14,8 @@ static_assert(vm::kPageSizeBytes == memory::kPageSize,
 
 namespace {
 
-using arch::x86_64::invalidate_page;
-using arch::x86_64::read_page_table_root;
+using arch::invalidate_page;
+using arch::read_page_table_root;
 
 constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
 constexpr uint64_t kKernelPml4Start = 256;
@@ -33,18 +33,18 @@ bool g_ready = false;
 // tomado. Ver sync_kernel_tlb() en vmm.hpp.
 uint64_t g_kernel_tlb_generation = 0;
 // La generacion con la que quedo al dia la TLB de cada core.
-uint64_t g_kernel_tlb_synced[arch::x86_64::kMaxCpus] = {};
+uint64_t g_kernel_tlb_synced[arch::kMaxCpus] = {};
 
 // User-half shootdown (see vmm.hpp). All of it changes with the kernel lock
 // held, and every core reads it with the lock held too.
-static_assert(arch::x86_64::kMaxCpus <= 32, "deferred_cpus is a 32-bit mask");
+static_assert(arch::kMaxCpus <= 32, "deferred_cpus is a 32-bit mask");
 // The user address space each core has in CR3 (its PML4), 0 for none yet.
-uint64_t g_loaded_pml4[arch::x86_64::kMaxCpus] = {};
+uint64_t g_loaded_pml4[arch::kMaxCpus] = {};
 // Shootdown numbers: the last one that asked each core to flush, and the last
 // one each core has flushed for. Equal means up to date.
 uint64_t g_shootdown_sequence = 0;
-uint64_t g_flush_requested[arch::x86_64::kMaxCpus] = {};
-uint64_t g_flush_done[arch::x86_64::kMaxCpus] = {};
+uint64_t g_flush_requested[arch::kMaxCpus] = {};
+uint64_t g_flush_done[arch::kMaxCpus] = {};
 // Other cores holding a space this batch of unmaps touched. unmap_page adds
 // to it; finish_shootdown() asks them to flush and clears it.
 uint32_t g_stale_cpus = 0;
@@ -391,7 +391,7 @@ bool unmap_kernel_page(uint64_t virtual_address) {
 
     // Los demas cores se enteran al tomar el lock. Este ya invalido la pagina:
     // si estaba al dia, sigue al dia.
-    const uint32_t cpu = arch::x86_64::cpu_index();
+    const uint32_t cpu = arch::cpu_index();
     const bool was_synced = g_kernel_tlb_synced[cpu] == g_kernel_tlb_generation;
     g_kernel_tlb_generation += 1;
     if (was_synced) {
@@ -404,11 +404,11 @@ bool unmap_kernel_page(uint64_t virtual_address) {
 // invalidates it if it holds the space, and every other core holding it is
 // noted for finish_shootdown().
 void note_user_unmap(const vm::VmSpace& space, uint64_t virtual_address) {
-    const uint32_t self = arch::x86_64::cpu_index();
+    const uint32_t self = arch::cpu_index();
     if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         invalidate_page(virtual_address);
     }
-    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+    for (uint32_t cpu = 0; cpu < arch::kMaxCpus; ++cpu) {
         if (cpu != self && g_loaded_pml4[cpu] == space.pml4_physical) {
             g_stale_cpus |= 1u << cpu;
         }
@@ -416,7 +416,7 @@ void note_user_unmap(const vm::VmSpace& space, uint64_t virtual_address) {
 }
 
 bool flushed_since(uint32_t cpus, uint64_t sequence) {
-    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+    for (uint32_t cpu = 0; cpu < arch::kMaxCpus; ++cpu) {
         if ((cpus & (1u << cpu)) != 0 && g_flush_done[cpu] < sequence) {
             return false;
         }
@@ -434,7 +434,7 @@ uint64_t finish_shootdown(uint32_t& cpus) {
         return 0;
     }
     g_shootdown_sequence += 1;
-    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+    for (uint32_t cpu = 0; cpu < arch::kMaxCpus; ++cpu) {
         if ((cpus & (1u << cpu)) != 0) {
             g_flush_requested[cpu] = g_shootdown_sequence;
             smp::kick(cpu);
@@ -534,8 +534,8 @@ void destroy_address_space(VmSpace& space) {
     // Its process runs nowhere else by now, and the cores that ran it loaded
     // another space since. This core may still hold it (a process that reaps
     // itself), until the scheduler switches away before dropping the lock.
-    const uint32_t self = arch::x86_64::cpu_index();
-    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+    const uint32_t self = arch::cpu_index();
+    for (uint32_t cpu = 0; cpu < arch::kMaxCpus; ++cpu) {
         if (g_loaded_pml4[cpu] != space.pml4_physical) {
             continue;
         }
@@ -1057,7 +1057,7 @@ bool write_combining_page_flags(uint64_t& flags) {
     // entry of its own but maps the framebuffer with another (write-through),
     // which is safe but not the best for burst writes to VRAM.
     constexpr uint32_t kMsrPat = 0x277u;
-    const uint64_t pat = arch::x86_64::read_msr(kMsrPat);
+    const uint64_t pat = arch::read_msr(kMsrPat);
 
     constexpr uint64_t kMemoryTypeWriteCombining = 0x01;
     for (uint64_t index = 0; index < 8; ++index) {
@@ -1130,33 +1130,33 @@ bool retarget_kernel_page(void* virtual_address, uint64_t physical_address, uint
 }
 
 void sync_kernel_tlb() {
-    const uint32_t cpu = arch::x86_64::cpu_index();
+    const uint32_t cpu = arch::cpu_index();
     const uint64_t generation = g_kernel_tlb_generation;
     if (g_kernel_tlb_synced[cpu] == generation) {
         return;
     }
-    arch::x86_64::flush_tlb();
+    arch::flush_tlb();
     g_kernel_tlb_synced[cpu] = generation;
 }
 
 void load_address_space(const VmSpace& space) {
-    const uint32_t cpu = arch::x86_64::cpu_index();
+    const uint32_t cpu = arch::cpu_index();
     g_loaded_pml4[cpu] = space.pml4_physical;
     if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         return;
     }
-    arch::x86_64::load_page_table_root(space.pml4_physical);
+    arch::load_page_table_root(space.pml4_physical);
     // Reloading CR3 drops every user translation: whatever shootdown was asked
     // of this core is done.
     g_flush_done[cpu] = g_flush_requested[cpu];
 }
 
 void sync_user_tlb() {
-    const uint32_t cpu = arch::x86_64::cpu_index();
+    const uint32_t cpu = arch::cpu_index();
     if (g_flush_done[cpu] == g_flush_requested[cpu]) {
         return;
     }
-    arch::x86_64::load_page_table_root(read_page_table_root());
+    arch::load_page_table_root(read_page_table_root());
     g_flush_done[cpu] = g_flush_requested[cpu];
 }
 

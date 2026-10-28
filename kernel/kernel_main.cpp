@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/ac97.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/ahci.hpp"
@@ -121,7 +121,7 @@ namespace
 
 [[noreturn]] void kernel_main(const boot::BootInfo &boot_info)
 {
-    arch::x86_64::initialize_cpu();
+    arch::initialize_cpu();
     // Reloj monotono antes que nada: hasta que este calibrado el kernel no
     // tiene forma de medir el tiempo (los ticks necesitan interrupciones, y
     // recien se habilitan bastante mas adelante), y el splash no puede animar

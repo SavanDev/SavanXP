@@ -1,6 +1,6 @@
 #include "kernel/ata.hpp"
 
-#include "arch/x86_64/io.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 
 #include <stddef.h>
@@ -8,7 +8,7 @@
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr uint16_t kPrimaryIoBase = 0x1f0;
 constexpr uint16_t kPrimaryControlBase = 0x3f6;

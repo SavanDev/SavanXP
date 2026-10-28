@@ -12,14 +12,14 @@ Cut-off notes:
 
 ### Changed
 
+- **The kernel is written against `namespace arch`** (`arch/cpu.hpp`, implemented by `arch/x86_64`),
+  and x86 code lives only under `arch/` and `include/arch/`: drivers share one port I/O header
+  (`arch/x86/io.hpp`) and call named CPU operations (`arch::memory_barrier`, `arch::cpu_relax`,
+  `arch::load_page_table_root`, ...) instead of inline assembly. See `docs/kernel/ARCH.md`.
+
 - **The userland runtime's units are listed once**, in `subsystems/posix/sdk/v1/runtime/units.txt`;
   CMake, `tools/build-user.sh` and the Doom, ccleste and FFmpeg ports read it
   (`tools/lib/runtime_units.sh`). See `docs/build/BUILD_CMAKE.md`.
-
-- **x86 code lives only under `arch/x86_64` and `include/arch/x86_64`**: drivers share one port I/O
-  header (`arch/x86_64/io.hpp`) and call named CPU operations (`memory_barrier`, `cpu_relax`,
-  `load_page_table_root`, ...) instead of inline assembly; `kernel/cpu.hpp` became
-  `arch/x86_64/cpu.hpp`. See `docs/kernel/ARCH.md`.
 
 - **SXGFX, SXCHROME and SXGUI-C left the POSIX SDK for the platform layer** (`system/gfx`,
   `include/sxgfx`), with the pixel primitives and fonts split out of the POSIX window client. The

@@ -1,6 +1,6 @@
 #include "kernel/smp.hpp"
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
@@ -93,7 +93,7 @@ int probe_on(uint32_t lapic_id, uint64_t address, bool sync) {
     __atomic_store_n(&g_probe_address, address, __ATOMIC_RELEASE);
     const uint64_t before = __atomic_load_n(&g_ping_count, __ATOMIC_ACQUIRE);
     int result = -1;
-    if (arch::x86_64::send_ipi(lapic_id, arch::x86_64::kIpiPingVector)) {
+    if (arch::send_ipi(lapic_id, arch::kIpiPingVector)) {
         for (uint64_t spin = 0; spin < kPingSpinLimit; ++spin) {
             if (__atomic_load_n(&g_ping_count, __ATOMIC_ACQUIRE) > before) {
                 result = static_cast<int>(__atomic_load_n(&g_probe_value, __ATOMIC_ACQUIRE));
@@ -112,12 +112,12 @@ void spin_hint() {
 
 uint16_t expected_selector(uint32_t kernel_index) {
     return static_cast<uint16_t>(
-        arch::x86_64::kTssSelectorBase + kernel_index * arch::x86_64::kTssDescriptorSize);
+        arch::kTssSelectorBase + kernel_index * arch::kTssDescriptorSize);
 }
 
 [[noreturn]] void park() {
     for (;;) {
-        arch::x86_64::halt_once();
+        arch::halt_once();
     }
 }
 
@@ -131,10 +131,10 @@ uint16_t expected_selector(uint32_t kernel_index) {
 // compartido. El AP solo toca registros de su propio core, su BootSlot y
 // atomicos. Su smp::Cpu ya la dejo lista el BSP antes de lanzarlo.
 extern "C" void savanxp_ap_entry(void*) {
-    arch::x86_64::ap_initialize_cpu();
-    arch::x86_64::ap_initialize_local_apic();
+    arch::ap_initialize_cpu();
+    arch::ap_initialize_local_apic();
 
-    const uint32_t lapic_id = arch::x86_64::local_apic_id();
+    const uint32_t lapic_id = arch::local_apic_id();
 
     BootSlot* slot = nullptr;
     for (uint32_t index = 0; index < g_slot_count; ++index) {
@@ -151,16 +151,16 @@ extern "C" void savanxp_ap_entry(void*) {
         park();
     }
 
-    arch::x86_64::load_task_register(slot->kernel_index);
+    arch::load_task_register(slot->kernel_index);
     // TR leido de verdad y no cpu_index(): aquel asm el compilador lo puede
     // adelantar por encima del `ltr`, y esto es justo lo que el BSP verifica.
-    slot->loaded_selector = arch::x86_64::read_task_register();
+    slot->loaded_selector = arch::read_task_register();
 
     // Habilitar antes de reportarse, para que "online" signifique tambien "ya
     // acepta IPIs". Mientras esta estacionado, el unico vector que puede
     // llegarle es un IPI: los GSI del IOAPIC estan ruteados al BSP y su timer
     // local todavia no arranco.
-    arch::x86_64::enable_interrupts();
+    arch::enable_interrupts();
     __atomic_store_n(&slot->online, 1u, __ATOMIC_RELEASE);
 
     // Estacionado hasta que el BSP arranque el scheduler. `cli` antes de mirar
@@ -168,16 +168,16 @@ extern "C" void savanxp_ap_entry(void*) {
     // hlt, el IPI queda pendiente y despierta al hlt en vez de perderse. Un AP
     // no tiene timer que lo despierte despues.
     for (;;) {
-        arch::x86_64::disable_interrupts();
+        arch::disable_interrupts();
         if (__atomic_load_n(&g_scheduling_started, __ATOMIC_ACQUIRE) != 0) {
             break;
         }
-        arch::x86_64::enable_interrupts_and_halt();
+        arch::enable_interrupts_and_halt();
     }
 
     // Un AP que no planifica (sin idle, sin timer o sin IPIs) sigue dormido.
     if (!smp::can_schedule(slot->kernel_index)) {
-        arch::x86_64::enable_interrupts();
+        arch::enable_interrupts();
         park();
     }
 
@@ -199,7 +199,7 @@ extern "C" void savanxp_kernel_lock_release() {
 }
 
 extern "C" process::SavedContext* savanxp_handle_reschedule_ipi(process::SavedContext* context) {
-    arch::x86_64::acknowledge_local_apic_interrupt();
+    arch::acknowledge_local_apic_interrupt();
     return process::handle_reschedule_ipi(context);
 }
 
@@ -230,8 +230,8 @@ bool initialize(const boot::BootInfo& boot_info) {
     // El BSP es el core 0 haya o no informacion de MP: cargo el TSS 0 en
     // initialize_cpu(), asi que this_cpu() ya lo resolvia desde entonces.
     g_cpu_state[0].index = 0;
-    g_cpu_state[0].lapic_id = arch::x86_64::local_apic_id();
-    if (arch::x86_64::read_task_register() != expected_selector(0)) {
+    g_cpu_state[0].lapic_id = arch::local_apic_id();
+    if (arch::read_task_register() != expected_selector(0)) {
         console::printf("smp: el BSP no tiene cargado el TSS 0\n");
     }
 
@@ -360,10 +360,10 @@ bool selftest_ipi() {
         return true; // nada que probar
     }
 
-    if (!arch::x86_64::register_interrupt_handler(
-            arch::x86_64::kIpiPingVector,
+    if (!arch::register_interrupt_handler(
+            arch::kIpiPingVector,
             ping_handler,
-            arch::x86_64::InterruptEoi::local_apic)) {
+            arch::InterruptEoi::local_apic)) {
         console::printf("smp: no se pudo registrar el vector de ping\n");
         return false;
     }
@@ -375,7 +375,7 @@ bool selftest_ipi() {
             __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) == 0) {
             continue;
         }
-        if (!arch::x86_64::send_ipi(slot.lapic_id, arch::x86_64::kIpiPingVector)) {
+        if (!arch::send_ipi(slot.lapic_id, arch::kIpiPingVector)) {
             console::printf(
                 "smp: fallo el IPI al lapic %u\n",
                 static_cast<unsigned>(slot.lapic_id));
@@ -521,7 +521,7 @@ void start_scheduling() {
             __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) == 0) {
             continue;
         }
-        (void)arch::x86_64::send_ipi(slot.lapic_id, arch::x86_64::kIpiPingVector);
+        (void)arch::send_ipi(slot.lapic_id, arch::kIpiPingVector);
     }
 
     if (g_online > 1) {
@@ -533,14 +533,14 @@ void start_scheduling() {
 }
 
 void kick(uint32_t index) {
-    if (!can_schedule(index) || index == arch::x86_64::cpu_index()) {
+    if (!can_schedule(index) || index == arch::cpu_index()) {
         return;
     }
     Cpu& cpu = g_cpu_state[index];
     if (cpu.kicked) {
         return;
     }
-    if (arch::x86_64::send_ipi(cpu.lapic_id, arch::x86_64::kIpiRescheduleVector)) {
+    if (arch::send_ipi(cpu.lapic_id, arch::kIpiRescheduleVector)) {
         cpu.kicked = true;
     }
 }
@@ -568,13 +568,13 @@ bool kernel_locked_here() {
 }
 
 void wait_for_interrupt() {
-    arch::x86_64::disable_interrupts();
+    arch::disable_interrupts();
     const bool held = kernel_locked_here();
     if (held) {
         unlock_kernel();
     }
-    arch::x86_64::enable_interrupts_and_halt();
-    arch::x86_64::disable_interrupts();
+    arch::enable_interrupts_and_halt();
+    arch::disable_interrupts();
     if (held) {
         lock_kernel();
     }

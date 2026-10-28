@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "boot/boot_info.hpp"
 #include "kernel/console.hpp"
 #include "kernel/kernel.hpp"
@@ -302,7 +302,7 @@ boot::BootInfo build_boot_info() {
 } // namespace
 
 extern "C" [[noreturn]] __attribute__((no_stack_protector)) void _start() {
-    arch::x86_64::initialize_stack_chk_guard();
+    arch::initialize_stack_chk_guard();
     console::early_init();
 
     if (!LIMINE_BASE_REVISION_SUPPORTED(g_limine_base_revision)) {

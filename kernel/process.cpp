@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
@@ -364,7 +364,7 @@ void release_all_handles(process::Process& proc) {
 }
 
 uint64_t initial_stack_guard() {
-    uint64_t value = arch::x86_64::random_u64();
+    uint64_t value = arch::random_u64();
     // The stack-protector ABI reserves the least-significant byte for string
     // termination, so a canary must never contain a zero there.
     if ((value & 0xffu) == 0) {
@@ -1156,7 +1156,7 @@ process::Thread* allocate_thread(process::Process& proc) {
         slot.kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
         slot.kernel_stack_size = kKernelStackPages * memory::kPageSize;
         reset_time_slice(slot);
-        arch::x86_64::fpu_init_area(slot.fpu_state);
+        arch::fpu_init_area(slot.fpu_state);
         proc.thread_count += 1;
         const size_t index = thread_index(&slot);
         if (index >= g_thread_bound) {
@@ -1708,17 +1708,17 @@ void switch_to_thread(process::Thread* target) {
     // The user FS/GS bases go the same way, for the same reason.
     if (this_cpu().current != target) {
         if (this_cpu().current != nullptr) {
-            arch::x86_64::fpu_save(this_cpu().current->fpu_state);
-            arch::x86_64::save_user_segment_bases(this_cpu().current->fs_base, this_cpu().current->gs_base);
+            arch::fpu_save(this_cpu().current->fpu_state);
+            arch::save_user_segment_bases(this_cpu().current->fs_base, this_cpu().current->gs_base);
         }
-        arch::x86_64::fpu_restore(target->fpu_state);
-        arch::x86_64::load_user_segment_bases(target->fs_base, target->gs_base);
+        arch::fpu_restore(target->fpu_state);
+        arch::load_user_segment_bases(target->fs_base, target->gs_base);
     }
 
     this_cpu().current = target;
     target->state = process::State::running;
     target->cpu = this_cpu().index;
-    arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
+    arch::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
     // Two threads of one process share the address space: switching between
     // them keeps CR3, and with it the TLB. load_address_space compares against
     // the live CR3, not against the previous thread's process, which also
@@ -1823,7 +1823,7 @@ bool prepare_exec_image(
         report_image_failure("exec", path, failure, reported_size);
         return false;
     }
-    vm::randomize_section_base(new_space, arch::x86_64::random_u64() ^ proc.pid);
+    vm::randomize_section_base(new_space, arch::random_u64() ^ proc.pid);
 
     elf::LoadResult load_result = {};
     elf::LoadFailure load_failure = elf::LoadFailure::none;
@@ -1864,7 +1864,7 @@ bool prepare_exec_image(
     self.fs_base = 0;
     self.gs_base = 0;
     if (this_cpu().current == &self) {
-        arch::x86_64::load_user_segment_bases(0, 0);
+        arch::load_user_segment_bases(0, 0);
     }
     fabricate_initial_context(self, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
     return true;
@@ -1928,7 +1928,7 @@ process::Process* create_process_internal(
         return nullptr;
     }
     vm::randomize_section_base(proc->address_space,
-        arch::x86_64::random_u64() ^ static_cast<uint64_t>(proc->pid));
+        arch::random_u64() ^ static_cast<uint64_t>(proc->pid));
 
     process::Thread* thread = process::detail::allocate_thread(*proc);
     if (thread == nullptr) {
@@ -2480,29 +2480,29 @@ bool snapshot_system_info(savanxp_system_info& info) {
         break;
     }
 
-    arch::x86_64::CpuIdentity identity = {};
-    arch::x86_64::query_cpu_identity(identity);
+    arch::CpuIdentity identity = {};
+    arch::query_cpu_identity(identity);
     memcpy(info.cpu_vendor, identity.vendor, sizeof(info.cpu_vendor));
     memcpy(info.cpu_brand, identity.brand, sizeof(info.cpu_brand));
     info.cpu_vendor[sizeof(info.cpu_vendor) - 1] = '\0';
     info.cpu_brand[sizeof(info.cpu_brand) - 1] = '\0';
     info.cpu_features = 0;
-    if ((identity.features & arch::x86_64::kCpuFeatureSse2) != 0) {
+    if ((identity.features & arch::kCpuFeatureSse2) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_SSE2;
     }
-    if ((identity.features & arch::x86_64::kCpuFeaturePae) != 0) {
+    if ((identity.features & arch::kCpuFeaturePae) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_PAE;
     }
-    if ((identity.features & arch::x86_64::kCpuFeatureNx) != 0) {
+    if ((identity.features & arch::kCpuFeatureNx) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_NX;
     }
-    if ((identity.features & arch::x86_64::kCpuFeatureLongMode) != 0) {
+    if ((identity.features & arch::kCpuFeatureLongMode) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_LONG_MODE;
     }
-    if ((identity.features & arch::x86_64::kCpuFeatureX2Apic) != 0) {
+    if ((identity.features & arch::kCpuFeatureX2Apic) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_X2APIC;
     }
-    if ((identity.features & arch::x86_64::kCpuFeatureHypervisor) != 0) {
+    if ((identity.features & arch::kCpuFeatureHypervisor) != 0) {
         info.cpu_features |= SAVANXP_CPU_FEATURE_HYPERVISOR;
     }
     return true;
@@ -2541,7 +2541,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
     // Desde aca el kernel deja de ser solo del BSP. El arranque corrio sin el
     // lock porque no habia con quien competir; lo que sigue ya no. IF=0 antes
     // de tomarlo: un tick con el lock tomado por este mismo core no entra.
-    arch::x86_64::disable_interrupts();
+    arch::disable_interrupts();
     smp::lock_kernel();
 
     // Un idle por core que pueda planificar. El del BSP es imprescindible; el
@@ -2577,12 +2577,12 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
     Thread* const init_thread = primary_thread(*init);
     g_schedule_cursor = thread_index(init_thread);
     switch_to_thread(init_thread);
-    arch::x86_64::resume_context(init_thread->context, init->address_space.pml4_physical);
+    arch::resume_context(init_thread->context, init->address_space.pml4_physical);
 }
 
 [[noreturn]] void run_secondary_core() {
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+    arch::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 void terminate_current(int exit_code) {
@@ -2603,7 +2603,7 @@ void terminate_current(int exit_code) {
     }
 
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+    arch::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 bool exit_pending(const Process& proc, int& exit_code) {
@@ -2813,7 +2813,7 @@ void exit_current_thread(int exit_code) {
     }
     this_cpu().retired = self;
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+    arch::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 int set_thread_base(Thread& self, uint32_t which, uint64_t address) {
@@ -2828,14 +2828,14 @@ int set_thread_base(Thread& self, uint32_t which, uint64_t address) {
         self.gs_base = address;
     }
     if (this_cpu().current == &self) {
-        arch::x86_64::load_user_segment_bases(self.fs_base, self.gs_base);
+        arch::load_user_segment_bases(self.fs_base, self.gs_base);
     }
     return 0;
 }
 
 void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base) {
     if (this_cpu().current == &thread) {
-        arch::x86_64::save_user_segment_bases(fs_base, gs_base);
+        arch::save_user_segment_bases(fs_base, gs_base);
         return;
     }
     fs_base = thread.fs_base;

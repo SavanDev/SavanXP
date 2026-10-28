@@ -3,15 +3,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/string.hpp"
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 void short_delay() {
     for (int i = 0; i < 1000; ++i) {
@@ -450,10 +450,10 @@ bool start_sci() {
         g_sci_active = ioapic::route_gsi(g_sci_int, ioapic::Polarity::active_low,
                                          ioapic::Trigger::level, sci_interrupt) != 0;
     } else if (g_sci_int < 16) {
-        g_sci_active = arch::x86_64::register_irq_handler(
+        g_sci_active = arch::register_irq_handler(
             static_cast<uint8_t>(g_sci_int), sci_interrupt);
         if (g_sci_active) {
-            arch::x86_64::enable_irq(static_cast<uint8_t>(g_sci_int));
+            arch::enable_irq(static_cast<uint8_t>(g_sci_int));
         }
     }
 
@@ -464,7 +464,7 @@ bool start_sci() {
 }
 
 [[noreturn]] void shutdown() {
-    arch::x86_64::disable_interrupts();
+    arch::disable_interrupts();
 
     if (g_s5_available && g_pm1a_cnt_port != 0) {
         const uint16_t value_a = static_cast<uint16_t>((g_slp_typ_a << 10) | (1u << 13));
@@ -481,11 +481,11 @@ bool start_sci() {
     out16(0xB004, 0x2000);  // Bochs / VirtualBox legacy
     out16(0x4004, 0x3400);  // VirtualBox
 
-    arch::x86_64::halt_forever();
+    arch::halt_forever();
 }
 
 [[noreturn]] void reboot() {
-    arch::x86_64::disable_interrupts();
+    arch::disable_interrupts();
 
     // 1) Reset register de la FADT.
     if (g_reset_supported) {
@@ -509,7 +509,7 @@ bool start_sci() {
     short_delay();
 
     // 4) Ultimo recurso.
-    arch::x86_64::halt_forever();
+    arch::halt_forever();
 }
 
 } // namespace acpi

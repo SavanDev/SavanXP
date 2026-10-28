@@ -1,7 +1,7 @@
 #include "kernel/timer.hpp"
 
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
@@ -12,7 +12,7 @@
 namespace
 {
 
-    using namespace arch::x86_64::port_io;
+    using namespace arch::x86::port_io;
 
     constexpr uint8_t kTimerVector = 48;
     constexpr uint8_t kPitIrq = 0;
@@ -131,7 +131,7 @@ namespace
         {
             return false;
         }
-        if (!arch::x86_64::local_apic_start_oneshot_timer(kTimerVector, kCalibrationOneShotCount, kApicDivideBy16))
+        if (!arch::local_apic_start_oneshot_timer(kTimerVector, kCalibrationOneShotCount, kApicDivideBy16))
         {
             return false;
         }
@@ -140,7 +140,7 @@ namespace
             return false;
         }
 
-        const uint32_t current_count = arch::x86_64::local_apic_current_timer_count();
+        const uint32_t current_count = arch::local_apic_current_timer_count();
         if (current_count == 0 || current_count >= kCalibrationOneShotCount)
         {
             return false;
@@ -172,7 +172,7 @@ namespace
         out8(kPitChannel0Data, static_cast<uint8_t>(divisor & 0xffu));
         out8(kPitChannel0Data, static_cast<uint8_t>((divisor >> 8) & 0xffu));
 
-        arch::x86_64::enable_irq(kPitIrq);
+        arch::enable_irq(kPitIrq);
         console::printf(
             "timer: PIT divisor=%u target_hz=%u\n",
             static_cast<unsigned>(divisor),
@@ -196,7 +196,7 @@ namespace timer
         g_frequency_hz = frequency_hz;
         g_backend = Backend::none;
 
-        if (!arch::x86_64::initialize_local_apic())
+        if (!arch::initialize_local_apic())
         {
             if (start_pit_timer(frequency_hz))
             {
@@ -222,7 +222,7 @@ namespace timer
                 static_cast<unsigned>(frequency_hz));
         }
 
-        if (!arch::x86_64::local_apic_start_periodic_timer(
+        if (!arch::local_apic_start_periodic_timer(
                 kTimerVector,
                 periodic_initial_count,
                 kApicDivideBy16))
@@ -244,7 +244,7 @@ namespace timer
         {
             return false;
         }
-        return arch::x86_64::local_apic_start_periodic_timer(
+        return arch::local_apic_start_periodic_timer(
             kTimerVector,
             g_periodic_initial_count,
             kApicDivideBy16);
@@ -270,7 +270,7 @@ namespace timer
         const uint64_t deadline = ticks() + tick_count;
         while (ticks() < deadline)
         {
-            arch::x86_64::halt_once();
+            arch::halt_once();
         }
     }
 
@@ -280,9 +280,9 @@ namespace timer
         // el reloj de ticks, la animacion del splash, el servicio de devices,
         // el sondeo de input y la medicion de entrega son del sistema, y los
         // hace el BSP una sola vez.
-        if (arch::x86_64::cpu_index() != 0)
+        if (arch::cpu_index() != 0)
         {
-            arch::x86_64::acknowledge_local_apic_interrupt();
+            arch::acknowledge_local_apic_interrupt();
             return process::handle_timer_tick(context);
         }
 
@@ -298,11 +298,11 @@ namespace timer
         input::poll();
         if (g_backend == Backend::local_apic)
         {
-            arch::x86_64::acknowledge_local_apic_interrupt();
+            arch::acknowledge_local_apic_interrupt();
         }
         else if (g_backend == Backend::pit)
         {
-            arch::x86_64::acknowledge_pic_irq(kPitIrq);
+            arch::acknowledge_pic_irq(kPitIrq);
         }
 
         process::SavedContext *next = process::handle_timer_tick(context);

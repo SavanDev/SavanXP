@@ -4,15 +4,15 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr uint16_t kDataPort = 0x60;
 constexpr uint16_t kStatusPort = 0x64;
@@ -631,16 +631,16 @@ void service_pending_led_update() {
     // Guardar y reponer IF en vez de prenderlas al salir: esto corre tambien
     // desde el tick y desde el IRQ del teclado, con el lock del kernel tomado,
     // y una interrupcion anidada ahi se quedaria esperando ese mismo lock.
-    const uint64_t flags = arch::x86_64::save_and_disable_interrupts();
+    const uint64_t flags = arch::save_and_disable_interrupts();
     if (g_raw_count != 0 || (in8(kStatusPort) & kStatusOutputReady) != 0) {
-        arch::x86_64::restore_interrupts(flags);
+        arch::restore_interrupts(flags);
         return;
     }
 
     if (synchronize_leds_locked()) {
         g_led_sync_pending = false;
     }
-    arch::x86_64::restore_interrupts(flags);
+    arch::restore_interrupts(flags);
 }
 
 bool detect_second_port() {
@@ -882,7 +882,7 @@ void initialize() {
     if (g_keyboard_active) {
         const bool keyboard_routed = use_ioapic
             ? ioapic::route_legacy_irq(1, keyboard_irq) != 0
-            : arch::x86_64::register_irq_handler(1, keyboard_irq);
+            : arch::register_irq_handler(1, keyboard_irq);
         if (!keyboard_routed) {
             console::write_line("ps2: failed to route irq1");
             return;
@@ -892,7 +892,7 @@ void initialize() {
     if (g_mouse_ready) {
         const bool mouse_routed = use_ioapic
             ? ioapic::route_legacy_irq(12, mouse_irq) != 0
-            : arch::x86_64::register_irq_handler(12, mouse_irq);
+            : arch::register_irq_handler(12, mouse_irq);
         if (!mouse_routed) {
             console::write_line("ps2: failed to route irq12");
             g_mouse_ready = false;
@@ -902,9 +902,9 @@ void initialize() {
     // route_legacy_irq deja la entrada del IOAPIC ya desenmascarada; el PIC en
     // cambio arranca todo enmascarado y hay que habilitar la linea a mano.
     if (!use_ioapic) {
-        arch::x86_64::enable_irq(1);
+        arch::enable_irq(1);
         if (g_mouse_ready) {
-            arch::x86_64::enable_irq(12);
+            arch::enable_irq(12);
         }
     }
     g_ready = true;

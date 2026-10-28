@@ -365,7 +365,7 @@ the regular smokes unchanged, the desktop ones on 4 cores (`smoke`,
 What landed:
 
 - `Thread::fs_base` and `gs_base`, swapped by `switch_to_thread` on a real
-  switch next to the FPU state (`arch::x86_64::save_user_segment_bases` /
+  switch next to the FPU state (`arch::save_user_segment_bases` /
   `load_user_segment_bases`). **The kernel uses neither segment** —
   `cpu_index()` reads `TR` and there is no `swapgs` — so the MSRs hold the
   running thread's values across every kernel entry and nothing has to be

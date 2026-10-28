@@ -202,7 +202,7 @@ most twice a second.
 
 ## Processor identity comes from `CPUID`
 
-`arch::x86_64::query_cpu_identity()` reads the vendor string (leaf 0), the
+`arch::query_cpu_identity()` reads the vendor string (leaf 0), the
 feature bits (leaves 1 and `0x80000001`) and the brand string (leaves
 `0x80000002..4`), and `snapshot_system_info` exports them as `cpu_vendor`,
 `cpu_brand`, `cpu_features` and `cpu_khz`.

@@ -1,11 +1,11 @@
 #include "kernel/pci.hpp"
 
-#include "arch/x86_64/io.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/string.hpp"
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr uint16_t kConfigAddressPort = 0x0cf8;
 constexpr uint16_t kConfigDataPort = 0x0cfc;

@@ -3,7 +3,7 @@
 .global x86_64_syscall_entry
 .global x86_64_timer_entry
 .global x86_64_reschedule_entry
-.global _ZN4arch6x86_6414resume_contextEPN7process12SavedContextEm
+.global _ZN4arch14resume_contextEPN7process12SavedContextEm
 
 /*
  * Entrada con contexto: guarda los registros como un process::SavedContext,
@@ -69,12 +69,14 @@ CONTEXT_ENTRY x86_64_timer_entry, savanxp_handle_timer_interrupt
 CONTEXT_ENTRY x86_64_reschedule_entry, savanxp_handle_reschedule_ipi
 
 /*
- * resume_context(context, cr3): salir del kernel hacia un contexto sin haber
- * entrado por uno de los stubs de arriba (el primer proceso de cada core, o la
- * vuelta de terminate_current). Se llama siempre con el lock del kernel tomado,
- * y lo suelta igual que ellos: recien sobre la pila nueva.
+ * arch::resume_context(context, cr3): leave the kernel for a context without
+ * having entered through one of the stubs above (the first process on each
+ * core, or the return from terminate_current). It is always called with the
+ * kernel lock held, and releases it the way they do: only once on the new
+ * stack. The label is the C++ mangled name of that declaration in
+ * include/arch/x86_64/cpu.hpp.
  */
-_ZN4arch6x86_6414resume_contextEPN7process12SavedContextEm:
+_ZN4arch14resume_contextEPN7process12SavedContextEm:
     movq %rsi, %cr3
     movq %rdi, %rsp
     subq $8, %rsp

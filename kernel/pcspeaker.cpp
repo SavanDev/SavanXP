@@ -3,8 +3,8 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
@@ -13,7 +13,7 @@
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr uint16_t kPitCommandPort = 0x43;
 constexpr uint16_t kPitChannel2Port = 0x42;

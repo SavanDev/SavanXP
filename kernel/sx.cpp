@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -41,10 +41,10 @@ bool read_user_memory(const process::Process& proc, void* destination, uint64_t 
         return true;
     }
 
-    const uint64_t previous_cr3 = arch::x86_64::read_page_table_root();
-    arch::x86_64::load_page_table_root(proc.address_space.pml4_physical);
+    const uint64_t previous_cr3 = arch::read_page_table_root();
+    arch::load_page_table_root(proc.address_space.pml4_physical);
     memcpy(destination, reinterpret_cast<const void*>(user_address), count);
-    arch::x86_64::load_page_table_root(previous_cr3);
+    arch::load_page_table_root(previous_cr3);
     return true;
 }
 
@@ -61,10 +61,10 @@ bool write_user_memory(process::Process& proc, uint64_t user_address, const void
         return true;
     }
 
-    const uint64_t previous_cr3 = arch::x86_64::read_page_table_root();
-    arch::x86_64::load_page_table_root(proc.address_space.pml4_physical);
+    const uint64_t previous_cr3 = arch::read_page_table_root();
+    arch::load_page_table_root(proc.address_space.pml4_physical);
     memcpy(reinterpret_cast<void*>(user_address), source, count);
-    arch::x86_64::load_page_table_root(previous_cr3);
+    arch::load_page_table_root(previous_cr3);
     return true;
 }
 

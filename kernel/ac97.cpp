@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/io.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/audio.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
@@ -15,7 +15,7 @@
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 // --- Formato fijo del ABI ----------------------------------------------------
 // AC'97 corre nativamente a 48 kHz, asi que el formato fijo del ABI (S16 estereo

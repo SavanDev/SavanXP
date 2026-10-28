@@ -1,6 +1,6 @@
 #include "kernel/virtio_pci.hpp"
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
@@ -8,7 +8,7 @@
 namespace virtio_pci {
 
 void memory_barrier() {
-    arch::x86_64::memory_barrier();
+    arch::memory_barrier();
 }
 
 void write_mmio_u64(volatile uint64_t& field, uint64_t value) {

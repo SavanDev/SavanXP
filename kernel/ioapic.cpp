@@ -193,7 +193,7 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
     // el handler corre pero el bit del ISR nunca se limpia y el APIC se traba
     // para siempre a partir de la primera interrupcion. Preferimos no programar
     // el IOAPIC y dejar que los consumidores caigan al PIC legacy.
-    if (!arch::x86_64::local_apic_ready()) {
+    if (!arch::local_apic_ready()) {
         console::printf("ioapic: sin Local APIC operativo, se mantiene el PIC legacy\n");
         return false;
     }
@@ -217,7 +217,7 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
 
 bool ready() { return g_ready; }
 
-uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHandler handler) {
+uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::IrqHandler handler) {
     if (!g_ready) return 0;
     IoApic* io = owner_of_gsi(gsi);
     if (!io) return 0;
@@ -236,8 +236,8 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
                 "ioapic: GSI %u compartida con otra polaridad/trigger, se conserva la original\n",
                 unsigned(gsi));
         }
-        if (!arch::x86_64::register_interrupt_handler(
-                existing->vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
+        if (!arch::register_interrupt_handler(
+                existing->vector, handler, arch::InterruptEoi::local_apic)) {
             console::printf("ioapic: no se pudo encadenar handler en GSI %u\n", unsigned(gsi));
             return 0;
         }
@@ -254,8 +254,8 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
 
     // Registrar el handler con EOI al Local APIC (la entrega pasa por el).
     // TOCAR EN ARCH: requiere el trampolin vector_NN para `vector` en la IDT.
-    if (!arch::x86_64::register_interrupt_handler(
-            vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
+    if (!arch::register_interrupt_handler(
+            vector, handler, arch::InterruptEoi::local_apic)) {
         return 0;
     }
 
@@ -263,12 +263,12 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
     // destino logico cuando el id de x2APIC no entra en 8 bits.
     write_redirection(*io, gsi, vector, active_low, level,
                       /*masked=*/false,
-                      /*dest_apic=*/static_cast<uint8_t>(arch::x86_64::local_apic_id()));
+                      /*dest_apic=*/static_cast<uint8_t>(arch::local_apic_id()));
     g_routed[g_routed_count++] = Routed{gsi, vector, active_low, level};
     return vector;
 }
 
-uint8_t route_legacy_irq(uint8_t isa_irq, arch::x86_64::IrqHandler handler) {
+uint8_t route_legacy_irq(uint8_t isa_irq, arch::IrqHandler handler) {
     uint32_t gsi; Polarity pol; Trigger trg;
     resolve_isa(isa_irq, gsi, pol, trg);
     return route_gsi(gsi, pol, trg, handler);

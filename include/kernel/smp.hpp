@@ -2,26 +2,26 @@
 
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "boot/boot_info.hpp"
 
-/* Los application processors y el estado de cada core.
+/* The application processors and the state of each core.
  *
- * Fase 0 de docs/kernel/SMP_ROADMAP.md: los APs arrancan, se identifican y quedan
- * estacionados en un bucle de hlt, y un ping IPI comprueba que el ICR entrega.
+ * Phase 0 of docs/kernel/SMP_ROADMAP.md: the APs start, identify themselves and
+ * stay parked in a hlt loop, and an IPI ping checks that the ICR delivers.
  *
- * Fase 1: cada core tiene su propio TSS y su propia entrada smp::Cpu, indexada
- * por el selector de ese TSS (arch::x86_64::cpu_index()). El proceso en curso,
- * el idle y el pedido de replanificar viven ahi en vez de en globales.
+ * Phase 1: each core has its own TSS and its own smp::Cpu entry, indexed by
+ * that TSS's selector (arch::cpu_index()). The running process, the idle one
+ * and the reschedule request live there instead of in globals.
  *
- * Fase 2: todos los cores corren procesos, de a uno por vez adentro del kernel.
- * Lo que lo hace posible es el lock grande del kernel (ver mas abajo): se toma
- * en cada entrada y se suelta en cada salida, y es lo que convierte al kernel
- * no preemptible de un solo core en uno correcto con varios.
+ * Phase 2: every core runs processes, one at a time inside the kernel. What
+ * makes it possible is the big kernel lock (see below): it is taken on every
+ * entry and released on every exit, and it is what turns the non-preemptible
+ * single-core kernel into a correct multi-core one.
  */
 namespace smp {
 
-constexpr uint32_t kMaxCpus = arch::x86_64::kMaxCpus;
+constexpr uint32_t kMaxCpus = arch::kMaxCpus;
 
 struct Cpu {
     uint32_t index;
@@ -53,7 +53,7 @@ extern Cpu g_cpu_state[kMaxCpus];
 // El estado del core que ejecuta esto. No guardar la referencia mas alla de una
 // entrada al kernel: un proceso puede volver a entrar por otro core.
 inline Cpu& this_cpu() {
-    return g_cpu_state[arch::x86_64::cpu_index()];
+    return g_cpu_state[arch::cpu_index()];
 }
 
 // Cores que el bootloader reporto, BSP incluido. 1 si no hubo informacion de MP.

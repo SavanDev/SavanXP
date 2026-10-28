@@ -128,7 +128,7 @@ The original plan follows.
    writing a real-mode trampoline and the identity mapping it needs — that is
    the single biggest saving available in this phase, and the reason to prefer
    it.
-2. Write `send_ipi()` in `arch::x86_64`, covering both APIC modes. The 64-bit
+2. Write `send_ipi()` in `arch`, covering both APIC modes. The 64-bit
    x2APIC ICR is one MSR write; the xAPIC one is two MMIO writes, high word
    first, and needs the delivery-status poll.
 3. Give each AP a kernel stack and park it.
@@ -148,7 +148,7 @@ What it actually took, against the plan below:
   BSP before any AP starts. Each core then loads its own with `ltr`.
 - **Indexed by the TSS selector, not the LAPIC ID.** Each core has a different
   TSS loaded, so `str` names the core with a register read
-  (`arch::x86_64::cpu_index()`). The LAPIC ID is an MSR or MMIO read that can
+  (`arch::cpu_index()`). The LAPIC ID is an MSR or MMIO read that can
   exit the VM under KVM on every access, and the current process is
   read dozens of times per syscall. `ltr` is privileged, so user space cannot
   change the answer. Each AP reads its selector back at boot and the BSP checks

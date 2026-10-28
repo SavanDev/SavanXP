@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 
 // Capa IOAPIC + MADT (ESQUELETO DE EVALUACION).
 //
@@ -39,12 +39,12 @@ enum class Trigger  : uint8_t { edge, level };
 // debe chequear si el evento es suyo antes de actuar.
 // Devuelve el vector asignado, o 0 si fallo.
 uint8_t route_gsi(uint32_t gsi, Polarity polarity, Trigger trigger,
-                  arch::x86_64::IrqHandler handler);
+                  arch::IrqHandler handler);
 
 // Rutea una IRQ ISA legacy (0..15) aplicando el override de la MADT si existe
 // (p.ej. IRQ0->GSI2, o polaridad/trigger no-default). Punto de entrada para
 // migrar PS/2. Devuelve el vector asignado o 0.
-uint8_t route_legacy_irq(uint8_t isa_irq, arch::x86_64::IrqHandler handler);
+uint8_t route_legacy_irq(uint8_t isa_irq, arch::IrqHandler handler);
 
 // Enmascara / desenmascara una GSI ya ruteada (bit 16 de la entrada).
 void set_gsi_masked(uint32_t gsi, bool masked);

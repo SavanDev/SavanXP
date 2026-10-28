@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
@@ -15,7 +15,7 @@
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
 constexpr bool kLogRtl = false;
 
@@ -164,7 +164,7 @@ void poll_receive() {
     // main loop (polling/service). Clearing IF around the section makes it
     // atomic on one core: while the main loop drains the ring, the NIC's IRQ
     // cannot preempt it and corrupt g_cur_rx.
-    const uint64_t flags = arch::x86_64::save_and_disable_interrupts();
+    const uint64_t flags = arch::save_and_disable_interrupts();
     clear_interrupt_status();
     auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
     while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
@@ -213,7 +213,7 @@ void poll_receive() {
             static_cast<uint16_t>(g_cur_rx == 0 ? 0xfff0u : (g_cur_rx - 16u))
         );
     }
-    arch::x86_64::restore_interrupts(flags);
+    arch::restore_interrupts(flags);
 }
 
 // Handler de la INTx del rtl8139 (ruteada por _PRT -> IOAPIC). Sirve el device

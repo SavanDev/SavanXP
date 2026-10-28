@@ -1,11 +1,16 @@
 # The architecture boundary: what is x86 and where it lives
 
-Everything that depends on the processor lives in two places:
+The kernel is written against one CPU contract, the functions in
+**namespace `arch`**, and every architecture implements it. Code outside
+`arch/` includes `arch/cpu.hpp`, which selects the implementation for the
+target being built:
 
 | Where | What |
 |---|---|
+| `include/arch/cpu.hpp` | The only header generic code includes. It picks `arch/x86_64/cpu.hpp` when building for x86_64, and fails the build for a target with no implementation |
+| `include/arch/x86_64/cpu.hpp` | x86_64's declaration of the contract, plus its inline single instructions |
 | `arch/x86_64/` | The sources: boot entry (`entry.cpp`), descriptor tables, interrupts, the PIC and the local APIC, the FPU (`cpu_init.cpp`), the timer backends (`timer.cpp`), AP start-up (`smp.cpp`), context switch and syscall entry (`context.S`), and `memcpy`/`memset` on the string instructions (`memory.cpp`) |
-| `include/arch/x86_64/` | What the rest of the kernel may call: `cpu.hpp` (namespace `arch::x86_64`) and `io.hpp` (namespace `arch::x86_64::port_io`) |
+| `include/arch/x86/io.hpp` | Port I/O, namespace `arch::x86::port_io`. It belongs to the whole x86 family: the instructions are the same in 32-bit protected mode |
 
 ## The rule
 
@@ -14,46 +19,57 @@ kernel subsystem that needs something from the processor calls it by name:
 
 | Need | Call |
 |---|---|
-| Spin-wait hint | `arch::x86_64::cpu_relax()` |
-| Order device-ring writes before the doorbell (virtio, AHCI) | `memory_barrier()` |
-| Order write-combining stores (a framebuffer) | `store_barrier()` |
-| Short section with interrupts off, from any context | `save_and_disable_interrupts()` / `restore_interrupts()` |
-| Switch or read the page table root, drop one translation | `load_page_table_root()`, `read_page_table_root()`, `invalidate_page()`, `flush_tlb()` |
-| Model-specific registers, cycle counter | `read_msr()`, `write_msr()`, `read_timestamp_counter()` |
-| Port I/O | `out8/16/32`, `in8/16/32`, `io_wait()` from `io.hpp` |
+| Spin-wait hint | `arch::cpu_relax()` |
+| Order device-ring writes before the doorbell (virtio, AHCI) | `arch::memory_barrier()` |
+| Order write-combining stores (a framebuffer) | `arch::store_barrier()` |
+| Short section with interrupts off, from any context | `arch::save_and_disable_interrupts()` / `arch::restore_interrupts()` |
+| Switch or read the page table root, drop one translation | `arch::load_page_table_root()`, `read_page_table_root()`, `invalidate_page()`, `flush_tlb()` |
+| Model-specific registers, cycle counter | `arch::read_msr()`, `write_msr()`, `read_timestamp_counter()` |
+| Port I/O | `out8/16/32`, `in8/16/32`, `io_wait()` from `arch/x86/io.hpp` |
 
 The check is mechanical and must print nothing:
 
 ```bash
 grep -rn 'asm' kernel subsystems/*/kernel include/kernel
+grep -rn '"arch/x86_64/' kernel subsystems/*/kernel include/kernel
 ```
 
 A compiler-only barrier is not assembly: it is
 `__atomic_signal_fence(__ATOMIC_SEQ_CST)` (the AC'97 driver uses it).
 
+`context.S` defines `arch::resume_context` under its C++ mangled name
+(`_ZN4arch14resume_contextEPN7process12SavedContextEm`). Renaming the namespace
+or changing that signature means changing the label too, or the link fails.
+
+## The contract is x86-shaped, and says so
+
+`namespace arch` is neutral in name, not yet in content. Part of it is the x86
+family's: `InterruptEoi::pic`, `local_apic_*`, `register_irq_handler` with ISA
+IRQ numbers, `send_ipi` by LAPIC id, the TSS selector behind `cpu_index()`.
+An i386 port implements those as they are, since it has the same PIC and APIC.
+A non-x86 port would have to redraw that part of the contract, and that is the
+right time to do it: drawing it now, with one implementation, would be
+guessing.
+
 ## Port I/O marks a PC-only driver
 
-Port I/O is an x86 address space of its own. A driver pulls it in with
-`using namespace arch::x86_64::port_io;` inside its anonymous namespace, and
-that line is also the marker: the driver exists only on PC hardware (ATA,
-PS/2, RTC, PIT, PC speaker, PCI configuration mechanism #1, the ACPI fixed
-registers, AC'97, RTL8139, the Bochs display). Drivers that reach their device
-through memory-mapped registers (AHCI, virtio, the local APIC) do not include
-it.
+A driver pulls port I/O in with `using namespace arch::x86::port_io;` inside
+its anonymous namespace, and that line is also the marker: the driver exists
+only on PC hardware (ATA, PS/2, RTC, PIT, PC speaker, PCI configuration
+mechanism #1, the ACPI fixed registers, AC'97, RTL8139, the Bochs display).
+Drivers that reach their device through memory-mapped registers (AHCI, virtio,
+the local APIC) do not include it.
 
 ## What a second architecture changes
 
 The `legacy` branch's i386 port ([REAL_HARDWARE.md](REAL_HARDWARE.md#route-a-port-the-system-to-i386))
 is the case this boundary is drawn for:
 
-- `io.hpp` is valid as it is: the port instructions are the same in 32-bit
-  protected mode.
-- `cpu.hpp` is the contract. An `arch/x86` provides the same functions;
+- An `include/arch/x86/cpu.hpp` and an `arch/x86/` that implement
+  `namespace arch`, and a branch in `arch/cpu.hpp` that selects them.
   `memory_barrier` needs SSE2 there (`mfence`), which every CPU the port
   targets has.
-- `memory.cpp` is rewritten with `rep movsd`.
-- What does **not** follow from this boundary: the code still calls
-  `arch::x86_64::` by that name, and `vmm.cpp` still builds 4-level page
-  tables itself. Renaming the namespace to a neutral `arch::` is mechanical
-  once a second architecture exists; the page tables are the VMM rewrite in
-  REAL_HARDWARE.md.
+- `arch/x86/io.hpp` as it is.
+- `memory.cpp` rewritten with `rep movsd`.
+- What does **not** follow from this boundary: `vmm.cpp` still builds 4-level
+  page tables itself. That is the VMM rewrite in REAL_HARDWARE.md.

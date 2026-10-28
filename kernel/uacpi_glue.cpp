@@ -21,8 +21,8 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
-#include "arch/x86_64/io.hpp"
+#include "arch/cpu.hpp"
+#include "arch/x86/io.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
@@ -34,10 +34,10 @@ extern "C" {
 
 namespace {
 
-using namespace arch::x86_64::port_io;
+using namespace arch::x86::port_io;
 
-using arch::x86_64::cpu_relax;
-using arch::x86_64::read_timestamp_counter;
+using arch::cpu_relax;
+using arch::read_timestamp_counter;
 
 // --- A clock that does not depend on interrupts (TSC) ---
 // Interrupts are disabled while uACPI comes up, so timer::ticks() (which the
@@ -70,8 +70,9 @@ void calibrate_tsc() {
 // RSDP fisico, cacheado desde boot_info al inicializar (ver set_rsdp_physical).
 uint64_t g_rsdp_physical = 0;
 
-// Un unico SCI: guardamos el handler+ctx de uACPI y registramos un trampolin
-// sin-argumentos que es lo que expone arch::x86_64::register_irq_handler.
+// A single SCI: uACPI's handler and context are kept here, and what gets
+// registered is an argument-less trampoline, which is what
+// arch::register_irq_handler takes.
 uacpi_interrupt_handler g_sci_handler = nullptr;
 uacpi_handle            g_sci_ctx = nullptr;
 uint32_t                g_sci_irq = 0;
@@ -285,7 +286,7 @@ uacpi_iteration_decision route_find_cb(void* user, uacpi_namespace_node* node, u
 }
 
 uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::x86_64::IrqHandler handler) {
+                       arch::IrqHandler handler) {
     const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3D); // Interrupt Pin
     if (pin < 1 || pin > 4) {
         return 0; // el dispositivo no usa INTx
@@ -422,10 +423,10 @@ void uacpi_kernel_sleep(uacpi_u64 msec) {
 
 // ======================= Interrupts (flags) =======================
 uacpi_interrupt_state uacpi_kernel_disable_interrupts(void) {
-    return static_cast<uacpi_interrupt_state>(arch::x86_64::save_and_disable_interrupts());
+    return static_cast<uacpi_interrupt_state>(arch::save_and_disable_interrupts());
 }
 void uacpi_kernel_restore_interrupts(uacpi_interrupt_state state) {
-    arch::x86_64::restore_interrupts(static_cast<uint64_t>(state));
+    arch::restore_interrupts(static_cast<uint64_t>(state));
 }
 
 // ======================= Spinlocks (monocore) =======================
@@ -510,9 +511,9 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
         routed = ioapic::route_gsi(irq, ioapic::Polarity::active_low,
                                    ioapic::Trigger::level, sci_trampoline) != 0;
     } else if (irq < 16) {
-        routed = arch::x86_64::register_irq_handler(uint8_t(irq), sci_trampoline);
+        routed = arch::register_irq_handler(uint8_t(irq), sci_trampoline);
         if (routed) {
-            arch::x86_64::enable_irq(uint8_t(irq));
+            arch::enable_irq(uint8_t(irq));
         }
     }
     if (!routed) {

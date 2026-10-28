@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/nic.hpp"

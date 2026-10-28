@@ -3,7 +3,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
@@ -236,7 +236,7 @@ process::Process* fork_process(process::Thread& parent_thread, const process::Sa
     // the saved area is stale (switch_to_thread only dumps it on a real
     // switch), so it has to be dumped before it is copied.
     if (this_cpu().current == &parent_thread) {
-        arch::x86_64::fpu_save(parent_thread.fpu_state);
+        arch::fpu_save(parent_thread.fpu_state);
     }
     memcpy(child_thread->fpu_state, parent_thread.fpu_state, sizeof(child_thread->fpu_state));
     // So do the segment bases: the child's thread-local storage is the

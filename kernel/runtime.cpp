@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 
 // Acceso de 64 bits que no promete alineacion ni exclusividad de aliasing: x86
 // permite loads/stores desalineados y may_alias evita que el optimizador asuma
@@ -105,7 +105,7 @@ extern "C" int __cxa_atexit(void (*)(void*), void*, void*) {
 }
 
 extern "C" void __cxa_pure_virtual() {
-    arch::x86_64::halt_forever();
+    arch::halt_forever();
 }
 
 void* __dso_handle = nullptr;

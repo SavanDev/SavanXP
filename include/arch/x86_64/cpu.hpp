@@ -4,15 +4,16 @@
 
 #include "kernel/process.hpp"
 
-/* The x86_64 CPU as the rest of the kernel sees it (docs/kernel/ARCH.md).
+/* x86_64's implementation of the CPU contract (docs/kernel/ARCH.md). Code
+ * outside arch/ includes arch/cpu.hpp, which selects this header.
  *
- * Everything the kernel needs from the processor goes through this header and
- * the sources in arch/x86_64: descriptor tables, interrupts and the APIC, the FPU, page
- * table roots and TLB invalidation, MSRs, the TSC, and the handful of single
- * instructions that drivers need by name (memory_barrier, store_barrier,
- * cpu_relax). Port I/O is in arch/x86_64/io.hpp. Code outside arch/ has no
- * inline assembly of its own. */
-namespace arch::x86_64 {
+ * Everything the kernel needs from the processor goes through namespace arch
+ * and the sources in arch/x86_64: descriptor tables, interrupts and the APIC,
+ * the FPU, page table roots and TLB invalidation, MSRs, the TSC, and the
+ * handful of single instructions that drivers need by name (memory_barrier,
+ * store_barrier, cpu_relax). Port I/O is in arch/x86/io.hpp. Code outside
+ * arch/ has no inline assembly of its own. */
+namespace arch {
 
 using IrqHandler = void (*)();
 
@@ -249,4 +250,4 @@ inline uint64_t read_timestamp_counter() {
     return (static_cast<uint64_t>(high) << 32) | low;
 }
 
-} // namespace arch::x86_64
+} // namespace arch

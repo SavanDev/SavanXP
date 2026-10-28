@@ -1,6 +1,6 @@
 #include "kernel/panic.hpp"
 
-#include "arch/x86_64/cpu.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 
@@ -16,5 +16,5 @@ extern "C" [[noreturn]] void __stack_chk_fail() {
     console::write_line("");
     console::write_line("*** PANIC ***");
     console::write_line(message);
-    arch::x86_64::halt_forever();
+    arch::halt_forever();
 }
