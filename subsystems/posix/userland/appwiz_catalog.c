@@ -79,12 +79,13 @@ static int default_path_exists(const char *path)
 
 /* The system's own directories: a data_dir may be neither one of them nor
  * anything below one. /bin and /lib hold the system and every installed
- * program, /icons and /tmp are written by the build into every image, and /dev
- * and /rescue are the in-memory tree. */
+ * program, /icons, /system and /tmp are written by the build into every image,
+ * and /dev and /rescue are the in-memory tree. */
 static const char *const k_reserved_data_dirs[] = {
     "/bin",
     "/lib",
     "/icons",
+    "/system",
     "/tmp",
     "/dev",
     "/rescue",
@@ -346,6 +347,58 @@ static void sort_entries(void)
     }
 }
 
+/* The names the build wrote into APPWIZ_SYSTEM_LIST, one per line. */
+static char g_system_list[4096];
+
+static int load_system_list(void)
+{
+    long fd = savanxp_open_mode(APPWIZ_SYSTEM_LIST, SAVANXP_OPEN_READ);
+    long length = 0;
+
+    g_system_list[0] = '\0';
+    if (fd < 0)
+    {
+        return 0;
+    }
+    length = savanxp_read((int)fd, g_system_list, sizeof(g_system_list) - 1u);
+    (void)savanxp_close((int)fd);
+    /* A list that fills the buffer may have been cut, and a name cut in half
+     * would make its program look installed: refuse it whole. */
+    if (length <= 0 || (size_t)length >= sizeof(g_system_list) - 1u)
+    {
+        g_system_list[0] = '\0';
+        return 0;
+    }
+    g_system_list[length] = '\0';
+    return 1;
+}
+
+static int is_system_program(const char *name)
+{
+    const char *line = g_system_list;
+    size_t name_length = strlen(name);
+
+    while (*line != '\0')
+    {
+        const char *end = line;
+
+        while (*end != '\0' && *end != '\n' && *end != '\r')
+        {
+            end += 1;
+        }
+        if ((size_t)(end - line) == name_length && strncmp(line, name, name_length) == 0)
+        {
+            return 1;
+        }
+        line = end;
+        while (*line == '\n' || *line == '\r')
+        {
+            line += 1;
+        }
+    }
+    return 0;
+}
+
 int appwiz_catalog_scan(appwiz_path_exists_fn exists)
 {
     _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
@@ -364,6 +417,10 @@ int appwiz_catalog_scan(appwiz_path_exists_fn exists)
         exists = default_path_exists;
     }
 
+    if (!load_system_list())
+    {
+        return 0;
+    }
     handle = opendir(APPWIZ_INSTALL_DIR);
     if (handle == 0)
     {
@@ -372,7 +429,6 @@ int appwiz_catalog_scan(appwiz_path_exists_fn exists)
     while ((entry = readdir(handle)) != 0 && g_entry_count < APPWIZ_MAX_ENTRIES)
     {
         struct appwiz_entry *slot = &g_entries[g_entry_count];
-        char system_path[APPWIZ_PATH_CAPACITY];
 
         if (entry->d_name[0] == '.' || entry->d_type == DT_DIR)
         {
@@ -387,14 +443,9 @@ int appwiz_catalog_scan(appwiz_path_exists_fn exists)
             {
                 continue;
             }
-            written = snprintf(system_path, sizeof(system_path), "%s/%s", APPWIZ_SYSTEM_DIR, entry->d_name);
-            if (written < 0 || (size_t)written >= sizeof(system_path))
-            {
-                continue;
-            }
         }
-        /* La resta con /bin: si tambien esta ahi, vino con el SO. */
-        if (exists(system_path))
+        /* The subtraction: a name the build listed came with the OS. */
+        if (is_system_program(entry->d_name))
         {
             continue;
         }
@@ -536,6 +587,8 @@ static void selftest_data_dir(void)
         "/lib/libsxgfx.so.0.4",
         "/dev/input0",
         "/rescue/bin",
+        "/system",
+        "/system/programs.txt",
         "/../bin",
         "/games/../../bin",
         "/disk/../bin",
@@ -618,10 +671,11 @@ static void selftest_catalog(void)
     }
 
     /*
-     * The subtraction with /rescue/bin, the module's one real decision. These
-     * three are in both in EVERY image -- the build stages the system's
-     * programs in both -- so if one shows up, the subtraction is not being
-     * done and the uninstaller is offering to delete the operating system.
+     * The subtraction with /system/programs.txt, the module's one real
+     * decision. These three are listed in EVERY image -- the build writes
+     * every program it stages -- so if one shows up, the subtraction is not
+     * being done and the uninstaller is offering to delete the operating
+     * system.
      */
     expect(!catalog_has_basename("notepad"), "catalogo: notepad es del sistema");
     expect(!catalog_has_basename("console.sxe"), "catalog: console.sxe is a system program");

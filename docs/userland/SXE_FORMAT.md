@@ -671,22 +671,21 @@ button, and what `appwiz_catalog.h` decides.
 **What can be uninstalled is a subtraction, not a list:**
 
 ```
-    in /bin   AND   not in /rescue/bin
+    in /bin   AND   not named in /system/programs.txt
 ```
 
-This is not a policy choice, it is the filesystem. `/bin` is on the system
-disk, and the build stages the system's programs there and in the initramfs,
-which is published under `/rescue`
-([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#the-root-is-the-system-disk)). So
-every system program appears on both sides, and the subtraction is exactly
-what separates "shipped with the OS" from "somebody installed it". A system
-program is not *forbidden* from being uninstalled here; it *cannot* be, because
-the next build puts it back.
+The build stages every program it builds into `/bin` and writes their names
+into `/system/programs.txt`, so the subtraction is exactly what separates
+"shipped with the OS" from "somebody installed it". The list comes from the
+build, not from the programs: a binary cannot declare itself removable, and
+without the list nothing is offered. A system program is not *forbidden* from
+being uninstalled here; it *cannot* be, because the next build puts it back.
 
-That holds while the initramfs carries every system program. Cutting it down
-to a rescue set needs another source for "shipped with the OS" — a list of the
-system's programs the build writes — or the subtraction offers to remove the
-desktop.
+It used to subtract the initramfs's `/bin` instead, which worked only while the
+initramfs carried every program
+([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#the-rescue-system)). A registry the
+installer writes, as Windows keeps under `Uninstall`, is the next step, and it
+belongs with elevation ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md)).
 
 **`data_dir` is a declaration, not a permission.** The program says where its
 persistent data lives (Doom: `/games/doom`, ~30 MiB of WADs that nothing

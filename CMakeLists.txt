@@ -853,6 +853,24 @@ add_test(NAME tcp-echo-server-test
             --server "${CMAKE_SOURCE_DIR}/tools/tcp_echo_server.py")
 add_dependencies(savanxp_tests savanxp_sxfs_cli)
 
+# The initramfs is the rescue system, published under /rescue: what is left when
+# no disk mounts (docs/kernel/FILESYSTEMS.md#the-rescue-system). A shell and the
+# tools to look at and repair a volume, nothing graphical. Every program,
+# these included, is staged onto the disk by savanxp_diskfs.
+#
+# imagetest is not a tool: it is here because it is the test of the in-memory
+# executable reader, and /rescue is the only place that reader runs from.
+set(SAVANXP_RESCUE_PROGRAMS
+    init sh
+    ls cat cp mv rm mkdir rmdir echo true false sleep ps truncate
+    df fscheck sync sysinfo uname
+    imagetest)
+foreach(target IN LISTS SAVANXP_RESCUE_PROGRAMS)
+    if(NOT target IN_LIST SAVANXP_USER_TARGETS)
+        message(FATAL_ERROR "rescue program '${target}' is not a savanxp_program")
+    endif()
+endforeach()
+
 set(SAVANXP_STAGE_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin"
@@ -860,7 +878,7 @@ set(SAVANXP_STAGE_COMMANDS
             "${CMAKE_SOURCE_DIR}/rootfs/README"
             "${SAVANXP_ROOTFS_ROOT}/README"
 )
-foreach(target IN LISTS SAVANXP_USER_TARGETS)
+foreach(target IN LISTS SAVANXP_RESCUE_PROGRAMS)
     list(APPEND SAVANXP_STAGE_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E copy
                 "$<TARGET_FILE:${target}>"
@@ -906,7 +924,7 @@ add_custom_command(OUTPUT "${SAVANXP_ROOTFS_STAMP}"
     # el texto de una etiqueta de la barra, build y escenario dan OK los dos,
     # porque los dos proban el programa viejo. Solo se nota al buscar el binario
     # extraido de la imagen.
-    DEPENDS ${SAVANXP_USER_TARGETS}
+    DEPENDS ${SAVANXP_RESCUE_PROGRAMS}
             "${CMAKE_SOURCE_DIR}/rootfs/README"
             "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"
             "${SAVANXP_SMOKE_CONFIG_STAMP}"
@@ -939,20 +957,36 @@ foreach(library IN LISTS SAVANXP_USER_LIBRARY_TARGETS)
                 "${CMAKE_BINARY_DIR}/${library_file}" "${SAVANXP_DISKFS_ROOT}/lib/")
 endforeach()
 
+# Every program the tree builds goes onto the disk, and /system/programs.txt
+# names them: it is how Add or Remove Programs tells what shipped with the
+# system from what someone installed (appwiz_catalog.h). One file name per line.
+set(SAVANXP_PROGRAM_COPY_COMMANDS)
+foreach(target IN LISTS SAVANXP_USER_TARGETS)
+    list(APPEND SAVANXP_PROGRAM_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:${target}>"
+                "${SAVANXP_DISKFS_ROOT}/bin/$<TARGET_FILE_NAME:${target}>")
+    string(APPEND SAVANXP_SYSTEM_PROGRAMS_CONTENT "$<TARGET_FILE_NAME:${target}>\n")
+endforeach()
+set(SAVANXP_SYSTEM_PROGRAMS "${CMAKE_BINARY_DIR}/system-programs.txt")
+file(GENERATE OUTPUT "${SAVANXP_SYSTEM_PROGRAMS}" CONTENT "${SAVANXP_SYSTEM_PROGRAMS_CONTENT}")
+
 add_custom_target(savanxp_diskfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_DISKFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/bin"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/lib"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/icons"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system"
     ${SAVANXP_LIB_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${SAVANXP_ROOTFS_ROOT}/bin" "${SAVANXP_DISKFS_ROOT}/bin"
+    ${SAVANXP_PROGRAM_COPY_COMMANDS}
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
             --project-root "${CMAKE_SOURCE_DIR}"
             --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
-    DEPENDS savanxp_rootfs ${SAVANXP_USER_LIBRARY_TARGETS}
+    DEPENDS ${SAVANXP_USER_TARGETS} ${SAVANXP_USER_LIBRARY_TARGETS}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Staging persistent disk tree"
     VERBATIM

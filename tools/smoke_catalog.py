@@ -30,6 +30,7 @@ class Scenario:
     host_action: str = ""
     visual_scenario: str = ""
     requires_virtio: bool = False
+    no_disk: bool = False
 
 
 def _qemu_scenario(
@@ -51,6 +52,7 @@ def _qemu_scenario(
     host_action: str = "",
     visual_scenario: str = "",
     requires_virtio: bool = False,
+    no_disk: bool = False,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -71,6 +73,7 @@ def _qemu_scenario(
         host_action=host_action,
         visual_scenario=visual_scenario,
         requires_virtio=requires_virtio,
+        no_disk=no_disk,
     )
 
 
@@ -323,6 +326,15 @@ SCENARIOS: dict[str, Scenario] = {
         "taskbar",
         completion="host",
         ready_wait=45.0,
+    ),
+    # No disk attached: the kernel starts /rescue/bin/init, and the rescue
+    # system has to work from the initramfs alone (docs/kernel/FILESYSTEMS.md).
+    "rescue-smoke": _qemu_scenario(
+        "rescue",
+        "RESCUE SMOKE PASS",
+        "RESCUE SMOKE FAIL",
+        "The rescue system, booted with no disk",
+        no_disk=True,
     ),
     "sxgui-smoke": _qemu_scenario(
         "",
@@ -580,6 +592,7 @@ def main() -> int:
             "host_action",
             "visual_scenario",
             "requires_virtio",
+            "no_disk",
         ),
         required=False,
     )

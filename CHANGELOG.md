@@ -18,6 +18,10 @@ Cut-off notes:
   an alias of `/`, so binaries already installed keep working. The boot log reads `root mounted`.
   See `docs/kernel/FILESYSTEMS.md`.
 
+- **The initramfs is a rescue system** (8.4 MB, from 45 MB): with no disk, init keeps
+  `/rescue/bin/sh` on the text console. New `rescue-smoke` boots with no disk (`--no-disk`).
+  Add or Remove Programs subtracts the build's `/system/programs.txt`.
+
 - **The kernel is written against `namespace arch`** (`arch/cpu.hpp`, implemented by `arch/x86_64`),
   and x86 code lives only under `arch/` and `include/arch/`: drivers share one port I/O header
   (`arch/x86/io.hpp`) and call named CPU operations (`arch::memory_barrier`, `arch::cpu_relax`,

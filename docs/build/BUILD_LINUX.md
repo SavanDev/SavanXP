@@ -88,13 +88,16 @@ persistent disk:
 ./build.sh smoke smoke
 ./build.sh smoke ffmpeg-smoke
 ./build.sh smoke taskbar-smoke
+./build.sh smoke rescue-smoke
 ./build.sh smoke --smp 4
 ./tools/shoot.sh --scenario desktop
 ```
 
-The runner stages one ASCII `/SMOKE` line in the initramfs, locks the real image,
-boots QEMU, and records the command and serial output under `build/smoke-logs/`.
-A normal build removes the temporary smoke specification from the image.
+The runner stages one ASCII `SMOKE` line in the initramfs (`/rescue/SMOKE` in the
+guest), locks the real image, boots QEMU, and records the command and serial
+output under `build/smoke-logs/`. A normal build removes the temporary smoke
+specification from the image. `rescue-smoke` boots with no disk attached
+(`--no-disk`), so the kernel starts the rescue system.
 
 `tools/shoot.sh` speaks QMP over a Unix socket and uses the same scenario driver
 as the media-player display assertion. The keyboard, pointer and taskbar smoke

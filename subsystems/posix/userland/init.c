@@ -476,7 +476,111 @@ static void apply_audio_preference(void) {
     savanxp_close((int)audio_fd);
 }
 
-int main(void) {
+/* --- the rescue system ------------------------------------------------------
+ *
+ * The kernel starts /rescue/bin/init when no disk mounted at "/"
+ * (docs/kernel/FILESYSTEMS.md#the-rescue-system). There is no desktop to bring
+ * up, no audiod and no /bin: init only keeps a shell from the initramfs alive
+ * on the text console. */
+
+#define RESCUE_ROOT "/rescue"
+#define RESCUE_SHELL RESCUE_ROOT "/bin/sh"
+
+static int started_from_rescue(int argc, char** argv) {
+    return argc > 0 && argv != 0 && argv[0] != 0 && text_starts_with(argv[0], RESCUE_ROOT "/");
+}
+
+/* Runs a program and returns its exit status, or -1 if it did not start. A
+ * failed check prints "rescue: FAIL", not the failure token: the runner stops
+ * at the token, and the remaining checks still have something to say. */
+static int rescue_run(const char* path, const char* const* argv, int argc) {
+    int status = 0;
+    long pid = spawn(path, argv, argc);
+    if (pid < 0) {
+        printf("rescue: FAIL spawn %s (%s)\n", path, result_error_string(pid));
+        return -1;
+    }
+    savanxp_waitpid((int)pid, &status);
+    return status;
+}
+
+static int rescue_expect(const char* path, const char* const* argv, int argc, int expected, const char* what) {
+    const int status = rescue_run(path, argv, argc);
+    if (status != expected) {
+        printf("rescue: FAIL %s: %s exited with %d, expected %d\n", what, path, status, expected);
+        return 0;
+    }
+    printf("rescue: ok %s\n", what);
+    return 1;
+}
+
+/* What the rescue system has to be able to do with no disk at all. */
+static int rescue_selftest(void) {
+    const char* ls_argv[] = {RESCUE_ROOT "/bin/ls", RESCUE_ROOT "/bin", 0};
+    const char* cat_argv[] = {RESCUE_ROOT "/bin/cat", RESCUE_ROOT "/README", 0};
+    // Neither command is a path: sh has to find both in /rescue/bin, with no /bin.
+    const char* sh_argv[] = {RESCUE_SHELL, "-c", "echo rescue-shell | cat", 0};
+    const char* df_argv[] = {RESCUE_ROOT "/bin/df", 0};
+    const char* imagetest_argv[] = {RESCUE_ROOT "/bin/imagetest", 0};
+    int ok = 1;
+
+    long disk_init = savanxp_open("/bin/init");
+    if (disk_init >= 0) {
+        savanxp_close((int)disk_init);
+        puts_out("RESCUE SMOKE FAIL /bin/init exists: this boot has a disk\n");
+        return 1;
+    }
+    ok = rescue_expect(ls_argv[0], ls_argv, 2, 0, "ls lists /rescue/bin") && ok;
+    ok = rescue_expect(cat_argv[0], cat_argv, 2, 0, "cat reads /rescue/README") && ok;
+    ok = rescue_expect(sh_argv[0], sh_argv, 3, 0, "sh finds commands in /rescue/bin") && ok;
+    ok = rescue_expect(df_argv[0], df_argv, 1, 1, "df reports no root volume") && ok;
+    ok = rescue_expect(imagetest_argv[0], imagetest_argv, 1, 0, "the in-memory executable reader") && ok;
+    puts_out(ok ? "RESCUE SMOKE PASS\n" : "RESCUE SMOKE FAIL\n");
+    return ok ? 0 : 1;
+}
+
+__attribute__((noreturn)) static void run_rescue_system(void) {
+    const char* shell_argv[] = {RESCUE_SHELL, 0};
+
+    long smoke_trigger = savanxp_open(RESCUE_ROOT "/SMOKE");
+    if (smoke_trigger >= 0) {
+        char automation_spec[64] = {};
+        long bytes_read = savanxp_read((int)smoke_trigger, automation_spec, sizeof(automation_spec) - 1);
+        savanxp_close((int)smoke_trigger);
+        if (bytes_read < 0) {
+            automation_spec[0] = '\0';
+        }
+        trim_automation_spec(automation_spec);
+        if (strcmp(automation_spec, "rescue") == 0) {
+            (void)rescue_selftest();
+        } else {
+            printf("RESCUE SMOKE FAIL '%s' needs the disk; this boot has none\n", automation_spec);
+        }
+        for (;;) {
+            sleep_ms(1000);
+        }
+    }
+
+    puts_out("init: no system disk mounted; starting the rescue shell\n");
+    for (;;) {
+        int status = 0;
+        long pid = spawn(RESCUE_SHELL, shell_argv, 1);
+        if (pid < 0) {
+            printf("init: failed to spawn %s (%s)\n", RESCUE_SHELL, result_error_string(pid));
+            sleep_ms(1000);
+            continue;
+        }
+        savanxp_waitpid((int)pid, &status);
+        printf("init: the rescue shell exited with %d, starting it again\n", status);
+        sleep_ms(250);
+    }
+}
+
+int main(int argc, char** argv) {
+    if (started_from_rescue(argc, argv)) {
+        run_rescue_system();
+    }
+
     /* The graphical session belongs to sessiond (docs/desktop/
      * DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond); init keeps audiod
      * and the fallback to the text shell. */

@@ -43,7 +43,7 @@ DISK_BUSES = ("ahci", "ide")
 def build_qemu_args(
     *,
     image_root: Path,
-    disk_image: Path,
+    disk_image: Path | None,
     code: Path,
     vars_copy: Path,
     debug_log: Path,
@@ -62,7 +62,8 @@ def build_qemu_args(
     """Build the common QEMU command used by normal and smoke launches.
 
     Without --virtio the disk image goes on the q35 AHCI controller (DMA), or
-    on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide".
+    on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide". With no disk
+    image the machine has no disk at all, which is how the rescue system boots.
     """
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
     if disk_bus not in DISK_BUSES:
@@ -114,13 +115,16 @@ def build_qemu_args(
 
     drive = f"if=none,id=svdisk,media=disk,format=raw,file={disk_image}"
     if virtio:
-        args_list += [
-            "-device",
-            "virtio-net-pci,netdev=net0",
+        disk_devices = [] if disk_image is None else [
             "-drive",
             drive,
             "-device",
             "virtio-blk-pci,drive=svdisk",
+        ]
+        args_list += [
+            "-device",
+            "virtio-net-pci,netdev=net0",
+            *disk_devices,
             "-device",
             "virtio-vga,xres=1280,yres=800",
             "-device",
@@ -143,11 +147,13 @@ def build_qemu_args(
                 "-device",
                 "ide-hd,drive=svdisk,bus=ide.1",
             ]
+        if disk_image is None:
+            disk_devices = []
+        else:
+            disk_devices = ["-drive", drive, *disk_devices]
         args_list += [
             "-device",
             "rtl8139,netdev=net0",
-            "-drive",
-            drive,
             *disk_devices,
             "-device",
             "VGA,edid=on,xres=1280,yres=800",
@@ -173,7 +179,7 @@ def build_qemu_args(
 def prepare_image(
     *,
     image_root: Path,
-    disk_image: Path,
+    disk_image: Path | None,
     ovmf_code: Path | None,
     ovmf_vars: Path | None,
     vars_copy: Path | None = None,
@@ -186,7 +192,6 @@ def prepare_image(
             "OVMF was not found; set OVMF_CODE and OVMF_VARS or pass --ovmf-code/--ovmf-vars"
         )
     image_root = image_root.resolve()
-    disk_image = disk_image.resolve()
     vars_copy = vars_copy or image_root.parent / "OVMF_VARS.fd"
     debug_log = debug_log or image_root.parent / "debugcon.log"
     vars_copy.parent.mkdir(parents=True, exist_ok=True)

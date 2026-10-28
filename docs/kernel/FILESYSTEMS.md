@@ -30,7 +30,8 @@ user's files are that volume's.
 in the disk's `bin`. The disk was already required — the shared libraries live
 only in its `lib`, so no graphical program runs without it — and the copy in
 memory cost 45 MB of RAM for the whole session, and lost the section cache's
-sharing, which keys on a volume's files.
+sharing, which keys on a volume's files. The initramfs is now the rescue
+system, 8.4 MB (below).
 
 **`/dev` and `/rescue` are never the volume's.** `vfs::is_memory_path` names
 them, and `fs::owner_of` returns no volume for a path below either, even with
@@ -41,6 +42,36 @@ would have it hidden; the system's image has neither.
 when the root mounted and `/rescue/bin/init` when it did not. `PATH` is
 `/bin:/rescue/bin`, and `sh` searches the same two, so the rescue shell finds
 its commands either way.
+
+## The rescue system
+
+The initramfs holds what is left when no disk mounts — the disk is missing, its
+controller is one there is no driver for, or the volume does not mount: a shell
+on the text console and the tools to look at and repair a volume. Nothing
+graphical, because the desktop needs `/lib`.
+
+| | |
+| --- | --- |
+| Programs | `SAVANXP_RESCUE_PROGRAMS` in `CMakeLists.txt`: `init`, `sh`, the coreutils (`ls cat cp mv rm mkdir rmdir echo true false sleep ps truncate`), `df`, `fscheck`, `sync`, `sysinfo`, `uname`, and `imagetest` |
+| Size | 8.4 MB, from 45 MB when it carried every program |
+| Started by | the kernel, as `/rescue/bin/init`, when no volume mounted at `/` |
+| What init does | sees that it was started from `/rescue` (its `argv[0]`), skips `audiod` and the session, and keeps `/rescue/bin/sh` alive on the console, starting it again when it exits |
+| Checked by | `rescue-smoke`: QEMU with no disk at all (`run_smoke.py --no-disk`, scenario field `no_disk`), asserting `ls`, `cat`, `sh` resolving commands through `PATH`, `df` reporting no volume, and `imagetest` |
+
+`imagetest` is not a tool. It tests the kernel's in-memory executable reader,
+and `/rescue` is the only place that reader runs from, so it lives there; the
+core `smoke` runs it from `/rescue/bin` too, next to the copy on the disk.
+
+Every program, the rescue set included, is staged onto the disk as well. The
+disk also carries `/system/programs.txt`, the build's list of the programs it
+shipped: before, Add or Remove Programs told "came with the OS" by subtracting
+the initramfs's `/bin`, which stopped working the moment the initramfs no
+longer held every program (`appwiz_catalog.h`).
+
+The smoke trigger (`/rescue/SMOKE`) is still staged into the initramfs, never
+onto the disk, so a smoke build leaves the persistent image alone. A rescue
+boot runs only the `rescue` scenario; any other one fails, since it needs the
+disk.
 
 **`/disk` is an alias of `/`.** `normalize_path` drops a first `disk`
 component. Binaries built before the move carry `/disk/...` inside them — an

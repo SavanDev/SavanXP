@@ -9,18 +9,17 @@
  *
  * WHAT CAN BE UNINSTALLED, which is this module's one real decision:
  *
- *     it is in /bin  AND  it is NOT in /rescue/bin
+ *     it is in /bin  AND  it is NOT named in /system/programs.txt
  *
  * Not a blocklist and not a guess from the name: it is exactly the set of what
- * was installed separately. /bin is on the system disk, and the build stages
- * the system's programs there; the initramfs, published under /rescue, carries
- * the same programs (docs/kernel/FILESYSTEMS.md). The subtraction is what tells
- * "came with the OS" from "someone installed it".
+ * was installed separately. The build stages every program it builds into
+ * /bin and writes their names into /system/programs.txt, so the subtraction is
+ * what tells "came with the OS" from "someone installed it". The list comes
+ * from the build, not from the programs: a binary cannot declare itself
+ * removable.
  *
- * That holds while the initramfs carries every system program. Once it is cut
- * down to a rescue set, the subtraction needs another source for "came with
- * the OS" (a manifest of the system's programs), or it will offer to remove
- * the desktop.
+ * Without the list nothing is offered. An uninstaller that cannot tell the
+ * system apart has to assume everything is the system.
  *
  * Each entry's identity comes from the binary's own .sxmeta, as in the launcher
  * (docs/userland/SXE_FORMAT.md). A binary without resources is not an error: it
@@ -35,7 +34,7 @@
 #define APPWIZ_PATH_CAPACITY 192
 
 #define APPWIZ_INSTALL_DIR "/bin"
-#define APPWIZ_SYSTEM_DIR "/rescue/bin"
+#define APPWIZ_SYSTEM_LIST "/system/programs.txt"
 
 /* Los iconos se dibujan en la lista, que es de 16. */
 #define APPWIZ_ICON_SIZE 16
@@ -86,7 +85,7 @@ const struct sx_bitmap *appwiz_entry_icon(const struct appwiz_entry *entry);
  *     disk became the root (an installed Doom) declare data_dir=/disk/...;
  *   - no "." or ".." segment and no empty one, so it cannot climb out;
  *   - not one of the system's directories, nor anything below one: /bin, /lib,
- *     /icons, /tmp, and the in-memory /dev and /rescue.
+ *     /icons, /system, /tmp, and the in-memory /dev and /rescue.
  *
  * Returns 1 if it may be deleted, 0 if not. A pure function of the text.
  */

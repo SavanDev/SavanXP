@@ -189,6 +189,8 @@ def main() -> int:
     parser.add_argument("--requires-virtio", action="store_true",
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
+    parser.add_argument("--no-disk", action="store_true",
+                        help="Boot with no disk attached: the rescue system's scenario.")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
@@ -218,21 +220,23 @@ def main() -> int:
     run_tag = f"{args.scenario}.{os.getpid()}"
     run_disk = log_dir / f"{run_tag}.disk.img"
     source_lock_path = source_disk.with_name(source_disk.name + ".lock")
-    with source_lock_path.open("a+") as source_lock:
-        fcntl.flock(source_lock.fileno(), fcntl.LOCK_EX)
-        make_smoke_copy(source_disk, run_disk, args.sxfs_cli.resolve())
-        for remove_path in args.remove_path:
-            removed = subprocess.run(
-                [str(args.sxfs_cli.resolve()), "rm", str(run_disk), remove_path],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            if removed.returncode != 0:
-                detail = (removed.stderr or removed.stdout).strip()
-                raise SystemExit(
-                    f"smoke: could not remove {remove_path!r} from disposable image: {detail}"
+    # Without a disk there is nothing to copy: the machine gets no disk at all.
+    if not args.no_disk:
+        with source_lock_path.open("a+") as source_lock:
+            fcntl.flock(source_lock.fileno(), fcntl.LOCK_EX)
+            make_smoke_copy(source_disk, run_disk, args.sxfs_cli.resolve())
+            for remove_path in args.remove_path:
+                removed = subprocess.run(
+                    [str(args.sxfs_cli.resolve()), "rm", str(run_disk), remove_path],
+                    text=True,
+                    capture_output=True,
+                    check=False,
                 )
+                if removed.returncode != 0:
+                    detail = (removed.stderr or removed.stdout).strip()
+                    raise SystemExit(
+                        f"smoke: could not remove {remove_path!r} from disposable image: {detail}"
+                    )
 
     vars_copy = log_dir / f"{run_tag}.OVMF_VARS.fd"
     debug_log = log_dir / f"{run_tag}.debugcon.log"
@@ -246,9 +250,10 @@ def main() -> int:
     if wav_path is not None:
         wav_path.parent.mkdir(parents=True, exist_ok=True)
         wav_path.unlink(missing_ok=True)
+    machine_disk = None if args.no_disk else run_disk
     code, vars_copy = prepare_image(
         image_root=image_root,
-        disk_image=run_disk,
+        disk_image=machine_disk,
         ovmf_code=args.ovmf_code,
         ovmf_vars=args.ovmf_vars,
         vars_copy=vars_copy,
@@ -256,7 +261,7 @@ def main() -> int:
     )
     qemu_args = build_qemu_args(
         image_root=image_root,
-        disk_image=run_disk,
+        disk_image=machine_disk,
         code=code,
         vars_copy=vars_copy,
         debug_log=debug_log,

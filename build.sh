@@ -193,6 +193,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_HOST_ACTION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_action)
         SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
         SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
+        SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -452,6 +453,7 @@ case "$COMMAND" in
         # en la maquina base: sin --virtio no hay tablet y el fallo seria del
         # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
         [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
+        [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then
