@@ -28,7 +28,8 @@ set below.
 SavanXP also has no users, UIDs, credentials or general capability model yet.
 Processes run with the same authority. Protecting init and classifying device
 I/O access reduce accidental or confused-deputy behavior, but do not create
-security isolation between applications.
+security isolation between applications. The planned model is in
+[`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md).
 
 ## Existing structural defenses
 

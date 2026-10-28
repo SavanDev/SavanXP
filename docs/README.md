@@ -23,6 +23,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the native dispatcher boundary, the slice plan, and what stays invariant.
 - [`KERNEL_SECURITY.md`](kernel/KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
+- [`USERS_AND_PERMISSIONS.md`](kernel/USERS_AND_PERMISSIONS.md) — the planned user model:
+  one everyday account, NT-style elevation through a broker and a prompt `windowd`
+  owns, owner/group/mode in the SxFS inode, and the phases to build it.
 - [`SECTIONS.md`](kernel/SECTIONS.md) — section objects and views: the grant model,
   execution as a view permission, W^X, the view and section budgets, and where
   shared library images belong.
