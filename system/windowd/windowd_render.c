@@ -749,7 +749,7 @@ static uint32_t add_desktop_layers(
 /* The scene, back to front:
  *
  *   fallback background, the desktop's background, application windows,
- *   panels, popups, switcher
+ *   panels, popups, switcher, elevation prompt
  *
  * The fallback is windowd's surface over the whole screen: the desktop's
  * background covers it once it has a frame, and until then (at boot, while
@@ -799,6 +799,12 @@ uint32_t windowd_build_scene(
     if (session->switcher_open)
     {
         count = add_wm_layer(layers, count, capacity, windowd_switcher_rect(info));
+    }
+    /* The elevation prompt is above all of it, the switcher included: nothing
+     * a client draws may cover it (docs/kernel/USERS_AND_PERMISSIONS.md). */
+    if (session->consent.open)
+    {
+        count = add_wm_layer(layers, count, capacity, windowd_consent_rect(info));
     }
     return count;
 }
@@ -853,5 +859,6 @@ void windowd_paint_wm_surface(struct windowd_session *session, const struct wind
     {
         draw_switcher(&painter, session);
     }
+    windowd_consent_draw(&painter, &session->consent, &session->gfx.info);
     sx_painter_pop_clip(&painter);
 }

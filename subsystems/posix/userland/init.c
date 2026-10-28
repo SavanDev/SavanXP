@@ -103,6 +103,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "sessiontest")) {
         return "SESSION SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "elevtest")) {
+        return "ELEVATION SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "nativetest")) {
         return "NATIVE TEST";
     }
@@ -147,6 +150,7 @@ static int run_automation_spec(const char* spec) {
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
+    const char* elevtest_argv[] = {"/bin/elevtest", 0};
     const char* ccleste_argv[] = {"/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
@@ -258,6 +262,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
             path = "/bin/floatsmoke";
             argv = floatsmoke_argv;
+            argc = 1;
+        } else if (strcmp(spec, "elevtest") == 0) {
+            path = "/bin/elevtest";
+            argv = elevtest_argv;
             argc = 1;
         } else if (strcmp(spec, "sessiontest") == 0) {
             path = "/bin/sessiontest";
@@ -624,6 +632,18 @@ int main(int argc, char** argv) {
         audiod_pid = 0;
     }
 
+    /* The elevation broker before the session (docs/kernel/
+     * USERS_AND_PERMISSIONS.md#elevation): its port name is taken before any
+     * program could take it. It is restarted if it dies, unless it dies at
+     * once, which is a broken binary or a name already taken. */
+    const char* elevationd_argv[] = {"/bin/elevationd.sxe", 0};
+    long elevationd_pid = spawn("/bin/elevationd.sxe", elevationd_argv, 1);
+    unsigned long elevationd_started_ms = uptime_ms();
+    if (elevationd_pid < 0) {
+        printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));
+        elevationd_pid = 0;
+    }
+
     long sessiond_pid = 0;
     for (;;) {
         int status = 0;
@@ -670,6 +690,22 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        if (pid == elevationd_pid && elevationd_pid != 0) {
+            elevationd_pid = 0;
+            if (uptime_ms() - elevationd_started_ms < 2000UL) {
+                printf("init: elevationd exited at once with %d; elevation is unavailable\n", status);
+            } else {
+                printf("init: elevationd exited with %d, restarting\n", status);
+                elevationd_pid = spawn("/bin/elevationd.sxe", elevationd_argv, 1);
+                elevationd_started_ms = uptime_ms();
+                if (elevationd_pid < 0) {
+                    printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));
+                    elevationd_pid = 0;
+                }
+            }
+            continue;
+        }
+
         if (pid == sessiond_pid && sessiond_pid != 0) {
             runtime_ms = uptime_ms() - last_sessiond_start_ms;
             printf("init: sessiond exited with %d, restarting\n", status);
@@ -700,7 +736,7 @@ int main(int argc, char** argv) {
             sleep_ms(250);
             continue;
         }
-        /* A child that is neither audiod nor sessiond (an app reparented when
-         * its launcher died, for instance): reaped and ignored. */
+        /* A child that is none of the three (an app reparented when its
+         * launcher died, for instance): reaped and ignored. */
     }
 }

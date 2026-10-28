@@ -24,6 +24,13 @@ Cut-off notes:
   `FSTAT_EX`, `OPEN_MODE`, `MKDIR_MODE`). `/dev/input0` and `/dev/mouse0` are 0600. New `idtest`
   in the core smoke. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
 
+- **Elevation: a program can run with the system's rights once the user says yes** on a prompt
+  windowd draws above every window, answered only by the keyboard and mouse it reads. New broker
+  `elevationd` (init starts it), `elevate()` in the libc, `INPUT_IOC_CLAIM` (windowd is the only
+  reader of `/dev/input0` and `/dev/mouse0`), `SXN_SYS_PORT_CONNECT_EX`/`_ACCEPT_EX` and
+  `SXN_SPAWN_FLAG_IDENTITY`. New `elevation-smoke` answers it with real keys over QMP. See
+  `docs/kernel/USERS_AND_PERMISSIONS.md#elevation`.
+
 ### Changed
 
 - **The system runs from its disk, mounted at `/`**: `/bin`, `/lib` and `/games` are the SxFS

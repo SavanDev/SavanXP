@@ -246,6 +246,15 @@ enum sxn_syscall_number {
      * reached, wherever it maps the word. WakeByAddressSingle/All,
      * futex(FUTEX_WAKE). Open to every subsystem. */
     SXN_SYS_WAKE_ADDRESS = 0x1028,
+    /* Like SXN_SYS_PORT_CONNECT, plus rdx = struct sxn_identity* (written):
+     * who created the port, as they were when they created it. A client that
+     * trusts an answer -- the elevation broker asking windowd for consent --
+     * checks that the port is the system's, since names are first come,
+     * first served (docs/kernel/USERS_AND_PERMISSIONS.md#elevation). */
+    SXN_SYS_PORT_CONNECT_EX = 0x1029,
+    /* Like SXN_SYS_PORT_ACCEPT, with rsi = struct sxn_port_connection_ex:
+     * also who the client was when it connected. SO_PEERCRED. */
+    SXN_SYS_PORT_ACCEPT_EX = 0x102a,
 };
 
 /* SXN_SYS_WAKE_ADDRESS: release every waiter. */
@@ -265,7 +274,24 @@ struct sxn_spawn_request {
     int32_t std_handles[3];   /* the child's 0, 1, 2; -1 = the caller's own */
     int32_t handles[SXN_SPAWN_MAX_HANDLES]; /* the child's 3, 4, ... */
     uint32_t handle_count;    /* entries used in handles[] */
-    uint32_t flags;           /* none yet: must be 0 */
+    uint32_t flags;           /* enum sxn_spawn_flags; unknown bits are -EINVAL */
+};
+
+enum sxn_spawn_flags {
+    /* rsi = const struct sxn_identity*: the child's identity instead of the
+     * caller's. Only a caller acting as the system may (-EPERM otherwise);
+     * the elevation broker is the one that does. The caller still needs the
+     * right to run the image. */
+    SXN_SPAWN_FLAG_IDENTITY = 1u << 0,
+};
+
+/* Who a process is (docs/kernel/USERS_AND_PERMISSIONS.md#the-token). The
+ * layout of savanxp_identity, which POSIX's GET_IDENTITY reports. */
+struct sxn_identity {
+    uint32_t uid;  /* who the person is */
+    uint32_t euid; /* whom it acts as: 0 is the system */
+    uint32_t gid;
+    uint32_t reserved;
 };
 
 enum sxn_process_state {
@@ -288,6 +314,14 @@ struct sxn_port_connection {
     int32_t read_handle;  /* client -> service pipe, read end */
     int32_t write_handle; /* service -> client pipe, write end */
     uint32_t reserved;
+};
+
+struct sxn_port_connection_ex {
+    uint32_t client_pid;
+    int32_t read_handle;  /* client -> service pipe, read end */
+    int32_t write_handle; /* service -> client pipe, write end */
+    uint32_t reserved;
+    struct sxn_identity client; /* as it was when it connected */
 };
 
 /* Access for SXN_SYS_OPEN_DEVICE. */

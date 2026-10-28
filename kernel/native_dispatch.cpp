@@ -194,6 +194,7 @@ int native_port_create(Process& proc, uint64_t user_name) {
     if (port == nullptr) {
         return sx::negative_error(SX_ENOMEM);
     }
+    port->creator = proc.credentials;
     const int handle = detail::allocate_fd(
         proc, &port->header, object::access_query | object::access_synchronize, object::handle_none);
     if (handle < 0) {
@@ -205,7 +206,16 @@ int native_port_create(Process& proc, uint64_t user_name) {
     return handle;
 }
 
-int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles) {
+sxn_identity identity_of(const cred::Credentials& who) {
+    sxn_identity out = {};
+    out.uid = who.uid;
+    out.euid = who.euid;
+    out.gid = who.gid;
+    return out;
+}
+
+/* `user_creator`, when not 0, receives who created the port (CONNECT_EX). */
+int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles, uint64_t user_creator) {
     char name[object::kPortNameCapacity] = {};
     object::IoObject* request_reader = nullptr;
     object::IoObject* request_writer = nullptr;
@@ -213,7 +223,8 @@ int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles
     object::IoObject* reply_writer = nullptr;
 
     if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0' ||
-        !sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true)) {
+        !sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true) ||
+        (user_creator != 0 && !sx::validate_user_range(user_creator, sizeof(sxn_identity), true))) {
         return sx::negative_error(SX_EINVAL);
     }
     object::PortObject* port = object::find_port(name);
@@ -246,12 +257,15 @@ int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles
 
     object::PortConnection connection = {};
     connection.client_pid = proc.pid;
+    connection.client = proc.credentials;
     connection.server_read = &request_reader->header;
     connection.server_write = &reply_writer->header;
     const int32_t values[2] = {write_handle, read_handle};
+    const sxn_identity creator = identity_of(port->creator);
 
     if (write_handle < 0 || read_handle < 0 ||
         !sx::copy_to_user(user_handles, values, sizeof(values)) ||
+        (user_creator != 0 && !sx::copy_to_user(user_creator, &creator, sizeof(creator))) ||
         !object::port_enqueue(port, connection)) {
         if (write_handle >= 0) {
             (void)native_close(proc, static_cast<uint64_t>(write_handle));
@@ -426,15 +440,18 @@ int native_pipe_create(Process& proc, uint64_t user_handles) {
     return 0;
 }
 
-int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connection) {
+/* `extended`: user_connection is a sxn_port_connection_ex (ACCEPT_EX), which
+ * also carries who the client was. */
+int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connection, bool extended) {
     object::PortObject* port = object::as_port(detail::lookup_handle(proc, port_handle, object::access_query));
     object::PortConnection connection = {};
-    sxn_port_connection out = {};
+    sxn_port_connection_ex out = {};
+    const size_t out_size = extended ? sizeof(sxn_port_connection_ex) : sizeof(sxn_port_connection);
 
     if (port == nullptr) {
         return sx::negative_error(SX_EBADF);
     }
-    if (!sx::validate_user_range(user_connection, sizeof(out), true)) {
+    if (!sx::validate_user_range(user_connection, out_size, true)) {
         return sx::negative_error(SX_EINVAL);
     }
     if (!object::port_dequeue(port, connection)) {
@@ -455,7 +472,8 @@ int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connec
     out.client_pid = connection.client_pid;
     out.read_handle = read_handle;
     out.write_handle = write_handle;
-    if (!sx::copy_to_user(user_connection, &out, sizeof(out))) {
+    out.client = identity_of(connection.client);
+    if (!sx::copy_to_user(user_connection, &out, out_size)) {
         (void)native_close(proc, static_cast<uint64_t>(read_handle));
         (void)native_close(proc, static_cast<uint64_t>(write_handle));
         return sx::negative_error(SX_EINVAL);
@@ -553,6 +571,8 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_PORT_CREATE:
         case SXN_SYS_PORT_CONNECT:
         case SXN_SYS_PORT_ACCEPT:
+        case SXN_SYS_PORT_CONNECT_EX:
+        case SXN_SYS_PORT_ACCEPT_EX:
         case SXN_SYS_PIPE_SEND_HANDLE:
         case SXN_SYS_PIPE_RECEIVE_HANDLE:
         case SXN_SYS_PIPE_CREATE:
@@ -675,9 +695,28 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
-            if (request.flags != 0 || request.handle_count > SXN_SPAWN_MAX_HANDLES) {
+            if ((request.flags & ~static_cast<uint32_t>(SXN_SPAWN_FLAG_IDENTITY)) != 0 ||
+                request.handle_count > SXN_SPAWN_MAX_HANDLES) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
+            }
+            // Another identity for the child: the one way a token goes up
+            // (docs/kernel/USERS_AND_PERMISSIONS.md#the-token), and only the
+            // system may take it -- in practice, the elevation broker.
+            cred::Credentials child_identity = caller->credentials;
+            const bool with_identity = (request.flags & SXN_SPAWN_FLAG_IDENTITY) != 0;
+            if (with_identity) {
+                sxn_identity identity = {};
+                if (!sx::validate_user_range(context->rsi, sizeof(identity), false) ||
+                    !sx::copy_from_user(&identity, context->rsi, sizeof(identity))) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                    return context;
+                }
+                if (!cred::acts_as_system(caller->credentials)) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EPERM));
+                    return context;
+                }
+                child_identity = {identity.uid, identity.euid, identity.gid};
             }
             for (int index = 0; index < 3; ++index) {
                 const int32_t handle = request.std_handles[index];
@@ -713,7 +752,8 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
 
             ImageFailure failure = ImageFailure::none;
             Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller,
-                request.std_handles[0], request.std_handles[1], request.std_handles[2], failure);
+                request.std_handles[0], request.std_handles[1], request.std_handles[2], failure,
+                with_identity ? &child_identity : nullptr);
             if (child != nullptr && !add_spawn_handles(*child, *caller, request.handles, request.handle_count)) {
                 failure = ImageFailure::no_handles;
                 child = nullptr;
@@ -898,10 +938,20 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(native_port_create(*caller, context->rdi));
             return context;
         case SXN_SYS_PORT_CONNECT:
-            context->rax = static_cast<uint64_t>(native_port_connect(*caller, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(native_port_connect(*caller, context->rdi, context->rsi, 0));
+            return context;
+        case SXN_SYS_PORT_CONNECT_EX:
+            if (context->rdx == 0) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(native_port_connect(*caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SXN_SYS_PORT_ACCEPT:
-            context->rax = static_cast<uint64_t>(native_port_accept(*caller, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(native_port_accept(*caller, context->rdi, context->rsi, false));
+            return context;
+        case SXN_SYS_PORT_ACCEPT_EX:
+            context->rax = static_cast<uint64_t>(native_port_accept(*caller, context->rdi, context->rsi, true));
             return context;
         case SXN_SYS_PIPE_SEND_HANDLE:
             context->rax = static_cast<uint64_t>(native_pipe_send_handle(*caller, context->rdi, context->rsi));

@@ -393,6 +393,19 @@ SCENARIOS: dict[str, Scenario] = {
         "Session manager: the desktop and the session come back when killed",
         300.0,
     ),
+    # The elevation prompt answered with real keys (docs/kernel/
+    # USERS_AND_PERMISSIONS.md#elevation): windowd logs the prompt, the host
+    # presses N and then Y through PS/2, and a forged answer the requester
+    # writes down its own pipe must change nothing.
+    "elevation-smoke": _qemu_scenario(
+        "elevtest",
+        "ELEVATION SMOKE PASS",
+        "ELEVATION SMOKE FAIL",
+        "Elevation broker and prompt: real keys decide, forged answers do not",
+        300.0,
+        "windowd: consent prompt shown",
+        qmp_callback="./tools/qmp_elevation.py",
+    ),
     "pthread-test": _qemu_scenario(
         "pthreadtest",
         "PTHREAD TEST PASS",

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/credentials.hpp"
 #include "kernel/physical_memory.hpp"
 
 namespace device {
@@ -183,6 +184,7 @@ struct ThreadObject {
  */
 struct PortConnection {
     uint32_t client_pid;
+    cred::Credentials client; /* when it connected: it may lower itself later */
     Header* server_read;  /* client -> server pipe, read end */
     Header* server_write; /* server -> client pipe, write end */
 };
@@ -191,6 +193,9 @@ struct PortObject {
     Header header;
     bool in_use;
     char name[kPortNameCapacity];
+    /* Who created it, as they were then. Names are first come, first served,
+     * so a client that trusts the answers checks this (PORT_CONNECT_EX). */
+    cred::Credentials creator;
     uint32_t pending_head;
     uint32_t pending_count;
     PortConnection pending[kPortPendingCapacity];

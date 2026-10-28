@@ -5,6 +5,7 @@
 
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
+#include "kernel/credentials.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/input.hpp"
@@ -47,6 +48,10 @@ size_t g_mouse_read_index = 0;
 size_t g_mouse_write_index = 0;
 size_t g_mouse_count = 0;
 uint32_t g_owner_pid = 0;
+// The pid that claimed each device's events (INPUT_IOC_CLAIM), or 0. pids are
+// never reused, so a claim is held while that process is alive.
+uint32_t g_input_reader_pid = 0;
+uint32_t g_mouse_reader_pid = 0;
 bool g_ready = false;
 bool g_mouse_available = false;
 
@@ -116,7 +121,45 @@ bool input_device_can_read() {
     return g_input_count != 0;
 }
 
+bool claim_held(uint32_t pid) {
+    if (pid == 0) {
+        return false;
+    }
+    const process::Process* proc = process::find(pid);
+    return proc != nullptr && proc->life == process::Lifecycle::alive;
+}
+
+// Input ownership (docs/kernel/USERS_AND_PERMISSIONS.md#elevation): once
+// windowd claims a device, its events are windowd's alone. Without it any
+// system process could drain the keyboard while the elevation prompt waits.
+int claim_reader(uint32_t& reader_pid) {
+    process::Process* caller = process::current();
+    if (caller == nullptr || !cred::acts_as_system(caller->credentials)) {
+        return negative_error(SX_EPERM);
+    }
+    if (claim_held(reader_pid) && reader_pid != caller->pid) {
+        return negative_error(SX_EBUSY);
+    }
+    reader_pid = caller->pid;
+    return 0;
+}
+
+// A read by anybody but the claimant, while the claim holds.
+bool read_refused(uint32_t reader_pid) {
+    return claim_held(reader_pid) && reader_pid != process::current_pid();
+}
+
+int mouse_ioctl(uint64_t request, uint64_t, uint32_t) {
+    if (request == INPUT_IOC_CLAIM) {
+        return claim_reader(g_mouse_reader_pid);
+    }
+    return negative_error(SX_ENOSYS);
+}
+
 int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    if (request == INPUT_IOC_CLAIM) {
+        return claim_reader(g_input_reader_pid);
+    }
     if (request == INPUT_IOC_SET_LAYOUT && (granted_access & object::access_write) == 0) {
         return negative_error(SX_EACCES);
     }
@@ -149,6 +192,9 @@ void release_graphics_session() {
 }
 
 int read_input_device(uint64_t user_buffer, size_t count) {
+    if (read_refused(g_input_reader_pid)) {
+        return negative_error(SX_EBUSY);
+    }
     if (count < sizeof(savanxp_input_event)) {
         return negative_error(SX_EINVAL);
     }
@@ -171,6 +217,9 @@ int read_input_device(uint64_t user_buffer, size_t count) {
 }
 
 int read_mouse_device(uint64_t user_buffer, size_t count) {
+    if (read_refused(g_mouse_reader_pid)) {
+        return negative_error(SX_EBUSY);
+    }
     input::poll_pointers();
 
     if (count < sizeof(savanxp_mouse_event)) {
@@ -210,6 +259,8 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     reset_input_queue();
     reset_mouse_queue();
     g_owner_pid = 0;
+    g_input_reader_pid = 0;
+    g_mouse_reader_pid = 0;
     g_mouse_available = false;
 
     if (display::ready()) {
@@ -223,6 +274,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_input_device.close = nullptr;
     g_mouse_device.read = read_mouse_device;
     g_mouse_device.can_read = mouse_device_can_read;
+    g_mouse_device.ioctl = mouse_ioctl;
     g_mouse_device.close = nullptr;
     // The system's only (docs/kernel/USERS_AND_PERMISSIONS.md, "Devices"): a
     // process that can read the keyboard can read a password, and one that can

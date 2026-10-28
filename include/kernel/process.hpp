@@ -304,8 +304,10 @@ void write_int_to_process_memory(Process& proc, uint64_t user_address, int value
 sx_status image_failure_errno(ImageFailure failure);
 bool prepare_exec_image(Thread& self, const char* path, int argc, const char* const* argv, ImageFailure& failure);
 // The child's 0, 1 and 2 are the parent's stdin_fd, stdout_fd and stderr_fd,
-// each one the parent's own 0, 1 or 2 when it is negative.
-Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure);
+// each one the parent's own 0, 1 or 2 when it is negative. Its identity is
+// the parent's, or `identity` when given (the native SPAWN_EX identity flag,
+// already checked by the caller).
+Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure, const cred::Credentials* identity = nullptr);
 // Gives a spawned child the parent's handles[i] as handle 3 + i (native
 // SPAWN_EX). Reaps the child and reports false when one is not a handle, like
 // clone_handles_for_spawn.

@@ -137,6 +137,16 @@ static inline long sxn_port_accept(long port, struct sxn_port_connection* out) {
     return sxn_trap(SXN_SYS_PORT_ACCEPT, (unsigned long)port, (unsigned long)out, 0);
 }
 
+/* sxn_port_connect, and who created the port into *creator. */
+static inline long sxn_port_connect_ex(const char* name, int32_t handles[2], struct sxn_identity* creator) {
+    return sxn_trap(SXN_SYS_PORT_CONNECT_EX, (unsigned long)name, (unsigned long)handles, (unsigned long)creator);
+}
+
+/* sxn_port_accept, and who the client was when it connected. */
+static inline long sxn_port_accept_ex(long port, struct sxn_port_connection_ex* out) {
+    return sxn_trap(SXN_SYS_PORT_ACCEPT_EX, (unsigned long)port, (unsigned long)out, 0);
+}
+
 static inline long sxn_pipe_send_handle(long pipe_write, long handle) {
     return sxn_trap(SXN_SYS_PIPE_SEND_HANDLE, (unsigned long)pipe_write, (unsigned long)handle, 0);
 }
@@ -181,6 +191,13 @@ static inline long sxn_pipe_create(int32_t handles[2]) {
  * pid. Start from sxn_spawn_request_init so unused fields are right. */
 static inline long sxn_spawn_ex(const struct sxn_spawn_request* request) {
     return sxn_trap(SXN_SYS_SPAWN_EX, (unsigned long)request, 0, 0);
+}
+
+/* sxn_spawn_ex with the child running as `identity`; sets
+ * SXN_SPAWN_FLAG_IDENTITY itself. Only the system may (-EPERM). */
+static inline long sxn_spawn_ex_as(struct sxn_spawn_request* request, const struct sxn_identity* identity) {
+    request->flags |= SXN_SPAWN_FLAG_IDENTITY;
+    return sxn_trap(SXN_SYS_SPAWN_EX, (unsigned long)request, (unsigned long)identity, 0);
 }
 
 /* A request for `path` with `argc` arguments, the caller's own stdio and no

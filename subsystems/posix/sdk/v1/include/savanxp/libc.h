@@ -21,6 +21,14 @@ long spawn(const char* path, const char* const* argv, int argc);
 long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd);
 long spawn_fds(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd, int stderr_fd);
 long exec(const char* path, const char* const* argv, int argc);
+/* Runs `path` with the system's rights once the user says yes on the
+ * elevation prompt (docs/kernel/USERS_AND_PERMISSIONS.md#elevation). The
+ * program is the broker's child, run as the same person acting as the
+ * system. Returns its pid, -SAVANXP_EACCES if the user said no, or -errno
+ * (-SAVANXP_ENOENT with no broker or no session to ask in). With
+ * `exit_status`, waits for it to end and stores its exit status there. A
+ * caller that already acts as the system is not asked. */
+long elevate(const char* path, const char* const* argv, int argc, int* exit_status);
 long savanxp_pipe(int fds[2]);
 long savanxp_dup(int fd);
 long savanxp_dup2(int oldfd, int newfd);

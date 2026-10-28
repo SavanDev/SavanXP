@@ -1886,7 +1886,8 @@ process::Process* create_process_internal(
     int stdin_fd,
     int stdout_fd,
     int stderr_fd,
-    process::ImageFailure& failure
+    process::ImageFailure& failure,
+    const cred::Credentials* identity
 ) {
     failure = process::ImageFailure::none;
 
@@ -1927,7 +1928,9 @@ process::Process* create_process_internal(
 
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
     proc->subsystem_id = parent != nullptr ? parent->subsystem_id : subsystem::Id::posix;
-    proc->credentials = spawner;
+    // Set before the thread exists: on another core it may run as soon as it
+    // does, and it must never run with the spawner's token by mistake.
+    proc->credentials = identity != nullptr ? *identity : spawner;
     set_process_name(*proc, path);
     if (parent != nullptr) {
         // El hijo hereda el estado privado del padre, que para POSIX incluye

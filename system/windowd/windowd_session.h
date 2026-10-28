@@ -4,6 +4,7 @@
 #include "wm/wm_shell_protocol.h"
 #include "windowd_presentation.h"
 #include "windowd_compositor_client.h"
+#include "windowd_consent.h"
 
 #define WINDOWD_MAX_OVERLAY_CLIENTS 12
 
@@ -187,6 +188,9 @@ struct windowd_session
      * is a task index (windowd_task_client). WM UI, like the window frames. */
     int switcher_open;
     int switcher_selected;
+    /* The elevation prompt (windowd_consent.h): above everything, and while
+     * it is up it has all the input. */
+    struct windowd_consent consent;
     int active_client_kind;
     int active_overlay_slot;
     int fullscreen_slot;

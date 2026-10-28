@@ -63,6 +63,19 @@ The layout is a user preference that lives in the core:
 `INPUT_IOC_SET_LAYOUT` / `INPUT_IOC_GET_LAYOUT` on `/dev/input0` reach it
 through `input::set_keyboard_layout`.
 
+### Who reads the events
+
+`/dev/input0` and `/dev/mouse0` each have one queue, and a read drains it. So
+the reader is claimed: `INPUT_IOC_CLAIM` on either device makes the caller its
+only reader until it exits, and a read by anybody else is `-EBUSY`. Only the
+system may claim, and only a device nobody holds. `windowd` claims both at
+startup. Opening and the layout ioctls stay open to anyone the device mode
+allows (the desktop opens `/dev/input0` for the layout), and a device nobody
+claimed reads as before, which is how `kbdtest` and `mousetest` run without a
+session. The reason is the elevation prompt: its answer has to be what
+`windowd` read ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#elevation)).
+Nothing writes events into the queues but the drivers.
+
 ## Verification
 
 `./build.sh smoke kbd-smoke` drives the keyboard over QMP: plain and shifted
@@ -70,4 +83,5 @@ letters, Ctrl, an extended key, Enter, Caps Lock on and off, and AltGr on the
 Spanish layout. Run it twice, once plain (PS/2) and once with `--virtio`: the
 two runs exercise the two drivers through the same core. `pointer-smoke
 --virtio` covers the absolute pointer, and `native-hw-smoke` the PS/2 keys
-into a native program.
+into a native program. `elevation-smoke` checks the claim: a second reader
+and a second claim are both `-EBUSY`.

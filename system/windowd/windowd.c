@@ -2643,6 +2643,7 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
 
     memset(session, 0, sizeof(*session));
     windowd_compositor_connection_init(&session->compositor);
+    windowd_consent_init(&session->consent);
     session->input_fd = -1;
     session->mouse_fd = -1;
     session->submit_event_fd = -1;
@@ -2712,6 +2713,30 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
         return windowd_stage_failed("create the WM port", session->port_fd);
     }
 
+    /* The keyboard and the pointer are windowd's alone from here on
+     * (INPUT_IOC_CLAIM): nobody else can read what the user types, and the
+     * answer to the elevation prompt can only be what windowd reads. */
+    result = (int)sxn_device_control(session->input_fd, INPUT_IOC_CLAIM, 0);
+    if (result < 0)
+    {
+        eprintf("windowd: could not claim /dev/input0 (%s)\n", result_error_string(result));
+    }
+    if (session->mouse_fd >= 0)
+    {
+        result = (int)sxn_device_control(session->mouse_fd, INPUT_IOC_CLAIM, 0);
+        if (result < 0)
+        {
+            eprintf("windowd: could not claim /dev/mouse0 (%s)\n", result_error_string(result));
+        }
+    }
+    /* Without it nothing can be elevated, but the session still works. */
+    result = windowd_consent_open_port(&session->consent);
+    if (result < 0)
+    {
+        eprintf("windowd: no consent port (%s); elevation is unavailable\n", result_error_string(result));
+    }
+    result = 0;
+
     windowd_set_wm_surface((uint32_t *)session->compositor.wm_view, session->compositor.wm_pitch);
     g_session = session;
     refresh_active_state(session);
@@ -2738,6 +2763,7 @@ static void close_compositor_session(struct windowd_session *session)
     }
     /* Connections still in the port's backlog go with it. */
     close_fd_if_needed(&session->port_fd);
+    windowd_consent_close(&session->consent);
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     close_fd_if_needed(&session->submit_event_fd);
@@ -4998,6 +5024,12 @@ static int windowd_selftest(void)
         return 1;
     }
 
+    if (windowd_consent_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL consent prompt input rules\n");
+        return 1;
+    }
+
     if (open_compositor_session(&session, 1) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL compositor startup\n");
@@ -5768,6 +5800,31 @@ static int windowd_selftest(void)
     return 0;
 }
 
+/* --- The elevation prompt ---------------------------------------------------
+ *
+ * windowd_consent.c keeps its state, input and drawing; here it only meets
+ * the rest of the WM: its rect is repainted when it changes, and opening it
+ * closes the Alt+Tab switcher, which would otherwise wait for an Alt release
+ * the prompt swallows.
+ */
+
+static void dirty_consent(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct sx_rect box = windowd_consent_rect(&session->gfx.info);
+
+    windowd_dirty_rect_add(dirty, &session->gfx.info, box.x, box.y, box.width, box.height);
+}
+
+static void consent_opened_or_closed(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    if (session->consent.open)
+    {
+        switcher_close(session, dirty);
+        session->hotkey_held_key = 0;
+    }
+    dirty_consent(session, dirty);
+}
+
 /* --- Alt+Tab switcher -------------------------------------------------------
  *
  * NT's Alt+Tab: while Alt is held each Tab moves to the next window and a box
@@ -6015,6 +6072,28 @@ static void handle_pointer_event(
         cursor_x = windowd_clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session->gfx.info.width - 1);
         cursor_y = windowd_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session->gfx.info.height - 1);
     }
+    if (session->consent.open)
+    {
+        int consent_changed = 0;
+
+        /* The prompt has the pointer: it moves, and nothing under it is
+         * told. */
+        (void)windowd_consent_pointer(&session->consent, &session->gfx.info, cursor_x, cursor_y,
+            pressed_buttons, last_buttons, uptime_ms(), &consent_changed);
+        if (consent_changed)
+        {
+            dirty_consent(session, dirty);
+        }
+        session->previous_cursor_shape = session->current_cursor_shape;
+        session->current_cursor_shape = SAVANXP_CURSOR_ARROW;
+        if (session->current_cursor_shape != session->previous_cursor_shape)
+        {
+            session->cursor_moved = 1;
+        }
+        refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
+        last_buttons = pressed_buttons;
+        goto done;
+    }
     current_hover_client = top_client_at_point(session, cursor_x, cursor_y);
 
     session->previous_cursor_shape = session->current_cursor_shape;
@@ -6260,7 +6339,7 @@ int main(int argc, char **argv)
     {
         /* Input, mouse, the session's submit event, the port and the pending
          * hellos. */
-        struct savanxp_pollfd poll_fds[4 + WINDOWD_MAX_PENDING_CONNECTIONS];
+        struct savanxp_pollfd poll_fds[6 + WINDOWD_MAX_PENDING_CONNECTIONS];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
         int request_poll_index = -1;
@@ -6309,6 +6388,8 @@ int main(int argc, char **argv)
                 ++poll_count;
             }
         }
+        /* The broker asking for consent, or hanging up on a prompt. */
+        poll_count += windowd_consent_poll_fds(&session.consent, &poll_fds[poll_count]);
 
         if (savanxp_poll(poll_fds, (unsigned long)poll_count, 16) < 0)
         {
@@ -6329,8 +6410,19 @@ int main(int argc, char **argv)
         {
             while ((count = savanxp_read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                /* Arbitration: the WM's own keys, then the hotkeys the
-                 * desktop registered, then the focused application. */
+                int consent_changed = 0;
+
+                /* Arbitration: the elevation prompt takes everything while it
+                 * is up; then the WM's own keys, then the hotkeys the desktop
+                 * registered, then the focused application. */
+                if (windowd_consent_key(&session.consent, &key_event, uptime_ms(), &consent_changed))
+                {
+                    if (consent_changed)
+                    {
+                        dirty_consent(&session, &dirty);
+                    }
+                    continue;
+                }
                 if (wm_handle_key(&session, &key_event, &dirty) ||
                     deliver_hotkey(&session, &key_event, &dirty))
                 {
@@ -6386,6 +6478,10 @@ int main(int argc, char **argv)
             break;
         }
         service_connections(&session, &dirty);
+        if (windowd_consent_service(&session.consent, uptime_ms()))
+        {
+            consent_opened_or_closed(&session, &dirty);
+        }
         service_close_requests(&session, &dirty);
         service_desktop(&session, &dirty);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)

@@ -96,7 +96,12 @@ Owns:
   using SXCHROME; `windowd` still does not link SXGUI-C.
 - Input: it reads the keyboard and pointer, coalesces and routes them. Routing
   needs geometry and focus, which is why input stays here and not in
-  `compositord` (in NT, USER's raw input thread).
+  `compositord` (in NT, USER's raw input thread). It claims both devices, so
+  no other process can read them.
+- The elevation prompt: the top layer of the scene, with all the input while
+  it is up, asked for by the broker over the `windowd.consent` port
+  ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md#elevation)).
+  windowd only shows it and answers; the broker starts the program.
 - The generic primitives listed under [Window roles](#window-roles),
   [Global hotkeys](#global-hotkeys) and
   [Window enumeration](#window-enumeration).

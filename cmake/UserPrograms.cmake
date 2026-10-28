@@ -321,6 +321,7 @@ savanxp_program(NAME df SOURCES subsystems/posix/userland/df.c)
 savanxp_program(NAME ticker TEST SOURCES subsystems/posix/userland/ticker.c)
 savanxp_program(NAME fdtest TEST SOURCES subsystems/posix/userland/fdtest.c)
 savanxp_program(NAME sessiontest TEST SOURCES subsystems/posix/userland/sessiontest.c)
+savanxp_program(NAME elevtest TEST SOURCES subsystems/posix/userland/elevtest.c)
 savanxp_program(NAME badptr TEST SOURCES subsystems/posix/userland/badptr.c)
 # The basic file utilities. They replaced the BusyBox port: one small program
 # each, with the shared helpers compiled into every one that needs them.

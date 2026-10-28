@@ -1,9 +1,10 @@
 # Users and permissions: one user, and elevation when it is needed
 
-> **Status: phases 1 (the format) and 2 (tokens and the check) are built;
-> phases 3–4 are design.** Every process carries an identity and the VFS checks
-> it on every operation, but everything still runs as the system, so nothing
-> is refused yet outside the tests.
+> **Status: phases 1 (the format), 2 (tokens and the check) and 3 (the
+> broker and the prompt) are built; phase 4 is design.** Every process carries
+> an identity and the VFS checks it on every operation, and a program can be
+> elevated through the prompt, but everything still runs as the system, so
+> nothing is refused or asked for yet outside the tests.
 > This document fixed the model before the code, because it moves three things
 > that are expensive to move twice: the SxFS inode, the `stat` ABI, and who is
 > allowed to talk to `/dev/input0`. The phases at the end are the order to build
@@ -38,8 +39,10 @@ Before phase 1 there were no users, UIDs or credentials, and every process ran
 with the same authority. What changed, and what is still true:
 
 - **Processes** carry a token (phase 2, `kernel/credentials.hpp`), and every
-  one is the system's: init is, and nothing lowers anything outside `idtest`.
-  So no application is yet kept from another.
+  one is the system's: init is, and nothing lowers anything outside `idtest`
+  and `elevtest`. So no application is yet kept from another, and the prompt
+  (phase 3) is never shown outside `elevation-smoke`: the system is not
+  asked.
 - **SxFS** records uid, gid, mode and modification time on every inode, and the
   VFS publishes them on the vnode it checks.
 - **The POSIX layer** answers with the token, applies `umask` on create, and
@@ -81,7 +84,9 @@ set when the process is created and never changes afterwards; there is no
   belong to the system, as files an elevated installer creates belong to
   Administrators on NT.
 - Only a process whose effective uid is 0 can create a process with a different
-  token. In practice that is one process: the elevation broker.
+  token (`SXN_SPAWN_FLAG_IDENTITY`,
+  [`KERNEL_NATIVE_API.md`](KERNEL_NATIVE_API.md#slice-26-identities-on-ports-and-spawn)).
+  In practice that is one process: the elevation broker.
 
 **There is no setuid bit.** NT has none either, and elevation replaces it: a
 program that needs rights asks for them through the broker instead of carrying
@@ -213,7 +218,10 @@ clipboard, `/dev/power` for shutting down). The ones that must not be:
 - **`/dev/input0` and `/dev/mouse0`: system only, read by `windowd`.** If any
   process can read the keyboard, it can read a password; if any process can
   write input, it can click "Yes" on the elevation prompt. The prompt below is
-  worth nothing without this.
+  worth nothing without this. The mode keeps the user out; within the
+  system, `windowd` claims both (`INPUT_IOC_CLAIM`,
+  [`INPUT.md`](INPUT.md#who-reads-the-events)), and from then on nobody else
+  can read them. No device node accepts events written into it.
 - Raw block devices, if they ever get a node.
 
 ### The check
@@ -240,13 +248,43 @@ Three parties, and the order matters:
    and Yes/No.
 3. `windowd` draws it **on its own layer, above every client**, and takes the
    answer only from real input it reads from `/dev/input0`. No client can
-   cover the dialog, draw something that looks like it, or send it input.
+   cover the dialog or send it input. One can draw a look-alike in its own
+   window, but answering that elevates nothing: only the broker does.
 4. If the user says yes, the broker spawns the program with an elevated token.
    The program that asked gets back the pid, never the token.
 
 That is UAC's secure desktop, reduced to what a compositor that already owns
 the screen and the input can do. Without step 3 the model is decorative: a
 program could approve its own request.
+
+### How it is built
+
+The protocol is `include/elevation/elevation_protocol.h`; a POSIX program
+calls `elevate()` in the libc.
+
+- **The broker is `elevationd`** (`system/elevationd`), native, started by
+  init before the session so its port name (`elevation`) is taken first. It
+  serves one request at a time. Who asked comes from the connection
+  (`SXN_SYS_PORT_ACCEPT_EX`), never from the request, and the elevated program
+  runs with that person's uid and gid and euid 0. The program is the broker's
+  child: the broker reaps it, and with `SAVANXP_ELEVATION_WAIT` reports its
+  exit status to the requester. A requester that already acts as the system
+  is not asked: it could start the program itself.
+- **The prompt is windowd's**, on a second port, `windowd.consent`. The
+  broker checks that the system created it (`SXN_SYS_PORT_CONNECT_EX`), so a
+  program that took the name first cannot answer; windowd hears a consent
+  request only from a connection that acts as the system, and `elevtest`
+  checks that it refuses the user. The prompt is the top layer of the scene,
+  above the Alt+Tab switcher and a fullscreen window, drawn on windowd's own
+  surface (`windowd_consent.c`). While it is up, every key and pointer event
+  is its own: no window, hotkey or WM key sees any.
+- **What counts as an answer:** Y, N or Esc, Enter or Space on the focused
+  button (it starts on No, so Enter alone is no), or a click whose press and
+  release both land on one button. Nothing counts until 500 ms after it
+  appears, so a key the user was typing into a window cannot answer it.
+  Nothing the requester writes reaches windowd, and the broker reads nothing
+  it writes after its request; hanging up withdraws the request and closes
+  the prompt. An unanswered prompt is no after ten minutes.
 
 There is no password at first. The one user is the administrator, and the
 confirmation is consent, not authentication, as it is for an NT administrator in
@@ -336,10 +374,14 @@ not move (4237 against 4328). `sxfs-cli apply` takes the host file's time, and
    to uid 1000 is refused `/bin`, `/system/programs.txt`, `/dev/input0`,
    `chmod` and `chown` of what is not its own, and raising itself back, and is
    allowed its profile and its own files in `/tmp`, but not the system's.
-3. **The broker and the prompt.** The service, the `windowd` layer, input
-   ownership. *Done when* a scenario asks for elevation, answers through real
-   input, and gets an elevated child; and a client that synthesizes the answer
-   is ignored.
+3. **The broker and the prompt — done.** The service, the `windowd` layer,
+   input ownership. Verified by `elevation-smoke`: as the system, a second
+   reader and a second claim of the keyboard are refused, and a request runs
+   without a prompt; lowered to the user, the keyboard and windowd's consent
+   port refuse it, a request followed by a forged yes is declined by a real N
+   (QMP, through PS/2), and a second one accepted by a real Y runs elevated
+   (uid 1000, euid 0, writes `/system`) and reports its exit status. The input
+   rules are also in `windowd --selftest`.
 4. **The desktop runs as the user.** Init starts `windowd` and the services as
    system and the shell as uid 1000. Programs that write outside the profile
    move their defaults into it; the settings split between the profile and

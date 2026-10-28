@@ -372,6 +372,13 @@ enum savanxp_keyboard_layout {
 enum savanxp_input_ioctl {
     INPUT_IOC_SET_LAYOUT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 1),
     INPUT_IOC_GET_LAYOUT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 2),
+    /* On /dev/input0 or /dev/mouse0: the caller becomes the device's only
+     * reader until it exits, and a read by anybody else is -EBUSY. Only the
+     * system may claim (-EPERM), and only an unclaimed device (-EBUSY).
+     * windowd claims both, so the answer to the elevation prompt can only
+     * come from what it reads (docs/kernel/USERS_AND_PERMISSIONS.md). A
+     * device nobody claimed reads as before. */
+    INPUT_IOC_CLAIM = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 3),
 };
 
 enum savanxp_net_ioctl {

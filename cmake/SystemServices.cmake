@@ -38,6 +38,10 @@ savanxp_system_service(NAME compositord SOURCES
 # Manager, and restarts them. init starts it.
 savanxp_system_service(NAME sessiond SOURCES sessiond.c)
 
+# The elevation broker (docs/kernel/USERS_AND_PERMISSIONS.md#elevation): runs
+# a program elevated once windowd's prompt says yes. init starts it.
+savanxp_system_service(NAME elevationd SOURCES elevationd.c)
+
 # The window manager. Its sources are written against the POSIX SDK;
 # windowd_sys.h, included first by every unit, renames those calls onto SXN
 # (windowd_sys.c). The desktop's icons are shared with the desktop and Program
@@ -49,6 +53,7 @@ savanxp_system_service(NAME windowd SOURCES
     windowd_presentation.c
     windowd_layout.c
     windowd_render.c
+    windowd_consent.c
     SHARED_SOURCES subsystems/posix/userland/desktop_icons.c)
 
 # The Command Prompt (docs/desktop/CONSOLE.md): the console host, the first

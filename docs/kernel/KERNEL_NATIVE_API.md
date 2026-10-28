@@ -67,6 +67,8 @@ object/process factoring, not before.
 - Slice 23: threads (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`).
 - Slice 24: `SXN_SYS_SET_THREAD_BASE`, per-thread `%fs` / `%gs`.
 - Slice 25: `SXN_SYS_WAIT_ADDRESS` and `SXN_SYS_WAKE_ADDRESS`.
+- Slice 26: identities on ports and spawn (`SXN_SYS_PORT_CONNECT_EX`,
+  `_ACCEPT_EX`, `SXN_SPAWN_FLAG_IDENTITY`), for elevation.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -246,6 +248,30 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 26: identities on ports and spawn
+
+What the elevation broker needs
+([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#elevation)). Both
+port calls are open to every subsystem.
+
+- `SXN_SYS_PORT_CONNECT_EX` (`0x1029`): `PORT_CONNECT`, plus rdx =
+  `struct sxn_identity*` (written): who created the port, as they were when
+  they created it. Port names are first come, first served, so a client that
+  trusts what a service answers checks that the system created it.
+- `SXN_SYS_PORT_ACCEPT_EX` (`0x102a`): `PORT_ACCEPT` into a
+  `struct sxn_port_connection_ex`, which adds who the client was when it
+  connected (`SO_PEERCRED`). It is taken at connect time, so lowering itself
+  or exiting afterwards changes nothing, and pids are never reused.
+- `SXN_SPAWN_FLAG_IDENTITY` in `sxn_spawn_request.flags`: rsi =
+  `const struct sxn_identity*`, the child's token instead of the caller's.
+  Only a caller acting as the system may (`-EPERM`), and it still needs the
+  right to run the image. The token is set before the child's thread exists,
+  so no core ever runs it with the spawner's. Before, `flags` had to be 0;
+  other bits are still `-EINVAL`.
+
+`elevation-smoke` covers all three through the broker, and the refusal of a
+consent request from the user.
 
 ## Slice 23: threads
 
