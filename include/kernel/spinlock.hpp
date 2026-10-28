@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "kernel/cpu.hpp"
+#include "arch/x86_64/cpu.hpp"
 
 /* Spinlock de tickets.
  *
@@ -44,7 +44,7 @@ inline bool held_by_this_cpu(const SpinLock& lock) {
 inline void acquire(SpinLock& lock) {
     const uint32_t ticket = __atomic_fetch_add(&lock.next_ticket, 1u, __ATOMIC_ACQ_REL);
     while (__atomic_load_n(&lock.now_serving, __ATOMIC_ACQUIRE) != ticket) {
-        asm volatile("pause");
+        arch::x86_64::cpu_relax();
     }
     __atomic_store_n(&lock.owner, arch::x86_64::cpu_index(), __ATOMIC_RELEASE);
 }

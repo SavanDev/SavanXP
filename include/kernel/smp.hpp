@@ -2,8 +2,8 @@
 
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "boot/boot_info.hpp"
-#include "kernel/cpu.hpp"
 
 /* Los application processors y el estado de cada core.
  *

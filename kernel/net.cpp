@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "kernel/cpu.hpp"
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/nic.hpp"
@@ -13,7 +14,6 @@
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace net {
 

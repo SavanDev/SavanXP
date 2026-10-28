@@ -1,13 +1,19 @@
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/vmm.hpp"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
+using arch::x86_64::read_msr;
+using arch::x86_64::read_timestamp_counter;
+using arch::x86_64::write_msr;
 
 constexpr uint16_t kKernelCodeSelector = 0x08;
 constexpr uint16_t kKernelDataSelector = 0x10;
@@ -157,42 +163,8 @@ extern "C" uintptr_t __stack_chk_guard = 0;
 // uncacheable). Nula mientras no se mapee o si el CPU expone x2APIC.
 volatile uint32_t* g_local_apic_mmio = nullptr;
 
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-void io_wait() {
-    out8(0x80, 0);
-}
-
 void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) {
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(leaf), "c"(subleaf));
-}
-
-uint64_t read_msr(uint32_t msr) {
-    uint32_t low = 0;
-    uint32_t high = 0;
-    asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return (static_cast<uint64_t>(high) << 32) | low;
-}
-
-void write_msr(uint32_t msr, uint64_t value) {
-    const uint32_t low = static_cast<uint32_t>(value);
-    const uint32_t high = static_cast<uint32_t>(value >> 32);
-    asm volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
-}
-
-uint64_t read_timestamp_counter() {
-    uint32_t low = 0;
-    uint32_t high = 0;
-    asm volatile("rdtsc" : "=a"(low), "=d"(high));
-    return (static_cast<uint64_t>(high) << 32) | low;
 }
 
 bool enable_nx() {
@@ -1217,9 +1189,7 @@ void flush_tlb() {
         asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
         return;
     }
-    uint64_t cr3 = 0;
-    asm volatile("mov %%cr3, %0" : "=r"(cr3));
-    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+    load_page_table_root(read_page_table_root());
 }
 
 void halt_once() {

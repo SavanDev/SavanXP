@@ -6,13 +6,14 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/net.hpp"
@@ -24,7 +25,6 @@
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/sx.hpp"
-#include "kernel/fs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"

@@ -1,8 +1,9 @@
 #include "kernel/timer.hpp"
 
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
@@ -10,6 +11,8 @@
 
 namespace
 {
+
+    using namespace arch::x86_64::port_io;
 
     constexpr uint8_t kTimerVector = 48;
     constexpr uint8_t kPitIrq = 0;
@@ -73,11 +76,6 @@ namespace
         g_report_begin_tick = g_ticks;
         g_handler_ns_total = 0;
         g_handler_ns_max = 0;
-    }
-
-    void out8(uint16_t port, uint8_t value)
-    {
-        asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
     }
 
     bool same_second(const savanxp_realtime &left, const savanxp_realtime &right)

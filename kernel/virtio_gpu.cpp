@@ -3,16 +3,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/input.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/ui.hpp"
-#include "kernel/input.hpp"
 #include "kernel/virtio_pci.hpp"
 #include "kernel/vmm.hpp"
 
@@ -728,7 +728,7 @@ bool wait_for_gpu_tick(uint64_t deadline_ns) {
 }
 
 void pause_briefly() {
-    asm volatile("pause" : : : "memory");
+    arch::x86_64::cpu_relax();
 }
 
 uint32_t scanout_flags(const GpuScanoutState& scanout) {

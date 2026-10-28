@@ -2,9 +2,12 @@
 
 #include <stdint.h>
 
+#include "arch/x86_64/io.hpp"
 #include "kernel/string.hpp"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kCmosAddressPort = 0x70;
 constexpr uint16_t kCmosDataPort = 0x71;
@@ -28,16 +31,6 @@ struct RtcRaw {
     uint8_t year;
     uint8_t status_b;
 };
-
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 
 uint8_t read_register(uint8_t reg) {
     out8(kCmosAddressPort, static_cast<uint8_t>(reg | 0x80u));

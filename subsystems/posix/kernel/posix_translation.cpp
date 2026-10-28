@@ -3,10 +3,10 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
@@ -17,6 +17,7 @@
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
@@ -25,7 +26,6 @@
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
-#include "kernel/process_detail.hpp"
 // POSIX translation speaking the POSIX surface, like its dispatcher. The
 // kernel proper never includes this header.
 #include "savanxp/syscall.h"

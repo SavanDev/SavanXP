@@ -1,11 +1,14 @@
 #include "kernel/ata.hpp"
 
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
 
 #include <stddef.h>
 #include <stdint.h>
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kPrimaryIoBase = 0x1f0;
 constexpr uint16_t kPrimaryControlBase = 0x3f6;
@@ -66,49 +69,15 @@ Slot g_slots[kSlotCount] = {
 
 const char* const kSlotNames[kSlotCount] = {"ata0", "ata1", "ata2", "ata3"};
 
-void outb(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-uint8_t inb(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-uint16_t inw(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-void outw(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-uint32_t inl(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-void outl(uint16_t port, uint32_t value) {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-
-void io_wait() {
-    outb(0x80, 0);
-}
-
 void wait_400ns(const Slot& slot) {
-    (void)inb(slot.control_base);
-    (void)inb(slot.control_base);
-    (void)inb(slot.control_base);
-    (void)inb(slot.control_base);
+    (void)in8(slot.control_base);
+    (void)in8(slot.control_base);
+    (void)in8(slot.control_base);
+    (void)in8(slot.control_base);
 }
 
 void select_drive(const Slot& slot, uint32_t lba) {
-    outb(
+    out8(
         static_cast<uint16_t>(slot.io_base + 6),
         static_cast<uint8_t>(0xe0u | slot.drive_select | ((lba >> 24) & 0x0f))
     );
@@ -155,7 +124,7 @@ bool poll_status(const Slot& slot, bool require_drq) {
     uint8_t status = 0;
     uint32_t spins = kPollSpinBudget;
     do {
-        status = inb(static_cast<uint16_t>(slot.io_base + 7));
+        status = in8(static_cast<uint16_t>(slot.io_base + 7));
     } while ((status & kStatusBsy) != 0 && --spins != 0);
     if (spins != 0 && spins < kPollSpinBudget) {
         const uint32_t spent = kPollSpinBudget - spins;
@@ -180,7 +149,7 @@ bool poll_status(const Slot& slot, bool require_drq) {
     if (require_drq) {
         spins = kPollSpinBudget;
         while ((status & kStatusDrq) == 0 && --spins != 0) {
-            status = inb(static_cast<uint16_t>(slot.io_base + 7));
+            status = in8(static_cast<uint16_t>(slot.io_base + 7));
             if ((status & (kStatusErr | kStatusDfq)) != 0) {
                 ++g_poll_failures[2];
                 return false;
@@ -206,20 +175,20 @@ bool identify(Slot& slot) {
     slot.sector_count = 0;
 
     select_drive(slot, 0);
-    outb(static_cast<uint16_t>(slot.control_base), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 2), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 3), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 4), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 5), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 7), kCommandIdentify);
+    out8(static_cast<uint16_t>(slot.control_base), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 2), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 3), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 4), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 5), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 7), kCommandIdentify);
 
-    const uint8_t initial_status = inb(static_cast<uint16_t>(slot.io_base + 7));
+    const uint8_t initial_status = in8(static_cast<uint16_t>(slot.io_base + 7));
     if (initial_status == 0) {
         return false;
     }
 
-    uint8_t lba_mid = inb(static_cast<uint16_t>(slot.io_base + 4));
-    uint8_t lba_high = inb(static_cast<uint16_t>(slot.io_base + 5));
+    uint8_t lba_mid = in8(static_cast<uint16_t>(slot.io_base + 4));
+    uint8_t lba_high = in8(static_cast<uint16_t>(slot.io_base + 5));
     if (lba_mid != 0 || lba_high != 0) {
         return false;
     }
@@ -230,7 +199,7 @@ bool identify(Slot& slot) {
 
     uint16_t identify_data[256] = {};
     for (size_t index = 0; index < 256; ++index) {
-        identify_data[index] = inw(slot.io_base);
+        identify_data[index] = in16(slot.io_base);
     }
 
     const uint32_t sector_count =
@@ -247,12 +216,12 @@ bool identify(Slot& slot) {
 // Una sola transferencia PIO de hasta kMaxSectorsPerCommand sectores, sin reintentos.
 bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, bool write) {
     select_drive(slot, lba);
-    outb(static_cast<uint16_t>(slot.io_base + 1), 0);
-    outb(static_cast<uint16_t>(slot.io_base + 2), static_cast<uint8_t>(sector_count));
-    outb(static_cast<uint16_t>(slot.io_base + 3), static_cast<uint8_t>(lba & 0xff));
-    outb(static_cast<uint16_t>(slot.io_base + 4), static_cast<uint8_t>((lba >> 8) & 0xff));
-    outb(static_cast<uint16_t>(slot.io_base + 5), static_cast<uint8_t>((lba >> 16) & 0xff));
-    outb(static_cast<uint16_t>(slot.io_base + 7), write ? kCommandWriteSectors : kCommandReadSectors);
+    out8(static_cast<uint16_t>(slot.io_base + 1), 0);
+    out8(static_cast<uint16_t>(slot.io_base + 2), static_cast<uint8_t>(sector_count));
+    out8(static_cast<uint16_t>(slot.io_base + 3), static_cast<uint8_t>(lba & 0xff));
+    out8(static_cast<uint16_t>(slot.io_base + 4), static_cast<uint8_t>((lba >> 8) & 0xff));
+    out8(static_cast<uint16_t>(slot.io_base + 5), static_cast<uint8_t>((lba >> 16) & 0xff));
+    out8(static_cast<uint16_t>(slot.io_base + 7), write ? kCommandWriteSectors : kCommandReadSectors);
 
     for (uint32_t sector = 0; sector < sector_count; ++sector) {
         if (!poll_status(slot, true)) {
@@ -282,11 +251,11 @@ bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* byt
                     (static_cast<uint32_t>(bytes[byte_index + 1]) << 8) |
                     (static_cast<uint32_t>(bytes[byte_index + 2]) << 16) |
                     (static_cast<uint32_t>(bytes[byte_index + 3]) << 24);
-                outl(slot.io_base, value);
+                out32(slot.io_base, value);
             }
         } else {
             for (size_t dword = 0; dword < (block::kSectorSize / sizeof(uint32_t)); ++dword) {
-                const uint32_t value = inl(slot.io_base);
+                const uint32_t value = in32(slot.io_base);
                 const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + dword * sizeof(uint32_t);
                 bytes[byte_index] = static_cast<uint8_t>(value & 0xff);
                 bytes[byte_index + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
@@ -336,12 +305,12 @@ bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* byt
  */
 void software_reset(Slot& slot) {
     ++g_poll_device_resets;
-    outb(static_cast<uint16_t>(slot.control_base), kControlSrst);
+    out8(static_cast<uint16_t>(slot.control_base), kControlSrst);
     wait_400ns(slot);
     (void)poll_status(slot, false);
 
     select_drive(slot, 0);
-    outb(static_cast<uint16_t>(slot.control_base), kControlSrstNien);
+    out8(static_cast<uint16_t>(slot.control_base), kControlSrstNien);
     wait_400ns(slot);
     (void)poll_status(slot, false);
 
@@ -438,7 +407,7 @@ bool flush_op(void* context) {
     if (!poll_status(slot, false)) {
         return false;
     }
-    outb(static_cast<uint16_t>(slot.io_base + 7), kCommandCacheFlush);
+    out8(static_cast<uint16_t>(slot.io_base + 7), kCommandCacheFlush);
     return poll_status(slot, false);
 }
 

@@ -202,6 +202,7 @@ set(SAVANXP_KERNEL_SOURCES
     arch/x86_64/cpu_init.cpp
     arch/x86_64/timer.cpp
     arch/x86_64/smp.cpp
+    arch/x86_64/memory.cpp
     kernel/kernel_main.cpp
     kernel/boot_screen.cpp
     kernel/console.cpp

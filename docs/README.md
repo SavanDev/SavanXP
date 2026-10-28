@@ -16,6 +16,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Kernel — `kernel/`
 
+- [`ARCH.md`](kernel/ARCH.md) — the architecture boundary: what lives in `arch/x86_64`
+  and `include/arch/x86_64`, the named CPU operations drivers call instead of
+  inline assembly, and what a second architecture would change.
 - [`KERNEL_NATIVE_API.md`](kernel/KERNEL_NATIVE_API.md) — the NT-style kernel API:
   the native dispatcher boundary, the slice plan, and what stays invariant.
 - [`KERNEL_SECURITY.md`](kernel/KERNEL_SECURITY.md) — the kernel trust boundary and

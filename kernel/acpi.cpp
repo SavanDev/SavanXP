@@ -3,44 +3,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/string.hpp"
 
 namespace {
 
-// --- Port I/O (local al archivo, mismo patron que pcspeaker.cpp) ---
-
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline void out16(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint16_t in16(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline uint32_t in32(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-void io_wait() {
-    out8(0x80, 0);
-}
+using namespace arch::x86_64::port_io;
 
 void short_delay() {
     for (int i = 0; i < 1000; ++i) {

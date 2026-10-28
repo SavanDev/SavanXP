@@ -2,15 +2,18 @@
 
 #include <stdint.h>
 
-#include "kernel/cpu.hpp"
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/timer.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kPitCommandPort = 0x43;
 constexpr uint16_t kPitChannel2Port = 0x42;
@@ -27,16 +30,6 @@ device::Device g_device = {
 };
 
 bool g_ready = false;
-
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 
 int negative_error(sx_status code) {
     return -static_cast<int>(code);

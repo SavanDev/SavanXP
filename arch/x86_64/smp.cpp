@@ -1,7 +1,7 @@
 #include "kernel/smp.hpp"
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"

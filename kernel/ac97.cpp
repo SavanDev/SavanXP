@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/io.hpp"
 #include "kernel/audio.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
@@ -13,6 +14,8 @@
 #include "abi/savanxp_abi.h"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 // --- Formato fijo del ABI ----------------------------------------------------
 // AC'97 corre nativamente a 48 kHz, asi que el formato fijo del ABI (S16 estereo
@@ -105,27 +108,8 @@ bool g_ready = false;
 bool g_prepared = false;   // motor DMA preparado para la sesion de escritura actual
 bool g_running = false;    // RPBM activo
 
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-inline void out16(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-inline void out32(uint16_t port, uint32_t value) {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-inline uint32_t in32(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 inline void compiler_barrier() {
-    asm volatile("" ::: "memory");
+    __atomic_signal_fence(__ATOMIC_SEQ_CST);
 }
 
 // Localiza el controlador AC'97 por clase PCI (0x04 multimedia / 0x01 audio),

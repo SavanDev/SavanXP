@@ -1,9 +1,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "boot/boot_info.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/kernel.hpp"
 #include "kernel/panic.hpp"
 #include "limine.h"

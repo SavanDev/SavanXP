@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
@@ -137,7 +138,7 @@ void write_reg(volatile uint8_t* base, uint32_t offset, uint32_t value) {
 }
 
 void barrier() {
-    asm volatile("mfence" ::: "memory");
+    arch::x86_64::memory_barrier();
 }
 
 bool wait_clear(volatile uint8_t* base, uint32_t offset, uint32_t mask, uint32_t spins) {

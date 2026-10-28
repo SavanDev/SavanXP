@@ -1,8 +1,11 @@
 #include "kernel/pci.hpp"
 
+#include "arch/x86_64/io.hpp"
 #include "kernel/string.hpp"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kConfigAddressPort = 0x0cf8;
 constexpr uint16_t kConfigDataPort = 0x0cfc;
@@ -18,16 +21,6 @@ constexpr uint8_t kCapabilityVendorSpecific = 0x09;
 pci::DeviceInfo g_devices[kMaxDevices] = {};
 size_t g_device_count = 0;
 bool g_ready = false;
-
-inline void out32(uint16_t port, uint32_t value) {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint32_t in32(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 
 uint32_t config_address(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset) {
     return 0x80000000u |

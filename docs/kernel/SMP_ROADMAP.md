@@ -71,7 +71,7 @@ process it is running.
 - **MADT parsing and IOAPIC programming** ([`ioapic.cpp`](../../kernel/ioapic.cpp)),
   with interrupt source overrides resolved.
 - **FPU/SSE state per process**, saved and restored on switch
-  ([`cpu.hpp`](../../include/kernel/cpu.hpp)) — already per-context, not per-CPU.
+  ([`cpu.hpp`](../../include/arch/x86_64/cpu.hpp)) — already per-context, not per-CPU.
 
 ### Missing
 

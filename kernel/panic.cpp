@@ -1,8 +1,8 @@
 #include "kernel/panic.hpp"
 
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
     const auto caller = reinterpret_cast<uint64_t>(__builtin_return_address(0));

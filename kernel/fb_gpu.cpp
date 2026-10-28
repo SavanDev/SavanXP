@@ -3,16 +3,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace fb_gpu {
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint32_t kImportedSurfaceCount = 8u;
 
@@ -132,16 +136,6 @@ constexpr uint16_t kDispiDisabled = 0x00;
 constexpr uint16_t kDispiEnabled = 0x01;
 constexpr uint16_t kDispiLfbEnabled = 0x40;
 
-inline void out16(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint16_t in16(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
 void dispi_write(uint16_t index, uint16_t value) {
     out16(kDispiIndexPort, index);
     out16(kDispiDataPort, value);
@@ -214,10 +208,10 @@ bool remap_vram_aperture() {
     const uint32_t saved = firmware_pixels[0];
     const uint32_t probe = saved ^ 0xA5A5A5A5u;
     aperture_pixels[0] = probe;
-    asm volatile("sfence" ::: "memory");
+    arch::x86_64::store_barrier();
     const bool aliases_same_memory = firmware_pixels[0] == probe;
     firmware_pixels[0] = saved;
-    asm volatile("sfence" ::: "memory");
+    arch::x86_64::store_barrier();
 
     if (!aliases_same_memory) {
         (void)vm::unmap_kernel_pages(

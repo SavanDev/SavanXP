@@ -4,14 +4,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 #include "kernel/uacpi_glue.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr bool kLogRtl = false;
 
@@ -98,36 +102,6 @@ void report(uint32_t net_status) {
     }
 }
 
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline void out16(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline void out32(uint16_t port, uint32_t value) {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline uint16_t in16(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline uint32_t in32(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
 bool wait_for_clear_reset() {
     for (uint32_t spin = 0; spin < 100000; ++spin) {
         if ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandReset) == 0) {
@@ -181,26 +155,16 @@ bool transmit(const void* frame, size_t length) {
     return false;
 }
 
-// Salva/deshabilita y restaura IF localmente. poll_receive corre tanto desde el
-// handler de INTx (contexto de IRQ) como desde el main (polling/service). Envolver
-// su seccion critica con esto la vuelve atomica en monocore: mientras el main
-// drena el ring, el IRQ del NIC no puede preemptarlo (evita corromper g_cur_rx).
-inline uint64_t irq_save() {
-    uint64_t f;
-    asm volatile("pushfq; pop %0; cli" : "=r"(f)::"memory");
-    return f;
-}
-
-inline void irq_restore(uint64_t f) {
-    asm volatile("push %0; popfq" ::"r"(f) : "memory", "cc");
-}
-
 void poll_receive() {
     if (!g_up) {
         return;
     }
 
-    const uint64_t flags = irq_save();
+    // poll_receive runs both from the INTx handler (IRQ context) and from the
+    // main loop (polling/service). Clearing IF around the section makes it
+    // atomic on one core: while the main loop drains the ring, the NIC's IRQ
+    // cannot preempt it and corrupt g_cur_rx.
+    const uint64_t flags = arch::x86_64::save_and_disable_interrupts();
     clear_interrupt_status();
     auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
     while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
@@ -249,7 +213,7 @@ void poll_receive() {
             static_cast<uint16_t>(g_cur_rx == 0 ? 0xfff0u : (g_cur_rx - 16u))
         );
     }
-    irq_restore(flags);
+    arch::x86_64::restore_interrupts(flags);
 }
 
 // Handler de la INTx del rtl8139 (ruteada por _PRT -> IOAPIC). Sirve el device

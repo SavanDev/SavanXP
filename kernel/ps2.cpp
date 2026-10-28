@@ -3,13 +3,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kDataPort = 0x60;
 constexpr uint16_t kStatusPort = 0x64;
@@ -103,16 +106,6 @@ bool g_led_sync_pending = false;
 uint8_t g_mouse_packet[4] = {};
 uint8_t g_mouse_packet_index = 0;
 uint8_t g_mouse_packet_length = 3;
-
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 
 bool wait_input_ready() {
     for (uint32_t spin = 0; spin < kIoWaitSpinCount; ++spin) {

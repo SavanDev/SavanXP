@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "kernel/cpu.hpp"
+#include "arch/x86_64/cpu.hpp"
 
 // Bridge C++ hacia la capa de host de uACPI (uacpi_glue.cpp). El resto de la
 // kernel-api de uACPI son funciones extern "C" que uACPI llama directo.

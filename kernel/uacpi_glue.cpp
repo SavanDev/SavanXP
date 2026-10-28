@@ -21,10 +21,11 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/cpu.hpp"
+#include "arch/x86_64/io.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/pci.hpp"
@@ -33,26 +34,17 @@ extern "C" {
 
 namespace {
 
-// --- Port I/O (mismo patron que acpi.cpp; falta out32/in32 alla) ---
-inline void out8(uint16_t port, uint8_t v)  { asm volatile("outb %0,%1"::"a"(v),"Nd"(port)); }
-inline void out16(uint16_t port, uint16_t v){ asm volatile("outw %0,%1"::"a"(v),"Nd"(port)); }
-inline void out32(uint16_t port, uint32_t v){ asm volatile("outl %0,%1"::"a"(v),"Nd"(port)); }
-inline uint8_t  in8(uint16_t port)  { uint8_t  v; asm volatile("inb %1,%0":"=a"(v):"Nd"(port)); return v; }
-inline uint16_t in16(uint16_t port) { uint16_t v; asm volatile("inw %1,%0":"=a"(v):"Nd"(port)); return v; }
-inline uint32_t in32(uint16_t port) { uint32_t v; asm volatile("inl %1,%0":"=a"(v):"Nd"(port)); return v; }
+using namespace arch::x86_64::port_io;
 
-// --- Fuente de tiempo independiente de interrupciones (TSC) ---
-// Durante el bringup de uACPI las interrupciones estan deshabilitadas, asi que
-// timer::ticks() (que avanza por IRQ) no avanza. Calibramos el TSC contra el PIT
-// canal 2 una sola vez, haciendo polling del bit OUT (0x61 bit5) sin IRQ.
+using arch::x86_64::cpu_relax;
+using arch::x86_64::read_timestamp_counter;
+
+// --- A clock that does not depend on interrupts (TSC) ---
+// Interrupts are disabled while uACPI comes up, so timer::ticks() (which the
+// IRQ advances) stands still. The TSC is calibrated once against PIT channel 2
+// by polling its OUT bit (port 0x61 bit 5), without an IRQ.
 uint64_t g_tsc_per_us = 0;
 uint64_t g_tsc_base = 0;
-
-inline uint64_t rdtsc() {
-    uint32_t lo, hi;
-    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (uint64_t(hi) << 32) | lo;
-}
 
 void calibrate_tsc() {
     if (g_tsc_per_us != 0) {
@@ -66,13 +58,13 @@ void calibrate_tsc() {
     out8(0x43, 0xB0);
     out8(0x42, kPitCount & 0xFF);
     out8(0x42, static_cast<uint8_t>(kPitCount >> 8));
-    const uint64_t start = rdtsc();
-    while ((in8(0x61) & 0x20) == 0) { /* espera terminal count */ }
-    const uint64_t end = rdtsc();
+    const uint64_t start = read_timestamp_counter();
+    while ((in8(0x61) & 0x20) == 0) { /* wait for terminal count */ }
+    const uint64_t end = read_timestamp_counter();
     out8(0x61, saved);
     g_tsc_per_us = (end - start) / 10000; // 10ms = 10000us
     if (g_tsc_per_us == 0) g_tsc_per_us = 1;
-    g_tsc_base = rdtsc();
+    g_tsc_base = read_timestamp_counter();
 }
 
 // RSDP fisico, cacheado desde boot_info al inicializar (ver set_rsdp_physical).
@@ -414,28 +406,26 @@ void* uacpi_kernel_alloc_zeroed(uacpi_size size) {
 }
 void uacpi_kernel_free(void* mem) { heap::free(mem); }
 
-// ======================= Tiempo (TSC, sin interrupciones) =======================
+// ======================= Time (TSC, no interrupts) =======================
 uacpi_u64 uacpi_kernel_get_nanoseconds_since_boot(void) {
     if (g_tsc_per_us == 0) return 0;
-    return ((rdtsc() - g_tsc_base) * 1000ULL) / g_tsc_per_us;
+    return ((read_timestamp_counter() - g_tsc_base) * 1000ULL) / g_tsc_per_us;
 }
 void uacpi_kernel_stall(uacpi_u8 usec) {
-    const uint64_t target = rdtsc() + uint64_t(usec) * g_tsc_per_us;
-    while (rdtsc() < target) { asm volatile("pause"); }
+    const uint64_t target = read_timestamp_counter() + uint64_t(usec) * g_tsc_per_us;
+    while (read_timestamp_counter() < target) { cpu_relax(); }
 }
 void uacpi_kernel_sleep(uacpi_u64 msec) {
-    const uint64_t target = rdtsc() + msec * 1000ULL * g_tsc_per_us;
-    while (rdtsc() < target) { asm volatile("pause"); }
+    const uint64_t target = read_timestamp_counter() + msec * 1000ULL * g_tsc_per_us;
+    while (read_timestamp_counter() < target) { cpu_relax(); }
 }
 
-// ======================= Interrupciones (flags) =======================
+// ======================= Interrupts (flags) =======================
 uacpi_interrupt_state uacpi_kernel_disable_interrupts(void) {
-    uint64_t flags;
-    asm volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
-    return static_cast<uacpi_interrupt_state>(flags);
+    return static_cast<uacpi_interrupt_state>(arch::x86_64::save_and_disable_interrupts());
 }
 void uacpi_kernel_restore_interrupts(uacpi_interrupt_state state) {
-    asm volatile("push %0; popfq" :: "r"(uint64_t(state)) : "memory", "cc");
+    arch::x86_64::restore_interrupts(static_cast<uint64_t>(state));
 }
 
 // ======================= Spinlocks (monocore) =======================
@@ -471,14 +461,15 @@ void uacpi_kernel_signal_event(uacpi_handle h) {
 void uacpi_kernel_reset_event(uacpi_handle h) { if (h) static_cast<Event*>(h)->count = 0; }
 uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle h, uacpi_u16 timeout_ms) {
     Event* e = static_cast<Event*>(h);
-    // timeout 0xFFFF = infinito. Monocore: si nadie va a signalizar, no colgar.
+    // A timeout of 0xFFFF means forever. Single core: if nobody is going to
+    // signal, do not hang.
     const uint64_t deadline = uacpi_kernel_get_nanoseconds_since_boot()
                               + uint64_t(timeout_ms) * 1000000ULL;
     for (;;) {
         if (e->count) { e->count = e->count - 1; return UACPI_TRUE; }
         if (timeout_ms != 0xFFFF &&
             uacpi_kernel_get_nanoseconds_since_boot() >= deadline) return UACPI_FALSE;
-        asm volatile("pause");
+        cpu_relax();
     }
 }
 

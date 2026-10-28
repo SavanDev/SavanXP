@@ -1,6 +1,6 @@
 #include "kernel/vmm.hpp"
 
-#include "kernel/cpu.hpp"
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/object.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
@@ -13,6 +13,9 @@ static_assert(vm::kPageSizeBytes == memory::kPageSize,
               "vm::kPageSizeBytes quedo desalineado de memory::kPageSize");
 
 namespace {
+
+using arch::x86_64::invalidate_page;
+using arch::x86_64::read_page_table_root;
 
 constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
 constexpr uint64_t kKernelPml4Start = 256;
@@ -225,12 +228,6 @@ bool choose_section_view_base(vm::VmSpace& space, uint64_t size, uint64_t& base_
     return false;
 }
 
-uint64_t read_cr3() {
-    uint64_t value = 0;
-    asm volatile("mov %%cr3, %0" : "=r"(value));
-    return value;
-}
-
 uint64_t* allocate_table_page(uint64_t& physical) {
     memory::PageAllocation allocation = {};
     if (!memory::allocate_page(allocation)) {
@@ -283,10 +280,6 @@ void destroy_table(uint64_t table_physical, uint8_t level) {
 
 uint64_t* kernel_pml4() {
     return vm::physical_to_virtual(g_kernel_pml4_physical);
-}
-
-void invalidate_page(uint64_t virtual_address) {
-    asm volatile("invlpg (%0)" : : "r"(virtual_address) : "memory");
 }
 
 bool reserve_kernel_mmio_window() {
@@ -412,7 +405,7 @@ bool unmap_kernel_page(uint64_t virtual_address) {
 // noted for finish_shootdown().
 void note_user_unmap(const vm::VmSpace& space, uint64_t virtual_address) {
     const uint32_t self = arch::x86_64::cpu_index();
-    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+    if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         invalidate_page(virtual_address);
     }
     for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
@@ -482,7 +475,7 @@ uint32_t g_view_failure = 0;
 
 void initialize(const boot::BootInfo& boot_info) {
     g_hhdm_offset = boot_info.hhdm_offset;
-    g_kernel_pml4_physical = read_cr3() & kPageMask;
+    g_kernel_pml4_physical = read_page_table_root() & kPageMask;
     g_kernel_mmio_base = 0;
     g_kernel_mmio_next = 0;
     g_kernel_mmio_limit = 0;
@@ -666,7 +659,7 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
     }
 
     pt[entry_index] = (physical_address & kPageMask) | flags | kPagePresent;
-    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+    if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         invalidate_page(virtual_address);
     }
     return true;
@@ -1059,14 +1052,12 @@ bool write_combining_page_flags(uint64_t& flags) {
         return false;
     }
 
-    // Que indice de IA32_PAT quedo configurado como write-combining lo decide
-    // el firmware, asi que se busca en vez de asumirlo. Limine deja WC en una
-    // entrada propia pero mapea el framebuffer con otra (write-through), que es
-    // segura pero no la mejor para escrituras en rafaga a VRAM.
-    uint32_t pat_low = 0;
-    uint32_t pat_high = 0;
-    asm volatile("rdmsr" : "=a"(pat_low), "=d"(pat_high) : "c"(0x277u));
-    const uint64_t pat = (static_cast<uint64_t>(pat_high) << 32) | pat_low;
+    // Which IA32_PAT index is set up as write-combining is the firmware's
+    // choice, so it is looked up rather than assumed. Limine leaves WC in an
+    // entry of its own but maps the framebuffer with another (write-through),
+    // which is safe but not the best for burst writes to VRAM.
+    constexpr uint32_t kMsrPat = 0x277u;
+    const uint64_t pat = arch::x86_64::read_msr(kMsrPat);
 
     constexpr uint64_t kMemoryTypeWriteCombining = 0x01;
     for (uint64_t index = 0; index < 8; ++index) {
@@ -1125,7 +1116,7 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
         table[pt_index(page)] &= ~static_cast<uint64_t>(kPageNoExecute);
     }
     table[pt_index(page)] |= (flags & (kPageWrite | kPageUser | kPageNoExecute));
-    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+    if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         invalidate_page(page);
     }
     return true;
@@ -1151,10 +1142,10 @@ void sync_kernel_tlb() {
 void load_address_space(const VmSpace& space) {
     const uint32_t cpu = arch::x86_64::cpu_index();
     g_loaded_pml4[cpu] = space.pml4_physical;
-    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+    if ((read_page_table_root() & kPageMask) == space.pml4_physical) {
         return;
     }
-    asm volatile("mov %0, %%cr3" : : "r"(space.pml4_physical) : "memory");
+    arch::x86_64::load_page_table_root(space.pml4_physical);
     // Reloading CR3 drops every user translation: whatever shootdown was asked
     // of this core is done.
     g_flush_done[cpu] = g_flush_requested[cpu];
@@ -1165,8 +1156,7 @@ void sync_user_tlb() {
     if (g_flush_done[cpu] == g_flush_requested[cpu]) {
         return;
     }
-    const uint64_t cr3 = read_cr3();
-    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+    arch::x86_64::load_page_table_root(read_page_table_root());
     g_flush_done[cpu] = g_flush_requested[cpu];
 }
 

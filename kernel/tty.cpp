@@ -1,13 +1,13 @@
 #include "kernel/tty.hpp"
 
+#include "abi/savanxp_abi.h"
+#include "arch/x86_64/cpu.hpp"
 #include "kernel/console.hpp"
-#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
-#include "abi/savanxp_abi.h"
 
 namespace {
 

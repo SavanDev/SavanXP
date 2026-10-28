@@ -4,10 +4,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/x86_64/io.hpp"
 #include "kernel/display.hpp"
 #include "kernel/string.hpp"
 
 namespace {
+
+using namespace arch::x86_64::port_io;
 
 constexpr uint16_t kCom1Port = 0x3f8;
 constexpr uint16_t kDebugConPort = 0x00e9;
@@ -67,16 +70,6 @@ void flush_full() {
         return;
     }
     (void)display::flush();
-}
-
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
 }
 
 void serial_write_char(char value) {

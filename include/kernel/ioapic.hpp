@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "kernel/cpu.hpp"
+#include "arch/x86_64/cpu.hpp"
 
 // Capa IOAPIC + MADT (ESQUELETO DE EVALUACION).
 //
