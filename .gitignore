@@ -1,4 +1,6 @@
 /build/
+# Saved Claude Code sessions: local to each checkout, never part of the tree.
+/sessions/
 __pycache__/
 
 # Una libreria compartida en la RAIZ del arbol es siempre un bug de un script que
