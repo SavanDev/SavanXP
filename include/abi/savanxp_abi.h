@@ -177,26 +177,26 @@ enum savanxp_timer_backend {
     SAVANXP_TIMER_PIT = 2,
 };
 
-/* Informe de consistencia del volumen SxFS, el equivalente dentro del sistema de
- * lo que `sxfs-cli check` hace en el host. Es de SOLO LECTURA: no repara nada y
- * no puede empeorar un volumen ya roto, asi que se puede correr con `/disk`
- * montado. Devuelve 0 si el informe se lleno, o un error negativo.
+/* The SxFS volume's consistency report, the in-system equivalent of what
+ * `sxfs-cli check` does on the host. It is READ-ONLY: it repairs nothing and
+ * cannot make an already broken volume worse, so it can run with the root
+ * volume mounted. Returns 0 if the report was filled, or a negative error.
  *
- * Todos los contadores `*_blocks` y `*_inodes` estan en cero en un volumen sano.
- * Los que no son cero describen el defecto:
+ * Every `*_blocks` and `*_inodes` counter is zero on a healthy volume. The ones
+ * that are not describe the defect:
  *
- *   leaked_blocks       sector ocupado en el bitmap que ningun inodo reclama
- *   lost_blocks         sector reclamado por un inodo y libre en el bitmap
- *   double_claimed      dos inodos sobre el mismo sector
- *   metadata_unmarked   sector de [0, data_lba) que el bitmap da por libre
- *   orphan_inodes       inodo asignado que ningun directorio alcanza
- *   alias_inodes        dos entradas de directorio apuntan al mismo inodo
- *   duplicate_names     un nombre repetido dentro de un mismo directorio
- *   bad_dir_entries     entrada de directorio que no valida
- *   unreadable_dirs     directorio ilegible o mas profundo que el limite
+ *   leaked_blocks       sector taken in the bitmap that no inode claims
+ *   lost_blocks         sector claimed by an inode and free in the bitmap
+ *   double_claimed      two inodes on the same sector
+ *   metadata_unmarked   sector in [0, data_lba) the bitmap considers free
+ *   orphan_inodes       allocated inode no directory reaches
+ *   alias_inodes        two directory entries point at the same inode
+ *   duplicate_names     a name repeated within one directory
+ *   bad_dir_entries     a directory entry that does not validate
+ *   unreadable_dirs     a directory that cannot be read, or deeper than the limit
  *
- * `journal_pending` distinto de cero significa que una transaccion quedo a
- * medias; el montaje la haya reintentado, asi que finding informed.
+ * A non-zero `journal_pending` means a transaction was left half done; the
+ * mount has retried it, so this reports a finding.
  */
 struct savanxp_fscheck_report {
     uint32_t total_sectors;

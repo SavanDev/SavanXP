@@ -58,7 +58,7 @@ def main() -> int:
     manifest = (port / "overlay" / "ccleste.sxres").read_text(encoding="utf-8")
     assert "category=Games" in manifest
     assert "launch_flags=fullscreen" in manifest
-    assert "data_dir=/disk/games/celeste" in manifest
+    assert "data_dir=/games/celeste" in manifest
     assert "mime_open=" not in manifest
     assert "ext_open=" not in manifest
 

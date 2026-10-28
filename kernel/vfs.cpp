@@ -103,10 +103,10 @@ int ensure_directory_node(int parent, const char* name) {
     return add_node(vfs::NodeType::directory, name, parent);
 }
 
-bool add_entry(const char* path, vfs::NodeType type, const void* data, size_t size) {
+// Adds an initramfs entry below `parent`, creating the directories on the way.
+bool add_entry(int parent, const char* path, vfs::NodeType type, const void* data, size_t size) {
     char component[kMaxNameLength] = {};
     const char* cursor = path;
-    int parent = 0;
 
     while (*cursor == '/') {
         ++cursor;
@@ -459,9 +459,15 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
         ++component_count;
     }
 
+    // The legacy /disk prefix (kLegacyDiskAlias) names the root.
+    size_t first = 0;
+    if (component_count > 0 && strcmp(components[0], kLegacyDiskAlias) == 0) {
+        first = 1;
+    }
+
     size_t written = 0;
     output[written++] = '/';
-    for (size_t index = 0; index < component_count; ++index) {
+    for (size_t index = first; index < component_count; ++index) {
         const size_t length = strlen(components[index]);
         if (written + length + 1 >= capacity) {
             return false;
@@ -476,6 +482,20 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
     return true;
 }
 
+bool is_memory_path(const char* path) {
+    if (path == nullptr) {
+        return false;
+    }
+    const char* const roots[] = {kDeviceRoot, kRescueRoot};
+    for (const char* root : roots) {
+        const size_t length = strlen(root);
+        if (strncmp(path, root, length) == 0 && (path[length] == '\0' || path[length] == '/')) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void initialize(const void* archive, size_t size) {
     memset(g_nodes, 0, sizeof(g_nodes));
     memset(g_dynamic_files, 0, sizeof(g_dynamic_files));
@@ -483,6 +503,12 @@ void initialize(const void* archive, size_t size) {
     g_ready = false;
 
     if (add_node(NodeType::directory, "/", -1) != 0) {
+        return;
+    }
+    // The initramfs is published under /rescue (kRescueRoot), not at the root:
+    // the root belongs to the system disk.
+    const int rescue = add_node(NodeType::directory, kRescueRoot + 1, 0);
+    if (rescue < 0) {
         return;
     }
 
@@ -557,7 +583,7 @@ void initialize(const void* archive, size_t size) {
             return;
         }
         const NodeType type = file_type == 0040000u ? NodeType::directory : NodeType::file;
-        if (!add_entry(name, type, data, file_size)) {
+        if (!add_entry(rescue, name, type, data, file_size)) {
             return;
         }
     }

@@ -6,7 +6,7 @@ diff --git a/config.h b/config.h
  
  /* Define to the directory where all game files are located */
 -#define FILES_DIR "."
-+#define FILES_DIR "/disk/games/doom"
++#define FILES_DIR "/games/doom"
 diff --git a/g_game.c b/g_game.c
 --- a/g_game.c
 +++ b/g_game.c

@@ -77,10 +77,10 @@ userland registry:
 ./build.sh build
 ./tools/build-user.sh --source sdk/hello/main.c --name hello
 ./tools/build-user.sh --source path/to/app --name app \
-  --destination /disk/bin/app
+  --destination /bin/app
 ```
 
-`--destination` is rooted at `/disk`; the default is `/disk/bin/NAME`. The
+`--destination` is a path on the disk, which is the guest's root (`/disk/...` is still accepted); the default is `/bin/NAME`. The
 builder accepts a single C/assembly file or a directory, stamps SXE resources,
 and installs through `tools/sxfs_sync.py` unless `--no-install` is selected.
 
@@ -126,7 +126,7 @@ that needs them, keyed by file name.
   scenario drivers.
 - `tools/smoke_catalog.py` keeps commands, tokens, and callbacks declarative.
 - `tools/build-user.sh` builds optional external applications: POSIX, or SUN
-  with `--native`, installed as `/disk/bin/<name>.sxe`.
+  with `--native`, installed as `/bin/<name>.sxe`.
 - `tools/lib/runtime_units.sh` reads the runtime manifest for the builds
   outside CMake.
 - `tools/new-user-app.sh` creates a new application from the SDK template.
@@ -142,7 +142,7 @@ that needs them, keyed by file name.
 - `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
 - `ports/doomgeneric/build.sh` builds the official Doom port independently.
 - `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and
-  installs the shared library `/disk/lib/libffmpeg.so.0.4` and no program; the
+  installs the shared library `/lib/libffmpeg.so.0.4` and no program; the
   Media Player is built by the tree from `subsystems/posix/userland/mediaplayer/`.
 - `tools/limine/` is the ignored, pinned bootloader checkout.
 
@@ -171,5 +171,5 @@ The regression case is external data, not only the freshly generated rootfs:
   --wad ports/doomgeneric/wad/doom1.wad
 ```
 
-The check confirms that `/disk/bin/doomgeneric` and the WAD remain present after
+The check confirms that `/bin/doomgeneric` and the WAD remain present after
 a normal rebuild.

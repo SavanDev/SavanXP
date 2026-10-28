@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Changed
 
+- **The system runs from its disk, mounted at `/`**: `/bin`, `/lib` and `/games` are the SxFS
+  volume's, and the initramfs moved to `/rescue`, where init starts from when no disk mounts.
+  `PATH` is `/bin:/rescue/bin`; the loader and `--dynamic-linker` use `/lib`. `/disk/...` stays as
+  an alias of `/`, so binaries already installed keep working. The boot log reads `root mounted`.
+  See `docs/kernel/FILESYSTEMS.md`.
+
 - **The kernel is written against `namespace arch`** (`arch/cpu.hpp`, implemented by `arch/x86_64`),
   and x86 code lives only under `arch/` and `include/arch/`: drivers share one port I/O header
   (`arch/x86/io.hpp`) and call named CPU operations (`arch::memory_barrier`, `arch::cpu_relax`,

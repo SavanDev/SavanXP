@@ -17,7 +17,7 @@ A different local WAD can be selected explicitly:
 ./ports/doomgeneric/build.sh --wad /path/to/doom1.wad
 ```
 
-The selected file is installed under `/disk/games/doom` in the persistent
+The selected file is installed under `/games/doom` in the persistent
 image. The WAD is not copied into the port source tree or committed to Git.
 Its provenance is recorded in `docs/third-party/THIRD_PARTY_PROVENANCE.md`. A missing WAD
 is non-fatal: the binary is still built and installed.

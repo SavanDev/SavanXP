@@ -63,10 +63,10 @@ struct progman_default_item
 };
 
 /*
- * Defaults horneados: siembran una instalacion fresca y son la red de seguridad
- * si /disk/progman.ini falta o esta corrupto. Duplican transitoriamente el
- * contenido de k_menu_items (windowd_menu.c); esa tabla se retira en A2.4 y este
- * pasa a ser el unico catalogo.
+ * Baked-in defaults: they seed a fresh installation and are the safety net if
+ * /progman.ini is missing or corrupt. They temporarily duplicate the contents
+ * of k_menu_items (windowd_menu.c); that table is retired in A2.4 and this one
+ * becomes the only catalog.
  */
 /*
  * Icono generico en TODAS las filas: ninguna necesita un id horneado propio.
@@ -93,7 +93,7 @@ static const struct progman_default_item k_default_items[] = {
      */
     {"Accessories", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Command Prompt", "/bin/console.sxe", "Windows-style console running the shell", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Accessories", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Files", "/bin/filesapp", "Browse the disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     /* El reproductor SIEMPRE es una entrada cuando el port esta construido, porque
      * /bin/mediaplayer existe entonces. Si el port no esta, el pruning lo descarta
      * --igual que a Doom, que tambien vive en el volumen-- y no hace falta ningun
@@ -110,7 +110,7 @@ static const struct progman_default_item k_default_items[] = {
     {"Diagnostics", "Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #endif
-    {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    {"Games", "Doom", "/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
     {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "Add/Remove Programs", "/bin/appwiz", "Uninstall programs installed outside the system image", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "Program Manager", "/bin/progman", "Launcher de programas", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
@@ -807,11 +807,13 @@ static const char *path_basename(const char *path)
 }
 
 /*
- * Si el registro ya tiene un item apuntando a un binario con este basename.
+ * Whether the registry already has an item pointing at a binary with this
+ * basename.
  *
- * El desempate va por BASENAME y no por path completo porque /disk/bin es una
- * copia de /bin (CMake): comparar paths dejaria entrar cada programa del
- * sistema dos veces, una por directorio, y son el mismo programa.
+ * The tie-break is by BASENAME and not by full path because the same program
+ * can be named by two paths: a /progman.ini written before the disk became the
+ * root says /disk/bin/doomgeneric, and the scan finds /bin/doomgeneric.
+ * Comparing paths would list it twice.
  */
 static int item_with_basename_exists(const char *basename)
 {
@@ -1027,8 +1029,7 @@ int progman_registry_scan_programs(progman_path_exists_fn exists)
     {
         exists = default_path_exists;
     }
-    added += scan_directory(PROGMAN_SCAN_DIR_PRIMARY, exists, meta_buffer, sizeof(meta_buffer));
-    added += scan_directory(PROGMAN_SCAN_DIR_SECONDARY, exists, meta_buffer, sizeof(meta_buffer));
+    added += scan_directory(PROGMAN_SCAN_DIR, exists, meta_buffer, sizeof(meta_buffer));
     sort_scanned_groups(first_group);
     sort_scanned_items(first);
 
@@ -1203,7 +1204,7 @@ static void selftest_well_formed(void)
         "\n"
         "[item]\n"
         "name = Doom\n"
-        "path =  /disk/bin/doomgeneric  \n"
+        "path =  /bin/doomgeneric  \n"
         "icon=doom\n"
         "flags=fullscreen\n"
         "\n"
@@ -1241,7 +1242,7 @@ static void selftest_well_formed(void)
     /* Espacios alrededor de clave y valor recortados. */
     item = progman_item_at(1);
     expect(item != 0 && strcmp(item->name, "Doom") == 0, "item 1 nombre trim");
-    expect(item != 0 && strcmp(item->path, "/disk/bin/doomgeneric") == 0, "item 1 path trim");
+    expect(item != 0 && strcmp(item->path, "/bin/doomgeneric") == 0, "item 1 path trim");
     /* "doom" ya no tiene alias (se fue del set horneado): un progman.ini
      * viejo con icon=doom tiene que degradar limpio a "sin path prestado",
      * no romper el parseo ni caer en cualquier otra cosa. */

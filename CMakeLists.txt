@@ -188,7 +188,7 @@ set(SAVANXP_USER_LINK_OPTIONS_PIE
     -fuse-ld=lld
     -pie
     "-Wl,-z,max-page-size=0x1000"
-    "-Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
+    "-Wl,--dynamic-linker,/lib/ld.so.0.4"
     -Wl,--build-id=none
     -Wl,--export-dynamic
     "-Wl,--gc-sections"
@@ -214,6 +214,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/virtio_blk.cpp
     kernel/partition.cpp
     kernel/fs.cpp
+    kernel/fs_path.cpp
     kernel/ramdisk.cpp
     kernel/nic.cpp
     kernel/rtl8139.cpp
@@ -775,6 +776,7 @@ set_target_properties(savanxp-block-writeback-test PROPERTIES CXX_STANDARD 20 CX
 
 add_executable(savanxp-sxfs-volume-test
     kernel/sxfs.cpp
+    kernel/fs_path.cpp
     tests/host/kernel_string_stubs.cpp
     tests/host/sxfs_host_stubs.cpp
     tests/host/sxfs_volume_test.cpp

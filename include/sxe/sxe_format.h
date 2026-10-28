@@ -165,16 +165,16 @@ struct sxe_record {
 #define SXE_TAG_EXT_OPEN 0x0302u  /* utf8 con punto: ".txt\0.md" */
 
 /*
- * Instalacion: lo que el programa OCUPA en el disco ademas de su binario.
+ * Installation: what the program TAKES on the disk besides its binary.
  *
- * utf8: directorio absoluto de los datos persistentes del programa
- * ("/disk/games/doom"). Existe para que desinstalar pueda ofrecer llevarse los
- * datos: sin esta clave, borrar el ejecutable deja huerfano todo lo que haya
- * escrito -- los WAD de Doom son 30 MiB que nadie volveria a nombrar.
+ * utf8: absolute directory of the program's persistent data ("/games/doom").
+ * It exists so that uninstalling can offer to take the data along: without
+ * this key, deleting the executable orphans everything it wrote -- Doom's WADs
+ * are 30 MiB nobody would ever name again.
  *
- * ES UNA DECLARACION, NO UN PERMISO. Quien borra valida el path antes de
- * tocarlo (appwiz_data_dir_is_removable): un manifiesto mal escrito no puede
- * convertirse en un rm -rf de /disk.
+ * IT IS A DECLARATION, NOT A PERMISSION. Whoever deletes validates the path
+ * before touching it (appwiz_data_dir_is_removable): a badly written manifest
+ * cannot turn into an rm -rf of the disk.
  */
 #define SXE_TAG_DATA_DIR 0x0401u
 

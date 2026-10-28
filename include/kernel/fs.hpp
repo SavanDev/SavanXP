@@ -30,8 +30,9 @@ constexpr size_t kMaxDrivers = 4;
 constexpr size_t kMaxMounts = 4;
 constexpr size_t kMountPointCapacity = 32;
 
-// Where the system disk is mounted. The shell and sysinfo know it too.
-constexpr const char* kRootMountPoint = "/disk";
+// Where the system disk is mounted: it is the root of the tree. The
+// in-memory subtrees (vfs::is_memory_path) stay outside it.
+constexpr const char* kRootMountPoint = "/";
 
 struct VolumeStats {
     bool writable;
@@ -114,7 +115,18 @@ bool mount_info(size_t mount_index, MountInfo& out);
 size_t find(const char* mount_point);
 // Index of the attached volume a path belongs to (longest mount point that is
 // a whole-component prefix of it), or kInvalidMount for the in-memory tree.
+// A path under an in-memory subtree (/dev, /rescue) never belongs to a volume,
+// even with one mounted at "/".
 size_t owner_of(const char* path);
+
+// The part of a normalized absolute `path` inside the volume mounted at
+// `mount_point`: "" for the mount point itself, "/a/b" for a path below it,
+// nullptr when the path is outside. A mount point of "/" contains every
+// absolute path, which is the one case a plain prefix test gets wrong.
+const char* path_below(const char* mount_point, const char* path);
+// The inverse: `mount_point` joined with a path relative to it ("a/b", or ""
+// for the mount point). False if it does not fit in `capacity`.
+bool join_mount_path(const char* mount_point, const char* relative, char* out, size_t capacity);
 
 bool stats(size_t mount_index, VolumeStats& out);
 bool sync(size_t mount_index);

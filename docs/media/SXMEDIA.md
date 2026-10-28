@@ -145,7 +145,7 @@ a compile, and the compile is the real fix.
 The last piece of work built a whole capability tag, a new launcher, and four smoke
 scenarios before running anything, and the tag's discovery path did not work. The
 one question that mattered — "does `sxe_load_meta` read a 7 MB binary out of
-`/disk/bin` from a userland program?" — is ten lines and one smoke. Build that
+`/bin` from a userland program?" — is ten lines and one smoke. Build that
 first next time.
 
 ---

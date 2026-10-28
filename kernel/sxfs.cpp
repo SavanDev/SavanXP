@@ -68,9 +68,9 @@ struct Volume {
     size_t device_index;
     sxfs::MountStatus status;
     bool metadata_ready;
-    // Prefijo bajo el que cuelga del vfs ("/disk"). Todas las rutas que entran
-    // por la API publica se resuelven contra esto, asi que un segundo volumen
-    // en "/mnt/destino" no le pisa las rutas al primero.
+    // Where the volume hangs in the VFS ("/" for the system disk). Every path
+    // that enters through the public API is resolved against it, so a second
+    // volume at "/mnt/target" does not take over the first one's paths.
     char mount_point[sxfs::kMountPointCapacity];
     Superblock superblock;
     uint8_t block_bitmap[kBlockBitmapBytes];
@@ -114,23 +114,26 @@ Volume* volume_for_id(sxfs::VolumeId id) {
     return &g_volumes[id];
 }
 
-// Volumen cuyo mount point es prefijo de path. Es como se resuelve a que
-// volumen le habla una ruta absoluta que entra por la API publica.
+// The volume whose mount point contains path, the longest one if several do
+// (one may be mounted at "/"). How an absolute path entering through the public
+// API finds the volume it talks to.
 Volume* volume_for_path(const char* path) {
     if (path == nullptr) {
         return nullptr;
     }
+    Volume* best = nullptr;
+    size_t best_length = 0;
     for (Volume& volume : g_volumes) {
-        if (!volume.in_use) {
+        if (!volume.in_use || fs::path_below(volume.mount_point, path) == nullptr) {
             continue;
         }
-        const size_t prefix = strlen(volume.mount_point);
-        if (strncmp(path, volume.mount_point, prefix) == 0 &&
-            (path[prefix] == 0 || path[prefix] == '/')) {
-            return &volume;
+        const size_t length = strlen(volume.mount_point);
+        if (best == nullptr || length > best_length) {
+            best = &volume;
+            best_length = length;
         }
     }
-    return nullptr;
+    return best;
 }
 
 enum class RecoveryState : uint8_t {
@@ -529,13 +532,10 @@ bool parse_relative_path(Volume& volume, const char* path, char* relative, size_
     if (path == nullptr || relative == nullptr || capacity == 0) {
         return false;
     }
-    const size_t prefix = strlen(volume.mount_point);
-    if (strncmp(path, volume.mount_point, prefix) != 0 ||
-        (path[prefix] != '\0' && path[prefix] != '/')) {
+    const char* cursor = fs::path_below(volume.mount_point, path);
+    if (cursor == nullptr) {
         return false;
     }
-
-    const char* cursor = path + prefix;
     while (*cursor == '/') {
         ++cursor;
     }
@@ -647,25 +647,7 @@ uint32_t parent_inode_for_relative_path(Volume& volume, const char* relative_par
 }
 
 bool make_absolute_path(Volume& volume, const char* relative, char* out, size_t capacity) {
-    if (relative == nullptr || out == nullptr) {
-        return false;
-    }
-    const size_t prefix = strlen(volume.mount_point);
-    if (*relative == '\0') {
-        if (prefix + 1 > capacity) {
-            return false;
-        }
-        strcpy(out, volume.mount_point);
-        return true;
-    }
-    const size_t relative_length = strlen(relative);
-    if (prefix + 1 + relative_length + 1 > capacity) {
-        return false;
-    }
-    strcpy(out, volume.mount_point);
-    out[prefix] = '/';
-    strcpy(out + prefix + 1, relative);
-    return true;
+    return fs::join_mount_path(volume.mount_point, relative, out, capacity);
 }
 
 sxfs::FileRecord* allocate_record(Volume& volume) {

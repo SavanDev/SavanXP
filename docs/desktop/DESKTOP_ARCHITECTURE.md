@@ -41,7 +41,7 @@ shell knowledge listed here is what phase 1 removed):
   channel (`wm_shell_protocol.h`) exists.
 - **Other shell knowledge in the WM:** the taskbar height
   (`WINDOWD_TASKBAR_HEIGHT`, tied by a static assert to the wallpaper module),
-  the wallpaper itself (the fallback background re-reads `/disk/desktop.cfg`
+  the wallpaper itself (the fallback background re-reads `/desktop.cfg`
   on every paint), a per-path table of known apps with their accents, a client
   slot for the terminal (`shell_client`) that the normal session never fills,
   and dead code from the old taskbar clock.
@@ -766,7 +766,7 @@ client.
   being run. It is host-side (KVM contention; a VirtualBox VM running on the
   same host was one instance), so `compositord`'s exit can still take minutes
   on a loaded host. It also showed far more often with the pattern wallpaper
-  (`/disk/desktop.cfg` = `2`) than with the default one, measured but not
+  (`/desktop.cfg` = `2`) than with the default one, measured but not
   explained. `windowd_compositor_close` kills a daemon that does not confirm its shutdown, which covers the timeout
   case. Reproduce: `./build.sh smoke windowd-smoke` a few times; a hang after
   `DESKTOP SMOKE capacity` is the symptom.

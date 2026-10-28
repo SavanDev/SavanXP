@@ -9,7 +9,7 @@ SavanXP is an experimental operating system for `x86_64 + UEFI`, with the
 workflow.
 
 It boots to a working graphical session with its own window manager, a userland
-shell, a persistent volume mounted at `/disk`, a minimal POSIX base, built-in
+shell, a persistent volume mounted at `/`, a minimal POSIX base, built-in
 apps, and support for external apps compiled against the SDK in this repo.
 
 ![The SavanXP desktop: Program Manager, the About window and Doom running in
@@ -50,7 +50,7 @@ built independently with `./ports/doomgeneric/build.sh`,
   and a Task Manager with live CPU and memory per process
   ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Media Player is an optional port
   ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).
-- Persistent `SxFS` volume mounted at `/disk`.
+- Persistent `SxFS` volume mounted at `/`.
 - POSIX base and SDK v1 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
 - Initial support for network, audio, input, GPU and storage.
@@ -106,7 +106,7 @@ Generating a bootable ISO:
 
 The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` from
 `PATH` (or `SAVANXP_XORRISO`) and uses the EFI tree the build already prepared.
-To keep `/disk` data when booting under VirtualBox or another hypervisor,
+To keep the disk's data when booting under VirtualBox or another hypervisor,
 attach `build/disk.img` as an extra disk as well.
 
 ## Running
@@ -163,7 +163,7 @@ of the system from inside the guest:
 ```text
 sysinfo
 df
-ls /disk
+ls /
 ```
 
 Useful commands in the current userland:
@@ -188,7 +188,7 @@ The basic file utilities are small in-tree programs too
 
 The recommended flow for testing your own programs does not require rebuilding
 the `initramfs`. External apps are compiled against the SDK and installed
-straight into `build/disk.img`, normally under `/disk/bin`.
+straight into `build/disk.img`, normally under `/bin`.
 
 ```bash
 ./build.sh build
@@ -196,9 +196,9 @@ straight into `build/disk.img`, normally under `/disk/bin`.
 ./build.sh run
 ```
 
-Use `--destination /disk/bin/NAME` (or another path below `/disk`) when the
-program should not use the default `/disk/bin/NAME` location. A SUN program,
-built with `--native`, installs as `/disk/bin/NAME.sxe`; the shell runs it as
+Use `--destination /bin/NAME` (or another path below `/`) when the
+program should not use the default `/bin/NAME` location. A SUN program,
+built with `--native`, installs as `/bin/NAME.sxe`; the shell runs it as
 `NAME` too ([`docs/userland/SXE_FORMAT.md`](docs/userland/SXE_FORMAT.md#sun-programs-are-named-sxe)).
 
 Inside SavanXP:
@@ -224,21 +224,21 @@ Included examples:
 
 ## Persistence
 
-SavanXP uses a persistent disk image at `build/disk.img`, mounted as `/disk`
+SavanXP uses a persistent disk image at `build/disk.img`, mounted as `/`
 inside the system through `SxFS`.
 
 This makes it possible to:
 
 - keep files across reboots
-- install external binaries in `/disk/bin`
-- store assets and persistent data under `/disk`
+- install external binaries in `/bin`
+- store assets and persistent data under `/`
 
 Inside the guest:
 
 ```text
-echo hello > /disk/notes.txt
+echo hello > /notes.txt
 sync
-cat /disk/notes.txt
+cat /notes.txt
 ```
 
 The repo workflow protects this persistence: `./build.sh build` must not
@@ -278,7 +278,7 @@ keep building on:
 - its own kernel and userland
 - a usable initial desktop
 - a graphics path under a compositor
-- real persistence over `/disk`
+- real persistence over `/`
 - support for ports and external applications
 
 It is still an experimental system, with APIs and subsystems in flux, but it is

@@ -73,7 +73,7 @@ Two proofs, at two levels:
   line endpoint, rect corner, brush stamp, picker (plus out-of-bounds),
   undo push/pop/empty, fill interior with frame intact, BMP bit-exact
   save/load round-trip, garbage-file rejection, the real
-  `/disk/paint-test.png` fixture by size and pixel value, refusal to write a
+  `/paint-test.png` fixture by size and pixel value, refusal to write a
   `.PNG` name, a 16x16 save/load that keeps its size, a top-down BMP, and a
   same-colour fill reported as a no-op. Expects `PAINT SMOKE PASS`.
 - `tools/shoot.sh --scenario paint` drives tool switching by keyboard in the

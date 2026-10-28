@@ -375,7 +375,7 @@ class Session(object):
         self.run("mines")
 
     def open_ccleste(self):
-        # An external port: sh finds it in /disk/bin.
+        # An external port: sh finds it in /bin.
         self.run("ccleste")
 
     def open_doom(self):
@@ -785,12 +785,9 @@ def scenario_files(s):
     s.qmp.tap("down", pause=0.6)
     s.qmp.tap("down", pause=1.2)
     s.shot("files-seleccion")
-    # Los dos `down` de arriba ya dejaron la seleccion sobre /disk, que mezcla
-    # carpetas con un .ini y un .bmp: es el directorio donde la capa de iconos
-    # por tipo resuelve mas de un tipo a la vez, asi que es el que sirve de
-    # regresion para el catalogo.
-    s.qmp.tap("ret", pause=2.5)
-    s.shot("files-disk")
+    # The root is the system disk: it mixes folders with an .ini and a .bmp, so
+    # it is where the per-type icon layer resolves more than one type at once,
+    # and the two shots above already serve as the catalog's regression.
 
 
 def scenario_console(s):
@@ -1427,15 +1424,15 @@ def scenario_notepadwheel(s):
 
 
 def scenario_webview(s):
-    """Web Viewer v0.1: arranca, abre un archivo local y lo pinta.
+    """Web Viewer v0.1: it starts, opens a local file and paints it.
 
-    Sin argumentos muestra su pantalla de bienvenida (parrafos sinteticos, sin
-    parser); con F3 se abre el dialogo, se tipea /disk/welcome.html y lo que
-    aparece lo produjo el parser de verdad: el h1 en la fuente de titulos y un
-    item de lista en la del cuerpo, afirmados pixel a pixel contra libsxgfx.
+    Without arguments it shows its welcome screen (synthetic paragraphs, no
+    parser); F3 opens the dialog, /welcome.html is typed, and what appears was
+    produced by the real parser: the h1 in the title font and a list item in
+    the body's, asserted pixel by pixel against libsxgfx.
 
-    La barra va con "/" de Shift+7: el layout activo del guest es ES y el qcode
-    es la tecla fisica, asi que "slash" escribiria un guion (ver type_text).
+    The slash is typed as Shift+7: the guest's active layout is ES and the
+    qcode is the physical key, so "slash" would type a dash (see type_text).
     """
     s.open_webview()
     welcome = s.shot("webview-bienvenida")
@@ -1443,8 +1440,6 @@ def scenario_webview(s):
     expect_text(welcome, (0, 0, width, height), "Web Viewer", TEXT, FIELD,
                 "la bienvenida de webviewer", which="title")
     s.qmp.tap("f3", pause=2.0)
-    s.qmp.chord("shift", "7")
-    s.qmp.type_text("disk")
     s.qmp.chord("shift", "7")
     s.qmp.type_text("welcome")
     s.qmp.tap("dot", pause=0.3)
@@ -1464,8 +1459,6 @@ def scenario_webview(s):
     # pasean por el historial. El foco quedo en la barra al cerrar el dialogo,
     # asi que Ctrl+A la selecciona entera antes de tipear la otra ruta.
     s.qmp.chord("ctrl", "a")
-    s.qmp.chord("shift", "7")
-    s.qmp.type_text("disk")
     s.qmp.chord("shift", "7")
     s.qmp.type_text("about")
     s.qmp.tap("dot", pause=0.3)
@@ -1870,9 +1863,9 @@ def scenario_doom(s):
         )
     if level < 0.01:
         raise Failure(
-            "el port no suena: el mayor RMS de los ultimos 8 s es %.4f; el WAV "
-            "existe y esta en silencio. Este escenario necesita el port "
-            "DoomGeneric instalado y un WAD en /disk/games/doom." % level
+            "the port is silent: the highest RMS of the last 8 s is %.4f; the "
+            "WAV exists and is silent. This scenario needs the DoomGeneric "
+            "port installed and a WAD in /games/doom." % level
         )
     print("  musica: RMS %.4f en la cola de %s" % (level, wav.name))
 

@@ -62,7 +62,7 @@ exist to compensate:
    program to the menu requires **recompiling the system**.
 
 With resources inside the executable itself, all three tables fall away and a
-capability that does not exist today appears: copying a `.sxe` to `/disk/bin`
+capability that does not exist today appears: copying a `.sxe` to `/bin`
 **is** installing a program.
 
 ## Why ELF sections and not a container of our own
@@ -287,7 +287,7 @@ executable, forever.**
   of *this* build, but it is still the real contract: an executable copied from
   elsewhere, built with another toolchain, or brought in by a third party must
   never fail to start for lacking a section the kernel does not even look at.
-  There will never be a "SXE only" `/disk/bin`.
+  There will never be a "SXE only" `/bin`.
 - **The kernel takes no part in any of this.** It does not read, does not
   validate, does not care. The whole mechanism lives in userland.
 - A `.sxmeta` that is corrupt, truncated, from a future version, or carrying an
@@ -327,7 +327,7 @@ get scanned — not in the name.
 ### SUN programs are named `.sxe`
 
 > Status: **applied 2026-10-24.** `/bin/console.sxe`, `/bin/windowd.sxe`,
-> `/disk/bin/nativetest.sxe`.
+> `/bin/nativetest.sxe`.
 
 A SUN program ([SUN.md](SUN.md)) runs only as an SXE image, and nothing else
 runs as SUN:
@@ -362,7 +362,7 @@ How it is held in place:
 - **The builders name the output.** `savanxp_program(... NATIVE)` (and so
   `savanxp_system_service`) sets the `.sxe` suffix; `NAME` never carries it,
   and a POSIX `NAME` ending in `.sxe` fails at configure time.
-  `tools/build-user.sh --native` installs `/disk/bin/<name>.sxe` by default,
+  `tools/build-user.sh --native` installs `/bin/<name>.sxe` by default,
   and refuses a native destination without `.sxe` or a POSIX one with it.
 - **`tools/stamp_osabi.py` refuses the image.** It is the last step of every
   native build, CMake and `build-user.sh` alike. It takes the name the program
@@ -376,7 +376,7 @@ How it is held in place:
   removes `bin/x`, and `bin/x` removes `bin/x.sxe` (`sxfs-cli rm -f`). Before
   the rule, installing over a name replaced the program, and this keeps that.
   It is also what cleaned the images from before the rename, which still held
-  `/disk/bin/console` next to the new `console.sxe`. The shell would have run
+  `/bin/console` next to the new `console.sxe`. The shell would have run
   the stale copy, and the launcher, which tells programs apart by file name,
   would have listed it twice.
 - **Names the user wrote by hand.** A `progman.ini` item whose path is gone
@@ -406,8 +406,9 @@ directories pays nothing, and the cost is charged once, when a file actually
 has to be opened.
 
 **The 141 has a concrete reading, and it changed with default stamping.**
-`/disk/bin` is a copy of `/bin`, so every program is examined twice — that did
-not move. What did move is the other half of the argument: with the previous
+At the time `/disk/bin` was a copy of the initramfs `/bin` and both were
+scanned, so every program was examined twice — that did not move then. (Since
+the disk became the root there is one `/bin` and one scan.) What did move is the other half of the argument: with the previous
 scan, "of the 131, only a handful carry resources" suggested the extension hint
 could prune away nearly all the cost. Now **every** binary has `.sxmeta` —
 opening them is no longer avoidable by name, because they all "have something"
@@ -594,7 +595,7 @@ capability**, the registry **resolves the association**.
 ### All Programs: the catalog discovers itself
 
 The registry stopped being **required** for a program to be visible.
-`progman_registry_scan_programs()` walks `/bin` and `/disk/bin`, reads each
+`progman_registry_scan_programs()` walks `/bin`, reads each
 executable's `.sxmeta`, and lists every one that declares `SXE_TAG_CATEGORY`.
 The category is the group name; the rest of the presentation is filled in by
 `progman_registry_apply_sxe()`, the same way as for any other item.
@@ -644,8 +645,8 @@ Order of the stages, which is not free:
 2. `progman_registry_prune_missing()` — drop what is not installed.
 3. `progman_registry_scan_programs()` — add what asked to be listed. It skips
    any candidate whose **basename** already has an item, so the `.ini` always
-   wins and `/disk/bin` never duplicates `/bin` — which is not theoretical,
-   since `/disk/bin` is a copy of `/bin` (CMake).
+   wins. It also absorbs an `.ini` written before the disk became the root,
+   whose items still say `/disk/bin/...` while the scan finds `/bin/...`.
 4. The baked defaults, **only** if the registry is still empty. They are the
    safety net for an image where not one binary can be read, not anybody's
    catalog.
@@ -670,26 +671,31 @@ button, and what `appwiz_catalog.h` decides.
 **What can be uninstalled is a subtraction, not a list:**
 
 ```
-    in /disk/bin   AND   not in /bin
+    in /bin   AND   not in /rescue/bin
 ```
 
-This is not a policy choice, it is the filesystem. `/bin` is the initramfs
-ramdisk (`Backend::memory` in [kernel/vfs.cpp:800](../../kernel/vfs.cpp:800)), so
-`unlink()` there only invalidates the vnode in RAM and the file is back on the
-next boot. The only deletion that persists is on `/disk`, which is SxFS. And
-since the build copies all of `/bin` into `/disk/bin`, every system program
-appears on both sides — the subtraction is exactly what separates "shipped with
-the OS" from "somebody installed it". A system program is not *forbidden* from
-being uninstalled here; it *cannot* be, because the next build puts it back.
+This is not a policy choice, it is the filesystem. `/bin` is on the system
+disk, and the build stages the system's programs there and in the initramfs,
+which is published under `/rescue`
+([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#the-root-is-the-system-disk)). So
+every system program appears on both sides, and the subtraction is exactly
+what separates "shipped with the OS" from "somebody installed it". A system
+program is not *forbidden* from being uninstalled here; it *cannot* be, because
+the next build puts it back.
+
+That holds while the initramfs carries every system program. Cutting it down
+to a rescue set needs another source for "shipped with the OS" — a list of the
+system's programs the build writes — or the subtraction offers to remove the
+desktop.
 
 **`data_dir` is a declaration, not a permission.** The program says where its
-persistent data lives (Doom: `/disk/games/doom`, ~30 MiB of WADs that nothing
+persistent data lives (Doom: `/games/doom`, ~30 MiB of WADs that nothing
 else would ever name again) so the uninstaller can offer to take it along, as a
 separate checkbox that is off by default. But the path was written by whoever
 compiled the program, so `appwiz_data_dir_is_removable()` validates it before
-anything is touched — without that, a manifest saying `data_dir=/disk` would
+anything is touched — without that, a manifest saying `data_dir=/` would
 turn one click into wiping the disk. It requires the path to be absolute and
-under `/disk/`, with at least one segment of its own, no `.` or `..` segment
+under `/`, with at least one segment of its own, no `.` or `..` segment
 anywhere, and not one of the system's own directories. A manifest that declares
 something else is not an error and does not block uninstalling the program: the
 entry is listed with the data checkbox off and the reason on it.
@@ -701,20 +707,20 @@ worst an orphaned data directory, which the status line says out loud instead of
 reporting a plain failure for something that did happen.
 
 `appwiz-smoke` validates it by actually deleting: the path validation case by
-case, a two-level tree it builds under `/disk/tmp`, and a full install →
+case, a two-level tree it builds under `/tmp`, and a full install →
 appears → uninstall → gone round trip using a fixture binary it drops in
-`/disk/bin`. It never touches a program the user installed — a smoke run that
+`/bin`. It never touches a program the user installed — a smoke run that
 uninstalls your games is not a test, it is a bug.
 
 ### File associations (phase 5)
 
 The association does not live in `progman.ini` but in its own registry,
-`/disk/assoc.ini`, because they are different things: one is the start menu
+`/assoc.ini`, because they are different things: one is the start menu
 arrangement, the other is system-wide policy. Minimal format, one line per
 association:
 
 ```ini
-# /disk/assoc.ini — who opens each extension
+# /assoc.ini — who opens each extension
 .txt=/bin/notepad
 .log=/bin/notepad
 ```
@@ -723,11 +729,12 @@ Precedence: **user policy > first binary declaring the extension > nothing**.
 The third case is not an error: filesapp falls back to its default editor, and
 another caller can decide otherwise.
 
-"First binary declaring it" is not theoretical: `/disk/bin` is a copy of
-`/bin`, so **every program shows up twice in the scan**. Without the rule that
-one scan entry does not overwrite another, the second pass rewrote every
-association to the `/disk/bin` path. A stable directory order is more
-predictable than any tie-breaking heuristic.
+"First binary declaring it" was not theoretical: while `/disk/bin` was a copy of
+the initramfs `/bin` and both were scanned, **every program showed up twice**,
+and without the rule that one scan entry does not overwrite another, the second
+pass rewrote every association to the `/disk/bin` path. With one `/bin` the rule
+still decides between two programs declaring the same extension. A stable
+directory order is more predictable than any tie-breaking heuristic.
 
 ### Precedence (implemented in phase 3)
 
@@ -898,7 +905,7 @@ all build entry points.
 1. ~~**Format + reader.**~~ **DONE.** The canonical format in
    `include/sxe/sxe_format.h` (freestanding, C/C++, with layout static
    asserts), the reader in `savanxp/sxe.h` + `runtime/sxe.c`, and the
-   `./build.sh smoke sxe-smoke` harness (`/disk/bin/sxetest`). Pure parsing is
+   `./build.sh smoke sxe-smoke` harness (`/bin/sxetest`). Pure parsing is
    exercised against blobs fabricated on the stack — well formed and every
    degraded case no correct generator would produce — and the disk path against
    the image's real binaries.
@@ -917,7 +924,7 @@ all build entry points.
    accent and style in the surface header (`savanxp_wm_presentation`).
    windowd reads no file and keeps no fallback table.
 5. ~~**Associations.**~~ **DONE** for `EXT_OPEN`. `file_assoc` resolves
-   extension → program by combining user policy (`/disk/assoc.ini`) with what
+   extension → program by combining user policy (`/assoc.ini`) with what
    the installed binaries declare, and filesapp opens each file with the
    associated program through the `argument` field that already existed — the
    `#define FILESAPP_EDITOR_PATH "/bin/notepad"` stopped being the only answer
@@ -941,7 +948,7 @@ all build entry points.
    >   data with the same format and precedence as `assoc.ini`. Adding a type is
    >   one line, not a recompile.
    > - **Neither are the pixels.** The catalog is a set of standalone `.sxicon`
-   >   blobs in `/disk/icons`, emitted by `tools/gen_mime_icons.py` and read
+   >   blobs in `/icons`, emitted by `tools/gen_mime_icons.py` and read
    >   with `sxe_load_icon_file()` — the variant of `sxe_load_icons()` for a
    >   file that *is* the blob, with no ELF around it. Not a single KiB of icon
    >   enters a loadable segment, which is the same decision that made `.sxicon`

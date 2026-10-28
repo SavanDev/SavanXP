@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Emite un blob .sxicon por cada icono del catalogo de tipos, para que la
-imagen los lleve como archivos sueltos en /disk/icons/.
+"""Emits one .sxicon blob per icon of the file-type catalog, so the image
+carries them as loose files in /icons/.
 
-Por que archivos y no un set horneado en filesapp: docs/userland/SXE_FORMAT.md decide
-que los KiB de iconos NO viajan en un segmento cargable (la BSS se mapea eager
-al exec, asi que cada KiB horneado es RAM residente por proceso). Los .sxicon
-sueltos se leen del disco cuando hacen falta y se cachean en runtime, igual que
-el icono propio de un programa.
+Why files and not a set baked into filesapp: docs/userland/SXE_FORMAT.md decides
+that the KiB of icons do NOT travel in a loadable segment (BSS is mapped
+eagerly at exec, so every baked-in KiB is resident RAM per process). Loose
+.sxicon files are read from the disk when needed and cached at run time, like
+a program's own icon.
 
-El formato del blob es EXACTAMENTE el mismo que produce gen_sxe_resources.py
-para la seccion .sxicon de un ejecutable -- se reusan sus helpers, no se
-duplican --, asi que el mismo sxe_icons_open() parsea los dos.
+The blob's format is EXACTLY the one gen_sxe_resources.py produces for an
+executable's .sxicon section -- its helpers are reused, not duplicated -- so the
+same sxe_icons_open() parses both.
 
-Uso:  python tools/gen_mime_icons.py --project-root DIR --output-dir DIR
+Usage:  python tools/gen_mime_icons.py --project-root DIR --output-dir DIR
 """
 
 import argparse

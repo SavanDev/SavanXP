@@ -115,7 +115,7 @@ first.
 
 **It no longer leaves the image — this cost was paid elsewhere.** Floats used to
 mean `--sse`, and `--sse` means `tools/build-user.sh` and a binary installed into
-`/disk/bin` instead of the image's `/bin`. The in-tree userland now compiles
+`/bin` instead of the image's `/bin`. The in-tree userland now compiles
 with `-msse2` and links the libm, so a `float` no longer decides where a binary
 lives — see
 [SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point). The
@@ -270,7 +270,7 @@ breaks it, and has to be reachable by the smoke harness from day one.
 
 That this is possible at all is recent. While the in-tree userland compiled
 without floating point, anything doing 3D maths had to be an external app in
-`/disk/bin`, and `ports/` was the only place it could start from. Since the
+`/bin`, and `ports/` was the only place it could start from. Since the
 userland moved to SSE2 that constraint is gone, and the consumer can be an
 ordinary test app of the image.
 

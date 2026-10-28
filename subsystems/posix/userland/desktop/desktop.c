@@ -508,7 +508,7 @@ int main(void)
         return 1;
     }
 
-    /* Loads the persisted choice and tries to decode /disk/wallpaper.bmp. */
+    /* Loads the persisted choice and tries to decode /wallpaper.bmp. */
     desktop_wallpaper_init();
     /* Without the window list there is nothing for a taskbar to show: the
      * desktop runs as a background only. */

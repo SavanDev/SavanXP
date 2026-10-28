@@ -61,14 +61,14 @@ built either, and the launcher registry drops the entry the way it drops Doom's.
 
 ## Installation
 
-`install.sh` stages one file, `/disk/lib/libffmpeg.so.0.4`, and when requested the
+`install.sh` stages one file, `/lib/libffmpeg.so.0.4`, and when requested the
 three deterministic test clips under `build/media/`. It requires an existing valid
 `build/disk.img` and `build/tools/sxfs-cli`, then uses `tools/sxfs_sync.py` with
 the persistent-image lock, candidate validation, atomic replacement, rollback, and
 safe compaction. It never passes `--reset`.
 
-Nothing under `/disk/bin` is installed, so an image built before this change can
-keep its stale `/disk/bin/mediaplayer-ffmpeg`; remove it once with
+Nothing under `/bin` is installed, so an image built before this change can
+keep its stale `/bin/mediaplayer-ffmpeg`; remove it once with
 `build/tools/sxfs-cli rm build/disk.img /bin/mediaplayer-ffmpeg` if you want the
 volume tidy. It is inert: nothing lists it and nothing has a `DT_NEEDED` for it.
 
@@ -85,7 +85,7 @@ build/media/clip.mjpeg
 build/media/avsync.avi
 ```
 
-They are installed under `/disk/media/` and are not committed to Git.
+They are installed under `/media/` and are not committed to Git.
 
 ## Smoke
 
@@ -109,10 +109,10 @@ flow finishes.
 After installation, run the normal Linux build and verify that these remain:
 
 ```text
-/disk/lib/libffmpeg.so.0.4
-/disk/bin/mediaplayer
-/disk/bin/doomgeneric
-/disk/games/doom/doom1.wad
+/lib/libffmpeg.so.0.4
+/bin/mediaplayer
+/bin/doomgeneric
+/games/doom/doom1.wad
 ```
 
 The current port is single-threaded, assembly-free, and uses the SavanXP SDK

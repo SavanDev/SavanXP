@@ -74,7 +74,7 @@ int exe_answer(void) {
  * tambien la prueba de que el ambito de simbolos abarca la cadena y no solo la
  * libreria que se pidio. */
 static int check_chain(void) {
-    const int why = ldso_load("/disk/lib/libchaintop.so.0.4");
+    const int why = ldso_load("/lib/libchaintop.so.0.4");
     if (why != 0) {
         eprintf("ldtest: no se cargo libchaintop.so.0.4 (paso %d)\n", -why);
         return 0;
@@ -108,7 +108,7 @@ static int check_chain(void) {
 
 int main(void) {
     if (!ldso_loaded()) {
-        const int why = ldso_load("/disk/lib/libmath.so.0.4");
+        const int why = ldso_load("/lib/libmath.so.0.4");
         if (why != 0) {
             return (why == -7) ? (70 + g_lib_reloc_step) : (80 - why);
         }

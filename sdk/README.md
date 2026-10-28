@@ -30,7 +30,7 @@ sources and local headers. A directory source is compiled recursively, with
 ## Included examples
 
 - `sdk/hello/main.c`: simple stdout output
-- `sdk/fsdemo/main.c`: create/write/read under `/disk/tmp`
+- `sdk/fsdemo/main.c`: create/write/read under `/tmp`
 - `sdk/pathops/main.c`: `mkdir`/`rename`/`truncate`/`unlink`/`rmdir`
 - `sdk/procpeek/main.c`: simple process snapshots
 - `sdk/spawnwait/main.c`: `spawn` and `waitpid`
@@ -51,11 +51,11 @@ in `system/gfx`) plus the POSIX-only scaled presenter.
 
 ## Build options
 
-Install under an explicit path below `/disk`:
+Install under an explicit path below `/`:
 
 ```bash
 ./tools/build-user.sh --source sdk/fsdemo --name fsdemo \
-  --destination /disk/bin/fsdemo
+  --destination /bin/fsdemo
 ```
 
 Build the ELF without installing it:

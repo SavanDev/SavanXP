@@ -256,7 +256,7 @@ another core, and runs a pipe ping-pong.
 development host (an i5-2400, 4 logical CPUs) `windowd-smoke` passes at
 `./build.sh smoke windowd-smoke --smp 2` under the available accelerators but
 fails at `./build.sh smoke windowd-smoke --smp 4`: its size-hint check assumes
-`progman` finishes its startup scan of `/disk` within 60 frames.
+`progman` finishes its startup scan of `/` within 60 frames.
 That scan is ATA PIO inside syscalls, under the lock; with four vCPUs on four
 host CPUs, the cores spinning for the lock take host time from the thread that
 emulates the disk, and `progman` measured more than 1.8 s of CPU without

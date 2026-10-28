@@ -1353,9 +1353,9 @@ static void selftest_icons(void)
 
 static void selftest_extension(void)
 {
-    expect(sxe_path_has_extension("/disk/bin/notepad.sxe") == 1, "extension .sxe");
-    expect(sxe_path_has_extension("/disk/bin/notepad") == 0, "sin extension");
-    expect(sxe_path_has_extension("/disk/bin/notepad.elf") == 0, "extension .elf");
+    expect(sxe_path_has_extension("/bin/notepad.sxe") == 1, "extension .sxe");
+    expect(sxe_path_has_extension("/bin/notepad") == 0, "no extension");
+    expect(sxe_path_has_extension("/bin/notepad.elf") == 0, "extension .elf");
     expect(sxe_path_has_extension(".sxe") == 0, "solo la extension no alcanza");
     expect(sxe_path_has_extension("/a.sxe") == 1, "path corto con extension");
     expect(sxe_path_has_extension(0) == 0, "path nulo");
@@ -1374,7 +1374,7 @@ static void selftest_disk(void)
     struct sxe_meta meta;
     size_t length = 1u;
 
-    expect(sxe_load_meta("/disk/bin/__no_instalado__", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
+    expect(sxe_load_meta("/bin/__no_instalado__", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
         "path inexistente");
 
     /*
@@ -1394,7 +1394,7 @@ static void selftest_disk(void)
         "seccion inexistente");
 
     /* Un archivo que no es ELF se resuelve como ausente, no como error. */
-    expect(sxe_read_section("/disk/wallpaper.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
+    expect(sxe_read_section("/wallpaper.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "archivo que no es ELF");
 }
 

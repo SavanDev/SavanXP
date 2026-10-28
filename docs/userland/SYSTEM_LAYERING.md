@@ -226,7 +226,7 @@ What this does **not** mean: the game is not part of the platform. Nothing in th
 kernel, `windowd`, `compositord` or the SDK may grow a dependency on it — it is
 an app that consumes the platform, exactly like Doom does, with the single
 difference that it **comes in the image** instead of being installed into
-`/disk/bin`. Being preinstalled is a packaging fact (an entry in the CMake userland
+`/bin`. Being preinstalled is a packaging fact (an entry in the CMake userland
 registry and `category=Games` in its `.sxres`), not a layer.
 
 The one thing the game did push into the platform is the gap it found in the

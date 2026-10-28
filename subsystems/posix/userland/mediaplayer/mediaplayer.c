@@ -547,7 +547,7 @@ static void show_open_dialog(void) {
     if (sxgui_dialog_active(&g.app.ui)) {
         return;
     }
-    snprintf(g.open_path, sizeof(g.open_path), "%s", has_file() ? g.playback.path : "/disk/media/");
+    snprintf(g.open_path, sizeof(g.open_path), "%s", has_file() ? g.playback.path : "/media/");
     g.open_widgets[1].caret = (int)strlen(g.open_path);
     sxgui_dialog_begin(&g.app.ui, &g.open_dialog, MP_OPEN_WIDTH, MP_OPEN_HEIGHT);
     g.needs_full = 1;

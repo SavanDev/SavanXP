@@ -75,7 +75,7 @@ upstream, small patches, the backend in `overlay/`.
   system hooks.
 - `hlsdk-portable` built with the same SDK, producing the client and server
   libraries.
-- The game data (`valve/`) is the user's, installed under `/disk/games`, like the
+- The game data (`valve/`) is the user's, installed under `/games`, like the
   Doom IWAD. Nothing proprietary is vendored or built.
 
 Build the dedicated server first, as upstream's porting guide recommends: it proves

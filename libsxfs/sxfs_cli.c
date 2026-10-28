@@ -637,9 +637,9 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
 }
 
 /* Removes one or more paths from the image. Paths follow the manifest
- * convention -- relative to the SxFS root, without the guest's /disk prefix --
- * and a leading '/' is tolerated: "bin/x" and "/bin/x" are the same, and both
- * are the "/disk/bin/x" the OS sees. With force, a path that does not exist is
+ * convention -- relative to the SxFS root, which is the guest's root -- and a
+ * leading '/' is tolerated: "bin/x" and "/bin/x" are the same, and both are
+ * the "/bin/x" the OS sees. With force, a path that does not exist is
  * not an error (rm -f), which is what retiring a file that may or may not be
  * there needs. */
 static int cmd_rm(const char* image_path, char** paths, int path_count, int force) {

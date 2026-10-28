@@ -38,7 +38,7 @@ which is why both go into the registry.
   Copyright (C) 2005-2014 Simon Howard. Full text in
   `ports/doomgeneric/source/LICENSE`; the per-file notices stay in the headers
 - Decision: `Adopt`
-- Distributed in: `/disk/bin/doomgeneric`. Built separately with
+- Distributed in: `/bin/doomgeneric`. Built separately with
   `ports/doomgeneric/build.sh`, not by the main build
 - Reproduction pin: archive SHA-256
   `6a5879c5f686199f0156ea8abcdaab820350c3a74aff211e81558f8675c8e2d5`
@@ -62,7 +62,7 @@ which is why both go into the registry.
   nonfree components
 - Decision: `Adopt`
 - Distributed in: the system launcher `/bin/mediaplayer`, built by the tree, plus
-  the optional shared library `/disk/lib/libffmpeg.so.0.4` linked with the
+  the optional shared library `/lib/libffmpeg.so.0.4` linked with the
   selected FFmpeg libraries. Corresponding source/relinking instructions are in
   `ports/ffmpeg/SOURCE.md`
 - Local test media is generated under `build/media` and is not a third-party
@@ -87,7 +87,7 @@ which is why both go into the registry.
   with an overlay, so no upstream code is committed. The archive is fetched and
   hash-verified at build time, and what the built image redistributes is the
   binary plus the game assets
-- Distributed in: `/disk/bin/ccleste` and `/disk/games/celeste` (the 128x128
+- Distributed in: `/bin/ccleste` and `/games/celeste` (the 128x128
   tile sheet, the font and 23 sound effects, ~1.1 MB). Built separately with
   `ports/ccleste/build.sh`, not by the main build
 - Known debt: because the license is unstated, this port cannot be
@@ -127,7 +127,7 @@ which is why both go into the registry.
   is supplied separately and the port prints the URL if it is missing
 - License reviewed: BSD-3-Clause. Independent project, unrelated to id Software
 - Decision: `Adopt`
-- Distributed in: `/disk/games/doom/freedoom1.wad` of the built image. It is
+- Distributed in: `/games/doom/freedoom1.wad` of the built image. It is
   the default IWAD so that the LiveCD is playable without proprietary or
   shareware content
 
@@ -222,7 +222,7 @@ which is why both go into the registry.
   domain was made precisely to remove the incompatibility with the GPL, so the
   version matters: **0.8.90 or later**
 - Decision: `Adopt`
-- Distributed in: the image, as standalone `.sxicon` blobs in `/disk/icons`
+- Distributed in: the image, as standalone `.sxicon` blobs in `/icons`
   emitted by `tools/gen_mime_icons.py`. They are **not** baked into any binary,
   for the same reason `.sxicon` is a non-alloc section (see
   `docs/userland/SXE_FORMAT.md`)

@@ -151,9 +151,9 @@ typedef struct {
      * diamante, D se carga desde A y desde C, y el segundo next_needed tiene
      * que saltar el que ya se proceso en vez de volver a cargarlo. */
     unsigned needed_done;
-    /* Nombre con el que se cargo, para reconocerlo si otro DT_NEEDED lo pide de
-     * nuevo en la misma cadena. Es el basename: DT_NEEDED lleva "libmath.so.0.4"
-     * aunque la ruta sea /disk/lib/libmath.so.0.4. */
+    /* The name it was loaded under, to recognise it if another DT_NEEDED asks
+     * for it again in the same chain. It is the basename: DT_NEEDED carries
+     * "libmath.so.0.4" even though the path is /lib/libmath.so.0.4. */
     char soname[96];
     /* Los program headers se leen una vez y se guardan aca: despues el
      * descriptor sigue abierto pero no se vuelve a leer el archivo. */
@@ -1029,15 +1029,15 @@ static int loaded_slot_named(const char* soname) {
     return -1;
 }
 
-/* Recorre la cadena de DT_NEEDED de una libreria. Carga lo que falte desde
- * /disk/lib/ y avanza el cursor de la libreria procesando, asi no carga dos
- * veces lo mismo.
+/* Walks a library's DT_NEEDED chain. Loads whatever is missing from /lib/ and
+ * advances the cursor of the library being processed, so it never loads the
+ * same thing twice.
  *
- * Es iterativo y no recursivo adrede: cargar una dependencia cambia g_lib (la
- * libreria en curso), asi que llevarlo por recursiones obligaria a guardar y
- * restaurar el contexto completo en cada nivel. Con un loop basta: se procesan
- * las librerias en el orden en que se completaron, y cada nueva carga apunta al
- * slot de esta en curso, no al de la que se estaba recorriendo. */
+ * Iterative and not recursive on purpose: loading a dependency changes g_lib
+ * (the library in progress), so carrying it through recursion would mean
+ * saving and restoring the whole context at every level. A loop is enough:
+ * libraries are processed in the order they were completed, and each new load
+ * points at the slot of the one in progress, not of the one being walked. */
 static int load_needed_chain(int parent_slot) {
     int failed = 0;
     for (int work = parent_slot; work < g_lib_count; ++work) {
@@ -1053,8 +1053,8 @@ static int load_needed_chain(int parent_slot) {
                 lib->deps |= (uint64_t)1 << existing;
                 continue;
             }
-            /* El nombre de DT_NEEDED es un basename, no una ruta: se busca en
-             * /disk/lib/. Una ruta que ya empieza con / se usa tal cual. */
+            /* A DT_NEEDED name is a basename, not a path: it is looked up in
+             * /lib/. A path that already starts with / is used as it is. */
             char full[128];
             if (need[0] == '/') {
                 unsigned i = 0;
@@ -1064,7 +1064,7 @@ static int load_needed_chain(int parent_slot) {
                 }
                 full[i] = '\0';
             } else {
-                const char* prefix = "/disk/lib/";
+                const char* prefix = "/lib/";
                 unsigned i = 0;
                 while (*prefix != '\0' && i < sizeof(full) - 1) {
                     full[i++] = *prefix++;
@@ -1633,7 +1633,7 @@ void* dlopen(const char* path, int mode) {
             break;
         }
     }
-    const char* parts[2] = {has_slash ? "" : "/disk/lib/", path};
+    const char* parts[2] = {has_slash ? "" : "/lib/", path};
     for (int part = 0; part < 2; ++part) {
         for (const char* ch = parts[part]; *ch != '\0'; ++ch) {
             if (used >= sizeof(full) - 1) {

@@ -52,17 +52,17 @@ OUT="$WORK/out"
 
 # FFmpeg uses floating point in the selected decoders, so this port uses the
 # SSE/SSE2 ABI and links the SDK math runtime.
-# -fPIC, y no -fno-pic, porque el objetivo de este puerto es que FFmpeg acabe en
-# /disk/lib/libffmpeg.so.0.4: los objetos de un .a tienen que ser reubicables para
-# poder entrar en una libreria compartida, y con -fno-pic no lo son.
+# -fPIC, not -fno-pic, because this port's goal is FFmpeg ending up in
+# /lib/libffmpeg.so.0.4: the objects of a .a have to be relocatable to go into a
+# shared library, and with -fno-pic they are not.
 #
-# Compilar con -fPIC no rompe el enlace estatico que se hace hoy --codigo PIC
-# funciona en un enlace estatico-- asi que el cambio es reversible quitando el flag
-# si alguna vez estorba.
+# Compiling with -fPIC does not break a static link -- PIC code works in a
+# static link -- so the change can be reverted by dropping the flag if it ever
+# gets in the way.
 #
-# -fno-pie se va con el: es lo que dice "este ejecutable no es position
-# independent", y la siguiente linea compila las unidades del runtime con los mismos
-# flags, asi que dejarlos en -fno-pie mientras FFmpeg es PIC no describe nada real.
+# -fno-pie goes with it: it is what says "this executable is not position
+# independent", and the next line compiles the runtime units with the same
+# flags, so leaving them at -fno-pie while FFmpeg is PIC describes nothing real.
 SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fPIC -mno-red-zone"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -mcmodel=small -mno-mmx -msse -msse2"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
@@ -96,7 +96,7 @@ SX_TARGET_LDFLAGS="$SX_TARGET_LDFLAGS -Wl,-z,max-page-size=0x1000 -Wl,--build-id
 # y el cargador los resuelve contra ESTE ejecutable. Sin la bandera, la carga falla.
 SX_TARGET_LDFLAGS_PIE="-nostdlib -fuse-ld=lld -pie"
 SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-z,max-page-size=0x1000"
-SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
+SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--dynamic-linker,/lib/ld.so.0.4"
 SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--build-id=none -Wl,--export-dynamic"
 SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-e,_start"
 

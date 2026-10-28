@@ -128,15 +128,14 @@ int mines_board_cycle_mark(struct mines_board *board, int column, int row);
  */
 int mines_board_chord(struct mines_board *board, int column, int row);
 
-/* --- mejores tiempos ------------------------------------------------------
+/* --- best times ------------------------------------------------------------
  *
- * Persisten en /disk/mines.ini, al lado de progman.ini y assoc.ini: es
- * configuracion del usuario, no un dato del programa. En una imagen de solo
- * lectura (la ISO live) la escritura falla en silencio y el juego funciona
- * igual, que es lo unico que puede hacer.
+ * They persist in /mines.ini, next to progman.ini and assoc.ini: it is the
+ * user's configuration, not the program's data. On a read-only image the write
+ * fails silently and the game works all the same, which is all it can do.
  */
 
-#define MINES_SCORES_PATH "/disk/mines.ini"
+#define MINES_SCORES_PATH "/mines.ini"
 
 /* Lee el archivo. Sin archivo deja los tres niveles sin record, que no es un
  * error: es una instalacion en la que nadie gano todavia. */

@@ -239,9 +239,9 @@ static void run_middle_child(void) {
     int32_t pid_value = 0;
     int status = -1;
 
-    sleeper_argv[0] = "/disk/bin/nativetest.sxe";
+    sleeper_argv[0] = "/bin/nativetest.sxe";
     sleeper_argv[1] = "sleeper";
-    sleeper = sxn_spawn_stdio("/disk/bin/nativetest.sxe", sleeper_argv, 2);
+    sleeper = sxn_spawn_stdio("/bin/nativetest.sxe", sleeper_argv, 2);
     if (sleeper <= 0) {
         sxn_exit(2);
     }
@@ -781,10 +781,10 @@ static void test_threads(const struct sxn_native_info* info) {
         long child = -1;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "threads";
         check(sxn_pipe_create(report) == 0);
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.std_handles[1] = report[1];
         child = sxn_spawn_ex(&request);
         check(child > 0);
@@ -803,9 +803,9 @@ static void test_threads(const struct sxn_native_info* info) {
         long child;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "lastexit";
-        child = sxn_spawn_stdio("/disk/bin/nativetest.sxe", child_argv, 2);
+        child = sxn_spawn_stdio("/bin/nativetest.sxe", child_argv, 2);
         check(child > 0);
         check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_THREAD_LAST_STATUS));
     }
@@ -816,9 +816,9 @@ static void test_threads(const struct sxn_native_info* info) {
         long child;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "exitall";
-        child = sxn_spawn_stdio("/disk/bin/nativetest.sxe", child_argv, 2);
+        child = sxn_spawn_stdio("/bin/nativetest.sxe", child_argv, 2);
         check(child > 0);
         check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_THREAD_EXITALL_STATUS));
     }
@@ -830,9 +830,9 @@ static void test_threads(const struct sxn_native_info* info) {
         long child;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "shootdown";
-        child = sxn_spawn_stdio("/disk/bin/nativetest.sxe", child_argv, 2);
+        child = sxn_spawn_stdio("/bin/nativetest.sxe", child_argv, 2);
         check(child > 0);
         check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_PAGE_FAULT_STATUS));
     }
@@ -928,12 +928,12 @@ int main(int argc, char** argv) {
         ev_req = sxn_event_create(SXN_EVENT_MANUAL_RESET);
         check(ev_req >= 0);
         itoau(ev_req, request_text);
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "child";
         child_argv[2] = event_text;
         child_argv[3] = section_text;
         child_argv[4] = request_text;
-        child = sxn_spawn("/disk/bin/nativetest.sxe", child_argv, 5);
+        child = sxn_spawn("/bin/nativetest.sxe", child_argv, 5);
         check(child > 0);
         if (child > 0) {
             volatile uint32_t* ring = (volatile uint32_t*)base + 16;
@@ -1028,9 +1028,9 @@ int main(int argc, char** argv) {
 
         check(port >= 0 && event >= 0);
         check(sxn_port_create("nativetest") == -SAVANXP_EEXIST);
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "portchild";
-        child = sxn_spawn("/disk/bin/nativetest.sxe", child_argv, 2);
+        child = sxn_spawn("/bin/nativetest.sxe", child_argv, 2);
         check(child > 0);
         if (port >= 0 && event >= 0 && child > 0) {
             check(sxn_wait_one(port, 5000) == 0);
@@ -1129,10 +1129,10 @@ int main(int argc, char** argv) {
         long isolated = -1;
         int status = 0;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "sleeper";
-        cloned = sxn_spawn("/disk/bin/nativetest.sxe", child_argv, 2);
-        isolated = sxn_spawn_stdio("/disk/bin/nativetest.sxe", child_argv, 2);
+        cloned = sxn_spawn("/bin/nativetest.sxe", child_argv, 2);
+        isolated = sxn_spawn_stdio("/bin/nativetest.sxe", child_argv, 2);
         check(cloned > 0 && isolated > 0);
         if (cloned > 0 && isolated > 0) {
             check(sxn_process_query(cloned, &whole) == 0 && sxn_process_query(isolated, &bare) == 0);
@@ -1151,9 +1151,9 @@ int main(int argc, char** argv) {
         long child = -1;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "sleeper";
-        child = sxn_spawn("/disk/bin/nativetest.sxe", child_argv, 2);
+        child = sxn_spawn("/bin/nativetest.sxe", child_argv, 2);
         check(child > 0);
         if (child > 0) {
             struct sxn_process_query query;
@@ -1218,10 +1218,10 @@ int main(int argc, char** argv) {
         long total = 0;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "stdiochild";
         check(sxn_pipe_create(input) == 0 && sxn_pipe_create(output) == 0 && sxn_pipe_create(extra) == 0);
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.std_handles[0] = input[0];
         request.std_handles[1] = output[1];
         request.std_handles[2] = output[1];
@@ -1254,13 +1254,13 @@ int main(int argc, char** argv) {
 
         /* Refusals: a handle that is not open, a flag that does not exist,
          * more extra handles than fit. */
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.std_handles[1] = 60;
         check(sxn_spawn_ex(&request) == -SAVANXP_EBADF);
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.flags = 1;
         check(sxn_spawn_ex(&request) == -SAVANXP_EINVAL);
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.handle_count = SXN_SPAWN_MAX_HANDLES + 1u;
         check(sxn_spawn_ex(&request) == -SAVANXP_EINVAL);
         check(sxn_log("nativetest: spawn ex done") == 0);
@@ -1277,10 +1277,10 @@ int main(int argc, char** argv) {
         long middle = -1;
         int status = -1;
 
-        child_argv[0] = "/disk/bin/nativetest.sxe";
+        child_argv[0] = "/bin/nativetest.sxe";
         child_argv[1] = "middle";
         check(sxn_pipe_create(report) == 0);
-        sxn_spawn_request_init(&request, "/disk/bin/nativetest.sxe", child_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
         request.std_handles[1] = report[1];
         middle = sxn_spawn_ex(&request);
         check(middle > 0);

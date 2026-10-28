@@ -2,6 +2,7 @@
 
 #include "kernel/block.hpp"
 #include "kernel/string.hpp"
+#include "kernel/vfs.hpp"
 
 namespace {
 
@@ -174,19 +175,19 @@ size_t find(const char* mount_point) {
 }
 
 size_t owner_of(const char* path) {
-    if (path == nullptr) {
+    if (path == nullptr || vfs::is_memory_path(path)) {
         return kInvalidMount;
     }
     size_t best = kInvalidMount;
     size_t best_length = 0;
     for (size_t index = 0; index < g_mount_count; ++index) {
         const Mount& slot = g_mounts[index];
-        if (!slot.in_use || !slot.attached) {
+        if (!slot.in_use || !slot.attached || path_below(slot.mount_point, path) == nullptr) {
             continue;
         }
+        // Longest mount point wins; "/" has length 1 and loses to any other.
         const size_t length = strlen(slot.mount_point);
-        if (length > best_length && strncmp(path, slot.mount_point, length) == 0 &&
-            (path[length] == '\0' || path[length] == '/')) {
+        if (best == kInvalidMount || length > best_length) {
             best = index;
             best_length = length;
         }

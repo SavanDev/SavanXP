@@ -56,7 +56,7 @@ Ports are independent from the base CMake target and use the same SxFS image:
 ```
 
 `ccleste` downloads its pinned upstream archive and hash-verifies it, then
-installs the game assets from that same archive under `/disk/games/celeste`.
+installs the game assets from that same archive under `/games/celeste`.
 
 A port installer requires an existing valid image and the `sxfs-cli` produced by
 the base build. It never resets the image.
@@ -74,7 +74,7 @@ registry:
 ```
 
 Use `--sse` for the floating-point runtime, `--gui` for SXGUI, `--audio` for
-the PCM mixer, and `--destination` for a path below `/disk`. Installation uses
+the PCM mixer, and `--destination` for a path below `/`. Installation uses
 `tools/sxfs_sync.py` and the same candidate/validation/rollback rules as the
 base image builder.
 
@@ -170,7 +170,7 @@ default `tcg` mode works without `/dev/kvm` and is the portable fallback.
 `build/image` no longer contains `build/disk.img`. The persistent volume reaches
 the system two different ways, and only one of them belongs to each path:
 
-| Path | How `/disk` arrives | Boot config |
+| Path | How `/` arrives | Boot config |
 | --- | --- | --- |
 | `run`, `debug`, smokes, `gpu-soak` | QEMU attaches `build/disk.img` as an ATA or virtio-blk disk | `boot/limine-dev.conf` |
 | ISO / LiveCD | a Limine module, mounted as the `livecd` ramdisk | `boot/limine.conf` |
@@ -194,7 +194,7 @@ The kernel does not depend on the module either way: `build_boot_info()` leaves
 `disk_image_address` null when no such module came, and `kernel_main.cpp` checks
 it before calling `ramdisk::attach_image`.
 
-`tools/iso_boot_test.py` requires `livecd(rw)` and `/disk mounted` in the serial
+`tools/iso_boot_test.py` requires `livecd(rw)` and `root mounted` in the serial
 log of both the BIOS and the UEFI ISO boots. Reaching `init` is not enough: an ISO
 whose volume module went missing still hands off to `init` and then has no
 storage at all.

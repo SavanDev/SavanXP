@@ -13,7 +13,7 @@ int main(void)
 {
     const int before = ldso_count();
 
-    const int why = ldso_load("/disk/lib/libnothere-at-all.so.0.4");
+    const int why = ldso_load("/lib/libnothere-at-all.so.0.4");
     if (why == 0) {
         eprintf("missingtest: cargo una libreria que no existe\n");
         return 1;
@@ -32,7 +32,7 @@ int main(void)
     }
     /* Y que el archivo que se pidio ahora exista de verdad en el volumen. Sin esto
      * la prueba pasaria por un motivo equivocado. */
-    if (savanxp_open("/disk/lib/libnothere-at-all.so.0.4") >= 0) {
+    if (savanxp_open("/lib/libnothere-at-all.so.0.4") >= 0) {
         eprintf("missingtest: el archivo ausente si se puede abrir\n");
         return 1;
     }

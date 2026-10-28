@@ -98,12 +98,12 @@ void shell_print_help(const struct shell_capture_sink* sink) {
     shell_emit_text(sink, 1, "Graphics/audio: desktop console gfxdemo gputest keytest mousetest beep\n");
     shell_emit_text(sink, 1, "Examples: sysinfo\n");
     shell_emit_text(sink, 1, "          df\n");
-    shell_emit_text(sink, 1, "          cd /disk\n");
+    shell_emit_text(sink, 1, "          cd /rescue\n");
     shell_emit_text(sink, 1, "          pwd\n");
     shell_emit_text(sink, 1, "          echo \"hola mundo\" | cat\n");
     shell_emit_text(sink, 1, "          cat < /README\n");
-    shell_emit_text(sink, 1, "          echo hola > /disk/out.txt\n");
-    shell_emit_text(sink, 1, "          cat /missing > /disk/mixed.txt 2>&1\n");
+    shell_emit_text(sink, 1, "          echo hola > /out.txt\n");
+    shell_emit_text(sink, 1, "          cat /missing > /mixed.txt 2>&1\n");
     shell_emit_text(sink, 1, "          fscheck\n");
     shell_emit_text(sink, 1, "          start notepad\n");
     shell_emit_text(sink, 1, "          ping 10.0.2.2  (QEMU user-net smoke test)\n");
@@ -160,7 +160,7 @@ static int shell_resolve_command_path(const char* command, char* path, size_t ca
         return shell_try_command_path("", command, path, capacity);
     }
 
-    if (shell_try_command_path("/disk/bin/", command, path, capacity)) {
+    if (shell_try_command_path("/bin/", command, path, capacity)) {
         return 1;
     }
     return shell_try_command_path("/bin/", command, path, capacity);

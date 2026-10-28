@@ -12,7 +12,7 @@
  * palette, and `map()` blits 8x8 tiles straight out of the sheet.
  *
  * Music decodes the five OGG tracks through libffmpeg.so.0.4 (shared, from
- * /disk/lib) into whole u8 loops on a dedicated mixer voice, one track at a
+ * /lib) into whole u8 loops on a dedicated mixer voice, one track at a
  * time on first request. Without the FFmpeg port the game still runs, silent.
  * See ports/ccleste/README.md. */
 #include "savanxp/libc.h"
@@ -30,10 +30,10 @@
 #include "ccleste_savanxp_assets.h"
 #include "tilemap.h"
 
-/* FFmpeg decodifica la musica: el programa declara libffmpeg.so.0.4 y el
- * cargador la mapea de /disk/lib (igual que mediaplayer). Sin el port, el
- * juego arranca igual y suena sin musica: ldso_missing() lo dice antes del
- * primer avformat_open_input. */
+/* FFmpeg decodes the music: the program declares libffmpeg.so.0.4 and the
+ * loader maps it from /lib (as for mediaplayer). Without the port the game
+ * still starts, without music: ldso_missing() says so before the first
+ * avformat_open_input. */
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 

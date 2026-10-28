@@ -49,8 +49,8 @@ def run_boot(
     """Boot the ISO and wait for init, then assert `require` also showed up.
 
     The extra tokens matter: the ISO carries the persistent volume as a Limine
-    module and has no disk attached, so the livecd ramdisk is the only /disk it
-    can get. A boot that reaches init without it still "passes" a token-only
+    module and has no disk attached, so the livecd ramdisk is the only root
+    volume it can get. A boot that reaches init without it still "passes" a token-only
     check while the system underneath has no storage at all, which is exactly
     the regression a change to the boot tree would cause.
     """
@@ -137,15 +137,15 @@ def main() -> int:
             "-no-reboot",
             "-no-shutdown",
         ]
-        # El volumen persistente tiene que haber llegado como modulo: en la ISO
-        # no hay disco adjunto, asi que sin el no hay /disk.
+        # The persistent volume has to have arrived as a module: the ISO has no
+        # disk attached, so without it there is no root volume.
         run_boot(
             qemu,
             "BIOS",
             common,
             serial_bios,
             args.timeout,
-            require=("livecd(rw)", "/disk mounted"),
+            require=("livecd(rw)", "root mounted"),
         )
         code = find_ovmf("CODE")
         variables = find_ovmf("VARS")
@@ -184,7 +184,7 @@ def main() -> int:
             uefi,
             serial_uefi,
             args.timeout,
-            require=("livecd(rw)", "/disk mounted"),
+            require=("livecd(rw)", "root mounted"),
         )
     return 0
 

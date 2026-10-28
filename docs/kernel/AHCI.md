@@ -16,7 +16,7 @@ adds its CD-ROM as an ATAPI device. So a normal boot shows:
 
 ```text
 ahci: ahci0 port 0, 1032192 sectors     the FAT boot drive
-ahci: ahci1 port 1, 2097152 sectors     disk.img, mounted as /disk
+ahci: ahci1 port 1, 2097152 sectors     disk.img, mounted as /
 block: 3 device(s) ahci0(rw) ahci1(rw) ahci0p1(rw)
 ```
 

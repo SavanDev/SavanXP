@@ -53,8 +53,8 @@ comments and user-visible strings translated in the same commit.
 
 `./build.sh build` must not delete or unconditionally recreate the image if
 one already exists and is valid. Changes to the kernel, the build, the SDK,
-`SxFS` or the host tooling must not lose external binaries in `/disk/bin` nor
-persistent assets under `/disk/games`.
+`SxFS` or the host tooling must not lose external binaries in `/bin` nor
+persistent assets under `/games`.
 
 When touching that area, verify it:
 
@@ -63,7 +63,7 @@ When touching that area, verify it:
 ./build.sh build              # then rebuild
 ```
 
-`/disk/bin/doomgeneric` and `/disk/games/doom/*.wad` must both still be there.
+`/bin/doomgeneric` and `/games/doom/*.wad` must both still be there.
 If they are not, treat it as a regression of the persistent image flow.
 
 ### 5. No machine-specific paths in the tooling

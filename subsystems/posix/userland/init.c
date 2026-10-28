@@ -110,52 +110,52 @@ static const char* automation_label_for_spec(const char* spec) {
 }
 
 static int run_automation_spec(const char* spec) {
-    const char* smoke_argv[] = {"/disk/bin/smoke", 0};
-    const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
+    const char* smoke_argv[] = {"/bin/smoke", 0};
+    const char* soak_argv[] = {"/bin/gputest", "--soak", 0, 0};
     const char* windowd_argv[] = {"/bin/windowd.sxe", "--selftest", 0};
     const char* windowd_hw_native_argv[] = {"/bin/windowd.sxe", "--hw-native-test", 0};
     const char* cursor_repro_argv[] = {"/bin/windowd.sxe", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
-    const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
+    const char* sxetest_argv[] = {"/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* taskmgr_selftest_argv[] = {"/bin/taskmgr", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
-    const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
-    const char* datetest_argv[] = {"/disk/bin/datetest", 0};
-    const char* needstest_argv[] = {"/disk/bin/needstest", 0};
+    const char* clocktest_argv[] = {"/bin/clocktest", 0};
+    const char* datetest_argv[] = {"/bin/datetest", 0};
+    const char* needstest_argv[] = {"/bin/needstest", 0};
     /* Los cuatro diagnósticos del cargador. Cada uno afirmaba en error y nada más,
      * así que ninguno podía tener escenario: ahora cada uno imprime su token de
      * éxito y hay uno que lo ejecuta. */
-    const char* brokentest_argv[] = {"/disk/bin/brokentest", 0};
-    const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
-    const char* slottest_argv[] = {"/disk/bin/slottest", 0};
-    const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
-    const char* dltest_argv[] = {"/disk/bin/dltest", 0};
-    const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
-    const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
-    const char* audiostream_quiet_argv[] = {"/disk/bin/audiotest", "--stream-quiet", 0};
+    const char* brokentest_argv[] = {"/bin/brokentest", 0};
+    const char* missingtest_argv[] = {"/bin/missingtest", 0};
+    const char* slottest_argv[] = {"/bin/slottest", 0};
+    const char* diamondtest_argv[] = {"/bin/diamondtest", 0};
+    const char* dltest_argv[] = {"/bin/dltest", 0};
+    const char* ffmpegload_argv[] = {"/bin/ffmpegload", 0};
+    const char* audiostream_argv[] = {"/bin/audiotest", "--stream", 0};
+    const char* audiostream_quiet_argv[] = {"/bin/audiotest", "--stream-quiet", 0};
     const char* audiod_selftest_argv[] = {"/bin/audiod", "--selftest", 0};
-    const char* volume_argv[] = {"/disk/bin/volume", "75", 0};
-    const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
-    const char* nettest_argv[] = {"/disk/bin/nettest", 0};
-    const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
-    const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
-    const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
-    const char* nativetest_argv[] = {"/disk/bin/nativetest.sxe", 0};
-    const char* pthreadtest_argv[] = {"/disk/bin/pthreadtest", 0};
-    const char* sessiontest_argv[] = {"/disk/bin/sessiontest", 0};
-    const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
-    const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
-    const char* mousetest_argv[] = {"/disk/bin/mousetest", "--selftest", 0};
+    const char* volume_argv[] = {"/bin/volume", "75", 0};
+    const char* audiorecord_argv[] = {"/bin/audiotest", "--record", 0};
+    const char* nettest_argv[] = {"/bin/nettest", 0};
+    const char* tcptest_argv[] = {"/bin/tcptest", 0, 0};
+    const char* ntptest_argv[] = {"/bin/ntptest", 0, 0};
+    const char* floatsmoke_argv[] = {"/bin/floatsmoke", 0};
+    const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
+    const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
+    const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
+    const char* ccleste_argv[] = {"/bin/ccleste", "--selftest", 0};
+    const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
+    const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
     /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
      * los dos intercalados en AVI, que ademas mide la sincronia. */
-    const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/disk/media/tono.wav",
-                                      "/disk/media/clip.mjpeg", "--sync", "/disk/media/avsync.avi", 0};
-    const char* mediaplayer_show_argv[] = {"/bin/mediaplayer", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
-    const char* path = "/disk/bin/smoke";
+    const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/media/tono.wav",
+                                      "/media/clip.mjpeg", "--sync", "/media/avsync.avi", 0};
+    const char* mediaplayer_show_argv[] = {"/bin/mediaplayer", "--gpu-hold", "8000", "/media/avsync.avi", 0};
+    const char* path = "/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
     int argc = 1;
@@ -179,7 +179,7 @@ static int run_automation_spec(const char* spec) {
             argv = appwiz_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "sxe-selftest") == 0 || strcmp(spec, "sxe") == 0) {
-            path = "/disk/bin/sxetest";
+            path = "/bin/sxetest";
             argv = sxetest_argv;
             argc = 1;
         } else if (strcmp(spec, "filesapp-selftest") == 0 || strcmp(spec, "filesapp") == 0) {
@@ -205,46 +205,46 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "ffmpegload") == 0) {
             /* Carga libffmpeg.so.0.4 y mide. El escenario instala el port antes,
              * asi que la libreria esta en el volumen. */
-            path = "/disk/bin/ffmpegload";
+            path = "/bin/ffmpegload";
             argv = ffmpegload_argv;
             argc = 1;
         } else if (strcmp(spec, "brokentest") == 0) {
-            path = "/disk/bin/brokentest";
+            path = "/bin/brokentest";
             argv = brokentest_argv;
             argc = 1;
         } else if (strcmp(spec, "missingtest") == 0) {
-            path = "/disk/bin/missingtest";
+            path = "/bin/missingtest";
             argv = missingtest_argv;
             argc = 1;
         } else if (strcmp(spec, "slottest") == 0) {
-            path = "/disk/bin/slottest";
+            path = "/bin/slottest";
             argv = slottest_argv;
             argc = 1;
         } else if (strcmp(spec, "diamondtest") == 0) {
-            path = "/disk/bin/diamondtest";
+            path = "/bin/diamondtest";
             argv = diamondtest_argv;
             argc = 1;
         } else if (strcmp(spec, "dltest") == 0) {
-            path = "/disk/bin/dltest";
+            path = "/bin/dltest";
             argv = dltest_argv;
             argc = 1;
         } else if (strcmp(spec, "needstest") == 0) {
             /* El programa con una dependencia declarada. El escenario
              * needstest-missing borra la libreria del volumen antes de arrancar;
              * con ella en su sitio el mismo programa resuelve y se va. */
-            path = "/disk/bin/needstest";
+            path = "/bin/needstest";
             argv = needstest_argv;
             argc = 1;
         } else if (strcmp(spec, "clocktest") == 0) {
-            path = "/disk/bin/clocktest";
+            path = "/bin/clocktest";
             argv = clocktest_argv;
             argc = 1;
         } else if (strcmp(spec, "datetest") == 0) {
-            path = "/disk/bin/datetest";
+            path = "/bin/datetest";
             argv = datetest_argv;
             argc = 1;
         } else if (strcmp(spec, "netsmoke") == 0) {
-            path = "/disk/bin/nettest";
+            path = "/bin/nettest";
             argv = nettest_argv;
             argc = 1;
         } else if (strcmp(spec, "mediaplayer") == 0) {
@@ -256,23 +256,23 @@ static int run_automation_spec(const char* spec) {
             argv = mediaplayer_show_argv;
             argc = 4;
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
-            path = "/disk/bin/floatsmoke";
+            path = "/bin/floatsmoke";
             argv = floatsmoke_argv;
             argc = 1;
         } else if (strcmp(spec, "sessiontest") == 0) {
-            path = "/disk/bin/sessiontest";
+            path = "/bin/sessiontest";
             argv = sessiontest_argv;
             argc = 1;
         } else if (strcmp(spec, "pthreadtest") == 0 || strcmp(spec, "pthread-test") == 0) {
-            path = "/disk/bin/pthreadtest";
+            path = "/bin/pthreadtest";
             argv = pthreadtest_argv;
             argc = 1;
         } else if (strcmp(spec, "nativetest") == 0 || strcmp(spec, "native-test") == 0) {
-            path = "/disk/bin/nativetest.sxe";
+            path = "/bin/nativetest.sxe";
             argv = nativetest_argv;
             argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
-            path = "/disk/bin/ccleste";
+            path = "/bin/ccleste";
             argv = ccleste_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
@@ -280,15 +280,15 @@ static int run_automation_spec(const char* spec) {
             argv = cursor_repro_argv;
             argc = 2;
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
-            path = "/disk/bin/gputest";
+            path = "/bin/gputest";
             argv = soak_argv;
             argc = 2;
         } else if (strcmp(spec, "audiostream") == 0) {
-            path = "/disk/bin/audiotest";
+            path = "/bin/audiotest";
             argv = audiostream_argv;
             argc = 2;
         } else if (strcmp(spec, "audiostream-quiet") == 0) {
-            path = "/disk/bin/audiotest";
+            path = "/bin/audiotest";
             argv = audiostream_quiet_argv;
             argc = 2;
         } else if (strcmp(spec, "audiodselftest") == 0) {
@@ -296,22 +296,22 @@ static int run_automation_spec(const char* spec) {
             argv = audiod_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "volumesmoke") == 0) {
-            path = "/disk/bin/volume";
+            path = "/bin/volume";
             argv = volume_argv;
             argc = 2;
         } else if (strcmp(spec, "audiorecord") == 0) {
-            path = "/disk/bin/audiotest";
+            path = "/bin/audiotest";
             argv = audiorecord_argv;
             argc = 2;
         } else if (strcmp(spec, "kbdtest") == 0 || strcmp(spec, "kbd-selftest") == 0) {
-            path = "/disk/bin/kbdtest";
+            path = "/bin/kbdtest";
             argv = kbdtest_argv;
             argc = 2;
         } else if (strcmp(spec, "mousetest") == 0 || strcmp(spec, "mousetest --selftest") == 0) {
             /* El gemelo del kbdtest para el puntero: mismo patron (sesion
              * grafica, READY, el host mueve el device por QMP, checkpoints),
              * distinto device. */
-            path = "/disk/bin/mousetest";
+            path = "/bin/mousetest";
             argv = mousetest_argv;
             argc = 2;
         } else if (text_starts_with(spec, "tcptest ")) {
@@ -322,7 +322,7 @@ static int run_automation_spec(const char* spec) {
                 printf("%s FAIL missing port\n", label);
                 return 1;
             }
-            path = "/disk/bin/tcptest";
+            path = "/bin/tcptest";
             tcptest_argv[1] = port;
             argv = tcptest_argv;
             argc = 2;
@@ -334,7 +334,7 @@ static int run_automation_spec(const char* spec) {
                 printf("%s FAIL missing port\n", label);
                 return 1;
             }
-            path = "/disk/bin/ntptest";
+            path = "/bin/ntptest";
             ntptest_argv[1] = port;
             argv = ntptest_argv;
             argc = 2;
@@ -344,7 +344,7 @@ static int run_automation_spec(const char* spec) {
                 printf("%s FAIL missing soak iteration count\n", label);
                 return 1;
             }
-            path = "/disk/bin/gputest";
+            path = "/bin/gputest";
             soak_argv[2] = iterations;
             argv = soak_argv;
             argc = 3;
@@ -377,8 +377,8 @@ static int run_automation_spec(const char* spec) {
     return status;
 }
 
-#define KEYBOARD_LAYOUT_CONFIG_PATH "/disk/keyboard.cfg"
-#define AUDIO_CONFIG_PATH "/disk/audio.cfg"
+#define KEYBOARD_LAYOUT_CONFIG_PATH "/keyboard.cfg"
+#define AUDIO_CONFIG_PATH "/audio.cfg"
 
 /* Layout preferido (mismo patron de 1 digito ASCII que desktop.cfg): se
  * aplica ANTES de arrancar windowd para que el layout ya este activo cuando
@@ -485,7 +485,9 @@ int main(void) {
     unsigned long last_sessiond_start_ms = 0;
     int rapid_failures = 0;
 
-    long smoke_trigger = savanxp_open("/SMOKE");
+    /* The smoke trigger is staged into the initramfs, never onto the disk, so a
+     * smoke build leaves the persistent image alone. */
+    long smoke_trigger = savanxp_open("/rescue/SMOKE");
     if (smoke_trigger >= 0) {
         char automation_spec[64] = {};
         long bytes_read = savanxp_read((int)smoke_trigger, automation_spec, sizeof(automation_spec) - 1);

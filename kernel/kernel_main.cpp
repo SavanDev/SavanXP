@@ -273,13 +273,12 @@ namespace
     // LiveCD: si Limine cargo la imagen de disco como modulo, ofrecersela al
     // driver de ramdisk antes de enumerar.
     //
-    // Escribible-efimero: las apps que crean directorios/archivos en /disk
-    // (p.ej. doom prepara /disk/games/doom/savegames) necesitan un FS de
-    // lectura-escritura. Escribimos in-place sobre la memoria del modulo, que es
-    // RAM normal mapeada RW por el HHDM de Limine (el kernel reutiliza su CR3);
-    // los cambios viven solo durante la sesion y se pierden al reiniciar, que es
-    // la semantica correcta de un LiveCD. La persistencia real llega con la
-    // instalacion a disco.
+    // Writable but ephemeral: apps that create files and directories on the
+    // root volume (Doom prepares /games/doom/savegames) need a read-write
+    // filesystem. Writes go in place to the module's memory, which is ordinary
+    // RAM mapped read-write by Limine's HHDM (the kernel reuses its CR3); the
+    // changes last for the session and are lost on reboot, which is what a
+    // LiveCD should do. Real persistence comes with installing to a disk.
     if (boot_info.disk_image_address != nullptr && boot_info.disk_image_size != 0)
     {
         ramdisk::attach_image(
@@ -301,10 +300,10 @@ namespace
     }
     console::write("\n");
     boot_screen::show("Mounting storage");
-    // Registro de sistemas de archivos: fs:: decide QUE device se monta y
-    // DONDE, y cada driver solo dice si reconoce el formato. mount_any recorre
-    // los block devices (particiones incluidas) y se queda con el primero que
-    // alguien reclame para la raiz del disco.
+    // The filesystem registry: fs:: decides WHICH device is mounted and WHERE,
+    // and each driver only says whether it recognises the format. mount_any
+    // walks the block devices (partitions included) and keeps the first one a
+    // driver claims, mounted at "/".
     fs::initialize();
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
@@ -365,12 +364,16 @@ namespace
         static_cast<unsigned>(mib_from_bytes(memory.reclaimable_bytes)),
         system_info.framebuffer_width,
         system_info.framebuffer_height);
+    // The system runs from its disk. Without one, the initramfs under /rescue
+    // still holds an init and a shell (docs/kernel/FILESYSTEMS.md).
+    const char* init_path = disk_mounted ? "/bin/init" : "/rescue/bin/init";
     console::printf(
-        "handoff: starting /bin/init (%s, /disk %s)\n",
+        "handoff: starting %s (%s, root %s)\n",
+        init_path,
         system_info.net_present != 0 ? "net online" : "net absent",
         disk_mounted ? "mounted" : "offline");
     console::write_line("");
 
     boot_screen::show("Starting session");
-    process::start_init("/bin/init");
+    process::start_init(init_path);
 }

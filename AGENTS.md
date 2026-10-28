@@ -82,8 +82,8 @@
 - `./build.sh build` must not delete or unconditionally recreate the disk
   image if one already exists and is valid.
 - Changes to the kernel, the build, the SDK, `SxFS` or the host tooling must
-  not lose external binaries already installed in `/disk/bin`, nor persistent
-  assets under `/disk/games`.
+  not lose external binaries already installed in `/bin`, nor persistent
+  assets under `/games`.
 
 ## Practical rule for the main build
 
@@ -98,9 +98,9 @@
   `./ports/doomgeneric/build.sh --wad ports/doomgeneric/wad/doom1.wad`
 - Then run the normal build:
   `./build.sh build`
-- Confirm the executable is still present in `/disk/bin`.
+- Confirm the executable is still present in `/bin`.
 - Confirm its persistent assets, for example
-  `/disk/games/doom/doom1.wad`, are still present.
+  `/games/doom/doom1.wad`, are still present.
 - For a repeatable isolated check, run
   `./tools/verify_doom_persistence.sh` (or pass `--wad` for a real IWAD).
 

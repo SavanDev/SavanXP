@@ -10,7 +10,7 @@
  * the speaker button is clicked again or on a press outside it.
  *
  * At the top, as always, against /dev/audio0: master slider, mute and
- * persistence in /disk/audio.cfg. Below, one row per application playing, with
+ * persistence in /audio.cfg. Below, one row per application playing, with
  * its own slider, from the daemon's census (asynchronous query every second;
  * without the daemon, the text and nothing else). The per-application level
  * lasts for the session: it is not persisted.
@@ -44,7 +44,7 @@
 #define VOLUMEPOPUP_POLL_MS 1000u
 #define VOLUMEPOPUP_QUERY_TIMEOUT_MS 300u
 
-#define VOLUMEPOPUP_CONFIG_PATH "/disk/audio.cfg"
+#define VOLUMEPOPUP_CONFIG_PATH "/audio.cfg"
 
 static struct sx_rect popup_mute_rect(void)
 {

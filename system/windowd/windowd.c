@@ -4606,7 +4606,7 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
 
     slot = find_free_overlay_slot(session);
     if (!overlay_slot_valid(slot) ||
-        selftest_launch(session, dirty, "/disk/bin/nativedemo.sxe", 0) != slot)
+        selftest_launch(session, dirty, "/bin/nativedemo.sxe", 0) != slot)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL native: no arranco nativedemo\n");
         return 1;
@@ -4740,7 +4740,7 @@ static int windowd_native_widgets_selftest(struct windowd_session *session, stru
 
     slot = find_free_overlay_slot(session);
     if (!overlay_slot_valid(slot) ||
-        selftest_launch(session, dirty, "/disk/bin/nativewidgets.sxe", 0) != slot)
+        selftest_launch(session, dirty, "/bin/nativewidgets.sxe", 0) != slot)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL widgets: no arranco nativewidgets\n");
         return 1;
@@ -4869,7 +4869,7 @@ static int windowd_native_hw_selftest(void)
 
     slot = find_free_overlay_slot(&session);
     if (!overlay_slot_valid(slot) ||
-        selftest_launch(&session, &dirty, "/disk/bin/nativewidgets.sxe", 0) != slot)
+        selftest_launch(&session, &dirty, "/bin/nativewidgets.sxe", 0) != slot)
     {
         puts_fd(2, "NATIVE HW FAIL no arranco nativewidgets\n");
         close_compositor_session(&session);

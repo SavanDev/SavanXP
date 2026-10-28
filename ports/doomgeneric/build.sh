@@ -146,7 +146,7 @@ LINK_FLAGS=(
     -fuse-ld=lld
     -pie
     -Wl,-z,max-page-size=0x1000
-    -Wl,--dynamic-linker,/disk/lib/ld.so.0.4
+    -Wl,--dynamic-linker,/lib/ld.so.0.4
     -Wl,--build-id=none
     -Wl,--export-dynamic
     -Wl,--gc-sections
@@ -284,7 +284,7 @@ if ((NO_COMPACT)); then
 fi
 "$PYTHON" "$ROOT/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
 
-echo "doomgeneric: installed /disk/bin/doomgeneric"
+echo "doomgeneric: installed /bin/doomgeneric"
 if [[ -f "$WAD_PATH" ]]; then
-    echo "doomgeneric: installed /disk/games/doom/$(basename -- "$WAD_PATH")"
+    echo "doomgeneric: installed /games/doom/$(basename -- "$WAD_PATH")"
 fi

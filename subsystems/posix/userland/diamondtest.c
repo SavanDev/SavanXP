@@ -29,7 +29,7 @@ int main(void)
         return 1;
     }
 
-    if (ldso_load("/disk/lib/libdia_top.so.0.4") != 0) {
+    if (ldso_load("/lib/libdia_top.so.0.4") != 0) {
         eprintf("diamondtest: no se cargo libdia_top.so.0.4\n");
         return 1;
     }

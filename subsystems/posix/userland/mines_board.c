@@ -10,9 +10,9 @@ static const struct mines_level_info k_levels[MINES_LEVEL_COUNT] = {
     {"Expert", 30, 16, 99},
 };
 
-/* Clave de cada nivel en /disk/mines.ini. En minusculas y sin espacios porque
- * es una clave de archivo, no el rotulo del menu: cambiar "Intermediate" por
- * otro texto en la UI no tiene que invalidar los records de nadie. */
+/* Each level's key in /mines.ini. Lowercase and without spaces because it is a
+ * file key, not the menu label: changing "Intermediate" to other text in the UI
+ * must not invalidate anyone's records. */
 static const char *const k_score_keys[MINES_LEVEL_COUNT] = {
     "beginner",
     "intermediate",
@@ -633,8 +633,8 @@ void mines_scores_reset(void)
 
 /* --- selftest ------------------------------------------------------------- */
 
-#define MINES_SELFTEST_SCORES_DIR "/disk/tmp"
-#define MINES_SELFTEST_SCORES_PATH "/disk/tmp/mines-selftest.ini"
+#define MINES_SELFTEST_SCORES_DIR "/tmp"
+#define MINES_SELFTEST_SCORES_PATH "/tmp/mines-selftest.ini"
 
 static int g_selftest_failures = 0;
 

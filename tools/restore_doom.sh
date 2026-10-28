@@ -28,4 +28,4 @@ cp "$ELF" "$stage/bin/doomgeneric"
     --cli "$CLI" \
     --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 rm -rf "$stage"
-echo "doom: restored /disk/bin/doomgeneric"
+echo "doom: restored /bin/doomgeneric"

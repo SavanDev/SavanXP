@@ -41,8 +41,8 @@ Options:
   --native          build a SUN program: stamp EI_OSABI as a native subsystem
                     binary and install it as NAME.sxe
   --output PATH     override the output ELF path
-  --destination PATH install under /disk (default: /disk/bin/NAME, or
-                    /disk/bin/NAME.sxe with --native)
+  --destination PATH install on the disk (default: /bin/NAME, or
+                    /bin/NAME.sxe with --native)
 EOF
 }
 
@@ -87,9 +87,9 @@ elif [[ "$NAME" == *.sxe ]]; then
 fi
 if [[ -z "$DESTINATION" ]]; then
     if ((NATIVE)); then
-        DESTINATION="/disk/bin/$NAME.sxe"
+        DESTINATION="/bin/$NAME.sxe"
     else
-        DESTINATION="/disk/bin/$NAME"
+        DESTINATION="/bin/$NAME"
     fi
 fi
 if ((NATIVE)) && [[ "$DESTINATION" != *.sxe ]]; then
@@ -100,15 +100,22 @@ if ((NATIVE == 0)) && [[ "$DESTINATION" == *.sxe ]]; then
     echo "build-user.sh: .sxe names a SUN program; build it with --native" >&2
     exit 2
 fi
+# The disk is the guest's root. /disk/... is still accepted, as the guest
+# accepts it, and /dev and /rescue are the in-memory tree, not the disk.
 case "$DESTINATION" in
     /disk/*) DESTINATION_RELATIVE=${DESTINATION#/disk/} ;;
+    /dev|/dev/*|/rescue|/rescue/*)
+        echo "build-user.sh: $DESTINATION is in memory, not on the disk" >&2
+        exit 2
+        ;;
+    /*) DESTINATION_RELATIVE=${DESTINATION#/} ;;
     *)
-        echo "build-user.sh: destination must be under /disk" >&2
+        echo "build-user.sh: destination must be an absolute path" >&2
         exit 2
         ;;
 esac
 [[ -n "$DESTINATION_RELATIVE" && "$DESTINATION_RELATIVE" != *..* && "$DESTINATION_RELATIVE" != /* ]] || {
-    echo "build-user.sh: destination must name a file below /disk" >&2
+    echo "build-user.sh: destination must name a file on the disk" >&2
     exit 2
 }
 

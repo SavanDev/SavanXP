@@ -50,7 +50,7 @@ so renaming the system regenerates it.
 
 The PNGs in `icons/mime/` are NOT baked into any binary.
 `tools/gen_mime_icons.py` converts them into standalone `.sxicon` blobs that
-land in `/disk/icons` in the image, and `diskfs/mimeicon.ini` maps an extension
+land in `/icons` in the image, and `diskfs/mimeicon.ini` maps an extension
 to an icon name. Adding a type means copying two PNGs (16 and 32) and adding a
 line to the `.ini`: no code changes, no rebuild.
 

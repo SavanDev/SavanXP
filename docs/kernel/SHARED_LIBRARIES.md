@@ -29,7 +29,7 @@ So the case is the runtime duplication, and it is real.
 ## Decisions taken
 
 **Libraries land in `/lib`, not `/bin`.** `/bin` is what Program Manager scans for
-programs, so a library there would show up as an application. `/disk/lib`.
+programs, so a library there would show up as an application. `/lib`.
 
 **Backing is read-only; writable segments are private copies.** No page another
 process has mapped is ever written, which keeps copy-on-write out of the first
@@ -89,7 +89,7 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 | One load bias per library, shared by every segment | done |
 | `R_X86_64_RELATIVE`, `R_X86_64_JUMP_SLOT`, `R_X86_64_GLOB_DAT` | done |
 | The executable is in the symbol scope, and is relocated too | done |
-| `DT_NEEDED` walked from `/disk/lib`, each dependency loaded once | done |
+| `DT_NEEDED` walked from `/lib`, each dependency loaded once | done |
 | A two-library dependency chain, proven by `libchaintop` → `libchainbase` | done |
 | A diamond in the dependency graph | handled, **not tested** |
 | `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
@@ -111,7 +111,7 @@ anything above it.
 | `libchainbase.so.0.4`, `libchaintop.so.0.4` | 4 KB each | each other (test chain) |
 
 `libffmpeg.so.0.4` is not in this table because the tree does not **build** it:
-`ports/ffmpeg` links it and stages it at `/disk/lib`, and the tree consumes it as an
+`ports/ffmpeg` links it and stages it at `/lib`, and the tree consumes it as an
 imported CMake target, so it exists only in an image that has the port installed —
 which is also when `mediaplayer` is built at all. It is two orders of magnitude
 larger than anything above, and
@@ -134,7 +134,7 @@ So "fourteen shared libraries" is not a claim about what the system can do. Five
 93 executables: 30 are `ET_DYN`, 24 declare a `DT_NEEDED`. By library:
 `libsxgfx` 21, `libgfx2d` 16, `libsxgui` 11, `libmath` 4, `libffmpeg` 1,
 `libneeded` 1 (the test chain). `libsxmidi` has no in-tree consumer yet: the only
-program that maps it is `/disk/bin/doomgeneric`, built by `ports/doomgeneric` and
+program that maps it is `/bin/doomgeneric`, built by `ports/doomgeneric` and
 not part of the `/bin` scan.
 
 No library asks the application for a single symbol. What each still needs from the
@@ -189,7 +189,7 @@ at 0 of 228 and 0 of 284 glyph pixels.
   it has nothing to declare a `DT_NEEDED` with. This is a property of the link
   model, not of the loader.
 - **`DT_SONAME` is read and ignored**; a `DT_NEEDED` is looked up verbatim under
-  `/disk/lib`.
+  `/lib`.
 - **Global visibility only.** No `STV_HIDDEN`, `STV_PROTECTED`, or `.symver`.
 - **No unload.** `dlclose` drops a reference and leaves the image mapped; see
   [`dlopen`](#dlopen).
@@ -364,7 +364,7 @@ the last argument string.
 
 `lld`, given `-pie` without `-static`, writes `/lib64/ld-linux-x86-64.so.2` into
 every `ET_DYN` by default — a path from the host that builds, and one SavanXP has
-no file for. The profile now declares `/disk/lib/ld.so.0.4`.
+no file for. The profile now declares `/lib/ld.so.0.4`.
 
 ## The kernel wrote the interpreter path over an argv string
 
@@ -741,7 +741,7 @@ count, or one with an unresolvable symbol. `ldtest` covers a missing *symbol* th
 | case | how it is provoked | what it asserts |
 | --- | --- | --- |
 | unresolved symbol | `libbroken.so.0.4` calls a symbol nothing defines | `g_lib_fail_symbol` and `g_lib_fail_library` name it |
-| missing library | `ldso_load` on a path that is not in `/disk/lib` | step `-2`, no slot consumed, and the path really does not open |
+| missing library | `ldso_load` on a path that is not in `/lib` | step `-2`, no slot consumed, and the path really does not open |
 | full slot table | `slottest`, compiled with `SAVANXP_LD_MAX_LIBRARIES=4` | step `-1`, and `-1` is not `-2` |
 | the diamond | `libdia_top` → `{left, right}` → `leaf` | `ldso_count()` is 5, not 6 |
 | a chain | `ldtest`, `libchaintop` → `libchainbase` | already covered |
@@ -860,7 +860,7 @@ recorded above with the measurements that closed them.
 
 ### Phase 3 — FFmpeg — done
 
-**Done.** `libffmpeg.so.0.4` is built shared, installed at `/disk/lib`, and
+**Done.** `libffmpeg.so.0.4` is built shared, installed at `/lib`, and
 `mediaplayer` maps it and decodes. The acceptance test below is met.
 
 One correction to what this section predicted: it expected `mediaplayer` to map
@@ -910,7 +910,7 @@ dependency that could not be loaded, and the `needstest-missing` scenario remove
 declared library from the volume to prove two things at once:
 
 ```
-loader: no se pudo abrir /disk/lib/libneeded.so.0.4 (paso 2)
+loader: no se pudo abrir /lib/libneeded.so.0.4 (paso 2)
 NEEDSTEST SURVIVED
 ```
 
@@ -947,13 +947,13 @@ image because twenty programs need it; removing it breaks all twenty, and no
 uninstaller can be the thing that decides otherwise. A shared library belongs to
 the set of images that reference it, not to any one of them.
 
-So an installed third-party library lands in `/disk/lib` beside the system's own and
+So an installed third-party library lands in `/lib` beside the system's own and
 there is no way to take it out again, short of rebuilding the image. For `libffmpeg`
 that is the arrangement: it is part of the system once installed, and the
 application that uses it is a system application that cannot be removed either.
 
 One consequence follows from the flat layout and is worth naming before a third-party
-library arrives. Resolution is one directory and an exact filename — `/disk/lib/`
+library arrives. Resolution is one directory and an exact filename — `/lib/`
 plus the `DT_NEEDED` string — so `libffmpeg.so.0.4` and `libsxgui.so.0.4` share one
 namespace, and a library installed by a third party can shadow a system's. There is
 no SONAME matching to keep them apart, which is the same limitation already recorded
@@ -1104,7 +1104,7 @@ decision.
 ### Four test programs that nothing ran
 
 `brokentest`, `missingtest`, `slottest` and `diamondtest` are built, staged into
-`/disk/bin`, and exercise the failure paths of the loader: an unresolved symbol, a
+`/bin`, and exercise the failure paths of the loader: an unresolved symbol, a
 missing library, a full slot table, and a diamond of four libraries. **No smoke
 scenario ran any of them**, and the reason is worth writing down because it is not
 obvious from the outside.
@@ -1147,7 +1147,7 @@ check went into `media_open`, which is where every `av_*` call was believed to
 live. It did not work, and the way it failed is worth writing down:
 
 ```
-loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+loader: no se pudo abrir /lib/libffmpeg.so.0.4 (paso 2)
 sx_start_dynamic: el interprete fallo (paso 8)
 user: exception #14 name=mediaplayer-ffmpeg cr2=0x4b6d6 rip=0x4b6d6
 ```
@@ -1213,7 +1213,7 @@ correctly, `libffmpeg.so.0.4` really was the missing one — went on to build it
 window, and died on `sx_rect_make@plt`:
 
 ```
-loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+loader: no se pudo abrir /lib/libffmpeg.so.0.4 (paso 2)
 user: exception #14 name=mediaplayer cr2=0x2c036
 ```
 
@@ -1229,7 +1229,7 @@ The walk now records the failure and continues, and returns non-zero afterwards 
 "libffmpeg is missing" and "nothing is there":
 
 ```
-loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+loader: no se pudo abrir /lib/libffmpeg.so.0.4 (paso 2)
 loader: 39 entradas de el ejecutable se quedaron sin reubicar porque libffmpeg.so.0.4 no cargo
 ```
 
@@ -1331,7 +1331,7 @@ at once; keeping it was never the destination. What follows is why it existed.
 What was still standing from the original design:
 
 - a **closed** `CHANGELOG.md` section: *"`/bin/mediaplayer` is always built,
-  delegates to `/disk/bin/mediaplayer-ffmpeg` when installed, and otherwise opens an
+  delegates to `/bin/mediaplayer-ffmpeg` when installed, and otherwise opens an
   in-OS warning"*
 - `docs/media/MEDIA_PLAYER.md`: *"`/bin/mediaplayer` is always built into the system image
   and is the program shown by the launcher"*
@@ -1559,7 +1559,7 @@ The count was checked against `readelf` for every library and two executables.
   real work with no consumer yet.
 - **No lazy binding.** `RTLD_LAZY` is `RTLD_NOW`, as at startup.
 - **One path, one image.** Identity is the path string `dlopen` was given, after
-  prefixing `/disk/lib/` to a bare name. Two spellings of one file load it twice.
+  prefixing `/lib/` to a bare name. Two spellings of one file load it twice.
 - **Constructors run for `dlopen` only.** `DT_INIT` then `DT_INIT_ARRAY`, for every
   image the call brought, newest first so dependencies initialize before what needs
   them; there are no destructors, since nothing unloads. Nothing at startup runs

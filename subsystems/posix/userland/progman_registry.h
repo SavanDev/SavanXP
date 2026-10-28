@@ -4,65 +4,65 @@
 #include "desktop_icons.h"
 
 /*
- * Registro de programas del Program Manager (A2.3, ver docs/desktop/WM_SUBSYSTEM.md).
+ * Program Manager's program registry (A2.3, see docs/desktop/WM_SUBSYSTEM.md).
  *
- * Reemplaza la tabla hardcodeada k_menu_items de windowd_menu.c: los grupos y
- * items viven en un archivo de texto en /disk, editable sin recompilar el SO.
- * El formato sigue la idea del PROGMAN.INI original: secciones [group]/[item]
- * con pares clave=valor.
+ * It replaces the hard-coded k_menu_items table of windowd_menu.c: the groups
+ * and items live in a text file on the disk, editable without recompiling the
+ * OS. The format follows the idea of the original PROGMAN.INI: [group]/[item]
+ * sections with key=value pairs.
  *
- *     # comentario (tambien ';')
+ *     # comment (';' too)
  *     [group]
  *     name=Main
  *
  *     [item]
  *     name=Doom
- *     path=/disk/bin/doomgeneric
+ *     path=/bin/doomgeneric
  *     desc=Classic FPS test port
- *     icon=/disk/bin/doomgeneric
+ *     icon=/bin/doomgeneric
  *     flags=fullscreen
  *
- * Reglas del parser:
- *   - Claves y secciones desconocidas se ignoran (compatibilidad hacia adelante).
- *   - Un item sin path, o con path que no empieza en '/', se descarta.
- *   - Items declarados antes del primer [group] caen en un grupo implicito.
- *   - Tolera CRLF y espacios alrededor de claves y valores.
- *   - Sin malloc (esta libc no tiene): todo entra en arrays de capacidad fija y
- *     los strings se truncan en vez de desbordar.
+ * Parser rules:
+ *   - Unknown keys and sections are ignored (forward compatibility).
+ *   - An item without a path, or with a path not starting at '/', is dropped.
+ *   - Items declared before the first [group] fall into an implicit group.
+ *   - It tolerates CRLF and spaces around keys and values.
+ *   - No malloc (this libc has none): everything fits in fixed-capacity arrays
+ *     and strings are truncated instead of overflowing.
  *
- * A PARTIR DE LA FASE 3 DE SXE (docs/userland/SXE_FORMAT.md) este archivo cambio de rol:
- * ya NO es el catalogo de identidad de los programas, es el ARREGLO del
- * usuario. Que grupos hay, que entra en cada uno, en que orden, y overrides
- * puntuales. Quien dice como se llama un programa, que hace y que icono tiene
- * es el propio binario, via su seccion .sxmeta/.sxicon.
+ * SINCE SXE PHASE 3 (docs/userland/SXE_FORMAT.md) this file changed role: it
+ * is NO LONGER the catalog of the programs' identity, it is the user's
+ * ARRANGEMENT. Which groups there are, what goes in each, in what order, and
+ * one-off overrides. What a program is called, what it does and which icon it
+ * has is said by the binary itself, through its .sxmeta/.sxicon section.
  *
- * Precedencia de cada campo, de mayor a menor:
+ * Each field's precedence, from highest to lowest:
  *
- *   1. La clave escrita en el .ini      -- lo que el USUARIO decidio
- *   2. El .sxmeta/.sxicon del binario   -- lo que el PROGRAMA declara de si
- *   3. El default horneado de abajo     -- red de seguridad
- *   4. Generico (icono desktop)         -- ultimo recurso
+ *   1. The key written in the .ini      -- what the USER decided
+ *   2. The binary's .sxmeta/.sxicon     -- what the PROGRAM declares of itself
+ *   3. The baked-in default below       -- safety net
+ *   4. Generic (desktop icon)           -- last resort
  *
- * El paso 2 lo aplica progman_registry_apply_sxe(). Los binarios sin recursos
- * -- que siguen siendo ejecutables de primera clase -- simplemente se saltean
- * ese escalon.
+ * Step 2 is applied by progman_registry_apply_sxe(). Binaries without
+ * resources -- still first-class executables -- simply skip that step.
  *
- * Y EL ARCHIVO YA NO ES LA UNICA FUENTE DE ITEMS. progman_registry_scan_programs()
- * recorre /bin y /disk/bin y da de alta cada ejecutable que declare
- * SXE_TAG_CATEGORY, que es como un programa pide aparecer en el menu. El .ini
- * dejo de ser obligatorio para que algo se vea: es el ARREGLO (que grupos hay,
- * en que orden, que renombrar) por encima de un catalogo que se descubre solo.
- * Instalar es copiar el binario; desinstalar es borrarlo.
+ * AND THE FILE IS NO LONGER THE ONLY SOURCE OF ITEMS.
+ * progman_registry_scan_programs() walks /bin and adds every executable that
+ * declares SXE_TAG_CATEGORY, which is how a program asks to appear in the
+ * menu. The .ini stopped being required for something to show: it is the
+ * ARRANGEMENT (which groups, in what order, what to rename) on top of a
+ * catalog that discovers itself. Installing is copying the binary;
+ * uninstalling is deleting it.
  *
- * `icon=` en un [item] YA NO elige de un catalogo horneado por nombre: apunta
- * a un PROGRAMA cuyo .sxicon tomar prestado (icon=/bin/notepad). El binario
- * referenciado no tiene que ser el que este item lanza -- pedir el icono de
- * otro programa es exactamente el caso de uso, p.ej. una segunda entrada del
- * mismo ejecutable con otro nombre. Nombres cortos previos a este cambio
- * (shell, notepad, gfxdemo, keytest, mousetest) siguen andando por
- * compatibilidad: resuelven al PATH del programa que hoy dibuja ese icono, ya
- * no a un id horneado. "desktop" y cualquier nombre sin alias caen al icono
- * generico, igual que un path que no se puede leer.
+ * `icon=` in an [item] NO LONGER picks from a catalog baked in by name: it
+ * points at a PROGRAM whose .sxicon to borrow (icon=/bin/notepad). The
+ * referenced binary does not have to be the one this item launches -- asking
+ * for another program's icon is exactly the use case, e.g. a second entry for
+ * the same executable under another name. Short names from before this change
+ * (shell, notepad, gfxdemo, keytest, mousetest) still work for compatibility:
+ * they resolve to the PATH of the program that draws that icon today, no
+ * longer to a baked-in id. "desktop" and any name without an alias fall to the
+ * generic icon, as does a path that cannot be read.
  */
 
 #define PROGMAN_MAX_GROUPS 8
@@ -70,7 +70,7 @@
 #define PROGMAN_NAME_CAPACITY 32
 #define PROGMAN_DESC_CAPACITY 64
 #define PROGMAN_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
-#define PROGMAN_REGISTRY_PATH "/disk/progman.ini"
+#define PROGMAN_REGISTRY_PATH "/progman.ini"
 /* Tope del archivo que se lee a un buffer estatico. */
 #define PROGMAN_REGISTRY_MAX_BYTES 8192
 
@@ -175,13 +175,11 @@ int progman_registry_prune_missing(progman_path_exists_fn exists);
 int progman_registry_apply_sxe(void);
 
 /*
- * Directorios que recorre el escaneo, en este orden. Espejan los de file_assoc
- * (file_assoc.h) por el mismo motivo: /disk/bin es una COPIA de /bin, asi que
- * cada programa del sistema aparece dos veces y hace falta una regla estable
- * de desempate en vez de una heuristica.
+ * The directory the scan walks, the same one file_assoc (file_assoc.h) scans.
+ * System programs and installed ones share it since the disk became the root,
+ * so each program appears once.
  */
-#define PROGMAN_SCAN_DIR_PRIMARY "/bin"
-#define PROGMAN_SCAN_DIR_SECONDARY "/disk/bin"
+#define PROGMAN_SCAN_DIR "/bin"
 
 /*
  * "All Programs": adds to the registry every installed executable that ASKS
@@ -199,8 +197,7 @@ int progman_registry_apply_sxe(void);
  * Rules:
  *   - It overrides NOTHING already in the registry: if an existing item
  *     already points at a binary with the same BASENAME, the candidate is
- *     skipped. So the user's .ini always wins, and /disk/bin does not
- *     duplicate /bin.
+ *     skipped. So the user's .ini always wins.
  *   - The items it adds carry no overrides, so apply_sxe fills in their
  *     presentation from the binary itself.
  *   - It runs AFTER progman_registry_prune_missing() and BEFORE

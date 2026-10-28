@@ -31,4 +31,4 @@ category=Games
 # The tile sheet, the font and the 23 sound effects live here (~1.1 MB) and are
 # named by no other program. Declaring the directory is what lets the
 # uninstaller offer to take them instead of leaving them orphaned on the disk.
-data_dir=/disk/games/celeste
+data_dir=/games/celeste

@@ -1,9 +1,9 @@
 #include "savanxp/libc.h"
 
 int main(void) {
-    const char* dir = "/disk/tmp/sdk-pathops";
-    const char* source = "/disk/tmp/sdk-pathops/file.txt";
-    const char* renamed = "/disk/tmp/sdk-pathops/moved.txt";
+    const char* dir = "/tmp/sdk-pathops";
+    const char* source = "/tmp/sdk-pathops/file.txt";
+    const char* renamed = "/tmp/sdk-pathops/moved.txt";
     const char* text = "pathops demo\n";
 
     savanxp_mkdir(dir);

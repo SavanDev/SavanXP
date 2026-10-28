@@ -182,7 +182,7 @@ static void build_install_block(const struct savanxp_system_info *info)
 
     if (info->sxfs_mounted != 0)
     {
-        snprintf(block_line(&g_install), ABOUT_LINE_CAPACITY, "SxFS volume mounted at /disk");
+        snprintf(block_line(&g_install), ABOUT_LINE_CAPACITY, "SxFS volume mounted at /");
         snprintf(block_line(&g_install), ABOUT_LINE_CAPACITY, "%llu of %llu MiB used, %u files",
                  (unsigned long long)(info->sxfs_used_bytes / (1024ull * 1024ull)),
                  (unsigned long long)(info->sxfs_total_bytes / (1024ull * 1024ull)),
@@ -315,7 +315,7 @@ static void build_hardware_rows(const struct savanxp_system_info *info)
 
     add_hardware_row("Keyboard/mouse", "PS/2 controller %s", present_absent(info->input_ready));
     add_hardware_row("Storage", "block device %s", present_absent(info->block_ready));
-    add_hardware_row("File system", info->sxfs_mounted != 0 ? "SxFS mounted at /disk" : "not mounted");
+    add_hardware_row("File system", info->sxfs_mounted != 0 ? "SxFS mounted at /" : "not mounted");
     /* "No hay placa" y "hay una que no sabemos manejar" son dos respuestas
      * distintas sobre la maquina, y la segunda es la que da VirtualBox. El
      * id del fabricante va en la linea porque es lo unico que se puede hacer

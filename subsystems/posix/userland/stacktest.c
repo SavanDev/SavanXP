@@ -28,7 +28,7 @@
 
 /* 125 caracteres: el doble de lo que entraba por argumento antes, y del
  * orden de una ruta real. */
-#define STACK_LONG_ARGUMENT "/disk/una/ruta/bastante/larga/para/el/buffer/viejo/de/64/bytes/que/ahora/tiene/que/llegar/entera/sin/recortarse/nunca/mas.txt"
+#define STACK_LONG_ARGUMENT "/una/ruta/bastante/larga/para/el/buffer/viejo/de/64/bytes/que/ahora/tiene/que/llegar/entera/sin/recortarse/nunca/mas.txt"
 
 static int g_failures = 0;
 

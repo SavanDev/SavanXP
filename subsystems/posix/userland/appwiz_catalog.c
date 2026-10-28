@@ -77,26 +77,38 @@ static int default_path_exists(const char *path)
 
 /* --- validacion de data_dir ----------------------------------------------- */
 
-/* Directorios de /disk que son del sistema y no de ningun programa. Que la
- * lista sea corta es a proposito: el filtro de verdad es el prefijo /disk/ mas
- * la prohibicion de "..", y esto solo tapa los tres nombres que el build
- * escribe en cada imagen. */
+/* The system's own directories: a data_dir may be neither one of them nor
+ * anything below one. /bin and /lib hold the system and every installed
+ * program, /icons and /tmp are written by the build into every image, and /dev
+ * and /rescue are the in-memory tree. */
 static const char *const k_reserved_data_dirs[] = {
-    "/disk/bin",
-    "/disk/icons",
-    "/disk/tmp",
+    "/bin",
+    "/lib",
+    "/icons",
+    "/tmp",
+    "/dev",
+    "/rescue",
 };
+
+/* The prefix binaries built before the disk became the root still declare. */
+static const char k_legacy_disk_prefix[] = "/disk";
 
 int appwiz_data_dir_is_removable(const char *path)
 {
-    static const char prefix[] = "/disk/";
     size_t index;
     size_t length;
     size_t segment_start;
+    const size_t legacy_length = sizeof(k_legacy_disk_prefix) - 1u;
 
     if (path == 0)
     {
         return 0;
+    }
+    /* "/disk/games/doom" is "/games/doom"; "/disk" alone is the root. */
+    if (strncmp(path, k_legacy_disk_prefix, legacy_length) == 0 &&
+        (path[legacy_length] == '\0' || path[legacy_length] == '/'))
+    {
+        path += legacy_length;
     }
     length = strlen(path);
     /* Una barra al final es cosmetica; el resto de la validacion trabaja sobre
@@ -105,18 +117,14 @@ int appwiz_data_dir_is_removable(const char *path)
     {
         length -= 1u;
     }
-    if (length < sizeof(prefix)) /* "/disk/" + al menos un caracter */
-    {
-        return 0;
-    }
-    if (strncmp(path, prefix, sizeof(prefix) - 1u) != 0)
+    if (length < 2u || path[0] != '/') /* "/" plus at least one character */
     {
         return 0;
     }
 
-    /* Ningun segmento "." ni ".." -- con uno solo se sale de /disk y toda la
-     * garantia del prefijo deja de valer. */
-    segment_start = sizeof(prefix) - 1u;
+    /* No "." or ".." segment: a single one climbs out, and every guarantee
+     * below is about the text, not about where it resolves. */
+    segment_start = 1u;
     for (index = segment_start; index <= length; ++index)
     {
         if (index == length || path[index] == '/')
@@ -144,7 +152,9 @@ int appwiz_data_dir_is_removable(const char *path)
         const char *reserved = k_reserved_data_dirs[index];
         size_t reserved_length = strlen(reserved);
 
-        if (length == reserved_length && strncmp(path, reserved, reserved_length) == 0)
+        /* The directory itself or anything below it. */
+        if (length >= reserved_length && strncmp(path, reserved, reserved_length) == 0 &&
+            (length == reserved_length || path[reserved_length] == '/'))
         {
             return 0;
         }
@@ -475,11 +485,11 @@ static void expect(int condition, const char *label)
 }
 
 /*
- * La fixture vive en /disk/tmp y no en /disk/bin ni en el data_dir de nadie: el
- * selftest tiene que ejercitar un borrado REAL, y hacerlo sobre datos de un
- * programa instalado significaria que correr un smoke te desinstala algo.
+ * The fixture lives in /tmp, not in /bin nor in anyone's data_dir: the selftest
+ * has to exercise a REAL deletion, and doing it on an installed program's data
+ * would mean that running a smoke uninstalls something.
  */
-#define APPWIZ_FIXTURE_TREE "/disk/tmp/appwiz-selftest"
+#define APPWIZ_FIXTURE_TREE "/tmp/appwiz-selftest"
 #define APPWIZ_FIXTURE_APP APPWIZ_INSTALL_DIR "/appwiz-selftest-app"
 
 static int write_file(const char *path, const char *contents)
@@ -512,30 +522,35 @@ static int catalog_has_basename(const char *basename)
 
 static void selftest_data_dir(void)
 {
-    /* Lo que un manifiesto mal escrito -- o malicioso -- no puede lograr. */
+    /* What a badly written -- or malicious -- manifest cannot achieve. */
     static const char *const rejected[] = {
         "",
         "/",
         "/disk",
         "/disk/",
-        "disk/games/doom",  /* relativo */
+        "disk/games/doom",  /* relative */
+        "games/doom",       /* relative */
         "/bin",
-        "/bin/notepad",
-        "/games/doom",      /* fuera de /disk */
+        "/bin/notepad",     /* below a system directory */
+        "/disk/bin",        /* the same, through the legacy prefix */
+        "/lib/libsxgfx.so.0.4",
+        "/dev/input0",
+        "/rescue/bin",
+        "/../bin",
+        "/games/../../bin",
         "/disk/../bin",
-        "/disk/games/../../bin",
-        "/disk/./games",
-        "/disk//games",
-        "/disk/bin",
-        "/disk/icons",
-        "/disk/tmp",
+        "/./games",
+        "//games",
+        "/icons",
+        "/tmp",
     };
     static const char *const accepted[] = {
-        "/disk/games/doom",
-        "/disk/games/doom/",
-        "/disk/myapp",
-        "/disk/a/b/c/d",
-        "/disk/binaries", /* prefijo de /disk/bin, pero no es /disk/bin */
+        "/games/doom",
+        "/games/doom/",
+        "/disk/games/doom", /* what an installed Doom declares */
+        "/myapp",
+        "/a/b/c/d",
+        "/binaries", /* /bin is a prefix of it, but it is not /bin */
     };
     size_t index;
 
@@ -603,10 +618,10 @@ static void selftest_catalog(void)
     }
 
     /*
-     * La resta con /bin, que es la unica decision de fondo del modulo. Estos
-     * tres estan en /disk/bin en TODA imagen -- el build copia /bin entero --,
-     * asi que si alguno aparece, la resta no se esta haciendo y el
-     * desinstalador estaria ofreciendo borrar el sistema operativo.
+     * The subtraction with /rescue/bin, the module's one real decision. These
+     * three are in both in EVERY image -- the build stages the system's
+     * programs in both -- so if one shows up, the subtraction is not being
+     * done and the uninstaller is offering to delete the operating system.
      */
     expect(!catalog_has_basename("notepad"), "catalogo: notepad es del sistema");
     expect(!catalog_has_basename("console.sxe"), "catalog: console.sxe is a system program");

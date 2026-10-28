@@ -41,25 +41,26 @@ ARCHIVES=(
     "$BUILD/libavutil/libavutil.a"
 )
 
-# El reproductor NO se construye aqui. Vive en subsystems/posix/userland/mediaplayer/
-# y lo enlaza el arbol, que es donde estan la ventana, los controles y el reloj; este
-# port solo aporta el motor. Antes lo compilaba este script y lo instalaba como
-# /disk/bin/mediaplayer-ffmpeg, con un lanzador de 114 lineas en el arbol que hacia
-# exec de este binario. Los dos se fueron: el motor es la libreria, y el programa es
-# del arbol.
-# libffmpeg DECLARA que necesita libmath, y no es cosmetico.
+# The player is NOT built here. It lives in subsystems/posix/userland/mediaplayer/
+# and the tree links it, which is where the window, the controls and the clock
+# are; this port only contributes the engine. This script used to compile it and
+# install it as mediaplayer-ffmpeg in what was then /disk/bin, with a 114-line
+# launcher in the tree that exec'd this binary. Both went away: the engine is the
+# library, and the program belongs to the tree.
+# libffmpeg DECLARES that it needs libmath, and it is not cosmetic.
 #
-# El cargador recorre el DT_NEEDED del ejecutable en orden y, en cuanto trae una
-# libreria, la reubica antes de traer la siguiente. Asi que si libffmpeg se carga
-# antes que libmath, sus 42 referencias a funciones de doble precision --fabs y
-#IPSIBLE-- no tienen donde resolverse y la carga falla con "necesita \"fabs\" y no
-# esta en ninguna imagen cargada". Con la dependencia declarada, el cargador trae la
-# cadena de la PROPIA libreria antes de reubicarla, que es lo unico que garantiza el
-# orden.
+# The loader walks the executable's DT_NEEDED in order and, as soon as it brings
+# in a library, relocates it before bringing the next. So if libffmpeg is loaded
+# before libmath, its 42 references to double-precision functions -- fabs and
+# the like -- have nowhere to resolve and the load fails with a "needs \"fabs\"
+# and it is in no loaded image" message. With the dependency declared, the
+# loader brings the library's OWN chain before relocating it, which is the only
+# thing that guarantees the order.
 #
-# Antes esto no pasaba porque el reproductor del port llevaba math.c estatico dentro
-# y no necesitaba la libreria. El fallo aparece al mover el reproductor al arbol, y
-# por eso es de este lado: una libreria que usa otra tiene que decirlo.
+# This did not happen before because the port's player carried math.c statically
+# and did not need the library. The failure shows up when the player moves into
+# the tree, and that is why it is fixed on this side: a library that uses another
+# has to say so.
 SAVANXP_MATH_LIBRARY="${SAVANXP_MATH_LIBRARY:-$OUTPUT_ROOT/diskfs/lib}"
 if [[ ! -f "$SAVANXP_MATH_LIBRARY/libmath.so.0.4" ]]; then
     echo "ffmpeg: falta $SAVANXP_MATH_LIBRARY/libmath.so.0.4; ejecuta ./build.sh build primero" >&2

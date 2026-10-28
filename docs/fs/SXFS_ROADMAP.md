@@ -160,7 +160,7 @@ entries and does not have to change.
 
 **What it would take.** Either a sorted comparison or a small per-directory name
 cache, and for the host path a buffer that is not the whole directory. Worth it
-only if directories actually get big: `/disk/bin` is the realistic case and it
+only if directories actually get big: `/bin` is the realistic case and it
 holds about 100 entries today, where O(n²) is 10K comparisons and nobody can
 tell.
 

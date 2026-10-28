@@ -273,9 +273,9 @@ static void filesapp_rebuild_labels(void)
     char type_cell[32];
     int index;
 
-    /* Una sola lectura de /disk/mimeicon.ini por proceso. Es barata --un
-     * ini chico, sin escanear binarios como file_assoc--, pero repetirla en
-     * cada cambio de directorio no aporta nada. */
+    /* One read of /mimeicon.ini per process. It is cheap -- a small ini,
+     * no binaries scanned as in file_assoc -- but repeating it on every
+     * directory change adds nothing. */
     if (!g_mime_icons_loaded)
     {
         (void)mime_icon_load();
@@ -464,11 +464,12 @@ static void filesapp_activate_selected(void)
         return;
     }
     /*
-     * Un archivo que no es programa lo abre quien este asociado a su extension
-     * (docs/userland/SXE_FORMAT.md, fase 5): el binario declara que puede abrirla y
-     * /disk/assoc.ini decide cual gana. Sin asociacion queda el bloc de notas,
-     * que es donde vive el preview que esta app tenia adentro -- no tener
-     * asociacion no es un error, es el caso comun.
+     * A file that is not a program is opened by whoever is associated with its
+     * extension (docs/userland/SXE_FORMAT.md, phase 5): the binary declares that
+     * it can open it and /assoc.ini decides which one wins. Without an
+     * association it falls to Notepad, which is where the preview this app
+     * used to carry lives -- no association is not an error, it is the common
+     * case.
      */
     {
         const char *program = 0;
@@ -714,10 +715,10 @@ static int filesapp_selftest(void)
     }
 
     /*
-     * Capa de iconos por tipo. Se reporta la cuenta del mapeo real de la
-     * imagen y si el catalogo de /disk/icons responde: un mapeo cargado con
-     * cero iconos que abren significa que el build no emitio los blobs, y eso
-     * desde afuera se ve igual que "la lista no tiene iconos".
+     * The per-type icon layer. It reports the count of the image's real
+     * mapping and whether the /icons catalog answers: a loaded mapping with
+     * zero icons that open means the build did not emit the blobs, and from
+     * outside that looks the same as "the list has no icons".
      */
     {
         int mapped = mime_icon_load();

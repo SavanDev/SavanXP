@@ -1,8 +1,8 @@
 #include "desktop_wallpaper.h"
 #include "shared/version.h"
 
-#define DESKTOP_WALLPAPER_CONFIG_PATH "/disk/desktop.cfg"
-#define DESKTOP_WALLPAPER_IMAGE_PATH "/disk/wallpaper.bmp"
+#define DESKTOP_WALLPAPER_CONFIG_PATH "/desktop.cfg"
+#define DESKTOP_WALLPAPER_IMAGE_PATH "/wallpaper.bmp"
 #define DESKTOP_WALLPAPER_MAX_DIMENSION 2048
 
 static int g_mode = DESKTOP_WALLPAPER_TEAL;
@@ -155,8 +155,8 @@ static void load_config(void)
 
     if (fd < 0)
     {
-        /* Sin config previa (instalacion fresca): si el build trae el
-         * wallpaper default en /disk, arrancar mostrandolo. */
+        /* No earlier configuration (a fresh install): if the build ships
+         * the default wallpaper on the disk, start by showing it. */
         if (g_image_pixels != 0)
         {
             g_mode = DESKTOP_WALLPAPER_IMAGE;

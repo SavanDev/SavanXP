@@ -1,7 +1,7 @@
 #include "libc.h"
 #include "savanxp/audio_server.h"
 
-#define VOLUME_CONFIG_PATH "/disk/audio.cfg"
+#define VOLUME_CONFIG_PATH "/audio.cfg"
 #define VOLUME_LIST_CAPACITY 16u
 
 static int parse_uint(const char* text, unsigned int* value) {

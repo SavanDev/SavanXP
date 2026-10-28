@@ -30,9 +30,9 @@ namespace {
 constexpr uint32_t kTotalSectors = 8192;
 constexpr size_t kImageBytes = static_cast<size_t>(kTotalSectors) * SXFS_SECTOR_SIZE;
 
-constexpr const char* kFilePath = "/disk/docs/hello.txt";
-constexpr const char* kDirPath = "/disk/docs";
-constexpr const char* kNewPath = "/disk/docs/nuevo.txt";
+constexpr const char* kFilePath = "/docs/hello.txt";
+constexpr const char* kDirPath = "/docs";
+constexpr const char* kNewPath = "/docs/nuevo.txt";
 constexpr const char* kFileContents = "sxfs read-only mount test\n";
 
 int g_failures = 0;
@@ -567,8 +567,8 @@ void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristin
     check(!sxfs::truncate_file(*record, 0), "truncate_file rechazado");
     check(!sxfs::unlink_file(*record), "unlink_file rechazado");
     check(sxfs::create_file(kNewPath) == nullptr, "create_file rechazado");
-    check(sxfs::create_directory("/disk/otro") == nullptr, "create_directory rechazado");
-    check(!sxfs::rename_path(kFilePath, "/disk/docs/renombrado.txt"), "rename_path rechazado");
+    check(sxfs::create_directory("/otro") == nullptr, "create_directory refused");
+    check(!sxfs::rename_path(kFilePath, "/docs/renombrado.txt"), "rename_path refused");
 
     sxfs::FileRecord* dir_record = nullptr;
     vfs::Vnode* dir_node = hoststub::find_node(kDirPath);

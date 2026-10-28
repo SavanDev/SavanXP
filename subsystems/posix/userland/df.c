@@ -44,7 +44,7 @@ int main(void) {
     }
 
     if (!info.sxfs_mounted) {
-        puts_out("df: /disk not mounted\n");
+        puts_out("df: the root volume is not mounted\n");
         return 1;
     }
 
@@ -55,6 +55,6 @@ int main(void) {
     print_u64(mib_from_bytes(info.sxfs_used_bytes));
     puts_out("         ");
     print_u64(mib_from_bytes(info.sxfs_free_bytes));
-    puts_out("         /disk\n");
+    puts_out("         /\n");
     return 0;
 }

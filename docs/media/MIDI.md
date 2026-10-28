@@ -7,7 +7,7 @@ music had to bring its own decoder, which is why the ccleste port decodes its
 tracks through FFmpeg. Doom plays MUS lumps, and neither is a codec — so the OS
 grew a synth instead of a second decoder.
 
-The library is built by the tree, staged at `/disk/lib/libsxmidi.so.0.4` and
+The library is built by the tree, staged at `/lib/libsxmidi.so.0.4` and
 loaded through the normal `DT_NEEDED` path. Its public surface is
 `savanxp/midi.h`.
 

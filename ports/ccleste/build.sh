@@ -16,7 +16,7 @@ Usage: ./ports/ccleste/build.sh [options]
 Options:
   --no-install       Build and stamp without touching build/disk.img.
   --skip-port        Reuse build/external/ccleste.elf and only install it.
-  --no-assets        Install only the executable, not /disk/games/celeste.
+  --no-assets        Install only the executable, not /games/celeste.
   --no-compact       Disable automatic SxFS compaction while installing.
   --work PATH        Override the port work directory.
   -h, --help         Show this help.
@@ -182,8 +182,8 @@ if ((SKIP_PORT == 0)); then
         "${RUNTIME_OBJECTS[@]}" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
     )
-    # DT_NEEDED por soname: el cargador mapea libffmpeg.so.0.4 de /disk/lib y
-    # de ahi cuelga libmath. Sin el port no se compila (ver el chequeo arriba).
+    # DT_NEEDED by soname: the loader maps libffmpeg.so.0.4 from /lib, and
+    # libmath hangs from it. Without the port it is not built (see the check above).
     if [[ -n "$FFMPEG_SRC" ]]; then
         LINK_ARGS+=("$FFMPEG_LIB")
     fi
@@ -254,7 +254,7 @@ fi
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin"
 cp "$STAMPED" "$STAGE/bin/ccleste"
-echo "ccleste: staged /disk/bin/ccleste"
+echo "ccleste: staged /bin/ccleste"
 
 if ((WITH_ASSETS)); then
     mkdir -p "$STAGE/games/celeste"
@@ -273,7 +273,7 @@ if ((WITH_ASSETS)); then
         installed=$((installed + 1))
     done
     shopt -u nullglob
-    echo "ccleste: staged /disk/games/celeste ($installed files)"
+    echo "ccleste: staged /games/celeste ($installed files)"
 fi
 
 SYNC_ARGS=(
@@ -287,7 +287,7 @@ if ((NO_COMPACT)); then
 fi
 "$PYTHON" "$REPO/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
 
-echo "ccleste: installed /disk/bin/ccleste"
+echo "ccleste: installed /bin/ccleste"
 if ((WITH_ASSETS)); then
     echo "ccleste: installed $DATA_TARGET"
 fi

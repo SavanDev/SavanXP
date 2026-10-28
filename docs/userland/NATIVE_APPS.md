@@ -94,7 +94,7 @@ runtime (`system/runtime/sxn_runtime.c`, linked into every native target; see
 
 `--native` stamps the OSABI from the neutral ABI header; without it
 the same sources build a POSIX binary instead. A SUN program is
-`myapp.sxe` on disk: `--native` installs `/disk/bin/myapp.sxe`, and the
+`myapp.sxe` on disk: `--native` installs `/bin/myapp.sxe`, and the
 shell runs it as `myapp` too. The build refuses a native image without the
 extension or without `.sxmeta`
 ([SXE_FORMAT.md](SXE_FORMAT.md#sun-programs-are-named-sxe)). Ship a `.sxres`

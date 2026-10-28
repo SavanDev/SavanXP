@@ -360,10 +360,10 @@ int main(void)
     expect_text("mundo", "campo: ctrl+x saca lo seleccionado");
 
     reset_field("ruta: ");
-    (void)clipboard_set_text("/disk/notas.txt");
+    (void)clipboard_set_text("/notas.txt");
     key(SAVANXP_KEY_END, 0, 0);
     key((uint32_t)'v', 'v', SAVANXP_KEY_MOD_CTRL);
-    expect_text("ruta: /disk/notas.txt", "campo: ctrl+v pega en el caret");
+    expect_text("ruta: /notas.txt", "campo: ctrl+v pega en el caret");
 
     reset_field("");
     key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);

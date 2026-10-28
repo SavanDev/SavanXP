@@ -146,7 +146,7 @@ static uint32_t keyboard_pointer(struct savanxp_gfx_context *gfx, const struct s
             {
                 char digit = (char)('0' + row);
                 int config_fd = (int)savanxp_open_mode(
-                    "/disk/keyboard.cfg",
+                    "/keyboard.cfg",
                     SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
                 if (config_fd >= 0)
                 {

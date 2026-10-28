@@ -141,12 +141,10 @@ static int set_entry(const char *extension, const char *program, int from_policy
     if (index >= 0)
     {
         /*
-         * Lo que ya esta registrado SOLO lo pisa la politica del usuario.
-         * Entre dos binarios que declaran la misma extension gana el primero
-         * del escaneo -- y eso importa de verdad, no es teorico: /disk/bin es
-         * una copia de /bin, asi que cada programa aparece dos veces y sin
-         * esta regla la segunda pasada reescribia todas las asociaciones a la
-         * ruta de /disk/bin.
+         * What is already registered is overridden ONLY by the user's policy.
+         * Between two binaries that declare the same extension, the first one
+         * in the scan wins. That stops a later program from silently taking
+         * over an association the system's own program declared.
          */
         if (!from_policy)
         {
@@ -177,8 +175,8 @@ const char *file_assoc_extension_of(const char *file_path, char *out, size_t cap
     {
         return 0;
     }
-    /* Solo el ultimo punto del ULTIMO componente: "/disk/v1.2/README" no tiene
-     * extension, aunque haya un punto en el camino. */
+    /* Only the last dot of the LAST component: "/v1.2/README" has no
+     * extension, even though there is a dot on the way. */
     while (cursor[0] != '\0')
     {
         if (cursor[0] == '/')
@@ -386,8 +384,7 @@ int file_assoc_scan_programs(file_assoc_path_exists_fn exists)
     {
         exists = default_path_exists;
     }
-    added += scan_directory(FILE_ASSOC_SCAN_DIR_PRIMARY, exists, meta_buffer, sizeof(meta_buffer));
-    added += scan_directory(FILE_ASSOC_SCAN_DIR_SECONDARY, exists, meta_buffer, sizeof(meta_buffer));
+    added += scan_directory(FILE_ASSOC_SCAN_DIR, exists, meta_buffer, sizeof(meta_buffer));
     return added;
 }
 
@@ -453,23 +450,23 @@ static void selftest_extension_of(void)
 {
     char extension[FILE_ASSOC_EXT_CAPACITY];
 
-    expect(file_assoc_extension_of("/disk/notas.txt", extension, sizeof(extension)) != 0 &&
+    expect(file_assoc_extension_of("/notas.txt", extension, sizeof(extension)) != 0 &&
         strcmp(extension, ".txt") == 0, "extension simple");
     /* Mayusculas normalizadas: un .TXT tiene que resolver como un .txt. */
-    expect(file_assoc_extension_of("/disk/NOTAS.TXT", extension, sizeof(extension)) != 0 &&
+    expect(file_assoc_extension_of("/NOTAS.TXT", extension, sizeof(extension)) != 0 &&
         strcmp(extension, ".txt") == 0, "extension en mayusculas");
     /* Solo cuenta el ultimo componente. */
-    expect(file_assoc_extension_of("/disk/v1.2/README", extension, sizeof(extension)) == 0,
+    expect(file_assoc_extension_of("/v1.2/README", extension, sizeof(extension)) == 0,
         "punto en un directorio no es extension");
     expect(file_assoc_extension_of("/bin/progman", extension, sizeof(extension)) == 0,
         "binario sin extension");
-    expect(file_assoc_extension_of("/disk/archivo.", extension, sizeof(extension)) == 0,
+    expect(file_assoc_extension_of("/archivo.", extension, sizeof(extension)) == 0,
         "punto final sin extension");
-    expect(file_assoc_extension_of("/disk/.oculto", extension, sizeof(extension)) != 0 &&
+    expect(file_assoc_extension_of("/.oculto", extension, sizeof(extension)) != 0 &&
         strcmp(extension, ".oculto") == 0, "archivo que empieza con punto");
     expect(file_assoc_extension_of(0, extension, sizeof(extension)) == 0, "path nulo");
     /* Extension mas larga que la capacidad: se trunca, no desborda. */
-    expect(file_assoc_extension_of("/disk/x.extensionmuylargaquenoentra", extension, sizeof(extension)) != 0,
+    expect(file_assoc_extension_of("/x.extensionmuylargaquenoentra", extension, sizeof(extension)) != 0,
         "extension larga truncada");
     expect(strlen(extension) == sizeof(extension) - 1u, "truncado a la capacidad");
 }
@@ -489,16 +486,16 @@ static void selftest_policy(void)
 
     expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 4, "politica: 4 entradas validas");
     expect(file_assoc_count() == 4, "politica: cuenta");
-    expect(file_assoc_program_for_file("/disk/a.txt") != 0 &&
-        strcmp(file_assoc_program_for_file("/disk/a.txt"), "/bin/notepad") == 0, "politica: .txt");
-    expect(file_assoc_program_for_file("/disk/a.md") != 0 &&
-        strcmp(file_assoc_program_for_file("/disk/a.md"), "/bin/notepad") == 0, "politica: espacios recortados");
-    expect(file_assoc_program_for_file("/disk/a.cfg") != 0, "politica: extension sin punto");
-    expect(file_assoc_program_for_file("/disk/a.bat") != 0 &&
-        strcmp(file_assoc_program_for_file("/disk/a.bat"), "/bin/console.sxe") == 0, "policy: upper case is normalised");
-    expect(file_assoc_program_for_file("/disk/a.rel") == 0, "politica: descarta path relativo");
-    expect(file_assoc_program_for_file("/disk/a.vacio") == 0, "politica: descarta programa vacio");
-    expect(file_assoc_program_for_file("/disk/a.desconocida") == 0, "politica: extension no declarada");
+    expect(file_assoc_program_for_file("/a.txt") != 0 &&
+        strcmp(file_assoc_program_for_file("/a.txt"), "/bin/notepad") == 0, "politica: .txt");
+    expect(file_assoc_program_for_file("/a.md") != 0 &&
+        strcmp(file_assoc_program_for_file("/a.md"), "/bin/notepad") == 0, "politica: espacios recortados");
+    expect(file_assoc_program_for_file("/a.cfg") != 0, "policy: extension without a dot");
+    expect(file_assoc_program_for_file("/a.bat") != 0 &&
+        strcmp(file_assoc_program_for_file("/a.bat"), "/bin/console.sxe") == 0, "policy: upper case is normalised");
+    expect(file_assoc_program_for_file("/a.rel") == 0, "politica: descarta path relativo");
+    expect(file_assoc_program_for_file("/a.vacio") == 0, "politica: descarta programa vacio");
+    expect(file_assoc_program_for_file("/a.desconocida") == 0, "policy: undeclared extension");
     expect(file_assoc_program_for_file("/bin/progman") == 0, "politica: archivo sin extension");
 
     /* Fuera de rango devuelve 0 en vez de basura. */
@@ -519,8 +516,8 @@ static void selftest_precedence(void)
      */
     expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 1, "precedencia: fixture");
     (void)file_assoc_scan_programs(0);
-    expect(file_assoc_program_for_file("/disk/a.txt") != 0 &&
-        strcmp(file_assoc_program_for_file("/disk/a.txt"), "/bin/console.sxe") == 0,
+    expect(file_assoc_program_for_file("/a.txt") != 0 &&
+        strcmp(file_assoc_program_for_file("/a.txt"), "/bin/console.sxe") == 0,
         "precedencia: la politica le gana al binario");
 
     entry = file_assoc_at(0);
@@ -546,29 +543,30 @@ static void selftest_scan(void)
     expect(file_assoc_parse_policy("", 0) == 0, "escaneo: sin politica previa");
     expect(file_assoc_scan_programs(0) > 0, "escaneo: alguna extension declarada");
 
-    program = file_assoc_program_for_file("/disk/notas.txt");
+    program = file_assoc_program_for_file("/notas.txt");
     expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .txt lo toma notepad");
-    program = file_assoc_program_for_file("/disk/config.ini");
+    program = file_assoc_program_for_file("/config.ini");
     expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .ini lo toma notepad");
-    program = file_assoc_program_for_file("/disk/algo.md");
+    program = file_assoc_program_for_file("/algo.md");
     expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .md lo toma notepad");
 
-    /* Medios: la asociacion tiene que apuntar al LANZADOR y no al backend.
+    /* Media: the association has to point at the LAUNCHER, not the backend.
 
-     * /disk/bin/mediaplayer-ffmpeg es del port y puede no estar; /bin/mediaplayer
-     * esta siempre y es el que delega o explica. Es lo que hace que abrir un .avi
-     * en una imagen sin FFmpeg muestre el aviso en vez de fallar, y lo unico que lo
-     * ata con la realidad es esta linea: las capacidades salen del .sxres
-     * estampado, asi que si el estampado se rompe esto cae. */
-    program = file_assoc_program_for_file("/disk/cancion.mp3");
+     * A mediaplayer-ffmpeg belongs to the port and may be absent;
+     * /bin/mediaplayer is always there and is the one that delegates or
+     * explains. It is what makes opening an .avi on an image without FFmpeg
+     * show the notice instead of failing, and the only thing tying that to
+     * reality is this line: the capabilities come from the stamped .sxres, so
+     * if the stamping breaks, this fails. */
+    program = file_assoc_program_for_file("/cancion.mp3");
     expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .mp3 lo toma el lanzador");
-    program = file_assoc_program_for_file("/disk/pelicula.avi");
+    program = file_assoc_program_for_file("/pelicula.avi");
     expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .avi lo toma el lanzador");
-    program = file_assoc_program_for_file("/disk/audio.flac");
+    program = file_assoc_program_for_file("/audio.flac");
     expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .flac lo toma el lanzador");
 
     /* Una extension que nadie declara sigue sin duenio. */
-    expect(file_assoc_program_for_file("/disk/algo.xyz") == 0, "escaneo: extension sin duenio");
+    expect(file_assoc_program_for_file("/algo.xyz") == 0, "scan: extension nobody owns");
 
     /* El escaneo tiene que ser idempotente: correrlo dos veces no puede
      * duplicar entradas ni cambiar a quien resuelve. */
@@ -577,7 +575,7 @@ static void selftest_scan(void)
 
         (void)file_assoc_scan_programs(0);
         expect(file_assoc_count() == before, "escaneo: idempotente");
-        program = file_assoc_program_for_file("/disk/notas.txt");
+        program = file_assoc_program_for_file("/notas.txt");
         expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: idempotente conserva");
     }
 

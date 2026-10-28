@@ -1954,7 +1954,7 @@ static void webview_show_welcome(void)
     webview_push_para("", 0, 1, 0, 4);
     webview_push_para("Type a path or an http:// address up there "
                       "and press Go (or Enter). File > Open (F3) works too: try "
-                      "/disk/welcome.html.",
+                      "/welcome.html.",
         0, 0, 1, 2);
     webview_push_para("Double-clicking an .html file in Files opens it here.", 0, 0, 1, 1);
     webview_push_para(
@@ -3007,7 +3007,7 @@ static int webview_open_location(const char *location, int push)
     }
     else
     {
-        resolved = webview_resolve_against(g_has_file ? g_path : "/disk/", location,
+        resolved = webview_resolve_against(g_has_file ? g_path : "/", location,
             target, sizeof(target));
         if (resolved == -1)
         {

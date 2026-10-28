@@ -11,7 +11,7 @@ build recipe make the download reproducible. `ccleste` does the same for a
 different reason: upstream ships no license file, so nothing may be vendored.
 
 The first official port is `doomgeneric`. Its persistent-data regression is
-`/disk/bin/doomgeneric` plus the WAD under `/disk/games/doom`.
+`/bin/doomgeneric` plus the WAD under `/games/doom`.
 
 `ccleste` is the port with the least upstream delta: the engine compiles
 unpatched and the overlay replaces the SDL frontend entirely, so it carries no

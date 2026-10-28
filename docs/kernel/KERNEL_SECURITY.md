@@ -12,7 +12,7 @@ SavanXP is a hardened multi-user operating system.
 The kernel treats the following inputs as hostile unless a stronger statement
 is made below:
 
-- ELF files executed from `/bin` or `/disk/bin`;
+- ELF files executed from `/bin` or `/rescue/bin`;
 - pointers, lengths and flags supplied through system calls;
 - SxFS metadata and directory trees read from disk;
 - the initramfs CPIO archive supplied by the boot configuration;
@@ -295,6 +295,6 @@ The loader/build flow must also preserve external applications and their data:
 ./build.sh build
 ```
 
-The smoke serial log must show `/disk/bin/doomgeneric` and the persistent Doom
+The smoke serial log must show `/bin/doomgeneric` and the persistent Doom
 WAD still exist. Changes to NX, page tables or SxFS are incomplete until this
 regression is run.

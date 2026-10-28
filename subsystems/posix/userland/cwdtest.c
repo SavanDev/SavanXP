@@ -15,8 +15,8 @@
  *     cwdtest exec       un exec: el cwd se conserva (exec no lo cambia)
  */
 
-#define CWDTEST_EXPECTED_PARENT "/disk"
-#define CWDTEST_EXPECTED_CHILD "/disk"
+#define CWDTEST_EXPECTED_PARENT "/bin"
+#define CWDTEST_EXPECTED_CHILD "/bin"
 
 static int g_failures = 0;
 
@@ -51,7 +51,7 @@ static int run_exec_child(void) {
 }
 
 int main(int argc, char** argv) {
-    const char* const exec_argv[] = {"/disk/bin/cwdtest", "exec", 0};
+    const char* const exec_argv[] = {"/bin/cwdtest", "exec", 0};
     long fd = 0;
     int status = -1;
 
@@ -69,18 +69,19 @@ int main(int argc, char** argv) {
     check(savanxp_chdir(CWDTEST_EXPECTED_PARENT) == 0, "chdir a un directorio existente");
     expect_cwd(CWDTEST_EXPECTED_PARENT, "getcwd tras chdir");
 
-    /* 3. La resolucion relativa usa el cwd: esto es exactamente lo que el
-     * kernel resolvia contra su campo cwd y ahora resuelve contra el estado
-     * de POSIX. Si el estado no llegara, "bin/progman" seria relativo a "/". */
-    fd = savanxp_open("bin/progman");
+    /* 3. Relative resolution uses the cwd: this is exactly what the kernel used
+     * to resolve against its cwd field and now resolves against POSIX's state.
+     * If the state did not arrive, "progman" would be relative to "/" and
+     * would not open. */
+    fd = savanxp_open("progman");
     check(fd >= 0, "una ruta relativa se resuelve contra el cwd");
     if (fd >= 0) {
         savanxp_close((int)fd);
     }
 
     /* 4. Errores que deben seguir siendo errores. */
-    check(savanxp_chdir("/disk/no_existe") < 0, "chdir a un directorio ausente falla");
-    check(savanxp_chdir("/disk/bin/progman") < 0, "chdir a un fichero falla");
+    check(savanxp_chdir("/no_existe") < 0, "chdir to a missing directory fails");
+    check(savanxp_chdir("/bin/progman") < 0, "chdir to a file fails");
 
     /* 5. fork hereda el cwd. */
     {
@@ -96,9 +97,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    /* 6. exec conserva el cwd: se reejecuta este mismo binario, que al volver
-     * a entrar comprueba que sigue en /disk. */
-    check(exec("/disk/bin/cwdtest", exec_argv, 2) == 0, "exec de si mismo");
+    /* 6. exec keeps the cwd: this same binary runs again, and on coming back
+     * in it checks it is still in /bin. */
+    check(exec("/bin/cwdtest", exec_argv, 2) == 0, "exec of itself");
 
     puts_out(g_failures == 0 ? "CWDTEST PASS\n" : "CWDTEST FAIL\n");
     return g_failures == 0 ? 0 : 1;

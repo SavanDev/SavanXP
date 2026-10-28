@@ -60,7 +60,7 @@ int main(void)
     }
 
     void* base = dlopen("libdlmod_base.so.0.4", RTLD_NOW);
-    void* one = dlopen("/disk/lib/libdlmod_one.so.0.4", RTLD_NOW);
+    void* one = dlopen("/lib/libdlmod_one.so.0.4", RTLD_NOW);
     if (base == 0 || one == 0) {
         eprintf("dltest: %s\n", dlerror());
         return fail("base or one did not open");

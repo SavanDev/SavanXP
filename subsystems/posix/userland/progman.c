@@ -953,7 +953,7 @@ static void refresh_catalog(void)
 
 /* Un nombre que no existe en /bin: si existiera, el escaneo lo descartaria por
  * ser un programa del sistema y la fixture no probaria nada. */
-#define PROGMAN_FIXTURE_APP "/disk/bin/progman-selftest-app"
+#define PROGMAN_FIXTURE_APP "/bin/progman-selftest-app"
 
 static int copy_file(const char *source_path, const char *destination_path)
 {
@@ -1147,7 +1147,7 @@ static int progman_selftest(void)
         printf("PROGMAN SMOKE FAIL path_is_launchable con binario instalado\n");
         return 1;
     }
-    if (path_is_launchable("/disk/bin/__no_instalado__"))
+    if (path_is_launchable("/bin/__no_instalado__"))
     {
         printf("PROGMAN SMOKE FAIL path_is_launchable con binario ausente\n");
         return 1;
@@ -1202,10 +1202,10 @@ static int progman_selftest(void)
     }
 
     /*
-     * El escaneo, contra los binarios REALES de esta imagen. Se corre sobre un
-     * registro vaciado a proposito: lo que interesa medir es lo que el escaneo
-     * aporta POR SI SOLO, que es exactamente el caso de una instalacion sin
-     * /disk/progman.ini -- el unico que existe hoy en una imagen recien hecha.
+     * The scan, against this image's REAL binaries. It runs over a registry
+     * emptied on purpose: what matters is what the scan contributes ON ITS
+     * OWN, which is exactly the case of an installation without /progman.ini
+     * -- the only one that exists today on a freshly made image.
      */
     (void)progman_registry_parse("", 0);
     {
@@ -1228,10 +1228,9 @@ static int progman_selftest(void)
         }
 
         /*
-         * Correrlo de nuevo no puede agregar NADA. Es el chequeo del desempate
-         * por basename, y no es teorico: /disk/bin es una copia de /bin, asi
-         * que la segunda pasada del propio escaneo ya se topa con cada programa
-         * del sistema por segunda vez.
+         * Running it again must add NOTHING. It is the check of the tie-break
+         * by basename: the second pass meets every program the first one
+         * already added, so anything it adds is a duplicate.
          */
         rescanned = progman_registry_scan_programs(path_is_launchable);
         if (rescanned != 0)
@@ -1264,8 +1263,8 @@ static int progman_selftest(void)
                 /* Integracion del launcher nativo: el escaneo no mira el
                  * subsistema, solo categoria declarada mas binario lanzable.
                  * Si un nativo con .sxres no aparece, el menu lo esconde. */
-                if (strcmp(item->path, "/disk/bin/nativewidgets.sxe") == 0 ||
-                    strcmp(item->path, "/disk/bin/nativedemo.sxe") == 0)
+                if (strcmp(item->path, "/bin/nativewidgets.sxe") == 0 ||
+                    strcmp(item->path, "/bin/nativedemo.sxe") == 0)
                 {
                     native_listed += 1;
                 }

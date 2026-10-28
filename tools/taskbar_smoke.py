@@ -156,10 +156,10 @@ def _volume_button() -> tuple[int, int]:
 
 
 def _expect_volume_popup(image: Image.Image, state: str) -> None:
-    # Popup de 144x140 anclado como el de layout: x=1280-4-144, y=772-140.
-    # Sin el cursor: depende del volumen heredado de la imagen (el persistido
-    # en /disk/audio.cfg), asi que su posicion la afirma el arrastre, no la
-    # apertura.
+    # A 144x140 popup anchored like the layout one: x=1280-4-144, y=772-140.
+    # Without the cursor: it depends on the volume inherited from the image (the
+    # one persisted in /audio.cfg), so its position is asserted by the drag,
+    # not by opening it.
     if _pixel(image, 1132, 632) != LIGHT:
         raise TaskbarSmokeError(f"{state}: volume popup frame expected {LIGHT}")
     # Fila de mute entre la casilla (termina en x=1150) y el texto (x=1154).

@@ -18,7 +18,7 @@ Usage: tools/run-user.sh --source PATH [options]
 
 Options:
   --name NAME          Program name (defaults to the source name).
-  --destination PATH   Install below /disk (default: /disk/bin/NAME).
+  --destination PATH   Install on the disk (default: /bin/NAME).
   --gui                 Link the SXGUI runtime.
   --sse                 Enable the SSE/SSE2 ABI and math runtime.
   --audio               Link the PCM audio runtime.

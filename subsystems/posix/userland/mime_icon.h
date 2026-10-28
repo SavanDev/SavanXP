@@ -5,26 +5,26 @@
 #include "savanxp/gfx2d.h"
 
 /*
- * Iconos por tipo de archivo.
+ * Icons by file type.
  *
- * Resuelve "que icono le toca a este archivo" con la misma division que usa
- * file_assoc para "que programa lo abre":
+ * Answers "which icon does this file get" with the same split file_assoc uses
+ * for "which program opens it":
  *
- *   - El MAPEO es un dato de la imagen, /disk/mimeicon.ini, no una tabla
- *     compilada. docs/userland/SXE_FORMAT.md decide que el sistema no lleva una tabla
- *     central de "que tipo es cada extension"; aca esa tabla existe pero es
- *     editable y no entra en ningun binario.
- *   - Los PIXELES son archivos .sxicon sueltos en /disk/icons, emitidos en
- *     build por tools/gen_mime_icons.py. Por el mismo motivo: el documento
- *     decide que los KiB de iconos no viajan en un segmento cargable, porque
- *     la BSS se mapea eager al exec y cada KiB horneado es RAM residente por
- *     proceso.
+ *   - The MAPPING is data in the image, /mimeicon.ini, not a compiled table.
+ *     docs/userland/SXE_FORMAT.md decides that the system carries no central
+ *     table of "which type is each extension"; here that table exists but is
+ *     editable and goes into no binary.
+ *   - The PIXELS are loose .sxicon files in /icons, emitted at build time by
+ *     tools/gen_mime_icons.py. For the same reason: the document decides that
+ *     the KiB of icons do not travel in a loadable segment, because BSS is
+ *     mapped eagerly at exec and every baked-in KiB is resident RAM per
+ *     process.
  *
- * Los nombres de icono siguen la Icon Naming Specification de freedesktop
- * ("text-x-generic", "image-x-generic"). Es lo que permite cambiar el origen
- * del arte sin tocar el mapeo.
+ * Icon names follow freedesktop's Icon Naming Specification
+ * ("text-x-generic", "image-x-generic"). That is what allows changing where
+ * the art comes from without touching the mapping.
  *
- * Sin malloc: capacidades fijas y truncado, igual que file_assoc.
+ * No malloc: fixed capacities and truncation, as in file_assoc.
  */
 
 /* Con punto y en minusculas: ".txt". */
@@ -32,9 +32,9 @@
 #define MIME_ICON_NAME_CAPACITY 40
 #define MIME_ICON_MAX_ENTRIES 64
 
-#define MIME_ICON_POLICY_PATH "/disk/mimeicon.ini"
+#define MIME_ICON_POLICY_PATH "/mimeicon.ini"
 #define MIME_ICON_POLICY_MAX_BYTES 4096
-#define MIME_ICON_DIRECTORY "/disk/icons"
+#define MIME_ICON_DIRECTORY "/icons"
 
 /*
  * Cache de bitmaps ya cargados.
@@ -59,9 +59,9 @@ struct mime_icon_entry
     char icon[MIME_ICON_NAME_CAPACITY];
 };
 
-/* Carga /disk/mimeicon.ini. Sin archivo no hay error: se queda sin mapeo y
- * todo resuelve a 0, que es "este archivo no muestra icono". Devuelve cuantas
- * extensiones quedaron mapeadas. */
+/* Loads /mimeicon.ini. No file is not an error: it stays without a mapping and
+ * everything resolves to 0, which is "this file shows no icon". Returns how
+ * many extensions ended up mapped. */
 int mime_icon_load(void);
 
 /* Parseo puro del texto, punto de entrada del selftest. */
@@ -77,12 +77,13 @@ int mime_icon_parse_policy(const char *text, size_t length);
 const char *mime_icon_name_for(const char *file_name, int is_dir, int launchable);
 
 /*
- * Bitmap de 16x16 para un nombre de icono, cargado de /disk/icons/<nombre>.sxicon
- * la primera vez y cacheado despues. Devuelve 0 si no existe o no parsea.
+ * The 16x16 bitmap for an icon name, loaded from /icons/<name>.sxicon the
+ * first time and cached afterwards. Returns 0 if it does not exist or does not
+ * parse.
  *
- * El puntero es estable mientras viva el proceso: apunta a la cache, no al
- * scratch. Los fallos tambien se cachean -- un icono que no esta no se
- * reintenta en cada repintado.
+ * The pointer is stable for the life of the process: it points at the cache,
+ * not at the scratch buffer. Failures are cached too -- an icon that is not
+ * there is not retried on every repaint.
  */
 const struct sx_bitmap *mime_icon_small(const char *icon_name);
 

@@ -186,14 +186,14 @@ int sxe_load_meta(const char* path, void* buffer, size_t capacity, struct sxe_me
 int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_icons* out);
 
 /*
- * Igual que sxe_load_icons, pero el archivo ES el blob: sin ELF ni secciones
- * alrededor. Es lo que permite que un icono exista en la imagen sin un
- * programa que lo lleve adentro -- el catalogo de tipos de /disk/icons vive
- * asi (ver diskfs/mimeicon.ini).
+ * Like sxe_load_icons, but the file IS the blob: no ELF or sections around it.
+ * It is what lets an icon exist in the image without a program carrying it --
+ * the file-type catalog in /icons lives that way (see diskfs/mimeicon.ini).
  *
- * SXE_ABSENT si no abre o no parsea; SXE_TOO_LARGE si el archivo no entra en
- * `capacity`, que se distingue de ABSENT leyendo un byte de mas al llenar el
- * buffer -- sin eso, un blob demasiado grande se veria igual que uno truncado.
+ * SXE_ABSENT if it does not open or does not parse; SXE_TOO_LARGE if the file
+ * does not fit in `capacity`, told apart from ABSENT by reading one byte more
+ * when filling the buffer -- without that, a blob too large would look the
+ * same as a truncated one.
  */
 int sxe_load_icon_file(const char* path, void* buffer, size_t capacity, struct sxe_icons* out);
 

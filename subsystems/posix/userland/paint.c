@@ -1408,9 +1408,9 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
  * se prueba es lo que dibuja y guarda de verdad. El escenario paint-smoke lo
  * corre como /bin/paint --selftest y espera PAINT SMOKE PASS. */
 
-#define PAINT_SELFTEST_PATH "/disk/paint-selftest.bmp"
-#define PAINT_SELFTEST_BAD "/disk/paint-selftest-bad.bin"
-#define PAINT_SELFTEST_PNG "/disk/paint-selftest.PNG"
+#define PAINT_SELFTEST_PATH "/paint-selftest.bmp"
+#define PAINT_SELFTEST_BAD "/paint-selftest-bad.bin"
+#define PAINT_SELFTEST_PNG "/paint-selftest.PNG"
 
 static int paint_selftest_fail(const char *what)
 {
@@ -1615,7 +1615,7 @@ static int paint_selftest(void)
 
     /* The real PNG on the volume (libsximg, through the UI path): the
      * document takes the image's own size, and known pixels come through. */
-    if (paint_load_image("/disk/paint-test.png") != 0)
+    if (paint_load_image("/paint-test.png") != 0)
     {
         free(reference);
         sx_bitmap_destroy(&g_doc);

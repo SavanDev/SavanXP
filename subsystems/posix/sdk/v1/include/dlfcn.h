@@ -10,7 +10,7 @@
  * - dlclose never unmaps. It drops the reference and returns 0; a later dlopen
  *   of the same path returns the same image with its data as it was left. musl
  *   behaves the same way.
- * - A name without a '/' is looked up in /disk/lib, the same place DT_NEEDED is.
+ * - A name without a '/' is looked up in /lib, the same place DT_NEEDED is.
  * - dlsym(RTLD_DEFAULT, ...) and dlsym(dlopen(NULL, ...), ...) search the global
  *   scope newest library first, executable last: the order the startup loader
  *   has always used. */

@@ -32,4 +32,4 @@ category=Games
 # Los WAD viven aca (FILES_DIR en doomgeneric_savanxp.c) y son ~30 MiB que
 # ningun otro programa nombra. Declararlo es lo que le permite al desinstalador
 # ofrecer llevarselos en vez de dejarlos huerfanos en el disco.
-data_dir=/disk/games/doom
+data_dir=/games/doom

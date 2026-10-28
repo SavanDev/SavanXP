@@ -21,7 +21,7 @@
 >   `progman` is the launcher: it lists every installed program that declares
 >   a category in its `.sxmeta` (see
 >   [SXE_FORMAT.md](../userland/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself)),
->   with `/disk/progman.ini` on top as the user's arrangement.
+>   with `/progman.ini` on top as the user's arrangement.
 > - The WM↔client contract is `savanxp/wm_protocol.h` (protocol v4, fds 3..6;
 >   see [Descriptor budget](#descriptor-budget)).
 > - The taskbar is replaced by the Task List (Ctrl+Esc), which is WM UI.

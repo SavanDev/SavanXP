@@ -14,8 +14,8 @@ int main(void) {
         eprintf("interptest: no llego la ruta del interprete\n");
         return 1;
     }
-    if (strcmp(path, "/disk/lib/ld.so.0.4") != 0) {
-        eprintf("interptest: llego '%s', se esperaba '/disk/lib/ld.so.0.4'\n", path);
+    if (strcmp(path, "/lib/ld.so.0.4") != 0) {
+        eprintf("interptest: got '%s', expected '/lib/ld.so.0.4'\n", path);
         return 1;
     }
     /* Tiene que estar terminada en NUL dentro de la cadena: el kernel copia

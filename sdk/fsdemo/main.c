@@ -1,7 +1,7 @@
 #include "savanxp/libc.h"
 
 int main(void) {
-    const char* path = "/disk/tmp/fsdemo.txt";
+    const char* path = "/tmp/fsdemo.txt";
     const char* message = "fsdemo: persisted via sdk\n";
     char buffer[64];
 

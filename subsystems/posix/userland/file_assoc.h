@@ -3,27 +3,26 @@
 #include "libc.h"
 
 /*
- * Asociaciones de archivo (docs/userland/SXE_FORMAT.md, fase 5).
+ * File associations (docs/userland/SXE_FORMAT.md, phase 5).
  *
- * Resuelve "que programa abre este archivo" con la division que fija el
- * documento:
+ * Answers "which program opens this file" with the split the document sets:
  *
- *   - El BINARIO declara CAPACIDAD, en el tag EXT_OPEN de su .sxmeta: "yo se
- *     abrir .txt". Declararlo no lo convierte en el que los abre.
- *   - El REGISTRO resuelve la ASOCIACION: /disk/assoc.ini dice cual gana. Es
- *     politica del usuario, igual que en Windows vive en el registro y no en
- *     el EXE.
+ *   - The BINARY declares a CAPABILITY, in the EXT_OPEN tag of its .sxmeta:
+ *     "I can open .txt". Declaring it does not make it the one that opens them.
+ *   - The REGISTRY resolves the ASSOCIATION: /assoc.ini says which one wins.
+ *     It is the user's policy, as on Windows it lives in the registry and not
+ *     in the EXE.
  *
- * Precedencia: politica del usuario > primer binario que declare la extension
- * > nada (y ahi el llamador decide su propio default).
+ * Precedence: the user's policy > the first binary that declares the extension
+ * > nothing (and then the caller decides its own default).
  *
- * SOLO POR EXTENSION EN ESTA ETAPA. El tag MIME_OPEN se sigue estampando y se
- * puede leer, pero resolver por tipo de contenido necesita una capa de
- * deteccion -- extension a mime, o sniffing -- que el sistema todavia no
- * tiene. Hornear aca una tabla de ".txt es text/plain" seria reintroducir
- * exactamente la clase de tabla central que este diseno vino a sacar.
+ * BY EXTENSION ONLY AT THIS STAGE. The MIME_OPEN tag is still stamped and can
+ * be read, but resolving by content type needs a detection layer -- extension
+ * to mime, or sniffing -- that the system does not have yet. Baking a ".txt is
+ * text/plain" table in here would bring back exactly the kind of central table
+ * this design came to remove.
  *
- * Sin malloc: capacidades fijas y truncado, igual que progman_registry.
+ * No malloc: fixed capacities and truncation, as in progman_registry.
  */
 
 /* Con punto y en minusculas: ".txt". Alcanza para lo que declara un .sxres. */
@@ -33,17 +32,15 @@
 
 /* Archivo de politica del usuario. Formato: una linea `\.ext=/ruta/programa`
  * por asociacion, con '#' y ';' como comentario. */
-#define FILE_ASSOC_POLICY_PATH "/disk/assoc.ini"
+#define FILE_ASSOC_POLICY_PATH "/assoc.ini"
 #define FILE_ASSOC_POLICY_MAX_BYTES 4096
 
 /*
- * Directorios que se escanean en busca de programas que declaren extensiones,
- * en orden de prioridad. El primero que declare una extension se la queda: sin
- * un criterio de desempate declarado, el orden estable del escaneo es mas
- * predecible que cualquier heuristica.
+ * The directory scanned for programs that declare extensions. The first one to
+ * declare an extension keeps it: without a declared tie-break rule, the stable
+ * order of the scan is more predictable than any heuristic.
  */
-#define FILE_ASSOC_SCAN_DIR_PRIMARY "/bin"
-#define FILE_ASSOC_SCAN_DIR_SECONDARY "/disk/bin"
+#define FILE_ASSOC_SCAN_DIR "/bin"
 
 struct file_assoc_entry
 {

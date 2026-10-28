@@ -205,7 +205,7 @@ Smoke tests útiles en el estado actual:
 - `smptest` (con `--smp 4`: procesos corriendo en paralelo, `kill` entre cores)
 - `polltest`
 - `sigtest`
-- `ls /disk/bin`
+- `ls /bin`
 - `smoke` via `./build.sh smoke smoke`
 
 Ejemplo externo recomendado para GUI:

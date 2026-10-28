@@ -267,18 +267,18 @@ savanxp_program(NAME brokentest TEST LINK_PROFILE PIE
     SOURCES subsystems/posix/userland/brokentest.c)
 savanxp_program(NAME ldtest TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/ldtest.c)
-savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
+savanxp_program(NAME interptest TEST INTERPRETER /lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
-# El sintetizador MIDI. Como libmath, no le pide un simbolo a la aplicacion mas
-# alla de malloc/free/memcpy/memset, asi que resuelve contra el ejecutable. El
-# unico consumidor hoy es el port de DoomGeneric, que lo mapea desde /disk/lib.
+# The MIDI synthesizer. Like libmath, it asks the application for no symbol
+# beyond malloc/free/memcpy/memset, so it resolves against the executable. Its
+# only consumer today is the DoomGeneric port, which maps it from /lib.
 savanxp_library(NAME libsxmidi SONAME libsxmidi.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/sxmidi.c)
-# El decodificador PNG. Como libsxmidi, no le pide un simbolo a la aplicacion
-# mas alla de malloc/free/memcpy/memset, asi que resuelve contra el ejecutable.
-# El unico consumidor hoy es Paint, que lo mapea desde /disk/lib.
+# The PNG decoder. Like libsxmidi, it asks the application for no symbol beyond
+# malloc/free/memcpy/memset, so it resolves against the executable. Its only
+# consumer today is Paint, which maps it from /lib.
 savanxp_library(NAME libsximg SONAME libsximg.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/sximg.c)
 # SxGFX: la capa de graficos del cliente, con sus tres tablas de fuente dentro.

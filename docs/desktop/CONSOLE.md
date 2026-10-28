@@ -120,7 +120,7 @@ which is how a GUI program started from `cmd` behaves.
 
 `--console <fd>` changes `sh` in four ways and nothing else:
 
-- The prompt is `<cwd>>` (`/disk>`), the default `$P$G` of `cmd`.
+- The prompt is `<cwd>>` (`/bin>`), the default `$P$G` of `cmd`.
 - `start <program> [args]` starts a program without waiting for it.
 - `;` separates commands on one line (`start notepad; exit`).
 - The foreground job goes to the control channel; `sh` reaps the

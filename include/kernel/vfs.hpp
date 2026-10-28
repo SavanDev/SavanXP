@@ -12,6 +12,20 @@ namespace vfs {
 constexpr size_t kMaxPathLength = 256;
 constexpr size_t kMaxPathComponentLength = 64;
 
+/* The tree's layout (docs/kernel/FILESYSTEMS.md#the-root-is-the-system-disk).
+ * The system disk is mounted at "/". Two subtrees stay in memory whatever is
+ * mounted there: the devices, and the initramfs, published under /rescue so
+ * the system can still reach a shell without a disk. */
+constexpr const char* kDeviceRoot = "/dev";
+constexpr const char* kRescueRoot = "/rescue";
+// The disk used to be mounted at /disk. normalize_path() drops that first
+// component, so binaries built before the move (an installed Doom carries
+// /disk/lib in its loader) keep finding their files.
+constexpr const char* kLegacyDiskAlias = "disk";
+
+// The path (normalized, absolute) is kDeviceRoot, kRescueRoot or below one.
+bool is_memory_path(const char* path);
+
 enum class NodeType : uint8_t {
     invalid = 0,
     directory = 1,

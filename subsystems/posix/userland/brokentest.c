@@ -16,7 +16,7 @@
 
 int main(void)
 {
-    const int why = ldso_load("/disk/lib/libbroken.so.0.4");
+    const int why = ldso_load("/lib/libbroken.so.0.4");
     if (why == 0) {
         eprintf("brokentest: libbroken cargo, y deberia haber fallado por el simbolo\n");
         return 1;

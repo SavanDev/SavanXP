@@ -2,9 +2,9 @@
 
 #include "libc.h"
 
-/* Fondo de pantalla del escritorio: modos integrados (procedurales) mas una
- * imagen BMP opcional cargada de /disk. El modo elegido persiste en
- * /disk/desktop.cfg y se restaura en el proximo arranque. */
+/* The desktop wallpaper: built-in (procedural) modes plus an optional BMP
+ * image loaded from the system disk. The chosen mode persists in
+ * /desktop.cfg and is restored on the next boot. */
 enum desktop_wallpaper_mode
 {
     DESKTOP_WALLPAPER_TEAL = 0,
@@ -14,9 +14,9 @@ enum desktop_wallpaper_mode
     DESKTOP_WALLPAPER_MODE_COUNT
 };
 
-/* Carga la config persistida e intenta decodificar /disk/wallpaper.bmp. Solo
- * la sesion interactiva la llama: los selftests headless se quedan con el
- * modo default (teal plano) para mantener sus frames deterministas. */
+/* Loads the persisted configuration and tries to decode /wallpaper.bmp. Only
+ * the interactive session calls it: the headless selftests keep the default
+ * mode (flat teal) so their frames stay deterministic. */
 void desktop_wallpaper_init(void);
 int desktop_wallpaper_mode(void);
 /* Pasa al siguiente modo disponible (saltea IMAGE si no hay BMP cargado) y

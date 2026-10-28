@@ -95,14 +95,14 @@ The game needs its tile sheet, its font and its sound effects. They come from
 the same pinned archive and are installed under:
 
 ```text
-/disk/games/celeste/gfx.bmp
-/disk/games/celeste/font.bmp
-/disk/games/celeste/snd*.wav     # 23 files
+/games/celeste/gfx.bmp
+/games/celeste/font.bmp
+/games/celeste/snd*.wav     # 23 files
 ```
 
 `build.sh` copies them out of the fetched tree, so nothing third-party is
 committed and the ~1.1 MB never has to be re-fetched by hand. The port declares
-`data_dir=/disk/games/celeste` in its `.sxres`, which is what lets the
+`data_dir=/games/celeste` in its `.sxres`, which is what lets the
 uninstaller offer to take the directory instead of leaving it orphaned. Passing
 `--no-assets` installs the executable alone; the port then starts, reports the
 missing directory and exits 1.
@@ -133,7 +133,7 @@ presentation size.
 ## Music
 
 The five tracks ship as OGG Vorbis and decode through `libffmpeg.so.0.4`,
-the shared library the FFmpeg port installs in `/disk/lib`. The OS grew the
+the shared library the FFmpeg port installs in `/lib`. The OS grew the
 dynamic linker this port was waiting for (see
 [`docs/media/SXMEDIA.md`](../../docs/media/SXMEDIA.md) for why no workaround was built
 before then), so this port links PIE with a `DT_NEEDED` on it, like
@@ -154,7 +154,7 @@ stems). Both are documented at the call site rather than half-implemented.
 
 Save and load state (`Shift+S` / `Shift+D` upstream) are announced and dropped.
 The port keeps the state in memory only rather than writing an undocumented file
-under `/disk`.
+under `/`.
 
 ## Icon
 
@@ -196,10 +196,10 @@ capturing.
 After installation, run the normal Linux build and verify that these remain:
 
 ```text
-/disk/bin/ccleste
-/disk/bin/doomgeneric
-/disk/games/doom/doom1.wad
-/disk/games/celeste/gfx.bmp
+/bin/ccleste
+/bin/doomgeneric
+/games/doom/doom1.wad
+/games/celeste/gfx.bmp
 ```
 
 The port is single-threaded and uses the SavanXP SDK runtime. The fixed-point

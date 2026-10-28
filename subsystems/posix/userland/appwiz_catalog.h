@@ -5,29 +5,28 @@
 #include "savanxp/gfx2d.h"
 
 /*
- * Catalogo de programas desinstalables (Agregar o quitar programas).
+ * The catalog of programs that can be uninstalled (Add or Remove Programs).
  *
- * QUE ES DESINSTALABLE, que es la unica decision de fondo de este modulo:
+ * WHAT CAN BE UNINSTALLED, which is this module's one real decision:
  *
- *     esta en /disk/bin  Y  NO esta en /bin
+ *     it is in /bin  AND  it is NOT in /rescue/bin
  *
- * No es una lista negra ni una heuristica sobre el nombre: es exactamente el
- * conjunto de lo que se instalo aparte. El motivo es del sistema de archivos y
- * no del gusto de nadie -- /bin es el ramdisk del initramfs (Backend::memory en
- * kernel/vfs.cpp), asi que borrar ahi solo invalida el vnode en RAM y el
- * archivo vuelve al reiniciar. La unica desinstalacion que persiste es sobre
- * /disk, que es SxFS. Y como el build copia /bin entero a /disk/bin
- * (CMake), un programa del sistema aparece en los dos lados: la resta es
- * la que separa "vino con el SO" de "lo instalo alguien".
+ * Not a blocklist and not a guess from the name: it is exactly the set of what
+ * was installed separately. /bin is on the system disk, and the build stages
+ * the system's programs there; the initramfs, published under /rescue, carries
+ * the same programs (docs/kernel/FILESYSTEMS.md). The subtraction is what tells
+ * "came with the OS" from "someone installed it".
  *
- * De ahi que un programa del sistema no se pueda desinstalar desde aca. No es
- * una politica de permisos, es que no se puede: el proximo build lo repone.
+ * That holds while the initramfs carries every system program. Once it is cut
+ * down to a rescue set, the subtraction needs another source for "came with
+ * the OS" (a manifest of the system's programs), or it will offer to remove
+ * the desktop.
  *
- * La identidad de cada entrada sale del .sxmeta del propio binario, igual que
- * en el launcher (docs/userland/SXE_FORMAT.md). Un binario sin recursos no es un error:
- * se muestra con su basename y se desinstala igual.
+ * Each entry's identity comes from the binary's own .sxmeta, as in the launcher
+ * (docs/userland/SXE_FORMAT.md). A binary without resources is not an error: it
+ * is shown by its basename and uninstalls all the same.
  *
- * Sin malloc: capacidades fijas y truncado, igual que progman_registry.
+ * No malloc: fixed capacities and truncation, as in progman_registry.
  */
 
 #define APPWIZ_MAX_ENTRIES 24
@@ -35,8 +34,8 @@
 #define APPWIZ_DESC_CAPACITY 64
 #define APPWIZ_PATH_CAPACITY 192
 
-#define APPWIZ_INSTALL_DIR "/disk/bin"
-#define APPWIZ_SYSTEM_DIR "/bin"
+#define APPWIZ_INSTALL_DIR "/bin"
+#define APPWIZ_SYSTEM_DIR "/rescue/bin"
 
 /* Los iconos se dibujan en la lista, que es de 16. */
 #define APPWIZ_ICON_SIZE 16
@@ -76,18 +75,20 @@ const struct appwiz_entry *appwiz_entry_at(int index);
 const struct sx_bitmap *appwiz_entry_icon(const struct appwiz_entry *entry);
 
 /*
- * Si un directorio declarado con data_dir= se puede borrar. ES LA VALIDACION
- * QUE HACE QUE SXE_TAG_DATA_DIR SEA UNA DECLARACION Y NO UN PERMISO: el path
- * lo escribio quien compilo el programa, y sin este filtro un manifiesto con
- * "data_dir=/disk" convertiria un clic en Remove en un borrado del disco
- * entero.
+ * Whether a directory declared with data_dir= may be deleted. THIS IS THE CHECK
+ * THAT MAKES SXE_TAG_DATA_DIR A DECLARATION AND NOT A PERMISSION: whoever built
+ * the program wrote that path, and without this filter a manifest saying
+ * "data_dir=/" would turn a click on Remove into deleting the whole disk.
  *
- * Exige, y el selftest lo verifica caso por caso:
- *   - absoluto y bajo /disk/, con al menos un segmento propio despues;
- *   - ningun segmento "." ni "..", asi no se puede salir por arriba;
- *   - no ser uno de los directorios del sistema (/disk/bin, /disk/icons).
+ * It requires, and the selftest checks each case:
+ *   - absolute, with at least one segment after the root. The legacy /disk
+ *     prefix is accepted and dropped first, because binaries built before the
+ *     disk became the root (an installed Doom) declare data_dir=/disk/...;
+ *   - no "." or ".." segment and no empty one, so it cannot climb out;
+ *   - not one of the system's directories, nor anything below one: /bin, /lib,
+ *     /icons, /tmp, and the in-memory /dev and /rescue.
  *
- * Devuelve 1 si se puede borrar, 0 si no. Es funcion pura del texto.
+ * Returns 1 if it may be deleted, 0 if not. A pure function of the text.
  */
 int appwiz_data_dir_is_removable(const char *path);
 

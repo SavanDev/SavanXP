@@ -82,7 +82,7 @@ SX_CC="$CLANG -target x86_64-unknown-none-elf"
 SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
 SX_TARGET_LDFLAGS=(
     -nostdlib -fuse-ld=lld -pie
-    -Wl,-z,max-page-size=0x1000 -Wl,--dynamic-linker,/disk/lib/ld.so.0.4
+    -Wl,-z,max-page-size=0x1000 -Wl,--dynamic-linker,/lib/ld.so.0.4
     -Wl,--build-id=none -Wl,--export-dynamic -Wl,--gc-sections -Wl,-e,_start
 )
 
@@ -95,9 +95,9 @@ FFMPEG_BUILD="$OUTPUT_ROOT/ports/ffmpeg/work/build"
 FFMPEG_SRC=""
 
 # The game data is not vendored: the port installs the upstream data/ tree under
-# /disk/games/celeste and .gitignore keeps it out of the repository.
+# /games/celeste and .gitignore keeps it out of the repository.
 DATA_DIR="${SAVANXP_CCLESTE_DATA:-$SRC/data}"
-DATA_TARGET="/disk/games/celeste"
+DATA_TARGET="/games/celeste"
 
 # The upstream frontend is SDL, which SavanXP does not have. The overlay
 # replaces sdl12main.c entirely, so the engine units are the whole upstream

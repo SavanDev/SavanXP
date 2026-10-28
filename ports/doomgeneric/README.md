@@ -67,8 +67,8 @@ produced it first. `build.sh` fails with the fix if
 After installing the port, run the normal Linux build and verify:
 
 ```text
-/disk/bin/doomgeneric
-/disk/games/doom/<selected-wad>
+/bin/doomgeneric
+/games/doom/<selected-wad>
 ```
 
 Existing Doom configuration and `savegames/` data must remain byte-for-byte
@@ -79,7 +79,7 @@ identical across the rebuild. The current regression assets are
 
 The port plays the WAD's MUS tracks through the WAD's own OPL2 bank. Each MUS lump
 goes to MIDI with the upstream `mus2mid.c`, the `GENMIDI` lump goes with it to
-`sx_midi_song_create_with_bank`, and the synthesizer in `/disk/lib/libsxmidi.so.0.4`
+`sx_midi_song_create_with_bank`, and the synthesizer in `/lib/libsxmidi.so.0.4`
 fills a buffer with one second of lead and then synthesises a quarter-second chunk
 per frame while the mixer loops that buffer on a dedicated voice. Without `GENMIDI`
 the same song falls back to the built-in families; the log names the path

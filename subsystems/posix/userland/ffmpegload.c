@@ -37,7 +37,7 @@ unsigned long uptime_ms(void);
  * segmentos y reubicar, que son los unicos que tocan las paginas. */
 static unsigned long time_map_only(void)
 {
-    const long handle = savanxp_open("/disk/lib/libffmpeg.so.0.4");
+    const long handle = savanxp_open("/lib/libffmpeg.so.0.4");
     if (handle < 0) {
         printf("ffmpegload: no se pudo abrir el archivo\n");
         return 0;
@@ -63,7 +63,7 @@ int main(void)
     const unsigned long map_ms = time_map_only();
     const unsigned long started = uptime_ms();
 
-    const int why = ldso_load("/disk/lib/libffmpeg.so.0.4");
+    const int why = ldso_load("/lib/libffmpeg.so.0.4");
     const unsigned long elapsed = uptime_ms() - started;
 
     if (why != 0) {

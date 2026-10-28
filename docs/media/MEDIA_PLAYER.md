@@ -8,11 +8,11 @@ covered by [`ports/ffmpeg/README.md`](../../ports/ffmpeg/README.md).
 ## Where it lives
 
 `subsystems/posix/userland/mediaplayer/`, and the system tree builds it. The port
-does not. `ports/ffmpeg` produces exactly one artifact, `/disk/lib/libffmpeg.so.0.4`,
+does not. `ports/ffmpeg` produces exactly one artifact, `/lib/libffmpeg.so.0.4`,
 and `mediaplayer` is a PIE program with a `DT_NEEDED` on it.
 
 That split was arrived at twice. The player started as a port artifact installed as
-`/disk/bin/mediaplayer-ffmpeg`, with a 114-line launcher in the tree that `exec`ed
+`/bin/mediaplayer-ffmpeg`, with a 114-line launcher in the tree that `exec`ed
 it. The launcher was removed with SxMedia in `26b16e0`, correctly — a launcher that
 delegates has nothing to delegate to when nothing installable exists that is not
 itself a program. It came back once `libffmpeg.so.0.4` made the engine installable,
@@ -192,7 +192,7 @@ without touching the program.
 
 ## What sync is verified, and how
 
-`/bin/mediaplayer --selftest --sync /disk/media/avsync.avi` (part of
+`/bin/mediaplayer --selftest --sync /media/avsync.avi` (part of
 `build.sh smoke ffmpeg-smoke`) decodes
 a generated AVI with a white flash frame and
 a 1 kHz beep at the start of every second, audio resampled from 44.1 kHz mono,

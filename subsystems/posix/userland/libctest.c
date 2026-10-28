@@ -24,7 +24,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define LIBCTEST_PATH "/disk/tmp/libctest.txt"
+#define LIBCTEST_PATH "/tmp/libctest.txt"
 
 static int g_failures = 0;
 
@@ -157,7 +157,7 @@ static void test_stdio_stream(void) {
 
 /* La convencion POSIX: -1 y errno, no el -errno crudo del kernel. */
 static void test_error_convention(void) {
-    int fd = open("/disk/no/existe/de/verdad", O_RDONLY);
+    int fd = open("/no/existe/de/verdad", O_RDONLY);
     check(fd == -1, "open fallido devuelve -1");
     check(errno == ENOENT, "open fallido deja errno=ENOENT");
 
@@ -167,7 +167,7 @@ static void test_error_convention(void) {
 }
 
 static void test_directories(void) {
-    DIR* directory = opendir("/disk/bin");
+    DIR* directory = opendir("/bin");
     int entries = 0;
 
     check(directory != 0, "opendir");

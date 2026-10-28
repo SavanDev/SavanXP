@@ -206,7 +206,7 @@ Audio PCM v1.2:
 
 1. Crear una app desde `sdk/template` o con `tools/new-user-app.sh`
 2. Compilar con `tools/build-user.sh`
-3. Instalar en `/disk/bin`
+3. Instalar en `/bin`
 4. Ejecutar desde la shell por nombre o ruta
 
 ## POSIX layer

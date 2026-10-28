@@ -1,13 +1,13 @@
 /*
- * Agregar o quitar programas.
+ * Add or Remove Programs.
  *
- * La contracara del alta automatica del launcher (docs/userland/SXE_FORMAT.md, "All
- * Programs"): ahi instalar es copiar el binario a /disk/bin y aparece solo, y
- * aca desinstalar es borrarlo y desaparece solo. No hay ninguna entrada de
- * registro que dar de baja, porque no hay ninguna que se haya dado de alta.
+ * The other side of the launcher's automatic listing (docs/userland/SXE_FORMAT.md,
+ * "All Programs"): there, installing is copying the binary into /bin and it
+ * shows up by itself, and here uninstalling is deleting it and it goes away by
+ * itself. There is no registry entry to remove, because none was ever added.
  *
- * Que se puede desinstalar y por que lo decide appwiz_catalog.h; esto es la
- * ventana.
+ * What can be uninstalled, and why, is decided in appwiz_catalog.h; this is the
+ * window.
  */
 
 #include "appwiz_catalog.h"

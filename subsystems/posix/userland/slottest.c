@@ -26,9 +26,9 @@ int main(void)
 {
     /* Ejecutable + tres librerias: el tope. */
     static const char* const fills[] = {
-        "/disk/lib/libmath.so.0.4",
-        "/disk/lib/libchainbase.so.0.4",
-        "/disk/lib/libchaintop.so.0.4",
+        "/lib/libmath.so.0.4",
+        "/lib/libchainbase.so.0.4",
+        "/lib/libchaintop.so.0.4",
     };
     for (unsigned i = 0; i < sizeof(fills) / sizeof(fills[0]); ++i) {
         if (ldso_load(fills[i]) != 0) {
@@ -43,7 +43,7 @@ int main(void)
     }
 
     /* La cuarta tiene que ser rechazada, y con -1: el cupo lleno. */
-    const int why = ldso_load("/disk/lib/libsxgfx.so.0.4");
+    const int why = ldso_load("/lib/libsxgfx.so.0.4");
     if (why != -1) {
         eprintf("slottest: la cuarta dio %d, y el cupo lleno es -1\n", why);
         return 1;

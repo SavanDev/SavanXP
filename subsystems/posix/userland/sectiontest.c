@@ -69,9 +69,9 @@ static int expect_refused(void* value, const char* label);
  * lo que read() trae del mismo descriptor, asi que le sirve cualquiera. */
 static long open_known_file(void) {
     static const char* const paths[] = {
-        "/disk/bin/sectiontest",
         "/bin/sectiontest",
-        "/disk/bin/true",
+        "/bin/sectiontest",
+        "/bin/true",
         "/bin/true",
     };
     for (unsigned index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {

@@ -1,24 +1,13 @@
-SavanXP
+SavanXP rescue system
 
-Sistema en estado experimental, pero ya usable para pruebas dentro de la shell.
+This tree is the initramfs, published under /rescue. The system runs from its
+disk, which is mounted at /; this copy is what is left when there is no disk,
+or when the one there cannot be mounted.
 
-Estado general:
-- Boot UEFI con Limine
-- Consola de texto sobre framebuffer
-- TTY canonica con teclado PS/2
-- Syscalls, procesos y shell de userland
-- /disk como volumen persistente principal
-
-Atajos utiles:
-- `help` para ver comandos y ejemplos
-- `sysinfo` para diagnostico general del sistema
-- `df` para ver espacio total, usado y libre de /disk
-- `cd /disk` para entrar al volumen persistente
-- `pwd` para ver el directorio actual
-- `ls` para listar el directorio actual
-- `sync` para forzar escritura de metadatos a disco
-
-Notas:
-- `/README` vive en el initramfs
-- `/disk/README` vive en el filesystem persistente SxFS
-- Los binarios externos instalados en `/disk/bin` se pueden ejecutar desde la shell
+Useful commands:
+- `help` lists the shell's commands with examples
+- `sysinfo` for a general diagnosis of the system
+- `df` shows the root volume's total, used and free space
+- `fscheck` reports the root volume's consistency
+- `ls /rescue/bin` lists the programs available here
+- `sync` forces the metadata out to the disk

@@ -47,7 +47,7 @@ def main() -> int:
     assert (port / "COPYING.LGPLv2.1").is_file()
 
     # The port builds a library and nothing else: no overlay, no program stamped
-    # into /disk/bin. The player moved into the tree (ada896f), so the port must
+    # into /bin. The player moved into the tree (ada896f), so the port must
     # not carry an overlay directory again.
     assert not (port / "overlay").exists()
     install_script = (port / "install.sh").read_text(encoding="utf-8")
