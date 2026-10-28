@@ -31,6 +31,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`THREADS_ROADMAP.md`](kernel/THREADS_ROADMAP.md) — threads: what moves from the
   process to the thread, the decisions taken, and the phases to get there.
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
+- [`FILESYSTEMS.md`](kernel/FILESYSTEMS.md) — the VFS, the `fs::` registry and
+  what a filesystem driver provides: how a request finds its driver, the rules
+  the VFS enforces for all of them, and what still names SxFS.
 - [`INPUT.md`](kernel/INPUT.md) — the input layer: how drivers register, why
   registration order decides which keyboard and pointer win, and the keyboard
   core that turns set 1 key positions into keys, text and modifiers.

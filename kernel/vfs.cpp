@@ -2,8 +2,7 @@
 
 #include <stdint.h>
 
-#include "kernel/ata.hpp"
-#include "kernel/sxfs.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/string.hpp"
 #include "abi/savanxp_abi.h"
 
@@ -201,10 +200,10 @@ DynamicFile* allocate_dynamic_file() {
 }
 
 void refresh_external_node(vfs::Vnode& node) {
-    if (node.backend != vfs::Backend::sxfs) {
+    if (node.backend != vfs::Backend::volume || node.volume_driver == nullptr) {
         return;
     }
-    sxfs::refresh_vnode(node);
+    node.volume_driver->refresh(node);
 }
 
 bool attach_dynamic_storage(vfs::Vnode& node, bool truncate_existing) {
@@ -280,10 +279,30 @@ bool split_parent_path(const char* path, char* parent_path, size_t parent_capaci
     return true;
 }
 
-// Se lo pregunta a sxfs:: en vez de comparar contra "/disk": desde que hay
-// varios volumenes, el mount point ya no es uno solo ni esta fijo aca.
-bool is_sxfs_path(const char* path) {
-    return sxfs::owns_path(path);
+// The volume a path belongs to: its driver and volume id. False for the
+// in-memory tree.
+struct VolumeRef {
+    const fs::Driver* driver;
+    fs::VolumeId volume;
+    size_t mount;
+};
+
+bool volume_for_path(const char* path, VolumeRef& out) {
+    const size_t mount = fs::owner_of(path);
+    fs::MountInfo info = {};
+    if (mount == fs::kInvalidMount || !fs::mount_info(mount, info)) {
+        return false;
+    }
+    out.driver = info.driver;
+    out.volume = info.volume;
+    out.mount = mount;
+    return true;
+}
+
+// A mount point is the root of a volume: it cannot be removed or renamed
+// from inside.
+bool is_mount_point(const char* path) {
+    return fs::find(path) != fs::kInvalidMount;
 }
 
 bool set_node_name(int index, const char* name) {
@@ -595,23 +614,17 @@ Vnode* open(const char* path, uint32_t flags) {
                 g_last_error = SX_ENOMEM;
                 return nullptr;
             }
-        } else if ((wants_write || wants_truncate) && node.backend == Backend::sxfs) {
+        } else if ((wants_write || wants_truncate) && node.backend == Backend::volume) {
             if (!node.writable) {
                 g_last_error = SX_EBADF;
                 return nullptr;
             }
             if (wants_truncate) {
-                sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-                if (file == nullptr) {
-                    g_last_error = SX_EBADF;
-                    return nullptr;
-                }
                 size_t written = 0;
-                if (!sxfs::write_file(*file, 0, nullptr, 0, true, written)) {
+                if (!node.volume_driver->write(node, 0, nullptr, 0, true, written)) {
                     g_last_error = SX_EINVAL;
                     return nullptr;
                 }
-                node.size = file->size;
             }
         }
         return &node;
@@ -640,18 +653,11 @@ Vnode* open(const char* path, uint32_t flags) {
         return nullptr;
     }
 
-    if (is_sxfs_path(normalized)) {
-        sxfs::FileRecord* file = sxfs::create_file(normalized);
-        if (file == nullptr) {
-            g_last_error = SX_ENOSPC;
-            return nullptr;
-        }
-        if (file->vnode != nullptr) {
-            return file->vnode;
-        }
-        Vnode* node = install_external_file(normalized, Backend::sxfs, file, file->size, true);
+    VolumeRef volume = {};
+    if (volume_for_path(normalized, volume)) {
+        Vnode* node = volume.driver->create_file(volume.volume, normalized);
         if (node == nullptr) {
-            g_last_error = SX_ENOMEM;
+            g_last_error = SX_ENOSPC;
         }
         return node;
     }
@@ -747,13 +753,13 @@ Vnode* mkdir(const char* path) {
         return nullptr;
     }
 
-    if (is_sxfs_path(normalized)) {
-        sxfs::FileRecord* directory = sxfs::create_directory(normalized);
+    VolumeRef volume = {};
+    if (volume_for_path(normalized, volume)) {
+        Vnode* directory = volume.driver->create_directory(volume.volume, normalized);
         if (directory == nullptr) {
             g_last_error = SX_EINVAL;
-            return nullptr;
         }
-        return directory->vnode != nullptr ? directory->vnode : ensure_directory(normalized);
+        return directory;
     }
 
     return ensure_directory(normalized);
@@ -805,7 +811,16 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
     node.data = data;
     node.size = size;
     node.writable = writable;
+    node.volume_driver = nullptr;
     return &node;
+}
+
+Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable) {
+    Vnode* node = install_external_file(path, Backend::volume, data, size, writable);
+    if (node != nullptr) {
+        node->volume_driver = &driver;
+    }
+    return node;
 }
 
 bool unlink(const char* path) {
@@ -836,15 +851,13 @@ bool unlink(const char* path) {
         case Backend::memory:
             invalidate_node(node);
             return true;
-        case Backend::sxfs: {
-            sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-            if (file == nullptr || !sxfs::unlink_file(*file)) {
+        case Backend::volume:
+            if (!node.volume_driver->unlink(node)) {
                 g_last_error = SX_EINVAL;
                 return false;
             }
             invalidate_node(node);
             return true;
-        }
         default:
             g_last_error = SX_EINVAL;
             return false;
@@ -853,13 +866,13 @@ bool unlink(const char* path) {
 
 bool rmdir(const char* path) {
     g_last_error = SX_ENOENT;
-    if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0 || strcmp(path, "/disk") == 0) {
+    if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
         g_last_error = SX_EINVAL;
         return false;
     }
 
     char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    if (!normalize_path("/", path, normalized, sizeof(normalized)) || is_mount_point(normalized)) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -879,9 +892,9 @@ bool rmdir(const char* path) {
         return false;
     }
 
-    if (is_sxfs_path(normalized)) {
-        sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-        if (file == nullptr || !sxfs::remove_directory(*file)) {
+    VolumeRef volume = {};
+    if (volume_for_path(normalized, volume)) {
+        if (!volume.driver->remove_directory(node)) {
             if (g_last_error == SX_ENOENT) {
                 g_last_error = SX_EINVAL;
             }
@@ -937,15 +950,12 @@ bool truncate(const char* path, size_t size) {
             node.size = size;
             return true;
         }
-        case Backend::sxfs: {
-            sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-            if (file == nullptr || !sxfs::truncate_file(*file, size)) {
+        case Backend::volume:
+            if (!node.volume_driver->truncate(node, size)) {
                 g_last_error = size > node.size ? SX_ENOSPC : SX_EINVAL;
                 return false;
             }
-            node.size = file->size;
             return true;
-        }
         default:
             g_last_error = SX_EINVAL;
             return false;
@@ -957,8 +967,7 @@ bool rename(const char* old_path, const char* new_path) {
     if (!g_ready || old_path == nullptr || new_path == nullptr ||
         *old_path == '\0' || *new_path == '\0' ||
         strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0 ||
-        strcmp(old_path, new_path) == 0 ||
-        strcmp(old_path, "/disk") == 0 || strcmp(new_path, "/disk") == 0) {
+        strcmp(old_path, new_path) == 0) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -966,7 +975,8 @@ bool rename(const char* old_path, const char* new_path) {
     char normalized_old[kMaxPathLength] = {};
     char normalized_new[kMaxPathLength] = {};
     if (!normalize_path("/", old_path, normalized_old, sizeof(normalized_old)) ||
-        !normalize_path("/", new_path, normalized_new, sizeof(normalized_new))) {
+        !normalize_path("/", new_path, normalized_new, sizeof(normalized_new)) ||
+        is_mount_point(normalized_old) || is_mount_point(normalized_new)) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1007,11 +1017,14 @@ bool rename(const char* old_path, const char* new_path) {
         return false;
     }
 
-    if (is_sxfs_path(normalized_old) != is_sxfs_path(normalized_new)) {
+    // Both ends on the same volume, or both in the in-memory tree.
+    if (fs::owner_of(normalized_old) != fs::owner_of(normalized_new)) {
         g_last_error = SX_EINVAL;
         return false;
     }
-    if (is_sxfs_path(normalized_old) && !sxfs::rename_path(normalized_old, normalized_new)) {
+    VolumeRef volume = {};
+    if (volume_for_path(normalized_old, volume) &&
+        !volume.driver->rename(volume.volume, normalized_old, normalized_new)) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1043,14 +1056,8 @@ size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
             }
             memcpy(buffer, static_cast<const uint8_t*>(node.data) + offset, to_copy);
             return to_copy;
-        case Backend::sxfs: {
-            sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-            if (file == nullptr || !sxfs::read_file(*file, offset, buffer, to_copy)) {
-                return 0;
-            }
-            node.size = file->size;
-            return to_copy;
-        }
+        case Backend::volume:
+            return node.volume_driver->read(node, offset, buffer, to_copy) ? to_copy : 0;
         default:
             return 0;
     }
@@ -1089,27 +1096,12 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             }
             return to_copy;
         }
-        case Backend::sxfs: {
-            sxfs::FileRecord* file = sxfs::file_from_vnode(node);
-            if (file == nullptr) {
-                g_last_error = SX_EBADF;
-                return 0;
-            }
+        case Backend::volume: {
             size_t written = 0;
-            // La curva de esperas se informa periodicamente (cada vez que un
-            // maximo dobla), no por fallo: sirve precisamente cuando todo va
-            // bien, que es cuando nadie mira.
-            ata::report_poll_headroom();
-            if (!sxfs::write_file(*file, offset, buffer, count, truncate, written)) {
-                // Este es el fallo que tumba la copia de la fixture del
-                // progman-smoke tras cinco minutos de escrituras. sxfs solo
-                // devuelve false si algo fallo de verdad, y lo mas probable es
-                // el sondeo ATA: el diagnostico dice cual de los dos.
-                ata::report_poll_failures();
+            if (!node.volume_driver->write(node, offset, buffer, count, truncate, written)) {
                 g_last_error = SX_ENOSPC;
                 return 0;
             }
-            node.size = file->size;
             return written;
         }
         default:

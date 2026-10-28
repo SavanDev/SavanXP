@@ -287,6 +287,9 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
     return write_cached(index, lba, sector_count, buffer) && flush(index);
 }
 
+void report_health(bool) {
+}
+
 } // namespace block
 
 // --- vfs:: ------------------------------------------------------------------
@@ -313,7 +316,16 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
     entry->node.data = data;
     entry->node.size = size;
     entry->node.writable = writable;
+    entry->node.volume_driver = nullptr;
     return &entry->node;
+}
+
+Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable) {
+    Vnode* node = install_external_file(path, Backend::volume, data, size, writable);
+    if (node != nullptr) {
+        node->volume_driver = &driver;
+    }
+    return node;
 }
 
 } // namespace vfs

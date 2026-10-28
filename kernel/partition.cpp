@@ -292,6 +292,7 @@ const block::Driver kDriver = {
     "partition",
     kDriverPriority,
     &enumerate,
+    nullptr,
 };
 
 } // namespace

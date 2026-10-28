@@ -440,6 +440,7 @@ const block::Driver kDriver = {
     "ahci",
     kDriverPriority,
     &enumerate,
+    nullptr,
 };
 
 } // namespace

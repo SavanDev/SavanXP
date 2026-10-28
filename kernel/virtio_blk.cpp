@@ -300,6 +300,7 @@ const block::Driver kDriver = {
     "virtio-blk",
     kDriverPriority,
     &enumerate,
+    nullptr,
 };
 
 } // namespace

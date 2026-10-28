@@ -57,7 +57,8 @@ void initialize() {
 }
 
 bool register_driver(const Driver& driver) {
-    if (g_driver_count >= kMaxDrivers || driver.probe == nullptr || driver.attach == nullptr) {
+    if (g_driver_count >= kMaxDrivers || driver.probe == nullptr || driver.attach == nullptr ||
+        driver.read == nullptr || driver.refresh == nullptr) {
         return false;
     }
     g_drivers[g_driver_count] = &driver;
@@ -151,6 +152,7 @@ bool mount_info(size_t mount_index, MountInfo& out) {
         return false;
     }
     const Mount& slot = g_mounts[mount_index];
+    out.driver = slot.driver;
     out.driver_name = slot.driver->name;
     out.volume = slot.volume;
     out.device_index = slot.device_index;
@@ -169,6 +171,53 @@ size_t find(const char* mount_point) {
         }
     }
     return kInvalidMount;
+}
+
+size_t owner_of(const char* path) {
+    if (path == nullptr) {
+        return kInvalidMount;
+    }
+    size_t best = kInvalidMount;
+    size_t best_length = 0;
+    for (size_t index = 0; index < g_mount_count; ++index) {
+        const Mount& slot = g_mounts[index];
+        if (!slot.in_use || !slot.attached) {
+            continue;
+        }
+        const size_t length = strlen(slot.mount_point);
+        if (length > best_length && strncmp(path, slot.mount_point, length) == 0 &&
+            (path[length] == '\0' || path[length] == '/')) {
+            best = index;
+            best_length = length;
+        }
+    }
+    return best;
+}
+
+bool stats(size_t mount_index, VolumeStats& out) {
+    if (mount_index >= g_mount_count || !g_mounts[mount_index].in_use) {
+        return false;
+    }
+    const Mount& slot = g_mounts[mount_index];
+    return slot.driver->stats != nullptr && slot.driver->stats(slot.volume, out);
+}
+
+bool sync(size_t mount_index) {
+    if (mount_index >= g_mount_count || !g_mounts[mount_index].in_use) {
+        return false;
+    }
+    const Mount& slot = g_mounts[mount_index];
+    return slot.driver->sync == nullptr || slot.driver->sync(slot.volume);
+}
+
+bool sync_all() {
+    bool ok = true;
+    for (size_t index = 0; index < g_mount_count; ++index) {
+        if (g_mounts[index].in_use && !sync(index)) {
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 } // namespace fs

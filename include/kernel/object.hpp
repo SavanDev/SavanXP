@@ -122,19 +122,21 @@ struct TimerObject {
 struct SectionObject {
     Header header;
     bool in_use;
-    // La seccion nace de un archivo (section_open) y no de section_create. Las
-    // respaldadas se comparten por inode_id entre procesos; las anonimas nunca.
+    // The section comes from a file (section_open), not from section_create.
+    // File-backed ones are shared across processes by source file; anonymous
+    // ones never are.
     uint8_t file_backed;
     uint16_t reserved1;
     uint32_t access_mask;
-    // Solo valido con file_backed. Es la clave del cache: dos peticiones del
-    // mismo archivo encuentran la misma seccion y por lo tanto las mismas
-    // paginas fisicas. Ver docs/kernel/SECTIONS.md para que NO alcanza como clave.
-    uint32_t source_inode_id;
-    /* Offset y largo de la parte del archivo que respaldo la seccion. Forman
-     * parte de la clave del cache junto con inode_id: pedir el archivo entero y
-     * pedir un tramo son secciones distintas, y confundirlas devuelve una
-     * seccion mas grande de la que se pidio. */
+    // Valid only with file_backed. The cache key: two requests for the same
+    // file find the same section and so the same physical pages. The vnode is
+    // unique across volumes and is not reused after an unlink, which an inode
+    // number is not. See docs/kernel/SECTIONS.md for what it does NOT cover.
+    const vfs::Vnode* source_node;
+    /* Offset and length of the part of the file backing the section. They are
+     * part of the cache key with source_node: the whole file and one slice of
+     * it are different sections, and mixing them up returns a section larger
+     * than the one asked for. */
     uint64_t source_offset;
     uint64_t source_length;
     uint64_t size_bytes;

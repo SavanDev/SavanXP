@@ -19,7 +19,7 @@ Three callers, and they want different things from it:
 | --- | --- | --- |
 | Heap arenas (`sx_heap_pages_map`: `runtime/posix.c`, `system/runtime/sxn_runtime.c` for native programs) | anonymous, writable, private | per process |
 | GPU surfaces (`GPU_IOC_IMPORT_SECTION`) | shared with another process by handle | while a handle is open |
-| File images (`section_open`) | read-only, backed by a file's bytes, shared by inode | as long as one view exists |
+| File images (`section_open`) | read-only, backed by a file's bytes, shared by file | as long as one view exists |
 | Library images (not built yet) | the same; they are what file images exist for | as long as one view exists |
 
 The heap allocator is the reason this subsystem is budget-driven rather than
@@ -40,11 +40,12 @@ anonymous sections instead.
 
 Two things are deliberately missing:
 
-- **No in-place update detection.** The cache key is the SxFS `inode_id` plus the
+- **No in-place update detection.** The cache key is the file's vnode plus the
   range backed — the range matters because "the whole file" and "one slice of it"
-  are different sections, and keying on the inode alone mapped a segment with the
-  whole image behind it. But `write_file` rewrites an existing inode rather than
-  allocating a new one, so overwriting a library's bytes in place would leave the
+  are different sections, and keying on the file alone mapped a segment with the
+  whole image behind it. The vnode, unlike an inode number, is unique across
+  mounted volumes and not reused after an unlink. But a write keeps the same
+  vnode, so overwriting a library's bytes in place would leave the
   cache serving the old image. This is unreachable today and must stay
   that way until it is handled: **there is no install syscall**, Add/Remove
   Programs can only uninstall, and the build rewrites `disk.img` from the host

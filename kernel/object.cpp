@@ -3,7 +3,6 @@
 #include "kernel/heap.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
-#include "kernel/sxfs.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 
@@ -314,18 +313,18 @@ void section_live_counts(uint32_t& live, uint32_t& file_backed) {
     }
 }
 
-static SectionObject* find_file_section(uint32_t inode_id, uint64_t offset, uint64_t length) {
-    if (inode_id == 0) {
+static SectionObject* find_file_section(const vfs::Vnode* source, uint64_t offset, uint64_t length) {
+    if (source == nullptr) {
         return nullptr;
     }
     for (SectionObject& section_object : g_section_objects) {
         if (!section_object.in_use || section_object.file_backed == 0) {
             continue;
         }
-        /* La clave incluye el rango. Con solo inode_id, pedir un tramo devolvia
-         * la seccion del archivo entero y el segmento terminaba mapeado con la
-         * imagen completa en lugar de la suya. */
-        if (section_object.source_inode_id != inode_id ||
+        /* The key includes the range. With the file alone, asking for a slice
+         * returned the whole file's section and the segment ended up mapped
+         * with the complete image instead of its own. */
+        if (section_object.source_node != source ||
             section_object.source_offset != offset ||
             section_object.source_length != length) {
             continue;
@@ -357,20 +356,13 @@ SectionObject* acquire_file_range_section(
         return nullptr;
     }
 
-    /* La clave de identidad es el inode de SxFS. Para un archivo del initramfs
-     * no hay inode: se lee igual, pero sin cache, porque no hay nada estable
-     * contra que comparar entre procesos. */
-    uint32_t inode_id = 0;
-    if (node.backend == vfs::Backend::sxfs) {
-        sxfs::FileRecord* record = sxfs::file_from_vnode(node);
-        if (record == nullptr) {
-            return nullptr;
-        }
-        inode_id = record->inode_id;
-        if (inode_id == 0) {
-            return nullptr;
-        }
-        if (SectionObject* existing = find_file_section(inode_id, offset, size_bytes)) {
+    /* The identity key is the vnode of a file on a mounted volume. An
+     * initramfs file is read the same way but not cached: it has no volume
+     * behind it, and the cache has only ever served volume files. */
+    const vfs::Vnode* source = nullptr;
+    if (node.backend == vfs::Backend::volume) {
+        source = &node;
+        if (SectionObject* existing = find_file_section(source, offset, size_bytes)) {
             /* NO se retiene aca. create_section tampoco deja referencia puesta:
              * la establish el llamador al instalar el handle (install_handle
              * hace retain). Retener aqui y dejar que install_handle retenga
@@ -385,7 +377,7 @@ SectionObject* acquire_file_range_section(
     }
 
     section_object->file_backed = 1;
-    section_object->source_inode_id = inode_id;
+    section_object->source_node = source;
     section_object->source_offset = offset;
     section_object->source_length = size_bytes;
 

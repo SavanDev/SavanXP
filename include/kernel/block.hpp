@@ -47,6 +47,11 @@ struct Driver {
     int priority;
     // Registra con register_device() cada device que encuentre.
     void (*enumerate)();
+    // Optional diagnostics. Filesystems call block::report_health(false) as
+    // writes go by and (true) when one failed; a driver with something to say
+    // about its devices (ATA's polling margins) prints it, at most once per
+    // condition.
+    void (*report_health)(bool failed);
 };
 
 constexpr size_t kMaxDrivers = 8;
@@ -84,6 +89,7 @@ bool flush(size_t index);
 // writeback queue, whatever device `index` is.
 bool sync(size_t index);
 bool sync_all();
+void report_health(bool failed);
 
 // Background writeback. writeback_step() moves one bounded piece of the queue
 // to its disk (up to 64 KiB of adjacent writes, or one device flush) and says

@@ -18,9 +18,8 @@ using VolumeId = size_t;
 constexpr VolumeId kInvalidVolume = static_cast<VolumeId>(-1);
 constexpr size_t kMountPointCapacity = 32;
 
-// Donde monta el disco del sistema. Lo comparte con vfs::, que rutea por
-// prefijo, y con el shell.
-constexpr const char* kRootMountPoint = "/disk";
+// Where the system disk is mounted (fs::kRootMountPoint).
+constexpr const char* kRootMountPoint = fs::kRootMountPoint;
 
 enum class MountStatus : uint8_t {
     unavailable = 0,
@@ -55,8 +54,6 @@ VolumeId probe(size_t device_index, const char* mount_point);
 bool attach(VolumeId volume);
 // El volumen montado en kRootMountPoint, o kInvalidVolume.
 VolumeId root();
-// true si la ruta cae bajo el mount point de algun volumen SxFS montado.
-bool owns_path(const char* path);
 
 MountStatus status(VolumeId volume);
 bool mounted(VolumeId volume);

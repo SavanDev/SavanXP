@@ -447,6 +447,14 @@ bool sync(size_t index) {
     return drain_all();
 }
 
+void report_health(bool failed) {
+    for (size_t i = 0; i < g_driver_count; ++i) {
+        if (g_drivers[i]->report_health != nullptr) {
+            g_drivers[i]->report_health(failed);
+        }
+    }
+}
+
 bool sync_all() {
     return drain_all();
 }

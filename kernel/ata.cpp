@@ -459,18 +459,8 @@ void enumerate() {
     }
 }
 
-const block::Driver kDriver = {
-    "ata",
-    kDriverPriority,
-    &enumerate,
-};
-
-} // namespace
-
-namespace ata {
-
-// La curva de esperas que SI funcionan. Sin esto, un fallo raro no dice si el
-// presupuesto era corto o si el dispositivo se wedgeo.
+// The waits that DO succeed. Without this curve, a rare failure does not say
+// whether the budget was short or the device wedged.
 void report_poll_headroom() {
     const uint32_t worst = g_poll_bsy_max_ok_spins > g_poll_drq_max_ok_spins
         ? g_poll_bsy_max_ok_spins
@@ -480,15 +470,15 @@ void report_poll_headroom() {
     }
     g_poll_reported_threshold = worst == 0 ? 1 : worst;
     console::printf(
-        "ata: espera maxima ok bsy=%u drq=%u de %u spins\n",
+        "ata: max successful wait bsy=%u drq=%u of %u spins\n",
         static_cast<unsigned>(g_poll_bsy_max_ok_spins),
         static_cast<unsigned>(g_poll_drq_max_ok_spins),
         static_cast<unsigned>(kPollSpinBudget)
     );
 }
 
-// Se informa desde el fallo que llega hasta userland, una sola vez, para que el
-// diagnostico aparezca junto al sintoma y no dentro de la copia.
+// Reported from the failure that reaches userland, once, so the diagnosis
+// shows up next to the symptom rather than in the middle of the copy.
 void report_poll_failures() {
     const uint32_t total = g_poll_failures[0] + g_poll_failures[1] + g_poll_failures[2];
     if (total == 0 || g_poll_failures_reported != 0) {
@@ -496,7 +486,7 @@ void report_poll_failures() {
     }
     g_poll_failures_reported = 1;
     console::printf(
-        "ata: sondeo fallido bsy=%u drq=%u err=%u reintentos=%u resets=%u\n",
+        "ata: polling failed bsy=%u drq=%u err=%u retries=%u resets=%u\n",
         static_cast<unsigned>(g_poll_failures[0]),
         static_cast<unsigned>(g_poll_failures[1]),
         static_cast<unsigned>(g_poll_failures[2]),
@@ -505,6 +495,26 @@ void report_poll_failures() {
     );
 }
 
+// The headroom is reported periodically (each time a maximum doubles), not on
+// failure: it is useful precisely when everything works and nobody looks.
+void report_health(bool failed) {
+    if (failed) {
+        report_poll_failures();
+    } else {
+        report_poll_headroom();
+    }
+}
+
+const block::Driver kDriver = {
+    "ata",
+    kDriverPriority,
+    &enumerate,
+    &report_health,
+};
+
+} // namespace
+
+namespace ata {
 
 const block::Driver& driver() { return kDriver; }
 

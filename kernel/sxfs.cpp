@@ -1198,9 +1198,9 @@ void mount_record(Volume& volume, sxfs::FileRecord& record) {
     if (record.directory) {
         record.vnode = vfs::ensure_directory(absolute);
     } else {
-        record.vnode = vfs::install_external_file(
+        record.vnode = vfs::install_volume_file(
             absolute,
-            vfs::Backend::sxfs,
+            sxfs::driver(),
             &record,
             record.size,
             volume.status != sxfs::MountStatus::read_only);
@@ -1348,10 +1348,6 @@ VolumeId root() {
         }
     }
     return kInvalidVolume;
-}
-
-bool owns_path(const char* path) {
-    return volume_for_path(path) != nullptr;
 }
 
 MountStatus status(VolumeId id) {
@@ -2006,15 +2002,113 @@ void refresh_vnode(vfs::Vnode& node) {
 
 namespace {
 
-// unmount queda en nullptr a proposito: vfs:: todavia no sabe desprender un
-// subarbol, asi que soltar el volumen dejaria vnodes apuntando a records
-// liberados. El instalador cierra con sync(), que si alcanza.
+/* The fs::Driver operations: the VFS hands in vnodes and paths, these find
+ * the FileRecord behind them and keep the vnode's size current. */
+
+bool driver_read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
+    FileRecord* file = file_from_vnode(node);
+    if (file == nullptr || !read_file(*file, offset, buffer, count)) {
+        return false;
+    }
+    node.size = file->size;
+    return true;
+}
+
+bool driver_write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+    FileRecord* file = file_from_vnode(node);
+    if (file == nullptr) {
+        return false;
+    }
+    // The block drivers report their health periodically, not only on
+    // failure: the margin left matters most when everything works.
+    block::report_health(false);
+    if (!write_file(*file, offset, buffer, count, truncate, written)) {
+        // sxfs only fails a write when something really failed, most likely
+        // the disk underneath: let the block drivers say which.
+        block::report_health(true);
+        return false;
+    }
+    node.size = file->size;
+    return true;
+}
+
+bool driver_truncate(vfs::Vnode& node, size_t size) {
+    FileRecord* file = file_from_vnode(node);
+    if (file == nullptr || !truncate_file(*file, size)) {
+        return false;
+    }
+    node.size = file->size;
+    return true;
+}
+
+bool driver_unlink(vfs::Vnode& node) {
+    FileRecord* file = file_from_vnode(node);
+    return file != nullptr && unlink_file(*file);
+}
+
+bool driver_remove_directory(vfs::Vnode& node) {
+    FileRecord* file = file_from_vnode(node);
+    return file != nullptr && remove_directory(*file);
+}
+
+// Paths carry their volume (volume_for_path), so the id fs:: hands in is not
+// needed here.
+vfs::Vnode* driver_create_file(VolumeId, const char* path) {
+    FileRecord* file = create_file(path);
+    if (file == nullptr) {
+        return nullptr;
+    }
+    if (file->vnode != nullptr) {
+        return file->vnode;
+    }
+    file->vnode = vfs::install_volume_file(path, driver(), file, file->size, true);
+    return file->vnode;
+}
+
+vfs::Vnode* driver_create_directory(VolumeId, const char* path) {
+    FileRecord* directory = create_directory(path);
+    if (directory == nullptr) {
+        return nullptr;
+    }
+    return directory->vnode != nullptr ? directory->vnode : vfs::ensure_directory(path);
+}
+
+bool driver_rename(VolumeId, const char* old_path, const char* new_path) {
+    return rename_path(old_path, new_path);
+}
+
+bool driver_stats(VolumeId volume, fs::VolumeStats& out) {
+    if (!mounted(volume)) {
+        return false;
+    }
+    out.writable = writable(volume);
+    out.file_count = file_count(volume);
+    out.total_bytes = total_bytes(volume);
+    out.used_bytes = used_bytes(volume);
+    out.free_bytes = free_bytes(volume);
+    return true;
+}
+
+// unmount stays nullptr on purpose: vfs:: cannot detach a subtree yet, so
+// releasing the volume would leave vnodes pointing at freed records. The
+// installer finishes with sync(), which is enough.
 const fs::Driver kDriver = {
-    "sxfs",
-    100,
-    &probe,
-    &attach,
-    nullptr,
+    .name = "sxfs",
+    .priority = 100,
+    .probe = &probe,
+    .attach = &attach,
+    .unmount = nullptr,
+    .read = &driver_read,
+    .write = &driver_write,
+    .truncate = &driver_truncate,
+    .unlink = &driver_unlink,
+    .remove_directory = &driver_remove_directory,
+    .refresh = &refresh_vnode,
+    .create_file = &driver_create_file,
+    .create_directory = &driver_create_directory,
+    .rename = &driver_rename,
+    .stats = &driver_stats,
+    .sync = &sync,
 };
 
 } // namespace

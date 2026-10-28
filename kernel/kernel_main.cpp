@@ -308,7 +308,7 @@ namespace
     fs::initialize();
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
-    const size_t root_mount = fs::mount_any(sxfs::kRootMountPoint);
+    const size_t root_mount = fs::mount_any(fs::kRootMountPoint);
 
     if (!vfs::ready())
     {
@@ -347,13 +347,15 @@ namespace
     system_info.framebuffer_height = ui::framebuffer_info().height;
     system_info.framebuffer_bpp = ui::framebuffer_info().bpp;
     system_info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    system_info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
+    fs::VolumeStats root_stats = {};
+    (void)fs::stats(root_mount, root_stats);
+    system_info.sxfs_file_count = static_cast<uint32_t>(root_stats.file_count);
     system_info.memory_usable_bytes = memory.usable_bytes;
     system_info.memory_reclaimable_bytes = memory.reclaimable_bytes;
     system_info.memory_total_pages = memory::total_page_count();
-    system_info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
-    system_info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());
-    system_info.sxfs_free_bytes = sxfs::free_bytes(sxfs::root());
+    system_info.sxfs_total_bytes = root_stats.total_bytes;
+    system_info.sxfs_used_bytes = root_stats.used_bytes;
+    system_info.sxfs_free_bytes = root_stats.free_bytes;
     system_info.initramfs_size = boot_info.initramfs_size;
     process::set_boot_system_info(system_info);
 

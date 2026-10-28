@@ -26,6 +26,7 @@ static void register_posix_process_state(void) {
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/sx.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
@@ -372,10 +373,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_SYNC:
-            // sxfs::sync marks the volume clean; block::sync_all then waits
-            // for the writeback queue, so everything written is on the medium.
+            // fs::sync_all marks every volume clean; block::sync_all then
+            // waits for the writeback queue, so everything written is on the
+            // medium.
             context->rax = static_cast<uint64_t>(
-                sxfs::sync(sxfs::root()) && block::sync_all() ? 0 : sx::negative_error(SAVANXP_EIO));
+                fs::sync_all() && block::sync_all() ? 0 : sx::negative_error(SAVANXP_EIO));
             return context;
         case SAVANXP_SYS_FSCHECK: {
             if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {

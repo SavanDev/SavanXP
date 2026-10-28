@@ -24,7 +24,7 @@
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/sx.hpp"
-#include "kernel/sxfs.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
@@ -2436,17 +2436,19 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.net_present = net::present() ? 1u : 0u;
     info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
     info.block_ready = block::ready() ? 1u : 0u;
-    info.sxfs_mounted = sxfs::mounted(sxfs::root()) ? 1u : 0u;
+    // The sxfs_* fields describe the system disk, whatever its format.
+    fs::VolumeStats root_stats = {};
+    info.sxfs_mounted = fs::stats(fs::find(fs::kRootMountPoint), root_stats) ? 1u : 0u;
     info.timer_backend = exported_timer_backend(timer::backend());
     info.timer_frequency_hz = timer::frequency_hz();
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
+    info.sxfs_file_count = static_cast<uint32_t>(root_stats.file_count);
     object::section_live_counts(info.sections_live, info.file_sections_live);
     info.last_view_failure = vm::last_view_failure();
     info.memory_total_pages = memory::total_page_count();
-    info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
-    info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());
-    info.sxfs_free_bytes = sxfs::free_bytes(sxfs::root());
+    info.sxfs_total_bytes = root_stats.total_bytes;
+    info.sxfs_used_bytes = root_stats.used_bytes;
+    info.sxfs_free_bytes = root_stats.free_bytes;
     info.uptime_ms = current_uptime_ms();
 
     info.memory_free_bytes = memory::free_page_count() * memory::kPageSize;

@@ -3,6 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+namespace fs {
+struct Driver;
+}
+
 namespace vfs {
 
 constexpr size_t kMaxPathLength = 256;
@@ -16,7 +20,8 @@ enum class NodeType : uint8_t {
 
 enum class Backend : uint8_t {
     memory = 0,
-    sxfs = 1,
+    // A file on a mounted volume: volume_driver (fs::Driver) serves it.
+    volume = 1,
     device = 2,
 };
 
@@ -30,6 +35,8 @@ struct Vnode {
     int parent;
     int first_child;
     int next_sibling;
+    // Set for Backend::volume, nullptr otherwise.
+    const fs::Driver* volume_driver;
 };
 
 void initialize(const void* archive, size_t size);
@@ -42,6 +49,9 @@ Vnode* open(const char* path, uint32_t flags);
 Vnode* ensure_directory(const char* path);
 Vnode* mkdir(const char* path);
 Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable);
+// What a filesystem driver calls from attach/create_file to publish a file.
+// `data` is the driver's own record; the VFS does not read it.
+Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable);
 bool unlink(const char* path);
 bool rmdir(const char* path);
 bool truncate(const char* path, size_t size);

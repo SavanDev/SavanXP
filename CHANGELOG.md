@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Changed
 
+- **The VFS reaches filesystems only through `fs::Driver`**, which now carries the file, path and
+  volume operations; `sxfs` is one registered driver and `vfs.cpp` no longer names it. No mount point
+  can be removed or renamed, not just `/disk`; `sync` flushes every mounted volume. ATA's polling
+  diagnostics log in English via `block::report_health`. See `docs/kernel/FILESYSTEMS.md`.
+
 - **Input drivers register with the kernel's input layer** (`input::register_driver`), and the
   keyboard logic (modifiers, locks, ES/EN layouts) is shared instead of living in the PS/2 driver.
   virtio-input no longer poses as PS/2, and `input_ready` is true with any keyboard. `kbd-smoke` also

@@ -56,6 +56,7 @@ const block::Driver kDriver = {
     "ramdisk",
     kDriverPriority,
     &enumerate,
+    nullptr,
 };
 
 } // namespace
