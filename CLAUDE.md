@@ -45,7 +45,9 @@ from earlier development are translated incrementally: every commit that
 touches a file translates the comments on the lines it changes, until only
 one language remains. No bulk rewrites. The unit is the whole comment: touching
 any part of a Spanish comment block or docstring rewrites all of it in English,
-never half and half.
+never half and half. **Moving code counts as changing it**: a file moved or
+renamed (`git mv`), or code cut from one file into another, has all its
+comments and user-visible strings translated in the same commit.
 
 ### 4. Never break the persistence of `build/disk.img`
 

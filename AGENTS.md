@@ -68,6 +68,13 @@
   touches any part of a Spanish comment (a `/* */` or `//` block, a run of
   `#` lines, a docstring) rewrites that entire comment in English. Never leave
   a comment half in Spanish and half in English.
+- Moving code counts as changing it. A file moved or renamed (`git mv`), or a
+  block of code cut out of one file into another, is touched in full: the
+  comments and the user-visible strings it carries are translated in the same
+  commit, even when no other line of it changes. A move is the cheapest
+  moment to do it, because the diff already shows the whole file. This is
+  what keeps the bulk-rewrite rule from becoming a reason to carry Spanish
+  into a new place.
 
 ## Repository rules
 
