@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #include "compositor_protocol.h"
-#include "savanxp/wm_protocol.h"
+#include "wm/wm_protocol.h"
 #include "sxn/sxn.h"
 
 /*

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "libc.h"
-#include "savanxp/wm_shell_protocol.h"
+#include "wm/wm_shell_protocol.h"
 #include "windowd_presentation.h"
 #include "windowd_compositor_client.h"
 

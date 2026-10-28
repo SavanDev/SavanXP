@@ -74,6 +74,17 @@ with its consumer.
 Dialogs already work the same way: `struct sxgui_dialog_host` gives them a
 window of their own, and `sxgui_app` is the host that provides it.
 
+## The window protocol
+
+The same reasoning moved the WM protocol out of the POSIX SDK:
+`include/wm/wm_protocol.h` (the port name and connect timeout, and the
+protocol's description) and `include/wm/wm_shell_protocol.h` (the shell's
+window list, whose structs it defines itself; the client protocol's structs
+are in `abi/savanxp_abi.h`). SUN's `sxnwm.h` and
+the native services include `wm/` directly; the POSIX SDK keeps
+`savanxp/wm_protocol.h` and `savanxp/wm_shell_protocol.h` as forwarding
+headers.
+
 ## Builds that list the units by hand
 
 CMake builds the static runtime and the shared libraries from one list

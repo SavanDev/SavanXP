@@ -50,8 +50,8 @@
 /* Same as WINDOWD_MAX_OVERLAY_CLIENTS: every task is an application window. */
 #define SAVANXP_WM_MAX_WINDOWS 12u
 
-/* Mismo tamano que WINDOWD_PRESENTATION_ICON_EXTENT: la entrada transporta el
- * icono chico tal como el WM ya lo tenia resuelto, sin reescalar. */
+/* Same size as WINDOWD_PRESENTATION_ICON_EXTENT: the entry carries the small
+ * icon exactly as the WM already resolved it, without rescaling. */
 #define SAVANXP_WM_WINDOW_ICON_EXTENT 16u
 #define SAVANXP_WM_WINDOW_ICON_PIXELS \
     (SAVANXP_WM_WINDOW_ICON_EXTENT * SAVANXP_WM_WINDOW_ICON_EXTENT)
@@ -66,34 +66,36 @@ enum savanxp_wm_window_flags {
 };
 
 struct savanxp_wm_window_entry {
-    /* Identidad estable mientras la ventana viva. NO es el indice en el
-     * arreglo: el arreglo se reordena con el z-order, asi que un click que
-     * llegara con un indice viejo activaria OTRA ventana. El WM resuelve el id
-     * contra sus clientes al recibir el pedido. */
+    /* Stable identity while the window lives. It is NOT the index in the
+     * array: the array is reordered with the z-order, so a click arriving
+     * with a stale index would activate ANOTHER window. The WM resolves the id
+     * against its clients when it receives the request. */
     uint32_t window_id;
     uint32_t flags; /* savanxp_wm_window_flags */
-    /* Ultimo recurso cuando la ventana no trajo icono propio: el cliente lo
-     * dibuja con desktop_icon_small(). */
+    /* Last resort when the window brought no icon of its own: the client
+     * draws it with desktop_icon_small(). */
     uint32_t icon_id;
-    /* 0 = sin icono propio, se usa icon_id. Si no, el lado de icon_pixels.
+    /* 0 = no icon of its own, icon_id is used. Otherwise, the side of
+     * icon_pixels.
      *
-     * Los PIXELES viajan y no una referencia al binario porque el WM ya los
-     * leyo del .sxe al crear la ventana (docs/userland/SXE_FORMAT.md): mandar el path
-     * obligaria al shell a reabrir y parsear cada ejecutable por su cuenta, y
-     * a mantener su propia cache, para llegar exactamente al mismo bitmap.
-     * Cuesta 1 KiB por entrada -- 13 KiB de seccion -- y esa es toda la deuda.
+     * The PIXELS travel rather than a reference to the binary because the WM
+     * already read them from the .sxe when it created the window
+     * (docs/userland/SXE_FORMAT.md): sending the path would force the shell
+     * to reopen and parse every executable itself, and keep its own cache, to
+     * arrive at exactly the same bitmap. It costs 1 KiB per entry -- a 13 KiB
+     * section -- and that is the whole debt.
      */
     uint32_t icon_extent;
     char title[SAVANXP_WM_WINDOW_TITLE_CAPACITY];
-    /* BGRA8888, icon_extent x icon_extent, en el tope del arreglo. */
+    /* BGRA8888, icon_extent x icon_extent, at the top of the array. */
     uint32_t icon_pixels[SAVANXP_WM_WINDOW_ICON_PIXELS];
 };
 
 /*
- * Seqlock. El WM sube `sequence` a impar antes de tocar las entradas y a par
- * cuando termino; el cliente lee la secuencia, copia, y vuelve a leerla: si
- * cambio o quedo impar, reintenta. Hace falta de verdad -- el WM es otro
- * proceso y lo pueden desalojar en medio de la escritura.
+ * Seqlock. The WM bumps `sequence` to odd before touching the entries and to
+ * even when it is done; the client reads the sequence, copies, and reads it
+ * again: if it changed or is odd, it retries. It is really needed -- the WM is
+ * another process and can be preempted in the middle of the write.
  */
 struct savanxp_wm_window_list {
     uint32_t version; /* SAVANXP_WM_SHELL_PROTOCOL_VERSION */

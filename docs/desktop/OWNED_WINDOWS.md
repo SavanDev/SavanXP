@@ -87,7 +87,7 @@ later added fd passing precisely to close that hole.
 
 ## The protocol
 
-Additive to v4; see `savanxp/wm_protocol.h` and `savanxp_wm_client_requests`
+Additive to v4; see `wm/wm_protocol.h` and `savanxp_wm_client_requests`
 in `include/abi/savanxp_abi.h`.
 
 1. The client picks the id (1..`SAVANXP_WM_MAX_OWNED_WINDOWS`), like an X11 XID

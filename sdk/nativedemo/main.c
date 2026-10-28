@@ -16,7 +16,7 @@
 #include <stdint.h>
 
 #include "savanxp/syscall.h"
-#include "savanxp/wm_protocol.h"
+#include "wm/wm_protocol.h"
 #include "sxn/sxn.h"
 #include "sxn/sxnwm.h"
 

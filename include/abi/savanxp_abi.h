@@ -724,10 +724,10 @@ struct savanxp_gpu_stats {
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_3 3u
 /* v4: los pedidos del cliente al WM (cursor, size hint, launch) y el pedido de
  * cierre viajan en el header en vez de por descriptores propios. Ver
- * savanxp/wm_protocol.h. */
+ * wm/wm_protocol.h. */
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 4u
 /* v5: the launch queue left the header -- a client starts programs itself
- * (protocol v5, savanxp/wm_protocol.h) -- so the requests that follow it moved. */
+ * (protocol v5, wm/wm_protocol.h) -- so the requests that follow it moved. */
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_5 5u
 #define SAVANXP_GPU_CLIENT_BATCH_CAPACITY 8u
 #define SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS 32u
@@ -1070,7 +1070,7 @@ struct savanxp_mouse_event {
 };
 
 /* Pointer event delivered by the compositor to a windowed client over its
- * event pipe (savanxp/wm_protocol.h). x,y are relative to the top-left of the
+ * event pipe (wm/wm_protocol.h). x,y are relative to the top-left of the
  * client's own surface (already accounting for window frame and position), so
  * apps can hit-test in their local coordinate space and stay aligned with the
  * system cursor the compositor draws. These are already absolute, so this one
@@ -1092,7 +1092,7 @@ enum savanxp_wm_event_kind {
 };
 
 /*
- * Connecting to the WM, protocol v5 (savanxp/wm_protocol.h). A client opens the
+ * Connecting to the WM, protocol v5 (wm/wm_protocol.h). A client opens the
  * WM's port (SAVANXP_WM_PORT_NAME) and writes this hello on the request pipe;
  * the WM answers on the event pipe with a WELCOME record. With status 0, the
  * handles are already queued on the event pipe, in this order: the surface
@@ -1107,7 +1107,7 @@ enum savanxp_wm_event_kind {
 /* The client wants its input on a shared ring instead of the event pipe
  * (what a native client without a POSIX read used to need). */
 #define SAVANXP_WM_HELLO_INPUT_RING 0x00000001u
-/* The client asks for the shell role (savanxp/wm_shell_protocol.h). Granted
+/* The client asks for the shell role (wm/wm_shell_protocol.h). Granted
  * only to a process the session manager started -- its parent is the WM's
  * parent, or the WM itself -- and to one at a time; otherwise the welcome
  * carries -EACCES. See docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-
@@ -1139,11 +1139,11 @@ struct savanxp_wm_welcome {
     uint32_t reserved[3];
 };
 
-/* Registro del canal de eventos WM -> cliente (savanxp/wm_protocol.h). Teclado
- * y puntero comparten el pipe, asi que cada registro dice que trae. Mide 32
- * bytes a proposito: el pipe del kernel tiene 8 KiB, un multiplo exacto, y
- * mientras todas las escrituras y lecturas sean de registros enteros el
- * espacio libre tambien lo es -- una escritura nunca queda por la mitad. */
+/* Record of the WM -> client event channel (wm/wm_protocol.h). Keyboard and
+ * pointer share the pipe, so each record says what it carries. It is 32 bytes
+ * on purpose: the kernel pipe holds 8 KiB, an exact multiple, and as long as
+ * every write and read is of whole records the free space is too -- a write
+ * never ends up halfway. */
 struct savanxp_wm_event {
     uint32_t kind; /* enum savanxp_wm_event_kind */
     /* Ventana del proceso a la que va el evento: 0 la principal, 1..N una con
@@ -1157,13 +1157,13 @@ struct savanxp_wm_event {
     } payload;
 };
 
-/* Anillo de entrada WM -> cliente para procesos nativos, que no pueden leer
- * el pipe (savanxp/wm_protocol.h). Mismo registro de 32 bytes, misma
- * disciplina SPSC que la cola de launches: el WM escribe el registro y
- * DESPUES publica head; el cliente drena hasta head y despues publica tail.
- * Los dos contadores solo crecen (indice = secuencia % capacidad). Lleno es
- * head - tail == capacidad y se descarta como el pipe lleno: preferimos
- * perder input de un cliente que no drena antes que congelar la sesion. */
+/* WM -> client input ring for native processes, which cannot read the pipe
+ * (wm/wm_protocol.h). The same 32-byte record, the same SPSC discipline as
+ * the launch queue: the WM writes the record and THEN publishes head; the
+ * client drains up to head and then publishes tail. Both counters only grow
+ * (index = sequence % capacity). Full is head - tail == capacity and is
+ * dropped like a full pipe: losing input from a client that does not drain is
+ * better than freezing the session. */
 #define SAVANXP_WM_INPUT_RING_CAPACITY 64u
 #define SAVANXP_WM_INPUT_RING_MAGIC 0x574D4952u
 #define SAVANXP_WM_INPUT_RING_VERSION_1 1u

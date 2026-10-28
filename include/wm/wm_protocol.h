@@ -1,6 +1,6 @@
 #pragma once
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 /*
  * WM <-> client protocol, version 5 (docs/desktop/DESKTOP_ARCHITECTURE.md,
@@ -21,7 +21,7 @@
  *      (savanxp_wm_welcome). With status 0, the handles are already queued on
  *      that pipe, in this order: the surface section, the wake event, the
  *      session's submit event, then the input ring (if asked) or the window
- *      list section (for the shell, savanxp/wm_shell_protocol.h), then the
+ *      list section (for the shell, wm/wm_shell_protocol.h), then the
  *      WM's request event (if asked, SAVANXP_WM_HELLO_REQUEST_EVENT).
  *
  * From then on everything is as in v4:
@@ -53,7 +53,9 @@
  *
  * The structs are shared with the native subsystem (they are the contract on
  * the wire, in include/abi/savanxp_abi.h); include/sxn/sxnwm.h is the native
- * client side.
+ * client side and gfx_impl.inc the POSIX one. This header belongs to neither
+ * subsystem: it lives in include/wm with the shell protocol, and the POSIX SDK
+ * keeps savanxp/wm_protocol.h as a forwarding header.
  */
 
 #define SAVANXP_WM_PORT_NAME "windowd"

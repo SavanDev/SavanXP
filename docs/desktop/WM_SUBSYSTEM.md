@@ -326,7 +326,7 @@ pipes). With the background client and the taskbar that left room for about
 four application windows, and the pipes ran out before twelve anyway.
 
 Protocol v4 brought it to **two descriptors and one pipe**, and protocol v5
-(`savanxp/wm_protocol.h`) keeps that while changing how the channels arrive: a
+(`wm/wm_protocol.h`, in the POSIX SDK until 2026-10-27) keeps that while changing how the channels arrive: a
 client connects to the port `windowd` (`SAVANXP_WM_PORT_NAME`), which gives it
 a request pipe and an event pipe, writes a `savanxp_wm_hello`, and the WM
 answers with a `SAVANXP_WM_EVENT_WELCOME` record after queuing the handles on

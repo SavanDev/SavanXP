@@ -46,7 +46,7 @@ The SUN headers, all header-only, no link or tool changes needed:
 ## Connecting a window
 
 A native client connects to `windowd` like any other (WM protocol v5,
-`savanxp/wm_protocol.h`): `sxnwm_connect` opens the port `windowd`, writes
+`wm/wm_protocol.h`, which belongs to neither subsystem): `sxnwm_connect` opens the port `windowd`, writes
 the hello asking for `SAVANXP_WM_HELLO_INPUT_RING`, reads the welcome and
 receives four handles from the event pipe -- surface section, wake event,
 submit event, input ring -- mapping the two sections. The event pipe stays

@@ -18,6 +18,10 @@ Cut-off notes:
   get theirs automatically. `savanxp/gfx2d.h`, `sxchrome.h` and `sxgui.h` keep working for POSIX
   code. Out-of-tree builds compile `system/gfx/*.c`. See `docs/desktop/PLATFORM_GRAPHICS.md`.
 
+- **The WM protocol headers moved to `include/wm/`** (`wm/wm_protocol.h`, `wm/wm_shell_protocol.h`), so
+  SUN's `sxnwm.h` and the native services no longer include the POSIX SDK. `savanxp/wm_protocol.h` and
+  `savanxp/wm_shell_protocol.h` forward to them. See `docs/desktop/PLATFORM_GRAPHICS.md`.
+
 - **The VFS reaches filesystems only through `fs::Driver`**, which now carries the file, path and
   volume operations; `sxfs` is one registered driver and `vfs.cpp` no longer names it. No mount point
   can be removed or renamed, not just `/disk`; `sync` flushes every mounted volume. ATA's polling

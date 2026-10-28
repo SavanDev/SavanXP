@@ -3,7 +3,7 @@
 /* sxnwm: SUN windowing (docs/userland/SUN.md), the user32 of SUN.
  *
  * The reusable layer over sxn.h for windowed native programs: connect to
- * windowd (protocol v5, savanxp/wm_protocol.h), publish full or partial
+ * windowd (protocol v5, wm/wm_protocol.h), publish full or partial
  * frames, wait for composition, drain the native input ring, ask for a size,
  * follow resizes and closing, and publish the title and icon. Extracted from sdk/nativedemo, which
  * uses all of it -- one client proves the shape, widgets wait for a second.
@@ -14,8 +14,8 @@
 
 #include <stdint.h>
 
-#include "savanxp/syscall.h"
-#include "savanxp/wm_protocol.h"
+#include "abi/savanxp_abi.h"
+#include "wm/wm_protocol.h"
 #include "sxn/sxn.h"
 
 struct sxnwm_client {

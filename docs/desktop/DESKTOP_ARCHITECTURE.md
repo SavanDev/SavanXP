@@ -678,7 +678,7 @@ Depends on the hotkeys of phase 1.
    session manager, `sessiond`, started by `init`, starts `windowd`, `desktop`
    and `progman` (and `compositord` from phase 4), and restarts `desktop`. `windowd` drops `fork`,
    `dup2`, `exec`, the descriptor sweep and reaping. **Done so far:** WM
-   protocol v5 (`savanxp/wm_protocol.h`, [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)):
+   protocol v5 (`wm/wm_protocol.h`, [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)):
    a client connects to the port `windowd`, says hello with the launch flags
    its own `.sxe` declares and whether it wants an input ring, and gets its
    handles with the welcome. `gfx_desktop_launch*` is a `spawn` in the caller,
