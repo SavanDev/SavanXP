@@ -194,6 +194,8 @@ enum savanxp_timer_backend {
  *   duplicate_names     a name repeated within one directory
  *   bad_dir_entries     a directory entry that does not validate
  *   unreadable_dirs     a directory that cannot be read, or deeper than the limit
+ *   unowned_inodes      with ownership recorded, an inode with mode 0 or a mode
+ *                       whose type bits disagree with its type
  *
  * A non-zero `journal_pending` means a transaction was left half done; the
  * mount has retried it, so this reports a finding.
@@ -205,7 +207,8 @@ struct savanxp_fscheck_report {
     uint32_t journal_pending;
     uint8_t clean_shutdown;
     uint8_t journal_valid;
-    uint16_t reserved0;
+    uint8_t ownership_recorded;
+    uint8_t reserved0;
     uint32_t inodes_allocated;
     uint32_t files;
     uint32_t directories;
@@ -226,7 +229,9 @@ struct savanxp_fscheck_report {
      * changed twice (journal and home), so `metadata_bytes_written` grows with
      * how much each transaction touches. See docs/fs/SXFS_JOURNAL.md. */
     uint32_t metadata_commits;
-    uint32_t reserved1;
+    /* With ownership recorded: reachable inodes whose mode is 0 or disagrees
+     * with their type. A finding. */
+    uint32_t unowned_inodes;
     uint64_t metadata_bytes_written;
 };
 

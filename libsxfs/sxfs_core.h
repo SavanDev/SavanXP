@@ -124,6 +124,21 @@ typedef int (*sxfs_walk_fn)(void* cookie, const char* relpath,
                             uint32_t inode_id, uint16_t type);
 int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie);
 
+/* Ownership (SXFS_FEATURE_OWNERSHIP, docs/kernel/USERS_AND_PERMISSIONS.md).
+ * New inodes get the default of their path on their own; these are for what
+ * was there before. */
+
+/* Gives every reachable inode with mode 0 the default of its path
+ * (sxfs/sxfs_ownership.h) and sets the feature. The host's answer to an image
+ * written before ownership existed. */
+int sxfs_stamp_ownership(struct sxfs_ctx* ctx);
+/* Records uid, gid and mode for an existing path. The mode's type bits have to
+ * match the inode's type. */
+int sxfs_set_ownership(struct sxfs_ctx* ctx, const char* relpath,
+                       uint32_t uid, uint32_t gid, uint16_t mode);
+int sxfs_get_ownership(const struct sxfs_ctx* ctx, uint32_t inode_id,
+                       uint32_t* uid, uint32_t* gid, uint16_t* mode);
+
 #ifdef __cplusplus
 }
 #endif

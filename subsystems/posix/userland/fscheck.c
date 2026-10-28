@@ -95,6 +95,7 @@ int main(void) {
     print_u64_line("  inodes_allocated", report.inodes_allocated);
     print_u64_line("  files", report.files);
     print_u64_line("  directories", report.directories);
+    print_yes_no_line("  ownership_recorded", report.ownership_recorded);
 
     puts_out("block accounting:\n");
     print_u64_line("  data_used", report.data_used_sectors);
@@ -133,6 +134,7 @@ int main(void) {
     findings += is_finding(report.duplicate_names);
     findings += is_finding(report.bad_dir_entries);
     findings += is_finding(report.unreadable_dirs);
+    findings += is_finding(report.unowned_inodes);
     /* El journal solo aporta un hallazgo cuando hay un header CON magia que no
      * valida: un journal limpio esta a cero y no tiene magia, y eso es lo normal.
      * clean_shutdown tampoco cuenta: el superblock se marca sucio cuando el
@@ -192,6 +194,11 @@ int main(void) {
         print_label("  unreadable_dirs");
         print_u64(report.unreadable_dirs);
         puts_out("  (unreadable or too deep)\n");
+    }
+    if (report.unowned_inodes != 0) {
+        print_label("  unowned_inodes");
+        print_u64(report.unowned_inodes);
+        puts_out("  (no owner or mode recorded)\n");
     }
     if (report.journal_valid == 0 && report.journal_pending != 0) {
         puts_out("  journal_invalid      (header with magic failed validation)\n");

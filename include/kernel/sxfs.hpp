@@ -92,7 +92,8 @@ struct CheckReport {
     uint32_t sequence;
     uint8_t clean_shutdown;   // el superblock tiene SXFS_FLAG_CLEAN
     uint8_t journal_valid;    // el header del journal se pudo leer y validar
-    uint16_t reserved0;
+    uint8_t ownership_recorded; // the volume has SXFS_FEATURE_OWNERSHIP
+    uint8_t reserved0;
     uint32_t journal_pending; // una transaccion quedo a medias
 
     // Poblacion del volumen.
@@ -115,6 +116,10 @@ struct CheckReport {
     uint32_t duplicate_names;      // un nombre repetido en el mismo directorio
     uint32_t bad_dir_entries;      // entrada que no pasa read_dir_entry
     uint32_t unreadable_dirs;      // directorio ilegible o mas profundo del limite
+    // With SXFS_FEATURE_OWNERSHIP: reachable inodes whose mode is 0 or whose
+    // type bits disagree with the inode's type. Always 0 without the feature,
+    // since nothing is recorded there to be wrong.
+    uint32_t unowned_inodes;
 
     // Costo de metadata desde el arranque, para poder medir en vez de deducir.
     // El journal copia toda la metadata en cada commit y la reescribe, asi que
@@ -135,7 +140,7 @@ struct CheckReport {
         return leaked_blocks == 0 && lost_blocks == 0 && double_claimed_blocks == 0 &&
             metadata_unmarked == 0 && orphan_inodes == 0 && alias_inodes == 0 &&
             duplicate_names == 0 && bad_dir_entries == 0 && unreadable_dirs == 0 &&
-            !(journal_valid == 0 && journal_pending != 0);
+            unowned_inodes == 0 && !(journal_valid == 0 && journal_pending != 0);
     }
 };
 

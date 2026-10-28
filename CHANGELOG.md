@@ -10,6 +10,14 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Added
+
+- **SxFS records an owner, a group and a mode on every inode** (`SXFS_FEATURE_OWNERSHIP`, no format
+  version bump). An existing image is stamped with the default of each path by the build or on its
+  first mount; nothing enforces them yet. `fscheck` reports `ownership_recorded` and
+  `unowned_inodes`; `sxfs-cli extract` and `apply` carry ownership (`owner` lines) through a
+  compaction. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
+
 ### Changed
 
 - **The system runs from its disk, mounted at `/`**: `/bin`, `/lib` and `/games` are the SxFS

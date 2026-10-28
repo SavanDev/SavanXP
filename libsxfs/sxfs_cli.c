@@ -1,32 +1,39 @@
 /*
- * sxfs_cli.c -- Tool de host para crear/poblar imagenes SxFS.
+ * sxfs_cli.c -- the host tool that creates and fills SxFS images.
  *
- * El CLI de host usa el core portable (libsxfs) sobre un backend de archivo.
- * `apply` recibe un manifiesto
- * con las operaciones ya resueltas; `extract` usa el recorrido de solo lectura
- * del core para la compactacion segura.
+ * The host CLI runs the portable core (libsxfs) over a file backend. `apply`
+ * takes a manifest with the operations already resolved; `extract` uses the
+ * core's read-only walk for the safe compaction.
  *
- * Uso:
- *   sxfs-cli info    <imagen>
- *       Imprime el numero de sectores de una imagen valida.
- *   sxfs-cli extract <imagen> <directorio_destino>
- *       Extrae el arbol a archivos host para una compactacion segura.
- *   sxfs-cli create <imagen> <total_sectores>
- *       Crea una imagen nueva, formateada y vacia (solo la raiz).
- *   sxfs-cli apply  <imagen> <manifiesto>
- *       Monta una imagen existente (preserva su contenido) y aplica el
- *       manifiesto. Cada linea, separada por TAB:
- *           mkdir <ruta_relativa>
- *           file  <ruta_relativa>\t<archivo_host>
- *       Las rutas son relativas a la raiz de SxFS (sin prefijo /disk).
- *   sxfs-cli rm     <imagen> <ruta> [<ruta>...]
- *       Borra archivos o directorios vacios. Es la contraparte de apply, que
- *       es aditivo y nunca borra: sin esto la unica forma de sacar algo de una
- *       imagen es recrearla desde cero. Misma convencion de rutas, tolerando
- *       una '/' inicial.
+ * Usage:
+ *   sxfs-cli info    <image>
+ *       Prints the sector count of a valid image.
+ *   sxfs-cli extract <image> <destination_directory> [<ownership_manifest>]
+ *       Extracts the tree into host files for a safe compaction. With a third
+ *       argument it also writes there one `owner` line per path, so `apply`
+ *       can put the ownership back on the rebuilt image.
+ *   sxfs-cli create <image> <total_sectors>
+ *       Creates a new image, formatted and empty (only the root).
+ *   sxfs-cli apply  <image> <manifest>
+ *       Opens an existing image (keeping its contents) and applies the
+ *       manifest. One operation per line, fields separated by TAB:
+ *           mkdir <relative_path>
+ *           file  <relative_path>\t<host_file>
+ *           owner <relative_path>\t<uid>\t<gid>\t<octal_mode>
+ *       `owner` records ownership on a path that already exists; its mode
+ *       carries the type bits. Paths are relative to the SxFS root, which is
+ *       the guest's root.
+ *   sxfs-cli rm     <image> <path> [<path>...]
+ *       Removes files or empty directories. It is apply's counterpart, which
+ *       is additive and never deletes: without it, the only way to take
+ *       something out of an image is to rebuild it from scratch. Same path
+ *       convention, tolerating a leading '/'.
  *
- * Codigos de salida: 0 ok, 1 error, 2 uso incorrecto, 3 el allocator se quedo
- * sin corrida contigua (ver SXFS_CLI_EXIT_NO_SPACE).
+ * apply and rm stamp an image written before ownership existed
+ * (sxfs_stamp_ownership) before changing it.
+ *
+ * Exit codes: 0 ok, 1 error, 2 bad usage, 3 the allocator ran out of a
+ * contiguous run (see SXFS_CLI_EXIT_NO_SPACE).
  */
 #define _FILE_OFFSET_BITS 64
 #define _POSIX_C_SOURCE 200809L /* fseeko/off_t: glibc los oculta bajo -std=c11 sin esto */
@@ -45,6 +52,7 @@
 #define SXFS_MKDIR(path) mkdir(path, 0755)
 
 #include "sxfs_core.h"
+#include "sxfs/sxfs_ownership.h"
 
 /* Codigo de salida propio para SXFS_ERR_NO_SPACE: el volumen tiene espacio libre
  * pero no una corrida contigua del tamano pedido. Se distingue del error
@@ -260,6 +268,8 @@ struct extract_context {
     const char* destination;
     uint32_t file_count;
     uint64_t byte_count;
+    /* The `owner` manifest being written, or NULL. */
+    FILE* ownership;
 };
 
 static int extract_file(struct extract_context* context, const char* host_path,
@@ -303,6 +313,16 @@ static int extract_callback(void* cookie, const char* relative, uint32_t inode_i
     if (join_host_path(context->destination, relative, host_path, sizeof(host_path)) != 0) {
         return SXFS_ERR_TOO_LONG;
     }
+    if (context->ownership != NULL) {
+        uint32_t uid = 0;
+        uint32_t gid = 0;
+        uint16_t mode = 0;
+        /* Mode 0 records nothing: the rebuilt image gives it the default. */
+        if (sxfs_get_ownership(context->image, inode_id, &uid, &gid, &mode) == SXFS_OK && mode != 0 &&
+            fprintf(context->ownership, "owner\t%s\t%u\t%u\t%o\n", relative, uid, gid, mode) < 0) {
+            return SXFS_ERR_IO;
+        }
+    }
     if (type == SXFS_INODE_DIRECTORY) {
         return ensure_directory_tree(host_path) == 0 ? SXFS_OK : SXFS_ERR_IO;
     }
@@ -338,7 +358,7 @@ static int cmd_info(const char* image_path) {
     return 0;
 }
 
-static int cmd_extract(const char* image_path, const char* destination) {
+static int cmd_extract(const char* image_path, const char* destination, const char* ownership_path) {
     FILE* image = fopen(image_path, "rb");
     if (image == NULL) {
         fprintf(stderr, "sxfs-cli: no existe o no se pudo leer la imagen '%s'.\n", image_path);
@@ -354,9 +374,19 @@ static int cmd_extract(const char* image_path, const char* destination) {
         fprintf(stderr, "sxfs-cli: no se pudo crear el destino '%s'.\n", destination);
         rc = SXFS_ERR_IO;
     }
-    struct extract_context context = { &ctx, destination, 0, 0 };
+    struct extract_context context = { &ctx, destination, 0, 0, NULL };
+    if (rc == SXFS_OK && ownership_path != NULL) {
+        context.ownership = fopen(ownership_path, "w");
+        if (context.ownership == NULL) {
+            fprintf(stderr, "sxfs-cli: could not write '%s'.\n", ownership_path);
+            rc = SXFS_ERR_IO;
+        }
+    }
     if (rc == SXFS_OK) {
         rc = sxfs_walk(&ctx, extract_callback, &context);
+    }
+    if (context.ownership != NULL && fclose(context.ownership) != 0 && rc == SXFS_OK) {
+        rc = SXFS_ERR_IO;
     }
     fclose(image);
     if (rc != SXFS_OK) {
@@ -492,6 +522,22 @@ static int validate_image_file(const char* image_path, const struct sxfs_ctx* ct
     return SXFS_OK;
 }
 
+struct ownership_count {
+    const struct sxfs_ctx* image;
+    uint32_t unowned;
+};
+
+static int count_unowned(void* cookie, const char* relative, uint32_t inode_id, uint16_t type) {
+    struct ownership_count* count = (struct ownership_count*)cookie;
+    const struct sxfs_inode* inode = &count->image->inodes[inode_id - 1];
+    (void)relative;
+    (void)type;
+    if (inode->mode == 0 || !sxfs_mode_matches_type(inode->mode, inode->type)) {
+        count->unowned += 1;
+    }
+    return SXFS_OK;
+}
+
 static int cmd_check(const char* image_path) {
     FILE* image = fopen(image_path, "rb");
     if (image == NULL) {
@@ -512,10 +558,34 @@ static int cmd_check(const char* image_path) {
         fclose(image);
         return 1;
     }
+    /* Ownership is checked only where it is recorded: an image written before
+     * it is valid, and gets stamped by the next apply or mount. The walk reads
+     * directories, so the image is still open. */
+    if ((ctx.superblock.features & SXFS_FEATURE_OWNERSHIP) != 0) {
+        struct ownership_count count = { &ctx, 0 };
+        const struct sxfs_inode* root = &ctx.inodes[SXFS_ROOT_INODE - 1];
+        if (root->mode == 0 || !sxfs_mode_matches_type(root->mode, root->type)) {
+            count.unowned += 1;
+        }
+        const int walked = sxfs_walk(&ctx, count_unowned, &count);
+        if (walked != SXFS_OK) {
+            fprintf(stderr, "sxfs-cli: could not walk '%s' to check ownership: %s.\n",
+                image_path, sxfs_strerror(walked));
+            fclose(image);
+            return 1;
+        }
+        if (count.unowned != 0) {
+            fprintf(stderr, "sxfs-cli: '%s' records ownership, but %u inode(s) have none.\n",
+                image_path, count.unowned);
+            fclose(image);
+            return 1;
+        }
+    }
     fclose(image);
 
-    printf("sxfs-cli: '%s' es una imagen SxFS valida (%u sectores).\n",
-        image_path, ctx.total_sectors);
+    printf("sxfs-cli: '%s' es una imagen SxFS valida (%u sectores, ownership %s).\n",
+        image_path, ctx.total_sectors,
+        (ctx.superblock.features & SXFS_FEATURE_OWNERSHIP) != 0 ? "recorded" : "not recorded");
     return 0;
 }
 
@@ -535,6 +605,12 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
         return 1;
     }
     if (validate_image_file(image_path, &ctx) != 0) {
+        fclose(image);
+        return 1;
+    }
+    rc = sxfs_stamp_ownership(&ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: could not stamp ownership: %s.\n", sxfs_strerror(rc));
         fclose(image);
         return 1;
     }
@@ -614,6 +690,45 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
                 status = exit_code_for(rc);
                 break;
             }
+        } else if (strcmp(op, "owner") == 0) {
+            char* fields[4] = {rest, NULL, NULL, NULL};
+            for (int field = 1; field < 4; ++field) {
+                char* next = strchr(fields[field - 1], '\t');
+                if (next == NULL) {
+                    break;
+                }
+                *next = '\0';
+                fields[field] = next + 1;
+            }
+            char* end = NULL;
+            unsigned long uid = 0;
+            unsigned long gid = 0;
+            unsigned long mode = 0;
+            int parsed = fields[3] != NULL && strchr(fields[3], '\t') == NULL;
+            if (parsed) {
+                errno = 0;
+                uid = strtoul(fields[1], &end, 10);
+                parsed = errno == 0 && *fields[1] != '\0' && *end == '\0' && uid <= UINT32_MAX;
+            }
+            if (parsed) {
+                gid = strtoul(fields[2], &end, 10);
+                parsed = errno == 0 && *fields[2] != '\0' && *end == '\0' && gid <= UINT32_MAX;
+            }
+            if (parsed) {
+                mode = strtoul(fields[3], &end, 8);
+                parsed = errno == 0 && *fields[3] != '\0' && *end == '\0' && mode <= 0177777u;
+            }
+            if (!parsed) {
+                fprintf(stderr, "sxfs-cli: line %lu: 'owner' takes <path> <uid> <gid> <octal mode>.\n", lineno);
+                status = 1;
+                break;
+            }
+            rc = sxfs_set_ownership(&ctx, fields[0], (uint32_t)uid, (uint32_t)gid, (uint16_t)mode);
+            if (rc != SXFS_OK) {
+                fprintf(stderr, "sxfs-cli: owner '%s' failed: %s.\n", fields[0], sxfs_strerror(rc));
+                status = exit_code_for(rc);
+                break;
+            }
         } else {
             fprintf(stderr, "sxfs-cli: operacion desconocida '%s' en linea %lu.\n", op, lineno);
             status = 1;
@@ -663,6 +778,12 @@ static int cmd_rm(const char* image_path, char** paths, int path_count, int forc
         fclose(image);
         return 1;
     }
+    rc = sxfs_stamp_ownership(&ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: could not stamp ownership: %s.\n", sxfs_strerror(rc));
+        fclose(image);
+        return 1;
+    }
 
     int status = 0;
     int removed = 0;
@@ -703,7 +824,7 @@ static void usage(void) {
         "Usage:\n"
         "  sxfs-cli check   <image>\n"
         "  sxfs-cli info    <image>\n"
-        "  sxfs-cli extract <image> <destination_directory>\n"
+        "  sxfs-cli extract <image> <destination_directory> [<ownership_manifest>]\n"
         "  sxfs-cli create  <image> <total_sectors>\n"
         "  sxfs-cli apply   <image> <manifest>\n"
         "  sxfs-cli rm [-f] <image> <path> [<path>...]\n");
@@ -729,11 +850,11 @@ int main(int argc, char** argv) {
         return cmd_info(argv[2]);
     }
     if (strcmp(argv[1], "extract") == 0) {
-        if (argc != 4) {
+        if (argc != 4 && argc != 5) {
             usage();
             return 2;
         }
-        return cmd_extract(argv[2], argv[3]);
+        return cmd_extract(argv[2], argv[3], argc == 5 ? argv[4] : NULL);
     }
     if (strcmp(argv[1], "create") == 0) {
         if (argc != 4) {

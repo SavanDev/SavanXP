@@ -8,6 +8,8 @@
  */
 #include "sxfs_core.h"
 
+#include "sxfs/sxfs_ownership.h"
+
 #include <string.h>
 
 /* API de mantenimiento host-only: usa el mismo limite de rutas que el
@@ -343,18 +345,31 @@ static int add_dir_entry(struct sxfs_ctx* ctx, uint32_t parent_id, uint32_t chil
     return write_inode_bytes(ctx, parent_id, (const uint8_t*)entries, count * SXFS_DIR_ENTRY_SIZE);
 }
 
-static void init_inode(struct sxfs_ctx* ctx, uint32_t inode_id, uint16_t type) {
+/* `path` (the first `path_len` bytes) is where the inode is created, relative
+ * to the root; it gets the default ownership of that path
+ * (sxfs/sxfs_ownership.h). */
+static void init_inode(struct sxfs_ctx* ctx, uint32_t inode_id, uint16_t type,
+                       const char* path, size_t path_len) {
     struct sxfs_inode* inode = inode_at(ctx, inode_id);
+    char relative[SXFS_MAX_RELATIVE_PATH + 1];
+    if (path_len > SXFS_MAX_RELATIVE_PATH) {
+        path_len = SXFS_MAX_RELATIVE_PATH;
+    }
+    memcpy(relative, path, path_len);
+    relative[path_len] = '\0';
     memset(inode, 0, sizeof(*inode));
     inode->inode_id = inode_id;
     inode->type = type;
     inode->link_count = 1;
+    sxfs_default_ownership(relative, type, &inode->uid, &inode->gid, &inode->mode);
 }
 
-/* Crea un unico componente `name` (len) dentro de parent_id, del tipo dado, y
- * devuelve su inode id. */
+/* Creates a single component `name` (len) inside parent_id, of the given type,
+ * and returns its inode id. `path` (`path_len` bytes) is the child's full
+ * relative path, for its default ownership. */
 static int create_child(struct sxfs_ctx* ctx, uint32_t parent_id, const char* name,
-                        size_t name_len, uint16_t type, uint32_t* out_inode) {
+                        size_t name_len, uint16_t type, uint32_t* out_inode,
+                        const char* path, size_t path_len) {
     if (name_len == 0 || name_len > SXFS_INODE_NAME_CAPACITY - 1) {
         return SXFS_ERR_TOO_LONG;
     }
@@ -362,7 +377,7 @@ static int create_child(struct sxfs_ctx* ctx, uint32_t parent_id, const char* na
     if (child == 0) {
         return SXFS_ERR_NO_INODES;
     }
-    init_inode(ctx, child, type);
+    init_inode(ctx, child, type, path, path_len);
     int rc = add_dir_entry(ctx, parent_id, child, type, name, name_len);
     if (rc != SXFS_OK) {
         return rc;
@@ -407,6 +422,7 @@ int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
     sb->data_lba = SXFS_DATA_LBA;
     sb->max_inodes = SXFS_MAX_INODES;
     sb->root_inode = SXFS_ROOT_INODE;
+    sb->features = SXFS_FEATURE_OWNERSHIP;
 
     /* La region de metadata (todo lo anterior a los datos) queda ocupada. */
     for (uint32_t sector = 0; sector < SXFS_DATA_LBA; ++sector) {
@@ -414,7 +430,7 @@ int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
     }
     /* Inodo raiz: id 1, directorio vacio. */
     sxfs_bitmap_set(ctx->inode_bitmap, SXFS_ROOT_INODE - 1, 1);
-    init_inode(ctx, SXFS_ROOT_INODE, SXFS_INODE_DIRECTORY);
+    init_inode(ctx, SXFS_ROOT_INODE, SXFS_INODE_DIRECTORY, "", 0);
     return SXFS_OK;
 }
 
@@ -539,7 +555,8 @@ int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
             parent = found;
         } else {
             uint32_t child = 0;
-            rc = create_child(ctx, parent, p, comp_len, SXFS_INODE_DIRECTORY, &child);
+            rc = create_child(ctx, parent, p, comp_len, SXFS_INODE_DIRECTORY, &child,
+                              relpath, (size_t)(slash - relpath));
             if (rc != SXFS_OK) {
                 return rc;
             }
@@ -718,7 +735,8 @@ int sxfs_write_file(struct sxfs_ctx* ctx, const char* relpath, const void* data,
             return SXFS_ERR_EXISTS;
         }
     } else if (rc == SXFS_ERR_NOT_FOUND) {
-        rc = create_child(ctx, parent, leaf, leaf_len, SXFS_INODE_FILE, &file_inode);
+        rc = create_child(ctx, parent, leaf, leaf_len, SXFS_INODE_FILE, &file_inode,
+                          relpath, strlen(relpath));
         if (rc != SXFS_OK) {
             return rc;
         }
@@ -990,5 +1008,66 @@ int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
             return SXFS_ERR_INVALID;
         }
     }
+    return SXFS_OK;
+}
+
+/* --- Ownership (SXFS_FEATURE_OWNERSHIP) ----------------------------------- */
+
+static int stamp_callback(void* cookie, const char* relpath, uint32_t inode_id, uint16_t type) {
+    struct sxfs_ctx* ctx = (struct sxfs_ctx*)cookie;
+    struct sxfs_inode* inode = inode_at(ctx, inode_id);
+    (void)type;
+    if (inode != NULL && inode->mode == 0) {
+        sxfs_default_ownership(relpath, inode->type, &inode->uid, &inode->gid, &inode->mode);
+    }
+    return SXFS_OK;
+}
+
+int sxfs_stamp_ownership(struct sxfs_ctx* ctx) {
+    struct sxfs_inode* root = inode_at(ctx, SXFS_ROOT_INODE);
+    if (root == NULL) {
+        return SXFS_ERR_INVALID;
+    }
+    if (root->mode == 0) {
+        sxfs_default_ownership("", root->type, &root->uid, &root->gid, &root->mode);
+    }
+    const int rc = sxfs_walk(ctx, stamp_callback, ctx);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    ctx->superblock.features |= SXFS_FEATURE_OWNERSHIP;
+    return SXFS_OK;
+}
+
+int sxfs_set_ownership(struct sxfs_ctx* ctx, const char* relpath,
+                       uint32_t uid, uint32_t gid, uint16_t mode) {
+    uint32_t inode_id = 0;
+    uint16_t type = 0;
+    if (!sxfs_path_valid(relpath)) {
+        return SXFS_ERR_INVALID;
+    }
+    const int rc = resolve_path(ctx, relpath, &inode_id, &type);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    struct sxfs_inode* inode = inode_at(ctx, inode_id);
+    if (inode == NULL || !sxfs_mode_matches_type(mode, inode->type)) {
+        return SXFS_ERR_INVALID;
+    }
+    inode->uid = uid;
+    inode->gid = gid;
+    inode->mode = mode;
+    return SXFS_OK;
+}
+
+int sxfs_get_ownership(const struct sxfs_ctx* ctx, uint32_t inode_id,
+                       uint32_t* uid, uint32_t* gid, uint16_t* mode) {
+    const struct sxfs_inode* inode = inode_at_const(ctx, inode_id);
+    if (inode == NULL) {
+        return SXFS_ERR_INVALID;
+    }
+    *uid = inode->uid;
+    *gid = inode->gid;
+    *mode = inode->mode;
     return SXFS_OK;
 }

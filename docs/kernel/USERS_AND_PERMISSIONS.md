@@ -1,9 +1,11 @@
 # Users and permissions: one user, and elevation when it is needed
 
-> **Status: design, nothing implemented.** This document fixes the model before
-> any code is written, because it moves three things that are expensive to move
-> twice: the SxFS inode, the `stat` ABI, and who is allowed to talk to
-> `/dev/input0`. The phases at the end are the order to build it in.
+> **Status: phase 1 (the format) is built; phases 2–4 are design.** SxFS records
+> an owner, a group and a mode on every inode, and nothing enforces them yet.
+> This document fixed the model before the code, because it moves three things
+> that are expensive to move twice: the SxFS inode, the `stat` ABI, and who is
+> allowed to talk to `/dev/input0`. The phases at the end are the order to build
+> it in.
 
 ## What the user sees
 
@@ -36,9 +38,9 @@ process runs with the same authority.
 - **Processes** carry no identity. Init and idle cannot be killed; a mutating
   `ioctl` needs a descriptor opened for writing. That prevents accidents, not
   one application acting on another.
-- **SxFS** stores no owner and no permission bits. `struct sxfs_inode` has a type,
-  a size, a link count and extents. `struct savanxp_stat` carries `st_mode`
-  (the file type only) and `st_size`.
+- **SxFS** records uid, gid and mode on every inode (phase 1, below), and
+  nothing reads them except `fscheck`. `struct savanxp_stat` still carries only
+  `st_mode` (the file type) and `st_size`.
 - **The POSIX layer** answers 0 to `getuid`/`geteuid`/`getgid`/`getegid`, keeps
   `umask` without applying it, and `getpwuid` returns a made-up `root`.
 - **The in-memory tree** (`/dev`, and the initramfs under `/rescue`; the
@@ -95,30 +97,45 @@ grants, and the existing check enforces it from there.
 
 ### What each inode stores
 
-Owner uid (32 bits), group gid (32 bits) and mode (16 bits: type plus `rwx` for
-owner, group and others). Modification time is worth adding at the same time,
-because `stat` needs it and it is the same format change.
+| field | where | what |
+| --- | --- | --- |
+| `mode` | `sxfs_inode`, offset 6 (was `reserved0`) | 16 bits, POSIX-style: the type bits (`040000` directory, `0100000` file) plus `07777` |
+| `uid`, `gid` | `sxfs_inode`, offsets 84 and 88 (from `reserved[44]`) | 32 bits each |
+| `features` | `sxfs_superblock`, offset 72 (from `reserved[440]`) | `SXFS_FEATURE_OWNERSHIP` (bit 0) |
 
-**This fits in SxFS v2.** `struct sxfs_inode` has 46 bytes unused: `reserved0`
-(16 bits, right after `type`) and `reserved[44]`. Neither the kernel driver nor
-`libsxfs` validates them, and both modify an inode in place, zeroing it only when
-the inode is allocated or freed. So:
+36 bytes of the inode stay reserved. Modification time is not in it yet: keeping
+it current dirties the inode on every write, and that cost belongs with `stat`
+in phase 2, measured against `bytes_per_commit`
+([`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md)).
 
-- A superblock feature flag (`SXFS_FEATURE_OWNERSHIP`, in `flags` or in the
-  reserved tail) says the fields are meaningful.
-- **A volume without the flag is read as before**, with every inode getting the
-  default ownership of its path (below). Nothing on it is lost. That is the
-  requirement for `build/disk.img`: Doom installed today has to still be there
-  and still run.
-- The first writable mount of such a volume by a kernel that knows the flag
-  stamps the defaults into every inode and sets the flag, in one journalled
-  commit. `fscheck` learns to check the fields only when the flag is set.
-- An older kernel mounting a stamped volume ignores the fields. New inodes it
-  creates are zeroed, and mode 0 means "no ownership recorded": the newer kernel
-  applies the default again. A downgrade loses permissions on new files only.
+**It fits in SxFS v2, with no version bump.** Neither the kernel driver nor
+`libsxfs` validated the reserved bytes, and both modify an inode in place,
+zeroing it only when it is allocated or freed. So:
 
-No format version bump. [`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md) keeps all
-planned work inside v2, and this keeps that true.
+- **The feature bit is apart from `flags`.** A mount rewrites `flags` whole on
+  every commit (clean or dirty), which would clear a feature kept there.
+- **Mode 0 means "no ownership recorded"**, and is never a recorded mode: the
+  type bits are always set. A recorded mode whose type bits disagree with the
+  inode's type is a defect.
+- **A volume without the feature is read as before.** The first writable mount
+  by a kernel that knows it gives every reachable inode the default of its path
+  (`stamp_ownership` in `kernel/sxfs.cpp`) and sets the feature, in one
+  journalled commit. A read-only mount applies the defaults in memory only.
+  `sxfs-cli apply` and `rm` do the same on the host (`sxfs_stamp_ownership`),
+  so `./build.sh build` stamps `build/disk.img` before QEMU ever sees it.
+- **A stamped volume with zeroed inodes** — new files an older kernel created,
+  which leaves the fields at zero — gets their defaults on the next mount. A
+  downgrade loses ownership on new files only.
+- **New inodes get the default of their path** (`prepare_new_inode`,
+  `init_inode` in `libsxfs`), since there are no tokens yet to say who created
+  them.
+- **`fscheck` and `sxfs-cli check`** count reachable inodes with mode 0 or a
+  mode that disagrees with their type, only when the feature is set
+  (`ownership_recorded`, `unowned_inodes` in `savanxp_fscheck_report`, which
+  took two reserved fields: the struct's size did not change).
+
+The table lives in `include/sxfs/sxfs_ownership.h`, freestanding, so the kernel
+and the host tools apply the same one.
 
 ### Default ownership
 
@@ -160,11 +177,14 @@ pointed, often the root itself, and in phase 4 that starts failing for an
 unelevated process. Moving their default save location into the profile is part
 of that phase, not an afterthought.
 
-`tools/sxfs_sync.py` and `libsxfs` install files from the host. They write the
-default for the destination path, so an image built on the host is already
-stamped. `sxfs_sync.py` also compacts an image by rebuilding it; that copy has to
-carry the three fields across, or a compaction silently resets every file a user
-or an elevated installer created to its default.
+`tools/sxfs_sync.py` and `libsxfs` install files from the host, with the
+default of the destination path. `sxfs_sync.py` also compacts an image by
+rebuilding it from extracted host files, which carry no owner or mode: `sxfs-cli
+extract` writes an `owner <path> <uid> <gid> <octal mode>` line per path to a
+side file, and the rebuild applies them (`carried_ownership`), except for what
+the build itself reinstalls or retires. Without that, a compaction would
+silently reset every file a user or an elevated installer created to its
+default. `apply` accepts `owner` lines in any manifest.
 
 ### The in-memory tree
 
@@ -269,13 +289,17 @@ installed binary instead of being fixed by a rebuild.
 
 ## Phases
 
-1. **The format.** Ownership fields and the feature flag in SxFS, the default
-   table, stamping on first mount, `fscheck` support, `sxfs_sync.py` and
-   `libsxfs` writing the defaults, and the compaction in `sxfs_sync.py`
-   carrying them. *Done when* an existing `build/disk.img` mounts, is stamped,
-   and `verify_doom_persistence.sh` passes.
+1. **The format — done.** Ownership fields and the feature bit in SxFS, the
+   default table, stamping on first mount and on the host, `fscheck` support,
+   `libsxfs` writing the defaults, and the compaction carrying them. Verified:
+   an existing `build/disk.img` stamped by the build, a copy of the same
+   pre-ownership image stamped by the kernel on boot, the host regression
+   (`sxfs_compaction_test.py`: stamping, the default table, a non-default owner
+   surviving compaction, a mode refused for the wrong type), and
+   `verify_doom_persistence.sh`.
 2. **Tokens and the check.** The token in the process, inheritance,
-   `vfs::check_access`, device owners, the POSIX calls above. **Everything
+   `vfs::check_access`, device owners, the POSIX calls above, and the
+   modification time in the inode that `stat` needs. **Everything
    still runs as system**, so behaviour does not change. *Done when* the smokes
    pass, and a test process spawned as uid 1000 is refused a write to `/bin`
    and allowed one in its profile.

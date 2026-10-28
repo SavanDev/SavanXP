@@ -227,6 +227,10 @@ allocator. The second is more work and buys a ceiling nothing needs yet.
   purpose: rejecting them at mount would mean refusing to mount a volume that is
   mostly fine and still readable, and the repair path in item 2 is where that
   decision belongs.
+- **Ownership did not need a v3.** uid, gid and mode took bytes the inode had
+  reserved, and a feature bit in the superblock's reserved tail says they are
+  recorded; a volume without it is stamped on its first writable mount. See
+  [`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#what-each-inode-stores).
 - **`sxfs_walk` refuses to follow aliases.** SxFS has no hard links —
   `create_file` writes `link_count = 1` and nothing raises it — so a second path
   to one inode is a defect. The host validator fails the image on it; `fscheck`

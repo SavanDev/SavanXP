@@ -91,6 +91,12 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     image = root / "grown.img"
     run([str(cli), "create", str(image), "8192"], root)
     run([str(cli), "apply", str(image), str(manifest)], root)
+    # Ownership that is not grown_b.bin's default: compaction rebuilds the
+    # image from host files, which carry none, so this survives only if the
+    # rebuild carries it (sxfs_sync.carried_ownership).
+    owner_manifest = root / "grow.owner"
+    owner_manifest.write_text("owner\tgrown_b.bin\t1000\t100\t100600\n", encoding="utf-8")
+    run([str(cli), "apply", str(image), str(owner_manifest)], root)
     # Fragment it so the next sync is forced through compaction.
     run(
         [
@@ -150,6 +156,92 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
             raise RuntimeError(f"preserved file differs after growing compaction: {name}")
     if digest(source / "added.bin") != digest(extracted / "added.bin"):
         raise RuntimeError("new build file differs after growing compaction")
+    owners = root / "grow-extracted.owners"
+    run([str(cli), "extract", str(image), str(root / "grow-owners-tree"), str(owners)], root)
+    if "owner\tgrown_b.bin\t1000\t100\t100600\n" not in owners.read_text(encoding="utf-8"):
+        raise RuntimeError("compaction lost the ownership a file carried")
+
+
+# Offsets into the v2 layout (include/sxfs/sxfs_format.h).
+SECTOR = 512
+SUPERBLOCK_LBAS = (0, 1)
+SUPERBLOCK_CHECKSUM = 12
+SUPERBLOCK_FEATURES = 72
+INODE_TABLE_LBA = 2 + (1 + 512 + 1 + 1024) + 512 + 1
+INODE_SIZE = 128
+INODE_COUNT = 4096
+INODE_MODE = 6
+INODE_UID = 84
+
+
+def strip_ownership(image: Path) -> None:
+    """Make an image look written before SXFS_FEATURE_OWNERSHIP: no feature
+    bit, and uid, gid and mode zero in every inode."""
+    data = bytearray(image.read_bytes())
+    table = INODE_TABLE_LBA * SECTOR
+    for index in range(INODE_COUNT):
+        inode = table + index * INODE_SIZE
+        struct.pack_into("<H", data, inode + INODE_MODE, 0)
+        struct.pack_into("<II", data, inode + INODE_UID, 0, 0)
+    for lba in SUPERBLOCK_LBAS:
+        block = lba * SECTOR
+        struct.pack_into("<I", data, block + SUPERBLOCK_FEATURES, 0)
+        struct.pack_into("<I", data, block + SUPERBLOCK_CHECKSUM, 0)
+        checksum = sxfs_checksum(bytes(data[block : block + SECTOR]))
+        struct.pack_into("<I", data, block + SUPERBLOCK_CHECKSUM, checksum)
+    image.write_bytes(data)
+
+
+def assert_old_image_is_stamped(cli: Path, root: Path) -> None:
+    """An image written before ownership existed is still valid, and the first
+    change to it records the default ownership of every path."""
+    seed = root / "stamp-seed"
+    seed.mkdir()
+    (seed / "tool").write_bytes(b"\x7fELF-not-really\n")
+    (seed / "notes.txt").write_bytes(b"notes\n")
+    manifest = root / "stamp.manifest"
+    manifest.write_text(
+        f"file\tbin/tool\t{seed / 'tool'}\nfile\tnotes.txt\t{seed / 'notes.txt'}\n"
+        f"file\tusers/someone/a.txt\t{seed / 'notes.txt'}\n",
+        encoding="utf-8",
+    )
+    image = root / "stamp.img"
+    run([str(cli), "create", str(image), "8192"], root)
+    run([str(cli), "apply", str(image), str(manifest)], root)
+    strip_ownership(image)
+
+    before = run([str(cli), "check", str(image)], root).stdout
+    if "ownership not recorded" not in before:
+        raise RuntimeError(f"a pre-ownership image did not check as such: {before!r}")
+
+    empty = root / "stamp-empty.manifest"
+    empty.write_text("", encoding="utf-8")
+    run([str(cli), "apply", str(image), str(empty)], root)
+    after = run([str(cli), "check", str(image)], root).stdout
+    if "ownership recorded" not in after:
+        raise RuntimeError(f"apply did not stamp a pre-ownership image: {after!r}")
+
+    owners = root / "stamp.owners"
+    run([str(cli), "extract", str(image), str(root / "stamp-tree"), str(owners)], root)
+    recorded = owners.read_text(encoding="utf-8")
+    for expected in (
+        "owner\tbin\t0\t0\t40755\n",
+        "owner\tbin/tool\t0\t0\t100755\n",
+        "owner\tnotes.txt\t0\t0\t100644\n",
+        "owner\tusers\t0\t0\t40755\n",
+        "owner\tusers/someone\t1000\t100\t40700\n",
+        "owner\tusers/someone/a.txt\t1000\t100\t100600\n",
+    ):
+        if expected not in recorded:
+            raise RuntimeError(f"stamped ownership is missing {expected!r}:\n{recorded}")
+
+    bad = root / "stamp-bad.manifest"
+    bad.write_text("owner\tnotes.txt\t0\t0\t40755\n", encoding="utf-8")
+    refused = subprocess.run(
+        [str(cli), "apply", str(image), str(bad)], cwd=root, text=True, capture_output=True, check=False
+    )
+    if refused.returncode == 0:
+        raise RuntimeError("apply accepted a directory mode on a file")
 
 
 def assert_grown_image_stays_sparse_on_ordinary_sync(cli: Path, sync: Path, root: Path) -> None:
@@ -362,6 +454,7 @@ def main() -> int:
             raise RuntimeError("successful compaction left a staging or recovery file")
 
         assert_grown_image_survives_compaction(cli, sync, root)
+        assert_old_image_is_stamped(cli, root)
         assert_grown_image_stays_sparse_on_ordinary_sync(cli, sync, root)
         assert_sync_retires_renamed_programs(cli, sync, root)
 

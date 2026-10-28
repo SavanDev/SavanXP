@@ -40,6 +40,16 @@
 #define SXFS_VERSION 2u
 #define SXFS_FLAG_CLEAN 1u
 
+/* Feature bits (sxfs_superblock.features). They live apart from `flags`
+ * because a mount rewrites `flags` whole on every commit (clean/dirty), and a
+ * feature has to survive that. Bits a reader does not know mean nothing to it:
+ * every one so far is readable by a v2 driver that ignores it.
+ *
+ * OWNERSHIP: every reachable inode's uid, gid and mode are meaningful
+ * (docs/kernel/USERS_AND_PERMISSIONS.md). Without it, they are zero and the
+ * reader applies sxfs_default_ownership() (sxfs/sxfs_ownership.h). */
+#define SXFS_FEATURE_OWNERSHIP 1u
+
 /* Tipos de inodo (campo sxfs_inode.type). */
 #define SXFS_INODE_UNUSED 0u
 #define SXFS_INODE_FILE 1u
@@ -128,12 +138,19 @@ struct sxfs_extent {
 struct sxfs_inode {
     uint32_t inode_id;
     uint16_t type;
-    uint16_t reserved0;
+    /* POSIX-style: the type bits (SXFS_MODE_DIRECTORY or SXFS_MODE_FILE) plus
+     * the permission bits. 0 means "no ownership recorded" -- a volume written
+     * before SXFS_FEATURE_OWNERSHIP, or an inode a driver that does not know it
+     * created -- and is never a valid recorded mode, because the type bits are
+     * always set. */
+    uint16_t mode;
     uint32_t size;
     uint32_t link_count;
     uint32_t extent_count;
     struct sxfs_extent extents[SXFS_MAX_EXTENTS];
-    uint8_t reserved[44];
+    uint32_t uid;
+    uint32_t gid;
+    uint8_t reserved[36];
 };
 
 struct sxfs_superblock {
@@ -154,7 +171,9 @@ struct sxfs_superblock {
     uint32_t data_lba;
     uint32_t max_inodes;
     uint32_t root_inode;
-    uint8_t reserved[440];
+    /* SXFS_FEATURE_* bits. */
+    uint32_t features;
+    uint8_t reserved[436];
 };
 
 struct sxfs_journal_header {

@@ -290,15 +290,20 @@ def compact_image(
     """Rebuild a same-size image with carryover and current build data."""
     staging = make_sibling(image, f"{image.name}.compact-", ".img")
     carry_root = Path(tempfile.mkdtemp(prefix="savanxp-sxfs-carry-", dir=str(image.parent)))
+    # Outside carry_root, or it would be carried into the image as a file.
+    ownership_path = carry_root.with_name(carry_root.name + ".owners")
     carry_manifest_path: Path | None = None
     success = False
     try:
-        if run([str(cli), "extract", str(image), str(carry_root)]) != 0:
+        if run([str(cli), "extract", str(image), str(carry_root), str(ownership_path)]) != 0:
             return 1
+        retired = set(retired_counterparts(produced))
         remove_produced_files(carry_root, produced)
-        remove_produced_files(carry_root, set(retired_counterparts(produced)))
+        remove_produced_files(carry_root, retired)
         carry_manifest, _ = manifest_for(carry_root)
-        combined_manifest = carry_manifest + source_manifest
+        combined_manifest = carry_manifest + source_manifest + carried_ownership(
+            ownership_path, produced | retired
+        )
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", prefix="savanxp-sxfs-carry-", suffix=".manifest", delete=False
         ) as handle:
@@ -323,12 +328,30 @@ def compact_image(
     finally:
         if carry_manifest_path is not None:
             carry_manifest_path.unlink(missing_ok=True)
+        ownership_path.unlink(missing_ok=True)
         if success:
             shutil.rmtree(carry_root, ignore_errors=True)
         else:
             staging.unlink(missing_ok=True)
             if carry_root.exists():
                 print(f"sxfs: carryover de recuperacion conservado en {carry_root}", file=sys.stderr)
+
+
+def carried_ownership(ownership_path: Path, rebuilt: set[str]) -> str:
+    """The `owner` lines extract wrote, minus the paths the build supplies.
+
+    A compaction rebuilds the image from extracted host files, which carry no
+    owner or mode; without these lines every file a user or an elevated
+    installer created would come back with its path's default
+    (docs/kernel/USERS_AND_PERMISSIONS.md). What the build reinstalls, or
+    retired, gets the build's ownership instead.
+    """
+    lines = []
+    for line in ownership_path.read_text(encoding="utf-8").splitlines():
+        fields = line.split("\t")
+        if len(fields) == 5 and fields[0] == "owner" and fields[1] not in rebuilt:
+            lines.append(line)
+    return "".join(f"{line}\n" for line in lines)
 
 
 def copy_candidate(image: Path) -> Path:

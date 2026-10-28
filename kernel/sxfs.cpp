@@ -6,6 +6,7 @@
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
 #include "sxfs/sxfs_format.h"
+#include "sxfs/sxfs_ownership.h"
 
 namespace {
 
@@ -1227,6 +1228,70 @@ bool record_is_ancestor(Volume& volume, uint32_t ancestor_inode, uint32_t inode_
     return ancestor_inode == kRootInodeId;
 }
 
+// `relative` is where the inode is being created. There are no tokens yet to
+// say who creates it (USERS_AND_PERMISSIONS.md, phase 2), so it gets the
+// default ownership of its path.
+bool prepare_new_inode(Inode& inode, uint32_t inode_id, uint16_t type, const char* relative) {
+    memset(&inode, 0, sizeof(inode));
+    inode.inode_id = inode_id;
+    inode.type = type;
+    inode.link_count = 1;
+    sxfs_default_ownership(relative, type, &inode.uid, &inode.gid, &inode.mode);
+    return true;
+}
+
+// Gives every reachable inode without recorded ownership (mode 0) the default
+// of its path. Returns how many it changed.
+uint32_t apply_default_ownership(Volume& volume) {
+    uint32_t changed = 0;
+    Inode* root = inode_for_id(volume, kRootInodeId);
+    if (root != nullptr && root->mode == 0) {
+        sxfs_default_ownership("", root->type, &root->uid, &root->gid, &root->mode);
+        ++changed;
+    }
+    for (sxfs::FileRecord& record : volume.records) {
+        Inode* inode = record.in_use ? inode_for_id(volume, record.inode_id) : nullptr;
+        if (inode != nullptr && inode->mode == 0) {
+            sxfs_default_ownership(record.path, inode->type, &inode->uid, &inode->gid, &inode->mode);
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+// SXFS_FEATURE_OWNERSHIP on mount (USERS_AND_PERMISSIONS.md, "What each inode
+// stores"). A volume without the feature, or with inodes a driver that ignores
+// it created, gets the defaults in one journalled commit, and the feature set.
+// On a read-only mount the defaults are applied in memory only.
+void stamp_ownership(Volume& volume) {
+    const bool recorded = (volume.superblock.features & SXFS_FEATURE_OWNERSHIP) != 0;
+    if (volume.status != sxfs::MountStatus::mounted) {
+        (void)apply_default_ownership(volume);
+        return;
+    }
+
+    MutationGuard guard(volume);
+    snapshot_metadata(volume);
+    const uint32_t changed = apply_default_ownership(volume);
+    if (recorded && changed == 0) {
+        volume.snapshot_valid = false;
+        return;
+    }
+    volume.superblock.features |= SXFS_FEATURE_OWNERSHIP;
+    if (changed == 0) {
+        // Only the superblock changes, and a commit writes nothing when no
+        // metadata sector did.
+        volume.snapshot_valid = false;
+        (void)write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable);
+        return;
+    }
+    if (!commit_metadata(volume)) {
+        // The snapshot holds the superblock too, so this drops the feature.
+        restore_metadata(volume);
+        (void)apply_default_ownership(volume);
+    }
+}
+
 bool load_filesystem_from_device(Volume& volume, size_t device_index) {
     Superblock primary = {};
     Superblock secondary = {};
@@ -1252,14 +1317,7 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
     }
     volume.status = recovery == RecoveryState::read_only ? sxfs::MountStatus::read_only : sxfs::MountStatus::mounted;
     volume.metadata_ready = true;
-    return true;
-}
-
-bool prepare_new_inode(Inode& inode, uint32_t inode_id, uint16_t type) {
-    memset(&inode, 0, sizeof(inode));
-    inode.inode_id = inode_id;
-    inode.type = type;
-    inode.link_count = 1;
+    stamp_ownership(volume);
     return true;
 }
 
@@ -1495,6 +1553,7 @@ bool check(VolumeId id, CheckReport& report) {
     report.data_lba = superblock.data_lba;
     report.sequence = superblock.sequence;
     report.clean_shutdown = (superblock.flags & kFlagClean) != 0 ? 1u : 0u;
+    report.ownership_recorded = (superblock.features & SXFS_FEATURE_OWNERSHIP) != 0 ? 1u : 0u;
     report.metadata_commits = volume->metadata_commits;
     report.metadata_bytes_written = volume->metadata_bytes_written;
 
@@ -1591,6 +1650,18 @@ bool check(VolumeId id, CheckReport& report) {
         if (bitmap_test(volume->inode_bitmap, inode_id - 1u) &&
             !bitmap_test(visited, inode_id - 1u)) {
             ++report.orphan_inodes;
+        }
+    }
+
+    // Ownership is checked only where it is recorded, and only on what the
+    // root reaches: an orphan is already a finding of its own.
+    if (report.ownership_recorded != 0) {
+        for (uint32_t inode_id = kRootInodeId; inode_id <= kMaxInodes; ++inode_id) {
+            const Inode& inode = volume->inodes[inode_id - 1];
+            if (bitmap_test(visited, inode_id - 1u) &&
+                (inode.mode == 0 || !sxfs_mode_matches_type(inode.mode, inode.type))) {
+                ++report.unowned_inodes;
+            }
         }
     }
 
@@ -1760,7 +1831,7 @@ FileRecord* create_file(const char* path) {
 
     const uint32_t inode_id = allocate_inode_id(*volume);
     Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeFile) ||
+    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeFile, relative) ||
         !add_directory_entry(*volume, *parent, inode_id, kInodeTypeFile, leaf) ||
         !commit_metadata(*volume)) {
         restore_metadata(*volume);
@@ -1808,7 +1879,7 @@ FileRecord* create_directory(const char* path) {
 
     const uint32_t inode_id = allocate_inode_id(*volume);
     Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeDirectory) ||
+    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeDirectory, relative) ||
         !add_directory_entry(*volume, *parent, inode_id, kInodeTypeDirectory, leaf) ||
         !commit_metadata(*volume)) {
         restore_metadata(*volume);

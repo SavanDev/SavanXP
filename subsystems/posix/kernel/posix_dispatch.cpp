@@ -400,6 +400,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             out.journal_pending = report.journal_pending;
             out.clean_shutdown = report.clean_shutdown;
             out.journal_valid = report.journal_valid;
+            out.ownership_recorded = report.ownership_recorded;
+            out.unowned_inodes = report.unowned_inodes;
             out.inodes_allocated = report.inodes_allocated;
             out.files = report.files;
             out.directories = report.directories;
