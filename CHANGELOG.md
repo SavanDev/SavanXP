@@ -27,6 +27,12 @@ Cut-off notes:
   or `.sxmeta`, and `build-user.sh --native` installs `NAME.sxe`. Installing a program retires its other
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
+### Fixed
+
+- **CMake uses the `python3` on `PATH`**, so a versioned interpreter earlier in `PATH` without Pillow
+  (uv, pyenv) no longer breaks a fresh configure or `tools/verify_doom_persistence.sh`. Override with
+  `-DPython3_EXECUTABLE`.
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

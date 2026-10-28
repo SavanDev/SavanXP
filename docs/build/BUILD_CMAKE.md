@@ -17,6 +17,11 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
+Python is the `python3` command on `PATH`, the same one you run, and it
+must have Pillow. A versioned interpreter earlier in `PATH` (a uv or pyenv
+`python3.X` without Pillow) is not picked over it. To use another
+interpreter, pass `-DPython3_EXECUTABLE=/path/to/python3` at configure.
+
 `build.sh` fetches the pinned Limine checkout when `tools/limine` is missing.
 The first configure must therefore go through `build.sh` unless Limine has
 already been populated.

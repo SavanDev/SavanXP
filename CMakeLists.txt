@@ -42,6 +42,16 @@ set(SAVANXP_ISO_IMAGE "${SAVANXP_OUTPUT_ROOT}/SavanXP.iso")
 set(SAVANXP_TOOLS_ROOT "${SAVANXP_OUTPUT_ROOT}/tools")
 set(SAVANXP_SXFS_CLI "${SAVANXP_TOOLS_ROOT}/sxfs-cli")
 
+# Prefer the `python3` command on PATH, the one a developer runs. FindPython3
+# alone walks PATH directory by directory looking for versioned names, so a
+# stray python3.X earlier in PATH (a uv or pyenv install without Pillow) wins
+# over the system python3. -DPython3_EXECUTABLE=... still overrides this.
+if(NOT DEFINED Python3_EXECUTABLE)
+    find_program(SAVANXP_PYTHON3 NAMES python3)
+    if(SAVANXP_PYTHON3)
+        set(Python3_EXECUTABLE "${SAVANXP_PYTHON3}")
+    endif()
+endif()
 find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
 find_program(SAVANXP_HOST_CC NAMES clang cc REQUIRED)
 find_program(SAVANXP_LD NAMES ld.lld REQUIRED)
@@ -59,7 +69,10 @@ execute_process(
     ERROR_QUIET
 )
 if(NOT SAVANXP_PIL_RESULT EQUAL 0)
-    message(FATAL_ERROR "Python Pillow is required to generate SavanXP assets.")
+    message(FATAL_ERROR
+        "Python Pillow is required to generate SavanXP assets, and "
+        "${Python3_EXECUTABLE} does not have it. Install Pillow there, or pick "
+        "another interpreter with -DPython3_EXECUTABLE=/path/to/python3.")
 endif()
 
 execute_process(
