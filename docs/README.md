@@ -78,6 +78,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   client protocol, and compositor model.
 - [`OWNED_WINDOWS.md`](desktop/OWNED_WINDOWS.md) — ownership rules for dialogs and
   other windows created by an application.
+- [`PLATFORM_GRAPHICS.md`](desktop/PLATFORM_GRAPHICS.md) — SXGFX, SXCHROME and
+  SXGUI-C as platform code: the no-system-call rule, what stays in each
+  subsystem (the window client, the application frame), and the toolkit's host.
 - [`SXGFX_ROADMAP.md`](desktop/SXGFX_ROADMAP.md) — hardening of the 2D rasterization
   layer and its planned role in the desktop stack.
 - [`SXGL_ROADMAP.md`](desktop/SXGL_ROADMAP.md) — the shape and boundaries of a future

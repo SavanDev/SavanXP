@@ -13,7 +13,7 @@ solid Win9x/2000-era system rather than a modern toolkit in a grey costume.
 
 The body tables keep their historical `SX_NOTO_*` / `kNoto*` names: the body
 face used to be Noto Sans, and renaming the symbols would touch every consumer
-(`gfx_impl.inc`, `tools/glyphs.py`, the host tests) for no change in behaviour.
+(`system/gfx/pixels.c`, `tools/glyphs.py`, the host tests) for no change in behaviour.
 
 The 13px strike is MS Sans Serif 8pt at 96 DPI, the face Windows 95, 98 and
 2000 used for menus, dialogs and controls: ascent 11, descent 2, line height 13.

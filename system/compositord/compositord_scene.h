@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #include "compositor_protocol.h"
-#include "savanxp/gfx2d.h"
+#include "sxgfx/gfx2d.h"
 
 /*
  * compositord's scene (docs/desktop/DESKTOP_ARCHITECTURE.md#the-scene): the

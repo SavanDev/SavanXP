@@ -48,15 +48,18 @@ the name of the layer, not a rename of its symbols.
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
-| Shared rendering | SXGFX, SXCHROME, SXGUI-C | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |
+| Shared rendering | SXGFX, SXCHROME, SXGUI-C (`system/gfx`, `include/sxgfx`) | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |
 
 The rendering libraries are not SUN: they belong to the platform and both
 subsystems link them. SXGFX and SXCHROME make no system call at all, so they
 work unchanged in a native program; the Command Prompt draws its text with the
-painter's console face and its scroll bar with SXCHROME. SXGUI-C makes three
-(clipboard read and write, and the uptime for double clicks) through POSIX, so
-a SUN program cannot use the toolkit yet: the first one that needs it brings a
-SUN implementation of those three, by rule 1.
+painter's console face and its scroll bar with SXCHROME. SXGUI-C needs three
+services from the system (clipboard read and write, and the uptime for double
+clicks), and takes them from a `struct sxgui_host`
+([PLATFORM_GRAPHICS.md](../desktop/PLATFORM_GRAPHICS.md#the-toolkits-host)). A
+POSIX program gets the POSIX host without asking. A SUN program has none yet:
+the first one that uses the toolkit brings a SUN host, and the application
+frame it needs over `sxnwm`, by rule 1.
 
 ### Resources compiled in
 

@@ -32,13 +32,13 @@ extern "C" {
 
 /* El decodificador real, el mismo .inc que compilan el SDK posix y el runtime
  * nativo. No hay copia en el test: si se rompe aca, se rompio en los dos. */
-#include "../../subsystems/posix/sdk/v1/runtime/gfx_utf8.inc"
+#include "../../system/gfx/gfx_utf8.inc"
 
 /* Y las tablas de glifos horneadas, para poder afirmar QUE codepoints existen
  * de verdad. Es data + una busqueda inline; no arrastra syscalls. El painter que
  * se prueba mas abajo usa stubs, asi que no hay colision. */
-#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc"
-#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_title.inc"
+#include "../../system/gfx/gfx_font_noto.inc"
+#include "../../system/gfx/gfx_font_title.inc"
 
 namespace {
 

@@ -1,4 +1,4 @@
-#include "savanxp/sxchrome.h"
+#include "sxgfx/sxchrome.h"
 
 /* Las lineas de 1px las pone el painter (sx_painter_hline/vline): el chrome ya
  * no las arma con rects de altura 1. */

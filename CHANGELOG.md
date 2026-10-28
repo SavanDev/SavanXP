@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Changed
 
+- **SXGFX, SXCHROME and SXGUI-C left the POSIX SDK for the platform layer** (`system/gfx`,
+  `include/sxgfx`), with the pixel primitives and fonts split out of the POSIX window client. The
+  toolkit takes clipboard and clock from a `struct sxgui_host` (`sxgui_set_host`); POSIX programs
+  get theirs automatically. `savanxp/gfx2d.h`, `sxchrome.h` and `sxgui.h` keep working for POSIX
+  code. Out-of-tree builds compile `system/gfx/*.c`. See `docs/desktop/PLATFORM_GRAPHICS.md`.
+
 - **The VFS reaches filesystems only through `fs::Driver`**, which now carries the file, path and
   volume operations; `sxfs` is one registered driver and `vfs.cpp` no longer names it. No mount point
   can be removed or renamed, not just `/disk`; `sync` flushes every mounted volume. ATA's polling

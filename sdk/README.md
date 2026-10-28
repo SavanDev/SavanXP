@@ -46,7 +46,8 @@ Applications normally include:
 ```
 
 They can also use `savanxp/gfx2d.h` and its 32-bit bitmap, painter, and
-rectangle primitives.
+rectangle primitives. That header is the platform painter (`sxgfx/gfx2d.h`,
+in `system/gfx`) plus the POSIX-only scaled presenter.
 
 ## Build options
 

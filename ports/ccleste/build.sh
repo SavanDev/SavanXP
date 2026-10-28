@@ -160,8 +160,13 @@ if ((SKIP_PORT == 0)); then
     compile_asm "$SDK/runtime/crt0.S" "$OBJ/crt0.o"
     compile_asm "$SDK/runtime/setjmp.S" "$OBJ/setjmp.o"
     # sxe: the window runtime publishes its title and icon from its own .sxe.
-    for unit in libc posix pthread gfx sxe gfx2d audio math; do
+    for unit in libc posix pthread gfx gfx_scaled sxe audio math; do
         compile_c "$SDK/runtime/$unit.c" "$OBJ/$unit.o" \
+            -fno-builtin "${INCLUDE_FLAGS[@]}"
+    done
+    # The platform's pixel primitives and painter (system/gfx).
+    for unit in pixels gfx2d; do
+        compile_c "$REPO/system/gfx/$unit.c" "$OBJ/$unit.o" \
             -fno-builtin "${INCLUDE_FLAGS[@]}"
     done
 
@@ -171,7 +176,7 @@ if ((SKIP_PORT == 0)); then
 
     echo "== linkeando ccleste"
     LINK_ARGS=(
-        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/pthread.o" "$OBJ/gfx.o" "$OBJ/sxe.o" "$OBJ/gfx2d.o"
+        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/pthread.o" "$OBJ/gfx.o" "$OBJ/pixels.o" "$OBJ/gfx_scaled.o" "$OBJ/sxe.o" "$OBJ/gfx2d.o"
         "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
     )

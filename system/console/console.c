@@ -17,8 +17,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "savanxp/gfx2d.h"
-#include "savanxp/sxchrome.h"
+#include "sxgfx/gfx2d.h"
+#include "sxgfx/sxchrome.h"
 #include "savanxp/syscall.h"
 #include "savanxp/wm_protocol.h"
 #include "sxn/sxn.h"

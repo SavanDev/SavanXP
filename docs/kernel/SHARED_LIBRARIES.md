@@ -569,9 +569,9 @@ strictly downward:
 
 | library | holds | needs from below |
 | --- | --- | --- |
-| `libsxgfx.so.0.4` | `gfx_impl.inc` and three font tables | libc, syscalls |
-| `libgfx2d.so.0.4` | `gfx2d.c`, `sxchrome.c` | `libsxgfx`, libc |
-| `libsxgui.so.0.4` | `sxgui.c`, `sxgui_app.c` | `libgfx2d`, `libsxgfx`, libc |
+| `libsxgfx.so.0.4` | `gfx.c` (the POSIX window client, `gfx_impl.inc`), `system/gfx/pixels.c` (primitives and three font tables) | libc, syscalls |
+| `libgfx2d.so.0.4` | `system/gfx/gfx2d.c`, `system/gfx/sxchrome.c`, `gfx_scaled.c` | `libsxgfx`, libc |
+| `libsxgui.so.0.4` | `system/gfx/sxgui.c`, `sxgui_app.c` (the POSIX frame and host) | `libgfx2d`, `libsxgfx`, libc |
 | `libmath.so.0.4` | `math.c` | nothing at all |
 | `libsxmidi.so.0.4` | `sxmidi.c` | nothing; libc symbols resolve against the program |
 

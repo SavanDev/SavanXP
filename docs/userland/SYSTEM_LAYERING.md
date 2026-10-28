@@ -143,18 +143,24 @@ The platform, always:
   ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md), phase 3).
 - **`windowd`** — the window manager (extracted from `desktop.c`; see
   [WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md)).
-- **SXGFX** — the SDK's 2D rasterization layer
-  (`subsystems/posix/sdk/v1/.../gfx2d.*`): surfaces, painter, blit, clipping,
+- **SXGFX** — the platform's 2D rasterization layer
+  (`system/gfx/gfx2d.c`, `include/sxgfx/gfx2d.h`, over the pixel primitives and
+  fonts in `system/gfx/pixels.c`): surfaces, painter, blit, clipping,
   damage. The analogue of GDI; the gaps against GDI32 and the order for closing
   them are in [SXGFX_ROADMAP.md](../desktop/SXGFX_ROADMAP.md).
 - **SXCHROME** — the system's 3D edges and the disabled relief
-  (`subsystems/posix/sdk/v1/.../sxchrome.*`), between SXGFX and SXGUI-C. Not
+  (`system/gfx/sxchrome.c`, `include/sxgfx/sxchrome.h`), between SXGFX and SXGUI-C. Not
   part of the toolkit because the toolkit is not the only thing that paints
   chrome: `windowd` and any app drawing its own content need the same bevels,
   and `windowd` deliberately does not link SXGUI-C. It ships in the base
   runtime of every userland binary, so nothing has to opt in.
 - **SXGUI-C** — the Win9x widget toolkit on top of SXGFX and SXCHROME
-  (`subsystems/posix/sdk/v1/.../sxgui.*`). The analogue of USER/comctl32.
+  (`system/gfx/sxgui.c`, `include/sxgfx/sxgui.h`). The analogue of USER/comctl32.
+
+These three are neither POSIX nor SUN: they make no system call, and both
+subsystems link them. What talks to the window system is each subsystem's
+own: the POSIX window client and application frame stay in the POSIX SDK. See
+[PLATFORM_GRAPHICS.md](../desktop/PLATFORM_GRAPHICS.md).
 
 And the apps, all of them, against the POSIX SDK:
 

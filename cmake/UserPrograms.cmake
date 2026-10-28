@@ -66,7 +66,7 @@ function(savanxp_program)
         foreach(lib IN LISTS P_DEPENDS)
             if(SAVANXP_LIBRARY_REPLACES_${lib})
                 foreach(unit IN LISTS SAVANXP_LIBRARY_REPLACES_${lib})
-                    list(APPEND dropped_units "subsystems/posix/sdk/v1/runtime/${unit}")
+                    list(APPEND dropped_units "${unit}")
                 endforeach()
             endif()
         endforeach()
@@ -285,22 +285,23 @@ savanxp_library(NAME libsximg SONAME libsximg.so.0.4
 # Pide del ejecutable solo syscalls y libc, asi que resuelve contra el binario
 # como las otras dos.
 savanxp_library(NAME libsxgfx SONAME libsxgfx.so.0.4
-    SOURCES subsystems/posix/sdk/v1/runtime/gfx.c)
+    SOURCES subsystems/posix/sdk/v1/runtime/gfx.c system/gfx/pixels.c)
 
 # El pintor de 2D y el cromado, encima de SxGFX. gfx2d.c necesita los glifos de
 # libsxgfx y sxchrome.c necesita el pintor; no hay ninguna otra dependencia, asi
 # que la cadena queda lineal hacia abajo.
 savanxp_library(NAME libgfx2d SONAME libgfx2d.so.0.4 DEPENDS libsxgfx
     SOURCES
-        subsystems/posix/sdk/v1/runtime/gfx2d.c
-        subsystems/posix/sdk/v1/runtime/sxchrome.c)
+        system/gfx/gfx2d.c
+        system/gfx/sxchrome.c
+        subsystems/posix/sdk/v1/runtime/gfx_scaled.c)
 
 # SxGUI encima de los dos. Antes pedia gfx_* y sx_* al EJECUTABLE, lo que obligaba
 # a que cada programa fuera PIE solo para poder exportar. Con las dos librerias de
 # abajo ya no le pide NADA a la aplicacion: ni un simbolo.
 savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libgfx2d libsxgfx
     SOURCES
-        subsystems/posix/sdk/v1/runtime/sxgui.c
+        system/gfx/sxgui.c
         subsystems/posix/sdk/v1/runtime/sxgui_app.c)
 savanxp_library(NAME libbroken TEST ALLOW_UNDEFINED SONAME libbroken.so.0.4
     SOURCES subsystems/posix/userland/brokenlib.c)

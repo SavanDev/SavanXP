@@ -2,6 +2,20 @@
 
 #include <string.h>
 
+/* The toolkit's host for every POSIX program, whether it runs sxgui_app or
+ * drives the widgets itself (seltest): this strong definition replaces the
+ * weak one in system/gfx/sxgui.c. */
+static const struct sxgui_host k_posix_host = {
+    uptime_ms,
+    clipboard_get_text,
+    clipboard_set_text,
+};
+
+const struct sxgui_host *sxgui_default_host(void)
+{
+    return &k_posix_host;
+}
+
 static void sxgui_app_report(const char *name, const char *what)
 {
     puts_fd(2, name != 0 ? name : "sxgui");

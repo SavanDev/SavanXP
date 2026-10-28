@@ -18,8 +18,11 @@ Incluye:
 - `runtime/posix.c`
 - `linker.ld`
 - `REFERENCE.md`
-- `include/savanxp/gfx2d.h`
-- `runtime/gfx2d.c`
+- `include/savanxp/gfx2d.h`, `include/savanxp/sxchrome.h`, `include/savanxp/sxgui.h`:
+  the platform graphics headers (`include/sxgfx/`) plus what is POSIX-only
+- `runtime/gfx.c`, `runtime/gfx_scaled.c`, `runtime/sxgui_app.c`: the POSIX
+  window client, scaled presenter and application frame; the painter, chrome,
+  toolkit and fonts they use are in `system/gfx/`
 - `include/savanxp/audio.h`
 - `runtime/audio.c` (optional with `tools/build-user.sh --audio`)
 

@@ -210,12 +210,14 @@ fi
 compile_c "$SDK/runtime/posix.c" "$OBJ_ROOT/posix.o" "${POSIX_EXTRA[@]}"
 compile_c "$SDK/runtime/pthread.c" "$OBJ_ROOT/pthread.o"
 compile_c "$SDK/runtime/gfx.c" "$OBJ_ROOT/gfx.o"
+compile_c "$ROOT/system/gfx/pixels.c" "$OBJ_ROOT/pixels.o"
 # gfx.c publishes the window's presentation from its own .sxe.
 compile_c "$SDK/runtime/sxe.c" "$OBJ_ROOT/sxe.o"
-compile_c "$SDK/runtime/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
+compile_c "$ROOT/system/gfx/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
+compile_c "$SDK/runtime/gfx_scaled.c" "$OBJ_ROOT/gfx_scaled.o"
 compile_asm "$SDK/runtime/setjmp.S" "$OBJ_ROOT/setjmp.o"
 compile_asm "$SDK/runtime/crt0.S" "$OBJ_ROOT/crt0.o"
-RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/pthread.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
+RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/pthread.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/pixels.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/gfx_scaled.o" "$OBJ_ROOT/setjmp.o")
 if ((NATIVE)); then
     # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
     # on SXN, replacing the runtime's weak POSIX one.
@@ -231,8 +233,8 @@ if ((AUDIO)); then
     RUNTIME_OBJECTS+=("$OBJ_ROOT/audio.o")
 fi
 if ((GUI)); then
-    compile_c "$SDK/runtime/sxchrome.c" "$OBJ_ROOT/sxchrome.o"
-    compile_c "$SDK/runtime/sxgui.c" "$OBJ_ROOT/sxgui.o"
+    compile_c "$ROOT/system/gfx/sxchrome.c" "$OBJ_ROOT/sxchrome.o"
+    compile_c "$ROOT/system/gfx/sxgui.c" "$OBJ_ROOT/sxgui.o"
     compile_c "$SDK/runtime/sxgui_app.c" "$OBJ_ROOT/sxgui_app.o"
     RUNTIME_OBJECTS+=("$OBJ_ROOT/sxchrome.o" "$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
 fi

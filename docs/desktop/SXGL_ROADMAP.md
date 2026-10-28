@@ -32,7 +32,7 @@ is the point. These are reasons about the model.
 ### 1. SxGFX has no state, and OpenGL *is* state
 
 `sx_painter` carries a bitmap, a clip stack of 16, an origin stack and a font id
-([gfx2d.h:110](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:110)). Colour
+([gfx2d.h:110](../../include/sxgfx/gfx2d.h:112)). Colour
 travels as a loose `uint32_t` per call. That is immediate mode on purpose: its
 consumer is SXGUI-C, and what a widget needs is `fill_rect`.
 
@@ -44,7 +44,7 @@ the painter does not extend SxGFX; it replaces the thing SxGFX is.
 
 No depth buffer. No textures with filtering, wrap or perspective correction. No
 matrix stack. And the blend is nailed to `SRC_OVER`
-([gfx2d.c:3](../../subsystems/posix/sdk/v1/runtime/gfx2d.c:3)) — the raster ops
+([gfx2d.c:3](../../system/gfx/gfx2d.c:3)) — the raster ops
 that landed in batch 3 (`SX_ROP_XOR` and company) are GDI's ROPs, which is a
 different thing from `glBlendFunc`.
 
@@ -95,7 +95,7 @@ So the whole binding is three facts:
 
 - **The GL colour buffer is that private buffer.** No allocation of its own, no
   copy, and `sx_bitmap_wrap`
-  ([gfx2d.h:191](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:191)) already
+  ([gfx2d.h:191](../../include/sxgfx/gfx2d.h:174)) already
   describes it as an `sx_bitmap` — which means SXGUI-C chrome and GL content can
   share one buffer with a painter clipped to the client area. That is the
   `glViewport`-inside-a-window case for free, and the reason not to invent a

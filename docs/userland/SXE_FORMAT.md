@@ -256,7 +256,7 @@ struct sxe_icon_entry {
 
 The **value 2 is not arbitrary**: it deliberately matches
 `SX_PIXEL_FORMAT_BGRA8888` from
-[gfx2d.h:18](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), so the
+[gfx2d.h:18](../../include/sxgfx/gfx2d.h:19), so the
 pixels of a `.sxicon` can be handed to a `struct sx_bitmap` without translating
 anything. `sxe.c` has a `_Static_assert` that breaks the build if someone
 renumbers the gfx2d formats — the alternative failure mode would be swapped

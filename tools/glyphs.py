@@ -191,8 +191,8 @@ def load(library: str | Path) -> dict[str, Font]:
             raise FontError(f"no {name} in {path}")
         return int(match.group(1))
 
-    body_inc = "subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc"
-    title_inc = "subsystems/posix/sdk/v1/runtime/gfx_font_title.inc"
+    body_inc = "system/gfx/gfx_font_noto.inc"
+    title_inc = "system/gfx/gfx_font_title.inc"
     return {
         "body": _load_font(
             obj, symbols, "body",

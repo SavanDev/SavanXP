@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "savanxp/syscall.h"
+#include "sxgfx/pixels.h"
 #include "savanxp/wm_protocol.h"
 #include "savanxp/gfx2d.h"
 #include "savanxp/audio.h"
@@ -276,36 +277,7 @@ long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gf
 /* Puntero de la ventana de `context`, sea la principal o una con dueno. Comparte
  * el pipe y el reparto con gfx_poll_event/gfx_poll_pointer. */
 int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_event* event);
-uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
-uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
-size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);
-size_t gfx_buffer_bytes(const struct savanxp_fb_info* info);
-void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour);
-void gfx_pixel(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, uint32_t colour);
-void gfx_hline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, uint32_t colour);
-void gfx_vline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int height, uint32_t colour);
-void gfx_rect(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, int height, uint32_t colour);
-void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, int height, uint32_t colour);
-int gfx_text_width(const char* text);
-int gfx_text_height(void);
-void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
-/* Same as gfx_blit_text, but blended pixels are restricted to [clip_x0, clip_x1) x [clip_y0, clip_y1). */
-void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
-                         int clip_x0, int clip_y0, int clip_x1, int clip_y1);
-/* RetroSans 18px caption variant used by window titles. */
-int gfx_text_width_title(const char* text);
-int gfx_text_height_title(void);
-void gfx_blit_text_title(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
-void gfx_blit_text_title_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
-                              int clip_x0, int clip_y0, int clip_x1, int clip_y1);
-/* Monospace UniFont path (fixed 8x16 cell), used for terminal-style output. */
-int gfx_cell_width(void);
-int gfx_cell_height(void);
-int gfx_text_width_mono(const char* text);
-void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
-/* Same as gfx_blit_text_mono, but restricted to [clip_x0, clip_x1) x [clip_y0, clip_y1). */
-void gfx_blit_text_mono_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
-                             int clip_x0, int clip_y0, int clip_x1, int clip_y1);
+/* Pixel and text primitives are the platform's: sxgfx/pixels.h. */
 
 int result_is_error(long result);
 int result_error_code(long result);

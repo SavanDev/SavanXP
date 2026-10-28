@@ -3,7 +3,7 @@
 
 #include "libc.h"
 #include <stdio.h>
-#include "savanxp/sxchrome.h"
+#include "sxgfx/sxchrome.h"
 #include "shared/version.h"
 #include "cursor_asset.h"
 #include "desktop_icons.h"

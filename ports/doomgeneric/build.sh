@@ -204,6 +204,8 @@ gfx="$OBJ/gfx.o"
 # icon (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along.
 sxe="$OBJ/sxe.o"
 gfx2d="$OBJ/gfx2d.o"
+gfx_scaled="$OBJ/gfx_scaled.o"
+pixels="$OBJ/pixels.o"
 math="$OBJ/math.o"
 setjmp_object="$OBJ/setjmp.o"
 audio="$OBJ/audio.o"
@@ -213,8 +215,10 @@ compile_c "$SDK/runtime/libc.c" "$libc"
 compile_c "$SDK/runtime/posix.c" "$posix"
 compile_c "$SDK/runtime/pthread.c" "$pthread_object"
 compile_c "$SDK/runtime/gfx.c" "$gfx"
+compile_c "$ROOT/system/gfx/pixels.c" "$pixels"
 compile_c "$SDK/runtime/sxe.c" "$sxe"
-compile_c "$SDK/runtime/gfx2d.c" "$gfx2d"
+compile_c "$ROOT/system/gfx/gfx2d.c" "$gfx2d"
+compile_c "$SDK/runtime/gfx_scaled.c" "$gfx_scaled"
 compile_c "$SDK/runtime/math.c" "$math"
 compile_asm "$SDK/runtime/setjmp.S" "$setjmp_object"
 compile_c "$SDK/runtime/audio.c" "$audio"
@@ -224,7 +228,7 @@ compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra 
 
 "$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
-    "$crt0" "$libc" "$posix" "$pthread_object" "$gfx" "$sxe" "$gfx2d" "$math" "$setjmp_object" "$audio" \
+    "$crt0" "$libc" "$posix" "$pthread_object" "$gfx" "$pixels" "$sxe" "$gfx2d" "$gfx_scaled" "$math" "$setjmp_object" "$audio" \
     "$ldso_object" \
     "${APP_OBJECTS[@]}" \
     "$SX_MIDI_LIB"

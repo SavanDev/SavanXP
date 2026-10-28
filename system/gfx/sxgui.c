@@ -1,6 +1,48 @@
-#include "savanxp/sxgui.h"
+#include "sxgfx/sxgui.h"
 
 #include <string.h>
+
+static const struct sxgui_host *g_sxgui_host;
+static int g_sxgui_host_set;
+
+__attribute__((weak)) const struct sxgui_host *sxgui_default_host(void)
+{
+    return 0;
+}
+
+void sxgui_set_host(const struct sxgui_host *host)
+{
+    g_sxgui_host = host;
+    g_sxgui_host_set = host != 0;
+}
+
+static const struct sxgui_host *sxgui_host(void)
+{
+    if (!g_sxgui_host_set)
+    {
+        g_sxgui_host = sxgui_default_host();
+        g_sxgui_host_set = 1;
+    }
+    return g_sxgui_host;
+}
+
+static unsigned long sxgui_uptime_ms(void)
+{
+    const struct sxgui_host *host = sxgui_host();
+    return host != 0 && host->uptime_ms != 0 ? host->uptime_ms() : 0;
+}
+
+static int sxgui_clipboard_get(char *buffer, int capacity)
+{
+    const struct sxgui_host *host = sxgui_host();
+    return host != 0 && host->clipboard_get_text != 0 ? host->clipboard_get_text(buffer, capacity) : 0;
+}
+
+static int sxgui_clipboard_set(const char *text)
+{
+    const struct sxgui_host *host = sxgui_host();
+    return host != 0 && host->clipboard_set_text != 0 ? host->clipboard_set_text(text) : -1;
+}
 
 /* ---- low level chrome helpers ------------------------------------------- */
 
@@ -1477,7 +1519,7 @@ static int sxgui_sel_copy(struct sxgui_widget *widget)
     end = sxgui_sel_end(widget);
     saved = widget->edit_buffer[end];
     widget->edit_buffer[end] = '\0';
-    result = clipboard_set_text(widget->edit_buffer + start);
+    result = sxgui_clipboard_set(widget->edit_buffer + start);
     widget->edit_buffer[end] = saved;
     return result >= 0;
 }
@@ -1494,7 +1536,7 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
     int room;
     int insert;
 
-    if (clipboard_get_text(g_sxgui_paste, (int)sizeof(g_sxgui_paste)) <= 0)
+    if (sxgui_clipboard_get(g_sxgui_paste, (int)sizeof(g_sxgui_paste)) <= 0)
     {
         return 0;
     }
@@ -2943,7 +2985,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                     int row = widget->scroll + (event->y - inner.y) / sxgui_row_height();
                     if (event->y >= inner.y && row >= 0 && row < widget->item_count)
                     {
-                        unsigned long now_ms = uptime_ms();
+                        unsigned long now_ms = sxgui_uptime_ms();
                         if (row != widget->value)
                         {
                             widget->value = row;

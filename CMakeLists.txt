@@ -315,9 +315,11 @@ set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/pthread.c
     subsystems/posix/sdk/v1/runtime/math.c
     subsystems/posix/sdk/v1/runtime/gfx.c
-    subsystems/posix/sdk/v1/runtime/gfx2d.c
-    subsystems/posix/sdk/v1/runtime/sxchrome.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
+    system/gfx/pixels.c
+    subsystems/posix/sdk/v1/runtime/gfx_scaled.c
+    system/gfx/gfx2d.c
+    system/gfx/sxchrome.c
+    system/gfx/sxgui.c
     subsystems/posix/sdk/v1/runtime/sxgui_app.c
     subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/sdk/v1/runtime/audio.c
@@ -369,11 +371,12 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
 #
 # El target se nombra por el conjunto que le falta, asi que dos programas con
 # DEPENDS distintos reciben targets distintos sin que nadie los enumere.
-set(SAVANXP_LIBRARY_REPLACES_libmath math.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxmidi sxmidi.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgfx gfx.c)
-set(SAVANXP_LIBRARY_REPLACES_libgfx2d gfx2d.c sxchrome.c)
+set(SAVANXP_POSIX_RUNTIME subsystems/posix/sdk/v1/runtime)
+set(SAVANXP_LIBRARY_REPLACES_libmath ${SAVANXP_POSIX_RUNTIME}/math.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxmidi ${SAVANXP_POSIX_RUNTIME}/sxmidi.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxgui system/gfx/sxgui.c ${SAVANXP_POSIX_RUNTIME}/sxgui_app.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxgfx ${SAVANXP_POSIX_RUNTIME}/gfx.c system/gfx/pixels.c)
+set(SAVANXP_LIBRARY_REPLACES_libgfx2d system/gfx/gfx2d.c system/gfx/sxchrome.c ${SAVANXP_POSIX_RUNTIME}/gfx_scaled.c)
 
 # El reproductor de medios es un programa de este arbol que depende de una libreria
 # que construye ports/ffmpeg. Eso rompe una suposicion: un programa se compila con
@@ -669,7 +672,8 @@ add_custom_target(savanxp_userland
 # Host tests deliberately use the normal Linux compiler and hosted linker;
 # they are not part of the freestanding target graph.
 add_executable(savanxp-gfx2d-test
-    subsystems/posix/sdk/v1/runtime/gfx2d.c
+    system/gfx/gfx2d.c
+    subsystems/posix/sdk/v1/runtime/gfx_scaled.c
     tests/host/gfx2d_test.cpp)
 target_include_directories(savanxp-gfx2d-test PRIVATE
     "${CMAKE_SOURCE_DIR}/include"

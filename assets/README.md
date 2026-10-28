@@ -152,16 +152,16 @@ To regenerate (from the repository root):
 ```
 python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \
     --out include/kernel/console_font_unifont.inc \
-    --out subsystems/posix/sdk/v1/runtime/console_font_unifont.inc
+    --out system/gfx/console_font_unifont.inc
 python tools/font/genfont.py sfd --sfd assets/desktop/fonts/ms_sans_serif.sfd --size 13 \
-    --out subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc
+    --out system/gfx/gfx_font_noto.inc
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/RetroSans.ttf --size 17 \
     --prefix SX_TITLE \
-    --out subsystems/posix/sdk/v1/runtime/gfx_font_title.inc
+    --out system/gfx/gfx_font_title.inc
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/PixelSans.ttf \
     --prefix SX_PIXEL_SANS \
-    --out subsystems/posix/sdk/v1/runtime/gfx_font_pixelsans.inc
+    --out system/gfx/gfx_font_pixelsans.inc
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/ImpactfulBits.ttf \
     --prefix SX_IMPACTFUL_BITS \
-    --out subsystems/posix/sdk/v1/runtime/gfx_font_impactfulbits.inc
+    --out system/gfx/gfx_font_impactfulbits.inc
 ```
