@@ -49,6 +49,13 @@ process runs with the same authority.
   `/rescue/bin/init` included.
 - **Devices** under `/dev` are open to every process. `/dev/input0` in particular:
   any program can read the keyboard, which matters for the elevation prompt below.
+- **`/system/programs.txt`** is the build's list of the programs it shipped, and
+  Add or Remove Programs trusts it to tell the system from what was installed
+  ([`SXE_FORMAT.md`](../userland/SXE_FORMAT.md)). Any process can rewrite it
+  today, and with it make a system program look removable.
+- **Settings live at the root of the disk**: `progman.ini`, `assoc.ini`,
+  `desktop.cfg`, `mines.ini`, `audio.cfg`, `keyboard.cfg`. Some are the user's
+  and some are the machine's, and nothing tells them apart yet.
 
 ## The identities
 
@@ -122,7 +129,30 @@ build the image:
 | --- | --- | --- |
 | `/users/<name>` and below | the user | `0700` dirs, `0600` files |
 | `/tmp` | system | `1777` |
+| `/system` and below | system | `0755` dirs, `0644` files |
 | everything else on the disk (`bin`, `lib`, `games`, icons, wallpaper, the root itself) | system | `0755` dirs, `0644` files, `0755` for anything under `bin`/`lib` |
+
+`/system` is the machine's: `programs.txt` today, and later the registry of
+installed programs and the machine-wide settings. Being system-owned is what
+makes `programs.txt` a list Add or Remove Programs can trust; until phase 2,
+the check that enforces it does not exist.
+
+### Settings: the user's and the machine's
+
+NT splits them into `HKEY_CURRENT_USER` and `HKEY_LOCAL_MACHINE`, and the same
+split applies to the `.ini` files at the root of the disk:
+
+| file | whose | moves to |
+| --- | --- | --- |
+| `progman.ini`, `assoc.ini`, `desktop.cfg`, `mines.ini` | the user's: menu arrangement, file associations, wallpaper, best times | `/users/<name>/` |
+| `keyboard.cfg`, `audio.cfg` | the machine's: init applies them at boot, before any user | `/system/` |
+
+Under the default table they would all be system-owned, so in phase 4 the
+desktop could no longer save its own settings. Moving them is part of that
+phase, and so is reading the old location once, so an existing image keeps its
+menu and its wallpaper. A machine setting the user changes (the volume) goes
+through elevation, or stays unelevated by being the user's after all; that is
+decided per file in phase 4.
 
 `/users/<name>` is the user's profile, NT's `Users\<name>`. It does not
 exist yet. Programs that save today (Paint, the editors) write wherever they are
@@ -148,6 +178,12 @@ system-only operation. Nothing in the tree does it today except tests, which run
 as system. `/rescue` is the system's in every case: it is what boots when the
 disk does not, so nothing the user runs may change it.
 
+**A rescue boot has no user.** With no disk there is no profile and no
+account, so init and the rescue shell run as system, as Windows' recovery
+environment runs as SYSTEM. That is not a hole: whoever can boot the machine
+without its disk can also read the disk from another machine, and the boot
+chain is outside this model ([`KERNEL_SECURITY.md`](KERNEL_SECURITY.md)).
+
 ### Devices
 
 `device::register_node` gains an owner and a mode. Most nodes stay open to the
@@ -168,6 +204,11 @@ driver is reached. It belongs with the rules `FILESYSTEMS.md` already lists as
 repeating it. The semantics are Unix's: owner bits, else group bits, else other
 bits; effective uid 0 passes read and write, and passes execute only if some `x`
 bit is set.
+
+It runs on the vnode, after `normalize_path`. That matters for the `/disk`
+alias ([`FILESYSTEMS.md`](FILESYSTEMS.md#the-root-is-the-system-disk)):
+`/disk/bin/x` and `/bin/x` are one vnode, so the alias cannot be a way around
+the check. Nothing may be decided from the path text alone.
 
 ## Elevation
 
@@ -195,7 +236,7 @@ approval mode. A password belongs with a second user, not before.
 
 | operation | why |
 | --- | --- |
-| writing system files: `/bin`, `/lib`, global settings | installing and uninstalling |
+| writing system files: `/bin`, `/lib`, `/system` | installing and uninstalling, machine settings |
 | killing a process that is not yours | services, `windowd` |
 | setting the system clock | shared by every process |
 | raw devices, PCI configuration | they bypass every check above |
@@ -203,6 +244,12 @@ approval mode. A password belongs with a second user, not before.
 
 Shutdown stays unelevated, as it is on a desktop NT. Reading the system
 (`/bin`, logs, the process list) stays unelevated.
+
+Uninstalling is writing `/bin` (and, with the box ticked, deleting a
+`data_dir`), so Add or Remove Programs asks for elevation from phase 4 on. The
+registry of installed programs that should replace the `programs.txt`
+subtraction, as Windows keeps under `Uninstall`, is written by the installer
+while it is elevated, into `/system`, and belongs with that phase too.
 
 ## POSIX, as a consequence
 
@@ -224,8 +271,9 @@ installed binary instead of being fixed by a rebuild.
 
 1. **The format.** Ownership fields and the feature flag in SxFS, the default
    table, stamping on first mount, `fscheck` support, `sxfs_sync.py` and
-   `libsxfs` writing the defaults. *Done when* an existing `build/disk.img`
-   mounts, is stamped, and `verify_doom_persistence.sh` passes.
+   `libsxfs` writing the defaults, and the compaction in `sxfs_sync.py`
+   carrying them. *Done when* an existing `build/disk.img` mounts, is stamped,
+   and `verify_doom_persistence.sh` passes.
 2. **Tokens and the check.** The token in the process, inheritance,
    `vfs::check_access`, device owners, the POSIX calls above. **Everything
    still runs as system**, so behaviour does not change. *Done when* the smokes
@@ -237,8 +285,10 @@ installed binary instead of being fixed by a rebuild.
    is ignored.
 4. **The desktop runs as the user.** Init starts `windowd` and the services as
    system and the shell as uid 1000. Programs that write outside the profile
-   move their defaults into it; installers ask for elevation. *Done when* the
-   full smoke set passes with the shell unelevated.
+   move their defaults into it; the settings split between the profile and
+   `/system`; installers and Add or Remove Programs ask for elevation, and the
+   installer records what it installed. *Done when* the full smoke set passes
+   with the shell unelevated.
 
 ## Deliberately out of scope
 
