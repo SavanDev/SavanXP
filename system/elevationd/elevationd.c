@@ -143,11 +143,13 @@ static int parse_request(struct savanxp_elevation_request* request, char** argv)
 }
 
 /*
- * Asks windowd. 1 yes, 0 no, -errno when it cannot be asked. While the
+ * Asks windowd, showing it the program and its arguments as the request
+ * carries them. 1 yes, 0 no, -errno when it cannot be asked. While the
  * prompt is up, the requester's pipe is watched only for it hanging up, which
  * withdraws the request; anything it writes is read and thrown away.
  */
-static int ask_consent(const struct sxn_port_connection_ex* client, long client_read, const char* path) {
+static int ask_consent(
+    const struct sxn_port_connection_ex* client, long client_read, const struct savanxp_elevation_request* asked) {
     struct savanxp_consent_request request;
     struct savanxp_consent_reply reply;
     struct sxn_identity creator;
@@ -174,13 +176,15 @@ static int ask_consent(const struct sxn_port_connection_ex* client, long client_
 
     memset(&request, 0, sizeof(request));
     request.magic = SAVANXP_CONSENT_MAGIC;
-    request.version = SAVANXP_ELEVATION_VERSION;
+    request.version = SAVANXP_CONSENT_VERSION;
     request.requester_pid = client->client_pid;
     request.requester_uid = client->client.uid;
     if (sxn_process_query((long)client->client_pid, &query) == 0) {
         memcpy(request.requester_name, query.name, sizeof(request.requester_name) - 1u);
     }
-    memcpy(request.path, path, sizeof(request.path) - 1u);
+    memcpy(request.path, asked->path, sizeof(request.path) - 1u);
+    request.argc = asked->argc;
+    memcpy(request.args, asked->args, sizeof(request.args));
     if (sxn_write(to_windowd, &request, sizeof(request)) != (long)sizeof(request)) {
         close_handle(&to_windowd);
         close_handle(&from_windowd);
@@ -261,7 +265,7 @@ static void serve(long port) {
     }
 
     /* The system asking is not asked about: it could start it itself. */
-    consent = client.client.euid == 0u ? 1 : ask_consent(&client, client_read, request.path);
+    consent = client.client.euid == 0u ? 1 : ask_consent(&client, client_read, &request);
     if (consent == 1) {
         struct sxn_spawn_request spawn;
         struct sxn_identity elevated;

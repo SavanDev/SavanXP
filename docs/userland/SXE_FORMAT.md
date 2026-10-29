@@ -695,7 +695,8 @@ compiled the program, so `appwiz_data_dir_is_removable()` validates it before
 anything is touched — without that, a manifest saying `data_dir=/` would
 turn one click into wiping the disk. It requires the path to be absolute and
 under `/`, with at least one segment of its own, no `.` or `..` segment
-anywhere, and not one of the system's own directories. A manifest that declares
+anywhere, and not one of the system's own directories nor `/users`, where
+the profiles live. A manifest that declares
 something else is not an error and does not block uninstalling the program: the
 entry is listed with the data checkbox off and the reason on it.
 

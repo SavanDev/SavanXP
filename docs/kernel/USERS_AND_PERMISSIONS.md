@@ -283,10 +283,19 @@ calls `elevate()` in the libc.
   above the Alt+Tab switcher and a fullscreen window, drawn on windowd's own
   surface (`windowd_consent.c`). While it is up, every key and pointer event
   is its own: no window, hotkey or WM key sees any.
+- **What it shows:** the program's path, every argument after `argv[0]`, and
+  who asked. What is drawn is what runs: a byte the font would not show as
+  itself is written `\xNN`, and an argument that is empty or holds a space, a
+  quote, a backslash or such a byte is quoted, with `\"` and `\\` inside, so
+  where each argument ends is visible. The prompt grows to fit all of it;
+  one that would not fit on the screen is not shown, and the request fails
+  with `E2BIG`. Nothing is cut off.
 - **What counts as an answer:** Y, N or Esc, Enter or Space on the focused
   button (it starts on No, so Enter alone is no), or a click whose press and
   release both land on one button. Nothing counts until 500 ms after it
-  appears, so a key the user was typing into a window cannot answer it.
+  appears, so a key the user was typing into a window cannot answer it, and a
+  held key is not a press: the keyboard core marks its repeats
+  (`SAVANXP_KEY_MOD_REPEAT`), and the prompt ignores them.
   Nothing the requester writes reaches windowd, and the broker reads nothing
   it writes after its request; hanging up withdraws the request and closes
   the prompt. An unanswered prompt is no after ten minutes.

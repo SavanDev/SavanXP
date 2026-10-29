@@ -12,7 +12,8 @@
  *      (SXN_SYS_PORT_ACCEPT_EX), never from the request. It connects to
  *      windowd's consent port, checks that the system created it
  *      (SXN_SYS_PORT_CONNECT_EX), and writes one savanxp_consent_request.
- *   3. windowd shows the prompt above every window and takes the answer only
+ *   3. windowd shows the prompt above every window, with the program and every
+ *      argument it would get, and takes the answer only
  *      from the keyboard and mouse it reads itself (INPUT_IOC_CLAIM). It
  *      writes one savanxp_consent_reply and hangs up. It refuses a consent
  *      request from anybody but the system.
@@ -38,6 +39,8 @@
 #define SAVANXP_ELEVATION_MAGIC 0x56454c45u /* "ELEV" */
 #define SAVANXP_CONSENT_MAGIC 0x534e4f43u   /* "CONS" */
 #define SAVANXP_ELEVATION_VERSION 1u
+/* The broker and windowd's own exchange: 2 since it carries the arguments. */
+#define SAVANXP_CONSENT_VERSION 2u
 
 #define SAVANXP_ELEVATION_PATH_CAPACITY 128u
 #define SAVANXP_ELEVATION_ARGS_CAPACITY 384u
@@ -74,15 +77,46 @@ struct savanxp_elevation_reply {
     uint32_t reserved;
 };
 
-/* Broker -> windowd: what the prompt shows. */
+/* Broker -> windowd: what the prompt shows. The arguments are the request's
+ * as they are, so what the user is shown is what the program gets; argv[0]
+ * is not shown, the path is. A prompt that cannot show all of it on the
+ * screen is not shown: windowd answers -E2BIG. */
 struct savanxp_consent_request {
     uint32_t magic;   /* SAVANXP_CONSENT_MAGIC */
-    uint32_t version; /* SAVANXP_ELEVATION_VERSION */
+    uint32_t version; /* SAVANXP_CONSENT_VERSION */
     uint32_t requester_pid;
     uint32_t requester_uid;
     char requester_name[SAVANXP_ELEVATION_NAME_CAPACITY]; /* its image's file name */
     char path[SAVANXP_ELEVATION_PATH_CAPACITY];           /* what would run */
+    uint32_t argc;                                        /* as in the elevation request */
+    char args[SAVANXP_ELEVATION_ARGS_CAPACITY];           /* argc NUL-terminated strings */
 };
+
+/* Whether `args` holds exactly `argc` NUL-terminated strings, 1..MAX_ARGS of
+ * them, inside its capacity. Both ends check it. */
+static inline int savanxp_elevation_args_valid(const char *args, uint32_t argc)
+{
+    uint32_t offset = 0;
+    uint32_t index;
+
+    if (argc == 0u || argc > SAVANXP_ELEVATION_MAX_ARGS)
+    {
+        return 0;
+    }
+    for (index = 0; index < argc; ++index)
+    {
+        while (offset < SAVANXP_ELEVATION_ARGS_CAPACITY && args[offset] != '\0')
+        {
+            ++offset;
+        }
+        if (offset >= SAVANXP_ELEVATION_ARGS_CAPACITY)
+        {
+            return 0;
+        }
+        ++offset;
+    }
+    return 1;
+}
 
 /* windowd -> broker. */
 struct savanxp_consent_reply {

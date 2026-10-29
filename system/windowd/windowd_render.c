@@ -804,7 +804,7 @@ uint32_t windowd_build_scene(
      * a client draws may cover it (docs/kernel/USERS_AND_PERMISSIONS.md). */
     if (session->consent.open)
     {
-        count = add_wm_layer(layers, count, capacity, windowd_consent_rect(info));
+        count = add_wm_layer(layers, count, capacity, windowd_consent_rect(&session->consent, info));
     }
     return count;
 }

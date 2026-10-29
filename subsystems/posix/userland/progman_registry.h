@@ -121,16 +121,16 @@ struct progman_group
 };
 
 /*
- * Carga el registro desde PROGMAN_REGISTRY_NAME. Devuelve la cantidad de items
- * que aporto el archivo; si falta, no entra en el buffer o no tiene ningun item
- * valido, devuelve 0 y DEJA EL REGISTRO VACIO.
+ * Loads the registry from PROGMAN_REGISTRY_NAME. Returns how many items the
+ * file contributed; if it is missing, does not fit in the buffer or holds no
+ * valid item, returns 0 and LEAVES THE REGISTRY EMPTY.
  *
- * Antes esta funcion caia sola a los defaults horneados. Ya no: con el escaneo
- * (progman_registry_scan_programs) los defaults pasaron a ser la red de
- * seguridad de ULTIMO recurso, y solo tienen sentido despues de que el escaneo
- * TAMBIEN se haya venido con las manos vacias. Quien orquesta esa secuencia es
- * el llamador -- progman.c --, porque es el unico que puede decidir entre las
- * dos fuentes con el disco delante.
+ * This function used to fall back to the built-in defaults on its own. Not
+ * any more: with the scan (progman_registry_scan_programs) the defaults became
+ * the LAST-resort safety net, and they only make sense after the scan ALSO
+ * came back empty-handed. The caller -- progman.c -- runs that sequence,
+ * because it is the only one that can choose between the two sources with the
+ * disk in front of it.
  */
 int progman_registry_load_file(void);
 /* Carga solo los defaults horneados (instalacion fresca / recuperacion). */

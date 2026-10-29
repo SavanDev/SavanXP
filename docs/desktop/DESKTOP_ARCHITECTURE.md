@@ -507,10 +507,12 @@ tells it what the scene is.
 waits for `windowd`'s, and only then starts `windowd`. `compositord` allocates
 the display memory (sized for the largest mode, as today) and picks the mode.
 
-- **One window manager, granted by parentage.** A connection becomes the WM
-  when its INIT arrives, and only from a process whose parent is
-  `compositord`'s parent (the session's `windowd`) or that is `compositord`'s
-  parent itself (a `windowd` that started its own, below). A connection that
+- **One window manager, granted by parentage and identity.** A connection
+  becomes the WM when its INIT arrives, and only from a process that acts as
+  the system (`SXN_SYS_PORT_ACCEPT_EX`) and whose parent is `compositord`'s
+  parent (the session's `windowd`) or that is `compositord`'s parent itself (a
+  `windowd` that started its own, below). Parentage alone is not enough: the
+  desktop is `windowd`'s sibling too, and it is the user's. A connection that
   hangs up before INIT -- `sessiond`'s readiness probe -- is dropped; once a WM
   holds the session, any other connection is refused.
 - **No reconnection.** The scene is `windowd`'s state and the client surfaces

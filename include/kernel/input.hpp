@@ -21,6 +21,7 @@ enum ModifierFlags : uint32_t {
     modifier_caps_lock = SAVANXP_KEY_MOD_CAPS_LOCK,
     modifier_num_lock = SAVANXP_KEY_MOD_NUM_LOCK,
     modifier_scroll_lock = SAVANXP_KEY_MOD_SCROLL_LOCK,
+    modifier_repeat = SAVANXP_KEY_MOD_REPEAT,
 };
 
 constexpr uint32_t kLockModifiers = modifier_caps_lock | modifier_num_lock | modifier_scroll_lock;

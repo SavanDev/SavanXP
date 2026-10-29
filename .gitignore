@@ -50,6 +50,7 @@ tools/*
 !tools/check_shared_libs.py
 !tools/glyphs.py
 !tools/qmp_native_hw.py
+!tools/qmp_elevation.py
 !tools/font/
 !tools/font/**
 *.log

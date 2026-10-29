@@ -17,11 +17,17 @@
  *   - as the system: /dev/input0 is windowd's (a read and a claim are
  *     -EBUSY), and asking for elevation starts the program without a prompt;
  *   - lowered to the user (uid 1000): it cannot read the keyboard, windowd
- *     refuses to show it a prompt of its own, and it asks twice. The first
- *     time it also writes a forged "yes" down its pipe; the host presses N
- *     (tools/qmp_elevation.py), and the answer must be no. The second time the
- *     host presses Y, and the program runs elevated: uid 1000, euid 0, able
- *     to write /system, and its exit status comes back.
+ *     refuses to show it a prompt of its own, and it asks four times
+ *     (tools/qmp_elevation.py answers):
+ *       1. with a forged "yes" written down its pipe behind the request; the
+ *          host presses N, and the answer must be no;
+ *       2. while the host holds Y down, so the prompt sees only its repeats,
+ *          then presses N: no again;
+ *       3. the host presses Y, and the program runs elevated: uid 1000,
+ *          euid 0, able to write /system, and its exit status comes back;
+ *       4. Add or Remove Programs' elevated half, `appwiz --uninstall`, on a
+ *          program the system put in /bin and the user cannot delete; the
+ *          host presses Y, and it is gone.
  *
  *     elevtest              the test (as init's smoke command)
  *     elevtest --elevated   what the broker starts: checks its own token
@@ -33,6 +39,8 @@
 #define ELEVTEST_USER 1000u
 #define ELEVTEST_GROUP 100u
 #define ELEVTEST_FLAG "/system/elevtest.flag"
+/* Not an ELF: Add or Remove Programs lists and removes it all the same. */
+#define ELEVTEST_APP "/bin/elevtest-app"
 #define ELEVTEST_START_MS 60000ul
 
 static int g_failures = 0;
@@ -123,8 +131,10 @@ static void ask_windowd_directly(void)
     }
     memset(&request, 0, sizeof(request));
     request.magic = SAVANXP_CONSENT_MAGIC;
-    request.version = SAVANXP_ELEVATION_VERSION;
+    request.version = SAVANXP_CONSENT_VERSION;
     request.requester_pid = (uint32_t)getpid();
+    request.argc = 1;
+    memcpy(request.args, "elevtest", sizeof("elevtest"));
     memcpy(request.path, "/bin/elevtest", sizeof("/bin/elevtest"));
     (void)savanxp_write(handles[0], &request, sizeof(request));
     memset(&reply, 0, sizeof(reply));
@@ -171,6 +181,31 @@ static void ask_and_forge(void)
     (void)savanxp_close(handles[1]);
 }
 
+/* The host holds Y down from before the prompt opens until after it arms:
+ * repeats are not a press, so it stays up until the N that follows. */
+static void ask_while_y_is_held(void)
+{
+    const char *true_argv[] = {"true", 0};
+    int status = -1;
+
+    check(elevate("/bin/true", true_argv, 1, &status) == -SAVANXP_EACCES, "a held Y is not a yes");
+}
+
+/* The elevated uninstall: what appwiz runs for the user. */
+static void uninstall_elevated(void)
+{
+    const char *appwiz_argv[] = {"appwiz", "--uninstall", ELEVTEST_APP, 0};
+    struct stat info;
+    int status = -1;
+    long pid;
+
+    check(unlink(ELEVTEST_APP) < 0 && errno == EACCES, "the user cannot delete a program in /bin");
+    pid = elevate("/bin/appwiz", appwiz_argv, 3, &status);
+    check(pid > 0, "the uninstall request is accepted");
+    check(pid > 0 && status == 0, "appwiz --uninstall reports the program removed");
+    check(stat(ELEVTEST_APP, &info) < 0 && errno == ENOENT, "the program is gone from /bin");
+}
+
 static int run_user(void)
 {
     const char *elevated_argv[] = {"elevtest", "--elevated", 0};
@@ -183,6 +218,7 @@ static int run_user(void)
     check(open("/dev/input0", O_RDONLY) < 0 && errno == EACCES, "the user cannot open the keyboard");
     ask_windowd_directly();
     ask_and_forge();
+    ask_while_y_is_held();
 
     pid = elevate("/bin/elevtest", elevated_argv, 2, &status);
     check(pid > 0, "the second request is accepted");
@@ -192,6 +228,8 @@ static int run_user(void)
     check(getuid() == ELEVTEST_USER && geteuid() == ELEVTEST_USER, "the requester is still the user");
     check(open(ELEVTEST_FLAG, O_WRONLY | O_CREAT, 0644) < 0 && errno == EACCES,
         "the requester still cannot write /system");
+
+    uninstall_elevated();
     return g_failures == 0 ? 0 : 1;
 }
 
@@ -243,6 +281,17 @@ int main(int argc, char **argv)
 
     check_input_owned();
 
+    /* What the user will ask Add or Remove Programs to remove. */
+    {
+        int fd = open(ELEVTEST_APP, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+
+        check(fd >= 0 && write(fd, "elevtest", 8) == 8, "installing the program to uninstall");
+        if (fd >= 0)
+        {
+            close(fd);
+        }
+    }
+
     /* The system is not asked: it could start it itself. */
     {
         long pid = elevate("/bin/true", true_argv, 1, &status);
@@ -261,6 +310,7 @@ int main(int argc, char **argv)
         check(savanxp_waitpid((int)child, &status) >= 0 && status == 0, "the checks as the user");
     }
 
+    (void)unlink(ELEVTEST_APP);
     (void)savanxp_kill((int)sessiond, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)elevationd, SAVANXP_SIGKILL);
     puts_out(g_failures == 0 ? "ELEVATION SMOKE PASS\n" : "ELEVATION SMOKE FAIL\n");

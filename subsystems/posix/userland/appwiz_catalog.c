@@ -80,7 +80,8 @@ static int default_path_exists(const char *path)
 /* The system's own directories: a data_dir may be neither one of them nor
  * anything below one. /bin and /lib hold the system and every installed
  * program, /icons, /system and /tmp are written by the build into every image,
- * and /dev and /rescue are the in-memory tree. */
+ * /dev and /rescue are the in-memory tree, and /users holds the profiles,
+ * which an elevated uninstall could otherwise wipe. */
 static const char *const k_reserved_data_dirs[] = {
     "/bin",
     "/lib",
@@ -89,6 +90,7 @@ static const char *const k_reserved_data_dirs[] = {
     "/tmp",
     "/dev",
     "/rescue",
+    "/users",
 };
 
 /* The prefix binaries built before the disk became the root still declare. */
@@ -596,6 +598,9 @@ static void selftest_data_dir(void)
         "//games",
         "/icons",
         "/tmp",
+        "/users",
+        "/users/user",
+        "/disk/users/user/doom", /* a profile, through the legacy prefix */
     };
     static const char *const accepted[] = {
         "/games/doom",

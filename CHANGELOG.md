@@ -33,6 +33,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The elevation prompt shows every argument** of the program it would run, escaped and quoted
+  so what is drawn is what runs, and grows to fit them; a request that does not fit on the screen
+  fails with `E2BIG` instead of being cut off. See `docs/kernel/USERS_AND_PERMISSIONS.md#elevation`.
+
 - **The desktop runs as the user** (uid 1000), and so does everything started from it; windowd and
   compositord stay the system's. `SAVANXP_PROC_FLAG_SYSTEM` reports which processes act as the
   system. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
@@ -91,6 +95,15 @@ Cut-off notes:
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
 ### Fixed
+
+- **A held key no longer answers the elevation prompt**: the keyboard core marks repeats with the new
+  `SAVANXP_KEY_MOD_REPEAT` bit, and the prompt ignores them.
+
+- **Add or Remove Programs refuses a `data_dir` under `/users`**, so uninstalling a program cannot
+  delete the profiles; and `compositord` takes as its window manager only a system process.
+
+- **`elevation-smoke` runs from a clean checkout**: `tools/qmp_elevation.py`, which answers its
+  prompts, was never tracked.
 
 - `ports/ffmpeg/runtime.sh` builds again: it still compiled SXGFX and SXGUI-C from the POSIX runtime
   directory they left for `system/gfx`.

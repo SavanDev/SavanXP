@@ -21,6 +21,9 @@ bool g_right_alt_pressed = false;
 bool g_caps_lock_enabled = false;
 bool g_num_lock_enabled = false;
 bool g_scroll_lock_enabled = false;
+// Which keys are down, by set 1 position (bit 7 for the 0xE0 ones): a make
+// code for a key already down is the keyboard repeating it.
+bool g_keys_down[256] = {};
 
 bool keyboard_shift_active() {
     return g_left_shift_pressed || g_right_shift_pressed;
@@ -260,7 +263,7 @@ uint32_t translate_key_code(uint8_t scancode, bool extended) {
     }
 }
 
-void emit_key_event(uint32_t key, bool pressed, char ascii_key, char ascii_text) {
+void emit_key_event(uint32_t key, bool pressed, char ascii_key, char ascii_text, bool repeat = false) {
     if (key == SAVANXP_KEY_NONE && ascii_key == 0) {
         return;
     }
@@ -269,7 +272,7 @@ void emit_key_event(uint32_t key, bool pressed, char ascii_key, char ascii_text)
         .key = key != SAVANXP_KEY_NONE ? key : static_cast<uint32_t>(static_cast<uint8_t>(ascii_key)),
         .pressed = pressed,
         .ascii = static_cast<char>(pressed ? ascii_text : 0),
-        .modifiers = current_modifiers(),
+        .modifiers = current_modifiers() | (repeat ? input::modifier_repeat : 0u),
     });
 }
 
@@ -338,9 +341,13 @@ void submit_scancode(uint8_t scancode, bool extended, bool pressed) {
         update_lock_state(scancode, pressed);
     }
 
+    const size_t position = scancode | (extended ? 0x80u : 0u);
+    const bool repeat = pressed && g_keys_down[position];
+    g_keys_down[position] = pressed;
+
     const uint32_t key_code = translate_key_code(scancode, extended);
     const char translated = translate_ascii(scancode, extended);
-    emit_key_event(key_code, pressed, translated, translated);
+    emit_key_event(key_code, pressed, translated, translated, repeat);
 }
 
 void submit_key(uint32_t key, bool pressed) {

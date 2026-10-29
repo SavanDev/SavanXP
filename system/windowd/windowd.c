@@ -5810,7 +5810,7 @@ static int windowd_selftest(void)
 
 static void dirty_consent(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
-    struct sx_rect box = windowd_consent_rect(&session->gfx.info);
+    struct sx_rect box = windowd_consent_rect(&session->consent, &session->gfx.info);
 
     windowd_dirty_rect_add(dirty, &session->gfx.info, box.x, box.y, box.width, box.height);
 }
@@ -6478,7 +6478,7 @@ int main(int argc, char **argv)
             break;
         }
         service_connections(&session, &dirty);
-        if (windowd_consent_service(&session.consent, uptime_ms()))
+        if (windowd_consent_service(&session.consent, &session.gfx.info, uptime_ms()))
         {
             consent_opened_or_closed(&session, &dirty);
         }

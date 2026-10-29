@@ -592,7 +592,7 @@ static int cmd_check(const char* image_path) {
     }
     fclose(image);
 
-    printf("sxfs-cli: '%s' es una imagen SxFS valida (%u sectores, ownership %s).\n",
+    printf("sxfs-cli: '%s' is a valid SxFS image (%u sectors, ownership %s).\n",
         image_path, ctx.total_sectors,
         (ctx.superblock.features & SXFS_FEATURE_OWNERSHIP) != 0 ? "recorded" : "not recorded");
     return 0;

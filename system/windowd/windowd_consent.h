@@ -17,14 +17,33 @@
  *
  * Input that was already queued when the prompt opened is not an answer:
  * nothing counts until WINDOWD_CONSENT_ARM_MS after it appears, so a key the
- * user was typing into a window cannot say yes. The focused button starts on
- * No, so Enter on its own does not either.
+ * user was typing into a window cannot say yes. Nor does a key held down: its
+ * repeats (SAVANXP_KEY_MOD_REPEAT) are not presses. The focused button starts
+ * on No, so Enter on its own does not say yes either.
+ *
+ * The prompt shows the program and every argument it would get, escaped so
+ * that what is drawn is what runs, and grows to fit them. One that would not
+ * fit on the screen is not shown at all (-E2BIG): nothing is cut off.
  */
 
 /* How long after the prompt appears before input counts. */
 #define WINDOWD_CONSENT_ARM_MS 500ul
 /* How long the broker gets to write its request once accepted. */
 #define WINDOWD_CONSENT_REQUEST_MS 2000ul
+
+/* The program or its arguments as drawn: printable ASCII, wrapped. Escaping
+ * can make a byte four characters, and quoting adds three per argument. */
+#define WINDOWD_CONSENT_TEXT_CAPACITY \
+    (SAVANXP_ELEVATION_ARGS_CAPACITY * 4u + SAVANXP_ELEVATION_MAX_ARGS * 3u + 1u)
+#define WINDOWD_CONSENT_MAX_LINES 48
+
+struct windowd_consent_text
+{
+    char text[WINDOWD_CONSENT_TEXT_CAPACITY];
+    uint16_t start[WINDOWD_CONSENT_MAX_LINES];
+    uint16_t length[WINDOWD_CONSENT_MAX_LINES];
+    int lines;
+};
 
 enum windowd_consent_button
 {
@@ -45,6 +64,11 @@ struct windowd_consent
     /* The last answer given: 1 yes, 0 no, -1 none yet. For the selftest. */
     int last_answer;
     struct savanxp_consent_request request;
+    struct windowd_consent_text program;
+    struct windowd_consent_text arguments; /* argv[1..]; no lines without any */
+    /* The box as last laid out. Kept once it closes: where to repaint. */
+    int width;
+    int height;
 };
 
 void windowd_consent_init(struct windowd_consent *consent);
@@ -59,7 +83,7 @@ int windowd_consent_poll_fds(const struct windowd_consent *consent, struct savan
 
 /* Accepts a connection, reads its request, notices the broker hanging up.
  * 1 when the prompt opened or closed: the screen has to be repainted. */
-int windowd_consent_service(struct windowd_consent *consent, unsigned long now_ms);
+int windowd_consent_service(struct windowd_consent *consent, const struct savanxp_fb_info *info, unsigned long now_ms);
 
 /* While the prompt is up, every event is its own: 1 if it took the event
  * (always, while it is open), 0 if the prompt is not up. *changed is set when
@@ -80,5 +104,5 @@ int windowd_consent_pointer(
 int windowd_consent_selftest(void);
 
 /* Where the prompt is, centred on the screen. */
-struct sx_rect windowd_consent_rect(const struct savanxp_fb_info *info);
+struct sx_rect windowd_consent_rect(const struct windowd_consent *consent, const struct savanxp_fb_info *info);
 void windowd_consent_draw(struct sx_painter *painter, const struct windowd_consent *consent, const struct savanxp_fb_info *info);

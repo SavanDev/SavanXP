@@ -880,10 +880,11 @@ static int serve_request(struct compositor_state *state, int request_fd, int rep
     return request.type == SAVANXP_COMPOSITOR_MSG_SHUTDOWN ? 0 : 1;
 }
 
-/* Whether `pid` may be this compositord's window manager: the session's
- * windowd (a sibling, started by the same parent) or a windowd that started
- * this compositord for its tests (the parent itself). */
-static int may_be_wm(long pid)
+/* Whether a client may be this compositord's window manager: the system's
+ * (the desktop is a sibling too, and it is the user's), and either the
+ * session's windowd (a sibling, started by the same parent) or a windowd that
+ * started this compositord for its tests (the parent itself). */
+static int may_be_wm(long pid, const struct sxn_identity *client)
 {
     static long parent = -1;
     struct sxn_process_query query;
@@ -897,6 +898,10 @@ static int may_be_wm(long pid)
             return 0;
         }
         parent = (long)query.parent_pid;
+    }
+    if (client->euid != 0u)
+    {
+        return 0;
     }
     if (pid == parent)
     {
@@ -914,7 +919,7 @@ static int accept_wm(struct compositor_state *state, long port, int *request_fd,
 {
     for (;;)
     {
-        struct sxn_port_connection connection;
+        struct sxn_port_connection_ex connection;
         struct savanxp_compositor_request request;
         struct savanxp_compositor_reply reply;
 
@@ -923,11 +928,11 @@ static int accept_wm(struct compositor_state *state, long port, int *request_fd,
             return -1;
         }
         memset(&connection, 0, sizeof(connection));
-        if (sxn_port_accept(port, &connection) < 0)
+        if (sxn_port_accept_ex(port, &connection) < 0)
         {
             continue;
         }
-        if (may_be_wm((long)connection.client_pid) &&
+        if (may_be_wm((long)connection.client_pid, &connection.client) &&
             read_exact(connection.read_handle, &request, sizeof(request)) == 0 &&
             request.magic == SAVANXP_COMPOSITOR_PROTOCOL_MAGIC &&
             request.version == SAVANXP_COMPOSITOR_PROTOCOL_VERSION &&

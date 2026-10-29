@@ -48,6 +48,14 @@ active layout (`SAVANXP_KEYBOARD_LAYOUT_ES` or `_EN`), and emits the
 Keys with no set 1 position of their own (Pause, Print Screen) go through
 `input::submit_key`.
 
+The core also knows which positions are down, so a make code for a key that
+already is is the keyboard repeating it (8042 typematic, or the host's repeat
+for `virtio-input`). It still goes out as `KEY_DOWN`, with
+`SAVANXP_KEY_MOD_REPEAT` in the mask: a text field wants the repeats, and
+something that must act once per press, as the elevation prompt does, skips
+them. The bit is not a modifier, so a consumer comparing masks for a hotkey
+leaves it out.
+
 Why set 1 rather than a neutral code: both existing drivers already speak it.
 The 8042 translates to it, and evdev codes 1–0x58 are set 1 by design, so
 `virtio-input` maps only the extended keys. A driver whose hardware speaks

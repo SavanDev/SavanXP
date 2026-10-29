@@ -134,7 +134,9 @@ def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str
             text=True,
             capture_output=True,
             check=False,
-            timeout=8.0,
+            # A callback may answer several prompts in turn (qmp_elevation.py
+            # takes about 15 s); this only catches one that hangs.
+            timeout=60.0,
         )
     except subprocess.TimeoutExpired as exc:
         raise QmpError(f"QMP callback timed out: {callback}") from exc

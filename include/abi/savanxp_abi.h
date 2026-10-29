@@ -1068,6 +1068,10 @@ enum savanxp_key_modifier {
     SAVANXP_KEY_MOD_CAPS_LOCK = 1u << 4,
     SAVANXP_KEY_MOD_NUM_LOCK = 1u << 5,
     SAVANXP_KEY_MOD_SCROLL_LOCK = 1u << 6,
+    /* Not a modifier: the key was already down, so this KEY_DOWN is the
+     * keyboard's own repeat, not a press. Something that must act once per
+     * press, as the elevation prompt does, ignores it. */
+    SAVANXP_KEY_MOD_REPEAT = 1u << 7,
 };
 
 struct savanxp_input_event {
