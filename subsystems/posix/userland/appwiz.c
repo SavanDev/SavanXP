@@ -14,6 +14,7 @@
 #include "savanxp/sxgui.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 static struct sxgui_app g_app;
 static struct sxgui_widget g_widgets[8];
@@ -186,6 +187,66 @@ static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 0);
 }
 
+/* The user said no on the elevation prompt. Not one of appwiz_catalog.h's
+ * results: only the window sees it. */
+#define APPWIZ_CANCELLED 100
+
+/*
+ * Uninstalling writes /bin, which is the system's, so a user's Add or Remove
+ * Programs asks for elevation (docs/kernel/USERS_AND_PERMISSIONS.md#what-
+ * requires-elevation) and the elevated `appwiz --uninstall` does the work.
+ * The system does it here.
+ */
+static int uninstall_entry(const struct appwiz_entry *entry, int remove_data)
+{
+    const char *argv[4];
+    int argc = 0;
+    int status = -1;
+    long pid;
+
+    if (geteuid() == 0)
+    {
+        return appwiz_uninstall(entry, remove_data);
+    }
+    argv[argc++] = "appwiz";
+    argv[argc++] = "--uninstall";
+    argv[argc++] = entry->path;
+    if (remove_data)
+    {
+        argv[argc++] = "--data";
+    }
+    pid = elevate("/bin/appwiz", argv, argc, &status);
+    if (pid == -SAVANXP_EACCES)
+    {
+        return APPWIZ_CANCELLED;
+    }
+    if (pid < 0 || status < 0)
+    {
+        return APPWIZ_ERR_BINARY;
+    }
+    return status;
+}
+
+/* The elevated half. The entry is found again in a scan of its own: what is
+ * removed, and whether its data may go, comes from the binary as this
+ * process reads it, never from the arguments of the one that asked. */
+static int run_uninstall(const char *path, int remove_data)
+{
+    int index;
+
+    (void)appwiz_catalog_scan(0);
+    for (index = 0; index < appwiz_entry_count(); ++index)
+    {
+        const struct appwiz_entry *entry = appwiz_entry_at(index);
+
+        if (entry != 0 && strcmp(entry->path, path) == 0)
+        {
+            return appwiz_uninstall(entry, remove_data);
+        }
+    }
+    return APPWIZ_ERR_BINARY;
+}
+
 static void on_confirm_remove(struct sxgui_widget *widget, void *user)
 {
     const struct appwiz_entry *entry = selected_entry();
@@ -205,10 +266,13 @@ static void on_confirm_remove(struct sxgui_widget *widget, void *user)
      * catalogo y `entry` deja de ser valido. */
     snprintf(name, sizeof(name), "%s", entry->name);
     remove_data = APPWIZ_DATA_CHECK->value != 0;
-    result = appwiz_uninstall(entry, remove_data);
+    result = uninstall_entry(entry, remove_data);
 
     switch (result)
     {
+    case APPWIZ_CANCELLED:
+        snprintf(g_status, sizeof(g_status), "%s was not removed.", name);
+        break;
     case APPWIZ_OK:
         snprintf(g_status, sizeof(g_status), "%s was removed.", name);
         break;
@@ -277,6 +341,10 @@ int main(int argc, char **argv)
         }
         printf("APPWIZ SMOKE PASS entries=%d\n", appwiz_entry_count());
         return 0;
+    }
+    if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--uninstall") == 0)
+    {
+        return run_uninstall(argv[2], argc > 3 && argv[3] != 0 && strcmp(argv[3], "--data") == 0);
     }
 
     *APPWIZ_TITLE_LABEL = sxgui_label(

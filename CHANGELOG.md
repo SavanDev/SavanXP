@@ -33,6 +33,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Add or Remove Programs asks for elevation** to uninstall when run by the user, through
+  `appwiz --uninstall`.
+
 - **Settings live in the user's profile**, `/users/user`, which init makes at boot: `progman.ini`,
   `desktop.cfg`, `mines.ini`, `assoc.ini`, `audio.cfg`, `keyboard.cfg`... are found with
   `savanxp_settings_path` (`HOME` says the same), falling back once to the old copy at the root. Doom
