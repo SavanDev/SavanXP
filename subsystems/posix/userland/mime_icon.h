@@ -32,7 +32,7 @@
 #define MIME_ICON_NAME_CAPACITY 40
 #define MIME_ICON_MAX_ENTRIES 64
 
-#define MIME_ICON_POLICY_PATH "/mimeicon.ini"
+#define MIME_ICON_POLICY_NAME "mimeicon.ini" /* in the profile: savanxp_settings_path */
 #define MIME_ICON_POLICY_MAX_BYTES 4096
 #define MIME_ICON_DIRECTORY "/icons"
 

@@ -318,7 +318,7 @@ while it is elevated, into `/system`, and belongs with that phase too.
 | `chmod`, `fchmod`, `chown` | implemented; `chown` needs effective uid 0 |
 | `access` | answers with the real uid, as POSIX says |
 | `umask` | applied on create |
-| `getpwuid`, `getpwnam` | the two identities, from a fixed table: `root` (0) and `user` (1000, `/users/user`), the second name provisional |
+| `getpwuid`, `getpwnam` | the two identities, from a fixed table: `root` (0) and `user` (1000, `/users/user`) |
 | `setuid`, `seteuid` | lowering only (an elevated process may drop to the user); raising is `EPERM` |
 
 `struct stat` already had room for the new fields, so its layout did not
@@ -399,9 +399,9 @@ not move (4237 against 4328). `sxfs-cli apply` takes the host file's time, and
 - **Network identity.** Sockets need no permission yet. Binding a low port
   could be made system-only later, if a server ever runs on the system.
 
-## Open questions
+## Decided
 
-- The profile path: `/users/<name>` (NT's `Users`) or `/home/<name>`
-  (Unix's). This document uses the first.
-- The user's name, and whether the installer or first boot asks for it, or it is
-  fixed until there is a second user.
+- **The profile path is `/users/<name>`**, NT's `Users`, not Unix's `/home`.
+- **The user is `user`** (uid 1000, profile `/users/user`), fixed until there
+  is a second user. Neither the installer nor the first boot asks for a name;
+  that belongs with multi-user, which is out of scope.

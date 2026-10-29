@@ -272,7 +272,10 @@ int mime_icon_parse_policy(const char *text, size_t length)
 int mime_icon_load(void)
 {
     static char file_buffer[MIME_ICON_POLICY_MAX_BYTES];
-    int fd = (int)savanxp_open_mode(MIME_ICON_POLICY_PATH, SAVANXP_OPEN_READ);
+    char path[256];
+    int fd = savanxp_settings_path(MIME_ICON_POLICY_NAME, 0, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+        : -1;
     long total = 0;
 
     g_entry_count = 0;

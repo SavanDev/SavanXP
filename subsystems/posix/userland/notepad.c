@@ -206,7 +206,18 @@ static int notepad_load(const char *path)
 static void notepad_path_dialog(int mode)
 {
     g_path_mode = mode;
-    snprintf(g_open_path, sizeof(g_open_path), "%s", g_path);
+    if (g_path[0] != '\0')
+    {
+        snprintf(g_open_path, sizeof(g_open_path), "%s", g_path);
+    }
+    else
+    {
+        /* A new document starts in the user's profile: the root is the
+         * system's. */
+        const char *profile = savanxp_profile_dir();
+
+        snprintf(g_open_path, sizeof(g_open_path), "%s%s", profile, strcmp(profile, "/") == 0 ? "" : "/");
+    }
     g_open_widgets[1].caret = (int)strlen(g_open_path);
     g_open_dialog.title = mode == NOTEPAD_PATH_MODE_SAVE ? "Save As" : "Open";
     g_open_widgets[2].text = mode == NOTEPAD_PATH_MODE_SAVE ? "Save" : "Open";

@@ -2,6 +2,7 @@
 #include "savanxp/wm_shell_protocol.h"
 
 #include "desktop_wallpaper.h"
+#include <unistd.h>
 
 /* The wallpaper keeps its version stamp above the taskbar with a copy of its
  * height (desktop_wallpaper.h): if the bar changes, the stamp follows it. */
@@ -507,6 +508,11 @@ int main(void)
         gfx_close(&g_background);
         return 1;
     }
+
+    /* Programs started from here inherit the working directory: a file
+     * saved under a bare name lands in the user's profile, not at the root,
+     * which the user may not write. */
+    (void)chdir(savanxp_profile_dir());
 
     /* Loads the persisted choice and tries to decode /wallpaper.bmp. */
     desktop_wallpaper_init();

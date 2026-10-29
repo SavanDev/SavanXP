@@ -1,7 +1,9 @@
 #include "desktop_wallpaper.h"
 #include "shared/version.h"
 
-#define DESKTOP_WALLPAPER_CONFIG_PATH "/desktop.cfg"
+/* The user's choice, in the profile (savanxp_settings_path); the image is the
+ * system's, at the root. */
+#define DESKTOP_WALLPAPER_CONFIG_NAME "desktop.cfg"
 #define DESKTOP_WALLPAPER_IMAGE_PATH "/wallpaper.bmp"
 #define DESKTOP_WALLPAPER_MAX_DIMENSION 2048
 
@@ -148,10 +150,19 @@ static void load_image(void)
     unload_image();
 }
 
+static int open_config_for_read(void)
+{
+    char path[256];
+
+    return savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 0, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+        : -1;
+}
+
 static void load_config(void)
 {
     char digit = 0;
-    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
+    int fd = open_config_for_read();
 
     if (fd < 0)
     {
@@ -178,9 +189,10 @@ static void load_config(void)
 static void save_mode(int mode)
 {
     char digit = (char)('0' + mode);
-    int fd = (int)savanxp_open_mode(
-        DESKTOP_WALLPAPER_CONFIG_PATH,
-        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    char path[256];
+    int fd = savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 1, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
+        : -1;
 
     if (fd < 0)
     {
@@ -214,7 +226,7 @@ static int read_persisted_mode(void)
 {
     char digit = 0;
     int mode = -1;
-    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
+    int fd = open_config_for_read();
 
     if (fd < 0)
     {

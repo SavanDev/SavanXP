@@ -28,6 +28,17 @@ device::Device g_input_device = {
     .can_read = nullptr,
 };
 
+// The keyboard's settings without its events: the layout ioctls only, for
+// the user's desktop, which may not open /dev/input0.
+device::Device g_keyboard_control_device = {
+    .name = "keyboard",
+    .read = nullptr,
+    .write = nullptr,
+    .ioctl = nullptr,
+    .close = nullptr,
+    .can_read = nullptr,
+};
+
 device::Device g_mouse_device = {
     .name = "mouse0",
     .read = nullptr,
@@ -121,6 +132,8 @@ bool input_device_can_read() {
     return g_input_count != 0;
 }
 
+int keyboard_control_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access);
+
 bool claim_held(uint32_t pid) {
     if (pid == 0) {
         return false;
@@ -160,6 +173,10 @@ int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (request == INPUT_IOC_CLAIM) {
         return claim_reader(g_input_reader_pid);
     }
+    return keyboard_control_ioctl(request, argument, granted_access);
+}
+
+int keyboard_control_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (request == INPUT_IOC_SET_LAYOUT && (granted_access & object::access_write) == 0) {
         return negative_error(SX_EACCES);
     }
@@ -272,6 +289,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_input_device.can_read = input_device_can_read;
     g_input_device.ioctl = input_ioctl;
     g_input_device.close = nullptr;
+    g_keyboard_control_device.ioctl = keyboard_control_ioctl;
     g_mouse_device.read = read_mouse_device;
     g_mouse_device.can_read = mouse_device_can_read;
     g_mouse_device.ioctl = mouse_ioctl;
@@ -280,6 +298,10 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     // process that can read the keyboard can read a password, and one that can
     // write input can answer the elevation prompt. windowd reads them.
     if (!device::register_node("/dev/input0", &g_input_device, false, 0600)) {
+        return;
+    }
+    // The layout is the user's to choose, as on NT; reading keys is not.
+    if (!device::register_node("/dev/keyboard", &g_keyboard_control_device, true, 0666)) {
         return;
     }
     if (input::pointer_available()) {

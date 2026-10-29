@@ -518,6 +518,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
+            // The clock is every process's: setting it needs the system.
+            if (!cred::acts_as_system(caller.credentials)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EPERM));
+                return context;
+            }
             // Fecha mala y chip atascado son fallos distintos: el llamador
             // tiene que saber si corrija el dato o reintente.
             if (!rtc::valid_time(value)) {

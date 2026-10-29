@@ -320,7 +320,7 @@ diff --git a/m_config.c b/m_config.c
      }
  
      LoadDefaultCollection(&doom_defaults);
-@@ -2042,11 +2121,7 @@
+@@ -2042,11 +2121,19 @@
  
  static char *GetDefaultConfigDir(void)
  {
@@ -329,6 +329,18 @@ diff --git a/m_config.c b/m_config.c
 -    result[1] = '\0';
 -
 -    return result;
++    // The player's settings and saves are theirs, in the profile: the game's
++    // directory belongs to the system (docs/kernel/USERS_AND_PERMISSIONS.md).
++    // The system itself, which has no profile, keeps them with the game.
++    const char *home = getenv("HOME");
++
++    if (home != NULL && strcmp(home, "/") != 0)
++    {
++        char *dir = M_StringJoin(home, DIR_SEPARATOR_S, "doom", NULL);
++
++        M_MakeDirectory(dir);
++        return dir;
++    }
 +    return strdup(FILES_DIR);
  }
  

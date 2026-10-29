@@ -267,7 +267,10 @@ int file_assoc_parse_policy(const char *text, size_t length)
 int file_assoc_load_policy(void)
 {
     static char file_buffer[FILE_ASSOC_POLICY_MAX_BYTES];
-    int fd = (int)savanxp_open_mode(FILE_ASSOC_POLICY_PATH, SAVANXP_OPEN_READ);
+    char path[256];
+    int fd = savanxp_settings_path(FILE_ASSOC_POLICY_NAME, 0, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+        : -1;
     long total = 0;
 
     g_entry_count = 0;

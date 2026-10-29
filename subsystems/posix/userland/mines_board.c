@@ -1,5 +1,7 @@
 #include "mines_board.h"
 
+#include "libc.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +22,8 @@ static const char *const k_score_keys[MINES_LEVEL_COUNT] = {
 };
 
 static int g_best[MINES_LEVEL_COUNT] = {0, 0, 0};
-static const char *g_scores_path = MINES_SCORES_PATH;
+/* 0: the player's own file, in the profile. The selftest points it at /tmp. */
+static const char *g_scores_path = 0;
 
 /* xorshift32. No hace falta mas: reparte 99 minas en 480 celdas, no genera
  * claves. El estado arranca en algo distinto de cero porque el cero es el punto
@@ -490,9 +493,19 @@ int mines_board_chord(struct mines_board *board, int column, int row)
 
 /* --- mejores tiempos ------------------------------------------------------ */
 
+static int scores_path(int for_write, char *out, size_t capacity)
+{
+    if (g_scores_path != 0)
+    {
+        snprintf(out, capacity, "%s", g_scores_path);
+        return 0;
+    }
+    return savanxp_settings_path(MINES_SCORES_NAME, for_write, out, capacity);
+}
+
 void mines_scores_set_path(const char *path)
 {
-    g_scores_path = (path != 0 && path[0] != '\0') ? path : MINES_SCORES_PATH;
+    g_scores_path = (path != 0 && path[0] != '\0') ? path : 0;
 }
 
 int mines_scores_best(int level)
@@ -506,7 +519,8 @@ int mines_scores_best(int level)
 
 static void mines_scores_save(void)
 {
-    FILE *stream = fopen(g_scores_path, "w");
+    char path[256];
+    FILE *stream = scores_path(1, path, sizeof(path)) == 0 ? fopen(path, "w") : 0;
     int level;
 
     /* Sin disco escribible no hay nada que hacer y tampoco nada que avisar: la
@@ -553,13 +567,14 @@ void mines_scores_load(void)
 {
     FILE *stream;
     char line[64];
+    char path[256];
     int level;
 
     for (level = 0; level < MINES_LEVEL_COUNT; ++level)
     {
         g_best[level] = 0;
     }
-    stream = fopen(g_scores_path, "r");
+    stream = scores_path(0, path, sizeof(path)) == 0 ? fopen(path, "r") : 0;
     if (stream == 0)
     {
         return;

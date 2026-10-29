@@ -30,9 +30,9 @@
 #define FILE_ASSOC_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
 #define FILE_ASSOC_MAX_ENTRIES 32
 
-/* Archivo de politica del usuario. Formato: una linea `\.ext=/ruta/programa`
- * por asociacion, con '#' y ';' como comentario. */
-#define FILE_ASSOC_POLICY_PATH "/assoc.ini"
+/* The user's policy file. Format: one `.ext=/path/program` line per
+ * association, with '#' and ';' starting a comment. */
+#define FILE_ASSOC_POLICY_NAME "assoc.ini" /* in the profile: savanxp_settings_path */
 #define FILE_ASSOC_POLICY_MAX_BYTES 4096
 
 /*

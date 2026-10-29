@@ -93,10 +93,10 @@ static int keyboard_open(void)
     g_hot_row = -1;
     g_last_buttons = 0;
     g_current_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
-    /* Only for the ioctls: this fd must never be read -- /dev/input0's queue
-     * is global and windowd is the one that drains it. Setting the layout is a
-     * mutating operation, so the descriptor needs write access. */
-    g_input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    /* The layout without the keys: /dev/input0 is windowd's, and the desktop
+     * runs as the user. Setting the layout is a mutating operation, so the
+     * descriptor needs write access. */
+    g_input_fd = savanxp_open_mode("/dev/keyboard", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (g_input_fd >= 0)
     {
         long layout = input_get_layout((int)g_input_fd);
@@ -145,9 +145,11 @@ static uint32_t keyboard_pointer(struct savanxp_gfx_context *gfx, const struct s
             else
             {
                 char digit = (char)('0' + row);
-                int config_fd = (int)savanxp_open_mode(
-                    "/keyboard.cfg",
-                    SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+                char path[256];
+                /* The user's, in the profile; init applies it at boot. */
+                int config_fd = savanxp_settings_path("keyboard.cfg", 1, path, sizeof(path)) == 0
+                    ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
+                    : -1;
                 if (config_fd >= 0)
                 {
                     (void)savanxp_write(config_fd, &digit, 1);

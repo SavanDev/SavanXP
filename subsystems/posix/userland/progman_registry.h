@@ -70,7 +70,7 @@
 #define PROGMAN_NAME_CAPACITY 32
 #define PROGMAN_DESC_CAPACITY 64
 #define PROGMAN_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
-#define PROGMAN_REGISTRY_PATH "/progman.ini"
+#define PROGMAN_REGISTRY_NAME "progman.ini" /* in the profile: savanxp_settings_path */
 /* Tope del archivo que se lee a un buffer estatico. */
 #define PROGMAN_REGISTRY_MAX_BYTES 8192
 
@@ -121,7 +121,7 @@ struct progman_group
 };
 
 /*
- * Carga el registro desde PROGMAN_REGISTRY_PATH. Devuelve la cantidad de items
+ * Carga el registro desde PROGMAN_REGISTRY_NAME. Devuelve la cantidad de items
  * que aporto el archivo; si falta, no entra en el buffer o no tiene ningun item
  * valido, devuelve 0 y DEJA EL REGISTRO VACIO.
  *

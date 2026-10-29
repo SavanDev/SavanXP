@@ -1,5 +1,10 @@
 #include "libc.h"
 
+#include <pwd.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 static int is_space_char(char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n';
 }
@@ -385,17 +390,52 @@ static int run_automation_spec(const char* spec) {
     return status;
 }
 
-#define KEYBOARD_LAYOUT_CONFIG_PATH "/keyboard.cfg"
-#define AUDIO_CONFIG_PATH "/audio.cfg"
+#define KEYBOARD_LAYOUT_CONFIG_NAME "keyboard.cfg"
+#define AUDIO_CONFIG_NAME "audio.cfg"
 
-/* Layout preferido (mismo patron de 1 digito ASCII que desktop.cfg): se
- * aplica ANTES de arrancar windowd para que el layout ya este activo cuando
- * el primer evento de teclado llegue. Abre /dev/input0 solo para el ioctl --
- * nunca para leer, porque la cola de eventos es global y windowd todavia no
- * arranco para drenarla. */
+/* The one user (docs/kernel/USERS_AND_PERMISSIONS.md): its profile, made at
+ * boot if missing, the user's own and nobody else's (0700). */
+static const struct passwd* the_user(void) {
+    return getpwnam("user");
+}
+
+static void ensure_user_profile(void) {
+    const struct passwd* user = the_user();
+
+    if (user == 0) {
+        return;
+    }
+    (void)mkdir("/users", 0755);
+    if (mkdir(user->pw_dir, 0700) == 0) {
+        (void)chown(user->pw_dir, user->pw_uid, user->pw_gid);
+        printf("init: made the profile %s\n", user->pw_dir);
+    }
+}
+
+/* A setting of the user's, which init applies before anybody logs in: the
+ * profile's copy, or the one at the root from before profiles. */
+static long open_user_setting(const char* name) {
+    const struct passwd* user = the_user();
+    char path[256];
+    long fd = -1;
+
+    if (user != 0) {
+        snprintf(path, sizeof(path), "%s/%s", user->pw_dir, name);
+        fd = savanxp_open(path);
+    }
+    if (fd < 0) {
+        snprintf(path, sizeof(path), "/%s", name);
+        fd = savanxp_open(path);
+    }
+    return fd;
+}
+
+/* The preferred layout (one ASCII digit, the pattern desktop.cfg uses), set
+ * BEFORE windowd starts so it is active for the first key. Through
+ * /dev/keyboard, which has the layout and none of the keys. */
 static void apply_keyboard_layout_preference(void) {
     char digit = 0;
-    long config_fd = savanxp_open(KEYBOARD_LAYOUT_CONFIG_PATH);
+    long config_fd = open_user_setting(KEYBOARD_LAYOUT_CONFIG_NAME);
     long input_fd;
 
     if (config_fd < 0) {
@@ -410,7 +450,7 @@ static void apply_keyboard_layout_preference(void) {
         return;
     }
 
-    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    input_fd = savanxp_open_mode("/dev/keyboard", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (input_fd < 0) {
         return;
     }
@@ -418,13 +458,13 @@ static void apply_keyboard_layout_preference(void) {
     savanxp_close((int)input_fd);
 }
 
-/* Volumen preferido (mismo patron que keyboard.cfg pero con dos numeros:
- * "75 0" = volumen 75 sin mutear). Se aplica ANTES de arrancar windowd para
- * que el primer sonido ya salga al nivel guardado. Sin fichero o con
- * contenido roto no se toca nada: el kernel arranca a 100 sin mutear. */
+/* The preferred volume (keyboard.cfg's pattern with two numbers: "75 0" is
+ * volume 75, not muted), set BEFORE windowd starts so the first sound already
+ * plays at the saved level. With no file or a broken one nothing changes: the
+ * kernel starts at 100, not muted. */
 static void apply_audio_preference(void) {
     char text[16] = {0};
-    long config_fd = savanxp_open(AUDIO_CONFIG_PATH);
+    long config_fd = open_user_setting(AUDIO_CONFIG_NAME);
     long audio_fd;
     long bytes_read;
     unsigned int volume = 0;
@@ -617,6 +657,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    ensure_user_profile();
     apply_keyboard_layout_preference();
     apply_audio_preference();
 

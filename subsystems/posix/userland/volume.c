@@ -1,7 +1,8 @@
 #include "libc.h"
 #include "savanxp/audio_server.h"
 
-#define VOLUME_CONFIG_PATH "/audio.cfg"
+/* The user's, in the profile (savanxp_settings_path); init applies it at boot. */
+#define VOLUME_CONFIG_NAME "audio.cfg"
 #define VOLUME_LIST_CAPACITY 16u
 
 static int parse_uint(const char* text, unsigned int* value) {
@@ -33,6 +34,7 @@ static void persist_volume(unsigned int volume, unsigned int muted) {
     size_t digit_index;
     char digits[4];
     long config_fd;
+    char config_path[256];
 
     values[0] = volume;
     values[1] = muted;
@@ -52,16 +54,20 @@ static void persist_volume(unsigned int volume, unsigned int muted) {
         text[length++] = value_index == 0 ? ' ' : '\n';
     }
 
+    if (savanxp_settings_path(VOLUME_CONFIG_NAME, 1, config_path, sizeof(config_path)) < 0) {
+        eprintf("volume: no settings path for %s\n", VOLUME_CONFIG_NAME);
+        return;
+    }
     config_fd = savanxp_open_mode(
-        VOLUME_CONFIG_PATH,
+        config_path,
         SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
     if (config_fd < 0) {
-        eprintf("volume: no se pudo guardar %s (%s)\n",
-                VOLUME_CONFIG_PATH, result_error_string(config_fd));
+        eprintf("volume: could not save %s (%s)\n",
+                config_path, result_error_string(config_fd));
         return;
     }
     if (savanxp_write((int)config_fd, text, length) != (long)length) {
-        eprintf("volume: no se pudo guardar %s\n", VOLUME_CONFIG_PATH);
+        eprintf("volume: could not save %s\n", config_path);
     }
     savanxp_close((int)config_fd);
     /* La preferencia tiene que sobrevivir a un apagado inmediato: sin esto,

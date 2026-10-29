@@ -516,8 +516,8 @@ int desktop_taskbar_init(void)
         return -1;
     }
 
-    /* Only for the layout ioctl -- this fd is never read. */
-    g_input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    /* Only for the layout ioctl: /dev/keyboard has no events to read. */
+    g_input_fd = savanxp_open_mode("/dev/keyboard", SAVANXP_OPEN_READ);
     /* Only for the volume read ioctls -- nothing is ever written through it.
      * Without audio there is no speaker to show: the button stays as is. */
     g_audio_fd = (long)audio_open();

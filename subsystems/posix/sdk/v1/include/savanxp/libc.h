@@ -41,6 +41,15 @@ long savanxp_mkdir_mode(const char* path, unsigned long permissions);
 long savanxp_get_identity(struct savanxp_identity* out);
 long savanxp_set_identity(unsigned long field, unsigned long value);
 long savanxp_access(const char* path, unsigned long want);
+/* The caller's profile (docs/kernel/USERS_AND_PERMISSIONS.md): /users/<name>
+ * for the person, by the real uid, so an elevated program finds the same one;
+ * "/" for the system. getenv("HOME") says the same. */
+const char* savanxp_profile_dir(void);
+/* Where the caller keeps the settings file `name` (a bare file name): in its
+ * profile. For reading (for_write 0), when the profile has no copy yet and
+ * the root still has the one from before profiles, that one, so an existing
+ * image keeps its settings until the first save moves them. 0 or -errno. */
+int savanxp_settings_path(const char* name, int for_write, char* out, size_t capacity);
 long savanxp_chmod(const char* path, unsigned long permissions);
 long savanxp_chown(const char* path, unsigned long uid, unsigned long gid);
 long savanxp_fchmod(int fd, unsigned long permissions);

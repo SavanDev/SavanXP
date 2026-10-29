@@ -135,7 +135,8 @@ int mines_board_chord(struct mines_board *board, int column, int row);
  * fails silently and the game works all the same, which is all it can do.
  */
 
-#define MINES_SCORES_PATH "/mines.ini"
+/* A settings file of the player's: in the profile (savanxp_settings_path). */
+#define MINES_SCORES_NAME "mines.ini"
 
 /* Lee el archivo. Sin archivo deja los tres niveles sin record, que no es un
  * error: es una instalacion en la que nadie gano todavia. */

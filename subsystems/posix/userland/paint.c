@@ -680,7 +680,18 @@ static void on_open_cancel(struct sxgui_widget *widget, void *user)
 static void paint_path_dialog(int save_as)
 {
     g_open_mode = save_as;
-    snprintf(g_open_path, sizeof(g_open_path), "%s", g_path);
+    if (g_path[0] != '\0')
+    {
+        snprintf(g_open_path, sizeof(g_open_path), "%s", g_path);
+    }
+    else
+    {
+        /* A new document starts in the user's profile: the root is the
+         * system's. */
+        const char *profile = savanxp_profile_dir();
+
+        snprintf(g_open_path, sizeof(g_open_path), "%s%s", profile, strcmp(profile, "/") == 0 ? "" : "/");
+    }
     if (save_as && path_is_png(g_open_path))
     {
         /* Offer the same name as a BMP: same length, so it always fits. */

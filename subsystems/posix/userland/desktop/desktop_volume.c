@@ -44,7 +44,8 @@
 #define VOLUMEPOPUP_POLL_MS 1000u
 #define VOLUMEPOPUP_QUERY_TIMEOUT_MS 300u
 
-#define VOLUMEPOPUP_CONFIG_PATH "/audio.cfg"
+/* The user's, in the profile (savanxp_settings_path), as `volume` keeps it. */
+#define VOLUMEPOPUP_CONFIG_NAME "audio.cfg"
 
 static struct sx_rect popup_mute_rect(void)
 {
@@ -320,11 +321,16 @@ static void popup_paint(
 static void popup_persist(int volume, int muted)
 {
     char text[16];
+    char path[256];
     long config_fd;
 
     (void)snprintf(text, sizeof(text), "%d %d\n", volume, muted);
+    if (savanxp_settings_path(VOLUMEPOPUP_CONFIG_NAME, 1, path, sizeof(path)) < 0)
+    {
+        return;
+    }
     config_fd = savanxp_open_mode(
-        VOLUMEPOPUP_CONFIG_PATH,
+        path,
         SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
     if (config_fd < 0)
     {

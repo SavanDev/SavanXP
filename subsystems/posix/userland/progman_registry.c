@@ -501,7 +501,10 @@ int progman_registry_parse(const char *text, size_t length)
 int progman_registry_load_file(void)
 {
     static char file_buffer[PROGMAN_REGISTRY_MAX_BYTES];
-    int fd = (int)savanxp_open_mode(PROGMAN_REGISTRY_PATH, SAVANXP_OPEN_READ);
+    char path[256];
+    int fd = savanxp_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+        : -1;
     size_t total = 0;
 
     if (fd >= 0)

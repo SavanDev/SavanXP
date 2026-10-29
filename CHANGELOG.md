@@ -33,6 +33,12 @@ Cut-off notes:
 
 ### Changed
 
+- **Settings live in the user's profile**, `/users/user`, which init makes at boot: `progman.ini`,
+  `desktop.cfg`, `mines.ini`, `assoc.ini`, `audio.cfg`, `keyboard.cfg`... are found with
+  `savanxp_settings_path` (`HOME` says the same), falling back once to the old copy at the root. Doom
+  saves in `$HOME/doom`. New `/dev/keyboard` for the layout; `kill` of another person's process and
+  setting the clock are `EPERM` for the user. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
+
 - **The system runs from its disk, mounted at `/`**: `/bin`, `/lib` and `/games` are the SxFS
   volume's, and the initramfs moved to `/rescue`, where init starts from when no disk mounts.
   `PATH` is `/bin:/rescue/bin`; the loader and `--dynamic-linker` use `/lib`. `/disk/...` stays as

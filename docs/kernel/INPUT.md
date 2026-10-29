@@ -60,8 +60,10 @@ through `set_keyboard_leds`. Only the driver whose keyboard is active is told,
 so a quiet 8042 is not sent LED commands on behalf of a virtio keyboard.
 
 The layout is a user preference that lives in the core:
-`INPUT_IOC_SET_LAYOUT` / `INPUT_IOC_GET_LAYOUT` on `/dev/input0` reach it
-through `input::set_keyboard_layout`.
+`INPUT_IOC_SET_LAYOUT` / `INPUT_IOC_GET_LAYOUT` reach it through
+`input::set_keyboard_layout`, on `/dev/input0` or on `/dev/keyboard`, which has
+those ioctls and no events: it is 0666, so the user's desktop can choose the
+layout without being able to read keys.
 
 ### Who reads the events
 
@@ -70,7 +72,7 @@ the reader is claimed: `INPUT_IOC_CLAIM` on either device makes the caller its
 only reader until it exits, and a read by anybody else is `-EBUSY`. Only the
 system may claim, and only a device nobody holds. `windowd` claims both at
 startup. Opening and the layout ioctls stay open to anyone the device mode
-allows (the desktop opens `/dev/input0` for the layout), and a device nobody
+allows, and a device nobody
 claimed reads as before, which is how `kbdtest` and `mousetest` run without a
 session. The reason is the elevation prompt: its answer has to be what
 `windowd` read ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#elevation)).

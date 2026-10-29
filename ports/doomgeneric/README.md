@@ -72,7 +72,9 @@ After installing the port, run the normal Linux build and verify:
 ```
 
 Existing Doom configuration and `savegames/` data must remain byte-for-byte
-identical across the rebuild. The current regression assets are
+identical across the rebuild. A Doom run by the user keeps its own in
+`$HOME/doom` (`/users/user/doom`), since `/games/doom` is the system's; run by
+the system (no profile), it keeps them in `/games/doom` as before. The current regression assets are
 `doom1.wad`, `default.cfg`, `doomgenericdoom.cfg`, and `savegames/`.
 
 ## Music

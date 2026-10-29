@@ -298,6 +298,15 @@ int kill_process(process::Process& sender, int pid, int signal_number) {
     if (target->idle || target->pid == detail::init_pid()) {
         return sx::negative_error(SAVANXP_EACCES);
     }
+    // Another person's process, or the system's, is not the caller's to
+    // end (docs/kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation):
+    // POSIX's rule, the caller's real or effective uid against the target's
+    // real one.
+    if (!cred::acts_as_system(sender.credentials) &&
+        sender.credentials.uid != target->credentials.uid &&
+        sender.credentials.euid != target->credentials.uid) {
+        return sx::negative_error(SAVANXP_EPERM);
+    }
 
     // No hay entrega de senales a userland (posix_signals.hpp): SIGCHLD es un
     // no-op que devuelve exito, y el resto termina el proceso con 128+n.

@@ -818,7 +818,9 @@ int main(int argc, char **argv)
     (void)sxgui_app_set_content_size(&g_app, FILESAPP_CONTENT_WIDTH, FILESAPP_CONTENT_HEIGHT);
     filesapp_layout(&g_app);
 
-    if (filesapp_load_directory("/") < 0)
+    /* The user's profile, as NT's Explorer opens on My Documents; the root
+     * for the system, and if the profile is not there. */
+    if (filesapp_load_directory(savanxp_profile_dir()) < 0 && filesapp_load_directory("/") < 0)
     {
         sxgui_app_quit(&g_app, 1);
     }

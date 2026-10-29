@@ -29,6 +29,8 @@
 #define IDTEST_TMP_SYSTEM "/tmp/idtest-system.txt"
 
 static int g_failures = 0;
+/* The parent, the system's: what the child tries to signal. */
+static long g_parent_pid = 0;
 
 static void check(int ok, const char* what) {
     if (!ok) {
@@ -98,6 +100,15 @@ static int run_child(void) {
         }
     }
 
+    /* Ending the system's processes and setting the clock need the system.
+     * SIGCHLD ends nothing, so asking about the parent costs nothing. */
+    check(savanxp_kill((int)g_parent_pid, SAVANXP_SIGCHLD) == -SAVANXP_EPERM, "the user signals the system's process");
+    {
+        struct savanxp_realtime now;
+
+        check(realtime(&now) == 0 && set_realtime(&now) == -SAVANXP_EPERM, "the user sets the clock");
+    }
+
     /* The keyboard is the system's only. */
     check_refused(open("/dev/input0", O_RDONLY), EACCES, "the user reads /dev/input0");
 
@@ -140,6 +151,7 @@ int main(void) {
     check(chown(IDTEST_PROFILE, IDTEST_USER, IDTEST_GROUP) == 0, "the system gives the profile to the user");
     check(create_file(IDTEST_TMP_SYSTEM, 0644) == 0, "the system creates a file in /tmp");
 
+    g_parent_pid = getpid();
     {
         long pid = savanxp_fork();
         check(pid >= 0, "fork");

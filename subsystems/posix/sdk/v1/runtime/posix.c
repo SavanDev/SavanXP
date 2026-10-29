@@ -1864,6 +1864,9 @@ char* sx_getenv(const char* name) {
     if (strcmp(name, "TERM") == 0) {
         return (char*)"savanxp";
     }
+    if (strcmp(name, "HOME") == 0) {
+        return (char*)savanxp_profile_dir();
+    }
     return 0;
 }
 
@@ -4457,6 +4460,54 @@ struct passwd* sx_getpwuid(uid_t uid) {
     for (size_t index = 0; index < sizeof(g_passwd_table) / sizeof(g_passwd_table[0]); ++index) {
         if (g_passwd_table[index].pw_uid == uid) {
             return &g_passwd_table[index];
+        }
+    }
+    return 0;
+}
+
+/* docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines.
+ * The person's, by the real uid: an elevated program (uid 1000, euid 0)
+ * finds the same profile as the program that asked for it. The system's is
+ * the root, where every setting lived before profiles. */
+const char* savanxp_profile_dir(void) {
+    struct savanxp_identity identity;
+    const struct passwd* entry;
+
+    if (savanxp_get_identity(&identity) < 0) {
+        return g_passwd_root_dir;
+    }
+    entry = sx_getpwuid((uid_t)identity.uid);
+    return entry != 0 ? entry->pw_dir : g_passwd_root_dir;
+}
+
+static int sx_join_profile(const char* directory, const char* name, char* out, size_t capacity) {
+    const int written = sx_strcmp(directory, "/") == 0
+        ? sx_snprintf(out, capacity, "/%s", name)
+        : sx_snprintf(out, capacity, "%s/%s", directory, name);
+    return written > 0 && (size_t)written < capacity ? 0 : -SAVANXP_E2BIG;
+}
+
+int savanxp_settings_path(const char* name, int for_write, char* out, size_t capacity) {
+    const char* profile = savanxp_profile_dir();
+    struct savanxp_stat info;
+
+    if (name == 0 || name[0] == '\0' || name[0] == '/' || out == 0 || capacity == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    if (sx_join_profile(profile, name, out, capacity) < 0) {
+        return -SAVANXP_E2BIG;
+    }
+    if (for_write || sx_strcmp(profile, "/") == 0 || savanxp_stat(out, &info) == 0) {
+        return 0;
+    }
+    /* Not in the profile yet: the copy at the root from before profiles,
+     * if there is one. The first save moves it into the profile. */
+    {
+        char legacy[256];
+
+        if (sx_join_profile("/", name, legacy, sizeof(legacy)) == 0 && savanxp_stat(legacy, &info) == 0 &&
+            sx_strlen(legacy) < capacity) {
+            sx_memcpy(out, legacy, sx_strlen(legacy) + 1u);
         }
     }
     return 0;
