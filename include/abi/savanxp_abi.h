@@ -139,6 +139,9 @@ struct savanxp_identity {
  * que vuelve calculable el uso de CPU del sistema: lo que el idle NO se llevo
  * es lo que se llevaron los demas. */
 #define SAVANXP_PROC_FLAG_IDLE (1u << 0)
+/* It acts as the system (euid 0): a service, or a program elevated through
+ * the broker (docs/kernel/USERS_AND_PERMISSIONS.md). */
+#define SAVANXP_PROC_FLAG_SYSTEM (1u << 1)
 
 struct savanxp_process_info {
     uint32_t pid;

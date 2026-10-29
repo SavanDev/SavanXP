@@ -2434,7 +2434,8 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
                 info.handle_count += 1;
             }
         }
-        info.flags = proc.idle ? SAVANXP_PROC_FLAG_IDLE : 0u;
+        info.flags = (proc.idle ? SAVANXP_PROC_FLAG_IDLE : 0u) |
+            (cred::acts_as_system(proc.credentials) ? SAVANXP_PROC_FLAG_SYSTEM : 0u);
         return true;
     }
     return false;

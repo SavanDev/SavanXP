@@ -26,11 +26,11 @@ is integrated, physical or boot-media modification is outside the mitigation
 set below.
 
 Every process carries credentials (uid, euid, gid) and the VFS checks them on
-every path operation, but every process still runs as the system: nothing yet
-starts one as the user. Until the desktop does (phase 4 of
-[`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)), protecting init and
-classifying device I/O access reduce accidental or confused-deputy behavior,
-but do not create security isolation between applications.
+every path operation. The desktop and what it starts run as the user, and the
+system's rights are reached only through the elevation prompt
+([`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)). That keeps the
+user's programs out of the system; it does not keep them from each other,
+since they are one person's, and it assumes the boot chain is intact.
 
 ## Existing structural defenses
 

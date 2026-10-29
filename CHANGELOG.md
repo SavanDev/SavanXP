@@ -33,6 +33,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The desktop runs as the user** (uid 1000), and so does everything started from it; windowd and
+  compositord stay the system's. `SAVANXP_PROC_FLAG_SYSTEM` reports which processes act as the
+  system. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
+
 - **Add or Remove Programs asks for elevation** to uninstall when run by the user, through
   `appwiz --uninstall`.
 

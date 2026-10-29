@@ -202,7 +202,10 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
    dies. `init` keeps what is not part of the graphical session: `audiod`, and
    the fallback to `/bin/sh` when the session will not come up.
 2. It starts `compositord` (since phase 4), then `windowd`, then `desktop`,
-   each once the one before has opened its port. Program Manager is not part
+   each once the one before has opened its port. The first two run as the
+   system and the desktop as the user
+   ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md)), so every
+   program launched from it is the user's too. Program Manager is not part
    of the session: it is an ordinary application, started from the Start
    menu. `sessiond` is their parent, so a
    blocking `waitpid(-1)` tells it when any of them ends; it needs no

@@ -7,6 +7,7 @@
  * Starts /bin/sessiond.sxe and watches its children through the process table:
  * compositord, windowd and the desktop come up, and Program Manager does not
  * (it is an ordinary application, started from the Start menu); the desktop
+ * runs as the user and windowd and compositord as the system; the desktop
  * stays up, which it only does if windowd granted it the shell role
  * (gfx_open_shell fails otherwise and it exits); killed, the desktop comes
  * back; killed, windowd takes the session with it and the whole session comes
@@ -79,6 +80,23 @@ static int alive(long pid)
     return 0;
 }
 
+/* Whether a live process acts as the system (SAVANXP_PROC_FLAG_SYSTEM). */
+static int acts_as_system(long pid)
+{
+    struct savanxp_process_info info;
+    unsigned long index = 0;
+
+    while (proc_info(index, &info) > 0)
+    {
+        ++index;
+        if ((long)info.pid == pid)
+        {
+            return (info.flags & SAVANXP_PROC_FLAG_SYSTEM) != 0u;
+        }
+    }
+    return 0;
+}
+
 /* The desktop exits at once when it is refused the shell role: still being
  * there after a while is the proof it got it. */
 static int stays_up(long pid)
@@ -127,6 +145,16 @@ int main(void)
     if (find_child(sessiond, "progman", 0) > 0)
     {
         fail("the session started Program Manager");
+    }
+    /* docs/kernel/USERS_AND_PERMISSIONS.md, phase 4: the shell is the user's,
+     * the servers the system's. */
+    if (acts_as_system(desktop))
+    {
+        fail("the desktop runs as the system");
+    }
+    if (!acts_as_system(windowd) || !acts_as_system(compositord))
+    {
+        fail("windowd or compositord does not run as the system");
     }
     printf("SESSION SMOKE up windowd=%ld desktop=%ld\n", windowd, desktop);
 

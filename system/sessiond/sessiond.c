@@ -42,16 +42,23 @@ static const char* const k_desktop_path = "/bin/desktop";
  * the text shell instead of restarting sessiond. */
 #define SESSIOND_EXIT_GAVE_UP 3
 
+/* The one user (docs/kernel/USERS_AND_PERMISSIONS.md#the-identities): what
+ * the desktop, and so everything started from it, runs as. compositord and
+ * windowd stay the system's. */
+#define SESSIOND_USER_UID 1000u
+#define SESSIOND_USER_GID 100u
+
 struct sessiond_child {
     const char* path;
+    int as_user; /* 1: started as the user, not as the system */
     long pid;
     uint64_t started_ns;
     int quick_exits;
 };
 
-static struct sessiond_child g_compositord = {0, 0, 0ull, 0};
-static struct sessiond_child g_windowd = {0, 0, 0ull, 0};
-static struct sessiond_child g_desktop = {0, 0, 0ull, 0};
+static struct sessiond_child g_compositord = {0, 0, 0, 0ull, 0};
+static struct sessiond_child g_windowd = {0, 0, 0, 0ull, 0};
+static struct sessiond_child g_desktop = {0, 1, 0, 0ull, 0};
 
 /* One event nobody sets: waiting on it with a timeout is a sleep. */
 static long g_sleep_event = -1;
@@ -72,7 +79,15 @@ static long start_child(struct sessiond_child* child) {
     argv[0] = (char*)child->path;
     argv[1] = 0;
     /* Stdio only: its own handles are nothing a session program should hold. */
-    child->pid = sxn_spawn_stdio(child->path, argv, 1);
+    if (child->as_user) {
+        struct sxn_spawn_request request;
+        struct sxn_identity user = {SESSIOND_USER_UID, SESSIOND_USER_UID, SESSIOND_USER_GID, 0u};
+
+        sxn_spawn_request_init(&request, child->path, argv, 1);
+        child->pid = sxn_spawn_ex_as(&request, &user);
+    } else {
+        child->pid = sxn_spawn_stdio(child->path, argv, 1);
+    }
     child->started_ns = sxn_clock_ns();
     if (child->pid < 0) {
         log_line("sessiond: a session program did not start");

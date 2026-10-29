@@ -1,10 +1,10 @@
 # Users and permissions: one user, and elevation when it is needed
 
-> **Status: phases 1 (the format), 2 (tokens and the check) and 3 (the
-> broker and the prompt) are built; phase 4 is design.** Every process carries
-> an identity and the VFS checks it on every operation, and a program can be
-> elevated through the prompt, but everything still runs as the system, so
-> nothing is refused or asked for yet outside the tests.
+> **Status: built, phases 1–4.** Every process carries an identity and the
+> VFS checks it on every operation; the desktop, and everything started from
+> it, runs as the user, and what needs the system's rights goes through the
+> elevation prompt. The record of installed programs is what is left (see
+> phase 4).
 > This document fixed the model before the code, because it moves three things
 > that are expensive to move twice: the SxFS inode, the `stat` ABI, and who is
 > allowed to talk to `/dev/input0`. The phases at the end are the order to build
@@ -38,11 +38,10 @@ also what POSIX programs already expect.
 Before phase 1 there were no users, UIDs or credentials, and every process ran
 with the same authority. What changed, and what is still true:
 
-- **Processes** carry a token (phase 2, `kernel/credentials.hpp`), and every
-  one is the system's: init is, and nothing lowers anything outside `idtest`
-  and `elevtest`. So no application is yet kept from another, and the prompt
-  (phase 3) is never shown outside `elevation-smoke`: the system is not
-  asked.
+- **Processes** carry a token (phase 2, `kernel/credentials.hpp`). init and
+  the services it starts are the system's; since phase 4 `sessiond` starts the
+  desktop as the user, and every program launched from the desktop inherits
+  that.
 - **SxFS** records uid, gid, mode and modification time on every inode, and the
   VFS publishes them on the vnode it checks.
 - **The POSIX layer** answers with the token, applies `umask` on create, and
@@ -57,10 +56,9 @@ with the same authority. What changed, and what is still true:
 - **`/system/programs.txt`** is the build's list of the programs it shipped, and
   Add or Remove Programs trusts it to tell the system from what was installed
   ([`SXE_FORMAT.md`](../userland/SXE_FORMAT.md)). It is the system's, so only
-  the system can rewrite it -- which, until phase 4, is every process.
-- **Settings live at the root of the disk**: `progman.ini`, `assoc.ini`,
-  `desktop.cfg`, `mines.ini`, `audio.cfg`, `keyboard.cfg`. Some are the user's
-  and some are the machine's, and nothing tells them apart yet.
+  the system can rewrite it.
+- **Settings lived at the root of the disk** until phase 4 moved them into the
+  profile ([below](#settings-the-users-and-the-machines)).
 
 ## The identities
 
@@ -161,26 +159,31 @@ the check that enforces it does not exist.
 
 ### Settings: the user's and the machine's
 
-NT splits them into `HKEY_CURRENT_USER` and `HKEY_LOCAL_MACHINE`, and the same
-split applies to the `.ini` files at the root of the disk:
+NT splits them into `HKEY_CURRENT_USER` and `HKEY_LOCAL_MACHINE`. Every
+setting the system has today turned out to be the user's, as on NT, where the
+volume and the keyboard layout are per user too:
 
-| file | whose | moves to |
-| --- | --- | --- |
-| `progman.ini`, `assoc.ini`, `desktop.cfg`, `mines.ini` | the user's: menu arrangement, file associations, wallpaper, best times | `/users/<name>/` |
-| `keyboard.cfg`, `audio.cfg` | the machine's: init applies them at boot, before any user | `/system/` |
+| file | what |
+| --- | --- |
+| `progman.ini`, `desktop.cfg`, `mines.ini` | menu arrangement, wallpaper, best times |
+| `assoc.ini`, `mimeicon.ini` | file associations and icons, hand-written |
+| `keyboard.cfg`, `audio.cfg` | the layout and the volume; init applies them at boot from the one user's profile |
 
-Under the default table they would all be system-owned, so in phase 4 the
-desktop could no longer save its own settings. Moving them is part of that
-phase, and so is reading the old location once, so an existing image keeps its
-menu and its wallpaper. A machine setting the user changes (the volume) goes
-through elevation, or stays unelevated by being the user's after all; that is
-decided per file in phase 4.
+They live in the profile, `/users/<name>`, NT's `Users\<name>`.
+`savanxp_settings_path()` in the runtime says where: the profile of the real
+uid, so an elevated program finds the same one, and for reading, when the
+profile has no copy yet, the old one at the root, so an existing image keeps
+its menu and wallpaper until the first save moves them. The system's profile
+is the root itself, which is why the smokes, which run as the system, read and
+write where they always did. `getenv("HOME")` answers the same directory.
+`/system` holds no setting yet; it is where a machine-wide one would go, and
+writing it would take elevation.
 
-`/users/<name>` is the user's profile, NT's `Users\<name>`. It does not
-exist yet. Programs that save today (Paint, the editors) write wherever they are
-pointed, often the root itself, and in phase 4 that starts failing for an
-unelevated process. Moving their default save location into the profile is part
-of that phase, not an afterthought.
+init makes `/users/user` at boot (0700, the user's) if it is missing. The
+desktop works in it, so a file saved under a bare name lands there; Paint and
+Notepad offer it for a new document, and Files opens on it. Doom keeps its
+settings and saves in `$HOME/doom`; the game's directory, `/games/doom`, is
+the system's, and saves an older Doom made there stay there.
 
 `tools/sxfs_sync.py` and `libsxfs` install files from the host, with the
 default of the destination path. `sxfs_sync.py` also compacts an image by
@@ -215,6 +218,8 @@ chain is outside this model ([`KERNEL_SECURITY.md`](KERNEL_SECURITY.md)).
 user (`/dev/gpu0` through `windowd`, `/dev/audio0` through `audiod`, the
 clipboard, `/dev/power` for shutting down). The ones that must not be:
 
+- **`/dev/keyboard`** (0666) has the layout ioctls of `/dev/input0` and none
+  of its events: how the user's desktop and init set and read the layout.
 - **`/dev/input0` and `/dev/mouse0`: system only, read by `windowd`.** If any
   process can read the keyboard, it can read a password; if any process can
   write input, it can click "Yes" on the elevation prompt. The prompt below is
@@ -303,8 +308,16 @@ approval mode. A password belongs with a second user, not before.
 Shutdown stays unelevated, as it is on a desktop NT. Reading the system
 (`/bin`, logs, the process list) stays unelevated.
 
+What enforces each, since phase 4: the VFS for the files; `kill` for another
+person's or the system's process (`EPERM`, POSIX's rule: the caller's real or
+effective uid against the target's real one); `SET_REALTIME` for the clock
+(`EPERM`). Raw devices have no node yet, and `fscheck` repair runs at boot as
+the system.
+
 Uninstalling is writing `/bin` (and, with the box ticked, deleting a
-`data_dir`), so Add or Remove Programs asks for elevation from phase 4 on. The
+`data_dir`), so Add or Remove Programs asks for elevation: run by the user, it
+starts `appwiz --uninstall <path> [--data]` through the broker, which finds
+the entry again in a scan of its own rather than trusting the arguments. The
 registry of installed programs that should replace the `programs.txt`
 subtraction, as Windows keeps under `Uninstall`, is written by the installer
 while it is elevated, into `/system`, and belongs with that phase too.
@@ -382,12 +395,17 @@ not move (4237 against 4328). `sxfs-cli apply` takes the host file's time, and
    (QMP, through PS/2), and a second one accepted by a real Y runs elevated
    (uid 1000, euid 0, writes `/system`) and reports its exit status. The input
    rules are also in `windowd --selftest`.
-4. **The desktop runs as the user.** Init starts `windowd` and the services as
-   system and the shell as uid 1000. Programs that write outside the profile
-   move their defaults into it; the settings split between the profile and
-   `/system`; installers and Add or Remove Programs ask for elevation, and the
-   installer records what it installed. *Done when* the full smoke set passes
-   with the shell unelevated.
+4. **The desktop runs as the user — done, but for the install record.**
+   `sessiond` starts the desktop as uid 1000 (`session-smoke` checks it, and
+   that windowd and compositord are the system's, through
+   `SAVANXP_PROC_FLAG_SYSTEM`); the settings, the save defaults and Doom's
+   saves moved into the profile; `/dev/keyboard`; `kill` and the clock
+   checked (`idtest`); Add or Remove Programs elevates. The full smoke set passes, and
+   the visual scenarios run in a session whose shell is the user's. *Left:*
+   there is no installer inside the system yet (programs are installed from
+   the host, `tools/build-user.sh`), so nothing records what it installed, and
+   Add or Remove Programs still subtracts `programs.txt`. The record belongs
+   with the first installer, written while elevated into `/system`.
 
 ## Deliberately out of scope
 
