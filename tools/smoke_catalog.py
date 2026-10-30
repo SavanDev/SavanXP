@@ -562,6 +562,7 @@ SCENARIOS: dict[str, Scenario] = {
         180.0,
     ),
     "gfx2d-test": _host_scenario("gfx2d-test", "Host GFX2D test"),
+    "sxgl-test": _host_scenario("sxgl-test", "Host SxGL rasterizer test and benchmark"),
     "audio-test": _host_scenario("audio-test", "Host audio mixer test"),
     "sxmidi-smoke": _host_scenario("sxmidi-test", "Host MIDI synthesizer test"),
     "partition-smoke": _host_scenario("partition-test", "Host partition table test"),

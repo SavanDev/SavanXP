@@ -214,7 +214,7 @@ done
 # The runtime's units come from its manifest
 # (subsystems/posix/sdk/v1/runtime/units.txt); this script names groups only.
 RUNTIME_GROUPS=(core setjmp)
-((SSE)) && RUNTIME_GROUPS+=(math)
+((SSE)) && RUNTIME_GROUPS+=(math gl)
 ((AUDIO)) && RUNTIME_GROUPS+=(audio)
 ((GUI)) && RUNTIME_GROUPS+=(gui)
 RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$ROOT" "${RUNTIME_GROUPS[@]}")

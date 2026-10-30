@@ -1,13 +1,13 @@
 # SxGL — the 3D layer goes beside SxGFX, never inside it
 
-> **Status: batch 0 landed; SxGL itself is not built.** `/bin/gears` is in the
-> image, in the Diagnostics group, rasterizing by hand — so the consumer that
-> defines the subset now exists and the rest of this document has something
-> concrete to be measured against. Everything from batch 1 on is still only the
-> *shape* a 3D API would have to take here, written down while the reasoning is
-> fresh, so that the day someone wants OpenGL the answer starts from a design
-> instead of from a blank page — and so that nobody tries to grow it out of
-> SxGFX in the meantime.
+> **Status: batches 0 to 4 landed.** SxGL exists: `include/sxgfx/sxgl.h` and
+> `system/gfx/sxgl.c`, a documented GL 1.1 fixed-function subset with its own
+> reference in [SXGL.md](SXGL.md). It has two consumers, one per subsystem:
+> `/bin/gears` (POSIX), which defined batches 1 and 2, and the forest game
+> `/bin/nightwood.sxe` (SUN), which defined batches 3 and 4. What follows is the
+> design the implementation was measured against, kept because the reasons
+> still hold; where the implementation answered a question this document left
+> open, the answer is written in.
 >
 > The question that produced it: *if SxGFX is the closest thing to GDI, do we
 > need a new API to implement OpenGL?* The answer is **yes**, and
@@ -68,7 +68,7 @@ The Windows analogy is exact, and it is the one to hold on to:
 |---|---|---|
 | 2D rasterization | **SxGFX** | GDI32 |
 | Control toolkit | **SXGUI-C** | USER32 / comctl32 |
-| 3D rasterization | **SxGL** *(does not exist)* | `opengl32.dll` |
+| 3D rasterization | **SxGL** | `opengl32.dll` |
 | Context ↔ window binding | part of SxGL | WGL |
 | Presentation | `gfx_present_region` | `SwapBuffers` |
 
@@ -100,9 +100,12 @@ So the whole binding is three facts:
   share one buffer with a painter clipped to the client area. That is the
   `glViewport`-inside-a-window case for free, and the reason not to invent a
   surface type.
-- **`SwapBuffers` is `gfx_present_region`**, with the GL viewport as the dirty
-  rect. Vsync, throttling and the wait for the compositor are already solved
-  there; SxGL must not grow a second present path.
+- **`SwapBuffers` is the subsystem's present**, with what GL drew as the dirty
+  rect: `gfx_present_region` for a POSIX program, `sxnwm_submit_rects` for a
+  SUN one. Vsync, throttling and the wait for the compositor are already solved
+  there; SxGL must not grow a second present path. As built,
+  `sxgl_swap_buffers` only *returns* that rectangle, and the program presents
+  it — so SxGL has no way to reach the compositor at all.
 - **The depth buffer is SxGL's own allocation** and never leaves the process. It
   is the one buffer the platform knows nothing about.
 
@@ -129,11 +132,17 @@ Quake-style — bought an in-image `libGL` at the price of a GL whose semantics
 are its own invention, and it is no longer buying anything. It is not OpenGL; do
 not call it OpenGL. **Recommendation: real floats and conformance to a subset.**
 
-**Where the code lives.** `sxgl.c` would be a runtime module of the SDK like
-`runtime/math.c`, which every in-tree program already links, and
-`savanxp/sxgl.h` a normal header. The layering rule it has to respect is no
-longer about the FPU: SxGL binds to the window surface and
-`gfx_present_region`, never to the GPU behind the compositor's back.
+**Where the code lives.** This document first placed `sxgl.c` in the POSIX
+SDK's runtime, next to `runtime/math.c`, with `gfx_present_region` as its
+`SwapBuffers`. That made SxGL a POSIX library. When its second consumer turned
+out to be a SUN program, the placement changed to the one SxGFX already had:
+**platform code** (`system/gfx/sxgl.c`, `include/sxgfx/sxgl.h`) that makes no
+system call, linked by both subsystems, with presentation left to the caller
+([PLATFORM_GRAPHICS.md](PLATFORM_GRAPHICS.md)). It is a unit of the static
+runtime (group `gl` of `units.txt`), so a program pays for SxGL only if it calls
+it. The layering rule it respects is the platform one: SxGL binds to an
+`sx_bitmap` the caller hands it and to nothing else — never to `windowd`, never
+to the GPU.
 
 ## Which OpenGL
 
@@ -210,10 +219,14 @@ to plan for: the upload formats are the ones SxGFX already speaks.
 
 `glGetError` is global, sticky and deferred — a poor design even for its time.
 D3D's debug layer validates at the call and names it. In a system where you
-cannot attach a graphics debugger that matters more, not less, and it is cheap:
-a compile-time `SXGL_VALIDATE` writing to `/dev/serial`, the channel
-`windowd-stats` already uses precisely so that measuring does not corrupt what
-is being measured ([GRAPHICS_PERF.md](./GRAPHICS_PERF.md#why-devserial-and-not-stderr)).
+cannot attach a graphics debugger that matters more, not less, and it is cheap.
+As built it is a run-time sink rather than a compile-time switch, because SxGL
+is call-free and cannot open `/dev/serial` itself: `sxgl_set_debug_sink` hands
+every error, named and with its reason, to the program, which writes it to
+the serial line (POSIX, the channel `windowd-stats` uses so that measuring does
+not corrupt what is measured,
+[GRAPHICS_PERF.md](./GRAPHICS_PERF.md#why-devserial-and-not-stderr)) or to
+`sxn_log` (SUN).
 
 ### And the precedent: WARP
 
@@ -245,10 +258,11 @@ batches 1 and 2 absorb. What it asks of them is the subset, and it is short:
 model/view/projection, viewport, depth test, backface culling and flat shading
 with one directional light.
 
-Two deliberate debts it hands to batch 2, both already anticipated above: the
-fill rule is "all three barycentrics >= 0", which double-draws shared edges
-instead of being top-left, and there is no near-plane clipping — a triangle with
-any vertex behind the eye is dropped whole.
+Two deliberate debts it handed to batch 2, both already anticipated above: the
+fill rule was "all three barycentrics >= 0", which double-draws shared edges
+instead of being top-left, and there was no near-plane clipping — a triangle
+with any vertex behind the eye was dropped whole. Batch 2 paid both, and the
+host test asserts them. Since then `gears.c` is only the scene, a GL client.
 
 The reasoning that put it there:
 
@@ -274,7 +288,7 @@ without floating point, anything doing 3D maths had to be an external app in
 userland moved to SSE2 that constraint is gone, and the consumer can be an
 ordinary test app of the image.
 
-### Batch 1 — the context and the swapchain, with no triangles
+### Batch 1 — the context and the swapchain, with no triangles — **done**
 
 `sxgl_context_create` over an existing `savanxp_gfx_context`, colour buffer
 wrapped as an `sx_bitmap`, depth buffer allocated, `sxgl_make_current`,
@@ -283,7 +297,7 @@ window that clears to a colour and presents. **It is worth landing as its own
 step**: it proves the seam against `windowd` — resize, damage, the wait for the
 compositor — before any of it is entangled with rasterization.
 
-### Batch 2 — the fixed-function pipeline, over a state object
+### Batch 2 — the fixed-function pipeline, over a state object — **done**
 
 Matrix stacks (`GL_MODELVIEW`/`GL_PROJECTION`), the transform, clipping against
 the near plane, the viewport map, backface culling, the triangle rasterizer with
@@ -305,17 +319,26 @@ rasterized from two triangles must not overlap or leave a seam. **Reuse that
 lesson, not that code: the polygon scanline in `gfx2d.c` is integer and 2D, and
 a 3D rasterizer needs subpixel precision and interpolated attributes.**
 
-### Batch 3 — texturing
+### Batch 3 — texturing — **done**
 
 One texture unit, `glTexImage2D` in the formats SxGFX already speaks
 (`SX_PIXEL_FORMAT_BGRX8888`/`BGRA8888`, so uploading an `sx_bitmap` is free),
 nearest and bilinear, wrap and clamp, and perspective-correct interpolation
 per span rather than per pixel. Mipmaps only if a port asks.
 
-### Batch 4 — blending, fog, and the state that is still missing
+### Batch 4 — blending, fog, and the state that is still missing — **done**
 
 `glBlendFunc` for the common pairs, alpha test, fog, scissor. Driven by the
 ports, one at a time, the same way batch 3 of SxGFX was.
+
+As landed, batches 1 to 4 arrived together, driven by two consumers instead of
+one port at a time: `gears` asked for what batch 2 lists, and the forest game
+(SUN) asked for textures, linear fog, alpha-tested foliage and an additive
+glow. Batch 1 was not landed on its own as this section recommended; the seam
+with `windowd` it was meant to prove is the same `sx_bitmap` plus the
+subsystem's present that every 2D client already uses, and both consumers
+exercise it under `tools/shoot.sh`. The subset as it stands, and every
+deliberate difference from GL 1.1, are in [SXGL.md](SXGL.md).
 
 ## Verification
 
@@ -323,7 +346,8 @@ The pattern is already established and should be copied, not reinvented:
 `tests/host/gfx2d_test.cpp` compiles the real painter on the **host** and
 asserts pixels without booting, behind `./build.sh test` (the gfx2d host test).
 
-A native `sxgl-test` alongside it is the right instrument for the whole of
+That test exists: `tests/host/sxgl_test.cpp` (`./build.sh smoke sxgl-test`,
+and part of `./build.sh test`). It is the right instrument for the whole of
 batches 2–4: a rasterizer is exactly the kind of code where a rendered image
 plus a hash catches regressions a human eye would sign off on. Batch 1 is the
 part that cannot be tested on the host — it is the seam with `windowd`, so it
@@ -341,8 +365,9 @@ to it accumulates slowdowns nobody notices until a port is unusable.
   seam.
 - **No second present path.** `gfx_present_region` throttles against the
   compositor; a GL loop that submits around it will look faster and be wrong.
-- **No `libGL` in the image.** That is the floating-point rule, and it is not
-  negotiable without changing the CMake userland flags for everybody.
+- **No shared `libGL` in the image yet.** SxGL is linked statically from the
+  runtime, like libm. A `libsxgl.so` belongs with the first port that loads GL
+  dynamically (Xash3D's `ref_gl`), not before.
 - **No hardware backend until the kernel has one.** Accelerating this means
   virgl in `virtio_gpu`, 3D ioctls next to the 21 that exist, and a command
   submission path — a kernel project with its own roadmap, which SxGL would sit
@@ -352,15 +377,10 @@ to it accumulates slowdowns nobody notices until a port is unusable.
   something apps consume. Nothing in the kernel, `compositord`, `windowd` or
   SXGUI-C may come to depend on it.
 
-## Open questions
+## Open questions — answered
 
-Worth answering before batch 1, not during it:
-
-- **Does a GL window compose with SXGUI-C chrome, or own its client area?** The
-  seam supports both; the answer decides whether `sxgl_swap_buffers` presents
-  the viewport or the whole window.
-- **Is the depth buffer per context or per window?** Per context is the GL
-  answer; per window is cheaper on resize.
-- **What happens on resize mid-frame?** `gfx_apply_resize_event` already exists
-  for 2D clients; SxGL has to reallocate two buffers and reset the viewport, and
-  the failure mode has to be defined rather than discovered.
+The three questions this section held before batch 1 are answered in
+[SXGL.md](SXGL.md#the-context-sxgls-wgl): GL may share a window's client area
+with 2D drawing (viewport plus scissor, and the swap reports only what GL
+wrote); the depth buffer is per context; and a resize is applied between
+frames with `sxgl_context_resize`, never in the middle of one.

@@ -13,6 +13,7 @@
 #   gui     the SXGUI toolkit and the POSIX application frame
 #   audio   PCM audio
 #   midi    the MIDI synthesizer
+#   gl      SxGL, the 3D rasterizer (needs SSE, like math)
 #   setjmp  sx_setjmp/sx_longjmp, for the ports that use them
 core    subsystems/posix/sdk/v1/runtime/crt0.S
 core    subsystems/posix/sdk/v1/runtime/libc.c
@@ -29,4 +30,5 @@ gui     system/gfx/sxgui.c
 gui     subsystems/posix/sdk/v1/runtime/sxgui_app.c
 audio   subsystems/posix/sdk/v1/runtime/audio.c
 midi    subsystems/posix/sdk/v1/runtime/sxmidi.c
+gl      system/gfx/sxgl.c
 setjmp  subsystems/posix/sdk/v1/runtime/setjmp.S

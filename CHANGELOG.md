@@ -31,7 +31,16 @@ Cut-off notes:
   `SXN_SPAWN_FLAG_IDENTITY`. New `elevation-smoke` answers it with real keys over QMP. See
   `docs/kernel/USERS_AND_PERMISSIONS.md#elevation`.
 
+- **SxGL, the 3D rasterizer: a documented OpenGL 1.1 fixed-function subset in software**
+  (`sxgfx/sxgl.h`), beside SxGFX and linkable from POSIX and SUN programs alike. Clipping, top-left
+  fill rule, lighting, perspective-correct textures, fog, alpha test, blending and scissor; the
+  program presents what `sxgl_swap_buffers` reports. New host test `sxgl-test` with a
+  triangles-per-second benchmark. See `docs/desktop/SXGL.md`.
+
 ### Changed
+
+- **Gears draws with SxGL** instead of its own rasterizer: geometry crossing the near plane is
+  clipped, and shared edges are no longer drawn twice.
 
 - **The elevation prompt shows every argument** of the program it would run, escaped and quoted
   so what is drawn is what runs, and grows to fit them; a request that does not fit on the screen

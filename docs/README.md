@@ -91,8 +91,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   subsystem (the window client, the application frame), and the toolkit's host.
 - [`SXGFX_ROADMAP.md`](desktop/SXGFX_ROADMAP.md) — hardening of the 2D rasterization
   layer and its planned role in the desktop stack.
-- [`SXGL_ROADMAP.md`](desktop/SXGL_ROADMAP.md) — the shape and boundaries of a future
-  3D API.
+- [`SXGL.md`](desktop/SXGL.md) — SxGL, the 3D rasterizer: the GL 1.1 subset call by
+  call, who presents, and every deliberate difference from the specification.
+- [`SXGL_ROADMAP.md`](desktop/SXGL_ROADMAP.md) — why the 3D layer sits beside SxGFX, the
+  design it was built against, and how its batches landed.
 - [`GRAPHICS_PERF.md`](desktop/GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the

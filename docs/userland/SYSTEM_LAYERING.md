@@ -157,7 +157,11 @@ The platform, always:
 - **SXGUI-C** — the Win9x widget toolkit on top of SXGFX and SXCHROME
   (`system/gfx/sxgui.c`, `include/sxgfx/sxgui.h`). The analogue of USER/comctl32.
 
-These three are neither POSIX nor SUN: they make no system call, and both
+- **SxGL** — the 3D rasterizer beside SXGFX (`system/gfx/sxgl.c`,
+  `include/sxgfx/sxgl.h`), a documented subset of OpenGL 1.1 fixed-function.
+  The analogue of `opengl32.dll`; see [SXGL.md](../desktop/SXGL.md).
+
+These four are neither POSIX nor SUN: they make no system call, and both
 subsystems link them. What talks to the window system is each subsystem's
 own: the POSIX window client and application frame stay in the POSIX SDK. See
 [PLATFORM_GRAPHICS.md](../desktop/PLATFORM_GRAPHICS.md).

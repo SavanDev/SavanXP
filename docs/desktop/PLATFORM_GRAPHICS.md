@@ -34,6 +34,7 @@ and `stdlib.h`.
 | Pixel primitives and fonts | `pixels.c`, `pixels.h`, the font tables, `gfx_utf8.inc` | — |
 | Painter, bitmaps, regions (SXGFX) | `gfx2d.c`, `gfx2d.h` | `runtime/gfx_scaled.c`: `sx_scaled_presenter`, which presents onto a POSIX window |
 | System 3D edges (SXCHROME) | `sxchrome.c`, `sxchrome.h` | — |
+| 3D rasterizer (SxGL, [SXGL.md](SXGL.md)) | `sxgl.c`, `sxgl.h` | — (the program presents what it drew) |
 | Widget toolkit (SXGUI-C) | `sxgui.c`, `sxgui.h` | `runtime/sxgui_app.c`: the application frame over a POSIX window, and the toolkit's POSIX host |
 | Window client | — | `runtime/gfx.c` + `gfx_impl.inc`: `gfx_open`, `gfx_present`, `gfx_poll_event`, owned windows, launching |
 

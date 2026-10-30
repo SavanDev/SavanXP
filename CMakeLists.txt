@@ -329,7 +329,7 @@ function(savanxp_runtime_units out_var)
     endforeach()
     set(${out_var} ${units} PARENT_SCOPE)
 endfunction()
-savanxp_runtime_units(SAVANXP_USER_RUNTIME_SOURCES core math gui audio midi)
+savanxp_runtime_units(SAVANXP_USER_RUNTIME_SOURCES core math gui audio midi gl)
 add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -685,6 +685,18 @@ target_include_directories(savanxp-gfx2d-test PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 set_target_properties(savanxp-gfx2d-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# SxGL on the host: the real rasterizer against a bitmap in memory, plus the
+# triangles-per-second figure (docs/desktop/SXGL_ROADMAP.md#verification).
+add_executable(savanxp-sxgl-test
+    system/gfx/sxgl.c
+    tests/host/sxgl_test.cpp)
+target_include_directories(savanxp-sxgl-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+set_target_properties(savanxp-sxgl-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+find_library(SAVANXP_HOST_LIBM m)
+if(SAVANXP_HOST_LIBM)
+    target_link_libraries(savanxp-sxgl-test PRIVATE ${SAVANXP_HOST_LIBM})
+endif()
+
 add_executable(savanxp-audio-test
     subsystems/posix/sdk/v1/runtime/audio.c
     tests/host/audio_mixer_test.cpp)
@@ -789,9 +801,10 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
+add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
 add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)
