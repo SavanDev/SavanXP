@@ -19,6 +19,7 @@ class TaskbarSmokeError(RuntimeError):
 FACE = (192, 192, 192)
 LIGHT = (255, 255, 255)
 SHADOW = (128, 128, 128)
+DARK = (0, 0, 0)
 # A point on Calculator's caption: the WM centres the window, so its title bar
 # spans x=505..830 at y=308 on the 1280x800 screen.
 CALC_CAPTION = (600, 308)
@@ -68,16 +69,17 @@ def _pixel(image: Image.Image, x: int, y: int) -> tuple[int, int, int]:
 
 
 def _button(image: Image.Image, index: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-    # Espejo de taskbar.c: boton Start de 64 + gap 2, despues botones de 160
-    # con gap 2 desde el margen 2.
+    # Mirrors desktop_taskbar.c: a 64-wide Start button and a gap of 2, then
+    # 160-wide buttons with a gap of 2 from the margin of 2. They are 22 high,
+    # from y=775 on the 1280x800 screen (bar at 772, margin 3).
     x = 2 + 64 + 2 + index * (160 + 2)
-    y = 774
-    return _pixel(image, x, y), _pixel(image, x + 159, y + 23)
+    y = 775
+    return _pixel(image, x, y), _pixel(image, x + 159, y + 21)
 
 
 def _expect_button(image: Image.Image, index: int, active: bool, state: str) -> None:
     top_left, bottom_right = _button(image, index)
-    expected = (SHADOW, LIGHT) if active else (LIGHT, SHADOW)
+    expected = (SHADOW, LIGHT) if active else (LIGHT, DARK)
     actual = (top_left, bottom_right)
     if actual != expected:
         raise TaskbarSmokeError(
@@ -87,24 +89,23 @@ def _expect_button(image: Image.Image, index: int, active: bool, state: str) -> 
 
 
 def _expect_strip(image: Image.Image, state: str) -> None:
-    # A la derecha de los botones de ventana y a la izquierda del altavoz:
-    # con dos ventanas de 160 los botones terminan en x=390 y la bandeja
-    # (volumen 1146..1178, layout 1180..1212, reloj 1214..1278) empieza en
-    # x=1146.
+    # Between the window buttons and the tray: with two 160-wide windows the
+    # buttons end at x=390 and the tray well (1164..1277) starts at x=1164.
     actual = _pixel(image, 1000, 786)
     if actual != FACE:
         raise TaskbarSmokeError(f"{state}: taskbar strip expected {FACE}, got {actual}")
 
 
 def _expect_clock(image: Image.Image, state: str) -> None:
-    # Espejo de taskbar.c: pozo hundido de 64 al borde derecho (x=1214..1278,
-    # pantalla 1280) con el HH:MM centrado. Los bordes son rellenos solidos;
-    # el texto se afirma solo por presencia (antialiaseado, no pixel exacto).
-    if _pixel(image, 1214, 774) != SHADOW:
+    # Mirrors desktop_taskbar.c: one sunken well of 114 at the right edge
+    # (x=1164..1277, y=775..796), with the clock as its rightmost flat cell
+    # (x=1220..1275). The edges are solid fills; the text is only asserted
+    # present (antialiased, not pixel exact).
+    if _pixel(image, 1164, 775) != SHADOW:
         raise TaskbarSmokeError(f"{state}: clock top-left expected {SHADOW}")
-    if _pixel(image, 1277, 797) != LIGHT:
+    if _pixel(image, 1277, 796) != LIGHT:
         raise TaskbarSmokeError(f"{state}: clock bottom-right expected {LIGHT}")
-    inner = [_pixel(image, x, y) for x in range(1216, 1276, 3) for y in range(777, 795, 3)]
+    inner = [_pixel(image, x, y) for x in range(1222, 1274, 3) for y in range(778, 794, 3)]
     if all(pixel == FACE for pixel in inner):
         raise TaskbarSmokeError(f"{state}: clock text missing")
 
@@ -149,10 +150,10 @@ def _click(client: QmpClient) -> None:
 
 
 def _volume_button() -> tuple[int, int]:
-    # Espejo de taskbar.c: boton de 32 a la izquierda del layout de 32, que a
-    # su vez esta a la izquierda del reloj de 64, con gaps de 2 y margen 2 en
-    # 1280 de ancho (1146..1178). Centro del boton.
-    return (1146 + 16, 774 + 11)
+    # Mirrors desktop_taskbar.c: the speaker cell (24 wide) sits between the
+    # layout cell (30) and the clock (56) inside the tray well, at
+    # x=1196..1219 on a 1280-wide screen. Centre of the cell.
+    return (1196 + 12, 775 + 11)
 
 
 def _expect_volume_popup(image: Image.Image, state: str) -> None:
@@ -305,12 +306,13 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         if _pixel(fifth, *CALC_CAPTION) != active_caption:
             raise TaskbarSmokeError("after second click: the window left active kept an inactive caption")
 
-        # Al reloj: a la esquina y despues al centro del pozo (1214..1278,
-        # centro 1246,785). Abre el calendario; toggle lo cierra y lo reabre.
+        # To the clock: to the corner, then to the centre of its cell
+        # (1220..1275, centre 1248,786). It opens the calendar; a second click
+        # closes it and a third reopens it.
         for _ in range(22):
             client.relative(-64, -64)
             time.sleep(0.03)
-        clock_x, clock_y = (1214 + 32, 774 + 11)
+        clock_x, clock_y = (1220 + 28, 775 + 11)
         steps_x = clock_x // 64
         steps_y = clock_y // 64
         for _ in range(steps_x):
@@ -378,9 +380,9 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         # Arrastre del cursor a 50: del centro del cursor (pantalla 1263,670,
         # popup 131,38) a pantalla 1204 (popup 72). Con offset de agarre 5,
         # v=(72-5-8)*100/118=50 exacto; el cursor queda en popup 67..76.
-        # El punto de agarre es fijo del popup; el dx compensa que el boton
-        # del altavoz esta a la izquierda del reloj (centro x=1162).
-        client.relative(101, -115)
+        # The grab point is fixed in the popup; the offset is taken from the
+        # speaker cell's centre (1208,786).
+        client.relative(55, -116)
         time.sleep(0.5)
         client.button("left", True)
         time.sleep(0.25)
@@ -415,8 +417,8 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         screenshots.append(output_dir / "11-volumen-mute.png")
         if _pixel(ninth, 1144, 644) != (0, 0, 0):
             raise TaskbarSmokeError("mute: checkbox mark missing")
-        # The muted speaker, 16x16, centred in the button (1146..1178), so at
-        # x=1154..1170, y=778..794.
-        _expect_icon(ninth, VOLUME_MUTED_ICON, 1154, 778, "mute: taskbar glyph did not switch")
+        # The muted speaker, 16x16, centred in its cell (1196..1219), so at
+        # x=1200..1215, y=778..793.
+        _expect_icon(ninth, VOLUME_MUTED_ICON, 1200, 778, "mute: taskbar glyph did not switch")
 
     return screenshots

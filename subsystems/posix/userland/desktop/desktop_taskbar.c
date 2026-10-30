@@ -24,11 +24,17 @@
 #define TASKBAR_BUTTON_MAX_WIDTH 160
 #define TASKBAR_BUTTON_MIN_WIDTH 40
 #define TASKBAR_BUTTON_GAP 2
-#define TASKBAR_MARGIN 2
+#define TASKBAR_MARGIN_X 2
+#define TASKBAR_MARGIN_Y 3
 #define TASKBAR_ICON_SIZE 16
-#define TASKBAR_LAYOUT_WIDTH 32
-#define TASKBAR_VOLUME_WIDTH 32
-#define TASKBAR_CLOCK_WIDTH 64
+/* The tray is one sunken well; the layout, speaker and clock sit flat inside
+ * it, side by side, as in the NT 4 notification area. */
+#define TASKBAR_TRAY_INSET 2
+#define TASKBAR_LAYOUT_WIDTH 30
+#define TASKBAR_VOLUME_WIDTH 24
+#define TASKBAR_CLOCK_WIDTH 56
+#define TASKBAR_TRAY_WIDTH \
+    ((TASKBAR_TRAY_INSET * 2) + TASKBAR_LAYOUT_WIDTH + TASKBAR_VOLUME_WIDTH + TASKBAR_CLOCK_WIDTH)
 #define TASKBAR_START_WIDTH 64
 #define TASKBAR_HIT_START (-3)
 #define TASKBAR_HIT_LAYOUT (-2)
@@ -196,6 +202,11 @@ static const struct desktop_embedded_bitmap *taskbar_entry_icon(
     return desktop_icon_small((enum desktop_icon_id)(entry != 0 ? entry->icon_id : 0u));
 }
 
+static int taskbar_item_height(const struct savanxp_fb_info *info)
+{
+    return (int)info->height - (TASKBAR_MARGIN_Y * 2);
+}
+
 static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
 {
     int usable;
@@ -205,10 +216,8 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
     {
         return 0;
     }
-    usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
-        - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP
-        - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP
-        - TASKBAR_VOLUME_WIDTH - TASKBAR_BUTTON_GAP
+    usable = (int)info->width - (TASKBAR_MARGIN_X * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
+        - TASKBAR_TRAY_WIDTH - TASKBAR_BUTTON_GAP
         - TASKBAR_START_WIDTH - TASKBAR_BUTTON_GAP;
     width = usable / count;
     if (width > TASKBAR_BUTTON_MAX_WIDTH)
@@ -221,57 +230,117 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
 static struct sx_rect taskbar_button_rect(const struct savanxp_fb_info *info, int count, int index)
 {
     int width = taskbar_button_width(info, count);
-    int height = (int)info->height - (TASKBAR_MARGIN * 2);
 
     return sx_rect_make(
-        TASKBAR_MARGIN + TASKBAR_START_WIDTH + TASKBAR_BUTTON_GAP + index * (width + TASKBAR_BUTTON_GAP),
-        TASKBAR_MARGIN,
+        TASKBAR_MARGIN_X + TASKBAR_START_WIDTH + TASKBAR_BUTTON_GAP + index * (width + TASKBAR_BUTTON_GAP),
+        TASKBAR_MARGIN_Y,
         width,
-        height);
+        taskbar_item_height(info));
 }
 
 static struct sx_rect taskbar_start_rect(const struct savanxp_fb_info *info)
 {
-    int height = (int)info->height - (TASKBAR_MARGIN * 2);
-
     return sx_rect_make(
-        TASKBAR_MARGIN,
-        TASKBAR_MARGIN,
+        TASKBAR_MARGIN_X,
+        TASKBAR_MARGIN_Y,
         TASKBAR_START_WIDTH,
-        height);
+        taskbar_item_height(info));
 }
 
-static struct sx_rect taskbar_clock_rect(const struct savanxp_fb_info *info)
+static struct sx_rect taskbar_tray_rect(const struct savanxp_fb_info *info)
 {
-    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+    return sx_rect_make(
+        (int)info->width - TASKBAR_MARGIN_X - TASKBAR_TRAY_WIDTH,
+        TASKBAR_MARGIN_Y,
+        TASKBAR_TRAY_WIDTH,
+        taskbar_item_height(info));
+}
+
+/* The tray items are flat cells inside the well: layout, speaker, clock. */
+static struct sx_rect taskbar_tray_cell(const struct savanxp_fb_info *info, int offset, int width)
+{
+    struct sx_rect tray = taskbar_tray_rect(info);
 
     return sx_rect_make(
-        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH,
-        TASKBAR_MARGIN,
-        TASKBAR_CLOCK_WIDTH,
-        height);
+        tray.x + TASKBAR_TRAY_INSET + offset,
+        tray.y + TASKBAR_TRAY_INSET,
+        width,
+        tray.height - (TASKBAR_TRAY_INSET * 2));
 }
 
 static struct sx_rect taskbar_layout_rect(const struct savanxp_fb_info *info)
 {
-    int height = (int)info->height - (TASKBAR_MARGIN * 2);
-
-    return sx_rect_make(
-        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_LAYOUT_WIDTH,
-        TASKBAR_MARGIN,
-        TASKBAR_LAYOUT_WIDTH,
-        height);
+    return taskbar_tray_cell(info, 0, TASKBAR_LAYOUT_WIDTH);
 }
 
 static struct sx_rect taskbar_volume_rect(const struct savanxp_fb_info *info)
 {
-    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+    return taskbar_tray_cell(info, TASKBAR_LAYOUT_WIDTH, TASKBAR_VOLUME_WIDTH);
+}
 
-    return sx_rect_make(
-        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_VOLUME_WIDTH,
-        TASKBAR_MARGIN,
-        TASKBAR_VOLUME_WIDTH,
-        height);
+static struct sx_rect taskbar_clock_rect(const struct savanxp_fb_info *info)
+{
+    return taskbar_tray_cell(info, TASKBAR_LAYOUT_WIDTH + TASKBAR_VOLUME_WIDTH, TASKBAR_CLOCK_WIDTH);
+}
+
+/* One pixel of border: `top_left` on the top and left edges, `bottom_right`
+ * on the bottom and right ones. */
+static void taskbar_edges(struct sx_painter *painter, struct sx_rect rect, uint32_t top_left, uint32_t bottom_right)
+{
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
+}
+
+/* The two-pixel Win9x/NT 4 button frame: outer and inner edge. Raised is white
+ * and light grey above and to the left, black and dark grey below and to the
+ * right; sunken is the mirror image. Returns the area inside the frame. */
+static struct sx_rect taskbar_button_frame(struct sx_painter *painter, struct sx_rect rect, int sunken)
+{
+    uint32_t outer_tl = sunken ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
+    uint32_t outer_br = sunken ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_DARK;
+    uint32_t inner_tl = sunken ? SXGUI_COLOR_DARK : SXGUI_COLOR_BEVEL;
+    uint32_t inner_br = sunken ? SXGUI_COLOR_BEVEL : SXGUI_COLOR_SHADOW;
+    struct sx_rect inner = sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+    taskbar_edges(painter, rect, outer_tl, outer_br);
+    taskbar_edges(painter, inner, inner_tl, inner_br);
+    return sx_rect_make(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
+}
+
+/* The pressed task button of Win9x: the face is dithered white and grey. */
+static void taskbar_dither(struct sx_painter *painter, struct sx_rect area)
+{
+    int x;
+    int y;
+
+    for (y = 0; y < area.height; ++y)
+    {
+        for (x = (y & 1); x < area.width; x += 2)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(area.x + x, area.y + y, 1, 1), SXGUI_COLOR_LIGHT);
+        }
+    }
+}
+
+static void taskbar_paint_glyph(
+    struct sx_painter *painter,
+    const struct savanxp_embedded_bitmap_asset *glyph,
+    int x,
+    int y)
+{
+    struct savanxp_fb_info info;
+    struct sx_bitmap bitmap;
+
+    info.width = glyph->width;
+    info.height = glyph->height;
+    info.pitch = glyph->width * 4u;
+    info.bpp = 32;
+    info.buffer_size = info.pitch * glyph->height;
+    sx_bitmap_wrap(&bitmap, (uint32_t *)glyph->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_blit_bitmap(painter, &bitmap, x, y);
 }
 
 static void taskbar_paint(struct savanxp_gfx_context *gfx)
@@ -285,34 +354,25 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
     sx_painter_init(&painter, &bitmap);
 
     sx_painter_fill_rect(&painter, sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height), SXGUI_COLOR_FACE);
-    /* Filo claro arriba: la barra se lee como una superficie levantada sobre el
-     * escritorio, igual que en Win95. */
-    sx_painter_fill_rect(&painter, sx_rect_make(0, 0, (int)gfx->info.width, 1), SXGUI_COLOR_LIGHT);
+    /* A light grey line and a white one along the top edge: the bar reads as a
+     * surface raised above the desktop, as in NT 4. */
+    sx_painter_fill_rect(&painter, sx_rect_make(0, 0, (int)gfx->info.width, 1), SXGUI_COLOR_BEVEL);
+    sx_painter_fill_rect(&painter, sx_rect_make(0, 1, (int)gfx->info.width, 1), SXGUI_COLOR_LIGHT);
 
     {
-        /* Start button, Windows style: logo on the left and text, sunken
-         * while it is pressed and while the Start menu is open. */
+        /* Start button: logo on the left and bold text, sunken while it is
+         * pressed and while the Start menu is open. */
         struct sx_rect start_rect = taskbar_start_rect(&gfx->info);
-        struct savanxp_fb_info logo_info;
-        struct sx_bitmap logo_bitmap;
         const char *start_label = "Start";
         int sunken = (g_pressed_index == TASKBAR_HIT_START) || desktop_popup_is_open(DESKTOP_POPUP_START_MENU);
-        int logo_x = start_rect.x + 4 + (sunken ? 1 : 0);
+        int logo_x = start_rect.x + 5 + (sunken ? 1 : 0);
         int logo_y = start_rect.y + (start_rect.height - (int)k_start_logo.height) / 2 + (sunken ? 1 : 0);
         int start_text_x = logo_x + (int)k_start_logo.width + 4;
         int start_text_y;
         int previous_font;
 
-        sx_painter_fill_rect(&painter, start_rect, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, start_rect, sunken);
-
-        logo_info.width = k_start_logo.width;
-        logo_info.height = k_start_logo.height;
-        logo_info.pitch = k_start_logo.width * 4u;
-        logo_info.bpp = 32;
-        logo_info.buffer_size = logo_info.pitch * k_start_logo.height;
-        sx_bitmap_wrap(&logo_bitmap, (uint32_t *)k_start_logo.pixels, &logo_info, SX_PIXEL_FORMAT_BGRA8888);
-        sx_painter_blit_bitmap(&painter, &logo_bitmap, logo_x, logo_y);
+        (void)taskbar_button_frame(&painter, start_rect, sunken);
+        taskbar_paint_glyph(&painter, &k_start_logo, logo_x, logo_y);
         /* The label uses the caption face, the closest thing to the bold
          * "Start" of Win9x: there is no bold UI strike. */
         previous_font = sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
@@ -327,17 +387,24 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         struct sx_rect rect = taskbar_button_rect(&gfx->info, count, index);
         int active = (entry->flags & SAVANXP_WM_WINDOW_FLAG_ACTIVE) != 0;
         int sunken = active || index == g_pressed_index;
-        int text_x = rect.x + 6;
+        int text_x = rect.x + 6 + (sunken ? 1 : 0);
+        struct sx_rect face;
         const struct desktop_embedded_bitmap *icon;
         struct desktop_embedded_bitmap own_icon;
+        int previous_font = 0;
 
         if (rect.width < TASKBAR_BUTTON_MIN_WIDTH)
         {
             break;
         }
 
-        sx_painter_fill_rect(&painter, rect, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, rect, sunken);
+        face = taskbar_button_frame(&painter, rect, sunken);
+        /* The active window's button is dithered and bold, as in Win9x. A
+         * button that is only being pressed keeps the plain face. */
+        if (active)
+        {
+            taskbar_dither(&painter, face);
+        }
 
         icon = taskbar_entry_icon(entry, &own_icon);
         if (icon != 0 && rect.width > TASKBAR_ICON_SIZE + 24)
@@ -355,14 +422,13 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
                 &painter,
                 &icon_bitmap,
                 text_x,
-                rect.y + (rect.height - (int)icon->height) / 2);
+                rect.y + (rect.height - (int)icon->height) / 2 + (sunken ? 1 : 0));
             text_x += TASKBAR_ICON_SIZE + 4;
         }
 
         {
-            /* El texto se recorta al ancho del boton: con muchas ventanas los
-             * botones se angostan y un titulo largo se derramaria sobre el de
-             * al lado. */
+            /* The text is clipped to the button: with many windows the buttons
+             * narrow and a long title would spill over its neighbour. */
             struct sx_rect clip = sx_rect_make(
                 text_x,
                 rect.y,
@@ -370,73 +436,63 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
                 rect.height);
             if (sx_painter_push_clip(&painter, clip))
             {
-                int text_y = rect.y + (rect.height - gfx_text_height()) / 2;
-                /* Un boton hundido corre su contenido un pixel, como los de
-                 * sxgui: es lo que da la sensacion de que se aprieta. */
-                sx_painter_draw_text(
-                    &painter,
-                    text_x + (sunken ? 1 : 0),
-                    text_y + (sunken ? 1 : 0),
-                    entry->title,
-                    SXGUI_COLOR_TEXT);
+                int text_y;
+
+                if (active)
+                {
+                    previous_font = sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
+                }
+                text_y = rect.y + (rect.height - sx_painter_text_height(&painter)) / 2 + (sunken ? 1 : 0);
+                sx_painter_draw_text(&painter, text_x, text_y, entry->title, SXGUI_COLOR_TEXT);
+                if (active)
+                {
+                    (void)sx_painter_set_font(&painter, previous_font);
+                }
                 sx_painter_pop_clip(&painter);
             }
         }
     }
 
     {
+        /* The tray: one sunken well at the right edge. The keyboard layout, the
+         * speaker and the clock are flat cells inside it (they are buttons that
+         * open popups, but NT 4 gives them no frame); a pressed one moves its
+         * content one pixel. */
+        struct sx_rect tray = taskbar_tray_rect(&gfx->info);
         struct sx_rect layout_rect = taskbar_layout_rect(&gfx->info);
-        const char *label = k_layout_labels[g_active_layout];
-        int text_x = layout_rect.x + (layout_rect.width - gfx_text_width(label)) / 2;
-        int text_y = layout_rect.y + (layout_rect.height - gfx_text_height()) / 2;
-
-        sx_painter_fill_rect(&painter, layout_rect, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, layout_rect, g_pressed_index == TASKBAR_HIT_LAYOUT);
-        sx_painter_draw_text(&painter, text_x, text_y, label, SXGUI_COLOR_TEXT);
-    }
-
-    {
-        /* Boton del altavoz: a la izquierda del layout, mismo bisel. El
-         * glifo cambia con el nivel y el mute (el popup aplica directo en
-         * el kernel y la barra se entera por polling, igual que el
-         * layout). */
         struct sx_rect volume_rect = taskbar_volume_rect(&gfx->info);
-        const struct savanxp_embedded_bitmap_asset *glyph = taskbar_volume_glyph();
-        int sunken = (g_pressed_index == TASKBAR_HIT_VOLUME);
-
-        sx_painter_fill_rect(&painter, volume_rect, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, volume_rect, sunken);
-        {
-            int icon_x = volume_rect.x + (volume_rect.width - (int)glyph->width) / 2 + (sunken ? 1 : 0);
-            int icon_y = volume_rect.y + (volume_rect.height - (int)glyph->height) / 2 + (sunken ? 1 : 0);
-            struct savanxp_fb_info icon_info;
-            struct sx_bitmap icon_bitmap;
-
-            icon_info.width = glyph->width;
-            icon_info.height = glyph->height;
-            icon_info.pitch = glyph->width * 4u;
-            icon_info.bpp = 32;
-            icon_info.buffer_size = icon_info.pitch * glyph->height;
-            sx_bitmap_wrap(
-                &icon_bitmap,
-                (uint32_t *)glyph->pixels,
-                &icon_info,
-                SX_PIXEL_FORMAT_BGRA8888);
-            sx_painter_blit_bitmap(&painter, &icon_bitmap, icon_x, icon_y);
-        }
-    }
-
-    {
-        /* Reloj estilo W2K: pozo hundido en el borde derecho, texto centrado.
-         * Es boton desde que tiene popup: click = toggle del calendario. */
         struct sx_rect clock_rect = taskbar_clock_rect(&gfx->info);
-        int text_shift = (g_pressed_index == TASKBAR_HIT_CLOCK) ? 1 : 0;
-        int text_x = clock_rect.x + (clock_rect.width - gfx_text_width(g_clock_text)) / 2 + text_shift;
-        int text_y = clock_rect.y + (clock_rect.height - gfx_text_height()) / 2 + text_shift;
+        const char *label = k_layout_labels[g_active_layout];
+        const struct savanxp_embedded_bitmap_asset *glyph = taskbar_volume_glyph();
+        int layout_shift = (g_pressed_index == TASKBAR_HIT_LAYOUT) ? 1 : 0;
+        int volume_shift = (g_pressed_index == TASKBAR_HIT_VOLUME) ? 1 : 0;
+        int clock_shift = (g_pressed_index == TASKBAR_HIT_CLOCK) ? 1 : 0;
 
-        sx_painter_fill_rect(&painter, clock_rect, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, clock_rect, 1);
-        sx_painter_draw_text(&painter, text_x, text_y, g_clock_text, SXGUI_COLOR_TEXT);
+        sx_painter_fill_rect(&painter, tray, SXGUI_COLOR_FACE);
+        taskbar_edges(&painter, tray, SXGUI_COLOR_SHADOW, SXGUI_COLOR_LIGHT);
+
+        sx_painter_draw_text(
+            &painter,
+            layout_rect.x + (layout_rect.width - gfx_text_width(label)) / 2 + layout_shift,
+            layout_rect.y + (layout_rect.height - gfx_text_height()) / 2 + layout_shift,
+            label,
+            SXGUI_COLOR_TEXT);
+
+        /* The glyph changes with the level and the mute: the popup applies it
+         * straight in the kernel and the bar learns of it by polling, like the
+         * layout. */
+        taskbar_paint_glyph(
+            &painter,
+            glyph,
+            volume_rect.x + (volume_rect.width - (int)glyph->width) / 2 + volume_shift,
+            volume_rect.y + (volume_rect.height - (int)glyph->height) / 2 + volume_shift);
+
+        sx_painter_draw_text(
+            &painter,
+            clock_rect.x + (clock_rect.width - gfx_text_width(g_clock_text)) / 2 + clock_shift,
+            clock_rect.y + (clock_rect.height - gfx_text_height()) / 2 + clock_shift,
+            g_clock_text,
+            SXGUI_COLOR_TEXT);
     }
 }
 
