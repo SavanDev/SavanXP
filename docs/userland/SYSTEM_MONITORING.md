@@ -240,20 +240,44 @@ The way to have network in VirtualBox today is to set the adapter type to
 *Paravirtualized Network (virtio-net)*, which the existing driver claims.
 Driving the PRO/1000 needs an `e1000` driver that does not exist yet.
 
+## Ending a process
+
+End Process sends `SIGKILL` and reads the answer. The kernel refuses two
+cases in two different ways, and the window treats them differently:
+
+- **`EACCES`: nobody may.** The idle processes and `init` cannot be ended by
+  anyone, elevated or not. The button is disabled on an idle row, and ending
+  `init` shows *Unable to Terminate Process — Access is denied.*
+- **`EPERM`: not yours.** Since the desktop runs as the user, the system's
+  processes (`windowd`, `compositord`, the services) are not the user's to end
+  ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation)).
+  The Task Manager then asks the elevation broker to run
+  `/bin/taskmgr --end <pid>`, and that elevated half does the kill. The window
+  itself never gains the rights, which is the same split Add or Remove Programs
+  uses for `appwiz --uninstall`. A *No* at the prompt is the user's decision
+  and shows nothing.
+
+`elevation-smoke` exercises the second path end to end: the user's kill of a
+process the system started is `EPERM`, and the elevated `taskmgr --end` ends
+it.
+
 ## What the Task Manager does not have
 
-Two tabs of the original are missing, and both are missing for the same kind of
-reason — the system does not have the thing they would list, not the UI to list
-it:
+Two tabs of the original are missing. Neither is blocked by the kernel any
+more; each needs a piece of plumbing that does not exist yet.
 
-- **Applications.** Would list *windows*, not processes, and the WM does not
-  publish its window list to clients: the protocol in
-  [`WM_SUBSYSTEM.md`](../desktop/WM_SUBSYSTEM.md) is a fixed set of descriptors per client,
-  with no channel to ask the WM anything. Adding one also costs a descriptor per
-  client, and the budget there is already tight.
-- **Users.** Would need user accounts, which do not exist. Every process runs
-  with the same authority; `savanxp_kill` has no owner check, which is why End
-  Process can end anything except the idle process.
+- **Applications.** It lists *windows*, not processes. The WM already keeps
+  that list for the shell: a read-only shared section with each task's title,
+  icon and `ACTIVE`/`MINIMIZED`/`NOT_RESPONDING` flags
+  (`include/wm/wm_shell_protocol.h`), and the shell's requests already include
+  activating a window. What is missing is a way for a client that is not the
+  shell to receive that section, and a request to close a window for
+  End Task.
+- **Users.** There is one account and every process carries an identity
+  ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md)), but the
+  process list only exports whether a process is the system's
+  (`SAVANXP_PROC_FLAG_SYSTEM`), not its uid. That is enough for a User Name
+  column that says SYSTEM or the user. A Users tab with one account has little
+  to show until there is a second one.
 
-Both are absent tabs, not empty ones. Adding either starts with the subsystem,
-not with the window.
+Both are absent tabs, not empty ones.

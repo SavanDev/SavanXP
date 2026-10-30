@@ -1,26 +1,25 @@
 /*
- * Administrador de tareas.
+ * Task Manager.
  *
- * El monitor del sistema con la forma del Task Manager clasico: pestanias de
- * Procesos, Rendimiento y Red, barra de estado con los tres numeros de siempre
- * y un menu que puede lanzar una tarea nueva o apagar la maquina.
+ * The system monitor in the shape of the classic Task Manager: Processes,
+ * Performance and Networking tabs, a status bar with the usual three numbers,
+ * and a menu that can start a new task or turn the machine off.
  *
- * COMO SE MIDE EL USO DE CPU. El kernel no lleva porcentajes: lleva un contador
- * de ticks por proceso (savanxp_process_info.cpu_ticks) y el contador global de
- * ticks (savanxp_system_info.cpu_ticks_total). Un tick incrementa exactamente
- * un proceso, asi que entre dos muestras la suma de los incrementos ES el
- * incremento global, y el porcentaje de cada uno es su parte de esa torta. El
- * del sistema es lo que NO se llevaron los procesos ociosos, uno por core. De
- * ahi que todo lo que se muestra salga de comparar dos muestras: una sola no
- * dice nada.
+ * HOW CPU USAGE IS MEASURED. The kernel keeps no percentages: it keeps a tick
+ * counter per process (savanxp_process_info.cpu_ticks) and the global tick
+ * counter (savanxp_system_info.cpu_ticks_total). One tick increments exactly
+ * one process, so between two samples the per-process increments add up to
+ * the global one, and each process's percentage is its share of that pie. The
+ * system's usage is what the idle processes, one per core, did NOT take. That
+ * is why everything shown comes from comparing two samples: one alone says
+ * nothing.
  *
- * Con varios cores la torta es la de todos juntos: un proceso que ocupa un core
- * entero de cuatro se ve al 25%, igual que en el Task Manager de siempre.
+ * With several cores the pie is all of them together: a process that keeps
+ * one core of four busy reads 25%, as in the classic Task Manager.
  *
- * QUE NO ESTA. No hay pestania de Aplicaciones ni de Usuarios. La primera
- * necesita que el WM publique su lista de ventanas, que hoy no es parte del
- * protocolo (docs/desktop/WM_SUBSYSTEM.md); la segunda necesita cuentas de usuario, que
- * el sistema no tiene. Las dos son pestanias que faltan, no pestanias vacias.
+ * WHAT IS MISSING. There is no Applications tab and no Users tab; what each
+ * still needs is in docs/userland/SYSTEM_MONITORING.md. Both are absent tabs,
+ * not empty ones.
  */
 
 #include "libc.h"
