@@ -1695,6 +1695,16 @@ def scenario_nightwood(s):
     s.qmp.key("left", False)
     time.sleep(1.0)
     s.shot("nightwood-forest")
+    # Mouse look: the pointer is captured while playing, so relative motion
+    # turns the head and the cursor stays hidden.
+    if s.qmp.abs_pointer:
+        s.qmp.move_to(400, 400)
+        s.qmp.move_to(700, 400)
+    else:
+        for _ in range(30):
+            s.qmp._rel_step(10, 0)
+    time.sleep(1.0)
+    s.shot("nightwood-mouselook")
     s.qmp.tap("esc")
     time.sleep(1.0)
     s.shot("nightwood-paused")

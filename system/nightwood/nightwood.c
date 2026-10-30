@@ -17,6 +17,7 @@
 #include "sxgfx/sxgl.h"
 #include "wm/wm_protocol.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnaudio.h"
 #include "sxn/sxnwm.h"
 
 #include "nightwood.h"
@@ -70,6 +71,11 @@ struct nw_game {
 
     uint8_t keys[NW_KEY_COUNT];
     int quit;
+    int captured; /* the pointer is ours: mouse look */
+    uint32_t buttons;
+    float steps; /* footsteps per second, for the sound */
+    struct nw_audio_mix audio;
+    int audio_running;
     /* --still: a fixed pose with the Warden in view, for screenshots. Nothing
      * moves and nothing can catch the player. */
     int still;
@@ -241,10 +247,19 @@ static void nw_new_night(void)
     g_game.seen = 0;
 }
 
+/* Mouse look is on only while playing: the title, the pause and the endings
+ * give the cursor back. The WM also suspends it by itself whenever the window
+ * loses the focus. */
 static void nw_set_screen(int screen)
 {
+    int capture = screen == NW_SCREEN_PLAY && !g_game.still;
+
     g_game.screen = screen;
     g_game.screen_time = 0.0f;
+    if (capture != g_game.captured && g_game.wm.header != 0) {
+        (void)sxnwm_set_pointer_capture(&g_game.wm, capture);
+        g_game.captured = capture;
+    }
 }
 
 /* Puts the Warden somewhere the player is not looking, nearer with every
@@ -287,6 +302,7 @@ static void nw_take_photo(void)
     landmark = &g_game.world.landmarks[g_game.prompt_landmark];
     landmark->photo_taken = 1;
     g_game.photos += 1;
+    g_game.audio.pickup += 1;
     nw_log_count("nightwood: photograph ", g_game.photos);
     if (g_game.photos >= NW_PHOTO_COUNT) {
         (void)sxn_log("nightwood: escaped");
@@ -367,6 +383,7 @@ static void nw_update_play(float dt)
     nw_world_collide(&g_game.world, &camera->x, &camera->z, NW_PLAYER_RADIUS);
     moved = sqrtf((camera->x - old_x) * (camera->x - old_x) + (camera->z - old_z) * (camera->z - old_z));
     g_game.step_phase += moved * 2.2f;
+    g_game.steps = dt > 0.0f ? moved / dt * 0.85f : 0.0f;
     camera->bob = 0.05f * sinf(g_game.step_phase * 2.0f) * nw_clamp(moved / (dt * NW_WALK_SPEED + 1e-4f), 0.0f, 1.5f);
 
     /* The photograph in reach: near, and roughly in the middle of the view. */
@@ -435,6 +452,7 @@ static void nw_update_play(float dt)
         }
         if (g_game.fear >= 1.0f) {
             (void)sxn_log("nightwood: caught");
+            g_game.audio.caught += 1;
             nw_set_screen(NW_SCREEN_CAUGHT);
         }
     }
@@ -525,6 +543,24 @@ static void nw_key_down(int key, int repeat)
     }
 }
 
+/* Captured motion turns the head: a tenth of a degree per count, the usual
+ * feel of a 400 dpi mouse. The left button takes the photograph. */
+static void nw_pointer_motion(const struct savanxp_gui_pointer_motion* motion)
+{
+    int pressed = (motion->buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0u &&
+        (g_game.buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0u;
+
+    g_game.buttons = motion->buttons;
+    if (g_game.screen != NW_SCREEN_PLAY) {
+        return;
+    }
+    g_game.camera.yaw -= (float)motion->dx * 0.12f;
+    g_game.camera.pitch = nw_clamp(g_game.camera.pitch - (float)motion->dy * 0.12f, -60.0f, 60.0f);
+    if (pressed) {
+        nw_take_photo();
+    }
+}
+
 static void nw_drain_input(void)
 {
     struct savanxp_wm_event record;
@@ -532,7 +568,14 @@ static void nw_drain_input(void)
     while (sxnwm_poll_input(&g_game.wm, &record) == 0) {
         const struct savanxp_input_event* key;
         int code;
-        if (record.window_id != 0 || record.kind != SAVANXP_WM_EVENT_KEY) {
+        if (record.window_id != 0) {
+            continue;
+        }
+        if (record.kind == SAVANXP_WM_EVENT_POINTER_MOTION) {
+            nw_pointer_motion(&record.payload.motion);
+            continue;
+        }
+        if (record.kind != SAVANXP_WM_EVENT_KEY) {
             continue;
         }
         key = &record.payload.key;
@@ -661,8 +704,8 @@ static void nw_draw_hud(void)
         (void)sx_painter_set_font(&painter, SX_FONT_UI);
         nw_text_centred(&painter, height / 3 + line + 10, "Eight photographs are pinned somewhere in these woods.", dim);
         nw_text_centred(&painter, height / 3 + line + 30, "Something else is out here. Do not look at it for long.", dim);
-        nw_text_centred(&painter, height - 120, "W S A D or arrows walk and turn   Shift runs   PgUp PgDn look", dim);
-        nw_text_centred(&painter, height - 100, "E takes a photograph   F switches the flashlight   Esc pauses", dim);
+        nw_text_centred(&painter, height - 120, "W S A D walk   the mouse or the arrows look   Shift runs", dim);
+        nw_text_centred(&painter, height - 100, "E or a click takes a photograph   F the flashlight   Esc pauses", dim);
         if (((int)(g_game.time * 2.0f) & 1) == 0) {
             nw_text_centred(&painter, height - 64, "Press Enter", pale);
         }
@@ -752,6 +795,18 @@ static void nw_frame(void)
     nw_world_render(&g_game.world, &g_game.camera, warden, g_game.flashlight, aspect);
     sxgl_swap_buffers(g_game.gl, &damage);
 
+    if (g_game.audio_running) {
+        float near = 0.0f;
+        if (g_game.screen == NW_SCREEN_PLAY && g_game.warden.present) {
+            near = nw_clamp((16.0f - g_game.warden_distance) / 14.0f, 0.0f, 1.0f);
+        }
+        g_game.audio.wind = g_game.screen == NW_SCREEN_PAUSE ? 0.25f : 0.7f;
+        g_game.audio.steps = g_game.screen == NW_SCREEN_PLAY && !g_game.still ? g_game.steps : 0.0f;
+        g_game.audio.heartbeat = g_game.screen == NW_SCREEN_PLAY ? (near > g_game.fear ? near : g_game.fear) : 0.0f;
+        g_game.audio.static_level = static_level > 1.0f ? 1.0f : static_level;
+        nw_audio_update(&g_game.audio);
+    }
+
     /* The surface may only be written once the compositor has read the last
      * frame. */
     if (sxnwm_wait_idle(&g_game.wm, 250) != 0) {
@@ -818,6 +873,15 @@ static int nw_selftest(void)
     nw_world_generate(&g_game.world, 0x5eed);
     g_game.rng.state = 77;
     nw_check(nw_world_upload_textures(&g_game.world) == 0, "seven procedural textures upload");
+    {
+        /* No session in the smoke, so no daemon: the stream must reach the
+         * device directly. A machine with no audio device skips this. */
+        long mode = nw_audio_start();
+        if (mode != -SAVANXP_ENOENT) {
+            nw_check(mode == SXNAUDIO_MODE_DIRECT, "the sound thread starts on the device");
+            nw_audio_stop();
+        }
+    }
     nw_check(g_game.world.tree_count > 150, "the forest has its trees");
     nw_check(!nw_world_blocked(&g_game.world, 0.0f, 0.0f, NW_PLAYER_RADIUS), "the spawn clearing is free");
     nw_check(nw_world_blocked(&g_game.world, g_game.world.trees[0].x, g_game.world.trees[0].z, NW_PLAYER_RADIUS),
@@ -841,6 +905,17 @@ static int nw_selftest(void)
     g_game.camera.yaw += 180.0f;
     nw_update_play(0.016f);
     nw_check(g_game.warden.present, "the first photograph wakes the Warden, out of view");
+    {
+        struct savanxp_gui_pointer_motion motion;
+        float yaw = g_game.camera.yaw;
+        float pitch = g_game.camera.pitch;
+        memset(&motion, 0, sizeof(motion));
+        motion.dx = 100;
+        motion.dy = -50;
+        nw_pointer_motion(&motion);
+        nw_check(fabsf(g_game.camera.yaw - (yaw - 12.0f)) < 0.01f && g_game.camera.pitch > pitch,
+            "captured motion turns the head: right is right, up is up");
+    }
 
     /* A frame with the Warden five metres ahead. */
     g_game.camera.x = 0.0f;
@@ -934,6 +1009,13 @@ int main(int argc, char** argv)
     if (still) {
         nw_enter_still();
     }
+    {
+        long mode = nw_audio_start();
+        g_game.audio_running = mode >= 0;
+        (void)sxn_log(mode == SXNAUDIO_MODE_DAEMON ? "nightwood: sound through audiod"
+                : mode == SXNAUDIO_MODE_DIRECT     ? "nightwood: sound straight to the device"
+                                                   : "nightwood: no sound");
+    }
 
     last = sxn_clock_ns();
     while (!g_game.quit) {
@@ -969,6 +1051,7 @@ int main(int argc, char** argv)
         }
     }
 
+    nw_audio_stop();
     sxgl_context_destroy(g_game.gl);
     sxn_exit(0);
 }

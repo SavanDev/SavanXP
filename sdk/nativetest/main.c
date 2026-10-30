@@ -36,6 +36,11 @@
  * process; SXN_SYS_EXIT from a second thread ending them all. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
+ *
+ * And SUN sound (sxn/sxnaudio.h): with no daemon a stream writes to
+ * /dev/audio0 directly; then the real audiod is started and a stream reaches
+ * it through its native port, names itself, and finds that name in the
+ * daemon's census.
  */
 
 #include <stdint.h>
@@ -44,6 +49,7 @@
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnaudio.h"
 
 #define SXN_CHILD_STATUS 42
 #define SXN_PARENT_MARKER 0x5EED1u
@@ -840,6 +846,106 @@ static void test_threads(const struct sxn_native_info* info) {
     check(sxn_log("nativetest: threads done") == 0);
 }
 
+/* SUN sound (sxn/sxnaudio.h, docs/media/AUDIO_DAEMON.md#sun-clients). The
+ * smoke boots without a session, so there is no daemon at first: the stream
+ * must go straight to the device. Then the real /bin/audiod is started and a
+ * second stream must reach it through the native port, under the name it
+ * declared. Without an audio device the whole test is skipped: the machine
+ * cannot say anything about sound. */
+static void test_audio(void) {
+    static int16_t frames[480 * 2]; /* more than one record's worth */
+    struct sxnaudio_stream stream;
+    char* const audiod_argv[] = {(char*)"/bin/audiod", 0};
+    long result = 0;
+    long pid = 0;
+    long pause = sxn_event_create(0);
+    int attempt = 0;
+    int found = 0;
+    int status = 0;
+    uint32_t index = 0;
+
+    for (index = 0; index < 480u; index += 1) {
+        int16_t value = (index / 40u) % 2u == 0 ? 1200 : -1200;
+        frames[index * 2u] = value;
+        frames[index * 2u + 1u] = value;
+    }
+
+    result = sxnaudio_open(&stream, "nativetest");
+    if (result == -SAVANXP_ENOENT) {
+        (void)sxn_log("nativetest: audio: no device, skipped");
+        (void)sxn_close(pause);
+        return;
+    }
+    check(result == 0);
+    check(stream.mode == SXNAUDIO_MODE_DIRECT);
+    check(stream.rate_hz >= 8000u);
+    check(sxnaudio_frames_due(&stream, 50) > 0);
+    check(sxnaudio_write(&stream, frames, 480u) == 480);
+    sxnaudio_close(&stream);
+    check(stream.mode == SXNAUDIO_MODE_CLOSED);
+
+    pid = sxn_spawn("/bin/audiod", audiod_argv, 1);
+    check(pid > 0);
+    if (pid <= 0) {
+        (void)sxn_close(pause);
+        return;
+    }
+    /* The port appears once the daemon owns the device. */
+    for (attempt = 0; attempt < 100; ++attempt) {
+        int32_t probe[2] = {-1, -1};
+        if (sxn_port_connect(SAVANXP_AUDIOD_PORT_NAME, probe) == 0) {
+            (void)sxn_close(probe[0]);
+            (void)sxn_close(probe[1]);
+            break;
+        }
+        (void)sxn_wait_one(pause, 50);
+    }
+    check(attempt < 100);
+
+    result = sxnaudio_open(&stream, "nativetest");
+    check(result == 0 && stream.mode == SXNAUDIO_MODE_DAEMON);
+    if (result == 0 && stream.mode == SXNAUDIO_MODE_DAEMON) {
+        struct savanxp_audiod_list_query query;
+
+        /* Four records: with the declaration and the census request, six of
+         * the eight a pipe holds. */
+        for (index = 0; index < 4u; index += 1) {
+            check(sxnaudio_write(&stream, frames, SAVANXP_AUDIOD_RECORD_MAX_FRAMES) ==
+                (long)SAVANXP_AUDIOD_RECORD_MAX_FRAMES);
+        }
+        query.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        query.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        query.kind = SAVANXP_AUDIOD_LIST;
+        check(sxnaudio_send_record(&stream, &query, (uint32_t)sizeof(query)) == 0);
+        for (attempt = 0; attempt < 40 && !found; ++attempt) {
+            struct savanxp_audiod_record record;
+            const struct savanxp_audiod_list_reply* reply =
+                (const struct savanxp_audiod_list_reply*)record.payload;
+
+            (void)sxn_wait_one(stream.from_daemon, 100);
+            while (sxn_read(stream.from_daemon, &record, sizeof(record)) == (long)sizeof(record)) {
+                if (record.magic == SAVANXP_AUDIOD_RECORD_MAGIC && record.length >= sizeof(*reply) &&
+                    reply->kind == SAVANXP_AUDIOD_REPLY && streq(reply->name, "nativetest") &&
+                    reply->port >= SAVANXP_AUDIOD_NATIVE_FIRST_PORT &&
+                    reply->port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT + SAVANXP_AUDIOD_NATIVE_SLOTS) {
+                    found = 1;
+                }
+            }
+        }
+        check(found);
+        /* A full pipe ends a write early instead of blocking or dropping. */
+        for (index = 0; index < 16u; index += 1) {
+            result = sxnaudio_write(&stream, frames, 480u);
+            check(result >= 0 && result <= 480);
+        }
+    }
+    sxnaudio_close(&stream);
+    check(sxn_terminate(pid, 0) == 0);
+    check(sxn_waitpid(pid, &status) == pid);
+    (void)sxn_close(pause);
+    check(sxn_log("nativetest: audio: direct and through audiod's port") == 0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -1303,6 +1409,7 @@ int main(int argc, char** argv) {
     test_threads(&info);
     test_thread_bases();
     test_address_waits();
+    test_audio();
 
     /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and
      * needs no system call; the arenas past it come from the native page

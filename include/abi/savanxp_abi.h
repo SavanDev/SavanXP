@@ -976,6 +976,13 @@ struct savanxp_wm_client_requests {
     /* What the window says about itself, published by the client (appended
      * after v4 shipped, like the window roles). */
     struct savanxp_wm_presentation presentation;
+    /* Pointer capture (appended like the presentation): 1 while the client
+     * wants relative motion instead of a cursor. Honoured only while its main
+     * window is the active one, and dropped the moment it is not; the WM then
+     * hides the cursor and sends SAVANXP_WM_EVENT_POINTER_MOTION records. One
+     * word written whole, so it needs no seqlock. */
+    uint32_t pointer_capture;
+    uint32_t pointer_reserved;
 };
 
 struct savanxp_gpu_client_surface_header {
@@ -1126,12 +1133,25 @@ struct savanxp_gui_pointer_event {
     uint32_t buttons;
 };
 
+/* Relative pointer motion for a client that captured the pointer
+ * (savanxp_wm_client_requests.pointer_capture): how far the mouse moved since
+ * the previous record, in device units, with no cursor and no window edge to
+ * stop it. Positive x is right, positive y is down. */
+struct savanxp_gui_pointer_motion {
+    int32_t dx;
+    int32_t dy;
+    int32_t wheel; /* as in savanxp_mouse_event.wheel */
+    uint32_t buttons;
+};
+
 enum savanxp_wm_event_kind {
     SAVANXP_WM_EVENT_KEY = 1,
     SAVANXP_WM_EVENT_POINTER = 2,
     /* The first record a client reads after connecting (protocol v5): the
      * WM's answer to its hello. payload.welcome. */
     SAVANXP_WM_EVENT_WELCOME = 3,
+    /* Relative motion while the pointer is captured. payload.motion. */
+    SAVANXP_WM_EVENT_POINTER_MOTION = 4,
 };
 
 /*
@@ -1195,6 +1215,7 @@ struct savanxp_wm_event {
     union {
         struct savanxp_input_event key;
         struct savanxp_gui_pointer_event pointer;
+        struct savanxp_gui_pointer_motion motion;
         struct savanxp_wm_welcome welcome;
         uint8_t bytes[24];
     } payload;

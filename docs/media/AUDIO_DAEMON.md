@@ -58,6 +58,37 @@ name, `LIST` returns the census the popup and `volume list` read, and
 persisted; the stream's name is announced again every 10 s so a restarted
 daemon relearns it.
 
+## SUN clients
+
+A SUN program has no sockets, so it cannot send a datagram. audiod also
+creates the native port `audiod` (`SAVANXP_AUDIOD_PORT_NAME`), and a SUN
+program reaches it through `sxn/sxnaudio.h`: `sxnaudio_open` connects, and
+`sxnaudio_write` sends **the same datagrams**, each wrapped in a fixed-size
+record (`struct savanxp_audiod_record`, 1024 bytes). The wire protocol both
+transports share lives in `include/audio/audiod_protocol.h`, outside either
+subsystem, like the WM's; `savanxp/audio_server.h` keeps only the UDP side.
+
+The record size is the whole design:
+
+- **Eight records fill a pipe exactly** (8 KiB), and a non-blocking write of a
+  whole record is all or nothing, so neither end ever sees half of one.
+- **A full pipe ends a write early, it does not block or drop.** The pipe holds
+  about 40 ms of sound; `sxnaudio_write` returns how many frames it took, and
+  the rest is simply due again on the next `sxnaudio_frames_due`, which paces
+  the program by the clock at a lead it chooses.
+- **Each connection is a stream** numbered by its slot, 1 to 8
+  (`SAVANXP_AUDIOD_NATIVE_FIRST_PORT`), below every port UDP hands out, so the
+  census, `SET_VOLUME` and the volume popup treat it like any other stream.
+  `DECLARE` names it; `LIST` is answered with REPLY records on the event pipe.
+  Closing the pipe ends the connection, and the stream expires with its
+  silence like a UDP one.
+
+Without a daemon (smoke mode, no NIC) there is no port, and `sxnaudio_open`
+falls back to writing `/dev/audio0` directly -- the same "first writer wins"
+rule as below. `nativetest` asserts both paths: direct with no daemon, then
+through the port of a real `/bin/audiod` it starts, finding its declared name
+in the census.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod

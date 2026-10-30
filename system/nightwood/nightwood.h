@@ -5,9 +5,10 @@
  * consumer that drove batches 3 and 4 of SxGL (docs/desktop/SXGL_ROADMAP.md).
  * The design of the game itself is in docs/userland/NIGHTWOOD.md.
  *
- * Two units:
+ * Three units:
  *   nightwood.c        the SUN side: window, input, the loop, the HUD
  *   nightwood_world.c  the forest: generation, collision, textures, drawing
+ *   nightwood_audio.c  the sound: every voice synthesized, on a thread of its own
  */
 
 #include <stdint.h>
@@ -110,3 +111,23 @@ void nw_world_collide(const struct nw_world* world, float* x, float* z, float ra
 int nw_world_blocked(const struct nw_world* world, float x, float z, float radius);
 /* 1 if a trunk stands between the two points (at eye height). */
 int nw_world_occluded(const struct nw_world* world, float ax, float az, float bx, float bz);
+
+/* --- Sound (nightwood_audio.c) -------------------------------------------- */
+
+/* What the game wants heard right now. The two events are counters: the sound
+ * thread plays the chime or the end once each time one of them goes up. */
+struct nw_audio_mix {
+    float wind; /* 0..1 */
+    float steps; /* footsteps per second, 0 standing still */
+    float heartbeat; /* 0..1: how near the Warden is, and how watched */
+    float static_level; /* 0..1: the screen's static, heard */
+    int pickup; /* photographs taken this session */
+    int caught; /* nights lost this session */
+};
+
+/* Starts the sound thread: the stream's mode (SXNAUDIO_MODE_DAEMON or
+ * _DIRECT) on success, negative when there is no sound to be had -- the game
+ * is then silent, never broken. */
+long nw_audio_start(void);
+void nw_audio_update(const struct nw_audio_mix* mix);
+void nw_audio_stop(void);

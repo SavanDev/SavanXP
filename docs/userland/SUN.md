@@ -46,7 +46,8 @@ the name of the layer, not a rename of its symbols.
 | Piece | Header / source | Role | Windows analogue |
 |---|---|---|---|
 | Base | `include/sxn/sxn.h` | processes, handles, events, waits, sections and views, pipes, devices, ports, the clock | `kernel32` |
-| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon | `user32` (window + message loop) |
+| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer | `user32` (window + message loop) |
+| Sound | `include/sxn/sxnaudio.h` | a PCM stream to `audiod` through its native port, or to `/dev/audio0` directly when no daemon runs, paced by the clock | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
@@ -140,6 +141,8 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `InvalidateRect` / partial `BitBlt` to screen | `sxnwm_submit_rects`, `sxnwm_wait_idle` | done |
 | `SetWindowPos` (size), `WM_SIZE`, `WM_CLOSE` | `sxnwm_request_size`, `sxnwm_check_resize`, `sxnwm_close_requested` | done |
 | `SetWindowText`, `WM_SETICON` | `sxnwm_set_title`, `sxnwm_set_presentation` | done |
+| `ClipCursor` + raw input (`WM_INPUT`), `ShowCursor(FALSE)` | `sxnwm_set_pointer_capture`, `SAVANXP_WM_EVENT_POINTER_MOTION` | done (Nightwood); suspended by the WM whenever the window is not active |
+| `waveOutOpen`/`waveOutWrite`, XAudio2 | `sxnaudio_open`, `sxnaudio_frames_due`, `sxnaudio_write` | done (Nightwood); mixed by `audiod` when it runs ([AUDIO_DAEMON.md](../media/AUDIO_DAEMON.md#sun-clients)) |
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device` | missing: no consumer yet |
@@ -168,6 +171,25 @@ lands.
   and resizes, the close request, and the title and icon
   (`sxnwm_set_title`, `sxnwm_set_presentation`); and the resources compiled in
   (above).
+
+## What the first game added
+
+Nightwood ([NIGHTWOOD.md](NIGHTWOOD.md)) is the consumer of three additions,
+none of them a kernel slice: everything they need was already open to SUN.
+
+- **SxGL as platform code.** The 3D rasterizer makes no system call and is
+  presented by the caller (`sxnwm_submit_full` here), so a SUN program links
+  it like it links SxGFX ([SXGL.md](../desktop/SXGL.md)).
+- **Sound, `sxn/sxnaudio.h`.** audiod gained a native port beside its UDP
+  socket, and a SUN stream speaks the same datagrams over it in fixed-size
+  records; with no daemon it writes the device. Asserted by `nativetest`
+  (both paths) and `nightwood --selftest`.
+- **Pointer capture, `sxnwm_set_pointer_capture`.** A request word in the
+  surface header and a new event kind; `windowd` grants it only to the active
+  window and drops it the moment that changes
+  ([WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md#pointer-capture)). Asserted by
+  `windowd --selftest` (the motion of both device kinds) and
+  `nightwood --selftest` (the camera it turns).
 
 ## Not there (deliberately)
 

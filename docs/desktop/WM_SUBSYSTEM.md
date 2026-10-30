@@ -405,6 +405,39 @@ A v4 client finds no channels on fixed descriptors and fails in `gfx_open`;
 the surface header is version 5 now that the launch queue left it. External
 apps built against the SDK, such as `doomgeneric`, must be rebuilt.
 
+## Pointer capture
+
+A first-person view needs to know how far the mouse moved, not where the
+cursor is: a cursor stops at the edge of the screen, and a head does not. A
+client asks for that by setting `requests.pointer_capture` in its surface
+header (SUN: `sxnwm_set_pointer_capture`). Appended to the requests like the
+presentation, it is one word written whole, so it needs no seqlock.
+
+While the client's main window is the **active** one and asks for it, the WM:
+
+- hides the cursor (`cursor_visible = 0` in the scene it commits) and leaves
+  its position alone, so it reappears where it was;
+- sends `SAVANXP_WM_EVENT_POINTER_MOTION` records
+  (`struct savanxp_gui_pointer_motion`: `dx`, `dy`, `wheel`, `buttons`)
+  instead of pointer records, with no hit-testing, frame buttons or drags.
+
+**The capture follows the focus, and the WM owns that rule.** `capture_client`
+is re-evaluated on every pass of the loop: Alt+Tab, the Start menu, a click
+that activates another window, an owned dialog that disables the owner, or the
+elevation prompt end it at once, and it resumes by itself when the window is
+active again. A captured program can therefore never trap the user, and
+needs no code to release the capture when it loses the focus -- it only
+releases it when its own state says so (a pause menu). Keyboard hotkeys are
+untouched: they never went through the pointer path.
+
+A relative device (PS/2) gives deltas straight through. A tablet
+(virtio-tablet) gives positions, so the motion is the difference from its last
+one, and the first event of a capture only sets the reference
+(`windowd_capture_motion`, asserted by `windowd --selftest`). **A tablet stops
+at the host window's edge** -- the one limit capture cannot lift, because the
+host's pointer is what the tablet reports. With the default PS/2 mouse, QEMU
+grabs the host pointer and the motion is unbounded.
+
 ## Fixed-size windows
 
 Some programs have a layout with nowhere to go. A board of cells, a calculator

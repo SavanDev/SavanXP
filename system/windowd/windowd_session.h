@@ -174,6 +174,13 @@ struct windowd_session
     /* The cursor moved or changed shape since the last commit: compositord
      * draws it, so a commit has to tell it even with nothing else damaged. */
     int cursor_moved;
+    /* Pointer capture (savanxp_wm_client_requests.pointer_capture): 1 while
+     * the active window holds it, which hides the cursor. The last absolute
+     * position turns a tablet's positions into motion. */
+    int pointer_captured;
+    int capture_has_last;
+    int capture_last_x;
+    int capture_last_y;
     int current_cursor_shape;
     int previous_cursor_shape;
     /* Redimensionado por bordes en curso. Se guarda el marco al agarrar y el

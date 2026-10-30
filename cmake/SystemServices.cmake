@@ -66,4 +66,4 @@ savanxp_system_service(NAME console SOURCES console.c)
 # Like the console it is an application, not a service, linked the same way;
 # being a SUN program is what puts it in system/ rather than in the POSIX
 # userland.
-savanxp_system_service(NAME nightwood SOURCES nightwood.c nightwood_world.c)
+savanxp_system_service(NAME nightwood SOURCES nightwood.c nightwood_world.c nightwood_audio.c)

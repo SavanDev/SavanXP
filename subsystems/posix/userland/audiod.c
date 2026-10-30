@@ -1,5 +1,6 @@
 #include "libc.h"
 #include "savanxp/audio_server.h"
+#include "sxn/sxn.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -68,6 +69,19 @@ struct audiod_stream {
 };
 
 static struct audiod_stream g_streams[AUDIOD_MAX_STREAMS];
+
+/* SUN clients have no sockets: they connect to the native port
+ * SAVANXP_AUDIOD_PORT_NAME and write fixed-size records on a pipe
+ * (audio/audiod_protocol.h). Each connection is a stream numbered by its
+ * slot, below every port UDP hands out. */
+struct audiod_native_client {
+    int used;
+    long read_handle; /* client -> daemon */
+    long write_handle; /* daemon -> client: census replies */
+};
+
+static struct audiod_native_client g_native[SAVANXP_AUDIOD_NATIVE_SLOTS];
+static long g_native_port = -1;
 static uint32_t g_device_rate_hz;
 static uint64_t g_dropped_packets;
 static uint64_t g_mismatch_packets;
@@ -224,10 +238,20 @@ static void audiod_handle_set_volume(
     const unsigned char* data,
     size_t length,
     uint64_t now_ms);
-static void audiod_handle_list(
-    int sock_fd,
-    const struct savanxp_sockaddr_in* source,
-    uint64_t now_ms);
+typedef void (*audiod_reply_sink)(const struct savanxp_audiod_list_reply* reply, void* context);
+static void audiod_handle_list(audiod_reply_sink sink, void* context);
+
+/* Where a census goes when it was asked for over UDP. */
+struct audiod_udp_reply {
+    int sock_fd;
+    const struct savanxp_sockaddr_in* source;
+};
+
+static void audiod_send_udp_reply(const struct savanxp_audiod_list_reply* reply, void* context)
+{
+    const struct audiod_udp_reply* to = (const struct audiod_udp_reply*)context;
+    (void)savanxp_sendto(to->sock_fd, reply, sizeof(*reply), to->source);
+}
 
 static void audiod_handle_datagram(
     int sock_fd,
@@ -259,7 +283,10 @@ static void audiod_handle_datagram(
         }
         else if (kind == SAVANXP_AUDIOD_LIST)
         {
-            audiod_handle_list(sock_fd, source, now_ms);
+            struct audiod_udp_reply reply_to;
+            reply_to.sock_fd = sock_fd;
+            reply_to.source = source;
+            audiod_handle_list(audiod_send_udp_reply, &reply_to);
         }
         else
         {
@@ -404,17 +431,16 @@ static void audiod_handle_set_volume(
     ++g_dropped_packets;
 }
 
-static void audiod_handle_list(
-    int sock_fd,
-    const struct savanxp_sockaddr_in* source,
-    uint64_t now_ms)
+/* The census: one REPLY per live stream, or a single one with count 0 so
+ * that an empty census still answers. `sink` delivers each reply the way the
+ * question came in. */
+static void audiod_handle_list(audiod_reply_sink sink, void* context)
 {
     struct savanxp_audiod_list_reply reply;
     struct audiod_stream* snapshot[AUDIOD_MAX_STREAMS];
     size_t count = 0;
     size_t index;
 
-    (void)now_ms;
     for (index = 0; index < AUDIOD_MAX_STREAMS; ++index)
     {
         if (g_streams[index].used)
@@ -428,9 +454,7 @@ static void audiod_handle_list(
         reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
         reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
         reply.kind = SAVANXP_AUDIOD_REPLY;
-        reply.count = 0;
-        reply.index = 0;
-        (void)savanxp_sendto(sock_fd, &reply, sizeof(reply), source);
+        sink(&reply, context);
         return;
     }
     for (index = 0; index < count; ++index)
@@ -444,7 +468,155 @@ static void audiod_handle_list(
         reply.port = snapshot[index]->port;
         reply.volume = snapshot[index]->volume;
         audiod_copy_name(reply.name, snapshot[index]->name);
-        (void)savanxp_sendto(sock_fd, &reply, sizeof(reply), source);
+        sink(&reply, context);
+    }
+}
+
+/* --- Native clients ------------------------------------------------------ */
+
+static void audiod_send_native_reply(const struct savanxp_audiod_list_reply* reply, void* context)
+{
+    const struct audiod_native_client* client = (const struct audiod_native_client*)context;
+    struct savanxp_audiod_record record;
+
+    memset(&record, 0, sizeof(record));
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC;
+    record.length = (uint32_t)sizeof(*reply);
+    memcpy(record.payload, reply, sizeof(*reply));
+    /* Non-blocking and whole: a client that does not read its replies loses
+     * them, it does not stall the mixer. */
+    (void)sxn_write(client->write_handle, &record, sizeof(record));
+}
+
+static void audiod_close_native(struct audiod_native_client* client)
+{
+    (void)sxn_close(client->read_handle);
+    (void)sxn_close(client->write_handle);
+    memset(client, 0, sizeof(*client));
+}
+
+/* Takes every pending connection. A ninth client is refused by closing its
+ * pipes, which it reads as the daemon going away. */
+static void audiod_accept_native(uint64_t now_ms)
+{
+    if (g_native_port < 0)
+    {
+        return;
+    }
+    while (sxn_wait_one(g_native_port, 0) == 0)
+    {
+        struct sxn_port_connection connection;
+        size_t slot;
+        uint16_t port;
+        struct audiod_stream* stale;
+
+        if (sxn_port_accept(g_native_port, &connection) < 0)
+        {
+            return;
+        }
+        for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS && g_native[slot].used; ++slot)
+        {
+        }
+        if (slot == SAVANXP_AUDIOD_NATIVE_SLOTS)
+        {
+            (void)sxn_close(connection.read_handle);
+            (void)sxn_close(connection.write_handle);
+            ++g_dropped_packets;
+            continue;
+        }
+        (void)sxn_set_nonblocking(connection.read_handle, 1);
+        (void)sxn_set_nonblocking(connection.write_handle, 1);
+        g_native[slot].used = 1;
+        g_native[slot].read_handle = connection.read_handle;
+        g_native[slot].write_handle = connection.write_handle;
+        port = (uint16_t)(SAVANXP_AUDIOD_NATIVE_FIRST_PORT + slot);
+        /* A new client in an old slot starts a new stream, not the tail of
+         * the last one's. */
+        stale = audiod_find_stream(port);
+        if (stale != 0)
+        {
+            memset(stale, 0, sizeof(*stale));
+        }
+        (void)now_ms;
+        eprintf("audiod: native client pid %u on stream %u\n", connection.client_pid, (unsigned int)port);
+    }
+}
+
+static void audiod_handle_native_datagram(
+    struct audiod_native_client* client,
+    const unsigned char* data,
+    size_t length,
+    uint16_t port,
+    uint64_t now_ms)
+{
+    uint32_t magic = 0;
+    uint16_t kind = 0;
+
+    if (length >= sizeof(magic))
+    {
+        memcpy(&magic, data, sizeof(magic));
+    }
+    if (magic != SAVANXP_AUDIOD_CONTROL_MAGIC)
+    {
+        audiod_handle_audio(data, length, port, now_ms);
+        return;
+    }
+    if (length >= sizeof(magic) + 2u + 2u)
+    {
+        memcpy(&kind, data + sizeof(magic) + 2u, sizeof(kind));
+    }
+    if (kind == SAVANXP_AUDIOD_DECLARE)
+    {
+        audiod_handle_declare(data, length, port, now_ms);
+    }
+    else if (kind == SAVANXP_AUDIOD_SET_VOLUME)
+    {
+        audiod_handle_set_volume(data, length, now_ms);
+    }
+    else if (kind == SAVANXP_AUDIOD_LIST)
+    {
+        audiod_handle_list(audiod_send_native_reply, client);
+    }
+    else
+    {
+        ++g_mismatch_packets;
+    }
+}
+
+/* Reads every whole record waiting on every native connection. End of
+ * stream, an error, or a record that is not one closes the connection: the
+ * stream itself expires with its silence, like a UDP one. */
+static void audiod_drain_native(uint64_t now_ms)
+{
+    size_t slot;
+
+    for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS; ++slot)
+    {
+        struct audiod_native_client* client = &g_native[slot];
+        uint16_t port = (uint16_t)(SAVANXP_AUDIOD_NATIVE_FIRST_PORT + slot);
+
+        while (client->used)
+        {
+            struct savanxp_audiod_record record;
+            long got = sxn_read(client->read_handle, &record, sizeof(record));
+
+            if (got == -SAVANXP_EAGAIN)
+            {
+                break;
+            }
+            if (got != (long)sizeof(record) || record.magic != SAVANXP_AUDIOD_RECORD_MAGIC ||
+                record.length > SAVANXP_AUDIOD_RECORD_PAYLOAD)
+            {
+                if (got > 0)
+                {
+                    ++g_mismatch_packets;
+                }
+                eprintf("audiod: native stream %u closed\n", (unsigned int)port);
+                audiod_close_native(client);
+                break;
+            }
+            audiod_handle_native_datagram(client, record.payload, record.length, port, now_ms);
+        }
     }
 }
 
@@ -633,6 +805,8 @@ static int audiod_serve(int sock_fd, int audio_fd)
         {
             audiod_handle_datagram(sock_fd, datagram, (size_t)got, &source, now_ms);
         }
+        audiod_accept_native(now_ms);
+        audiod_drain_native(now_ms);
         audiod_expire_streams(now_ms);
 
         due_ms = now_ms > last_render_ms ? now_ms - last_render_ms : 0;
@@ -1187,6 +1361,14 @@ int main(int argc, char** argv)
         savanxp_close((int)sock_fd);
         savanxp_close((int)audio_fd);
         return 1;
+    }
+    /* The port for SUN clients. Without it the daemon still serves UDP: a
+     * name taken by someone else costs the native clients, not the rest. */
+    g_native_port = sxn_port_create(SAVANXP_AUDIOD_PORT_NAME);
+    if (g_native_port < 0)
+    {
+        eprintf("audiod: no native port (%s)\n", result_error_string(g_native_port));
+        g_native_port = -1;
     }
     eprintf("audiod: mezclando a %u Hz\n", g_device_rate_hz);
     return audiod_serve((int)sock_fd, (int)audio_fd);

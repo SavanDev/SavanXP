@@ -493,6 +493,23 @@ static inline long sxnwm_set_presentation(struct sxnwm_client* ctx, const struct
     return sxnwm_notify(ctx);
 }
 
+/* Captures the pointer (on = 1) or lets it go (on = 0): while the window is
+ * the active one, the WM hides the cursor and sends
+ * SAVANXP_WM_EVENT_POINTER_MOTION records with how far the mouse moved,
+ * unbounded by the screen -- what a first-person view needs. Losing the
+ * focus (Alt+Tab, the Start menu, another window) suspends the capture
+ * without the program doing anything, and it resumes when the window is
+ * active again, so a captured window can never trap the user. ClipCursor
+ * plus raw input, in Win32 terms. */
+static inline long sxnwm_set_pointer_capture(struct sxnwm_client* ctx, int on) {
+    if (ctx == 0 || ctx->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header->requests.pointer_capture = on ? 1u : 0u;
+    __asm__ volatile("" ::: "memory");
+    return sxnwm_notify(ctx);
+}
+
 /* SetWindowText: a new title, everything else as last published. Titles
  * longer than SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. */
 static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) {

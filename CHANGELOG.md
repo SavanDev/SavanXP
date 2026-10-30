@@ -38,9 +38,17 @@ Cut-off notes:
   triangles-per-second benchmark. See `docs/desktop/SXGL.md`.
 
 - **Nightwood, the first game written against SUN** (`/bin/nightwood.sxe`, Games): a forest at
-  night drawn with SxGL, eight photographs to find and something that follows. New
-  `nightwood-smoke` (`nightwood --selftest`) and `tools/shoot.sh --scenario nightwood`. See
-  `docs/userland/NIGHTWOOD.md`.
+  night drawn with SxGL, eight photographs to find and something that follows, with mouse look and
+  synthesized sound. New `nightwood-smoke` (`nightwood --selftest`) and
+  `tools/shoot.sh --scenario nightwood`. See `docs/userland/NIGHTWOOD.md`.
+
+- **SUN programs can play sound** (`sxn/sxnaudio.h`): `audiod` also listens on the native port
+  `audiod`, and a SUN stream reaches it there, or writes `/dev/audio0` directly when no daemon runs.
+  The wire protocol moved to `audio/audiod_protocol.h`. See `docs/media/AUDIO_DAEMON.md#sun-clients`.
+
+- **A window can capture the pointer** (`sxnwm_set_pointer_capture`): while it is the active window
+  the cursor hides and it gets relative `SAVANXP_WM_EVENT_POINTER_MOTION`; losing the focus suspends
+  the capture. See `docs/desktop/WM_SUBSYSTEM.md#pointer-capture`.
 
 ### Changed
 

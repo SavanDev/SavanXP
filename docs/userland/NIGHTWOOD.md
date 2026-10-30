@@ -17,10 +17,10 @@ It exists for two reasons, and both shape it:
 
 | | |
 |---|---|
-| Sources | `system/nightwood/` (`nightwood.c`, `nightwood_world.c`, `nightwood.h`) |
+| Sources | `system/nightwood/` (`nightwood.c`, `nightwood_world.c`, `nightwood_audio.c`, `nightwood.h`) |
 | Manifest | `system/nightwood/nightwood.sxres`, compiled in as `nightwood.sunres.h` |
 | Smoke | `./build.sh smoke nightwood-smoke` (`nightwood --selftest`, no window) |
-| Look at it | `./tools/shoot.sh --scenario nightwood` (title, forest, pause, `--still`) |
+| Look at it | `./tools/shoot.sh --scenario nightwood` (title, forest, mouse look, pause, `--still`) |
 
 ## Playing
 
@@ -28,10 +28,10 @@ It exists for two reasons, and both shape it:
 |---|---|
 | W / S or Up / Down | walk forward and back |
 | A / D | step sideways |
-| Left / Right | turn |
-| Page Up / Page Down | look up and down |
+| the mouse | look around (the pointer is captured while playing) |
+| Left / Right, Page Up / Page Down | turn and look up and down without a mouse |
 | Shift | run, while the stamina bar lasts |
-| E (or Enter, Space) | take the photograph in front of you |
+| E, a left click, Enter or Space | take the photograph in front of you |
 | F | switch the flashlight off and on |
 | Esc | pause; Esc again gives up the night |
 
@@ -53,6 +53,26 @@ Every night is a new forest: the seed is the clock. The eight landmarks (a
 boulder, a shed, a water tank, a wrecked car, a ruined wall, an old oak, a
 signpost and a stone arch) sit one per sector of a ring 20 to 48 m around the
 clearing where the player starts, each facing roughly back towards it.
+
+## Sound and mouse
+
+**Sound** (`nightwood_audio.c`) is synthesized on a SUN thread of its own, so
+a slow frame never starves the speaker: wind (noise through two filters that
+breathe with slow gusts), a low drone of two detuned sines, a crunch of
+filtered noise per footstep, a heartbeat that quickens and swells as the
+Warden nears or is watched, the screen's static, the shutter and chime of a
+photograph, and the roar at the end. Oscillators read a sine table; nothing is
+a file, because a SUN program has none. The game thread only describes the
+moment (`nw_audio_update`); the sound thread keeps the stream 80 ms ahead with
+`sxnaudio_frames_due`. Through `audiod` it appears in the volume popup as
+"Nightwood"; with no daemon it writes the device; with no device the game is
+silent and otherwise unchanged.
+
+**Mouse look** is SUN's pointer capture: entering play captures the pointer,
+and the title, the pause and the endings release it. Each
+`SAVANXP_WM_EVENT_POINTER_MOTION` turns the head a tenth of a degree per
+count, and a left click takes the photograph. The WM suspends the capture by
+itself whenever the window loses the focus, so Alt+Tab always works.
 
 ## How a frame is made
 
@@ -78,8 +98,10 @@ lets `nightwood --selftest` and a host harness run it without a window.
 ## Testing it
 
 `nightwood --selftest` runs with no window: it builds a fixed forest, uploads
-the textures, walks up to every photograph and checks that each one is in
-reach, takes one and checks that the Warden wakes out of view, then renders
+the textures, starts the sound thread (straight to the device: the smoke has
+no daemon), walks up to every photograph and checks that each one is in
+reach, takes one and checks that the Warden wakes out of view, feeds a
+captured motion and checks the head turns the right way, then renders
 ten frames with the Warden five metres ahead and asserts that its eyes glow,
 that the beam lights the ground and that GL raised no error. It also logs the
 time per frame and the triangles per frame (about 170 ms and 1000 under TCG

@@ -1111,6 +1111,55 @@ static int route_pointer(
     return route_event(client, &event);
 }
 
+/* The window that holds the pointer, if any: the active application window,
+ * when it asks for the capture and no elevation prompt is up. Anything that
+ * takes the focus away ends the capture by making this return 0. */
+static struct windowd_client *capture_client(struct windowd_session *session)
+{
+    struct windowd_client *client = active_client(session);
+
+    if (client == 0 || client->header == 0 || session->consent.open ||
+        client->header->requests.pointer_capture == 0u || overlay_client_disabled(session, client))
+    {
+        return 0;
+    }
+    return client;
+}
+
+/* How far a captured pointer moved. A relative device says so; a tablet says
+ * where it is, so the motion is the difference from its last position (and
+ * nothing on the first event of a capture, which only sets the reference).
+ * A tablet stops at the host window's edge -- the one limit capture cannot
+ * lift; a PS/2 mouse has none. */
+static void windowd_capture_motion(
+    const struct savanxp_mouse_event *event, int *has_last, int *last_x, int *last_y, int *dx, int *dy)
+{
+    if ((event->flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) == 0u)
+    {
+        *dx = event->delta_x;
+        *dy = event->delta_y;
+        return;
+    }
+    *dx = *has_last ? event->absolute_x - *last_x : 0;
+    *dy = *has_last ? event->absolute_y - *last_y : 0;
+    *last_x = event->absolute_x;
+    *last_y = event->absolute_y;
+    *has_last = 1;
+}
+
+static int route_pointer_motion(const struct windowd_client *client, int dx, int dy, int wheel, uint32_t buttons)
+{
+    struct savanxp_wm_event event;
+
+    memset(&event, 0, sizeof(event));
+    event.kind = SAVANXP_WM_EVENT_POINTER_MOTION;
+    event.payload.motion.dx = dx;
+    event.payload.motion.dy = dy;
+    event.payload.motion.wheel = wheel;
+    event.payload.motion.buttons = buttons;
+    return route_event(client, &event);
+}
+
 static size_t coalesce_mouse_events(
     const struct savanxp_mouse_event *events,
     size_t event_count,
@@ -1405,7 +1454,7 @@ static int windowd_commit(
     scene->cursor_x = cursor_x;
     scene->cursor_y = cursor_y;
     scene->cursor_shape = (uint32_t)session->current_cursor_shape;
-    scene->cursor_visible = 1u;
+    scene->cursor_visible = session->pointer_captured ? 0u : 1u;
 
     result = windowd_compositor_commit(&session->compositor, wait ? SAVANXP_COMPOSITOR_COMMIT_WAIT : 0u, &reply);
     windowd_dirty_rect_reset(dirty);
@@ -3715,6 +3764,40 @@ static int windowd_pointer_coalesce_selftest(void)
     return (coalesced[0].flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) != 0u ? 1 : 0;
 }
 
+/* A captured pointer's motion, from both kinds of device: a mouse's deltas
+ * pass through, and a tablet's positions become differences, starting from
+ * nothing on the first event so that a new capture does not jump. */
+static int windowd_capture_motion_selftest(void)
+{
+    struct savanxp_mouse_event event;
+    int has_last = 0;
+    int last_x = 0;
+    int last_y = 0;
+    int dx = 0;
+    int dy = 0;
+
+    memset(&event, 0, sizeof(event));
+    event.delta_x = 7;
+    event.delta_y = -3;
+    windowd_capture_motion(&event, &has_last, &last_x, &last_y, &dx, &dy);
+    if (dx != 7 || dy != -3 || has_last)
+    {
+        return 1;
+    }
+    event.flags = SAVANXP_MOUSE_FLAG_ABSOLUTE;
+    event.absolute_x = 600;
+    event.absolute_y = 300;
+    windowd_capture_motion(&event, &has_last, &last_x, &last_y, &dx, &dy);
+    if (dx != 0 || dy != 0 || !has_last)
+    {
+        return 1;
+    }
+    event.absolute_x = 640;
+    event.absolute_y = 290;
+    windowd_capture_motion(&event, &has_last, &last_x, &last_y, &dx, &dy);
+    return dx == 40 && dy == -10 ? 0 : 1;
+}
+
 /* Descriptores que a windowd le tienen que sobrar con todas las ventanas
  * abiertas: el cliente de shell (la terminal), que todavia se puede abrir, mas
  * los fds transitorios de un launch y la lectura del .sxe. */
@@ -5013,6 +5096,12 @@ static int windowd_selftest(void)
     if (windowd_pointer_coalesce_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL pointer position lost in coalescing\n");
+        return 1;
+    }
+
+    if (windowd_capture_motion_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL captured pointer motion\n");
         return 1;
     }
 
@@ -6446,6 +6535,19 @@ int main(int argc, char **argv)
             session.cursor_moved = 1;
         }
 
+        /* The capture follows the focus on every pass: a window that loses it
+         * gets the cursor back at once, and the motion of a new capture starts
+         * from its first event. */
+        {
+            int captured = capture_client(&session) != 0;
+            if (captured != session.pointer_captured)
+            {
+                session.pointer_captured = captured;
+                session.capture_has_last = 0;
+                session.cursor_moved = 1;
+            }
+        }
+
         if (mouse_poll_index >= 0 && (poll_fds[mouse_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
             struct savanxp_mouse_event raw_mouse_events[WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME];
@@ -6468,6 +6570,23 @@ int main(int argc, char **argv)
 
             for (mouse_event_index = 0; mouse_event_index < coalesced_mouse_count; ++mouse_event_index)
             {
+                struct windowd_client *captor = session.pointer_captured ? capture_client(&session) : 0;
+                if (captor != 0)
+                {
+                    /* Captured: the motion goes to the window and the cursor
+                     * stays where it was, hidden. */
+                    const struct savanxp_mouse_event *event = &coalesced_mouse_events[mouse_event_index];
+                    int dx = 0;
+                    int dy = 0;
+                    windowd_capture_motion(event, &session.capture_has_last, &session.capture_last_x,
+                        &session.capture_last_y, &dx, &dy);
+                    if (dx != 0 || dy != 0 || event->wheel != 0 || event->buttons != last_buttons)
+                    {
+                        (void)route_pointer_motion(captor, dx, dy, event->wheel, event->buttons);
+                    }
+                    last_buttons = event->buttons;
+                    continue;
+                }
                 handle_pointer_event(&session, &coalesced_mouse_events[mouse_event_index], &dirty,
                     &cursor_x, &cursor_y, &last_buttons, &drag_overlay_slot, &drag_offset_x, &drag_offset_y);
             }
