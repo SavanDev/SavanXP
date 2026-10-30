@@ -56,7 +56,7 @@ Cut-off notes:
 
 ### Changed
 
-- **The taskbar looks like Windows NT 4.0's.** Two-pixel button bevels, a dithered bold button for the
+- **The taskbar looks like Windows NT 4.0's.** Two-pixel button bevels (24 px high), a dithered bold button for the
   active window, and one sunken tray well holding the layout, speaker and clock as flat cells.
 
 - **Gears draws with SxGL** instead of its own rasterizer: geometry crossing the near plane is

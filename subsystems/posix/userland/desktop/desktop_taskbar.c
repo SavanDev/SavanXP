@@ -25,7 +25,10 @@
 #define TASKBAR_BUTTON_MIN_WIDTH 40
 #define TASKBAR_BUTTON_GAP 2
 #define TASKBAR_MARGIN_X 2
+/* The two highlight lines along the top edge count toward the top margin, so
+ * the bottom one is smaller: one free row above the items and one below. */
 #define TASKBAR_MARGIN_Y 3
+#define TASKBAR_MARGIN_BOTTOM 1
 #define TASKBAR_ICON_SIZE 16
 /* The tray is one sunken well; the layout, speaker and clock sit flat inside
  * it, side by side, as in the NT 4 notification area. */
@@ -204,7 +207,7 @@ static const struct desktop_embedded_bitmap *taskbar_entry_icon(
 
 static int taskbar_item_height(const struct savanxp_fb_info *info)
 {
-    return (int)info->height - (TASKBAR_MARGIN_Y * 2);
+    return (int)info->height - TASKBAR_MARGIN_Y - TASKBAR_MARGIN_BOTTOM;
 }
 
 static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
