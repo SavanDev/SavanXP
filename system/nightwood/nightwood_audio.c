@@ -120,11 +120,12 @@ static void nw_synthesize(int16_t* out, uint32_t frames)
         float sample;
 
         /* Wind: noise through two one-pole filters, the cut-off breathing
-         * with slow gusts. */
+         * with slow gusts. A bed under everything else, about -30 dBFS: at
+         * the level of a footstep it drowned the rest. */
         gust = 0.5f + 0.5f * nw_sine(nw_advance(&g_audio.gust_phase, 0.07f));
         g_audio.wind_low += (white - g_audio.wind_low) * (0.010f + 0.030f * gust);
         g_audio.wind_band += (g_audio.wind_low - g_audio.wind_band) * 0.06f;
-        wind = (g_audio.wind_low - g_audio.wind_band) * 5.0f * mix.wind * (0.4f + 0.6f * gust);
+        wind = (g_audio.wind_low - g_audio.wind_band) * 1.4f * mix.wind * (0.4f + 0.6f * gust);
         left += wind * (0.8f + 0.2f * gust);
         right += wind * (1.0f - 0.2f * gust);
 

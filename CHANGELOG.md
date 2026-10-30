@@ -50,6 +50,10 @@ Cut-off notes:
   the cursor hides and it gets relative `SAVANXP_WM_EVENT_POINTER_MOTION`; losing the focus suspends
   the capture. See `docs/desktop/WM_SUBSYSTEM.md#pointer-capture`.
 
+- **`SAVANXP_QEMU_DISPLAY=sdl` opens QEMU with SDL instead of GTK**, whose grab cannot confine the
+  host pointer on Wayland; with SDL a captured pointer stays in the window. See
+  `docs/build/BUILD_LINUX.md#the-qemu-window`.
+
 ### Changed
 
 - **Gears draws with SxGL** instead of its own rasterizer: geometry crossing the near plane is

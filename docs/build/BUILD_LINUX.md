@@ -168,6 +168,27 @@ The launcher accepts only `tcg` and `kvm` for acceleration:
 KVM requires hardware virtualization support and uses the host CPU model. The
 default `tcg` mode works without `/dev/kvm` and is the portable fallback.
 
+### The QEMU window
+
+`SAVANXP_QEMU_DISPLAY` picks the window `run` and `debug` open: `gtk` (the
+default) or `sdl` (Arch package `qemu-ui-sdl`).
+
+```bash
+SAVANXP_QEMU_DISPLAY=sdl ./build.sh run --accel kvm
+```
+
+The difference is the pointer grab. On a **Wayland** session GTK's grab
+cannot confine the host pointer, so a program that captures the pointer (the
+mouse look in Nightwood, [WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md#pointer-capture))
+sees it leave the window and stop at its edge. SDL locks the pointer through
+its relative mouse mode: click into the window to grab, Ctrl+Alt+G to let go.
+Running GTK through XWayland (`GDK_BACKEND=x11 ./build.sh run`) is the other
+way out. On X11 both grab normally.
+
+Either way the grab only matters with the default PS/2 mouse. With `--virtio`
+the pointer is a tablet, which reports positions, not motion: QEMU never grabs
+it, and a captured pointer stops at the window's edge whatever the display.
+
 ### The 496 MiB ceiling is gone from the development path
 
 `build/image` no longer contains `build/disk.img`. The persistent volume reaches

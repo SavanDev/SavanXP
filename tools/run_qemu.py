@@ -39,6 +39,24 @@ def find_ovmf(name: str) -> Path | None:
 
 DISK_BUSES = ("ahci", "ide")
 
+# The window QEMU shows. GTK is the default: it scales and has menus. Its pointer
+# grab cannot confine the host pointer on a Wayland session, so a game that
+# captures the pointer (Nightwood's mouse look) sees the mouse leave the window;
+# SDL locks the pointer through its relative mouse mode and keeps it in.
+# SAVANXP_QEMU_DISPLAY picks one (docs/build/BUILD_LINUX.md#the-qemu-window).
+QEMU_DISPLAYS = {
+    "gtk": "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=off",
+    "sdl": "sdl,window-close=on",
+}
+
+
+def qemu_display() -> str:
+    name = os.environ.get("SAVANXP_QEMU_DISPLAY", "gtk")
+    if name not in QEMU_DISPLAYS:
+        raise SystemExit(
+            f"unknown SAVANXP_QEMU_DISPLAY {name!r}; expected one of {', '.join(QEMU_DISPLAYS)}")
+    return QEMU_DISPLAYS[name]
+
 
 def build_qemu_args(
     *,
@@ -83,7 +101,7 @@ def build_qemu_args(
         "-audiodev",
         "none,id=audio0" if headless else "sdl,id=audio0",
         "-display",
-        "none" if headless else "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=off",
+        "none" if headless else qemu_display(),
         "-rtc",
         "base=localtime",
         "-drive",
