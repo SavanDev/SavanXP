@@ -27,7 +27,9 @@
 #include "savanxp/sxgui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ---- limites --------------------------------------------------------------
  *
@@ -238,6 +240,12 @@ static int g_pending_power;
 static struct sxgui_dialog g_run_dialog;
 static struct sxgui_widget g_run_widgets[4];
 static char g_run_path[128] = "/bin/";
+
+/* The one-button box that reports why End Process could not finish. */
+static struct sxgui_dialog g_message_dialog;
+static struct sxgui_widget g_message_widgets[3];
+static char g_message_line[96];
+static char g_message_detail[96];
 
 /* ---- utilidades ----------------------------------------------------------- */
 
@@ -1050,6 +1058,98 @@ static void on_list(struct sxgui_widget *widget, void *user)
     sxgui_app_request_repaint((struct sxgui_app *)user);
 }
 
+/* ---- ending a process -----------------------------------------------------
+ *
+ * The desktop runs as the user, and a process that belongs to the system (or
+ * to anyone else) is not the user's to end: kill answers EPERM
+ * (docs/kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation). Ending it
+ * anyway takes elevation, as uninstalling does in Add or Remove Programs: the
+ * elevated `taskmgr --end <pid>` does the kill, and this window never gains
+ * the rights itself. EACCES is different: the idle process and init cannot be
+ * ended by anyone, so there is nothing to elevate for. */
+
+#define TASKMGR_PATH "/bin/taskmgr"
+
+/* Returns 0 when the process is gone or the user declined the prompt, or a
+ * negative status to report. */
+static long end_process(uint32_t pid)
+{
+    const char *argv[3];
+    char pid_text[16];
+    int status = -1;
+    long result = savanxp_kill((int)pid, SAVANXP_SIGKILL);
+
+    if (result != -SAVANXP_EPERM || geteuid() == 0)
+    {
+        return result;
+    }
+    snprintf(pid_text, sizeof(pid_text), "%u", (unsigned)pid);
+    argv[0] = "taskmgr";
+    argv[1] = "--end";
+    argv[2] = pid_text;
+    result = elevate(TASKMGR_PATH, argv, 3, &status);
+    if (result == -SAVANXP_EACCES)
+    {
+        /* The user answered No: that is a decision, not an error. */
+        return 0;
+    }
+    if (result < 0)
+    {
+        return -SAVANXP_EPERM;
+    }
+    /* The elevated half exits with the kill's errno, 0 on success. */
+    return status == 0 ? 0 : -(long)(status > 0 ? status : SAVANXP_EPERM);
+}
+
+/* The elevated half, run by the broker with euid 0. It opens no window. */
+static int run_end(const char *pid_text)
+{
+    char *end = 0;
+    unsigned long pid = strtoul(pid_text != 0 ? pid_text : "", &end, 10);
+    long result;
+
+    if (pid_text == 0 || end == pid_text || *end != '\0' || pid == 0ul)
+    {
+        return SAVANXP_EINVAL;
+    }
+    result = savanxp_kill((int)pid, SAVANXP_SIGKILL);
+    return result < 0 ? (int)-result : 0;
+}
+
+static void on_message_ok(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+}
+
+static void show_end_failure(long result)
+{
+    /* Gone before the kill reached it: the next sample drops the row, which is
+     * all the user needs to see. */
+    if (result == -SAVANXP_ENOENT)
+    {
+        return;
+    }
+    snprintf(g_message_line, sizeof(g_message_line), "%s", "The operation could not be completed.");
+    if (result == -SAVANXP_EPERM || result == -SAVANXP_EACCES)
+    {
+        snprintf(g_message_detail, sizeof(g_message_detail), "%s", "Access is denied.");
+    }
+    else
+    {
+        snprintf(g_message_detail, sizeof(g_message_detail), "The process could not be ended (error %ld).", -result);
+    }
+
+    memset(&g_message_dialog, 0, sizeof(g_message_dialog));
+    g_message_dialog.title = "Unable to Terminate Process";
+    g_message_dialog.widgets = g_message_widgets;
+    g_message_dialog.widget_count = 3;
+    g_message_dialog.initial_focus = 2;
+    g_message_dialog.default_button = 2;
+    sxgui_dialog_begin(&g_app.ui, &g_message_dialog, TASKMGR_CONFIRM_WIDTH, TASKMGR_CONFIRM_HEIGHT);
+}
+
 static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
@@ -1065,7 +1165,7 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
 
     if (g_pending_power == TASKMGR_CMD_SHUTDOWN)
     {
-        /* No retorna si tiene exito. */
+        /* Does not return when it succeeds. */
         (void)power_shutdown();
         g_pending_power = 0;
         return;
@@ -1079,10 +1179,15 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
 
     if (g_confirm_pid != 0u)
     {
-        (void)savanxp_kill((int)g_confirm_pid, SAVANXP_SIGKILL);
+        long result = end_process(g_confirm_pid);
+
         g_confirm_pid = 0u;
-        /* Se remuestrea ya: esperar al proximo tick dejaria la fila muerta en
-         * la lista hasta un segundo despues de haberla matado. */
+        if (result < 0)
+        {
+            show_end_failure(result);
+        }
+        /* Sample again now: waiting for the next tick would leave the dead
+         * row in the list for up to a second after it was ended. */
         refresh_sample();
         sxgui_app_request_repaint(&g_app);
     }
@@ -1394,6 +1499,10 @@ int main(int argc, char **argv)
     {
         return selftest();
     }
+    if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--end") == 0)
+    {
+        return run_end(argv[2]);
+    }
 
     *TASKMGR_TABS = sxgui_tabs(sx_rect_make(0, 0, 0, 0), k_tab_labels, TASKMGR_TAB_COUNT,
                                TASKMGR_TAB_PROCESSES);
@@ -1433,6 +1542,20 @@ int main(int argc, char **argv)
                      TASKMGR_CONFIRM_HEIGHT - TASKMGR_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
                      SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
         "No", on_confirm_cancel, 0);
+
+    g_message_widgets[0] = sxgui_label(
+        sx_rect_make(TASKMGR_DIALOG_MARGIN, TASKMGR_DIALOG_MARGIN,
+                     TASKMGR_CONFIRM_WIDTH - (TASKMGR_DIALOG_MARGIN * 2), TASKMGR_ROW),
+        g_message_line);
+    g_message_widgets[1] = sxgui_label(
+        sx_rect_make(TASKMGR_DIALOG_MARGIN, TASKMGR_DIALOG_MARGIN + TASKMGR_ROW + 2,
+                     TASKMGR_CONFIRM_WIDTH - (TASKMGR_DIALOG_MARGIN * 2), TASKMGR_ROW),
+        g_message_detail);
+    g_message_widgets[2] = sxgui_button(
+        sx_rect_make(centred_button_x(TASKMGR_CONFIRM_WIDTH, 1, 0),
+                     TASKMGR_CONFIRM_HEIGHT - TASKMGR_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_message_ok, 0);
 
     g_run_widgets[0] = sxgui_label(
         sx_rect_make(TASKMGR_DIALOG_MARGIN, TASKMGR_DIALOG_MARGIN,

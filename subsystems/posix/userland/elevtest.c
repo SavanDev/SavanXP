@@ -17,7 +17,7 @@
  *   - as the system: /dev/input0 is windowd's (a read and a claim are
  *     -EBUSY), and asking for elevation starts the program without a prompt;
  *   - lowered to the user (uid 1000): it cannot read the keyboard, windowd
- *     refuses to show it a prompt of its own, and it asks four times
+ *     refuses to show it a prompt of its own, and it asks five times
  *     (tools/qmp_elevation.py answers):
  *       1. with a forged "yes" written down its pipe behind the request; the
  *          host presses N, and the answer must be no;
@@ -27,7 +27,10 @@
  *          euid 0, able to write /system, and its exit status comes back;
  *       4. Add or Remove Programs' elevated half, `appwiz --uninstall`, on a
  *          program the system put in /bin and the user cannot delete; the
- *          host presses Y, and it is gone.
+ *          host presses Y, and it is gone;
+ *       5. Task Manager's elevated half, `taskmgr --end`, on a process the
+ *          system started and the user's kill is refused (EPERM); the host
+ *          presses Y, and the process ends.
  *
  *     elevtest              the test (as init's smoke command)
  *     elevtest --elevated   what the broker starts: checks its own token
@@ -44,6 +47,8 @@
 #define ELEVTEST_START_MS 60000ul
 
 static int g_failures = 0;
+/* A process of the system's, started before the fork, for the user to end. */
+static long g_victim = 0;
 
 static void check(int ok, const char *what)
 {
@@ -206,6 +211,40 @@ static void uninstall_elevated(void)
     check(stat(ELEVTEST_APP, &info) < 0 && errno == ENOENT, "the program is gone from /bin");
 }
 
+/* Gone, or ended and waiting for its parent to reap it. */
+static int process_ended(long pid)
+{
+    struct savanxp_process_info info;
+    unsigned long index;
+
+    for (index = 0; proc_info(index, &info) > 0; ++index)
+    {
+        if ((long)info.pid == pid)
+        {
+            return info.state == SAVANXP_PROC_ZOMBIE;
+        }
+    }
+    return 1;
+}
+
+/* End Process on a process that is not the user's: what taskmgr runs. */
+static void end_elevated(void)
+{
+    char pid_text[16];
+    const char *taskmgr_argv[] = {"taskmgr", "--end", pid_text, 0};
+    int status = -1;
+    long pid;
+
+    snprintf(pid_text, sizeof(pid_text), "%ld", g_victim);
+    check(g_victim > 0, "the system's process to end is running");
+    check(savanxp_kill((int)g_victim, SAVANXP_SIGKILL) == -SAVANXP_EPERM,
+        "the user cannot end the system's process");
+    pid = elevate("/bin/taskmgr", taskmgr_argv, 3, &status);
+    check(pid > 0, "the end request is accepted");
+    check(pid > 0 && status == 0, "taskmgr --end reports the process ended");
+    check(process_ended(g_victim), "the system's process has ended");
+}
+
 static int run_user(void)
 {
     const char *elevated_argv[] = {"elevtest", "--elevated", 0};
@@ -230,6 +269,7 @@ static int run_user(void)
         "the requester still cannot write /system");
 
     uninstall_elevated();
+    end_elevated();
     return g_failures == 0 ? 0 : 1;
 }
 
@@ -258,6 +298,7 @@ int main(int argc, char **argv)
     const char *elevationd_argv[] = {"/bin/elevationd.sxe", 0};
     const char *sessiond_argv[] = {"/bin/sessiond.sxe", 0};
     const char *true_argv[] = {"true", 0};
+    const char *sleep_argv[] = {"sleep", "120", 0};
     long elevationd = 0;
     long sessiond = 0;
     long child = 0;
@@ -299,6 +340,9 @@ int main(int argc, char **argv)
         check(pid > 0 && status == 0, "the system's request runs without a prompt");
     }
 
+    /* What the user will ask Task Manager to end. */
+    g_victim = spawn("/bin/sleep", sleep_argv, 2);
+
     child = savanxp_fork();
     check(child >= 0, "fork");
     if (child == 0)
@@ -311,6 +355,13 @@ int main(int argc, char **argv)
     }
 
     (void)unlink(ELEVTEST_APP);
+    if (g_victim > 0)
+    {
+        int victim_status = -1;
+
+        (void)savanxp_kill((int)g_victim, SAVANXP_SIGKILL);
+        (void)savanxp_waitpid((int)g_victim, &victim_status);
+    }
     (void)savanxp_kill((int)sessiond, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)elevationd, SAVANXP_SIGKILL);
     puts_out(g_failures == 0 ? "ELEVATION SMOKE PASS\n" : "ELEVATION SMOKE FAIL\n");

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host QMP keys for the elevation smoke.
 
-The guest (`elevtest`) asks for elevation four times as the user. windowd
+The guest (`elevtest`) asks for elevation five times as the user. windowd
 prints "consent prompt shown" when the first prompt is up, which is when this
 runs:
 
@@ -12,6 +12,7 @@ runs:
   3. Y accepts the third.
   4. Y accepts the fourth, `appwiz --uninstall`, whose arguments the prompt
      shows; its screenshot is kept.
+  5. Y accepts the fifth, `taskmgr --end`.
 
 The keys travel QMP -> PS/2 (or virtio) -> driver -> /dev/input0 -> windowd,
 the only path an answer may take. Each pause outlasts the round trip to the
@@ -54,7 +55,9 @@ def main() -> int:
         time.sleep(4.0)
         client.screenshot(args.out_dir / "prompt-arguments.ppm")
         client.tap("y", pause=0.0)
-    print("qmp_elevation: sent n, a held y then n, y, y", flush=True)
+        time.sleep(4.0)
+        client.tap("y", pause=0.0)
+    print("qmp_elevation: sent n, a held y then n, y, y, y", flush=True)
     return 0
 
 

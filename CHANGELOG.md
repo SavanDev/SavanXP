@@ -125,6 +125,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Task Manager's End Process works on processes that are not the user's**: it asks for elevation
+  and the elevated `taskmgr --end <pid>` ends them; a refusal shows "Unable to Terminate Process"
+  instead of failing silently. `elevation-smoke` covers it.
+
 - **A held key no longer answers the elevation prompt**: the keyboard core marks repeats with the new
   `SAVANXP_KEY_MOD_REPEAT` bit, and the prompt ignores them.
 
