@@ -225,7 +225,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(duplicate_fd_to(caller, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_PROC_INFO: {
-            if (!vm::is_user_range_accessible(caller.address_space, context->rsi, sizeof(savanxp_process_info), true)) {
+            // The v1 struct: binaries built before kernel_ticks was appended
+            // pass a buffer this size. POSIX has no reader of the v2 fields.
+            if (!vm::is_user_range_accessible(caller.address_space, context->rsi, SAVANXP_PROCESS_INFO_V1_SIZE, true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -235,7 +237,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = 0;
                 return context;
             }
-            if (!write_to_process_memory(caller, context->rsi, &info, sizeof(info))) {
+            if (!write_to_process_memory(caller, context->rsi, &info, SAVANXP_PROCESS_INFO_V1_SIZE)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }

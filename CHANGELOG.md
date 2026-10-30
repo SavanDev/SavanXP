@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs can read the process table and the system** (`SXN_SYS_PROCESS_SNAPSHOT`,
+  `SXN_SYS_SYSTEM_INFO`, `sxn_process_snapshot`, `sxn_system_info`) and ask for elevation
+  (`sxn_elevate` in `sxn/sxnelevate.h`). `savanxp_process_info` gains `kernel_ticks`,
+  `thread_count` and `uid`; POSIX `proc_info` keeps the old size. See slice 27 in
+  `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **SxFS records an owner, a group and a mode on every inode** (`SXFS_FEATURE_OWNERSHIP`, no format
   version bump). An existing image is stamped with the default of each path by the build or on its
   first mount; nothing enforces them yet. `fscheck` reports `ownership_recorded` and
@@ -55,6 +61,10 @@ Cut-off notes:
   `docs/build/BUILD_LINUX.md#the-qemu-window`.
 
 ### Changed
+
+- **`SXN_SYS_TERMINATE` follows kill's rule**: a descendant, a process of the caller's uid, or any
+  when the caller acts as the system; otherwise `-EPERM` (was `-ECHILD`). Idle and init are
+  `-EACCES`, the caller itself `-EINVAL`.
 
 - **The taskbar looks like Windows NT 4.0's.** Two-pixel button bevels (24 px high), a dithered bold button for the
   active window, and one sunken tray well holding the layout, speaker and clock as flat cells.

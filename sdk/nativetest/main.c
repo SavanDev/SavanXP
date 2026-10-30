@@ -199,6 +199,28 @@ static void run_sleeper(void) {
     }
 }
 
+/* TERMINATE as the user (uid 1000), which the parent started it as:
+ * argv[2] is a sleeper of the system's that is not this child's descendant,
+ * argv[3] one of the user's that is not either. kill's rule: the first is
+ * -EPERM, the second, same owner, ends. Exits 0 when both held. */
+static void run_user_terminate_child(int argc, char** argv) {
+    long system_sleeper;
+    long user_sleeper;
+
+    if (argc < 4) {
+        sxn_exit(2);
+    }
+    system_sleeper = atou(argv[2]);
+    user_sleeper = atou(argv[3]);
+    if (sxn_terminate(system_sleeper, 1) != -SAVANXP_EPERM) {
+        sxn_exit(3);
+    }
+    if (sxn_terminate(user_sleeper, 1) != 0) {
+        sxn_exit(4);
+    }
+    sxn_exit(0);
+}
+
 /* Port child: connects to the parent's port by name, says ping, reads pong,
  * takes the event the parent handed over and signals it. Native calls only. */
 static void run_port_child(void) {
@@ -980,6 +1002,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "shootdown")) {
         run_shootdown_child();
     }
+    if (argc > 1 && streq(argv[1], "userterm")) {
+        run_user_terminate_child(argc, argv);
+    }
 
     check(sxn_info(&info) == 0);
     check(info.abi_version == SXN_ABI_VERSION);
@@ -1283,10 +1308,83 @@ int main(int argc, char** argv) {
             check(self.pid == info.pid && self.state == SXN_PROCESS_RUNNING && self.handle_count >= 3u);
             check(sxn_process_query(0, &self) == -SAVANXP_ENOENT);
         }
-        /* pid 1 is the idle task: not this process's child. */
-        check(sxn_terminate(1, 1) == -SAVANXP_ECHILD);
+        /* pid 1 is the idle task, which nobody ends; the caller ends itself
+         * with EXIT, not TERMINATE. */
+        check(sxn_terminate(1, 1) == -SAVANXP_EACCES);
+        check(sxn_terminate(info.pid, 1) == -SAVANXP_EINVAL);
         check(sxn_terminate(0, 1) == -SAVANXP_ENOENT);
         check(sxn_log("nativetest: terminate and query done") == 0);
+    }
+
+    /* TERMINATE outside the tree: kill's rule (USERS_AND_PERMISSIONS.md). Two
+     * sleepers, one the system's and one the user's, and a child started as
+     * the user that is the parent of neither. */
+    {
+        struct sxn_identity user = {1000u, 1000u, 100u, 0u};
+        struct sxn_spawn_request request;
+        char* sleeper_argv[2];
+        char* child_argv[4];
+        char system_text[16];
+        char user_text[16];
+        long system_sleeper;
+        long user_sleeper = -1;
+        long child = -1;
+        int status = -1;
+
+        sleeper_argv[0] = "/bin/nativetest.sxe";
+        sleeper_argv[1] = "sleeper";
+        system_sleeper = sxn_spawn_stdio("/bin/nativetest.sxe", sleeper_argv, 2);
+        sxn_spawn_request_init(&request, "/bin/nativetest.sxe", sleeper_argv, 2);
+        user_sleeper = sxn_spawn_ex_as(&request, &user);
+        check(system_sleeper > 0 && user_sleeper > 0);
+        if (system_sleeper > 0 && user_sleeper > 0) {
+            itoau(system_sleeper, system_text);
+            itoau(user_sleeper, user_text);
+            child_argv[0] = "/bin/nativetest.sxe";
+            child_argv[1] = "userterm";
+            child_argv[2] = system_text;
+            child_argv[3] = user_text;
+            sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 4);
+            child = sxn_spawn_ex_as(&request, &user);
+            check(child > 0);
+            check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
+            /* The user's sleeper was ended by the child; reap it. */
+            check(sxn_waitpid(user_sleeper, &status) == user_sleeper && status == 1);
+        }
+        if (system_sleeper > 0) {
+            (void)sxn_terminate(system_sleeper, 0);
+            (void)sxn_waitpid(system_sleeper, &status);
+        }
+        check(sxn_log("nativetest: terminate by owner done") == 0);
+    }
+
+    /* PROCESS_SNAPSHOT and SYSTEM_INFO: the task list's two reads. */
+    {
+        struct savanxp_process_info entry;
+        struct savanxp_system_info system;
+        unsigned long index = 0;
+        int found_self = 0;
+        int found_idle = 0;
+        long result;
+
+        while ((result = sxn_process_snapshot(index, &entry)) == 1) {
+            if (entry.pid == info.pid) {
+                found_self = streq(entry.name, "nativetest.sxe") && entry.thread_count >= 1u &&
+                    entry.uid == 0u && (entry.flags & SAVANXP_PROC_FLAG_SYSTEM) != 0u &&
+                    entry.handle_count >= 3u && entry.kernel_ticks <= entry.cpu_ticks;
+            }
+            if ((entry.flags & SAVANXP_PROC_FLAG_IDLE) != 0u) {
+                found_idle = 1;
+            }
+            index += 1;
+        }
+        check(result == 0 && found_self && found_idle);
+        check(sxn_trap(SXN_SYS_PROCESS_SNAPSHOT, 0, (unsigned long)&entry, SAVANXP_PROCESS_INFO_V1_SIZE - 1u) ==
+            -SAVANXP_EINVAL);
+        check(sxn_system_info(&system) == 0);
+        check(system.cpu_online >= 1u && system.memory_free_bytes > 0u && system.cpu_ticks_total > 0u &&
+            system.process_count >= 1u);
+        check(sxn_log("nativetest: process snapshot and system info done") == 0);
     }
 
     /* PIPE_CREATE: a pipe made by a native process, both ends in its table.

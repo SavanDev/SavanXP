@@ -161,12 +161,16 @@ enum sxn_syscall_number {
     /* rdi = pipe read end. Pops the oldest queued handle into the caller's
      * table. Returns the handle or -EAGAIN if none; never blocks. */
     SXN_SYS_PIPE_RECEIVE_HANDLE = 0x101b,
-    /* rdi = pid, rsi = exit status. Ends a descendant of the caller (a child,
-     * or a child's child, and so on), which its parent's waitpid then reaps
-     * with that status. Having started the process tree is the right to end
-     * any process in it, as a job object gives Windows. Returns 0 (also for a
-     * process that already ended), -ENOENT if no such process, -ECHILD if the
-     * caller is not one of its ancestors. Native only. */
+    /* rdi = pid, rsi = exit status. Ends a process, which its parent's
+     * waitpid then reaps with that status. Allowed for a descendant of the
+     * caller (having started the process tree is the right to end any process
+     * in it, as a job object gives Windows), for a process of the caller's
+     * own uid, and for any process when the caller acts as the system --
+     * kill's rule (docs/kernel/USERS_AND_PERMISSIONS.md#what-requires-
+     * elevation). Returns 0 (also for a process that already ended), -ENOENT
+     * if no such process, -EACCES for the idle processes and init, which
+     * nobody ends, -EINVAL for the caller itself (that is SXN_SYS_EXIT), and
+     * -EPERM otherwise. Native only. */
     SXN_SYS_TERMINATE = 0x101c,
     /* rdi = const int32_t handles[], rsi = count (1..16), rdx = timeout in ms
      * (0 = poll, negative = forever). Waits until ANY of them is signaled and
@@ -255,6 +259,19 @@ enum sxn_syscall_number {
     /* Like SXN_SYS_PORT_ACCEPT, with rsi = struct sxn_port_connection_ex:
      * also who the client was when it connected. SO_PEERCRED. */
     SXN_SYS_PORT_ACCEPT_EX = 0x102a,
+    /* rdi = index, rsi = struct savanxp_process_info (written), rdx = its
+     * size. The index-th live or ended process, in table order, as a task
+     * list shows it: counters, threads and owner included. Writes at most
+     * `size` bytes, so a caller built against a shorter struct gets its
+     * prefix. Returns 1, 0 past the last process, or -EINVAL if the size is
+     * below SAVANXP_PROCESS_INFO_V1_SIZE. Any process may list every other.
+     * Toolhelp's snapshot, one entry per call. */
+    SXN_SYS_PROCESS_SNAPSHOT = 0x102b,
+    /* rdi = struct savanxp_system_info (written), rsi = its size. The machine
+     * as the boot found it plus what is live now: free memory, the global
+     * tick counter, the cores that schedule. Writes at most `size` bytes.
+     * Returns 0 or -EINVAL. GlobalMemoryStatus and GetSystemInfo in one. */
+    SXN_SYS_SYSTEM_INFO = 0x102c,
 };
 
 /* SXN_SYS_WAKE_ADDRESS: release every waiter. */

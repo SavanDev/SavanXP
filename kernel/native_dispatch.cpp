@@ -368,6 +368,24 @@ int native_process_query(uint64_t pid_value, uint64_t user_out) {
 // the right to end it (NT asks for a handle with terminate access; there are no
 // process handles yet). terminate_process already ignores a zombie, so a child
 // that ended on its own is not an error.
+// Whether `target` descends from `proc`: walk up from the target. The chain
+// ends at init (an orphan is re-parented there) and is never longer than the
+// process table, which bounds the walk if a parent link ever loops.
+bool descends_from(const Process& target, const Process& proc) {
+    uint32_t ancestor = target.parent_pid;
+    for (size_t depth = 0; ancestor != 0 && depth < process::kMaxProcesses; ++depth) {
+        if (ancestor == proc.pid) {
+            return true;
+        }
+        const Process* step = process::find(ancestor);
+        if (step == nullptr) {
+            return false;
+        }
+        ancestor = step->parent_pid;
+    }
+    return false;
+}
+
 int native_terminate(Process& proc, uint64_t pid_value, uint64_t status) {
     if (pid_value == 0 || pid_value > 0xffffffffull) {
         return sx::negative_error(SX_ENOENT);
@@ -376,27 +394,51 @@ int native_terminate(Process& proc, uint64_t pid_value, uint64_t status) {
     if (target == nullptr) {
         return sx::negative_error(SX_ENOENT);
     }
-    // Any descendant, not only a child: walk up from the target. The chain
-    // ends at init (an orphan is re-parented there) and is never longer than
-    // the process table, which bounds the walk if a parent link ever loops.
-    uint32_t ancestor = target->parent_pid;
-    bool descendant = false;
-    for (size_t depth = 0; ancestor != 0 && depth < process::kMaxProcesses; ++depth) {
-        if (ancestor == proc.pid) {
-            descendant = true;
-            break;
-        }
-        const Process* step = process::find(ancestor);
-        if (step == nullptr) {
-            break;
-        }
-        ancestor = step->parent_pid;
+    if (target->idle || target->pid == detail::init_pid()) {
+        return sx::negative_error(SX_EACCES);
     }
-    if (!descendant) {
-        return sx::negative_error(SX_ECHILD);
+    if (target == &proc) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    // POSIX kill's rule, the caller's real or effective uid against the
+    // target's real one, plus the job-object rule TERMINATE always had.
+    const bool same_owner = proc.credentials.uid == target->credentials.uid ||
+        proc.credentials.euid == target->credentials.uid;
+    if (!cred::acts_as_system(proc.credentials) && !same_owner && !descends_from(*target, proc)) {
+        return sx::negative_error(SX_EPERM);
     }
     detail::terminate_process(*target, static_cast<int>(status));
     return 0;
+}
+
+// Toolhelp, one entry per call, over the snapshot POSIX's PROC_INFO uses.
+int native_process_snapshot(uint64_t index, uint64_t user_out, uint64_t size) {
+    savanxp_process_info info = {};
+
+    if (size < SAVANXP_PROCESS_INFO_V1_SIZE) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t length = size < sizeof(info) ? static_cast<size_t>(size) : sizeof(info);
+    if (!sx::validate_user_range(user_out, length, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (!snapshot_process(static_cast<size_t>(index), info)) {
+        return 0;
+    }
+    return sx::copy_to_user(user_out, &info, length) ? 1 : sx::negative_error(SX_EINVAL);
+}
+
+int native_system_info(uint64_t user_out, uint64_t size) {
+    savanxp_system_info info = {};
+
+    if (size == 0) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t length = size < sizeof(info) ? static_cast<size_t>(size) : sizeof(info);
+    if (!sx::validate_user_range(user_out, length, true) || !snapshot_system_info(info)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return sx::copy_to_user(user_out, &info, length) ? 0 : sx::negative_error(SX_EINVAL);
 }
 
 // Whether `handle` names an open entry of the caller's table.
@@ -1017,6 +1059,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_PROCESS_QUERY:
             context->rax = static_cast<uint64_t>(native_process_query(context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PROCESS_SNAPSHOT:
+            context->rax = static_cast<uint64_t>(native_process_snapshot(context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_SYSTEM_INFO:
+            context->rax = static_cast<uint64_t>(native_system_info(context->rdi, context->rsi));
             return context;
         default:
             break;

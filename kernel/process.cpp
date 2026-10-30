@@ -2402,6 +2402,11 @@ Process* find(uint32_t pid) {
     return nullptr;
 }
 
+// PROC_INFO hands POSIX callers this prefix; it must end where kernel_ticks
+// begins.
+static_assert(offsetof(savanxp_process_info, kernel_ticks) == SAVANXP_PROCESS_INFO_V1_SIZE,
+    "SAVANXP_PROCESS_INFO_V1_SIZE no longer matches the v1 layout");
+
 bool snapshot_process(size_t index, savanxp_process_info& info) {
     size_t visible = 0;
     for (const Process& proc : g_processes) {
@@ -2436,6 +2441,9 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
         }
         info.flags = (proc.idle ? SAVANXP_PROC_FLAG_IDLE : 0u) |
             (cred::acts_as_system(proc.credentials) ? SAVANXP_PROC_FLAG_SYSTEM : 0u);
+        info.kernel_ticks = proc.kernel_ticks;
+        info.thread_count = proc.life == Lifecycle::zombie ? 0u : live_thread_count(proc);
+        info.uid = proc.credentials.uid;
         return true;
     }
     return false;
@@ -2975,6 +2983,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     // This tick was consumed by whoever was running when it arrived, before
     // anything below can replace it.
     this_cpu().current->process->cpu_ticks += 1;
+    if ((context->cs & 3u) == 0u) {
+        this_cpu().current->process->kernel_ticks += 1;
+    }
     g_cpu_ticks_total += 1;
 
     // Los vencimientos se miden con el reloj monotono, no con el contador de

@@ -149,6 +149,8 @@ struct Process {
     // like any other process, which is exactly what makes total system usage
     // computable.
     uint64_t cpu_ticks;
+    // The share of cpu_ticks that found the process in ring 0.
+    uint64_t kernel_ticks;
     char name[kProcessNameLength];
     // Private state of the subsystem this process belongs to (isolation
     // slice B). The kernel reserves and frees these bytes according to what

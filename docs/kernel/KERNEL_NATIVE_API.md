@@ -69,6 +69,8 @@ object/process factoring, not before.
 - Slice 25: `SXN_SYS_WAIT_ADDRESS` and `SXN_SYS_WAKE_ADDRESS`.
 - Slice 26: identities on ports and spawn (`SXN_SYS_PORT_CONNECT_EX`,
   `_ACCEPT_EX`, `SXN_SPAWN_FLAG_IDENTITY`), for elevation.
+- Slice 27: what a task list reads (`SXN_SYS_PROCESS_SNAPSHOT`,
+  `SXN_SYS_SYSTEM_INFO`), and `SXN_SYS_TERMINATE` under kill's rule.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -248,6 +250,45 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 27: what a task list reads, and ending by owner
+
+What the Task Manager needs to run as a SUN program
+([SYSTEM_MONITORING.md](../userland/SYSTEM_MONITORING.md)). Native only.
+
+- `SXN_SYS_PROCESS_SNAPSHOT` (`0x102b`): rdi = index, rsi = `struct
+  savanxp_process_info` (written), rdx = its size. The index-th process of the
+  table, ended ones included, in the same struct POSIX's `PROC_INFO` fills
+  and from the same `snapshot_process`. 1 when filled, 0 past the last one.
+  Any process may list every other, as with `PROCESS_QUERY`.
+- `SXN_SYS_SYSTEM_INFO` (`0x102c`): rdi = `struct savanxp_system_info`
+  (written), rsi = its size. `snapshot_system_info`, as POSIX's
+  `SYSTEM_INFO`.
+- **The structs are the neutral ones, and they grow at the end.**
+  `savanxp_process_info` gained `kernel_ticks` (the ticks that found the
+  process in ring 0), `thread_count` and `uid`. Both calls write at most the
+  size the caller passes, so a program built against a shorter struct gets
+  its prefix. POSIX's `PROC_INFO` takes no size, so it keeps writing
+  `SAVANXP_PROCESS_INFO_V1_SIZE` bytes, the struct binaries built before
+  pass; a `static_assert` in `kernel/process.cpp` ties the constant to the
+  layout. POSIX gets the new fields the day a POSIX program needs them,
+  through a call that takes a size.
+- `SXN_SYS_TERMINATE` is no longer only for descendants. It now follows
+  kill's rule ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#what-requires-elevation)):
+  allowed for a descendant (the job-object rule it had), for a process of the
+  caller's real or effective uid, and for any process when the caller acts
+  as the system; otherwise `-EPERM`, where it used to be `-ECHILD`. The idle
+  processes and init are `-EACCES` for everyone, and the caller itself is
+  `-EINVAL` (that is `SXN_SYS_EXIT`).
+
+`nativetest` lists the table and finds itself (threads, uid 0, the system
+flag, `kernel_ticks <= cpu_ticks`) and an idle process, reads the system,
+and starts a child as the user that is refused a system sleeper it did not
+start and ends a user sleeper it did not start either.
+
+The elevation request moved to `include/sxn/sxnelevate.h` (`sxn_elevate`)
+in the same change, since a SUN program that ends someone else's process
+asks for it; POSIX's `elevate()` wraps it.
 
 ## Slice 26: identities on ports and spawn
 

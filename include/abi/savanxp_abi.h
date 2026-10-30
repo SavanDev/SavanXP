@@ -150,15 +150,30 @@ struct savanxp_process_info {
     uint32_t state;
     char name[32];
 
-    /* Contadores vivos. `cpu_ticks` son ticks del timer consumidos por este
-     * proceso desde que arranco: se lee por diferencia contra
-     * savanxp_system_info.cpu_ticks_total, nunca solo. `memory_bytes` son las
-     * paginas de usuario mapeadas en este instante. */
+    /* Live counters. `cpu_ticks` are timer ticks consumed by this process
+     * since it started: read it as a difference against
+     * savanxp_system_info.cpu_ticks_total, never on its own. `memory_bytes`
+     * are the user pages mapped at this instant. */
     uint64_t cpu_ticks;
     uint64_t memory_bytes;
     uint32_t handle_count;
     uint32_t flags;          /* SAVANXP_PROC_FLAG_* */
+
+    /* ---- v2: everything below is new, and only callers that pass a size
+     * (SXN_SYS_PROCESS_SNAPSHOT) receive it. POSIX's PROC_INFO still writes
+     * SAVANXP_PROCESS_INFO_V1_SIZE bytes, the struct binaries built before
+     * pass. ---- */
+
+    /* The part of cpu_ticks whose tick found the process in ring 0: inside a
+     * system call or an interrupt it was charged for. Same rule, same
+     * denominator. */
+    uint64_t kernel_ticks;
+    uint32_t thread_count;   /* live threads; 0 for an ended process */
+    uint32_t uid;            /* real uid (docs/kernel/USERS_AND_PERMISSIONS.md) */
 };
+
+/* The size of savanxp_process_info before kernel_ticks was appended. */
+#define SAVANXP_PROCESS_INFO_V1_SIZE 72u
 
 
 

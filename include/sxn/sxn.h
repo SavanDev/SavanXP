@@ -175,10 +175,22 @@ static inline long sxn_set_nonblocking(long handle, int on) {
     return sxn_trap(SXN_SYS_SET_NONBLOCKING, (unsigned long)handle, (unsigned long)(on != 0), 0);
 }
 
-/* Ends a descendant (child, grandchild, ...); its parent's waitpid reports
- * `status`. */
+/* Ends a process: a descendant, one of the caller's own uid, or any when
+ * the caller acts as the system (-EPERM otherwise; -EACCES for idle and
+ * init). Its parent's waitpid reports `status`. */
 static inline long sxn_terminate(long pid, int status) {
     return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);
+}
+
+/* The index-th process of the table, counters included. 1 when filled, 0
+ * past the last one. Walk from 0 until it returns 0. */
+static inline long sxn_process_snapshot(unsigned long index, struct savanxp_process_info* out) {
+    return sxn_trap(SXN_SYS_PROCESS_SNAPSHOT, index, (unsigned long)out, sizeof(*out));
+}
+
+/* The machine and its live counters (free memory, cpu_ticks_total, cores). */
+static inline long sxn_system_info(struct savanxp_system_info* out) {
+    return sxn_trap(SXN_SYS_SYSTEM_INFO, (unsigned long)out, sizeof(*out), 0);
 }
 
 /* CreatePipe: handles[0] is the read end, handles[1] the write end. */

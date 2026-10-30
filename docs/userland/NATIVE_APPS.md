@@ -32,13 +32,17 @@ The SUN headers, all header-only, no link or tool changes needed:
   `sxn_set_thread_base`, `sxn_wait_address`, `sxn_wake_address`),
   events, sections, views, waits, gfx, handle close and duplicate, pipe
   creation (`sxn_pipe_create`), pipe and device read/write, device open and
-  control, ports, the clock.
+  control, ports, the clock, and the task list's reads
+  (`sxn_process_snapshot`, `sxn_system_info`).
 - `include/sxn/sxnwm.h` — the windowing of SUN over a context struct:
   connect to `windowd` (`sxnwm_connect`), submit the whole surface or
   rectangles, wait for composed or idle, drain the input ring, ask for a
   size and follow resizes, see the close request, and publish the title and
   icon (`sxnwm_set_title`, `sxnwm_set_presentation`), and capture the pointer
   for relative motion (`sxnwm_set_pointer_capture`).
+- `include/sxn/sxnelevate.h` — `sxn_elevate`: ask the elevation broker to
+  run a program with the system's rights, behind the consent prompt
+  ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md#elevation)).
 - `include/sxn/sxnaudio.h` — sound: a PCM stream to `audiod`'s native port,
   or straight to `/dev/audio0` with no daemon (`sxnaudio_open`,
   `sxnaudio_frames_due`, `sxnaudio_write`, `sxnaudio_close`); see
