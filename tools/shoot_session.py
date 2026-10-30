@@ -1674,6 +1674,39 @@ def scenario_gears(s):
     s.shot("gears-rotada")
 
 
+def scenario_nightwood(s):
+    """Nightwood, the SUN game on SxGL: the title, a few steps into the forest,
+    and the still pose with the Warden in view.
+
+    Like gears this is for looking: winding, the flashlight's beam, the fog
+    and the glow of the eyes are judged by eye. The logic and a rendered frame
+    are asserted by nightwood-smoke.
+    """
+    s.run("nightwood", wait=15)
+    time.sleep(3.0)
+    s.shot("nightwood-title")
+    s.qmp.tap("ret")
+    time.sleep(2.0)
+    s.qmp.key("w", True)
+    time.sleep(2.5)
+    s.qmp.key("w", False)
+    s.qmp.key("left", True)
+    time.sleep(1.0)
+    s.qmp.key("left", False)
+    time.sleep(1.0)
+    s.shot("nightwood-forest")
+    s.qmp.tap("esc")
+    time.sleep(1.0)
+    s.shot("nightwood-paused")
+    s.qmp.tap("esc")
+    time.sleep(0.5)
+    s.qmp.tap("esc")
+    time.sleep(2.0)
+    s.run("nightwood --still", wait=15)
+    time.sleep(3.0)
+    s.shot("nightwood-warden")
+
+
 def scenario_spin(s):
     """Carga que SI satura el pipeline: el cliente dibuja sin esperar la entrada.
 
@@ -1906,6 +1939,7 @@ SCENARIOS = {
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,
+    "nightwood": scenario_nightwood,
     "gears": scenario_gears,
     "ccleste": scenario_ccleste,
 }

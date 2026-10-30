@@ -37,6 +37,11 @@ Cut-off notes:
   program presents what `sxgl_swap_buffers` reports. New host test `sxgl-test` with a
   triangles-per-second benchmark. See `docs/desktop/SXGL.md`.
 
+- **Nightwood, the first game written against SUN** (`/bin/nightwood.sxe`, Games): a forest at
+  night drawn with SxGL, eight photographs to find and something that follows. New
+  `nightwood-smoke` (`nightwood --selftest`) and `tools/shoot.sh --scenario nightwood`. See
+  `docs/userland/NIGHTWOOD.md`.
+
 ### Changed
 
 - **Gears draws with SxGL** instead of its own rasterizer: geometry crossing the near plane is

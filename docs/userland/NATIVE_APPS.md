@@ -64,7 +64,7 @@ native too, but they are not programs of the POSIX subsystem: they live in
 `savanxp_system_service`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
-in `sxn_exit`. Four are:
+in `sxn_exit`. Five are:
 
 - `compositord`: the GPU through `SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, the
   display memory a section it creates, and a port of its own that `windowd`
@@ -76,6 +76,9 @@ in `sxn_exit`. Four are:
   started with `sxn_spawn_ex` over pipes from `sxn_pipe_create`, and one
   `sxn_wait_many` over the window and the pipes. Its title and icon come from
   `console.sunres.h` ([SUN.md](SUN.md#resources-compiled-in)).
+- `nightwood`: the forest game ([NIGHTWOOD.md](NIGHTWOOD.md)), the first game
+  written against SUN: a window through `sxnwm.h`, 3D through SxGL into a
+  bitmap of its own, scaled up and presented with `sxnwm_submit_full`.
 - `windowd`: written against the POSIX SDK and kept that way; `windowd_sys.h`
   renames its POSIX calls to SXN equivalents in `windowd_sys.c`. A large
   program can move to the native API that way, one renamed call at a time,

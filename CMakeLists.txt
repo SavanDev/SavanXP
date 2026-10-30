@@ -609,6 +609,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer"
             # The SUN programs that ship with the system, each in system/<name>.
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/console"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/nightwood"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

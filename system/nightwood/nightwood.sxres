@@ -1,0 +1,10 @@
+# SXE resources of Nightwood, the forest game. See docs/userland/SXE_FORMAT.md;
+# as a SUN program it also gets them compiled in (nightwood.sunres.h).
+name=Nightwood
+description=Find eight photographs in a forest at night
+version=system
+vendor=SavanXP
+subsystem=native
+accent=2c3e2a
+icon=app-nightwood
+category=Games

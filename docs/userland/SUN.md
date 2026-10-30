@@ -4,6 +4,8 @@
 > native API: what a program that does not use POSIX writes against. The
 > Command Prompt ([CONSOLE.md](../desktop/CONSOLE.md)) is its first application
 > and the consumer that drove slices 20-22 and the windowing additions.
+> **First game 2026-10-29:** Nightwood ([NIGHTWOOD.md](NIGHTWOOD.md)), drawn
+> with SxGL, which is platform code so that a SUN program can link it.
 > **Direction clarified 2026-10-24:** SUN is the system's own API, not a
 > replica of Win32 ([below](#the-direction-the-systems-own-api)).
 

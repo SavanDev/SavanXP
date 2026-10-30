@@ -60,3 +60,10 @@ savanxp_system_service(NAME windowd SOURCES
 # SUN application. Not a service, but a piece of the system written against
 # the native API like them, so it lives here and links the same way.
 savanxp_system_service(NAME console SOURCES console.c)
+
+# Nightwood (docs/userland/NIGHTWOOD.md): the forest game, the first game
+# written against SUN and the consumer of SxGL's textures, fog and blending.
+# Like the console it is an application, not a service, linked the same way;
+# being a SUN program is what puts it in system/ rather than in the POSIX
+# userland.
+savanxp_system_service(NAME nightwood SOURCES nightwood.c nightwood_world.c)

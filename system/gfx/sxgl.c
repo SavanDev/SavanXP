@@ -2278,18 +2278,24 @@ static inline __attribute__((always_inline)) uint64_t sxgl_span_core(
 
 #define SXGL_DEPTH (SXGL_F_DEPTH_TEST | SXGL_F_DEPTH_WRITE)
 #define SXGL_WORLD (SXGL_DEPTH | SXGL_F_VARY | SXGL_F_TEX | SXGL_F_FOG)
+#define SXGL_WORLD_TINTED (SXGL_DEPTH | SXGL_F_TEX | SXGL_F_FOG)
 
 /* The specializations: the combinations the consumers in the tree draw with.
- * Gears is flat and Gouraud over a depth buffer; the forest of the SUN game is
- * textured, fogged and Gouraud-lit, with alpha-tested foliage and an additive
- * glow. Anything else takes the generic routine, correct and slower. */
+ * Gears is flat and Gouraud over a depth buffer. The forest of the SUN game is
+ * textured and fogged, Gouraud-lit or (the needles) one colour per quad, with
+ * alpha-tested cut-outs and an additive glow that ignores the fog. Anything
+ * else takes the generic routine, correct and slower. */
 SXGL_SPECIALIZE(sxgl_span_flat_depth, SXGL_DEPTH)
 SXGL_SPECIALIZE(sxgl_span_smooth_depth, SXGL_DEPTH | SXGL_F_VARY)
 SXGL_SPECIALIZE(sxgl_span_world_nearest, SXGL_WORLD)
 SXGL_SPECIALIZE(sxgl_span_world_linear, SXGL_WORLD | SXGL_F_TEX_LINEAR)
 SXGL_SPECIALIZE(sxgl_span_world_cutout, SXGL_WORLD | SXGL_F_ALPHA_TEST)
 SXGL_SPECIALIZE(sxgl_span_world_cutout_linear, SXGL_WORLD | SXGL_F_ALPHA_TEST | SXGL_F_TEX_LINEAR)
-SXGL_SPECIALIZE(sxgl_span_glow, SXGL_F_DEPTH_TEST | SXGL_F_VARY | SXGL_F_BLEND | SXGL_F_BLEND_ADD | SXGL_F_FOG)
+SXGL_SPECIALIZE(sxgl_span_tinted_nearest, SXGL_WORLD_TINTED)
+SXGL_SPECIALIZE(sxgl_span_tinted_linear, SXGL_WORLD_TINTED | SXGL_F_TEX_LINEAR)
+SXGL_SPECIALIZE(sxgl_span_tinted_cutout, SXGL_WORLD_TINTED | SXGL_F_ALPHA_TEST)
+SXGL_SPECIALIZE(sxgl_span_tinted_cutout_linear, SXGL_WORLD_TINTED | SXGL_F_ALPHA_TEST | SXGL_F_TEX_LINEAR)
+SXGL_SPECIALIZE(sxgl_span_glow, SXGL_F_DEPTH_TEST | SXGL_F_VARY | SXGL_F_BLEND | SXGL_F_BLEND_ADD)
 SXGL_SPECIALIZE(sxgl_span_smooth, SXGL_F_VARY)
 
 static uint64_t sxgl_span_generic(const struct sxgl_pipeline* pipeline, const struct sxgl_span* span);
@@ -2306,7 +2312,11 @@ static const struct sxgl_specialization g_sxgl_specializations[] = {
     {SXGL_WORLD | SXGL_F_TEX_LINEAR, sxgl_span_world_linear},
     {SXGL_WORLD | SXGL_F_ALPHA_TEST, sxgl_span_world_cutout},
     {SXGL_WORLD | SXGL_F_ALPHA_TEST | SXGL_F_TEX_LINEAR, sxgl_span_world_cutout_linear},
-    {SXGL_F_DEPTH_TEST | SXGL_F_VARY | SXGL_F_BLEND | SXGL_F_BLEND_ADD | SXGL_F_FOG, sxgl_span_glow},
+    {SXGL_WORLD_TINTED, sxgl_span_tinted_nearest},
+    {SXGL_WORLD_TINTED | SXGL_F_TEX_LINEAR, sxgl_span_tinted_linear},
+    {SXGL_WORLD_TINTED | SXGL_F_ALPHA_TEST, sxgl_span_tinted_cutout},
+    {SXGL_WORLD_TINTED | SXGL_F_ALPHA_TEST | SXGL_F_TEX_LINEAR, sxgl_span_tinted_cutout_linear},
+    {SXGL_F_DEPTH_TEST | SXGL_F_VARY | SXGL_F_BLEND | SXGL_F_BLEND_ADD, sxgl_span_glow},
     {SXGL_F_VARY, sxgl_span_smooth},
 };
 

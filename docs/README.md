@@ -69,6 +69,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the slices the Command Prompt drives.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
+- [`NIGHTWOOD.md`](userland/NIGHTWOOD.md) — Nightwood, the forest game: the first game
+  written against SUN and SxGL's second consumer; its rules, its frame and its tests.
 - [`NATIVE_HEAP.md`](userland/NATIVE_HEAP.md) — `malloc` for native programs: the
   allocator's replaceable page source, what a native process has today, the plan.
 - [`SYSTEM_MONITORING.md`](userland/SYSTEM_MONITORING.md) — process, memory, and system

@@ -413,6 +413,13 @@ SCENARIOS: dict[str, Scenario] = {
         "POSIX threads: locks, malloc, errno, TLS, poll, exec and fork with threads",
         240.0,
     ),
+    "nightwood-smoke": _qemu_scenario(
+        "nightwood-selftest",
+        "NIGHTWOOD SELFTEST PASS",
+        "NIGHTWOOD SELFTEST FAIL",
+        "Nightwood (SUN) builds its forest, reaches every photograph and renders it with SxGL",
+        180.0,
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
