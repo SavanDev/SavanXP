@@ -264,6 +264,32 @@ treats them differently:
 process the system started is `EPERM`, and the elevated `taskmgr --end` ends
 it.
 
+**End Process Tree** ends the process and everything it started, children
+before their parent: a parent ended first leaves its children to `init`, and
+they drop out of the tree half-way through. The tree is read from a fresh
+`SXN_SYS_PROCESS_SNAPSHOT`, not from the list on screen, and the Task Manager
+leaves itself out of it. The user's rights go first; if any process in the
+tree answered `EPERM`, one elevation (`taskmgr --end-tree <pid>`) walks the
+tree again and ends what is left.
+
+## The process list
+
+The columns are Image Name, User Name, PID, CPU, CPU Time, Mem Usage,
+Threads and Handles, all from one `SXN_SYS_PROCESS_SNAPSHOT` record. User
+Name maps the real uid: 0 is `SYSTEM` and 1000 is `user`, the one account
+([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#decided));
+any other uid shows as its number. CPU Time is `cpu_ticks` at the timer's
+rate (`timer_frequency_hz`), as H:MM:SS.
+
+The list starts in the kernel's order, creation order. A click on a header
+sorts by that column and a second click reverses it; ties fall back to the
+PID so equal rows do not swap places on every refresh. The selection
+follows the process, not the row, so a sort or a process ending never moves
+End Process onto something else. The header click is the toolkit's
+`SXGUI_COLUMN_CLICKABLE` and `SXGUI_ACTION_HEADER`, with
+`sxgui_header_column()` saying which column; it does not add a field to
+`sxgui_widget`, whose layout `libsxgui` shares with every program.
+
 ## What the Task Manager does not have
 
 Two tabs of the original are missing. Neither is blocked by the kernel any
@@ -276,11 +302,8 @@ more; each needs a piece of plumbing that does not exist yet.
   activating a window. What is missing is a way for a client that is not the
   shell to receive that section, and a request to close a window for
   End Task.
-- **Users.** There is one account and every process carries an identity
-  ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md)), but the
-  process list only exports whether a process is the system's
-  (`SAVANXP_PROC_FLAG_SYSTEM`), not its uid. That is enough for a User Name
-  column that says SYSTEM or the user. A Users tab with one account has little
-  to show until there is a second one.
+- **Users.** There is one account. Who runs each process is the User Name
+  column; a Users tab with one account has nothing else to show until there
+  is a second one.
 
 Both are absent tabs, not empty ones.

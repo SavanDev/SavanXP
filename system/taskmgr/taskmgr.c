@@ -19,7 +19,7 @@
  *
  * WHAT IS MISSING. There is no Applications tab and no Users tab; what each
  * still needs is in docs/userland/SYSTEM_MONITORING.md. Both are absent tabs,
- * not empty ones.
+ * not empty ones. The user behind each process is the User Name column.
  */
 
 #include <stdint.h>
@@ -74,7 +74,7 @@ static const char *const k_tab_labels[] = {"Processes", "Performance", "Networki
  * bit" is what left the last row cut off. */
 #define TASKMGR_GROUP_HEIGHT(rows) \
     ((rows) * TASKMGR_ROW + TASKMGR_ROW / 2 + (SXGUI_GAP * 2) + 4)
-#define TASKMGR_DEFAULT_WIDTH 560
+#define TASKMGR_DEFAULT_WIDTH 640
 #define TASKMGR_DEFAULT_HEIGHT 460
 #define TASKMGR_MIN_WIDTH 420
 #define TASKMGR_MIN_HEIGHT 320
@@ -98,6 +98,7 @@ enum taskmgr_command {
     TASKMGR_CMD_SPEED_LOW,
     TASKMGR_CMD_SPEED_PAUSED,
     TASKMGR_CMD_END_PROCESS,
+    TASKMGR_CMD_END_TREE,
     TASKMGR_CMD_SHUTDOWN,
     TASKMGR_CMD_REBOOT,
     TASKMGR_CMD_ABOUT,
@@ -123,6 +124,7 @@ static struct sxgui_menu_item k_view_items[] = {
 
 static struct sxgui_menu_item k_process_items[] = {
     {"End Process\tDel", TASKMGR_CMD_END_PROCESS, 0},
+    {"End Process Tree", TASKMGR_CMD_END_TREE, 0},
 };
 
 static struct sxgui_menu_item k_shutdown_items[] = {
@@ -157,7 +159,10 @@ struct taskmgr_sample {
     uint32_t state;
     uint32_t flags;
     uint32_t handle_count;
+    uint32_t thread_count;
+    uint32_t uid;
     uint64_t cpu_ticks;
+    uint64_t kernel_ticks;
     uint64_t memory_bytes;
     char name[TASKMGR_NAME_CAPACITY];
     /* Percentage against the previous sample; 0 on the first. */
@@ -223,19 +228,44 @@ static struct sxgui_widget g_widgets[6];
 #define TASKMGR_STATUS_MEMORY (&g_widgets[5])
 #define TASKMGR_WIDGET_COUNT ((int)(sizeof(g_widgets) / sizeof(g_widgets[0])))
 
-#define TASKMGR_COLUMN_PID_WIDTH 52
-#define TASKMGR_COLUMN_CPU_WIDTH 44
-#define TASKMGR_COLUMN_MEMORY_WIDTH 92
-#define TASKMGR_COLUMN_HANDLES_WIDTH 64
+/* The columns, in the order of the table below. Image Name takes whatever
+ * width the others leave. Every header sorts (SXGUI_COLUMN_CLICKABLE). */
+enum taskmgr_column {
+    TASKMGR_COL_NAME = 0,
+    TASKMGR_COL_USER,
+    TASKMGR_COL_PID,
+    TASKMGR_COL_CPU,
+    TASKMGR_COL_CPU_TIME,
+    TASKMGR_COL_MEMORY,
+    TASKMGR_COL_THREADS,
+    TASKMGR_COL_HANDLES,
+};
+
+#define TASKMGR_SORTS (SXGUI_COLUMN_CLICKABLE)
+#define TASKMGR_SORTS_RIGHT (SXGUI_COLUMN_CLICKABLE | SXGUI_COLUMN_RIGHT)
 
 static struct sxgui_column g_columns[] = {
-    {"Image Name", 0, 0},
-    {"PID", TASKMGR_COLUMN_PID_WIDTH, SXGUI_COLUMN_RIGHT},
-    {"CPU", TASKMGR_COLUMN_CPU_WIDTH, SXGUI_COLUMN_RIGHT},
-    {"Mem Usage", TASKMGR_COLUMN_MEMORY_WIDTH, SXGUI_COLUMN_RIGHT},
-    {"Handles", TASKMGR_COLUMN_HANDLES_WIDTH, SXGUI_COLUMN_RIGHT},
+    {"Image Name", 0, TASKMGR_SORTS},
+    {"User Name", 72, TASKMGR_SORTS},
+    {"PID", 40, TASKMGR_SORTS_RIGHT},
+    {"CPU", 36, TASKMGR_SORTS_RIGHT},
+    {"CPU Time", 66, TASKMGR_SORTS_RIGHT},
+    {"Mem Usage", 80, TASKMGR_SORTS_RIGHT},
+    {"Threads", 56, TASKMGR_SORTS_RIGHT},
+    {"Handles", 56, TASKMGR_SORTS_RIGHT},
 };
 #define TASKMGR_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
+
+/* Sorting. The list starts in the kernel's order, which is creation order,
+ * and a header click sorts by that column; a second click on the same one
+ * reverses it, as in the original. */
+static int g_sort_column = -1;
+static int g_sort_descending;
+
+/* The selection follows the process, not the row: sorting and a process
+ * ending both move rows, and End Process has to aim at what the user
+ * clicked. */
+static uint32_t g_selected_pid;
 
 /* ---- dialogs -------------------------------------------------------------------- */
 
@@ -253,6 +283,7 @@ static struct sxgui_widget g_confirm_widgets[4];
 static char g_confirm_line[TASKMGR_NAME_CAPACITY + 64];
 static char g_confirm_detail[96];
 static uint32_t g_confirm_pid;
+static int g_confirm_tree;
 static int g_pending_power;
 
 static struct sxgui_dialog g_run_dialog;
@@ -397,6 +428,22 @@ static long launch(const char *path)
     argv[0] = (char *)path;
     argv[1] = 0;
     pid = sxn_spawn_stdio(path, argv, 1);
+    if (pid == -SAVANXP_ENOENT)
+    {
+        /* The path as typed, then with .sxe, as the shell does: a program is
+         * <name>.sxe on disk (docs/userland/SXE_FORMAT.md), and "/bin/notepad"
+         * has to find notepad.sxe the way PATHEXT lets Windows find a .exe. */
+        size_t length = strlen(path);
+        char with_extension[160];
+
+        if ((length < 4 || strcmp(path + length - 4, ".sxe") != 0) && length + 5 <= sizeof(with_extension))
+        {
+            memcpy(with_extension, path, length);
+            memcpy(with_extension + length, ".sxe", 5);
+            argv[0] = with_extension;
+            pid = sxn_spawn_stdio(with_extension, argv, 1);
+        }
+    }
     if (pid > 0 && g_launched_count < TASKMGR_LAUNCHED_CAPACITY)
     {
         g_launched[g_launched_count++] = pid;
@@ -488,11 +535,134 @@ static void update_end_command(void)
     {
         TASKMGR_END_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
         k_process_items[0].flags &= ~(uint32_t)SXGUI_MENU_DISABLED;
+        k_process_items[1].flags &= ~(uint32_t)SXGUI_MENU_DISABLED;
     }
     else
     {
         TASKMGR_END_BUTTON->flags |= SXGUI_FLAG_DISABLED;
         k_process_items[0].flags |= SXGUI_MENU_DISABLED;
+        k_process_items[1].flags |= SXGUI_MENU_DISABLED;
+    }
+}
+
+/* The account a uid belongs to. There is one user, `user`, uid 1000
+ * (docs/kernel/USERS_AND_PERMISSIONS.md#decided), and the system, which the
+ * original Task Manager calls SYSTEM. Anything else is shown as its number:
+ * it means the list has outgrown this table. */
+static void format_user(uint32_t uid, char *out, size_t capacity)
+{
+    if (uid == 0u)
+    {
+        snprintf(out, capacity, "%s", "SYSTEM");
+    }
+    else if (uid == 1000u)
+    {
+        snprintf(out, capacity, "%s", "user");
+    }
+    else
+    {
+        snprintf(out, capacity, "%u", (unsigned)uid);
+    }
+}
+
+/* CPU Time is H:MM:SS of ticks, at the timer's rate. */
+static void format_cpu_time(uint64_t ticks, char *out, size_t capacity)
+{
+    uint64_t hz = g_info.timer_frequency_hz != 0u ? g_info.timer_frequency_hz : 1u;
+    uint64_t seconds = ticks / hz;
+
+    snprintf(out, capacity, "%u:%02u:%02u",
+             (unsigned)(seconds / 3600u),
+             (unsigned)((seconds / 60u) % 60u),
+             (unsigned)(seconds % 60u));
+}
+
+static int compare_text(const char *left, const char *right)
+{
+    while (*left != '\0' && *right != '\0')
+    {
+        int a = (*left >= 'A' && *left <= 'Z') ? *left + ('a' - 'A') : *left;
+        int b = (*right >= 'A' && *right <= 'Z') ? *right + ('a' - 'A') : *right;
+
+        if (a != b)
+        {
+            return a < b ? -1 : 1;
+        }
+        left += 1;
+        right += 1;
+    }
+    return *left == *right ? 0 : (*left == '\0' ? -1 : 1);
+}
+
+#define TASKMGR_COMPARE(a, b) ((a) < (b) ? -1 : ((a) > (b) ? 1 : 0))
+
+static int compare_samples(const struct taskmgr_sample *left, const struct taskmgr_sample *right)
+{
+    int result = 0;
+
+    switch (g_sort_column)
+    {
+    case TASKMGR_COL_NAME:
+        result = compare_text(left->name, right->name);
+        break;
+    case TASKMGR_COL_USER:
+    {
+        char a[16];
+        char b[16];
+
+        format_user(left->uid, a, sizeof(a));
+        format_user(right->uid, b, sizeof(b));
+        result = compare_text(a, b);
+        break;
+    }
+    case TASKMGR_COL_CPU:
+        result = TASKMGR_COMPARE(left->cpu_percent, right->cpu_percent);
+        break;
+    case TASKMGR_COL_CPU_TIME:
+        result = TASKMGR_COMPARE(left->cpu_ticks, right->cpu_ticks);
+        break;
+    case TASKMGR_COL_MEMORY:
+        result = TASKMGR_COMPARE(left->memory_bytes, right->memory_bytes);
+        break;
+    case TASKMGR_COL_THREADS:
+        result = TASKMGR_COMPARE(left->thread_count, right->thread_count);
+        break;
+    case TASKMGR_COL_HANDLES:
+        result = TASKMGR_COMPARE(left->handle_count, right->handle_count);
+        break;
+    default:
+        break;
+    }
+    /* Ties, and the PID column itself, fall back to the PID, so equal rows
+     * do not trade places on every refresh. */
+    if (result == 0)
+    {
+        result = TASKMGR_COMPARE(left->pid, right->pid);
+    }
+    return g_sort_descending ? -result : result;
+}
+
+/* Insertion sort: the list is a few dozen rows, already almost in order
+ * from the previous refresh. */
+static void sort_samples(void)
+{
+    int index;
+
+    if (g_sort_column < 0)
+    {
+        return;
+    }
+    for (index = 1; index < g_process_count; ++index)
+    {
+        struct taskmgr_sample moving = g_processes[index];
+        int slot = index;
+
+        while (slot > 0 && compare_samples(&moving, &g_processes[slot - 1]) < 0)
+        {
+            g_processes[slot] = g_processes[slot - 1];
+            slot -= 1;
+        }
+        g_processes[slot] = moving;
     }
 }
 
@@ -500,19 +670,31 @@ static void build_rows(void)
 {
     int index;
 
+    sort_samples();
     for (index = 0; index < g_process_count; ++index)
     {
         const struct taskmgr_sample *sample = &g_processes[index];
         char memory[24];
+        char user[16];
+        char cpu_time[24];
 
         format_grouped(sample->memory_bytes / 1024ull, memory, sizeof(memory));
-        snprintf(g_rows[index], sizeof(g_rows[index]), "%s\t%u\t%02u\t%s K\t%u",
+        format_user(sample->uid, user, sizeof(user));
+        format_cpu_time(sample->cpu_ticks, cpu_time, sizeof(cpu_time));
+        snprintf(g_rows[index], sizeof(g_rows[index]), "%s\t%s\t%u\t%02u\t%s\t%s K\t%u\t%u",
                  sample->name[0] != '\0' ? sample->name : "(unnamed)",
+                 user,
                  (unsigned)sample->pid,
                  sample->cpu_percent > 99u ? 99u : sample->cpu_percent,
+                 cpu_time,
                  memory,
+                 (unsigned)sample->thread_count,
                  (unsigned)sample->handle_count);
         g_row_pointers[index] = g_rows[index];
+        if (sample->pid == g_selected_pid)
+        {
+            TASKMGR_LIST->value = index;
+        }
     }
 
     TASKMGR_LIST->items = g_row_pointers;
@@ -520,6 +702,10 @@ static void build_rows(void)
     if (TASKMGR_LIST->value >= g_process_count)
     {
         TASKMGR_LIST->value = g_process_count > 0 ? g_process_count - 1 : 0;
+    }
+    if (TASKMGR_LIST->value >= 0 && TASKMGR_LIST->value < g_process_count)
+    {
+        g_selected_pid = g_processes[TASKMGR_LIST->value].pid;
     }
     update_end_command();
 }
@@ -552,7 +738,10 @@ static void refresh_sample(void)
         sample->state = info.state;
         sample->flags = info.flags;
         sample->handle_count = info.handle_count;
+        sample->thread_count = info.thread_count;
+        sample->uid = info.uid;
         sample->cpu_ticks = info.cpu_ticks;
+        sample->kernel_ticks = info.kernel_ticks;
         sample->memory_bytes = info.memory_bytes;
         sample->cpu_percent = 0;
         snprintf(sample->name, sizeof(sample->name), "%s", info.name);
@@ -679,12 +868,20 @@ static void relayout(void)
         page.y + TASKMGR_PAGE_PAD,
         page.width - (TASKMGR_PAGE_PAD * 2),
         list_height);
-    g_columns[0].width = TASKMGR_LIST->rect.width - (SXGUI_BORDER_SUNKEN * 2) -
-        SXGUI_SCROLLBAR_THICKNESS - TASKMGR_COLUMN_PID_WIDTH - TASKMGR_COLUMN_CPU_WIDTH -
-        TASKMGR_COLUMN_MEMORY_WIDTH - TASKMGR_COLUMN_HANDLES_WIDTH;
-    if (g_columns[0].width < 80)
     {
-        g_columns[0].width = 80;
+        int column;
+        int others = 0;
+
+        for (column = 1; column < TASKMGR_COLUMN_COUNT; ++column)
+        {
+            others += g_columns[column].width;
+        }
+        g_columns[TASKMGR_COL_NAME].width = TASKMGR_LIST->rect.width - (SXGUI_BORDER_SUNKEN * 2) -
+            SXGUI_SCROLLBAR_THICKNESS - others;
+        if (g_columns[TASKMGR_COL_NAME].width < 80)
+        {
+            g_columns[TASKMGR_COL_NAME].width = 80;
+        }
     }
 
     TASKMGR_END_BUTTON->rect = sx_rect_make(
@@ -1122,7 +1319,29 @@ static void on_tab_changed(struct sxgui_widget *widget, void *user)
 
 static void on_list(struct sxgui_widget *widget, void *user)
 {
-    (void)widget;
+    if (widget->action == SXGUI_ACTION_HEADER)
+    {
+        int column = sxgui_header_column(widget);
+
+        if (column < 0)
+        {
+            return;
+        }
+        if (column == g_sort_column)
+        {
+            g_sort_descending = !g_sort_descending;
+        }
+        else
+        {
+            g_sort_column = column;
+            g_sort_descending = 0;
+        }
+        build_rows();
+    }
+    else if (widget->value >= 0 && widget->value < g_process_count)
+    {
+        g_selected_pid = g_processes[widget->value].pid;
+    }
     update_end_command();
     sxngui_app_request_repaint((struct sxngui_app *)user);
 }
@@ -1137,22 +1356,125 @@ static void on_list(struct sxgui_widget *widget, void *user)
  * rights itself. EACCES is different: the idle processes and init cannot be
  * ended by anyone, so there is nothing to elevate for. */
 
-/* Returns 0 when the process is gone or the user declined the prompt, or a
+/* ---- End Process Tree ----
+ *
+ * The process and everything it started, children before their parent: a
+ * parent ended first would leave its children to be adopted by init, and
+ * they would drop out of the tree half-way through. The tree is read from a
+ * fresh snapshot rather than from the list on screen, which may be a second
+ * old, and the Task Manager leaves itself out of it: it may well be a
+ * descendant of what the user is ending (the desktop, say), and it still has
+ * to report how that went. */
+
+struct taskmgr_tree_node {
+    uint32_t pid;
+    uint32_t parent_pid;
+};
+
+static int tree_snapshot(struct taskmgr_tree_node *nodes, int capacity)
+{
+    struct savanxp_process_info info;
+    unsigned long index = 0;
+    int count = 0;
+
+    memset(&info, 0, sizeof(info));
+    while (count < capacity && sxn_process_snapshot(index, &info) > 0)
+    {
+        index += 1;
+        if (info.state == SAVANXP_PROC_UNUSED || info.state == SAVANXP_PROC_ZOMBIE)
+        {
+            continue;
+        }
+        nodes[count].pid = info.pid;
+        nodes[count].parent_pid = info.parent_pid;
+        count += 1;
+    }
+    return count;
+}
+
+/* Appends `pid`'s descendants and then `pid` itself to `out`. The depth is
+ * bounded by the 64 process slots. */
+static int tree_order(const struct taskmgr_tree_node *nodes, int count, uint32_t pid,
+                      uint32_t *out, int used, int capacity)
+{
+    int index;
+
+    for (index = 0; index < count; ++index)
+    {
+        if (nodes[index].parent_pid == pid && nodes[index].pid != pid)
+        {
+            used = tree_order(nodes, count, nodes[index].pid, out, used, capacity);
+        }
+    }
+    if (used < capacity)
+    {
+        out[used] = pid;
+        used += 1;
+    }
+    return used;
+}
+
+/* Ends `root` (and its tree, when `tree` is set) with this process's rights.
+ * Returns 0, or the first error worth reporting; `denied` counts the
+ * processes that answered EPERM, which elevation may still end. A process
+ * already gone (ENOENT) is not an error, it is the goal. */
+static long terminate_now(uint32_t root, int tree, int *denied)
+{
+    struct taskmgr_tree_node nodes[TASKMGR_MAX_PROCESSES];
+    uint32_t order[TASKMGR_MAX_PROCESSES];
+    int count;
+    int index;
+    long first_error = 0;
+
+    *denied = 0;
+    if (!tree)
+    {
+        order[0] = root;
+        count = 1;
+    }
+    else
+    {
+        count = tree_snapshot(nodes, TASKMGR_MAX_PROCESSES);
+        count = tree_order(nodes, count, root, order, 0, TASKMGR_MAX_PROCESSES);
+    }
+    for (index = 0; index < count; ++index)
+    {
+        long result;
+
+        if (order[index] == g_self_pid && tree)
+        {
+            continue;
+        }
+        result = sxn_terminate((long)order[index], TASKMGR_END_STATUS);
+        if (result == -SAVANXP_EPERM)
+        {
+            *denied += 1;
+        }
+        else if (result < 0 && result != -SAVANXP_ENOENT && first_error == 0)
+        {
+            first_error = result;
+        }
+    }
+    return first_error;
+}
+
+/* Returns 0 when the processes are gone or the user declined the prompt, or a
  * negative status to report. */
-static long end_process(uint32_t pid)
+static long end_process(uint32_t pid, int tree)
 {
     const char *argv[3];
     char pid_text[16];
     int status = -1;
-    long result = sxn_terminate((long)pid, TASKMGR_END_STATUS);
+    int denied = 0;
+    long result = terminate_now(pid, tree, &denied);
 
-    if (result != -SAVANXP_EPERM)
+    if (denied == 0)
     {
         return result;
     }
     snprintf(pid_text, sizeof(pid_text), "%u", (unsigned)pid);
     argv[0] = "taskmgr";
-    argv[1] = "--end";
+    argv[1] = tree ? "--end-tree" : "--end";
     argv[2] = pid_text;
     result = sxn_elevate(TASKMGR_PATH, argv, 3, &status);
     if (result == -SAVANXP_EACCES)
@@ -1168,11 +1490,14 @@ static long end_process(uint32_t pid)
     return status == 0 ? 0 : -(long)(status > 0 ? status : SAVANXP_EPERM);
 }
 
-/* The elevated half, run by the broker as the system. It opens no window. */
-static int run_end(const char *pid_text)
+/* The elevated half, run by the broker as the system. It opens no window.
+ * For a tree it walks it again: what the user could end is already gone,
+ * and what is left is what needed the rights. */
+static int run_end(const char *pid_text, int tree)
 {
     unsigned long pid = 0;
     const char *cursor = pid_text;
+    int denied = 0;
     long result;
 
     if (cursor == 0 || *cursor == '\0')
@@ -1188,7 +1513,11 @@ static int run_end(const char *pid_text)
     {
         return SAVANXP_EINVAL;
     }
-    result = sxn_terminate((long)pid, TASKMGR_END_STATUS);
+    result = terminate_now((uint32_t)pid, tree, &denied);
+    if (result == 0 && denied != 0)
+    {
+        result = -SAVANXP_EPERM;
+    }
     return result < 0 ? (int)-result : 0;
 }
 
@@ -1266,7 +1595,7 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
 
     if (g_confirm_pid != 0u)
     {
-        long result = end_process(g_confirm_pid);
+        long result = end_process(g_confirm_pid, g_confirm_tree);
 
         g_confirm_pid = 0u;
         if (result < 0)
@@ -1294,7 +1623,7 @@ static void begin_confirm(const char *title, const char *line, const char *detai
     sxgui_dialog_begin(&g_app.ui, &g_confirm_dialog, TASKMGR_CONFIRM_WIDTH, TASKMGR_CONFIRM_HEIGHT);
 }
 
-static void end_selected_process(void)
+static void end_selected_process(int tree)
 {
     const struct taskmgr_sample *sample = selected_sample();
     char line[TASKMGR_NAME_CAPACITY + 64];
@@ -1312,8 +1641,10 @@ static void end_selected_process(void)
 
     g_pending_power = 0;
     g_confirm_pid = sample->pid;
-    snprintf(line, sizeof(line), "End '%s' (PID %u)?", sample->name, (unsigned)sample->pid);
-    begin_confirm("End Process", line,
+    g_confirm_tree = tree;
+    snprintf(line, sizeof(line), tree ? "End '%s' (PID %u) and every process it started?" : "End '%s' (PID %u)?",
+             sample->name, (unsigned)sample->pid);
+    begin_confirm(tree ? "End Process Tree" : "End Process", line,
                   "Unsaved data will be lost and the system may become unstable.", 1);
 }
 
@@ -1321,7 +1652,7 @@ static void on_end_process(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    end_selected_process();
+    end_selected_process(0);
 }
 
 static void on_run_cancel(struct sxgui_widget *widget, void *user)
@@ -1382,7 +1713,10 @@ static void on_menu_command(int id, void *user)
         set_update_speed(3);
         break;
     case TASKMGR_CMD_END_PROCESS:
-        end_selected_process();
+        end_selected_process(0);
+        break;
+    case TASKMGR_CMD_END_TREE:
+        end_selected_process(1);
         break;
     case TASKMGR_CMD_SHUTDOWN:
         g_pending_power = TASKMGR_CMD_SHUTDOWN;
@@ -1421,7 +1755,7 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     }
     if (event->key == SAVANXP_KEY_DELETE)
     {
-        end_selected_process();
+        end_selected_process(0);
         return 1;
     }
     return 0;
@@ -1581,6 +1915,88 @@ static int selftest(void)
         selftest_fail(text);
     }
 
+    /* The v2 counters: this process has its main thread, and runs as whoever
+     * started it (init, the system, under the smoke). */
+    for (index = 0; index < g_process_count; ++index)
+    {
+        const struct taskmgr_sample *sample = &g_processes[index];
+
+        if (sample->pid != g_self_pid)
+        {
+            continue;
+        }
+        if (sample->thread_count < 1u)
+        {
+            selftest_fail("this process reports no live thread");
+        }
+        if (sample->kernel_ticks > sample->cpu_ticks)
+        {
+            selftest_fail("kernel time is larger than the whole CPU time");
+        }
+    }
+    {
+        char user[16];
+
+        format_user(0u, user, sizeof(user));
+        if (strcmp(user, "SYSTEM") != 0)
+        {
+            selftest_fail("uid 0 is not shown as SYSTEM");
+        }
+    }
+    if (g_info.timer_frequency_hz != 0u)
+    {
+        char cpu_time[24];
+
+        format_cpu_time((uint64_t)3723u * g_info.timer_frequency_hz, cpu_time, sizeof(cpu_time));
+        if (strcmp(cpu_time, "1:02:03") != 0)
+        {
+            snprintf(text, sizeof(text), "CPU Time format: '%s'", cpu_time);
+            selftest_fail(text);
+        }
+    }
+
+    /* Sorting by a header: PID descending must come out strictly
+     * decreasing, and the name ascending must not go backwards. */
+    g_sort_column = TASKMGR_COL_PID;
+    g_sort_descending = 1;
+    build_rows();
+    for (index = 1; index < g_process_count; ++index)
+    {
+        if (g_processes[index - 1].pid <= g_processes[index].pid)
+        {
+            selftest_fail("sorting by PID, descending, is out of order");
+            break;
+        }
+    }
+    g_sort_column = TASKMGR_COL_NAME;
+    g_sort_descending = 0;
+    build_rows();
+    for (index = 1; index < g_process_count; ++index)
+    {
+        if (compare_text(g_processes[index - 1].name, g_processes[index].name) > 0)
+        {
+            selftest_fail("sorting by name is out of order");
+            break;
+        }
+    }
+    g_sort_column = -1;
+
+    /* End Process Tree's order: children before their parent, all the way
+     * down. 10 started 11 and 12, and 11 started 13. */
+    {
+        static const struct taskmgr_tree_node nodes[] = {
+            {10u, 1u}, {11u, 10u}, {12u, 10u}, {13u, 11u}, {14u, 1u},
+        };
+        static const uint32_t expected[] = {13u, 11u, 12u, 10u};
+        uint32_t order[8];
+        int count = tree_order(nodes, (int)(sizeof(nodes) / sizeof(nodes[0])), 10u, order, 0, 8);
+
+        if (count != 4 || memcmp(order, expected, sizeof(expected)) != 0)
+        {
+            selftest_fail("End Process Tree would not end children first");
+        }
+    }
+
     if (g_selftest_failures != 0)
     {
         return 1;
@@ -1716,7 +2132,11 @@ int main(int argc, char **argv)
     }
     if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--end") == 0)
     {
-        sxn_exit(run_end(argv[2]));
+        sxn_exit(run_end(argv[2], 0));
+    }
+    if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--end-tree") == 0)
+    {
+        sxn_exit(run_end(argv[2], 1));
     }
     sxn_exit(run_window());
     return 0;

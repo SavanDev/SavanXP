@@ -95,7 +95,9 @@ enum sxgui_kind {
 enum sxgui_action {
     SXGUI_ACTION_CLICK = 0,   /* button press released on the widget */
     SXGUI_ACTION_CHANGE,      /* value/selection/text changed */
-    SXGUI_ACTION_ACTIVATE     /* listbox: double click or Enter on a row */
+    SXGUI_ACTION_ACTIVATE,    /* listbox: double click or Enter on a row */
+    SXGUI_ACTION_HEADER       /* listbox: click on a SXGUI_COLUMN_CLICKABLE header;
+                               * sxgui_header_column() says which one */
 };
 
 /* ---- listbox columns ("details" view) -------------------------------------
@@ -107,6 +109,9 @@ enum sxgui_action {
  */
 
 #define SXGUI_COLUMN_RIGHT (1u << 0)  /* right-aligned cell */
+/* The header cell is a button: a click fires SXGUI_ACTION_HEADER. Opt-in, so
+ * a list that does not sort never sees the new action. */
+#define SXGUI_COLUMN_CLICKABLE (1u << 1)
 
 struct sxgui_column {
     const char *title;
@@ -373,6 +378,12 @@ struct sxgui_widget sxgui_label(struct sx_rect rect, const char *text);
 struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*on_action)(struct sxgui_widget *, void *), void *user);
 struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int checked);
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
+
+/* The column whose header was clicked, while `widget` runs its
+ * SXGUI_ACTION_HEADER; -1 at any other time. It lives in the toolkit rather
+ * than in the widget so the widget's layout, which libsxgui shares with every
+ * program, stays the same. */
+int sxgui_header_column(const struct sxgui_widget *widget);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);

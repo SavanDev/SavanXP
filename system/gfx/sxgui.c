@@ -2497,6 +2497,48 @@ static void sxgui_fire(struct sxgui_widget *widget, int action)
     }
 }
 
+/* The header click being dispatched (sxgui_header_column). */
+static const struct sxgui_widget *g_sxgui_header_widget;
+static int g_sxgui_header_column = -1;
+
+int sxgui_header_column(const struct sxgui_widget *widget)
+{
+    return widget != 0 && widget == g_sxgui_header_widget ? g_sxgui_header_column : -1;
+}
+
+/* A press on the header of a listbox with columns. Returns 1 when it landed
+ * there, whether or not the column is clickable, so the press never falls
+ * through to the rows under it. */
+static int sxgui_listbox_header_press(struct sxgui_widget *widget, const struct savanxp_gui_pointer_event *event)
+{
+    struct sx_rect header = sxgui_listbox_header_rect(widget);
+    int cell_x = header.x;
+    int column;
+
+    if (header.height <= 0 || !sx_rect_contains_point(header, event->x, event->y))
+    {
+        return 0;
+    }
+    for (column = 0; column < widget->column_count; ++column)
+    {
+        const struct sxgui_column *spec = &widget->columns[column];
+        if (event->x >= cell_x && event->x < cell_x + spec->width)
+        {
+            if ((spec->flags & SXGUI_COLUMN_CLICKABLE) != 0)
+            {
+                g_sxgui_header_widget = widget;
+                g_sxgui_header_column = column;
+                sxgui_fire(widget, SXGUI_ACTION_HEADER);
+                g_sxgui_header_widget = 0;
+                g_sxgui_header_column = -1;
+            }
+            break;
+        }
+        cell_x += spec->width;
+    }
+    return 1;
+}
+
 /* Check one radio and clear the rest of its group. Fires only on change. */
 static int sxgui_radio_select(struct sxgui_context *ctx, int index)
 {
@@ -2980,6 +3022,11 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 if (sxgui_listbox_scrollbar_press(ctx, index, widget, event, &changed))
                 {
+                    break;
+                }
+                if (sxgui_listbox_header_press(widget, event))
+                {
+                    changed = 1;
                     break;
                 }
                 {

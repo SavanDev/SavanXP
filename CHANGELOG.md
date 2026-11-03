@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Task Manager: User Name, CPU Time and Threads columns, sort by header, End Process Tree**
+  (elevates once for the rest of the tree). SXGUI list headers can be clicked
+  (`SXGUI_COLUMN_CLICKABLE`, `SXGUI_ACTION_HEADER`, `sxgui_header_column`).
+
 - **SUN programs can use the SXGUI toolkit** through `sxn/sxngui.h` (`sxngui_app_init`,
   `sxngui_app_run`), with dialogs in owned windows (`sxnwm_window_open`, `sxnwm_poll_owned_input`)
   and `sxnwm_set_cursor_shape`. See `docs/desktop/PLATFORM_GRAPHICS.md`.

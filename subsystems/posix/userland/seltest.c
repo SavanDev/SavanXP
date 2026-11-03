@@ -171,6 +171,65 @@ static void reset_field(const char *initial)
     install(initial, 1);
 }
 
+/* A listbox header (SXGUI_ACTION_HEADER): a click on a clickable column
+ * reports that column, a click on a plain one reports nothing, and neither
+ * moves the selection to the row under the header. */
+static int g_header_hits;
+static int g_header_last = -2;
+
+static void on_header(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    if (widget->action == SXGUI_ACTION_HEADER)
+    {
+        g_header_hits += 1;
+        g_header_last = sxgui_header_column(widget);
+    }
+}
+
+static void test_listbox_header(void)
+{
+    static const char *const items[] = {"a\t1", "b\t2", "c\t3"};
+    static const struct sxgui_column columns[] = {
+        {"Name", 100, SXGUI_COLUMN_CLICKABLE},
+        {"Plain", 60, 0},
+        {"Size", 60, SXGUI_COLUMN_CLICKABLE | SXGUI_COLUMN_RIGHT},
+    };
+    struct sxgui_widget list[1];
+    int header_y;
+
+    list[0] = sxgui_listbox(sx_rect_make(4, 4, 260, 120), items, 3);
+    list[0].columns = columns;
+    list[0].column_count = 3;
+    list[0].value = 1;
+    list[0].on_action = on_header;
+    sxgui_context_init(&g_ctx, g_pixels, &g_info, list, 1);
+
+    /* The header row sits right under the sunken border. */
+    header_y = 4 + 2 + 4;
+    pointer(4 + 2 + 100 + 60 + 10, header_y, 1u);
+    pointer(4 + 2 + 100 + 60 + 10, header_y, 0u);
+    if (g_header_hits != 1 || g_header_last != 2)
+    {
+        eprintf("seltest: FAIL header: hits=%d column=%d, expected 1 and 2\n", g_header_hits, g_header_last);
+        g_failures += 1;
+    }
+    pointer(4 + 2 + 100 + 10, header_y, 1u);
+    pointer(4 + 2 + 100 + 10, header_y, 0u);
+    if (g_header_hits != 1)
+    {
+        fail("header: a plain column fired an action");
+    }
+    if (list[0].value != 1)
+    {
+        fail("header: a click on the header moved the selection");
+    }
+    if (sxgui_header_column(&list[0]) != -1)
+    {
+        fail("header: the column outlived its action");
+    }
+}
+
 int main(void)
 {
     g_info.width = TEST_WIDTH;
@@ -402,6 +461,8 @@ int main(void)
     reset_field("una ruta larga para pintar con seleccion");
     key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
     sxgui_paint(&g_ctx);
+
+    test_listbox_header();
 
     if (g_failures != 0)
     {
