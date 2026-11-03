@@ -102,9 +102,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
   rule that every UI font is 1-bit, and how to change a face.
 - [`DESKTOP_ICONS.md`](desktop/DESKTOP_ICONS.md) — desktop icons, shortcuts and
-  context menus: the desktop's right-click menu and the toolkit's popup menu
-  (built), then the Desktop folder, the `.sxlnk` format, the icon grid and
-  context menus in applications.
+  context menus: the Desktop folder, the `.sxlnk` format and what "open"
+  means, the icon grid and its keyboard, the desktop's focus in `windowd`,
+  and context menus in applications (popups owned by any window,
+  `sxgui_context_menu_open`).
 - [`ICON_STYLE.md`](desktop/ICON_STYLE.md) — the Windows 2000 look of the house
   icon set: the drawing rules, the shared kit and generator, and what is exempt.
 - [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)

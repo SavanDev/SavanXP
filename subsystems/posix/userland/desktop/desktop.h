@@ -39,7 +39,9 @@ enum desktop_popup
     DESKTOP_POPUP_HUNG = 4,
     /* The background's right-click menu, in the Start menu's window. */
     DESKTOP_POPUP_CONTEXT_MENU = 5,
-    DESKTOP_POPUP_COUNT = 6,
+    /* A question about an icon (delete it?), in the Start menu's window too. */
+    DESKTOP_POPUP_CONFIRM = 6,
+    DESKTOP_POPUP_COUNT = 7,
 };
 
 /* Bits a module's pointer or tick handler returns. */
@@ -90,6 +92,27 @@ extern const struct desktop_popup_ops desktop_clock_ops;
 extern const struct desktop_popup_ops desktop_keyboard_ops;
 extern const struct desktop_popup_ops desktop_hung_ops;
 extern const struct desktop_popup_ops desktop_contextmenu_ops;
+extern const struct desktop_popup_ops desktop_confirm_ops;
+
+/* desktop_contextmenu.c: shows `menu` at the screen point (x, y); the id of
+ * the item chosen goes to `command` once the menu is closed. */
+void desktop_context_menu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
+/* The open context menu's keys (arrows, Enter, Esc). */
+uint32_t desktop_context_menu_key(const struct savanxp_input_event *event);
+
+/* desktop_confirm.c: a centred question, Yes/No (`yes_no`) or only OK. The
+ * answer goes to `answer` (which may be 0), once the dialog is closed. */
+void desktop_confirm(const char *title, const char *text, int yes_no, void (*answer)(int yes));
+uint32_t desktop_confirm_key(const struct savanxp_input_event *event);
+
+/* desktop_view.c: the icons on the background (docs/desktop/DESKTOP_ICONS.md). */
+void desktop_view_init(const struct savanxp_fb_info *info);
+void desktop_view_resize(const struct savanxp_fb_info *info);
+/* Re-reads the Desktop folder now and then; non-zero when it changed. */
+int desktop_view_tick(void);
+void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info *info);
+uint32_t desktop_view_pointer(const struct savanxp_gui_pointer_event *pointer);
+uint32_t desktop_view_key(const struct savanxp_input_event *event);
 
 /* desktop_hung.c: the window the dialog is about (its id is its pid). */
 void desktop_hung_set_target(uint32_t window_id, const char *title);
@@ -106,8 +129,12 @@ int desktop_popup_is_open(enum desktop_popup popup);
  * screen point (x, y), flipped left or up where it would not fit above the
  * taskbar, as Windows places a context menu. */
 void desktop_open_popup_at(enum desktop_popup popup, int x, int y);
-/* The background must be painted again (the wallpaper changed). */
+/* The background must be painted again (an icon changed). */
 void desktop_repaint_background(void);
+/* The wallpaper changed: it is drawn again, not only the icons over it. */
+void desktop_wallpaper_changed(void);
+/* The desktop's main window, for launching programs from it. */
+const struct savanxp_gfx_context *desktop_main_window(void);
 /* Starts a program; it connects to windowd for its own window. */
 long desktop_launch(const char *path, uint32_t launch_flags);
 /* Sends a request on the shell's request pipe (savanxp/wm_shell_protocol.h). */

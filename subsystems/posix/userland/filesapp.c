@@ -9,16 +9,23 @@
 
 #include "file_assoc.h"
 #include "mime_icon.h"
+#include "shortcut.h"
+
+#include <string.h>
+#include <unistd.h>
 
 /*
- * Explorador de archivos, con la forma del explorador de la era Win95: barra de
- * menu, barra de direccion con "Up One Level", lista de detalles (Name / Size /
- * Type) con cabecera de columnas, y barra de estado de dos paneles.
+ * File browser, shaped like the Win95-era Explorer: menu bar, address bar with
+ * "Up One Level", a details list (Name / Size / Type) with column headers, and
+ * a two-pane status bar.
  *
- * NO muestra el contenido de los archivos: eso es trabajo de un editor. Abrir
- * un archivo que no es un programa lo manda al programa ASOCIADO a su
- * extension (file_assoc, docs/userland/SXE_FORMAT.md fase 5); sin asociacion cae a
- * /bin/notepad, que es donde vive ahora el preview que esta app tenia adentro.
+ * It does NOT show what files contain: that is an editor's job. Opening a file
+ * goes through shortcut_open_path, as on the desktop: a program starts, a
+ * document goes to the program ASSOCIATED with its extension (file_assoc,
+ * docs/userland/SXE_FORMAT.md phase 5) or to /bin/notepad, and a shortcut opens
+ * its target. A right click on a row opens its context menu: Open, Send To
+ * Desktop (a shortcut in the Desktop folder), Rename and Delete
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications).
  */
 
 #define FILESAPP_PATH_CAPACITY 256
@@ -50,8 +57,6 @@ static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
 static char g_count_pane[64] = "0 object(s)";
 static char g_size_pane[64] = "";
 static int g_entry_count = 0;
-/* Las asociaciones se cargan a demanda; ver filesapp_activate_selected. */
-static int g_assoc_loaded = 0;
 static int g_mime_icons_loaded = 0;
 
 static struct sxgui_dialog g_about_dialog;
@@ -71,7 +76,6 @@ static struct sxgui_column g_columns[] = {
 };
 
 #define FILESAPP_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
-#define FILESAPP_EDITOR_PATH "/bin/notepad"
 
 #define FILESAPP_COLUMN_SIZE_WIDTH 80
 #define FILESAPP_COLUMN_TYPE_WIDTH 130
@@ -453,49 +457,21 @@ static void filesapp_activate_selected(void)
         (void)filesapp_load_directory(full_path);
         return;
     }
-    if (filesapp_path_is_launchable(full_path))
+    switch (shortcut_open_path(&g_app.gfx, full_path))
     {
-        if (gfx_desktop_launch(&g_app.gfx, full_path) < 0)
-        {
-            filesapp_set_status("Launch failed.");
-            return;
-        }
+    case SHORTCUT_OPEN_PROGRAM:
+    case SHORTCUT_OPEN_FOLDER:
         filesapp_set_status("Launch requested.");
-        return;
-    }
-    /*
-     * A file that is not a program is opened by whoever is associated with its
-     * extension (docs/userland/SXE_FORMAT.md, phase 5): the binary declares that
-     * it can open it and /assoc.ini decides which one wins. Without an
-     * association it falls to Notepad, which is where the preview this app
-     * used to carry lives -- no association is not an error, it is the common
-     * case.
-     */
-    {
-        const char *program = 0;
-        int associated = 0;
-
-        /* Perezoso: el escaneo abre el .sxmeta de cada ejecutable instalado, y
-         * una sesion que solo navega directorios no tiene por que pagarlo. Se
-         * hace una sola vez, en el momento en que de verdad hace falta. */
-        if (!g_assoc_loaded)
-        {
-            (void)file_assoc_load();
-            g_assoc_loaded = 1;
-        }
-        program = file_assoc_program_for_file(full_path);
-        associated = (program != 0);
-
-        if (program == 0)
-        {
-            program = FILESAPP_EDITOR_PATH;
-        }
-        if (gfx_desktop_launch_arg(&g_app.gfx, program, full_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
-        {
-            filesapp_set_status(associated ? "Cannot open associated program." : "Cannot open Notepad.");
-            return;
-        }
-        filesapp_set_status(associated ? "Opening with associated program..." : "Opening in Notepad...");
+        break;
+    case SHORTCUT_OPEN_ASSOCIATED:
+        filesapp_set_status("Opening with associated program...");
+        break;
+    case SHORTCUT_OPEN_EDITOR:
+        filesapp_set_status("Opening in Notepad...");
+        break;
+    default:
+        filesapp_set_status("Cannot open it.");
+        break;
     }
 }
 
@@ -549,12 +525,258 @@ static void on_menu_command(int id, void *user)
     }
 }
 
+/* ---- context menu --------------------------------------------------------
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications) */
+
+#define FILESAPP_CMD_OPEN 20
+#define FILESAPP_CMD_SEND_TO_DESKTOP 21
+#define FILESAPP_CMD_RENAME 22
+#define FILESAPP_CMD_DELETE 23
+#define FILESAPP_CMD_UP 24
+#define FILESAPP_CMD_REFRESH 25
+
+#define FILESAPP_QUESTION_WIDTH 340
+#define FILESAPP_QUESTION_HEIGHT 96
+#define FILESAPP_RENAME_HEIGHT 112
+
+static const struct sxgui_menu_item k_entry_items[] = {
+    {"Open", FILESAPP_CMD_OPEN, 0},
+    {0, 0, 0},
+    {"Send To Desktop", FILESAPP_CMD_SEND_TO_DESKTOP, 0},
+    {0, 0, 0},
+    {"Rename...", FILESAPP_CMD_RENAME, 0},
+    {"Delete", FILESAPP_CMD_DELETE, 0},
+};
+
+static const struct sxgui_menu k_entry_menu = {
+    "Entry",
+    k_entry_items,
+    (int)(sizeof(k_entry_items) / sizeof(k_entry_items[0])),
+};
+
+static const struct sxgui_menu_item k_folder_items[] = {
+    {"Up One Level", FILESAPP_CMD_UP, 0},
+    {"Refresh", FILESAPP_CMD_REFRESH, 0},
+};
+
+static const struct sxgui_menu k_folder_menu = {
+    "Folder",
+    k_folder_items,
+    (int)(sizeof(k_folder_items) / sizeof(k_folder_items[0])),
+};
+
+/* The entry a menu or a dialog is about, by name: the list may be reloaded
+ * in between. */
+static char g_subject[256];
+static char g_question_text[300];
+static char g_rename_buffer[128];
+static struct sxgui_dialog g_question_dialog;
+static struct sxgui_widget g_question_widgets[3];
+static struct sxgui_dialog g_rename_dialog;
+static struct sxgui_widget g_rename_widgets[4];
+static uint32_t g_pointer_buttons = 0;
+
+static int filesapp_subject_path(char *buffer, size_t capacity)
+{
+    return g_subject[0] != '\0' && filesapp_join_path(g_current_path, g_subject, buffer, capacity);
+}
+
+/* A shortcut to the entry in the user's Desktop folder, as Send To > Desktop
+ * (create shortcut) does. A name already taken gets " (2)" and on. */
+static void filesapp_send_to_desktop(void)
+{
+    char target[FILESAPP_PATH_CAPACITY];
+    char folder[FILESAPP_PATH_CAPACITY];
+    char name[160];
+    char path[FILESAPP_PATH_CAPACITY + 160];
+    struct shortcut shortcut;
+    struct stat info;
+    int attempt;
+
+    if (!filesapp_subject_path(target, sizeof(target)))
+    {
+        return;
+    }
+    snprintf(folder, sizeof(folder), "%s/Desktop", savanxp_profile_dir());
+    if (stat(folder, &info) != 0)
+    {
+        (void)savanxp_mkdir(folder);
+    }
+    shortcut_for_target(target, &shortcut, name, sizeof(name));
+    snprintf(path, sizeof(path), "%s/%s", folder, name);
+    for (attempt = 2; stat(path, &info) == 0 && attempt < 100; ++attempt)
+    {
+        size_t stem = strlen(name) - (sizeof(SHORTCUT_EXTENSION) - 1u);
+        snprintf(path, sizeof(path), "%s/%.*s (%d)%s", folder, (int)stem, name, attempt, SHORTCUT_EXTENSION);
+    }
+    filesapp_set_status(shortcut_save(path, &shortcut) == 0
+        ? "Shortcut created on the desktop."
+        : "Cannot create the shortcut.");
+}
+
+static void on_question_yes(struct sxgui_widget *widget, void *user)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    struct stat info;
+    int result = -1;
+
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    if (!filesapp_subject_path(path, sizeof(path)) || stat(path, &info) != 0)
+    {
+        return;
+    }
+    result = S_ISDIR(info.st_mode) ? rmdir(path) : unlink(path);
+    (void)filesapp_load_directory(g_current_path);
+    filesapp_set_status(result == 0 ? "Deleted." :
+        (S_ISDIR(info.st_mode) ? "Cannot delete: is the folder empty?" : "Cannot delete it."));
+}
+
+static void on_dialog_cancel(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+static void filesapp_ask_delete(void)
+{
+    snprintf(g_question_text, sizeof(g_question_text), "Delete '%s'?", g_subject);
+    sxgui_dialog_begin(&g_app.ui, &g_question_dialog, FILESAPP_QUESTION_WIDTH, FILESAPP_QUESTION_HEIGHT);
+}
+
+static void on_rename_ok(struct sxgui_widget *widget, void *user)
+{
+    char from[FILESAPP_PATH_CAPACITY];
+    char to[FILESAPP_PATH_CAPACITY];
+    struct stat info;
+
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    if (strcmp(g_rename_buffer, g_subject) == 0)
+    {
+        return;
+    }
+    if (g_rename_buffer[0] == '\0' || strchr(g_rename_buffer, '/') != 0 ||
+        strcmp(g_rename_buffer, ".") == 0 || strcmp(g_rename_buffer, "..") == 0)
+    {
+        filesapp_set_status("A name cannot be empty or contain '/'.");
+        return;
+    }
+    if (!filesapp_subject_path(from, sizeof(from)) ||
+        !filesapp_join_path(g_current_path, g_rename_buffer, to, sizeof(to)) ||
+        stat(to, &info) == 0 || rename(from, to) != 0)
+    {
+        filesapp_set_status("Cannot rename it.");
+        return;
+    }
+    (void)filesapp_load_directory(g_current_path);
+    filesapp_set_status("Renamed.");
+}
+
+static void filesapp_ask_rename(void)
+{
+    snprintf(g_rename_buffer, sizeof(g_rename_buffer), "%s", g_subject);
+    g_rename_widgets[1].caret = (int)strlen(g_rename_buffer);
+    g_rename_widgets[1].scroll = 0;
+    sxgui_dialog_begin(&g_app.ui, &g_rename_dialog, FILESAPP_QUESTION_WIDTH, FILESAPP_RENAME_HEIGHT);
+}
+
+static void on_context_command(int id, void *user)
+{
+    (void)user;
+    switch (id)
+    {
+    case FILESAPP_CMD_OPEN:
+        filesapp_activate_selected();
+        break;
+    case FILESAPP_CMD_SEND_TO_DESKTOP:
+        filesapp_send_to_desktop();
+        break;
+    case FILESAPP_CMD_RENAME:
+        filesapp_ask_rename();
+        break;
+    case FILESAPP_CMD_DELETE:
+        filesapp_ask_delete();
+        break;
+    case FILESAPP_CMD_UP:
+        filesapp_go_up();
+        break;
+    case FILESAPP_CMD_REFRESH:
+        (void)filesapp_load_directory(g_current_path);
+        break;
+    default:
+        break;
+    }
+}
+
+/* The menu for row `row` (selecting it), or the folder's for -1 and "..". */
+static void filesapp_show_menu(int row, int x, int y)
+{
+    g_subject[0] = '\0';
+    if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
+    {
+        FILESAPP_LIST->value = row;
+        snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
+        sxgui_context_menu_open(&g_app.ui, &k_entry_menu, x, y, on_context_command, 0);
+        return;
+    }
+    sxgui_context_menu_open(&g_app.ui, &k_folder_menu, x, y, on_context_command, 0);
+}
+
+/* A right click on the list: on the release, as Windows sends
+ * WM_CONTEXTMENU. Everything else goes on to the toolkit. */
+static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
+{
+    uint32_t released = g_pointer_buttons & ~event->buttons;
+
+    (void)app;
+    g_pointer_buttons = event->buttons;
+    if ((released & SAVANXP_MOUSE_BUTTON_RIGHT) == 0 || sxgui_dialog_active(&g_app.ui) ||
+        !sx_rect_contains_point(FILESAPP_LIST->rect, event->x, event->y))
+    {
+        return 0;
+    }
+    filesapp_show_menu(sxgui_listbox_row_at(FILESAPP_LIST, event->x, event->y), event->x, event->y);
+    return 1;
+}
+
 static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
 {
     (void)app;
     if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
     {
         return 0;
+    }
+    /* The keyboard's right click opens the selected row's menu next to it. */
+    if (!sxgui_dialog_active(&g_app.ui) &&
+        (event->key == SAVANXP_KEY_MENU ||
+         (event->key == SAVANXP_KEY_F10 && (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0)))
+    {
+        int row_height = gfx_text_height() + 4;
+        int visible = FILESAPP_LIST->value - FILESAPP_LIST->scroll;
+        int x = FILESAPP_LIST->rect.x + 24;
+        int y = FILESAPP_LIST->rect.y + 2 + row_height + (visible + 1) * row_height;
+
+        if (visible < 0 || y > FILESAPP_LIST->rect.y + FILESAPP_LIST->rect.height)
+        {
+            y = FILESAPP_LIST->rect.y + row_height * 2;
+        }
+        filesapp_show_menu(FILESAPP_LIST->value, x, y);
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_DELETE && !sxgui_dialog_active(&g_app.ui))
+    {
+        int row = FILESAPP_LIST->value;
+
+        if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
+        {
+            snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
+            filesapp_ask_delete();
+        }
+        return 1;
     }
     if (event->key == SAVANXP_KEY_BACKSPACE)
     {
@@ -744,6 +966,7 @@ static int filesapp_selftest(void)
      * cuando algo falla. */
     failures = file_assoc_selftest();
     failures += mime_icon_selftest();
+    failures += shortcut_selftest();
 
     if (failures != 0)
     {
@@ -803,6 +1026,50 @@ int main(int argc, char **argv)
                      FILESAPP_ABOUT_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
                      SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
         "OK", on_dialog_ok, 0);
+    g_question_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
+                     FILESAPP_QUESTION_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        g_question_text);
+    g_question_widgets[1] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 - SXGUI_BUTTON_WIDTH - 4,
+                     FILESAPP_QUESTION_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Yes", on_question_yes, 0);
+    g_question_widgets[2] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 + 4,
+                     FILESAPP_QUESTION_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "No", on_dialog_cancel, 0);
+    g_question_dialog.title = "Confirm Delete";
+    g_question_dialog.widgets = g_question_widgets;
+    g_question_dialog.widget_count = 3;
+    g_question_dialog.initial_focus = 1;
+    g_question_dialog.default_button = 1;
+
+    g_rename_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
+                     FILESAPP_QUESTION_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        "New name:");
+    g_rename_widgets[1] = sxgui_textfield(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW,
+                     FILESAPP_QUESTION_WIDTH - SXGUI_DIALOG_MARGIN * 2, SXGUI_FIELD_HEIGHT),
+        g_rename_buffer, (int)sizeof(g_rename_buffer));
+    g_rename_widgets[2] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 - SXGUI_BUTTON_WIDTH - 4,
+                     FILESAPP_RENAME_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_rename_ok, 0);
+    g_rename_widgets[3] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 + 4,
+                     FILESAPP_RENAME_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_dialog_cancel, 0);
+    g_rename_dialog.title = "Rename";
+    g_rename_dialog.widgets = g_rename_widgets;
+    g_rename_dialog.widget_count = 4;
+    g_rename_dialog.initial_focus = 1;
+    g_rename_dialog.default_button = 2;
+
     g_about_dialog.title = "About Files";
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 4;
@@ -813,14 +1080,17 @@ int main(int argc, char **argv)
         return 1;
     }
     g_app.on_key = on_key;
+    g_app.on_pointer = on_pointer;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     (void)sxgui_app_set_content_size(&g_app, FILESAPP_CONTENT_WIDTH, FILESAPP_CONTENT_HEIGHT);
     filesapp_layout(&g_app);
 
-    /* The user's profile, as NT's Explorer opens on My Documents; the root
-     * for the system, and if the profile is not there. */
-    if (filesapp_load_directory(savanxp_profile_dir()) < 0 && filesapp_load_directory("/") < 0)
+    /* The folder it was asked to show (a folder opened from the desktop);
+     * else the user's profile, as NT's Explorer opens on My Documents; the
+     * root for the system, and if the profile is not there. */
+    if ((argc < 2 || argv == 0 || argv[1] == 0 || filesapp_load_directory(argv[1]) < 0) &&
+        filesapp_load_directory(savanxp_profile_dir()) < 0 && filesapp_load_directory("/") < 0)
     {
         sxgui_app_quit(&g_app, 1);
     }

@@ -229,6 +229,68 @@ static void sxgui_app_detach_dialog_host(struct sxgui_app *app)
     app->ui.dialog_host = 0;
 }
 
+/* --- context menu in a popup window ---------------------------------------
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications)
+ *
+ * The frame is the popup host of its context: each sxgui_context_menu_open
+ * asks the WM for a frameless popup owned by the app's window, and the loop
+ * below pumps its pointer into the toolkit and paints it. The app's window
+ * keeps the focus, so the menu's keys arrive through the main window. */
+#define SXGUI_APP_POPUP_WINDOW_ID 2u
+
+static int sxgui_app_popup_open(struct sxgui_popup_host *host, int x, int y, int width, int height)
+{
+    struct sxgui_app *app = (struct sxgui_app *)host->user;
+
+    if (app == 0 || app->popup_window_open || width <= 0 || height <= 0)
+    {
+        return -1;
+    }
+    if (gfx_window_open_role(
+            &app->gfx,
+            &app->popup_gfx,
+            SXGUI_APP_POPUP_WINDOW_ID,
+            SAVANXP_WM_WINDOW_ROLE_POPUP,
+            SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE,
+            x,
+            y,
+            (uint32_t)width,
+            (uint32_t)height) < 0)
+    {
+        return -1;
+    }
+    app->popup_window_open = 1;
+    app->needs_repaint = 1;
+    return 0;
+}
+
+static void sxgui_app_popup_close(struct sxgui_popup_host *host)
+{
+    struct sxgui_app *app = (struct sxgui_app *)host->user;
+
+    if (app == 0 || !app->popup_window_open)
+    {
+        return;
+    }
+    (void)gfx_window_close(&app->gfx, &app->popup_gfx);
+    app->popup_window_open = 0;
+    app->needs_repaint = 1;
+}
+
+static void sxgui_app_attach_popup_host(struct sxgui_app *app)
+{
+    app->popup_host.open = sxgui_app_popup_open;
+    app->popup_host.close = sxgui_app_popup_close;
+    app->popup_host.user = app;
+    app->ui.popup_host = &app->popup_host;
+}
+
+static void sxgui_app_detach_popup_host(struct sxgui_app *app)
+{
+    sxgui_context_menu_close(&app->ui);
+    app->ui.popup_host = 0;
+}
+
 static void sxgui_app_shutdown(struct sxgui_app *app)
 {
     gfx_release(&app->gfx);
@@ -255,6 +317,7 @@ int sxgui_app_run(struct sxgui_app *app)
     /* Solo este loop sabe pintar y bombear la ventana de un dialogo: una app con
      * loop propio sigue teniendo el dialogo adentro de su superficie. */
     sxgui_app_attach_dialog_host(app);
+    sxgui_app_attach_popup_host(app);
 
     while (app->running)
     {
@@ -320,6 +383,23 @@ int sxgui_app_run(struct sxgui_app *app)
             }
         }
 
+        /* The WM asked the popup to close: a press landed off the menu. */
+        if (app->popup_window_open && gfx_should_close(&app->popup_gfx))
+        {
+            sxgui_context_menu_close(&app->ui);
+            app->needs_repaint = 1;
+        }
+        while (app->popup_window_open && gfx_poll_event(&app->popup_gfx, &event) > 0)
+        {
+        }
+        while (app->popup_window_open && gfx_poll_window_pointer(&app->popup_gfx, &pointer_event) > 0)
+        {
+            if (sxgui_context_menu_pointer(&app->ui, &pointer_event))
+            {
+                app->needs_repaint = 1;
+            }
+        }
+
         while (gfx_poll_event(&app->gfx, &event) > 0)
         {
             if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
@@ -331,6 +411,15 @@ int sxgui_app_run(struct sxgui_app *app)
                     app->on_resize(app);
                 }
                 app->needs_repaint = 1;
+                continue;
+            }
+            /* An open context menu takes the keys before the app does. */
+            if (sxgui_context_menu_active(&app->ui))
+            {
+                if (sxgui_handle_key(&app->ui, &event))
+                {
+                    app->needs_repaint = 1;
+                }
                 continue;
             }
             if (app->on_key != 0 && app->on_key(app, &event))
@@ -356,6 +445,16 @@ int sxgui_app_run(struct sxgui_app *app)
              * interpretar contra el dialogo. */
             if (sxgui_dialog_windowed(&app->ui))
             {
+                continue;
+            }
+            /* With a context menu open, a press in the window only closes it:
+             * the app's own hook does not see it. */
+            if (sxgui_context_menu_active(&app->ui))
+            {
+                if (sxgui_handle_pointer(&app->ui, &pointer_event))
+                {
+                    app->needs_repaint = 1;
+                }
                 continue;
             }
             if (app->on_pointer != 0 && app->on_pointer(app, &pointer_event))
@@ -399,6 +498,14 @@ int sxgui_app_run(struct sxgui_app *app)
                 sxgui_app_quit(app, 1);
                 break;
             }
+            if (app->popup_window_open && sxgui_context_menu_windowed(&app->ui))
+            {
+                sxgui_paint_context_menu_window(&app->ui, app->popup_gfx.pixels, &app->popup_gfx.info);
+                if (gfx_present(&app->popup_gfx, app->popup_gfx.pixels) < 0)
+                {
+                    sxgui_context_menu_close(&app->ui);
+                }
+            }
             if (app->dialog_window_open && sxgui_dialog_windowed(&app->ui))
             {
                 sxgui_paint_dialog_window(&app->ui, app->dialog_gfx.pixels, &app->dialog_gfx.info);
@@ -417,6 +524,7 @@ int sxgui_app_run(struct sxgui_app *app)
         }
     }
 
+    sxgui_app_detach_popup_host(app);
     sxgui_app_detach_dialog_host(app);
     sxgui_app_shutdown(app);
     return app->exit_code;

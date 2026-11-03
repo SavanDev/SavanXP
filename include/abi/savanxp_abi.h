@@ -924,9 +924,10 @@ enum savanxp_wm_window_action {
 /*
  * Window roles (docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles). A role is a
  * property of the window, asked for when it is created. Only the shell client
- * may ask for anything but NORMAL; for any other client the WM refuses the
- * request. The shell's main window is the background, which is granted when
- * the WM starts the shell, never requested.
+ * may ask for a PANEL; any application may ask for a POPUP owned by its main
+ * window, a context menu (docs/desktop/DESKTOP_ICONS.md). The shell's main
+ * window is the background, which is granted when the WM starts the shell,
+ * never requested.
  */
 enum savanxp_wm_window_role {
     /* An owned window (a dialog): framed, above its owner. */
@@ -935,8 +936,9 @@ enum savanxp_wm_window_role {
      * fullscreen app. Its strip is reserved: maximized windows stay out of it.
      * `height` is the strip's thickness; `width`, `x` and `y` are ignored. */
     SAVANXP_WM_WINDOW_ROLE_PANEL = 1,
-    /* Frameless, above panels, at `x`,`y` in screen coordinates (clamped to the
-     * display). Never takes keyboard focus. */
+    /* Frameless, above panels, at `x`,`y` (clamped to the display): screen
+     * coordinates for the shell, the owner's client area for an application,
+     * whose popup stacks above its owner. Never takes keyboard focus. */
     SAVANXP_WM_WINDOW_ROLE_POPUP = 2,
 };
 

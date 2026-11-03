@@ -2,6 +2,7 @@
 #include "savanxp/wm_shell_protocol.h"
 
 #include "desktop_wallpaper.h"
+#include <stdlib.h>
 #include <unistd.h>
 
 /* The wallpaper keeps its version stamp above the taskbar with a copy of its
@@ -15,10 +16,11 @@ _Static_assert(
  * as the shell and gives its main window the background role; everything else
  * the shell shows is a window it asks for:
  *
- *   id 0  background  wallpaper (main window, role granted by windowd)
+ *   id 0  background  wallpaper and icons (main window, role granted by windowd)
  *   id 1  taskbar     panel on the bottom edge
- *   id 2  Start menu  popup, bottom left above the taskbar; or the context
- *                     menu, at the pointer (never both: they share the id)
+ *   id 2  Start menu  popup, bottom left above the taskbar; or a context
+ *                     menu at the pointer, or an icon's question, centred
+ *                     (one at a time: they share the id)
  *   id 3  tray popup  volume, clock or keyboard layout, bottom right
  *   id 4  End Program a program asked to close is not responding (centred)
  *
@@ -57,11 +59,17 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_keyboard_ops,
     &desktop_hung_ops,
     &desktop_contextmenu_ops,
+    &desktop_confirm_ops,
 };
 
 static struct savanxp_gfx_context g_background;
 static int g_background_repaint = 1;
 static uint32_t g_background_buttons = 0;
+/* The wallpaper drawn once, for repainting the icons without drawing it
+ * again: an image wallpaper is scaled on every draw. */
+static uint32_t *g_wallpaper_cache = 0;
+static size_t g_wallpaper_cache_bytes = 0;
+static int g_wallpaper_dirty = 1;
 
 static struct savanxp_gfx_context g_taskbar;
 static int g_taskbar_open = 0;
@@ -114,7 +122,7 @@ static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
     /* A process has four owned windows (SAVANXP_WM_MAX_OWNED_WINDOWS) and
      * the desktop uses them all, so the context menu takes the Start menu's
      * slot: as on Windows, opening either closes the other. */
-    if (popup == DESKTOP_POPUP_START_MENU || popup == DESKTOP_POPUP_CONTEXT_MENU)
+    if (popup == DESKTOP_POPUP_START_MENU || popup == DESKTOP_POPUP_CONTEXT_MENU || popup == DESKTOP_POPUP_CONFIRM)
     {
         return &g_start_menu;
     }
@@ -127,12 +135,16 @@ static void close_slot(struct desktop_popup_slot *slot)
     {
         return;
     }
+    const struct desktop_popup_ops *ops = slot->ops;
+
     (void)gfx_window_close(&g_background, &slot->gfx);
-    slot->ops->close();
     slot->open = 0;
     slot->ops = 0;
     /* The Start button shows whether the menu is open. */
     g_taskbar_repaint = 1;
+    /* Last: a module may open another popup from here, even in this slot (a
+     * context menu's Delete opens the confirmation). */
+    ops->close();
 }
 
 /* `at_point`: open with the top-left corner at (x, y) instead of where the
@@ -236,9 +248,13 @@ void desktop_toggle_popup(enum desktop_popup popup)
     }
 }
 
+/* The menus. A question stays until it is answered. */
 void desktop_close_popups(void)
 {
-    close_slot(&g_start_menu);
+    if (!(g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONFIRM))
+    {
+        close_slot(&g_start_menu);
+    }
     close_slot(&g_tray);
 }
 
@@ -248,12 +264,24 @@ void desktop_open_popup_at(enum desktop_popup popup, int x, int y)
 
     /* The context menu's slot is the Start menu's, which this closes too. */
     desktop_close_popups();
+    close_slot(slot);
     open_slot_at(slot, popup, 1, x, y);
 }
 
 void desktop_repaint_background(void)
 {
     g_background_repaint = 1;
+}
+
+void desktop_wallpaper_changed(void)
+{
+    g_wallpaper_dirty = 1;
+    g_background_repaint = 1;
+}
+
+const struct savanxp_gfx_context *desktop_main_window(void)
+{
+    return &g_background;
 }
 
 int desktop_popup_is_open(enum desktop_popup popup)
@@ -322,25 +350,33 @@ static void register_hotkey(uint32_t key, uint32_t modifiers)
     desktop_shell_request(&request);
 }
 
-/* The main window never has the focus, so every key it gets is a hotkey this
- * process registered. */
-static void handle_hotkey(const struct savanxp_input_event *event)
+/* The hotkeys this process registered. The main window also has the focus
+ * once the background is clicked, so a key here is a hotkey only with the
+ * exact modifiers it was registered with. Returns non-zero if it was one. */
+static int handle_hotkey(const struct savanxp_input_event *event)
 {
+    uint32_t modifiers = event->modifiers &
+        (SAVANXP_KEY_MOD_SHIFT | SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_ALT);
+    int console = (event->key == 't' || event->key == 'T') &&
+        modifiers == (SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_ALT);
+    int start = event->key == SAVANXP_KEY_ESC && modifiers == SAVANXP_KEY_MOD_CTRL;
+    int task_manager = event->key == SAVANXP_KEY_ESC &&
+        modifiers == (SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_SHIFT);
+
+    if (!console && !start && !task_manager)
+    {
+        return 0;
+    }
     if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
     {
-        return;
+        return 1;
     }
-    if (event->key == 't' || event->key == 'T')
+    if (console)
     {
         desktop_close_popups();
         (void)desktop_launch(k_console_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
-        return;
     }
-    if (event->key != SAVANXP_KEY_ESC)
-    {
-        return;
-    }
-    if ((event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0)
+    else if (task_manager)
     {
         desktop_close_popups();
         (void)desktop_launch(k_task_manager_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
@@ -349,16 +385,58 @@ static void handle_hotkey(const struct savanxp_input_event *event)
     {
         desktop_toggle_popup(DESKTOP_POPUP_START_MENU);
     }
+    return 1;
+}
+
+/* A key for the desktop itself: the open menu's or question's first, then
+ * the icons'. */
+static void handle_desktop_key(const struct savanxp_input_event *event)
+{
+    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONTEXT_MENU)
+    {
+        apply_actions(desktop_context_menu_key(event), &g_start_menu);
+        return;
+    }
+    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONFIRM)
+    {
+        apply_actions(desktop_confirm_key(event), &g_start_menu);
+        return;
+    }
+    if ((desktop_view_key(event) & DESKTOP_ACTION_REPAINT) != 0)
+    {
+        g_background_repaint = 1;
+    }
 }
 
 static void paint_background(void)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
+    size_t bytes = (size_t)g_background.info.pitch * g_background.info.height;
 
     sx_bitmap_wrap(&bitmap, g_background.pixels, &g_background.info, SX_PIXEL_FORMAT_BGRX8888);
     sx_painter_init(&painter, &bitmap);
-    desktop_wallpaper_draw(&painter, &g_background.info);
+    if (g_wallpaper_cache_bytes != bytes)
+    {
+        free(g_wallpaper_cache);
+        g_wallpaper_cache = (uint32_t *)malloc(bytes);
+        g_wallpaper_cache_bytes = g_wallpaper_cache != 0 ? bytes : 0;
+        g_wallpaper_dirty = 1;
+    }
+    if (g_wallpaper_dirty || g_wallpaper_cache == 0)
+    {
+        desktop_wallpaper_draw(&painter, &g_background.info);
+        if (g_wallpaper_cache != 0)
+        {
+            memcpy(g_wallpaper_cache, g_background.pixels, bytes);
+            g_wallpaper_dirty = 0;
+        }
+    }
+    else
+    {
+        memcpy(g_background.pixels, g_wallpaper_cache, bytes);
+    }
+    desktop_view_paint(&painter, &g_background.info);
 }
 
 static void try_open_taskbar(void)
@@ -411,9 +489,10 @@ static void notify_pointer_left_popups(void)
     }
 }
 
-/* Background: resize, a press on it closes the popups (windowd only asks a
- * popup to close for a press on another process; the background is ours),
- * and releasing the right button there opens the context menu. */
+/* Background: resize, its keys (the hotkeys, and the desktop's own once it
+ * has the focus), and its pointer: a press closes the popups (windowd only
+ * asks a popup to close for a press on another process; the background is
+ * ours), and the icons get the rest. */
 static void service_background(void)
 {
     struct savanxp_input_event event;
@@ -425,33 +504,31 @@ static void service_background(void)
         if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
         {
             (void)gfx_apply_resize_event(&g_background, &event);
-            g_background_repaint = 1;
+            desktop_view_resize(&g_background.info);
+            desktop_wallpaper_changed();
         }
-        else
+        else if (!handle_hotkey(&event))
         {
-            handle_hotkey(&event);
+            handle_desktop_key(&event);
         }
     }
     while (gfx_poll_window_pointer(&g_background, &pointer) > 0)
     {
         uint32_t down = pointer.buttons & ~g_background_buttons;
-        uint32_t up = g_background_buttons & ~pointer.buttons;
 
         if ((down & (SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT)) != 0)
         {
             desktop_close_popups();
-        }
-        else if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
-        {
-            /* On the release, as Windows sends WM_CONTEXTMENU: the press is
-             * over by the time the menu is under the pointer. */
-            desktop_open_popup_at(DESKTOP_POPUP_CONTEXT_MENU, pointer.x, pointer.y);
         }
         else
         {
             notify_pointer_left_popups();
         }
         g_background_buttons = pointer.buttons;
+        if ((desktop_view_pointer(&pointer) & DESKTOP_ACTION_REPAINT) != 0)
+        {
+            g_background_repaint = 1;
+        }
     }
 }
 
@@ -588,6 +665,8 @@ int main(void)
 
     /* Loads the persisted choice and tries to decode /wallpaper.bmp. */
     desktop_wallpaper_init();
+    /* The Desktop folder, created with its first shortcuts if it is not there. */
+    desktop_view_init(&g_background.info);
     /* Without the window list there is nothing for a taskbar to show: the
      * desktop runs as a background only. */
     g_taskbar_available = desktop_taskbar_init() == 0;
@@ -617,13 +696,17 @@ int main(void)
         service_popup(&g_tray);
         service_hung();
         service_popup(&g_hung);
+        if (desktop_view_tick())
+        {
+            g_background_repaint = 1;
+        }
 
         if (now >= next_wallpaper_check_ms)
         {
             next_wallpaper_check_ms = now + DESKTOP_WALLPAPER_CHECK_MS;
             if (desktop_wallpaper_reload())
             {
-                g_background_repaint = 1;
+                desktop_wallpaper_changed();
             }
         }
 

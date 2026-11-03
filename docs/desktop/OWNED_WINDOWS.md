@@ -2,7 +2,10 @@
 
 A process has **one connection** to `windowd` and can have **several windows**:
 its main window and up to `SAVANXP_WM_MAX_OWNED_WINDOWS` windows *owned* by it.
-Today the only user is the toolkit's modal dialog: under `sxgui_app_run`, a
+Two kinds use it: the toolkit's modal dialog, and the context menu's popup
+([DESKTOP_ICONS.md](./DESKTOP_ICONS.md#phase-4-context-menus-in-applications)),
+which has no frame, never takes the focus and does not disable its owner.
+Under `sxgui_app_run`, a
 `sxgui_dialog_begin` gets a real top-level window, framed and titled by the WM,
 instead of being painted inside the app's own surface.
 
@@ -117,8 +120,8 @@ owner's pid. The rules are all expressed as "the family" — owner plus owned:
 
 - **Z-order:** raising any member raises the owner and then its owned windows,
   so a click on the owner can never cover its own dialog.
-- **Disabled owner:** while it has an owned window, the owner gets no pointer
-  input. A click on it only raises the family and activates the dialog; hover,
+- **Disabled owner:** while it has an owned dialog, the owner gets no pointer
+  input (an owned popup does not disable it). A click on it only raises the family and activates the dialog; hover,
   frame buttons and title dragging are ignored, and it shows the arrow cursor.
 - **Close button and Alt+F4:** the dialog's X does not destroy it, and neither
   does Alt+F4 while it is the active window (both go through

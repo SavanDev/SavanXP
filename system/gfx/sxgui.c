@@ -1372,6 +1372,217 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
         bar->hot_item);
 }
 
+/* ---- context menu ------------------------------------------------------- */
+
+void sxgui_context_menu_close(struct sxgui_context *ctx)
+{
+    if (ctx == 0 || ctx->context_menu == 0)
+    {
+        return;
+    }
+    if (ctx->context_menu_windowed && ctx->popup_host != 0 && ctx->popup_host->close != 0)
+    {
+        ctx->popup_host->close(ctx->popup_host);
+    }
+    ctx->context_menu = 0;
+    ctx->context_menu_hot = -1;
+    ctx->context_menu_windowed = 0;
+    ctx->context_menu_command = 0;
+    ctx->context_menu_user = 0;
+}
+
+void sxgui_context_menu_open(
+    struct sxgui_context *ctx,
+    const struct sxgui_menu *menu,
+    int x,
+    int y,
+    void (*on_command)(int id, void *user),
+    void *user)
+{
+    int width = 0;
+    int height = 0;
+
+    if (ctx == 0 || menu == 0 || menu->item_count <= 0)
+    {
+        return;
+    }
+    sxgui_context_menu_close(ctx);
+    sxgui_popup_close(ctx);
+    if (ctx->menubar != 0)
+    {
+        ctx->menubar->open_menu = -1;
+        ctx->menubar->hot_item = -1;
+    }
+
+    sxgui_popup_menu_size(menu, &width, &height);
+    ctx->context_menu = menu;
+    ctx->context_menu_hot = -1;
+    ctx->context_menu_command = on_command;
+    ctx->context_menu_user = user;
+    /* No button counts as held: the release that opened the menu may never
+     * have reached the toolkit (an on_pointer hook took it), and it must not
+     * choose an item. A button still held from a press that opened it chooses
+     * the item it is released over, as dragging into a menu does on Windows. */
+    ctx->context_menu_buttons = 0;
+
+    if (ctx->popup_host != 0 && ctx->popup_host->open != 0 &&
+        ctx->popup_host->open(ctx->popup_host, x, y, width, height) == 0)
+    {
+        ctx->context_menu_windowed = 1;
+        ctx->context_menu_rect = sx_rect_make(0, 0, width, height);
+        return;
+    }
+
+    /* Inside the surface: where it does not fit right of or below the point
+     * it opens to the left of or above it, as Windows places it. */
+    {
+        int surface_width = (int)ctx->target.info.width;
+        int surface_height = (int)ctx->target.info.height;
+
+        if (x + width > surface_width)
+        {
+            x -= width;
+        }
+        if (y + height > surface_height)
+        {
+            y -= height;
+        }
+        x = x < 0 ? 0 : x;
+        y = y < 0 ? 0 : y;
+    }
+    ctx->context_menu_windowed = 0;
+    ctx->context_menu_rect = sx_rect_make(x, y, width, height);
+}
+
+int sxgui_context_menu_active(const struct sxgui_context *ctx)
+{
+    return ctx != 0 && ctx->context_menu != 0;
+}
+
+int sxgui_context_menu_windowed(const struct sxgui_context *ctx)
+{
+    return ctx != 0 && ctx->context_menu != 0 && ctx->context_menu_windowed;
+}
+
+/* Closes the menu first and only then runs the command: the command may open
+ * another menu or a dialog. */
+static void sxgui_context_menu_fire(struct sxgui_context *ctx, int index)
+{
+    void (*command)(int id, void *user) = ctx->context_menu_command;
+    void *user = ctx->context_menu_user;
+    int id = ctx->context_menu->items[index].id;
+
+    sxgui_context_menu_close(ctx);
+    if (command != 0)
+    {
+        command(id, user);
+    }
+}
+
+/* A pointer event in the menu's own coordinates (the popup window's, or the
+ * surface's when it is drawn inside). As on Windows, an item fires when
+ * either button is released over it. */
+static int sxgui_context_menu_track(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
+{
+    const uint32_t buttons = SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT;
+    uint32_t released = ctx->context_menu_buttons & ~event->buttons & buttons;
+    int item = sxgui_popup_menu_item_at(ctx->context_menu_rect, ctx->context_menu, event->x, event->y);
+    int changed = 0;
+
+    ctx->context_menu_buttons = event->buttons;
+    if (item != ctx->context_menu_hot)
+    {
+        ctx->context_menu_hot = item;
+        changed = 1;
+    }
+    if (released != 0 && sxgui_popup_menu_item_selectable(ctx->context_menu, item))
+    {
+        sxgui_context_menu_fire(ctx, item);
+        changed = 1;
+    }
+    return changed;
+}
+
+int sxgui_context_menu_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
+{
+    if (ctx == 0 || event == 0 || ctx->context_menu == 0 || !ctx->context_menu_windowed)
+    {
+        return 0;
+    }
+    return sxgui_context_menu_track(ctx, event);
+}
+
+/* The window's own pointer while a menu is open. Drawn inside, the menu is
+ * tracked against it; either way a press anywhere off the menu closes it and
+ * is consumed, as a click that dismisses a menu does nothing else. */
+static int sxgui_context_menu_window_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
+{
+    const uint32_t buttons = SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT;
+    uint32_t pressed = event->buttons & ~ctx->last_buttons & buttons;
+    int inside = !ctx->context_menu_windowed &&
+        sx_rect_contains_point(ctx->context_menu_rect, event->x, event->y);
+
+    if (inside)
+    {
+        int changed = sxgui_context_menu_track(ctx, event);
+        ctx->last_buttons = event->buttons;
+        return changed;
+    }
+    ctx->last_buttons = event->buttons;
+    if (!ctx->context_menu_windowed)
+    {
+        ctx->context_menu_buttons = event->buttons;
+        if (ctx->context_menu_hot >= 0)
+        {
+            ctx->context_menu_hot = -1;
+            if (pressed == 0)
+            {
+                return 1;
+            }
+        }
+    }
+    if (pressed != 0)
+    {
+        sxgui_context_menu_close(ctx);
+        return 1;
+    }
+    return 0;
+}
+
+static int sxgui_context_menu_key(struct sxgui_context *ctx, const struct savanxp_input_event *event)
+{
+    const struct sxgui_menu *menu = ctx->context_menu;
+
+    if (event->key == SAVANXP_KEY_ESC)
+    {
+        sxgui_context_menu_close(ctx);
+    }
+    else if (event->key == SAVANXP_KEY_UP || event->key == SAVANXP_KEY_DOWN)
+    {
+        ctx->context_menu_hot = sxgui_popup_menu_step(menu, ctx->context_menu_hot, event->key == SAVANXP_KEY_DOWN ? 1 : -1);
+    }
+    else if (event->key == SAVANXP_KEY_ENTER && sxgui_popup_menu_item_selectable(menu, ctx->context_menu_hot))
+    {
+        sxgui_context_menu_fire(ctx, ctx->context_menu_hot);
+    }
+    /* Every other key is swallowed while the menu is open. */
+    return 1;
+}
+
+void sxgui_paint_context_menu_window(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)
+{
+    struct sx_bitmap bitmap;
+    struct sx_painter painter;
+
+    if (ctx == 0 || ctx->context_menu == 0 || !ctx->context_menu_windowed || pixels == 0 || info == 0)
+    {
+        return;
+    }
+    sx_bitmap_wrap(&bitmap, pixels, info, SX_PIXEL_FORMAT_BGRX8888);
+    sx_painter_init(&painter, &bitmap);
+    sxgui_popup_menu_paint(&painter, sx_rect_make(0, 0, (int)info->width, (int)info->height), ctx->context_menu, ctx->context_menu_hot);
+}
+
 static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sxgui_scroll_metrics metrics;
@@ -2344,6 +2555,10 @@ void sxgui_paint_overlay(struct sxgui_context *ctx)
     {
         sxgui_paint_dialog(ctx);
     }
+    if (ctx->context_menu != 0 && !ctx->context_menu_windowed)
+    {
+        sxgui_popup_menu_paint(&ctx->painter, ctx->context_menu_rect, ctx->context_menu, ctx->context_menu_hot);
+    }
 }
 
 void sxgui_paint_dialog_window(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)
@@ -2521,6 +2736,24 @@ static int g_sxgui_header_column = -1;
 int sxgui_header_column(const struct sxgui_widget *widget)
 {
     return widget != 0 && widget == g_sxgui_header_widget ? g_sxgui_header_column : -1;
+}
+
+int sxgui_listbox_row_at(const struct sxgui_widget *widget, int x, int y)
+{
+    struct sx_rect inner;
+    int row;
+
+    if (widget == 0 || widget->kind != SXGUI_LISTBOX)
+    {
+        return -1;
+    }
+    inner = sxgui_listbox_inner(widget);
+    if (!sx_rect_contains_point(inner, x, y))
+    {
+        return -1;
+    }
+    row = widget->scroll + (y - inner.y) / sxgui_row_height();
+    return row >= 0 && row < widget->item_count ? row : -1;
 }
 
 /* A press on the header of a listbox with columns. Returns 1 when it landed
@@ -2787,6 +3020,12 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     ctx->pointer_y = event->y;
     left_now = (event->buttons & left) != 0;
     left_before = (ctx->last_buttons & left) != 0;
+
+    /* An open context menu owns the pointer. */
+    if (ctx->context_menu != 0 && !ctx->modal_route)
+    {
+        return sxgui_context_menu_window_pointer(ctx, event);
+    }
 
     /* an active dialog captures the pointer: translate to its client area and
      * re-dispatch against the dialog's widget array */
@@ -3249,6 +3488,11 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         event->key == SAVANXP_KEY_SUPER || event->key == SAVANXP_KEY_MENU)
     {
         return 0;
+    }
+    /* an open context menu swallows the keyboard */
+    if (ctx->context_menu != 0 && !ctx->modal_route)
+    {
+        return sxgui_context_menu_key(ctx, event);
     }
     /* an active dialog swallows the keyboard; ESC ends it with result 0 */
     if (ctx->modal != 0 && !ctx->modal_route)
@@ -4028,6 +4272,7 @@ void sxgui_context_init(
     ctx->capture_index = -1;
     ctx->last_click_index = -1;
     ctx->popup_owner = -1;
+    ctx->context_menu_hot = -1;
 }
 
 void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)

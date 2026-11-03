@@ -244,6 +244,52 @@ int sxgui_popup_menu_item_selectable(const struct sxgui_menu *menu, int index);
  * separators and wrapping around; -1 if the menu has no rows. */
 int sxgui_popup_menu_step(const struct sxgui_menu *menu, int hot, int direction);
 
+/* ---- context menu ---------------------------------------------------------
+ *
+ * A menu shown at a point of the window, as Win32's TrackPopupMenu: what a
+ * right click or the Menu key opens. While it is open the toolkit owns the
+ * keyboard (arrows, Enter, Esc) and the pointer; choosing an item closes the
+ * menu and calls `on_command` with its id, any other press closes it.
+ *
+ * Where it shows depends on the context's popup host. Under sxgui_app_run it
+ * is a window of its own, so it may leave the window
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications); without a host, or if the WM refuses the window, it is
+ * drawn inside the surface, flipped and clamped to fit. The menu table is the
+ * caller's and must outlive the menu.
+ */
+
+struct sxgui_context;
+
+/* Gives context menus a window of their own. `open` returns 0 once a popup
+ * of width x height exists at (x, y) of the window's client area; anything
+ * else keeps the menu inside the surface. The host pumps the popup's pointer
+ * into sxgui_context_menu_pointer and paints it with
+ * sxgui_paint_context_menu_window. */
+struct sxgui_popup_host {
+    int (*open)(struct sxgui_popup_host *host, int x, int y, int width, int height);
+    void (*close)(struct sxgui_popup_host *host);
+    void *user;
+};
+
+/* Opens `menu` with its top-left corner at (x, y) of the window, closing any
+ * menu, drop-down or context menu that was open. */
+void sxgui_context_menu_open(
+    struct sxgui_context *ctx,
+    const struct sxgui_menu *menu,
+    int x,
+    int y,
+    void (*on_command)(int id, void *user),
+    void *user);
+void sxgui_context_menu_close(struct sxgui_context *ctx);
+int sxgui_context_menu_active(const struct sxgui_context *ctx);
+/* Non-zero while the open menu lives in a window of the popup host. */
+int sxgui_context_menu_windowed(const struct sxgui_context *ctx);
+/* For the popup host: a pointer event in the popup window's coordinates.
+ * Non-zero if something changed and the popup needs painting. */
+int sxgui_context_menu_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event);
+/* For the popup host: paints the open menu into the popup window's surface. */
+void sxgui_paint_context_menu_window(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info);
+
 /* ---- modal dialogs ---------------------------------------------------------
  *
  * A second caller-owned widget array. While a dialog is active it captures all
@@ -329,6 +375,19 @@ struct sxgui_context {
     /* cursor shape the pointer should show given the widget currently under
      * it (enum savanxp_cursor_shape); updated by sxgui_handle_pointer */
     int cursor_shape;
+
+    /* NULL = context menus are drawn inside this surface */
+    struct sxgui_popup_host *popup_host;
+    /* The open context menu (NULL = none), all owned by the toolkit. The rect
+     * is in the surface while the menu is drawn inside it, and the popup
+     * window's (origin 0,0) while it is windowed. */
+    const struct sxgui_menu *context_menu;
+    int context_menu_hot;
+    int context_menu_windowed;
+    struct sx_rect context_menu_rect;
+    uint32_t context_menu_buttons;
+    void (*context_menu_command)(int id, void *user);
+    void *context_menu_user;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -406,6 +465,10 @@ struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items,
  * than in the widget so the widget's layout, which libsxgui shares with every
  * program, stays the same. */
 int sxgui_header_column(const struct sxgui_widget *widget);
+/* The listbox row under (x, y), for a click the toolkit does not handle --
+ * the right button that opens a row's context menu. -1 off the rows (the
+ * header, the scrollbar, the empty space below the last row). */
+int sxgui_listbox_row_at(const struct sxgui_widget *widget, int x, int y);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);

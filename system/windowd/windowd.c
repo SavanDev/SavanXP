@@ -215,9 +215,15 @@ static void refresh_active_state(struct windowd_session *session)
 
     visible_overlay_slot = top_visible_overlay_slot(session);
 
+    /* The desktop keeps the focus it was given by a click on the background,
+     * for as long as it is there; no application window is active then. */
+    if (session->active_client_kind == WINDOWD_CLIENT_DESKTOP && session->desktop_windows[0].pid > 0)
+    {
+        session->active_overlay_slot = -1;
+    }
     /* With no window active, the top visible one takes the focus; only an
      * empty (or all minimized) desktop has none. */
-    if (session->active_client_kind != WINDOWD_CLIENT_APP || session->active_overlay_slot < 0)
+    else if (session->active_client_kind != WINDOWD_CLIENT_APP || session->active_overlay_slot < 0)
     {
         session->active_client_kind = visible_overlay_slot >= 0 ? WINDOWD_CLIENT_APP : WINDOWD_CLIENT_NONE;
         session->active_overlay_slot = visible_overlay_slot;
@@ -329,9 +335,6 @@ static int owned_window_slot(const struct windowd_session *session, int owner_sl
     return -1;
 }
 
-/* Deshabilitado = tiene una ventana con dueno abierta. No recibe input: un click
- * sobre el solo levanta la familia, y el dialogo queda activo. Es el
- * EnableWindow(owner, FALSE) de DialogBox, decidido por el WM. */
 /*
  * The display windows are laid out on: the native mode, whatever the scanout
  * runs at right now. While an application is fullscreen the scanout drops to
@@ -350,11 +353,34 @@ static const struct savanxp_fb_info *layout_display(const struct windowd_session
     return native->width != 0 && native->height != 0 ? native : &session->gfx.info;
 }
 
+/* Disabled = it has a dialog open. It gets no input: a click on it only raises
+ * the family, and the dialog stays active. It is DialogBox's
+ * EnableWindow(owner, FALSE), decided by the WM.
+ *
+ * Whether `owner_slot` has an owned window that disables it: a dialog. An
+ * application's popup (a context menu) does not; the owner keeps the
+ * keyboard and the pointer while it is open. */
+static int owned_dialog_open(const struct windowd_session *session, int owner_slot)
+{
+    int slot;
+
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        const struct windowd_client *client = &session->overlay_clients[slot];
+
+        if (client->pid > 0 && client->owner_slot == owner_slot && client->role != WINDOWD_ROLE_POPUP)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int overlay_client_disabled(const struct windowd_session *session, const struct windowd_client *client)
 {
     int slot = overlay_slot_for_client_ptr(session, client);
 
-    return overlay_slot_valid(slot) && !overlay_client_owned(client) && owned_window_slot(session, slot, 0) >= 0;
+    return overlay_slot_valid(slot) && !overlay_client_owned(client) && owned_dialog_open(session, slot);
 }
 
 static void raise_overlay(struct windowd_session *session, int slot)
@@ -385,13 +411,20 @@ static void raise_overlay(struct windowd_session *session, int slot)
         }
         owned->minimized = 0;
         append_overlay_to_order(session, child);
-        session->active_overlay_slot = child;
+        /* A popup stacks on top but never takes the focus from its owner. */
+        if (owned->role != WINDOWD_ROLE_POPUP)
+        {
+            session->active_overlay_slot = child;
+        }
     }
-    /* Con mas de un dialogo, el que se pidio queda arriba y activo. */
+    /* With more than one dialog, the one asked for ends on top and active. */
     if (slot != root)
     {
         append_overlay_to_order(session, slot);
-        session->active_overlay_slot = slot;
+        if (session->overlay_clients[slot].role != WINDOWD_ROLE_POPUP)
+        {
+            session->active_overlay_slot = slot;
+        }
     }
     session->active_client_kind = WINDOWD_CLIENT_APP;
     refresh_active_state(session);
@@ -408,6 +441,18 @@ static struct windowd_client *active_client(struct windowd_session *session)
         return &session->overlay_clients[session->active_overlay_slot];
     }
     return 0;
+}
+
+/* The window the keyboard goes to: the active application window, or the
+ * desktop's main window while the desktop has the focus. */
+static struct windowd_client *keyboard_client(struct windowd_session *session)
+{
+    if (session != 0 && session->active_client_kind == WINDOWD_CLIENT_DESKTOP &&
+        session->desktop_windows[0].pid > 0)
+    {
+        return &session->desktop_windows[0];
+    }
+    return active_client(session);
 }
 
 static int drag_overlay_slot_active(const struct windowd_session *session, int slot)
@@ -3207,6 +3252,115 @@ static int open_owned_window(
     return 0;
 }
 
+/*
+ * An application's popup
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications): a
+ * context menu or a drop-down that has to be able to leave its owner's surface, as
+ * Win32's TrackPopupMenu. It is an owned window with the desktop popup's
+ * behaviour: no frame, at `x`,`y` relative to the owner's client area
+ * (clamped to the display), above its owner, and never active -- the owner
+ * keeps the keyboard, so the program drives the menu with its own keys.
+ * SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE closes it on a press anywhere but on it,
+ * the owner included.
+ */
+static int open_owned_popup(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    int owner_slot,
+    const struct savanxp_wm_window_request *request)
+{
+    struct windowd_client *owner = overlay_client_at(session, owner_slot);
+    const struct savanxp_fb_info *display = layout_display(session);
+    struct windowd_client *client = 0;
+    struct sx_rect owner_surface;
+    int slot = -1;
+    int section_fd = -1;
+    long result = 0;
+
+    if (owner == 0 || owner->pid <= 0 || owner->events_write_fd < 0 || owner->wake_event_fd < 0 ||
+        owner->minimized)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (request->window_id == 0 || request->window_id > SAVANXP_WM_MAX_OWNED_WINDOWS ||
+        owned_window_slot(session, owner_slot, request->window_id) >= 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (request->width == 0 || request->height == 0 ||
+        request->width > display->width || request->height > display->height)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    slot = find_free_overlay_slot(session);
+    if (!overlay_slot_valid(slot))
+    {
+        return -SAVANXP_ENOSPC;
+    }
+    /* Fullscreen composes only the application: the popup would be invisible. */
+    if (session->fullscreen_slot == owner_slot)
+    {
+        exit_overlay_fullscreen(session, dirty);
+    }
+
+    client = &session->overlay_clients[slot];
+    reset_client(client);
+    client->surface_info.width = request->width;
+    client->surface_info.height = request->height;
+    client->surface_info.pitch = request->width * (uint32_t)sizeof(uint32_t);
+    client->surface_info.bpp = 32u;
+    client->surface_info.buffer_size = client->surface_info.pitch * request->height;
+
+    section_fd = create_client_surface(client);
+    if (section_fd < 0)
+    {
+        reset_client(client);
+        return -SAVANXP_ENOMEM;
+    }
+    client->events_write_fd = (int)savanxp_dup(owner->events_write_fd);
+    client->wake_event_fd = (int)savanxp_dup(owner->wake_event_fd);
+    result = (client->events_write_fd < 0 || client->wake_event_fd < 0)
+        ? -SAVANXP_EBADF
+        : pipe_send_handle(owner->events_write_fd, section_fd);
+    if (result >= 0 && attach_client_surface(client, section_fd, client->wake_event_fd) < 0)
+    {
+        result = -SAVANXP_EIO;
+    }
+    close_fd_if_needed(&section_fd);
+    if (result < 0)
+    {
+        destroy_client_instance(client, 0);
+        return (int)result;
+    }
+
+    client->pid = owner->pid;
+    client->owner_slot = owner_slot;
+    client->window_id = request->window_id;
+    client->role = WINDOWD_ROLE_POPUP;
+    client->role_flags = request->role_flags;
+    memcpy(client->path, owner->path, sizeof(client->path));
+    client->presentation = owner->presentation;
+    client->presentation.window_flags |= SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE;
+
+    owner_surface = windowd_client_surface_rect(owner);
+    client->window_width = (int)request->width;
+    client->window_height = (int)request->height;
+    client->window_x = windowd_clamp_int(owner_surface.x + request->x, 0, (int)display->width - client->window_width);
+    client->window_y = windowd_clamp_int(owner_surface.y + request->y, 0, (int)display->height - client->window_height);
+    client->restore_window_x = client->window_x;
+    client->restore_window_y = client->window_y;
+    client->restore_window_width = client->window_width;
+    client->restore_window_height = client->window_height;
+    client->frame_visible = 0;
+    client->cascade_index = owner->cascade_index;
+    client->size_hint_applied = 1;
+
+    /* On top of the family; the owner stays the active window. */
+    raise_overlay(session, owner_slot);
+    windowd_dirty_rect_add_client(dirty, client);
+    return 0;
+}
+
 static void close_owned_window(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -3364,6 +3518,21 @@ static void close_desktop_window(struct windowd_session *session, struct windowd
     destroy_client_instance(client, 0);
 }
 
+/* Asks a popup to close. The flag first, then the wake: a client that resets
+ * the event and looks at the header again cannot miss it. */
+static void request_popup_dismiss(struct windowd_client *popup)
+{
+    if (popup->header != 0)
+    {
+        popup->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+    }
+    if (popup->wake_event_fd >= 0)
+    {
+        (void)event_set(popup->wake_event_fd);
+    }
+    popup->dismiss_requested = 1;
+}
+
 /* A press at x,y asks every dismissable popup to close when it lands on
  * nothing, or on a window of another process. A press on another window of
  * the popup's own process is that process's to interpret: the toggle button
@@ -3386,17 +3555,20 @@ static void dismiss_popups_for_press(struct windowd_session *session, int x, int
         {
             continue;
         }
-        /* The flag first, then the wake: a client that resets the event and
-         * looks at the header again cannot miss it. */
-        if (popup->header != 0)
+        request_popup_dismiss(popup);
+    }
+    /* An application's popup closes on a press anywhere but on itself: on
+     * its owner too, as a menu closes when the window under it is clicked. */
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS; ++index)
+    {
+        struct windowd_client *popup = &session->overlay_clients[index];
+
+        if (popup->pid <= 0 || popup->role != WINDOWD_ROLE_POPUP || popup->dismiss_requested ||
+            (popup->role_flags & SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE) == 0 || hit == popup)
         {
-            popup->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+            continue;
         }
-        if (popup->wake_event_fd >= 0)
-        {
-            (void)event_set(popup->wake_event_fd);
-        }
-        popup->dismiss_requested = 1;
+        request_popup_dismiss(popup);
     }
 }
 
@@ -3536,11 +3708,23 @@ static void service_client_window_requests(
     {
         status = service_task_request(session, dirty, client, &request);
     }
-    /* Roles other than NORMAL belong to the shell. */
+    /* An application's main window may open dialogs (NORMAL) and popups;
+     * panels belong to the shell. */
     else if (!overlay_slot_valid(slot) || client->owner_slot >= 0 ||
-        request.role != SAVANXP_WM_WINDOW_ROLE_NORMAL)
+        (request.role != SAVANXP_WM_WINDOW_ROLE_NORMAL && request.role != SAVANXP_WM_WINDOW_ROLE_POPUP))
     {
         status = -SAVANXP_EINVAL;
+    }
+    else if (request.action == SAVANXP_WM_WINDOW_ACTION_OPEN && request.role == SAVANXP_WM_WINDOW_ROLE_POPUP)
+    {
+        status = open_owned_popup(session, dirty, slot, &request);
+        if (status < 0)
+        {
+            eprintf("windowd: popup %u for %s refused (%s)\n",
+                (unsigned)request.window_id,
+                client->path[0] != '\0' ? client->path : "?",
+                result_error_string(status));
+        }
     }
     else if (request.action == SAVANXP_WM_WINDOW_ACTION_OPEN)
     {
@@ -4219,6 +4403,8 @@ static struct windowd_client *selftest_desktop_open_popup(struct windowd_session
  * a popup above it; a press on an application window asks the popup to close
  * and the desktop closes it; and an application asking for a role is refused.
  */
+static int selftest_order_index(const struct windowd_session *session, int slot);
+
 static int windowd_desktop_selftest(struct windowd_session *session, int app_slot, int fullscreen_slot)
 {
     struct windowd_dirty_rect dirty = {0};
@@ -4658,26 +4844,74 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         puts_fd(1, "DESKTOP SMOKE hung: marked, dialog shown, End Now ended it\n");
     }
 
-    /* An application may not ask for a role: the request is refused, as the
-     * runtime would see it. */
+    /* An application may open a popup (a context menu) but not a panel. The
+     * popup sits relative to its owner's client area, leaves the owner
+     * enabled and active, and a press on the owner asks it to close. */
     {
         struct savanxp_wm_client_requests *requests = &app->header->requests;
         uint32_t sequence = (requests->window_sequence | 1u) + 1u;
+        struct windowd_client *app_popup = 0;
+        struct sx_rect owner_surface;
+        int popup_slot = -1;
 
+        raise_overlay(session, app_slot);
         memset(&requests->window, 0, sizeof(requests->window));
         requests->window.action = SAVANXP_WM_WINDOW_ACTION_OPEN;
-        requests->window.window_id = 1;
+        requests->window.window_id = 3;
         requests->window.width = 64;
         requests->window.height = 64;
-        requests->window.role = SAVANXP_WM_WINDOW_ROLE_POPUP;
+        requests->window.role = SAVANXP_WM_WINDOW_ROLE_PANEL;
         requests->window_sequence = sequence;
         service_client_window_requests(session, &dirty, app, app_slot);
         if (requests->window_reply_sequence != sequence || requests->window_reply_status != -SAVANXP_EINVAL ||
             owned_window_slot(session, app_slot, 0) >= 0)
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL roles: an application got a popup\n");
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: an application got a panel\n");
             return 1;
         }
+
+        sequence = (requests->window_sequence | 1u) + 1u;
+        requests->window.role = SAVANXP_WM_WINDOW_ROLE_POPUP;
+        requests->window.role_flags = SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE;
+        requests->window.x = 10;
+        requests->window.y = 20;
+        requests->window_sequence = sequence;
+        service_client_window_requests(session, &dirty, app, app_slot);
+        popup_slot = owned_window_slot(session, app_slot, 3);
+        app_popup = overlay_client_at(session, popup_slot);
+        owner_surface = windowd_client_surface_rect(app);
+        if (requests->window_reply_sequence != sequence || requests->window_reply_status != 0 ||
+            app_popup == 0 || app_popup->role != WINDOWD_ROLE_POPUP || app_popup->frame_visible)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: an application did not get its popup\n");
+            return 1;
+        }
+        if (app_popup->window_x != windowd_clamp_int(owner_surface.x + 10, 0, (int)layout_display(session)->width - 64) ||
+            app_popup->window_y != windowd_clamp_int(owner_surface.y + 20, 0, (int)layout_display(session)->height - 64))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: the popup is not where its owner asked\n");
+            return 1;
+        }
+        if (overlay_client_disabled(session, app) || session->active_client_kind != WINDOWD_CLIENT_APP ||
+            session->active_overlay_slot != app_slot ||
+            selftest_order_index(session, popup_slot) <= selftest_order_index(session, app_slot))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: the popup disabled its owner or took the focus\n");
+            return 1;
+        }
+        dismiss_popups_for_press(session, owner_surface.x + owner_surface.width - 2, owner_surface.y + owner_surface.height - 2);
+        if (!app_popup->dismiss_requested)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: a press on the owner left its popup open\n");
+            return 1;
+        }
+        close_owned_window(session, &dirty, app_slot, 3);
+        if (owned_window_slot(session, app_slot, 0) >= 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: the application's popup did not close\n");
+            return 1;
+        }
+        puts_fd(1, "DESKTOP SMOKE roles: an application's popup opens, stays inactive and is dismissed\n");
     }
 
     printf("DESKTOP SMOKE roles panel=%d popup=%dx%d\n", panel->window_height, popup_width, popup_height);
@@ -6321,8 +6555,6 @@ static void handle_pointer_event(
     pressed_buttons = mouse_event.buttons;
     left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
     right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
-    (void)right_pressed;
-    (void)right_was_pressed;
 
     if (!drag_overlay_slot_active(session, drag_overlay_slot))
     {
@@ -6378,11 +6610,34 @@ static void handle_pointer_event(
         session->cursor_moved = 1;
     }
 
-    /* A press outside the desktop's popups asks them to close; the press
+    /* A press of either button outside a popup asks it to close; the press
      * still goes to whatever it landed on. */
-    if (left_pressed != 0 && left_was_pressed == 0)
+    if ((left_pressed != 0 && left_was_pressed == 0) || (right_pressed != 0 && right_was_pressed == 0))
     {
         dismiss_popups_for_press(session, cursor_x, cursor_y);
+    }
+
+    /* A right press activates what it lands on, as a left one does, so the
+     * context menu it opens has the keyboard: the background takes the focus,
+     * an application window comes to the front. */
+    if (right_pressed != 0 && right_was_pressed == 0 && left_pressed == 0 && current_hover_client != 0)
+    {
+        if (current_hover_client->role == WINDOWD_ROLE_BACKGROUND)
+        {
+            session->active_client_kind = WINDOWD_CLIENT_DESKTOP;
+            refresh_active_state(session);
+        }
+        else if (current_hover_client->role == WINDOWD_ROLE_NORMAL &&
+                 !overlay_client_disabled(session, current_hover_client))
+        {
+            int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
+
+            if (overlay_slot_valid(target_slot) && !session->overlay_clients[target_slot].active)
+            {
+                raise_overlay(session, target_slot);
+                current_hover_client = overlay_client_at_const(session, target_slot);
+            }
+        }
     }
 
     if (left_pressed != 0 && left_was_pressed == 0)
@@ -6391,11 +6646,21 @@ static void handle_pointer_event(
         {
             if (current_hover_client->role != WINDOWD_ROLE_NORMAL)
             {
-                /* A window of the desktop (background, panel, popup) is not an
-                 * application window: it is not activated, not raised and has
-                 * no frame. It only gets the press. Without this cut it would
-                 * fall into the window path, where overlay_slot_for_client_ptr
-                 * returns -1, the hover is dropped and the press is lost. */
+                /* A window of the desktop (background, panel, popup) or an
+                 * application's popup is not an application window: it is not
+                 * raised and has no frame. It only gets the press. Without this
+                 * cut it would fall into the window path, where
+                 * overlay_slot_for_client_ptr returns -1 for the desktop's, the
+                 * hover is dropped and the press is lost.
+                 *
+                 * The background is the one that takes the focus, as clicking
+                 * the Windows desktop activates its icon view: the keyboard goes
+                 * to the desktop until an application window is activated. */
+                if (current_hover_client->role == WINDOWD_ROLE_BACKGROUND)
+                {
+                    session->active_client_kind = WINDOWD_CLIENT_DESKTOP;
+                    refresh_active_state(session);
+                }
                 (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
@@ -6702,10 +6967,7 @@ int main(int argc, char **argv)
                 {
                     continue;
                 }
-                {
-                    struct windowd_client *client = active_client(&session);
-                    (void)route_key(client, &key_event);
-                }
+                (void)route_key(keyboard_client(&session), &key_event);
             }
         }
 

@@ -9,11 +9,13 @@
 
 #define WINDOWD_MAX_OVERLAY_CLIENTS 12
 
-/* What has the keyboard: an application window, or nothing (the desktop). */
+/* What has the keyboard: an application window, the desktop's main window
+ * (the background, once clicked: docs/desktop/DESKTOP_ICONS.md), or nothing. */
 enum windowd_client_kind
 {
     WINDOWD_CLIENT_NONE = 0,
     WINDOWD_CLIENT_APP = 1,
+    WINDOWD_CLIENT_DESKTOP = 2,
 };
 
 /* Where a window sits in the stack and how input treats it

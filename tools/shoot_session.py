@@ -790,6 +790,63 @@ def scenario_files(s):
     # and the two shots above already serve as the catalog's regression.
 
 
+def scenario_filesmenu(s):
+    """An application's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
+
+    Files opens on the user's profile, where the Desktop folder is. A right
+    click on its row opens the row's menu in a popup window of its own; the
+    window keeps the keyboard, so the arrows and Enter choose Send To
+    Desktop, and the desktop shows the new shortcut once it re-reads its
+    folder.
+    """
+    WHITE = (255, 255, 255)
+    s.open_files()
+    image = s.shot("files")
+    origin = find_text(image, (0, 0, 1280, 770), "Desktop", TEXT, FIELD)[0]
+    if origin is None:
+        raise Failure("Files does not list the Desktop folder")
+    s.qmp.move_to(origin[0] + 10, origin[1] + 6)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot("files-menu")
+    expect_text(image, (0, 0, 1280, 770), "Send To Desktop", TEXT, FACE,
+                "a right click on a row opens its menu")
+    # Down from nothing is Open; the separator is skipped on the way.
+    s.qmp.tap("down", pause=0.4)
+    s.qmp.tap("down", pause=0.6)
+    image = s.shot("files-menu-keyboard")
+    expect_text(image, (0, 0, 1280, 770), "Send To Desktop", SELECT_TEXT, SELECT,
+                "the window's keys move through its menu")
+    s.qmp.tap("ret", pause=1.0)
+    image = s.shot("files-sent")
+    if find_text(image, (0, 0, 1280, 770), "Send To Desktop", TEXT, FACE)[0]:
+        raise Failure("the menu is still open after choosing an item")
+
+    # Near the list's right edge the menu has to leave the window: it is a
+    # window of its own, not drawn inside Files (which would flip it left).
+    header = find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0]
+    if header is None:
+        raise Failure("Files has no Type column to measure from")
+    click = (header[0] + 120, header[1] + 220)
+    s.qmp.move_to(*click)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot("files-menu-outside")
+    expect_text(image, (click[0], click[1], click[0] + 200, click[1] + 80), "Up One Level", TEXT, FACE,
+                "the folder's menu opens at the pointer")
+    outside = (click[0] + 100, click[1] + 8)
+    if image.getpixel(outside) != FACE:
+        raise Failure("the menu does not reach %r, outside the window: it is not a popup of its own"
+                      % (outside,))
+    s.qmp.tap("esc", pause=1.0)
+    # Close Files and let the desktop re-read its folder.
+    s.qmp.chord("alt", "f4")
+    time.sleep(4.0)
+    image = s.shot("desktop-shortcut")
+    expect_text(image, (0, 0, 400, 400), "Desktop", WHITE, FACE,
+                "the desktop shows the shortcut Send To made", solid_only=True)
+
+
 def scenario_console(s):
     """Command Prompt: opened with its hotkey, a builtin, a program's output,
     the history, scrolling past a screen, and Ctrl+C on a program that would
@@ -943,8 +1000,9 @@ def scenario_contextmenu(s):
 
     A right click on the background opens it with its corner at the pointer;
     near the bottom-right corner it opens to the left of and above the
-    pointer instead. Hovering a row highlights it, and Change Wallpaper
-    repaints the background.
+    pointer instead. Hovering a row highlights it. The right click gave the
+    desktop the keyboard, so the arrows and Enter choose Change Wallpaper,
+    which repaints the background.
     """
     before = s.shot("desktop")
     probe = (300, 200)
@@ -953,9 +1011,9 @@ def scenario_contextmenu(s):
     s.qmp.click("right")
     time.sleep(1.0)
     image = s.shot("menu-open")
-    expect_text(image, (400, 300, 660, 390), "Change Wallpaper", TEXT, FACE,
+    expect_text(image, (400, 300, 660, 500), "Arrange Icons", TEXT, FACE,
                 "the menu opens at the pointer")
-    expect_text(image, (400, 300, 660, 390), "Open Command Prompt", TEXT, FACE,
+    expect_text(image, (400, 300, 660, 500), "Open Command Prompt", TEXT, FACE,
                 "the menu lists the Command Prompt")
 
     # The first row: below the raised border, half a row down, and in the
@@ -963,7 +1021,7 @@ def scenario_contextmenu(s):
     s.qmp.move_to(408, 312)
     time.sleep(1.0)
     image = s.shot("menu-hover")
-    expect_text(image, (400, 300, 660, 330), "Change Wallpaper", SELECT_TEXT, SELECT,
+    expect_text(image, (400, 300, 660, 330), "Arrange Icons", SELECT_TEXT, SELECT,
                 "hovering highlights the row")
 
     # A right click elsewhere closes it and opens it again there; at the
@@ -972,22 +1030,145 @@ def scenario_contextmenu(s):
     s.qmp.click("right")
     time.sleep(1.0)
     image = s.shot("menu-flipped")
-    expect_text(image, (960, 640, 1240, 760), "Change Wallpaper", TEXT, FACE,
+    expect_text(image, (900, 520, 1240, 760), "Change Wallpaper", TEXT, FACE,
                 "near the corner the menu opens left of and above the pointer")
 
-    # Back to the first spot, and run Change Wallpaper.
-    s.qmp.move_to(400, 300)
-    s.qmp.click("right")
-    time.sleep(1.0)
-    s.qmp.move_to(408, 312)
-    s.qmp.click()
-    time.sleep(2.0)
+    # Up from nothing wraps to the last row, Open Command Prompt; once more
+    # is Change Wallpaper.
+    s.qmp.tap("up", pause=0.4)
+    s.qmp.tap("up", pause=0.4)
+    image = s.shot("menu-keyboard")
+    expect_text(image, (900, 520, 1240, 760), "Change Wallpaper", SELECT_TEXT, SELECT,
+                "the arrows move through the menu")
+    s.qmp.tap("ret", pause=2.0)
     after = s.shot("wallpaper-changed")
     if after.getpixel(probe) == before.getpixel(probe):
         raise Failure("Change Wallpaper left the background at %r as it was: %r"
                       % (probe, after.getpixel(probe)))
-    if find_text(after, (400, 300, 660, 390), "Change Wallpaper", TEXT, FACE)[0]:
+    if find_text(after, (900, 520, 1240, 760), "Change Wallpaper", TEXT, FACE)[0]:
         raise Failure("the menu is still open after running an item")
+
+
+# The desktop's grid (desktop_view.c): cells of 76x74 from (6, 6), the 32x32
+# icon centred at the top of its cell and the label 36 px down.
+def desktop_cell_icon(column, row):
+    return (6 + column * 76 + 38, 6 + row * 74 + 18)
+
+
+def desktop_cell_box(column, row):
+    x = 6 + column * 76
+    y = 6 + row * 74
+    return (x, y + 30, x + 76, y + 74)
+
+
+def scenario_desktopicons(s):
+    """The icons on the desktop (docs/desktop/DESKTOP_ICONS.md, phases 2-3).
+
+    The first session gets three shortcuts in the Desktop folder. Click
+    selects, double click opens, the background takes the keyboard (arrows,
+    F2 to rename), dragging moves an icon to another cell, the icon's menu
+    deletes it after a question, and the background's menu makes a folder.
+    """
+    WHITE = (255, 255, 255)
+    image = s.shot("desktop")
+    for row, name in enumerate(("Command", "Files", "Notepad")):
+        expect_text(image, desktop_cell_box(0, row), name, WHITE, FACE,
+                    "the default shortcut %s" % name, solid_only=True)
+
+    # Click selects: the label takes the selection colour.
+    s.qmp.move_to(*desktop_cell_icon(0, 2))
+    s.qmp.click()
+    time.sleep(1.0)
+    image = s.shot("notepad-selected")
+    expect_text(image, desktop_cell_box(0, 2), "Notepad", SELECT_TEXT, SELECT,
+                "a click selects the icon")
+
+    # Double click opens: Notepad's window shows up in the middle.
+    centre = (640, 380)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(0.1)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(6.0)
+    opened = s.shot("notepad-opened")
+    if opened.getpixel(centre) == image.getpixel(centre):
+        raise Failure("a double click on Notepad opened no window over %r" % (centre,))
+    s.qmp.chord("alt", "f4")
+    time.sleep(2.0)
+
+    # The background takes the keyboard: Up moves the selection to Files,
+    # F2 renames it in place.
+    s.qmp.move_to(600, 500)
+    s.qmp.click()
+    s.qmp.move_to(*desktop_cell_icon(0, 2))
+    s.qmp.click()
+    time.sleep(0.8)
+    s.qmp.tap("up", pause=0.6)
+    image = s.shot("keyboard-up")
+    expect_text(image, desktop_cell_box(0, 1), "Files", SELECT_TEXT, SELECT,
+                "Up moves the selection")
+    s.qmp.tap("f2", pause=0.6)
+    for _ in range(5):
+        s.qmp.tap("backspace", pause=0.1)
+    s.qmp.type_text("browse")
+    s.qmp.tap("ret", pause=1.0)
+    image = s.shot("renamed")
+    expect_text(image, desktop_cell_box(0, 1), "browse", SELECT_TEXT, SELECT,
+                "F2 renames the icon")
+
+    # Drag it two columns to the right.
+    s.qmp.move_to(*desktop_cell_icon(0, 1))
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.3)
+    target = desktop_cell_icon(2, 1)
+    s.qmp.move_to(target[0], target[1])
+    time.sleep(0.5)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(1.0)
+    s.qmp.move_to(600, 500)
+    time.sleep(0.5)
+    image = s.shot("dragged")
+    expect_text(image, desktop_cell_box(2, 1), "browse", SELECT_TEXT, SELECT,
+                "dragging moves the icon to the cell it is dropped on")
+
+    # The icon's menu: Delete asks first; Enter answers Yes.
+    s.qmp.move_to(*desktop_cell_icon(2, 1))
+    s.qmp.click("right")
+    time.sleep(1.0)
+    image = s.shot("icon-menu")
+    expect_text(image, (160, 80, 460, 300), "Delete", TEXT, FACE, "the icon's menu lists Delete")
+    s.qmp.tap("up", pause=0.4)
+    s.qmp.tap("ret", pause=1.5)
+    image = s.shot("delete-question")
+    expect_text(image, (400, 250, 900, 550), "Delete 'browse'?", TEXT, FACE,
+                "Delete asks before deleting")
+    s.qmp.tap("ret", pause=3.0)
+    image = s.shot("deleted")
+    if find_text(image, (0, 0, 400, 300), "browse", SELECT_TEXT, SELECT)[0] or \
+            find_text(image, (0, 0, 400, 300), "browse", WHITE, FACE, solid_only=True)[0]:
+        raise Failure("the icon is still there after deleting it")
+
+    # The background's menu makes a folder and starts its name being edited.
+    s.qmp.move_to(600, 500)
+    s.qmp.click("right")
+    time.sleep(1.0)
+    s.qmp.tap("down", pause=0.3)
+    s.qmp.tap("down", pause=0.3)
+    s.qmp.tap("down", pause=0.3)
+    image = s.shot("menu-new-folder")
+    expect_text(image, (600, 500, 900, 700), "New Folder", SELECT_TEXT, SELECT,
+                "the background's menu offers New Folder")
+    s.qmp.tap("ret", pause=2.0)
+    s.qmp.tap("ret", pause=1.5)
+    image = s.shot("new-folder")
+    found = False
+    for column in range(3):
+        for row in range(4):
+            if find_text(image, desktop_cell_box(column, row), "New Folder", SELECT_TEXT, SELECT)[0]:
+                found = True
+    if not found:
+        raise Failure("New Folder made no icon")
 
 
 def scenario_taskbar(s):
@@ -2001,6 +2182,8 @@ SCENARIOS = {
     "notepadwheel": scenario_notepadwheel,
     "kbdlayout": scenario_kbdlayout,
     "contextmenu": scenario_contextmenu,
+    "desktopicons": scenario_desktopicons,
+    "filesmenu": scenario_filesmenu,
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,

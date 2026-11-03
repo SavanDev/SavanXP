@@ -12,9 +12,16 @@ Cut-off notes:
 
 ### Added
 
-- **Right-clicking the desktop opens a context menu** (Change Wallpaper, Open Command Prompt). SXGUI
-  can show a menu outside a menu bar (`sxgui_popup_menu_size`/`_paint`/`_item_at`). Plan for icons
-  and shortcuts: `docs/desktop/DESKTOP_ICONS.md`.
+- **Desktop icons and shortcuts**: the desktop shows `/users/<name>/Desktop` as a grid of icons
+  (created with Command Prompt, Files and Notepad). Double click opens, drag moves, F2 renames, Delete
+  asks first; right click opens the background's menu (Arrange Icons, Refresh, New Folder, New Text
+  Document, Change Wallpaper) or the icon's (Open, Rename, Delete). Shortcuts are `.sxlnk` text files
+  (`target=`, `args=`, `workdir=`, `icon=`). See `docs/desktop/DESKTOP_ICONS.md`.
+
+- **Context menus in applications**: an application may open a popup owned by its window
+  (`SAVANXP_WM_WINDOW_ROLE_POPUP`), and SXGUI shows one with `sxgui_context_menu_open` (also
+  `sxgui_popup_menu_*`, `sxgui_listbox_row_at`). Files gets Open, Send To Desktop, Rename... and
+  Delete on a right click, Shift+F10 or the Menu key, and opens a folder given as its argument.
 
 - **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
   point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See
@@ -84,6 +91,10 @@ Cut-off notes:
   `docs/build/BUILD_LINUX.md#the-qemu-window`.
 
 ### Changed
+
+- **Clicking the desktop gives it the keyboard**: `windowd` has a desktop focus state, so the icons
+  get arrows, Enter, Delete and F2. A right press activates the window it lands on and closes
+  popups, as a left press does.
 
 - **A kernel panic or ring-0 fault stops every core** by NMI and says so (`smp: other cores stopped
   (n/n)`). `POWER_IOC_PANIC` on `/dev/power` (system only) and `panic-smoke` exercise it.

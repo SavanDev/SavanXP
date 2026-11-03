@@ -346,16 +346,17 @@ not a client slot in `windowd`, and it is not a launch flag.
 |---|---|---|
 | `background` | Below every window | Full screen, never activated |
 | `panel` | Above normal windows, below a fullscreen app | Anchored to a screen edge; declares a reserved strip (the maximize area excludes it) |
-| `popup` | Above panels | At the screen position the client gives, clamped to the display; frameless; never focused; optional *dismiss on outside click* |
+| `popup` | Above panels (an application's: above its owner) | At the screen position the client gives (an application's: relative to its window), clamped to the display; frameless; never focused; optional *dismiss on outside click* |
 | `normal` | The ordinary z-order | Frame, cascade placement, owned dialogs |
 
 Rules:
 
-- Only a client holding the shell privilege may create anything but `normal`
-  windows. The privilege is granted when the connection is made, to a client
-  that asks for it and was started by the session manager (see
-  [Who is the shell](#who-is-the-shell-decided-by-parentage)), never on the
-  client's word alone.
+- Only a client holding the shell privilege may create `panel` windows, or
+  popups at screen positions. The privilege is granted when the connection is
+  made, to a client that asks for it and was started by the session manager
+  (see [Who is the shell](#who-is-the-shell-decided-by-parentage)), never on
+  the client's word alone. Any application may open a `popup` owned by its
+  window, a context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md#phase-4-context-menus-in-applications)).
 - `windowd` keeps no per-role special cases in routing, reaping or stacking.
   One loop over windows, ordered by role and then by z-order.
 - Sizes and positions come from the client: the numbers that used to live in

@@ -53,6 +53,12 @@ struct sxgui_app {
     struct savanxp_gfx_context dialog_gfx;
     int dialog_window_open;
     int dialog_last_cursor_shape;
+
+    /* Owned by the frame: the popup window of the open context menu
+     * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications). */
+    struct sxgui_popup_host popup_host;
+    struct savanxp_gfx_context popup_gfx;
+    int popup_window_open;
 };
 
 /* Margin sxgui_app_autosize leaves to the right of and below the widgets'
