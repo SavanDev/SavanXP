@@ -19,7 +19,7 @@
  * 0 is the main window, which windowd gives the background role. The Start
  * menu and the tray popups have an id each because they can be open at the
  * same time; the three tray popups share a corner and an id, so at most one of
- * them is open. */
+ * them is open. The context menu shares the Start menu's id the same way. */
 enum desktop_window_id
 {
     DESKTOP_WINDOW_BACKGROUND = 0,
@@ -37,7 +37,9 @@ enum desktop_popup
     DESKTOP_POPUP_CLOCK = 2,
     DESKTOP_POPUP_KEYBOARD = 3,
     DESKTOP_POPUP_HUNG = 4,
-    DESKTOP_POPUP_COUNT = 5,
+    /* The background's right-click menu, in the Start menu's window. */
+    DESKTOP_POPUP_CONTEXT_MENU = 5,
+    DESKTOP_POPUP_COUNT = 6,
 };
 
 /* Bits a module's pointer or tick handler returns. */
@@ -54,7 +56,8 @@ enum desktop_popup
 #define DESKTOP_TASKBAR_HEIGHT 28
 
 /* One popup kind. `width` and `height` are its surface; `anchor_right` puts it
- * at the right end of the taskbar (the tray corner) instead of the left. */
+ * at the right end of the taskbar (the tray corner) instead of the left. A
+ * popup opened at a point (desktop_open_popup_at) ignores both anchors. */
 struct desktop_popup_ops
 {
     int width;
@@ -76,6 +79,9 @@ struct desktop_popup_ops
      * a window under the pointer, so the popup is simply not told any more.
      * Moving onto an application window is not reported. May be 0. */
     uint32_t (*pointer_left)(void);
+    /* The surface size, asked each time it opens, for a popup whose size
+     * depends on its content; overrides `width` and `height`. May be 0. */
+    void (*measure)(int *width, int *height);
 };
 
 extern const struct desktop_popup_ops desktop_startmenu_ops;
@@ -83,6 +89,7 @@ extern const struct desktop_popup_ops desktop_volume_ops;
 extern const struct desktop_popup_ops desktop_clock_ops;
 extern const struct desktop_popup_ops desktop_keyboard_ops;
 extern const struct desktop_popup_ops desktop_hung_ops;
+extern const struct desktop_popup_ops desktop_contextmenu_ops;
 
 /* desktop_hung.c: the window the dialog is about (its id is its pid). */
 void desktop_hung_set_target(uint32_t window_id, const char *title);
@@ -95,6 +102,12 @@ void desktop_hung_dismissed(uint32_t window_id);
 void desktop_toggle_popup(enum desktop_popup popup);
 void desktop_close_popups(void);
 int desktop_popup_is_open(enum desktop_popup popup);
+/* Closes every other popup and opens this one with its top-left corner at the
+ * screen point (x, y), flipped left or up where it would not fit above the
+ * taskbar, as Windows places a context menu. */
+void desktop_open_popup_at(enum desktop_popup popup, int x, int y);
+/* The background must be painted again (the wallpaper changed). */
+void desktop_repaint_background(void);
 /* Starts a program; it connects to windowd for its own window. */
 long desktop_launch(const char *path, uint32_t launch_flags);
 /* Sends a request on the shell's request pipe (savanxp/wm_shell_protocol.h). */

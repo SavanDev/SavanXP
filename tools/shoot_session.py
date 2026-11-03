@@ -160,12 +160,12 @@ class Qmp(object):
             moved_y += dy
         time.sleep(0.5)
 
-    def click(self):
+    def click(self, button="left"):
         self.cmd("input-send-event", events=[
-            {"type": "btn", "data": {"down": True, "button": "left"}}])
+            {"type": "btn", "data": {"down": True, "button": button}}])
         time.sleep(0.25)
         self.cmd("input-send-event", events=[
-            {"type": "btn", "data": {"down": False, "button": "left"}}])
+            {"type": "btn", "data": {"down": False, "button": button}}])
         time.sleep(0.6)
 
     def wheel(self, ticks):
@@ -936,6 +936,58 @@ def scenario_kbdlayout(s):
     s.qmp.tap("bracket_left")
     time.sleep(0.5)
     s.shot("notepad-en")
+
+
+def scenario_contextmenu(s):
+    """The desktop's context menu (docs/desktop/DESKTOP_ICONS.md).
+
+    A right click on the background opens it with its corner at the pointer;
+    near the bottom-right corner it opens to the left of and above the
+    pointer instead. Hovering a row highlights it, and Change Wallpaper
+    repaints the background.
+    """
+    before = s.shot("desktop")
+    probe = (300, 200)
+
+    s.qmp.move_to(400, 300)
+    s.qmp.click("right")
+    time.sleep(1.0)
+    image = s.shot("menu-open")
+    expect_text(image, (400, 300, 660, 390), "Change Wallpaper", TEXT, FACE,
+                "the menu opens at the pointer")
+    expect_text(image, (400, 300, 660, 390), "Open Command Prompt", TEXT, FACE,
+                "the menu lists the Command Prompt")
+
+    # The first row: below the raised border, half a row down, and in the
+    # check gutter so the cursor does not cover the text.
+    s.qmp.move_to(408, 312)
+    time.sleep(1.0)
+    image = s.shot("menu-hover")
+    expect_text(image, (400, 300, 660, 330), "Change Wallpaper", SELECT_TEXT, SELECT,
+                "hovering highlights the row")
+
+    # A right click elsewhere closes it and opens it again there; at the
+    # corner it has to flip so it stays above the taskbar.
+    s.qmp.move_to(1240, 760)
+    s.qmp.click("right")
+    time.sleep(1.0)
+    image = s.shot("menu-flipped")
+    expect_text(image, (960, 640, 1240, 760), "Change Wallpaper", TEXT, FACE,
+                "near the corner the menu opens left of and above the pointer")
+
+    # Back to the first spot, and run Change Wallpaper.
+    s.qmp.move_to(400, 300)
+    s.qmp.click("right")
+    time.sleep(1.0)
+    s.qmp.move_to(408, 312)
+    s.qmp.click()
+    time.sleep(2.0)
+    after = s.shot("wallpaper-changed")
+    if after.getpixel(probe) == before.getpixel(probe):
+        raise Failure("Change Wallpaper left the background at %r as it was: %r"
+                      % (probe, after.getpixel(probe)))
+    if find_text(after, (400, 300, 660, 390), "Change Wallpaper", TEXT, FACE)[0]:
+        raise Failure("the menu is still open after running an item")
 
 
 def scenario_taskbar(s):
@@ -1948,6 +2000,7 @@ SCENARIOS = {
     "webview": scenario_webview,
     "notepadwheel": scenario_notepadwheel,
     "kbdlayout": scenario_kbdlayout,
+    "contextmenu": scenario_contextmenu,
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,

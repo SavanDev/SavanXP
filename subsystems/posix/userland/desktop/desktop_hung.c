@@ -176,4 +176,5 @@ const struct desktop_popup_ops desktop_hung_ops = {
     hung_paint,
     1,
     0,
+    0,
 };

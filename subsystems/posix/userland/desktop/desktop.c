@@ -17,7 +17,8 @@ _Static_assert(
  *
  *   id 0  background  wallpaper (main window, role granted by windowd)
  *   id 1  taskbar     panel on the bottom edge
- *   id 2  Start menu  popup, bottom left above the taskbar
+ *   id 2  Start menu  popup, bottom left above the taskbar; or the context
+ *                     menu, at the pointer (never both: they share the id)
  *   id 3  tray popup  volume, clock or keyboard layout, bottom right
  *   id 4  End Program a program asked to close is not responding (centred)
  *
@@ -55,6 +56,7 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_clock_ops,
     &desktop_keyboard_ops,
     &desktop_hung_ops,
+    &desktop_contextmenu_ops,
 };
 
 static struct savanxp_gfx_context g_background;
@@ -70,6 +72,9 @@ static unsigned long g_taskbar_retry_ms = 0;
 static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, 0};
 static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, 0};
 static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, 0};
+/* Every popup slot, for what is done to all of them. */
+static struct desktop_popup_slot *const k_slots[] = {&g_start_menu, &g_tray, &g_hung};
+#define DESKTOP_SLOT_COUNT ((int)(sizeof(k_slots) / sizeof(k_slots[0])))
 /* The window whose "not responding" the user already answered. */
 static uint32_t g_hung_answered = 0;
 
@@ -106,7 +111,14 @@ static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
     {
         return &g_hung;
     }
-    return popup == DESKTOP_POPUP_START_MENU ? &g_start_menu : &g_tray;
+    /* A process has four owned windows (SAVANXP_WM_MAX_OWNED_WINDOWS) and
+     * the desktop uses them all, so the context menu takes the Start menu's
+     * slot: as on Windows, opening either closes the other. */
+    if (popup == DESKTOP_POPUP_START_MENU || popup == DESKTOP_POPUP_CONTEXT_MENU)
+    {
+        return &g_start_menu;
+    }
+    return &g_tray;
 }
 
 static void close_slot(struct desktop_popup_slot *slot)
@@ -123,30 +135,51 @@ static void close_slot(struct desktop_popup_slot *slot)
     g_taskbar_repaint = 1;
 }
 
-static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
+/* `at_point`: open with the top-left corner at (x, y) instead of where the
+ * popup kind is anchored. */
+static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup popup, int at_point, int x, int y)
 {
     const struct desktop_popup_ops *ops = k_popup_ops[popup];
     int display_width = (int)g_background.info.width;
-    int display_height = (int)g_background.info.height;
-    int x = 0;
-    int y = 0;
+    int work_height = (int)g_background.info.height - DESKTOP_TASKBAR_HEIGHT;
+    int width = ops->width;
+    int height = ops->height;
 
+    if (ops->measure != 0)
+    {
+        ops->measure(&width, &height);
+    }
+    if (at_point)
+    {
+        /* Where it does not fit right of or below the point, it opens to the
+         * left of or above it, and never over the taskbar. */
+        if (x + width > display_width)
+        {
+            x -= width;
+        }
+        if (y + height > work_height)
+        {
+            y -= height;
+        }
+        x = x < 0 ? 0 : x;
+        y = y < 0 ? 0 : y;
+    }
     /* Above the taskbar: the Start menu at its left end, the tray popups at
      * its right end. A dialog in the middle of the screen. */
-    if (ops->centered)
+    else if (ops->centered)
     {
-        x = (display_width - ops->width) / 2;
-        y = (display_height - DESKTOP_TASKBAR_HEIGHT - ops->height) / 2;
+        x = (display_width - width) / 2;
+        y = (work_height - height) / 2;
     }
     else if (ops->anchor_right)
     {
-        x = display_width - 4 - ops->width;
-        y = display_height - DESKTOP_TASKBAR_HEIGHT - ops->height;
+        x = display_width - 4 - width;
+        y = work_height - height;
     }
     else
     {
         x = 2;
-        y = display_height - DESKTOP_TASKBAR_HEIGHT - ops->height;
+        y = work_height - height;
     }
 
     if (ops->open() != 0)
@@ -161,8 +194,8 @@ static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
             ops->centered ? 0u : SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE,
             x,
             y,
-            (uint32_t)ops->width,
-            (uint32_t)ops->height) < 0)
+            (uint32_t)width,
+            (uint32_t)height) < 0)
     {
         puts_fd(2, "desktop: windowd refused a popup\n");
         ops->close();
@@ -175,6 +208,19 @@ static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
     g_taskbar_repaint = 1;
 }
 
+static void close_context_menu(void)
+{
+    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONTEXT_MENU)
+    {
+        close_slot(&g_start_menu);
+    }
+}
+
+static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
+{
+    open_slot_at(slot, popup, 0, 0, 0);
+}
+
 /* The taskbar's buttons are toggles: the same button closes what it opened.
  * The tray popups share a corner, so opening one closes the other. */
 void desktop_toggle_popup(enum desktop_popup popup)
@@ -182,6 +228,7 @@ void desktop_toggle_popup(enum desktop_popup popup)
     struct desktop_popup_slot *slot = slot_for(popup);
     int was_this = slot->open && slot->kind == popup;
 
+    close_context_menu();
     close_slot(slot);
     if (!was_this)
     {
@@ -193,6 +240,20 @@ void desktop_close_popups(void)
 {
     close_slot(&g_start_menu);
     close_slot(&g_tray);
+}
+
+void desktop_open_popup_at(enum desktop_popup popup, int x, int y)
+{
+    struct desktop_popup_slot *slot = slot_for(popup);
+
+    /* The context menu's slot is the Start menu's, which this closes too. */
+    desktop_close_popups();
+    open_slot_at(slot, popup, 1, x, y);
+}
+
+void desktop_repaint_background(void)
+{
+    g_background_repaint = 1;
 }
 
 int desktop_popup_is_open(enum desktop_popup popup)
@@ -337,12 +398,11 @@ static void try_open_taskbar(void)
  * left them (desktop_popup_ops.pointer_left). */
 static void notify_pointer_left_popups(void)
 {
-    struct desktop_popup_slot *slots[3] = {&g_start_menu, &g_tray, &g_hung};
     int index;
 
-    for (index = 0; index < 3; ++index)
+    for (index = 0; index < DESKTOP_SLOT_COUNT; ++index)
     {
-        struct desktop_popup_slot *slot = slots[index];
+        struct desktop_popup_slot *slot = k_slots[index];
 
         if (slot->open && slot->ops != 0 && slot->ops->pointer_left != 0)
         {
@@ -351,8 +411,9 @@ static void notify_pointer_left_popups(void)
     }
 }
 
-/* Background: resize, and a press on it closes the popups. windowd only asks
- * a popup to close for a press on another process; the background is ours. */
+/* Background: resize, a press on it closes the popups (windowd only asks a
+ * popup to close for a press on another process; the background is ours),
+ * and releasing the right button there opens the context menu. */
 static void service_background(void)
 {
     struct savanxp_input_event event;
@@ -374,10 +435,17 @@ static void service_background(void)
     while (gfx_poll_window_pointer(&g_background, &pointer) > 0)
     {
         uint32_t down = pointer.buttons & ~g_background_buttons;
+        uint32_t up = g_background_buttons & ~pointer.buttons;
 
-        if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
+        if ((down & (SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT)) != 0)
         {
             desktop_close_popups();
+        }
+        else if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+        {
+            /* On the release, as Windows sends WM_CONTEXTMENU: the press is
+             * over by the time the menu is under the pointer. */
+            desktop_open_popup_at(DESKTOP_POPUP_CONTEXT_MENU, pointer.x, pointer.y);
         }
         else
         {
@@ -407,6 +475,11 @@ static void service_taskbar(void)
     while (gfx_poll_window_pointer(&g_taskbar, &pointer) > 0)
     {
         notify_pointer_left_popups();
+        /* A press on the taskbar is a press outside the context menu. */
+        if (pointer.buttons != 0)
+        {
+            close_context_menu();
+        }
         if ((desktop_taskbar_pointer(&g_taskbar, &pointer) & DESKTOP_ACTION_REPAINT) != 0)
         {
             g_taskbar_repaint = 1;
@@ -451,7 +524,6 @@ static void service_popup(struct desktop_popup_slot *slot)
 static int present_windows(int *lost_session)
 {
     int presented = 0;
-    struct desktop_popup_slot *slots[3] = {&g_start_menu, &g_tray, &g_hung};
     int index;
 
     if (g_background_repaint)
@@ -474,9 +546,9 @@ static int present_windows(int *lost_session)
         }
         g_taskbar_repaint = 0;
     }
-    for (index = 0; index < 3; ++index)
+    for (index = 0; index < DESKTOP_SLOT_COUNT; ++index)
     {
-        struct desktop_popup_slot *slot = slots[index];
+        struct desktop_popup_slot *slot = k_slots[index];
 
         if (slot->open && slot->needs_repaint)
         {

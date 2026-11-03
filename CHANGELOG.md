@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Right-clicking the desktop opens a context menu** (Change Wallpaper, Open Command Prompt). SXGUI
+  can show a menu outside a menu bar (`sxgui_popup_menu_size`/`_paint`/`_item_at`). Plan for icons
+  and shortcuts: `docs/desktop/DESKTOP_ICONS.md`.
+
 - **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
   point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See
   `docs/kernel/SMP_ROADMAP.md#reading-smp-stats`.

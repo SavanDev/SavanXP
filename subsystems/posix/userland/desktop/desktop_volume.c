@@ -808,4 +808,5 @@ const struct desktop_popup_ops desktop_volume_ops = {
     volume_paint,
     0,
     0,
+    0,
 };

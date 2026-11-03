@@ -153,7 +153,7 @@ Which windows the desktop has, and what each is:
 |---|---|---|
 | 0 | Background (wallpaper) | `background`, granted at launch |
 | 1 | Taskbar | `panel`, bottom edge, 28 px |
-| 2 | Start menu | `popup`, dismissable |
+| 2 | Start menu, or the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)) | `popup`, dismissable; never both open, so one id |
 | 3 | Volume, clock or keyboard-layout popup | `popup`, dismissable; the three share the tray corner, so one id |
 
 The modules are `subsystems/posix/userland/desktop/desktop_*.c`, one per

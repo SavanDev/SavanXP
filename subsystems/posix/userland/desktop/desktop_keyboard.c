@@ -179,4 +179,5 @@ const struct desktop_popup_ops desktop_keyboard_ops = {
     keyboard_paint,
     0,
     0,
+    0,
 };

@@ -222,6 +222,28 @@ struct sxgui_menubar {
     void *user;
 };
 
+/* ---- popup menu -----------------------------------------------------------
+ *
+ * One menu's drop-down list on its own, for a menu that does not hang from a
+ * menu bar: a context menu shown in a popup window of its own. The menu bar
+ * draws its drop-downs with these same calls, so both look alike. The caller
+ * owns where the list is shown, which row is hot and what a click means.
+ */
+
+/* The size the list needs: the widest item plus the check gutter, and every
+ * row and separator. */
+void sxgui_popup_menu_size(const struct sxgui_menu *menu, int *width, int *height);
+/* Paints the list into `rect` (usually the size above). `hot_item` is the
+ * highlighted row, -1 for none; a disabled row is never highlighted. */
+void sxgui_popup_menu_paint(struct sx_painter *painter, struct sx_rect rect, const struct sxgui_menu *menu, int hot_item);
+/* The row under (x, y), or -1 over a separator or outside `rect`. */
+int sxgui_popup_menu_item_at(struct sx_rect rect, const struct sxgui_menu *menu, int x, int y);
+/* Non-zero if the row exists, is not a separator and is not disabled. */
+int sxgui_popup_menu_item_selectable(const struct sxgui_menu *menu, int index);
+/* The next row up (direction -1) or down (+1) from `hot`, skipping
+ * separators and wrapping around; -1 if the menu has no rows. */
+int sxgui_popup_menu_step(const struct sxgui_menu *menu, int hot, int direction);
+
 /* ---- modal dialogs ---------------------------------------------------------
  *
  * A second caller-owned widget array. While a dialog is active it captures all

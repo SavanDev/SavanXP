@@ -644,14 +644,10 @@ static int sxgui_menu_item_height(const struct sxgui_menu_item *item)
     return item->text != 0 ? sxgui_row_height() : SXGUI_MENU_SEPARATOR_HEIGHT;
 }
 
-static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, const struct sxgui_menubar *bar, int menu_index)
+void sxgui_popup_menu_size(const struct sxgui_menu *menu, int *width, int *height)
 {
-    const struct sxgui_menu *menu = &bar->menus[menu_index];
-    struct sx_rect title = sxgui_menubar_title_rect(bar, menu_index);
-    int surface_width = (int)ctx->target.info.width;
-    int width = 0;
-    int height = SXGUI_MENU_POPUP_PAD * 2;
-    int x = title.x;
+    int text_width_max = 0;
+    int total_height = SXGUI_MENU_POPUP_PAD * 2;
     int index;
 
     for (index = 0; index < menu->item_count; ++index)
@@ -659,14 +655,26 @@ static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, con
         if (menu->items[index].text != 0)
         {
             int text_width = gfx_text_width(menu->items[index].text);
-            if (text_width > width)
+            if (text_width > text_width_max)
             {
-                width = text_width;
+                text_width_max = text_width;
             }
         }
-        height += sxgui_menu_item_height(&menu->items[index]);
+        total_height += sxgui_menu_item_height(&menu->items[index]);
     }
-    width += SXGUI_MENU_GUTTER + SXGUI_MENU_POPUP_PAD + 12;
+    *width = text_width_max + SXGUI_MENU_GUTTER + SXGUI_MENU_POPUP_PAD + 12;
+    *height = total_height;
+}
+
+static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, const struct sxgui_menubar *bar, int menu_index)
+{
+    struct sx_rect title = sxgui_menubar_title_rect(bar, menu_index);
+    int surface_width = (int)ctx->target.info.width;
+    int width = 0;
+    int height = 0;
+    int x = title.x;
+
+    sxgui_popup_menu_size(&bar->menus[menu_index], &width, &height);
     if (x + width > surface_width)
     {
         x = surface_width - width;
@@ -678,12 +686,15 @@ static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, con
     return sx_rect_make(x, sxgui_menubar_height(), width, height);
 }
 
-/* Row index under y, or -1 over separators and outside the popup. */
-static int sxgui_menu_item_at(struct sx_rect popup, const struct sxgui_menu *menu, int y)
+int sxgui_popup_menu_item_at(struct sx_rect rect, const struct sxgui_menu *menu, int x, int y)
 {
-    int row_y = popup.y + SXGUI_MENU_POPUP_PAD;
+    int row_y = rect.y + SXGUI_MENU_POPUP_PAD;
     int index;
 
+    if (!sx_rect_contains_point(rect, x, y))
+    {
+        return -1;
+    }
     for (index = 0; index < menu->item_count; ++index)
     {
         int height = sxgui_menu_item_height(&menu->items[index]);
@@ -696,15 +707,14 @@ static int sxgui_menu_item_at(struct sx_rect popup, const struct sxgui_menu *men
     return -1;
 }
 
-static int sxgui_menu_item_selectable(const struct sxgui_menu *menu, int index)
+int sxgui_popup_menu_item_selectable(const struct sxgui_menu *menu, int index)
 {
     return index >= 0 && index < menu->item_count &&
            menu->items[index].text != 0 &&
            (menu->items[index].flags & SXGUI_MENU_DISABLED) == 0;
 }
 
-/* Move hot_item up/down skipping separators, wrapping around. */
-static int sxgui_menu_step_hot(const struct sxgui_menu *menu, int hot, int direction)
+int sxgui_popup_menu_step(const struct sxgui_menu *menu, int hot, int direction)
 {
     int step;
 
@@ -1307,19 +1317,15 @@ static void sxgui_paint_menubar(struct sxgui_context *ctx)
     }
 }
 
-static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
+void sxgui_popup_menu_paint(struct sx_painter *painter, struct sx_rect rect, const struct sxgui_menu *menu, int hot_item)
 {
-    struct sxgui_menubar *bar = ctx->menubar;
-    const struct sxgui_menu *menu = &bar->menus[bar->open_menu];
-    struct sx_painter *painter = &ctx->painter;
-    struct sx_rect popup = sxgui_menu_popup_rect(ctx, bar, bar->open_menu);
-    int row_y = popup.y + SXGUI_MENU_POPUP_PAD;
-    int row_x = popup.x + SXGUI_MENU_POPUP_PAD;
-    int row_width = popup.width - SXGUI_MENU_POPUP_PAD * 2;
+    int row_y = rect.y + SXGUI_MENU_POPUP_PAD;
+    int row_x = rect.x + SXGUI_MENU_POPUP_PAD;
+    int row_width = rect.width - SXGUI_MENU_POPUP_PAD * 2;
     int index;
 
-    sx_painter_fill_rect(painter, popup, SXGUI_COLOR_FACE);
-    sxgui_draw_raised(painter, popup);
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, rect);
 
     for (index = 0; index < menu->item_count; ++index)
     {
@@ -1337,7 +1343,7 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
             int enabled = (item->flags & SXGUI_MENU_DISABLED) == 0;
             uint32_t colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
 
-            if (index == bar->hot_item && enabled)
+            if (index == hot_item && enabled)
             {
                 sx_painter_fill_rect(painter, sx_rect_make(row_x, row_y, row_width, height), SXGUI_COLOR_SELECT);
                 colour = SXGUI_COLOR_SELECT_TEXT;
@@ -1353,6 +1359,17 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
         }
         row_y += height;
     }
+}
+
+static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
+{
+    struct sxgui_menubar *bar = ctx->menubar;
+
+    sxgui_popup_menu_paint(
+        &ctx->painter,
+        sxgui_menu_popup_rect(ctx, bar, bar->open_menu),
+        &bar->menus[bar->open_menu],
+        bar->hot_item);
 }
 
 static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui_widget *widget)
@@ -2841,14 +2858,14 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
         }
         else if (sx_rect_contains_point(popup, event->x, event->y))
         {
-            int item_index = sxgui_menu_item_at(popup, menu, event->y);
+            int item_index = sxgui_popup_menu_item_at(popup, menu, event->x, event->y);
 
             if (item_index != bar->hot_item)
             {
                 bar->hot_item = item_index;
                 changed = 1;
             }
-            if (left_now && !left_before && sxgui_menu_item_selectable(menu, item_index))
+            if (left_now && !left_before && sxgui_popup_menu_item_selectable(menu, item_index))
             {
                 sxgui_menu_fire(bar, menu, item_index);
                 changed = 1;
@@ -3310,10 +3327,10 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         }
         if (event->key == SAVANXP_KEY_UP || event->key == SAVANXP_KEY_DOWN)
         {
-            bar->hot_item = sxgui_menu_step_hot(menu, bar->hot_item, event->key == SAVANXP_KEY_DOWN ? 1 : -1);
+            bar->hot_item = sxgui_popup_menu_step(menu, bar->hot_item, event->key == SAVANXP_KEY_DOWN ? 1 : -1);
             return 1;
         }
-        if (event->key == SAVANXP_KEY_ENTER && sxgui_menu_item_selectable(menu, bar->hot_item))
+        if (event->key == SAVANXP_KEY_ENTER && sxgui_popup_menu_item_selectable(menu, bar->hot_item))
         {
             sxgui_menu_fire(bar, menu, bar->hot_item);
             return 1;
