@@ -127,7 +127,7 @@ static int run_automation_spec(const char* spec) {
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
     const char* sxetest_argv[] = {"/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
-    const char* taskmgr_selftest_argv[] = {"/bin/taskmgr", "--selftest", 0};
+    const char* taskmgr_selftest_argv[] = {"/bin/taskmgr.sxe", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
@@ -197,7 +197,7 @@ static int run_automation_spec(const char* spec) {
             argv = filesapp_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "taskmgr-selftest") == 0 || strcmp(spec, "taskmgr") == 0) {
-            path = "/bin/taskmgr";
+            path = "/bin/taskmgr.sxe";
             argv = taskmgr_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {

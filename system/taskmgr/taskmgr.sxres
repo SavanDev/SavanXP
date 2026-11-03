@@ -1,0 +1,10 @@
+# SXE resources of the Task Manager. See docs/userland/SXE_FORMAT.md; as a
+# SUN program it also gets them compiled in (taskmgr.sunres.h).
+name=Task Manager
+description=Processes, performance and network
+version=system
+vendor=SavanXP
+subsystem=native
+accent=2f6f3f
+icon=desktop
+category=System

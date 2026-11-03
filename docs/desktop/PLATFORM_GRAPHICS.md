@@ -29,14 +29,14 @@ and `stdlib.h`.
 
 ## Where each piece lives
 
-| Piece | Platform (`system/gfx`, `include/sxgfx`) | POSIX (`subsystems/posix/sdk/v1`) |
-|---|---|---|
-| Pixel primitives and fonts | `pixels.c`, `pixels.h`, the font tables, `gfx_utf8.inc` | — |
-| Painter, bitmaps, regions (SXGFX) | `gfx2d.c`, `gfx2d.h` | `runtime/gfx_scaled.c`: `sx_scaled_presenter`, which presents onto a POSIX window |
-| System 3D edges (SXCHROME) | `sxchrome.c`, `sxchrome.h` | — |
-| 3D rasterizer (SxGL, [SXGL.md](SXGL.md)) | `sxgl.c`, `sxgl.h` | — (the program presents what it drew) |
-| Widget toolkit (SXGUI-C) | `sxgui.c`, `sxgui.h` | `runtime/sxgui_app.c`: the application frame over a POSIX window, and the toolkit's POSIX host |
-| Window client | — | `runtime/gfx.c` + `gfx_impl.inc`: `gfx_open`, `gfx_present`, `gfx_poll_event`, owned windows, launching |
+| Piece | Platform (`system/gfx`, `include/sxgfx`) | POSIX (`subsystems/posix/sdk/v1`) | SUN (`system/runtime`, `include/sxn`) |
+|---|---|---|---|
+| Pixel primitives and fonts | `pixels.c`, `pixels.h`, the font tables, `gfx_utf8.inc` | — | — |
+| Painter, bitmaps, regions (SXGFX) | `gfx2d.c`, `gfx2d.h` | `runtime/gfx_scaled.c`: `sx_scaled_presenter`, which presents onto a POSIX window | — |
+| System 3D edges (SXCHROME) | `sxchrome.c`, `sxchrome.h` | — | — |
+| 3D rasterizer (SxGL, [SXGL.md](SXGL.md)) | `sxgl.c`, `sxgl.h` | — (the program presents what it drew) | — |
+| Widget toolkit (SXGUI-C) | `sxgui.c`, `sxgui.h` | `runtime/sxgui_app.c`: the application frame over a POSIX window, and the toolkit's POSIX host | `sxngui.c` + `sxngui.h`: the frame over `sxnwm`, and the SUN host |
+| Window client | — | `runtime/gfx.c` + `gfx_impl.inc`: `gfx_open`, `gfx_present`, `gfx_poll_event`, owned windows, launching | `sxnwm.h`: `sxnwm_connect`, `sxnwm_submit_full`, the input ring, owned windows |
 
 The POSIX SDK keeps `savanxp/gfx2d.h`, `savanxp/sxchrome.h` and
 `savanxp/sxgui.h`. Each includes its platform header and adds what only a
@@ -66,14 +66,25 @@ without calling anything, including the ones that drive the widgets without
 `sxgui_app` (`seltest`). A program without a host keeps working, degraded: no
 double click, nothing to paste, copy fails.
 
-A SUN program has no host yet. The first SUN program that uses the toolkit
-brings two things: a SUN host (`sxgui_set_host`), and an application frame
-over `sxnwm`, the counterpart of `sxgui_app.c`. That follows rule 1 of
-[SUN.md](../userland/SUN.md#the-direction-the-systems-own-api): a call lands
-with its consumer.
+A SUN program has its host in `system/runtime/sxngui.c` (`sxngui_host()`):
+the clock is `sxn_clock_ns`, the clipboard `/dev/clipboard` through
+`sxn_open_device`. A native program links the whole user runtime, POSIX frame
+included, so the strong POSIX `sxgui_default_host` is in it too; that is why
+the SUN frame installs its host with `sxgui_set_host` instead of relying on
+the default. It came with Task Manager, the first SUN program that uses the
+toolkit, as rule 1 of
+[SUN.md](../userland/SUN.md#the-direction-the-systems-own-api) asks.
 
-Dialogs already work the same way: `struct sxgui_dialog_host` gives them a
-window of their own, and `sxgui_app` is the host that provides it.
+The frame (`sxngui_app_*`, `include/sxn/sxngui.h`) is the counterpart of
+`sxgui_app.c` over `sxnwm`: the same hooks (`on_key`, `on_pointer`,
+`on_paint`, `on_resize`, `on_tick`), and dialogs in owned windows. Its names
+differ because both frames end up linked into a native program. Where the
+POSIX loop sleeps 16 ms between passes, this one waits on the window's wake
+event and the dialogs' pipe with a timeout until the next tick, so an idle
+window does not wake up.
+
+Dialogs work the same way: `struct sxgui_dialog_host` gives them a window of
+their own, and each frame is the host that provides it.
 
 ## The window protocol
 

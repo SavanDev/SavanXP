@@ -5,7 +5,7 @@ this", which are two different questions with two different windows behind them.
 
 The split is deliberate:
 
-- **Task Manager** (`/bin/taskmgr`) shows *state*: what is running, what it
+- **Task Manager** (`/bin/taskmgr.sxe`, a SUN program) shows *state*: what is running, what it
   costs, how full the machine is. Everything it shows changes while you look at
   it.
 - **System Properties** (`/bin/aboutapp`) shows *identity*: which system this
@@ -242,20 +242,23 @@ Driving the PRO/1000 needs an `e1000` driver that does not exist yet.
 
 ## Ending a process
 
-End Process sends `SIGKILL` and reads the answer. The kernel refuses two
-cases in two different ways, and the window treats them differently:
+End Process asks `SXN_SYS_TERMINATE` to end the process and reads the
+answer. The kernel refuses two cases in two different ways, and the window
+treats them differently:
 
 - **`EACCES`: nobody may.** The idle processes and `init` cannot be ended by
   anyone, elevated or not. The button is disabled on an idle row, and ending
   `init` shows *Unable to Terminate Process — Access is denied.*
-- **`EPERM`: not yours.** Since the desktop runs as the user, the system's
-  processes (`windowd`, `compositord`, the services) are not the user's to end
+- **`EPERM`: not yours.** `SXN_SYS_TERMINATE` follows kill's rule (slice 27
+  in [`KERNEL_NATIVE_API.md`](../kernel/KERNEL_NATIVE_API.md)). Since the
+  desktop runs as the user, the system's processes (`windowd`, `compositord`,
+  the services) are not the user's to end
   ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation)).
-  The Task Manager then asks the elevation broker to run
-  `/bin/taskmgr --end <pid>`, and that elevated half does the kill. The window
-  itself never gains the rights, which is the same split Add or Remove Programs
-  uses for `appwiz --uninstall`. A *No* at the prompt is the user's decision
-  and shows nothing.
+  The Task Manager then asks the elevation broker (`sxn_elevate`) to run
+  `/bin/taskmgr.sxe --end <pid>`, and that elevated half ends it. The window
+  itself never gains the rights, which is the same split Add or Remove
+  Programs uses for `appwiz --uninstall`. A *No* at the prompt is the user's
+  decision and shows nothing.
 
 `elevation-smoke` exercises the second path end to end: the user's kill of a
 process the system started is `EPERM`, and the elevated `taskmgr --end` ends

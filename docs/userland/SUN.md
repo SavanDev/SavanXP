@@ -49,6 +49,7 @@ the name of the layer, not a rename of its symbols.
 | Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer | `user32` (window + message loop) |
 | Sound | `include/sxn/sxnaudio.h` | a PCM stream to `audiod` through its native port, or to `/dev/audio0` directly when no daemon runs, paced by the clock | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
+| Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows | `comctl32` + the message loop |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
 | Shared rendering | SXGFX, SXCHROME, SXGUI-C (`system/gfx`, `include/sxgfx`) | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |
@@ -60,9 +61,10 @@ painter's console face and its scroll bar with SXCHROME. SXGUI-C needs three
 services from the system (clipboard read and write, and the uptime for double
 clicks), and takes them from a `struct sxgui_host`
 ([PLATFORM_GRAPHICS.md](../desktop/PLATFORM_GRAPHICS.md#the-toolkits-host)). A
-POSIX program gets the POSIX host without asking. A SUN program has none yet:
-the first one that uses the toolkit brings a SUN host, and the application
-frame it needs over `sxnwm`, by rule 1.
+POSIX program gets the POSIX host without asking. A SUN program gets the SUN
+host and an application frame over `sxnwm` from `sxn/sxngui.h`
+(`sxngui_app_*`), which Task Manager brought as the first SUN program drawn
+with the toolkit.
 
 ### Resources compiled in
 
@@ -147,10 +149,12 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `waveOutOpen`/`waveOutWrite`, XAudio2 | `sxnaudio_open`, `sxnaudio_frames_due`, `sxnaudio_write` | done (Nightwood); mixed by `audiod` when it runs ([AUDIO_DAEMON.md](../media/AUDIO_DAEMON.md#sun-clients)) |
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
-| Clipboard | `/dev/clipboard` through `sxn_open_device` | missing: no consumer yet |
+| Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
 | `CreateFile` and the file API | — | missing: SUN has no files |
 | Registry / profile settings | — | missing (needs files) |
-| Owned windows and dialogs | — | missing: SXGUI-C draws dialogs inside the window instead |
+| Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs in them | done (Task Manager) |
+| `SetCursor` | `sxnwm_set_cursor_shape` | done |
+| `comctl32` + a message loop | `sxngui_app_init`, `sxngui_app_run` (`sxn/sxngui.h`) | done (Task Manager) |
 
 ## Slices driven by the console
 
@@ -195,6 +199,6 @@ none of them a kernel slice: everything they need was already open to SUN.
 
 ## Not there (deliberately)
 
-Files, a registry, owned windows, the clipboard, the SXGUI-C toolkit, signals (the kernel
+Files, a registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
 and a native `fork`. Each one waits for a consumer, by rule 1.

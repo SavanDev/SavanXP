@@ -239,7 +239,7 @@ static void end_elevated(void)
     check(g_victim > 0, "the system's process to end is running");
     check(savanxp_kill((int)g_victim, SAVANXP_SIGKILL) == -SAVANXP_EPERM,
         "the user cannot end the system's process");
-    pid = elevate("/bin/taskmgr", taskmgr_argv, 3, &status);
+    pid = elevate("/bin/taskmgr.sxe", taskmgr_argv, 3, &status);
     check(pid > 0, "the end request is accepted");
     check(pid > 0 && status == 0, "taskmgr --end reports the process ended");
     check(process_ended(g_victim), "the system's process has ended");

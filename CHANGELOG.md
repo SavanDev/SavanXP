@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs can use the SXGUI toolkit** through `sxn/sxngui.h` (`sxngui_app_init`,
+  `sxngui_app_run`), with dialogs in owned windows (`sxnwm_window_open`, `sxnwm_poll_owned_input`)
+  and `sxnwm_set_cursor_shape`. See `docs/desktop/PLATFORM_GRAPHICS.md`.
+
 - **SUN programs can read the process table and the system** (`SXN_SYS_PROCESS_SNAPSHOT`,
   `SXN_SYS_SYSTEM_INFO`, `sxn_process_snapshot`, `sxn_system_info`) and ask for elevation
   (`sxn_elevate` in `sxn/sxnelevate.h`). `savanxp_process_info` gains `kernel_ticks`,
@@ -61,6 +65,10 @@ Cut-off notes:
   `docs/build/BUILD_LINUX.md#the-qemu-window`.
 
 ### Changed
+
+- **Task Manager is a SUN program**, `/bin/taskmgr.sxe`, built from `system/taskmgr`; the POSIX
+  `/bin/taskmgr` is removed from the image. It looks and behaves as before, and its idle window no
+  longer wakes up between refreshes.
 
 - **`SXN_SYS_TERMINATE` follows kill's rule**: a descendant, a process of the caller's uid, or any
   when the caller acts as the system; otherwise `-EPERM` (was `-ECHILD`). Idle and init are

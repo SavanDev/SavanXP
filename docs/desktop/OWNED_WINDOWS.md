@@ -154,8 +154,9 @@ already in use, or when there is no free overlay slot.
 
 ## The toolkit
 
-`struct sxgui_dialog_host` gives a context's dialogs a window. `sxgui_app_run`
-is the only host: it attaches itself when the loop starts, pumps the dialog
+`struct sxgui_dialog_host` gives a context's dialogs a window. Each
+application frame is a host: POSIX's `sxgui_app_run` and SUN's
+`sxngui_app_run` (`include/sxn/sxngui.h`). The POSIX one attaches itself when the loop starts, pumps the dialog
 window's keyboard, pointer and close request, and paints it with
 `sxgui_paint_dialog_window`. The dialog API did not change, so every app using
 `sxgui_app_run` got windowed dialogs without edits.
@@ -180,6 +181,18 @@ Two consequences worth remembering:
   descriptor cost, Alt+F4 closing it (and then closing a main window with its
   process), and both windows disappearing when the owner is terminated with a
   dialog open.
+
+## Native clients
+
+A native client takes its main window's input from the input ring
+(`SAVANXP_WM_HELLO_INPUT_RING`), and the WM never writes that window's
+records to the event pipe. The pipe still exists, and an owned window is an
+ordinary non-ring client of the WM, so everything about owned windows reaches
+a native owner there: the surface handle, then the dialog's records tagged
+with its `window_id`. `sxnwm.h` reads it with `sxn_pipe_receive_handle` and
+non-blocking `sxn_read` (`sxnwm_window_open`, `sxnwm_poll_owned_input`); the
+WM needed no change. The pipe is a wait target, so the SUN frame waits on it
+together with the wake event: the WM sets no event for a pipe record.
 
 ## Not done yet
 

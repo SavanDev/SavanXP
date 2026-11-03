@@ -33,8 +33,10 @@ function(savanxp_program)
     if(P_NATIVE)
         set_property(GLOBAL APPEND PROPERTY SAVANXP_NATIVE_TARGETS ${P_NAME})
         # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page
-        # source on SXN, replacing the runtime's weak POSIX one.
-        target_sources(${P_NAME} PRIVATE system/runtime/sxn_runtime.c)
+        # source on SXN, replacing the runtime's weak POSIX one; and the SXGUI
+        # application frame for SUN (include/sxn/sxngui.h), which the linker
+        # drops from programs that do not call it.
+        target_sources(${P_NAME} PRIVATE system/runtime/sxn_runtime.c system/runtime/sxngui.c)
     endif()
     target_sources(${P_NAME} PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
     target_include_directories(${P_NAME} PRIVATE
@@ -377,8 +379,6 @@ savanxp_program(NAME appwiz DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE 
     subsystems/posix/userland/appwiz_catalog.c)
 savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME taskmgr DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/taskmgr.c)
 savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c

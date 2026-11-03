@@ -39,7 +39,14 @@ The SUN headers, all header-only, no link or tool changes needed:
   rectangles, wait for composed or idle, drain the input ring, ask for a
   size and follow resizes, see the close request, and publish the title and
   icon (`sxnwm_set_title`, `sxnwm_set_presentation`), and capture the pointer
-  for relative motion (`sxnwm_set_pointer_capture`).
+  for relative motion (`sxnwm_set_pointer_capture`); set the cursor shape
+  (`sxnwm_set_cursor_shape`) and open owned windows (`sxnwm_window_open`,
+  `sxnwm_window_close`, `sxnwm_poll_owned_input`).
+- `include/sxn/sxngui.h` — the SXGUI application frame
+  (`sxngui_app_init`, `sxngui_app_run`, the `on_*` hooks) over `sxnwm`, with
+  dialogs in owned windows and the toolkit's SUN host; the counterpart of
+  POSIX's `sxgui_app`. Built from `system/runtime/sxngui.c`, which every
+  native program links.
 - `include/sxn/sxnelevate.h` — `sxn_elevate`: ask the elevation broker to
   run a program with the system's rights, behind the consent prompt
   ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md#elevation)).
@@ -73,7 +80,7 @@ native too, but they are not programs of the POSIX subsystem: they live in
 `savanxp_system_service`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
-in `sxn_exit`. Five are:
+in `sxn_exit`. Six are:
 
 - `compositord`: the GPU through `SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, the
   display memory a section it creates, and a port of its own that `windowd`
@@ -88,6 +95,12 @@ in `sxn_exit`. Five are:
 - `nightwood`: the forest game ([NIGHTWOOD.md](NIGHTWOOD.md)), the first game
   written against SUN: a window through `sxnwm.h`, 3D through SxGL into a
   bitmap of its own, scaled up and presented with `sxnwm_submit_full`.
+- `taskmgr`: Task Manager
+  ([SYSTEM_MONITORING.md](SYSTEM_MONITORING.md)), the first SUN program
+  drawn with the SXGUI toolkit: its frame is `sxn/sxngui.h`, its dialogs are
+  owned windows, it reads the process table with `sxn_process_snapshot`, and
+  it ends a process with `sxn_terminate`, elevating through `sxn_elevate`
+  when the process is not the user's.
 - `windowd`: written against the POSIX SDK and kept that way; `windowd_sys.h`
   renames its POSIX calls to SXN equivalents in `windowd_sys.c`. A large
   program can move to the native API that way, one renamed call at a time,
@@ -157,7 +170,6 @@ from the menu, the manifest is the first suspect.
 
 ## Not there (deliberately)
 
-Native owned dialogs, native fork, sockets and files, and toolkit
-widgets beyond the seed. Per-handle inheritance is `sxn_spawn_ex`, by
+Native fork, sockets and files. Per-handle inheritance is `sxn_spawn_ex`, by
 naming the handles; there is no `FD_CLOEXEC`-style flag on a handle. See
 `KERNEL_NATIVE_API.md` and [SUN.md](SUN.md) for the standing list.

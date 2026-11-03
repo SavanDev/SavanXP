@@ -1,5 +1,5 @@
 /*
- * Task Manager.
+ * Task Manager, a SUN program (docs/userland/SUN.md).
  *
  * The system monitor in the shape of the classic Task Manager: Processes,
  * Performance and Networking tabs, a status bar with the usual three numbers,
@@ -12,7 +12,7 @@
  * the global one, and each process's percentage is its share of that pie. The
  * system's usage is what the idle processes, one per core, did NOT take. That
  * is why everything shown comes from comparing two samples: one alone says
- * nothing.
+ * nothing (docs/userland/SYSTEM_MONITORING.md).
  *
  * With several cores the pie is all of them together: a process that keeps
  * one core of four busy reads 25%, as in the classic Task Manager.
@@ -22,27 +22,39 @@
  * not empty ones.
  */
 
-#include "libc.h"
-#include "savanxp/sxgui.h"
-
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-/* ---- limites --------------------------------------------------------------
+#include "abi/savanxp_abi.h"
+#include "sxgfx/gfx2d.h"
+#include "sxgfx/pixels.h"
+#include "sxgfx/sxchrome.h"
+#include "sxgfx/sxgui.h"
+#include "sxn/sxn.h"
+#include "sxn/sxnelevate.h"
+#include "sxn/sxngui.h"
+
+#include "taskmgr.sunres.h"
+
+/* ---- limits ----------------------------------------------------------------
  *
- * El kernel tiene 64 slots de proceso (process::kMaxProcesses) y 64 handles por
- * proceso; enumerar mas que eso no es posible, asi que las tablas de aca se
- * dimensionan con ese tope y no hace falta paginar. */
+ * The kernel has 64 process slots (process::kMaxProcesses) and 64 handles per
+ * process; enumerating more than that is impossible, so the tables here are
+ * sized to that ceiling and need no paging. */
 #define TASKMGR_MAX_PROCESSES 64
 #define TASKMGR_NAME_CAPACITY 32
 #define TASKMGR_ROW_CAPACITY 96
-/* Muestras de historia de los graficos. A la velocidad normal (1 s) son dos
- * minutos, que es lo que entra a un pixel por muestra en una ventana comoda. */
+/* Samples of graph history. At the normal speed (1 s) that is two minutes,
+ * which is what fits at one pixel per sample in a comfortable window. */
 #define TASKMGR_HISTORY 120
 
-/* ---- pestanias ------------------------------------------------------------ */
+#define TASKMGR_PATH "/bin/taskmgr.sxe"
+/* What POSIX's kill reports for SIGKILL, so a parent's waitpid reads the same
+ * whichever subsystem ended its child. */
+#define TASKMGR_END_STATUS (128 + 9)
+
+/* ---- tabs ------------------------------------------------------------------- */
 
 #define TASKMGR_TAB_PROCESSES 0
 #define TASKMGR_TAB_PERFORMANCE 1
@@ -51,15 +63,15 @@
 static const char *const k_tab_labels[] = {"Processes", "Performance", "Networking"};
 #define TASKMGR_TAB_COUNT ((int)(sizeof(k_tab_labels) / sizeof(k_tab_labels[0])))
 
-/* ---- grilla --------------------------------------------------------------- */
+/* ---- grid ------------------------------------------------------------------- */
 
 #define TASKMGR_MARGIN SXGUI_MARGIN
 #define TASKMGR_ROW 18
 #define TASKMGR_PAGE_PAD 10
-/* Alto que necesita una caja de grupo para mostrar `rows` filas enteras. La
- * cuenta tiene que incluir lo que draw_group se queda: la media altura del
- * rotulo que se monta sobre el borde de arriba, y el aire de los dos lados.
- * Clavar "filas * paso + algo" fue lo que dejo la ultima fila cortada. */
+/* Height a group box needs to show `rows` whole rows. The sum has to include
+ * what draw_group keeps for itself: half the height of the caption riding on
+ * the top edge, and the air on both sides. Pinning it to "rows * step + a
+ * bit" is what left the last row cut off. */
 #define TASKMGR_GROUP_HEIGHT(rows) \
     ((rows) * TASKMGR_ROW + TASKMGR_ROW / 2 + (SXGUI_GAP * 2) + 4)
 #define TASKMGR_DEFAULT_WIDTH 560
@@ -67,15 +79,15 @@ static const char *const k_tab_labels[] = {"Processes", "Performance", "Networki
 #define TASKMGR_MIN_WIDTH 420
 #define TASKMGR_MIN_HEIGHT 320
 
-/* Colores del panel de graficos. Son los del original: fondo negro, grilla
- * verde apagada y trazo verde encendido. No salen de la paleta 3D del toolkit
- * a proposito -- un grafico no es un control. */
+/* The graph panel's colours are the original's: black background, dim green
+ * grid and bright green trace. They do not come from the toolkit's 3D palette
+ * on purpose -- a graph is not a control. */
 #define TASKMGR_GRAPH_BACKGROUND SXGUI_RGB(0, 0, 0)
 #define TASKMGR_GRAPH_GRID SXGUI_RGB(0, 72, 0)
 #define TASKMGR_GRAPH_LINE SXGUI_RGB(0, 255, 0)
 #define TASKMGR_GRAPH_LINE_ALT SXGUI_RGB(255, 216, 0)
 
-/* ---- comandos del menu ---------------------------------------------------- */
+/* ---- menu commands ------------------------------------------------------------ */
 
 enum taskmgr_command {
     TASKMGR_CMD_NEW_TASK = 1,
@@ -97,9 +109,9 @@ static struct sxgui_menu_item k_file_items[] = {
     {"Exit Task Manager", TASKMGR_CMD_EXIT, 0},
 };
 
-/* El original ponia las velocidades en un submenu de View. sxgui tiene menus de
- * un solo nivel, asi que van en el mismo desplegable, separadas por una linea:
- * es la misma eleccion, con un click menos. */
+/* The original put the speeds in a submenu of View. SXGUI's menus have one
+ * level, so they go in the same drop-down, behind a separator: the same
+ * choice, one click shorter. */
 static struct sxgui_menu_item k_view_items[] = {
     {"Refresh Now\tF5", TASKMGR_CMD_REFRESH, 0},
     {0, 0, 0},
@@ -130,14 +142,14 @@ static const struct sxgui_menu k_menus[] = {
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
 };
 
-/* Indices dentro de k_view_items de las cuatro velocidades, para mover la
- * tilde: el orden de la tabla y estos numeros tienen que moverse juntos. */
+/* Indices of the four speeds inside k_view_items, to move the check mark:
+ * the table's order and these numbers have to move together. */
 #define TASKMGR_SPEED_FIRST_ITEM 2
 #define TASKMGR_SPEED_COUNT 4
 
 static const unsigned long k_speed_ms[TASKMGR_SPEED_COUNT] = {500ul, 1000ul, 4000ul, 0ul};
 
-/* ---- estado --------------------------------------------------------------- */
+/* ---- state -------------------------------------------------------------------- */
 
 struct taskmgr_sample {
     uint32_t pid;
@@ -148,19 +160,20 @@ struct taskmgr_sample {
     uint64_t cpu_ticks;
     uint64_t memory_bytes;
     char name[TASKMGR_NAME_CAPACITY];
-    /* Porcentaje calculado contra la muestra anterior; 0 en la primera. */
+    /* Percentage against the previous sample; 0 on the first. */
     unsigned int cpu_percent;
 };
 
-static struct sxgui_app g_app;
+static struct sxngui_app g_app;
 static struct sxgui_menubar g_menubar;
+static uint32_t g_self_pid;
 
 static struct taskmgr_sample g_processes[TASKMGR_MAX_PROCESSES];
 static int g_process_count;
 
-/* La muestra anterior, para las diferencias. Se guarda entera y no solo el
- * contador porque hay que reencontrar cada proceso por pid: los indices se
- * corren en cuanto alguien arranca o termina. */
+/* The previous sample, for the differences. Kept whole and not only the
+ * counter because every process has to be found again by pid: the indices
+ * shift as soon as something starts or ends. */
 static struct taskmgr_sample g_previous[TASKMGR_MAX_PROCESSES];
 static int g_previous_count;
 static uint64_t g_previous_ticks_total;
@@ -193,7 +206,13 @@ static char g_status_processes[48];
 static char g_status_cpu[48];
 static char g_status_memory[64];
 
-/* ---- widgets -------------------------------------------------------------- */
+/* Programs started from New Task and System Properties, to be reaped once
+ * they end. One that does not fit is reaped by init when this one exits. */
+#define TASKMGR_LAUNCHED_CAPACITY 8
+static long g_launched[TASKMGR_LAUNCHED_CAPACITY];
+static int g_launched_count;
+
+/* ---- widgets ------------------------------------------------------------------- */
 
 static struct sxgui_widget g_widgets[6];
 #define TASKMGR_TABS (&g_widgets[0])
@@ -218,12 +237,12 @@ static struct sxgui_column g_columns[] = {
 };
 #define TASKMGR_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
 
-/* ---- dialogos ------------------------------------------------------------- */
+/* ---- dialogs -------------------------------------------------------------------- */
 
 #define TASKMGR_DIALOG_MARGIN SXGUI_DIALOG_MARGIN
-/* El ancho lo fija la advertencia de terminar un proceso, que es la linea mas
- * larga que muestra el dialogo. Un dialogo no tiene scroll: la unica forma de
- * que el texto se lea entero es que el dialogo lo contenga. */
+/* The width is set by the warning about ending a process, the longest line
+ * the dialog shows. A dialog has no scrolling: the only way the text reads
+ * whole is for the dialog to hold it. */
 #define TASKMGR_CONFIRM_WIDTH 404
 #define TASKMGR_CONFIRM_HEIGHT 128
 #define TASKMGR_RUN_WIDTH 360
@@ -246,7 +265,7 @@ static struct sxgui_widget g_message_widgets[3];
 static char g_message_line[96];
 static char g_message_detail[96];
 
-/* ---- utilidades ----------------------------------------------------------- */
+/* ---- utilities -------------------------------------------------------------------- */
 
 static int centred_button_x(int dialog_width, int count, int index)
 {
@@ -254,8 +273,9 @@ static int centred_button_x(int dialog_width, int count, int index)
         (index * (SXGUI_BUTTON_WIDTH + SXGUI_GAP));
 }
 
-/* Miles separados por coma, como los "1,234 K" del original. El printf del SDK
- * no agrupa, asi que el numero se arma al reves y se da vuelta. */
+/* Thousands separated by commas, like the original's "1,234 K". The SDK's
+ * printf does not group, so the number is built backwards and turned
+ * around. */
 static void format_grouped(uint64_t value, char *out, size_t capacity)
 {
     char reversed[32];
@@ -337,36 +357,83 @@ static void push_history(unsigned char *history, unsigned char value)
     history[TASKMGR_HISTORY - 1] = value;
 }
 
-/* ---- muestreo -------------------------------------------------------------
+/* ---- starting programs -------------------------------------------------------------- *
  *
- * Una pasada: leer el sistema, leer los procesos, calcular los porcentajes
- * contra la muestra anterior y recien entonces guardar esta como anterior. */
+ * A program connects to windowd on its own, so starting one is a spawn here;
+ * a POSIX program starts from a SUN parent like from any other. Only stdio
+ * crosses: the window's channels are this process's alone. */
+
+static void reap_launched(void)
+{
+    int index = 0;
+
+    while (index < g_launched_count)
+    {
+        struct sxn_process_query query;
+        int status = 0;
+
+        if (sxn_process_query(g_launched[index], &query) == 0 && query.state == SXN_PROCESS_RUNNING)
+        {
+            index += 1;
+            continue;
+        }
+        /* Ended (or already gone): the wait returns at once. */
+        (void)sxn_waitpid(g_launched[index], &status);
+        g_launched[index] = g_launched[g_launched_count - 1];
+        g_launched_count -= 1;
+    }
+}
+
+static long launch(const char *path)
+{
+    char *argv[2];
+    long pid;
+
+    if (path == 0 || path[0] != '/')
+    {
+        return -SAVANXP_EINVAL;
+    }
+    reap_launched();
+    argv[0] = (char *)path;
+    argv[1] = 0;
+    pid = sxn_spawn_stdio(path, argv, 1);
+    if (pid > 0 && g_launched_count < TASKMGR_LAUNCHED_CAPACITY)
+    {
+        g_launched[g_launched_count++] = pid;
+    }
+    return pid;
+}
+
+/* ---- sampling ---------------------------------------------------------------------- *
+ *
+ * One pass: read the system, read the processes, compute the percentages
+ * against the previous sample, and only then keep this one as the previous. */
 
 static void sample_network(void)
 {
     struct savanxp_net_info info;
-    long fd;
-    uint32_t frames;
-    unsigned long now_ms = uptime_ms();
+    long device;
+    unsigned long now_ms = sxngui_uptime_ms();
     unsigned long elapsed_ms;
+    uint32_t frames;
 
     memset(&info, 0, sizeof(info));
-    /* Se abre y se cierra en cada muestra: mantener el device abierto le
-     * costaria un descriptor permanente a una pestania que puede no mirarse
-     * nunca. Solo GET_INFO -- este programa observa, no levanta la interfaz. */
-    fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
-    if (fd < 0)
+    /* Opened and closed on every sample: keeping the device open would cost
+     * a permanent handle for a tab that may never be looked at. GET_INFO only
+     * -- this program observes, it does not bring the interface up. */
+    device = sxn_open_device("net0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    if (device < 0)
     {
         g_net_available = 0;
         return;
     }
-    if (savanxp_ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info) < 0)
+    if (sxn_device_control(device, NET_IOC_GET_INFO, (unsigned long)&info) < 0)
     {
-        savanxp_close((int)fd);
+        (void)sxn_close(device);
         g_net_available = 0;
         return;
     }
-    savanxp_close((int)fd);
+    (void)sxn_close(device);
 
     g_net = info;
     g_net_available = info.present != 0;
@@ -375,9 +442,9 @@ static void sample_network(void)
         return;
     }
 
-    /* El intervalo se MIDE, no se deduce del refresco elegido: con la
-     * actualizacion pausada, el unico muestreo que hay es el de un Refresh a
-     * mano, y dividir por el periodo del menu daria una tasa inventada. */
+    /* The interval is MEASURED, not derived from the chosen refresh: with
+     * updates paused the only sample is a manual Refresh, and dividing by the
+     * menu's period would make a rate up. */
     frames = info.tx_frames + info.rx_frames;
     elapsed_ms = now_ms > g_net_previous_ms ? (now_ms - g_net_previous_ms) : 0ul;
     if (elapsed_ms != 0ul && frames >= g_net_previous_frames)
@@ -406,11 +473,11 @@ static const struct taskmgr_sample *selected_sample(void)
 }
 
 /*
- * El proceso ocioso no se puede terminar -- es a donde vuelve el planificador
- * cuando no hay nada listo --, asi que el boton y el comando del menu se apagan
- * cuando es el elegido. Deshabilitarlos y no esconderlos: que exista pero no se
- * pueda es informacion sobre ese proceso; un boton que desaparece y vuelve
- * segun la fila es una ventana que cambia de forma sola.
+ * The idle process cannot be ended -- it is where the scheduler goes when
+ * nothing is ready -- so the button and the menu command are disabled while
+ * it is the one selected. Disabled, not hidden: that it exists but cannot be
+ * ended is information about that process; a button that disappears and
+ * comes back with the row is a window changing shape on its own.
  */
 static void update_end_command(void)
 {
@@ -466,12 +533,12 @@ static void refresh_sample(void)
     int index;
 
     memset(&g_info, 0, sizeof(g_info));
-    (void)system_info(&g_info);
+    (void)sxn_system_info(&g_info);
 
     g_process_count = 0;
     g_total_handles = 0;
     memset(&info, 0, sizeof(info));
-    while (g_process_count < TASKMGR_MAX_PROCESSES && proc_info(proc_index, &info) > 0)
+    while (g_process_count < TASKMGR_MAX_PROCESSES && sxn_process_snapshot(proc_index, &info) > 0)
     {
         struct taskmgr_sample *sample = &g_processes[g_process_count];
 
@@ -518,18 +585,19 @@ static void refresh_sample(void)
         }
     }
 
-    /* El uso del sistema es lo que el ocioso NO se llevo. Si el ocioso no
-     * aparecio en la muestra anterior -- la primera pasada -- queda en cero, que
-     * es lo honesto: todavia no hay intervalo que medir. */
+    /* The system's usage is what the idle processes did NOT take. When the
+     * idle did not appear in the previous sample -- the first pass -- it stays
+     * at zero, which is the honest answer: there is no interval to measure
+     * yet. */
     g_cpu_percent = 0;
     if (ticks_delta != 0ull && idle_delta <= ticks_delta)
     {
         g_cpu_percent = (unsigned int)(((ticks_delta - idle_delta) * 100ull) / ticks_delta);
     }
 
-    /* La memoria sale del pool del asignador de paginas, no del mapa de memoria
-     * del boot: total y libre tienen que venir de la misma cuenta o el "en uso"
-     * no cierra. */
+    /* Memory comes from the page allocator's pool, not from the boot memory
+     * map: total and free have to come from the same count or "in use" does
+     * not add up. */
     g_memory_total_bytes = g_info.memory_total_pages * 4096ull;
     g_memory_used_bytes = g_memory_total_bytes > g_info.memory_free_bytes
         ? g_memory_total_bytes - g_info.memory_free_bytes
@@ -565,11 +633,11 @@ static void refresh_sample(void)
              (unsigned long long)(g_memory_total_bytes / (1024ull * 1024ull)));
 }
 
-/* ---- layout ---------------------------------------------------------------
+/* ---- layout -------------------------------------------------------------------------
  *
- * Se recalcula a partir del tamano de la ventana, no al reves: esta ventana se
- * estira y su contenido es una lista y unos graficos que tienen que aprovechar
- * lo que haya. */
+ * Computed from the window's size, not the other way round: this window
+ * stretches, and its content is a list and some graphs that have to use
+ * whatever room there is. */
 
 static int content_top(void)
 {
@@ -578,8 +646,8 @@ static int content_top(void)
 
 static void relayout(void)
 {
-    int width = (int)g_app.gfx.info.width;
-    int height = (int)g_app.gfx.info.height;
+    int width = (int)g_app.info.width;
+    int height = (int)g_app.info.height;
     int top = content_top() + TASKMGR_MARGIN;
     int status_y = height - TASKMGR_MARGIN - SXGUI_STATUS_HEIGHT;
     int tabs_height = status_y - SXGUI_GAP - top;
@@ -625,8 +693,8 @@ static void relayout(void)
         SXGUI_BUTTON_WIDTH + 26,
         SXGUI_BUTTON_HEIGHT);
 
-    /* La barra de estado son tres paneles hundidos, como la del original: el
-     * primero se lleva lo que sobra y los otros dos miden lo suyo. */
+    /* The status bar is three sunken panels, like the original's: the first
+     * takes what is left and the other two measure their own. */
     panel_width = 150;
     TASKMGR_STATUS_MEMORY->rect = sx_rect_make(
         width - TASKMGR_MARGIN - panel_width, status_y, panel_width, SXGUI_STATUS_HEIGHT);
@@ -637,8 +705,8 @@ static void relayout(void)
         TASKMGR_STATUS_CPU->rect.x - SXGUI_GAP - TASKMGR_MARGIN, SXGUI_STATUS_HEIGHT);
 }
 
-/* Los controles de la lista solo existen en su pestania; en las otras dos el
- * contenido lo pinta la app y dejarlos visibles seria dibujarlos encima. */
+/* The list's controls exist only on their tab; on the other two the app
+ * paints the content, and leaving them visible would draw them on top. */
 static void apply_tab_visibility(void)
 {
     int on_processes = TASKMGR_TABS->value == TASKMGR_TAB_PROCESSES;
@@ -655,7 +723,7 @@ static void apply_tab_visibility(void)
     }
 }
 
-/* ---- pintado -------------------------------------------------------------- */
+/* ---- painting ------------------------------------------------------------------------- */
 
 static void draw_etched(struct sx_painter *painter, struct sx_rect rect)
 {
@@ -667,10 +735,11 @@ static void draw_etched(struct sx_painter *painter, struct sx_rect rect)
                           SXGUI_COLOR_SHADOW);
 }
 
-/* Marco de grupo identico al del toolkit (sxgui_paint_groupbox): el rotulo se
- * monta sobre el borde de arriba, con el fondo de la ventana detras. Se dibuja
- * a mano y no con widgets porque estos marcos cambian con la pestania activa, y
- * como widgets habria que prenderlos y apagarlos en cada cambio. */
+/* A group frame identical to the toolkit's (sxgui_paint_groupbox): the
+ * caption rides on the top edge, with the window's background behind it.
+ * Drawn by hand and not as widgets because these frames change with the
+ * active tab, and as widgets they would have to be switched on and off on
+ * every change. */
 static struct sx_rect draw_group(struct sx_painter *painter, struct sx_rect rect, const char *title)
 {
     struct sx_rect frame = rect;
@@ -690,14 +759,14 @@ static struct sx_rect draw_group(struct sx_painter *painter, struct sx_rect rect
         sx_painter_draw_text(painter, text_x, rect.y, title, SXGUI_COLOR_TEXT);
     }
 
-    /* Area util: adentro del marco y con aire, que es donde va el contenido. */
+    /* The usable area: inside the frame, with some air, where content goes. */
     return sx_rect_make(frame.x + SXGUI_GAP, frame.y + SXGUI_GAP,
                         frame.width - (SXGUI_GAP * 2), frame.height - (SXGUI_GAP * 2));
 }
 
-/* Medidor vertical: la barra que el original dibuja al lado de cada grafico.
- * El relleno va por bloques con un pixel de corte, que es lo que le da el
- * aspecto de segmentos en vez de barra lisa. */
+/* The vertical meter the original draws beside each graph. The fill goes in
+ * blocks with a one-pixel gap, which is what makes it look segmented rather
+ * than a plain bar. */
 static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned int percent, uint32_t colour)
 {
     struct sx_rect inner;
@@ -724,9 +793,9 @@ static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned
     }
 }
 
-/* Grafico de historia: grilla fija y una muestra por pixel, de derecha a
- * izquierda. Las muestras viejas viven al principio del arreglo, asi que la
- * ultima siempre cae contra el borde derecho aunque todavia no se haya llenado. */
+/* A history graph: a fixed grid and one sample per pixel, right to left. The
+ * old samples live at the start of the array, so the newest always lands on
+ * the right edge even before the history has filled. */
 static void draw_history(
     struct sx_painter *painter,
     struct sx_rect rect,
@@ -790,8 +859,8 @@ static void draw_history(
     }
 }
 
-/* Fila "rotulo ..... valor" de las cajas de totales, con el valor pegado al
- * borde derecho como en el original. */
+/* A "label ..... value" row of the totals boxes, with the value against the
+ * right edge as in the original. */
 static void draw_field(struct sx_painter *painter, struct sx_rect area, int row, const char *label, const char *value)
 {
     int y = area.y + (row * TASKMGR_ROW);
@@ -821,7 +890,7 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
         graph_height = 56;
     }
 
-    /* Fila 1: medidor de CPU + historia de CPU. */
+    /* Row 1: the CPU meter and the CPU history. */
     area = draw_group(painter, sx_rect_make(x, y, meter_width + 24, graph_height), "CPU Usage");
     snprintf(number, sizeof(number), "%u %%", g_cpu_percent);
     sx_painter_draw_text(painter,
@@ -842,7 +911,7 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
     draw_history(painter, area, g_cpu_history, TASKMGR_GRAPH_LINE);
     y += graph_height + pad;
 
-    /* Fila 2: lo mismo para la memoria. */
+    /* Row 2: the same for memory. */
     area = draw_group(painter, sx_rect_make(x, y, meter_width + 24, graph_height), "Mem Usage");
     snprintf(number, sizeof(number), "%u %%", g_memory_percent);
     sx_painter_draw_text(painter,
@@ -863,7 +932,7 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
     draw_history(painter, area, g_memory_history, TASKMGR_GRAPH_LINE_ALT);
     y += graph_height + pad;
 
-    /* Fila 3: los dos cuadros de numeros. */
+    /* Row 3: the two boxes of numbers. */
     {
         int half = (full_width - SXGUI_GAP) / 2;
         unsigned long long uptime_seconds = g_info.uptime_ms / 1000ull;
@@ -924,12 +993,12 @@ static void paint_networking(struct sx_painter *painter, struct sx_rect page)
     }
     y += graph_height + pad;
 
-    /* Sin adaptador manejable no hay filas que mostrar, pero SI hay algo que
-     * decir, y son dos cosas distintas: que la maquina no tiene placa, o que
-     * tiene una para la que este sistema no trae driver -- el caso de
-     * VirtualBox, cuya placa por default es una Intel PRO/1000. Decirle "not
-     * present" a la segunda manda a buscar el problema a la configuracion de
-     * la VM, que esta bien. */
+    /* Without an adapter it can drive there are no rows to show, but there
+     * IS something to say, and two different things: that the machine has no
+     * card, or that it has one this system has no driver for -- VirtualBox's
+     * case, whose default card is an Intel PRO/1000. Calling the second "not
+     * present" sends the user to look for the problem in the VM's settings,
+     * which are fine. */
     area = draw_group(painter, sx_rect_make(x, y, full_width, adapter_height), "Adapter");
     if (!g_net_available)
     {
@@ -969,9 +1038,9 @@ static void paint_networking(struct sx_painter *painter, struct sx_rect page)
     draw_field(painter, area, 4, "Frames", number);
 }
 
-/* Debajo de la lista, el detalle de la fila elegida: estado y padre, que no
- * tienen columna propia pero son lo primero que uno quiere de un proceso que
- * esta por matar. */
+/* Under the list, the selected row's detail: state and parent, which have no
+ * column of their own but are the first thing one wants to know about a
+ * process one is about to end. */
 static void paint_processes(struct sx_painter *painter, struct sx_rect page)
 {
     const struct taskmgr_sample *sample = selected_sample();
@@ -988,7 +1057,7 @@ static void paint_processes(struct sx_painter *painter, struct sx_rect page)
     sx_painter_draw_text(painter, TASKMGR_LIST->rect.x, y, line, SXGUI_COLOR_TEXT);
 }
 
-static void on_paint(struct sxgui_app *app)
+static void on_paint(struct sxngui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
     struct sx_rect page = sxgui_tabs_page(TASKMGR_TABS);
@@ -1012,12 +1081,13 @@ static void on_paint(struct sxgui_app *app)
     sx_painter_pop_clip(painter);
 }
 
-/* ---- acciones ------------------------------------------------------------- */
+/* ---- actions ------------------------------------------------------------------------- */
 
-static void on_tick(struct sxgui_app *app)
+static void on_tick(struct sxngui_app *app)
 {
     refresh_sample();
-    sxgui_app_request_repaint(app);
+    reap_launched();
+    sxngui_app_request_repaint(app);
 }
 
 static void set_update_speed(int index)
@@ -1047,27 +1117,25 @@ static void on_tab_changed(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     apply_tab_visibility();
-    sxgui_app_request_repaint((struct sxgui_app *)user);
+    sxngui_app_request_repaint((struct sxngui_app *)user);
 }
 
 static void on_list(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     update_end_command();
-    sxgui_app_request_repaint((struct sxgui_app *)user);
+    sxngui_app_request_repaint((struct sxngui_app *)user);
 }
 
-/* ---- ending a process -----------------------------------------------------
+/* ---- ending a process -----------------------------------------------------------------
  *
  * The desktop runs as the user, and a process that belongs to the system (or
- * to anyone else) is not the user's to end: kill answers EPERM
+ * to anyone else) is not the user's to end: TERMINATE answers EPERM
  * (docs/kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation). Ending it
  * anyway takes elevation, as uninstalling does in Add or Remove Programs: the
- * elevated `taskmgr --end <pid>` does the kill, and this window never gains
- * the rights itself. EACCES is different: the idle process and init cannot be
+ * elevated `taskmgr --end <pid>` does it, and this window never gains the
+ * rights itself. EACCES is different: the idle processes and init cannot be
  * ended by anyone, so there is nothing to elevate for. */
-
-#define TASKMGR_PATH "/bin/taskmgr"
 
 /* Returns 0 when the process is gone or the user declined the prompt, or a
  * negative status to report. */
@@ -1076,9 +1144,9 @@ static long end_process(uint32_t pid)
     const char *argv[3];
     char pid_text[16];
     int status = -1;
-    long result = savanxp_kill((int)pid, SAVANXP_SIGKILL);
+    long result = sxn_terminate((long)pid, TASKMGR_END_STATUS);
 
-    if (result != -SAVANXP_EPERM || geteuid() == 0)
+    if (result != -SAVANXP_EPERM)
     {
         return result;
     }
@@ -1086,7 +1154,7 @@ static long end_process(uint32_t pid)
     argv[0] = "taskmgr";
     argv[1] = "--end";
     argv[2] = pid_text;
-    result = elevate(TASKMGR_PATH, argv, 3, &status);
+    result = sxn_elevate(TASKMGR_PATH, argv, 3, &status);
     if (result == -SAVANXP_EACCES)
     {
         /* The user answered No: that is a decision, not an error. */
@@ -1096,22 +1164,31 @@ static long end_process(uint32_t pid)
     {
         return -SAVANXP_EPERM;
     }
-    /* The elevated half exits with the kill's errno, 0 on success. */
+    /* The elevated half exits with the errno of its TERMINATE, 0 on success. */
     return status == 0 ? 0 : -(long)(status > 0 ? status : SAVANXP_EPERM);
 }
 
-/* The elevated half, run by the broker with euid 0. It opens no window. */
+/* The elevated half, run by the broker as the system. It opens no window. */
 static int run_end(const char *pid_text)
 {
-    char *end = 0;
-    unsigned long pid = strtoul(pid_text != 0 ? pid_text : "", &end, 10);
+    unsigned long pid = 0;
+    const char *cursor = pid_text;
     long result;
 
-    if (pid_text == 0 || end == pid_text || *end != '\0' || pid == 0ul)
+    if (cursor == 0 || *cursor == '\0')
     {
         return SAVANXP_EINVAL;
     }
-    result = savanxp_kill((int)pid, SAVANXP_SIGKILL);
+    while (*cursor >= '0' && *cursor <= '9')
+    {
+        pid = pid * 10ul + (unsigned long)(*cursor - '0');
+        cursor += 1;
+    }
+    if (*cursor != '\0' || pid == 0ul)
+    {
+        return SAVANXP_EINVAL;
+    }
+    result = sxn_terminate((long)pid, TASKMGR_END_STATUS);
     return result < 0 ? (int)-result : 0;
 }
 
@@ -1124,8 +1201,8 @@ static void on_message_ok(struct sxgui_widget *widget, void *user)
 
 static void show_end_failure(long result)
 {
-    /* Gone before the kill reached it: the next sample drops the row, which is
-     * all the user needs to see. */
+    /* Gone before the request reached it: the next sample drops the row,
+     * which is all the user needs to see. */
     if (result == -SAVANXP_ENOENT)
     {
         return;
@@ -1149,6 +1226,18 @@ static void show_end_failure(long result)
     sxgui_dialog_begin(&g_app.ui, &g_message_dialog, TASKMGR_CONFIRM_WIDTH, TASKMGR_CONFIRM_HEIGHT);
 }
 
+static void power_request(unsigned long code)
+{
+    long device = sxn_open_device("power", SXN_DEVICE_WRITE);
+
+    if (device >= 0)
+    {
+        /* Does not return when it succeeds. */
+        (void)sxn_device_control(device, code, 0);
+        (void)sxn_close(device);
+    }
+}
+
 static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
@@ -1164,15 +1253,14 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
 
     if (g_pending_power == TASKMGR_CMD_SHUTDOWN)
     {
-        /* Does not return when it succeeds. */
-        (void)power_shutdown();
         g_pending_power = 0;
+        power_request(POWER_IOC_SHUTDOWN);
         return;
     }
     if (g_pending_power == TASKMGR_CMD_REBOOT)
     {
-        (void)power_reboot();
         g_pending_power = 0;
+        power_request(POWER_IOC_REBOOT);
         return;
     }
 
@@ -1188,7 +1276,7 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
         /* Sample again now: waiting for the next tick would leave the dead
          * row in the list for up to a second after it was ended. */
         refresh_sample();
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
     }
 }
 
@@ -1215,8 +1303,8 @@ static void end_selected_process(void)
     {
         return;
     }
-    /* Matar el ocioso dejaria al planificador sin a que volver. El kernel ya lo
-     * rechaza, pero preguntarlo primero es peor que no ofrecerlo. */
+    /* Ending the idle would leave the scheduler nowhere to go. The kernel
+     * refuses it anyway, but asking first is worse than not offering it. */
     if ((sample->flags & SAVANXP_PROC_FLAG_IDLE) != 0u)
     {
         return;
@@ -1252,9 +1340,7 @@ static void on_run_accept(struct sxgui_widget *widget, void *user)
     {
         return;
     }
-    /* El lanzamiento pasa por el WM, que es el que le arma la ventana al hijo:
-     * un spawn directo daria un proceso sin superficie. */
-    (void)gfx_desktop_launch_ex(&g_app.gfx, g_run_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+    (void)launch(g_run_path);
 }
 
 static void begin_run_dialog(void)
@@ -1277,11 +1363,11 @@ static void on_menu_command(int id, void *user)
         begin_run_dialog();
         break;
     case TASKMGR_CMD_EXIT:
-        sxgui_app_quit(&g_app, 0);
+        sxngui_app_quit(&g_app, 0);
         break;
     case TASKMGR_CMD_REFRESH:
         refresh_sample();
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
         break;
     case TASKMGR_CMD_SPEED_HIGH:
         set_update_speed(0);
@@ -1311,14 +1397,14 @@ static void on_menu_command(int id, void *user)
                       "Every running program will be closed.", 1);
         break;
     case TASKMGR_CMD_ABOUT:
-        (void)gfx_desktop_launch_ex(&g_app.gfx, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+        (void)launch("/bin/aboutapp");
         break;
     default:
         break;
     }
 }
 
-static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
+static int on_key(struct sxngui_app *app, const struct savanxp_input_event *event)
 {
     if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
     {
@@ -1341,40 +1427,61 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     return 0;
 }
 
-static void on_resize(struct sxgui_app *app)
+static void on_resize(struct sxngui_app *app)
 {
     (void)app;
     relayout();
 }
 
-/* ---- autoprueba -----------------------------------------------------------
+/* ---- self-test -----------------------------------------------------------------------
  *
- * Headless, sin ventana: comprueba que el muestreo sea coherente consigo mismo,
- * que es lo unico que se puede afirmar sin mirar la pantalla. Si el kernel deja
- * de exportar los contadores, esto lo dice.
- */
+ * Headless, with no window: checks that the sampling agrees with itself,
+ * which is all that can be asserted without looking at the screen. If the
+ * kernel stops exporting the counters, this says so. Failures go to the
+ * kernel log; init reads the verdict from the exit status. */
+
+static int g_selftest_failures;
+
+static void selftest_fail(const char *what)
+{
+    char line[160];
+
+    snprintf(line, sizeof(line), "TASKMGR SMOKE FAIL %s", what);
+    (void)sxn_log(line);
+    g_selftest_failures += 1;
+}
+
+static void selftest_sleep(long ms)
+{
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+
+    if (event >= 0)
+    {
+        (void)sxn_wait_one(event, ms);
+        (void)sxn_close(event);
+    }
+}
+
 static int selftest(void)
 {
-    int failures = 0;
+    char text[96];
     int index;
     uint64_t ticks_before;
     char grouped[32];
-    /* Cores que planifican: uno ocioso por cada uno. Un proceso que gira ocupa
-     * un core entero, que es 100/cores de la torta. */
+    /* Cores that schedule: one idle process for each. A process that spins
+     * keeps a whole core busy, which is 100/cores of the pie. */
     unsigned int cores = 1;
 
     refresh_sample();
     ticks_before = g_info.cpu_ticks_total;
     if (g_process_count <= 0)
     {
-        printf("TASKMGR SMOKE FAIL no se enumero ningun proceso\n");
-        failures += 1;
+        selftest_fail("no process was listed");
     }
 
     {
         int idle_seen = 0;
         int self_seen = 0;
-        uint32_t self_pid = (uint32_t)savanxp_getpid();
 
         for (index = 0; index < g_process_count; ++index)
         {
@@ -1382,147 +1489,112 @@ static int selftest(void)
             {
                 idle_seen += 1;
             }
-            if (g_processes[index].pid == self_pid)
+            if (g_processes[index].pid == g_self_pid)
             {
                 self_seen = 1;
                 if (g_processes[index].memory_bytes == 0ull)
                 {
-                    printf("TASKMGR SMOKE FAIL el propio proceso reporta 0 bytes mapeados\n");
-                    failures += 1;
+                    selftest_fail("this process reports 0 bytes mapped");
                 }
             }
         }
         cores = g_info.cpu_online != 0u ? g_info.cpu_online : 1u;
         if (idle_seen != (int)cores)
         {
-            printf("TASKMGR SMOKE FAIL se esperaba un proceso ocioso por core (%u), hay %d\n",
-                   cores, idle_seen);
-            failures += 1;
+            snprintf(text, sizeof(text), "expected one idle process per core (%u), found %d", cores, idle_seen);
+            selftest_fail(text);
         }
         if (!self_seen)
         {
-            printf("TASKMGR SMOKE FAIL el propio proceso no aparece en la enumeracion\n");
-            failures += 1;
+            selftest_fail("this process is not in the list");
         }
     }
 
-    /* Segunda muestra, tras dormir: el contador global tiene que haber
-     * avanzado y el tiempo se lo tiene que haber llevado el ocioso. Que el uso
-     * del sistema de un intervalo DORMIDO de "casi 0" es la prueba de que el
-     * contador del ocioso avanza: si no avanzara, esto daria 100%. */
-    sleep_ms(600);
+    /* A second sample, after sleeping: the global counter must have moved,
+     * and the idle must have taken the time. A system usage of "almost 0"
+     * over an interval spent ASLEEP is the proof that the idle's counter
+     * advances: if it did not, this would read 100%. */
+    selftest_sleep(600);
     refresh_sample();
     if (g_info.cpu_ticks_total <= ticks_before)
     {
-        printf("TASKMGR SMOKE FAIL el contador global de ticks no avanzo\n");
-        failures += 1;
+        selftest_fail("the global tick counter did not advance");
     }
     if (g_cpu_percent > 25u)
     {
-        printf("TASKMGR SMOKE FAIL durmiendo, el sistema reporta %u%% de CPU\n", g_cpu_percent);
-        failures += 1;
+        snprintf(text, sizeof(text), "asleep, the system reports %u%% CPU", g_cpu_percent);
+        selftest_fail(text);
     }
     if (g_memory_total_bytes == 0ull || g_memory_used_bytes > g_memory_total_bytes)
     {
-        printf("TASKMGR SMOKE FAIL memoria incoherente: %llu usados de %llu\n",
-               (unsigned long long)g_memory_used_bytes,
-               (unsigned long long)g_memory_total_bytes);
-        failures += 1;
+        snprintf(text, sizeof(text), "memory does not add up: %llu used of %llu",
+                 (unsigned long long)g_memory_used_bytes, (unsigned long long)g_memory_total_bytes);
+        selftest_fail(text);
     }
     for (index = 0; index < g_process_count; ++index)
     {
         if (g_processes[index].cpu_percent > 100u)
         {
-            printf("TASKMGR SMOKE FAIL pid %u con %u%% de CPU\n",
-                   (unsigned)g_processes[index].pid, g_processes[index].cpu_percent);
-            failures += 1;
+            snprintf(text, sizeof(text), "pid %u at %u%% CPU",
+                     (unsigned)g_processes[index].pid, g_processes[index].cpu_percent);
+            selftest_fail(text);
             break;
         }
     }
 
-    /* Tercera muestra, tras quemar CPU de verdad: ahora el intervalo tiene que
-     * atribuirse a ESTE proceso. Es la contracara de la segunda y lo que
-     * distingue "los contadores se mueven" de "los contadores se mueven en el
-     * proceso correcto". */
+    /* A third sample, after burning CPU for real: now the interval must be
+     * charged to THIS process. It is the other side of the second, and what
+     * tells "the counters move" from "the counters move in the right
+     * process". */
     {
-        unsigned long deadline = uptime_ms() + 600ul;
+        unsigned long deadline = sxngui_uptime_ms() + 600ul;
         unsigned int self_percent = 0;
-        uint32_t self_pid = (uint32_t)savanxp_getpid();
 
-        while (uptime_ms() < deadline)
+        while (sxngui_uptime_ms() < deadline)
         {
-            /* Girar sin dormir: la unica forma de quedarse con el tiempo. */
+            /* Spin without sleeping: the only way to keep the time. */
         }
         refresh_sample();
         for (index = 0; index < g_process_count; ++index)
         {
-            if (g_processes[index].pid == self_pid)
+            if (g_processes[index].pid == g_self_pid)
             {
                 self_percent = g_processes[index].cpu_percent;
             }
         }
         if (g_cpu_percent < 50u / cores)
         {
-            printf("TASKMGR SMOKE FAIL girando, el sistema reporta %u%% de CPU\n", g_cpu_percent);
-            failures += 1;
+            snprintf(text, sizeof(text), "spinning, the system reports %u%% CPU", g_cpu_percent);
+            selftest_fail(text);
         }
         if (self_percent < 50u / cores)
         {
-            printf("TASKMGR SMOKE FAIL girando, el propio proceso reporta %u%% de CPU\n", self_percent);
-            failures += 1;
+            snprintf(text, sizeof(text), "spinning, this process reports %u%% CPU", self_percent);
+            selftest_fail(text);
         }
     }
 
     format_grouped(1234567ull, grouped, sizeof(grouped));
     if (strcmp(grouped, "1,234,567") != 0)
     {
-        printf("TASKMGR SMOKE FAIL agrupado de miles: '%s'\n", grouped);
-        failures += 1;
+        snprintf(text, sizeof(text), "thousands grouping: '%s'", grouped);
+        selftest_fail(text);
     }
 
-    if (failures != 0)
+    if (g_selftest_failures != 0)
     {
-        printf("TASKMGR SMOKE FAIL %d checks\n", failures);
         return 1;
     }
-    printf("TASKMGR SMOKE PASS processes=%d cpu=%u%% mem=%u%% handles=%u\n",
-           g_process_count, g_cpu_percent, g_memory_percent, (unsigned)g_total_handles);
+    snprintf(text, sizeof(text), "taskmgr: self-test passed, %d processes, cpu %u%%, memory %u%%, handles %u",
+             g_process_count, g_cpu_percent, g_memory_percent, (unsigned)g_total_handles);
+    (void)sxn_log(text);
     return 0;
 }
 
-/* ---- arranque ------------------------------------------------------------- */
+/* ---- start-up ------------------------------------------------------------------------- */
 
-int main(int argc, char **argv)
+static void build_dialogs(void)
 {
-    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
-    {
-        return selftest();
-    }
-    if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--end") == 0)
-    {
-        return run_end(argv[2]);
-    }
-
-    *TASKMGR_TABS = sxgui_tabs(sx_rect_make(0, 0, 0, 0), k_tab_labels, TASKMGR_TAB_COUNT,
-                               TASKMGR_TAB_PROCESSES);
-    TASKMGR_TABS->on_action = on_tab_changed;
-    TASKMGR_TABS->user = &g_app;
-
-    *TASKMGR_LIST = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_row_pointers, 0);
-    TASKMGR_LIST->columns = g_columns;
-    TASKMGR_LIST->column_count = TASKMGR_COLUMN_COUNT;
-    TASKMGR_LIST->on_action = on_list;
-    TASKMGR_LIST->user = &g_app;
-
-    *TASKMGR_END_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "End Process", on_end_process, 0);
-
-    *TASKMGR_STATUS_PROCESSES = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_processes);
-    TASKMGR_STATUS_PROCESSES->flags |= SXGUI_FLAG_SUNKEN;
-    *TASKMGR_STATUS_CPU = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_cpu);
-    TASKMGR_STATUS_CPU->flags |= SXGUI_FLAG_SUNKEN;
-    *TASKMGR_STATUS_MEMORY = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_memory);
-    TASKMGR_STATUS_MEMORY->flags |= SXGUI_FLAG_SUNKEN;
-
     g_confirm_widgets[0] = sxgui_label(
         sx_rect_make(TASKMGR_DIALOG_MARGIN, TASKMGR_DIALOG_MARGIN,
                      TASKMGR_CONFIRM_WIDTH - (TASKMGR_DIALOG_MARGIN * 2), TASKMGR_ROW),
@@ -1574,9 +1646,38 @@ int main(int argc, char **argv)
                      TASKMGR_RUN_HEIGHT - TASKMGR_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
                      SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
         "Cancel", on_run_cancel, 0);
+}
 
-    if (sxgui_app_init(&g_app, "taskmgr", g_widgets, TASKMGR_WIDGET_COUNT) < 0)
+static int run_window(void)
+{
+    int result;
+
+    *TASKMGR_TABS = sxgui_tabs(sx_rect_make(0, 0, 0, 0), k_tab_labels, TASKMGR_TAB_COUNT,
+                               TASKMGR_TAB_PROCESSES);
+    TASKMGR_TABS->on_action = on_tab_changed;
+    TASKMGR_TABS->user = &g_app;
+
+    *TASKMGR_LIST = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_row_pointers, 0);
+    TASKMGR_LIST->columns = g_columns;
+    TASKMGR_LIST->column_count = TASKMGR_COLUMN_COUNT;
+    TASKMGR_LIST->on_action = on_list;
+    TASKMGR_LIST->user = &g_app;
+
+    *TASKMGR_END_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "End Process", on_end_process, 0);
+
+    *TASKMGR_STATUS_PROCESSES = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_processes);
+    TASKMGR_STATUS_PROCESSES->flags |= SXGUI_FLAG_SUNKEN;
+    *TASKMGR_STATUS_CPU = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_cpu);
+    TASKMGR_STATUS_CPU->flags |= SXGUI_FLAG_SUNKEN;
+    *TASKMGR_STATUS_MEMORY = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_memory);
+    TASKMGR_STATUS_MEMORY->flags |= SXGUI_FLAG_SUNKEN;
+
+    build_dialogs();
+
+    result = sxngui_app_init(&g_app, &sun_resources, g_widgets, TASKMGR_WIDGET_COUNT);
+    if (result < 0)
     {
+        (void)sxn_log("taskmgr: no window from windowd");
         return 1;
     }
 
@@ -1585,7 +1686,7 @@ int main(int argc, char **argv)
     g_menubar.on_command = on_menu_command;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
 
-    (void)sxgui_app_set_content_size(&g_app, TASKMGR_DEFAULT_WIDTH, TASKMGR_DEFAULT_HEIGHT);
+    (void)sxngui_app_set_content_size(&g_app, TASKMGR_DEFAULT_WIDTH, TASKMGR_DEFAULT_HEIGHT);
     relayout();
     apply_tab_visibility();
     refresh_sample();
@@ -1596,5 +1697,27 @@ int main(int argc, char **argv)
     g_app.on_tick = on_tick;
     set_update_speed(g_speed_index);
     sxgui_focus(&g_app.ui, 1);
-    return sxgui_app_run(&g_app);
+    return sxngui_app_run(&g_app);
+}
+
+int main(int argc, char **argv)
+{
+    struct sxn_native_info info;
+
+    /* A SUN program never returns from main: the stock crt0 would fall
+     * through to a POSIX exit, which is ENOSYS here. */
+    if (sxn_info(&info) == 0)
+    {
+        g_self_pid = info.pid;
+    }
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
+    {
+        sxn_exit(selftest());
+    }
+    if (argc > 2 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--end") == 0)
+    {
+        sxn_exit(run_end(argv[2]));
+    }
+    sxn_exit(run_window());
+    return 0;
 }

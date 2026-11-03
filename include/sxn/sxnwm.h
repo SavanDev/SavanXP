@@ -510,6 +510,176 @@ static inline long sxnwm_set_pointer_capture(struct sxnwm_client* ctx, int on) {
     return sxnwm_notify(ctx);
 }
 
+/* SetCursor: the shape the WM shows while the pointer is over this window
+ * (enum savanxp_cursor_shape). State, not an event: the last one asked for
+ * stays until the next. */
+static inline long sxnwm_set_cursor_shape(struct sxnwm_client* ctx, uint32_t shape) {
+    if (ctx == 0 || ctx->header == 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header->requests.cursor_shape = shape;
+    __asm__ volatile("" ::: "memory");
+    return sxnwm_notify(ctx);
+}
+
+/* ---- owned windows (docs/desktop/OWNED_WINDOWS.md) ------------------------
+ *
+ * A dialog of the program, in a window of its own that the WM keeps above
+ * its owner and disables the owner for. The request travels in the owner's
+ * header; the WM answers by queueing the new surface on the owner's event
+ * pipe. That pipe is the right channel for everything about owned windows:
+ * a native client takes its main window's input from the ring and never
+ * reads the pipe for it, so what arrives there is the dialogs' -- their
+ * surface handles and their input, each record tagged with its window_id.
+ *
+ * The owned window's sxnwm_client shares the owner's submit, wake and
+ * request events, so sxnwm_submit_full and sxnwm_set_cursor_shape work on it
+ * unchanged. It has no ring (ring == 0): read its input with
+ * sxnwm_poll_owned_input on the owner. */
+
+#define SXNWM_WINDOW_OPEN_WAIT_MS 1000l
+#define SXNWM_WINDOW_CLOSE_WAIT_MS 250l
+
+/* Write an owned-window request into the owner's header and wait for its
+ * reply, up to timeout_ms. The reply status, or -EAGAIN when it did not
+ * come in time, -EPIPE when the owner is being closed. */
+static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
+                                        uint32_t width, uint32_t height, const char* title, long timeout_ms) {
+    struct savanxp_wm_client_requests* requests = 0;
+    uint32_t sequence = 0;
+    uint64_t deadline = 0;
+    uint32_t index = 0;
+
+    if (owner == 0 || owner->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    requests = &owner->header->requests;
+    /* Seqlock: odd while the request is half written. */
+    requests->window_sequence |= 1u;
+    __asm__ volatile("" ::: "memory");
+    {
+        unsigned char* bytes = (unsigned char*)&requests->window;
+        for (index = 0; index < (uint32_t)sizeof(requests->window); index += 1) {
+            bytes[index] = 0;
+        }
+    }
+    requests->window.action = action;
+    requests->window.window_id = window_id;
+    requests->window.width = width;
+    requests->window.height = height;
+    for (index = 0; title != 0 && title[index] != '\0' && index + 1u < SAVANXP_WM_WINDOW_TITLE_CAPACITY; index += 1) {
+        requests->window.title[index] = title[index];
+    }
+    __asm__ volatile("" ::: "memory");
+    requests->window_sequence += 1u;
+    sequence = requests->window_sequence;
+    (void)sxnwm_notify(owner);
+
+    deadline = sxn_clock_ns() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 0) * 1000000ull;
+    for (;;) {
+        if (requests->window_reply_sequence == sequence) {
+            return requests->window_reply_status;
+        }
+        if (sxnwm_close_requested(owner)) {
+            return -SAVANXP_EPIPE;
+        }
+        if (sxn_clock_ns() >= deadline) {
+            return -SAVANXP_EAGAIN;
+        }
+        /* The wake event serves several conditions: reset, look again, and
+         * only then sleep. */
+        (void)sxn_event_reset(owner->wake_fd);
+        if (requests->window_reply_sequence == sequence) {
+            return requests->window_reply_status;
+        }
+        (void)sxn_wait_one(owner->wake_fd, 20);
+    }
+}
+
+/* Open owned window `window_id` (1..SAVANXP_WM_MAX_OWNED_WINDOWS) of
+ * width x height client pixels with `title`, filling `window`. 0, or -errno
+ * when the WM refused (no room on screen, no free slot): the caller then
+ * draws the dialog inside its own window, as the toolkit does. */
+static inline long sxnwm_window_open(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id,
+                                     uint32_t width, uint32_t height, const char* title) {
+    long section = -1;
+    long result = 0;
+
+    if (owner == 0 || owner->header == 0 || owner->events_fd < 0 || window == 0 || window_id == 0 ||
+        window_id > SAVANXP_WM_MAX_OWNED_WINDOWS || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    /* Input for dialogs is read without blocking (sxnwm_poll_owned_input). */
+    (void)sxn_set_nonblocking(owner->events_fd, 1);
+    /* A handle already queued belongs to an earlier request that timed out on
+     * this side: not this request's, and nobody will use it. */
+    while ((section = sxn_pipe_receive_handle(owner->events_fd)) >= 0) {
+        (void)sxn_close(section);
+    }
+    result = sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title,
+                                  SXNWM_WINDOW_OPEN_WAIT_MS);
+    if (result < 0) {
+        if (result == -SAVANXP_EAGAIN) {
+            /* Timed out: if the WM creates it anyway, it should destroy it. */
+            (void)sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0);
+        }
+        return result;
+    }
+    section = sxn_pipe_receive_handle(owner->events_fd);
+    result = section < 0 ? section : sxnwm_attach(window, section);
+    if (section >= 0) {
+        /* The view keeps the section alive. */
+        (void)sxn_close(section);
+    }
+    if (result != 0) {
+        window->header = 0;
+        (void)sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0,
+                                   SXNWM_WINDOW_CLOSE_WAIT_MS);
+        return result;
+    }
+    window->submit_fd = owner->submit_fd;
+    window->wake_fd = owner->wake_fd;
+    window->request_fd = owner->request_fd;
+    window->events_fd = -1;
+    return 0;
+}
+
+/* Close an owned window opened with sxnwm_window_open. Closing one that is
+ * already gone is not an error. */
+static inline long sxnwm_window_close(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id) {
+    struct savanxp_wm_event stale;
+
+    if (owner == 0 || window == 0 || window->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    (void)sxn_unmap_view((unsigned long)window->header);
+    window->header = 0;
+    window->pixels = 0;
+    (void)sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0,
+                               SXNWM_WINDOW_CLOSE_WAIT_MS);
+    /* After the request, not before: whatever the WM sent until it destroyed
+     * the window is dropped here. */
+    while (sxn_read(owner->events_fd, &stale, sizeof(stale)) == (long)sizeof(stale)) {
+    }
+    return 0;
+}
+
+/* Drain one record of the owned windows' input from the owner's event pipe:
+ * 0 with *out filled (out->window_id says whose), -EAGAIN when there is none.
+ * Only after sxnwm_window_open, which makes the pipe non-blocking. */
+static inline long sxnwm_poll_owned_input(struct sxnwm_client* owner, struct savanxp_wm_event* out) {
+    long result;
+
+    if (owner == 0 || out == 0 || owner->events_fd < 0) {
+        return -SAVANXP_EINVAL;
+    }
+    result = sxn_read(owner->events_fd, out, sizeof(*out));
+    if (result == (long)sizeof(*out)) {
+        return 0;
+    }
+    return result < 0 ? result : -SAVANXP_EAGAIN;
+}
+
 /* SetWindowText: a new title, everything else as last published. Titles
  * longer than SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. */
 static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) {

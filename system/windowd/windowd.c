@@ -4356,7 +4356,7 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
             {
                 const struct windowd_client *client = &session->overlay_clients[slot];
 
-                if (client->pid > 0 && client->owner_slot < 0 && strcmp(client->path, "taskmgr") == 0)
+                if (client->pid > 0 && client->owner_slot < 0 && strcmp(client->path, "taskmgr.sxe") == 0)
                 {
                     taskmgr_slot = slot;
                 }

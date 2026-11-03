@@ -27,7 +27,7 @@ _Static_assert(
  */
 
 /* Task Manager, which Ctrl+Shift+Esc opens. */
-static const char *k_task_manager_path = "/bin/taskmgr";
+static const char *k_task_manager_path = "/bin/taskmgr.sxe";
 /* The Command Prompt, which Ctrl+Alt+T opens (docs/desktop/CONSOLE.md). */
 static const char *k_console_path = "/bin/console.sxe";
 

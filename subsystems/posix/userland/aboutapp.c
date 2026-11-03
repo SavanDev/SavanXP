@@ -1,15 +1,15 @@
 /*
- * Propiedades del sistema.
+ * System Properties.
  *
- * La ficha de identidad de la maquina, con la forma del "About this Computer"
- * de la epoca: el logo a la izquierda y tres bloques de texto a la derecha --
- * que sistema es, donde esta instalado y sobre que corre --, mas una segunda
- * pestania con el inventario de hardware.
+ * The machine's identity card, in the shape of the period's "About this
+ * Computer": the logo on the left and three blocks of text on the right --
+ * which system this is, where it is installed and what it runs on -- plus a
+ * second tab with the hardware inventory.
  *
- * Lo que esta ventana NO muestra es estado vivo: la memoria que se esta usando
- * ahora, los procesos, el uso de CPU. Eso es el administrador de tareas
- * (/bin/taskmgr), y tenerlo en dos lados significaba tener dos versiones del
- * mismo numero. Aca va lo que no cambia mientras la maquina esta prendida.
+ * What this window does NOT show is live state: the memory in use now, the
+ * processes, the CPU usage. That is Task Manager's (/bin/taskmgr.sxe), and
+ * having it in both places meant having two versions of the same number.
+ * Here goes what does not change while the machine is on.
  */
 
 #include "libc.h"

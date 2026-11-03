@@ -42,6 +42,10 @@ savanxp_system_service(NAME sessiond SOURCES sessiond.c)
 # a program elevated once windowd's prompt says yes. init starts it.
 savanxp_system_service(NAME elevationd SOURCES elevationd.c)
 
+# Task Manager (docs/userland/SYSTEM_MONITORING.md): an application like the
+# console, and the first SUN program drawn with SXGUI (include/sxn/sxngui.h).
+savanxp_system_service(NAME taskmgr SOURCES taskmgr.c)
+
 # The window manager. Its sources are written against the POSIX SDK;
 # windowd_sys.h, included first by every unit, renames those calls onto SXN
 # (windowd_sys.c). The desktop's icons are shared with the desktop and Program
