@@ -16,6 +16,7 @@
 
 #include "abi/savanxp_abi.h"
 #include "wm/wm_protocol.h"
+#include "wm/wm_shell_protocol.h"
 #include "sxn/sxn.h"
 
 struct sxnwm_client {
@@ -662,6 +663,93 @@ static inline long sxnwm_window_close(struct sxnwm_client* owner, struct sxnwm_c
     while (sxn_read(owner->events_fd, &stale, sizeof(stale)) == (long)sizeof(stale)) {
     }
     return 0;
+}
+
+/* ---- the task list (EnumWindows) ----
+ *
+ * The windows the taskbar shows, for a program that is not the shell: a Task
+ * Manager's Applications tab. The WM gives this client a list of its own and
+ * keeps it current; it is read under its seqlock with sxnwm_task_list_read.
+ * Ids are task ids (the process's pid), not indices. */
+
+/* Map the task list read-only into *out. 0, or -errno. */
+static inline long sxnwm_task_list_open(struct sxnwm_client* owner, const struct savanxp_wm_window_list** out) {
+    long section = -1;
+    long result = 0;
+    long base = 0;
+
+    if (owner == 0 || owner->header == 0 || owner->events_fd < 0 || out == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    *out = 0;
+    (void)sxn_set_nonblocking(owner->events_fd, 1);
+    while ((section = sxn_pipe_receive_handle(owner->events_fd)) >= 0) {
+        (void)sxn_close(section);
+    }
+    result = sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_TASK_LIST, 0, 0, 0, 0,
+                                  SXNWM_WINDOW_OPEN_WAIT_MS);
+    if (result < 0) {
+        return result;
+    }
+    section = sxn_pipe_receive_handle(owner->events_fd);
+    if (section < 0) {
+        return section;
+    }
+    base = sxn_map_view(section, SXN_SECTION_READ);
+    /* The view keeps the section alive. */
+    (void)sxn_close(section);
+    if (base <= 0) {
+        return base < 0 ? base : -SAVANXP_ENOMEM;
+    }
+    *out = (const struct savanxp_wm_window_list*)base;
+    return 0;
+}
+
+/* Copy the list whole into *out, retrying while the WM is writing it. 0, or
+ * -EAGAIN if it never held still. */
+static inline long sxnwm_task_list_read(const struct savanxp_wm_window_list* list,
+                                        struct savanxp_wm_window_list* out) {
+    int attempt = 0;
+
+    if (list == 0 || out == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    for (attempt = 0; attempt < 64; attempt += 1) {
+        const volatile uint64_t* sequence = &list->sequence;
+        uint64_t before = *sequence;
+        const unsigned char* from = (const unsigned char*)list;
+        unsigned char* to = (unsigned char*)out;
+        uint32_t index = 0;
+
+        if ((before & 1u) != 0u) {
+            continue;
+        }
+        __asm__ volatile("" ::: "memory");
+        for (index = 0; index < (uint32_t)sizeof(*out); index += 1) {
+            to[index] = from[index];
+        }
+        __asm__ volatile("" ::: "memory");
+        if (*sequence == before) {
+            if (out->count > SAVANXP_WM_MAX_WINDOWS) {
+                out->count = SAVANXP_WM_MAX_WINDOWS;
+            }
+            return 0;
+        }
+    }
+    return -SAVANXP_EAGAIN;
+}
+
+/* Switch To: bring task `id` to the front. 0, or -ENOENT when it is gone. */
+static inline long sxnwm_task_activate(struct sxnwm_client* owner, uint32_t id) {
+    return sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_TASK_ACTIVATE, id, 0, 0, 0,
+                                SXNWM_WINDOW_OPEN_WAIT_MS);
+}
+
+/* End Task: ask task `id` to close, as its X button does. 0, -EPERM when it
+ * is another user's, -ENOENT when it is gone. */
+static inline long sxnwm_task_close(struct sxnwm_client* owner, uint32_t id) {
+    return sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_TASK_CLOSE, id, 0, 0, 0,
+                                SXNWM_WINDOW_OPEN_WAIT_MS);
 }
 
 /* Drain one record of the owned windows' input from the owner's event pipe:

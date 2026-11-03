@@ -841,26 +841,28 @@ def scenario_system(s):
     s.qmp.tap("esc", pause=6.0)
 
     s.open_task_manager()
-    s.shot("taskmgr-processes")
-    # De la lista al control de pestanias con SHIFT+TAB, que va al widget
-    # ANTERIOR. Contar TABs hacia adelante no sirve: el boton End Process se
-    # deshabilita cuando la fila elegida es el proceso ocioso, y un control
-    # deshabilitado no recibe foco, asi que la cuenta cambia con la seleccion.
+    # It opens on Applications, with the focus on the task list.
+    s.shot("taskmgr-applications")
+    # From the list to the tab control with SHIFT+TAB, which goes to the
+    # PREVIOUS widget. Counting TABs forward does not work: a disabled button
+    # takes no focus, and which ones are disabled depends on the selection.
     s.qmp.chord("shift", "tab")
     time.sleep(1.0)
+    s.qmp.tap("right", pause=3.0)
+    s.shot("taskmgr-processes")
     s.qmp.tap("right", pause=3.0)
     s.shot("taskmgr-performance")
     s.qmp.tap("right", pause=3.0)
     s.shot("taskmgr-networking")
     s.qmp.tap("left", pause=1.0)
     s.qmp.tap("left", pause=2.5)
-    # De vuelta a la lista y a la ULTIMA fila, que es el propio administrador:
-    # sobre el proceso ocioso -- la fila 0 -- terminar esta deshabilitado a
-    # proposito, y ademas el unico riesgo de un Enter de mas aca es que esta
-    # ventana se cierre sola.
-    # Las pausas son generosas a proposito: bajo TCG el guest va mucho mas lento
-    # que el reloj del host, y un Del que llega antes de que la seleccion se haya
-    # movido cae sobre el proceso ocioso, donde terminar no hace nada.
+    # Back to the process list (TAB skips the hidden Applications controls)
+    # and to its LAST row, the Task Manager itself: on the idle process -- row
+    # 0 -- ending is disabled on purpose, and the only risk of one Enter too
+    # many here is this window closing itself.
+    # The pauses are generous on purpose: under TCG the guest runs much slower
+    # than the host clock, and a Del that arrives before the selection moved
+    # lands on the idle process, where ending does nothing.
     s.qmp.tap("tab", pause=2.0)
     s.qmp.tap("end", pause=4.0)
     s.qmp.tap("delete", pause=4.0)

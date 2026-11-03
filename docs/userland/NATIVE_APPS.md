@@ -41,7 +41,9 @@ The SUN headers, all header-only, no link or tool changes needed:
   icon (`sxnwm_set_title`, `sxnwm_set_presentation`), and capture the pointer
   for relative motion (`sxnwm_set_pointer_capture`); set the cursor shape
   (`sxnwm_set_cursor_shape`) and open owned windows (`sxnwm_window_open`,
-  `sxnwm_window_close`, `sxnwm_poll_owned_input`).
+  `sxnwm_window_close`, `sxnwm_poll_owned_input`); read the task list and
+  switch to or close a task (`sxnwm_task_list_open`, `sxnwm_task_list_read`,
+  `sxnwm_task_activate`, `sxnwm_task_close`).
 - `include/sxn/sxngui.h` — the SXGUI application frame
   (`sxngui_app_init`, `sxngui_app_run`, the `on_*` hooks) over `sxnwm`, with
   dialogs in owned windows and the toolkit's SUN host; the counterpart of

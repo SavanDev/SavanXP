@@ -1,9 +1,10 @@
 /*
  * Task Manager, a SUN program (docs/userland/SUN.md).
  *
- * The system monitor in the shape of the classic Task Manager: Processes,
- * Performance and Networking tabs, a status bar with the usual three numbers,
- * and a menu that can start a new task or turn the machine off.
+ * The system monitor in the shape of the classic Task Manager: Applications,
+ * Processes, Performance and Networking tabs, a status bar with the usual
+ * three numbers, and a menu that can start a new task or turn the machine
+ * off.
  *
  * HOW CPU USAGE IS MEASURED. The kernel keeps no percentages: it keeps a tick
  * counter per process (savanxp_process_info.cpu_ticks) and the global tick
@@ -17,9 +18,9 @@
  * With several cores the pie is all of them together: a process that keeps
  * one core of four busy reads 25%, as in the classic Task Manager.
  *
- * WHAT IS MISSING. There is no Applications tab and no Users tab; what each
- * still needs is in docs/userland/SYSTEM_MONITORING.md. Both are absent tabs,
- * not empty ones. The user behind each process is the User Name column.
+ * APPLICATIONS lists windows, not processes: a copy of the taskbar's list the
+ * WM keeps for this window (sxnwm_task_list_open). There is no Users tab:
+ * with one account, who runs each process is the User Name column.
  */
 
 #include <stdint.h>
@@ -56,11 +57,12 @@
 
 /* ---- tabs ------------------------------------------------------------------- */
 
-#define TASKMGR_TAB_PROCESSES 0
-#define TASKMGR_TAB_PERFORMANCE 1
-#define TASKMGR_TAB_NETWORKING 2
+#define TASKMGR_TAB_APPLICATIONS 0
+#define TASKMGR_TAB_PROCESSES 1
+#define TASKMGR_TAB_PERFORMANCE 2
+#define TASKMGR_TAB_NETWORKING 3
 
-static const char *const k_tab_labels[] = {"Processes", "Performance", "Networking"};
+static const char *const k_tab_labels[] = {"Applications", "Processes", "Performance", "Networking"};
 #define TASKMGR_TAB_COUNT ((int)(sizeof(k_tab_labels) / sizeof(k_tab_labels[0])))
 
 /* ---- grid ------------------------------------------------------------------- */
@@ -250,13 +252,20 @@ static int g_launched_count;
 
 /* ---- widgets ------------------------------------------------------------------- */
 
-static struct sxgui_widget g_widgets[6];
+/* The order is the Tab order: the tabs, then each page's controls. A hidden
+ * page's controls take no focus. */
+static struct sxgui_widget g_widgets[10];
 #define TASKMGR_TABS (&g_widgets[0])
-#define TASKMGR_LIST (&g_widgets[1])
-#define TASKMGR_END_BUTTON (&g_widgets[2])
-#define TASKMGR_STATUS_PROCESSES (&g_widgets[3])
-#define TASKMGR_STATUS_CPU (&g_widgets[4])
-#define TASKMGR_STATUS_MEMORY (&g_widgets[5])
+#define TASKMGR_TASK_LIST (&g_widgets[1])
+#define TASKMGR_END_TASK_BUTTON (&g_widgets[2])
+#define TASKMGR_SWITCH_BUTTON (&g_widgets[3])
+#define TASKMGR_NEW_TASK_BUTTON (&g_widgets[4])
+#define TASKMGR_LIST (&g_widgets[5])
+#define TASKMGR_END_BUTTON (&g_widgets[6])
+#define TASKMGR_STATUS_PROCESSES (&g_widgets[7])
+#define TASKMGR_STATUS_CPU (&g_widgets[8])
+#define TASKMGR_STATUS_MEMORY (&g_widgets[9])
+#define TASKMGR_TASK_WIDGET_FIRST 1
 #define TASKMGR_WIDGET_COUNT ((int)(sizeof(g_widgets) / sizeof(g_widgets[0])))
 
 /* The columns, in the order of the table below. Image Name takes whatever
@@ -286,6 +295,21 @@ static struct sxgui_column g_columns[] = {
     {"Handles", 56, TASKMGR_SORTS_RIGHT},
 };
 #define TASKMGR_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
+
+/* ---- Applications ----
+ *
+ * The windows, not the processes: the list the taskbar shows, which the WM
+ * gives this window a copy of (sxnwm_task_list_open,
+ * docs/userland/SYSTEM_MONITORING.md). Task ids are pids. */
+static struct sxgui_column g_task_columns[] = {
+    {"Task", 0, 0},
+    {"Status", 110, 0},
+};
+static const struct savanxp_wm_window_list *g_task_source;
+static struct savanxp_wm_window_list g_tasks;
+static char g_task_rows[SAVANXP_WM_MAX_WINDOWS][SAVANXP_WM_WINDOW_TITLE_CAPACITY + 24];
+static const char *g_task_row_pointers[SAVANXP_WM_MAX_WINDOWS];
+static uint32_t g_selected_task;
 
 /* Sorting. The list starts in the kernel's order, which is creation order,
  * and a header click sorts by that column; a second click on the same one
@@ -741,6 +765,64 @@ static void build_rows(void)
     update_end_command();
 }
 
+static const struct savanxp_wm_window_entry *selected_task(void)
+{
+    if (TASKMGR_TASK_LIST->value < 0 || TASKMGR_TASK_LIST->value >= (int)g_tasks.count)
+    {
+        return 0;
+    }
+    return &g_tasks.windows[TASKMGR_TASK_LIST->value];
+}
+
+static void update_task_commands(void)
+{
+    int has = selected_task() != 0;
+
+    if (has)
+    {
+        TASKMGR_END_TASK_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+        TASKMGR_SWITCH_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+    }
+    else
+    {
+        TASKMGR_END_TASK_BUTTON->flags |= SXGUI_FLAG_DISABLED;
+        TASKMGR_SWITCH_BUTTON->flags |= SXGUI_FLAG_DISABLED;
+    }
+}
+
+/* Copies the WM's list and rebuilds the rows, keeping the selection on the
+ * same task. Without a list (no WM: the self-test) the tab stays empty. */
+static void refresh_tasks(void)
+{
+    uint32_t index;
+
+    if (g_task_source == 0 || sxnwm_task_list_read(g_task_source, &g_tasks) != 0)
+    {
+        g_tasks.count = 0;
+    }
+    for (index = 0; index < g_tasks.count; ++index)
+    {
+        const struct savanxp_wm_window_entry *entry = &g_tasks.windows[index];
+
+        snprintf(g_task_rows[index], sizeof(g_task_rows[index]), "%s\t%s",
+                 entry->title[0] != '\0' ? entry->title : "(untitled)",
+                 (entry->flags & SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING) != 0u ? "Not Responding" : "Running");
+        g_task_row_pointers[index] = g_task_rows[index];
+        if (entry->window_id == g_selected_task)
+        {
+            TASKMGR_TASK_LIST->value = (int)index;
+        }
+    }
+    TASKMGR_TASK_LIST->items = g_task_row_pointers;
+    TASKMGR_TASK_LIST->item_count = (int)g_tasks.count;
+    if (TASKMGR_TASK_LIST->value >= (int)g_tasks.count)
+    {
+        TASKMGR_TASK_LIST->value = g_tasks.count > 0 ? (int)g_tasks.count - 1 : 0;
+    }
+    g_selected_task = selected_task() != 0 ? selected_task()->window_id : 0u;
+    update_task_commands();
+}
+
 static void refresh_sample(void)
 {
     struct savanxp_process_info info;
@@ -881,6 +963,7 @@ static void refresh_sample(void)
     g_have_previous = 1;
 
     build_rows();
+    refresh_tasks();
 
     snprintf(g_status_processes, sizeof(g_status_processes), "Processes: %d", g_process_count);
     snprintf(g_status_cpu, sizeof(g_status_cpu), "CPU Usage: %u%%", g_cpu_percent);
@@ -957,6 +1040,25 @@ static void relayout(void)
         SXGUI_BUTTON_WIDTH + 26,
         SXGUI_BUTTON_HEIGHT);
 
+    /* Applications: the same list area, and its three buttons at the right
+     * of one row, End Task first, as in the original. */
+    TASKMGR_TASK_LIST->rect = TASKMGR_LIST->rect;
+    g_task_columns[0].width = TASKMGR_TASK_LIST->rect.width - (SXGUI_BORDER_SUNKEN * 2) -
+        SXGUI_SCROLLBAR_THICKNESS - g_task_columns[1].width;
+    if (g_task_columns[0].width < 80)
+    {
+        g_task_columns[0].width = 80;
+    }
+    TASKMGR_NEW_TASK_BUTTON->rect = sx_rect_make(
+        TASKMGR_LIST->rect.x + TASKMGR_LIST->rect.width - (SXGUI_BUTTON_WIDTH + 26),
+        TASKMGR_END_BUTTON->rect.y, SXGUI_BUTTON_WIDTH + 26, SXGUI_BUTTON_HEIGHT);
+    TASKMGR_SWITCH_BUTTON->rect = sx_rect_make(
+        TASKMGR_NEW_TASK_BUTTON->rect.x - SXGUI_GAP - (SXGUI_BUTTON_WIDTH + 10),
+        TASKMGR_END_BUTTON->rect.y, SXGUI_BUTTON_WIDTH + 10, SXGUI_BUTTON_HEIGHT);
+    TASKMGR_END_TASK_BUTTON->rect = sx_rect_make(
+        TASKMGR_SWITCH_BUTTON->rect.x - SXGUI_GAP - (SXGUI_BUTTON_WIDTH + 10),
+        TASKMGR_END_BUTTON->rect.y, SXGUI_BUTTON_WIDTH + 10, SXGUI_BUTTON_HEIGHT);
+
     /* The status bar is three sunken panels, like the original's: the first
      * takes what is left and the other two measure their own. */
     panel_width = 150;
@@ -971,20 +1073,29 @@ static void relayout(void)
 
 /* The list's controls exist only on their tab; on the other two the app
  * paints the content, and leaving them visible would draw them on top. */
-static void apply_tab_visibility(void)
+static void set_visible(struct sxgui_widget *widget, int visible)
 {
-    int on_processes = TASKMGR_TABS->value == TASKMGR_TAB_PROCESSES;
-
-    if (on_processes)
+    if (visible)
     {
-        TASKMGR_LIST->flags |= SXGUI_FLAG_VISIBLE;
-        TASKMGR_END_BUTTON->flags |= SXGUI_FLAG_VISIBLE;
+        widget->flags |= SXGUI_FLAG_VISIBLE;
     }
     else
     {
-        TASKMGR_LIST->flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
-        TASKMGR_END_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+        widget->flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
     }
+}
+
+static void apply_tab_visibility(void)
+{
+    int on_processes = TASKMGR_TABS->value == TASKMGR_TAB_PROCESSES;
+    int on_applications = TASKMGR_TABS->value == TASKMGR_TAB_APPLICATIONS;
+
+    set_visible(TASKMGR_LIST, on_processes);
+    set_visible(TASKMGR_END_BUTTON, on_processes);
+    set_visible(TASKMGR_TASK_LIST, on_applications);
+    set_visible(TASKMGR_END_TASK_BUTTON, on_applications);
+    set_visible(TASKMGR_SWITCH_BUTTON, on_applications);
+    set_visible(TASKMGR_NEW_TASK_BUTTON, on_applications);
 }
 
 /* ---- painting ------------------------------------------------------------------------- */
@@ -1374,6 +1485,8 @@ static void on_paint(struct sxngui_app *app)
     }
     switch (TASKMGR_TABS->value)
     {
+    case TASKMGR_TAB_APPLICATIONS:
+        break;
     case TASKMGR_TAB_PERFORMANCE:
         paint_performance(painter, page);
         break;
@@ -1637,7 +1750,7 @@ static void on_message_ok(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 1);
 }
 
-static void show_end_failure(long result)
+static void show_failure(const char *title, long result)
 {
     /* Gone before the request reached it: the next sample drops the row,
      * which is all the user needs to see. */
@@ -1656,7 +1769,7 @@ static void show_end_failure(long result)
     }
 
     memset(&g_message_dialog, 0, sizeof(g_message_dialog));
-    g_message_dialog.title = "Unable to Terminate Process";
+    g_message_dialog.title = title;
     g_message_dialog.widgets = g_message_widgets;
     g_message_dialog.widget_count = 3;
     g_message_dialog.initial_focus = 2;
@@ -1709,7 +1822,7 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
         g_confirm_pid = 0u;
         if (result < 0)
         {
-            show_end_failure(result);
+            show_failure("Unable to Terminate Process", result);
         }
         /* Sample again now: waiting for the next tick would leave the dead
          * row in the list for up to a second after it was ended. */
@@ -1762,6 +1875,78 @@ static void on_end_process(struct sxgui_widget *widget, void *user)
     (void)widget;
     (void)user;
     end_selected_process(0);
+}
+
+static void begin_run_dialog(void);
+
+/* ---- Applications: End Task and Switch To ----
+ *
+ * End Task asks the window to close, as its X button does (the WM's
+ * TASK_CLOSE): the program decides, and may ask to save. Only a window the
+ * WM already shows as not responding is ended outright, after asking, which
+ * is the original's "End Now". */
+
+static void on_task_list(struct sxgui_widget *widget, void *user)
+{
+    const struct savanxp_wm_window_entry *entry;
+
+    (void)user;
+    entry = selected_task();
+    g_selected_task = entry != 0 ? entry->window_id : 0u;
+    if (widget->action == SXGUI_ACTION_ACTIVATE && entry != 0)
+    {
+        (void)sxnwm_task_activate(&g_app.wm, entry->window_id);
+    }
+    update_task_commands();
+    sxngui_app_request_repaint(&g_app);
+}
+
+static void on_switch_to(struct sxgui_widget *widget, void *user)
+{
+    const struct savanxp_wm_window_entry *entry = selected_task();
+
+    (void)widget;
+    (void)user;
+    if (entry != 0)
+    {
+        (void)sxnwm_task_activate(&g_app.wm, entry->window_id);
+    }
+}
+
+static void on_end_task(struct sxgui_widget *widget, void *user)
+{
+    const struct savanxp_wm_window_entry *entry = selected_task();
+    long result;
+
+    (void)widget;
+    (void)user;
+    if (entry == 0)
+    {
+        return;
+    }
+    if ((entry->flags & SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING) != 0u)
+    {
+        char line[SAVANXP_WM_WINDOW_TITLE_CAPACITY + 32];
+
+        g_pending_power = 0;
+        g_confirm_pid = entry->window_id;
+        g_confirm_tree = 0;
+        snprintf(line, sizeof(line), "'%s' is not responding.", entry->title);
+        begin_confirm("End Program", line, "End it now? Unsaved data will be lost.", 1);
+        return;
+    }
+    result = sxnwm_task_close(&g_app.wm, entry->window_id);
+    if (result < 0 && result != -SAVANXP_ENOENT)
+    {
+        show_failure("Unable to End Task", result);
+    }
+}
+
+static void on_new_task(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    begin_run_dialog();
 }
 
 static void on_run_cancel(struct sxgui_widget *widget, void *user)
@@ -2136,6 +2321,40 @@ static int selftest(void)
     }
     g_sort_column = -1;
 
+    /* Applications: rows come from the WM's list, the status from its flag,
+     * and the selection stays on the same task when the list reorders. */
+    {
+        static struct savanxp_wm_window_list fake;
+
+        memset(&fake, 0, sizeof(fake));
+        fake.version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
+        fake.count = 2;
+        fake.windows[0].window_id = 21u;
+        snprintf(fake.windows[0].title, sizeof(fake.windows[0].title), "%s", "Notepad");
+        fake.windows[1].window_id = 22u;
+        fake.windows[1].flags = SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING;
+        snprintf(fake.windows[1].title, sizeof(fake.windows[1].title), "%s", "Paint");
+        g_task_source = &fake;
+        TASKMGR_TASK_LIST->value = 1;
+        refresh_tasks();
+        if (g_tasks.count != 2u || strcmp(g_task_rows[0], "Notepad\tRunning") != 0 ||
+            strcmp(g_task_rows[1], "Paint\tNot Responding") != 0)
+        {
+            selftest_fail("the Applications rows do not match the WM's list");
+        }
+        fake.windows[0] = fake.windows[1];
+        fake.windows[1].window_id = 21u;
+        fake.windows[1].flags = 0u;
+        snprintf(fake.windows[1].title, sizeof(fake.windows[1].title), "%s", "Notepad");
+        fake.sequence += 2u;
+        refresh_tasks();
+        if (g_selected_task != 22u || TASKMGR_TASK_LIST->value != 0)
+        {
+            selftest_fail("the Applications selection did not follow its task");
+        }
+        g_task_source = 0;
+    }
+
     /* End Process Tree's order: children before their parent, all the way
      * down. 10 started 11 and 12, and 11 started 13. */
     {
@@ -2224,7 +2443,7 @@ static int run_window(void)
     int result;
 
     *TASKMGR_TABS = sxgui_tabs(sx_rect_make(0, 0, 0, 0), k_tab_labels, TASKMGR_TAB_COUNT,
-                               TASKMGR_TAB_PROCESSES);
+                               TASKMGR_TAB_APPLICATIONS);
     TASKMGR_TABS->on_action = on_tab_changed;
     TASKMGR_TABS->user = &g_app;
 
@@ -2235,6 +2454,14 @@ static int run_window(void)
     TASKMGR_LIST->user = &g_app;
 
     *TASKMGR_END_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "End Process", on_end_process, 0);
+
+    *TASKMGR_TASK_LIST = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_task_row_pointers, 0);
+    TASKMGR_TASK_LIST->columns = g_task_columns;
+    TASKMGR_TASK_LIST->column_count = (int)(sizeof(g_task_columns) / sizeof(g_task_columns[0]));
+    TASKMGR_TASK_LIST->on_action = on_task_list;
+    *TASKMGR_END_TASK_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "End Task", on_end_task, 0);
+    *TASKMGR_SWITCH_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "Switch To", on_switch_to, 0);
+    *TASKMGR_NEW_TASK_BUTTON = sxgui_button(sx_rect_make(0, 0, 0, 0), "New Task...", on_new_task, 0);
 
     *TASKMGR_STATUS_PROCESSES = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_processes);
     TASKMGR_STATUS_PROCESSES->flags |= SXGUI_FLAG_SUNKEN;
@@ -2252,6 +2479,13 @@ static int run_window(void)
         return 1;
     }
 
+    /* No list (an older WM, or no room for the section): the tab stays
+     * empty rather than the window failing. */
+    if (sxnwm_task_list_open(&g_app.wm, &g_task_source) < 0)
+    {
+        g_task_source = 0;
+    }
+
     g_menubar.menus = k_menus;
     g_menubar.menu_count = (int)(sizeof(k_menus) / sizeof(k_menus[0]));
     g_menubar.on_command = on_menu_command;
@@ -2267,7 +2501,7 @@ static int run_window(void)
     g_app.on_resize = on_resize;
     g_app.on_tick = on_tick;
     set_update_speed(g_speed_index);
-    sxgui_focus(&g_app.ui, 1);
+    sxgui_focus(&g_app.ui, TASKMGR_TASK_WIDGET_FIRST);
     return sxngui_app_run(&g_app);
 }
 

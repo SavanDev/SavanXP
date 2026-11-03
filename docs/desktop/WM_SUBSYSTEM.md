@@ -341,6 +341,7 @@ the event pipe:
 | 3 | submit event, **one for the whole session**, set after a frame. Since phase 4 it is `compositord`'s ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#frames)): frames wake `compositord`, not `windowd` | one descriptor in total, only to hand it out |
 | 4 | the shell only (`SAVANXP_WM_HELLO_SHELL`, granted by parentage): window list section (its requests go on its request pipe) | the request pipe's read end |
 | 4 | a client that asked for `SAVANXP_WM_HELLO_INPUT_RING`: the input ring | nothing — closed once sent |
+| later | a client that asked for a task list (`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`, any client): a window list section of its own, kept current like the shell's ([SYSTEM_MONITORING.md](../userland/SYSTEM_MONITORING.md#applications)) | its mapping only |
 | last | a client that asked for `SAVANXP_WM_HELLO_REQUEST_EVENT` (the POSIX runtime always does): `windowd`'s request event, set after a request in the header (welcome flag `SAVANXP_WM_WELCOME_REQUEST_EVENT`) | one descriptor in total |
 
 Five handles at most, in a pipe handle queue of eight. A client built before the

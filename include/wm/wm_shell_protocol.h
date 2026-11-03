@@ -7,7 +7,10 @@
  *
  * An OPTIONAL extension of savanxp/wm_protocol.h. Only the connection the WM
  * recognizes as the shell gets it: the window list section and a request pipe
- * that stays open. Channels are paid PER CLIENT against the limit of 64 per
+ * that stays open. Any other client may ask for a COPY of the list, a section
+ * of its own, with SAVANXP_WM_WINDOW_ACTION_TASK_LIST (a Task Manager's
+ * Applications tab); it switches to and closes tasks through the header's
+ * window request, not through this file's requests. Channels are paid PER CLIENT against the limit of 64 per
  * process (see docs/desktop/WM_SUBSYSTEM.md), so this is one descriptor for
  * the whole system, not one per window.
  *

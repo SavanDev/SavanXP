@@ -1989,32 +1989,67 @@ _Static_assert(
     WINDOWD_PRESENTATION_ICON_EXTENT == SAVANXP_WM_WINDOW_ICON_EXTENT,
     "el icono de la presentacion y el de la entrada del shell deben coincidir");
 
-static void publish_window_list(struct windowd_session *session)
+/* Writes `staging` into one client's list, only if something changed. The
+ * sequence is left out of the comparison: it is exactly what publishing
+ * changes. */
+static void write_window_list(struct savanxp_wm_window_list *list, struct savanxp_wm_window_list *staging)
 {
-    /* Estatico y no del stack: pasan los diez KiB -- cada entrada lleva su
-     * icono -- y este WM ya tiene el habito de no dejar buffers grandes en el
-     * stack. */
-    static struct savanxp_wm_window_list staging;
-    struct savanxp_wm_window_list *list;
-    int index;
-    int written = 0;
-
-    if (session == 0 || session->desktop_windows[0].window_list == 0)
+    if (list == 0)
     {
         return;
     }
-    list = session->desktop_windows[0].window_list;
+    staging->sequence = list->sequence;
+    if (window_lists_equal(staging, list))
+    {
+        return;
+    }
+    /* Seqlock: odd while it is written, even once it is stable. */
+    list->sequence += 1;
+    memcpy(list->windows, staging->windows, sizeof(list->windows));
+    list->count = staging->count;
+    list->version = staging->version;
+    list->sequence += 1;
+}
+
+static void publish_window_list(struct windowd_session *session)
+{
+    /* Static, not on the stack: it is over ten KiB -- every entry carries its
+     * icon -- and this WM keeps large buffers off the stack. */
+    static struct savanxp_wm_window_list staging;
+    int index;
+    int written = 0;
+    int readers = 0;
+
+    if (session == 0)
+    {
+        return;
+    }
+    if (session->desktop_windows[0].window_list != 0)
+    {
+        readers += 1;
+    }
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS; ++index)
+    {
+        if (session->overlay_clients[index].pid > 0 && session->overlay_clients[index].window_list != 0)
+        {
+            readers += 1;
+        }
+    }
+    if (readers == 0)
+    {
+        return;
+    }
 
     memset(&staging, 0, sizeof(staging));
 
     /*
-     * Orden ESTABLE por slot, no por z-order.
+     * A STABLE order, by slot, not by z-order.
      *
-     * windowd_task_client enumera en z-order, que es lo que quieren el Task
-     * List y Alt+Tab -- la ventana anterior primero. Pero una barra de tareas
-     * necesita lo contrario: si los botones se reordenan al cambiar de ventana,
-     * el click siguiente cae sobre otra cosa. Win95 los deja fijos y aca
-     * tambien: el slot de un overlay no cambia mientras la ventana viva.
+     * windowd_task_client enumerates in z-order, which is what the Task List
+     * and Alt+Tab want -- the previous window first. A taskbar needs the
+     * opposite: if its buttons reorder when the active window changes, the
+     * next click lands on something else. Win95 keeps them still, and so does
+     * this: an overlay's slot does not change while its window lives.
      */
     for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
     {
@@ -2023,17 +2058,17 @@ static void publish_window_list(struct windowd_session *session)
         const char *title;
         size_t length;
 
-        /* Un dialogo no es una tarea: su boton es el de su dueno, y el id (el
-         * pid) seria el mismo. */
+        /* A dialog is not a task: its button is its owner's, and its id (the
+         * pid) would be the same. */
         if (client->pid <= 0 || client->owner_slot >= 0)
         {
             continue;
         }
         entry = &staging.windows[written];
-        /* El id es el pid: estable mientras la ventana viva, y el WM lo puede
-         * resolver de vuelta sin llevar un contador propio. NO se usa el indice
-         * del arreglo porque se reordena con el z-order, y un click que llegara
-         * con un indice viejo activaria otra ventana. */
+        /* The id is the pid: stable while the window lives, and the WM can
+         * resolve it back without a counter of its own. NOT the array index,
+         * which moves with the z-order: a click arriving with a stale index
+         * would activate another window. */
         entry->window_id = (uint32_t)client->pid;
         entry->flags = SAVANXP_WM_WINDOW_FLAG_NONE;
         if (session->active_client_kind == WINDOWD_CLIENT_APP &&
@@ -2049,10 +2084,10 @@ static void publish_window_list(struct windowd_session *session)
         {
             entry->flags |= SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING;
         }
-        /* Icono: van los pixeles propios del .sxe cuando el binario los trajo,
-         * y el id del set horneado como ultimo recurso. La barra no puede
-         * resolverlos sola -- el fallback generico para todo el mundo era
-         * justamente lo que se veia antes de que la entrada los transporte. */
+        /* Icon: the .sxe's own pixels when the binary brought them, and the
+         * id from the baked-in set as the last resort. The reader cannot
+         * resolve them alone -- the generic fallback for everyone was exactly
+         * what showed before the entry carried them. */
         entry->icon_id = client->presentation.fallback_icon_id;
         entry->icon_extent = 0;
         if (client->presentation.icon_extent == SAVANXP_WM_WINDOW_ICON_EXTENT)
@@ -2079,25 +2114,20 @@ static void publish_window_list(struct windowd_session *session)
     staging.version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
 
     /*
-     * Se publica solo si algo cambio de verdad. Comparar es mas barato y mucho
-     * mas confiable que marcar un flag en cada mutador: alcanza con olvidarse
-     * UNO -- abrir, cerrar, activar, minimizar, restaurar, renombrar -- para que
-     * la barra quede mostrando un estado viejo, y ese bug no se ve hasta que
-     * alguien mira la pantalla. La secuencia se excluye de la comparacion
-     * porque es justamente lo que cambia al publicar.
+     * Each list is written only if something really changed. Comparing is
+     * cheaper and far more reliable than setting a flag in every mutator:
+     * forgetting ONE -- open, close, activate, minimize, restore, rename --
+     * leaves the taskbar showing an old state, and that bug does not show
+     * until someone looks at the screen.
      */
-    staging.sequence = list->sequence;
-    if (window_lists_equal(&staging, list))
+    write_window_list(session->desktop_windows[0].window_list, &staging);
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS; ++index)
     {
-        return;
+        if (session->overlay_clients[index].pid > 0)
+        {
+            write_window_list(session->overlay_clients[index].window_list, &staging);
+        }
     }
-
-    /* Seqlock: impar mientras se escribe, par cuando quedo estable. */
-    list->sequence += 1;
-    memcpy(list->windows, staging.windows, sizeof(list->windows));
-    list->count = staging.count;
-    list->version = staging.version;
-    list->sequence += 1;
 }
 
 /* Resolves a window id from the window list (a pid) to the slot of that
@@ -2215,6 +2245,37 @@ static int deliver_hotkey(
     return 0;
 }
 
+/* Activation moved to another window, whose caption changes colour. The
+ * pointer path repaints that at the end of its event; a request from the
+ * taskbar or a task list has no such end, so it is done here. */
+static void repaint_activation_change(struct windowd_session *session, struct windowd_dirty_rect *dirty,
+                                      int previous_active_slot)
+{
+    if (session->active_overlay_slot == previous_active_slot)
+    {
+        return;
+    }
+    if (overlay_slot_valid(previous_active_slot))
+    {
+        windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_slot));
+    }
+    if (overlay_slot_valid(session->active_overlay_slot))
+    {
+        windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
+    }
+}
+
+/* Brings a task to the front, restoring it if it was minimized. */
+static void activate_task(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
+{
+    if (session->overlay_clients[slot].minimized)
+    {
+        restore_overlay_client(session, dirty, slot);
+    }
+    raise_overlay(session, slot);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
 static void service_shell_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     struct savanxp_wm_shell_request request;
@@ -2243,31 +2304,13 @@ static void service_shell_requests(struct windowd_session *session, struct windo
         }
         if (request.action == SAVANXP_WM_SHELL_ACTIVATE)
         {
-            if (session->overlay_clients[slot].minimized)
-            {
-                restore_overlay_client(session, dirty, slot);
-            }
-            raise_overlay(session, slot);
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            activate_task(session, dirty, slot);
         }
         else if (request.action == SAVANXP_WM_SHELL_MINIMIZE && !session->overlay_clients[slot].minimized)
         {
             minimize_overlay_client(session, dirty, slot);
         }
-        /* Activation moved to another window, whose caption changes colour.
-         * The pointer path repaints that at the end of its event; a request
-         * from the taskbar has no such end, so it is done here. */
-        if (session->active_overlay_slot != previous_active_slot)
-        {
-            if (overlay_slot_valid(previous_active_slot))
-            {
-                windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_slot));
-            }
-            if (overlay_slot_valid(session->active_overlay_slot))
-            {
-                windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
-            }
-        }
+        repaint_activation_change(session, dirty, previous_active_slot);
     }
 }
 
@@ -2592,6 +2635,8 @@ static void admit_connection(
      * open the binary for that (service_client_presentation). */
     windowd_presentation_default(&client->presentation, client->path);
     client->pid = connection->pid;
+    client->uid = connection->identity.uid;
+    client->euid = connection->identity.euid;
     close_pending_connection(connection);
     if (!shell_role)
     {
@@ -2621,7 +2666,7 @@ static void service_connections(struct windowd_session *session, struct windowd_
 
     for (;;)
     {
-        struct sxn_port_connection accepted;
+        struct sxn_port_connection_ex accepted;
         struct windowd_pending_connection *connection = 0;
 
         for (index = 0; index < WINDOWD_MAX_PENDING_CONNECTIONS; ++index)
@@ -2638,11 +2683,12 @@ static void service_connections(struct windowd_session *session, struct windowd_
             break;
         }
         memset(&accepted, 0, sizeof(accepted));
-        if (sxn_port_accept(session->port_fd, &accepted) < 0)
+        if (sxn_port_accept_ex(session->port_fd, &accepted) < 0)
         {
             break;
         }
         connection->pid = (long)accepted.client_pid;
+        connection->identity = accepted.client;
         connection->read_fd = accepted.read_handle;
         connection->write_fd = accepted.write_handle;
         connection->deadline_ms = now + WINDOWD_HELLO_TIMEOUT_MS;
@@ -3354,6 +3400,82 @@ static void dismiss_popups_for_press(struct windowd_session *session, int x, int
     }
 }
 
+/*
+ * A task list for a client that is not the shell: the Task Manager's
+ * Applications tab (docs/userland/SYSTEM_MONITORING.md). Win32's EnumWindows
+ * is open to every program, and so is this list, but each reader gets a
+ * section of its own: a handle to the shell's would let any client write the
+ * taskbar. Closing someone's window follows kill's rule: the same user, or
+ * the system.
+ */
+static int service_task_request(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client,
+    const struct savanxp_wm_window_request *request)
+{
+    int target;
+
+    if (request->action == SAVANXP_WM_WINDOW_ACTION_TASK_LIST)
+    {
+        int section_fd;
+        struct savanxp_wm_window_list *list;
+
+        if (client->window_list != 0)
+        {
+            return 0;
+        }
+        section_fd = (int)section_create(
+            sizeof(struct savanxp_wm_window_list),
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (section_fd < 0)
+        {
+            return section_fd;
+        }
+        list = (struct savanxp_wm_window_list *)map_view(
+            section_fd,
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (result_is_error((long)list))
+        {
+            close_fd_if_needed(&section_fd);
+            return -SAVANXP_ENOMEM;
+        }
+        memset(list, 0, sizeof(*list));
+        list->version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
+        if (client->events_write_fd < 0 || pipe_send_handle(client->events_write_fd, section_fd) < 0)
+        {
+            (void)unmap_view(list);
+            close_fd_if_needed(&section_fd);
+            return -SAVANXP_EAGAIN;
+        }
+        close_fd_if_needed(&section_fd);
+        client->window_list = list;
+        /* Filled now, so the reply finds it current. */
+        publish_window_list(session);
+        return 0;
+    }
+
+    target = resolve_window_id(session, request->window_id);
+    if (!overlay_slot_valid(target))
+    {
+        return -SAVANXP_ENOENT;
+    }
+    if (request->action == SAVANXP_WM_WINDOW_ACTION_TASK_ACTIVATE)
+    {
+        int previous_active_slot = session->active_overlay_slot;
+
+        activate_task(session, dirty, target);
+        repaint_activation_change(session, dirty, previous_active_slot);
+        return 0;
+    }
+    if (client->euid != 0u && client->uid != session->overlay_clients[target].uid)
+    {
+        return -SAVANXP_EPERM;
+    }
+    (void)close_overlay_window(session, dirty, target);
+    return 0;
+}
+
 /* Drains the window request in the header (savanxp_wm_client_requests.window).
  * Like everything in the header: copied, validated, and only then used. The
  * desktop's main window may open role windows; the main window of an
@@ -3407,6 +3529,13 @@ static void service_client_window_requests(
             status = -SAVANXP_EINVAL;
         }
     }
+    else if (overlay_slot_valid(slot) && client->owner_slot < 0 &&
+        (request.action == SAVANXP_WM_WINDOW_ACTION_TASK_LIST ||
+         request.action == SAVANXP_WM_WINDOW_ACTION_TASK_ACTIVATE ||
+         request.action == SAVANXP_WM_WINDOW_ACTION_TASK_CLOSE))
+    {
+        status = service_task_request(session, dirty, client, &request);
+    }
     /* Roles other than NORMAL belong to the shell. */
     else if (!overlay_slot_valid(slot) || client->owner_slot >= 0 ||
         request.role != SAVANXP_WM_WINDOW_ROLE_NORMAL)
@@ -3433,8 +3562,8 @@ static void service_client_window_requests(
         status = -SAVANXP_EINVAL;
     }
 
-    /* Respuesta despues del handle: el cliente lo va a buscar apenas vea la
-     * secuencia, asi que tiene que estar encolado antes. */
+    /* The reply goes after the handle: the client looks for it as soon as it
+     * sees the sequence, so it has to be queued first. */
     client->header->requests.window_reply_status = status;
     client->header->requests.window_reply_sequence = sequence;
     if (client->wake_event_fd >= 0)
@@ -4377,6 +4506,62 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         {
             puts_fd(2, "DESKTOP SMOKE FAIL launch: the shell rule judged the parentage wrong\n");
             return 1;
+        }
+
+        /* Its Applications tab asks for a task list of its own
+         * (SAVANXP_WM_WINDOW_ACTION_TASK_LIST), which must list its window.
+         * Closing another user's task is refused, and an unknown id is
+         * ENOENT. */
+        {
+            struct windowd_client *taskmgr = &session->overlay_clients[taskmgr_slot];
+            struct windowd_client stranger;
+            struct savanxp_wm_window_request request;
+            uint32_t saved_uid = taskmgr->uid;
+            int listed = 0;
+            uint32_t index;
+
+            deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+            while (taskmgr->window_list == 0 && uptime_ms() < deadline)
+            {
+                selftest_service_overlays(session, &dirty);
+                sleep_ms(20);
+            }
+            publish_window_list(session);
+            if (taskmgr->window_list != 0)
+            {
+                for (index = 0; index < taskmgr->window_list->count && index < SAVANXP_WM_MAX_WINDOWS; ++index)
+                {
+                    if (taskmgr->window_list->windows[index].window_id == (uint32_t)taskmgr->pid)
+                    {
+                        listed = 1;
+                    }
+                }
+            }
+            if (!listed)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasks: Task Manager has no task list with its own window\n");
+                return 1;
+            }
+            reset_client(&stranger);
+            stranger.uid = 1000u;
+            stranger.euid = 1000u;
+            taskmgr->uid = 0u;
+            memset(&request, 0, sizeof(request));
+            request.action = SAVANXP_WM_WINDOW_ACTION_TASK_CLOSE;
+            request.window_id = (uint32_t)taskmgr->pid;
+            if (service_task_request(session, &dirty, &stranger, &request) != -SAVANXP_EPERM)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasks: the user closed the system's window\n");
+                return 1;
+            }
+            taskmgr->uid = saved_uid;
+            request.window_id = 0x7fffffffu;
+            if (service_task_request(session, &dirty, &stranger, &request) != -SAVANXP_ENOENT)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasks: closing an unknown task was not ENOENT\n");
+                return 1;
+            }
+            printf("DESKTOP SMOKE tasks: Task Manager reads the task list, and closing is the owner's\n");
         }
         destroy_overlay_client(session, taskmgr_slot, 1);
         windowd_dirty_rect_reset(&dirty);

@@ -307,20 +307,37 @@ End Process onto something else. The header click is the toolkit's
 `sxgui_header_column()` saying which column; it does not add a field to
 `sxgui_widget`, whose layout `libsxgui` shares with every program.
 
+## Applications
+
+The first tab lists *windows*, not processes: the tasks the taskbar shows,
+with their status (Running, or Not Responding once the WM has flagged a
+window that was asked to close and did not). It comes from the WM, through
+three actions on the window request in the surface header
+(`savanxp_wm_client_requests`), which any client may send:
+
+- **`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`** hands the client a section of its
+  own holding a `savanxp_wm_window_list`, on its event pipe like an owned
+  window's surface. `windowd` writes every reader's list from the same
+  snapshot as the shell's, under the list's seqlock. It is a copy, not the
+  shell's section: there is no way to pass a handle with fewer rights, and
+  a handle to the shell's would let any program write the taskbar. Win32's
+  `EnumWindows` is open to every program too.
+- **`TASK_ACTIVATE`** is Switch To (and a double click on the row).
+- **`TASK_CLOSE`** is End Task: the same close request as the window's X
+  button, so the program decides and may ask to save. It follows kill's
+  rule: the same real uid, or the system; anyone else gets `EPERM`.
+  `windowd` knows each client's identity from the port
+  (`sxn_port_accept_ex`). A window already flagged Not Responding is
+  instead ended outright, after asking, through End Process: the
+  original's *End Now*.
+
+SUN wraps them as `sxnwm_task_list_open`, `sxnwm_task_list_read`,
+`sxnwm_task_activate` and `sxnwm_task_close`. `windowd-smoke` checks that
+the Task Manager it launches receives a list holding its own window, and
+that a user may not close the system's window.
+
 ## What the Task Manager does not have
 
-Two tabs of the original are missing. Neither is blocked by the kernel any
-more; each needs a piece of plumbing that does not exist yet.
-
-- **Applications.** It lists *windows*, not processes. The WM already keeps
-  that list for the shell: a read-only shared section with each task's title,
-  icon and `ACTIVE`/`MINIMIZED`/`NOT_RESPONDING` flags
-  (`include/wm/wm_shell_protocol.h`), and the shell's requests already include
-  activating a window. What is missing is a way for a client that is not the
-  shell to receive that section, and a request to close a window for
-  End Task.
-- **Users.** There is one account. Who runs each process is the User Name
-  column; a Users tab with one account has nothing else to show until there
-  is a second one.
-
-Both are absent tabs, not empty ones.
+**Users.** There is one account. Who runs each process is the User Name
+column; a Users tab with one account has nothing else to show until there is
+a second one. It is an absent tab, not an empty one.

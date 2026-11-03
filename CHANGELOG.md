@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Task Manager: Applications tab** (End Task, Switch To, New Task). Any WM client can read the
+  task list and switch to or close a task (`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`/`_ACTIVATE`/`_CLOSE`,
+  `sxnwm_task_*`); closing takes the same user or the system. See `docs/userland/SYSTEM_MONITORING.md`.
+
 - **Task Manager: one CPU graph per core and kernel times** (View → CPU History, Show Kernel
   Times, red under the total); Totals gains Threads. `tools/shoot.sh --smp N` boots more cores.
 

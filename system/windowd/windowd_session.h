@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libc.h"
+#include "abi/savanxp_native_abi.h"
 #include "wm/wm_shell_protocol.h"
 #include "windowd_presentation.h"
 #include "windowd_compositor_client.h"
@@ -70,7 +71,14 @@ struct windowd_client
      * window has them -- the connection's request pipe and the window list.
      * -1 in any other client. */
     int shell_request_read_fd;
+    /* The window list this client reads: the shell's, or a copy of its own
+     * for a client that asked for one (SAVANXP_WM_WINDOW_ACTION_TASK_LIST).
+     * Every list is written from the same snapshot by publish_window_list. */
     struct savanxp_wm_window_list *window_list;
+    /* Who the process is, from the port (sxn_port_accept_ex): ending another
+     * user's window takes being that user or the system. */
+    uint32_t uid;
+    uint32_t euid;
     int last_cursor_hint_shape;
     /* The WM's own state about the header requests. Kept here and never read
      * back from the header, where the client may write whatever it likes. */
@@ -146,6 +154,8 @@ struct windowd_client
 struct windowd_pending_connection
 {
     long pid;
+    /* Who the client was when it connected (SXN_SYS_PORT_ACCEPT_EX). */
+    struct sxn_identity identity;
     int read_fd;
     int write_fd;
     unsigned long deadline_ms;

@@ -901,6 +901,19 @@ enum savanxp_wm_window_action {
     SAVANXP_WM_WINDOW_ACTION_OPEN = 1,
     /* Destruirla. Cerrar una que no existe no es error. */
     SAVANXP_WM_WINDOW_ACTION_CLOSE = 2,
+    /* The task list for a client that is not the shell (a Task Manager's
+     * Applications tab). Reply 0: the handle of a section of its own holding a
+     * savanxp_wm_window_list (wm/wm_shell_protocol.h) is queued on the event
+     * pipe, as for OPEN. The WM keeps it up to date under the list's seqlock;
+     * asking again sends nothing new and answers 0. window_id is unused. */
+    SAVANXP_WM_WINDOW_ACTION_TASK_LIST = 3,
+    /* Bring task `window_id` (an id from the list) to the front, restoring it
+     * if minimized. -ENOENT when there is no such task. */
+    SAVANXP_WM_WINDOW_ACTION_TASK_ACTIVATE = 4,
+    /* Ask task `window_id` to close, as its X button does. Only the same user
+     * (real uid) or the system may: -EPERM otherwise, -ENOENT when there is no
+     * such task. A task that does not close is flagged NOT_RESPONDING. */
+    SAVANXP_WM_WINDOW_ACTION_TASK_CLOSE = 5,
 };
 
 /*
