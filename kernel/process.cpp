@@ -2923,6 +2923,7 @@ void terminate_current_from_exception(uint8_t vector) {
 SavedContext* handle_syscall(SavedContext* context) {
     Thread* const caller = this_cpu().current;
     const subsystem::Id id = caller != nullptr ? caller->process->subsystem_id : subsystem::Id::posix;
+    smp::tag_lock_hold(static_cast<uint32_t>(id), static_cast<uint32_t>(context->rax));
     SavedContext* result = subsystem::dispatch(id, context);
 
     // Its process was asked to end while it was in this syscall. If it is

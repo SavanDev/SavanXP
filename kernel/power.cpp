@@ -4,8 +4,11 @@
 
 #include "kernel/acpi.hpp"
 #include "kernel/block.hpp"
+#include "kernel/credentials.hpp"
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
+#include "kernel/panic.hpp"
+#include "kernel/process.hpp"
 #include "abi/savanxp_abi.h"
 
 namespace {
@@ -33,6 +36,14 @@ int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access
         case POWER_IOC_REBOOT:
             (void)block::sync_all();
             acpi::reboot(); // does not return
+        case POWER_IOC_PANIC: {
+            const process::Process* caller = process::current();
+            if (caller == nullptr || !cred::acts_as_system(caller->credentials)) {
+                return -static_cast<int>(SX_EPERM);
+            }
+            (void)block::sync_all();
+            panic("power: panic requested through /dev/power");
+        }
         default:
             return -static_cast<int>(SX_ENOSYS);
     }

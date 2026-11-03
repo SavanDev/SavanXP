@@ -1,15 +1,18 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phases 0 to 3 done, on master. Phase 4 not started.** This document is
-> the measurement: what the kernel already has, what it is missing, and in what
+> **Status: phases 0 to 4 done, on master. The roadmap is closed; what remains
+> is splitting the big kernel lock, one subsystem at a time, when
+> [`smp-stats`](#reading-smp-stats) says which.** This document was the
+> measurement: what the kernel already had, what it was missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
 > Phase 0 landed as `smp::` ([smp.hpp](../../include/kernel/smp.hpp),
 > [smp.cpp](../../arch/x86_64/smp.cpp)): the APs start, identify themselves by
 > their own LAPIC ID and park in a `hlt` loop, and a ping IPI proves the ICR
 > delivers. Verified on 4 cores in **both** APIC modes — x2APIC (`-cpu max`)
-> and xAPIC (`-cpu qemu64`, the VirtualBox path). Nothing schedules on them:
-> from the outside the system behaves exactly as it did on one core.
+> and xAPIC (`-cpu qemu64`, the VirtualBox path; SMEP later broke `qemu64`,
+> see phase 4, and `-cpu max,-x2apic` tests xAPIC now). Nothing schedules on
+> them: from the outside the system behaves exactly as it did on one core.
 >
 > Phase 1 gave every core its own TSS and its own `smp::Cpu` (current process,
 > idle, reschedule request), indexed by the TSS selector. Still nothing
@@ -26,6 +29,12 @@
 > lazily, at lock acquisition, not with an IPI
 > ([why](#phase-3--tlb-shootdown)). A boot self-test catches an AP reading a
 > stale translation and proves the flush removes it.
+>
+> Phase 4 paid the debt around the lock without splitting it: a panic stops
+> every core by NMI, uACPI has real locks, device interrupts go to the APs, and
+> the lock counts its own contention per entry point (`smp-stats:`). The
+> counters' first finding was QEMU's: under TCG, `pause` in the lock's spin
+> made four cores crawl.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -383,7 +392,144 @@ So: an invalidation IPI, broadcast on kernel-range changes, with the initiator
 waiting for acknowledgement before it reuses the physical page. **Estimate: 2-4
 days.**
 
-## Phase 4 — dismantling the BKL
+## Phase 4 — the debt around the BKL, and a way to measure it — **DONE**
+
+**Goal, as narrowed when it started:** close what phase 2 left owed — a panic
+that stops only one core, uACPI's placeholder locks, every device interrupt on
+the BSP — and build the measurement the rule below asks for. **Split nothing
+without it.** The only contention ever measured (`windowd-smoke --smp 4`
+failing on the lock held across ATA PIO, [above](#phase-2--the-big-kernel-lock-and-the-multi-core-scheduler--done))
+no longer reproduced when the phase started: the disk is AHCI with DMA now,
+and the test passes.
+
+What it actually took:
+
+- **A panic stops every core.** `panic()` and a ring-0 exception call
+  `smp::stop_other_cores()` before printing: one core claims the stop with a
+  compare-and-swap, sends every other online core an NMI (`arch::send_nmi`,
+  delivery mode NMI on the same ICR path as `send_ipi`) and waits, bounded,
+  for each to acknowledge. The NMI is what makes it work: a core spinning for
+  the kernel lock the panicking core still holds has `IF=0` and would never
+  take a normal IPI. The NMI handler checks `smp::stopping()` before anything
+  else and halts with NMIs blocked. Two cores failing at once: the loser halts
+  quietly and the winner reports. The panic ends with
+  `smp: other cores stopped (n/n)`, or `NOT stopped (k/n)` if some did not
+  answer. `panic-smoke` crashes the kernel on purpose through
+  `POWER_IOC_PANIC` on `/dev/power` (system identity only) and waits for that
+  line: 1/1 on two cores, 3/3 on four, in both APIC modes.
+- **The lock counts its contention, per door.** `smp::lock_kernel(Door)`
+  records, for syscall, timer, reschedule IPI, device IRQ, ring-3 fault, the
+  retake after `wait_for_interrupt` (`wake`) and the scheduler start
+  (`other`): acquisitions, how many found the lock taken, cycles waited and
+  cycles held. `sync::acquire` now says whether it waited. The BSP's tick prints
+  it next to `timer-stats:`, every 2000 ticks, [read like this](#reading-smp-stats).
+  The counters live under the lock they measure, so they cost two `rdtsc` per
+  acquisition and no atomics.
+- **The first thing it measured was not the kernel: it was `pause` under TCG.**
+  With four cores under TCG the smoke timed out, the guest saw 75-83% of its
+  ticks lost, and `smptest`'s pipe ping-pong took 37 s (the 1.1 s measured in
+  phase 2 was on another host and QEMU). The counters said the lock was
+  *held* 22% of the time while the cores spent 92% of theirs *waiting* for it:
+  a lock mostly free that nobody manages to take. QEMU's TCG emulates `pause`
+  by leaving translated code through its global lock, so four cores spinning
+  with `pause` queue behind each other inside QEMU, holder included. Without
+  `pause` in the spin, the same smoke passes in 35 s and the ping-pong takes
+  0.37 s. `pause` stays on hardware and under KVM, where it is what lets KVM's
+  pause-loop exiting run a preempted holder instead of the spinner (0.023 s for
+  the ping-pong there): `arch::lock_spin_hint()` drops it only when CPUID's
+  hypervisor leaf says `TCGTCGTCGTCG` (`cpu: QEMU TCG, the kernel lock spins
+  without pause`). Only the lock's spin changes; device polling keeps `pause`.
+- **uACPI has real locks.** Spinlocks are ticket locks that clear `IF` first, as
+  the API asks; mutexes take a compare-and-swap and spin until their timeout;
+  events count with atomics; and `uacpi_kernel_get_thread_id` returns the
+  running thread (a per-core number during boot, before there is one). Under the
+  BKL none of them ever waits — whoever holds a uACPI lock is inside uACPI, and
+  so holds the kernel lock — so they are what keeps uACPI correct the day it
+  runs without the BKL, not a fix for today. An infinite mutex wait that lasts
+  5 s panics: by then two cores are waiting on each other.
+- **Device interrupts go to the APs.** `route_gsi()` still targets the core that
+  routes, which during boot is the BSP; `smp::start_scheduling()` then calls
+  `ioapic::spread()`, which rewrites each routed GSI's destination round-robin
+  over the scheduling APs (`ioapic: GSI 1 (vector 51) -> lapic 1`). Not earlier:
+  a parked AP that took a device IRQ would run the driver alongside a boot that
+  holds no lock. The BSP is left out because its tick already does the
+  system's periodic work. A keyboard IRQ was observed handled on core 1, and
+  `kbd-smoke` passes. Two limits, both written next to `ioapic::kMaxDestination`:
+  - **An APIC ID above 254 gets no device interrupts.** An IOAPIC entry names
+    its destination in 8 bits (255 is broadcast). Logical destination mode, the
+    remedy the original plan named, does not help in x2APIC mode, where logical
+    IDs are 32 bits; the remedy is interrupt remapping (VT-d / AMD-Vi), which
+    this kernel does not have. Such cores are skipped.
+  - **MSI-X stays on the BSP.** virtio-gpu programs its MSI-X entry at boot,
+    before the APs schedule; moving it means rewriting that entry afterwards,
+    and nothing measured asks for it.
+- **A bug from v0.4.0: no SMEP, no APs.** Verifying in xAPIC mode with
+  `-cpu qemu64` found every AP offline. `ap_initialize_cpu()` required SMEP
+  outright since the commit that enabled it, while the BSP treats it as
+  optional; on a processor without SMEP the system had quietly run on one core.
+  The APs now mirror the BSP ([KERNEL_SECURITY.md](KERNEL_SECURITY.md)).
+  `-cpu max,-x2apic` is the better way to test xAPIC: it drops only the x2APIC.
+
+**Not done, on purpose: splitting the BKL.** Each subsystem is split when
+`smp-stats` shows it is the one, and not before. What the counters showed when
+this phase closed is [below](#what-the-counters-showed); the candidates, in the
+order the global counts suggest, and what each split must respect, are the
+original plan that follows. One rule from phase 3 travels with every split: the
+moment code touches unmappable kernel memory without the lock, the lazy TLB
+flush stops being enough and the IPI comes back.
+
+### Reading `smp-stats`
+
+```
+smp-stats: window=3826 ms acq=24559 contended=10% wait=38% of 4 cores (max 689221 us) held=54% (max 690095 us, syscall #59 posix)
+smp-stats: doors acq/wait ms/held ms: syscall=8675/4313/2477 timer=8039/2945/69 resched=0/0/0 irq=0/0/0 fault=447/0/4 wake=7316/60/7 other=0/0/0
+```
+
+- `contended` is the share of acquisitions that found the lock taken.
+- `wait` is time spent spinning, against **every** scheduling core's time:
+  100% would be all cores spinning for the whole window.
+- `held` is time the lock was held, against **one** core's time: it is held by
+  one core at a time, so 100% means it was never free. A `held` near 100% is a
+  lock that is the bottleneck; a `wait` far above `held` is a lock that is free
+  but not being taken, which is what the TCG `pause` problem looked like.
+- The longest hold names its door and, for a syscall, its number and subsystem
+  (`handle_syscall` tags it); `#59 posix` is `SAVANXP_SYS_FSCHECK`.
+- The second line splits acquisitions, milliseconds waited and milliseconds held
+  by door. Silent on one core.
+
+### What the counters showed
+
+Measured on a Ryzen 5 1600 (12 logical CPUs), QEMU 11.1, when phase 4 closed.
+Windows of 2000 ticks; ranges are over the windows of one run (for `smoke`,
+over the first, busiest window of two runs).
+
+| Run | `contended` | `wait` | `held` | Longest hold |
+| --- | --- | --- | --- | --- |
+| `windowd-smoke`, KVM, 2 cores | 28-36% | 15-21% of 2 | 46-84% | up to 76 ms, `SXN_SYS_SPAWN_STDIO` |
+| `windowd-smoke`, KVM, 4 cores | 28-56% | 1-40% of 4 | 6-87% | up to 67 ms, `SXN_SYS_SPAWN_STDIO` |
+| `smoke`, KVM, 4 cores | 10-22% | 38-43% of 4 | 54-60% | 0.7-0.8 s, `SAVANXP_SYS_FSCHECK` |
+
+- **The desktop smoke keeps the lock busy.** While `windowd-smoke` launches
+  its programs one after another, the lock is held up to 87% of the time, and
+  the longest holds are program launches: `SXN_SYS_SPAWN_STDIO` reads the
+  image from disk and maps it without letting go, 50-76 ms each. Next come
+  `SXN_SYS_DEVICE_CONTROL` calls, the compositor's GPU requests, up to 12 ms.
+  Those are the first candidates the counters name: image loading (storage and
+  the VFS under it), then the GPU path. In the quiet window after the launches,
+  `held` drops to 6%.
+- **`SYS_FSCHECK` is the longest single hold**, 0.7-0.8 s: the smoke's
+  `fscheck` walks the whole filesystem in one syscall. A test tool, not a
+  workload; it is the reason the `smoke` row's maximum is not worth chasing.
+- **Under TCG, `wait` overstates.** On two cores under TCG, `taskbar-smoke`
+  showed `wait=53%` of two cores with `held=29%` — more waiting than there was
+  holding to wait for, which two honest cores cannot produce. Under KVM the
+  same smokes keep `wait` below `held`. The likely mechanism, not confirmed in
+  QEMU's source: a vCPU spinning with `IF=0` while an interrupt is pending goes
+  through QEMU's global lock on every block of translated code, and stalls there
+  with the kernel lock already free. Read TCG's `wait` as an upper bound and act
+  on KVM's.
+
+The original plan follows.
 
 Open-ended, and deliberately last. The BKL is correct; it just does not scale.
 Splitting it is a per-subsystem campaign, and each subsystem should only be
@@ -429,6 +575,8 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
 - TCG stays the accelerator for the smokes, for determinism — but note that TCG
   serializes far more than real hardware does, so a clean TCG run is weak
   evidence. A KVM run (`--accel kvm`) is where memory-ordering bugs surface.
+- `panic-smoke` panics the kernel with every core running and fails unless the
+  others acknowledge the stop. **Added in phase 4.**
 
 ## Two cores by default
 
@@ -450,9 +598,13 @@ Measured under TCG on the development host (an i5-2400, 4 logical CPUs):
 Two and not more: `--smp 4` on a 4-CPU host still fails `windowd-smoke` (the
 lock held across disk I/O, [above](#phase-2--the-big-kernel-lock-and-the-multi-core-scheduler--done)),
 and half the host's CPUs leaves the thread that emulates the disk room to run.
-None of the phase 4 debt changes: a `panic` stops one core, device
-interrupts all go to the BSP, and the drivers still run under the one lock.
 VirtualBox is unaffected: its core count is the VM's setting.
+
+Phase 4 revisited both reasons on a Ryzen 5 1600 (12 logical CPUs), with AHCI
+as the default disk: `windowd-smoke --smp 4` passes, and so does `smoke
+--smp 4` under TCG and KVM — under TCG only since the lock stopped spinning
+with `pause` there ([phase 4](#phase-4--the-debt-around-the-bkl-and-a-way-to-measure-it--done)).
+Two stays the default: it is what the whole suite is verified on.
 
 ## Known traps
 
@@ -460,6 +612,11 @@ VirtualBox is unaffected: its core count is the VM's setting.
   I/O APIC masking LINT0, which required xAPIC-over-MMIO support and a restored
   virtual wire). AP bring-up under VirtualBox should be treated as its own
   investigation, not as a footnote to the QEMU work.
+- **`pause` under TCG.** QEMU's TCG emulates `pause` by leaving translated code
+  through its global lock, so a spin loop with `pause` on several vCPUs
+  serializes them inside QEMU, lock holder included. The kernel lock detects
+  TCG and spins without it ([phase 4](#phase-4--the-debt-around-the-bkl-and-a-way-to-measure-it--done)).
+  A new lock that spins should use `arch::lock_spin_hint()`, not `cpu_relax()`.
 - **The RAM budget.** A kernel stack, a GDT and a TSS per CPU are small, but an
   idle process per core costs a real process slot each. The machine runs in
   512 MiB, and the boot log puts the usable figure at 368 MiB with another
@@ -508,7 +665,13 @@ on one core while an application computes on another, instead of taking turns
 through a single round-robin queue.
 
 That makes phases 0-3 worth doing on their own terms — roughly **3-5 weeks** of
-focused work for a correct multi-core kernel with a big lock — while phase 4
-should wait for either threads or a measurement proving that a specific
+focused work for a correct multi-core kernel with a big lock — while splitting
+the lock should wait for either threads or a measurement proving that a specific
 subsystem is the bottleneck. Splitting locks before there is contention to split
 is how a kernel acquires races it cannot reproduce.
+
+Threads have landed, and phase 4 built the measurement. Its first reading
+names program loading and the GPU path as where the lock is held longest, but
+under a smoke that launches a dozen programs back to back
+([numbers](#what-the-counters-showed)); whether an interactive desktop feels
+it is the next measurement, and the one to take before splitting anything.

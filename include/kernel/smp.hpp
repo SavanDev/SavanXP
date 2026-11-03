@@ -116,24 +116,74 @@ void start_scheduling();
 // if the core already has a request in flight or is this core.
 void kick(uint32_t index);
 
-/* --- el lock grande del kernel ----------------------------------------------
+/* --- stopping the machine ---------------------------------------------------
  *
- * Un solo lock para todo el estado del kernel. Se toma en las entradas
- * (syscall, timer, IRQ externa, excepcion de ring 3, IPI de replanificar) y se
- * suelta en la salida, despues de cambiar de pila: soltarlo antes dejaria que
- * otro core retome el proceso saliente sobre la pila que este core todavia usa.
- *
- * El vector de ping (y cualquier IPI que no toque estado del kernel) NO lo toma:
- * el BSP lo manda durante el arranque, cuando ya corre codigo del kernel, y
- * espera el acuse.
- *
- * El codigo del arranque en kernel_main corre SIN el lock: los APs estan
- * estacionados y no hay con quien competir. Por eso los helpers de abajo
- * miran si el lock lo tiene este core en vez de suponerlo.
+ * A panic, or an exception in ring 0, ends the system: the core that hit it
+ * reports and halts. The others must halt too, or they keep running against
+ * the state that just proved broken -- or spin forever for the kernel lock
+ * the stopped core still holds, with nothing on screen saying why. They are
+ * stopped with an NMI, which arrives even with IF=0.
  */
-void lock_kernel();
+
+// Claims the stop and halts every other core. Returns how many of them
+// acknowledged; `targets` gets how many were sent the NMI. If another core
+// already claimed the stop (two cores failing at once), this one does not
+// return: it halts silently and leaves the report to the first.
+uint32_t stop_other_cores(uint32_t& targets);
+
+// The line that says whether the other cores stopped, after the panic
+// message: "smp: other cores stopped (n/n)", or "smp: other cores NOT
+// stopped (k/n)" when some did not acknowledge. panic-smoke waits for it.
+void report_stop(uint32_t stopped, uint32_t targets);
+
+// A stop is in progress. The NMI handler asks this to tell a stop request
+// from any other NMI.
+bool stopping();
+
+// Acknowledges the stop and halts this core for good. For the NMI handler.
+[[noreturn]] void park_stopped_core();
+
+/* --- the big kernel lock ----------------------------------------------------
+ *
+ * One lock for all kernel state. It is taken at the entries (syscall, timer,
+ * external IRQ, ring 3 exception, reschedule IPI) and released at the exit,
+ * after the stack switch: releasing it earlier would let another core resume
+ * the outgoing process on the stack this core is still using.
+ *
+ * The ping vector (and any IPI that touches no kernel state) does NOT take it:
+ * the BSP sends it during boot, while already running kernel code, and waits
+ * for the acknowledgement.
+ *
+ * Boot code in kernel_main runs WITHOUT the lock: the APs are parked and
+ * there is nobody to compete with. That is why the helpers below ask whether
+ * this core holds the lock instead of assuming it.
+ */
+// Where the lock was taken, for its contention counters. The stubs in
+// context.S pass syscall, timer and reschedule by number: keep the values.
+enum class Door : uint32_t {
+    syscall = 0,
+    timer = 1,
+    reschedule = 2,
+    device_irq = 3,
+    exception = 4,  // a fault from ring 3
+    wake = 5,       // taken again after wait_for_interrupt()
+    other = 6,      // the scheduler's start on each core
+    count = 7,
+};
+
+void lock_kernel(Door door = Door::other);
 void unlock_kernel();
 bool kernel_locked_here();
+
+// Prints the kernel lock's contention since the previous call, two lines
+// that start with `smp-stats:`, and starts a new window. The BSP's tick calls
+// it next to `timer-stats:`, with the lock held. Silent on one core. What it
+// measures, and how to read it: docs/kernel/SMP_ROADMAP.md, phase 4.
+void report_lock_stats();
+
+// Names what the current holder is doing, for the longest hold in the report:
+// handle_syscall() tags each syscall with its subsystem and number.
+void tag_lock_hold(uint32_t subsystem, uint32_t number);
 
 // Esperar la proxima interrupcion desde adentro del kernel: suelta el lock si
 // este core lo tiene, `sti; hlt`, `cli`, y lo vuelve a tomar. Vuelve siempre con

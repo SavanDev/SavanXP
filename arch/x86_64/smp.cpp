@@ -2,6 +2,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -54,8 +55,36 @@ bool g_ready = false;
 volatile uint64_t g_ping_count = 0;
 bool g_ipi_ok = false;
 
-// El lock grande del kernel. Ver smp.hpp.
+// The big kernel lock. See smp.hpp.
 constinit sync::SpinLock g_kernel_lock;
+
+// The kernel lock's contention counters, per door (smp::Door). Every field is
+// written only by the core holding the lock, so the lock itself protects them.
+// In TSC cycles; report_lock_stats() turns them into time.
+struct DoorStats {
+    uint64_t acquisitions;
+    uint64_t contended;
+    uint64_t wait_cycles;
+    uint64_t wait_max;
+    uint64_t hold_cycles;
+    uint64_t hold_max;
+};
+
+constexpr uint32_t kDoorCount = static_cast<uint32_t>(smp::Door::count);
+constexpr const char* kDoorNames[kDoorCount] = {
+    "syscall", "timer", "resched", "irq", "fault", "wake", "other",
+};
+
+DoorStats g_door_stats[kDoorCount] = {};
+// The current holder's door and when it took the lock.
+uint32_t g_hold_door = 0;
+uint64_t g_hold_start = 0;
+// What the holder tagged itself with (tag_lock_hold), and the same for the
+// longest hold of the window. kNoTag when it did not say.
+constexpr uint32_t kNoTag = 0xffffffffu;
+uint32_t g_hold_tag = kNoTag;
+uint32_t g_hold_max_tag = kNoTag;
+uint64_t g_stats_window_start = 0;
 
 // Que cores planifican, por indice denso. El BSP siempre.
 bool g_can_schedule[smp::kMaxCpus] = {true};
@@ -72,6 +101,11 @@ volatile uint32_t g_scheduling_started = 0;
 volatile uint64_t g_probe_address = 0;
 volatile uint32_t g_probe_sync = 0;
 volatile uint32_t g_probe_value = 0;
+
+// Fatal stop (smp::stop_other_cores). The claimant's index plus one, so 0
+// means no stop; and how many other cores have acknowledged it.
+uint32_t g_stop_owner = 0;
+uint32_t g_stop_acks = 0;
 
 void ping_handler() {
     const uint64_t address = __atomic_load_n(&g_probe_address, __ATOMIC_ACQUIRE);
@@ -190,8 +224,8 @@ extern "C" void savanxp_ap_entry(void*) {
     process::run_secondary_core();
 }
 
-extern "C" void savanxp_kernel_lock_acquire() {
-    smp::lock_kernel();
+extern "C" void savanxp_kernel_lock_acquire(uint32_t door) {
+    smp::lock_kernel(door < kDoorCount ? static_cast<smp::Door>(door) : smp::Door::other);
 }
 
 extern "C" void savanxp_kernel_lock_release() {
@@ -530,6 +564,84 @@ void start_scheduling() {
             static_cast<unsigned>(g_scheduling_count),
             static_cast<unsigned>(g_online));
     }
+
+    // Device IRQs go to the APs: the BSP's tick already does the system's
+    // periodic work (sleepers, timeouts, input polling). An AP the IOAPIC
+    // cannot name in 8 bits keeps out of the rotation. With no AP, they stay
+    // on the BSP.
+    uint32_t targets[kMaxCpus] = {};
+    uint32_t target_count = 0;
+    for (uint32_t index = 1; index < kMaxCpus; ++index) {
+        if (g_can_schedule[index] && g_cpu_state[index].lapic_id <= ioapic::kMaxDestination) {
+            targets[target_count++] = g_cpu_state[index].lapic_id;
+        }
+    }
+    if (ioapic::ready()) {
+        (void)ioapic::spread(targets, target_count);
+    }
+}
+
+uint32_t stop_other_cores(uint32_t& targets) {
+    targets = 0;
+    const uint32_t self = arch::cpu_index();
+    uint32_t expected = 0;
+    if (!__atomic_compare_exchange_n(
+            &g_stop_owner, &expected, self + 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (expected != self + 1) {
+            park_stopped_core();
+        }
+        // The same core failing again while it reports (a fault inside the
+        // panic path): the others are already stopped.
+        return __atomic_load_n(&g_stop_acks, __ATOMIC_ACQUIRE);
+    }
+
+    // Every core that answered start-up, parked or scheduling: a parked AP
+    // has IF=1 in its hlt loop and would otherwise wake for the next IPI.
+    for (uint32_t index = 0; index < g_slot_count; ++index) {
+        const BootSlot& slot = g_slots[index];
+        if (slot.start_slot == nullptr || slot.kernel_index == kNoIndex ||
+            slot.kernel_index == self ||
+            __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) == 0) {
+            continue;
+        }
+        if (arch::send_nmi(slot.lapic_id)) {
+            ++targets;
+        }
+    }
+    // The BSP has no BootSlot with a start_slot; an AP that fails stops it too.
+    if (self != 0 && g_online > 1 && arch::send_nmi(g_bsp_lapic_id)) {
+        ++targets;
+    }
+
+    for (uint64_t spin = 0; spin < kPingSpinLimit; ++spin) {
+        if (__atomic_load_n(&g_stop_acks, __ATOMIC_ACQUIRE) >= targets) {
+            break;
+        }
+        spin_hint();
+    }
+    return __atomic_load_n(&g_stop_acks, __ATOMIC_ACQUIRE);
+}
+
+void report_stop(uint32_t stopped, uint32_t targets) {
+    console::printf(
+        stopped >= targets ? "smp: other cores stopped (%u/%u)\n"
+                           : "smp: other cores NOT stopped (%u/%u)\n",
+        static_cast<unsigned>(stopped),
+        static_cast<unsigned>(targets));
+}
+
+bool stopping() {
+    return __atomic_load_n(&g_stop_owner, __ATOMIC_ACQUIRE) != 0;
+}
+
+[[noreturn]] void park_stopped_core() {
+    arch::disable_interrupts();
+    __atomic_add_fetch(&g_stop_acks, 1u, __ATOMIC_ACQ_REL);
+    // NMIs stay blocked until an iretq that never comes, and IF=0 keeps out
+    // the rest: hlt does not wake again.
+    for (;;) {
+        arch::halt_once();
+    }
 }
 
 void kick(uint32_t index) {
@@ -545,13 +657,31 @@ void kick(uint32_t index) {
     }
 }
 
-void lock_kernel() {
+void lock_kernel(Door door) {
     if (sync::held_by_this_cpu(g_kernel_lock)) {
-        // Tomarlo dos veces desde el mismo core no se destraba nunca. Mejor un
-        // panic que diga que paso que un core girando en silencio.
-        panic("smp: el lock del kernel se tomo dos veces en el mismo core");
+        // Taking it twice on the same core never comes undone. Better a panic
+        // that says what happened than a core spinning in silence.
+        panic("smp: the kernel lock was taken twice on the same core");
     }
-    sync::acquire(g_kernel_lock);
+    const uint64_t before = arch::read_timestamp_counter();
+    const bool waited = sync::acquire(g_kernel_lock);
+    const uint64_t now = arch::read_timestamp_counter();
+
+    const uint32_t index = static_cast<uint32_t>(door);
+    DoorStats& stats = g_door_stats[index];
+    ++stats.acquisitions;
+    if (waited) {
+        const uint64_t wait = now - before;
+        ++stats.contended;
+        stats.wait_cycles += wait;
+        if (wait > stats.wait_max) {
+            stats.wait_max = wait;
+        }
+    }
+    g_hold_door = index;
+    g_hold_start = now;
+    g_hold_tag = kNoTag;
+
     // Before touching anything: pages another core unmapped while this one
     // did not hold the lock may still be in this core's TLB -- kernel pages,
     // or user pages of the address space it shares with a thread over there.
@@ -560,7 +690,115 @@ void lock_kernel() {
 }
 
 void unlock_kernel() {
+    const uint64_t hold = arch::read_timestamp_counter() - g_hold_start;
+    DoorStats& stats = g_door_stats[g_hold_door];
+    stats.hold_cycles += hold;
+    if (hold > stats.hold_max) {
+        stats.hold_max = hold;
+        uint64_t longest = 0;
+        for (const DoorStats& other : g_door_stats) {
+            if (other.hold_max > longest) {
+                longest = other.hold_max;
+            }
+        }
+        if (hold >= longest) {
+            g_hold_max_tag = g_hold_tag;
+        }
+    }
     sync::release(g_kernel_lock);
+}
+
+void tag_lock_hold(uint32_t subsystem, uint32_t number) {
+    g_hold_tag = (subsystem << 16) | (number & 0xffffu);
+}
+
+void report_lock_stats() {
+    const uint64_t now = arch::read_timestamp_counter();
+    const uint64_t window = now - g_stats_window_start;
+    const bool first = g_stats_window_start == 0;
+    g_stats_window_start = now;
+    const uint64_t khz = timer::tsc_khz();
+    if (first || khz == 0 || g_scheduling_count <= 1) {
+        for (DoorStats& stats : g_door_stats) {
+            stats = {};
+        }
+        g_hold_max_tag = kNoTag;
+        return;
+    }
+
+    auto to_us = [khz](uint64_t cycles) { return (cycles * 1000ull) / khz; };
+
+    uint64_t acquisitions = 0;
+    uint64_t contended = 0;
+    uint64_t wait_cycles = 0;
+    uint64_t wait_max = 0;
+    uint64_t hold_cycles = 0;
+    uint64_t hold_max = 0;
+    uint32_t hold_max_door = 0;
+    for (uint32_t index = 0; index < kDoorCount; ++index) {
+        const DoorStats& stats = g_door_stats[index];
+        acquisitions += stats.acquisitions;
+        contended += stats.contended;
+        wait_cycles += stats.wait_cycles;
+        hold_cycles += stats.hold_cycles;
+        if (stats.wait_max > wait_max) {
+            wait_max = stats.wait_max;
+        }
+        if (stats.hold_max > hold_max) {
+            hold_max = stats.hold_max;
+            hold_max_door = index;
+        }
+    }
+
+    // Waiting is measured against every scheduling core's time: 100% would
+    // be every core spinning for the whole window. Holding is measured against
+    // one core's: the lock is held by one core at a time, so 100% is a lock
+    // that was never free.
+    const uint64_t core_cycles = window * g_scheduling_count;
+    console::printf(
+        "smp-stats: window=%llu ms acq=%llu contended=%llu%% wait=%llu%% of %u cores (max %llu us) "
+        "held=%llu%% (max %llu us, %s",
+        (unsigned long long)(to_us(window) / 1000ull),
+        (unsigned long long)acquisitions,
+        (unsigned long long)(acquisitions != 0 ? (contended * 100ull) / acquisitions : 0),
+        (unsigned long long)(core_cycles != 0 ? (wait_cycles * 100ull) / core_cycles : 0),
+        static_cast<unsigned>(g_scheduling_count),
+        (unsigned long long)to_us(wait_max),
+        (unsigned long long)(window != 0 ? (hold_cycles * 100ull) / window : 0),
+        (unsigned long long)to_us(hold_max),
+        kDoorNames[hold_max_door]);
+    // The syscall behind the longest hold, when it was a tagged one. The
+    // console is serialized by the lock this core holds, so the line is not
+    // interleaved with anyone else's.
+    if (g_hold_max_tag != kNoTag) {
+        console::printf(" #%u %s",
+            static_cast<unsigned>(g_hold_max_tag & 0xffffu),
+            (g_hold_max_tag >> 16) == 0 ? "posix" : "native");
+    }
+    console::printf(")\n");
+    g_hold_max_tag = kNoTag;
+
+    // Per door: acquisitions / milliseconds waited / milliseconds held.
+    unsigned long long cells[kDoorCount][3] = {};
+    for (uint32_t index = 0; index < kDoorCount; ++index) {
+        const DoorStats& stats = g_door_stats[index];
+        cells[index][0] = stats.acquisitions;
+        cells[index][1] = to_us(stats.wait_cycles) / 1000ull;
+        cells[index][2] = to_us(stats.hold_cycles) / 1000ull;
+    }
+    static_assert(kDoorCount == 7, "the line below names every door");
+    console::printf(
+        "smp-stats: doors acq/wait ms/held ms: syscall=%llu/%llu/%llu timer=%llu/%llu/%llu "
+        "resched=%llu/%llu/%llu irq=%llu/%llu/%llu fault=%llu/%llu/%llu wake=%llu/%llu/%llu "
+        "other=%llu/%llu/%llu\n",
+        cells[0][0], cells[0][1], cells[0][2], cells[1][0], cells[1][1], cells[1][2],
+        cells[2][0], cells[2][1], cells[2][2], cells[3][0], cells[3][1], cells[3][2],
+        cells[4][0], cells[4][1], cells[4][2], cells[5][0], cells[5][1], cells[5][2],
+        cells[6][0], cells[6][1], cells[6][2]);
+
+    for (DoorStats& stats : g_door_stats) {
+        stats = {};
+    }
 }
 
 bool kernel_locked_here() {
@@ -576,7 +814,7 @@ void wait_for_interrupt() {
     arch::enable_interrupts_and_halt();
     arch::disable_interrupts();
     if (held) {
-        lock_kernel();
+        lock_kernel(Door::wake);
     }
 }
 

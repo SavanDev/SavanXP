@@ -49,4 +49,15 @@ uint8_t route_legacy_irq(uint8_t isa_irq, arch::IrqHandler handler);
 // Enmascara / desenmascara una GSI ya ruteada (bit 16 de la entrada).
 void set_gsi_masked(uint32_t gsi, bool masked);
 
+// Spreads every routed GSI over the cores whose LAPIC ids are given, in turn,
+// and logs where each one went. Until then route_gsi() sends each GSI to the
+// core that routes it, which during boot is the BSP. smp::start_scheduling()
+// calls it with the APs, once they take the kernel lock like any other core:
+// a parked AP that took a device IRQ would run the driver alongside a boot
+// that holds no lock. An id above kMaxDestination is not addressable (the
+// entry's destination is 8 bits, and 255 is broadcast) and must not be passed.
+// Returns how many GSIs it moved.
+constexpr uint32_t kMaxDestination = 254;
+uint32_t spread(const uint32_t* lapic_ids, uint32_t count);
+
 } // namespace ioapic

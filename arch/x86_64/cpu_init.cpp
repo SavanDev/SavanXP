@@ -56,6 +56,8 @@ constexpr uint32_t kApicLvtExtInt = 0x7u << 8;
 // asi que el comando es el vector mas este bit.
 constexpr uint32_t kApicIcrDeliveryStatus = 1u << 12;
 constexpr uint32_t kApicIcrAssert = 1u << 14;
+// Delivery mode NMI (bits 8-10 = 100): the vector field is ignored.
+constexpr uint32_t kApicIcrDeliveryNmi = 4u << 8;
 constexpr uint32_t kIpiDeliverySpinLimit = 1000000u;
 
 extern "C" void x86_64_syscall_entry();
@@ -185,6 +187,26 @@ bool enable_nx() {
     return true;
 }
 
+// QEMU's TCG says so in the hypervisor leaf, "TCGTCGTCGTCG", behind the
+// hypervisor bit of leaf 1.
+bool running_under_tcg() {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    if ((ecx & (1u << 31)) == 0) {
+        return false;
+    }
+    cpuid(0x40000000u, 0, eax, ebx, ecx, edx);
+    // The signature in EBX, ECX, EDX: "TCGT" "CGTC" "GTCG", little-endian.
+    return ebx == 0x54474354u && ecx == 0x43544743u && edx == 0x47435447u;
+}
+
+// Whether the BSP turned SMEP on. Every AP does the same as the BSP: all
+// cores enforce it or none does.
+bool g_smep_enabled = false;
+
 bool enable_smep() {
     uint32_t maximum_leaf = 0;
     uint32_t ebx = 0;
@@ -278,6 +300,10 @@ uint64_t read_cr2() {
 }
 
 [[noreturn]] void stop_on_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code, bool has_error_code) {
+    // The other cores first: they must not keep running on top of whatever
+    // state this fault came from, nor print over the report.
+    uint32_t targets = 0;
+    const uint32_t stopped = smp::stop_other_cores(targets);
     console::write_line("");
     console::printf("exception: #%u %s\n", static_cast<unsigned>(vector), exception_name(vector));
     if (has_error_code) {
@@ -290,22 +316,29 @@ uint64_t read_cr2() {
         console::printf("rip: 0x%llx cs: 0x%llx rflags: 0x%llx\n", frame->rip, frame->cs, frame->rflags);
         console::printf("rsp: 0x%llx ss: 0x%llx\n", frame->rsp, frame->ss);
     }
+    smp::report_stop(stopped, targets);
 
     arch::disable_interrupts();
     arch::halt_forever();
 }
 
 void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code, bool has_error_code) {
+    // The NMI another core sends when it panics. Checked before anything else:
+    // it can land in ring 3 or in the middle of the kernel, lock held or not.
+    if (vector == 2 && smp::stopping()) {
+        smp::park_stopped_core();
+    }
+
     if (vector == 3 && g_breakpoint_probe_active) {
         g_breakpoint_probe_hits = g_breakpoint_probe_hits + 1;
         return;
     }
 
     if (frame != nullptr && (frame->cs & 0x3) == 0x3) {
-        // Una excepcion de ring 3 es una entrada al kernel como un syscall: toca
-        // el proceso, sus tablas de paginas y, si lo mata, el scheduler. Desde
-        // ring 3 no hay forma de tener ya el lock en este core.
-        smp::lock_kernel();
+        // An exception from ring 3 enters the kernel like a syscall: it touches
+        // the process, its page tables and, if it kills it, the scheduler.
+        // Coming from ring 3, this core cannot already hold the lock.
+        smp::lock_kernel(smp::Door::exception);
         if (process::current() == nullptr) {
             smp::unlock_kernel();
             stop_on_exception(vector, frame, error_code, has_error_code);
@@ -349,13 +382,13 @@ void dispatch_external_vector(uint8_t vector) {
         return;
     }
 
-    // Los IRQ de dispositivos corren drivers, y los drivers son estado del
-    // kernel: van con el lock. Los IPI no -- el ping llega mientras el BSP,
-    // que lo mando, esta corriendo el arranque y espera el acuse. Estos
-    // handlers no cambian de contexto, asi que soltar el lock aca es seguro.
+    // Device IRQs run drivers, and drivers are kernel state: they take the
+    // lock. IPIs do not -- the ping arrives while the BSP, which sent it, is
+    // running the boot and waiting for the acknowledgement. These handlers do
+    // not switch context, so releasing the lock here is safe.
     const bool takes_kernel_lock = vector < arch::kIpiPingVector;
     if (takes_kernel_lock) {
-        smp::lock_kernel();
+        smp::lock_kernel(smp::Door::device_irq);
     }
 
     const ExternalHandlerSlot& slot = g_external_handlers[vector];
@@ -771,7 +804,13 @@ void initialize_cpu() {
     if (!enable_nx()) {
         panic("cpu: NX/W^X is required");
     }
-    if (!enable_smep()) {
+    // Before any AP starts: they all spin on the kernel lock with this.
+    if (running_under_tcg()) {
+        g_lock_spin_pause = false;
+        console::printf("cpu: QEMU TCG, the kernel lock spins without pause\n");
+    }
+    g_smep_enabled = enable_smep();
+    if (!g_smep_enabled) {
         console::printf("cpu: SMEP unavailable on this processor\n");
     }
     install_tss_descriptors();
@@ -789,7 +828,9 @@ void ap_initialize_cpu() {
     if (!enable_nx()) {
         halt_forever();
     }
-    if (!enable_smep()) {
+    // SMEP as on the BSP. Requiring it unconditionally left every AP halted
+    // on a processor without it (QEMU's qemu64), and the system on one core.
+    if (g_smep_enabled && !enable_smep()) {
         halt_forever();
     }
     // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core
@@ -839,24 +880,23 @@ static bool wait_for_ipi_delivery() {
     return false;
 }
 
-bool send_ipi(uint32_t destination_lapic_id, uint8_t vector) {
+// Writes one ICR command to a core by its LAPIC id, physical destination.
+static bool send_icr(uint32_t destination_lapic_id, uint32_t command) {
     if (!g_local_apic_ready) {
         return false;
     }
 
-    const uint32_t command = static_cast<uint32_t>(vector) | kApicIcrAssert;
-
     if (g_local_apic_x2apic) {
-        // Un unico MSR de 64 bits: destino arriba, comando abajo. El x2APIC no
-        // expone bit de entrega pendiente, no hay nada que sondear.
+        // One 64-bit MSR: destination above, command below. The x2APIC has no
+        // delivery-pending bit, so there is nothing to poll.
         write_msr(x2apic_msr(kApicIcrLow),
                   (static_cast<uint64_t>(destination_lapic_id) << 32) | command);
         return true;
     }
 
-    // En xAPIC el destino fisico tiene 8 bits. Un id mas grande no es
-    // direccionable asi y necesita destino logico, que es trabajo de cuando
-    // haya mas de 255 cores.
+    // In xAPIC mode the physical destination is 8 bits. A larger id is not
+    // addressable that way; it would need logical destination mode, which is
+    // work for when there are more than 255 cores.
     if (destination_lapic_id > 0xffu) {
         return false;
     }
@@ -864,10 +904,18 @@ bool send_ipi(uint32_t destination_lapic_id, uint8_t vector) {
         return false;
     }
 
-    // La parte alta primero: escribir la baja es lo que dispara el envio.
+    // High half first: writing the low half is what sends it.
     write_local_apic(kApicIcrHigh, destination_lapic_id << 24);
     write_local_apic(kApicIcrLow, command);
     return wait_for_ipi_delivery();
+}
+
+bool send_ipi(uint32_t destination_lapic_id, uint8_t vector) {
+    return send_icr(destination_lapic_id, static_cast<uint32_t>(vector) | kApicIcrAssert);
+}
+
+bool send_nmi(uint32_t destination_lapic_id) {
+    return send_icr(destination_lapic_id, kApicIcrDeliveryNmi | kApicIcrAssert);
 }
 
 bool register_irq_handler(uint8_t irq, IrqHandler handler) {
@@ -1199,6 +1247,10 @@ void halt_once() {
 void enable_interrupts_and_halt() {
     asm volatile("sti; hlt");
 }
+
+// See lock_spin_hint() in cpu.hpp. initialize_cpu() clears it under TCG,
+// before any AP starts.
+bool g_lock_spin_pause = true;
 
 [[noreturn]] void halt_forever() {
     for (;;) {

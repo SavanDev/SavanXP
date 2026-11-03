@@ -456,6 +456,8 @@ savanxp_program(NAME cwdtest TEST SOURCES subsystems/posix/userland/cwdtest.c)
 # system's files and allowed its own (docs/kernel/USERS_AND_PERMISSIONS.md).
 savanxp_program(NAME idtest TEST SOURCES subsystems/posix/userland/idtest.c)
 savanxp_program(NAME smptest TEST SOURCES subsystems/posix/userland/smptest.c)
+# Panics the kernel on purpose: what panic-smoke runs.
+savanxp_program(NAME panictest TEST SOURCES subsystems/posix/userland/panictest.c)
 savanxp_program(NAME pthreadtest TEST SOURCES subsystems/posix/userland/pthreadtest.c)
 savanxp_program(NAME polltest TEST SOURCES subsystems/posix/userland/polltest.c)
 savanxp_program(NAME clocktest TEST SOURCES subsystems/posix/userland/clocktest.c)

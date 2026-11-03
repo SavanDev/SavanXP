@@ -259,8 +259,8 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::IrqHandler hand
         return 0;
     }
 
-    // Destino: el BSP, en modo fisico. Con SMP habria que elegir CPU y considerar
-    // destino logico cuando el id de x2APIC no entra en 8 bits.
+    // Destination: this core, in physical mode. During boot that is the BSP;
+    // spread() moves every GSI to the APs once they schedule.
     write_redirection(*io, gsi, vector, active_low, level,
                       /*masked=*/false,
                       /*dest_apic=*/static_cast<uint8_t>(arch::local_apic_id()));
@@ -272,6 +272,25 @@ uint8_t route_legacy_irq(uint8_t isa_irq, arch::IrqHandler handler) {
     uint32_t gsi; Polarity pol; Trigger trg;
     resolve_isa(isa_irq, gsi, pol, trg);
     return route_gsi(gsi, pol, trg, handler);
+}
+
+uint32_t spread(const uint32_t* lapic_ids, uint32_t count) {
+    if (count == 0) return 0;
+    uint32_t moved = 0;
+    for (size_t i = 0; i < g_routed_count; ++i) {
+        IoApic* io = owner_of_gsi(g_routed[i].gsi);
+        if (!io) continue;
+        const uint32_t lapic = lapic_ids[i % count];
+        if (lapic > kMaxDestination) continue;
+        // Only the high half: one 32-bit write, so the entry never names half
+        // an old destination. The vector, mask and trigger stay as routed.
+        const uint32_t index = 0x10 + (g_routed[i].gsi - io->gsi_base) * 2;
+        ioapic_write(*io, index + 1, lapic << 24);
+        console::printf("ioapic: GSI %u (vector %u) -> lapic %u\n",
+                        unsigned(g_routed[i].gsi), unsigned(g_routed[i].vector), unsigned(lapic));
+        ++moved;
+    }
+    return moved;
 }
 
 void set_gsi_masked(uint32_t gsi, bool masked) {

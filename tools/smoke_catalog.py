@@ -101,6 +101,15 @@ SCENARIOS: dict[str, Scenario] = {
     "smoke": _qemu_scenario(
         "smoke", "SMOKE PASS", "SMOKE FAIL", "Core POSIX userland smoke test", 120.0
     ),
+    # The kernel panics on purpose (POWER_IOC_PANIC) with every core running;
+    # the panic must stop the others by NMI and say so.
+    "panic-smoke": _qemu_scenario(
+        "panictest",
+        "smp: other cores stopped",
+        "smp: other cores NOT stopped",
+        "A kernel panic halts every core",
+        120.0,
+    ),
     "windowd-smoke": _qemu_scenario(
         "windowd-selftest",
         "WINDOWD SMOKE PASS",

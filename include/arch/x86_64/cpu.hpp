@@ -104,6 +104,11 @@ constexpr uint8_t kIpiRescheduleVector = 65;
 // fit in 8 bits in xAPIC mode, or if the previous delivery has not finished.
 bool send_ipi(uint32_t destination_lapic_id, uint8_t vector);
 
+// A non-maskable interrupt to a core by its LAPIC id. It arrives even on a core
+// spinning with IF=0, for a lock or anything else; smp::stop_other_cores() uses
+// it to stop the machine on a panic. Same failure cases as send_ipi.
+bool send_nmi(uint32_t destination_lapic_id);
+
 bool register_irq_handler(uint8_t irq, IrqHandler handler);
 bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi eoi);
 bool initialize_local_apic();
@@ -193,6 +198,23 @@ void enable_interrupts_and_halt();
 // hyperthreaded core gives the sibling the execution units).
 inline void cpu_relax() {
     asm volatile("pause" : : : "memory");
+}
+
+// False under QEMU's TCG, detected at boot. See lock_spin_hint().
+extern bool g_lock_spin_pause;
+
+// The hint for a core spinning on a lock another core holds. On hardware and
+// under KVM that is `pause`, which also lets KVM notice a vCPU spinning for a
+// preempted holder and run something else. Under TCG, QEMU emulates `pause` by
+// leaving translated code through its own global lock, so every core spinning
+// on the kernel lock queued behind the others in QEMU itself: measured with
+// smptest on 4 cores, a pipe ping-pong took 37 s with it and 0.45 s without.
+inline void lock_spin_hint() {
+    if (g_lock_spin_pause) {
+        asm volatile("pause" : : : "memory");
+    } else {
+        asm volatile("" : : : "memory");
+    }
 }
 
 // Full barrier: every earlier load and store, to memory or MMIO, is globally

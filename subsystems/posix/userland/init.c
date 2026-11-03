@@ -157,6 +157,8 @@ static int run_automation_spec(const char* spec) {
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
     const char* elevtest_argv[] = {"/bin/elevtest", 0};
+
+    const char* panictest_argv[] = {"/bin/panictest", 0};
     const char* ccleste_argv[] = {"/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
@@ -272,6 +274,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";
             argv = elevtest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "panictest") == 0) {
+            path = "/bin/panictest";
+            argv = panictest_argv;
             argc = 1;
         } else if (strcmp(spec, "sessiontest") == 0) {
             path = "/bin/sessiontest";

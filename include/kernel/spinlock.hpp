@@ -41,12 +41,17 @@ inline bool held_by_this_cpu(const SpinLock& lock) {
     return __atomic_load_n(&lock.owner, __ATOMIC_ACQUIRE) == arch::cpu_index();
 }
 
-inline void acquire(SpinLock& lock) {
+// True when the lock was taken by someone else and this core had to wait:
+// what the kernel lock's contention counters count (smp::Door).
+inline bool acquire(SpinLock& lock) {
     const uint32_t ticket = __atomic_fetch_add(&lock.next_ticket, 1u, __ATOMIC_ACQ_REL);
+    bool waited = false;
     while (__atomic_load_n(&lock.now_serving, __ATOMIC_ACQUIRE) != ticket) {
-        arch::cpu_relax();
+        waited = true;
+        arch::lock_spin_hint();
     }
     __atomic_store_n(&lock.owner, arch::cpu_index(), __ATOMIC_RELEASE);
+    return waited;
 }
 
 inline void release(SpinLock& lock) {

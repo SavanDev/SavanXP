@@ -1,12 +1,14 @@
-// uacpi_glue.cpp — Capa de host (uacpi_kernel_*) que uACPI necesita del kernel.
+// uacpi_glue.cpp — the host layer (uacpi_kernel_*) uACPI needs from the kernel.
 //
-// Implementa la kernel-api de uACPI mapeandola a los subsistemas de SavanXP
-// (heap, vmm, pci, timer, ioapic). uACPI vive vendorizado en vendor/uacpi/.
+// Implements uACPI's kernel API on top of SavanXP's subsystems (heap, vmm, pci,
+// timer, ioapic). uACPI itself is vendored in vendor/uacpi/.
 //
-// Supuestos validos HOY en SavanXP (si cambian, revisar los bloques marcados):
-//   * Monocore: no hay bring-up de CPUs secundarias -> sincronizacion trivial.
-//   * Kernel no-preemptivo: el work de GPE/Notify puede correr sincrono (por
-//     ahora) sin romper reentrancia grave.
+// Assumptions that hold TODAY (if they change, revisit the marked blocks):
+//   * Every uACPI call runs under the big kernel lock, or during the part of
+//     boot where the APs are parked. The spinlocks and mutexes below are real,
+//     but never contended while that holds (SMP_ROADMAP.md, phase 4).
+//   * The kernel is not preemptible: GPE/Notify work can run synchronously
+//     (for now) without serious reentrancy problems.
 
 extern "C" {
 #include "uacpi/kernel_api.h"
@@ -28,7 +30,10 @@ extern "C" {
 #include "kernel/console.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/ioapic.hpp"
+#include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
+#include "kernel/process.hpp"
+#include "kernel/spinlock.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/vmm.hpp"
 
@@ -98,8 +103,16 @@ inline PciAddr pci_unpack(uacpi_handle h) {
 inline uacpi_handle io_pack(uacpi_io_addr base) { return reinterpret_cast<uacpi_handle>(uintptr_t(base)); }
 inline uint16_t     io_base(uacpi_handle h)     { return uint16_t(reinterpret_cast<uintptr_t>(h)); }
 
-// Semaforo minimo para uacpi_kernel_*event (monocore: solo un contador).
-struct Event { volatile uint32_t count; };
+// A counting semaphore; the count is only touched with atomics.
+struct Event { uint32_t count; };
+
+// A uACPI mutex: taken or not. Not recursive -- uACPI does its own recursion
+// on top, keyed by uacpi_kernel_get_thread_id().
+struct Mutex { uint32_t locked; };
+
+// An infinite mutex wait that has not ended by then is a lock-order bug, not a
+// slow firmware method: see uacpi_kernel_acquire_mutex.
+constexpr uint64_t kMutexStallNs = 5000000000ull;
 
 } // namespace
 
@@ -429,27 +442,63 @@ void uacpi_kernel_restore_interrupts(uacpi_interrupt_state state) {
     arch::restore_interrupts(static_cast<uint64_t>(state));
 }
 
-// ======================= Spinlocks (monocore) =======================
-// Sin SMP no hay contencion: el "lock" solo salva/restaura IF. Reemplazar por
-// un spinlock real cuando exista SMP.
-uacpi_handle uacpi_kernel_create_spinlock(void) { return reinterpret_cast<uacpi_handle>(1); }
-void uacpi_kernel_free_spinlock(uacpi_handle) {}
-uacpi_cpu_flags uacpi_kernel_lock_spinlock(uacpi_handle) {
-    return static_cast<uacpi_cpu_flags>(uacpi_kernel_disable_interrupts());
+// ======================= Spinlocks =======================
+// Ticket spinlocks (sync::SpinLock) that clear IF first, as the API asks.
+// Today every uACPI call already runs under the big kernel lock or during the
+// single-core part of boot, so these never wait; they are what keeps uACPI
+// correct the day it runs outside that lock (SMP_ROADMAP.md, phase 4).
+uacpi_handle uacpi_kernel_create_spinlock(void) {
+    auto* lock = static_cast<sync::SpinLock*>(heap::allocate(sizeof(sync::SpinLock)));
+    if (lock != nullptr) *lock = sync::SpinLock{};
+    return lock;
 }
-void uacpi_kernel_unlock_spinlock(uacpi_handle, uacpi_cpu_flags f) {
-    uacpi_kernel_restore_interrupts(static_cast<uacpi_interrupt_state>(f));
+void uacpi_kernel_free_spinlock(uacpi_handle handle) { heap::free(handle); }
+uacpi_cpu_flags uacpi_kernel_lock_spinlock(uacpi_handle handle) {
+    const uint64_t flags = arch::save_and_disable_interrupts();
+    (void)sync::acquire(*static_cast<sync::SpinLock*>(handle));
+    return static_cast<uacpi_cpu_flags>(flags);
+}
+void uacpi_kernel_unlock_spinlock(uacpi_handle handle, uacpi_cpu_flags flags) {
+    sync::release(*static_cast<sync::SpinLock*>(handle));
+    arch::restore_interrupts(static_cast<uint64_t>(flags));
 }
 
-// ======================= Mutex (monocore, un solo hilo) =======================
-// No hay concurrencia real: acquire/release son no-ops que siempre exitan. El
-// handle no-nulo basta para que uACPI lo trate como valido.
-uacpi_handle uacpi_kernel_create_mutex(void) { return reinterpret_cast<uacpi_handle>(1); }
-void uacpi_kernel_free_mutex(uacpi_handle) {}
-uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle, uacpi_u16) { return UACPI_STATUS_OK; }
-void uacpi_kernel_release_mutex(uacpi_handle) {}
+// ======================= Mutexes =======================
+// The kernel cannot sleep inside a call, so a contended mutex spins until its
+// timeout. Under the big kernel lock it is never contended: whoever holds it is
+// inside uACPI, and so holds the kernel lock this core would need to get there.
+// If an infinite wait outlasts kMutexStallNs anyway, two cores are waiting on
+// each other; a panic says so instead of hanging both.
+uacpi_handle uacpi_kernel_create_mutex(void) {
+    Mutex* mutex = static_cast<Mutex*>(heap::allocate(sizeof(Mutex)));
+    if (mutex != nullptr) mutex->locked = 0;
+    return mutex;
+}
+void uacpi_kernel_free_mutex(uacpi_handle handle) { heap::free(handle); }
+uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle handle, uacpi_u16 timeout_ms) {
+    Mutex* mutex = static_cast<Mutex*>(handle);
+    const uint64_t start = uacpi_kernel_get_nanoseconds_since_boot();
+    for (;;) {
+        uint32_t expected = 0;
+        if (__atomic_compare_exchange_n(&mutex->locked, &expected, 1u, false,
+                                        __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+            return UACPI_STATUS_OK;
+        }
+        const uint64_t waited = uacpi_kernel_get_nanoseconds_since_boot() - start;
+        if (timeout_ms != 0xFFFF && waited >= uint64_t(timeout_ms) * 1000000ULL) {
+            return UACPI_STATUS_TIMEOUT;
+        }
+        if (timeout_ms == 0xFFFF && waited >= kMutexStallNs) {
+            panic("uacpi: a mutex wait did not end; two cores wait on each other");
+        }
+        arch::lock_spin_hint();
+    }
+}
+void uacpi_kernel_release_mutex(uacpi_handle handle) {
+    __atomic_store_n(&static_cast<Mutex*>(handle)->locked, 0u, __ATOMIC_RELEASE);
+}
 
-// ======================= Events / semaforos =======================
+// ======================= Events (semaphores) =======================
 uacpi_handle uacpi_kernel_create_event(void) {
     Event* e = static_cast<Event*>(heap::allocate(sizeof(Event)));
     if (e) e->count = 0;
@@ -457,17 +506,26 @@ uacpi_handle uacpi_kernel_create_event(void) {
 }
 void uacpi_kernel_free_event(uacpi_handle h) { heap::free(h); }
 void uacpi_kernel_signal_event(uacpi_handle h) {
-    if (h) { Event* e = static_cast<Event*>(h); e->count = e->count + 1; }
+    if (h) __atomic_add_fetch(&static_cast<Event*>(h)->count, 1u, __ATOMIC_RELEASE);
 }
-void uacpi_kernel_reset_event(uacpi_handle h) { if (h) static_cast<Event*>(h)->count = 0; }
+void uacpi_kernel_reset_event(uacpi_handle h) {
+    if (h) __atomic_store_n(&static_cast<Event*>(h)->count, 0u, __ATOMIC_RELEASE);
+}
 uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle h, uacpi_u16 timeout_ms) {
     Event* e = static_cast<Event*>(h);
-    // A timeout of 0xFFFF means forever. Single core: if nobody is going to
-    // signal, do not hang.
+    // A timeout of 0xFFFF means forever. Nothing in the kernel signals an event
+    // from another context while this one spins, so "forever" ends only if the
+    // count is already there.
     const uint64_t deadline = uacpi_kernel_get_nanoseconds_since_boot()
                               + uint64_t(timeout_ms) * 1000000ULL;
     for (;;) {
-        if (e->count) { e->count = e->count - 1; return UACPI_TRUE; }
+        uint32_t count = __atomic_load_n(&e->count, __ATOMIC_ACQUIRE);
+        while (count != 0) {
+            if (__atomic_compare_exchange_n(&e->count, &count, count - 1, false,
+                                            __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+                return UACPI_TRUE;
+            }
+        }
         if (timeout_ms != 0xFFFF &&
             uacpi_kernel_get_nanoseconds_since_boot() >= deadline) return UACPI_FALSE;
         cpu_relax();
@@ -475,8 +533,15 @@ uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle h, uacpi_u16 timeout_ms) {
 }
 
 // ======================= Thread id =======================
+// The kernel thread running this, which uACPI keys its recursive locks on.
+// During boot there is none yet: then each core is its own thread, named by a
+// small number no Thread pointer can take.
 uacpi_thread_id uacpi_kernel_get_thread_id(void) {
-    return reinterpret_cast<uacpi_thread_id>(1); // un solo hilo de kernel
+    process::Thread* thread = process::current_thread();
+    if (thread != nullptr) {
+        return reinterpret_cast<uacpi_thread_id>(thread);
+    }
+    return reinterpret_cast<uacpi_thread_id>(static_cast<uintptr_t>(arch::cpu_index()) + 1);
 }
 
 // ======================= Firmware request =======================

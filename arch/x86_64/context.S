@@ -20,7 +20,7 @@
  * aca no abre ninguna ventana en este core. Clobberear los registros volatiles
  * en las llamadas no importa: todos salen del frame.
  */
-.macro CONTEXT_ENTRY name, handler
+.macro CONTEXT_ENTRY name, handler, door
 \name:
     cld
     pushq %rax
@@ -39,6 +39,7 @@
     pushq %r14
     pushq %r15
     subq $8, %rsp
+    movl $\door, %edi
     call savanxp_kernel_lock_acquire
     leaq 8(%rsp), %rdi
     call \handler
@@ -64,9 +65,10 @@
     iretq
 .endm
 
-CONTEXT_ENTRY x86_64_syscall_entry, savanxp_handle_syscall
-CONTEXT_ENTRY x86_64_timer_entry, savanxp_handle_timer_interrupt
-CONTEXT_ENTRY x86_64_reschedule_entry, savanxp_handle_reschedule_ipi
+/* The third argument is the smp::Door the lock is counted against. */
+CONTEXT_ENTRY x86_64_syscall_entry, savanxp_handle_syscall, 0
+CONTEXT_ENTRY x86_64_timer_entry, savanxp_handle_timer_interrupt, 1
+CONTEXT_ENTRY x86_64_reschedule_entry, savanxp_handle_reschedule_ipi, 2
 
 /*
  * arch::resume_context(context, cr3): leave the kernel for a context without

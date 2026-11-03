@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
+  point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See
+  `docs/kernel/SMP_ROADMAP.md#reading-smp-stats`.
+
 - **Task Manager: Applications tab** (End Task, Switch To, New Task). Any WM client can read the
   task list and switch to or close a task (`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`/`_ACTIVATE`/`_CLOSE`,
   `sxnwm_task_*`); closing takes the same user or the system. See `docs/userland/SYSTEM_MONITORING.md`.
@@ -76,6 +80,12 @@ Cut-off notes:
   `docs/build/BUILD_LINUX.md#the-qemu-window`.
 
 ### Changed
+
+- **A kernel panic or ring-0 fault stops every core** by NMI and says so (`smp: other cores stopped
+  (n/n)`). `POWER_IOC_PANIC` on `/dev/power` (system only) and `panic-smoke` exercise it.
+
+- **Device interrupts go to the APs** once they schedule (`ioapic: GSI n (vector v) -> lapic m`);
+  the BSP keeps the tick's work, MSI-X stays on it. uACPI gets real spinlocks, mutexes and events.
 
 - **QEMU boots two cores by default** (`build.sh`, `tools/run_qemu.py`, `tools/run_smoke.py`,
   `tools/shoot.sh`, `SAVANXP_SMP`), smokes included; `--smp 1` keeps one. See
@@ -157,6 +167,12 @@ Cut-off notes:
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
 ### Fixed
+
+- **The APs start on processors without SMEP** (QEMU `-cpu qemu64`): since v0.4.0 they halted at
+  start-up and the system ran on one core.
+
+- **Four cores under QEMU TCG no longer crawl**: the kernel lock spins without `pause` there
+  (`cpu: QEMU TCG, the kernel lock spins without pause`); `smoke --smp 4` passes instead of timing out.
 
 - **Task Manager's End Process works on processes that are not the user's**: it asks for elevation
   and the elevated `taskmgr --end <pid>` ends them; a refusal shows "Unable to Terminate Process"

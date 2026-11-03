@@ -216,7 +216,9 @@ chain is outside this model ([`KERNEL_SECURITY.md`](KERNEL_SECURITY.md)).
 
 `device::register_node` gains an owner and a mode. Most nodes stay open to the
 user (`/dev/gpu0` through `windowd`, `/dev/audio0` through `audiod`, the
-clipboard, `/dev/power` for shutting down). The ones that must not be:
+clipboard, `/dev/power` for shutting down -- its `POWER_IOC_PANIC`, which
+crashes the kernel on purpose for `panic-smoke`, answers only the system). The
+ones that must not be:
 
 - **`/dev/keyboard`** (0666) has the layout ioctls of `/dev/input0` and none
   of its events: how the user's desktop and init set and read the layout.

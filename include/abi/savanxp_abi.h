@@ -479,6 +479,11 @@ enum savanxp_audio_ioctl {
 enum savanxp_power_ioctl {
     POWER_IOC_SHUTDOWN = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 1),
     POWER_IOC_REBOOT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 2),
+    /* Stops the kernel on purpose: the writeback queue is synced, then
+     * panic(). For the smoke that checks a panic halts every core. System
+     * identity only (SX_EPERM otherwise): shutting down is the user's, a crash
+     * is not. */
+    POWER_IOC_PANIC = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 3),
 };
 
 /* Portapapeles del sistema, expuesto como `/dev/clipboard`.

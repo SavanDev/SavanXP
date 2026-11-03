@@ -8,6 +8,7 @@
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
 #include "kernel/rtc.hpp"
+#include "kernel/smp.hpp"
 
 namespace
 {
@@ -326,6 +327,7 @@ namespace timer
             else if (g_ticks - g_report_begin_tick >= kTickReportPeriod)
             {
                 report_tick_delivery(exit_ns);
+                smp::report_lock_stats();
             }
         }
         return next;
