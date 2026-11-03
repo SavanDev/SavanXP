@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Task Manager: one CPU graph per core and kernel times** (View → CPU History, Show Kernel
+  Times, red under the total); Totals gains Threads. `tools/shoot.sh --smp N` boots more cores.
+
 - **Task Manager: User Name, CPU Time and Threads columns, sort by header, End Process Tree**
   (elevates once for the rest of the tree). SXGUI list headers can be clicked
   (`SXGUI_COLUMN_CLICKABLE`, `SXGUI_ACTION_HEADER`, `sxgui_header_column`).

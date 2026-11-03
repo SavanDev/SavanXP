@@ -25,6 +25,7 @@ OUT_DIR="$OUTPUT_ROOT/shots"
 SCENARIO="desktop"
 ACCEL="tcg"
 VIRTIO=0
+SMP=1
 BOOT_WAIT=45
 KEEP_RUNNING=0
 SCENARIOS="desktop alttab clipboard calc mines paint files console appwiz system taskbar startmenu kbdlayout wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
@@ -38,6 +39,7 @@ Options:
   --out-dir PATH      Capture directory (default: build/shots).
   --accel tcg|kvm     QEMU accelerator (default: tcg).
   --virtio            Use virtio graphics/input/storage.
+  --smp N             Number of virtual CPUs (default: 1).
   --boot-wait SEC     Wait after the init handoff before driving the session.
   --keep-running      Leave QEMU running after the scenario succeeds.
   -h, --help          Show this help.
@@ -62,6 +64,13 @@ while (($#)); do
             shift 2
             ;;
         --virtio) VIRTIO=1; shift ;;
+        --smp)
+            (($# >= 2)) || { echo "shoot.sh: --smp requires a value" >&2; exit 2; }
+            [[ $2 =~ ^[0-9]+$ ]] && (($2 >= 1 && $2 <= 32)) ||
+                { echo "shoot.sh: --smp must be an integer between 1 and 32" >&2; exit 2; }
+            SMP=$2
+            shift 2
+            ;;
         --boot-wait)
             (($# >= 2)) || { echo "shoot.sh: --boot-wait requires a value" >&2; exit 2; }
             BOOT_WAIT=$2
@@ -142,7 +151,7 @@ qemu_args=(
     --disk-image "$run_disk"
     --headless
     --accel "$ACCEL"
-    --smp 1
+    --smp "$SMP"
     --qmp-path "$qmp_path"
     --monitor-path "$hmp_path"
     --serial-log "$serial_log"

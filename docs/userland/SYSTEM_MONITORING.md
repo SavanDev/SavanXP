@@ -87,6 +87,23 @@ everything measured in ticks run N times too fast.
 `taskmgr-smoke` scales its thresholds by `cpu_online`: it expects one idle
 process per core, and a busy loop above `50 / cores` percent.
 
+**One graph per CPU** (the default; View offers one graph for all) needs no
+per-core counter. The idle processes are created in core order, so the n-th
+idle in the snapshot is core n, and every core's timer runs at the same rate,
+so each core's share of an interval is `ticks_delta / cores`. What core n's
+idle did not take of that share is core n's usage. The smoke also expects the
+busy loop to show on one core at 50% or more. `tools/shoot.sh --smp N` boots
+the visual check with more than one core.
+
+### Kernel time
+
+`kernel_ticks` is the part of `cpu_ticks` whose tick found the process in
+ring 0: inside a system call, or an interrupt it was charged for. View → Show
+Kernel Times draws it in red under the total, in the meter and in the combined
+graph, as the original does. The idle processes are left out of it: they halt
+in ring 0, and that is not work. Kernel time is per process, not per core, so
+the per-CPU graphs show none.
+
 ### The wall clock is a free-running counter; ticks only count CPU
 
 Two clocks, two jobs, and mixing them up cost a long hunt:

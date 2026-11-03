@@ -86,6 +86,11 @@ static const char *const k_tab_labels[] = {"Processes", "Performance", "Networki
 #define TASKMGR_GRAPH_GRID SXGUI_RGB(0, 72, 0)
 #define TASKMGR_GRAPH_LINE SXGUI_RGB(0, 255, 0)
 #define TASKMGR_GRAPH_LINE_ALT SXGUI_RGB(255, 216, 0)
+#define TASKMGR_GRAPH_KERNEL SXGUI_RGB(255, 0, 0)
+
+/* Cores with a graph of their own. Past this, One Graph Per CPU shows the
+ * first ones; the combined graph always counts all of them. */
+#define TASKMGR_MAX_CPUS 8
 
 /* ---- menu commands ------------------------------------------------------------ */
 
@@ -97,6 +102,9 @@ enum taskmgr_command {
     TASKMGR_CMD_SPEED_NORMAL,
     TASKMGR_CMD_SPEED_LOW,
     TASKMGR_CMD_SPEED_PAUSED,
+    TASKMGR_CMD_CPU_ONE_GRAPH,
+    TASKMGR_CMD_CPU_PER_CPU,
+    TASKMGR_CMD_SHOW_KERNEL,
     TASKMGR_CMD_END_PROCESS,
     TASKMGR_CMD_END_TREE,
     TASKMGR_CMD_SHUTDOWN,
@@ -120,6 +128,10 @@ static struct sxgui_menu_item k_view_items[] = {
     {"Update Speed: Normal", TASKMGR_CMD_SPEED_NORMAL, SXGUI_MENU_CHECKED},
     {"Update Speed: Low", TASKMGR_CMD_SPEED_LOW, 0},
     {"Update Speed: Paused", TASKMGR_CMD_SPEED_PAUSED, 0},
+    {0, 0, 0},
+    {"CPU History: One Graph, All CPUs", TASKMGR_CMD_CPU_ONE_GRAPH, 0},
+    {"CPU History: One Graph Per CPU", TASKMGR_CMD_CPU_PER_CPU, SXGUI_MENU_CHECKED},
+    {"Show Kernel Times", TASKMGR_CMD_SHOW_KERNEL, 0},
 };
 
 static struct sxgui_menu_item k_process_items[] = {
@@ -148,6 +160,9 @@ static const struct sxgui_menu k_menus[] = {
  * the table's order and these numbers have to move together. */
 #define TASKMGR_SPEED_FIRST_ITEM 2
 #define TASKMGR_SPEED_COUNT 4
+#define TASKMGR_ONE_GRAPH_ITEM 7
+#define TASKMGR_PER_CPU_ITEM 8
+#define TASKMGR_SHOW_KERNEL_ITEM 9
 
 static const unsigned long k_speed_ms[TASKMGR_SPEED_COUNT] = {500ul, 1000ul, 4000ul, 0ul};
 
@@ -195,6 +210,22 @@ static uint64_t g_memory_used_bytes;
 static uint32_t g_total_handles;
 
 static unsigned char g_cpu_history[TASKMGR_HISTORY];
+
+/* Kernel time: the share of the interval that found a process other than
+ * the idle in ring 0. The idle halts in ring 0 too, and that is not work. */
+static unsigned int g_kernel_percent;
+static unsigned char g_kernel_history[TASKMGR_HISTORY];
+static int g_show_kernel;
+
+/* One history per core. The kernel has one idle process per core, created
+ * in core order, so the n-th idle in the snapshot is core n, and each core
+ * gets an equal share of the global ticks (every core's timer runs at the
+ * same rate). What a core's idle did not take is that core's usage. */
+static int g_core_count;
+static unsigned int g_core_percent[TASKMGR_MAX_CPUS];
+static unsigned char g_core_history[TASKMGR_MAX_CPUS][TASKMGR_HISTORY];
+static int g_cpu_per_core = 1;
+static uint32_t g_total_threads;
 static unsigned char g_memory_history[TASKMGR_HISTORY];
 static unsigned char g_net_history[TASKMGR_HISTORY];
 static int g_history_length;
@@ -716,6 +747,9 @@ static void refresh_sample(void)
     unsigned long proc_index = 0;
     uint64_t ticks_delta = 0;
     uint64_t idle_delta = 0;
+    uint64_t kernel_delta = 0;
+    uint64_t core_idle_delta[TASKMGR_MAX_CPUS];
+    int idle_seen = 0;
     int index;
 
     memset(&g_info, 0, sizeof(g_info));
@@ -723,6 +757,7 @@ static void refresh_sample(void)
 
     g_process_count = 0;
     g_total_handles = 0;
+    g_total_threads = 0;
     memset(&info, 0, sizeof(info));
     while (g_process_count < TASKMGR_MAX_PROCESSES && sxn_process_snapshot(proc_index, &info) > 0)
     {
@@ -746,6 +781,7 @@ static void refresh_sample(void)
         sample->cpu_percent = 0;
         snprintf(sample->name, sizeof(sample->name), "%s", info.name);
         g_total_handles += info.handle_count;
+        g_total_threads += info.thread_count;
         g_process_count += 1;
     }
 
@@ -771,6 +807,15 @@ static void refresh_sample(void)
         if ((sample->flags & SAVANXP_PROC_FLAG_IDLE) != 0u)
         {
             idle_delta += delta;
+            if (idle_seen < TASKMGR_MAX_CPUS)
+            {
+                core_idle_delta[idle_seen] = delta;
+            }
+            idle_seen += 1;
+        }
+        else if (previous != 0 && sample->kernel_ticks > previous->kernel_ticks)
+        {
+            kernel_delta += sample->kernel_ticks - previous->kernel_ticks;
         }
     }
 
@@ -782,6 +827,27 @@ static void refresh_sample(void)
     if (ticks_delta != 0ull && idle_delta <= ticks_delta)
     {
         g_cpu_percent = (unsigned int)(((ticks_delta - idle_delta) * 100ull) / ticks_delta);
+    }
+    g_kernel_percent = 0;
+    if (ticks_delta != 0ull)
+    {
+        g_kernel_percent = (unsigned int)((kernel_delta * 100ull) / ticks_delta);
+        if (g_kernel_percent > g_cpu_percent)
+        {
+            g_kernel_percent = g_cpu_percent;
+        }
+    }
+    g_core_count = idle_seen < TASKMGR_MAX_CPUS ? idle_seen : TASKMGR_MAX_CPUS;
+    for (index = 0; index < g_core_count; ++index)
+    {
+        uint64_t share = idle_seen > 0 ? ticks_delta / (uint64_t)idle_seen : 0ull;
+
+        g_core_percent[index] = 0;
+        if (share != 0ull && core_idle_delta[index] <= share)
+        {
+            g_core_percent[index] = (unsigned int)(((share - core_idle_delta[index]) * 100ull) / share);
+        }
+        push_history(g_core_history[index], (unsigned char)g_core_percent[index]);
     }
 
     /* Memory comes from the page allocator's pool, not from the boot memory
@@ -798,6 +864,7 @@ static void refresh_sample(void)
     sample_network();
 
     push_history(g_cpu_history, (unsigned char)(g_cpu_percent > 100u ? 100u : g_cpu_percent));
+    push_history(g_kernel_history, (unsigned char)g_kernel_percent);
     push_history(g_memory_history, (unsigned char)(g_memory_percent > 100u ? 100u : g_memory_percent));
     push_history(g_net_history,
                  (unsigned char)(g_net_peak_rate != 0ul
@@ -964,8 +1031,11 @@ static struct sx_rect draw_group(struct sx_painter *painter, struct sx_rect rect
 /* The vertical meter the original draws beside each graph. The fill goes in
  * blocks with a one-pixel gap, which is what makes it look segmented rather
  * than a plain bar. */
-static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned int percent, uint32_t colour)
+static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned int percent,
+                       unsigned int kernel_percent, uint32_t colour)
 {
+    int kernel_filled;
+
     struct sx_rect inner;
     int filled;
     int y;
@@ -978,7 +1048,12 @@ static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned
     {
         percent = 100u;
     }
+    if (kernel_percent > percent)
+    {
+        kernel_percent = percent;
+    }
     filled = (inner.height * (int)percent) / 100;
+    kernel_filled = (inner.height * (int)kernel_percent) / 100;
     for (y = 0; y < filled; y += 3)
     {
         int height = (filled - y) < 2 ? (filled - y) : 2;
@@ -986,43 +1061,20 @@ static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned
         sx_painter_fill_rect(
             painter,
             sx_rect_make(inner.x, inner.y + inner.height - y - height, inner.width, height),
-            colour);
+            y < kernel_filled ? TASKMGR_GRAPH_KERNEL : colour);
     }
 }
 
 /* A history graph: a fixed grid and one sample per pixel, right to left. The
  * old samples live at the start of the array, so the newest always lands on
  * the right edge even before the history has filled. */
-static void draw_history(
-    struct sx_painter *painter,
-    struct sx_rect rect,
-    const unsigned char *history,
-    uint32_t colour)
+static void draw_series(struct sx_painter *painter, struct sx_rect inner,
+                        const unsigned char *history, uint32_t colour)
 {
-    struct sx_rect inner;
-    int step = 12;
-    int offset;
     int index;
     int previous_x = 0;
     int previous_y = 0;
     int have_previous = 0;
-
-    sxchrome_draw_inset(painter, rect);
-    inner = sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
-    if (inner.width <= 0 || inner.height <= 0)
-    {
-        return;
-    }
-    sx_painter_fill_rect(painter, inner, TASKMGR_GRAPH_BACKGROUND);
-
-    for (offset = step; offset < inner.width; offset += step)
-    {
-        sx_painter_vline(painter, inner.x + offset, inner.y, inner.height, TASKMGR_GRAPH_GRID);
-    }
-    for (offset = step; offset < inner.height; offset += step)
-    {
-        sx_painter_hline(painter, inner.x, inner.y + offset, inner.width, TASKMGR_GRAPH_GRID);
-    }
 
     for (index = 0; index < inner.width; ++index)
     {
@@ -1056,8 +1108,42 @@ static void draw_history(
     }
 }
 
-/* A "label ..... value" row of the totals boxes, with the value against the
- * right edge as in the original. */
+/* A graph: the grid, then `kernel` in red when it is given, then `history`
+ * on top, as the original draws its kernel times under the total. */
+static void draw_history(
+    struct sx_painter *painter,
+    struct sx_rect rect,
+    const unsigned char *history,
+    uint32_t colour,
+    const unsigned char *kernel)
+{
+    struct sx_rect inner;
+    int step = 12;
+    int offset;
+
+    sxchrome_draw_inset(painter, rect);
+    inner = sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+    if (inner.width <= 0 || inner.height <= 0)
+    {
+        return;
+    }
+    sx_painter_fill_rect(painter, inner, TASKMGR_GRAPH_BACKGROUND);
+
+    for (offset = step; offset < inner.width; offset += step)
+    {
+        sx_painter_vline(painter, inner.x + offset, inner.y, inner.height, TASKMGR_GRAPH_GRID);
+    }
+    for (offset = step; offset < inner.height; offset += step)
+    {
+        sx_painter_hline(painter, inner.x, inner.y + offset, inner.width, TASKMGR_GRAPH_GRID);
+    }
+    if (kernel != 0)
+    {
+        draw_series(painter, inner, kernel, TASKMGR_GRAPH_KERNEL);
+    }
+    draw_series(painter, inner, history, colour);
+}
+
 static void draw_field(struct sx_painter *painter, struct sx_rect area, int row, const char *label, const char *value)
 {
     int y = area.y + (row * TASKMGR_ROW);
@@ -1077,7 +1163,7 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
     int y = page.y + pad;
     int full_width = page.width - (pad * 2);
     int meter_width = 60;
-    int totals_height = TASKMGR_GROUP_HEIGHT(3);
+    int totals_height = TASKMGR_GROUP_HEIGHT(4);
     int graph_height = (page.height - (pad * 3) - totals_height) / 2;
     char number[32];
     struct sx_rect area;
@@ -1099,13 +1185,33 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
                sx_rect_make(area.x + ((area.width - 24) / 2), area.y + TASKMGR_ROW, 24,
                             area.height - TASKMGR_ROW),
                g_cpu_percent,
+               g_show_kernel ? g_kernel_percent : 0u,
                TASKMGR_GRAPH_LINE);
 
     area = draw_group(painter,
                       sx_rect_make(x + meter_width + 24 + SXGUI_GAP, y,
                                    full_width - meter_width - 24 - SXGUI_GAP, graph_height),
                       "CPU Usage History");
-    draw_history(painter, area, g_cpu_history, TASKMGR_GRAPH_LINE);
+    if (g_cpu_per_core && g_core_count > 1)
+    {
+        /* One graph per core, side by side. Kernel time is not split by
+         * core -- the counter is per process -- so these show none. */
+        int core;
+        int gap = 4;
+        int each = (area.width - gap * (g_core_count - 1)) / g_core_count;
+
+        for (core = 0; core < g_core_count; ++core)
+        {
+            draw_history(painter,
+                         sx_rect_make(area.x + core * (each + gap), area.y, each, area.height),
+                         g_core_history[core], TASKMGR_GRAPH_LINE, 0);
+        }
+    }
+    else
+    {
+        draw_history(painter, area, g_cpu_history, TASKMGR_GRAPH_LINE,
+                     g_show_kernel ? g_kernel_history : 0);
+    }
     y += graph_height + pad;
 
     /* Row 2: the same for memory. */
@@ -1120,13 +1226,14 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
                sx_rect_make(area.x + ((area.width - 24) / 2), area.y + TASKMGR_ROW, 24,
                             area.height - TASKMGR_ROW),
                g_memory_percent,
+               0u,
                TASKMGR_GRAPH_LINE_ALT);
 
     area = draw_group(painter,
                       sx_rect_make(x + meter_width + 24 + SXGUI_GAP, y,
                                    full_width - meter_width - 24 - SXGUI_GAP, graph_height),
                       "Memory Usage History");
-    draw_history(painter, area, g_memory_history, TASKMGR_GRAPH_LINE_ALT);
+    draw_history(painter, area, g_memory_history, TASKMGR_GRAPH_LINE_ALT, 0);
     y += graph_height + pad;
 
     /* Row 3: the two boxes of numbers. */
@@ -1135,15 +1242,17 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
         unsigned long long uptime_seconds = g_info.uptime_ms / 1000ull;
 
         area = draw_group(painter, sx_rect_make(x, y, half, totals_height), "Totals");
+        format_grouped(g_total_handles, number, sizeof(number));
+        draw_field(painter, area, 0, "Handles", number);
+        format_grouped(g_total_threads, number, sizeof(number));
+        draw_field(painter, area, 1, "Threads", number);
         snprintf(number, sizeof(number), "%d", g_process_count);
-        draw_field(painter, area, 0, "Processes", number);
-        snprintf(number, sizeof(number), "%u", (unsigned)g_total_handles);
-        draw_field(painter, area, 1, "Handles", number);
+        draw_field(painter, area, 2, "Processes", number);
         snprintf(number, sizeof(number), "%llu:%02llu:%02llu",
                  uptime_seconds / 3600ull,
                  (uptime_seconds / 60ull) % 60ull,
                  uptime_seconds % 60ull);
-        draw_field(painter, area, 2, "Up Time", number);
+        draw_field(painter, area, 3, "Up Time", number);
 
         area = draw_group(painter, sx_rect_make(x + half + SXGUI_GAP, y, half, totals_height),
                           "Physical Memory (K)");
@@ -1182,7 +1291,7 @@ static void paint_networking(struct sx_painter *painter, struct sx_rect page)
     area = draw_group(painter, sx_rect_make(x, y, full_width, graph_height), "Network Utilization");
     if (g_net_available)
     {
-        draw_history(painter, area, g_net_history, TASKMGR_GRAPH_LINE);
+        draw_history(painter, area, g_net_history, TASKMGR_GRAPH_LINE, 0);
     }
     else
     {
@@ -1712,6 +1821,20 @@ static void on_menu_command(int id, void *user)
     case TASKMGR_CMD_SPEED_PAUSED:
         set_update_speed(3);
         break;
+    case TASKMGR_CMD_CPU_ONE_GRAPH:
+    case TASKMGR_CMD_CPU_PER_CPU:
+        g_cpu_per_core = id == TASKMGR_CMD_CPU_PER_CPU;
+        k_view_items[TASKMGR_ONE_GRAPH_ITEM].flags =
+            g_cpu_per_core ? 0u : (uint32_t)SXGUI_MENU_CHECKED;
+        k_view_items[TASKMGR_PER_CPU_ITEM].flags =
+            g_cpu_per_core ? (uint32_t)SXGUI_MENU_CHECKED : 0u;
+        sxngui_app_request_repaint(&g_app);
+        break;
+    case TASKMGR_CMD_SHOW_KERNEL:
+        g_show_kernel = !g_show_kernel;
+        k_view_items[TASKMGR_SHOW_KERNEL_ITEM].flags = g_show_kernel ? (uint32_t)SXGUI_MENU_CHECKED : 0u;
+        sxngui_app_request_repaint(&g_app);
+        break;
     case TASKMGR_CMD_END_PROCESS:
         end_selected_process(0);
         break;
@@ -1905,6 +2028,38 @@ static int selftest(void)
         {
             snprintf(text, sizeof(text), "spinning, this process reports %u%% CPU", self_percent);
             selftest_fail(text);
+        }
+        /* The spin ran on one core, which must look busy in its own graph;
+         * and the kernel share is part of the total, never more. */
+        {
+            unsigned int busiest = 0;
+            int core;
+
+            if (g_core_count != (int)(cores < TASKMGR_MAX_CPUS ? cores : TASKMGR_MAX_CPUS))
+            {
+                snprintf(text, sizeof(text), "%d per-core graphs for %u cores", g_core_count, cores);
+                selftest_fail(text);
+            }
+            for (core = 0; core < g_core_count; ++core)
+            {
+                if (g_core_percent[core] > 100u)
+                {
+                    selftest_fail("a core reports more than 100%");
+                }
+                if (g_core_percent[core] > busiest)
+                {
+                    busiest = g_core_percent[core];
+                }
+            }
+            if (busiest < 50u)
+            {
+                snprintf(text, sizeof(text), "spinning, the busiest core reports %u%%", busiest);
+                selftest_fail(text);
+            }
+            if (g_kernel_percent > g_cpu_percent)
+            {
+                selftest_fail("kernel time is larger than the CPU usage");
+            }
         }
     }
 
