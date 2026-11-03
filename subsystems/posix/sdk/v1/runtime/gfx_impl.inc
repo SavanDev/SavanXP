@@ -346,6 +346,53 @@ static long gfx_adopt_channels(
  * binary. A program without resources publishes nothing and gets its file
  * name; so does one whose path is unknown.
  */
+
+/* argv[0] is what the launcher typed: a bare name ("notepad", as the Command
+ * Prompt passes it) is looked for where sh and execvp look, /bin and then
+ * /rescue/bin, as typed and then with .sxe. Without that, a program started
+ * by name could not read its own name and icon. */
+static const char* gfx_program_image(char* buffer, size_t capacity) {
+    static const char* const k_dirs[] = {"/bin/", "/rescue/bin/"};
+    static const char* const k_suffixes[] = {"", ".sxe"};
+    const char* name = sx_program_path();
+    size_t dir;
+    size_t suffix;
+
+    if (name == 0 || name[0] == '\0') {
+        return 0;
+    }
+    for (const char* cursor = name; *cursor != '\0'; ++cursor) {
+        if (*cursor == '/') {
+            return name;
+        }
+    }
+    for (dir = 0; dir < sizeof(k_dirs) / sizeof(k_dirs[0]); ++dir) {
+        for (suffix = 0; suffix < sizeof(k_suffixes) / sizeof(k_suffixes[0]); ++suffix) {
+            const char* parts[3] = {k_dirs[dir], name, k_suffixes[suffix]};
+            size_t written = 0;
+            size_t part;
+            long fd;
+
+            for (part = 0; part < 3u; ++part) {
+                const char* cursor = parts[part];
+                while (*cursor != '\0' && written + 1u < capacity) {
+                    buffer[written++] = *cursor++;
+                }
+                if (*cursor != '\0') {
+                    return name;
+                }
+            }
+            buffer[written] = '\0';
+            fd = savanxp_open(buffer);
+            if (fd >= 0) {
+                (void)savanxp_close((int)fd);
+                return buffer;
+            }
+        }
+    }
+    return name;
+}
+
 static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
     _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
@@ -353,7 +400,8 @@ static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     struct savanxp_wm_presentation staging;
     struct sxe_meta meta;
     struct sxe_icons icons;
-    const char* path = sx_program_path();
+    static char image[128];
+    const char* path = gfx_program_image(image, sizeof(image));
     uint32_t value = 0;
     int have_any = 0;
 
@@ -446,7 +494,8 @@ static void gfx_close_fd(int* fd) {
 static uint32_t gfx_own_launch_flags(void) {
     _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
     struct sxe_meta meta;
-    const char* path = sx_program_path();
+    static char image[128];
+    const char* path = gfx_program_image(image, sizeof(image));
     uint32_t value = 0;
 
     if (path == 0 || path[0] == '\0' ||

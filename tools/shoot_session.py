@@ -397,6 +397,7 @@ class Session(object):
 FACE = (192, 192, 192)
 LIGHT = (255, 255, 255)
 SHADOW = (128, 128, 128)
+DARK = (0, 0, 0)
 # El editor pinta su campo con SXGUI_COLOR_FIELD y el texto con SXGUI_COLOR_TEXT,
 # que son SXGUI_COLOR_FACE y SXGUI_COLOR_TEXT en sxchrome.h. Espejo, como los de
 # la barra de tareas.
@@ -416,11 +417,14 @@ LINK = (0, 0, 255)
 # convenio que la barra: si sxgui_row_height cambia, esto cambia con el.
 SXGUI_ROW_LEADING = 4
 
-# Geometria de la barra, espejo de windowd_layout.h y taskbar.c. Si alguno de
-# los dos cambia, este harness tiene que cambiar con el -- que es justamente la
-# gracia: el numero deja de estar solo en el codigo.
+# The taskbar's geometry, mirrored from windowd_layout.h and desktop_taskbar.c.
+# When either changes this harness has to change with it -- which is the point:
+# the number no longer lives only in the code. The two highlight lines along the
+# top edge count toward the top margin, so it is 3 and the bottom one is 1.
 TASKBAR_HEIGHT = 28
 TASKBAR_MARGIN = 2
+TASKBAR_MARGIN_TOP = 3
+TASKBAR_MARGIN_BOTTOM = 1
 TASKBAR_START_WIDTH = 64
 TASKBAR_BUTTON_WIDTH = 160
 TASKBAR_BUTTON_GAP = 2
@@ -443,9 +447,9 @@ def button_rect(image, index):
     base = TASKBAR_MARGIN + TASKBAR_START_WIDTH + TASKBAR_BUTTON_GAP
     return (
         base + index * (TASKBAR_BUTTON_WIDTH + TASKBAR_BUTTON_GAP),
-        height - TASKBAR_HEIGHT + TASKBAR_MARGIN,
+        height - TASKBAR_HEIGHT + TASKBAR_MARGIN_TOP,
         TASKBAR_BUTTON_WIDTH,
-        TASKBAR_HEIGHT - (TASKBAR_MARGIN * 2),
+        TASKBAR_HEIGHT - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM,
     )
 
 
@@ -473,28 +477,39 @@ def expect_pixel(image, x, y, colour, label):
         raise Failure("%s: pixel (%d,%d) es %s, esperaba %s" % (label, x, y, got, colour))
 
 
-def expect_button(image, index, sunken, label):
-    """Un boton hundido invierte el bisel.
+def expect_button(image, index, active, label):
+    """An active window's button is sunken and its face dithered.
 
-    Es la asercion mas util que se puede hacer sobre esta barra: el relieve
-    codifica DIRECTAMENTE cual es la ventana activa, asi que verificarlo prueba
-    la cadena entera -- click, pedido al WM, cambio de estado, republicacion de
-    la lista y repintado del cliente -- sin leer una sola variable.
+    The most useful assertion about this bar: the relief encodes DIRECTLY which
+    window is active, so checking it proves the whole chain -- click, request
+    to the WM, state change, list republication and the client's repaint --
+    without reading a single variable.
+
+    The NT 4 frame (taskbar_button_frame): raised is white above and to the
+    left and black below and to the right; sunken is grey and white. The face
+    of the active button alternates white and face grey, starting white at its
+    top left corner, which a button merely held down does not have.
     """
     x, y, w, h = button_rect(image, index)
-    top_left = SHADOW if sunken else LIGHT
-    bottom_right = LIGHT if sunken else SHADOW
-    estado = "hundido" if sunken else "levantado"
-    expect_pixel(image, x, y, top_left, "%s: boton %d %s (borde sup-izq)" % (label, index, estado))
+    top_left = SHADOW if active else LIGHT
+    bottom_right = LIGHT if active else DARK
+    state = "sunken" if active else "raised"
+    expect_pixel(image, x, y, top_left, "%s: button %d %s (top-left edge)" % (label, index, state))
     expect_pixel(image, x + w - 1, y + h - 1, bottom_right,
-                 "%s: boton %d %s (borde inf-der)" % (label, index, estado))
+                 "%s: button %d %s (bottom-right edge)" % (label, index, state))
+    expect_pixel(image, x + 2, y + 2, LIGHT if active else FACE,
+                 "%s: button %d face (dither)" % (label, index))
+    expect_pixel(image, x + 3, y + 2, FACE,
+                 "%s: button %d face" % (label, index))
 
 
 def expect_taskbar_present(image, label):
     width, height = image.size
-    # Bien a la derecha de los botones: ahi la franja tiene que ser cara pelada.
-    expect_pixel(image, width - 40, height - (TASKBAR_HEIGHT // 2), FACE,
-                 "%s: la franja de la barra" % label)
+    # Right of the buttons and left of the tray (114 px wide, 2 px from the
+    # edge): the strip has to be bare face there. Further right is the clock,
+    # whose digits change.
+    expect_pixel(image, width - TASKBAR_MARGIN - 114 - 20, height - (TASKBAR_HEIGHT // 2), FACE,
+                 "%s: the taskbar strip" % label)
 
 
 def find_text(image, box, text, colour, background, which="body", solid_only=False):
@@ -1270,21 +1285,20 @@ def scenario_taskbar(s):
     expect_button(image, 0, False, "con dos ventanas")
     expect_button(image, 1, True, "con dos ventanas")
 
-    # La etiqueta del boton esta escrita con estas letras, en negro, sobre la cara
-    # del boton. 284 pixeles del glifo que tienen que coincidir uno a uno.
+    # The label of the inactive button is written in these letters, black on
+    # the button's plain face. The active one is not checked: it is bold over
+    # the dither, and find_text models a single background colour.
     #
-    # NO se afirma el titulo de la ventana, aunque se ve en la misma captura, y
-    # conviene decir por que. El titulo va sobre un degradado de 24 bandas con un
-    # acento que se mezcla mas a la izquierda que a la derecha, y predecirlo desde
-    # aca significa copiar la aritmetica de windowd_render.c. Lo que queda es
-    # afirmar solo los pixeles del glifo con cobertura 255, que no dependen del
-    # fondo, y son 14 para "Notepad": se probaron y NO detectan ni un cambio de
-    # fuente. Once pixeles no son una afirmacion. Queda como trabajo pendiente, no
-    # como una cobertura que parece existir.
-    bx, by, bw, bh = button_rect(image, 1)
+    # The window's title is NOT asserted, although it is in the same shot. It
+    # sits on a 24-band gradient with an accent blended more on the left than
+    # on the right, and predicting it from here means copying the arithmetic of
+    # windowd_render.c. Asserting only the glyph pixels with full coverage,
+    # which do not depend on the background, leaves too few to notice even a
+    # change of font. That is pending work, not coverage that seems to exist.
+    bx, by, bw, bh = button_rect(image, 0)
     expect_text(
-        image, (bx, by, bx + bw, by + bh), "Notepad", TEXT, FACE,
-        "la etiqueta de la barra de tareas",
+        image, (bx, by, bx + bw, by + bh), "Calculator", TEXT, FACE,
+        "the taskbar label",
     )
 
 

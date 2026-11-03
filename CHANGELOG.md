@@ -184,6 +184,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A program started by name from the Command Prompt shows its own title and icon** (`Calculator`,
+  not `calc` with the generic icon): the window runtime finds a bare `argv[0]` in `/bin` and
+  `/rescue/bin`. The `taskbar` scenario of `tools/shoot.sh` follows the NT 4 taskbar's geometry again.
+
 - **The APs start on processors without SMEP** (QEMU `-cpu qemu64`): since v0.4.0 they halted at
   start-up and the system ran on one core.
 

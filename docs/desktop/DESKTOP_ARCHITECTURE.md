@@ -679,8 +679,9 @@ Depends on the hotkeys of phase 1.
    built in-tree with `NATIVE`. It needed no native C runtime: a static
    program links the usual runtime, whose call-free parts work unchanged.
 4. **Presentation from the client** (see above). **Done:** the window runtime
-   reads the program's own `.sxe` through `argv[0]` (kept by `crt0`) and
-   publishes `savanxp_wm_presentation`; windowd starts every window with its
+   reads the program's own `.sxe` through `argv[0]` (kept by `crt0`; a bare
+   name, as the Command Prompt passes it, is looked for in `/bin` and
+   `/rescue/bin` as `sh` does) and publishes `savanxp_wm_presentation`; windowd starts every window with its
    file name and adopts what it publishes. The per-path table is gone. Native
    clients have no file access to read their own `.sxe` and so show their
    file name.
