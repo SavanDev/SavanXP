@@ -58,6 +58,13 @@ struct sxngui_app {
     struct savanxp_fb_info dialog_info;
     int dialog_window_open;
     int dialog_last_cursor_shape;
+
+    /* Owned by the frame: the popup window of the open context menu
+     * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications). */
+    struct sxgui_popup_host popup_host;
+    struct sxnwm_client popup;
+    struct savanxp_fb_info popup_info;
+    int popup_window_open;
 };
 
 /* The toolkit's host for SUN. sxngui_app_init installs it; a SUN program

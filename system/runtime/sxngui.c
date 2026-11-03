@@ -238,6 +238,45 @@ static void sxngui_dialog_close(struct sxgui_dialog_host *host, struct sxgui_dia
     app->needs_repaint = 1;
 }
 
+/* ---- context menus in popup windows ---------------------------------------------
+ *
+ * The frame is the popup host of its context: each sxgui_context_menu_open
+ * asks the WM for a frameless popup owned by the window, and the loop hands
+ * the popup its pointer and paints it. The window keeps the focus, so the
+ * menu's keys arrive through the main window, as under sxgui_app_run. */
+#define SXNGUI_POPUP_WINDOW_ID 2u
+
+static int sxngui_popup_open(struct sxgui_popup_host *host, int x, int y, int width, int height)
+{
+    struct sxngui_app *app = (struct sxngui_app *)host->user;
+
+    if (app == 0 || app->popup_window_open || width <= 0 || height <= 0)
+    {
+        return -1;
+    }
+    if (sxnwm_popup_open(&app->wm, &app->popup, SXNGUI_POPUP_WINDOW_ID, x, y, (uint32_t)width, (uint32_t)height) < 0)
+    {
+        return -1;
+    }
+    sxngui_fill_info(&app->popup_info, &app->popup);
+    app->popup_window_open = 1;
+    app->needs_repaint = 1;
+    return 0;
+}
+
+static void sxngui_popup_close(struct sxgui_popup_host *host)
+{
+    struct sxngui_app *app = (struct sxngui_app *)host->user;
+
+    if (app == 0 || !app->popup_window_open)
+    {
+        return;
+    }
+    (void)sxnwm_window_close(&app->wm, &app->popup, SXNGUI_POPUP_WINDOW_ID);
+    app->popup_window_open = 0;
+    app->needs_repaint = 1;
+}
+
 /* ---- input ---------------------------------------------------------------------- */
 
 static void sxngui_update_cursor(struct sxngui_app *app, struct sxnwm_client *window, int *last)
@@ -252,6 +291,15 @@ static void sxngui_update_cursor(struct sxngui_app *app, struct sxnwm_client *wi
 
 static void sxngui_key(struct sxngui_app *app, const struct savanxp_input_event *key, int main_window)
 {
+    /* An open context menu takes the keys before the app does. */
+    if (sxgui_context_menu_active(&app->ui))
+    {
+        if (sxgui_handle_key(&app->ui, key))
+        {
+            app->needs_repaint = 1;
+        }
+        return;
+    }
     if (app->on_key != 0 && app->on_key(app, key))
     {
         app->needs_repaint = 1;
@@ -287,6 +335,16 @@ static void sxngui_drain_main(struct sxngui_app *app)
             {
                 continue;
             }
+            /* With a context menu open, a press in the window only closes
+             * it: the app's own hook does not see it. */
+            if (sxgui_context_menu_active(&app->ui))
+            {
+                if (sxgui_handle_pointer(&app->ui, &record.payload.pointer))
+                {
+                    app->needs_repaint = 1;
+                }
+                continue;
+            }
             if (app->on_pointer != 0 && app->on_pointer(app, &record.payload.pointer))
             {
                 app->needs_repaint = 1;
@@ -301,20 +359,25 @@ static void sxngui_drain_main(struct sxngui_app *app)
     }
 }
 
-/* The dialog's input, from the owner's event pipe. Without on_pointer: the
- * app's hook thinks in its own window's coordinates, and these are the
- * dialog's. */
-static void sxngui_drain_dialog(struct sxngui_app *app)
+/* The owned windows' input, from the owner's event pipe: the dialog's and
+ * the context menu popup's. Without on_pointer: the app's hook thinks in its
+ * own window's coordinates, and these are the owned window's. */
+static void sxngui_drain_owned(struct sxngui_app *app)
 {
     struct savanxp_wm_event record;
 
-    if (!app->dialog_window_open)
+    while ((app->dialog_window_open || app->popup_window_open) && sxnwm_poll_owned_input(&app->wm, &record) == 0)
     {
-        return;
-    }
-    while (app->dialog_window_open && sxnwm_poll_owned_input(&app->wm, &record) == 0)
-    {
-        if (record.window_id != SXNGUI_DIALOG_WINDOW_ID)
+        if (record.window_id == SXNGUI_POPUP_WINDOW_ID)
+        {
+            if (app->popup_window_open && record.kind == SAVANXP_WM_EVENT_POINTER &&
+                sxgui_context_menu_pointer(&app->ui, &record.payload.pointer))
+            {
+                app->needs_repaint = 1;
+            }
+            continue;
+        }
+        if (!app->dialog_window_open || record.window_id != SXNGUI_DIALOG_WINDOW_ID)
         {
             continue;
         }
@@ -357,6 +420,14 @@ static void sxngui_paint(struct sxngui_app *app)
         sxngui_app_quit(app, 1);
         return;
     }
+    if (app->popup_window_open && sxgui_context_menu_windowed(&app->ui))
+    {
+        sxgui_paint_context_menu_window(&app->ui, app->popup.pixels, &app->popup_info);
+        if (sxngui_present(&app->popup) < 0)
+        {
+            sxgui_context_menu_close(&app->ui);
+        }
+    }
     if (app->dialog_window_open && sxgui_dialog_windowed(&app->ui))
     {
         sxgui_paint_dialog_window(&app->ui, app->dialog.pixels, &app->dialog_info);
@@ -370,7 +441,7 @@ static void sxngui_paint(struct sxngui_app *app)
 }
 
 /* Sleep until the window has something (input, a resize, a close), a
- * dialog has input, or the next tick is due. */
+ * dialog or the popup has input, or the next tick is due. */
 static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
 {
     int32_t handles[2];
@@ -383,7 +454,7 @@ static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
         timeout_ms = next_tick_ms > now ? (long)(next_tick_ms - now) : 0;
     }
     handles[count++] = (int32_t)app->wm.wake_fd;
-    if (app->dialog_window_open)
+    if (app->dialog_window_open || app->popup_window_open)
     {
         handles[count++] = (int32_t)app->wm.events_fd;
     }
@@ -402,6 +473,10 @@ int sxngui_app_run(struct sxngui_app *app)
     app->dialog_host.close = sxngui_dialog_close;
     app->dialog_host.user = app;
     app->ui.dialog_host = &app->dialog_host;
+    app->popup_host.open = sxngui_popup_open;
+    app->popup_host.close = sxngui_popup_close;
+    app->popup_host.user = app;
+    app->ui.popup_host = &app->popup_host;
     next_tick_ms = sxngui_uptime_ms() + app->tick_interval_ms;
 
     while (app->running)
@@ -427,6 +502,12 @@ int sxngui_app_run(struct sxngui_app *app)
                 next_tick_ms = now + app->tick_interval_ms;
             }
         }
+        /* The WM asked the popup to close: a press landed off the menu. */
+        if (app->popup_window_open && sxnwm_close_requested(&app->popup))
+        {
+            sxgui_context_menu_close(&app->ui);
+            app->needs_repaint = 1;
+        }
         /* The dialog's close button is a Cancel, like ESC. */
         if (app->dialog_window_open && sxnwm_close_requested(&app->dialog))
         {
@@ -435,7 +516,7 @@ int sxngui_app_run(struct sxngui_app *app)
         }
 
         sxngui_apply_resize(app);
-        sxngui_drain_dialog(app);
+        sxngui_drain_owned(app);
         sxngui_drain_main(app);
         if (!app->running)
         {
@@ -451,6 +532,8 @@ int sxngui_app_run(struct sxngui_app *app)
         sxngui_wait(app, next_tick_ms);
     }
 
+    sxgui_context_menu_close(&app->ui);
+    app->ui.popup_host = 0;
     /* A dialog open at exit goes with its window, it is not abandoned. */
     if (sxgui_dialog_active(&app->ui))
     {

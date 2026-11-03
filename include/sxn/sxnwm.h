@@ -542,10 +542,13 @@ static inline long sxnwm_set_cursor_shape(struct sxnwm_client* ctx, uint32_t sha
 #define SXNWM_WINDOW_CLOSE_WAIT_MS 250l
 
 /* Write an owned-window request into the owner's header and wait for its
- * reply, up to timeout_ms. The reply status, or -EAGAIN when it did not
- * come in time, -EPIPE when the owner is being closed. */
-static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
-                                        uint32_t width, uint32_t height, const char* title, long timeout_ms) {
+ * reply, up to timeout_ms. `role` and `role_flags` are a
+ * SAVANXP_WM_WINDOW_ROLE_* and its flags (NORMAL and 0 for a dialog); `x`,`y`
+ * place a popup in the owner's client area. The reply status, or -EAGAIN when
+ * it did not come in time, -EPIPE when the owner is being closed. */
+static inline long sxnwm_window_request_ex(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
+                                           uint32_t width, uint32_t height, const char* title, uint32_t role,
+                                           uint32_t role_flags, int32_t x, int32_t y, long timeout_ms) {
     struct savanxp_wm_client_requests* requests = 0;
     uint32_t sequence = 0;
     uint64_t deadline = 0;
@@ -568,6 +571,10 @@ static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t act
     requests->window.window_id = window_id;
     requests->window.width = width;
     requests->window.height = height;
+    requests->window.role = role;
+    requests->window.role_flags = role_flags;
+    requests->window.x = x;
+    requests->window.y = y;
     for (index = 0; title != 0 && title[index] != '\0' && index + 1u < SAVANXP_WM_WINDOW_TITLE_CAPACITY; index += 1) {
         requests->window.title[index] = title[index];
     }
@@ -597,12 +604,18 @@ static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t act
     }
 }
 
-/* Open owned window `window_id` (1..SAVANXP_WM_MAX_OWNED_WINDOWS) of
- * width x height client pixels with `title`, filling `window`. 0, or -errno
- * when the WM refused (no room on screen, no free slot): the caller then
- * draws the dialog inside its own window, as the toolkit does. */
-static inline long sxnwm_window_open(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id,
-                                     uint32_t width, uint32_t height, const char* title) {
+/* A dialog's request: no role, no position. */
+static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
+                                        uint32_t width, uint32_t height, const char* title, long timeout_ms) {
+    return sxnwm_window_request_ex(owner, action, window_id, width, height, title,
+                                   SAVANXP_WM_WINDOW_ROLE_NORMAL, 0u, 0, 0, timeout_ms);
+}
+
+/* sxnwm_window_open and sxnwm_popup_open: the request, then the surface the
+ * WM queues on the owner's event pipe. */
+static inline long sxnwm_window_open_ex(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id,
+                                        uint32_t width, uint32_t height, const char* title, uint32_t role,
+                                        uint32_t role_flags, int32_t x, int32_t y) {
     long section = -1;
     long result = 0;
 
@@ -617,8 +630,8 @@ static inline long sxnwm_window_open(struct sxnwm_client* owner, struct sxnwm_cl
     while ((section = sxn_pipe_receive_handle(owner->events_fd)) >= 0) {
         (void)sxn_close(section);
     }
-    result = sxnwm_window_request(owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title,
-                                  SXNWM_WINDOW_OPEN_WAIT_MS);
+    result = sxnwm_window_request_ex(owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title, role,
+                                     role_flags, x, y, SXNWM_WINDOW_OPEN_WAIT_MS);
     if (result < 0) {
         if (result == -SAVANXP_EAGAIN) {
             /* Timed out: if the WM creates it anyway, it should destroy it. */
@@ -643,6 +656,27 @@ static inline long sxnwm_window_open(struct sxnwm_client* owner, struct sxnwm_cl
     window->request_fd = owner->request_fd;
     window->events_fd = -1;
     return 0;
+}
+
+/* Open owned window `window_id` (1..SAVANXP_WM_MAX_OWNED_WINDOWS) of
+ * width x height client pixels with `title`, filling `window`. 0, or -errno
+ * when the WM refused (no room on screen, no free slot): the caller then
+ * draws the dialog inside its own window, as the toolkit does. */
+static inline long sxnwm_window_open(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id,
+                                     uint32_t width, uint32_t height, const char* title) {
+    return sxnwm_window_open_ex(owner, window, window_id, width, height, title, SAVANXP_WM_WINDOW_ROLE_NORMAL, 0u,
+                                0, 0);
+}
+
+/* TrackPopupMenu's window: a frameless popup owned by `owner`, at (x, y) of
+ * its client area, closed by the WM on a press anywhere else
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications). It
+ * never takes the focus: its keys arrive through the owner. Close it with
+ * sxnwm_window_close; its input comes with sxnwm_poll_owned_input. */
+static inline long sxnwm_popup_open(struct sxnwm_client* owner, struct sxnwm_client* window, uint32_t window_id,
+                                    int32_t x, int32_t y, uint32_t width, uint32_t height) {
+    return sxnwm_window_open_ex(owner, window, window_id, width, height, 0, SAVANXP_WM_WINDOW_ROLE_POPUP,
+                                SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE, x, y);
 }
 
 /* Close an owned window opened with sxnwm_window_open. Closing one that is

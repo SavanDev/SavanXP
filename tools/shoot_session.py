@@ -847,6 +847,78 @@ def scenario_filesmenu(s):
                 "the desktop shows the shortcut Send To made", solid_only=True)
 
 
+def scenario_taskmgrmenu(s):
+    """A SUN program's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
+
+    Task Manager runs on sxngui, whose frame opens the menu as a popup window
+    too. A right click on Notepad's row of the Applications tab opens Switch
+    To / End Task; the window keeps the keyboard, so Up and Enter choose End
+    Task, and Notepad closes.
+    """
+    s.open_notepad()
+    s.open_task_manager()
+    # Task Manager sizes itself after it opens, and the WM places it again:
+    # measure only once two shots agree.
+    image = s.shot("taskmgr")
+    for _ in range(5):
+        time.sleep(2.0)
+        again = s.shot("taskmgr")
+        if list(again.getdata()) == list(image.getdata()):
+            break
+        image = again
+    # The Applications list, measured from its Status header: the row names
+    # the window by its title, "notepad".
+    header = find_text(image, (0, 0, 1280, 770), "Status", TEXT, FACE)[0]
+    if header is None:
+        raise Failure("Task Manager does not show the Applications tab")
+    rows = (max(0, header[0] - 520), header[1] + 10, header[0], header[1] + 200)
+    row = None
+    for colour, background in ((TEXT, FIELD), (SELECT_TEXT, SELECT)):
+        row = find_text(image, rows, "notepad", colour, background)[0]
+        if row is not None:
+            break
+    if row is None:
+        raise Failure("Task Manager does not list Notepad in Applications")
+    click = (row[0] + 10, row[1] + 6)
+    s.qmp.move_to(*click)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot("taskmgr-menu")
+    near = (click[0], click[1], click[0] + 220, click[1] + 90)
+    expect_text(image, near, "Switch To", TEXT, FACE,
+                "a right click on a task opens its menu at the pointer")
+    # Up from nothing wraps to the last row, End Task.
+    s.qmp.tap("up", pause=0.6)
+    image = s.shot("taskmgr-menu-keyboard")
+    expect_text(image, near, "End Task", SELECT_TEXT, SELECT,
+                "the window's keys move through its menu")
+    s.qmp.tap("ret", pause=4.0)
+    # The cursor off the list: over a selected row it could pass for text.
+    s.qmp.move_to(1200, 100)
+    time.sleep(0.5)
+    image = s.shot("taskmgr-ended")
+    # Absence is asserted in black only: the UI font has no anti-aliasing,
+    # so white text on the selection would match any white part of the list.
+    if find_text(image, rows, "notepad", TEXT, FIELD)[0] or \
+            find_text(image, (0, 772, 1280, 800), "notepad", TEXT, FACE)[0]:
+        raise Failure("End Task from the menu left Notepad running")
+
+    # Task Manager's own row, near the list's right edge: the menu has to
+    # leave the window, so it is a popup of its own and not drawn inside.
+    click = (header[0] + 100, header[1] + 24)
+    s.qmp.move_to(*click)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot("taskmgr-menu-outside")
+    expect_text(image, (click[0], click[1], click[0] + 220, click[1] + 90), "Switch To", TEXT, FACE,
+                "the menu opens at the pointer near the edge")
+    outside = (click[0] + 75, click[1] + 8)
+    if image.getpixel(outside) != FACE:
+        raise Failure("the menu does not reach %r, outside the window: it is not a popup of its own"
+                      % (outside,))
+    s.qmp.tap("esc", pause=1.0)
+
+
 def scenario_console(s):
     """Command Prompt: opened with its hotkey, a builtin, a program's output,
     the history, scrolling past a screen, and Ctrl+C on a program that would
@@ -2184,6 +2256,7 @@ SCENARIOS = {
     "contextmenu": scenario_contextmenu,
     "desktopicons": scenario_desktopicons,
     "filesmenu": scenario_filesmenu,
+    "taskmgrmenu": scenario_taskmgrmenu,
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,

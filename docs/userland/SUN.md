@@ -152,7 +152,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
 | `CreateFile` and the file API | — | missing: SUN has no files |
 | Registry / profile settings | — | missing (needs files) |
-| Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs in them | done (Task Manager) |
+| Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
 | `comctl32` + a message loop | `sxngui_app_init`, `sxngui_app_run` (`sxn/sxngui.h`) | done (Task Manager) |

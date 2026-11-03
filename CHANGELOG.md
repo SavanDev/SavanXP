@@ -20,8 +20,9 @@ Cut-off notes:
 
 - **Context menus in applications**: an application may open a popup owned by its window
   (`SAVANXP_WM_WINDOW_ROLE_POPUP`), and SXGUI shows one with `sxgui_context_menu_open` (also
-  `sxgui_popup_menu_*`, `sxgui_listbox_row_at`). Files gets Open, Send To Desktop, Rename... and
-  Delete on a right click, Shift+F10 or the Menu key, and opens a folder given as its argument.
+  `sxgui_popup_menu_*`, `sxgui_listbox_row_at`; SUN: `sxnwm_popup_open`). Files gets Open, Send To
+  Desktop, Rename... and Delete on a right click, Shift+F10 or the Menu key, and opens a folder given
+  as its argument; Task Manager gets End Process (Tree) and Switch To / End Task on its rows.
 
 - **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
   point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See

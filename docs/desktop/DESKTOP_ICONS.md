@@ -1,7 +1,8 @@
 # Desktop icons, shortcuts and context menus
 
 > **Status: built** (phases 1 to 4). `tools/shoot.sh` scenarios
-> `contextmenu`, `desktopicons` and `filesmenu` drive them end to end;
+> `contextmenu`, `desktopicons`, `filesmenu` and `taskmgrmenu` drive them end
+> to end;
 > `windowd-smoke` asserts the application popup rules and `filesapp-smoke`
 > the shortcut format.
 
@@ -163,11 +164,15 @@ once the menu is closed. Where it shows is the context's `popup_host`'s
 business: `sxgui_app_run` opens a popup window (owned window id 2; dialogs
 use id 1) and pumps it, so the menu may leave the window. Without a host, or
 if the WM refuses the window, the menu is drawn inside the surface, flipped
-and clamped to fit. SUN programs under `sxngui` get that fallback until
-their host opens popups too. `sxgui_listbox_row_at` tells which row a right
-click landed on.
+and clamped to fit. SUN programs get the same from `sxngui_app_run`, which
+opens the popup with `sxnwm_popup_open` (`sxn/sxnwm.h`). `sxgui_listbox_row_at`
+tells which row a right click landed on.
 
-**Files** is the first user: a right click on a row opens Open, Send To
+**Task Manager**, a SUN program, has the original's row menus: End Process
+and End Process Tree on the Processes tab, Switch To and End Task on
+Applications, from a right click, Shift+F10 or the Menu key.
+
+**Files**: a right click on a row opens Open, Send To
 Desktop (a shortcut in the Desktop folder, named as the desktop would name
 it), Rename... and Delete; on `..` or the empty part of the list, Up One
 Level and Refresh. Shift+F10 and the Menu key open the selected row's menu,

@@ -112,6 +112,8 @@ enum taskmgr_command {
     TASKMGR_CMD_SHUTDOWN,
     TASKMGR_CMD_REBOOT,
     TASKMGR_CMD_ABOUT,
+    TASKMGR_CMD_SWITCH_TO,
+    TASKMGR_CMD_END_TASK,
 };
 
 static struct sxgui_menu_item k_file_items[] = {
@@ -2041,9 +2043,125 @@ static void on_menu_command(int id, void *user)
     case TASKMGR_CMD_ABOUT:
         (void)launch("/bin/aboutapp");
         break;
+    case TASKMGR_CMD_SWITCH_TO:
+        on_switch_to(0, 0);
+        break;
+    case TASKMGR_CMD_END_TASK:
+        on_end_task(0, 0);
+        break;
     default:
         break;
     }
+}
+
+/* ---- context menus -------------------------------------------------------------------
+ * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications)
+ *
+ * A right click on a row, Shift+F10 or the Menu key open the row's menu, as
+ * the original's: the window's own commands for that row. */
+
+static const struct sxgui_menu_item k_process_context_items[] = {
+    {"End Process", TASKMGR_CMD_END_PROCESS, 0},
+    {"End Process Tree", TASKMGR_CMD_END_TREE, 0},
+};
+
+static const struct sxgui_menu k_process_context_menu = {
+    "Process",
+    k_process_context_items,
+    (int)(sizeof(k_process_context_items) / sizeof(k_process_context_items[0])),
+};
+
+static const struct sxgui_menu_item k_task_context_items[] = {
+    {"Switch To", TASKMGR_CMD_SWITCH_TO, 0},
+    {0, 0, 0},
+    {"End Task", TASKMGR_CMD_END_TASK, 0},
+};
+
+static const struct sxgui_menu k_task_context_menu = {
+    "Task",
+    k_task_context_items,
+    (int)(sizeof(k_task_context_items) / sizeof(k_task_context_items[0])),
+};
+
+static uint32_t g_pointer_buttons;
+
+/* The list the current tab shows, and its menu; 0 on a tab without one. */
+static struct sxgui_widget *context_list(const struct sxgui_menu **menu)
+{
+    if (TASKMGR_TABS->value == TASKMGR_TAB_PROCESSES)
+    {
+        *menu = &k_process_context_menu;
+        return TASKMGR_LIST;
+    }
+    if (TASKMGR_TABS->value == TASKMGR_TAB_APPLICATIONS)
+    {
+        *menu = &k_task_context_menu;
+        return TASKMGR_TASK_LIST;
+    }
+    return 0;
+}
+
+/* Selects `row` of the current tab's list, as a click on it would. */
+static void select_row(struct sxgui_widget *list, int row)
+{
+    list->value = row;
+    if (list == TASKMGR_LIST && row < g_process_count)
+    {
+        g_selected_pid = g_processes[row].pid;
+        update_end_command();
+    }
+    else if (list == TASKMGR_TASK_LIST)
+    {
+        g_selected_task = selected_task() != 0 ? selected_task()->window_id : 0u;
+        update_task_commands();
+    }
+}
+
+/* On the release, as Windows sends WM_CONTEXTMENU. */
+static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event)
+{
+    uint32_t released = g_pointer_buttons & ~event->buttons;
+    const struct sxgui_menu *menu = 0;
+    struct sxgui_widget *list;
+    int row;
+
+    g_pointer_buttons = event->buttons;
+    if ((released & SAVANXP_MOUSE_BUTTON_RIGHT) == 0 || sxgui_dialog_active(&app->ui))
+    {
+        return 0;
+    }
+    list = context_list(&menu);
+    row = list != 0 ? sxgui_listbox_row_at(list, event->x, event->y) : -1;
+    if (row < 0)
+    {
+        return 0;
+    }
+    select_row(list, row);
+    sxgui_context_menu_open(&app->ui, menu, event->x, event->y, on_menu_command, 0);
+    return 1;
+}
+
+/* The keyboard's right click: the selected row's menu, next to the row. */
+static int open_context_menu_from_keyboard(struct sxngui_app *app)
+{
+    const struct sxgui_menu *menu = 0;
+    struct sxgui_widget *list = context_list(&menu);
+    int row_height = gfx_text_height() + 4;
+    int visible;
+    int y;
+
+    if (list == 0 || list->value < 0 || list->value >= list->item_count)
+    {
+        return 0;
+    }
+    visible = list->value - list->scroll;
+    y = list->rect.y + 2 + row_height + (visible + 1) * row_height;
+    if (visible < 0 || y > list->rect.y + list->rect.height)
+    {
+        y = list->rect.y + row_height * 2;
+    }
+    sxgui_context_menu_open(&app->ui, menu, list->rect.x + 24, y, on_menu_command, 0);
+    return 1;
 }
 
 static int on_key(struct sxngui_app *app, const struct savanxp_input_event *event)
@@ -2065,6 +2183,11 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     {
         end_selected_process(0);
         return 1;
+    }
+    if (event->key == SAVANXP_KEY_MENU ||
+        (event->key == SAVANXP_KEY_F10 && (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0))
+    {
+        return open_context_menu_from_keyboard(app);
     }
     return 0;
 }
@@ -2498,6 +2621,7 @@ static int run_window(void)
 
     g_app.on_paint = on_paint;
     g_app.on_key = on_key;
+    g_app.on_pointer = on_pointer;
     g_app.on_resize = on_resize;
     g_app.on_tick = on_tick;
     set_update_speed(g_speed_index);
