@@ -9,7 +9,7 @@ OUTPUT_ROOT=${SAVANXP_OUTPUT_ROOT:-"$ROOT/build"}
 BUILD_TYPE=${SAVANXP_BUILD_TYPE:-Debug}
 INCLUDE_TEST_APPS=${SAVANXP_INCLUDE_TEST_APPS:-ON}
 ACCEL=${SAVANXP_ACCEL:-tcg}
-SMP=${SAVANXP_SMP:-1}
+SMP=${SAVANXP_SMP:-2}
 VIRTIO=${SAVANXP_VIRTIO:-OFF}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
@@ -102,7 +102,7 @@ Options:
   --debug           configure a Debug build (default)
   --release         configure a RelWithDebInfo build
   --accel tcg|kvm   select the QEMU accelerator
-  --smp N           set the number of virtual CPUs
+  --smp N           set the number of virtual CPUs (default: 2)
   --virtio          use QEMU virtio hardware
   --headless        do not open a graphical QEMU window
   --jobs N          pass a parallelism limit to Ninja

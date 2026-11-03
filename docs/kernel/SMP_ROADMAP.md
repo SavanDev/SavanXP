@@ -16,8 +16,11 @@
 > schedules on the APs.
 >
 > Phase 2 made every core run user processes, one at a time inside the kernel,
-> under a single big kernel lock. `./build.sh smoke smoke --smp <n>` still
-> defaults to one core.
+> under a single big kernel lock.
+>
+> **QEMU boots two cores by default** (`build.sh`, `run_qemu.py`,
+> `run_smoke.py`, `shoot.sh`; `--smp 1` still gives one), and so does every
+> smoke. [Why two, and what was measured](#two-cores-by-default).
 >
 > Phase 3 keeps the other cores' TLBs honest when a kernel page is unmapped —
 > lazily, at lock acquisition, not with an IPI
@@ -413,9 +416,9 @@ write uses.
 The existing smoke suite runs on one core and will therefore keep passing while
 being blind to every race introduced. Phases 0-3 need `--smp` variants:
 
-- `build.sh` gains an `--smp <n>` switch that reaches the QEMU argument list,
-  defaulting to 1 so nothing existing changes. **Done in phase 0**; it feeds
-  both the interactive and the smoke invocations.
+- `build.sh` gains an `--smp <n>` switch that reaches the QEMU argument list.
+  **Done in phase 0**; it feeds both the interactive and the smoke
+  invocations. It defaulted to 1 until the switch to two cores below.
 - At least `smoke`, `windowd-smoke` and `sxfs-smoke` get an `--smp 4` run. The
   filesystem and compositor smokes are the ones that actually exercise shared
   state from several processes at once. **Done in phase 2**, with the caveat
@@ -426,6 +429,30 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
 - TCG stays the accelerator for the smokes, for determinism — but note that TCG
   serializes far more than real hardware does, so a clean TCG run is weak
   evidence. A KVM run (`--accel kvm`) is where memory-ordering bugs surface.
+
+## Two cores by default
+
+The default went from one core to two once every smoke had passed on two.
+Measured under TCG on the development host (an i5-2400, 4 logical CPUs):
+
+- **All 51 QEMU smokes pass with `--smp 2`** (`pointer-smoke` with the
+  `--virtio` it requires), and the timing-sensitive ones (`smoke`,
+  `windowd-smoke`, `session-smoke`, `elevation-smoke`, `native-hw-smoke`,
+  `kbd-smoke`, `pthread-test`, `taskmgr-smoke`) passed two more times each.
+  The slowest two, `sxgui-smoke` and `taskbar-smoke`, take the same ~170 s on
+  one core: their waits are fixed.
+- **The display path got faster, not slower.** The
+  [`spin` scenario](../desktop/GRAPHICS_PERF.md#which-workload-measures-what)
+  composed about 1 240 fps on one core and 2 200 to 2 600 on two, read from
+  `compositord-stats`: `windowd` and `compositord` now overlap instead of
+  taking turns. The same-core handoff of a synchronous RPC is unchanged.
+
+Two and not more: `--smp 4` on a 4-CPU host still fails `windowd-smoke` (the
+lock held across disk I/O, [above](#phase-2--the-big-kernel-lock-and-the-multi-core-scheduler--done)),
+and half the host's CPUs leaves the thread that emulates the disk room to run.
+None of the phase 4 debt changes: a `panic` stops one core, device
+interrupts all go to the BSP, and the drivers still run under the one lock.
+VirtualBox is unaffected: its core count is the VM's setting.
 
 ## Known traps
 

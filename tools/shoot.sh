@@ -25,7 +25,7 @@ OUT_DIR="$OUTPUT_ROOT/shots"
 SCENARIO="desktop"
 ACCEL="tcg"
 VIRTIO=0
-SMP=1
+SMP=2
 BOOT_WAIT=45
 KEEP_RUNNING=0
 SCENARIOS="desktop alttab clipboard calc mines paint files console appwiz system taskbar startmenu kbdlayout wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
@@ -39,7 +39,7 @@ Options:
   --out-dir PATH      Capture directory (default: build/shots).
   --accel tcg|kvm     QEMU accelerator (default: tcg).
   --virtio            Use virtio graphics/input/storage.
-  --smp N             Number of virtual CPUs (default: 1).
+  --smp N             Number of virtual CPUs (default: 2).
   --boot-wait SEC     Wait after the init handoff before driving the session.
   --keep-running      Leave QEMU running after the scenario succeeds.
   -h, --help          Show this help.

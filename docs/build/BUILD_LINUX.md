@@ -100,7 +100,7 @@ specification from the image. `rescue-smoke` boots with no disk attached
 (`--no-disk`), so the kernel starts the rescue system.
 
 `tools/shoot.sh` speaks QMP over a Unix socket and uses the same scenario driver
-as the media-player display assertion. It boots one core; `--smp N` boots more. The keyboard, pointer and taskbar smoke
+as the media-player display assertion. It boots two cores, like `build.sh`; `--smp N` changes that. The keyboard, pointer and taskbar smoke
 drivers use `tools/qmp_client.py`.
 
 A scenario whose device only exists on the paravirtualized machine declares it

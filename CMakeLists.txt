@@ -13,7 +13,7 @@ set(SAVANXP_ACCEL "tcg" CACHE STRING "QEMU accelerator: tcg or kvm")
 if(NOT SAVANXP_ACCEL STREQUAL "tcg" AND NOT SAVANXP_ACCEL STREQUAL "kvm")
     message(FATAL_ERROR "SAVANXP_ACCEL must be tcg or kvm")
 endif()
-set(SAVANXP_SMP 1 CACHE STRING "Number of virtual CPUs")
+set(SAVANXP_SMP 2 CACHE STRING "Number of virtual CPUs")
 option(SAVANXP_VIRTIO "Use QEMU virtio hardware" OFF)
 option(SAVANXP_HEADLESS "Run QEMU without a graphical display" OFF)
 set(SAVANXP_SMOKE_COMMAND "" CACHE STRING

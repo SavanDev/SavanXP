@@ -77,6 +77,10 @@ Cut-off notes:
 
 ### Changed
 
+- **QEMU boots two cores by default** (`build.sh`, `tools/run_qemu.py`, `tools/run_smoke.py`,
+  `tools/shoot.sh`, `SAVANXP_SMP`), smokes included; `--smp 1` keeps one. See
+  `docs/kernel/SMP_ROADMAP.md#two-cores-by-default`.
+
 - **Task Manager is a SUN program**, `/bin/taskmgr.sxe`, built from `system/taskmgr`; the POSIX
   `/bin/taskmgr` is removed from the image. It looks and behaves as before, and its idle window no
   longer wakes up between refreshes.

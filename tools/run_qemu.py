@@ -226,7 +226,7 @@ def main() -> int:
     parser.add_argument("--ovmf-code", type=Path)
     parser.add_argument("--ovmf-vars", type=Path)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
-    parser.add_argument("--smp", type=int, default=1)
+    parser.add_argument("--smp", type=int, default=2)
     parser.add_argument("--virtio", action="store_true")
     parser.add_argument("--disk-bus", choices=DISK_BUSES,
                         help="disk controller without --virtio (default: SAVANXP_DISK_BUS or ahci)")
