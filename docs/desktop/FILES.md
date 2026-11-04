@@ -18,9 +18,17 @@ The folder is shown in one of two views, picked from the View menu (the
 checked item is the current one):
 
 - **Large Icons** — the default, as Windows 98's Explorer opens a folder. A
-  grid of 32x32 icons with the name under each, in up to two lines.
+  grid of 32x32 icons with the name under each, in up to two lines. It has
+  no ".." entry, as Explorer's icon view has none: Up One Level and
+  Backspace go up.
 - **Details** — the Name / Size / Type list with 16x16 icons and column
-  headers.
+  headers, with ".." first outside the root.
+
+In both, a folder opens with **nothing selected**, a click on the
+background clears the selection, and the first arrow key selects the first
+item (End the last). Enter, Delete and the keyboard's context-menu key do
+nothing for an item when none is selected; the latter opens the folder's
+menu instead.
 
 The choice is saved in the user's profile as `filesapp.cfg` (one line,
 `view=icons` or `view=details`; anything else is Large Icons) and applies
@@ -40,9 +48,19 @@ the matching size. The icon view reads the listbox's own fields:
 | `value` | selected row | selected item |
 | `scroll` | first visible row | first visible row **of the grid** |
 
-So the items, the selection and everything keyed on them (Open, the
-context menu, Rename, Delete) do not change with the view.
-`scroll` is reset to 0 on a switch because its unit changes.
+The selection may be empty (`value` -1) because Files sets
+`SXGUI_FLAG_EMPTY_SELECTION` on the widget. The flag is opt-in so that the
+other listboxes (Task Manager's, for one) keep a selection always.
+
+The widget's items are `g_entries`, except that Large Icons leaves out
+"..". Since ".." is always entry 0 when present, the icon view's item *i*
+is entry *i* + 1: Files points `items` and `item_icons` one past the start
+of its arrays and converts with `filesapp_entry_of` / `filesapp_item_of`.
+Everything keyed on an entry (Open, the context menu, Rename, Delete) goes
+through that conversion, so it does not depend on the view. On a switch the
+selected entry stays selected if the new view shows it (a selected ".."
+ends with nothing selected in Large Icons), and `scroll` is reset to 0
+because its unit changes.
 
 Two reasons for a new widget kind rather than a grid drawn inside Files, as
 Program Manager and Paint draw theirs:
@@ -72,9 +90,9 @@ label lines).
   colour (as the desktop and Windows draw it) and its name on the selection
   colour, with the focus rectangle around the name while the view has focus.
 - Only the icon and the name are hit targets; the rest of the cell is
-  background. A click on the background keeps the selection (the widget
-  always has one, like the listbox), and a right click there opens the
-  folder's menu.
+  background. A click there clears the selection (with
+  `SXGUI_FLAG_EMPTY_SELECTION`; without it the selection stays), and a right
+  click there opens the folder's menu.
 - Keys: arrows move in two dimensions (Down from a row with nothing under
   it stays put; Up from the first row does not wrap), Page Up/Down move a
   screenful of rows, Home/End go to the ends, Enter opens. The wheel moves

@@ -95,6 +95,11 @@ enum sxgui_kind {
 #define SXGUI_FLAG_DISABLED (1u << 1)
 #define SXGUI_FLAG_HSCROLL  (1u << 2)  /* scrollbar: horizontal orientation */
 #define SXGUI_FLAG_SUNKEN   (1u << 3)  /* label: sunken status-bar panel */
+/* listbox and iconview: the selection may be empty (value -1), as in an
+ * Explorer folder. A click on the background clears it, and from no
+ * selection the first arrow key selects the first item. Without the flag a
+ * click on the background keeps the selection, as it always has. */
+#define SXGUI_FLAG_EMPTY_SELECTION (1u << 4)
 
 #define SXGUI_DOUBLE_CLICK_MS 450UL
 

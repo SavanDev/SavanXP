@@ -1220,6 +1220,37 @@ static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
     sxgui_listbox_clamp_scroll(widget);
 }
 
+/* A key that moves a list's selection. From no selection (value -1) every
+ * one of them selects the first item, End the last: the selection starts
+ * where the focus is, as in an Explorer folder. */
+static int sxgui_list_nav_key(int key, int horizontal)
+{
+    return key == SAVANXP_KEY_UP || key == SAVANXP_KEY_DOWN || key == SAVANXP_KEY_PAGE_UP ||
+           key == SAVANXP_KEY_PAGE_DOWN || key == SAVANXP_KEY_HOME || key == SAVANXP_KEY_END ||
+           (horizontal && (key == SAVANXP_KEY_LEFT || key == SAVANXP_KEY_RIGHT));
+}
+
+static int sxgui_list_select_from_none(struct sxgui_widget *widget, int key)
+{
+    widget->value = key == SAVANXP_KEY_END ? widget->item_count - 1 : 0;
+    sxgui_listbox_ensure_visible(widget);
+    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    return 1;
+}
+
+/* A click on a list's background: clears the selection where the widget
+ * allows an empty one. */
+static int sxgui_list_clear_selection(struct sxgui_widget *widget)
+{
+    if ((widget->flags & SXGUI_FLAG_EMPTY_SELECTION) == 0 || widget->value < 0)
+    {
+        return 0;
+    }
+    widget->value = -1;
+    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    return 1;
+}
+
 /* Shared by listbox and textview: handle a press on the embedded scrollbar
  * column. Returns non-zero when the press landed on the scrollbar. */
 static int sxgui_listbox_scrollbar_press(
@@ -3807,6 +3838,11 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 {
                     struct sx_rect inner = sxgui_listbox_inner(widget);
                     int row = widget->scroll + (event->y - inner.y) / sxgui_row_height();
+                    if (event->y >= inner.y && row >= widget->item_count &&
+                        sx_rect_contains_point(inner, event->x, event->y))
+                    {
+                        changed = sxgui_list_clear_selection(widget) || changed;
+                    }
                     if (event->y >= inner.y && row >= 0 && row < widget->item_count)
                     {
                         unsigned long now_ms = sxgui_uptime_ms();
@@ -3836,9 +3872,13 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 {
                     break;
                 }
-                /* A click on the background keeps the selection: the
-                 * widget always has one, as the listbox does. */
+                /* A click on the background clears the selection only
+                 * with SXGUI_FLAG_EMPTY_SELECTION, as in the listbox. */
                 item = sxgui_iconview_item_at(widget, event->x, event->y);
+                if (item < 0)
+                {
+                    changed = sxgui_list_clear_selection(widget) || changed;
+                }
                 if (item >= 0)
                 {
                     unsigned long now_ms = sxgui_uptime_ms();
@@ -4282,8 +4322,16 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         }
         if (event->key == SAVANXP_KEY_ENTER)
         {
+            if (widget->value < 0)
+            {
+                return 0;
+            }
             sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
             return 1;
+        }
+        if (widget->value < 0 && sxgui_list_nav_key(event->key, 0))
+        {
+            return sxgui_list_select_from_none(widget, event->key);
         }
         switch (event->key)
         {
@@ -4330,8 +4378,16 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         }
         if (event->key == SAVANXP_KEY_ENTER)
         {
+            if (widget->value < 0)
+            {
+                return 0;
+            }
             sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
             return 1;
+        }
+        if (widget->value < 0 && sxgui_list_nav_key(event->key, 1))
+        {
+            return sxgui_list_select_from_none(widget, event->key);
         }
         switch (event->key)
         {

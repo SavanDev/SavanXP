@@ -813,8 +813,9 @@ def scenario_files(s):
 
     Address bar, button, the folder as Large Icons and then as a details list
     with column headers, and a two-pane status bar: if a toolkit margin or
-    indent slips, it shows here. The keyboard moves the selection so the
-    highlighted item is in view too, a grid row down in the icon view.
+    indent slips, it shows here. The folder opens with nothing selected; the
+    first arrow selects the first icon and the next one moves right, so the
+    highlighted item is in view too.
     """
     s.open_files()
     image = s.shot("files-raiz")

@@ -274,7 +274,48 @@ static void filesapp_sort_entries(int start_index)
     }
 }
 
-/* Arma las filas "nombre TAB tamano TAB tipo" que parte el listbox. */
+/* ---- list items and entries ------------------------------------------------
+ *
+ * The widget's items are g_entries, except that Large Icons leaves out "..":
+ * Explorer's icon view has no parent entry (Up One Level and Backspace go
+ * up). Since ".." is always entry 0 when present, the icon view's item i is
+ * entry i + 1, and the widget is pointed one past the start of the arrays.
+ */
+
+static int filesapp_item_offset(void)
+{
+    return FILESAPP_LIST->kind == SXGUI_ICONVIEW && g_entry_count > 0 &&
+        strcmp(g_entries[0].name, "..") == 0 ? 1 : 0;
+}
+
+/* The entry behind widget item `item`, or -1 for none. */
+static int filesapp_entry_of(int item)
+{
+    int entry = item < 0 ? -1 : item + filesapp_item_offset();
+    return entry < g_entry_count ? entry : -1;
+}
+
+/* The widget item showing entry `entry`, or -1 when this view hides it. */
+static int filesapp_item_of(int entry)
+{
+    int item = entry < 0 ? -1 : entry - filesapp_item_offset();
+    return item >= 0 ? item : -1;
+}
+
+/* Points the widget at the arrays of the current view, keeping the
+ * selected entry selected if the view shows it. */
+static void filesapp_bind_list(int selected_entry)
+{
+    int offset = filesapp_item_offset();
+
+    FILESAPP_LIST->items = g_item_ptrs + offset;
+    FILESAPP_LIST->item_icons = (FILESAPP_LIST->kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons) + offset;
+    FILESAPP_LIST->item_count = g_entry_count - offset;
+    FILESAPP_LIST->value = filesapp_item_of(selected_entry);
+    FILESAPP_LIST->scroll = 0;
+}
+
+/* Builds the "name TAB size TAB type" rows the listbox splits. */
 static void filesapp_rebuild_labels(void)
 {
     char full_path[FILESAPP_PATH_CAPACITY];
@@ -329,11 +370,8 @@ static void filesapp_rebuild_labels(void)
         g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
         g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
     }
-    FILESAPP_LIST->items = g_item_ptrs;
-    FILESAPP_LIST->item_icons = FILESAPP_LIST->kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons;
-    FILESAPP_LIST->item_count = g_entry_count;
-    FILESAPP_LIST->value = 0;
-    FILESAPP_LIST->scroll = 0;
+    /* A folder opens with nothing selected, as Explorer opens one. */
+    filesapp_bind_list(-1);
 }
 
 static void filesapp_update_status(void)
@@ -442,7 +480,7 @@ static void filesapp_go_up(void)
 static void filesapp_activate_selected(void)
 {
     char full_path[FILESAPP_PATH_CAPACITY];
-    int selected = FILESAPP_LIST->value;
+    int selected = filesapp_entry_of(FILESAPP_LIST->value);
 
     if (g_entry_count <= 0 || selected < 0 || selected >= g_entry_count)
     {
@@ -564,16 +602,17 @@ static void filesapp_save_view(int kind)
     fclose(file);
 }
 
-/* The same widget either way: the items, the selection and the context menu
- * do not change, only how they are drawn. */
+/* The same widget either way: the entries, the selection and the context
+ * menu do not change, only how they are drawn -- and whether ".." shows. */
 static void filesapp_set_view(int kind)
 {
-    struct sxgui_widget *list = FILESAPP_LIST;
+    int selected = filesapp_entry_of(FILESAPP_LIST->value);
 
-    list->kind = kind;
-    list->item_icons = kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons;
-    /* `scroll` counts rows in one view and grid rows in the other. */
-    list->scroll = 0;
+    FILESAPP_LIST->kind = kind;
+    /* `scroll` counts rows in one view and grid rows in the other, and the
+     * icon view hides "..": rebinding converts the selection and resets the
+     * scroll. A selected ".." ends with nothing selected in Large Icons. */
+    filesapp_bind_list(selected);
     k_view_items[0].flags = kind == SXGUI_ICONVIEW ? SXGUI_MENU_CHECKED : 0;
     k_view_items[1].flags = kind == SXGUI_LISTBOX ? SXGUI_MENU_CHECKED : 0;
 }
@@ -806,13 +845,16 @@ static void on_context_command(int id, void *user)
     }
 }
 
-/* The menu for row `row` (selecting it), or the folder's for -1 and "..". */
-static void filesapp_show_menu(int row, int x, int y)
+/* The menu for widget item `item` (selecting it), or the folder's for -1
+ * and "..". */
+static void filesapp_show_menu(int item, int x, int y)
 {
+    int row = filesapp_entry_of(item);
+
     g_subject[0] = '\0';
     if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
     {
-        FILESAPP_LIST->value = row;
+        FILESAPP_LIST->value = item;
         snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
         sxgui_context_menu_open(&g_app.ui, &k_entry_menu, x, y, on_context_command, 0);
         return;
@@ -873,7 +915,7 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     }
     if (event->key == SAVANXP_KEY_DELETE && !sxgui_dialog_active(&g_app.ui))
     {
-        int row = FILESAPP_LIST->value;
+        int row = filesapp_entry_of(FILESAPP_LIST->value);
 
         if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
         {
@@ -1110,6 +1152,7 @@ int main(int argc, char **argv)
     g_widgets[2].columns = g_columns;
     g_widgets[2].column_count = FILESAPP_COLUMN_COUNT;
     g_widgets[2].on_action = on_list;
+    g_widgets[2].flags |= SXGUI_FLAG_EMPTY_SELECTION;
     g_widgets[3] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_count_pane);
     g_widgets[3].flags |= SXGUI_FLAG_SUNKEN;
     g_widgets[4] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_size_pane);
