@@ -1088,7 +1088,8 @@ int pipe_send_handle(process::Process& proc, uint64_t pipe_fd, uint64_t handle_f
     if (handle_object == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
-    if (handle_object->type == object::Type::io) {
+    // Streams and ports do not travel (see native_pipe_send_handle).
+    if (handle_object->type == object::Type::io || handle_object->type == object::Type::port) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
 

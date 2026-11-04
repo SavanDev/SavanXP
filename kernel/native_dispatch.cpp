@@ -525,7 +525,9 @@ int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connec
 
 /* Handle passing over a pipe: holding the write end is the permission. Only
  * objects that are not streams travel -- a shared stream would drag its offset
- * and its reader/writer counts along. Same queue as the POSIX side's. */
+ * and its reader/writer counts along. Ports do not travel either: a port holds
+ * the pipes of its pending connections, so a port queued on one of them would
+ * keep both alive forever, name included. Same queue as the POSIX side's. */
 int native_pipe_send_handle(Process& proc, uint64_t pipe_handle, uint64_t handle) {
     object::IoObject* file = detail::fd_to_io_object(proc, pipe_handle, object::access_write);
     if (file == nullptr || file->kind != HandleKind::pipe || file->pipe == nullptr ||
@@ -536,7 +538,7 @@ int native_pipe_send_handle(Process& proc, uint64_t pipe_handle, uint64_t handle
     if (target == nullptr) {
         return sx::negative_error(SX_EBADF);
     }
-    if (target->type == object::Type::io) {
+    if (target->type == object::Type::io || target->type == object::Type::port) {
         return sx::negative_error(SX_EINVAL);
     }
     Pipe& pipe = *file->pipe;

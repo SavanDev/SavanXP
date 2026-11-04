@@ -734,7 +734,11 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
     if (index >= 0) {
         Vnode& node = g_nodes[index].vnode;
         refresh_external_node(node);
-        const uint32_t want = ((flags & SAVANXP_OPEN_READ) != 0 ? kAccessRead : 0u) |
+        // A handle opened with no access mode becomes a read handle (the
+        // subsystem grants read), so it is checked as one: asking for nothing
+        // would pass permits() for anybody.
+        const bool wants_read = (flags & SAVANXP_OPEN_READ) != 0 || !wants_write;
+        const uint32_t want = (wants_read ? kAccessRead : 0u) |
             ((wants_write || wants_truncate) ? kAccessWrite : 0u);
         if (!ancestors_searchable(who, index) || !permits(who, node, want)) {
             g_last_error = SX_EACCES;

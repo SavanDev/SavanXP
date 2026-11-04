@@ -215,6 +215,13 @@ Cut-off notes:
 
 ### Fixed
 
+- **`open` with no access mode no longer reads files the caller may not read**: it is checked as a
+  read, so a `0600` file or an unreadable directory returns `EACCES`
+  ([`KERNEL_SECURITY.md`](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E1).
+
+- **A port can no longer be sent over a pipe** (`PIPE_SEND_HANDLE` returns `EINVAL`): queued on its
+  own pending connection it kept itself, its name and one of the 16 port slots until reboot (E2).
+
 - **A program started by name from the Command Prompt shows its own title and icon** (`Calculator`,
   not `calc` with the generic icon): the window runtime finds a bare `argv[0]` in `/bin` and
   `/rescue/bin`. The `taskbar` scenario of `tools/shoot.sh` follows the NT 4 taskbar's geometry again.

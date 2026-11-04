@@ -255,6 +255,9 @@ static int run_user(void)
     check(geteuid() == ELEVTEST_USER, "the child is the user");
 
     check(open("/dev/input0", O_RDONLY) < 0 && errno == EACCES, "the user cannot open the keyboard");
+    /* No access mode is a read handle, and is checked as one. */
+    check(savanxp_open_mode("/dev/input0", 0) == -SAVANXP_EACCES,
+        "the user cannot open the keyboard without an access mode");
     ask_windowd_directly();
     ask_and_forge();
     ask_while_y_is_held();

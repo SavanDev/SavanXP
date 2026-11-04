@@ -91,7 +91,20 @@ static int test_rejections(void) {
         !expect_success(event = event_create(SAVANXP_EVENT_MANUAL_RESET), "event")) {
         return 0;
     }
-    /* Extremos al reves y objetos de E/S no viajan. */
+    /* Wrong ends, I/O objects and ports do not travel. A port queued on a pipe
+     * of its own pending connection would keep itself alive forever. */
+    {
+        long port = sxn_port_create("handletest-reject");
+        long sent = port < 0 ? port : pipe_send_handle(fds[1], (int)port);
+
+        if (port >= 0) {
+            (void)savanxp_close((int)port);
+        }
+        if (!expect_success(port, "port for the rejection") ||
+            !expect_error(sent, SAVANXP_EINVAL, "send a port")) {
+            return 0;
+        }
+    }
     if (!expect_error(pipe_send_handle(fds[0], (int)event), SAVANXP_EBADF, "send on read end") ||
         !expect_error(pipe_receive_handle(fds[1]), SAVANXP_EBADF, "receive on write end") ||
         !expect_error(pipe_send_handle(fds[1], fds[0]), SAVANXP_EINVAL, "send a pipe end") ||

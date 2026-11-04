@@ -1178,6 +1178,9 @@ int main(int argc, char** argv) {
                 check(sxn_wait_many(targets, 2, 5000) == 1);
             }
             check(sxn_read(connection.read_handle, request, 4) == 4 && request[0] == 'p' && request[1] == 'i');
+            /* A port does not travel: queued on a pipe of its own pending
+             * connection it would keep itself alive forever. */
+            check(sxn_pipe_send_handle(connection.write_handle, port) == -SAVANXP_EINVAL);
             check(sxn_pipe_send_handle(connection.write_handle, event) == 0);
             check(sxn_write(connection.write_handle, "pong", 4) == 4);
             check(sxn_wait_one(event, 5000) == 0);

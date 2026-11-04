@@ -237,10 +237,11 @@ bool read_user_pointer(const process::Process& proc, uint64_t user_address, uint
 
 
 
-// Suelta los handles que quedaron viajando. Se llama cuando ya nadie los puede
-// recibir: sin lectores, o con el pipe muerto. Los objetos encolados nunca son
-// IoObjects (pipe_send_handle los rechaza), asi que soltar uno no puede volver a
-// entrar aca por el destroy de otro pipe.
+// Releases the handles still in flight. Called once nobody can receive them:
+// no readers left, or the pipe is dead. A queued object is never an IoObject
+// nor a port (pipe_send_handle refuses both), and nothing else that travels
+// holds a pipe, so releasing one cannot re-enter here through another pipe's
+// destroy.
 void drain_pipe_handles(process::Pipe& pipe) {
     while (pipe.handle_count != 0) {
         object::Header*& queued = pipe.handles[pipe.handle_head];

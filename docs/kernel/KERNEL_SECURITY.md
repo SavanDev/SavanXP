@@ -1,11 +1,14 @@
 # Kernel security model and hardening
 
-Status: audited on 2026-09-23.
+Status: audited on 2026-11-04 (third pass, against `bd08141`). The first audit
+and its second-pass review date from 2026-09-23.
 
 This document defines SavanXP's current kernel security boundary, records the
-findings from the kernel audit, and distinguishes mitigations already in the
+findings from the kernel audits, and distinguishes mitigations already in the
 tree from risks that still require architectural work. It is not a claim that
-SavanXP is a hardened multi-user operating system.
+SavanXP is a hardened multi-user operating system. The newest findings, and
+what the third pass verified, are in
+[Third-pass audit](#third-pass-audit-2026-11-04).
 
 ## Trust boundary
 
@@ -18,7 +21,9 @@ is made below:
 - the initramfs CPIO archive supplied by the boot configuration;
 - packet lengths and used-ring entries reported by NIC hardware;
 - ACPI, PCI and MMIO descriptions supplied by firmware or virtual hardware;
-- resource exhaustion requests from otherwise valid processes.
+- resource exhaustion requests from otherwise valid processes;
+- the user's processes as seen by the system's: port names, connections and
+  handles passed over pipes, and every path or file a user process names.
 
 The boot chain itself is not authenticated. Limine, the kernel, initramfs and
 disk image are trusted at this boundary. Until verified boot or UEFI Secure Boot
@@ -210,7 +215,7 @@ at fixed addresses, and the kernel is not relocated.
 | Devices | Mutating ioctls required only query access | High | Fixed |
 | Processes | `kill(1, ...)` and orphan zombies | High | Fixed |
 | Resource use | No process quotas or PMM ownership bitmap | High | Open |
-| Authorization | No UID/GID/capabilities; power and diagnostics remain broadly available | High | Open |
+| Authorization | UID/GID, VFS modes and elevation exist; network fault injection and the display session are open to every user | High | Partially fixed |
 | ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Open |
 | PCI | No central resource manager for BAR/I/O ranges | High | Open |
 | Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Open |
@@ -218,8 +223,15 @@ at fixed addresses, and the kernel is not relocated.
 | Fault handling | No exception-table-based `copy_*_user` recovery | Medium | Open |
 | CPU isolation | SMEP is enabled when available; SMAP/KPTI are not enabled | Medium | Partial |
 | Control flow | No CET shadow stacks, PIE, KASLR or compiler CFI | Medium | Open |
-| SMP panic | Panic halts only the reporting core | Medium | Open |
+| SMP panic | Panic halts only the reporting core | Medium | Fixed: `smp::stop_other_cores` |
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |
+| VFS | `open` with no access mode skipped the permission check and granted read (E1) | High | Fixed |
+| Ports | A port sent over its own pending connection leaked with its name (E2) | Medium | Fixed |
+| Ports | Global 16-slot namespace with no ACL on service names (E3) | Medium | Open |
+| VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Open |
+| Sections | File-section cache is never invalidated by writes (E5) | Low | Open |
+| Sections | An anonymous section may grant write and execute to separate views (E6) | Low | Accepted |
+| ELF | ET_DYN wrap check uses the unbiased `p_vaddr` (E7) | Low | Open |
 
 ## Second-pass audit disposition
 
@@ -248,14 +260,136 @@ loader restriction; it is not a reproduced runtime failure.
 
 The D1-D3 design decisions remain unimplemented by design.
 
+## Third-pass audit (2026-11-04)
+
+Scope: what entered the kernel between the second pass (`8625174`) and
+`bd08141` — the native dispatcher (`native_dispatch.cpp`, `sx.cpp`), ports and
+handle passing, threads and wait-on-address, executable, fixed-address and
+file-backed section views, `ET_DYN` and `PT_INTERP` in the loader, the POSIX
+translation in `subsystems/posix/kernel/`, credentials, the VFS permission
+checks, the elevation path (`SPAWN_EX` with an identity, input claims), and the
+`/dev` nodes with their ioctls. The AHCI driver, block writeback and the SxFS
+journal changes were read only where they meet a system call; they were not
+audited as parsers of hostile disks.
+
+E1 and E2 were fixed right after the audit, with tests in `elevtest`,
+`handletest` and `nativetest`. The other findings below are open until a commit
+fixes them and marks them in the table above.
+
+### Verified
+
+- Every system call holds the kernel lock from entry to return
+  (`CONTEXT_ENTRY` in `context.S`), so a sibling thread cannot unmap a page
+  between `is_user_range_accessible` and the copy. A call that blocks
+  revalidates when it completes: `write_to_process_memory` checks the range
+  again before writing into the parked buffer.
+- System calls enter through `int $0x80` and leave through `iretq`. There is no
+  `SYSRET`, so a non-canonical return address cannot fault in ring 0.
+  `create_thread` requires a mapped user entry point and a writable stack slot;
+  `SET_THREAD_BASE` rejects non-canonical FS/GS bases before `wrmsr`.
+- `WAIT_ADDRESS` requires a natural size and alignment and reads the word only
+  in the caller's address space, under the lock.
+- `SPAWN_EX` with `SXN_SPAWN_FLAG_IDENTITY` is refused unless the caller acts
+  as the system. Spawn and exec check `may_execute` with the spawner's
+  credentials, and a new process gets its token before its first thread exists.
+- `kill` and `TERMINATE` apply POSIX's rule (caller's uid or euid against the
+  target's uid) and never reach init or idle. An elevated process keeps the
+  user's uid, so the user may end it, as POSIX allows; nothing else reaches into
+  it.
+- `INPUT_IOC_CLAIM`, `POWER_IOC_PANIC`, `SET_REALTIME` and `chown` require the
+  system; `chmod` requires the owner; the sticky bit holds for unlink and
+  rename.
+- `MAP_VIEW_AT` requires page alignment and a free, canonical range below the
+  stack guard; W^X is refused per view in both places `SECTIONS.md` names.
+- `PT_INTERP` is read through the bounds-checked image reader and must be a
+  terminated absolute path no longer than 512 bytes.
+- Panic now stops every other core (`smp::stop_other_cores`).
+
+### Findings
+
+**E1 — High, fixed. `open` without an access mode read any reachable file.**
+`vfs::open` builds the permission it checks from `SAVANXP_OPEN_READ` and
+`SAVANXP_OPEN_WRITE`. With neither, it asks `permits(who, node, 0)`, which is
+true for everyone. `open_node` then treats a handle with no mode as read-only
+and grants `access_read`. A user process can therefore read a `0600` file of
+the system or of another user, list a directory it has no read permission on
+(`readdir` only checks the handle), and build a file section from it, as long
+as the ancestors are searchable. Fixed: `vfs::open` asks for read whenever
+neither mode is given, so the check and the grant agree. `elevtest` checks that
+the user cannot open `/dev/input0` (`0600`) with no mode.
+
+**E2 — Medium, fixed. A port could keep itself alive forever.** A port handle may be sent
+over a pipe (`PIPE_SEND_HANDLE` rejects only `io` objects). If the process
+connects to its own port and sends the port over the request pipe of that
+connection, the port's pending queue holds the pipe's reader and the pipe's
+handle queue holds the port. Queued handles are released only when the reader
+count drops to zero, so neither ever does: after the process exits, the slot
+(one of 16 system-wide) and the name stay taken until reboot. The comment on
+`drain_pipe_handles` also assumes a queued object never releases an `IoObject`;
+a port does, through `destroy_port`. Fixed: both `pipe_send_handle` paths
+refuse ports with `EINVAL`, which also makes that comment true again. Nothing
+in the tree sent ports; only sections and events travel. Allowing them again
+needs cycle collection or a port that cannot outlive its creator.
+
+**E3 — Medium. Port names are first come, first served.** `PORT_CREATE` takes
+any free name from any process, and the table holds 16 ports for the whole
+system. A user process can fill the remaining slots, or claim
+`SAVANXP_WM_PORT_NAME` while `windowd` is not running; an elevated program that
+then opens a window would read input from a user-owned server. Only
+`elevationd` checks who created the port it connects to (`CONNECT_EX` on the
+consent port). Fix: reserve the service names (or a prefix) for creators that
+act as the system, have clients of system services check the creator, and add
+a per-process port limit.
+
+**E4 — Medium. The VFS node table only grows.** `add_node` appends to a
+768-slot table; `unlink` and `rmdir` mark a slot invalid and nothing reuses it.
+SxFS files enter the table through `install_volume_file`, so a user process that
+creates and deletes files in its own profile exhausts the table, after which
+every create and mkdir in the system fails with `ENOMEM` until reboot. Normal
+use leaks slots too. Fix: a free list of invalidated slots, landed together
+with E5, because a reused slot would otherwise match a stale file section.
+
+**E5 — Low. Cached file sections go stale.** A file-backed section is looked up
+by `(vnode, offset, length)` and filled once. Writing or truncating the file
+does not invalidate it, so a library rewritten in place at the same size keeps
+serving the old pages to new mappings while any view of it lives. Sections are
+not counted by `vnode_has_open_references` either. The cached section also keeps
+the access mask of its first opener.
+
+**E6 — Low, accepted. W^X is per view, not per section.** An anonymous
+section may be created with read, write and execute granted; one writable view
+and one executable view of it give memory that is written and then run, with no
+`mprotect` involved. [`SECTIONS.md`](./SECTIONS.md) records this as the design.
+If no JIT appears, refusing write and execute together in an anonymous
+section's grant closes it without touching file-backed images.
+
+**E7 — Low. The `ET_DYN` wrap check uses the unbiased address.** The loader
+checks `image_end >= p_vaddr` where `image_end` already includes the load bias,
+so a segment whose end wraps by less than the bias passes validation. The image
+can only overwrite its own pages and the copy fails on unmapped ones, so this
+crosses no boundary; the check should compare against the biased address.
+
+**Still open from the earlier passes.** `/dev/net0` is `0666`, so any user can
+set TCP fault injection (`NET_IOC_SET_TCP_FAULT`). `/dev/gpu0` is `0666` and
+the display session goes to whoever acquires it first, so a user process can
+take the screen whenever `compositord` has released it. Incoming IPv4 and TCP
+checksums are still not verified. `find_table` trusts the RSDT/XSDT length and
+checksum. Thread, port, section and node tables are global with no per-process
+quota.
+
 ## Required follow-up work
 
-The next security phase should not add more ad-hoc device checks. It should add
-a small process security context first:
+First, the open third-pass findings, in this order: E3 (reserved service
+names and a port limit), E4 together with E5, then E7.
 
-1. UIDs/GIDs plus inheritable and permitted capability bitmaps.
-2. A capability check for power, network fault injection, process inspection and
-   protected storage mutation.
+The next security phase should not add more ad-hoc device checks. The process
+security context it called for now exists in part: every process carries a
+uid, euid and gid ([`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)).
+What remains:
+
+1. Capability bitmaps, or at least the elevation rule, beyond file modes.
+2. A system check for network fault injection, the display session and
+   protected storage mutation. Shutdown stays unelevated by design.
 3. PID 1 as a real subreaper with a non-blocking reap loop.
 4. Per-process memory, object, handle and I/O quotas.
 5. `FD_CLOEXEC` and references for blocked-wait objects.
@@ -271,7 +405,7 @@ Memory safety should then proceed in this order:
    it onto a base — but the base is still a constant, and no userland image is
    linked as PIE yet;
 5. exception-table user-copy helpers before enabling SMAP;
-6. per-stack non-present guard pages and SMP-wide panic stop.
+6. per-stack non-present guard pages (the SMP-wide panic stop is done).
 7. for the shared-library loader: `mprotect` with per-page copy-on-write, and
    RELRO. Dropping write on a view another process still holds writable would
    change that process's mapping without its consent, so the first `mprotect`
