@@ -346,7 +346,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
            widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW ||
-           widget->kind == SXGUI_TEXTEDIT || widget->kind == SXGUI_TABS;
+           widget->kind == SXGUI_TEXTEDIT || widget->kind == SXGUI_TABS ||
+           widget->kind == SXGUI_TRACKBAR;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -425,6 +426,102 @@ static void sxgui_paint_progress(struct sx_painter *painter, const struct sxgui_
     {
         sx_painter_fill_rect(painter, sx_rect_make(inner.x, inner.y, filled, inner.height), SXGUI_COLOR_SELECT);
     }
+}
+
+/* ---- trackbar ---------------------------------------------------------------
+ *
+ * A horizontal slider over [range_min, range_max] in steps of one: the track
+ * sunk along the top, the thumb on it and a tick under every step. The ends
+ * of the track are inset by half a thumb so the thumb never leaves the
+ * widget. */
+static void sxgui_fire(struct sxgui_widget *widget, int action);
+
+#define SXGUI_TRACKBAR_THUMB_WIDTH 11
+#define SXGUI_TRACKBAR_THUMB_HEIGHT 20
+#define SXGUI_TRACKBAR_TRACK_Y 8
+#define SXGUI_TRACKBAR_TICK_Y 23
+
+static int sxgui_trackbar_left(const struct sxgui_widget *widget)
+{
+    return widget->rect.x + SXGUI_TRACKBAR_THUMB_WIDTH / 2 + 1;
+}
+
+static int sxgui_trackbar_right(const struct sxgui_widget *widget)
+{
+    return widget->rect.x + widget->rect.width - SXGUI_TRACKBAR_THUMB_WIDTH / 2 - 2;
+}
+
+/* Centre of the thumb for `value`. */
+static int sxgui_trackbar_position(const struct sxgui_widget *widget, int value)
+{
+    int span = widget->range_max - widget->range_min;
+    int left = sxgui_trackbar_left(widget);
+    int right = sxgui_trackbar_right(widget);
+
+    if (span <= 0)
+    {
+        return left;
+    }
+    return left + (int)((long)(value - widget->range_min) * (right - left) / span);
+}
+
+/* The step nearest to x. */
+static int sxgui_trackbar_value_at(const struct sxgui_widget *widget, int x)
+{
+    int span = widget->range_max - widget->range_min;
+    int left = sxgui_trackbar_left(widget);
+    int right = sxgui_trackbar_right(widget);
+    long offset;
+
+    if (span <= 0 || right <= left)
+    {
+        return widget->range_min;
+    }
+    offset = (long)sxgui_clamp_int(x, left, right) - left;
+    return widget->range_min + (int)((offset * span + (right - left) / 2) / (right - left));
+}
+
+static void sxgui_paint_trackbar(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    int enabled = sxgui_widget_enabled(widget);
+    int left = sxgui_trackbar_left(widget);
+    int right = sxgui_trackbar_right(widget);
+    int top = widget->rect.y;
+    int thumb_x = sxgui_trackbar_position(widget, widget->value) - SXGUI_TRACKBAR_THUMB_WIDTH / 2;
+    struct sx_rect thumb = sx_rect_make(thumb_x, top, SXGUI_TRACKBAR_THUMB_WIDTH, SXGUI_TRACKBAR_THUMB_HEIGHT);
+    uint32_t tick = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_SHADOW;
+    int value;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
+    sxgui_draw_sunken(painter, sx_rect_make(left - 2, top + SXGUI_TRACKBAR_TRACK_Y, right - left + 5, 4));
+    for (value = widget->range_min; value <= widget->range_max; ++value)
+    {
+        sx_painter_vline(painter, sxgui_trackbar_position(widget, value), top + SXGUI_TRACKBAR_TICK_Y, 3, tick);
+    }
+    sx_painter_fill_rect(painter, thumb, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, thumb);
+    if (!enabled)
+    {
+        /* A disabled thumb is hollow, as the period's controls drew it. */
+        sx_painter_fill_rect(painter, sxgui_inset(thumb, 3), SXGUI_COLOR_FACE);
+    }
+    if (widget->focused)
+    {
+        sxgui_draw_focus_rect(painter, widget->rect);
+    }
+}
+
+/* Moves the thumb to `value`, firing CHANGE when it moved. */
+static int sxgui_trackbar_set(struct sxgui_widget *widget, int value)
+{
+    value = sxgui_clamp_int(value, widget->range_min, widget->range_max);
+    if (value == widget->value)
+    {
+        return 0;
+    }
+    widget->value = value;
+    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    return 1;
 }
 
 static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_widget *widget)
@@ -2409,6 +2506,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
     case SXGUI_PROGRESS:
         sxgui_paint_progress(painter, widget);
         break;
+    case SXGUI_TRACKBAR:
+        sxgui_paint_trackbar(painter, widget);
+        break;
     case SXGUI_RADIO:
         sxgui_paint_radio(painter, widget);
         break;
@@ -2815,6 +2915,10 @@ static int sxgui_radio_select(struct sxgui_context *ctx, int index)
 /* Pointer moves routed to the captured widget while the button is held. */
 static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *widget, const struct savanxp_gui_pointer_event *event)
 {
+    if (widget->kind == SXGUI_TRACKBAR)
+    {
+        return sxgui_trackbar_set(widget, sxgui_trackbar_value_at(widget, event->x));
+    }
     if (widget->kind == SXGUI_TEXTFIELD && widget->edit_buffer != 0)
     {
         int caret = sxgui_textfield_caret_from_point(widget, event->x);
@@ -3323,6 +3427,13 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 }
                 break;
             }
+            case SXGUI_TRACKBAR:
+                /* A press anywhere jumps the thumb there and holds it. */
+                (void)sxgui_trackbar_set(widget, sxgui_trackbar_value_at(widget, event->x));
+                ctx->capture_index = index;
+                ctx->capture_part = SXGUI_SCROLL_NONE;
+                changed = 1;
+                break;
             case SXGUI_SCROLLBAR:
             {
                 struct sxgui_scroll_metrics metrics;
@@ -3652,6 +3763,40 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             return sxgui_radio_select(ctx, ctx->focus_index);
         }
         return 0;
+    }
+
+    if (widget->kind == SXGUI_TRACKBAR)
+    {
+        int page = widget->page > 0 ? widget->page : 1;
+        int value;
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_LEFT:
+        case SAVANXP_KEY_UP:
+            value = widget->value - 1;
+            break;
+        case SAVANXP_KEY_RIGHT:
+        case SAVANXP_KEY_DOWN:
+            value = widget->value + 1;
+            break;
+        case SAVANXP_KEY_PAGE_UP:
+            value = widget->value - page;
+            break;
+        case SAVANXP_KEY_PAGE_DOWN:
+            value = widget->value + page;
+            break;
+        case SAVANXP_KEY_HOME:
+            value = widget->range_min;
+            break;
+        case SAVANXP_KEY_END:
+            value = widget->range_max;
+            break;
+        default:
+            return 0;
+        }
+        (void)sxgui_trackbar_set(widget, value);
+        return 1;
     }
 
     if (widget->kind == SXGUI_COMBOBOX)
@@ -4455,6 +4600,16 @@ struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capaci
     struct sxgui_widget widget = sxgui_make(SXGUI_TEXTEDIT, rect, 0);
     widget.edit_buffer = buffer;
     widget.edit_capacity = capacity;
+    return widget;
+}
+
+struct sxgui_widget sxgui_trackbar(struct sx_rect rect, int range_min, int range_max, int value)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_TRACKBAR, rect, 0);
+    widget.range_min = range_min;
+    widget.range_max = range_max >= range_min ? range_max : range_min;
+    widget.page = 1;
+    widget.value = sxgui_clamp_int(value, widget.range_min, widget.range_max);
     return widget;
 }
 

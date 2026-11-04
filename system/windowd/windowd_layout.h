@@ -62,7 +62,14 @@ void windowd_maximize_area_bounds(
     int *y,
     int *width,
     int *height);
-void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info);
+/* The background's surface: the size of the screen, with room for
+ * capacity_width x capacity_height (the largest mode the session may switch
+ * to), so a change of mode resizes it instead of replacing it. */
+void windowd_fill_shell_surface_info(
+    const struct savanxp_fb_info *display_info,
+    uint32_t capacity_width,
+    uint32_t capacity_height,
+    struct savanxp_fb_info *client_info);
 void windowd_fill_overlay_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info);
 void windowd_center_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int *x, int *y, int *width, int *height);
 void windowd_place_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int cascade_index, int *x, int *y, int *width, int *height);

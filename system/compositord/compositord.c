@@ -34,6 +34,8 @@ static long gpu_control(int fd, unsigned long code, const void *argument)
 }
 
 #define gpu_get_info(fd, info) gpu_control((fd), GPU_IOC_GET_INFO, (info))
+#define gpu_get_connector_properties(fd, properties) \
+    gpu_control((fd), GPU_IOC_GET_CONNECTOR_PROPERTIES, (properties))
 #define gpu_acquire(fd) gpu_control((fd), GPU_IOC_ACQUIRE, 0)
 #define gpu_release(fd) gpu_control((fd), GPU_IOC_RELEASE, 0)
 #define gpu_set_mode(fd, mode) gpu_control((fd), GPU_IOC_SET_MODE, (mode))
@@ -93,6 +95,9 @@ struct compositor_state
      * size: a mode whose buffer does not fit is refused. */
     long display_section;
     uint64_t display_capacity;
+    /* The largest mode the section holds, for the WM (the INIT reply). */
+    uint32_t max_width;
+    uint32_t max_height;
 };
 
 static void close_fd_if_needed(int *fd)
@@ -323,9 +328,40 @@ static int compositor_set_mode(
 /*
  * Takes the GPU and the display at startup, before the port exists: a
  * compositord that cannot drive the display never offers itself to a WM. The
- * mode is the one the firmware left (the native one); the display section is
- * sized for it plus slack, as the largest mode this session will use.
+ * mode is the one the firmware left (the native one). The display section is
+ * sized for the largest mode this session may switch to: the boot mode, or the
+ * adapter's maximum up to SAVANXP_DISPLAY_SESSION_MAX_*, whichever is larger.
  */
+static void choose_max_mode(struct compositor_state *state, uint32_t boot_width, uint32_t boot_height)
+{
+    struct savanxp_gpu_connector_properties properties;
+    uint32_t width = boot_width;
+    uint32_t height = boot_height;
+
+    memset(&properties, 0, sizeof(properties));
+    if (gpu_get_connector_properties(state->gpu_fd, &properties) == 0 &&
+        (properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING) != 0u)
+    {
+        uint32_t adapter_width = properties.max_width < SAVANXP_DISPLAY_SESSION_MAX_WIDTH
+            ? properties.max_width
+            : SAVANXP_DISPLAY_SESSION_MAX_WIDTH;
+        uint32_t adapter_height = properties.max_height < SAVANXP_DISPLAY_SESSION_MAX_HEIGHT
+            ? properties.max_height
+            : SAVANXP_DISPLAY_SESSION_MAX_HEIGHT;
+
+        if (adapter_width > width)
+        {
+            width = adapter_width;
+        }
+        if (adapter_height > height)
+        {
+            height = adapter_height;
+        }
+    }
+    state->max_width = width;
+    state->max_height = height;
+}
+
 static int compositor_startup(struct compositor_state *state)
 {
     struct sxn_gfx_info boot;
@@ -355,7 +391,8 @@ static int compositor_startup(struct compositor_state *state)
         return (int)result;
     }
 
-    state->display_capacity = ((uint64_t)width * 4u * height) + (4ull * 1024ull * 1024ull);
+    choose_max_mode(state, width, height);
+    state->display_capacity = ((uint64_t)state->max_width * 4u * state->max_height) + (4ull * 1024ull * 1024ull);
     state->display_section = sxn_section_create(state->display_capacity, SXN_SECTION_READ | SXN_SECTION_WRITE);
     if (state->display_section < 0)
     {
@@ -420,6 +457,8 @@ static int compositor_init(
     }
     reply->fb_info = state->display_info;
     reply->gpu_info = state->gpu_info;
+    reply->max_width = state->max_width;
+    reply->max_height = state->max_height;
     return 0;
 }
 

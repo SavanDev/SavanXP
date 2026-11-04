@@ -72,7 +72,11 @@ void windowd_maximize_area_bounds(
     }
 }
 
-void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
+void windowd_fill_shell_surface_info(
+    const struct savanxp_fb_info *display_info,
+    uint32_t capacity_width,
+    uint32_t capacity_height,
+    struct savanxp_fb_info *client_info)
 {
     int area_x = 0;
     int area_y = 0;
@@ -85,11 +89,19 @@ void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info,
     }
 
     windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    if (capacity_width < (uint32_t)area_width)
+    {
+        capacity_width = (uint32_t)area_width;
+    }
+    if (capacity_height < (uint32_t)area_height)
+    {
+        capacity_height = (uint32_t)area_height;
+    }
     *client_info = *display_info;
     client_info->width = (uint32_t)area_width;
     client_info->height = (uint32_t)area_height;
-    client_info->pitch = (uint32_t)(area_width * (int)sizeof(uint32_t));
-    client_info->buffer_size = client_info->pitch * client_info->height;
+    client_info->pitch = capacity_width * (uint32_t)sizeof(uint32_t);
+    client_info->buffer_size = client_info->pitch * capacity_height;
 }
 
 void windowd_fill_overlay_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)

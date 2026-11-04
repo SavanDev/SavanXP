@@ -18,13 +18,19 @@ struct windowd_compositor_connection
     /* The scene section (compositor_protocol.h): written between commits. */
     struct savanxp_compositor_scene *scene;
     /* windowd's own surface, SAVANXP_COMPOSITOR_SURFACE_WM: frames, switcher,
-     * fallback background, the size of the native mode. */
+     * fallback background, the size of the largest mode (max_width x
+     * max_height). */
     void *wm_view;
     uint32_t wm_pitch;
     /* compositord's frame event, from INIT, until the session takes it as
      * the submit event it hands to clients; -1 after. */
     int frame_event_fd;
     struct savanxp_fb_info requested_info;
+    /* The largest mode compositord's display memory holds (its INIT reply):
+     * the limit of SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE and the size of
+     * the full-screen surfaces, which cannot grow once created. */
+    uint32_t max_width;
+    uint32_t max_height;
     struct savanxp_fb_info display_info;
     struct savanxp_gpu_info gpu_info;
     uint32_t next_serial;

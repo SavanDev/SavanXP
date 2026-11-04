@@ -798,6 +798,9 @@ void fill_present_timeline(savanxp_gpu_present_timeline& timeline) {
     };
 }
 
+constexpr uint32_t kMaxModeWidth = 2560;
+constexpr uint32_t kMaxModeHeight = 1600;
+
 void fill_connector_properties(savanxp_gpu_connector_properties& properties) {
     uint32_t flags = SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING |
         SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT |
@@ -818,6 +821,13 @@ void fill_connector_properties(savanxp_gpu_connector_properties& properties) {
         .preferred_height = g_preferred_scanout_height != 0 ? g_preferred_scanout_height : g_framebuffer_info.height,
         .batch_capacity = kPendingPresentCapacity,
         .max_dirty_rects = SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS,
+        // The scanout is backed by the pages of an imported section, so any
+        // size the importer can allocate works; the limit only keeps a mode
+        // list finite.
+        .max_width = kMaxModeWidth,
+        .max_height = kMaxModeHeight,
+        .max_bytes = kMaxModeWidth * kMaxModeHeight * static_cast<uint32_t>(sizeof(uint32_t)),
+        .reserved = 0,
     };
 }
 

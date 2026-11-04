@@ -81,7 +81,8 @@ enum sxgui_kind {
     SXGUI_COMBOBOX,
     SXGUI_TEXTVIEW,
     SXGUI_TEXTEDIT,
-    SXGUI_TABS
+    SXGUI_TABS,
+    SXGUI_TRACKBAR
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -532,6 +533,13 @@ void sxgui_textedit_select_all(struct sxgui_widget *widget);
  * already return 0 when there is nothing to cut or copy. */
 int sxgui_textedit_has_selection(const struct sxgui_widget *widget);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
+/* Horizontal slider over [range_min, range_max] in steps of one, a tick per
+ * step: Display Properties' resolution. `value` is the step; a press or a drag
+ * moves it, and so do the arrows, Home/End and PgUp/PgDn (by `page`, 1 unless
+ * the caller sets it). Every move fires SXGUI_ACTION_CHANGE. It is
+ * SXGUI_TRACKBAR_HEIGHT tall. */
+#define SXGUI_TRACKBAR_HEIGHT 28
+struct sxgui_widget sxgui_trackbar(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- host services ---------------------------------------------------------
  *

@@ -370,6 +370,7 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/desktop/desktop_confirm.c
     subsystems/posix/userland/desktop/desktop_view.c
     subsystems/posix/userland/desktop_wallpaper.c
+    subsystems/posix/userland/display_settings.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/shortcut.c
@@ -384,6 +385,7 @@ savanxp_program(NAME appwiz DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE 
     subsystems/posix/userland/appwiz_catalog.c)
 savanxp_program(NAME display DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/display.c
+    subsystems/posix/userland/display_settings.c
     subsystems/posix/userland/desktop_wallpaper.c)
 savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/aboutapp.c)

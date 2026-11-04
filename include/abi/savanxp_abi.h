@@ -638,6 +638,16 @@ struct savanxp_gpu_connector_properties {
     uint32_t preferred_height;
     uint32_t batch_capacity;
     uint32_t max_dirty_rects;
+    /* The largest mode GPU_IOC_SET_MODE may accept, and how many bytes one
+     * frame of it may take (32 bpp, pitch included): a mode inside both limits
+     * is worth trying, one outside them is refused. Without
+     * SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING they are the current
+     * mode. Display Properties builds its list of modes from them
+     * (docs/desktop/DISPLAY_PROPERTIES.md). */
+    uint32_t max_width;
+    uint32_t max_height;
+    uint32_t max_bytes;
+    uint32_t reserved;
 };
 
 struct savanxp_gpu_dirty_rect {
@@ -919,6 +929,13 @@ enum savanxp_wm_window_action {
      * (real uid) or the system may: -EPERM otherwise, -ENOENT when there is no
      * such task. A task that does not close is flagged NOT_RESPONDING. */
     SAVANXP_WM_WINDOW_ACTION_TASK_CLOSE = 5,
+    /* Change the screen's resolution to `width` x `height` (32 bpp): the mode
+     * windows are laid out on from then on. The shell's surfaces follow it and
+     * every window is kept on the screen. -EINVAL outside the session's
+     * limits, -EIO when the adapter refuses the mode (the previous one stays).
+     * Only from a main window. window_id is unused. Not persisted: whoever
+     * asks saves it (docs/desktop/DISPLAY_PROPERTIES.md). */
+    SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE = 6,
 };
 
 /*
@@ -952,6 +969,17 @@ enum savanxp_wm_window_role {
  * press still reaches whatever it landed on. A press on another window of the
  * same process does not dismiss: that process decides what it means. */
 #define SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE 0x00000001u
+
+/*
+ * The largest mode a session switches to (Display Properties,
+ * SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE). Memory that has to hold a whole
+ * screen -- compositord's display section, windowd's own surface, the desktop's
+ * background and taskbar -- is allocated for it when the session starts, since
+ * sections are backed when created. A larger boot mode raises it to that mode.
+ * docs/desktop/DISPLAY_PROPERTIES.md.
+ */
+#define SAVANXP_DISPLAY_SESSION_MAX_WIDTH 1920u
+#define SAVANXP_DISPLAY_SESSION_MAX_HEIGHT 1200u
 
 struct savanxp_wm_window_request {
     uint32_t action; /* enum savanxp_wm_window_action */

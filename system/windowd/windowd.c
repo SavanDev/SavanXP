@@ -1530,7 +1530,11 @@ static void fill_client_surface_info(
     }
     else
     {
-        windowd_fill_shell_surface_info(layout_display(session), client_info);
+        windowd_fill_shell_surface_info(
+            layout_display(session),
+            session->compositor.max_width,
+            session->compositor.max_height,
+            client_info);
     }
 }
 
@@ -3455,7 +3459,13 @@ static int open_desktop_window(
     reset_client(client);
     client->surface_info.width = (uint32_t)width;
     client->surface_info.height = (uint32_t)height;
+    /* A panel spans the screen: room for the widest mode, so a change of mode
+     * resizes it instead of replacing it. */
     client->surface_info.pitch = (uint32_t)width * (uint32_t)sizeof(uint32_t);
+    if (request->role == SAVANXP_WM_WINDOW_ROLE_PANEL && session->compositor.max_width > (uint32_t)width)
+    {
+        client->surface_info.pitch = session->compositor.max_width * (uint32_t)sizeof(uint32_t);
+    }
     client->surface_info.bpp = 32u;
     client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)height;
 
@@ -3653,6 +3663,166 @@ static int service_task_request(
  * desktop's main window may open role windows; the main window of an
  * application may open owned (NORMAL) windows. Any other request is answered
  * with an error, which the runtime takes as "keep drawing the dialog inside". */
+/* --- Changing the screen's resolution (docs/desktop/DISPLAY_PROPERTIES.md) -- */
+
+/* The smallest mode a session accepts: below it the shell does not fit. */
+#define WINDOWD_DISPLAY_MIN_WIDTH 640u
+#define WINDOWD_DISPLAY_MIN_HEIGHT 480u
+
+/* Gives a full-screen window of the desktop (the background, a panel) a new
+ * size inside its surface's capacity, and tells the client through the
+ * header, which is how every resize reaches it. */
+static void resize_shell_surface(struct windowd_client *client, int width, int height)
+{
+    int capacity_width = (int)client_surface_capacity_width(client);
+    int capacity_height = (int)client_surface_capacity_height(client);
+
+    width = windowd_clamp_int(width, 1, capacity_width > 0 ? capacity_width : 1);
+    height = windowd_clamp_int(height, 1, capacity_height > 0 ? capacity_height : 1);
+    client->surface_info.width = (uint32_t)width;
+    client->surface_info.height = (uint32_t)height;
+    if (client->header != 0)
+    {
+        client->header->info.width = client->surface_info.width;
+        client->header->info.height = client->surface_info.height;
+    }
+    client->window_width = width;
+    client->window_height = height;
+    client->restore_window_width = width;
+    client->restore_window_height = height;
+}
+
+/* Everything that depends on the screen's size, after it changed: the
+ * desktop's background and panels follow it, popups close (they were placed
+ * against the old screen), maximized windows refit and the rest are pulled
+ * back onto the screen. A window cannot grow past the surface it was created
+ * with, so one opened under a smaller mode stays that size when maximized
+ * until it is opened again. */
+static void relayout_for_display(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    const struct savanxp_fb_info *display = layout_display(session);
+    const int width = (int)display->width;
+    const int height = (int)display->height;
+    int index;
+
+    if (session->desktop_windows[0].pid > 0)
+    {
+        resize_shell_surface(&session->desktop_windows[0], width, height);
+    }
+    for (index = 1; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        struct windowd_client *client = &session->desktop_windows[index];
+
+        if (client->pid <= 0)
+        {
+            continue;
+        }
+        if (client->role == WINDOWD_ROLE_PANEL)
+        {
+            resize_shell_surface(client, width, (int)client->surface_info.height);
+            client->window_x = 0;
+            client->window_y = (client->role_flags & SAVANXP_WM_PANEL_EDGE_TOP) != 0
+                ? 0
+                : height - client->window_height;
+            client->restore_window_x = client->window_x;
+            client->restore_window_y = client->window_y;
+        }
+        else if (client->role == WINDOWD_ROLE_POPUP && !client->dismiss_requested)
+        {
+            request_popup_dismiss(client);
+        }
+    }
+
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS; ++index)
+    {
+        struct windowd_client *client = &session->overlay_clients[index];
+
+        if (client->pid <= 0)
+        {
+            continue;
+        }
+        if (client->role == WINDOWD_ROLE_POPUP)
+        {
+            if (!client->dismiss_requested)
+            {
+                request_popup_dismiss(client);
+            }
+            continue;
+        }
+        if (!client->frame_visible)
+        {
+            continue;
+        }
+        if (client->maximized)
+        {
+            int reserved_top = 0;
+            int reserved_bottom = 0;
+            int area_x = 0;
+            int area_y = 0;
+            int area_width = 0;
+            int area_height = 0;
+
+            desktop_reserved_strips(session, &reserved_top, &reserved_bottom);
+            windowd_maximize_area_bounds(display, reserved_top, reserved_bottom,
+                &area_x, &area_y, &area_width, &area_height);
+            client->window_x = area_x;
+            client->window_y = area_y;
+            client->window_width = area_width;
+            client->window_height = area_height;
+            resize_overlay_client_surface(session, dirty, index,
+                area_width - (WINDOWD_WINDOW_BORDER * 2),
+                area_height - WINDOWD_WINDOW_TITLEBAR_HEIGHT - WINDOWD_WINDOW_BORDER);
+        }
+        windowd_clamp_overlay_frame_position(display, client->window_width, client->window_height,
+            &client->window_x, &client->window_y);
+        windowd_clamp_overlay_frame_position(display, client->restore_window_width, client->restore_window_height,
+            &client->restore_window_x, &client->restore_window_y);
+    }
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
+/* SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE: a new native mode. A fullscreen
+ * program is taken out of fullscreen first, so the mode it leaves is the one
+ * it would go back to. When the adapter refuses, the previous mode is set
+ * again and nothing else moves. */
+static int set_display_mode(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    uint32_t width,
+    uint32_t height)
+{
+    struct savanxp_fb_info previous = session->compositor.requested_info;
+
+    if (width < WINDOWD_DISPLAY_MIN_WIDTH || height < WINDOWD_DISPLAY_MIN_HEIGHT ||
+        width > session->compositor.max_width || height > session->compositor.max_height)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (session->fullscreen_slot >= 0)
+    {
+        exit_overlay_fullscreen(session, dirty);
+    }
+    if (width == previous.width && height == previous.height &&
+        session->gfx.info.width == width && session->gfx.info.height == height)
+    {
+        return 0;
+    }
+    if (windowd_compositor_set_mode(&session->compositor, width, height) != 0 ||
+        session->compositor.display_info.width != width ||
+        session->compositor.display_info.height != height)
+    {
+        (void)windowd_compositor_set_mode(&session->compositor, previous.width, previous.height);
+        session->gfx.info = session->compositor.display_info;
+        eprintf("windowd: display mode %ux%u refused\n", (unsigned)width, (unsigned)height);
+        return -SAVANXP_EIO;
+    }
+    session->gfx.info = session->compositor.display_info;
+    session->compositor.requested_info = session->compositor.display_info;
+    relayout_for_display(session, dirty);
+    eprintf("windowd: display mode %ux%u\n", (unsigned)width, (unsigned)height);
+    return 0;
+}
+
 static void service_client_window_requests(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -3681,7 +3851,12 @@ static void service_client_window_requests(
     client->window_request_consumed_sequence = sequence;
     request.title[SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u] = '\0';
 
-    if (client == &session->desktop_windows[0])
+    if (request.action == SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE &&
+        (client == &session->desktop_windows[0] || (overlay_slot_valid(slot) && client->owner_slot < 0)))
+    {
+        status = set_display_mode(session, dirty, request.width, request.height);
+    }
+    else if (client == &session->desktop_windows[0])
     {
         if (request.action == SAVANXP_WM_WINDOW_ACTION_OPEN)
         {

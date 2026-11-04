@@ -8,7 +8,9 @@
  *
  * This program never draws the real background. It writes the configuration
  * (desktop_wallpaper_write_config) and the desktop, which re-reads it, repaints
- * on its own. How the pieces fit is in docs/desktop/DISPLAY_PROPERTIES.md.
+ * on its own. The resolution it asks windowd for (gfx_set_display_mode), and
+ * saves only once the user keeps it. How the pieces fit is in
+ * docs/desktop/DISPLAY_PROPERTIES.md.
  */
 
 #include "libc.h"
@@ -19,6 +21,7 @@
 #include <string.h>
 
 #include "desktop_wallpaper.h"
+#include "display_settings.h"
 
 static struct sxgui_app g_app;
 
@@ -70,6 +73,7 @@ enum display_widget
     W_DISPLAY_NAME,
     W_RESOLUTION_GROUP,
     W_LESS,
+    W_RESOLUTION,
     W_MORE,
     W_RESOLUTION_TEXT,
     W_QUALITY_GROUP,
@@ -100,6 +104,9 @@ static struct desktop_wallpaper_image g_preview;
 
 static int g_screen_width = 1280;
 static int g_screen_height = 800;
+/* The preview's height, fixed at start-up from the screen's proportions: the
+ * controls under it are placed once, so it does not follow a new mode. */
+static int g_preview_height = 0;
 
 /* ---- the background list -------------------------------------------------
  *
@@ -329,17 +336,18 @@ static uint32_t painter_color(uint32_t rgb)
 
 /* ---- resolution ----------------------------------------------------------
  *
- * The Settings tab shows the screen's mode on the slider of the usual modes.
- * Changing it is the next step (DISPLAY_PROPERTIES.md, "Changing the
- * resolution"); for now the slider shows where the current mode sits and
- * does not move. */
+ * The slider's stops are the usual modes the adapter and the session can take,
+ * plus the current mode when it is not one of them. The adapter says what it
+ * takes (GPU_IOC_GET_CONNECTOR_PROPERTIES, a query any program may make); the
+ * session never goes past SAVANXP_DISPLAY_SESSION_MAX_*, what its full-screen
+ * memory was allocated for, unless it booted in a larger mode. */
 struct display_mode
 {
-    int width;
-    int height;
+    uint32_t width;
+    uint32_t height;
 };
 
-static const struct display_mode k_modes[] = {
+static const struct display_mode k_usual_modes[] = {
     {640, 480},
     {800, 600},
     {1024, 768},
@@ -353,39 +361,134 @@ static const struct display_mode k_modes[] = {
     {1920, 1080},
     {1920, 1200},
 };
-#define DISPLAY_MODE_COUNT ((int)(sizeof(k_modes) / sizeof(k_modes[0])))
+#define DISPLAY_USUAL_MODES ((int)(sizeof(k_usual_modes) / sizeof(k_usual_modes[0])))
 
+static struct display_mode g_modes[DISPLAY_USUAL_MODES + 1];
+static int g_mode_count = 0;
+static int g_current_mode = 0;  /* the mode on the screen */
+static int g_pending_mode = 0;  /* the mode the slider shows */
+static int g_mode_mutable = 0;  /* the adapter can change it at all */
 static char g_resolution_text[48];
-static int g_mode_count = 0;   /* slider stops: the modes up to the current one */
-static int g_mode_index = 0;   /* where the current mode sits */
+static char g_adapter_text[64];
 
-static void build_modes(void)
+/* Sorted by size, so the slider goes from less to more. */
+static void add_mode(uint32_t width, uint32_t height)
 {
+    unsigned long area = (unsigned long)width * height;
+    int slot = g_mode_count;
     int index;
 
-    g_mode_count = 0;
-    g_mode_index = 0;
-    for (index = 0; index < DISPLAY_MODE_COUNT; ++index)
+    for (index = 0; index < g_mode_count; ++index)
     {
-        if ((long)k_modes[index].width * k_modes[index].height <= (long)g_screen_width * g_screen_height)
+        if (g_modes[index].width == width && g_modes[index].height == height)
         {
-            ++g_mode_count;
+            return;
         }
     }
-    /* The current mode is a stop of its own when it is not one of the list. */
-    for (index = 0; index < DISPLAY_MODE_COUNT; ++index)
+    if (g_mode_count >= (int)(sizeof(g_modes) / sizeof(g_modes[0])))
     {
-        if (k_modes[index].width == g_screen_width && k_modes[index].height == g_screen_height)
+        return;
+    }
+    while (slot > 0)
+    {
+        const struct display_mode *before = &g_modes[slot - 1];
+        unsigned long before_area = (unsigned long)before->width * before->height;
+
+        if (before_area < area || (before_area == area && before->width < width))
         {
             break;
         }
+        g_modes[slot] = g_modes[slot - 1];
+        --slot;
     }
-    if (index == DISPLAY_MODE_COUNT)
+    g_modes[slot].width = width;
+    g_modes[slot].height = height;
+    ++g_mode_count;
+}
+
+static int find_mode(uint32_t width, uint32_t height)
+{
+    int index;
+
+    for (index = 0; index < g_mode_count; ++index)
     {
-        ++g_mode_count;
+        if (g_modes[index].width == width && g_modes[index].height == height)
+        {
+            return index;
+        }
     }
-    g_mode_index = g_mode_count - 1;
-    snprintf(g_resolution_text, sizeof(g_resolution_text), "%d by %d pixels", g_screen_width, g_screen_height);
+    return 0;
+}
+
+static void build_modes(void)
+{
+    struct savanxp_gpu_connector_properties properties;
+    struct savanxp_gpu_info info;
+    const char *adapter = "the display adapter";
+    long fd = savanxp_open_mode("/dev/gpu0", SAVANXP_OPEN_READ);
+    int have_properties = 0;
+    int index;
+
+    memset(&properties, 0, sizeof(properties));
+    memset(&info, 0, sizeof(info));
+    if (fd >= 0)
+    {
+        if (gpu_get_info((int)fd, &info) == 0 && info.width != 0 && info.height != 0)
+        {
+            g_screen_width = (int)info.width;
+            g_screen_height = (int)info.height;
+        }
+        have_properties = gpu_get_connector_properties((int)fd, &properties) == 0;
+        savanxp_close((int)fd);
+    }
+    if (info.backend == SAVANXP_GPU_BACKEND_VIRTIO)
+    {
+        adapter = "VirtIO GPU";
+    }
+    else if (info.backend == SAVANXP_GPU_BACKEND_FRAMEBUFFER)
+    {
+        adapter = "the boot framebuffer";
+    }
+    snprintf(g_adapter_text, sizeof(g_adapter_text), "Default Monitor on %s", adapter);
+
+    g_mode_mutable = have_properties &&
+        (properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING) != 0u;
+    g_mode_count = 0;
+    if (g_mode_mutable)
+    {
+        uint32_t max_width = properties.max_width < SAVANXP_DISPLAY_SESSION_MAX_WIDTH
+            ? properties.max_width : SAVANXP_DISPLAY_SESSION_MAX_WIDTH;
+        uint32_t max_height = properties.max_height < SAVANXP_DISPLAY_SESSION_MAX_HEIGHT
+            ? properties.max_height : SAVANXP_DISPLAY_SESSION_MAX_HEIGHT;
+
+        for (index = 0; index < DISPLAY_USUAL_MODES; ++index)
+        {
+            const struct display_mode *mode = &k_usual_modes[index];
+
+            if (mode->width <= max_width && mode->height <= max_height &&
+                (unsigned long)mode->width * mode->height * 4ul <= (unsigned long)properties.max_bytes)
+            {
+                add_mode(mode->width, mode->height);
+            }
+        }
+    }
+    add_mode((uint32_t)g_screen_width, (uint32_t)g_screen_height);
+    g_current_mode = find_mode((uint32_t)g_screen_width, (uint32_t)g_screen_height);
+    g_pending_mode = g_current_mode;
+}
+
+/* The text under the slider, centred in its group. */
+static void update_resolution_text(void)
+{
+    struct sxgui_widget *label = &g_widgets[W_RESOLUTION_TEXT];
+    const struct sxgui_widget *group = &g_widgets[W_RESOLUTION_GROUP];
+    int width;
+
+    snprintf(g_resolution_text, sizeof(g_resolution_text), "%u by %u pixels",
+        (unsigned int)g_modes[g_pending_mode].width, (unsigned int)g_modes[g_pending_mode].height);
+    width = gfx_text_width(g_resolution_text) + 2;
+    label->rect.x = group->rect.x + (group->rect.width - width) / 2;
+    label->rect.width = width;
 }
 
 static const char *const k_quality_names[] = {"Highest (32 bit)"};
@@ -401,11 +504,16 @@ static struct sx_rect page_rect(void)
 static struct sx_rect preview_screen_rect(void)
 {
     struct sx_rect page = page_rect();
-    int height = (DISPLAY_PREVIEW_WIDTH * g_screen_height) / (g_screen_width > 0 ? g_screen_width : 1);
+    int height = g_preview_height;
 
-    if (height > DISPLAY_PREVIEW_WIDTH)
+    if (height <= 0)
     {
-        height = DISPLAY_PREVIEW_WIDTH;
+        height = (DISPLAY_PREVIEW_WIDTH * g_screen_height) / (g_screen_width > 0 ? g_screen_width : 1);
+        if (height > DISPLAY_PREVIEW_WIDTH)
+        {
+            height = DISPLAY_PREVIEW_WIDTH;
+        }
+        g_preview_height = height;
     }
     return sx_rect_make(
         page.x + (page.width - DISPLAY_PREVIEW_WIDTH) / 2,
@@ -511,32 +619,6 @@ static void paint_color_swatch(struct sx_painter *painter)
     sx_painter_draw_frame(painter, swatch, SXGUI_COLOR_TEXT);
 }
 
-/* The resolution slider: a sunken track, a tick per mode and the thumb at
- * the current one. Disabled until the mode can change. */
-static void paint_resolution_slider(struct sx_painter *painter)
-{
-    const struct sxgui_widget *less = &g_widgets[W_LESS];
-    const struct sxgui_widget *more = &g_widgets[W_MORE];
-    int left = less->rect.x + less->rect.width + 8;
-    int right = more->rect.x - 8;
-    int track_y = less->rect.y + 6;
-    int stops = g_mode_count > 1 ? g_mode_count - 1 : 1;
-    int thumb_x;
-    int index;
-
-    sxgui_draw_sunken_edge(painter, sx_rect_make(left, track_y, right - left, 4));
-    for (index = 0; index < g_mode_count; ++index)
-    {
-        int x = left + ((right - left - 1) * index) / stops;
-
-        sx_painter_vline(painter, x, track_y + 14, 3, SXGUI_COLOR_TEXT);
-    }
-
-    thumb_x = left + ((right - left - 1) * g_mode_index) / stops - 5;
-    sx_painter_fill_rect(painter, sx_rect_make(thumb_x, track_y - 7, 11, 18), SXGUI_COLOR_FACE);
-    sxgui_draw_raised_edge(painter, sx_rect_make(thumb_x, track_y - 7, 11, 18));
-}
-
 /* The colour quality's spectrum: what 32 bits can show, as a hue band. */
 static void paint_spectrum(struct sx_painter *painter)
 {
@@ -579,7 +661,6 @@ static void on_paint(struct sxgui_app *app)
     if (g_widgets[W_TABS].value == DISPLAY_TAB_SETTINGS)
     {
         paint_preview(painter, 1);
-        paint_resolution_slider(painter);
         paint_spectrum(painter);
     }
     else
@@ -614,7 +695,10 @@ static void sync_controls(void)
     /* Position means nothing without an image, as in the period's dialog. */
     set_widget_enabled(&g_widgets[W_POSITION], g_pending.path[0] != '\0');
     g_widgets[W_COLOR].value = color_index(g_pending.color);
-    set_widget_enabled(&g_widgets[W_APPLY], !desktop_wallpaper_config_equal(&g_pending, &g_saved));
+    g_widgets[W_RESOLUTION].value = g_pending_mode;
+    update_resolution_text();
+    set_widget_enabled(&g_widgets[W_APPLY],
+        !desktop_wallpaper_config_equal(&g_pending, &g_saved) || g_pending_mode != g_current_mode);
     sxgui_app_request_repaint(&g_app);
 }
 
@@ -641,19 +725,13 @@ static void select_background(const char *path)
     sync_controls();
 }
 
-static int apply_pending(void)
+static void write_wallpaper(void)
 {
-    if (desktop_wallpaper_config_equal(&g_pending, &g_saved))
+    if (!desktop_wallpaper_config_equal(&g_pending, &g_saved) &&
+        desktop_wallpaper_write_config(&g_pending) == 0)
     {
-        return 0;
+        g_saved = g_pending;
     }
-    if (desktop_wallpaper_write_config(&g_pending) < 0)
-    {
-        return -1;
-    }
-    g_saved = g_pending;
-    sync_controls();
-    return 0;
 }
 
 /* ---- dialogs ---------------------------------------------------------------
@@ -799,6 +877,204 @@ static void accept_color(void)
     sync_controls();
 }
 
+/* ---- keeping a new resolution ------------------------------------------------
+ *
+ * A mode the monitor cannot show must not stick, so a new one is a trial: the
+ * dialog asks whether to keep it and goes back to the previous mode unless
+ * the answer is Yes within DISPLAY_CONFIRM_SECONDS. Closing the question with
+ * Esc is a No. Only a kept mode is saved (display_settings_write_mode). */
+#define DISPLAY_CONFIRM_SECONDS 15
+#define DISPLAY_CONFIRM_WIDTH 340
+#define DISPLAY_CONFIRM_HEIGHT 96
+
+enum confirm_widget
+{
+    C_QUESTION = 0,
+    C_COUNTDOWN,
+    C_YES,
+    C_NO,
+    C_COUNT
+};
+
+static struct sxgui_widget g_confirm_widgets[C_COUNT];
+static char g_countdown_text[64];
+static int g_confirm_open = 0;
+static unsigned long g_confirm_deadline_ms = 0;
+static int g_previous_mode = 0;
+static int g_quit_after_confirm = 0;
+
+/* A one-button notice. */
+#define DISPLAY_MESSAGE_HEIGHT 72
+static struct sxgui_widget g_message_widgets[2];
+
+static void show_message(const char *title, const char *text)
+{
+    const int inner = DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN * 2;
+
+    g_message_widgets[0] = sxgui_label(sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN, inner, DISPLAY_ROW), text);
+    g_message_widgets[1] = sxgui_button(
+        sx_rect_make(DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH,
+                     DISPLAY_MESSAGE_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_dialog_cancel, 0);
+    memset(&g_dialog, 0, sizeof(g_dialog));
+    g_dialog.title = title;
+    g_dialog.widgets = g_message_widgets;
+    g_dialog.widget_count = 2;
+    g_dialog.initial_focus = 1;
+    g_dialog.default_button = 1;
+    sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_CONFIRM_WIDTH, DISPLAY_MESSAGE_HEIGHT);
+    sxgui_app_request_repaint(&g_app);
+}
+
+static void set_screen_mode(int mode)
+{
+    g_current_mode = mode;
+    g_pending_mode = mode;
+    g_screen_width = (int)g_modes[mode].width;
+    g_screen_height = (int)g_modes[mode].height;
+}
+
+static void finish_confirm(int keep)
+{
+    g_confirm_open = 0;
+    if (keep)
+    {
+        (void)display_settings_write_mode(g_modes[g_current_mode].width, g_modes[g_current_mode].height);
+    }
+    else
+    {
+        (void)gfx_set_display_mode(&g_app.gfx, g_modes[g_previous_mode].width, g_modes[g_previous_mode].height);
+        set_screen_mode(g_previous_mode);
+        g_quit_after_confirm = 0;
+    }
+    sync_controls();
+    if (g_quit_after_confirm)
+    {
+        sxgui_app_quit(&g_app, 0);
+    }
+}
+
+static void on_confirm_yes(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    g_confirm_open = 0;
+    sxgui_dialog_end(&g_app.ui, 1);
+    finish_confirm(1);
+}
+
+static void on_confirm_no(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    g_confirm_open = 0;
+    sxgui_dialog_end(&g_app.ui, 0);
+    finish_confirm(0);
+}
+
+static void update_countdown(void)
+{
+    unsigned long now = uptime_ms();
+    unsigned long left = now < g_confirm_deadline_ms ? (g_confirm_deadline_ms - now + 999ul) / 1000ul : 0ul;
+
+    snprintf(g_countdown_text, sizeof(g_countdown_text), "Reverting in %lu second%s.", left, left == 1ul ? "" : "s");
+}
+
+static void open_confirm(void)
+{
+    const int inner = DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN * 2;
+    const int buttons_y = DISPLAY_CONFIRM_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT;
+
+    g_confirm_deadline_ms = uptime_ms() + DISPLAY_CONFIRM_SECONDS * 1000ul;
+    update_countdown();
+    g_confirm_widgets[C_QUESTION] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN, inner, DISPLAY_ROW),
+        "Your desktop has been reconfigured. Keep these settings?");
+    g_confirm_widgets[C_COUNTDOWN] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + DISPLAY_ROW + 2, inner, DISPLAY_ROW),
+        g_countdown_text);
+    g_confirm_widgets[C_YES] = sxgui_button(
+        sx_rect_make(DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH * 2 - SXGUI_GAP, buttons_y,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Yes", on_confirm_yes, 0);
+    g_confirm_widgets[C_NO] = sxgui_button(
+        sx_rect_make(DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH, buttons_y,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "No", on_confirm_no, 0);
+
+    memset(&g_dialog, 0, sizeof(g_dialog));
+    g_dialog.title = "Monitor Settings";
+    g_dialog.widgets = g_confirm_widgets;
+    g_dialog.widget_count = C_COUNT;
+    g_dialog.initial_focus = C_YES;
+    g_dialog.default_button = C_YES;
+    g_confirm_open = 1;
+    sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_CONFIRM_WIDTH, DISPLAY_CONFIRM_HEIGHT);
+    sxgui_app_request_repaint(&g_app);
+}
+
+/* The countdown, and the question closed by Esc (the toolkit ends a dialog
+ * on Esc without a callback). */
+static void on_tick(struct sxgui_app *app)
+{
+    if (!g_confirm_open)
+    {
+        return;
+    }
+    if (!sxgui_dialog_active(&app->ui))
+    {
+        finish_confirm(0);
+        return;
+    }
+    if (uptime_ms() >= g_confirm_deadline_ms)
+    {
+        g_confirm_open = 0;
+        sxgui_dialog_end(&app->ui, 0);
+        finish_confirm(0);
+        return;
+    }
+    update_countdown();
+    sxgui_app_request_repaint(app);
+}
+
+/* Writes the wallpaper and, when the slider moved, tries the new mode. With
+ * `quit` the dialog closes afterwards -- after the question, when there is
+ * one, and not at all when the mode is turned down. */
+static void apply_pending(int quit)
+{
+    char text[96];
+    const struct display_mode *mode = &g_modes[g_pending_mode];
+    long result;
+
+    write_wallpaper();
+    if (g_pending_mode == g_current_mode || !g_mode_mutable)
+    {
+        sync_controls();
+        if (quit)
+        {
+            sxgui_app_quit(&g_app, 0);
+        }
+        return;
+    }
+
+    result = gfx_set_display_mode(&g_app.gfx, mode->width, mode->height);
+    if (result < 0)
+    {
+        g_pending_mode = g_current_mode;
+        sync_controls();
+        snprintf(text, sizeof(text), "The display adapter did not accept %u by %u pixels.",
+            (unsigned int)mode->width, (unsigned int)mode->height);
+        show_message("Display Properties", text);
+        return;
+    }
+    g_previous_mode = g_current_mode;
+    set_screen_mode(g_pending_mode);
+    g_quit_after_confirm = quit;
+    sync_controls();
+    open_confirm();
+}
+
 /* ---- interaction ---------------------------------------------------------- */
 
 static void show_tab(int tab)
@@ -810,6 +1086,10 @@ static void show_tab(int tab)
         int on_desktop = index <= DISPLAY_LAST_DESKTOP_WIDGET;
         int visible = on_desktop ? tab == DISPLAY_TAB_DESKTOP : tab == DISPLAY_TAB_SETTINGS;
 
+        if (index == W_RESOLUTION_NOTE && g_mode_mutable)
+        {
+            visible = 0;
+        }
         if (visible)
         {
             g_widgets[index].flags |= SXGUI_FLAG_VISIBLE;
@@ -874,8 +1154,7 @@ static void on_ok(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    (void)apply_pending();
-    sxgui_app_quit(&g_app, 0);
+    apply_pending(1);
 }
 
 static void on_cancel(struct sxgui_widget *widget, void *user)
@@ -889,7 +1168,17 @@ static void on_apply(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    (void)apply_pending();
+    apply_pending(0);
+}
+
+static void on_resolution_changed(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    if (widget->value >= 0 && widget->value < g_mode_count)
+    {
+        g_pending_mode = widget->value;
+        sync_controls();
+    }
 }
 
 /* Enter is OK, as on any property sheet, unless a dialog or an open drop-down
@@ -982,16 +1271,22 @@ static void build_widgets(void)
     /* Settings: which display, then two groups side by side. */
     g_widgets[W_DISPLAY_LABEL] = sxgui_label(sx_rect_make(x, top, page.width - DISPLAY_PAGE_PAD * 2, DISPLAY_ROW), "Display:");
     g_widgets[W_DISPLAY_NAME] = sxgui_label(
-        sx_rect_make(x, top + DISPLAY_ROW, page.width - DISPLAY_PAGE_PAD * 2, DISPLAY_ROW), "Default Monitor");
+        sx_rect_make(x, top + DISPLAY_ROW, page.width - DISPLAY_PAGE_PAD * 2, DISPLAY_ROW), g_adapter_text);
     group_y = top + DISPLAY_ROW * 2 + 8;
     group_width = (page.width - DISPLAY_PAGE_PAD * 3) / 2;
     g_widgets[W_RESOLUTION_GROUP] = sxgui_groupbox(sx_rect_make(x, group_y, group_width, DISPLAY_GROUP_HEIGHT), "Screen resolution");
     g_widgets[W_LESS] = sxgui_label(sx_rect_make(x + 8, group_y + 22, 30, DISPLAY_ROW), "Less");
     g_widgets[W_MORE] = sxgui_label(sx_rect_make(x + group_width - 8 - 32, group_y + 22, 32, DISPLAY_ROW), "More");
-    g_widgets[W_RESOLUTION_TEXT] = sxgui_label(
-        sx_rect_make(x + (group_width - gfx_text_width(g_resolution_text)) / 2, group_y + 58,
-                     gfx_text_width(g_resolution_text) + 2, DISPLAY_ROW),
-        g_resolution_text);
+    {
+        int slider_x = g_widgets[W_LESS].rect.x + g_widgets[W_LESS].rect.width + 2;
+
+        g_widgets[W_RESOLUTION] = sxgui_trackbar(
+            sx_rect_make(slider_x, group_y + 18, g_widgets[W_MORE].rect.x - 4 - slider_x, SXGUI_TRACKBAR_HEIGHT),
+            0, g_mode_count - 1, g_current_mode);
+        g_widgets[W_RESOLUTION].on_action = on_resolution_changed;
+        set_widget_enabled(&g_widgets[W_RESOLUTION], g_mode_mutable && g_mode_count > 1);
+    }
+    g_widgets[W_RESOLUTION_TEXT] = sxgui_label(sx_rect_make(x, group_y + 58, group_width, DISPLAY_ROW), g_resolution_text);
     {
         int quality_x = x + group_width + DISPLAY_PAGE_PAD;
 
@@ -1002,7 +1297,7 @@ static void build_widgets(void)
     }
     g_widgets[W_RESOLUTION_NOTE] = sxgui_label(
         sx_rect_make(x, group_y + DISPLAY_GROUP_HEIGHT + 8, page.width - DISPLAY_PAGE_PAD * 2, DISPLAY_ROW),
-        "The resolution is chosen when the system starts.");
+        "This display adapter cannot change its resolution.");
     g_widgets[W_RESOLUTION_NOTE].flags |= SXGUI_FLAG_DISABLED;
 
     /* OK, Cancel and Apply, right-aligned under the sheet. */
@@ -1047,6 +1342,9 @@ int main(void)
         g_widgets[W_OK].rect.y + SXGUI_BUTTON_HEIGHT + DISPLAY_MARGIN);
     g_app.on_paint = on_paint;
     g_app.on_key = on_key;
+    /* The countdown of "Keep these settings?". */
+    g_app.on_tick = on_tick;
+    g_app.tick_interval_ms = 250;
 
     show_tab(DISPLAY_TAB_DESKTOP);
     sync_controls();

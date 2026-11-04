@@ -34,8 +34,9 @@
  * of inherited descriptors 3, 4 and 5. v4: the port is compositord's, and so
  * is the display memory. v5: the scene -- compositord composes, the WM
  * commits layers instead of presenting a composed frame. v6: the frame event,
- * so clients' frames reach compositord without the WM. */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 6u
+ * so clients' frames reach compositord without the WM. v7: the INIT reply
+ * carries the largest mode the display memory holds. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 7u
 
 #define SAVANXP_COMPOSITOR_PORT_NAME "compositord"
 #define SAVANXP_COMPOSITOR_PORT_PREFIX "wd-compositor-"
@@ -190,5 +191,9 @@ struct savanxp_compositor_reply
     uint64_t damage_px;
     uint64_t bounds_px;
     uint32_t damage_rects;
+    /* INIT: the largest mode SET_MODE may ask for -- what the display section
+     * was sized for. The WM allocates its own full-screen surfaces for it. */
+    uint32_t max_width;
+    uint32_t max_height;
     uint32_t reserved;
 };

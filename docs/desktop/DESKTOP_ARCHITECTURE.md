@@ -506,7 +506,9 @@ tells it what the scene is.
 
 `sessiond` starts `compositord`, waits for its port `compositord` the way it
 waits for `windowd`'s, and only then starts `windowd`. `compositord` allocates
-the display memory (sized for the largest mode, as today) and picks the mode.
+the display memory (sized for the largest mode the session may switch to,
+[DISPLAY_PROPERTIES.md](./DISPLAY_PROPERTIES.md#the-sessions-largest-mode))
+and picks the mode.
 
 - **One window manager, granted by parentage and identity.** A connection
   becomes the WM when its INIT arrives, and only from a process that acts as

@@ -2,6 +2,7 @@
 #include "savanxp/wm_shell_protocol.h"
 
 #include "desktop_wallpaper.h"
+#include "display_settings.h"
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -662,6 +663,26 @@ int main(void)
      * saved under a bare name lands in the user's profile, not at the root,
      * which the user may not write. */
     (void)chdir(savanxp_profile_dir());
+
+    /* The resolution the user chose in Display Properties, if it is not the
+     * one the session booted with. windowd resizes the background and its
+     * RESIZED arrives with the first events. */
+    {
+        uint32_t width = 0;
+        uint32_t height = 0;
+
+        if (display_settings_read_mode(&width, &height) == 0 &&
+            (width != g_background.info.width || height != g_background.info.height))
+        {
+            long result = gfx_set_display_mode(&g_background, width, height);
+
+            if (result < 0)
+            {
+                eprintf("desktop: the saved resolution %ux%u was refused (%s)\n",
+                    (unsigned)width, (unsigned)height, result_error_string(result));
+            }
+        }
+    }
 
     /* Loads the persisted choice and decodes its image. */
     desktop_wallpaper_init();

@@ -238,9 +238,12 @@ class Qmp(object):
 
 
 class Session(object):
-    def __init__(self, qmp, out_dir):
+    def __init__(self, qmp, out_dir, serial=None):
         self.qmp = qmp
         self.out = out_dir
+        # The guest's serial log, for a scenario that restarts the machine and
+        # has to know the new boot reached init.
+        self.serial = serial
         self.index = 0
         self.progman_open = False
 
@@ -1032,6 +1035,85 @@ def scenario_display(s):
     expect_text(image, (0, 0, image.size[0], image.size[1]), "Screen resolution", TEXT, FACE,
                 "the Settings tab shows the resolution")
     s.qmp.tap("esc", pause=2.0)
+
+
+def scenario_resolution(s):
+    """Changing the resolution (docs/desktop/DISPLAY_PROPERTIES.md).
+
+    Display Properties' Settings tab, by keyboard: SHIFT+TAB to the tabs, the
+    arrow to Settings, TAB to the slider, Home and two steps right is
+    1024x768, Enter is OK. The screen changes mode at once and asks whether to
+    keep it; Enter is Yes. Then once more to 800x600 with Apply, and no answer:
+    after the countdown the screen is back at 1024x768. Last, a restart: the
+    desktop sets the kept 1024x768 again.
+    """
+    def open_settings():
+        s.run("display")
+        s.qmp.chord("shift", "tab")
+        time.sleep(1.0)
+        s.qmp.tap("right", pause=2.0)
+        s.qmp.tap("tab", pause=1.0)
+
+    before = s.shot("native")
+    open_settings()
+    s.qmp.tap("home", pause=1.0)
+    s.qmp.tap("right", pause=1.0)
+    s.qmp.tap("right", pause=2.0)
+    image = s.shot("slider-1024")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "1024 by 768 pixels", TEXT, FACE,
+                "the slider names the mode it is on")
+    s.qmp.tap("ret", pause=8.0)
+    image = s.shot("keep-settings")
+    if image.size != (1024, 768):
+        raise Failure("after OK the screen should be 1024x768, not %dx%d" % image.size)
+    expect_text(image, (0, 0, 1024, 768), "Keep these settings?", TEXT, FACE,
+                "a new mode asks to be kept")
+    s.qmp.tap("ret", pause=6.0)
+    image = s.shot("kept")
+    if image.size != (1024, 768):
+        raise Failure("Yes should keep 1024x768, the screen is %dx%d" % image.size)
+    expect_taskbar_present(image, "the taskbar follows the new width")
+
+    open_settings()
+    s.qmp.tap("left", pause=2.0)
+    s.qmp.tap("tab", pause=0.5)   # colour quality
+    s.qmp.tap("tab", pause=0.5)   # OK
+    s.qmp.tap("tab", pause=0.5)   # Cancel
+    s.qmp.tap("tab", pause=0.5)   # Apply
+    s.qmp.tap("spc", pause=8.0)
+    image = s.shot("trial-800")
+    if image.size != (800, 600):
+        raise Failure("Apply should try 800x600, the screen is %dx%d" % image.size)
+    time.sleep(25.0)
+    image = s.shot("reverted")
+    if image.size != (1024, 768):
+        raise Failure("without an answer the screen should go back to 1024x768, not %dx%d" % image.size)
+    s.qmp.tap("esc", pause=5.0)
+
+    # The kept mode is the user's: after a restart the desktop sets it again.
+    # QEMU runs with -no-reboot, which turns a reset into a stop: set-action
+    # makes this one a real restart. The new boot has to reach init, or the
+    # shot below would be the old session's last frame.
+    if s.serial is None:
+        raise Failure("the restart needs the serial log")
+    marker = "handoff: starting /bin/init"
+    with io.open(s.serial, "r", encoding="utf-8", errors="replace") as fh:
+        boots = fh.read().count(marker)
+    s.qmp.cmd("set-action", reboot="reset")
+    s.qmp.cmd("system_reset")
+    deadline = time.time() + 240
+    while True:
+        with io.open(s.serial, "r", encoding="utf-8", errors="replace") as fh:
+            if fh.read().count(marker) > boots:
+                break
+        if time.time() > deadline:
+            raise Failure("the machine did not boot again after the reset")
+        time.sleep(0.5)
+    time.sleep(75.0)
+    image = s.shot("after-restart")
+    if image.size != (1024, 768):
+        raise Failure("after a restart the saved 1024x768 should be back, the screen is %dx%d" % image.size)
+    expect_taskbar_present(image, "the taskbar at the saved width")
 
 
 def scenario_appwiz(s):
@@ -2288,6 +2370,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,
+    "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,
     "wheel": scenario_wheel,
@@ -2338,7 +2421,7 @@ def main():
     time.sleep(opts.boot_wait)
 
     try:
-        SCENARIOS[opts.scenario](Session(qmp, opts.out))
+        SCENARIOS[opts.scenario](Session(qmp, opts.out, opts.serial))
     except Failure as failure:
         print("FALLO: %s" % failure)
         print("Las capturas quedaron en %s para ver que paso." % opts.out)

@@ -151,6 +151,22 @@ bool detect_dispi() {
     return id >= kDispiIdMin && id <= kDispiIdMax;
 }
 
+// The largest mode the adapter takes, read once at start-up. With GETCAPS set
+// in the enable register, XRES and YRES read back the maximum instead of the
+// current mode. The enabled bits are written back as they were, so the live
+// scanout is not touched: the device only reprograms on a change of them.
+constexpr uint16_t kDispiGetCaps = 0x02;
+uint32_t g_dispi_max_width = 0;
+uint32_t g_dispi_max_height = 0;
+
+void read_dispi_caps() {
+    const uint16_t enable = dispi_read(kDispiRegisterEnable);
+    dispi_write(kDispiRegisterEnable, static_cast<uint16_t>(enable | kDispiGetCaps));
+    g_dispi_max_width = dispi_read(kDispiRegisterXres);
+    g_dispi_max_height = dispi_read(kDispiRegisterYres);
+    dispi_write(kDispiRegisterEnable, static_cast<uint16_t>(enable & ~kDispiGetCaps));
+}
+
 // El firmware mapea solo el modo visible, pero detras hay toda la apertura de
 // VRAM: dispi dice cuanta hay. Mapear el resto es lo que habilita el doble
 // buffer en resoluciones grandes, donde dos buffers no entran en lo que dejo
@@ -371,20 +387,34 @@ bool get_connector_properties(savanxp_gpu_connector_properties& properties) {
     if (!ready()) {
         return false;
     }
-    // Sin plano de cursor de hardware: el compositor cae a su cursor por
-    // software. Anunciamos PARTIAL_PRESENT para que use present_surface_batch
-    // con rects sucios, y MUTABLE_MODE_SETTING solo si el adaptador expone
-    // dispi -- con el framebuffer pelado la resolucion sigue siendo fija.
+    // No hardware cursor plane: the compositor falls back to its software
+    // cursor. PARTIAL_PRESENT is announced so it uses present_surface_batch
+    // with dirty rects, and MUTABLE_MODE_SETTING only when the adapter exposes
+    // dispi -- with the bare framebuffer the resolution stays fixed, and the
+    // largest mode is the current one.
     properties = {
         .flags = SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT | SAVANXP_GPU_CONNECTOR_FLAG_SAFE_MODE |
             (g_dispi_available ? SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING : 0u),
         .active_scanout_id = 0,
-        // El modo preferido es el nativo, no el que este puesto ahora.
+        // The preferred mode is the native one, not the one set right now.
         .preferred_width = g_native_info.width,
         .preferred_height = g_native_info.height,
         .batch_capacity = kImportedSurfaceCount,
         .max_dirty_rects = SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS,
+        .max_width = g_fb_info.width,
+        .max_height = g_fb_info.height,
+        .max_bytes = g_fb_info.buffer_size,
+        .reserved = 0,
     };
+    // With dispi, any mode under the adapter's maximum whose frame fits in
+    // the mapped VRAM (apply_dispi_mode checks the same bound).
+    if (g_dispi_available && g_dispi_max_width != 0 && g_dispi_max_height != 0) {
+        properties.max_width = g_dispi_max_width;
+        properties.max_height = g_dispi_max_height;
+        properties.max_bytes = g_mapped_bytes > 0xffffffffull
+            ? 0xffffffffu
+            : static_cast<uint32_t>(g_mapped_bytes);
+    }
     return true;
 }
 
@@ -998,6 +1028,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         ? framebuffer.mapped_bytes
         : g_fb_info.buffer_size;
     g_dispi_available = detect_dispi();
+    if (g_dispi_available) {
+        read_dispi_caps();
+    }
     if (g_dispi_available && remap_vram_aperture()) {
         // Solo con dispi tiene sentido: es quien reporta el tamano de la VRAM y
         // el unico camino que puede usar lo que hay de mas. Si el scanout se

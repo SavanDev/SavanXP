@@ -12,11 +12,12 @@ Cut-off notes:
 
 ### Added
 
-- **Display Properties** (`/bin/display`, fixed size), opened from the desktop's Properties or Program Manager's
-  Options: any BMP as wallpaper, Center/Tile/Stretch and a background colour, with a preview; a
-  Settings tab shows the resolution (changing it is next). Wallpapers move to `/wallpapers` (six,
-  from `tools/gen_wallpapers.py`); `desktop.cfg` becomes `wallpaper=`/`position=`/`color=` and the
-  old one-digit file migrates. Replaces Change Wallpaper. See `docs/desktop/DISPLAY_PROPERTIES.md`.
+- **Display Properties** (`/bin/display`, fixed size), opened from the desktop's Properties or Program
+  Manager's Options: any BMP as wallpaper, Center/Tile/Stretch and a colour (`desktop.cfg`, wallpapers in
+  `/wallpapers` from `tools/gen_wallpapers.py`; replaces Change Wallpaper). The Settings tab changes the
+  resolution live with a 15-second "Keep these settings?" and saves it in `display.cfg`
+  (`SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE`, `gfx_set_display_mode`, `sxgui_trackbar`). See
+  `docs/desktop/DISPLAY_PROPERTIES.md`.
 
 - **Desktop icons and shortcuts**: the desktop shows `/users/<name>/Desktop` as a grid of icons
   (created with Command Prompt, Files and Notepad). Double click opens, drag moves, F2 renames, Delete

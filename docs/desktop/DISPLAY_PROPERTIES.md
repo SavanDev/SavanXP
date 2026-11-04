@@ -1,9 +1,10 @@
 # Display Properties
 
-> **Status: phase 1 built (2026-11-04).** The Desktop tab is complete: any
-> wallpaper, its position and the colour behind it. The Settings tab shows the
-> screen's resolution and colour quality but cannot change them yet; that is
-> phase 2, designed [below](#phase-2-changing-the-resolution).
+> **Status: built (2026-11-04).** Phase 1, the Desktop tab: any wallpaper,
+> its position and the colour behind it. Phase 2, the Settings tab: the
+> resolution changes while the session runs, with the period's "keep these
+> settings?" countdown ([Changing the resolution](#changing-the-resolution)).
+> Colour quality stays at 32 bits, the only depth the system draws.
 
 Display Properties (`/bin/display`, `subsystems/posix/userland/display.c`) is
 the period's Display control panel with two of its tabs, Desktop and Settings.
@@ -88,56 +89,84 @@ list, so the list never shows something the desktop cannot draw.
   teal and the period's desktop blue; its last row, **Other...**, asks for
   any `RRGGBB`. The closed list shows the colour itself, painted over the
   name.
-- **Settings tab**: the preview with the taskbar, the display, the resolution
-  slider (disabled, see below) and the colour quality, which is always 32
-  bits.
+- **Settings tab**: the preview with the taskbar, the adapter, the resolution
+  slider (`sxgui_trackbar`, a toolkit widget) and the colour quality, which is
+  always 32 bits. On an adapter that cannot change mode the slider is
+  disabled and a line says so.
 - **OK** applies and closes, **Cancel** (or Esc) closes without writing,
   **Apply** writes and stays; it is enabled only while something differs
-  from what the desktop shows. Enter is OK, as on any property sheet, except
+  from what the desktop shows. A new resolution is a trial, not a write:
+  see below. Enter is OK, as on any property sheet, except
   while a prompt or an open drop-down list takes the keys.
 
-## Phase 2: changing the resolution
+## Changing the resolution
 
-What the resolution slider needs before it can move. Each step is ordered
-so the system works after it.
+### Who does what
 
-### What exists
+| Piece | Job |
+|---|---|
+| Kernel | `GPU_IOC_GET_CONNECTOR_PROPERTIES` says whether the adapter can change mode (`SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING`) and its limits: `max_width`, `max_height`, `max_bytes`. The `dispi` registers report their maximum (GETCAPS) and the mapped VRAM bounds the frame; virtio-gpu backs the scanout with an imported section, so its limit (2560x1600) only keeps the list finite. A plain firmware framebuffer cannot change mode. |
+| `compositord` | Sizes the display section, at start, for the largest mode the session may use, and reports it in the INIT reply (`max_width`, `max_height`, protocol v7). |
+| `windowd` | Serves `SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE` from any main window: sets the mode through `compositord`, makes it the native mode, and lays everything out again. |
+| `desktop` | Its background and taskbar follow the `RESIZED` they get; at start it sets the mode the user kept. |
+| `display` | Lists the modes, asks for one with `gfx_set_display_mode`, and saves it only once the user keeps it. |
 
-- `compositord` changes the scanout mode on request
-  (`SAVANXP_COMPOSITOR_MSG_SET_MODE`). `windowd` uses it for composited
-  fullscreen: the low mode of a game, and back to the native mode on exit.
-- `windowd` keeps the **native mode** in `compositor.requested_info` and lays
-  every window out against it (`layout_display`).
-- The kernel backends can program arbitrary modes: virtio-gpu
-  (`configure_primary_surface`) and the Bochs/QEMU `dispi` registers in
-  `fb_gpu`. A plain firmware framebuffer cannot change mode at all.
+### The session's largest mode
 
-### What is missing
+Sections are backed by physical pages when they are created, so a surface
+cannot grow later without being replaced. Everything that has to cover the
+whole screen is therefore allocated, when the session starts, for the
+largest mode the session may switch to: the boot mode, or the adapter's
+maximum capped at `SAVANXP_DISPLAY_SESSION_MAX_WIDTH` x `_HEIGHT` (1920x1200),
+whichever is larger. That covers `compositord`'s display section, `windowd`'s
+own surface, the desktop's background and its panels (a panel's width is the
+screen's). At 1920x1200 it is about 9 MiB for each of them.
 
-1. **Which modes exist.** There is no way to ask. A `GPU_IOC_GET_MODES`
-   returns the list: virtio-gpu's display info gives the preferred mode,
-   `dispi` reports its maximum and accepts anything under it, and the firmware
-   framebuffer offers only its own. The dialog builds the slider from that
-   list instead of a fixed table.
-2. **Display memory for the largest mode.** `compositord` sizes the display
-   section for the boot mode plus 4 MiB, and `windowd` maps that one section.
-   Either it is sized for the largest mode on the list at start, or a mode
-   change re-creates it and hands `windowd` the new handle. Sizing it once is
-   simpler and costs memory only on machines that offer large modes.
-3. **Changing the native mode.** A shell-only request to `windowd` (the role
-   gate of `wm_shell_protocol.h`, not a launch flag) that sets
-   `requested_info`, asks `compositord` for the mode, and re-lays out: the
-   background and the taskbar get a `RESIZED`, maximised windows refit, and
-   every other window is pulled back on screen. A fullscreen program keeps its
-   low mode and returns to the new native one.
-4. **The desktop follows.** The background and taskbar take their new size
-   from `RESIZED`, the icon grid is laid out again and the wallpaper cache is
-   rebuilt (the wallpaper already scales to any size).
-5. **Persisting it.** The mode is the machine's, not the user's: a system
-   setting under `/system`, written with elevation. `windowd` and
-   `compositord` read no files, so the desktop applies it at start through
-   the same request as the dialog.
-6. **The dialog.** Apply changes the mode, then asks "Do you want to keep
-   these settings?" with a 15-second countdown; no answer reverts to the
-   previous mode, so a mode the monitor cannot show never sticks. The slider
-   becomes a toolkit trackbar (`SXGUI_TRACKBAR`).
+**Application windows are not.** Each gets a surface the size of the screen
+when it opens, as before, because a dozen windows at the largest mode would
+cost a hundred megabytes. A window opened under a smaller mode keeps its
+surface after the screen grows: maximized, it stops at its old size until it
+is opened again. Replacing a window's surface while it lives (a new section
+sent to the client, as an owned window's is) would lift this; it needs both
+client runtimes and every program that keeps its own back buffer to follow,
+so it waits for a consumer that cannot live with the limit.
+
+### The layout after a change
+
+`set_display_mode` in `windowd` refuses a mode below 640x480 or past the
+session's largest (`-EINVAL`), takes a fullscreen program out of fullscreen,
+and asks `compositord` for the mode. When the adapter refuses it, or programs
+another size, the previous mode is set again and the answer is `-EIO`.
+Otherwise the new mode becomes the native one and `relayout_for_display`:
+
+- resizes the background to the screen and each panel to its width,
+  anchored again to its edge;
+- asks every popup to close (the desktop's and the applications'), since
+  each was placed against the old screen;
+- refits maximized windows to the new work area and pulls every other window,
+  and its restore position, back onto the screen;
+- damages the whole screen.
+
+Clients learn their new size from the surface header, as from any resize.
+
+### Keeping it
+
+A mode the monitor cannot show must not stick. Apply (or OK) sets the mode
+and asks "Keep these settings?" with a 15-second countdown; Yes saves it,
+No, Esc or the end of the countdown sets the previous mode again. Only a kept
+mode is written: `display.cfg` in the user's profile, one line,
+`mode=<width>x<height>` (`display_settings.c`). The desktop reads it when it
+starts and asks for the mode if the session booted in another.
+
+It is the user's setting and not the machine's because the desktop, which
+applies it, runs as the user, and a system file would need elevation for
+every change. `windowd` and `compositord` read no files, so neither could
+apply a machine-wide one at boot without a reader of their own.
+
+### Verified by
+
+`tools/shoot.sh --scenario resolution` (with and without `--virtio`):
+1024x768 by keyboard and Yes, the taskbar at the new width, then 800x600
+left unanswered until it reverts, then a real restart (`set-action
+reboot=reset`, since the harness runs QEMU with `-no-reboot`) after which the
+desktop sets 1024x768 again.

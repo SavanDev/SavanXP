@@ -1442,6 +1442,19 @@ long gfx_window_open_role(
     return gfx_window_open_with(owner, window, window_id, width, height, 0, &placement);
 }
 
+/* The screen's resolution (SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE). The WM
+ * answers once the mode is on the screen and every window has been laid out
+ * again, which takes a few frames: hence the longer wait. */
+#define GFX_DISPLAY_MODE_WAIT_MS 3000ul
+
+long gfx_set_display_mode(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height) {
+    if (context == 0 || context->header == 0 || context->window_id != 0 || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return gfx_window_request(
+        context, SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE, 0, width, height, 0, 0, GFX_DISPLAY_MODE_WAIT_MS);
+}
+
 long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window) {
     uint32_t window_id = 0;
 

@@ -305,6 +305,10 @@ long gfx_window_open_role(
     uint32_t width,
     uint32_t height);
 long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window);
+/* Changes the screen's resolution, from the program's main window. 0 once the
+ * mode is on the screen; -EINVAL outside the session's limits, -EIO when the
+ * adapter refuses it. Nothing is saved: docs/desktop/DISPLAY_PROPERTIES.md. */
+long gfx_set_display_mode(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height);
 /* Puntero de la ventana de `context`, sea la principal o una con dueno. Comparte
  * el pipe y el reparto con gfx_poll_event/gfx_poll_pointer. */
 int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_event* event);

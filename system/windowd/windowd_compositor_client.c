@@ -297,6 +297,8 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection, in
     connection->gpu_info = reply.gpu_info;
     /* The native mode: the one to go back to after a fullscreen mode. */
     connection->requested_info = reply.fb_info;
+    connection->max_width = reply.max_width >= reply.fb_info.width ? reply.max_width : reply.fb_info.width;
+    connection->max_height = reply.max_height >= reply.fb_info.height ? reply.max_height : reply.fb_info.height;
 
     section = sxn_pipe_receive_handle(connection->reply_fd);
     if (section < 0)
@@ -325,16 +327,16 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection, in
         return result;
     }
 
-    /* windowd's own surface, at the native mode: every smaller mode fits. */
+    /* windowd's own surface, at the largest mode: every mode fits. */
     {
         struct savanxp_compositor_surface surface;
         long wm;
 
         memset(&surface, 0, sizeof(surface));
         surface.surface_id = SAVANXP_COMPOSITOR_SURFACE_WM;
-        surface.pitch = connection->display_info.width * (uint32_t)sizeof(uint32_t);
-        surface.capacity_width = connection->display_info.width;
-        surface.capacity_height = connection->display_info.height;
+        surface.pitch = connection->max_width * (uint32_t)sizeof(uint32_t);
+        surface.capacity_width = connection->max_width;
+        surface.capacity_height = connection->max_height;
         surface.section_size = (uint64_t)surface.pitch * surface.capacity_height;
         wm = section_create((unsigned long)surface.section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
         if (wm < 0)
