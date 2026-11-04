@@ -226,10 +226,41 @@ is out of scope for now.
 2. **Toolbar, address bar, history and Properties** — done. Not yet: the
    drop-down lists of recent folders on Back and Forward, and the address
    bar's drop-down of parent folders.
-3. **Cut / Copy / Paste** — the SXGUI clipboard holds text only, so file
-   paths need either a tagged text payload or a clipboard of their own; and
-   copying needs a recursive copy with name clashes ("Copy of ...") and
-   error handling. Moving within one volume is `rename`.
 
-Undo is left out: it needs an operation log, and a deleted file cannot come
-back without a Recycle Bin.
+### Pending
+
+Not started. In the order they depend on each other:
+
+3. **A clipboard with formats.** The clipboard is `/dev/clipboard`
+   ([`WM_SUBSYSTEM.md`](WM_SUBSYSTEM.md)), one blob of text read and written
+   through the toolkit's host (`clipboard_get_text`/`clipboard_set_text`).
+   Copying files needs a second kind of content, a list of paths, that a
+   program can tell apart from text, as Windows' `CF_HDROP` sits next to
+   `CF_TEXT`. Two ways:
+   - **A tagged text payload** (a marker line, then one path per line).
+     Nothing changes outside Files, but any other program pastes the tag as
+     text, and nothing stops a text that happens to start with it.
+   - **Formats in the clipboard itself**: the device keeps one entry per
+     format, a writer replaces them all at once, a reader asks for the one it
+     wants. A file list also offers its paths as text, so Notepad pastes
+     them. This is the one to build; it touches the device, the host
+     interface and the SUN host ([`SUN.md`](../userland/SUN.md)).
+4. **Cut / Copy / Paste.** On the clipboard above. Paste copies into the
+   folder shown; copying a folder is a recursive copy, a name already taken
+   becomes "Copy of ..." (and "Copy (2) of ..."), and a failure halfway
+   reports what was left behind instead of rolling back silently. Cut moves:
+   `rename` within one volume, copy-then-delete across volumes. A cut item
+   is drawn faded until it is pasted, as in the Explorer. The toolbar gets
+   Cut, Copy and Paste between Up and Delete, and the Edit menu returns.
+5. **Recycle Bin.** Delete moves to a per-user bin instead of removing:
+   the item goes into a folder in the profile together with a record of its
+   original path and the time, so it can be put back. The bin needs a view
+   (Restore, Empty Recycle Bin, Delete for good) and an icon on the desktop
+   that shows whether it is empty. Moving to it across volumes is the copy
+   of step 4. With it, deleting a folder that is not empty stops being
+   refused ([`DESKTOP_ICONS.md`](DESKTOP_ICONS.md) refuses it today because
+   nothing could bring it back), on the desktop and in Files alike.
+
+**Undo** comes after both: it needs an operation log (what was moved,
+renamed or deleted, from where), and undoing a delete needs the Recycle Bin
+to take the item back from.
