@@ -17,6 +17,7 @@ from pathlib import Path
 
 from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions, send_pointer_smoke_actions
 from sxfs_sync import copy_preserving_holes
+from smoke_profile import reset_display_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
 from run_qemu import build_qemu_args, find_qemu, prepare_image
@@ -227,6 +228,12 @@ def main() -> int:
         with source_lock_path.open("a+") as source_lock:
             fcntl.flock(source_lock.fileno(), fcntl.LOCK_EX)
             make_smoke_copy(source_disk, run_disk, args.sxfs_cli.resolve())
+            # The developer's resolution is a preference of their disk, not of
+            # the scenario: every driver assumes the default mode.
+            try:
+                reset_display_preferences(args.sxfs_cli.resolve(), run_disk)
+            except RuntimeError as error:
+                raise SystemExit(f"smoke: {error}")
             for remove_path in args.remove_path:
                 removed = subprocess.run(
                     [str(args.sxfs_cli.resolve()), "rm", str(run_disk), remove_path],

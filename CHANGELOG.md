@@ -116,6 +116,10 @@ Cut-off notes:
   `sxe_file_load_icons`), which reads the ELF's section table in one go. See
   `docs/userland/SXE_FORMAT.md`.
 
+- **Smokes and `tools/shoot.sh` boot at the default resolution** whatever the developer chose in
+  Display Properties: `tools/smoke_profile.py` removes `display.cfg` from the disposable copy, so a
+  `build/disk.img` at 1024x768 no longer fails `taskbar-smoke` or the visual scenarios.
+
 - **Clicking the desktop gives it the keyboard**: `windowd` has a desktop focus state, so the icons
   get arrows, Enter, Delete and F2. A right press activates the window it lands on and closes
   popups, as a left press does.

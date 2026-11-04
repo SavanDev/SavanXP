@@ -131,6 +131,9 @@ rm -f "$run_disk" "$run_disk.lock" "$qmp_path" "$hmp_path" "$vars_copy" "$serial
 
 cp -- "$DISK_IMAGE" "$run_disk"
 "$SXFS_CLI" check "$run_disk" >/dev/null
+# The scenarios click at coordinates for the default 1280x800: the developer's
+# own resolution stays out of the copy (tools/smoke_profile.py).
+python3 "$ROOT/tools/smoke_profile.py" --sxfs-cli "$SXFS_CLI" "$run_disk"
 
 qemu_pid=""
 cleanup() {

@@ -99,6 +99,14 @@ output under `build/smoke-logs/`. A normal build removes the temporary smoke
 specification from the image. `rescue-smoke` boots with no disk attached
 (`--no-disk`), so the kernel starts the rescue system.
 
+**The copy starts at the default resolution.** `build/disk.img` is also the
+developer's own disk, and Display Properties saves the chosen mode in it
+(`display.cfg`). The host drivers click at coordinates for the default
+1280x800, so both `run_smoke.py` and `shoot.sh` remove the display
+preferences from the copy with `tools/smoke_profile.py` before booting it; the
+persistent image keeps them. A scenario that needs another resolution has to
+set it itself, as `resolution` does through Display Properties.
+
 `tools/shoot.sh` speaks QMP over a Unix socket and uses the same scenario driver
 as the media-player display assertion. It boots two cores, like `build.sh`; `--smp N` changes that. The keyboard, pointer and taskbar smoke
 drivers use `tools/qmp_client.py`.
