@@ -34,7 +34,7 @@ static const char *k_task_manager_path = "/bin/taskmgr.sxe";
 /* The Command Prompt, which Ctrl+Alt+T opens (docs/desktop/CONSOLE.md). */
 static const char *k_console_path = "/bin/console.sxe";
 
-/* How often the persisted wallpaper choice is re-read. progman's Options menu
+/* How often the persisted wallpaper choice is re-read. Display Properties
  * changes it by writing the config; it is a rare, manual change, not worth an
  * open+read per pass. */
 #define DESKTOP_WALLPAPER_CHECK_MS 500ul
@@ -663,7 +663,7 @@ int main(void)
      * which the user may not write. */
     (void)chdir(savanxp_profile_dir());
 
-    /* Loads the persisted choice and tries to decode /wallpaper.bmp. */
+    /* Loads the persisted choice and decodes its image. */
     desktop_wallpaper_init();
     /* The Desktop folder, created with its first shortcuts if it is not there. */
     desktop_view_init(&g_background.info);

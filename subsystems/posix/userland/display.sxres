@@ -1,0 +1,8 @@
+# SXE resources of Display Properties. See docs/userland/SXE_FORMAT.md.
+name=Display Properties
+description=Wallpaper, its position and colour, and the screen's resolution
+version=system
+vendor=SavanXP
+accent=3a68be
+icon=desktop
+category=System

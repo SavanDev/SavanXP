@@ -1,7 +1,6 @@
 #include "desktop.h"
 
 #include "desktop_icons.h"
-#include "desktop_wallpaper.h"
 #include "mime_icon.h"
 #include "shortcut.h"
 #include "savanxp/sxe.h"
@@ -873,7 +872,7 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 #define VIEW_CMD_REFRESH 2
 #define VIEW_CMD_NEW_FOLDER 3
 #define VIEW_CMD_NEW_TEXT 4
-#define VIEW_CMD_WALLPAPER 5
+#define VIEW_CMD_PROPERTIES 5
 #define VIEW_CMD_CONSOLE 6
 #define VIEW_CMD_OPEN 10
 #define VIEW_CMD_DELETE 11
@@ -881,6 +880,8 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 
 /* The Command Prompt, as Ctrl+Alt+T opens it (docs/desktop/CONSOLE.md). */
 static const char *k_console_path = "/bin/console.sxe";
+/* Display Properties (docs/desktop/DISPLAY_PROPERTIES.md). */
+static const char *k_display_path = "/bin/display";
 
 static const struct sxgui_menu_item k_background_items[] = {
     {"Arrange Icons", VIEW_CMD_ARRANGE, 0},
@@ -889,8 +890,9 @@ static const struct sxgui_menu_item k_background_items[] = {
     {"New Folder", VIEW_CMD_NEW_FOLDER, 0},
     {"New Text Document", VIEW_CMD_NEW_TEXT, 0},
     {0, 0, 0},
-    {"Change Wallpaper", VIEW_CMD_WALLPAPER, 0},
     {"Open Command Prompt", VIEW_CMD_CONSOLE, 0},
+    {0, 0, 0},
+    {"Properties", VIEW_CMD_PROPERTIES, 0},
 };
 
 static const struct sxgui_menu k_background_menu = {
@@ -1143,9 +1145,8 @@ static void run_command(int id)
     case VIEW_CMD_NEW_TEXT:
         create_new(0);
         break;
-    case VIEW_CMD_WALLPAPER:
-        (void)desktop_wallpaper_cycle();
-        desktop_wallpaper_changed();
+    case VIEW_CMD_PROPERTIES:
+        (void)desktop_launch(k_display_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
         break;
     case VIEW_CMD_CONSOLE:
         (void)desktop_launch(k_console_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);

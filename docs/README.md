@@ -106,6 +106,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   means, the icon grid and its keyboard, the desktop's focus in `windowd`,
   and context menus in applications (popups owned by any window,
   `sxgui_context_menu_open`).
+- [`DISPLAY_PROPERTIES.md`](desktop/DISPLAY_PROPERTIES.md) — Display Properties:
+  the wallpaper configuration (`desktop.cfg`) and how the desktop follows it,
+  the shipped wallpapers, and the plan for changing the resolution.
 - [`ICON_STYLE.md`](desktop/ICON_STYLE.md) — the Windows 2000 look of the house
   icon set: the drawing rules, the shared kit and generator, and what is exempt.
 - [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)

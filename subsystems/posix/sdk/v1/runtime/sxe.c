@@ -1393,9 +1393,9 @@ static void selftest_disk(void)
     expect(sxe_read_section("/bin/init", ".no_existe", buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "seccion inexistente");
 
-    /* Un archivo que no es ELF se resuelve como ausente, no como error. */
-    expect(sxe_read_section("/wallpaper.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
-        "archivo que no es ELF");
+    /* A file that is not ELF resolves as absent, not as an error. */
+    expect(sxe_read_section("/wallpapers/Clouds.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
+        "file that is not ELF");
 }
 
 /*

@@ -108,7 +108,7 @@ with it.
 
 | Menu | Items |
 |---|---|
-| Background | Arrange Icons (folders first, then by name), Refresh, New Folder, New Text Document, Change Wallpaper, Open Command Prompt |
+| Background | Arrange Icons (folders first, then by name), Refresh, New Folder, New Text Document, Open Command Prompt, Properties (opens [Display Properties](./DISPLAY_PROPERTIES.md)) |
 | Icon | Open, Rename, Delete |
 
 New Folder and New Text Document create "New Folder" / "New Text

@@ -1014,6 +1014,26 @@ def scenario_system(s):
     s.qmp.tap("esc", pause=2.0)
 
 
+def scenario_display(s):
+    """Display Properties, both tabs (docs/desktop/DISPLAY_PROPERTIES.md).
+
+    Opened by name through the console. The focus starts on the wallpaper
+    list; SHIFT+TAB takes it back to the tab control and the arrow walks to
+    Settings. ESC is Cancel, so nothing is written.
+    """
+    s.run("display")
+    image = s.shot("display-desktop")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Background:", TEXT, FACE,
+                "the Desktop tab lists the wallpapers")
+    s.qmp.chord("shift", "tab")
+    time.sleep(1.0)
+    s.qmp.tap("right", pause=3.0)
+    image = s.shot("display-settings")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Screen resolution", TEXT, FACE,
+                "the Settings tab shows the resolution")
+    s.qmp.tap("esc", pause=2.0)
+
+
 def scenario_appwiz(s):
     """Agregar o quitar programas: la ventana que desinstala.
 
@@ -1088,8 +1108,9 @@ def scenario_contextmenu(s):
     A right click on the background opens it with its corner at the pointer;
     near the bottom-right corner it opens to the left of and above the
     pointer instead. Hovering a row highlights it. The right click gave the
-    desktop the keyboard, so the arrows and Enter choose Change Wallpaper,
-    which repaints the background.
+    desktop the keyboard, so the arrows and Enter choose Properties, which
+    opens Display Properties (docs/desktop/DISPLAY_PROPERTIES.md). There Home
+    picks "(None)" and Enter is OK, which leaves the background a plain colour.
     """
     before = s.shot("desktop")
     probe = (300, 200)
@@ -1117,23 +1138,28 @@ def scenario_contextmenu(s):
     s.qmp.click("right")
     time.sleep(1.0)
     image = s.shot("menu-flipped")
-    expect_text(image, (900, 520, 1240, 760), "Change Wallpaper", TEXT, FACE,
+    expect_text(image, (900, 480, 1240, 760), "Properties", TEXT, FACE,
                 "near the corner the menu opens left of and above the pointer")
 
-    # Up from nothing wraps to the last row, Open Command Prompt; once more
-    # is Change Wallpaper.
-    s.qmp.tap("up", pause=0.4)
+    # Up from nothing wraps to the last row, Properties.
     s.qmp.tap("up", pause=0.4)
     image = s.shot("menu-keyboard")
-    expect_text(image, (900, 520, 1240, 760), "Change Wallpaper", SELECT_TEXT, SELECT,
+    expect_text(image, (900, 480, 1240, 760), "Properties", SELECT_TEXT, SELECT,
                 "the arrows move through the menu")
-    s.qmp.tap("ret", pause=2.0)
-    after = s.shot("wallpaper-changed")
-    if after.getpixel(probe) == before.getpixel(probe):
-        raise Failure("Change Wallpaper left the background at %r as it was: %r"
-                      % (probe, after.getpixel(probe)))
-    if find_text(after, (900, 520, 1240, 760), "Change Wallpaper", TEXT, FACE)[0]:
+    s.qmp.tap("ret", pause=6.0)
+    image = s.shot("display-properties")
+    if find_text(image, (900, 480, 1240, 760), "Open Command Prompt", TEXT, FACE)[0]:
         raise Failure("the menu is still open after running an item")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Background:", TEXT, FACE,
+                "Properties opens Display Properties on its Desktop tab")
+
+    # The focus starts on the wallpaper list: Home is "(None)", Enter is OK.
+    s.qmp.tap("home", pause=2.0)
+    s.qmp.tap("ret", pause=4.0)
+    after = s.shot("wallpaper-none")
+    if after.getpixel(probe) != (0, 128, 128):
+        raise Failure("with no wallpaper the background at %r should be teal, not %r (it was %r)"
+                      % (probe, after.getpixel(probe), before.getpixel(probe)))
 
 
 # The desktop's grid (desktop_view.c): cells of 76x74 from (6, 6), the 32x32
@@ -2261,6 +2287,7 @@ SCENARIOS = {
     "console": scenario_console,
     "appwiz": scenario_appwiz,
     "system": scenario_system,
+    "display": scenario_display,
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,
     "wheel": scenario_wheel,

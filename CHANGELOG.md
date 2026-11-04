@@ -12,10 +12,16 @@ Cut-off notes:
 
 ### Added
 
+- **Display Properties** (`/bin/display`), opened from the desktop's Properties or Program Manager's
+  Options: any BMP as wallpaper, Center/Tile/Stretch and a background colour, with a preview; a
+  Settings tab shows the resolution (changing it is next). Wallpapers move to `/wallpapers` (six,
+  from `tools/gen_wallpapers.py`); `desktop.cfg` becomes `wallpaper=`/`position=`/`color=` and the
+  old one-digit file migrates. Replaces Change Wallpaper. See `docs/desktop/DISPLAY_PROPERTIES.md`.
+
 - **Desktop icons and shortcuts**: the desktop shows `/users/<name>/Desktop` as a grid of icons
   (created with Command Prompt, Files and Notepad). Double click opens, drag moves, F2 renames, Delete
   asks first; right click opens the background's menu (Arrange Icons, Refresh, New Folder, New Text
-  Document, Change Wallpaper) or the icon's (Open, Rename, Delete). Shortcuts are `.sxlnk` text files
+  Document, Properties) or the icon's (Open, Rename, Delete). Shortcuts are `.sxlnk` text files
   (`target=`, `args=`, `workdir=`, `icon=`). See `docs/desktop/DESKTOP_ICONS.md`.
 
 - **Context menus in applications**: an application may open a popup owned by its window

@@ -2,7 +2,6 @@
 #include "savanxp/sxgui.h"
 
 #include "progman_registry.h"
-#include "desktop_wallpaper.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -80,7 +79,7 @@ enum progman_command
     PROGMAN_CMD_REBOOT,
     PROGMAN_CMD_EXIT,
     PROGMAN_CMD_REFRESH,
-    PROGMAN_CMD_WALLPAPER,
+    PROGMAN_CMD_DISPLAY,
     PROGMAN_CMD_ABOUT,
 };
 
@@ -93,10 +92,11 @@ static const struct sxgui_menu_item k_file_items[] = {
     {"Salir", PROGMAN_CMD_EXIT, 0},
 };
 
-/* El Progman real no cambiaba el fondo (eso era el Control Panel), pero no
- * tenemos uno: Options es el hogar razonable mientras tanto. */
+/* The real Program Manager did not change the wallpaper (the Control Panel
+ * did), but there is no Control Panel yet: Options opens Display Properties
+ * meanwhile. */
 static const struct sxgui_menu_item k_options_items[] = {
-    {"Cambiar fondo", PROGMAN_CMD_WALLPAPER, 0},
+    {"Display Properties...", PROGMAN_CMD_DISPLAY, 0},
 };
 
 static const struct sxgui_menu_item k_help_items[] = {
@@ -616,21 +616,12 @@ static void on_menu_command(int id, void *user)
         refresh_catalog();
         snprintf(g_status, sizeof(g_status), "Catalogo actualizado: %d programa(s)", progman_item_count());
         break;
-    case PROGMAN_CMD_WALLPAPER:
-    {
-        /* Only the mode is persisted: the desktop draws the background, and
-         * it re-reads the config and repaints on its own. */
-        static const char *k_mode_names[DESKTOP_WALLPAPER_MODE_COUNT] = {
-            "teal", "degrade", "patron", "imagen"
-        };
-        int mode = desktop_wallpaper_cycle_config();
-
-        if (mode >= 0 && mode < DESKTOP_WALLPAPER_MODE_COUNT)
+    case PROGMAN_CMD_DISPLAY:
+        if (gfx_desktop_launch_ex(&g_app.gfx, "/bin/display", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
         {
-            snprintf(g_status, sizeof(g_status), "Fondo: %s", k_mode_names[mode]);
+            snprintf(g_status, sizeof(g_status), "Cannot start /bin/display");
         }
         break;
-    }
     case PROGMAN_CMD_ABOUT:
         if (gfx_desktop_launch_ex(&g_app.gfx, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
         {

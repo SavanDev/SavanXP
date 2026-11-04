@@ -1,19 +1,268 @@
 #include "desktop_wallpaper.h"
 #include "shared/version.h"
 
-/* The user's choice, in the profile (savanxp_settings_path); the image is the
- * system's, at the root. */
-#define DESKTOP_WALLPAPER_CONFIG_NAME "desktop.cfg"
-#define DESKTOP_WALLPAPER_IMAGE_PATH "/wallpaper.bmp"
-#define DESKTOP_WALLPAPER_MAX_DIMENSION 2048
+#include <stdio.h>
+#include <string.h>
 
-static int g_mode = DESKTOP_WALLPAPER_TEAL;
-/* La imagen vive en una seccion propia: esta libc no tiene malloc y un buffer
- * estatico del tamano maximo inflaria el BSS del proceso desktop. */
-static int g_image_section_fd = -1;
-static uint32_t *g_image_pixels = 0;
-static int g_image_width = 0;
-static int g_image_height = 0;
+/* The user's choice, in the profile (savanxp_settings_path). */
+#define DESKTOP_WALLPAPER_CONFIG_NAME "desktop.cfg"
+/* Big enough for the three keys with a full-length path. */
+#define DESKTOP_WALLPAPER_CONFIG_BYTES (DESKTOP_WALLPAPER_PATH_MAX + 96)
+
+/* The old format was one digit, a mode: 0 teal, 1 gradient, 2 grid pattern,
+ * 3 /wallpaper.bmp. These are the wallpapers each one became. */
+#define DESKTOP_WALLPAPER_LEGACY_GRADIENT DESKTOP_WALLPAPER_DIRECTORY "/Gradient.bmp"
+#define DESKTOP_WALLPAPER_LEGACY_GRID DESKTOP_WALLPAPER_DIRECTORY "/Grid.bmp"
+
+static const char *const k_position_names[DESKTOP_WALLPAPER_POSITION_COUNT] = {
+    "Center",
+    "Tile",
+    "Stretch",
+};
+/* As written in the file: stable, never translated. */
+static const char *const k_position_keys[DESKTOP_WALLPAPER_POSITION_COUNT] = {
+    "center",
+    "tile",
+    "stretch",
+};
+
+/* ---- configuration ------------------------------------------------------- */
+
+static void copy_path(char *destination, const char *source)
+{
+    size_t length = 0;
+
+    while (source[length] != '\0' && length + 1 < DESKTOP_WALLPAPER_PATH_MAX)
+    {
+        destination[length] = source[length];
+        ++length;
+    }
+    destination[length] = '\0';
+}
+
+void desktop_wallpaper_default_config(struct desktop_wallpaper_config *config)
+{
+    if (config == 0)
+    {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+    copy_path(config->path, DESKTOP_WALLPAPER_DEFAULT_IMAGE);
+    config->position = DESKTOP_WALLPAPER_STRETCH;
+    config->color = DESKTOP_WALLPAPER_DEFAULT_COLOR;
+}
+
+const char *desktop_wallpaper_position_name(int position)
+{
+    return position >= 0 && position < DESKTOP_WALLPAPER_POSITION_COUNT ? k_position_names[position] : "";
+}
+
+int desktop_wallpaper_config_equal(
+    const struct desktop_wallpaper_config *left,
+    const struct desktop_wallpaper_config *right)
+{
+    return left != 0 && right != 0 &&
+           left->position == right->position &&
+           left->color == right->color &&
+           strcmp(left->path, right->path) == 0;
+}
+
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9')
+    {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f')
+    {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F')
+    {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+/* Six hex digits, RRGGBB. Returns -1 for anything else. */
+static int parse_color(const char *text, uint32_t *color)
+{
+    uint32_t value = 0;
+    int index;
+
+    for (index = 0; index < 6; ++index)
+    {
+        int digit = hex_digit(text[index]);
+
+        if (digit < 0)
+        {
+            return -1;
+        }
+        value = (value << 4) | (uint32_t)digit;
+    }
+    if (text[6] != '\0')
+    {
+        return -1;
+    }
+    *color = value;
+    return 0;
+}
+
+static void apply_legacy_mode(struct desktop_wallpaper_config *config, int mode)
+{
+    switch (mode)
+    {
+    case 0:
+        config->path[0] = '\0';
+        break;
+    case 1:
+        copy_path(config->path, DESKTOP_WALLPAPER_LEGACY_GRADIENT);
+        config->position = DESKTOP_WALLPAPER_STRETCH;
+        break;
+    case 2:
+        copy_path(config->path, DESKTOP_WALLPAPER_LEGACY_GRID);
+        config->position = DESKTOP_WALLPAPER_TILE;
+        break;
+    default:
+        /* The image mode: the default wallpaper is what /wallpaper.bmp was. */
+        break;
+    }
+}
+
+/* One "key=value" line. Unknown keys and malformed values are ignored, so a
+ * file written by a newer system still loads what this one understands. */
+static void parse_line(struct desktop_wallpaper_config *config, char *line)
+{
+    char *value = strchr(line, '=');
+    int index;
+
+    if (value == 0)
+    {
+        return;
+    }
+    *value++ = '\0';
+
+    if (strcmp(line, "wallpaper") == 0)
+    {
+        /* Only absolute paths: the desktop's working directory is not the
+         * dialog's, so a relative one would name two different files. */
+        if (value[0] == '\0' || value[0] == '/')
+        {
+            copy_path(config->path, value);
+        }
+    }
+    else if (strcmp(line, "position") == 0)
+    {
+        for (index = 0; index < DESKTOP_WALLPAPER_POSITION_COUNT; ++index)
+        {
+            if (strcmp(value, k_position_keys[index]) == 0)
+            {
+                config->position = index;
+            }
+        }
+    }
+    else if (strcmp(line, "color") == 0)
+    {
+        (void)parse_color(value, &config->color);
+    }
+}
+
+int desktop_wallpaper_read_config(struct desktop_wallpaper_config *config)
+{
+    char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
+    char path[256];
+    long total = 0;
+    int fd;
+    char *line;
+
+    if (config == 0)
+    {
+        return -1;
+    }
+    desktop_wallpaper_default_config(config);
+
+    fd = savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 0, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+        : -1;
+    if (fd < 0)
+    {
+        return -1;
+    }
+    while (total < (long)sizeof(text) - 1)
+    {
+        long result = savanxp_read(fd, text + total, (unsigned long)(sizeof(text) - 1 - (unsigned long)total));
+
+        if (result <= 0)
+        {
+            break;
+        }
+        total += result;
+    }
+    savanxp_close(fd);
+    text[total] = '\0';
+
+    if (total >= 1 && text[0] >= '0' && text[0] <= '3' &&
+        (total == 1 || text[1] == '\n' || text[1] == '\r'))
+    {
+        apply_legacy_mode(config, text[0] - '0');
+        return 0;
+    }
+
+    line = text;
+    while (*line != '\0')
+    {
+        char *end = line;
+
+        while (*end != '\0' && *end != '\n' && *end != '\r')
+        {
+            ++end;
+        }
+        if (*end != '\0')
+        {
+            *end++ = '\0';
+        }
+        parse_line(config, line);
+        line = end;
+    }
+    return 0;
+}
+
+int desktop_wallpaper_write_config(const struct desktop_wallpaper_config *config)
+{
+    char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
+    char path[256];
+    int position;
+    int length;
+    int fd;
+    long written;
+
+    if (config == 0)
+    {
+        return -1;
+    }
+    position = config->position >= 0 && config->position < DESKTOP_WALLPAPER_POSITION_COUNT
+        ? config->position
+        : DESKTOP_WALLPAPER_STRETCH;
+    length = snprintf(text, sizeof(text), "wallpaper=%s\nposition=%s\ncolor=%06x\n",
+        config->path, k_position_keys[position], (unsigned int)(config->color & 0xffffffu));
+    if (length < 0 || length >= (int)sizeof(text))
+    {
+        return -1;
+    }
+
+    fd = savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 1, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
+        : -1;
+    if (fd < 0)
+    {
+        return -1;
+    }
+    written = savanxp_write(fd, text, (unsigned long)length);
+    savanxp_close(fd);
+    return written == length ? 0 : -1;
+}
+
+/* ---- images -------------------------------------------------------------- */
 
 static uint16_t read_le16(const unsigned char *bytes)
 {
@@ -45,31 +294,39 @@ static int read_exact(int fd, void *buffer, unsigned long count)
     return 0;
 }
 
-static void unload_image(void)
+void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image)
 {
-    if (g_image_pixels != 0)
+    if (image == 0)
     {
-        (void)unmap_view(g_image_pixels);
-        g_image_pixels = 0;
+        return;
     }
-    if (g_image_section_fd >= 0)
+    if (image->pixels != 0)
     {
-        savanxp_close(g_image_section_fd);
-        g_image_section_fd = -1;
+        (void)unmap_view(image->pixels);
+        image->pixels = 0;
     }
-    g_image_width = 0;
-    g_image_height = 0;
+    if (image->section_fd > 0)
+    {
+        savanxp_close(image->section_fd);
+    }
+    image->section_fd = 0;
+    image->width = 0;
+    image->height = 0;
 }
 
-/* Decodifica un BMP sin compresion (BI_RGB) de 24 o 32 bpp, bottom-up o
- * top-down, a pixeles BGRX listos para el painter. Cualquier campo fuera de
- * ese perfil descarta la imagen en silencio: el fondo cae a los modos
- * integrados. */
-static void load_image(void)
+/*
+ * Decodes an uncompressed BMP (BI_RGB) of 24 or 32 bpp, bottom-up or
+ * top-down, into BGRX pixels ready for the painter. Anything outside that
+ * profile is refused, and the caller falls back to the plain colour.
+ *
+ * The pixels live in a section of their own, not on the heap: an image is up
+ * to 16 MiB and the desktop keeps it for as long as it is the wallpaper.
+ */
+int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const char *path)
 {
     unsigned char header[54];
     static unsigned char row[DESKTOP_WALLPAPER_MAX_DIMENSION * 4u];
-    int fd = -1;
+    int fd;
     uint32_t pixel_offset = 0;
     int32_t raw_height = 0;
     int width = 0;
@@ -80,12 +337,20 @@ static void load_image(void)
     int loaded = 0;
     int y;
 
-    unload_image();
+    if (image == 0)
+    {
+        return -1;
+    }
+    desktop_wallpaper_image_unload(image);
+    if (path == 0 || path[0] == '\0')
+    {
+        return -1;
+    }
 
-    fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
+    fd = (int)savanxp_open_mode(path, SAVANXP_OPEN_READ);
     if (fd < 0)
     {
-        return;
+        return -1;
     }
 
     if (read_exact(fd, header, sizeof(header)) == 0 && header[0] == 'B' && header[1] == 'M')
@@ -97,7 +362,7 @@ static void load_image(void)
         top_down = raw_height < 0;
         height = top_down ? -(int)raw_height : (int)raw_height;
 
-        if (read_le32(header + 14) >= 40u &&           /* BITMAPINFOHEADER o mayor */
+        if (read_le32(header + 14) >= 40u &&           /* BITMAPINFOHEADER or larger */
             read_le16(header + 26) == 1u &&            /* planes */
             (bpp == 24u || bpp == 32u) &&
             read_le32(header + 30) == 0u &&            /* BI_RGB */
@@ -106,17 +371,21 @@ static void load_image(void)
             pixel_offset >= sizeof(header) &&
             seek(fd, (long)pixel_offset, SAVANXP_SEEK_SET) >= 0)
         {
+            long section;
+
             bytes_per_pixel = bpp / 8u;
             row_stride = (((unsigned long)width * bytes_per_pixel) + 3ul) & ~3ul;
-            g_image_section_fd = (int)section_create(
+            section = section_create(
                 (unsigned long)width * (unsigned long)height * sizeof(uint32_t),
                 SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-            if (g_image_section_fd >= 0)
+            if (section > 0)
             {
-                void *view = map_view(g_image_section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+                void *view = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+
+                image->section_fd = (int)section;
                 if (!result_is_error((long)view))
                 {
-                    g_image_pixels = (uint32_t *)view;
+                    image->pixels = (uint32_t *)view;
                     loaded = 1;
                     for (y = 0; y < height; ++y)
                     {
@@ -128,7 +397,7 @@ static void load_image(void)
                             loaded = 0;
                             break;
                         }
-                        dest = g_image_pixels + ((unsigned long)(top_down ? y : (height - 1 - y)) * (unsigned long)width);
+                        dest = image->pixels + ((unsigned long)(top_down ? y : (height - 1 - y)) * (unsigned long)width);
                         for (x = 0; x < width; ++x)
                         {
                             const unsigned char *px = row + ((unsigned long)x * bytes_per_pixel);
@@ -143,251 +412,185 @@ static void load_image(void)
     savanxp_close(fd);
     if (loaded)
     {
-        g_image_width = width;
-        g_image_height = height;
-        return;
-    }
-    unload_image();
-}
-
-static int open_config_for_read(void)
-{
-    char path[256];
-
-    return savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 0, path, sizeof(path)) == 0
-        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
-        : -1;
-}
-
-static void load_config(void)
-{
-    char digit = 0;
-    int fd = open_config_for_read();
-
-    if (fd < 0)
-    {
-        /* No earlier configuration (a fresh install): if the build ships
-         * the default wallpaper on the disk, start by showing it. */
-        if (g_image_pixels != 0)
-        {
-            g_mode = DESKTOP_WALLPAPER_IMAGE;
-        }
-        return;
-    }
-    if (savanxp_read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
-    {
-        g_mode = digit - '0';
-    }
-    savanxp_close(fd);
-
-    if (g_mode == DESKTOP_WALLPAPER_IMAGE && g_image_pixels == 0)
-    {
-        g_mode = DESKTOP_WALLPAPER_TEAL;
-    }
-}
-
-static void save_mode(int mode)
-{
-    char digit = (char)('0' + mode);
-    char path[256];
-    int fd = savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 1, path, sizeof(path)) == 0
-        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
-        : -1;
-
-    if (fd < 0)
-    {
-        return;
-    }
-    (void)savanxp_write(fd, &digit, 1);
-    savanxp_close(fd);
-}
-
-static void save_config(void)
-{
-    save_mode(g_mode);
-}
-
-/* Presencia del BMP sin decodificarlo: alcanza para saber si el modo IMAGE es
- * elegible. */
-static int image_file_present(void)
-{
-    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
-
-    if (fd < 0)
-    {
+        image->width = width;
+        image->height = height;
         return 0;
     }
-    savanxp_close(fd);
-    return 1;
+    desktop_wallpaper_image_unload(image);
+    return -1;
 }
 
-/* Lee el modo persistido. Devuelve -1 si no hay config legible. */
-static int read_persisted_mode(void)
-{
-    char digit = 0;
-    int mode = -1;
-    int fd = open_config_for_read();
+/* ---- painting ------------------------------------------------------------ */
 
-    if (fd < 0)
+static uint32_t painter_color(uint32_t rgb)
+{
+    return gfx_rgb((uint8_t)(rgb >> 16), (uint8_t)(rgb >> 8), (uint8_t)rgb);
+}
+
+/* A length on the screen, as it measures in the target. Never below one
+ * pixel, so a small image still shows in a preview. */
+static int scale_length(int length, int target, int screen)
+{
+    int scaled;
+
+    if (screen <= 0 || target == screen)
     {
-        return -1;
+        return length;
     }
-    if (savanxp_read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
+    scaled = (int)(((long)length * (long)target) / (long)screen);
+    return scaled > 0 ? scaled : 1;
+}
+
+/* Copies one copy of the image to dest, scaling only when the sizes differ. */
+static void place_image(
+    struct sx_painter *painter,
+    const struct sx_bitmap *bitmap,
+    const struct desktop_wallpaper_image *image,
+    struct sx_rect dest,
+    int filter)
+{
+    if (dest.width == image->width && dest.height == image->height)
     {
-        mode = digit - '0';
+        sx_painter_blit_bitmap(painter, bitmap, dest.x, dest.y);
+        return;
     }
-    savanxp_close(fd);
-    return mode;
+    sx_painter_draw_scaled_bitmap(
+        painter,
+        bitmap,
+        dest,
+        sx_rect_make(0, 0, image->width, image->height),
+        filter);
+}
+
+void desktop_wallpaper_paint(
+    struct sx_painter *painter,
+    struct sx_rect target,
+    int screen_width,
+    int screen_height,
+    const struct desktop_wallpaper_config *config,
+    const struct desktop_wallpaper_image *image)
+{
+    struct savanxp_fb_info image_info;
+    struct sx_bitmap bitmap;
+    int position;
+
+    if (painter == 0 || config == 0 || sx_rect_is_empty(target))
+    {
+        return;
+    }
+    if (!sx_painter_push_clip(painter, target))
+    {
+        return;
+    }
+    sx_painter_fill_rect(painter, target, painter_color(config->color));
+
+    if (image == 0 || image->pixels == 0 || config->path[0] == '\0')
+    {
+        sx_painter_pop_clip(painter);
+        return;
+    }
+
+    memset(&image_info, 0, sizeof(image_info));
+    image_info.width = (uint32_t)image->width;
+    image_info.height = (uint32_t)image->height;
+    image_info.pitch = (uint32_t)image->width * (uint32_t)sizeof(uint32_t);
+    image_info.bpp = 32u;
+    image_info.buffer_size = image_info.pitch * image_info.height;
+    sx_bitmap_wrap(&bitmap, image->pixels, &image_info, SX_PIXEL_FORMAT_BGRX8888);
+
+    position = config->position;
+    if (position == DESKTOP_WALLPAPER_STRETCH)
+    {
+        /* Bilinear and not nearest: the image rarely matches the screen, and
+         * at an arbitrary factor nearest leaves visible steps across the
+         * whole background. The desktop pays it once per change, not per
+         * frame, because it caches the result. */
+        place_image(painter, &bitmap, image, target, SX_SCALE_BILINEAR);
+    }
+    else if (position == DESKTOP_WALLPAPER_TILE)
+    {
+        const int tile_width = scale_length(image->width, target.width, screen_width);
+        const int tile_height = scale_length(image->height, target.height, screen_height);
+        /* Only the tiles that cross the active clip: a small tile on a large
+         * screen is thousands of copies, and the clip is often a fragment. */
+        struct sx_rect clip = sx_rect_intersect(sx_painter_clip_bounds(painter), target);
+        int first_x = target.x + ((clip.x - target.x) / tile_width) * tile_width;
+        int first_y = target.y + ((clip.y - target.y) / tile_height) * tile_height;
+        int x;
+        int y;
+
+        for (y = first_y; y < clip.y + clip.height; y += tile_height)
+        {
+            for (x = first_x; x < clip.x + clip.width; x += tile_width)
+            {
+                place_image(painter, &bitmap, image, sx_rect_make(x, y, tile_width, tile_height), SX_SCALE_NEAREST);
+            }
+        }
+    }
+    else
+    {
+        const int width = scale_length(image->width, target.width, screen_width);
+        const int height = scale_length(image->height, target.height, screen_height);
+
+        place_image(
+            painter,
+            &bitmap,
+            image,
+            sx_rect_make(target.x + (target.width - width) / 2, target.y + (target.height - height) / 2, width, height),
+            SX_SCALE_BILINEAR);
+    }
+    sx_painter_pop_clip(painter);
+}
+
+/* ---- the desktop's background ------------------------------------------- */
+
+/* The initial state is what the headless selftests draw: teal, no image. */
+static struct desktop_wallpaper_config g_config = {
+    {0},
+    DESKTOP_WALLPAPER_STRETCH,
+    DESKTOP_WALLPAPER_DEFAULT_COLOR,
+};
+static struct desktop_wallpaper_image g_image;
+
+/* Takes a new configuration, decoding the image again only if it changed. */
+static void adopt_config(const struct desktop_wallpaper_config *config)
+{
+    if (strcmp(config->path, g_config.path) != 0 || g_image.pixels == 0)
+    {
+        (void)desktop_wallpaper_image_load(&g_image, config->path);
+    }
+    g_config = *config;
 }
 
 void desktop_wallpaper_init(void)
 {
-    load_image();
-    load_config();
-}
+    struct desktop_wallpaper_config config;
 
-int desktop_wallpaper_mode(void)
-{
-    return g_mode;
-}
-
-int desktop_wallpaper_cycle(void)
-{
-    int next = g_mode;
-
-    do
-    {
-        next = (next + 1) % DESKTOP_WALLPAPER_MODE_COUNT;
-    } while (next == DESKTOP_WALLPAPER_IMAGE && g_image_pixels == 0);
-
-    g_mode = next;
-    save_config();
-    return g_mode;
-}
-
-int desktop_wallpaper_cycle_config(void)
-{
-    const int has_image = image_file_present();
-    int mode = read_persisted_mode();
-    int next;
-
-    if (mode < 0)
-    {
-        /* Sin config previa: mismo criterio que load_config(). */
-        mode = has_image ? DESKTOP_WALLPAPER_IMAGE : DESKTOP_WALLPAPER_TEAL;
-    }
-
-    next = mode;
-    do
-    {
-        next = (next + 1) % DESKTOP_WALLPAPER_MODE_COUNT;
-    } while (next == DESKTOP_WALLPAPER_IMAGE && !has_image);
-
-    /* Solo persiste: no toca g_mode, porque quien cambia el fondo puede no ser
-     * quien lo dibuja. El que dibuja se entera por desktop_wallpaper_reload(). */
-    save_mode(next);
-    return next;
+    (void)desktop_wallpaper_read_config(&config);
+    adopt_config(&config);
 }
 
 int desktop_wallpaper_reload(void)
 {
-    int mode = read_persisted_mode();
+    struct desktop_wallpaper_config config;
 
-    if (mode < 0 || mode == g_mode)
+    if (desktop_wallpaper_read_config(&config) < 0 ||
+        desktop_wallpaper_config_equal(&config, &g_config))
     {
         return 0;
     }
-    if (mode == DESKTOP_WALLPAPER_IMAGE && g_image_pixels == 0)
-    {
-        return 0;
-    }
-    g_mode = mode;
+    adopt_config(&config);
     return 1;
 }
 
-static void draw_gradient(struct sx_painter *painter, const struct savanxp_fb_info *info)
-{
-    const int band_height = 4;
-    const int height = (int)info->height;
-    int y;
-
-    for (y = 0; y < height; y += band_height)
-    {
-        int t = (y * 255) / (height > 1 ? height - 1 : 1);
-        uint32_t colour = gfx_rgb(
-            0,
-            (uint8_t)(24 + ((132 - 24) * t) / 255),
-            (uint8_t)(96 + ((160 - 96) * t) / 255));
-        sx_painter_fill_rect(painter, sx_rect_make(0, y, (int)info->width, band_height), colour);
-    }
-}
-
-/* Rejilla sutil sobre teal oscuro. Solo recorre las lineas que cruzan el clip
- * activo del painter: el compose repinta por fragmentos y las lineas 1px son
- * demasiadas para iterarlas todas en cada sub-rect. */
-static void draw_pattern(struct sx_painter *painter)
-{
-    const int cell = 24;
-    const uint32_t base = gfx_rgb(0, 104, 104);
-    const uint32_t line = gfx_rgb(0, 122, 122);
-    struct sx_rect clip = sx_painter_clip_bounds(painter);
-    int start;
-    int position;
-
-    sx_painter_fill(painter, base);
-
-    start = (clip.x / cell) * cell;
-    for (position = start; position < clip.x + clip.width; position += cell)
-    {
-        sx_painter_vline(painter, position, clip.y, clip.height, line);
-    }
-    start = (clip.y / cell) * cell;
-    for (position = start; position < clip.y + clip.height; position += cell)
-    {
-        sx_painter_hline(painter, clip.x, position, clip.width, line);
-    }
-}
-
-static void draw_image(struct sx_painter *painter, const struct savanxp_fb_info *info)
-{
-    struct sx_bitmap bitmap;
-    struct savanxp_fb_info image_info;
-
-    memset(&image_info, 0, sizeof(image_info));
-    image_info.width = (uint32_t)g_image_width;
-    image_info.height = (uint32_t)g_image_height;
-    image_info.pitch = (uint32_t)g_image_width * (uint32_t)sizeof(uint32_t);
-    image_info.bpp = 32u;
-    image_info.buffer_size = image_info.pitch * image_info.height;
-    sx_bitmap_wrap(&bitmap, g_image_pixels, &image_info, SX_PIXEL_FORMAT_BGRX8888);
-
-    if (g_image_width == (int)info->width && g_image_height == (int)info->height)
-    {
-        sx_painter_blit_bitmap(painter, &bitmap, 0, 0);
-        return;
-    }
-    /* Bilineal y no nearest: el BMP casi nunca mide lo mismo que la pantalla, y
-     * a un factor de escala arbitrario el nearest deja escalones bien visibles
-     * en un fondo que ocupa todo. Se paga una vez por cambio de fondo, no por
-     * frame, asi que el costo de las cuatro muestras no importa aca -- a
-     * diferencia del escalado de superficies de clientes en el compositor, que
-     * si esta en el camino caliente y sigue en nearest. */
-    sx_painter_draw_scaled_bitmap(
-        painter,
-        &bitmap,
-        sx_rect_make(0, 0, (int)info->width, (int)info->height),
-        sx_rect_make(0, 0, g_image_width, g_image_height),
-        SX_SCALE_BILINEAR);
-}
-
 /*
- * Nombre y version del sistema abajo a la derecha, sobre el fondo: lo que hacen
- * Windows en sus builds de prueba y ReactOS siempre. Es parte del FONDO y no de
- * una ventana, asi que queda debajo de todo y nunca tapa nada.
+ * The system's name and version in the bottom-right corner, over the
+ * background: what Windows test builds did and ReactOS always does. It is part
+ * of the BACKGROUND and not a window, so it stays below everything.
  *
- * Se levanta por encima de la barra de tareas, que se compone sobre el fondo
- * al pie de la pantalla. Sin barra queda un hueco de su alto, que es preferible
- * a que el texto dependa de si un cliente arranco o no.
+ * It sits above the taskbar, which is composed over the background at the
+ * foot of the screen. Without a taskbar there is a gap of its height, which is
+ * better than the text depending on whether a client started or not.
  */
 #define DESKTOP_WALLPAPER_STAMP_MARGIN 8
 
@@ -410,33 +613,10 @@ static void draw_version_stamp(struct sx_painter *painter, const struct savanxp_
         int x = (int)info->width - DESKTOP_WALLPAPER_STAMP_MARGIN - gfx_text_width(lines[index]);
         int y = bottom - (line_count - index) * line_height;
 
-        /* Sombra de un pixel: el blanco solo se pierde sobre un bitmap claro. */
+        /* A one-pixel shadow: white alone is lost on a light image. */
         sx_painter_draw_text(painter, x + 1, y + 1, lines[index], gfx_rgb(0, 0, 0));
         sx_painter_draw_text(painter, x, y, lines[index], gfx_rgb(255, 255, 255));
     }
-}
-
-static void draw_background(struct sx_painter *painter, const struct savanxp_fb_info *info)
-{
-    switch (g_mode)
-    {
-    case DESKTOP_WALLPAPER_GRADIENT:
-        draw_gradient(painter, info);
-        return;
-    case DESKTOP_WALLPAPER_PATTERN:
-        draw_pattern(painter);
-        return;
-    case DESKTOP_WALLPAPER_IMAGE:
-        if (g_image_pixels != 0)
-        {
-            draw_image(painter, info);
-            return;
-        }
-        break;
-    default:
-        break;
-    }
-    sx_painter_fill(painter, gfx_rgb(0, 128, 128));
 }
 
 void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info)
@@ -446,6 +626,12 @@ void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_
         return;
     }
 
-    draw_background(painter, info);
+    desktop_wallpaper_paint(
+        painter,
+        sx_rect_make(0, 0, (int)info->width, (int)info->height),
+        (int)info->width,
+        (int)info->height,
+        &g_config,
+        &g_image);
     draw_version_stamp(painter, info);
 }
