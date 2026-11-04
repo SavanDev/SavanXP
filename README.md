@@ -4,9 +4,9 @@
 
 # SavanXP
 
-SavanXP is an experimental operating system for `x86_64 + UEFI`, with the
-`Limine` bootloader, its own kernel in `C/C++`, and a native Bash/CMake
-workflow.
+SavanXP is an experimental operating system for `x86_64`, booting on UEFI or
+legacy BIOS firmware through the `Limine` bootloader, with its own kernel in
+`C/C++` and a native Bash/CMake workflow.
 
 It boots to a working graphical session with its own window manager, a userland
 shell, a persistent volume mounted at `/`, a minimal POSIX base, built-in
@@ -35,7 +35,8 @@ built independently with `./ports/doomgeneric/build.sh`,
 
 ## What works today
 
-- `x86_64` kernel booting over UEFI via Limine.
+- `x86_64` kernel booting over UEFI or legacy BIOS via Limine: the ISO is
+  hybrid, and `./build.sh run` boots the development tree with UEFI (OVMF).
 - Framebuffer console and early serial output.
 - Userland with `ELF64` processes, syscalls and a preemptive scheduler.
 - Shell with `pipes`, redirections and basic builtins.
@@ -106,6 +107,9 @@ Generating a bootable ISO:
 
 The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` from
 `PATH` (or `SAVANXP_XORRISO`) and uses the EFI tree the build already prepared.
+It is a hybrid image: it boots on UEFI and on legacy BIOS (VirtualBox with EFI
+off, SeaBIOS in QEMU), and `tools/iso_boot_test.py --iso build/SavanXP.iso`
+boots it both ways in QEMU.
 To keep the disk's data when booting under VirtualBox or another hypervisor,
 attach `build/disk.img` as an extra disk as well.
 
