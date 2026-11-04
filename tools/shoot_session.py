@@ -899,6 +899,74 @@ def scenario_filesmenu(s):
                 "the desktop shows the shortcut Send To made", solid_only=True)
 
 
+def files_click_text(s, image, text, label, box=(0, 0, 1280, 770)):
+    """Clicks a toolbar button or a menu item by its caption, searched in
+    `box`: a short caption such as "Up" also matches stray pixels elsewhere."""
+    origin = find_text(image, box, text, TEXT, FACE)[0]
+    if origin is None:
+        raise Failure(label)
+    s.qmp.move_to(origin[0] + 6, origin[1] + 4)
+    s.qmp.click()
+    time.sleep(1.2)
+
+
+def scenario_filestoolbar(s):
+    """Files' toolbar and address bar (docs/desktop/FILES.md).
+
+    Back and Forward start disabled (their captions are etched, so the
+    black-on-grey text is not found). Typing /bin in the address bar goes
+    there; Back returns to the profile, Forward to /bin again and Up to the
+    root. With nothing selected, Properties describes the folder itself, and
+    the Views button drops down the view menu.
+    """
+    s.open_files()
+    image = s.shot("toolbar")
+    # Properties is always enabled: its caption gives the toolbar's row.
+    caption = find_text(image, (0, 0, 1280, 770), "Properties", TEXT, FACE)[0]
+    if caption is None:
+        raise Failure("the toolbar has no Properties")
+    toolbar = (0, caption[1] - 4, 1280, caption[1] + 20)
+    if find_text(image, toolbar, "Back", TEXT, FACE)[0] is not None:
+        raise Failure("Back is enabled with no history")
+    field = find_text(image, (0, 0, 1280, 770), "/users/user", TEXT, FIELD)[0]
+    if field is None:
+        raise Failure("the address bar does not show the folder")
+    s.qmp.move_to(field[0] + 200, field[1] + 4)
+    s.qmp.click()
+    time.sleep(0.6)
+    for _ in range(len("/users/user")):
+        s.qmp.tap("backspace", pause=0.08)
+    s.qmp.type_line("/bin")
+    s.qmp.tap("ret", pause=1.5)
+    image = s.shot("address-bin")
+    expect_text(image, (0, 0, 1280, 770), "/bin", TEXT, FIELD, "Enter in the address bar goes there")
+    expect_text(image, (0, 0, 1280, 770), "aboutapp", TEXT, FIELD, "the list shows /bin")
+
+    files_click_text(s, image, "Back", "Back is not enabled after going somewhere", toolbar)
+    image = s.shot("back")
+    expect_text(image, (0, 0, 1280, 770), "/users/user", TEXT, FIELD, "Back returns to the profile")
+    files_click_text(s, image, "Forward", "Forward is not enabled after Back", toolbar)
+    image = s.shot("forward")
+    expect_text(image, (0, 0, 1280, 770), "aboutapp", TEXT, FIELD, "Forward goes to /bin again")
+    files_click_text(s, image, "Up", "Up is not enabled under the root", toolbar)
+    image = s.shot("up")
+    expect_text(image, (0, 0, 1280, 770), "wallpapers", TEXT, FIELD, "Up goes to the root")
+
+    files_click_text(s, image, "Properties", "the toolbar has no Properties", toolbar)
+    time.sleep(0.8)
+    image = s.shot("properties")
+    expect_text(image, (0, 0, 1280, 770), "Contains:", TEXT, FACE,
+                "Properties with nothing selected describes the folder")
+    s.qmp.tap("ret", pause=1.0)
+
+    image = s.shot("properties-closed")
+    files_click_text(s, image, "Views", "the toolbar has no Views", toolbar)
+    image = s.shot("views-menu")
+    files_click_text(s, image, "Details", "the Views button does not drop down the views")
+    image = s.shot("views-details")
+    expect_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE, "Views > Details shows the column headers")
+
+
 def scenario_taskmgrmenu(s):
     """A SUN program's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
 
@@ -2414,6 +2482,7 @@ SCENARIOS = {
     "contextmenu": scenario_contextmenu,
     "desktopicons": scenario_desktopicons,
     "filesmenu": scenario_filesmenu,
+    "filestoolbar": scenario_filestoolbar,
     "taskmgrmenu": scenario_taskmgrmenu,
     "bench": scenario_bench,
     "saturate": scenario_saturate,

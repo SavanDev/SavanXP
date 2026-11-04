@@ -5,12 +5,88 @@ Windows 98/2000 Explorer without its web-view side panel. Source in
 `subsystems/posix/userland/filesapp.c`, built as PIE against `libgfx2d`,
 `libsxgui` and `libsxgfx`, with `file_assoc.c` (which program opens a file),
 `mime_icon.c` and `mime_icon_large.c` (which icon a file gets) and
-`shortcut.c` (what "open" means, shared with the desktop).
+`shortcut.c` (what "open" means, shared with the desktop). The toolbar
+glyphs are drawn by `filesapp_toolbar/gen_icons.py`.
 
-This document pins how its views work and why, and what is planned next.
+This document pins how its window, views and commands work and why, and
+what is planned next.
 Opening files and the context menu are covered in
 [`DESKTOP_ICONS.md`](DESKTOP_ICONS.md#phase-4-context-menus-in-applications)
 and [`../userland/SXE_FORMAT.md`](../userland/SXE_FORMAT.md) (phase 5).
+
+## The window
+
+Under the menu bar (File, View, Go, Help) come three bands, each ruled off
+by an etched line as in the Explorer:
+
+1. **Toolbar** — Back, Forward | Up | Delete, Properties | Views.
+2. **Address bar** — the folder's path, editable.
+3. **The folder** — as Large Icons or Details, down to the two-pane status
+   bar (object count and total size).
+
+### Commands
+
+Each command is in a menu and most are on the toolbar too. Both are enabled
+from one function (`filesapp_update_commands`), run whenever the folder, the
+history or the selection changes, so a grey button and a grey menu item never
+disagree.
+
+| Command | Toolbar | Menu | Keys | Enabled when |
+|---|---|---|---|---|
+| Back | Back | Go | Alt+Left | there is a folder to go back to |
+| Forward | Forward | Go | Alt+Right | after Back |
+| Up One Level | Up | Go, folder's context menu | Backspace | not at the root |
+| Delete | Delete | File, item's context menu | Delete | an item is selected (not "..") |
+| Rename... | — | File, item's context menu | — | an item is selected (not "..") |
+| Properties | Properties | File, both context menus | Alt+Enter | always |
+| Views | Views (drops down) | View | — | always |
+| Refresh | — | View, folder's context menu | F5 | always |
+
+**History.** Going to a folder (opening one, Up, the address bar) pushes the
+folder left on Back and clears Forward, as a browser does; Back and Forward
+move one folder between the two. Refresh, Rename and Delete reload in place
+and record nothing. Each side keeps `FILESAPP_HISTORY_DEPTH` (16) folders and
+drops the oldest. A folder that no longer exists is dropped when Back or
+Forward reaches it.
+
+**Address bar.** A text field holding its own copy of the path
+(`g_address`); every folder change writes the current path back. Enter goes
+to what it holds, absolute or relative to the folder shown, ignoring trailing
+slashes, and returns the focus to the folder; a path that does not open says
+so in the status bar and leaves the text for correcting. Esc puts the path
+back instead of closing the window. While it has the focus, Backspace and
+Delete edit its text instead of going up or deleting a file.
+
+**Properties.** Of the selected item, or of the folder itself when nothing
+is selected, as Explorer's File > Properties does: name, type, location and
+size, and for a folder what it contains. A folder's size and contents count
+only what is directly in it, not its subfolders: a recursive walk could take
+long on a big tree, and the window would hang meanwhile.
+
+### Toolbar widgets
+
+The toolbar is ordinary SXGUI widgets with flags, so `struct sxgui_widget`
+keeps its layout:
+
+- `sxgui_toolbar_button` — a `SXGUI_BUTTON` with `SXGUI_FLAG_TOOLBAR`: flat,
+  a one-pixel raised edge under the pointer and a sunken one while pressed,
+  its 20x20 glyph (`SXGUI_TOOLBAR_ICON_SIZE`, read from `item_icons[0]`) over
+  its caption. Disabled, the glyph is drawn as its embossed silhouette, as
+  Windows draws a toolbar's disabled image from its mask, so each glyph must
+  read by its shape alone. `SXGUI_FLAG_DROPDOWN` adds the small arrow of a
+  button that opens a menu (Views opens it with `sxgui_context_menu_open`).
+- A toolbar button never takes the focus, and pressing one leaves the focus
+  where it was: Delete acts on the selection of the list that keeps the
+  focus.
+- `sxgui_separator` — a label with `SXGUI_FLAG_SEPARATOR`: an etched line,
+  vertical between button groups and horizontal between bands.
+
+All buttons share the widest one's width (`sxgui_toolbar_button_width`), as
+in the Explorer. Buttons that do not fit a narrow window are hidden, not
+squeezed.
+
+The glyphs are embedded rather than shipped as `.sxicon` files, like the
+media player's: six 20x20 images are about 9 KiB, and nothing else uses them.
 
 ## Views
 
@@ -129,6 +205,10 @@ programs that draw large icons list `mime_icon_large.c` in their sources.
 - `./tools/shoot.sh --scenario files` opens Files (Large Icons), moves the
   selection, switches to Details and asserts the column headers, then opens
   `/bin` as Large Icons and presses End, which must scroll the grid.
+- `./tools/shoot.sh --scenario filestoolbar` checks that Back starts
+  disabled, types `/bin` in the address bar, then follows Back, Forward and
+  Up by their toolbar buttons, opens the folder's Properties, and picks
+  Details from the Views button.
 - `./tools/shoot.sh --scenario filesmenu` right-clicks an icon's name for its
   context menu, then switches to Details to measure the folder menu against
   the Type column.
@@ -142,13 +222,10 @@ resolution (`display.cfg`) has to be run without that file.
 Toward the Windows 98/2000 Explorer, in this order. The web-view side panel
 is out of scope for now.
 
-1. **Large Icons view** — done (this document).
-2. **Toolbar** — a flat toolbar with icon-over-text buttons (Back, Forward,
-   Up, Delete, Properties, Views), hover relief, separators and a disabled
-   state. Needs a toolbar widget in SXGUI and a set of toolbar glyphs drawn
-   to [`ICON_STYLE.md`](ICON_STYLE.md). Back/Forward is a navigation
-   history; Properties is a small dialog (size, type, location). An editable
-   address bar fits here too.
+1. **Large Icons view** — done.
+2. **Toolbar, address bar, history and Properties** — done. Not yet: the
+   drop-down lists of recent folders on Back and Forward, and the address
+   bar's drop-down of parent folders.
 3. **Cut / Copy / Paste** — the SXGUI clipboard holds text only, so file
    paths need either a tagged text payload or a clipboard of their own; and
    copying needs a recursive copy with name clashes ("Copy of ...") and

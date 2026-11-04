@@ -15,19 +15,57 @@
 #include <unistd.h>
 
 /*
- * File browser, shaped like the Win95-era Explorer: menu bar, address bar with
- * "Up One Level", the folder as Large Icons or as a details list (Name / Size
- * / Type) with column headers -- View picks one and filesapp.cfg in the
- * profile remembers it -- and a two-pane status bar.
+ * File browser, shaped like the Windows 98 Explorer: menu bar, a toolbar
+ * (Back, Forward, Up, Delete, Properties, Views), an editable address bar,
+ * the folder as Large Icons or as a details list (Name / Size / Type) with
+ * column headers -- View picks one and filesapp.cfg in the profile remembers
+ * it -- and a two-pane status bar (docs/desktop/FILES.md).
  *
  * It does NOT show what files contain: that is an editor's job. Opening a file
  * goes through shortcut_open_path, as on the desktop: a program starts, a
  * document goes to the program ASSOCIATED with its extension (file_assoc,
  * docs/userland/SXE_FORMAT.md phase 5) or to /bin/notepad, and a shortcut opens
- * its target. A right click on a row opens its context menu: Open, Send To
- * Desktop (a shortcut in the Desktop folder), Rename and Delete
+ * its target. A right click on an item opens its context menu: Open, Send To
+ * Desktop (a shortcut in the Desktop folder), Rename, Delete and Properties
  * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications).
  */
+
+/* ---- toolbar glyphs ----------------------------------------------------------
+ * Drawn by filesapp_toolbar/gen_icons.py, embedded (see that file for why). */
+#include "filesapp_toolbar/icons.inc"
+
+static struct sx_bitmap g_glyph_bitmaps[6];
+/* One-element arrays: a toolbar button reads its glyph from item_icons[0]. */
+static const struct sx_bitmap *k_glyph_back[1];
+static const struct sx_bitmap *k_glyph_forward[1];
+static const struct sx_bitmap *k_glyph_up[1];
+static const struct sx_bitmap *k_glyph_delete[1];
+static const struct sx_bitmap *k_glyph_properties[1];
+static const struct sx_bitmap *k_glyph_views[1];
+
+static const struct sx_bitmap *filesapp_glyph(int slot, const uint32_t *pixels)
+{
+    struct savanxp_fb_info info;
+
+    memset(&info, 0, sizeof(info));
+    info.width = FILES_TOOLBAR_ICON_SIZE;
+    info.height = FILES_TOOLBAR_ICON_SIZE;
+    info.pitch = FILES_TOOLBAR_ICON_SIZE * (uint32_t)sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * FILES_TOOLBAR_ICON_SIZE;
+    sx_bitmap_wrap(&g_glyph_bitmaps[slot], (uint32_t *)pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    return &g_glyph_bitmaps[slot];
+}
+
+static void filesapp_build_toolbar_glyphs(void)
+{
+    k_glyph_back[0] = filesapp_glyph(0, files_toolbar_go_previous);
+    k_glyph_forward[0] = filesapp_glyph(1, files_toolbar_go_next);
+    k_glyph_up[0] = filesapp_glyph(2, files_toolbar_go_up);
+    k_glyph_delete[0] = filesapp_glyph(3, files_toolbar_edit_delete);
+    k_glyph_properties[0] = filesapp_glyph(4, files_toolbar_document_properties);
+    k_glyph_views[0] = filesapp_glyph(5, files_toolbar_view_choose);
+}
 
 #define FILESAPP_PATH_CAPACITY 256
 #define FILESAPP_MAX_ENTRIES 128
@@ -40,6 +78,14 @@
 #define FILESAPP_MENU_VIEW_DETAILS 5
 #define FILESAPP_MENU_ABOUT 8
 #define FILESAPP_MENU_CLOSE 9
+#define FILESAPP_MENU_BACK 10
+#define FILESAPP_MENU_FORWARD 11
+#define FILESAPP_MENU_DELETE 12
+#define FILESAPP_MENU_RENAME 13
+#define FILESAPP_MENU_PROPERTIES 14
+
+/* Back and Forward each remember this many folders; the oldest goes first. */
+#define FILESAPP_HISTORY_DEPTH 16
 
 struct filesapp_entry
 {
@@ -48,8 +94,31 @@ struct filesapp_entry
     int is_dir;
 };
 
+/* The window's widgets, in painting and Tab order: the toolbar band, the
+ * address band, the list and the status bar. */
+enum filesapp_widget
+{
+    W_RULE_MENU,
+    W_BACK,
+    W_FORWARD,
+    W_SEP_HISTORY,
+    W_UP,
+    W_SEP_UP,
+    W_DELETE,
+    W_PROPERTIES,
+    W_SEP_EDIT,
+    W_VIEWS,
+    W_RULE_TOOLBAR,
+    W_ADDRESS_LABEL,
+    W_ADDRESS,
+    W_LIST,
+    W_STATUS_COUNT,
+    W_STATUS_SIZE,
+    W_COUNT
+};
+
 static struct sxgui_app g_app;
-static struct sxgui_widget g_widgets[5];
+static struct sxgui_widget g_widgets[W_COUNT];
 
 static struct filesapp_entry g_entries[FILESAPP_MAX_ENTRIES];
 static char g_item_labels[FILESAPP_MAX_ENTRIES][FILESAPP_LABEL_LENGTH];
@@ -59,6 +128,16 @@ static const char *g_item_ptrs[FILESAPP_MAX_ENTRIES];
 static const struct sx_bitmap *g_item_icons[FILESAPP_MAX_ENTRIES];
 static const struct sx_bitmap *g_item_large_icons[FILESAPP_MAX_ENTRIES];
 static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
+/* The address bar's own text: what the user types, until Enter goes there.
+ * Every folder change writes the current path back into it. */
+static char g_address[FILESAPP_PATH_CAPACITY] = "/";
+static char g_back[FILESAPP_HISTORY_DEPTH][FILESAPP_PATH_CAPACITY];
+static int g_back_count = 0;
+/* The entry a menu or a dialog is about, by name: the list may be reloaded
+ * in between. */
+static char g_subject[256];
+static char g_forward[FILESAPP_HISTORY_DEPTH][FILESAPP_PATH_CAPACITY];
+static int g_forward_count = 0;
 static char g_count_pane[64] = "0 object(s)";
 static char g_size_pane[64] = "";
 static int g_entry_count = 0;
@@ -67,10 +146,15 @@ static int g_mime_icons_loaded = 0;
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[4];
 
-#define FILESAPP_ADDRESS (&g_widgets[0])
-#define FILESAPP_UP_BUTTON (&g_widgets[1])
-#define FILESAPP_LIST_INDEX 2
+#define FILESAPP_ADDRESS (&g_widgets[W_ADDRESS])
+#define FILESAPP_LIST_INDEX W_LIST
 #define FILESAPP_LIST (&g_widgets[FILESAPP_LIST_INDEX])
+
+/* Defined further down, used before: the commands reach across sections. */
+static void filesapp_update_commands(void);
+static void filesapp_ask_delete(void);
+static void filesapp_ask_rename(void);
+static void filesapp_show_properties(void);
 
 /* Anchos fijos; la columna Name se lleva el resto y se recalcula en el layout,
  * que es lo que hace que la lista se estire con la ventana. */
@@ -450,20 +534,87 @@ static int filesapp_load_directory(const char *path)
     filesapp_rebuild_labels();
     filesapp_update_status();
 
-    /* En la raiz no hay a donde subir: el boton se apaga en vez de no hacer
-     * nada al apretarlo. */
-    if (filesapp_is_root_path(g_current_path))
+    snprintf(g_address, sizeof(g_address), "%s", g_current_path);
+    FILESAPP_ADDRESS->caret = (int)strlen(g_address);
+    FILESAPP_ADDRESS->sel_anchor = -1;
+    FILESAPP_ADDRESS->scroll = 0;
+    filesapp_update_commands();
+    return 0;
+}
+
+/* ---- navigation ------------------------------------------------------------
+ *
+ * Going to a folder records the one left in Back and forgets Forward, as a
+ * browser does; Back and Forward move one folder between the two. Refresh,
+ * Rename and Delete reload in place and record nothing.
+ */
+
+static void filesapp_history_push(char stack[][FILESAPP_PATH_CAPACITY], int *count, const char *path)
+{
+    if (*count == FILESAPP_HISTORY_DEPTH)
     {
-        FILESAPP_UP_BUTTON->flags |= SXGUI_FLAG_DISABLED;
+        memmove(stack[0], stack[1], (size_t)(FILESAPP_HISTORY_DEPTH - 1) * FILESAPP_PATH_CAPACITY);
+        *count -= 1;
     }
-    else
+    snprintf(stack[*count], FILESAPP_PATH_CAPACITY, "%s", path);
+    *count += 1;
+}
+
+static int filesapp_navigate(const char *path)
+{
+    char previous[FILESAPP_PATH_CAPACITY];
+    char target[FILESAPP_PATH_CAPACITY];
+
+    /* Copies: `path` may be one of the strings a load overwrites. */
+    snprintf(previous, sizeof(previous), "%s", g_current_path);
+    snprintf(target, sizeof(target), "%s", path);
+    if (filesapp_load_directory(target) < 0)
     {
-        FILESAPP_UP_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+        return -1;
+    }
+    if (strcmp(previous, g_current_path) != 0)
+    {
+        filesapp_history_push(g_back, &g_back_count, previous);
+        g_forward_count = 0;
+        filesapp_update_commands();
     }
     return 0;
 }
 
-/* ---- navegacion ----------------------------------------------------------- */
+/* One step through the history: from `from` to the folder on its top, with
+ * the folder left pushed on `to`. A folder that is gone is dropped and
+ * reported, and the history stays where it was. */
+static void filesapp_history_step(
+    char from[][FILESAPP_PATH_CAPACITY], int *from_count, char to[][FILESAPP_PATH_CAPACITY], int *to_count)
+{
+    char previous[FILESAPP_PATH_CAPACITY];
+    char target[FILESAPP_PATH_CAPACITY];
+
+    if (*from_count <= 0)
+    {
+        return;
+    }
+    *from_count -= 1;
+    snprintf(target, sizeof(target), "%s", from[*from_count]);
+    snprintf(previous, sizeof(previous), "%s", g_current_path);
+    if (filesapp_load_directory(target) < 0)
+    {
+        filesapp_update_commands();
+        return;
+    }
+    filesapp_history_push(to, to_count, previous);
+    filesapp_update_commands();
+}
+
+static void filesapp_go_back(void)
+{
+    filesapp_history_step(g_back, &g_back_count, g_forward, &g_forward_count);
+}
+
+static void filesapp_go_forward(void)
+{
+    filesapp_history_step(g_forward, &g_forward_count, g_back, &g_back_count);
+}
 
 static void filesapp_go_up(void)
 {
@@ -474,7 +625,42 @@ static void filesapp_go_up(void)
         return;
     }
     filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
-    (void)filesapp_load_directory(parent_path);
+    (void)filesapp_navigate(parent_path);
+}
+
+/* What the user typed in the address bar: a path, absolute or relative to
+ * the folder shown, with no trailing slash needed. */
+static void filesapp_go_to_address(void)
+{
+    char target[FILESAPP_PATH_CAPACITY];
+    size_t length;
+
+    if (g_address[0] == '\0')
+    {
+        return;
+    }
+    if (g_address[0] == '/')
+    {
+        snprintf(target, sizeof(target), "%s", g_address);
+    }
+    else if (!filesapp_join_path(g_current_path, g_address, target, sizeof(target)))
+    {
+        filesapp_set_status("Path too long.");
+        return;
+    }
+    length = strlen(target);
+    while (length > 1 && target[length - 1] == '/')
+    {
+        target[--length] = '\0';
+    }
+    if (filesapp_navigate(target) < 0)
+    {
+        char message[FILESAPP_PATH_CAPACITY + 32];
+        snprintf(message, sizeof(message), "Cannot find '%s'.", target);
+        filesapp_set_status(message);
+        return;
+    }
+    sxgui_focus(&g_app.ui, FILESAPP_LIST_INDEX);
 }
 
 static void filesapp_activate_selected(void)
@@ -498,7 +684,7 @@ static void filesapp_activate_selected(void)
     }
     if (g_entries[selected].is_dir)
     {
-        (void)filesapp_load_directory(full_path);
+        (void)filesapp_navigate(full_path);
         return;
     }
     switch (shortcut_open_path(&g_app.gfx, full_path))
@@ -524,6 +710,10 @@ static void filesapp_activate_selected(void)
 static void on_list(struct sxgui_widget *widget, void *user)
 {
     (void)user;
+    if (widget->action == SXGUI_ACTION_CHANGE)
+    {
+        filesapp_update_commands();
+    }
     if (widget->action == SXGUI_ACTION_ACTIVATE)
     {
         filesapp_activate_selected();
@@ -544,6 +734,136 @@ static void on_dialog_ok(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 1);
 }
 
+/* ---- commands ----------------------------------------------------------------
+ *
+ * Each command is in the menus and most are on the toolbar too; both are
+ * enabled from the same state here, so a greyed button and a greyed menu item
+ * never disagree.
+ */
+
+static struct sxgui_menu_item k_file_items[] = {
+    {"Open", FILESAPP_MENU_OPEN, 0},
+    {0, 0, 0},
+    {"Delete", FILESAPP_MENU_DELETE, 0},
+    {"Rename...", FILESAPP_MENU_RENAME, 0},
+    {"Properties", FILESAPP_MENU_PROPERTIES, 0},
+    {0, 0, 0},
+    {"Close", FILESAPP_MENU_CLOSE, 0},
+};
+
+static struct sxgui_menu_item k_go_items[] = {
+    {"Back", FILESAPP_MENU_BACK, 0},
+    {"Forward", FILESAPP_MENU_FORWARD, 0},
+    {"Up One Level", FILESAPP_MENU_UP, 0},
+};
+
+/* The selected entry, or -1 when there is none or it is "..": the entries a
+ * command can act on. */
+static int filesapp_selected_entry(void)
+{
+    int row = filesapp_entry_of(FILESAPP_LIST->value);
+
+    if (row < 0 || row >= g_entry_count || strcmp(g_entries[row].name, "..") == 0)
+    {
+        return -1;
+    }
+    return row;
+}
+
+static void filesapp_enable(struct sxgui_widget *widget, int enabled)
+{
+    if (enabled)
+    {
+        widget->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+    }
+    else
+    {
+        widget->flags |= SXGUI_FLAG_DISABLED;
+        /* A button greyed under the pointer would stay raised. */
+        widget->hover = 0;
+        widget->pressed = 0;
+    }
+}
+
+static void filesapp_enable_item(struct sxgui_menu_item *item, int enabled)
+{
+    item->flags = enabled ? (item->flags & ~(uint32_t)SXGUI_MENU_DISABLED) : (item->flags | SXGUI_MENU_DISABLED);
+}
+
+static void filesapp_update_commands(void)
+{
+    int has_selection = filesapp_selected_entry() >= 0;
+    int can_go_up = !filesapp_is_root_path(g_current_path);
+
+    filesapp_enable(&g_widgets[W_BACK], g_back_count > 0);
+    filesapp_enable(&g_widgets[W_FORWARD], g_forward_count > 0);
+    filesapp_enable(&g_widgets[W_UP], can_go_up);
+    filesapp_enable(&g_widgets[W_DELETE], has_selection);
+    filesapp_enable_item(&k_file_items[0], FILESAPP_LIST->value >= 0);
+    filesapp_enable_item(&k_file_items[2], has_selection);
+    filesapp_enable_item(&k_file_items[3], has_selection);
+    filesapp_enable_item(&k_go_items[0], g_back_count > 0);
+    filesapp_enable_item(&k_go_items[1], g_forward_count > 0);
+    filesapp_enable_item(&k_go_items[2], can_go_up);
+}
+
+/* Delete and Rename act on the selected entry, by name (g_subject). */
+static int filesapp_take_subject(void)
+{
+    int row = filesapp_selected_entry();
+
+    if (row < 0)
+    {
+        return 0;
+    }
+    snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
+    return 1;
+}
+
+static void filesapp_delete_selected(void)
+{
+    if (filesapp_take_subject())
+    {
+        filesapp_ask_delete();
+    }
+}
+
+static void filesapp_rename_selected(void)
+{
+    if (filesapp_take_subject())
+    {
+        filesapp_ask_rename();
+    }
+}
+
+static void on_back_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_go_back();
+}
+
+static void on_forward_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_go_forward();
+}
+
+static void on_delete_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_delete_selected();
+}
+
+static void on_properties_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_show_properties();
+}
+
 /* ---- view ------------------------------------------------------------------ */
 
 /* The user's last choice, in the profile (savanxp_settings_path). One line,
@@ -556,6 +876,18 @@ static struct sxgui_menu_item k_view_items[] = {
     {"Details", FILESAPP_MENU_VIEW_DETAILS, 0},
     {0, 0, 0},
     {"Refresh", FILESAPP_MENU_REFRESH, 0},
+};
+
+/* The toolbar's Views button drops down the same two choices. */
+static struct sxgui_menu_item k_views_items[] = {
+    {"Large Icons", FILESAPP_MENU_VIEW_ICONS, 0},
+    {"Details", FILESAPP_MENU_VIEW_DETAILS, 0},
+};
+
+static const struct sxgui_menu k_views_menu = {
+    "Views",
+    k_views_items,
+    (int)(sizeof(k_views_items) / sizeof(k_views_items[0])),
 };
 
 static int filesapp_load_view(void)
@@ -615,6 +947,9 @@ static void filesapp_set_view(int kind)
     filesapp_bind_list(selected);
     k_view_items[0].flags = kind == SXGUI_ICONVIEW ? SXGUI_MENU_CHECKED : 0;
     k_view_items[1].flags = kind == SXGUI_LISTBOX ? SXGUI_MENU_CHECKED : 0;
+    k_views_items[0].flags = k_view_items[0].flags;
+    k_views_items[1].flags = k_view_items[1].flags;
+    filesapp_update_commands();
 }
 
 static void filesapp_choose_view(int kind)
@@ -627,6 +962,19 @@ static void filesapp_choose_view(int kind)
     filesapp_save_view(kind);
 }
 
+static void on_views_command(int id, void *user)
+{
+    (void)user;
+    filesapp_choose_view(id == FILESAPP_MENU_VIEW_DETAILS ? SXGUI_LISTBOX : SXGUI_ICONVIEW);
+}
+
+static void on_views_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    sxgui_context_menu_open(
+        &g_app.ui, &k_views_menu, widget->rect.x, widget->rect.y + widget->rect.height, on_views_command, 0);
+}
+
 static void on_menu_command(int id, void *user)
 {
     (void)user;
@@ -637,6 +985,21 @@ static void on_menu_command(int id, void *user)
         break;
     case FILESAPP_MENU_UP:
         filesapp_go_up();
+        break;
+    case FILESAPP_MENU_BACK:
+        filesapp_go_back();
+        break;
+    case FILESAPP_MENU_FORWARD:
+        filesapp_go_forward();
+        break;
+    case FILESAPP_MENU_DELETE:
+        filesapp_delete_selected();
+        break;
+    case FILESAPP_MENU_RENAME:
+        filesapp_rename_selected();
+        break;
+    case FILESAPP_MENU_PROPERTIES:
+        filesapp_show_properties();
         break;
     case FILESAPP_MENU_REFRESH:
         (void)filesapp_load_directory(g_current_path);
@@ -667,6 +1030,7 @@ static void on_menu_command(int id, void *user)
 #define FILESAPP_CMD_DELETE 23
 #define FILESAPP_CMD_UP 24
 #define FILESAPP_CMD_REFRESH 25
+#define FILESAPP_CMD_PROPERTIES 26
 
 #define FILESAPP_QUESTION_WIDTH 340
 #define FILESAPP_QUESTION_HEIGHT 96
@@ -679,6 +1043,8 @@ static const struct sxgui_menu_item k_entry_items[] = {
     {0, 0, 0},
     {"Rename...", FILESAPP_CMD_RENAME, 0},
     {"Delete", FILESAPP_CMD_DELETE, 0},
+    {0, 0, 0},
+    {"Properties", FILESAPP_CMD_PROPERTIES, 0},
 };
 
 static const struct sxgui_menu k_entry_menu = {
@@ -690,6 +1056,8 @@ static const struct sxgui_menu k_entry_menu = {
 static const struct sxgui_menu_item k_folder_items[] = {
     {"Up One Level", FILESAPP_CMD_UP, 0},
     {"Refresh", FILESAPP_CMD_REFRESH, 0},
+    {0, 0, 0},
+    {"Properties", FILESAPP_CMD_PROPERTIES, 0},
 };
 
 static const struct sxgui_menu k_folder_menu = {
@@ -698,9 +1066,6 @@ static const struct sxgui_menu k_folder_menu = {
     (int)(sizeof(k_folder_items) / sizeof(k_folder_items[0])),
 };
 
-/* The entry a menu or a dialog is about, by name: the list may be reloaded
- * in between. */
-static char g_subject[256];
 static char g_question_text[300];
 static char g_rename_buffer[128];
 static struct sxgui_dialog g_question_dialog;
@@ -817,6 +1182,188 @@ static void filesapp_ask_rename(void)
     sxgui_dialog_begin(&g_app.ui, &g_rename_dialog, FILESAPP_QUESTION_WIDTH, FILESAPP_RENAME_HEIGHT);
 }
 
+/* ---- properties --------------------------------------------------------------
+ *
+ * The selected entry's, or the folder's own when nothing is selected, as
+ * Explorer's File > Properties does. A folder's size and contents count only
+ * what is directly in it: a recursive walk could take long on a big tree,
+ * and the window would hang meanwhile.
+ */
+
+#define FILESAPP_PROPERTIES_WIDTH 360
+#define FILESAPP_PROPERTIES_ROWS 5
+#define FILESAPP_PROPERTIES_CAPTION_WIDTH 70
+#define FILESAPP_PROPERTIES_HEIGHT \
+    (SXGUI_DIALOG_MARGIN * 3 + FILESAPP_PROPERTIES_ROWS * FILESAPP_DLG_ROW + SXGUI_BUTTON_HEIGHT)
+
+static struct sxgui_dialog g_properties_dialog;
+static struct sxgui_widget g_properties_widgets[FILESAPP_PROPERTIES_ROWS * 2 + 1];
+static char g_properties_title[300];
+static char g_properties_values[FILESAPP_PROPERTIES_ROWS][FILESAPP_PATH_CAPACITY];
+static const char *const k_properties_captions[FILESAPP_PROPERTIES_ROWS] = {
+    "Name:", "Type:", "Location:", "Size:", "Contains:",
+};
+
+static void filesapp_format_bytes(unsigned int bytes, char *buffer, size_t capacity)
+{
+    char short_form[64];
+
+    if (bytes < 1024u)
+    {
+        snprintf(buffer, capacity, "%u bytes", bytes);
+        return;
+    }
+    filesapp_format_total(bytes, short_form, sizeof(short_form));
+    snprintf(buffer, capacity, "%s (%u bytes)", short_form, bytes);
+}
+
+/* What is directly in `path`: files, folders and the files' bytes. */
+static void filesapp_count_folder(const char *path, int *files, int *folders, unsigned int *bytes)
+{
+    DIR *directory = opendir(path);
+    struct dirent *entry;
+    char full_path[FILESAPP_PATH_CAPACITY];
+
+    *files = 0;
+    *folders = 0;
+    *bytes = 0;
+    if (directory == 0)
+    {
+        return;
+    }
+    while ((entry = readdir(directory)) != 0)
+    {
+        struct stat info;
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
+            !filesapp_join_path(path, entry->d_name, full_path, sizeof(full_path)) || stat(full_path, &info) != 0)
+        {
+            continue;
+        }
+        if (S_ISDIR(info.st_mode))
+        {
+            *folders += 1;
+        }
+        else
+        {
+            *files += 1;
+            *bytes += (unsigned int)info.st_size;
+        }
+    }
+    closedir(directory);
+}
+
+static void on_properties_ok(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+}
+
+static void filesapp_show_properties(void)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    char name[256];
+    struct stat info;
+    int row = filesapp_selected_entry();
+    int is_folder;
+    int launchable = 0;
+
+    if (row >= 0)
+    {
+        snprintf(name, sizeof(name), "%s", g_entries[row].name);
+        if (!filesapp_join_path(g_current_path, name, path, sizeof(path)))
+        {
+            filesapp_set_status("Path too long.");
+            return;
+        }
+        snprintf(g_properties_values[2], FILESAPP_PATH_CAPACITY, "%s", g_current_path);
+    }
+    else
+    {
+        const char *slash = strrchr(g_current_path, '/');
+
+        snprintf(path, sizeof(path), "%s", g_current_path);
+        snprintf(name, sizeof(name), "%s", filesapp_is_root_path(path) || slash == 0 ? "/" : slash + 1);
+        if (filesapp_is_root_path(path))
+        {
+            g_properties_values[2][0] = '\0';
+        }
+        else
+        {
+            filesapp_parent_path(path, g_properties_values[2], FILESAPP_PATH_CAPACITY);
+        }
+    }
+    if (stat(path, &info) != 0)
+    {
+        filesapp_set_status("Cannot read its properties.");
+        return;
+    }
+    is_folder = S_ISDIR(info.st_mode);
+    if (!is_folder)
+    {
+        launchable = filesapp_path_is_launchable(path);
+    }
+
+    snprintf(g_properties_title, sizeof(g_properties_title), "%s Properties", name);
+    snprintf(g_properties_values[0], FILESAPP_PATH_CAPACITY, "%s", name);
+    filesapp_format_type(name, is_folder, launchable, g_properties_values[1], FILESAPP_PATH_CAPACITY);
+    if (is_folder)
+    {
+        int files;
+        int folders;
+        unsigned int bytes;
+
+        filesapp_count_folder(path, &files, &folders, &bytes);
+        filesapp_format_bytes(bytes, g_properties_values[3], FILESAPP_PATH_CAPACITY);
+        snprintf(g_properties_values[4], FILESAPP_PATH_CAPACITY, "%d File(s), %d Folder(s)", files, folders);
+    }
+    else
+    {
+        filesapp_format_bytes((unsigned int)info.st_size, g_properties_values[3], FILESAPP_PATH_CAPACITY);
+    }
+    /* A file has nothing to contain: the row goes away. */
+    if (is_folder)
+    {
+        g_properties_widgets[8].flags |= SXGUI_FLAG_VISIBLE;
+        g_properties_widgets[9].flags |= SXGUI_FLAG_VISIBLE;
+    }
+    else
+    {
+        g_properties_widgets[8].flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+        g_properties_widgets[9].flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+    }
+    sxgui_dialog_begin(&g_app.ui, &g_properties_dialog, FILESAPP_PROPERTIES_WIDTH, FILESAPP_PROPERTIES_HEIGHT);
+}
+
+static void filesapp_build_properties_dialog(void)
+{
+    int index;
+    int value_x = SXGUI_DIALOG_MARGIN + FILESAPP_PROPERTIES_CAPTION_WIDTH;
+
+    for (index = 0; index < FILESAPP_PROPERTIES_ROWS; ++index)
+    {
+        int y = SXGUI_DIALOG_MARGIN + index * FILESAPP_DLG_ROW;
+
+        g_properties_widgets[index * 2] = sxgui_label(
+            sx_rect_make(SXGUI_DIALOG_MARGIN, y, FILESAPP_PROPERTIES_CAPTION_WIDTH, 18),
+            k_properties_captions[index]);
+        g_properties_widgets[index * 2 + 1] = sxgui_label(
+            sx_rect_make(value_x, y, FILESAPP_PROPERTIES_WIDTH - value_x - SXGUI_DIALOG_MARGIN, 18),
+            g_properties_values[index]);
+    }
+    g_properties_widgets[FILESAPP_PROPERTIES_ROWS * 2] = sxgui_button(
+        sx_rect_make(FILESAPP_PROPERTIES_WIDTH - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH,
+                     FILESAPP_PROPERTIES_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_properties_ok, 0);
+    g_properties_dialog.title = g_properties_title;
+    g_properties_dialog.widgets = g_properties_widgets;
+    g_properties_dialog.widget_count = FILESAPP_PROPERTIES_ROWS * 2 + 1;
+    g_properties_dialog.initial_focus = FILESAPP_PROPERTIES_ROWS * 2;
+    g_properties_dialog.default_button = FILESAPP_PROPERTIES_ROWS * 2;
+}
+
 static void on_context_command(int id, void *user)
 {
     (void)user;
@@ -840,6 +1387,9 @@ static void on_context_command(int id, void *user)
     case FILESAPP_CMD_REFRESH:
         (void)filesapp_load_directory(g_current_path);
         break;
+    case FILESAPP_CMD_PROPERTIES:
+        filesapp_show_properties();
+        break;
     default:
         break;
     }
@@ -856,8 +1406,16 @@ static void filesapp_show_menu(int item, int x, int y)
     {
         FILESAPP_LIST->value = item;
         snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
+        filesapp_update_commands();
         sxgui_context_menu_open(&g_app.ui, &k_entry_menu, x, y, on_context_command, 0);
         return;
+    }
+    /* The folder's menu is about the folder: its Properties are the
+     * folder's, so nothing stays selected. */
+    if (item < 0)
+    {
+        FILESAPP_LIST->value = -1;
+        filesapp_update_commands();
     }
     sxgui_context_menu_open(&g_app.ui, &k_folder_menu, x, y, on_context_command, 0);
 }
@@ -881,15 +1439,55 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
 
 static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
 {
+    int alt = (event->modifiers & SAVANXP_KEY_MOD_ALT) != 0;
+    int typing = g_app.ui.focus_index == W_ADDRESS;
+
     (void)app;
-    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    /* A dialog's keys come through here too: they are the dialog's (the
+     * Rename field's Backspace erases, it does not go up a folder). */
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || sxgui_dialog_active(&g_app.ui))
+    {
+        return 0;
+    }
+    if (alt && event->key == SAVANXP_KEY_LEFT)
+    {
+        filesapp_go_back();
+        return 1;
+    }
+    if (alt && event->key == SAVANXP_KEY_RIGHT)
+    {
+        filesapp_go_forward();
+        return 1;
+    }
+    if (alt && event->key == SAVANXP_KEY_ENTER)
+    {
+        filesapp_show_properties();
+        return 1;
+    }
+    if (typing && event->key == SAVANXP_KEY_ENTER)
+    {
+        filesapp_go_to_address();
+        return 1;
+    }
+    /* Esc in the address bar puts the folder's path back instead of
+     * closing the window. */
+    if (typing && event->key == SAVANXP_KEY_ESC)
+    {
+        snprintf(g_address, sizeof(g_address), "%s", g_current_path);
+        FILESAPP_ADDRESS->caret = (int)strlen(g_address);
+        FILESAPP_ADDRESS->sel_anchor = -1;
+        FILESAPP_ADDRESS->scroll = 0;
+        sxgui_focus(&g_app.ui, FILESAPP_LIST_INDEX);
+        return 1;
+    }
+    /* In the address bar, Backspace and Delete edit the text. */
+    if (typing)
     {
         return 0;
     }
     /* The keyboard's right click opens the selected row's menu next to it. */
-    if (!sxgui_dialog_active(&g_app.ui) &&
-        (event->key == SAVANXP_KEY_MENU ||
-         (event->key == SAVANXP_KEY_F10 && (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0)))
+    if (event->key == SAVANXP_KEY_MENU ||
+        (event->key == SAVANXP_KEY_F10 && (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0))
     {
         int row_height = gfx_text_height() + 4;
         int visible = FILESAPP_LIST->value - FILESAPP_LIST->scroll;
@@ -913,15 +1511,9 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
         filesapp_show_menu(FILESAPP_LIST->value, x, y);
         return 1;
     }
-    if (event->key == SAVANXP_KEY_DELETE && !sxgui_dialog_active(&g_app.ui))
+    if (event->key == SAVANXP_KEY_DELETE)
     {
-        int row = filesapp_entry_of(FILESAPP_LIST->value);
-
-        if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
-        {
-            snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
-            filesapp_ask_delete();
-        }
+        filesapp_delete_selected();
         return 1;
     }
     if (event->key == SAVANXP_KEY_BACKSPACE)
@@ -937,58 +1529,116 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     return 0;
 }
 
-/* ---- layout --------------------------------------------------------------- */
-
-/* La lista se estira con la ventana, asi que no hay bounding box del que
- * deducir el tamano: este es un explorador comodo sin comerse la pantalla. */
+/* ---- layout ------------------------------------------------------------------
+ *
+ * Three bands under the menu bar, each ruled off by an etched line as in the
+ * Explorer: the toolbar, the address bar, then the list down to the status
+ * bar. The list stretches with the window, so there is no bounding box to
+ * size the window from; this is a comfortable browser that does not eat the
+ * screen.
+ */
 #define FILESAPP_CONTENT_WIDTH 560
-#define FILESAPP_CONTENT_HEIGHT 400
+#define FILESAPP_CONTENT_HEIGHT 440
 
-/* La banda de la barra de direccion lleva UNA altura para los dos controles que
- * viven ahi: si el campo y el boton no miden lo mismo, quedan desalineados por
- * arriba o por abajo y no hay margen que lo tape. */
-#define FILESAPP_TOOLBAR_HEIGHT SXGUI_FIELD_HEIGHT
-#define FILESAPP_UP_BUTTON_WIDTH 110
-/* Separacion entre los dos paneles de la barra de estado. Es menor que el GAP
- * general a proposito: son dos mitades de la misma barra, no dos controles. */
+/* An etched rule is two pixels; it gets one more above and below. */
+#define FILESAPP_RULE_HEIGHT 4
+#define FILESAPP_SEPARATOR_WIDTH 8
+/* Gap between the status bar's two panes: smaller than the general GAP on
+ * purpose, they are two halves of one bar, not two controls. */
 #define FILESAPP_STATUS_GAP 2
+
+static const int k_toolbar_order[] = {
+    W_BACK, W_FORWARD, W_SEP_HISTORY, W_UP, W_SEP_UP, W_DELETE, W_PROPERTIES, W_SEP_EDIT, W_VIEWS,
+};
+
+static int filesapp_toolbar_button_width(void)
+{
+    int widest = 0;
+    int index;
+
+    for (index = 0; index < (int)(sizeof(k_toolbar_order) / sizeof(k_toolbar_order[0])); ++index)
+    {
+        const struct sxgui_widget *widget = &g_widgets[k_toolbar_order[index]];
+
+        if (widget->kind == SXGUI_BUTTON)
+        {
+            int width = sxgui_toolbar_button_width(widget->text);
+            widest = width > widest ? width : widest;
+        }
+    }
+    /* Room for the Views button's arrow. */
+    return widest + 8;
+}
 
 static void filesapp_layout(struct sxgui_app *app)
 {
     int width = (int)app->gfx.info.width;
     int height = (int)app->gfx.info.height;
-    int toolbar_y = sxgui_menubar_height() + SXGUI_MARGIN;
-    int list_y = toolbar_y + FILESAPP_TOOLBAR_HEIGHT + SXGUI_GAP;
+    int toolbar_height = sxgui_toolbar_height();
+    int button_width = filesapp_toolbar_button_width();
+    int y = sxgui_menubar_height();
+    int x = SXGUI_MARGIN;
+    int list_y;
     int status_y = height - SXGUI_MARGIN - SXGUI_STATUS_HEIGHT;
-    int list_height = status_y - SXGUI_GAP - list_y;
+    int list_height;
     int list_width = width - SXGUI_MARGIN * 2;
-    int address_width = list_width - FILESAPP_UP_BUTTON_WIDTH - SXGUI_GAP;
+    int label_width = gfx_text_width("Address") + SXGUI_GAP;
+    int address_width;
     int name_width;
     int count_pane_width;
+    int index;
 
-    if (list_height < 60)
-    {
-        list_height = 60;
-    }
-    if (address_width < 80)
-    {
-        address_width = 80;
-    }
     if (list_width < 120)
     {
         list_width = 120;
     }
 
-    FILESAPP_ADDRESS->rect = sx_rect_make(SXGUI_MARGIN, toolbar_y, address_width, FILESAPP_TOOLBAR_HEIGHT);
-    FILESAPP_UP_BUTTON->rect = sx_rect_make(
-        SXGUI_MARGIN + address_width + SXGUI_GAP, toolbar_y, FILESAPP_UP_BUTTON_WIDTH, FILESAPP_TOOLBAR_HEIGHT);
+    g_widgets[W_RULE_MENU].rect = sx_rect_make(0, y, width, FILESAPP_RULE_HEIGHT);
+    y += FILESAPP_RULE_HEIGHT;
+    /* Buttons that do not fit are hidden rather than squeezed, as a toolbar
+     * cut by a narrow window. */
+    for (index = 0; index < (int)(sizeof(k_toolbar_order) / sizeof(k_toolbar_order[0])); ++index)
+    {
+        struct sxgui_widget *widget = &g_widgets[k_toolbar_order[index]];
+        int item_width = widget->kind == SXGUI_BUTTON ? button_width : FILESAPP_SEPARATOR_WIDTH;
+
+        widget->rect = widget->kind == SXGUI_BUTTON
+            ? sx_rect_make(x, y, item_width, toolbar_height)
+            : sx_rect_make(x, y + 3, item_width, toolbar_height - 6);
+        if (x + item_width <= width - SXGUI_MARGIN)
+        {
+            widget->flags |= SXGUI_FLAG_VISIBLE;
+        }
+        else
+        {
+            widget->flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+        }
+        x += item_width;
+    }
+    y += toolbar_height;
+    g_widgets[W_RULE_TOOLBAR].rect = sx_rect_make(0, y, width, FILESAPP_RULE_HEIGHT);
+    y += FILESAPP_RULE_HEIGHT;
+
+    address_width = list_width - label_width;
+    if (address_width < 80)
+    {
+        address_width = 80;
+    }
+    g_widgets[W_ADDRESS_LABEL].rect = sx_rect_make(SXGUI_MARGIN, y, label_width, SXGUI_FIELD_HEIGHT);
+    FILESAPP_ADDRESS->rect = sx_rect_make(SXGUI_MARGIN + label_width, y, address_width, SXGUI_FIELD_HEIGHT);
+    list_y = y + SXGUI_FIELD_HEIGHT + SXGUI_GAP;
+    list_height = status_y - SXGUI_GAP - list_y;
+    if (list_height < 60)
+    {
+        list_height = 60;
+    }
     FILESAPP_LIST->rect = sx_rect_make(SXGUI_MARGIN, list_y, list_width, list_height);
 
-    /* Name se queda con lo que sobra: es la columna que crece al agrandar la
-     * ventana, igual que en el explorador. Lo que se descuenta es el area util
-     * REAL de la lista -- los dos biseles hundidos y la columna del scrollbar,
-     * que se reserva siempre: si solo se descontara cuando la barra esta, las
-     * columnas saltarian de ancho al agregar un archivo. */
+    /* Name takes what is left: it is the column that grows with the window,
+     * as in the Explorer. What is subtracted is the list's REAL usable area --
+     * both sunken bevels and the scrollbar column, which is always reserved:
+     * if it were subtracted only while the bar shows, the columns would jump
+     * in width when a file is added. */
     name_width = list_width - SXGUI_BORDER_SUNKEN * 2 - SXGUI_SCROLLBAR_THICKNESS -
         FILESAPP_COLUMN_SIZE_WIDTH - FILESAPP_COLUMN_TYPE_WIDTH;
     if (name_width < 90)
@@ -1002,8 +1652,8 @@ static void filesapp_layout(struct sxgui_app *app)
     {
         count_pane_width = 80;
     }
-    g_widgets[3].rect = sx_rect_make(SXGUI_MARGIN, status_y, count_pane_width, SXGUI_STATUS_HEIGHT);
-    g_widgets[4].rect = sx_rect_make(
+    g_widgets[W_STATUS_COUNT].rect = sx_rect_make(SXGUI_MARGIN, status_y, count_pane_width, SXGUI_STATUS_HEIGHT);
+    g_widgets[W_STATUS_SIZE].rect = sx_rect_make(
         SXGUI_MARGIN + count_pane_width + FILESAPP_STATUS_GAP, status_y,
         list_width - count_pane_width - FILESAPP_STATUS_GAP, SXGUI_STATUS_HEIGHT);
 }
@@ -1015,13 +1665,6 @@ static void on_resize(struct sxgui_app *app)
 
 /* ---- menus ----------------------------------------------------------------- */
 
-static const struct sxgui_menu_item k_file_items[] = {
-    {"Open", FILESAPP_MENU_OPEN, 0},
-    {"Up One Level", FILESAPP_MENU_UP, 0},
-    {0, 0, 0},
-    {"Close", FILESAPP_MENU_CLOSE, 0},
-};
-
 static const struct sxgui_menu_item k_help_items[] = {
     {"About Files", FILESAPP_MENU_ABOUT, 0},
 };
@@ -1029,6 +1672,7 @@ static const struct sxgui_menu_item k_help_items[] = {
 static const struct sxgui_menu k_menus[] = {
     {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
     {"View", k_view_items, (int)(sizeof(k_view_items) / sizeof(k_view_items[0]))},
+    {"Go", k_go_items, (int)(sizeof(k_go_items) / sizeof(k_go_items[0]))},
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
 };
 
@@ -1145,18 +1789,36 @@ int main(int argc, char **argv)
         return filesapp_selftest();
     }
 
-    g_widgets[0] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_current_path);
-    g_widgets[0].flags |= SXGUI_FLAG_SUNKEN;
-    g_widgets[1] = sxgui_button(sx_rect_make(0, 0, 0, 0), "Up One Level", on_up_clicked, 0);
-    g_widgets[2] = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_item_ptrs, 0);
-    g_widgets[2].columns = g_columns;
-    g_widgets[2].column_count = FILESAPP_COLUMN_COUNT;
-    g_widgets[2].on_action = on_list;
-    g_widgets[2].flags |= SXGUI_FLAG_EMPTY_SELECTION;
-    g_widgets[3] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_count_pane);
-    g_widgets[3].flags |= SXGUI_FLAG_SUNKEN;
-    g_widgets[4] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_size_pane);
-    g_widgets[4].flags |= SXGUI_FLAG_SUNKEN;
+    filesapp_build_toolbar_glyphs();
+    {
+        struct sx_rect none = sx_rect_make(0, 0, 0, 0);
+
+        g_widgets[W_RULE_MENU] = sxgui_separator(none);
+        g_widgets[W_BACK] = sxgui_toolbar_button(none, "Back", k_glyph_back, on_back_clicked, 0);
+        g_widgets[W_FORWARD] = sxgui_toolbar_button(none, "Forward", k_glyph_forward, on_forward_clicked, 0);
+        g_widgets[W_SEP_HISTORY] = sxgui_separator(none);
+        g_widgets[W_UP] = sxgui_toolbar_button(none, "Up", k_glyph_up, on_up_clicked, 0);
+        g_widgets[W_SEP_UP] = sxgui_separator(none);
+        g_widgets[W_DELETE] = sxgui_toolbar_button(none, "Delete", k_glyph_delete, on_delete_clicked, 0);
+        g_widgets[W_PROPERTIES] = sxgui_toolbar_button(
+            none, "Properties", k_glyph_properties, on_properties_clicked, 0);
+        g_widgets[W_SEP_EDIT] = sxgui_separator(none);
+        g_widgets[W_VIEWS] = sxgui_toolbar_button(none, "Views", k_glyph_views, on_views_clicked, 0);
+        g_widgets[W_VIEWS].flags |= SXGUI_FLAG_DROPDOWN;
+        g_widgets[W_RULE_TOOLBAR] = sxgui_separator(none);
+        g_widgets[W_ADDRESS_LABEL] = sxgui_label(none, "Address");
+        g_widgets[W_ADDRESS] = sxgui_textfield(none, g_address, (int)sizeof(g_address));
+        g_widgets[W_LIST] = sxgui_listbox(none, g_item_ptrs, 0);
+        g_widgets[W_LIST].columns = g_columns;
+        g_widgets[W_LIST].column_count = FILESAPP_COLUMN_COUNT;
+        g_widgets[W_LIST].on_action = on_list;
+        g_widgets[W_LIST].flags |= SXGUI_FLAG_EMPTY_SELECTION;
+        g_widgets[W_STATUS_COUNT] = sxgui_label(none, g_count_pane);
+        g_widgets[W_STATUS_COUNT].flags |= SXGUI_FLAG_SUNKEN;
+        g_widgets[W_STATUS_SIZE] = sxgui_label(none, g_size_pane);
+        g_widgets[W_STATUS_SIZE].flags |= SXGUI_FLAG_SUNKEN;
+    }
+    filesapp_build_properties_dialog();
 
     g_about_widgets[0] = sxgui_label(
         sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
@@ -1224,7 +1886,7 @@ int main(int argc, char **argv)
     g_about_dialog.widget_count = 4;
     g_about_dialog.default_button = 3;
 
-    if (sxgui_app_init(&g_app, "filesapp", g_widgets, 5) < 0)
+    if (sxgui_app_init(&g_app, "filesapp", g_widgets, W_COUNT) < 0)
     {
         return 1;
     }

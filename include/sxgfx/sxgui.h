@@ -61,6 +61,8 @@ extern "C" {
  * font (two label lines under the icon). */
 #define SXGUI_ICONVIEW_ICON_SIZE  32
 #define SXGUI_ICONVIEW_CELL_WIDTH 76
+/* Toolbar button glyph. A button is as tall as sxgui_toolbar_height(). */
+#define SXGUI_TOOLBAR_ICON_SIZE   20
 /* Gap between the text and a control's inner edge. A loose label that wants
  * to line up with a field's text moves by BORDER + TEXT_PAD. */
 #define SXGUI_TEXT_PAD            3
@@ -100,6 +102,17 @@ enum sxgui_kind {
  * selection the first arrow key selects the first item. Without the flag a
  * click on the background keeps the selection, as it always has. */
 #define SXGUI_FLAG_EMPTY_SELECTION (1u << 4)
+/* button: a flat toolbar button, the Explorer kind. Its glyph is
+ * item_icons[0] (SXGUI_TOOLBAR_ICON_SIZE, drawn embossed in grey while
+ * disabled) with `text` under it; it shows a thin relief only under the
+ * pointer and does not take the focus, so a click leaves it where it was. */
+#define SXGUI_FLAG_TOOLBAR  (1u << 5)
+/* toolbar button: a small arrow right of the glyph, for a button that opens
+ * a menu (the app opens it from on_action). */
+#define SXGUI_FLAG_DROPDOWN (1u << 6)
+/* label: an etched line across its rect instead of text -- vertical when
+ * the rect is narrower than tall. Toolbar separators and band rules. */
+#define SXGUI_FLAG_SEPARATOR (1u << 7)
 
 #define SXGUI_DOUBLE_CLICK_MS 450UL
 
@@ -470,6 +483,18 @@ void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect);
 struct sxgui_widget sxgui_label(struct sx_rect rect, const char *text);
 struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*on_action)(struct sxgui_widget *, void *), void *user);
 struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int checked);
+/* A toolbar button (SXGUI_FLAG_TOOLBAR) whose glyph is icons[0]. `icons`
+ * must outlive the widget: the toolkit keeps the pointer. */
+struct sxgui_widget sxgui_toolbar_button(
+    struct sx_rect rect, const char *text, const struct sx_bitmap *const *icons,
+    void (*on_action)(struct sxgui_widget *, void *), void *user);
+/* Height of a toolbar button: the glyph, the text under it and the relief. */
+int sxgui_toolbar_height(void);
+/* Width that fits `text` under a glyph, with the Explorer's padding. A
+ * toolbar gives all its buttons the widest one's width. */
+int sxgui_toolbar_button_width(const char *text);
+/* An etched line (SXGUI_FLAG_SEPARATOR). */
+struct sxgui_widget sxgui_separator(struct sx_rect rect);
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
 
 /*

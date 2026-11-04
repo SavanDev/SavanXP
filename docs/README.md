@@ -110,9 +110,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the wallpaper configuration (`desktop.cfg`) and how the desktop follows it,
   the shipped wallpapers, and changing the resolution while the session runs
   (the session's largest mode, the layout after a change, `display.cfg`).
-- [`FILES.md`](desktop/FILES.md) — Files, the file browser: the Large Icons and
-  Details views over one widget (`SXGUI_ICONVIEW`), the icon grid's rules,
-  the per-size icon caches and their RAM, and the road to the Explorer toolbar.
+- [`FILES.md`](desktop/FILES.md) — Files, the file browser: the toolbar,
+  address bar, history and Properties, the toolbar widgets
+  (`SXGUI_FLAG_TOOLBAR`), the Large Icons and Details views over one widget
+  (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM, and what is next.
 - [`ICON_STYLE.md`](desktop/ICON_STYLE.md) — the Windows 2000 look of the house
   icon set: the drawing rules, the shared kit and generator, and what is exempt.
 - [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)

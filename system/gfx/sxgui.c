@@ -342,6 +342,10 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
     {
         return 0;
     }
+    if (widget->kind == SXGUI_BUTTON && (widget->flags & SXGUI_FLAG_TOOLBAR) != 0)
+    {
+        return 0;
+    }
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
@@ -368,12 +372,36 @@ static void sxgui_draw_control_text(struct sx_painter *painter, int x, int y, co
     sxchrome_draw_text_disabled(painter, x, y, text);
 }
 
+/* An etched line, the separator between toolbar groups and between bands. */
+static void sxgui_paint_separator(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect rect = widget->rect;
+
+    if (rect.width < rect.height)
+    {
+        int x = rect.x + rect.width / 2 - 1;
+        sx_painter_vline(painter, x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
+        sx_painter_vline(painter, x + 1, rect.y, rect.height, SXGUI_COLOR_LIGHT);
+    }
+    else
+    {
+        int y = rect.y + rect.height / 2 - 1;
+        sx_painter_hline(painter, rect.x, y, rect.width, SXGUI_COLOR_SHADOW);
+        sx_painter_hline(painter, rect.x, y + 1, rect.width, SXGUI_COLOR_LIGHT);
+    }
+}
+
 static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
     int text_x = widget->rect.x;
 
+    if ((widget->flags & SXGUI_FLAG_SEPARATOR) != 0)
+    {
+        sxgui_paint_separator(painter, widget);
+        return;
+    }
     if ((widget->flags & SXGUI_FLAG_SUNKEN) != 0)
     {
         sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
@@ -524,6 +552,140 @@ static int sxgui_trackbar_set(struct sxgui_widget *widget, int value)
     return 1;
 }
 
+/* ---- toolbar button ---------------------------------------------------------
+ *
+ * A SXGUI_BUTTON with SXGUI_FLAG_TOOLBAR: the Explorer's flat button. It has
+ * no relief at rest, a one-pixel raised one under the pointer and a sunken one
+ * while pressed, and its glyph sits over its text. Pressing and clicking are
+ * the button's own (capture, CLICK on release over it).
+ */
+
+#define SXGUI_TOOLBAR_PAD 3   /* from the relief to the glyph and the text */
+
+int sxgui_toolbar_height(void)
+{
+    return 1 + SXGUI_TOOLBAR_PAD + SXGUI_TOOLBAR_ICON_SIZE + 2 + gfx_text_height() + SXGUI_TOOLBAR_PAD + 1;
+}
+
+int sxgui_toolbar_button_width(const char *text)
+{
+    int text_width = text != 0 ? gfx_text_width(text) : 0;
+    int width = text_width > SXGUI_TOOLBAR_ICON_SIZE ? text_width : SXGUI_TOOLBAR_ICON_SIZE;
+    return width + 2 * (1 + SXGUI_TOOLBAR_PAD) + 8;
+}
+
+static void sxgui_draw_thin_edge(struct sx_painter *painter, struct sx_rect rect, uint32_t top_left, uint32_t bottom_right)
+{
+    sx_painter_hline(painter, rect.x, rect.y, rect.width, top_left);
+    sx_painter_vline(painter, rect.x, rect.y, rect.height, top_left);
+    sx_painter_hline(painter, rect.x, rect.y + rect.height - 1, rect.width, bottom_right);
+    sx_painter_vline(painter, rect.x + rect.width - 1, rect.y, rect.height, bottom_right);
+}
+
+/* A disabled glyph is its silhouette embossed: white one pixel down and
+ * right, grey on top, as Windows draws a toolbar's disabled image from its
+ * mask. The colours of the glyph are dropped. */
+static void sxgui_draw_glyph(struct sx_painter *painter, const struct sx_bitmap *icon, int x, int y, int enabled)
+{
+    int width;
+    int height;
+    int pass;
+
+    if (icon == 0 || icon->pixels == 0)
+    {
+        return;
+    }
+    if (enabled)
+    {
+        if (sx_painter_push_clip(painter, sx_rect_make(x, y, SXGUI_TOOLBAR_ICON_SIZE, SXGUI_TOOLBAR_ICON_SIZE)))
+        {
+            sx_painter_blit_bitmap(painter, icon, x, y);
+            sx_painter_pop_clip(painter);
+        }
+        return;
+    }
+    width = (int)icon->info.width < SXGUI_TOOLBAR_ICON_SIZE ? (int)icon->info.width : SXGUI_TOOLBAR_ICON_SIZE;
+    height = (int)icon->info.height < SXGUI_TOOLBAR_ICON_SIZE ? (int)icon->info.height : SXGUI_TOOLBAR_ICON_SIZE;
+    for (pass = 0; pass < 2; ++pass)
+    {
+        int row;
+
+        for (row = 0; row < height; ++row)
+        {
+            const uint32_t *source = (const uint32_t *)((const uint8_t *)icon->pixels + (size_t)row * icon->info.pitch);
+            int column;
+
+            for (column = 0; column < width; ++column)
+            {
+                if ((source[column] >> 24) < 0x80u)
+                {
+                    continue;
+                }
+                if (pass == 0)
+                {
+                    sx_painter_set_pixel(painter, x + column + 1, y + row + 1, SXGUI_COLOR_LIGHT);
+                }
+                else
+                {
+                    sx_painter_set_pixel(painter, x + column, y + row, SXGUI_COLOR_SHADOW);
+                }
+            }
+        }
+    }
+}
+
+static void sxgui_paint_toolbar_button(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect rect = widget->rect;
+    int enabled = sxgui_widget_enabled(widget);
+    int pressed = enabled && widget->pressed && widget->hover;
+    int offset = pressed ? 1 : 0;
+    int dropdown = (widget->flags & SXGUI_FLAG_DROPDOWN) != 0;
+    int icon_x = rect.x + (rect.width - SXGUI_TOOLBAR_ICON_SIZE) / 2 - (dropdown ? 4 : 0) + offset;
+    int icon_y = rect.y + 1 + SXGUI_TOOLBAR_PAD + offset;
+
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+    if (pressed)
+    {
+        sxgui_draw_thin_edge(painter, rect, SXGUI_COLOR_SHADOW, SXGUI_COLOR_LIGHT);
+    }
+    else if (enabled && (widget->hover || widget->pressed))
+    {
+        sxgui_draw_thin_edge(painter, rect, SXGUI_COLOR_LIGHT, SXGUI_COLOR_SHADOW);
+    }
+    if (sx_painter_push_clip(painter, sxgui_inset(rect, 1)))
+    {
+        sxgui_draw_glyph(painter, widget->item_icons != 0 ? widget->item_icons[0] : 0, icon_x, icon_y, enabled);
+        if (dropdown)
+        {
+            /* A five-pixel arrow, centred on the glyph, right of it. */
+            int arrow_x = icon_x + SXGUI_TOOLBAR_ICON_SIZE + 3;
+            int arrow_y = icon_y + SXGUI_TOOLBAR_ICON_SIZE / 2 - 1;
+            int step;
+
+            for (step = 0; step < 3; ++step)
+            {
+                if (!enabled)
+                {
+                    sx_painter_hline(painter, arrow_x + step + 1, arrow_y + step + 1, 5 - step * 2, SXGUI_COLOR_LIGHT);
+                }
+                sx_painter_hline(painter, arrow_x + step, arrow_y + step, 5 - step * 2,
+                    enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_SHADOW);
+            }
+        }
+        if (widget->text != 0)
+        {
+            sxgui_draw_control_text(
+                painter,
+                rect.x + (rect.width - gfx_text_width(widget->text)) / 2 + offset,
+                icon_y + SXGUI_TOOLBAR_ICON_SIZE + 2,
+                widget->text,
+                enabled);
+        }
+        sx_painter_pop_clip(painter);
+    }
+}
+
 static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sx_rect rect = widget->rect;
@@ -532,6 +694,12 @@ static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_wi
     int text_y;
     int offset = pressed ? 1 : 0;
     int enabled = sxgui_widget_enabled(widget);
+
+    if ((widget->flags & SXGUI_FLAG_TOOLBAR) != 0)
+    {
+        sxgui_paint_toolbar_button(painter, widget);
+        return;
+    }
 
     sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
     if (pressed)
@@ -3786,6 +3954,9 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     if (left_now && !left_before)
     {
         int focus_target = -1;
+        /* A toolbar button acts on what has the focus (the list it
+         * deletes from, say), so pressing one must not take it away. */
+        int keep_focus = 0;
         for (index = 0; index < ctx->widget_count; ++index)
         {
             struct sxgui_widget *widget = &ctx->widgets[index];
@@ -3797,6 +3968,10 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             if (sxgui_focusable(widget))
             {
                 focus_target = index;
+            }
+            if (widget->kind == SXGUI_BUTTON && (widget->flags & SXGUI_FLAG_TOOLBAR) != 0)
+            {
+                keep_focus = 1;
             }
             switch (widget->kind)
             {
@@ -3996,7 +4171,10 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 break;
             }
         }
-        sxgui_set_focus(ctx, focus_target);
+        if (!keep_focus)
+        {
+            sxgui_set_focus(ctx, focus_target);
+        }
         changed = 1;
     }
     else if (!left_now && left_before)
@@ -5021,6 +5199,23 @@ struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*o
     struct sxgui_widget widget = sxgui_make(SXGUI_BUTTON, rect, text);
     widget.on_action = on_action;
     widget.user = user;
+    return widget;
+}
+
+struct sxgui_widget sxgui_toolbar_button(
+    struct sx_rect rect, const char *text, const struct sx_bitmap *const *icons,
+    void (*on_action)(struct sxgui_widget *, void *), void *user)
+{
+    struct sxgui_widget widget = sxgui_button(rect, text, on_action, user);
+    widget.flags |= SXGUI_FLAG_TOOLBAR;
+    widget.item_icons = icons;
+    return widget;
+}
+
+struct sxgui_widget sxgui_separator(struct sx_rect rect)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_LABEL, rect, 0);
+    widget.flags |= SXGUI_FLAG_SEPARATOR;
     return widget;
 }
 

@@ -13,6 +13,9 @@ joins the set instead of standing out from it.
   Celeste ports (`ports/*/overlay/icon*.png`).
 - The media player's folder and speaker glyphs, which the taskbar tray also
   uses for the volume icon.
+- Files' 20x20 toolbar glyphs (`subsystems/posix/userland/filesapp_toolbar/`),
+  which must also read by their silhouette alone, since a disabled button
+  draws only that (see [`FILES.md`](FILES.md#toolbar-widgets)).
 
 Not covered: `assets/desktop/icons/mime/`, the file-type catalog, which is
 Tango art (see

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Files: Explorer toolbar and address bar**: Back, Forward, Up, Delete, Properties and Views,
+  an editable address bar, a Go menu and a Properties dialog (Alt+Left/Right, Alt+Enter). SXGUI
+  gains `sxgui_toolbar_button` (`SXGUI_FLAG_TOOLBAR`, `SXGUI_FLAG_DROPDOWN`) and `sxgui_separator`.
+
 - **Files: Large Icons view**, now the default, next to Details (View menu, remembered in
   `filesapp.cfg`), without the ".." entry. Folders open with nothing selected and a click on
   the background clears the selection. SXGUI gains the `SXGUI_ICONVIEW` widget (`sxgui_iconview`,
