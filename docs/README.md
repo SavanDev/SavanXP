@@ -116,6 +116,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   selftest plus visual scenario.
 - [`WEBVIEWER.md`](desktop/WEBVIEWER.md) — Web Viewer, the in-tree browser prototype:
   its rendering contract, the CSS subset, and what each milestone leaves out.
+  Frozen: NetSurf replaces it (see `ports/NETSURF_ROADMAP.md`).
 
 ## Media — `media/`
 
@@ -152,6 +153,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`XASH3D_ROADMAP.md`](ports/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
   engine needs from the platform, and the order that makes it pay for `dlopen` and
   SxGL without pulling in threads or SDL.
+- [`NETSURF_ROADMAP.md`](ports/NETSURF_ROADMAP.md) — porting NetSurf: the license
+  (GPL-2.0-only core, MIT libraries) and what it allows, what the browser needs
+  from the platform, and the steps that end with Web Viewer removed.
 
 ## Third-party code — `third-party/`
 
