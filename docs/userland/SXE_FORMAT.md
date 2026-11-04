@@ -597,8 +597,11 @@ capability**, the registry **resolves the association**.
 The registry stopped being **required** for a program to be visible.
 `progman_registry_scan_programs()` walks `/bin`, reads each
 executable's `.sxmeta`, and lists every one that declares `SXE_TAG_CATEGORY`.
-The category is the group name; the rest of the presentation is filled in by
-`progman_registry_apply_sxe()`, the same way as for any other item.
+The category is the group name; the rest of the presentation (name,
+description, flags, `.sxicon`) comes from the same open file, with
+`struct sxe_file`, and the item is marked `PROGMAN_SXE_DONE` so
+`progman_registry_apply_sxe()` does not open it again. Each binary is opened
+once per build of the catalog.
 
 **Installing is copying the binary. Uninstalling is deleting it.** Nothing on
 the host writes an entry anywhere, so there is no second copy of the truth that
@@ -659,7 +662,30 @@ order, not one that helps anybody find a name in a list.
 
 The cost is the same one measured for the association scan, and for the same
 reason — it opens every installed executable. `progman-smoke` reports it as
-`examined=` so the magnitude stays visible: **145 files** on the current image.
+`examined=` so the magnitude stays visible (107 files on the current image), and
+prints `catalog build=` and `signature=` in milliseconds.
+
+**Reading a section is three reads plus its data.** SxFS caches no reads (see
+[`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md#7-nothing-caches-reads)), so every
+`read` is a device request. `sxe_file_open()` reads the ELF header, the whole
+section header table and the whole `.shstrtab` once each, and finding a section
+after that happens in memory. Walking the headers one 64-byte read at a time,
+as the reader first did, cost about 40 requests per section and made a catalog
+build take 541 ms; it now takes about 130 ms. Tables larger than the cache in
+`struct sxe_file` (48 headers, 512 bytes of names) still work, one read at a
+time.
+
+**The Start menu does not rebuild on every click.** The desktop keeps the
+catalog and compares `progman_registry_disk_signature()` — the `.ini`, every
+`/bin` entry's name, size and mtime, and the paths the catalog points at — with
+the value taken after the last build. The signature reads only metadata (~14
+ms). What it cannot see: a binary rewritten in place within the same second at
+the same size, and an `.ini` item pointing outside `/bin` at a path that did not
+exist at the last build and has appeared since (it was pruned, so the signature
+no longer names it; restarting the session picks it up). The first is an SxFS
+limit, recorded in
+[`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md#8-a-directorys-mtime-does-not-move-and-an-mtime-is-whole-seconds).
+`progman` itself still rebuilds on `F5`.
 
 ### Uninstalling: the other half of the same idea
 

@@ -110,6 +110,12 @@ Cut-off notes:
 
 ### Changed
 
+- **The Start menu opens without the one-second wait**: it keeps the catalog and rebuilds it only
+  when `progman_registry_disk_signature()` changes, and a rebuild opens each binary once. The SDK
+  gains `struct sxe_file` (`sxe_file_open`, `sxe_file_read_section`, `sxe_file_load_meta`,
+  `sxe_file_load_icons`), which reads the ELF's section table in one go. See
+  `docs/userland/SXE_FORMAT.md`.
+
 - **Clicking the desktop gives it the keyboard**: `windowd` has a desktop focus state, so the icons
   get arrows, Enter, Delete and F2. A right press activates the window it lands on and closes
   popups, as a left press does.

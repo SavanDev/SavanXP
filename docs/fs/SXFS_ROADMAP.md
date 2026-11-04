@@ -220,6 +220,55 @@ BSS for the three copies, double the journal payload, and the ATA chunking is
 already there) or a two-level bitmap, whose cost is real indirection in the
 allocator. The second is more work and buys a ceiling nothing needs yet.
 
+## 7. Nothing caches reads
+
+`block.cpp` caches writes (`block::write_cached`) and nothing caches reads:
+every `read_file` becomes a device request, however small. A 64-byte read of an
+ELF section header costs the same round trip as a full sector, and reading the
+same sector twice pays twice. Under QEMU each request is a VM exit.
+
+This is what made the Start menu take a second to open: building
+progman's catalog read every binary in `/bin` through `sxe_read_section`, which
+walked the section headers one 64-byte read at a time — about 7,700 requests,
+541 ms in `progman-smoke`. It was fixed above the filesystem (`struct sxe_file`
+reads the header table and `.shstrtab` once; the Start menu keeps its catalog
+until `progman_registry_disk_signature()` changes), but every other reader of
+small records — `file_assoc`, `appwiz`, the loader walking a library's headers —
+still pays the full price.
+
+**Reachable in v2:** a sector cache in the block layer, below SxFS, needs no
+format change. The design questions are the size (a fixed pool in BSS, like the
+rest of the kernel), eviction (LRU over a small hash), and coherence with the
+write path: `write_cached` and the journal's ordered writes must update or
+invalidate the cached sectors, or a read after a write returns the old bytes.
+Metadata already lives in memory (the inode table, the bitmaps, the `FileRecord`
+cache), so this is only for file data and directory blocks.
+
+## 8. A directory's mtime does not move, and an mtime is whole seconds
+
+`inode.mtime` is set when an inode is created and when its own contents are
+written or truncated. **Creating, deleting or renaming an entry does not touch
+the parent directory's mtime**, unlike POSIX. So "did anything in `/bin`
+change?" cannot be answered by one `stat` of `/bin`: a caller has to list the
+directory and stat every entry, which is what
+`progman_registry_disk_signature()` does. It is cheap — no device reads, ~14 ms
+for `/bin` — but it is a workaround for a missing guarantee.
+
+And the field is whole seconds, so a file rewritten in place within the same
+second at the same size is indistinguishable from the old one by metadata. The
+Start menu's cache accepts that edge.
+
+**Reachable in v2:** both.
+
+- Bumping the parent's `mtime` belongs in `add_directory_entry` and
+  `remove_directory_entry` (a rename does both), inside the same metadata
+  commit, so it costs no extra journal transaction.
+- Sub-second resolution fits in `reserved1`, the 4 spare bytes right before
+  `mtime`, as nanoseconds. It needs a feature bit in the superblock so a reader
+  knows the field is meaningful, the same way `SXFS_FEATURE_OWNERSHIP` made
+  uid/gid/mode trustworthy without a v3. `struct savanxp_stat_ex` would gain an
+  `st_mtime_nsec` at its end.
+
 ## What is deliberately not broken
 
 - **The kernel validates one direction at mount.** Every per-inode check runs as

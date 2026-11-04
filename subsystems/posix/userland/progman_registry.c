@@ -38,9 +38,10 @@ static int g_source = PROGMAN_REGISTRY_SOURCE_DEFAULTS;
  * alternative -- rereading the .sxicon when painting -- would put disk I/O
  * inside the repaint loop, which is exactly where it must not go.
  *
- * They are filled once, in progman_registry_apply_sxe(), AFTER pruning:
- * pruning moves items between indices and would leave the slots pointing at
- * the wrong item.
+ * They are filled when a binary's resources are read: by the scan for the
+ * items it adds, by progman_registry_apply_sxe() for the rest. A slot is not
+ * tied to an item's index -- each item holds the first one free when it got
+ * its icon -- so pruning and sorting can move items freely.
  */
 #define PROGMAN_ICON_MAX_EXTENT 32u
 #define PROGMAN_ICON_SLOT_PIXELS (PROGMAN_ICON_MAX_EXTENT * PROGMAN_ICON_MAX_EXTENT)
@@ -677,91 +678,158 @@ static int adopt_icon(struct progman_item *item, int slot, const struct sxe_icon
     return 1;
 }
 
-static int apply_sxe_to_item(struct progman_item *item, int slot, void *meta_buffer, size_t meta_capacity, void *icon_buffer, size_t icon_capacity)
+/*
+ * Scratch for reading resources, shared by the scan and apply_sxe (they never
+ * run at the same time). Static and not on the stack: this libc runs with a
+ * bounded stack. The icon scratch is sized to the FORMAT's limit, not to what
+ * the manifests emit today: sizing it to "16 + 32 and done" would leave a
+ * binary that also carries 48x48 without an icon -- a silent downgrade, for a
+ * perfectly valid blob.
+ */
+_Alignas(4) static uint8_t g_meta_scratch[SXE_META_MAX_BYTES];
+_Alignas(4) static uint8_t g_icon_scratch[SXE_ICON_MAX_BYTES];
+
+/* First icon slot no item holds. There are as many slots as items, so one is
+ * always free for an item that has none. */
+static int take_icon_slot(void)
 {
-    struct sxe_meta meta;
-    struct sxe_icons icons;
-    /* Del tamano del campo mas grande que se copia desde el blob. */
+    int used[PROGMAN_MAX_ITEMS];
+    int index;
+
+    memset(used, 0, sizeof(used));
+    for (index = 0; index < g_item_count; ++index)
+    {
+        int slot = g_items[index].icon_slot;
+
+        if (slot >= 0 && slot < PROGMAN_MAX_ITEMS)
+        {
+            used[slot] = 1;
+        }
+    }
+    for (index = 0; index < PROGMAN_MAX_ITEMS; ++index)
+    {
+        if (!used[index])
+        {
+            return index;
+        }
+    }
+    return PROGMAN_ICON_SLOT_NONE;
+}
+
+/* The .sxmeta fields the .ini did not override. Returns 1 if any was taken. */
+static int apply_meta_to_item(struct progman_item *item, const struct sxe_meta *meta)
+{
+    /* The size of the largest field copied out of the blob. */
     char text[PROGMAN_DESC_CAPACITY];
     uint32_t value = 0;
     int touched = 0;
 
-    if (sxe_load_meta(item->path, meta_buffer, meta_capacity, &meta) == SXE_OK)
+    /*
+     * Into the temporary buffer and not straight into the field:
+     * sxe_meta_string empties the destination BEFORE looking for the tag, so
+     * writing into item->name would erase the default when the binary
+     * declares no name.
+     */
+    if ((item->overrides & PROGMAN_OVERRIDE_NAME) == 0 &&
+        sxe_meta_string(meta, SXE_TAG_NAME, text, sizeof(text)) > 0u)
     {
-        /*
-         * Al buffer temporal y no directo al campo: sxe_meta_string vacia el
-         * destino ANTES de buscar el tag, asi que escribir en item->name
-         * borraria el default cuando el binario no declara nombre.
-         */
-        if ((item->overrides & PROGMAN_OVERRIDE_NAME) == 0 &&
-            sxe_meta_string(&meta, SXE_TAG_NAME, text, sizeof(text)) > 0u)
+        copy_field(item->name, sizeof(item->name), text);
+        touched = 1;
+    }
+    if ((item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0 &&
+        sxe_meta_string(meta, SXE_TAG_DESCRIPTION, text, sizeof(text)) > 0u)
+    {
+        copy_field(item->description, sizeof(item->description), text);
+        touched = 1;
+    }
+    if ((item->overrides & PROGMAN_OVERRIDE_FLAGS) == 0 &&
+        sxe_meta_u32(meta, SXE_TAG_LAUNCH_FLAGS, &value))
+    {
+        item->launch_flags = value;
+        touched = 1;
+    }
+    return touched;
+}
+
+/* Takes the icon from the open `file` into a free slot. Returns 1 if it did. */
+static int apply_icon_from_file(struct progman_item *item, struct sxe_file *file)
+{
+    struct sxe_icons icons;
+    int slot;
+
+    if (sxe_file_load_icons(file, g_icon_scratch, sizeof(g_icon_scratch), &icons) != SXE_OK)
+    {
+        return 0;
+    }
+    slot = take_icon_slot();
+    return slot != PROGMAN_ICON_SLOT_NONE && adopt_icon(item, slot, &icons);
+}
+
+static int apply_sxe_to_item(struct progman_item *item)
+{
+    struct sxe_file file;
+    struct sxe_meta meta;
+    int own_file = sxe_file_open(&file, item->path) == SXE_OK;
+    int touched = 0;
+
+    if (own_file && sxe_file_load_meta(&file, g_meta_scratch, sizeof(g_meta_scratch), &meta) == SXE_OK)
+    {
+        touched |= apply_meta_to_item(item, &meta);
+    }
+
+    /*
+     * Without an override the icon comes from the binary itself, read from
+     * the file already open. With an override there is only something to
+     * read if icon= resolved to a path (its own or borrowed from another
+     * program) -- a name without an alias leaves icon_borrow_path empty on
+     * purpose, and then there is nothing to try: the item keeps the generic
+     * icon_id.
+     */
+    if ((item->overrides & PROGMAN_OVERRIDE_ICON) == 0)
+    {
+        if (own_file)
         {
-            copy_field(item->name, sizeof(item->name), text);
-            touched = 1;
+            touched |= apply_icon_from_file(item, &file);
         }
-        if ((item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0 &&
-            sxe_meta_string(&meta, SXE_TAG_DESCRIPTION, text, sizeof(text)) > 0u)
+    }
+    else if (item->icon_borrow_path[0] != '\0')
+    {
+        struct sxe_file borrowed;
+
+        if (sxe_file_open(&borrowed, item->icon_borrow_path) == SXE_OK)
         {
-            copy_field(item->description, sizeof(item->description), text);
-            touched = 1;
-        }
-        if ((item->overrides & PROGMAN_OVERRIDE_FLAGS) == 0 &&
-            sxe_meta_u32(&meta, SXE_TAG_LAUNCH_FLAGS, &value))
-        {
-            item->launch_flags = value;
-            touched = 1;
+            touched |= apply_icon_from_file(item, &borrowed);
+            sxe_file_close(&borrowed);
         }
     }
 
-    {
-        /*
-         * Sin override: el icono sale del propio binario. Con override, solo
-         * hay algo que leer si icon= resolvio a un path (propio o prestado de
-         * otro programa) -- un nombre sin alias deja icon_borrow_path vacio a
-         * proposito, y ahi no hay nada que intentar: el item se queda con el
-         * icon_id generico.
-         */
-        const char *icon_source_path = (item->overrides & PROGMAN_OVERRIDE_ICON) == 0
-            ? item->path
-            : (item->icon_borrow_path[0] != '\0' ? item->icon_borrow_path : 0);
-
-        if (icon_source_path != 0 &&
-            sxe_load_icons(icon_source_path, icon_buffer, icon_capacity, &icons) == SXE_OK &&
-            adopt_icon(item, slot, &icons))
-        {
-            touched = 1;
-        }
-    }
-
+    sxe_file_close(&file);
     return touched;
 }
 
 int progman_registry_apply_sxe(void)
 {
-    /*
-     * Estaticos y no en el stack: son 12 KiB de scratch y esta libc corre con
-     * un stack acotado. Es el mismo criterio que el buffer de parseo de
-     * progman_registry_parse().
-     */
-    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
-    /*
-     * El scratch de iconos va al TOPE DEL FORMATO y no al tamano que hoy
-     * emiten los manifiestos. Ajustarlo a "16 + 32 y listo" haria que un
-     * binario que ademas trae 48x48 se pase de capacidad y se quede sin icono
-     * -- degradado silencioso, y por un blob perfectamente valido. Son 64 KiB
-     * de scratch compartido por todos los items, una sola vez.
-     */
-    _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
     int index;
     int touched = 0;
 
+    /* Release the slots of the items about to be read again first, so they
+     * can be reused; the ones the scan resolved keep theirs. */
     for (index = 0; index < g_item_count; ++index)
     {
-        g_items[index].icon_slot = PROGMAN_ICON_SLOT_NONE;
+        if (g_items[index].sxe_state == PROGMAN_SXE_PENDING)
+        {
+            g_items[index].icon_slot = PROGMAN_ICON_SLOT_NONE;
+        }
     }
     for (index = 0; index < g_item_count; ++index)
     {
-        if (apply_sxe_to_item(&g_items[index], index, meta_buffer, sizeof(meta_buffer), icon_buffer, sizeof(icon_buffer)))
+        struct progman_item *item = &g_items[index];
+
+        if (item->sxe_state == PROGMAN_SXE_DONE_TOUCHED)
+        {
+            touched += 1;
+        }
+        else if (item->sxe_state == PROGMAN_SXE_PENDING && apply_sxe_to_item(item))
         {
             touched += 1;
         }
@@ -833,35 +901,37 @@ static int item_with_basename_exists(const char *basename)
 }
 
 /*
- * Da de alta un candidato si su .sxmeta declara categoria. Devuelve 1 si lo
- * agrego.
+ * Adds a candidate if its .sxmeta declares a category. Returns 1 if it did.
  *
- * The name is copied HERE, rather than leaving it all to apply_sxe, for one
- * reason: the final alphabetical order has to be the one the user sees
- * ("Command Prompt"), not the file's ("console"). The .sxmeta is already open
- * at this point, so it comes for free. The item still enters without
- * overrides, so apply_sxe resolves it again by the normal path afterwards.
+ * The binary is opened once: the .sxmeta that decides whether it enters is
+ * also what fills its presentation, and the .sxicon comes from the same open
+ * file. The item enters without overrides, so the result is exactly what
+ * apply_sxe would produce, and it is marked done so apply_sxe does not open
+ * it again. The name in particular has to be set here and not later: the
+ * final alphabetical order has to be the one the user sees ("Command
+ * Prompt"), not the file's ("console").
  */
-static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capacity)
+static int scan_candidate(const char *path)
 {
+    struct sxe_file file;
     struct sxe_meta meta;
     struct progman_item item;
+    struct progman_item *added = 0;
     char category[PROGMAN_NAME_CAPACITY];
-    char name[PROGMAN_NAME_CAPACITY];
     int group_index;
 
-    if (sxe_load_meta(path, meta_buffer, meta_capacity, &meta) != SXE_OK)
+    if (sxe_file_open(&file, path) != SXE_OK)
     {
         return 0;
     }
-    if (sxe_meta_string(&meta, SXE_TAG_CATEGORY, category, sizeof(category)) == 0u)
+    if (sxe_file_load_meta(&file, g_meta_scratch, sizeof(g_meta_scratch), &meta) != SXE_OK ||
+        sxe_meta_string(&meta, SXE_TAG_CATEGORY, category, sizeof(category)) == 0u ||
+        item_with_basename_exists(path_basename(path)))
     {
-        /* No pidio estar en el menu. Sigue siendo lanzable por shell, por
-         * filesapp y por cualquier item del .ini que lo apunte a mano. */
-        return 0;
-    }
-    if (item_with_basename_exists(path_basename(path)))
-    {
+        /* Without a category it did not ask to be in the menu. It is still
+         * launchable from the shell, from filesapp and from any .ini item
+         * that points at it by hand. */
+        sxe_file_close(&file);
         return 0;
     }
 
@@ -872,21 +942,18 @@ static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capac
     }
     if (group_index < 0)
     {
-        /* Sin lugar para un grupo mas. Se descarta el candidato en vez de
-         * meterlo en un grupo que no es el suyo. */
+        /* No room for one more group. The candidate is dropped rather than
+         * put in a group that is not its own. */
+        sxe_file_close(&file);
         return 0;
     }
 
     begin_item(&item, group_index);
     copy_field(item.path, sizeof(item.path), path);
-    if (sxe_meta_string(&meta, SXE_TAG_NAME, name, sizeof(name)) > 0u)
     {
-        copy_field(item.name, sizeof(item.name), name);
-    }
-    else
-    {
-        /* The program's name rather than its file name: without NAME, a SUN
-         * program listed as console.sxe is shown as console. */
+        /* The default when the binary declares no NAME: the program's name
+         * rather than its file name, so a SUN program listed as console.sxe
+         * is shown as console. */
         size_t length;
 
         copy_field(item.name, sizeof(item.name), path_basename(path));
@@ -896,10 +963,24 @@ static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capac
             item.name[length - 4u] = '\0';
         }
     }
-    return append_item(&item);
+    if (!append_item(&item))
+    {
+        sxe_file_close(&file);
+        return 0;
+    }
+
+    added = &g_items[g_item_count - 1];
+    {
+        int touched = apply_meta_to_item(added, &meta);
+
+        touched |= apply_icon_from_file(added, &file);
+        added->sxe_state = touched ? PROGMAN_SXE_DONE_TOUCHED : PROGMAN_SXE_DONE;
+    }
+    sxe_file_close(&file);
+    return 1;
 }
 
-static int scan_directory(const char *directory, progman_path_exists_fn exists, void *meta_buffer, size_t meta_capacity)
+static int scan_directory(const char *directory, progman_path_exists_fn exists)
 {
     char full_path[PROGMAN_PATH_CAPACITY];
     DIR *handle = opendir(directory);
@@ -930,7 +1011,7 @@ static int scan_directory(const char *directory, progman_path_exists_fn exists, 
             continue;
         }
         g_last_scan_examined += 1;
-        added += scan_candidate(full_path, meta_buffer, meta_capacity);
+        added += scan_candidate(full_path);
     }
     closedir(handle);
     return added;
@@ -1020,9 +1101,6 @@ static void sort_scanned_items(int first)
 
 int progman_registry_scan_programs(progman_path_exists_fn exists)
 {
-    /* Estatico y no en el stack: son 12 KiB reusados por cada binario del
-     * escaneo, igual que en file_assoc. */
-    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
     int first = g_item_count;
     int first_group = g_group_count;
     int added = 0;
@@ -1032,7 +1110,7 @@ int progman_registry_scan_programs(progman_path_exists_fn exists)
     {
         exists = default_path_exists;
     }
-    added += scan_directory(PROGMAN_SCAN_DIR, exists, meta_buffer, sizeof(meta_buffer));
+    added += scan_directory(PROGMAN_SCAN_DIR, exists);
     sort_scanned_groups(first_group);
     sort_scanned_items(first);
 
@@ -1043,6 +1121,88 @@ int progman_registry_scan_programs(progman_path_exists_fn exists)
         g_source = PROGMAN_REGISTRY_SOURCE_SCAN;
     }
     return added;
+}
+
+/* --- disk signature -------------------------------------------------------- */
+
+static uint32_t signature_mix(uint32_t hash, const void *data, size_t length)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    size_t index;
+
+    for (index = 0; index < length; ++index)
+    {
+        hash ^= bytes[index];
+        hash *= 16777619u; /* FNV-1a */
+    }
+    return hash;
+}
+
+/* A path's name, whether it exists, its size and its mtime. */
+static uint32_t signature_mix_path(uint32_t hash, const char *path)
+{
+    struct savanxp_stat_ex info;
+    uint8_t present;
+
+    hash = signature_mix(hash, path, strlen(path) + 1u);
+    memset(&info, 0, sizeof(info));
+    present = savanxp_stat_ex(path, &info) >= 0 ? 1u : 0u;
+    hash = signature_mix(hash, &present, sizeof(present));
+    if (present)
+    {
+        hash = signature_mix(hash, &info.st_size, sizeof(info.st_size));
+        hash = signature_mix(hash, &info.st_mtime, sizeof(info.st_mtime));
+    }
+    return hash;
+}
+
+uint32_t progman_registry_disk_signature(void)
+{
+    char path[PROGMAN_PATH_CAPACITY];
+    uint32_t hash = 2166136261u;
+    DIR *handle;
+    int index;
+
+    if (savanxp_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0)
+    {
+        hash = signature_mix_path(hash, path);
+    }
+
+    /* What the scan would find. */
+    handle = opendir(PROGMAN_SCAN_DIR);
+    if (handle != 0)
+    {
+        struct dirent *entry;
+
+        while ((entry = readdir(handle)) != 0)
+        {
+            int written;
+
+            if (entry->d_name[0] == '.')
+            {
+                continue;
+            }
+            written = snprintf(path, sizeof(path), "%s/%s", PROGMAN_SCAN_DIR, entry->d_name);
+            if (written < 0 || (size_t)written >= sizeof(path))
+            {
+                continue;
+            }
+            hash = signature_mix_path(hash, path);
+        }
+        closedir(handle);
+    }
+
+    /* What the current catalog points at outside the scanned directory:
+     * items the .ini placed elsewhere and borrowed icons. */
+    for (index = 0; index < g_item_count; ++index)
+    {
+        hash = signature_mix_path(hash, g_items[index].path);
+        if (g_items[index].icon_borrow_path[0] != '\0')
+        {
+            hash = signature_mix_path(hash, g_items[index].icon_borrow_path);
+        }
+    }
+    return hash;
 }
 
 int progman_registry_scan_examined(void)

@@ -6,8 +6,10 @@
 
 /*
  * The Start menu: a popup of the desktop, anchored at the bottom left above
- * the taskbar. It scans progman's catalog every time it opens, so it is always
- * fresh with no cache to invalidate. A flat list by group (header plus items
+ * the taskbar. It keeps progman's catalog between openings and rebuilds it only
+ * when progman_registry_disk_signature() says the disk under it changed:
+ * building it reads every binary in /bin, and doing that on each click is what
+ * made the menu take a second to appear. A flat list by group (header plus items
  * with icon and name), and Shut Down/Restart with a confirmation at the bottom;
  * no cascades and no keyboard -- mouse only. It closes when it launches a
  * program, when the Start button is clicked again, or on a press outside it
@@ -266,12 +268,22 @@ static int path_is_launchable(const char *path)
     return 1;
 }
 
-/* Mismo orden de etapas que progman.c:build_catalog (ver progman_registry.h).
- * Aca corre una sola vez por apertura, asi que no hay refresh. */
+/* The catalog the rows below describe, and the disk signature taken right
+ * after building it. */
+static int g_catalog_built = 0;
+static uint32_t g_catalog_signature = 0;
+
+/* The same stages, in the same order, as progman.c:build_catalog (see
+ * progman_registry.h). Rebuilds only when the disk changed since last time. */
 static void build_catalog(void)
 {
     int group;
     int item;
+
+    if (g_catalog_built && progman_registry_disk_signature() == g_catalog_signature)
+    {
+        return;
+    }
 
     (void)progman_registry_load_file();
     (void)progman_registry_prune_missing(path_is_launchable);
@@ -308,6 +320,8 @@ static void build_catalog(void)
             ++g_row_count;
         }
     }
+    g_catalog_signature = progman_registry_disk_signature();
+    g_catalog_built = 1;
 }
 
 static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop_embedded_bitmap *icon, int x, int y)

@@ -1118,6 +1118,8 @@ static int progman_selftest(void)
     int dropped;
     int applied;
     int index;
+    uint32_t signature_before = 0;
+    uint32_t signature_installed = 0;
     /* Los nombres de grupo de la tabla horneada, ANTES de que el escaneo la
      * rearme. Es la unica forma de que la comparacion de mas abajo signifique algo:
      * despues del escaneo los dos lados son la misma lista. */
@@ -1361,6 +1363,8 @@ static int progman_selftest(void)
      *
      * The number is printed because without it this was a smoke that "did not
      * finish" and nobody could say where. */
+    build_catalog();
+    signature_before = progman_registry_disk_signature();
     {
         unsigned long t0 = uptime_ms();
         if (copy_file("/bin/notepad", PROGMAN_FIXTURE_APP) != 0)
@@ -1369,6 +1373,14 @@ static int progman_selftest(void)
             return 1;
         }
         printf("PROGMAN SMOKE fixture copiada en %lu ms\n", uptime_ms() - t0);
+    }
+    /* The Start menu keeps its catalog until this changes: an install it
+     * cannot see is a program missing from the menu until reboot. */
+    if (progman_registry_disk_signature() == signature_before)
+    {
+        printf("PROGMAN SMOKE FAIL the disk signature did not see the install\n");
+        (void)unlink(PROGMAN_FIXTURE_APP);
+        return 1;
     }
     build_catalog();
     if (!catalog_has_path(PROGMAN_FIXTURE_APP))
@@ -1382,6 +1394,8 @@ static int progman_selftest(void)
          * acumulara en vez de rearmar, cada F5 duplicaria la grilla entera. */
         int items = progman_item_count();
         int groups = progman_group_count();
+
+        signature_installed = progman_registry_disk_signature();
 
         build_catalog();
         if (progman_item_count() != items || progman_group_count() != groups)
@@ -1397,6 +1411,11 @@ static int progman_selftest(void)
         printf("PROGMAN SMOKE FAIL no se pudo desinstalar la fixture\n");
         return 1;
     }
+    if (progman_registry_disk_signature() == signature_installed)
+    {
+        printf("PROGMAN SMOKE FAIL the disk signature did not see the uninstall\n");
+        return 1;
+    }
     build_catalog();
     if (catalog_has_path(PROGMAN_FIXTURE_APP))
     {
@@ -1404,6 +1423,25 @@ static int progman_selftest(void)
         return 1;
     }
     printf("PROGMAN SMOKE refresh ok items=%d\n", progman_item_count());
+
+    /* What opening the Start menu costs: a full build when the disk changed,
+     * only the signature when it did not. Printed so a regression shows up as
+     * a number and not as "the menu feels slow". */
+    {
+        unsigned long t0 = uptime_ms();
+        unsigned long t1;
+        uint32_t first;
+
+        build_catalog();
+        t1 = uptime_ms();
+        first = progman_registry_disk_signature();
+        printf("PROGMAN SMOKE catalog build=%lu ms signature=%lu ms\n", t1 - t0, uptime_ms() - t1);
+        if (progman_registry_disk_signature() != first)
+        {
+            printf("PROGMAN SMOKE FAIL the disk signature changed with nothing written\n");
+            return 1;
+        }
+    }
 
     printf("PROGMAN SMOKE PASS groups=%d items=%d\n",
         progman_group_count(),

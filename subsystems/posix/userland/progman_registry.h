@@ -94,6 +94,17 @@ enum progman_registry_source
 #define PROGMAN_OVERRIDE_ICON 0x00000004u
 #define PROGMAN_OVERRIDE_FLAGS 0x00000008u
 
+/*
+ * sxe_state of an item. The scan reads every candidate's .sxmeta anyway, so
+ * for the items it adds it also takes the .sxicon from the same open file and
+ * marks them DONE; progman_registry_apply_sxe() then leaves them alone instead
+ * of opening the binary a second time. TOUCHED records that the binary gave
+ * the item something, which apply_sxe still counts.
+ */
+#define PROGMAN_SXE_PENDING 0
+#define PROGMAN_SXE_DONE 1
+#define PROGMAN_SXE_DONE_TOUCHED 2
+
 /* icon_slot cuando el binario no trajo icono propio: se usa icon_id. */
 #define PROGMAN_ICON_SLOT_NONE (-1)
 
@@ -112,6 +123,7 @@ struct progman_item
     uint32_t overrides;    /* PROGMAN_OVERRIDE_* */
     int icon_slot;         /* indice en el pool de iconos .sxicon, o NONE */
     int group_index;
+    int sxe_state;         /* PROGMAN_SXE_*: whether its resources were already read */
 };
 
 struct progman_group
@@ -161,16 +173,17 @@ typedef int (*progman_path_exists_fn)(const char *path);
 int progman_registry_prune_missing(progman_path_exists_fn exists);
 
 /*
- * Rellena los items con lo que declara el .sxmeta/.sxicon de su binario, sin
- * pisar lo que el .ini haya declarado explicitamente. Devuelve cuantos items
- * tomaron algo del ejecutable.
+ * Fills in the items with what their binary's .sxmeta/.sxicon declares,
+ * without overwriting what the .ini declared explicitly. Each binary is
+ * opened once for both sections. Items the scan already resolved
+ * (PROGMAN_SXE_DONE) are not read again. Returns how many items took
+ * something from their executable, those included.
  *
- * Va DESPUES de progman_registry_prune_missing(): no tiene sentido abrir el
- * binario de un item que se va a descartar, y el pruning reordena los items,
- * lo que invalidaria los slots de icono ya asignados.
+ * It goes AFTER progman_registry_prune_missing(): there is no point opening
+ * the binary of an item about to be dropped.
  *
- * Que un binario no tenga recursos, no abra, o traiga un blob invalido no es
- * un error: ese item simplemente se queda con sus valores previos.
+ * A binary without resources, one that does not open, or one with an invalid
+ * blob is not an error: that item simply keeps its previous values.
  */
 int progman_registry_apply_sxe(void);
 
@@ -198,8 +211,9 @@ int progman_registry_apply_sxe(void);
  *   - It overrides NOTHING already in the registry: if an existing item
  *     already points at a binary with the same BASENAME, the candidate is
  *     skipped. So the user's .ini always wins.
- *   - The items it adds carry no overrides, so apply_sxe fills in their
- *     presentation from the binary itself.
+ *   - The items it adds carry no overrides, so their presentation comes
+ *     from the binary itself. The scan fills it in right away, from the file
+ *     it already has open, and marks them PROGMAN_SXE_DONE.
  *   - It runs AFTER progman_registry_prune_missing() and BEFORE
  *     progman_registry_apply_sxe(): pruning reorders items, and apply_sxe
  *     assigns icon slots against the final indices.
@@ -211,6 +225,20 @@ int progman_registry_apply_sxe(void);
  * its own.
  */
 int progman_registry_scan_programs(progman_path_exists_fn exists);
+
+/*
+ * A hash of everything on disk the catalog is built from: the .ini, the name,
+ * size and mtime of every entry in PROGMAN_SCAN_DIR, and the paths the current
+ * catalog points at (items and borrowed icons). It reads only metadata, never
+ * a file's contents, so it costs a directory listing plus one stat per entry
+ * and no device reads. A caller that keeps the catalog between uses (the
+ * Start menu) compares it with the value taken right after building, and
+ * rebuilds only when it differs.
+ *
+ * It cannot see a binary rewritten in place within the same second with the
+ * same size: SxFS mtimes are whole seconds. See docs/fs/SXFS_ROADMAP.md.
+ */
+uint32_t progman_registry_disk_signature(void);
 
 /* Cuantos ejecutables abrio el ultimo escaneo. Lo reporta el smoke: es la
  * magnitud a mirar antes de decidir si hace falta una cache. */

@@ -584,8 +584,8 @@ const uint32_t* sxe_icons_pixels(const struct sxe_icons* icons, const struct sxe
 /* Acota el recorrido de la tabla de secciones. Un binario de userland de este
  * sistema tiene decenas, no cientos. */
 #define SXE_ELF_MAX_SECTIONS 256u
-/* Solo hace falta para comparar ".sxmeta"/".sxicon": no se carga .shstrtab
- * entero, se lee de a un nombre. */
+/* Longest section name the fallback compares when .shstrtab did not fit in
+ * the cache of struct sxe_file and is read one name at a time. */
 #define SXE_SECTION_NAME_CAPACITY 32u
 
 /* Offsets dentro del ELF64 header. */
@@ -600,6 +600,8 @@ const uint32_t* sxe_icons_pixels(const struct sxe_icons* icons, const struct sxe
 #define SXE_SHDR_OFF_NAME 0u
 #define SXE_SHDR_OFF_OFFSET 24u
 #define SXE_SHDR_OFF_SIZE 32u
+
+_Static_assert(SXE_ELF_SHDR_BYTES == 64u, "struct sxe_file sizes its header cache at 64 bytes per header");
 
 static int sxe_read_exact(int fd, void* buffer, size_t count)
 {
@@ -632,11 +634,14 @@ static int sxe_read_at(int fd, uint64_t offset, void* buffer, size_t count)
     return sxe_read_exact(fd, buffer, count);
 }
 
-/* Compara el nombre de la seccion `name_offset` de .shstrtab contra `name`,
- * sin cargar la tabla de strings entera. */
-static int sxe_section_name_matches(int fd, uint64_t strtab_offset, uint64_t strtab_size, uint32_t name_offset, const char* name)
+/* Compares the name at `name_offset` in .shstrtab against `name`. The NUL
+ * after it has to match too: without that ".sxmetaX" would pass as
+ * ".sxmeta". Reads from the cached name table when it fit, from the disk one
+ * name at a time otherwise. */
+static int sxe_section_name_matches(const struct sxe_file* file, uint32_t name_offset, const char* name)
 {
     char buffer[SXE_SECTION_NAME_CAPACITY];
+    const char* candidate = buffer;
     size_t name_length = strlen(name);
     size_t needed = name_length + 1u;
 
@@ -644,37 +649,61 @@ static int sxe_section_name_matches(int fd, uint64_t strtab_offset, uint64_t str
     {
         return 0;
     }
-    if (name_offset >= strtab_size || strtab_size - name_offset < needed)
+    if (name_offset >= file->strtab_size || file->strtab_size - name_offset < needed)
     {
         return 0;
     }
-    if (!sxe_read_at(fd, strtab_offset + name_offset, buffer, needed))
+    if (file->strtab_cached)
+    {
+        candidate = file->strtab + name_offset;
+    }
+    else if (!sxe_read_at(file->fd, file->strtab_offset + name_offset, buffer, needed))
     {
         return 0;
     }
-    /* El byte de mas tiene que ser el terminador: sin esto ".sxmetaX" pasaria
-     * como ".sxmeta". */
-    return sxe_bytes_equal(buffer, name, name_length) && buffer[name_length] == '\0';
+    return sxe_bytes_equal(candidate, name, name_length) && candidate[name_length] == '\0';
 }
 
-int sxe_read_section(const char* path, const char* section, void* buffer, size_t capacity, size_t* out_length)
+/* Section header `index`: from the cached table when it fit, read into
+ * `scratch` otherwise. 0 if it cannot be read. */
+static const uint8_t* sxe_file_shdr(const struct sxe_file* file, uint32_t index, uint8_t* scratch)
+{
+    if (file->shdrs_cached)
+    {
+        return file->shdrs + ((size_t)index * SXE_ELF_SHDR_BYTES);
+    }
+    if (!sxe_read_at(file->fd, file->section_header_offset + ((uint64_t)index * SXE_ELF_SHDR_BYTES), scratch, SXE_ELF_SHDR_BYTES))
+    {
+        return 0;
+    }
+    return scratch;
+}
+
+void sxe_file_close(struct sxe_file* file)
+{
+    if (file != 0 && file->fd >= 0)
+    {
+        (void)savanxp_close(file->fd);
+        file->fd = -1;
+    }
+}
+
+int sxe_file_open(struct sxe_file* file, const char* path)
 {
     uint8_t header[SXE_ELF_HEADER_BYTES];
-    uint8_t shdr[SXE_ELF_SHDR_BYTES];
-    long fd = -1;
-    uint64_t section_header_offset = 0;
-    uint64_t strtab_offset = 0;
-    uint64_t strtab_size = 0;
-    uint32_t section_count = 0;
+    uint8_t scratch[SXE_ELF_SHDR_BYTES];
+    const uint8_t* shdr = 0;
     uint32_t name_index = 0;
-    uint32_t index = 0;
-    int result = SXE_ABSENT;
+    long fd = -1;
 
-    if (out_length != 0)
+    if (file == 0)
     {
-        *out_length = 0;
+        return SXE_ABSENT;
     }
-    if (path == 0 || section == 0 || buffer == 0 || capacity == 0)
+    file->fd = -1;
+    file->shdrs_cached = 0;
+    file->strtab_cached = 0;
+    if (path == 0)
     {
         return SXE_ABSENT;
     }
@@ -684,56 +713,86 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
     {
         return SXE_ABSENT;
     }
+    file->fd = (int)fd;
 
-    if (!sxe_read_exact((int)fd, header, sizeof(header)))
+    if (!sxe_read_exact(file->fd, header, sizeof(header)))
     {
-        (void)savanxp_close((int)fd);
+        sxe_file_close(file);
         return SXE_ABSENT;
     }
-    /* Un archivo que no es ELF64 little-endian no tiene secciones que buscar:
-     * para el llamador es exactamente lo mismo que no tener recursos. */
+    /* A file that is not a little-endian ELF64 has no sections to look for:
+     * for the caller that is exactly the same as having no resources. */
     if (header[0] != 0x7fu || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' ||
         header[SXE_ELF_OFF_CLASS] != 2u || header[SXE_ELF_OFF_DATA] != 1u)
     {
-        (void)savanxp_close((int)fd);
+        sxe_file_close(file);
         return SXE_ABSENT;
     }
 
-    section_header_offset = sxe_load_u64(header + SXE_ELF_OFF_SHOFF);
-    section_count = sxe_load_u16(header + SXE_ELF_OFF_SHNUM);
+    file->section_header_offset = sxe_load_u64(header + SXE_ELF_OFF_SHOFF);
+    file->section_count = sxe_load_u16(header + SXE_ELF_OFF_SHNUM);
     name_index = sxe_load_u16(header + SXE_ELF_OFF_SHSTRNDX);
 
-    if (section_header_offset == 0u || section_count == 0u || section_count > SXE_ELF_MAX_SECTIONS ||
-        sxe_load_u16(header + SXE_ELF_OFF_SHENTSIZE) != SXE_ELF_SHDR_BYTES || name_index >= section_count)
+    if (file->section_header_offset == 0u || file->section_count == 0u || file->section_count > SXE_ELF_MAX_SECTIONS ||
+        sxe_load_u16(header + SXE_ELF_OFF_SHENTSIZE) != SXE_ELF_SHDR_BYTES || name_index >= file->section_count)
     {
-        (void)savanxp_close((int)fd);
+        sxe_file_close(file);
         return SXE_ABSENT;
     }
 
-    if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)name_index * SXE_ELF_SHDR_BYTES), shdr, sizeof(shdr)))
+    if (file->section_count <= SXE_FILE_SHDR_CACHE &&
+        sxe_read_at(file->fd, file->section_header_offset, file->shdrs, (size_t)file->section_count * SXE_ELF_SHDR_BYTES))
     {
-        (void)savanxp_close((int)fd);
+        file->shdrs_cached = 1;
+    }
+
+    shdr = sxe_file_shdr(file, name_index, scratch);
+    if (shdr == 0)
+    {
+        sxe_file_close(file);
         return SXE_ABSENT;
     }
-    strtab_offset = sxe_load_u64(shdr + SXE_SHDR_OFF_OFFSET);
-    strtab_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
-    if (strtab_size == 0u)
+    file->strtab_offset = sxe_load_u64(shdr + SXE_SHDR_OFF_OFFSET);
+    file->strtab_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
+    if (file->strtab_size == 0u)
     {
-        (void)savanxp_close((int)fd);
+        sxe_file_close(file);
+        return SXE_ABSENT;
+    }
+    if (file->strtab_size <= SXE_FILE_STRTAB_CACHE &&
+        sxe_read_at(file->fd, file->strtab_offset, file->strtab, (size_t)file->strtab_size))
+    {
+        file->strtab_cached = 1;
+    }
+    return SXE_OK;
+}
+
+int sxe_file_read_section(struct sxe_file* file, const char* section, void* buffer, size_t capacity, size_t* out_length)
+{
+    uint8_t scratch[SXE_ELF_SHDR_BYTES];
+    uint32_t index = 0;
+
+    if (out_length != 0)
+    {
+        *out_length = 0;
+    }
+    if (file == 0 || file->fd < 0 || section == 0 || buffer == 0 || capacity == 0)
+    {
         return SXE_ABSENT;
     }
 
-    /* La seccion 0 es SHT_NULL por definicion: se saltea. */
-    for (index = 1u; index < section_count; ++index)
+    /* Section 0 is SHT_NULL by definition: skip it. */
+    for (index = 1u; index < file->section_count; ++index)
     {
+        const uint8_t* shdr = sxe_file_shdr(file, index, scratch);
         uint64_t data_offset = 0;
         uint64_t data_size = 0;
 
-        if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)index * SXE_ELF_SHDR_BYTES), shdr, sizeof(shdr)))
+        if (shdr == 0)
         {
-            break;
+            return SXE_ABSENT;
         }
-        if (!sxe_section_name_matches((int)fd, strtab_offset, strtab_size, sxe_load_u32(shdr + SXE_SHDR_OFF_NAME), section))
+        if (!sxe_section_name_matches(file, sxe_load_u32(shdr + SXE_SHDR_OFF_NAME), section))
         {
             continue;
         }
@@ -742,35 +801,51 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
         data_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
         if (data_size == 0u)
         {
-            result = SXE_ABSENT;
-            break;
+            return SXE_ABSENT;
         }
         if (data_size > capacity)
         {
-            result = SXE_TOO_LARGE;
-            break;
+            return SXE_TOO_LARGE;
         }
-        if (!sxe_read_at((int)fd, data_offset, buffer, (size_t)data_size))
+        if (!sxe_read_at(file->fd, data_offset, buffer, (size_t)data_size))
         {
-            result = SXE_TRUNCATED;
-            break;
+            return SXE_TRUNCATED;
         }
         if (out_length != 0)
         {
             *out_length = (size_t)data_size;
         }
-        result = SXE_OK;
-        break;
+        return SXE_OK;
     }
+    return SXE_ABSENT;
+}
 
-    (void)savanxp_close((int)fd);
+int sxe_read_section(const char* path, const char* section, void* buffer, size_t capacity, size_t* out_length)
+{
+    struct sxe_file file;
+    int result;
+
+    if (out_length != 0)
+    {
+        *out_length = 0;
+    }
+    if (path == 0 || section == 0 || buffer == 0 || capacity == 0)
+    {
+        return SXE_ABSENT;
+    }
+    if (sxe_file_open(&file, path) != SXE_OK)
+    {
+        return SXE_ABSENT;
+    }
+    result = sxe_file_read_section(&file, section, buffer, capacity, out_length);
+    sxe_file_close(&file);
     return result;
 }
 
-int sxe_load_meta(const char* path, void* buffer, size_t capacity, struct sxe_meta* out)
+int sxe_file_load_meta(struct sxe_file* file, void* buffer, size_t capacity, struct sxe_meta* out)
 {
     size_t length = 0;
-    int result = sxe_read_section(path, SXE_SECTION_META, buffer, capacity, &length);
+    int result = sxe_file_read_section(file, SXE_SECTION_META, buffer, capacity, &length);
 
     if (out != 0)
     {
@@ -783,10 +858,10 @@ int sxe_load_meta(const char* path, void* buffer, size_t capacity, struct sxe_me
     return sxe_meta_open(buffer, length, out);
 }
 
-int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_icons* out)
+int sxe_file_load_icons(struct sxe_file* file, void* buffer, size_t capacity, struct sxe_icons* out)
 {
     size_t length = 0;
-    int result = sxe_read_section(path, SXE_SECTION_ICON, buffer, capacity, &length);
+    int result = sxe_file_read_section(file, SXE_SECTION_ICON, buffer, capacity, &length);
 
     if (out != 0)
     {
@@ -797,6 +872,42 @@ int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_i
         return result;
     }
     return sxe_icons_open(buffer, length, out);
+}
+
+int sxe_load_meta(const char* path, void* buffer, size_t capacity, struct sxe_meta* out)
+{
+    struct sxe_file file;
+    int result;
+
+    if (out != 0)
+    {
+        memset(out, 0, sizeof(*out));
+    }
+    if (sxe_file_open(&file, path) != SXE_OK)
+    {
+        return SXE_ABSENT;
+    }
+    result = sxe_file_load_meta(&file, buffer, capacity, out);
+    sxe_file_close(&file);
+    return result;
+}
+
+int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_icons* out)
+{
+    struct sxe_file file;
+    int result;
+
+    if (out != 0)
+    {
+        memset(out, 0, sizeof(*out));
+    }
+    if (sxe_file_open(&file, path) != SXE_OK)
+    {
+        return SXE_ABSENT;
+    }
+    result = sxe_file_load_icons(&file, buffer, capacity, out);
+    sxe_file_close(&file);
+    return result;
 }
 
 int sxe_load_icon_file(const char* path, void* buffer, size_t capacity, struct sxe_icons* out)
@@ -1396,6 +1507,24 @@ static void selftest_disk(void)
     /* A file that is not ELF resolves as absent, not as an error. */
     expect(sxe_read_section("/wallpapers/Clouds.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "file that is not ELF");
+
+    /* One open, both sections: the path the Start menu catalog takes. */
+    {
+        _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
+        struct sxe_file file;
+        struct sxe_icons icons;
+
+        expect(sxe_file_open(&file, "/bin/notepad") == SXE_OK, "sxe_file opens a stamped binary");
+        expect(file.shdrs_cached && file.strtab_cached, "sxe_file caches the headers and names");
+        expect(sxe_file_load_meta(&file, buffer, sizeof(buffer), &meta) == SXE_OK, "sxe_file reads .sxmeta");
+        expect(sxe_file_load_icons(&file, icon_buffer, sizeof(icon_buffer), &icons) == SXE_OK, "sxe_file reads .sxicon");
+        expect(sxe_file_read_section(&file, ".tex", buffer, sizeof(buffer), &length) == SXE_ABSENT,
+            "sxe_file name prefix does not match");
+        sxe_file_close(&file);
+        expect(file.fd == -1, "sxe_file_close releases the descriptor");
+        expect(sxe_file_open(&file, "/bin/__no_instalado__") == SXE_ABSENT && file.fd == -1,
+            "sxe_file missing path leaves nothing open");
+    }
 }
 
 /*

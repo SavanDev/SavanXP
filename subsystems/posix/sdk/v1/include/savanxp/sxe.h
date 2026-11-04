@@ -168,17 +168,51 @@ const uint32_t* sxe_icons_pixels(const struct sxe_icons* icons, const struct sxe
 /* --- Capa de disco ------------------------------------------------------- */
 
 /*
- * Lee una seccion del ELF en `path` al buffer del llamador.
+ * Reads one section of the ELF at `path` into the caller's buffer. It is
+ * sxe_file_open + sxe_file_read_section + sxe_file_close in one call.
  *
- * Recorre la tabla de section headers y compara nombres contra .shstrtab. No
- * carga la tabla entera en memoria: lee un header por vez y solo el nombre que
- * necesita, para no tener que reservar buffers grandes.
- *
- * Devuelve SXE_ABSENT si el archivo no abre, no es un ELF64 valido, o no tiene
- * esa seccion -- los tres son el mismo caso para el llamador. SXE_TOO_LARGE si
- * la seccion no entra en `capacity`.
+ * Returns SXE_ABSENT if the file does not open, is not a valid ELF64, or has
+ * no such section -- the three are the same case for the caller.
+ * SXE_TOO_LARGE if the section does not fit in `capacity`.
  */
 int sxe_read_section(const char* path, const char* section, void* buffer, size_t capacity, size_t* out_length);
+
+/*
+ * An ELF opened once to read several sections from it, so a caller that wants
+ * both .sxmeta and .sxicon pays for one open and one walk of the headers.
+ *
+ * Opening reads the ELF header, the whole section header table and the whole
+ * .shstrtab in one read each, and keeps them here: finding a section is then
+ * a search in memory plus one read for its data. Every disk read is a real
+ * device request (SxFS has no read cache), so this is what keeps a scan of
+ * /bin cheap. A table or name table larger than the cache below is still
+ * read correctly, one header and one name at a time.
+ *
+ * About 3.6 KiB, fine on the stack. Not shared between threads.
+ */
+#define SXE_FILE_SHDR_CACHE 48u
+#define SXE_FILE_STRTAB_CACHE 512u
+
+struct sxe_file {
+    int fd;
+    uint32_t section_count;
+    uint64_t section_header_offset;
+    uint64_t strtab_offset;
+    uint64_t strtab_size;
+    int shdrs_cached;
+    int strtab_cached;
+    _Alignas(8) uint8_t shdrs[SXE_FILE_SHDR_CACHE * 64u];
+    char strtab[SXE_FILE_STRTAB_CACHE];
+};
+
+/* SXE_OK, or SXE_ABSENT if `path` does not open or is not an ELF64. On
+ * failure nothing stays open and sxe_file_close is harmless. */
+int sxe_file_open(struct sxe_file* file, const char* path);
+/* Same results as sxe_read_section, against an open file. */
+int sxe_file_read_section(struct sxe_file* file, const char* section, void* buffer, size_t capacity, size_t* out_length);
+int sxe_file_load_meta(struct sxe_file* file, void* buffer, size_t capacity, struct sxe_meta* out);
+int sxe_file_load_icons(struct sxe_file* file, void* buffer, size_t capacity, struct sxe_icons* out);
+void sxe_file_close(struct sxe_file* file);
 
 /* Conveniencia: leer + parsear en un paso. El buffer sigue siendo del
  * llamador y tiene que sobrevivir a la vista devuelta. */
