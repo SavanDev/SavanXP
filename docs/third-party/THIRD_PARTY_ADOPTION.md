@@ -12,6 +12,9 @@ Every adoption has to be recorded under one of these categories:
   inside SavanXP.
 - `Selective port`: small, self-contained code is copied, preserving its
   copyright and license notices.
+- `Adopt`: a whole library is vendored unmodified under `vendor/<name>/`, with
+  its license file and a pinned commit, and integrated through glue code of
+  our own (uACPI is the first case).
 - `Do not adopt`: the component is discarded because of tight coupling, an
   unclear license or maintenance cost.
 
@@ -106,6 +109,25 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
 Every piece that becomes a `Selective port` goes into the provenance registry
 with its original ISC header intact: those notices are a few lines long, and
 losing them is the easy mistake to make.
+
+## NetSurf
+
+NetSurf is split by license, and the decision follows the split. The plan is
+in [`WEBVIEWER_ROADMAP.md`](../desktop/WEBVIEWER_ROADMAP.md) and
+[`NETSURF_ROADMAP.md`](../ports/NETSURF_ROADMAP.md).
+
+`Adopt` (MIT, under `vendor/netsurf/`, for Web Viewer):
+
+- libparserutils, libwapcaplet, libhubbub, libdom and libcss; later libnsgif
+  and libnsbmp
+
+`Do not adopt` (GPL-2.0-only):
+
+- the core: the browser, its box construction, layout, redraw, the libcss
+  select handler and the default stylesheet. It is not `Reference` either:
+  Web Viewer's versions are written from the CSS and HTML specifications, and
+  NetSurf's behaviour is observed by running it, never by reading its source.
+  The core exists in the repository only as the `ports/netsurf` port.
 
 ## Traceability: the registry is the source of truth
 

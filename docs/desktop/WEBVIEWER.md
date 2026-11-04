@@ -1,8 +1,8 @@
 # Web Viewer: the rendering contract
 
-> **Frozen.** Web Viewer gets bug fixes only. The browser's future is the
-> NetSurf port, and once it matches what is described here, Web Viewer is
-> removed. See [NETSURF_ROADMAP.md](../ports/NETSURF_ROADMAP.md).
+> This contract changes phase by phase as Web Viewer moves onto NetSurf's MIT
+> libraries and grows its own layout engine. See
+> [WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md).
 
 `/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
 of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and
