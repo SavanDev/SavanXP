@@ -93,6 +93,7 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 - `app-mediaplayer.png`
 - `app-paint.png`
 - `app-webview.png`
+- `app-display.png`
 
 They are used for two different things, and it is worth not confusing them:
 

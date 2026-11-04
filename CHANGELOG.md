@@ -12,7 +12,7 @@ Cut-off notes:
 
 ### Added
 
-- **Display Properties** (`/bin/display`), opened from the desktop's Properties or Program Manager's
+- **Display Properties** (`/bin/display`, fixed size), opened from the desktop's Properties or Program Manager's
   Options: any BMP as wallpaper, Center/Tile/Stretch and a background colour, with a preview; a
   Settings tab shows the resolution (changing it is next). Wallpapers move to `/wallpapers` (six,
   from `tools/gen_wallpapers.py`); `desktop.cfg` becomes `wallpaper=`/`position=`/`color=` and the

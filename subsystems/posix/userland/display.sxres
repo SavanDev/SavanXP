@@ -4,5 +4,9 @@ description=Wallpaper, its position and colour, and the screen's resolution
 version=system
 vendor=SavanXP
 accent=3a68be
-icon=desktop
+icon=app-display
 category=System
+
+# Fixed size, as a property sheet is: a larger window adds only empty face.
+# The WM turns off Maximize and the resizing borders.
+window_flags=fixed_size
