@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Files: Large Icons view**, now the default, next to Details (View menu, remembered in
+  `filesapp.cfg`). SXGUI gains the `SXGUI_ICONVIEW` widget (`sxgui_iconview`,
+  `sxgui_iconview_item_rect`) and `mime_icon_large`. See `docs/desktop/FILES.md`.
+
 - **Display Properties** (`/bin/display`, fixed size), opened from the desktop's Properties or Program
   Manager's Options: any BMP as wallpaper, Center/Tile/Stretch and a colour (`desktop.cfg`, wallpapers in
   `/wallpapers` from `tools/gen_wallpapers.py`; replaces Change Wallpaper). The Settings tab changes the

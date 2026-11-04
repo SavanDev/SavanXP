@@ -37,21 +37,45 @@
 #define MIME_ICON_DIRECTORY "/icons"
 
 /*
- * Cache de bitmaps ya cargados.
+ * Caches of loaded bitmaps, one per size.
  *
- * PRESUPUESTO DE RAM, que es lo que fija estos numeros: la cache guarda solo
- * el tamano chico (16x16 = 1 KiB por icono), asi que MIME_ICON_CACHE_ENTRIES
- * iconos son 12 KiB de BSS residente. El scratch para parsear el blob entra
- * aparte y es uno solo, reusado: un .sxicon con los dos tamanos mide ~5 KiB.
+ * The RAM BUDGET is what sets these numbers. The small cache (16x16 = 1 KiB
+ * per icon) is MIME_ICON_CACHE_ENTRIES icons, 12 KiB of resident BSS; the
+ * large one (32x32 = 4 KiB per icon) is 48 KiB more. The large one lives in
+ * mime_icon_large.c, which only the programs that show large icons (Files)
+ * link: --gc-sections cannot drop it from the others, because a PIE program
+ * exports every global function (--export-dynamic) and so keeps it. The
+ * parse scratch counts apart and is one, reused: an .sxicon with both sizes
+ * measures ~5 KiB.
  *
- * Que la cache sea del tamano chico y no de los dos es deliberado: hoy el
- * unico consumidor es la lista de filesapp, que dibuja a 16. El blob igual
- * lleva los dos tamanos porque un .sxicon incompleto obligaria a escalar en
- * runtime; el que elige cual usar es el llamador.
+ * The blob carries both sizes because an incomplete .sxicon would force
+ * scaling at runtime; the caller picks which one it draws.
  */
 #define MIME_ICON_CACHE_ENTRIES 12
 #define MIME_ICON_SMALL_SIZE 16
+#define MIME_ICON_LARGE_SIZE 32
 #define MIME_ICON_SCRATCH_BYTES 8192
+
+/* One cached icon of one size. */
+struct mime_icon_cache_slot
+{
+    char name[MIME_ICON_NAME_CAPACITY];
+    /* 0 = it was tried and failed. A failure is cached like a success:
+     * without that, a missing icon is retried on every repaint of the list. */
+    int valid;
+    struct sx_bitmap bitmap;
+};
+
+/* A cache of icons of one size; the pixels are the owner's array of
+ * MIME_ICON_CACHE_ENTRIES * size * size, so each size's RAM is in the file
+ * that defines it. */
+struct mime_icon_cache
+{
+    int size;
+    int count;
+    struct mime_icon_cache_slot *slots;
+    uint32_t *pixels;
+};
 
 struct mime_icon_entry
 {
@@ -86,9 +110,17 @@ const char *mime_icon_name_for(const char *file_name, int is_dir, int launchable
  * there is not retried on every repaint.
  */
 const struct sx_bitmap *mime_icon_small(const char *icon_name);
+/* The same at 32x32, from its own cache: Files' Large Icons view. Defined in
+ * mime_icon_large.c, which a program links only if it draws large icons. */
+const struct sx_bitmap *mime_icon_large(const char *icon_name);
 
-/* Atajo: las dos llamadas de arriba en una. 0 si el archivo no tiene icono. */
+/* The loader behind both: the icon from `cache`, loading it the first time. */
+const struct sx_bitmap *mime_icon_cache_load(struct mime_icon_cache *cache, const char *icon_name);
+
+/* Shortcuts: mime_icon_name_for and the bitmap of one size in one call. 0 if
+ * the file has no icon. */
 const struct sx_bitmap *mime_icon_for_file(const char *file_name, int is_dir, int launchable);
+const struct sx_bitmap *mime_icon_large_for_file(const char *file_name, int is_dir, int launchable);
 
 int mime_icon_count(void);
 const struct mime_icon_entry *mime_icon_at(int index);

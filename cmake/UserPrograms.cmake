@@ -393,6 +393,7 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
     subsystems/posix/userland/mime_icon.c
+    subsystems/posix/userland/mime_icon_large.c
     subsystems/posix/userland/shortcut.c)# El editor es la app con mejor verificacion automatizada del arbol: el escenario
 # shoot_session notepadwheel teclea 40 lineas, captura, scrollea con la rueda y
 # COMPARA PIXELES. Si SxGUI viniera de una libreria y dibujara distinto, el

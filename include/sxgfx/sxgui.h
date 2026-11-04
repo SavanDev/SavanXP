@@ -56,6 +56,11 @@ extern "C" {
  * indent is the same on every row, with an icon or without. */
 #define SXGUI_LISTBOX_ICON_SIZE   16
 #define SXGUI_LISTBOX_ICON_GAP    3
+/* Icon view cell: the same grid the desktop lays its icons on, so a folder
+ * looks alike in Files and on the desktop. The cell's height follows the
+ * font (two label lines under the icon). */
+#define SXGUI_ICONVIEW_ICON_SIZE  32
+#define SXGUI_ICONVIEW_CELL_WIDTH 76
 /* Gap between the text and a control's inner edge. A loose label that wants
  * to line up with a field's text moves by BORDER + TEXT_PAD. */
 #define SXGUI_TEXT_PAD            3
@@ -82,7 +87,8 @@ enum sxgui_kind {
     SXGUI_TEXTVIEW,
     SXGUI_TEXTEDIT,
     SXGUI_TABS,
-    SXGUI_TRACKBAR
+    SXGUI_TRACKBAR,
+    SXGUI_ICONVIEW
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -173,7 +179,7 @@ struct sxgui_widget {
     int modified;
 
     /* textfield: horizontal scroll in pixels to keep the caret visible;
-     * listbox: first visible row */
+     * listbox: first visible row; iconview: first visible row of the grid */
     int scroll;
 
     /* scrollbar: value ranges over [range_min, range_max]; page sizes the
@@ -461,6 +467,21 @@ struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*o
 struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int checked);
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
 
+/*
+ * Icon view ("Large Icons"): the same data as a listbox shown as a grid of
+ * SXGUI_ICONVIEW_ICON_SIZE icons with the name under each one, in up to two
+ * lines. It reads the listbox's fields -- `items` (only the first cell of an
+ * item with columns), `item_icons`, `value` (the selected item) -- so a
+ * program switches between both views by changing `kind`. `scroll` counts
+ * grid rows, not items. sxgui_listbox_row_at answers the item under a point
+ * for both kinds.
+ */
+struct sxgui_widget sxgui_iconview(struct sx_rect rect, const char *const *items, int item_count);
+/* Where item `index` of an icon view sits now (its whole cell), for a
+ * program that opens something next to it, such as the keyboard's context
+ * menu. A zero-sized rect when the widget is not an icon view. */
+struct sx_rect sxgui_iconview_item_rect(const struct sxgui_widget *widget, int index);
+
 /* The column whose header was clicked, while `widget` runs its
  * SXGUI_ACTION_HEADER; -1 at any other time. It lives in the toolkit rather
  * than in the widget so the widget's layout, which libsxgui shares with every
@@ -468,7 +489,9 @@ struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items,
 int sxgui_header_column(const struct sxgui_widget *widget);
 /* The listbox row under (x, y), for a click the toolkit does not handle --
  * the right button that opens a row's context menu. -1 off the rows (the
- * header, the scrollbar, the empty space below the last row). */
+ * header, the scrollbar, the empty space below the last row). On an icon
+ * view, the item whose icon or name is under (x, y), or -1 on the
+ * background. */
 int sxgui_listbox_row_at(const struct sxgui_widget *widget, int x, int y);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);

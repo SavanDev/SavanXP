@@ -16,8 +16,9 @@
 
 /*
  * File browser, shaped like the Win95-era Explorer: menu bar, address bar with
- * "Up One Level", a details list (Name / Size / Type) with column headers, and
- * a two-pane status bar.
+ * "Up One Level", the folder as Large Icons or as a details list (Name / Size
+ * / Type) with column headers -- View picks one and filesapp.cfg in the
+ * profile remembers it -- and a two-pane status bar.
  *
  * It does NOT show what files contain: that is an editor's job. Opening a file
  * goes through shortcut_open_path, as on the desktop: a program starts, a
@@ -35,6 +36,8 @@
 #define FILESAPP_MENU_OPEN 1
 #define FILESAPP_MENU_UP 2
 #define FILESAPP_MENU_REFRESH 3
+#define FILESAPP_MENU_VIEW_ICONS 4
+#define FILESAPP_MENU_VIEW_DETAILS 5
 #define FILESAPP_MENU_ABOUT 8
 #define FILESAPP_MENU_CLOSE 9
 
@@ -51,8 +54,10 @@ static struct sxgui_widget g_widgets[5];
 static struct filesapp_entry g_entries[FILESAPP_MAX_ENTRIES];
 static char g_item_labels[FILESAPP_MAX_ENTRIES][FILESAPP_LABEL_LENGTH];
 static const char *g_item_ptrs[FILESAPP_MAX_ENTRIES];
-/* Paralelo a g_item_ptrs: el icono que le toca a cada fila, o 0. */
+/* Parallel to g_item_ptrs: each row's icon, or 0. One array per size: the
+ * details list draws the 16x16 ones, Large Icons the 32x32 ones. */
 static const struct sx_bitmap *g_item_icons[FILESAPP_MAX_ENTRIES];
+static const struct sx_bitmap *g_item_large_icons[FILESAPP_MAX_ENTRIES];
 static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
 static char g_count_pane[64] = "0 object(s)";
 static char g_size_pane[64] = "";
@@ -322,9 +327,10 @@ static void filesapp_rebuild_labels(void)
             type_cell);
         g_item_ptrs[index] = g_item_labels[index];
         g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
+        g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
     }
     FILESAPP_LIST->items = g_item_ptrs;
-    FILESAPP_LIST->item_icons = g_item_icons;
+    FILESAPP_LIST->item_icons = FILESAPP_LIST->kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons;
     FILESAPP_LIST->item_count = g_entry_count;
     FILESAPP_LIST->value = 0;
     FILESAPP_LIST->scroll = 0;
@@ -500,6 +506,88 @@ static void on_dialog_ok(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 1);
 }
 
+/* ---- view ------------------------------------------------------------------ */
+
+/* The user's last choice, in the profile (savanxp_settings_path). One line,
+ * "view=icons" or "view=details"; anything else is the default, Large Icons,
+ * as Windows 98's Explorer opens a folder. */
+#define FILESAPP_SETTINGS_NAME "filesapp.cfg"
+
+static struct sxgui_menu_item k_view_items[] = {
+    {"Large Icons", FILESAPP_MENU_VIEW_ICONS, 0},
+    {"Details", FILESAPP_MENU_VIEW_DETAILS, 0},
+    {0, 0, 0},
+    {"Refresh", FILESAPP_MENU_REFRESH, 0},
+};
+
+static int filesapp_load_view(void)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    char line[32];
+    FILE *file;
+    int kind = SXGUI_ICONVIEW;
+
+    if (savanxp_settings_path(FILESAPP_SETTINGS_NAME, 0, path, sizeof(path)) < 0)
+    {
+        return kind;
+    }
+    file = fopen(path, "r");
+    if (file == 0)
+    {
+        return kind;
+    }
+    if (fgets(line, sizeof(line), file) != 0 && strncmp(line, "view=details", 12) == 0)
+    {
+        kind = SXGUI_LISTBOX;
+    }
+    fclose(file);
+    return kind;
+}
+
+/* A disk that does not take the write only loses the preference: the view
+ * already changed. */
+static void filesapp_save_view(int kind)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    FILE *file;
+
+    if (savanxp_settings_path(FILESAPP_SETTINGS_NAME, 1, path, sizeof(path)) < 0)
+    {
+        return;
+    }
+    file = fopen(path, "w");
+    if (file == 0)
+    {
+        return;
+    }
+    fputs(kind == SXGUI_LISTBOX ? "view=details\n" : "view=icons\n", file);
+    fclose(file);
+}
+
+/* The same widget either way: the items, the selection and the context menu
+ * do not change, only how they are drawn. */
+static void filesapp_set_view(int kind)
+{
+    struct sxgui_widget *list = FILESAPP_LIST;
+
+    list->kind = kind;
+    list->item_icons = kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons;
+    /* `scroll` counts rows in one view and grid rows in the other. */
+    list->scroll = 0;
+    k_view_items[0].flags = kind == SXGUI_ICONVIEW ? SXGUI_MENU_CHECKED : 0;
+    k_view_items[1].flags = kind == SXGUI_LISTBOX ? SXGUI_MENU_CHECKED : 0;
+}
+
+static void filesapp_choose_view(int kind)
+{
+    if (FILESAPP_LIST->kind == kind)
+    {
+        return;
+    }
+    filesapp_set_view(kind);
+    filesapp_save_view(kind);
+}
+
 static void on_menu_command(int id, void *user)
 {
     (void)user;
@@ -513,6 +601,12 @@ static void on_menu_command(int id, void *user)
         break;
     case FILESAPP_MENU_REFRESH:
         (void)filesapp_load_directory(g_current_path);
+        break;
+    case FILESAPP_MENU_VIEW_ICONS:
+        filesapp_choose_view(SXGUI_ICONVIEW);
+        break;
+    case FILESAPP_MENU_VIEW_DETAILS:
+        filesapp_choose_view(SXGUI_LISTBOX);
         break;
     case FILESAPP_MENU_ABOUT:
         sxgui_dialog_begin(&g_app.ui, &g_about_dialog, FILESAPP_ABOUT_WIDTH, FILESAPP_ABOUT_HEIGHT);
@@ -760,8 +854,18 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
         int x = FILESAPP_LIST->rect.x + 24;
         int y = FILESAPP_LIST->rect.y + 2 + row_height + (visible + 1) * row_height;
 
+        if (FILESAPP_LIST->kind == SXGUI_ICONVIEW)
+        {
+            /* Under the selected icon, over its name. */
+            struct sx_rect cell = sxgui_iconview_item_rect(FILESAPP_LIST, FILESAPP_LIST->value);
+
+            x = cell.x + cell.width / 2;
+            y = cell.y + SXGUI_ICONVIEW_ICON_SIZE + 8;
+            visible = cell.width > 0 && y >= FILESAPP_LIST->rect.y ? 0 : -1;
+        }
         if (visible < 0 || y > FILESAPP_LIST->rect.y + FILESAPP_LIST->rect.height)
         {
+            x = FILESAPP_LIST->rect.x + 24;
             y = FILESAPP_LIST->rect.y + row_height * 2;
         }
         filesapp_show_menu(FILESAPP_LIST->value, x, y);
@@ -876,10 +980,6 @@ static const struct sxgui_menu_item k_file_items[] = {
     {"Close", FILESAPP_MENU_CLOSE, 0},
 };
 
-static const struct sxgui_menu_item k_view_items[] = {
-    {"Refresh", FILESAPP_MENU_REFRESH, 0},
-};
-
 static const struct sxgui_menu_item k_help_items[] = {
     {"About Files", FILESAPP_MENU_ABOUT, 0},
 };
@@ -945,6 +1045,7 @@ static int filesapp_selftest(void)
     {
         int mapped = mime_icon_load();
         int resolved = 0;
+        int resolved_large = 0;
         static const char *const k_probe[] = {"notas.txt", "captura.png", "tema.wav", "doom.sxe"};
         int probe;
 
@@ -954,11 +1055,16 @@ static int filesapp_selftest(void)
             {
                 resolved += 1;
             }
+            if (mime_icon_large_for_file(k_probe[probe], 0, 0) != 0)
+            {
+                resolved_large += 1;
+            }
         }
-        printf("FILESAPP SMOKE mimeicon mapped=%d probes=%d resolved=%d\n",
+        printf("FILESAPP SMOKE mimeicon mapped=%d probes=%d resolved=%d large=%d\n",
             mapped,
             (int)(sizeof(k_probe) / sizeof(k_probe[0])),
-            resolved);
+            resolved,
+            resolved_large);
     }
 
     /* El harness corta la corrida en la PRIMERA linea con el token de fallo,
@@ -1083,6 +1189,7 @@ int main(int argc, char **argv)
     g_app.on_pointer = on_pointer;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
+    filesapp_set_view(filesapp_load_view());
     (void)sxgui_app_set_content_size(&g_app, FILESAPP_CONTENT_WIDTH, FILESAPP_CONTENT_HEIGHT);
     filesapp_layout(&g_app);
 

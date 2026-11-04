@@ -790,29 +790,60 @@ def scenario_paint(s):
                 solid_only=True)
 
 
-def scenario_files(s):
-    """Explorador: la ventana con mas controles distintos a la vez.
+def files_choose_view(s, image, item):
+    """Picks `item` ("Large Icons" or "Details") from Files' View menu."""
+    title = find_text(image, (0, 0, 1280, 770), "View", TEXT, FACE)[0]
+    if title is None:
+        raise Failure("Files has no View menu")
+    s.qmp.move_to(title[0] + 6, title[1] + 4)
+    s.qmp.click()
+    time.sleep(1.0)
+    image = s.shot("files-view-menu")
+    entry = find_text(image, (0, 0, 1280, 770), item, TEXT, FACE)[0]
+    if entry is None:
+        raise Failure("the View menu has no %s" % item)
+    s.qmp.move_to(entry[0] + 6, entry[1] + 4)
+    s.qmp.click()
+    time.sleep(1.2)
+    return s.shot("files-view-" + item.lower().replace(" ", "-"))
 
-    Barra de direccion, boton, lista de detalles con cabecera de columnas y
-    barra de estado de dos paneles: si un margen o una sangria del toolkit se
-    va, aca se ve. Se mueve la seleccion con el teclado para que quede a la
-    vista tambien la fila resaltada.
+
+def scenario_files(s):
+    """Files: the window with the most different controls at once.
+
+    Address bar, button, the folder as Large Icons and then as a details list
+    with column headers, and a two-pane status bar: if a toolkit margin or
+    indent slips, it shows here. The keyboard moves the selection so the
+    highlighted item is in view too, a grid row down in the icon view.
     """
     s.open_files()
-    s.shot("files-raiz")
+    image = s.shot("files-raiz")
+    if find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0] is not None:
+        raise Failure("Files does not open as Large Icons")
     s.qmp.tap("down", pause=0.6)
-    s.qmp.tap("down", pause=1.2)
+    s.qmp.tap("right", pause=1.2)
     s.shot("files-seleccion")
-    # The root is the system disk: it mixes folders with an .ini and a .bmp, so
-    # it is where the per-type icon layer resolves more than one type at once,
-    # and the two shots above already serve as the catalog's regression.
+    image = files_choose_view(s, image, "Details")
+    expect_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE,
+                "View > Details shows the column headers")
+    # Back to Large Icons, in a folder bigger than the window: End has to
+    # scroll the grid so the last item is in view, with the bar beside it.
+    files_choose_view(s, image, "Large Icons")
+    s.qmp.chord("alt", "f4")
+    time.sleep(1.5)
+    s.run("filesapp /bin")
+    s.qmp.tap("end", pause=1.2)
+    s.shot("files-bin-end")
+    # The profile mixes folders with .cfg and .ini files, so it is where the
+    # per-type icon layer resolves more than one type at once, and the shots
+    # above serve as the catalog's regression at both sizes.
 
 
 def scenario_filesmenu(s):
     """An application's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
 
     Files opens on the user's profile, where the Desktop folder is. A right
-    click on its row opens the row's menu in a popup window of its own; the
+    click on its icon's name opens the item's menu in a popup window of its own; the
     window keeps the keyboard, so the arrows and Enter choose Send To
     Desktop, and the desktop shows the new shortcut once it re-reads its
     folder.
@@ -842,6 +873,8 @@ def scenario_filesmenu(s):
 
     # Near the list's right edge the menu has to leave the window: it is a
     # window of its own, not drawn inside Files (which would flip it left).
+    # The Type column of the details view is the ruler.
+    image = files_choose_view(s, image, "Details")
     header = find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0]
     if header is None:
         raise Failure("Files has no Type column to measure from")

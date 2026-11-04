@@ -15,18 +15,10 @@ static char g_icon_folder[MIME_ICON_NAME_CAPACITY];
 static char g_icon_program[MIME_ICON_NAME_CAPACITY];
 static char g_icon_default[MIME_ICON_NAME_CAPACITY];
 
-struct mime_icon_cache_slot
-{
-    char name[MIME_ICON_NAME_CAPACITY];
-    /* 0 = se intento y no salio. El fallo se cachea igual que el exito: sin
-     * eso, un icono que no esta se reintenta en cada repintado de la lista. */
-    int valid;
-    struct sx_bitmap bitmap;
-    uint32_t pixels[MIME_ICON_SMALL_SIZE * MIME_ICON_SMALL_SIZE];
-};
-
-static struct mime_icon_cache_slot g_cache[MIME_ICON_CACHE_ENTRIES];
-static int g_cache_count = 0;
+static struct mime_icon_cache_slot g_small_slots[MIME_ICON_CACHE_ENTRIES];
+static uint32_t g_small_pixels[MIME_ICON_CACHE_ENTRIES * MIME_ICON_SMALL_SIZE * MIME_ICON_SMALL_SIZE];
+static struct mime_icon_cache g_small_cache = {
+    MIME_ICON_SMALL_SIZE, 0, g_small_slots, g_small_pixels};
 
 static int g_selftest_failures = 0;
 
@@ -338,31 +330,34 @@ const char *mime_icon_name_for(const char *file_name, int is_dir, int launchable
 
 /* --- pixeles -------------------------------------------------------------- */
 
-static struct mime_icon_cache_slot *cache_find(const char *icon_name)
+static struct mime_icon_cache_slot *cache_find(struct mime_icon_cache *cache, const char *icon_name)
 {
     int index = 0;
 
-    for (index = 0; index < g_cache_count; ++index)
+    for (index = 0; index < cache->count; ++index)
     {
-        if (strcmp(g_cache[index].name, icon_name) == 0)
+        if (strcmp(cache->slots[index].name, icon_name) == 0)
         {
-            return &g_cache[index];
+            return &cache->slots[index];
         }
     }
     return 0;
 }
 
-/* Copia el 16x16 del blob al slot. 0 si el blob no trae ese tamano exacto:
- * escalar en runtime es justamente lo que el .sxicon con los dos tamanos
- * existe para evitar, asi que un blob incompleto es un error del build, no
- * algo que se arregle interpolando. */
-static int fill_slot(struct mime_icon_cache_slot *slot, const struct sxe_icons *icons)
+/* Copies the blob's image of the cache's size into the slot. 0 if the blob
+ * does not carry that exact size: scaling at runtime is exactly what an
+ * .sxicon with both sizes exists to avoid, so an incomplete blob is a build
+ * error, not something to fix by interpolating. */
+static int fill_slot(
+    struct mime_icon_cache *cache, int slot_index, const struct sxe_icons *icons)
 {
-    const struct sxe_icon_entry *entry = sxe_icons_best(icons, MIME_ICON_SMALL_SIZE);
+    struct mime_icon_cache_slot *slot = &cache->slots[slot_index];
+    uint32_t *destination = cache->pixels + (size_t)slot_index * (size_t)cache->size * (size_t)cache->size;
+    const struct sxe_icon_entry *entry = sxe_icons_best(icons, (uint32_t)cache->size);
     const uint32_t *pixels = 0;
-    size_t count = (size_t)MIME_ICON_SMALL_SIZE * (size_t)MIME_ICON_SMALL_SIZE;
+    size_t count = (size_t)cache->size * (size_t)cache->size;
 
-    if (entry == 0 || entry->width != MIME_ICON_SMALL_SIZE || entry->height != MIME_ICON_SMALL_SIZE)
+    if (entry == 0 || entry->width != (uint32_t)cache->size || entry->height != (uint32_t)cache->size)
     {
         return 0;
     }
@@ -372,44 +367,46 @@ static int fill_slot(struct mime_icon_cache_slot *slot, const struct sxe_icons *
         return 0;
     }
 
-    memcpy(slot->pixels, pixels, count * sizeof(uint32_t));
-    slot->bitmap.pixels = slot->pixels;
-    slot->bitmap.info.width = MIME_ICON_SMALL_SIZE;
-    slot->bitmap.info.height = MIME_ICON_SMALL_SIZE;
-    slot->bitmap.info.pitch = MIME_ICON_SMALL_SIZE * (uint32_t)sizeof(uint32_t);
+    memcpy(destination, pixels, count * sizeof(uint32_t));
+    slot->bitmap.pixels = destination;
+    slot->bitmap.info.width = (uint32_t)cache->size;
+    slot->bitmap.info.height = (uint32_t)cache->size;
+    slot->bitmap.info.pitch = (uint32_t)cache->size * (uint32_t)sizeof(uint32_t);
     slot->bitmap.info.bpp = 32u;
     slot->bitmap.format = SX_PIXEL_FORMAT_BGRA8888;
     return 1;
 }
 
-const struct sx_bitmap *mime_icon_small(const char *icon_name)
+const struct sx_bitmap *mime_icon_cache_load(struct mime_icon_cache *cache, const char *icon_name)
 {
-    /* Uno solo y reusado: parsear el blob necesita el archivo entero en
-     * memoria, pero solo mientras dura la copia al slot. */
+    /* One scratch, reused: parsing the blob needs the whole file in memory,
+     * but only while it is copied into the slot. */
     static _Alignas(4) uint8_t scratch[MIME_ICON_SCRATCH_BYTES];
     struct mime_icon_cache_slot *slot = 0;
     struct sxe_icons icons;
     char path[MIME_ICON_NAME_CAPACITY + 48];
+    int slot_index;
 
     if (icon_name == 0 || icon_name[0] == '\0')
     {
         return 0;
     }
-    slot = cache_find(icon_name);
+    slot = cache_find(cache, icon_name);
     if (slot != 0)
     {
         return slot->valid ? &slot->bitmap : 0;
     }
-    if (g_cache_count >= MIME_ICON_CACHE_ENTRIES)
+    if (cache->count >= MIME_ICON_CACHE_ENTRIES)
     {
-        /* Sin eviccion: el catalogo entra en la cache por diseno. Si algun dia
-         * no entra, lo correcto es agrandarla, no empezar a desalojar en el
-         * medio de un repintado. */
+        /* No eviction: the catalogue fits in the cache by design. If one day
+         * it does not, the fix is to grow it, not to start evicting in the
+         * middle of a repaint. */
         return 0;
     }
 
-    slot = &g_cache[g_cache_count];
-    g_cache_count += 1;
+    slot_index = cache->count;
+    slot = &cache->slots[slot_index];
+    cache->count += 1;
     copy_field(slot->name, sizeof(slot->name), icon_name);
     slot->valid = 0;
 
@@ -418,8 +415,13 @@ const struct sx_bitmap *mime_icon_small(const char *icon_name)
     {
         return 0;
     }
-    slot->valid = fill_slot(slot, &icons);
+    slot->valid = fill_slot(cache, slot_index, &icons);
     return slot->valid ? &slot->bitmap : 0;
+}
+
+const struct sx_bitmap *mime_icon_small(const char *icon_name)
+{
+    return mime_icon_cache_load(&g_small_cache, icon_name);
 }
 
 const struct sx_bitmap *mime_icon_for_file(const char *file_name, int is_dir, int launchable)

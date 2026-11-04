@@ -347,7 +347,7 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
            widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW ||
            widget->kind == SXGUI_TEXTEDIT || widget->kind == SXGUI_TABS ||
-           widget->kind == SXGUI_TRACKBAR;
+           widget->kind == SXGUI_TRACKBAR || widget->kind == SXGUI_ICONVIEW;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -853,6 +853,124 @@ static void sxgui_menu_fire(struct sxgui_menubar *bar, const struct sxgui_menu *
 
 /* Height of the column header; 0 when the listbox has no columns, which is
  * what keeps everything below valid for a plain list. */
+/* ---- icon view geometry ----------------------------------------------------
+ *
+ * The icon view lays the items on a grid of SXGUI_ICONVIEW_CELL_WIDTH-wide
+ * cells, left to right and then down, and scrolls by whole grid rows. Its
+ * scroll state is the listbox's (`scroll`, the embedded bar), so the listbox
+ * helpers below ask these for the row arithmetic when the kind is ICONVIEW.
+ */
+
+#define SXGUI_ICONVIEW_MARGIN      2   /* from the bevel to the first cell */
+#define SXGUI_ICONVIEW_ICON_TOP    4   /* from the cell's top to the icon */
+#define SXGUI_ICONVIEW_LABEL_GAP   4   /* between the icon and the label */
+#define SXGUI_ICONVIEW_LABEL_WIDTH 72  /* widest a label line may be */
+#define SXGUI_ICONVIEW_LABEL_CAPACITY 128
+
+static int sxgui_iconview_line_height(void)
+{
+    return gfx_text_height() + 1;
+}
+
+static int sxgui_iconview_cell_height(void)
+{
+    return SXGUI_ICONVIEW_ICON_TOP + SXGUI_ICONVIEW_ICON_SIZE + SXGUI_ICONVIEW_LABEL_GAP +
+        2 * sxgui_iconview_line_height() + 2 + SXGUI_ICONVIEW_ICON_TOP;
+}
+
+static struct sx_rect sxgui_iconview_area(const struct sxgui_widget *widget, int with_scrollbar)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
+
+    if (with_scrollbar)
+    {
+        inner.width -= SXGUI_SCROLLBAR_THICKNESS;
+    }
+    if (inner.width < 0)
+    {
+        inner.width = 0;
+    }
+    if (inner.height < 0)
+    {
+        inner.height = 0;
+    }
+    return inner;
+}
+
+static int sxgui_iconview_columns_in(struct sx_rect area)
+{
+    int columns = (area.width - SXGUI_ICONVIEW_MARGIN * 2) / SXGUI_ICONVIEW_CELL_WIDTH;
+    return columns > 0 ? columns : 1;
+}
+
+/* Rows that fit whole; a partial one at the bottom is painted but does not
+ * count, so the last scroll position shows the last row entirely. */
+static int sxgui_iconview_rows_in(struct sx_rect area)
+{
+    int rows = (area.height - SXGUI_ICONVIEW_MARGIN * 2) / sxgui_iconview_cell_height();
+    return rows > 0 ? rows : 1;
+}
+
+static int sxgui_iconview_row_count(int item_count, int columns)
+{
+    return item_count > 0 ? (item_count + columns - 1) / columns : 0;
+}
+
+/* Decided on the area WITHOUT the bar: the bar narrows the grid, which can
+ * only add rows, so the answer cannot flip once the bar is there. */
+static int sxgui_iconview_has_scrollbar(const struct sxgui_widget *widget)
+{
+    struct sx_rect area = sxgui_iconview_area(widget, 0);
+    return sxgui_iconview_row_count(widget->item_count, sxgui_iconview_columns_in(area)) >
+        sxgui_iconview_rows_in(area);
+}
+
+static struct sx_rect sxgui_iconview_items_area(const struct sxgui_widget *widget)
+{
+    return sxgui_iconview_area(widget, sxgui_iconview_has_scrollbar(widget));
+}
+
+static int sxgui_iconview_columns(const struct sxgui_widget *widget)
+{
+    return sxgui_iconview_columns_in(sxgui_iconview_items_area(widget));
+}
+
+static int sxgui_iconview_visible_rows(const struct sxgui_widget *widget)
+{
+    return sxgui_iconview_rows_in(sxgui_iconview_items_area(widget));
+}
+
+static int sxgui_iconview_max_scroll(const struct sxgui_widget *widget)
+{
+    int max_scroll = sxgui_iconview_row_count(widget->item_count, sxgui_iconview_columns(widget)) -
+        sxgui_iconview_visible_rows(widget);
+    return max_scroll > 0 ? max_scroll : 0;
+}
+
+/* Item `index`'s cell at the current scroll; it may lie outside the area. */
+static struct sx_rect sxgui_iconview_cell(const struct sxgui_widget *widget, int index)
+{
+    struct sx_rect area = sxgui_iconview_items_area(widget);
+    int columns = sxgui_iconview_columns_in(area);
+    int column = index % columns;
+    int row = index / columns - widget->scroll;
+
+    return sx_rect_make(
+        area.x + SXGUI_ICONVIEW_MARGIN + column * SXGUI_ICONVIEW_CELL_WIDTH,
+        area.y + SXGUI_ICONVIEW_MARGIN + row * sxgui_iconview_cell_height(),
+        SXGUI_ICONVIEW_CELL_WIDTH,
+        sxgui_iconview_cell_height());
+}
+
+static struct sx_rect sxgui_iconview_icon_rect(struct sx_rect cell)
+{
+    return sx_rect_make(
+        cell.x + (cell.width - SXGUI_ICONVIEW_ICON_SIZE) / 2,
+        cell.y + SXGUI_ICONVIEW_ICON_TOP,
+        SXGUI_ICONVIEW_ICON_SIZE,
+        SXGUI_ICONVIEW_ICON_SIZE);
+}
+
 static int sxgui_listbox_header_height(const struct sxgui_widget *widget)
 {
     if (widget->kind != SXGUI_LISTBOX || widget->columns == 0 || widget->column_count <= 0)
@@ -864,19 +982,36 @@ static int sxgui_listbox_header_height(const struct sxgui_widget *widget)
 
 static int sxgui_listbox_visible_rows(const struct sxgui_widget *widget)
 {
-    int usable = widget->rect.height - SXGUI_BORDER_SUNKEN * 2 - sxgui_listbox_header_height(widget);
-    int rows = usable / sxgui_row_height();
+    int usable;
+    int rows;
+
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        return sxgui_iconview_visible_rows(widget);
+    }
+    usable = widget->rect.height - SXGUI_BORDER_SUNKEN * 2 - sxgui_listbox_header_height(widget);
+    rows = usable / sxgui_row_height();
     return rows > 0 ? rows : 1;
 }
 
 static int sxgui_listbox_has_scrollbar(const struct sxgui_widget *widget)
 {
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        return sxgui_iconview_has_scrollbar(widget);
+    }
     return widget->item_count > sxgui_listbox_visible_rows(widget);
 }
 
 static int sxgui_listbox_max_scroll(const struct sxgui_widget *widget)
 {
-    int max_scroll = widget->item_count - sxgui_listbox_visible_rows(widget);
+    int max_scroll;
+
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        return sxgui_iconview_max_scroll(widget);
+    }
+    max_scroll = widget->item_count - sxgui_listbox_visible_rows(widget);
     return max_scroll > 0 ? max_scroll : 0;
 }
 
@@ -1070,14 +1205,17 @@ static void sxgui_listbox_clamp_scroll(struct sxgui_widget *widget)
 static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
 {
     int visible_rows = sxgui_listbox_visible_rows(widget);
+    /* The row the selection is on: the item itself in a list, its grid row
+     * in an icon view. */
+    int row = widget->kind == SXGUI_ICONVIEW ? widget->value / sxgui_iconview_columns(widget) : widget->value;
 
-    if (widget->value < widget->scroll)
+    if (row < widget->scroll)
     {
-        widget->scroll = widget->value;
+        widget->scroll = row;
     }
-    if (widget->value >= widget->scroll + visible_rows)
+    if (row >= widget->scroll + visible_rows)
     {
-        widget->scroll = widget->value - visible_rows + 1;
+        widget->scroll = row - visible_rows + 1;
     }
     sxgui_listbox_clamp_scroll(widget);
 }
@@ -1262,6 +1400,267 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
     sxgui_paint_listbox_header(painter, widget);
 
     if (sxgui_listbox_has_scrollbar(widget))
+    {
+        struct sxgui_scroll_metrics metrics;
+        sxgui_listbox_metrics(widget, &metrics);
+        sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    }
+}
+
+/* ---- icon view ------------------------------------------------------------ */
+
+/* Copies `length` bytes of `text` into `out` and adds "..." when `ellipsis`,
+ * always terminated within SXGUI_ICONVIEW_LABEL_CAPACITY. */
+static void sxgui_iconview_piece(char *out, const char *text, int length, int ellipsis)
+{
+    int room = SXGUI_ICONVIEW_LABEL_CAPACITY - 1 - (ellipsis ? 3 : 0);
+
+    if (length > room)
+    {
+        length = room;
+    }
+    if (length < 0)
+    {
+        length = 0;
+    }
+    memcpy(out, text, (size_t)length);
+    if (ellipsis)
+    {
+        memcpy(out + length, "...", 3);
+        length += 3;
+    }
+    out[length] = 0;
+}
+
+/* The name split to fit under the icon, as the desktop does it: at most two
+ * lines, cut at a space when one fits, a word too long cut by characters, and
+ * "..." when the rest does not fit in the second line. Returns the lines. */
+static int sxgui_iconview_wrap(const char *text, char lines[2][SXGUI_ICONVIEW_LABEL_CAPACITY])
+{
+    int length = (int)strlen(text);
+    int start = 0;
+    int line;
+
+    lines[0][0] = 0;
+    lines[1][0] = 0;
+    if (length > SXGUI_ICONVIEW_LABEL_CAPACITY - 4)
+    {
+        length = SXGUI_ICONVIEW_LABEL_CAPACITY - 4;
+    }
+    for (line = 0; line < 2 && start < length; ++line)
+    {
+        char candidate[SXGUI_ICONVIEW_LABEL_CAPACITY];
+        int end = start;
+        int best = start;
+
+        /* The longest piece that fits, preferring a cut at a space. */
+        while (end < length)
+        {
+            sxgui_iconview_piece(candidate, text + start, end + 1 - start, 0);
+            if (gfx_text_width(candidate) > SXGUI_ICONVIEW_LABEL_WIDTH)
+            {
+                break;
+            }
+            end += 1;
+            if (end == length || text[end] == ' ')
+            {
+                best = end;
+            }
+        }
+        if (best == start)
+        {
+            best = end > start ? end : start + 1;
+        }
+        if (line == 1 && best < length)
+        {
+            int cut = best;
+
+            for (;;)
+            {
+                sxgui_iconview_piece(candidate, text + start, cut - start, 1);
+                if (gfx_text_width(candidate) <= SXGUI_ICONVIEW_LABEL_WIDTH || cut <= start)
+                {
+                    break;
+                }
+                cut -= 1;
+            }
+            memcpy(lines[1], candidate, sizeof(candidate));
+            return 2;
+        }
+        sxgui_iconview_piece(lines[line], text + start, best - start, 0);
+        start = best;
+        while (start < length && text[start] == ' ')
+        {
+            start += 1;
+        }
+    }
+    return lines[1][0] != 0 ? 2 : 1;
+}
+
+/* The label's box under the icon: what gets the selection colour, the focus
+ * rectangle, and counts as a hit. */
+static struct sx_rect sxgui_iconview_label_rect(
+    const struct sxgui_widget *widget, int index, struct sx_rect cell,
+    char lines[2][SXGUI_ICONVIEW_LABEL_CAPACITY], int *line_count)
+{
+    char name[SXGUI_ICONVIEW_LABEL_CAPACITY];
+    const char *label = widget->items != 0 ? widget->items[index] : 0;
+    int count;
+    int widest;
+
+    /* Only the first cell: an item may carry the details view's columns. */
+    (void)sxgui_column_cell(label, 0, name, (int)sizeof(name));
+    count = sxgui_iconview_wrap(name, lines);
+    widest = gfx_text_width(lines[0]);
+    if (count > 1 && gfx_text_width(lines[1]) > widest)
+    {
+        widest = gfx_text_width(lines[1]);
+    }
+    *line_count = count;
+    return sx_rect_make(
+        cell.x + (cell.width - widest) / 2 - 2,
+        cell.y + SXGUI_ICONVIEW_ICON_TOP + SXGUI_ICONVIEW_ICON_SIZE + SXGUI_ICONVIEW_LABEL_GAP,
+        widest + 4,
+        count * sxgui_iconview_line_height() + 2);
+}
+
+/* The item whose icon or label is under (x, y), or -1: the empty part of a
+ * cell is background, as in the classic view. */
+static int sxgui_iconview_item_at(const struct sxgui_widget *widget, int x, int y)
+{
+    struct sx_rect area = sxgui_iconview_items_area(widget);
+    int columns = sxgui_iconview_columns_in(area);
+    int column;
+    int row;
+    int index;
+    struct sx_rect cell;
+    char lines[2][SXGUI_ICONVIEW_LABEL_CAPACITY];
+    int count;
+
+    if (!sx_rect_contains_point(area, x, y))
+    {
+        return -1;
+    }
+    column = (x - area.x - SXGUI_ICONVIEW_MARGIN) / SXGUI_ICONVIEW_CELL_WIDTH;
+    row = (y - area.y - SXGUI_ICONVIEW_MARGIN) / sxgui_iconview_cell_height();
+    if (x < area.x + SXGUI_ICONVIEW_MARGIN || y < area.y + SXGUI_ICONVIEW_MARGIN || column >= columns)
+    {
+        return -1;
+    }
+    index = (row + widget->scroll) * columns + column;
+    if (index < 0 || index >= widget->item_count)
+    {
+        return -1;
+    }
+    cell = sxgui_iconview_cell(widget, index);
+    if (sx_rect_contains_point(sxgui_iconview_icon_rect(cell), x, y) ||
+        sx_rect_contains_point(sxgui_iconview_label_rect(widget, index, cell, lines, &count), x, y))
+    {
+        return index;
+    }
+    return -1;
+}
+
+/* A selected icon is tinted with the selection colour, half and half, as
+ * Windows draws it and as the desktop does. Bigger bitmaps are cropped to
+ * the icon size, never scaled. */
+static void sxgui_iconview_draw_icon(struct sx_painter *painter, const struct sx_bitmap *icon, int x, int y, int selected)
+{
+    static uint32_t tinted[SXGUI_ICONVIEW_ICON_SIZE * SXGUI_ICONVIEW_ICON_SIZE];
+    struct sx_bitmap bitmap;
+    int width;
+    int height;
+    int row;
+
+    if (icon == 0 || icon->pixels == 0)
+    {
+        return;
+    }
+    if (!selected)
+    {
+        if (sx_painter_push_clip(painter, sx_rect_make(x, y, SXGUI_ICONVIEW_ICON_SIZE, SXGUI_ICONVIEW_ICON_SIZE)))
+        {
+            sx_painter_blit_bitmap(painter, icon, x, y);
+            sx_painter_pop_clip(painter);
+        }
+        return;
+    }
+    width = (int)icon->info.width < SXGUI_ICONVIEW_ICON_SIZE ? (int)icon->info.width : SXGUI_ICONVIEW_ICON_SIZE;
+    height = (int)icon->info.height < SXGUI_ICONVIEW_ICON_SIZE ? (int)icon->info.height : SXGUI_ICONVIEW_ICON_SIZE;
+    for (row = 0; row < height; ++row)
+    {
+        const uint32_t *source = (const uint32_t *)((const uint8_t *)icon->pixels + (size_t)row * icon->info.pitch);
+        int column;
+
+        for (column = 0; column < width; ++column)
+        {
+            uint32_t pixel = source[column];
+            uint32_t tint = SXGUI_COLOR_SELECT;
+            uint32_t blue = ((pixel & 0xFFu) + (tint & 0xFFu)) / 2u;
+            uint32_t green = (((pixel >> 8) & 0xFFu) + ((tint >> 8) & 0xFFu)) / 2u;
+            uint32_t red = (((pixel >> 16) & 0xFFu) + ((tint >> 16) & 0xFFu)) / 2u;
+
+            tinted[row * width + column] = (pixel & 0xFF000000u) | (red << 16) | (green << 8) | blue;
+        }
+    }
+    bitmap = *icon;
+    bitmap.pixels = tinted;
+    bitmap.info.width = (uint32_t)width;
+    bitmap.info.height = (uint32_t)height;
+    bitmap.info.pitch = (uint32_t)width * (uint32_t)sizeof(uint32_t);
+    sx_painter_blit_bitmap(painter, &bitmap, x, y);
+}
+
+static void sxgui_paint_iconview(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect area = sxgui_iconview_items_area(widget);
+    int columns = sxgui_iconview_columns_in(area);
+    int index;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+
+    if (sx_painter_push_clip(painter, area))
+    {
+        for (index = widget->scroll * columns; index < widget->item_count; ++index)
+        {
+            struct sx_rect cell = sxgui_iconview_cell(widget, index);
+            struct sx_rect icon = sxgui_iconview_icon_rect(cell);
+            char lines[2][SXGUI_ICONVIEW_LABEL_CAPACITY];
+            int count = 0;
+            struct sx_rect label;
+            int selected = index == widget->value;
+            int line;
+
+            if (cell.y >= area.y + area.height)
+            {
+                break;
+            }
+            sxgui_iconview_draw_icon(
+                painter, widget->item_icons != 0 ? widget->item_icons[index] : 0, icon.x, icon.y, selected);
+            label = sxgui_iconview_label_rect(widget, index, cell, lines, &count);
+            if (selected)
+            {
+                sx_painter_fill_rect(painter, label, SXGUI_COLOR_SELECT);
+            }
+            for (line = 0; line < count; ++line)
+            {
+                sx_painter_draw_text(
+                    painter,
+                    cell.x + (cell.width - gfx_text_width(lines[line])) / 2,
+                    label.y + 1 + line * sxgui_iconview_line_height(),
+                    lines[line],
+                    selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
+            }
+            if (selected && widget->focused)
+            {
+                sxgui_draw_focus_rect(painter, label);
+            }
+        }
+        sx_painter_pop_clip(painter);
+    }
+
+    if (sxgui_iconview_has_scrollbar(widget))
     {
         struct sxgui_scroll_metrics metrics;
         sxgui_listbox_metrics(widget, &metrics);
@@ -2494,6 +2893,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
     case SXGUI_LISTBOX:
         sxgui_paint_listbox(painter, widget);
         break;
+    case SXGUI_ICONVIEW:
+        sxgui_paint_iconview(painter, widget);
+        break;
     case SXGUI_TEXTFIELD:
         sxgui_paint_textfield(painter, widget);
         break;
@@ -2843,6 +3245,10 @@ int sxgui_listbox_row_at(const struct sxgui_widget *widget, int x, int y)
     struct sx_rect inner;
     int row;
 
+    if (widget != 0 && widget->kind == SXGUI_ICONVIEW)
+    {
+        return sxgui_iconview_item_at(widget, x, y);
+    }
     if (widget == 0 || widget->kind != SXGUI_LISTBOX)
     {
         return -1;
@@ -2989,7 +3395,7 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
         }
         return 0;
     }
-    if ((widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTVIEW) &&
+    if ((widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTVIEW || widget->kind == SXGUI_ICONVIEW) &&
         ctx->capture_part == SXGUI_SCROLL_THUMB)
     {
         struct sxgui_scroll_metrics metrics;
@@ -3023,6 +3429,15 @@ int sxgui_cursor_shape(const struct sxgui_context *ctx)
 
 static int sxgui_wheel_scroll_widget(struct sxgui_widget *widget, int rows)
 {
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        /* A grid row is several list rows tall: one per tick, not three. */
+        int before = widget->scroll;
+
+        widget->scroll = sxgui_clamp_int(
+            widget->scroll + (rows > 0 ? 1 : -1), 0, sxgui_listbox_max_scroll(widget));
+        return widget->scroll != before;
+    }
     if (widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTVIEW)
     {
         int before = widget->scroll;
@@ -3410,6 +3825,37 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                         ctx->last_click_ms = now_ms;
                         changed = 1;
                     }
+                }
+                break;
+            }
+            case SXGUI_ICONVIEW:
+            {
+                int item;
+
+                if (sxgui_listbox_scrollbar_press(ctx, index, widget, event, &changed))
+                {
+                    break;
+                }
+                /* A click on the background keeps the selection: the
+                 * widget always has one, as the listbox does. */
+                item = sxgui_iconview_item_at(widget, event->x, event->y);
+                if (item >= 0)
+                {
+                    unsigned long now_ms = sxgui_uptime_ms();
+                    if (item != widget->value)
+                    {
+                        widget->value = item;
+                        sxgui_listbox_ensure_visible(widget);
+                        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                    }
+                    else if (ctx->last_click_index == index &&
+                             now_ms - ctx->last_click_ms <= SXGUI_DOUBLE_CLICK_MS)
+                    {
+                        sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
+                    }
+                    ctx->last_click_index = index;
+                    ctx->last_click_ms = now_ms;
+                    changed = 1;
                 }
                 break;
             }
@@ -3860,6 +4306,71 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             new_value = widget->item_count - 1;
             break;
         default:
+            return 0;
+        }
+        new_value = sxgui_clamp_int(new_value, 0, widget->item_count - 1);
+        if (new_value == widget->value)
+        {
+            return 0;
+        }
+        widget->value = new_value;
+        sxgui_listbox_ensure_visible(widget);
+        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+        return 1;
+    }
+
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        int columns = sxgui_iconview_columns(widget);
+        int new_value = widget->value;
+
+        if (widget->item_count <= 0)
+        {
+            return 0;
+        }
+        if (event->key == SAVANXP_KEY_ENTER)
+        {
+            sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
+            return 1;
+        }
+        switch (event->key)
+        {
+        case SAVANXP_KEY_LEFT:
+            new_value -= 1;
+            break;
+        case SAVANXP_KEY_RIGHT:
+            new_value += 1;
+            break;
+        case SAVANXP_KEY_UP:
+            new_value -= columns;
+            break;
+        case SAVANXP_KEY_DOWN:
+            /* Down from a row with nothing under it stays put rather than
+             * jumping to the last item of a shorter row. */
+            if (new_value + columns >= widget->item_count)
+            {
+                return 0;
+            }
+            new_value += columns;
+            break;
+        case SAVANXP_KEY_PAGE_UP:
+            new_value -= columns * sxgui_listbox_visible_rows(widget);
+            break;
+        case SAVANXP_KEY_PAGE_DOWN:
+            new_value += columns * sxgui_listbox_visible_rows(widget);
+            break;
+        case SAVANXP_KEY_HOME:
+            new_value = 0;
+            break;
+        case SAVANXP_KEY_END:
+            new_value = widget->item_count - 1;
+            break;
+        default:
+            return 0;
+        }
+        /* Up from the first row has nowhere to go: no wrapping to the end. */
+        if (new_value < 0 && event->key == SAVANXP_KEY_UP)
+        {
             return 0;
         }
         new_value = sxgui_clamp_int(new_value, 0, widget->item_count - 1);
@@ -4470,6 +4981,23 @@ struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items,
     widget.items = items;
     widget.item_count = item_count;
     return widget;
+}
+
+struct sxgui_widget sxgui_iconview(struct sx_rect rect, const char *const *items, int item_count)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_ICONVIEW, rect, 0);
+    widget.items = items;
+    widget.item_count = item_count;
+    return widget;
+}
+
+struct sx_rect sxgui_iconview_item_rect(const struct sxgui_widget *widget, int index)
+{
+    if (widget == 0 || widget->kind != SXGUI_ICONVIEW || index < 0 || index >= widget->item_count)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sxgui_iconview_cell(widget, index);
 }
 
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity)
