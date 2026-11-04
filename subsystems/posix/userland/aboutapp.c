@@ -21,6 +21,7 @@
 
 #include "brand_logo.h"
 #include "shared/version.h"
+#include "build_number.h"
 
 static struct sxgui_app g_app;
 
@@ -163,8 +164,8 @@ static void build_system_block(void)
     g_system.line_count = 0;
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "%s", SAVANXP_SYSTEM_NAME);
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "%s", SAVANXP_EDITION);
-    snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "Version %d.%d.%d",
-             SAVANXP_VERSION_MAJOR, SAVANXP_VERSION_MINOR, SAVANXP_VERSION_PATCH);
+    snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "Version %s",
+             SAVANXP_FULL_VERSION_NUMBER);
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "SDK %d.%d",
              SAVANXP_SDK_VERSION_MAJOR, SAVANXP_SDK_VERSION_MINOR);
 }

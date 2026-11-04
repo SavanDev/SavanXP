@@ -50,6 +50,7 @@
 #include "kernel/virtio_sound.hpp"
 #include "kernel/vmm.hpp"
 #include "shared/version.h"
+#include "build_number.h"
 
 namespace
 {
@@ -135,7 +136,7 @@ namespace
         boot_screen::show("Preparing CPU");
     }
 
-    console::printf("%s booting...\n", SAVANXP_DISPLAY_NAME);
+    console::printf("%s %s booting...\n", SAVANXP_SYSTEM_NAME, SAVANXP_FULL_VERSION_STRING);
 
     boot_screen::show("Initializing physical memory");
     memory::initialize(boot_info);

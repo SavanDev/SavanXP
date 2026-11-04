@@ -109,6 +109,34 @@ is an edit to the manifest and nothing else. Per-unit compile flags (the
 `-fno-builtin` on `math.c`, `--heap-mib` on `posix.c`) stay in the script
 that needs them, keyed by file name.
 
+## Version and build number
+
+The system shows its version as `<MAJOR>.<MINOR>.<PATCH> (Build <build>)`, for
+example `0.4.2 (Build 588)`: on the boot screen, the kernel log, the desktop
+stamp, About and the console banner. `sysinfo` prints them as two lines,
+`version v0.4.2` and `build 588`, so scripts can read each one.
+
+- **The version** lives in `include/shared/version.h` and is the single source
+  of truth. Master always carries the *next* version: the release commit
+  (`release(vX.Y.Z): ...`, tagged `vX.Y.Z`) is the last commit with that
+  number, and the commit right after it bumps `SAVANXP_VERSION_PATCH` (or
+  MINOR/MAJOR when the next release is planned as one). Every build checks
+  this: if `vX.Y.Z` is already tagged on an earlier commit, it prints a CMake
+  warning asking for the bump.
+- **The build number** is the commit count of `HEAD` (`git rev-list --count
+  HEAD`). It grows with every commit and the same code always gets the same
+  number; uncommitted changes do not change it. Without git it is `0`, and a
+  shallow clone gives a smaller count, so release images are built from a full
+  clone.
+- The target `savanxp_build_number` runs `cmake/GenBuildNumber.cmake` on every
+  build and writes `build/generated/build_number.h` (`SAVANXP_BUILD_NUMBER`,
+  `SAVANXP_BUILD_STRING`, `SAVANXP_FULL_VERSION_STRING`,
+  `SAVANXP_FULL_VERSION_NUMBER`) only when the number changed, so only the
+  files that include it recompile, once per commit.
+- `version.h` stays free of the build number on purpose: it is part of what
+  external programs compile against, and `build_number.h` exists only in the
+  system's own build tree.
+
 ## Layout
 
 - `CMakeLists.txt` defines the target graph and host-tool requirements.

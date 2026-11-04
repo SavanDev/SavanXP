@@ -19,6 +19,9 @@
   the file, create it.
 - The release commit (`release(vX.Y.Z): ...`) is the only one that renames
   `[Unreleased]` to the new version with a date.
+- Right after a release, master bumps `include/shared/version.h` to the next
+  version, so master never shows a number that is already published (see
+  `docs/build/BUILD_CMAKE.md`, "Version and build number").
 
 ### How to write an entry
 

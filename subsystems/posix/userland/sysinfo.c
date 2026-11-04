@@ -1,6 +1,7 @@
 #include "libc.h"
 
 #include "shared/version.h"
+#include "build_number.h"
 
 static void print_u64(uint64_t value) {
     char buffer[32];
@@ -82,6 +83,7 @@ int main(void) {
     puts_out("system:\n");
     print_text_line("name", SAVANXP_SYSTEM_NAME);
     print_text_line("version", SAVANXP_VERSION_STRING);
+    print_text_line("build", SAVANXP_BUILD_STRING);
     print_text_line("entry", "/bin/sh");
 
     puts_out("boot:\n");

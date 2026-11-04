@@ -110,6 +110,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The version shows the build number**, `0.4.2 (Build 588)` (the commit count): boot screen,
+  kernel log, desktop stamp, About, the console banner and a new `build` line in `sysinfo`. Master now carries the
+  next version (0.4.2); the build warns if `version.h` names an already tagged release.
+
 - **The Start menu opens without the one-second wait**: it keeps the catalog and rebuilds it only
   when `progman_registry_disk_signature()` changes, and a rebuild opens each binary once. The SDK
   gains `struct sxe_file` (`sxe_file_open`, `sxe_file_read_section`, `sxe_file_load_meta`,

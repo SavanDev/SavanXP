@@ -5,6 +5,7 @@
 
 #include "kernel/timer.hpp"
 #include "shared/version.h"
+#include "build_number.h"
 
 namespace boot_screen {
 namespace {
@@ -336,10 +337,10 @@ void draw_static(const Layout& layout) {
     draw_centered_text(layout.wordmark_y + (SX_BOOT_WORDMARK_H * layout.scale) + (12 * layout.scale),
                        SAVANXP_EDITION, layout.scale, faded(kWordmark));
 
-    const uint64_t version_width = text_width(SAVANXP_VERSION_STRING, layout.scale);
+    const uint64_t version_width = text_width(SAVANXP_FULL_VERSION_STRING, layout.scale);
     draw_text(g_framebuffer.width - version_width - (16 * layout.scale),
               g_framebuffer.height - (SX_CONSOLE_GLYPH_H * layout.scale) - (12 * layout.scale),
-              SAVANXP_VERSION_STRING, layout.scale, faded(kMuted));
+              SAVANXP_FULL_VERSION_STRING, layout.scale, faded(kMuted));
     draw_trough(layout);
 }
 

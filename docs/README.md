@@ -10,7 +10,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 ## Build — `build/`
 
 - [`BUILD_CMAKE.md`](build/BUILD_CMAKE.md) — the native Bash/CMake build graph, tools,
-  targets, external applications, and persistent-image rules.
+  targets, external applications, version and build number, and persistent-image rules.
 - [`BUILD_LINUX.md`](build/BUILD_LINUX.md) — host packages, QEMU setup, official
   ports, smoke tests, KVM configuration, and the GitHub Actions CI.
 

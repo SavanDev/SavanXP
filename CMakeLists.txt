@@ -555,6 +555,21 @@ set(SAVANXP_GENERATED_HEADER_FILES
 )
 set_source_files_properties(${SAVANXP_GENERATED_HEADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
 add_custom_target(savanxp_generated_headers DEPENDS ${SAVANXP_GENERATED_HEADER_FILES})
+
+# The build number (commit count) shown next to the version: "v0.4.2 (Build 588)".
+# It runs on every build because a new commit does not touch any file CMake
+# watches; the script only rewrites the header when the number changed.
+set(SAVANXP_BUILD_NUMBER_HEADER "${SAVANXP_GENERATED_ROOT}/build_number.h")
+add_custom_target(savanxp_build_number
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+            -DOUTPUT=${SAVANXP_BUILD_NUMBER_HEADER}
+            -P "${CMAKE_SOURCE_DIR}/cmake/GenBuildNumber.cmake"
+    BYPRODUCTS "${SAVANXP_BUILD_NUMBER_HEADER}"
+    COMMENT "Updating build number"
+    VERBATIM
+)
+add_dependencies(savanxp_generated_headers savanxp_build_number)
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
@@ -629,6 +644,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
     VERBATIM
 )
 add_custom_target(savanxp_sxe_resources DEPENDS "${SAVANXP_SXE_STAMP}")
+add_dependencies(savanxp_sxe_resources savanxp_build_number)
 
 foreach(target IN LISTS SAVANXP_USER_TARGETS)
     add_dependencies(${target} savanxp_sxe_resources)

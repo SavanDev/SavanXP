@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "shared/version.h"
+#include "build_number.h"
 
 #define SH_MAX_STAGES 8
 #define SH_MAX_ARGS 16
@@ -717,11 +718,10 @@ int main(int argc, char** argv) {
 
     if (g_console_fd >= 0) {
         /* The banner of the Windows 2000 console, with our name. */
-        printf("%s [Version %d.%d.%d]\n", SAVANXP_SYSTEM_NAME,
-            SAVANXP_VERSION_MAJOR, SAVANXP_VERSION_MINOR, SAVANXP_VERSION_PATCH);
+        printf("%s [Version %s]\n", SAVANXP_SYSTEM_NAME, SAVANXP_FULL_VERSION_NUMBER);
         puts_out("Type 'help' for commands. 'start <program>' opens a program.\n\n");
     } else {
-        printf("%s\n", SAVANXP_DISPLAY_NAME);
+        printf("%s %s\n", SAVANXP_SYSTEM_NAME, SAVANXP_FULL_VERSION_STRING);
         puts_out("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
     }
 
