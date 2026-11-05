@@ -711,7 +711,8 @@ It used to subtract the initramfs's `/bin` instead, which worked only while the
 initramfs carried every program
 ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#the-rescue-system)). A registry the
 installer writes, as Windows keeps under `Uninstall`, is the next step, and it
-belongs with elevation ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md)).
+belongs with elevation ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md))
+and setup ([SETUP_AND_UPDATES.md](SETUP_AND_UPDATES.md)).
 
 **`data_dir` is a declaration, not a permission.** The program says where its
 persistent data lives (Doom: `/games/doom`, ~30 MiB of WADs that nothing

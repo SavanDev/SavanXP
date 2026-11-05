@@ -77,6 +77,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   metrics exposed by the kernel.
 - [`SXE_FORMAT.md`](userland/SXE_FORMAT.md) — the executable format, resource sections,
   generator, stamping, runtime rules, and why SUN programs are named `.sxe`.
+- [`SETUP_AND_UPDATES.md`](userland/SETUP_AND_UPDATES.md) — the planned setup and
+  updater: a wizard on the LiveCD over a scriptable engine, the target disk
+  layout, the kernel pieces still missing, upgrade from newer media, the update
+  settings that do not exist yet, staging and apply at boot, and the phases.
 
 ## Desktop and graphics — `desktop/`
 

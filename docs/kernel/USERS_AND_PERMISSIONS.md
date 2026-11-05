@@ -424,7 +424,8 @@ not move (4237 against 4328). `sxfs-cli apply` takes the host file's time, and
    there is no installer inside the system yet (programs are installed from
    the host, `tools/build-user.sh`), so nothing records what it installed, and
    Add or Remove Programs still subtracts `programs.txt`. The record belongs
-   with the first installer, written while elevated into `/system`.
+   with the first installer, written while elevated into `/system`
+   ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md)).
 
 ## Deliberately out of scope
 
