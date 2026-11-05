@@ -48,6 +48,10 @@ struct Driver {
     // Higher probes first. It matters when two formats can be mistaken for
     // each other (a FAT32 with garbage where SxFS keeps its superblock).
     int priority;
+    // The format may hold the system's root. Only such a driver is tried for
+    // kRootMountPoint: a FAT boot drive or a stick must never become "/",
+    // whatever its position among the block devices.
+    bool can_be_root;
     // Recognises the device and loads its metadata without touching the VFS.
     // kInvalidVolume is not an error: it means "not my format", and fs:: goes
     // on with the next driver.
@@ -106,7 +110,8 @@ void initialize();
 bool register_driver(const Driver& driver);
 
 // Tries the drivers on a device, by descending priority, and stops at the
-// first that claims it. Returns the mount index or kInvalidMount.
+// first that claims it; for kRootMountPoint, only those with can_be_root.
+// Returns the mount index or kInvalidMount.
 size_t mount(size_t device_index, const char* mount_point);
 // The same over every block device in order: the first one some driver claims
 // wins. It is the boot path.

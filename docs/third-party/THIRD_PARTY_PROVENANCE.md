@@ -27,6 +27,27 @@ which is why both go into the registry.
   (`SAVANXP_UACPI_COMPILE_OPTIONS`) and integrated through
   `kernel/uacpi_glue.cpp`
 
+### FatFs
+
+- Origin: http://elm-chan.org/fsw/ff/, release R0.16 (`arc/ff16.zip`)
+- Pinned version: R0.16, zip SHA-256
+  `99f7dc1f7e095356e4a9e3dbe29959090d8b948afe2bbc5441e52fdf4b85449e`
+  (`vendor/fatfs/FATFS_RELEASE.txt`). FatFs has no public repository; the zip
+  is the release.
+- Versioned: yes, `vendor/fatfs/`, unmodified. Only the module sources are
+  kept: `ff.c`, `ff.h`, `diskio.h`, `ffunicode.c` and the two text files.
+  `ffconf.h`, `diskio.c` and `ffsystem.c` are left out: the configuration is
+  ours (`kernel/fatfs/ffconf.h`), and the other two are examples the driver
+  replaces.
+- License reviewed: the FatFs license, one-clause BSD style (Copyright (C) 2025
+  ChaN), `vendor/fatfs/LICENSE.txt`. Compatible with MIT; the notice stays in
+  every source file.
+- Decision: `Adopt`, over a port of Microsoft's `fastfat` (written against the
+  NT executive, MS-PL) and a driver of our own
+  ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md#decision-fatfs-not-fastfat-not-our-own))
+- Distributed in: not yet. It is built with the kernel's freestanding C flags
+  (`savanxp_fatfs_objects`) but not linked until the FAT driver exists.
+
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit

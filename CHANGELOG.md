@@ -117,6 +117,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Only a driver marked `can_be_root` mounts `/`** (`fs::Driver::can_be_root`; SxFS is): a FAT boot
+  drive ahead of the system disk can never become the root once a FAT driver exists. FatFs R0.16 is
+  vendored under `vendor/fatfs/`, compiled but not yet linked. See `docs/fs/FAT_ROADMAP.md`.
+
 - **GPT tables are checked before they are used**: both CRCs, falling back to the backup header
   (`partition: <disk>: primary GPT damaged, using the backup`); a disk with neither is left whole. The
   AHCI and ATA boot lines show each disk's model and serial.

@@ -118,7 +118,10 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
 `fs::Driver` in `include/kernel/fs.hpp`:
 
 - **Mounting:** `probe` (recognise the device, load metadata, publish nothing),
-  `attach` (publish the tree), `unmount` (optional).
+  `attach` (publish the tree), `unmount` (optional). `can_be_root` says the
+  format may hold the system's root: `fs::mount` tries only such drivers for
+  `/`, so a FAT boot drive registered ahead of the system disk, as on AHCI
+  port 0, never becomes the root.
 - **Publishing:** directories through `vfs::ensure_directory`, files through
   `vfs::install_volume_file`, which stamps the vnode with the driver. `data`
   is the driver's own record (an SxFS `FileRecord`). The VFS never reads it.

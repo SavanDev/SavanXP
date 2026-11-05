@@ -304,7 +304,8 @@ namespace
     // The filesystem registry: fs:: decides WHICH device is mounted and WHERE,
     // and each driver only says whether it recognises the format. mount_any
     // walks the block devices (partitions included) and keeps the first one a
-    // driver claims, mounted at "/".
+    // driver claims, mounted at "/". Only drivers marked can_be_root are tried
+    // there, so a FAT boot drive ahead of the system disk is never the root.
     fs::initialize();
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
@@ -314,8 +315,8 @@ namespace
     {
         panic("vfs: initramfs unavailable");
     }
-    // attach va aparte de mount porque la metadata se lee antes de que vfs::
-    // este listo para recibir vnodes.
+    // attach is separate from mount because the metadata is read before vfs::
+    // is ready to receive vnodes.
     const bool disk_mounted = fs::attach(root_mount);
 
     const MemorySummary memory = summarize_memory(boot_info);

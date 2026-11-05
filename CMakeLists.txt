@@ -295,6 +295,26 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
     C_EXTENSIONS YES
 )
 
+# FatFs (vendor/fatfs, unmodified), configured by kernel/fatfs/ffconf.h. Built
+# with the kernel so a toolchain or configuration change that breaks it shows
+# up now, but not linked yet: nothing calls it until the FAT driver exists
+# (docs/fs/FAT_ROADMAP.md, phase 1).
+set(SAVANXP_FATFS_SOURCES
+    "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.c"
+    "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ffunicode.c"
+)
+add_library(savanxp_fatfs_objects OBJECT ${SAVANXP_FATFS_SOURCES})
+target_include_directories(savanxp_fatfs_objects PRIVATE
+    "${CMAKE_SOURCE_DIR}/kernel/fatfs"
+)
+# The same freestanding C flags as uACPI, without uACPI's own define.
+set(SAVANXP_FATFS_COMPILE_OPTIONS ${SAVANXP_UACPI_COMPILE_OPTIONS})
+list(REMOVE_ITEM SAVANXP_FATFS_COMPILE_OPTIONS -DUACPI_USE_BUILTIN_STRING)
+target_compile_options(savanxp_fatfs_objects PRIVATE
+    ${SAVANXP_FATFS_COMPILE_OPTIONS}
+    -std=gnu11
+)
+
 # The freestanding userland runtime is shared by every in-tree executable. The
 # final link still uses --gc-sections, so each program only retains the runtime
 # pieces it references.
@@ -683,7 +703,7 @@ add_custom_target(savanxp_kernel
             $<TARGET_OBJECTS:savanxp_kernel_objects>
             $<TARGET_OBJECTS:savanxp_uacpi_objects>
     COMMAND_EXPAND_LISTS
-    DEPENDS savanxp_kernel_objects savanxp_uacpi_objects
+    DEPENDS savanxp_kernel_objects savanxp_uacpi_objects savanxp_fatfs_objects
     COMMENT "Linking SavanXP kernel"
     VERBATIM
 )
@@ -821,6 +841,17 @@ target_include_directories(savanxp-sxfs-volume-test PRIVATE
 target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# The filesystem registry: which driver may mount what, and where.
+add_executable(savanxp-fs-registry-test
+    kernel/fs.cpp
+    kernel/fs_path.cpp
+    tests/host/kernel_string_stubs.cpp
+    tests/host/fs_registry_test.cpp)
+target_include_directories(savanxp-fs-registry-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-fs-registry-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-fs-registry-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 # libsxdisk, the GPT writer Disk Management and setup share, and sxfs_mkfs.
 add_executable(savanxp-sxdisk-test
     libsxdisk/sxdisk.c
@@ -833,7 +864,7 @@ target_compile_options(savanxp-sxdisk-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sxdisk-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -847,6 +878,7 @@ add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
+add_test(NAME fs-registry-test COMMAND savanxp-fs-registry-test)
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"

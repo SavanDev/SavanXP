@@ -87,6 +87,7 @@ size_t mount(size_t device_index, const char* mount_point) {
         return kInvalidMount;
     }
 
+    const bool root = strcmp(slot.mount_point, kRootMountPoint) == 0;
     bool tried[kMaxDrivers] = {};
     for (size_t attempt = 0; attempt < g_driver_count; ++attempt) {
         const size_t index = next_driver(tried);
@@ -94,6 +95,9 @@ size_t mount(size_t device_index, const char* mount_point) {
             break;
         }
         tried[index] = true;
+        if (root && !g_drivers[index]->can_be_root) {
+            continue;
+        }
 
         const VolumeId volume = g_drivers[index]->probe(device_index, slot.mount_point);
         if (volume == kInvalidVolume) {

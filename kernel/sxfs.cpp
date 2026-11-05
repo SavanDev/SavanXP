@@ -2257,6 +2257,7 @@ void driver_unmount(VolumeId id) {
 const fs::Driver kDriver = {
     .name = "sxfs",
     .priority = 100,
+    .can_be_root = true,
     .probe = &probe,
     .attach = &attach,
     .unmount = &driver_unmount,

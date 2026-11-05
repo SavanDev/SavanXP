@@ -1,6 +1,7 @@
 # FAT — a second filesystem driver, on FatFs
 
-Status: **planned**. Nothing here is implemented yet.
+Status: **phase 0 done** (the root guard; FatFs vendored and compiled, not
+linked). The driver itself is not written yet.
 
 SavanXP reads and writes only SxFS. The one FAT volume that matters today, the
 EFI System Partition, is written as a whole image because "the kernel has no
@@ -30,8 +31,9 @@ change outside it, and the phases.
 | **FatFs** | ~7k lines of portable C, no dependencies, a five-function disk layer, a one-clause BSD-style license compatible with MIT. `Adopt`. |
 
 FatFs is published as a zip on elm-chan.org, not as a git repository. The pin
-is the release name (R0.15a as of this writing) plus the zip's SHA-256, in
-`vendor/fatfs/FATFS_RELEASE.txt`, next to its license file. The adoption is
+is the release name (R0.16) plus the zip's SHA-256, in
+`vendor/fatfs/FATFS_RELEASE.txt`, next to its license file. Only the module
+sources are vendored; `vendor/fatfs/README.md` lists what is left out and why. The adoption is
 recorded in [`THIRD_PARTY_PROVENANCE.md`](../third-party/THIRD_PARTY_PROVENANCE.md).
 
 ## Prerequisite: the root is never FAT
@@ -87,7 +89,16 @@ but the boot path calls `fs::mount` directly and needs the driver's own check.
 | `FF_LBA64` | 0 | `block::` addresses sectors with 32 bits |
 
 FatFs is C. It builds as an object library with the kernel's freestanding
-flags, the way `savanxp_uacpi_objects` does.
+flags (`savanxp_fatfs_objects`), the way `savanxp_uacpi_objects` does. The
+configuration lives in `kernel/fatfs/`, outside the vendored tree, and the
+include path finds it because `vendor/fatfs/source` has no `ffconf.h` of its
+own. Next to it, `kernel/fatfs/string.h` stands in for the `<string.h>` a
+freestanding compiler does not ship: the kernel's `mem*` (C linkage) and an
+inline `strchr`, which `ff.c` uses to reject characters FAT does not allow.
+
+What the compiled module asks of the driver, measured on the phase 0 build:
+`disk_initialize`, `disk_status`, `disk_read`, `disk_write`, `disk_ioctl`,
+`ff_memalloc`, `ff_memfree` and `get_fattime`. It is about 31 KB of code.
 
 ### The disk layer (`diskio`)
 
@@ -174,10 +185,11 @@ read-only. Writes are tested on a disposable FAT image instead.
 
 Each phase builds, boots and is verified on its own.
 
-0. **Root guard and vendoring.** `can_be_root` and `mount_any` (with its
-   changelog entry); `vendor/fatfs/`, `ffconf.h`, the CMake object library and
-   the provenance record. Nothing calls FatFs yet. Checked by `rescue-smoke`,
-   the AHCI smoke and the `disk.img` persistence check.
+0. **Root guard and vendoring. Done.** `can_be_root`, checked in `fs::mount`
+   so no path can mount `/` with another driver, and `fs-registry-test` (a FAT
+   boot drive ahead of the system disk, a boot with only FAT, mounts outside
+   `/`); `vendor/fatfs/`, `kernel/fatfs/ffconf.h`, the CMake object library
+   and the provenance record. Nothing calls FatFs yet.
 1. **Read-only driver.** `probe`, `attach`, `read`, `refresh`, `stats`; the ESP
    (or the development boot drive) at `/boot`. A host test,
    `savanxp-fat-volume-test`, that formats FAT12, FAT16 and FAT32 images in
