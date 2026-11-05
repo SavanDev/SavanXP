@@ -354,6 +354,12 @@ int close_fd(process::Process& proc, uint64_t fd) {
 }
 
 int open_node(process::Process& proc, const char* path, uint32_t flags, uint16_t create_permissions) {
+    // POSIX has no open without an access mode (libc turns O_RDONLY into
+    // SAVANXP_OPEN_READ). To the VFS no mode is a query open that checks only
+    // reachability, so it must never become a read handle here.
+    if ((flags & (SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE)) == 0) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
     vfs::Vnode* node = vfs::open(proc.credentials, path, flags, create_permissions);
     if (node == nullptr) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
@@ -372,12 +378,6 @@ int open_node(process::Process& proc, const char* path, uint32_t flags, uint16_t
         ((flags & SAVANXP_OPEN_READ) != 0 ? process::open_read : 0) |
         ((flags & SAVANXP_OPEN_WRITE) != 0 ? process::open_write : 0) |
         ((flags & SAVANXP_OPEN_NONBLOCK) != 0 ? process::open_nonblock : 0);
-    if ((file->open_flags & (process::open_read | process::open_write)) == 0) {
-        file->open_flags = process::open_read;
-        if ((flags & SAVANXP_OPEN_NONBLOCK) != 0) {
-            file->open_flags |= process::open_nonblock;
-        }
-    }
     file->node = node;
     file->device = node->backend == vfs::Backend::device ? static_cast<device::Device*>(node->data) : nullptr;
     file->header.destroy = detail::destroy_io_object;

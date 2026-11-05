@@ -255,9 +255,12 @@ static int run_user(void)
     check(geteuid() == ELEVTEST_USER, "the child is the user");
 
     check(open("/dev/input0", O_RDONLY) < 0 && errno == EACCES, "the user cannot open the keyboard");
-    /* No access mode is a read handle, and is checked as one. */
-    check(savanxp_open_mode("/dev/input0", 0) == -SAVANXP_EACCES,
+    /* POSIX has no open without an access mode: to the VFS it is a query that
+     * checks only reachability, and it used to come back as a read handle. */
+    check(savanxp_open_mode("/dev/input0", 0) == -SAVANXP_EINVAL,
         "the user cannot open the keyboard without an access mode");
+    check(savanxp_open_mode("/bin/true", 0) == -SAVANXP_EINVAL,
+        "an open without an access mode is refused even where reading is allowed");
     ask_windowd_directly();
     ask_and_forge();
     ask_while_y_is_held();

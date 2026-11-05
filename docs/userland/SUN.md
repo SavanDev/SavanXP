@@ -150,7 +150,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
-| `CreateFile` and the file API | — | missing: SUN has no files |
+| `CreateFile` and the file API | — | missing: SUN has no files; no desired access will be a query open, a query-only handle ([rule](../kernel/USERS_AND_PERMISSIONS.md#what-the-check-covers)) |
 | Registry / profile settings | — | missing (needs files) |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |

@@ -357,7 +357,7 @@ and a directory 0755.
 | operation | needs |
 | --- | --- |
 | reaching any path | search (`x`) on every directory above it |
-| `open` | `r` and/or `w` on the file, by the flags |
+| `open` | `r` and/or `w` on the file, by the flags; with neither, only reaching it (a query open) |
 | create, `mkdir` | `w` and `x` on the parent; in the in-memory tree, the system |
 | `unlink`, `rmdir`, `rename` | `w` and `x` on the parent (both parents for a rename); in a sticky directory (`/tmp`), also being the entry's owner, the directory's or the system |
 | `truncate` | `w` on the file |
@@ -366,6 +366,14 @@ and a directory 0755.
 | `stat` | only reaching it |
 | `chmod`, `fchmod` | being the owner, or the system |
 | `chown` | being the system |
+
+A query open is NT's `CreateFile` with no desired access: it is checked only
+for reaching the node, so the handle a subsystem makes from it may carry query
+access and never read or write. The kernel allows it for the subsystems that
+have the idea — SUN's file API when it exists, a Win32 subsystem — and POSIX,
+which has no open without a mode, refuses it in `open_node` with `EINVAL`. Until
+2026-11 POSIX turned it into a read handle, which read past the check
+([`KERNEL_SECURITY.md`](KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E1).
 
 A refusal is `EACCES`, and `EPERM` for `chmod`, `chown` and raising an
 identity. `set_identity` in `posix_translation.cpp` is the only place a token

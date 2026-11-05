@@ -225,7 +225,7 @@ at fixed addresses, and the kernel is not relocated.
 | Control flow | No CET shadow stacks, PIE, KASLR or compiler CFI | Medium | Open |
 | SMP panic | Panic halts only the reporting core | Medium | Fixed: `smp::stop_other_cores` |
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |
-| VFS | `open` with no access mode skipped the permission check and granted read (E1) | High | Fixed |
+| VFS | POSIX `open` with no access mode skipped the permission check and granted read (E1) | High | Fixed |
 | Ports | A port sent over its own pending connection leaked with its name (E2) | Medium | Fixed |
 | Ports | Global 16-slot namespace with no ACL on service names (E3) | Medium | Open |
 | VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Open |
@@ -314,9 +314,14 @@ true for everyone. `open_node` then treats a handle with no mode as read-only
 and grants `access_read`. A user process can therefore read a `0600` file of
 the system or of another user, list a directory it has no read permission on
 (`readdir` only checks the handle), and build a file section from it, as long
-as the ancestors are searchable. Fixed: `vfs::open` asks for read whenever
-neither mode is given, so the check and the grant agree. `elevtest` checks that
-the user cannot open `/dev/input0` (`0600`) with no mode.
+as the ancestors are searchable. The check was right and the grant was wrong:
+to the VFS, no mode is a query open, which NT's `CreateFile` with no desired
+access needs and a future SUN or Win32 file API will use. Fixed in the POSIX
+layer: `open_node` refuses an open with no mode (`EINVAL`), and `vfs::open`
+keeps the query semantics, documented in
+[`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md#what-the-check-covers).
+Any other subsystem must grant such a handle query access only. `elevtest`
+checks the refusal on `/dev/input0` (`0600`) and on a readable file.
 
 **E2 — Medium, fixed. A port could keep itself alive forever.** A port handle may be sent
 over a pipe (`PIPE_SEND_HANDLE` rejects only `io` objects). If the process
