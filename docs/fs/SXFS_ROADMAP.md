@@ -171,8 +171,8 @@ principle hold every inode. That is the ceiling, not a typical shape.
 ## 4. The `FileRecord` cache is what breaks first, and it is not the inode table
 
 **The cost.** `struct FileRecord` is 344 bytes and there is one per inode:
-4095 × 344 = 1.4 MiB per volume, and `kMaxVolumes` is 2. With the block bitmaps
-that is 3.4 MiB of static metadata per volume, 6.8 MiB for the pair. The
+4095 × 344 = 1.4 MiB per volume, and `kMaxVolumes` is 3. With the block bitmaps
+that is 3.4 MiB of static metadata per volume, about 10 MiB for all three. The
 measured cost of that is small — the guest reports 938 MiB usable out of 1 GiB —
 so this is a note, not a problem.
 
@@ -268,6 +268,40 @@ Start menu's cache accepts that edge.
   knows the field is meaningful, the same way `SXFS_FEATURE_OWNERSHIP` made
   uid/gid/mode trustworthy without a v3. `struct savanxp_stat_ex` would gain an
   `st_mtime_nsec` at its end.
+
+## What a second driver showed
+
+Writing the FAT driver ([FAT_ROADMAP.md](FAT_ROADMAP.md)) was the first time
+anything but SxFS sat under the VFS. What it showed about the VFS itself is in
+[FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits); these are SxFS's.
+
+- **Mounting is not read-only.** `probe` replays the journal
+  (`recover_journal`) before it validates the home metadata, and the replay
+  writes the disk. So SxFS cannot be mounted just to look at a volume and let
+  go: the search for the boot volume asks for the FAT driver by name
+  (`fs::mount` with a driver name) precisely so that no SxFS volume on another
+  disk is opened along the way. A probe that only reads, with the replay
+  deferred to a writable attach, would remove the reason.
+- **Few volumes, each expensive.** `kMaxVolumes` is 3 and each one costs about
+  3.4 MiB of static metadata (item 4), reserved whether or not it is used. The
+  root takes one, so two SxFS volumes can be mounted at `/mnt`, which is also
+  all `fs::kMaxMounts` leaves once the root and `/boot` are in. Raising either
+  means raising both, and item 4 is what makes the SxFS side cost.
+- **Every operation on a vnode searches every record.** `file_from_vnode`
+  walks the `FileRecord`s of every volume, up to 4095 × 3, comparing vnode
+  pointers. For a directory there is no other way, since the VFS gives a
+  directory vnode no data of the driver's. For a file there is: `mount_record`
+  already hands the record to the VFS as `vnode.data`, and nothing reads it
+  back. FAT reads it; SxFS could too, leaving the search to directories.
+- **No volume label.** SxFS has none; Disk Management shows and sets the GPT
+  partition name instead ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md)),
+  so a whole-disk SxFS volume has no name at all. A label in the superblock's
+  reserved tail would not need a new version, as ownership did not.
+- **`write(..., truncate)` ignores the offset.** With `truncate` the file is
+  emptied and written from 0, whatever offset was passed; the VFS uses it for
+  `O_TRUNC` with an empty write. FAT copies the behaviour so both drivers
+  answer the same. It is an odd contract for a driver to learn, and a
+  separate truncate-to-zero before the write would say the same thing.
 
 ## What is deliberately not broken
 

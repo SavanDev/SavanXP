@@ -189,12 +189,63 @@ so only the system writes there, and it is never unmounted.
 
 ## Limits
 
-- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4: root, `/boot`, and two
-  for `/mnt` (the installer's target among them). SxFS holds 3 volumes at once (`kMaxVolumes`, about
-  3 MiB of kernel memory each).
-- The VFS holds 2048 nodes (`kMaxNodes`) for the initramfs, `/dev` and every
-  mounted volume's files and directories together. A volume whose tree does
-  not fit does not mount: FAT publishes its whole tree at attach.
-- Directories on a volume are plain in-memory vnodes (`Backend::memory`). They
-  find their driver by path, not by a stamp. That is enough while every
-  directory operation starts from a path.
+What the VFS and the registry cannot do today. Most of it showed up writing the
+second driver, FAT ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)): SxFS was shaped
+with the VFS and never ran into it. Each entry says what breaks and, where it
+is known, what the fix is. The SxFS side is in
+[SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md#what-a-second-driver-showed).
+
+### Capacity
+
+- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4: root, `/boot`, and two for
+  `/mnt` (the installer's target among them). SxFS holds 3 volumes at once
+  (`kMaxVolumes`, about 3 MiB of kernel memory each).
+- **Every volume's whole tree is published at attach, out of one pool.** There
+  is no lookup on demand: a driver publishes every file and directory before
+  the volume is usable, and the VFS holds 2048 nodes (`kMaxNodes`) for the
+  initramfs, `/dev` and every mounted volume together. A volume whose tree
+  does not fit does not mount (FAT fails attach cleanly and `fs::release`
+  takes back what was published). A USB stick with a few thousand files is
+  enough. The fix is publishing a directory's children when it is first
+  looked up, which changes how every driver attaches.
+- **Names are at most 63 bytes, paths at most 255** (`kMaxPathComponentLength`,
+  `kMaxPathLength`). FAT allows 255-character names; the FAT driver leaves out
+  what does not fit and logs it, never truncating a name.
+
+### Semantics
+
+- **Names are compared byte for byte** (`strcmp` in the child lookup). FAT is
+  case-insensitive, the VFS is not: `/boot/LIMINE.CONF` is not found although
+  FAT would find it, and creating `Readme` next to `README` passes the VFS's
+  check and is then refused by the format, reported as `ENOSPC`. Read in the
+  code, not yet exercised. A per-volume flag asking for case-insensitive
+  lookup would be the smallest fix.
+- **A driver's failure is a `bool`, and the VFS picks the errno per
+  operation**: a failed create or write is `ENOSPC`, a failed truncate
+  `ENOSPC` when growing and `EINVAL` when shrinking, and a failed mkdir,
+  rename, unlink or rmdir `EINVAL`. A full volume, a read-only file, an I/O
+  error and a name the format refuses all look alike to the program. The fix
+  is driver operations that return a status.
+- **There is no read-only mount.** Acting as the system passes the write bits
+  ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#what-the-check-covers)),
+  so what protects a read-only volume is each vnode published without
+  `writable` and the driver refusing. And the VFS calls the write operations
+  without checking them for `nullptr`: a driver that cannot write still has to
+  provide each one, returning failure. A mount flag the VFS checks before any
+  driver call would cover both.
+- **A driver never sees an open, a close or a vnode released.** It cannot keep
+  state per open file, so FAT opens the file again on every `read`, walking
+  its cluster chain from the start each time. And it is never told when the
+  last handle on an unlinked file goes: both drivers free an unlinked file at
+  once, so a handle still open on it reads nothing, where POSIX keeps it alive
+  until the last close.
+- **A rename reaches the driver first, then the tree.** If the VFS failed to
+  rename its own node after the driver succeeded, the disk and the tree would
+  disagree. Not seen; it is the order in `vfs::rename`. The VFS does refuse a
+  directory moved into its own subtree before any driver is called, which
+  FatFs on its own lets through.
+- **Directories on a volume are plain in-memory vnodes** (`Backend::memory`).
+  They find their driver by path, not by a stamp, which is enough while every
+  directory operation starts from a path; but a driver holding a record per
+  directory finds it by searching for the vnode, linearly (FAT's
+  `directory_from_vnode`, SxFS's `file_from_vnode`).
