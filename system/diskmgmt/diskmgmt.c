@@ -788,10 +788,11 @@ static int can_modify_partition(const struct sxn_storage_device *partition)
     return parent >= 0 && can_partition(&g_devices[parent]);
 }
 
-/* A volume that may be mounted: SxFS, not mounted, not the ESP. */
+/* A volume that may be mounted: SxFS or FAT, not mounted, not the ESP. */
 static int can_mount(const struct sxn_storage_device *device)
 {
-    return device != 0 && device->kind != SXN_STORAGE_MEMORY && strcmp(device->fs_name, "sxfs") == 0 &&
+    return device != 0 && device->kind != SXN_STORAGE_MEMORY &&
+        (strcmp(device->fs_name, "sxfs") == 0 || strcmp(device->fs_name, "fat") == 0) &&
         (device->flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_ESP)) == 0u &&
         (device->kind == SXN_STORAGE_PARTITION || device->scheme == SXN_STORAGE_SCHEME_NONE);
 }
@@ -2936,6 +2937,81 @@ static void selftest_mount(uint32_t part_id, const char *name)
     (void)sxn_log("diskmgmt: mounted, wrote, refused a busy unmount, unmounted and remounted /mnt/sxtest");
 }
 
+/* The FAT disk the scenario attaches (serial SXFAT0, a whole-disk volume the
+ * smoke runner built with /hello.txt on it): offered for Mount, mounted at
+ * /mnt/fattest, read and written through /bin/sh, unmounted, and mounted
+ * again with the new file still there. */
+static void selftest_fat(void)
+{
+    const struct sxn_storage_device *device;
+    char name[SXN_STORAGE_NAME_CAPACITY];
+    uint32_t id;
+    uint32_t files;
+    int status = -1;
+    long child;
+    int index;
+
+    (void)load_devices();
+    index = find_serial("SXFAT0");
+    if (index < 0)
+    {
+        selftest_fail("the FAT disk SXFAT0 is not attached");
+        return;
+    }
+    device = &g_devices[index];
+    if (strcmp(device->fs_name, "fat") != 0 || !can_mount(device))
+    {
+        selftest_fail("the FAT disk is not offered for Mount");
+        return;
+    }
+    id = device->id;
+    snprintf(name, sizeof(name), "%s", device->name);
+    if (op_mount(id, name, "/mnt/fattest") != 0)
+    {
+        selftest_fail("Mount of the FAT disk failed");
+        return;
+    }
+    device = selftest_device(id);
+    if (device == 0 || (device->flags & SXN_STORAGE_MOUNTED) == 0u || strcmp(device->mount_point, "/mnt/fattest") != 0 ||
+        strcmp(device->fs_name, "fat") != 0 || device->total_bytes == 0u || device->file_count == 0u)
+    {
+        selftest_fail("the FAT disk is not listed as mounted at /mnt/fattest");
+        return;
+    }
+    files = device->file_count;
+    child = selftest_shell("cat /mnt/fattest/hello.txt > /mnt/fattest/copy.txt", -1);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
+    {
+        selftest_fail("the FAT volume cannot be read and written");
+    }
+    device = selftest_device(id);
+    if (device == 0 || device->file_count != files + 1u)
+    {
+        selftest_fail("the file written on the FAT volume is not counted");
+    }
+    if (op_unmount(id, name) != 0 || op_mount(id, name, "/mnt/fattest") != 0)
+    {
+        selftest_fail("the FAT volume could not be unmounted and mounted again");
+        return;
+    }
+    device = selftest_device(id);
+    if (device == 0 || device->file_count != files + 1u)
+    {
+        selftest_fail("the file written on the FAT volume is gone after a remount");
+    }
+    child = selftest_shell("cat /mnt/fattest/copy.txt > /mnt/fattest/copy2.txt", -1);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
+    {
+        selftest_fail("the remounted FAT volume cannot be read");
+    }
+    if (op_unmount(id, name) != 0)
+    {
+        selftest_fail("the FAT volume's second unmount failed");
+        return;
+    }
+    (void)sxn_log("diskmgmt: mounted the FAT disk at /mnt/fattest, wrote, unmounted and remounted it");
+}
+
 /* The write half, on the scenario's blank disk (serial SXBLANK0), never on
  * the system's: initialize, partition and format, relabel, delete. */
 static void selftest_writes(void)
@@ -3060,6 +3136,7 @@ static int selftest(void)
 
     (void)selftest_layout();
     selftest_writes();
+    selftest_fat();
     (void)load_devices();
     build_rows();
     if (g_row_count == 0)

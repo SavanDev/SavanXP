@@ -47,7 +47,7 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 | New Partition | free space, or a GPT disk's box (its first free range) | adds a GPT entry, 1 MiB aligned; *Format as SxFS* (default) formats it and gives it the SxFS type, otherwise its type is Basic data |
 | Format | a partition | `sxfs_mkfs`, the root owned by the person who asked (uid, group `users`), the SxFS type, and the label as the GPT name |
 | Delete Partition | a partition | empties its GPT entry |
-| Mount | an SxFS volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case |
+| Mount | an SxFS or FAT volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case |
 | Unmount | a mounted volume but `/` and `/boot` | syncs and releases it; refused while a file of it is open |
 | Rescan Disks | every disk with nothing mounted | reads its table again |
 
@@ -126,7 +126,11 @@ partition name (36 UTF-16 units, kept as ASCII).
   label, mounts it at `/mnt/sxtest`, writes a file through `/bin/sh`, is
   refused unmounting while `cat` holds a file open, unmounts, mounts again and
   finds both files, refuses an overlapping partition and a wrong start, and
-  deletes it.
+  deletes it. It also attaches a 16 MiB FAT disk, serial `SXFAT0`, that the
+  smoke runner builds with `build/tools/fat-image` (`fat_disk_mib`): the
+  self-test mounts it at `/mnt/fattest`, writes through `/bin/sh`, unmounts,
+  mounts again and finds the file. A FAT volume is the system's, so only the
+  system writes it ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md#open-questions)).
 - `./build.sh smoke native-test`: the slice 28 assertions.
 - `./build.sh smoke elevation-smoke`: `diskmgmt --rescan` through the real
   consent prompt.

@@ -660,9 +660,4 @@ const fs::Driver& driver() {
     return kDriver;
 }
 
-bool is_boot_sector(const uint8_t* sector) {
-    const bool signature = sector[510] == 0x55 && sector[511] == 0xaa;
-    return signature && (memcmp(sector + 54, "FAT", 3) == 0 || memcmp(sector + 82, "FAT32", 5) == 0);
-}
-
 } // namespace fat

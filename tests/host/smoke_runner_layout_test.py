@@ -354,6 +354,13 @@ def main() -> int:
     assert "extra_disk_mib=64" in catalog
     assert "SXBLANK0" in (root / "tools" / "run_smoke.py").read_text(encoding="utf-8")
     assert "extra_disks" in run_qemu
+    # And mounts a FAT disk the runner builds with the fat-image host tool.
+    assert "fat_disk_mib=16" in catalog
+    run_smoke_text = (root / "tools" / "run_smoke.py").read_text(encoding="utf-8")
+    assert "SXFAT0" in run_smoke_text and "--fat-image" in run_smoke_text
+    assert "savanxp_fat_image" in (root / "build.sh").read_text(encoding="utf-8")
+    # The boot drive sits under a snapshot overlay: guest writes never reach build/image.
+    assert "snapshot=on" in run_qemu and "fat:rw:" not in run_qemu
 
     for path in (
         root / "tools" / "run_qemu.py",

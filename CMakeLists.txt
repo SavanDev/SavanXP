@@ -41,6 +41,7 @@ set(SAVANXP_KERNEL_ELF "${SAVANXP_OUTPUT_ROOT}/kernel.elf")
 set(SAVANXP_ISO_IMAGE "${SAVANXP_OUTPUT_ROOT}/SavanXP.iso")
 set(SAVANXP_TOOLS_ROOT "${SAVANXP_OUTPUT_ROOT}/tools")
 set(SAVANXP_SXFS_CLI "${SAVANXP_TOOLS_ROOT}/sxfs-cli")
+set(SAVANXP_FAT_IMAGE "${SAVANXP_TOOLS_ROOT}/fat-image")
 
 # Prefer the `python3` command on PATH, the one a developer runs. FindPython3
 # alone walks PATH directory by directory looking for versioned names, so a
@@ -922,6 +923,30 @@ add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
     VERBATIM
 )
 add_custom_target(savanxp_sxfs_cli DEPENDS "${SAVANXP_SXFS_CLI}")
+
+# fat-image: FAT images on the host, with the same FatFs the kernel runs
+# (tools/fat_image.c). -iquote finds our ffconf.h for ff.h's #include
+# "ffconf.h" while <string.h> stays the host's, not the kernel's stand-in.
+add_custom_command(OUTPUT "${SAVANXP_FAT_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"
+    COMMAND "${SAVANXP_HOST_CC}"
+            -std=c11 -O2 -Wall
+            -iquote "${CMAKE_SOURCE_DIR}/kernel/fatfs"
+            -I "${CMAKE_SOURCE_DIR}/vendor/fatfs/source"
+            "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.c"
+            "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ffunicode.c"
+            "${CMAKE_SOURCE_DIR}/tools/fat_image.c"
+            -o "${SAVANXP_FAT_IMAGE}"
+    DEPENDS
+        "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.c"
+        "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ffunicode.c"
+        "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.h"
+        "${CMAKE_SOURCE_DIR}/kernel/fatfs/ffconf.h"
+        "${CMAKE_SOURCE_DIR}/tools/fat_image.c"
+    COMMENT "Building fat-image"
+    VERBATIM
+)
+add_custom_target(savanxp_fat_image DEPENDS "${SAVANXP_FAT_IMAGE}")
 add_test(NAME sxfs-compaction-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/sxfs_compaction_test.py"

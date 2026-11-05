@@ -334,6 +334,30 @@ void case_mbr_table() {
     }
 }
 
+// A "superfloppy": FAT over the whole disk, no table. Its boot sector ends in
+// 0x55AA like an MBR, and the bytes where an MBR keeps its entries are FAT's
+// boot code, here made to look like a partition. It is a volume: nothing is
+// sliced and the disk reads as having no scheme.
+void case_fat_volume_is_not_a_table() {
+    printf("case: FAT over the whole disk\n");
+    reset_devices();
+    const size_t disk = add_disk(65536, "ahci3", /*writable=*/true);
+    uint8_t* image = disk_bytes(disk);
+    image[0] = 0xeb;
+    image[1] = 0x3c;
+    image[2] = 0x90;
+    memcpy(image + 54, "FAT16   ", 8);
+    uint8_t* entry = mbr_entry(image, 0);
+    entry[4] = 0x06;
+    put32(entry + 8, 63);
+    put32(entry + 12, 1000);
+    write_boot_signature(image);
+    enumerate_partitions();
+
+    check(g_device_count == 1, "nothing sliced from a FAT boot sector");
+    check(partition::disk_info(disk).scheme == partition::Scheme::none, "the disk has no scheme");
+}
+
 void case_read_only_disk_yields_read_only_partitions() {
     printf("case: read-only disk\n");
     reset_devices();
@@ -712,6 +736,7 @@ int main() {
     case_partition_offsets_reach_the_parent();
     case_gpt_without_protective_mbr();
     case_mbr_table();
+    case_fat_volume_is_not_a_table();
     case_read_only_disk_yields_read_only_partitions();
     case_raw_disk_is_left_alone();
     case_bogus_entries_are_discarded();

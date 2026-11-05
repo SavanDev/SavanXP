@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Disk Management mounts FAT volumes**, not only SxFS. New host tool `fat-image` (`create`, `put`)
+  builds FAT images with the kernel's FatFs; smokes can attach one (`fat_disk_mib`, serial `SXFAT0`).
+
 - **A FAT driver, and the boot volume at `/boot`**: FAT12/16/32 with long names on FatFs
   (`fat::driver()`), read and write. At boot the first FAT volume holding `boot/kernel.elf`, ESPs first,
   is mounted at `/boot` (`storage: /boot is <device>`), writable by the system only, never unmounted.
@@ -237,6 +240,9 @@ Cut-off notes:
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
 ### Fixed
+
+- **A FAT volume over a whole disk is no longer read as an MBR**: its boot sector ends in `0x55AA` too,
+  and `partition::` sliced its boot code as a table. Such a disk now has no scheme and mounts whole.
 
 - **Asking for a volume's usage no longer stalls the system**: SxFS counted its used sectors one bit at a
   time, a third of a second under the kernel lock on a 1 GiB volume, each time Task Manager, `sysinfo` or

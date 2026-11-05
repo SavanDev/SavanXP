@@ -197,6 +197,11 @@ def main() -> int:
     parser.add_argument("--extra-disk-mib", type=int, default=0,
                         help="Attach a blank disk of this size (serial SXBLANK0) for the "
                              "scenario to write: Disk Management's.")
+    parser.add_argument("--fat-disk-mib", type=int, default=0,
+                        help="Attach a FAT disk of this size (serial SXFAT0), built by "
+                             "--fat-image with /hello.txt on it: Disk Management's.")
+    parser.add_argument("--fat-image", type=Path,
+                        help="The fat-image host tool (build/tools/fat-image).")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
@@ -272,6 +277,17 @@ def main() -> int:
         with blank_disk.open("wb") as handle:
             handle.truncate(args.extra_disk_mib * 1024 * 1024)
         extra_disks = ((blank_disk, "SXBLANK0"),)
+    if args.fat_disk_mib > 0:
+        if args.fat_image is None:
+            raise SystemExit("--fat-disk-mib needs --fat-image")
+        fat_disk = log_dir / f"{run_tag}.fat.img"
+        hello = log_dir / f"{run_tag}.fat-hello.txt"
+        fat_disk.unlink(missing_ok=True)
+        hello.write_text("fat-hello\n")
+        tool = str(args.fat_image.resolve())
+        subprocess.run([tool, "create", str(fat_disk), str(args.fat_disk_mib)], check=True)
+        subprocess.run([tool, "put", str(fat_disk), str(hello), "/hello.txt"], check=True)
+        extra_disks = extra_disks + ((fat_disk, "SXFAT0"),)
     code, vars_copy = prepare_image(
         image_root=image_root,
         disk_image=machine_disk,

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/fat.hpp"
 #include "kernel/string.hpp"
 #include "shared/crc32.h"
 
@@ -355,6 +356,11 @@ void scan_disk(size_t index) {
         return;
     }
     if (load_le16(boot_sector + 510) != 0xaa55) {
+        return;
+    }
+    // A FAT volume holding the whole disk ends its boot sector in 0x55AA too.
+    // It is a volume, not a table: nothing to slice.
+    if (fat::is_boot_sector(boot_sector)) {
         return;
     }
 

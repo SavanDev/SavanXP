@@ -195,6 +195,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
+        SMOKE_FAT_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field fat_disk_mib)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -456,6 +457,10 @@ case "$COMMAND" in
         [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
         [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ "$SMOKE_EXTRA_DISK_MIB" == 0 ]] || SMOKE_ARGS+=(--extra-disk-mib "$SMOKE_EXTRA_DISK_MIB")
+        if [[ "$SMOKE_FAT_DISK_MIB" != 0 ]]; then
+            build_target savanxp_fat_image
+            SMOKE_ARGS+=(--fat-disk-mib "$SMOKE_FAT_DISK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")
+        fi
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then

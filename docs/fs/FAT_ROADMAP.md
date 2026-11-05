@@ -1,8 +1,8 @@
 # FAT — a second filesystem driver, on FatFs
 
-Status: **phase 2 done**: a FAT driver that reads and writes
-(`kernel/fat.cpp`), and the boot volume mounted at `/boot`. Phase 3, the
-consumers, is next.
+Status: **phase 3 in part**: a FAT driver that reads and writes
+(`kernel/fat.cpp`), the boot volume at `/boot`, and Disk Management mounting
+FAT volumes. The updater, the other consumer, waits for the updater itself.
 
 Before this driver SavanXP read only SxFS, and the one FAT volume that matters,
 the EFI System Partition, could only be written as a whole image
@@ -18,8 +18,8 @@ had to change outside it, and the phases.
   `fs::mount_any` has to stop accepting a FAT volume as `/`.
 - **The ESP is mounted at `/boot`**, owned by the system: only the system
   writes there. Nothing runs from it, and it is not unmounted.
-- **Disk Management mounts FAT volumes at `/mnt/<name>`** once the driver
-  exists: the storage calls already go through `fs::mount`.
+- **Disk Management mounts FAT volumes at `/mnt/<name>`**: the storage calls
+  already went through `fs::mount`.
 - **FAT12, FAT16 and FAT32 with long names. No exFAT.**
 - Effort: one to two weeks, most of it in the glue and the tests.
 
@@ -241,14 +241,26 @@ Each phase builds, boots and is verified on its own.
    write, create or delete there. The plan had a smoke that writes a second
    FAT disk and reboots; the overlay made `/boot` itself safe to write, and
    persistence across a new mount is the host test's.
-3. **Consumers.** The updater replaces `boot/kernel.elf` and
-   `boot/initramfs.cpio` as files and edits `limine.conf`, instead of rewriting
-   the ESP image ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md),
-   phase 5). Disk Management's Mount accepts FAT volumes, not only SxFS (the
-   check in `diskmgmt.c`; the kernel side needs nothing), and its
-   `diskmgmt-smoke` mounts a FAT partition on the blank disk. Formatting as
-   FAT from Disk Management would need FatFs in userland and is not planned.
-   Removable media wait for a USB mass-storage driver, which does not exist.
+3. **Consumers.**
+   - **Disk Management. Done.** Mount accepts FAT volumes, not only SxFS.
+     `diskmgmt-smoke` attaches a 16 MiB FAT disk (serial `SXFAT0`,
+     `fat_disk_mib` in `tools/smoke_catalog.py`) that the smoke runner builds
+     with `fat-image`, a host tool over the same FatFs (`tools/fat_image.c`,
+     `build/tools/fat-image create|put`). The self-test mounts it at
+     `/mnt/fattest`, reads and writes through `/bin/sh`, unmounts, mounts
+     again and finds the new file; `fsck.fat` on the image afterwards finds
+     it clean. Formatting as FAT from Disk Management is not planned.
+   - **The superfloppy fix this needed.** A FAT volume holding a whole disk,
+     with no partition table, ends its boot sector in `0x55AA` like an MBR,
+     and `partition::` sliced its boot code as a table. A disk whose sector 0
+     is a FAT boot sector (`fat::is_boot_sector`, which now also wants the x86
+     jump every FAT boot sector starts with) has no scheme and is not sliced:
+     factory USB sticks are often formatted this way.
+   - **The updater. Waiting.** It replaces `boot/kernel.elf` and
+     `boot/initramfs.cpio` as files and edits `limine.conf`, instead of
+     rewriting the ESP image ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md),
+     phase 5). There is no updater yet.
+   - Removable media wait for a USB mass-storage driver, which does not exist.
 
 ## Limits accepted
 
@@ -260,6 +272,12 @@ Each phase builds, boots and is verified on its own.
   does not mount.
 
 ## Open questions
+
+- Who owns a FAT volume mounted at `/mnt`. Everything on FAT is published as
+  the system's, so a user can read a mounted stick but not write it. The
+  elevated copy of Disk Management that mounts it still carries the user's
+  real uid; giving the volume that owner, as Format does for SxFS, would need
+  the owner passed down through `fs::mount` to the driver.
 
 - Whether the ESP should stay read-only for everyone and be remounted writable
   only while the updater runs, rather than writable by the system all the time.

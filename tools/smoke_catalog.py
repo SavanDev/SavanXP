@@ -32,6 +32,7 @@ class Scenario:
     requires_virtio: bool = False
     no_disk: bool = False
     extra_disk_mib: int = 0
+    fat_disk_mib: int = 0
 
 
 def _qemu_scenario(
@@ -55,6 +56,7 @@ def _qemu_scenario(
     requires_virtio: bool = False,
     no_disk: bool = False,
     extra_disk_mib: int = 0,
+    fat_disk_mib: int = 0,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -77,6 +79,7 @@ def _qemu_scenario(
         requires_virtio=requires_virtio,
         no_disk=no_disk,
         extra_disk_mib=extra_disk_mib,
+        fat_disk_mib=fat_disk_mib,
     )
 
 
@@ -170,9 +173,11 @@ SCENARIOS: dict[str, Scenario] = {
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",
         "DISKMGMT SMOKE FAIL",
-        "Disk Management: listing, then initialize, partition, format and delete on a blank disk",
+        "Disk Management: listing, then initialize, partition, format and delete on a blank disk, "
+        "and mount a FAT disk",
         timeout=300.0,
         extra_disk_mib=64,
+        fat_disk_mib=16,
     ),
     "mines-smoke": _qemu_scenario(
         "mines-selftest",
@@ -635,6 +640,7 @@ def main() -> int:
             "requires_virtio",
             "no_disk",
             "extra_disk_mib",
+            "fat_disk_mib",
         ),
         required=False,
     )
