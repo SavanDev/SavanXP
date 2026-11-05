@@ -9,8 +9,13 @@
  * What each case pins:
  *   - FAT12, FAT16 and FAT32 mount and read back, long UTF-8 names included,
  *     and a read at any offset of a file spanning many clusters is exact;
- *   - everything is the system's, read-only, without execute bits, and the
- *     write operations refuse;
+ *   - everything is the system's, 0755/0644, never an execute bit;
+ *   - writes: create, write, a hole filled with zeros, truncate both ways,
+ *     mkdir, rename of a directory with files below it, unlink (an open
+ *     vnode then reads nothing), rmdir, and all of it still there after an
+ *     unmount and a new mount;
+ *   - FAT's read-only bit makes a file read-only, a full volume writes what
+ *     fits, and a read-only device mounts read-only with every write refused;
  *   - a name the VFS cannot hold is left out, not truncated;
  *   - a partitioned disk is never claimed as a whole, although FatFs alone
  *     would mount its first partition through it;
@@ -168,22 +173,15 @@ void mounted_volume_reads_back(const char* label, uint32_t sectors, BYTE format,
         check(conf->size == strlen(kLimineText), "its size");
         check(read_node(conf, 0, text, conf->size) && memcmp(text, kLimineText, conf->size) == 0,
               "its contents read back");
-        check(!conf->writable, "a file is published read-only");
-        check(conf->uid == 0 && conf->gid == 0 && conf->mode == (vfs::kModeFile | 0444),
-              "owned by the system, 0444, no execute bit");
+        check(conf->writable, "a file on a writable device is writable");
+        check(conf->uid == 0 && conf->gid == 0 && conf->mode == (vfs::kModeFile | 0644),
+              "owned by the system, 0644, no execute bit");
         check(conf->mtime == (1700000000u & ~1u), "mtime comes from the FAT date (2-second steps)");
-        size_t written = 1;
-        check(!driver.write(*conf, 0, "x", 1, false, written) && written == 0, "write refuses");
-        check(!driver.truncate(*conf, 0) && !driver.unlink(*conf), "truncate and unlink refuse");
     }
-    check(driver.create_file(id, "/boot/new", {0, 0, vfs::kModeFile | 0644}) == nullptr, "create refuses");
-    check(driver.create_directory(id, "/boot/newdir", {0, 0, vfs::kModeDirectory | 0755}) == nullptr,
-          "mkdir refuses");
-    check(!driver.rename(id, "/boot/boot", "/boot/x"), "rename refuses");
 
     vfs::Vnode* directory = hoststub::find_node("/boot/a/b");
     check(directory != nullptr && directory->type == vfs::NodeType::directory, "nested directories");
-    check(directory != nullptr && directory->mode == (vfs::kModeDirectory | 0555), "a directory is 0555");
+    check(directory != nullptr && directory->mode == (vfs::kModeDirectory | 0755), "a directory is 0755");
 
     char long_path[128];
     snprintf(long_path, sizeof(long_path), "/boot/%s", kLongUtf8Name);
@@ -209,19 +207,169 @@ void mounted_volume_reads_back(const char* label, uint32_t sectors, BYTE format,
             check(exact, "a read at an offset is exact");
         }
         driver.refresh(*big);
-        check(big->size == kBigFileBytes && !big->writable, "refresh keeps size and read-only");
+        check(big->size == kBigFileBytes && big->writable, "refresh keeps size and writability");
     }
 
     fs::VolumeStats stats = {};
     check(driver.stats(id, stats), "stats");
-    check(!stats.writable && stats.total_bytes > 0 && stats.used_bytes > 0 &&
+    check(stats.writable && stats.total_bytes > 0 && stats.used_bytes > 0 &&
               stats.used_bytes + stats.free_bytes == stats.total_bytes,
-          "stats add up and say read-only");
+          "stats add up and say writable");
     check(stats.file_count == 4, "four files published (the long name left out)");
-    check(driver.sync(id), "sync of a clean volume");
+    check(driver.sync(id), "sync");
 
     driver.unmount(id);
     check(!fat_disk::bound(static_cast<uint8_t>(id)), "unmount unbinds the drive");
+    hoststub::detach_device();
+    free(image);
+}
+
+const vfs::Ownership kNewFile = {0, 0, vfs::kModeFile | 0644};
+const vfs::Ownership kNewDirectory = {0, 0, vfs::kModeDirectory | 0755};
+
+bool node_reads(vfs::Vnode* node, const char* expected, size_t length) {
+    char buffer[64] = {};
+    return node != nullptr && node->size == length && length < sizeof(buffer) &&
+        (length == 0 || read_node(node, 0, buffer, length)) && memcmp(buffer, expected, length) == 0;
+}
+
+bool node_is_zero(vfs::Vnode* node, size_t from, size_t to) {
+    static uint8_t buffer[16384];
+    if (node == nullptr || to - from > sizeof(buffer) || !read_node(node, from, buffer, to - from)) {
+        return false;
+    }
+    for (size_t index = 0; index < to - from; ++index) {
+        if (buffer[index] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool write_node(vfs::Vnode* node, size_t offset, const char* text, bool truncate) {
+    size_t written = 0;
+    const size_t length = strlen(text);
+    return node != nullptr && fat::driver().write(*node, offset, text, length, truncate, written) && written == length;
+}
+
+void writes_round_trip() {
+    printf("fat-volume-test: writes\n");
+    constexpr uint32_t kSectors = 65536;
+    uint8_t* image = static_cast<uint8_t*>(malloc(static_cast<size_t>(kSectors) * kSector));
+    build_image(image, kSectors, FM_FAT, 0);
+    const fs::Driver& driver = fat::driver();
+    hoststub::reset_vfs();
+    fs::VolumeId id = driver.probe(0, "/mnt/w");
+    check(id != fs::kInvalidVolume && driver.attach(id), "mount a writable volume");
+
+    vfs::Vnode* file = driver.create_file(id, "/mnt/w/new.txt", kNewFile);
+    check(file != nullptr && file->writable && file->size == 0 && file->mode == (vfs::kModeFile | 0644),
+          "create a file: empty, writable, 0644");
+    check(driver.create_file(id, "/mnt/w/new.txt", kNewFile) == nullptr, "creating it again refuses");
+    check(write_node(file, 0, "hello", false) && node_reads(file, "hello", 5), "write and read back");
+    check(write_node(file, 10000, "X", false) && file != nullptr && file->size == 10001, "a write past the end");
+    check(node_is_zero(file, 5, 10000), "the hole reads as zeros");
+    check(write_node(file, 0, "abc", true) && node_reads(file, "abc", 3), "a truncating write starts over");
+    check(file != nullptr && driver.truncate(*file, 1) && node_reads(file, "a", 1), "truncate shrinks");
+    check(file != nullptr && driver.truncate(*file, 3000) && file->size == 3000 && node_is_zero(file, 1, 3000),
+          "truncate grows with zeros");
+
+    check(driver.create_directory(id, "/mnt/w/dir", kNewDirectory) != nullptr, "mkdir");
+    vfs::Vnode* sub = driver.create_directory(id, "/mnt/w/dir/sub", kNewDirectory);
+    check(sub != nullptr && sub->mode == (vfs::kModeDirectory | 0755), "a nested mkdir, 0755");
+    vfs::Vnode* inner = driver.create_file(id, "/mnt/w/dir/inner.txt", kNewFile);
+    vfs::Vnode* deep = driver.create_file(id, "/mnt/w/dir/sub/deep.txt", kNewFile);
+    check(write_node(inner, 0, "inner", false) && write_node(deep, 0, "deep", false), "files below the directory");
+
+    check(driver.rename(id, "/mnt/w/dir", "/mnt/w/moved"), "rename the directory");
+    check(node_reads(inner, "inner", 5) && node_reads(deep, "deep", 4), "its files read through their new path");
+    check(write_node(deep, 4, "er", false) && node_reads(deep, "deeper", 6), "and write through it");
+    check(!driver.rename(id, "/mnt/w/new.txt", "/mnt/w/moved/inner.txt"), "a rename onto a file refuses");
+    check(!driver.rename(id, "/mnt/w/moved", "/mnt/w/moved/sub/x"), "a directory into itself refuses");
+
+    check(inner != nullptr && driver.unlink(*inner), "unlink");
+    char buffer[8] = {};
+    check(inner != nullptr && inner->data == nullptr && !read_node(inner, 0, buffer, 1),
+          "an unlinked vnode still open reads nothing");
+    check(deep != nullptr && driver.unlink(*deep), "unlink the deep file");
+    check(sub != nullptr && driver.remove_directory(*sub), "rmdir the emptied directory");
+
+    vfs::Vnode* locked = driver.create_file(id, "/mnt/w/locked.txt", kNewFile);
+    check(write_node(locked, 0, "keep", false), "write a file to lock");
+    char locked_path[16] = {};
+    snprintf(locked_path, sizeof(locked_path), "%d:/locked.txt", static_cast<int>(id));
+    check(f_chmod(locked_path, AM_RDO, AM_RDO) == FR_OK, "set FAT's read-only bit");
+    if (locked != nullptr) {
+        driver.refresh(*locked);
+        check(!locked->writable && locked->mode == (vfs::kModeFile | 0444), "it is published read-only");
+        check(!write_node(locked, 0, "x", false), "and writing it refuses");
+    }
+
+    fs::VolumeStats stats = {};
+    check(driver.stats(id, stats) && stats.file_count == 6, "the file count follows creates and unlinks");
+    check(driver.sync(id), "sync");
+    driver.unmount(id);
+
+    // A new mount reads what the first one wrote.
+    hoststub::reset_vfs();
+    id = driver.probe(0, "/mnt/w");
+    check(id != fs::kInvalidVolume && driver.attach(id), "mount it again");
+    vfs::Vnode* again = hoststub::find_node("/mnt/w/new.txt");
+    check(again != nullptr && again->size == 3000 && node_is_zero(again, 1, 3000), "new.txt is still there");
+    check(hoststub::find_node("/mnt/w/moved") != nullptr && hoststub::find_node("/mnt/w/dir") == nullptr,
+          "the rename is on the disk");
+    check(hoststub::find_node("/mnt/w/moved/inner.txt") == nullptr, "the unlink is on the disk");
+    vfs::Vnode* locked_again = hoststub::find_node("/mnt/w/locked.txt");
+    check(locked_again != nullptr && !locked_again->writable, "the read-only bit is on the disk");
+    driver.unmount(id);
+    hoststub::detach_device();
+    free(image);
+}
+
+void full_volume_writes_what_fits() {
+    printf("fat-volume-test: a full volume\n");
+    constexpr uint32_t kSectors = 1024;
+    uint8_t* image = static_cast<uint8_t*>(malloc(static_cast<size_t>(kSectors) * kSector));
+    build_image(image, kSectors, FM_FAT, 0);
+    const fs::Driver& driver = fat::driver();
+    hoststub::reset_vfs();
+    const fs::VolumeId id = driver.probe(0, "/mnt/full");
+    check(id != fs::kInvalidVolume && driver.attach(id), "mount a small volume");
+    vfs::Vnode* file = driver.create_file(id, "/mnt/full/fill", kNewFile);
+    static uint8_t data[1u << 20];
+    size_t written = 0;
+    check(file != nullptr && driver.write(*file, 0, data, sizeof(data), false, written), "a write larger than the volume");
+    check(written > 0 && written < sizeof(data) && file != nullptr && file->size == written, "writes what fits");
+    check(file != nullptr && !driver.write(*file, written, data, 4096, false, written) && written == 0,
+          "then nothing more fits");
+    driver.unmount(id);
+    hoststub::detach_device();
+    free(image);
+}
+
+void read_only_device() {
+    printf("fat-volume-test: a read-only device\n");
+    constexpr uint32_t kSectors = 4096;
+    uint8_t* image = static_cast<uint8_t*>(malloc(static_cast<size_t>(kSectors) * kSector));
+    build_image(image, kSectors, FM_FAT, 0);
+    hoststub::attach_device(image, kSectors, false);
+    const fs::Driver& driver = fat::driver();
+    hoststub::reset_vfs();
+    const fs::VolumeId id = driver.probe(0, "/boot");
+    check(id != fs::kInvalidVolume && driver.attach(id), "mount it");
+    vfs::Vnode* conf = hoststub::find_node("/boot/boot/limine.conf");
+    check(conf != nullptr && !conf->writable && conf->mode == (vfs::kModeFile | 0444), "files are 0444, read-only");
+    vfs::Vnode* directory = hoststub::find_node("/boot/a");
+    check(directory != nullptr && directory->mode == (vfs::kModeDirectory | 0555), "directories are 0555");
+    check(!write_node(conf, 0, "x", false), "write refuses");
+    check(conf != nullptr && !driver.truncate(*conf, 0) && !driver.unlink(*conf), "truncate and unlink refuse");
+    check(driver.create_file(id, "/boot/new", kNewFile) == nullptr, "create refuses");
+    check(driver.create_directory(id, "/boot/newdir", kNewDirectory) == nullptr, "mkdir refuses");
+    check(!driver.rename(id, "/boot/boot", "/boot/x"), "rename refuses");
+    fs::VolumeStats stats = {};
+    check(driver.stats(id, stats) && !stats.writable, "stats say read-only");
+    check(hoststub::rejected_writes() == 0, "nothing even tried to write the device");
+    driver.unmount(id);
     hoststub::detach_device();
     free(image);
 }
@@ -303,6 +451,9 @@ int main() {
     mounted_volume_reads_back("FAT12", 4096, FM_FAT, FS_FAT12);
     mounted_volume_reads_back("FAT16", 65536, FM_FAT, FS_FAT16);
     mounted_volume_reads_back("FAT32", 131072, FM_FAT32, FS_FAT32);
+    writes_round_trip();
+    full_volume_writes_what_fits();
+    read_only_device();
     partitioned_disk_is_not_claimed();
     tree_larger_than_the_vfs();
     dates_convert();

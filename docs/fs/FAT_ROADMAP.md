@@ -1,7 +1,8 @@
 # FAT — a second filesystem driver, on FatFs
 
-Status: **phase 1 done**: a read-only FAT driver (`kernel/fat.cpp`), and the
-boot volume mounted at `/boot`. Writes are phase 2.
+Status: **phase 2 done**: a FAT driver that reads and writes
+(`kernel/fat.cpp`), and the boot volume mounted at `/boot`. Phase 3, the
+consumers, is next.
 
 Before this driver SavanXP read only SxFS, and the one FAT volume that matters,
 the EFI System Partition, could only be written as a whole image
@@ -15,8 +16,8 @@ had to change outside it, and the phases.
   glue of our own in `kernel/fat.cpp` that implements `fs::Driver`.
 - **SxFS stays the only root.** Before any FAT driver is registered,
   `fs::mount_any` has to stop accepting a FAT volume as `/`.
-- **The ESP is mounted at `/boot`**, owned by the system, read-only first,
-  writable in a later phase. Nothing runs from it, and it is not unmounted.
+- **The ESP is mounted at `/boot`**, owned by the system: only the system
+  writes there. Nothing runs from it, and it is not unmounted.
 - **Disk Management mounts FAT volumes at `/mnt/<name>`** once the driver
   exists: the storage calls already go through `fs::mount`.
 - **FAT12, FAT16 and FAT32 with long names. No exFAT.**
@@ -139,13 +140,25 @@ Points worth knowing before writing it:
   way. Fine for `limine.conf` and a kernel image; a per-vnode open `FIL` cache
   is a later optimisation, not part of the first version.
 - **Ownership is synthesized.** Everything is owned by the system: directories
-  `0755`, files `0644`, minus the write bits when the volume or the file
-  (`AM_RDO`) is read-only. No execute bit on files, so nothing runs from a FAT
-  volume. While the driver is read-only, that is `0555` and `0444` everywhere;
-  the system passes the permission check for writing anyway, so what refuses
-  it is the vnode published without `writable` and the write operations, which
-  exist (the VFS calls them unchecked) and fail. `mtime` is the FAT date, local
-  time like the RTC's, in 2-second steps.
+  `0755`, files `0644`, minus the write bits when the device is read-only or
+  the file has FAT's read-only attribute (`AM_RDO`). No execute bit on files,
+  so nothing runs from a FAT volume, and a user can read but not write. The
+  system passes the permission check for writing whatever the bits say, so on
+  a read-only volume what refuses it is the vnode published without
+  `writable` and the write operations, which exist (the VFS calls them
+  unchecked) and fail. Files and directories created on the volume get the
+  same: the owner the VFS hands to `create_file` is dropped. `chmod` and
+  `chown` are refused. `mtime` is the FAT date, local time like the RTC's, in
+  2-second steps.
+- **Writes follow SxFS.** A truncating write empties the file and writes from
+  0. A write past the end fills the gap with zeros, because FatFs extends a
+  file with whatever its new clusters held. A full volume writes what fits and
+  reports how much; nothing at all is `ENOSPC`. `unlink` removes the file from
+  the disk at once and clears the vnode's data, so a handle still open on it
+  reads nothing instead of a freed record. `rename` rewrites the stored path of
+  everything below a moved directory.
+- **FatFs moves a directory into its own subtree without complaint**, leaving
+  it hanging from itself, unreachable. `rename` refuses that itself.
 - **What attach leaves out.** A name longer than a VFS path component (63
   bytes), a path longer than 255, and anything below 24 levels of directories.
   They are counted and logged (`fat: /boot: N entries left out ...`), never
@@ -167,7 +180,7 @@ Points worth knowing before writing it:
 At boot, right after the root, `storage::mount_boot_volume` mounts at `/boot`
 the first FAT volume that holds `boot/kernel.elf`, trying the partitions
 `partition::info` flags as `esp` first. In the development run there is no ESP
-partition; the boot drive is QEMU's virtual FAT (`-drive file=fat:rw:...`),
+partition; the boot drive is QEMU's virtual FAT (`-drive file=fat:...`),
 which presents an MBR disk with one FAT16 partition (`ahci0p1`), not of type
 `0xEF`, and the boot log says `storage: /boot is ahci0p1`. Requiring
 `boot/kernel.elf` keeps another system's ESP from being taken for ours.
@@ -190,11 +203,14 @@ of another disk and is not affected; the updater cannot rewrite the running
 system's ESP image while `/boot` is mounted, which is one more reason it
 replaces files instead (phase 3).
 
-**The development boot drive must not be written from the guest.** QEMU's
-`fat:rw:` writes back into the host's staging directory, and its write support
-is known to be fragile. Before the write phase, `run_qemu.py` drops `rw` (Limine
-does not write), the block device becomes read-only, and the driver mounts it
-read-only. Writes are tested on a disposable FAT image instead.
+**The development boot drive is never written through to the host.** With
+`fat:rw:`, QEMU's virtual FAT writes the guest's changes back into the
+staging directory (`build/image`), and that write-back is known to be
+fragile. A read-only virtual FAT cannot be attached at all: `ide-hd` refuses a
+read-only drive ("Block node is read-only"). So `run_qemu.py` attaches it as
+`fat:<dir>,snapshot=on`: the virtual FAT is read-only and a throwaway overlay
+above it takes the writes. The guest sees a writable disk, `/boot` is
+writable, and everything written there is gone when QEMU exits.
 
 ## Phases
 
@@ -212,14 +228,19 @@ Each phase builds, boots and is verified on its own.
    names, reads at any offset of a multi-cluster file, ownership, refused
    writes, a name left out, a partitioned disk not claimed although FatFs alone
    would mount it, a tree larger than the VFS, dates. The core `smoke` reads
-   `/boot/limine.conf` and the ELF magic of `/boot/boot/kernel.elf` and is
-   refused creating or writing there; `native-test` checks `/boot` is the
-   `fat` partition and that its unmount is `EINVAL`.
-2. **Writes.** The rest of the operations; the read-only development drive.
-   The host test covers create, write, truncate, rename of a directory with
-   files inside, unlink, a full volume and a read-only file. A smoke that
-   writes to a disposable FAT image on a second disk, syncs, reboots and reads
-   it back. Two to four days.
+   `/boot/limine.conf` and the ELF magic of `/boot/boot/kernel.elf`;
+   `native-test` checks `/boot` is the `fat` partition and that its unmount
+   is `EINVAL`.
+2. **Writes. Done.** The rest of the operations, and the development boot drive
+   under a snapshot overlay. `fat-volume-test` adds create, writes with a hole,
+   truncate both ways, mkdir, rename of a directory with files below it and
+   one into itself, unlink of an open file, rmdir, FAT's read-only bit, a full
+   volume, a read-only device, and a second mount that finds all of it. The
+   core `smoke` makes a directory on `/boot`, writes a file, renames it, reads
+   it back and removes both; `idtest` checks a user reads `/boot` but cannot
+   write, create or delete there. The plan had a smoke that writes a second
+   FAT disk and reboots; the overlay made `/boot` itself safe to write, and
+   persistence across a new mount is the host test's.
 3. **Consumers.** The updater replaces `boot/kernel.elf` and
    `boot/initramfs.cpio` as files and edits `limine.conf`, instead of rewriting
    the ESP image ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md),

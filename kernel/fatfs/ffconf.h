@@ -8,7 +8,8 @@
  *
  * The values that differ from the release, and why:
  *   FF_USE_MKFS 1        the host test formats its images with f_mkfs
- *   FF_USE_FASTSEEK 1    reads at an offset without walking the whole chain
+ *   FF_USE_FASTSEEK 1    room for a per-vnode cluster link map (unused yet)
+ *   FF_USE_CHMOD 1       f_chmod/f_utime: the host test sets FAT's read-only bit
  *   FF_CODE_PAGE 437     short names only; avoids every other code page table
  *   FF_USE_LFN 3         long names, working buffer on the kernel heap
  *   FF_LFN_UNICODE 2     UTF-8 in and out, as every path in the system is
@@ -62,7 +63,7 @@
 /* This option switches f_expand(). (0:Disable or 1:Enable) */
 
 
-#define FF_USE_CHMOD	0
+#define FF_USE_CHMOD	1
 /* This option switches attribute control API functions, f_chmod() and f_utime().
 /  (0:Disable or 1:Enable) Also FF_FS_READONLY needs to be 0 to enable this option. */
 

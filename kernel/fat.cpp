@@ -13,8 +13,8 @@
 
 /* The FAT driver (docs/fs/FAT_ROADMAP.md). FatFs does the format; this file
  * maps it onto fs::Driver: probe mounts a FatFs volume, attach publishes its
- * whole tree, and every file operation reopens the file by its path, because
- * FatFs names files by path, not by cluster. Read-only in this phase. */
+ * whole tree, and every operation reopens the file by its path, because FatFs
+ * names files by path, not by cluster. */
 
 namespace {
 
@@ -24,20 +24,27 @@ constexpr size_t kSectorSize = block::kSectorSize;
 constexpr size_t kMaxDepth = 24;
 // "N:" in front of a path inside the volume.
 constexpr size_t kDrivePrefix = 2;
+constexpr size_t kFatfsPathCapacity = kDrivePrefix + vfs::kMaxPathLength;
 
-// A published file. The path is the one FatFs opens, inside the volume.
-struct FileNode {
-    FileNode* next;
+// A published file or directory. The path is the one FatFs opens, inside the
+// volume ("/a/b"). A file's vnode points back here through its data; a
+// directory's vnode is a plain in-memory one, found by searching the list.
+struct Node {
+    Node* next;
     uint8_t volume;
+    bool directory;
     vfs::Vnode* vnode;
     char path[vfs::kMaxPathLength];
 };
 
 struct Volume {
     bool in_use;
+    // The device is writable: what every vnode of the volume starts from.
+    bool writable;
+    size_t device_index;
     FATFS fs;
     char mount_point[fs::kMountPointCapacity];
-    FileNode* files;
+    Node* nodes;
     size_t file_count;
     // Entries attach left out: a name or a path the VFS cannot hold, or a
     // directory too deep.
@@ -45,6 +52,8 @@ struct Volume {
 };
 
 Volume g_volumes[fat_disk::kDrives] = {};
+
+const uint8_t kZeros[kSectorSize] = {};
 
 const fs::Driver& driver_ref();
 
@@ -75,31 +84,90 @@ void drive_root(uint8_t volume, char* out) {
     out[2] = 0;
 }
 
-FileNode* file_from_vnode(const vfs::Vnode& node) {
+Node* file_from_vnode(const vfs::Vnode& node) {
     if (node.backend != vfs::Backend::volume || node.volume_driver != &driver_ref() || node.data == nullptr) {
         return nullptr;
     }
-    FileNode* file = static_cast<FileNode*>(node.data);
-    return volume_for_id(file->volume) != nullptr ? file : nullptr;
+    Node* file = static_cast<Node*>(node.data);
+    return volume_for_id(file->volume) != nullptr && !file->directory ? file : nullptr;
 }
 
-// FAT has no owners. Everything is the system's; the write bits go while the
-// volume is read-only, and files never get an execute bit, so nothing runs
-// from a FAT volume.
-void publish_ownership(vfs::Vnode& node, bool directory, uint16_t date, uint16_t time) {
-    const uint16_t mode = directory ? (vfs::kModeDirectory | 0555) : (vfs::kModeFile | 0444);
+Node* directory_from_vnode(const vfs::Vnode& node) {
+    for (Volume& volume : g_volumes) {
+        if (!volume.in_use) {
+            continue;
+        }
+        for (Node* entry = volume.nodes; entry != nullptr; entry = entry->next) {
+            if (entry->directory && entry->vnode == &node) {
+                return entry;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// FAT has no owners. Everything is the system's: 0755 and 0644, without the
+// write bits on a read-only volume or a file with FAT's read-only attribute.
+// Files never get an execute bit, so nothing runs from a FAT volume.
+void publish_ownership(vfs::Vnode& node, bool directory, bool writable, uint16_t date, uint16_t time) {
+    uint16_t mode = directory ? (vfs::kModeDirectory | 0755) : (vfs::kModeFile | 0644);
+    if (!writable) {
+        mode &= static_cast<uint16_t>(~0222);
+    }
     vfs::set_ownership(node, cred::kSystemUid, cred::kSystemGid, mode);
     node.mtime = fat_disk::epoch_seconds(date, time);
 }
 
-void free_files(Volume& volume) {
-    FileNode* file = volume.files;
-    while (file != nullptr) {
-        FileNode* next = file->next;
-        heap::free(file);
-        file = next;
+bool file_writable(const Volume& volume, uint8_t attributes) {
+    return volume.writable && (attributes & AM_RDO) == 0;
+}
+
+Node* new_node(uint8_t id, bool directory, const char* inner) {
+    const size_t length = strlen(inner);
+    if (length >= vfs::kMaxPathLength) {
+        return nullptr;
     }
-    volume.files = nullptr;
+    Node* entry = static_cast<Node*>(heap::allocate(sizeof(Node)));
+    if (entry == nullptr) {
+        return nullptr;
+    }
+    memset(entry, 0, sizeof(Node));
+    entry->volume = id;
+    entry->directory = directory;
+    memcpy(entry->path, inner, length + 1);
+    return entry;
+}
+
+void link_node(Volume& volume, Node* entry) {
+    entry->next = volume.nodes;
+    volume.nodes = entry;
+    if (!entry->directory) {
+        ++volume.file_count;
+    }
+}
+
+// Takes `entry` out of its volume's list and frees it.
+void drop_node(Volume& volume, Node* entry) {
+    for (Node** link = &volume.nodes; *link != nullptr; link = &(*link)->next) {
+        if (*link == entry) {
+            *link = entry->next;
+            if (!entry->directory && volume.file_count > 0) {
+                --volume.file_count;
+            }
+            heap::free(entry);
+            return;
+        }
+    }
+}
+
+void free_nodes(Volume& volume) {
+    Node* entry = volume.nodes;
+    while (entry != nullptr) {
+        Node* next = entry->next;
+        heap::free(entry);
+        entry = next;
+    }
+    volume.nodes = nullptr;
     volume.file_count = 0;
 }
 
@@ -108,7 +176,7 @@ void free_files(Volume& volume) {
 struct Level {
     DIR dir;
     FILINFO info;
-    char fatfs_path[kDrivePrefix + vfs::kMaxPathLength];
+    char fatfs_path[kFatfsPathCapacity];
     char child[vfs::kMaxPathLength];
     char absolute[vfs::kMaxPathLength];
 };
@@ -117,7 +185,7 @@ bool is_dot_entry(const char* name) {
     return name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0));
 }
 
-// Publishes the directory `inner` ("" for the root) and everything below.
+// Publishes what the directory `inner` ("" for the root) holds, and below.
 // False only when the VFS refused a node or memory ran out: the volume is then
 // left half published, and fs::release takes it back.
 bool publish_directory(Volume& volume, uint8_t id, const char* inner, size_t depth) {
@@ -159,46 +227,58 @@ bool publish_directory(Volume& volume, uint8_t id, const char* inner, size_t dep
             continue;
         }
 
-        const uint16_t date = level->info.fdate;
-        const uint16_t time = level->info.ftime;
-        if ((level->info.fattrib & AM_DIR) != 0) {
-            vfs::Vnode* node = vfs::ensure_directory(absolute);
-            if (node == nullptr) {
-                ok = false;
-                break;
-            }
-            publish_ownership(*node, true, date, time);
+        const bool directory = (level->info.fattrib & AM_DIR) != 0;
+        Node* entry = new_node(id, directory, child);
+        if (entry == nullptr) {
+            ok = false;
+            break;
+        }
+        const bool writable = file_writable(volume, level->info.fattrib);
+        entry->vnode = directory ? vfs::ensure_directory(absolute)
+                                 : vfs::install_volume_file(absolute, driver_ref(), entry, level->info.fsize, writable);
+        if (entry->vnode == nullptr) {
+            heap::free(entry);
+            ok = false;
+            break;
+        }
+        publish_ownership(*entry->vnode, directory, writable, level->info.fdate, level->info.ftime);
+        link_node(volume, entry);
+
+        if (directory) {
             if (depth + 1 >= kMaxDepth) {
                 ++volume.skipped;
                 continue;
             }
             ok = publish_directory(volume, id, child, depth + 1);
-            continue;
         }
-
-        FileNode* file = static_cast<FileNode*>(heap::allocate(sizeof(FileNode)));
-        if (file == nullptr) {
-            ok = false;
-            break;
-        }
-        memset(file, 0, sizeof(FileNode));
-        file->volume = id;
-        memcpy(file->path, child, strlen(child) + 1);
-        file->vnode = vfs::install_volume_file(absolute, driver_ref(), file, level->info.fsize, false);
-        if (file->vnode == nullptr) {
-            heap::free(file);
-            ok = false;
-            break;
-        }
-        publish_ownership(*file->vnode, false, date, time);
-        file->next = volume.files;
-        volume.files = file;
-        ++volume.file_count;
     }
 
     (void)f_closedir(&level->dir);
     heap::free(level);
     return ok;
+}
+
+// FatFs extends a file past its end with whatever the clusters held. Every
+// byte between the old end and `target` is written as zero instead, the way
+// SxFS and POSIX fill a hole. The file is open for writing, positioned at its
+// end.
+bool zero_fill(FIL& handle, FSIZE_t target) {
+    while (f_size(&handle) < target) {
+        const FSIZE_t left = target - f_size(&handle);
+        const UINT chunk = left < kSectorSize ? static_cast<UINT>(left) : static_cast<UINT>(kSectorSize);
+        UINT done = 0;
+        if (f_write(&handle, kZeros, chunk, &done) != FR_OK || done != chunk) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The path inside the volume of an absolute path under its mount point, or
+// nullptr. The mount point itself is not a path a driver operation takes.
+const char* inner_path(const Volume& volume, const char* path) {
+    const char* inner = fs::path_below(volume.mount_point, path);
+    return inner != nullptr && *inner != 0 ? inner : nullptr;
 }
 
 /* --- fs::Driver ------------------------------------------------------------ */
@@ -239,6 +319,8 @@ fs::VolumeId probe(size_t device_index, const char* mount_point) {
             return fs::kInvalidVolume;
         }
         volume.in_use = true;
+        volume.writable = info.writable;
+        volume.device_index = device_index;
         memcpy(volume.mount_point, mount_point, strlen(mount_point) + 1);
         return id;
     }
@@ -254,7 +336,7 @@ bool attach(fs::VolumeId id) {
     if (root == nullptr) {
         return false;
     }
-    publish_ownership(*root, true, 0, 0);
+    publish_ownership(*root, true, volume->writable, 0, 0);
     if (!publish_directory(*volume, static_cast<uint8_t>(id), "", 0)) {
         console::printf("fat: %s: the tree does not fit in the VFS, not mounted\n", volume->mount_point);
         return false;
@@ -275,15 +357,15 @@ void unmount(fs::VolumeId id) {
     }
     char root[4] = {};
     drive_root(static_cast<uint8_t>(id), root);
-    free_files(*volume);
+    free_nodes(*volume);
     (void)f_mount(nullptr, root, 0);
     fat_disk::unbind(static_cast<uint8_t>(id));
     memset(volume, 0, sizeof(*volume));
 }
 
 bool read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
-    FileNode* file = file_from_vnode(node);
-    char path[kDrivePrefix + vfs::kMaxPathLength] = {};
+    Node* file = file_from_vnode(node);
+    char path[kFatfsPathCapacity] = {};
     if (file == nullptr || !drive_path(file->volume, file->path, path, sizeof(path))) {
         return false;
     }
@@ -299,32 +381,217 @@ bool read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
     return ok;
 }
 
+// `truncate` empties the file first and writes from 0, as SxFS does. A full
+// volume writes what fits: `written` says how much, and nothing written at all
+// is a failure.
+bool write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+    written = 0;
+    Node* file = file_from_vnode(node);
+    Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || !volume->writable || !drive_path(file->volume, file->path, path, sizeof(path))) {
+        return false;
+    }
+    FIL handle = {};
+    if (f_open(&handle, path, FA_WRITE) != FR_OK) {
+        return false;
+    }
+    bool ok = true;
+    if (truncate) {
+        ok = f_lseek(&handle, 0) == FR_OK && f_truncate(&handle) == FR_OK;
+        offset = 0;
+    }
+    const FSIZE_t target = static_cast<FSIZE_t>(offset);
+    if (ok && target > f_size(&handle)) {
+        ok = f_lseek(&handle, f_size(&handle)) == FR_OK && zero_fill(handle, target);
+    } else if (ok) {
+        ok = f_lseek(&handle, target) == FR_OK;
+    }
+    if (ok && count != 0) {
+        UINT done = 0;
+        ok = f_write(&handle, buffer, static_cast<UINT>(count), &done) == FR_OK && done != 0;
+        written = done;
+    }
+    node.size = f_size(&handle);
+    ok = f_close(&handle) == FR_OK && ok;
+    return ok;
+}
+
+// Shrinks the file, or grows it with zeros.
+bool truncate(vfs::Vnode& node, size_t size) {
+    Node* file = file_from_vnode(node);
+    Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || !volume->writable || !drive_path(file->volume, file->path, path, sizeof(path))) {
+        return false;
+    }
+    FIL handle = {};
+    if (f_open(&handle, path, FA_WRITE) != FR_OK) {
+        return false;
+    }
+    const FSIZE_t target = static_cast<FSIZE_t>(size);
+    bool ok = false;
+    if (target <= f_size(&handle)) {
+        ok = f_lseek(&handle, target) == FR_OK && f_truncate(&handle) == FR_OK;
+    } else {
+        ok = f_lseek(&handle, f_size(&handle)) == FR_OK && zero_fill(handle, target);
+    }
+    node.size = f_size(&handle);
+    ok = f_close(&handle) == FR_OK && ok;
+    return ok;
+}
+
+// The file is gone from the disk at once, as on SxFS. The vnode may outlive
+// it while a handle holds it open: its data is cleared, so such a handle
+// reads nothing rather than a freed record.
+bool unlink(vfs::Vnode& node) {
+    Node* file = file_from_vnode(node);
+    Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || !volume->writable || !drive_path(file->volume, file->path, path, sizeof(path)) ||
+        f_unlink(path) != FR_OK) {
+        return false;
+    }
+    node.data = nullptr;
+    node.size = 0;
+    drop_node(*volume, file);
+    return true;
+}
+
+bool remove_directory(vfs::Vnode& node) {
+    Node* directory = directory_from_vnode(node);
+    Volume* volume = directory != nullptr ? volume_for_id(directory->volume) : nullptr;
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || !volume->writable ||
+        !drive_path(directory->volume, directory->path, path, sizeof(path)) || f_unlink(path) != FR_OK) {
+        return false;
+    }
+    drop_node(*volume, directory);
+    return true;
+}
+
+vfs::Vnode* create_file(fs::VolumeId id, const char* path, const vfs::Ownership&) {
+    Volume* volume = volume_for_id(id);
+    const char* inner = volume != nullptr ? inner_path(*volume, path) : nullptr;
+    char fatfs_path[kFatfsPathCapacity] = {};
+    if (inner == nullptr || !volume->writable || !drive_path(static_cast<uint8_t>(id), inner, fatfs_path, sizeof(fatfs_path))) {
+        return nullptr;
+    }
+    Node* entry = new_node(static_cast<uint8_t>(id), false, inner);
+    if (entry == nullptr) {
+        return nullptr;
+    }
+    FIL handle = {};
+    if (f_open(&handle, fatfs_path, FA_WRITE | FA_CREATE_NEW) != FR_OK) {
+        heap::free(entry);
+        return nullptr;
+    }
+    const bool closed = f_close(&handle) == FR_OK;
+    entry->vnode = closed ? vfs::install_volume_file(path, driver_ref(), entry, 0, true) : nullptr;
+    if (entry->vnode == nullptr) {
+        // The VFS is full: the file must not stay on the disk unpublished.
+        (void)f_unlink(fatfs_path);
+        heap::free(entry);
+        return nullptr;
+    }
+    const uint32_t now = get_fattime();
+    publish_ownership(*entry->vnode, false, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
+    link_node(*volume, entry);
+    return entry->vnode;
+}
+
+vfs::Vnode* create_directory(fs::VolumeId id, const char* path, const vfs::Ownership&) {
+    Volume* volume = volume_for_id(id);
+    const char* inner = volume != nullptr ? inner_path(*volume, path) : nullptr;
+    char fatfs_path[kFatfsPathCapacity] = {};
+    if (inner == nullptr || !volume->writable || !drive_path(static_cast<uint8_t>(id), inner, fatfs_path, sizeof(fatfs_path))) {
+        return nullptr;
+    }
+    Node* entry = new_node(static_cast<uint8_t>(id), true, inner);
+    if (entry == nullptr) {
+        return nullptr;
+    }
+    if (f_mkdir(fatfs_path) != FR_OK) {
+        heap::free(entry);
+        return nullptr;
+    }
+    entry->vnode = vfs::ensure_directory(path);
+    if (entry->vnode == nullptr) {
+        (void)f_unlink(fatfs_path);
+        heap::free(entry);
+        return nullptr;
+    }
+    const uint32_t now = get_fattime();
+    publish_ownership(*entry->vnode, true, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
+    link_node(*volume, entry);
+    return entry->vnode;
+}
+
+// `prefix` names `path` itself or a directory above it.
+bool path_under(const char* path, const char* prefix, size_t prefix_length) {
+    return strncmp(path, prefix, prefix_length) == 0 && (path[prefix_length] == 0 || path[prefix_length] == '/');
+}
+
+// Renames a file or a directory, and with a directory, the path every record
+// below it carries. Every new path is checked to fit before anything moves.
+bool rename(fs::VolumeId id, const char* old_path, const char* new_path) {
+    Volume* volume = volume_for_id(id);
+    const char* old_inner = volume != nullptr ? inner_path(*volume, old_path) : nullptr;
+    const char* new_inner = volume != nullptr ? inner_path(*volume, new_path) : nullptr;
+    char old_fatfs[kFatfsPathCapacity] = {};
+    char new_fatfs[kFatfsPathCapacity] = {};
+    if (old_inner == nullptr || new_inner == nullptr || !volume->writable ||
+        !drive_path(static_cast<uint8_t>(id), old_inner, old_fatfs, sizeof(old_fatfs)) ||
+        !drive_path(static_cast<uint8_t>(id), new_inner, new_fatfs, sizeof(new_fatfs))) {
+        return false;
+    }
+    const size_t old_length = strlen(old_inner);
+    const size_t new_length = strlen(new_inner);
+    // FatFs moves a directory into its own subtree without a word, which
+    // leaves it hanging from itself, unreachable from the root.
+    if (path_under(new_inner, old_inner, old_length)) {
+        return false;
+    }
+    for (Node* entry = volume->nodes; entry != nullptr; entry = entry->next) {
+        if (path_under(entry->path, old_inner, old_length) &&
+            strlen(entry->path) - old_length + new_length >= vfs::kMaxPathLength) {
+            return false;
+        }
+    }
+    // f_rename refuses a target that exists.
+    if (f_rename(old_fatfs, new_fatfs) != FR_OK) {
+        return false;
+    }
+    // old_inner and new_inner point into the VFS's buffers, not into a record,
+    // so rewriting the records cannot change them under the loop.
+    for (Node* entry = volume->nodes; entry != nullptr; entry = entry->next) {
+        if (!path_under(entry->path, old_inner, old_length)) {
+            continue;
+        }
+        char renamed[vfs::kMaxPathLength] = {};
+        const size_t tail = strlen(entry->path) - old_length;
+        memcpy(renamed, new_inner, new_length);
+        memcpy(renamed + new_length, entry->path + old_length, tail + 1);
+        memcpy(entry->path, renamed, new_length + tail + 1);
+    }
+    return true;
+}
+
 void refresh(vfs::Vnode& node) {
-    FileNode* file = file_from_vnode(node);
-    char path[kDrivePrefix + vfs::kMaxPathLength] = {};
-    if (file == nullptr || !drive_path(file->volume, file->path, path, sizeof(path))) {
+    Node* file = file_from_vnode(node);
+    Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || !drive_path(file->volume, file->path, path, sizeof(path))) {
         return;
     }
     FILINFO info = {};
     if (f_stat(path, &info) == FR_OK) {
+        const bool writable = file_writable(*volume, info.fattrib);
         node.size = info.fsize;
-        publish_ownership(node, false, info.fdate, info.ftime);
+        node.writable = writable;
+        publish_ownership(node, false, writable, info.fdate, info.ftime);
     }
-    node.writable = false;
 }
-
-// Read-only for now: the VFS calls these without checking them for nullptr,
-// so they exist and refuse.
-bool write(vfs::Vnode&, size_t, const void*, size_t, bool, size_t& written) {
-    written = 0;
-    return false;
-}
-bool truncate(vfs::Vnode&, size_t) { return false; }
-bool unlink(vfs::Vnode&) { return false; }
-bool remove_directory(vfs::Vnode&) { return false; }
-vfs::Vnode* create_file(fs::VolumeId, const char*, const vfs::Ownership&) { return nullptr; }
-vfs::Vnode* create_directory(fs::VolumeId, const char*, const vfs::Ownership&) { return nullptr; }
-bool rename(fs::VolumeId, const char*, const char*) { return false; }
 
 bool stats(fs::VolumeId id, fs::VolumeStats& out) {
     Volume* volume = volume_for_id(id);
@@ -339,7 +606,7 @@ bool stats(fs::VolumeId id, fs::VolumeStats& out) {
         return false;
     }
     const uint64_t cluster_bytes = static_cast<uint64_t>(volume->fs.csize) * kSectorSize;
-    out.writable = false;
+    out.writable = volume->writable;
     out.file_count = volume->file_count;
     out.total_bytes = static_cast<uint64_t>(volume->fs.n_fatent - 2) * cluster_bytes;
     out.free_bytes = static_cast<uint64_t>(free_clusters) * cluster_bytes;
@@ -347,9 +614,15 @@ bool stats(fs::VolumeId id, fs::VolumeStats& out) {
     return true;
 }
 
-// Nothing is ever dirty on a read-only volume.
+// FatFs writes its FAT, directories and FSInfo before each operation returns
+// (f_close, f_mkdir, f_unlink, f_rename all sync the volume); what is left is
+// the device's own cache.
 bool sync(fs::VolumeId id) {
-    return volume_for_id(id) != nullptr;
+    Volume* volume = volume_for_id(id);
+    if (volume == nullptr) {
+        return false;
+    }
+    return !volume->writable || block::sync(volume->device_index);
 }
 
 const fs::Driver kDriver = {
@@ -369,6 +642,7 @@ const fs::Driver kDriver = {
     .create_file = &create_file,
     .create_directory = &create_directory,
     .rename = &rename,
+    // FAT has no owners: chmod and chown are refused.
     .set_ownership = nullptr,
     .stats = &stats,
     .sync = &sync,

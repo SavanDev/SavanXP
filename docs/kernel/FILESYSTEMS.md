@@ -22,7 +22,7 @@ user's files are that volume's.
 | path | what it is | backed by |
 | --- | --- | --- |
 | `/` and everything below, except the rows under it | the system disk | SxFS (`build/disk.img`, or the LiveCD module) |
-| `/boot` | the boot volume: what Limine loaded the kernel from, read-only | FAT (the ESP, or the development boot drive) |
+| `/boot` | the boot volume: what Limine loaded the kernel from; only the system writes there | FAT (the ESP, or the development boot drive) |
 | `/dev` | devices | in memory, published by the drivers |
 | `/rescue` | the initramfs: a rescue system | in memory, loaded by Limine |
 
@@ -182,7 +182,8 @@ development path that is the QEMU boot drive's partition (`ahci0p1`); on an
 installed system, the ESP; a LiveCD boot has none. Only the FAT driver is tried
 there (`fs::mount` with a driver name), so no other volume is opened, let alone
 written, to look for it. A root that carries its own `boot` keeps it and no
-boot volume is mounted. It is read-only for now and is never unmounted.
+boot volume is mounted. Everything on it is the system's (FAT has no owners),
+so only the system writes there, and it is never unmounted.
 
 ## Limits
 

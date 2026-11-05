@@ -83,11 +83,15 @@ static int validate_file_contains(const char* path, const char* needle) {
     return 1;
 }
 
-/* The boot volume (FAT, read-only): the development boot drive mounted at
- * /boot. Its limine.conf reads back, the kernel it booted starts with the ELF
- * magic, and nothing can be created or written there. */
+/* The boot volume (FAT): the development boot drive mounted at /boot. Its
+ * limine.conf reads back and the kernel it booted starts with the ELF magic.
+ * The system writes there too: a directory, a file written, renamed, read
+ * back and removed. The drive sits under a QEMU snapshot overlay
+ * (tools/run_qemu.py), so none of this reaches build/image. */
 static int validate_boot_volume(void) {
+    static const char text[] = "fat-write";
     char magic[4] = {};
+    char back[sizeof(text)] = {};
     long fd;
 
     if (!validate_file_contains("/boot/limine.conf", "default_entry")) {
@@ -103,19 +107,44 @@ static int validate_boot_volume(void) {
         return 0;
     }
     savanxp_close((int)fd);
-    fd = savanxp_open_mode("/boot/smoke.txt", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-    if (fd >= 0) {
-        savanxp_close((int)fd);
-        puts_out("SMOKE FAIL created a file on the read-only /boot\n");
+
+    (void)savanxp_unlink("/boot/smoke/renamed.txt");
+    (void)savanxp_unlink("/boot/smoke/written.txt");
+    (void)savanxp_rmdir("/boot/smoke");
+    if (savanxp_mkdir("/boot/smoke") < 0) {
+        puts_out("SMOKE FAIL mkdir /boot/smoke\n");
         return 0;
     }
-    fd = savanxp_open_mode("/boot/limine.conf", SAVANXP_OPEN_WRITE);
-    if (fd >= 0) {
-        savanxp_close((int)fd);
-        puts_out("SMOKE FAIL opened /boot/limine.conf for writing\n");
+    fd = savanxp_open_mode("/boot/smoke/written.txt", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    if (fd < 0 || savanxp_write((int)fd, text, sizeof(text) - 1) != (long)(sizeof(text) - 1)) {
+        if (fd >= 0) {
+            savanxp_close((int)fd);
+        }
+        puts_out("SMOKE FAIL write /boot/smoke/written.txt\n");
         return 0;
     }
-    printf("smoke: validated /boot (read-only FAT)\n");
+    savanxp_close((int)fd);
+    if (savanxp_rename("/boot/smoke/written.txt", "/boot/smoke/renamed.txt") < 0 ||
+        !file_exists("/boot/smoke/renamed.txt") || file_exists("/boot/smoke/written.txt")) {
+        puts_out("SMOKE FAIL rename on /boot\n");
+        return 0;
+    }
+    fd = savanxp_open("/boot/smoke/renamed.txt");
+    if (fd < 0 || savanxp_read((int)fd, back, sizeof(back) - 1) != (long)(sizeof(text) - 1) ||
+        strncmp(back, text, sizeof(text) - 1) != 0) {
+        if (fd >= 0) {
+            savanxp_close((int)fd);
+        }
+        puts_out("SMOKE FAIL /boot/smoke/renamed.txt does not read back\n");
+        return 0;
+    }
+    savanxp_close((int)fd);
+    if (savanxp_unlink("/boot/smoke/renamed.txt") < 0 || savanxp_rmdir("/boot/smoke") < 0 ||
+        file_exists("/boot/smoke")) {
+        puts_out("SMOKE FAIL cleaning /boot/smoke\n");
+        return 0;
+    }
+    printf("smoke: validated /boot (FAT read and write)\n");
     return 1;
 }
 

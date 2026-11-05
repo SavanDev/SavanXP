@@ -88,6 +88,18 @@ static int run_child(void) {
     check_refused(access("/bin/ls", W_OK), EACCES, "access(/bin/ls, W_OK) as the user");
     check(open("/system/programs.txt", O_RDONLY) >= 0, "the user reads /system/programs.txt");
     check_refused(open("/system/programs.txt", O_WRONLY), EACCES, "the user writes /system/programs.txt");
+    /* The boot volume is FAT, with no owners of its own: the FAT driver
+     * publishes all of it as the system's, 0755 and 0644. */
+    check_refused(open("/boot/limine.conf", O_WRONLY), EACCES, "the user writes /boot/limine.conf");
+    check_refused(open("/boot/idtest-new", O_WRONLY | O_CREAT, 0644), EACCES, "the user creates a file in /boot");
+    check_refused(unlink("/boot/limine.conf"), EACCES, "the user deletes /boot/limine.conf");
+    {
+        int boot_fd = open("/boot/limine.conf", O_RDONLY);
+        check(boot_fd >= 0, "the user reads /boot/limine.conf");
+        if (boot_fd >= 0) {
+            close(boot_fd);
+        }
+    }
 
     /* Running something still works: /bin is 0755. */
     {

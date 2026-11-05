@@ -12,10 +12,10 @@ Cut-off notes:
 
 ### Added
 
-- **A read-only FAT driver, and the boot volume at `/boot`**: FAT12/16/32 with long names on FatFs
-  (`fat::driver()`). At boot the first FAT volume holding `boot/kernel.elf`, ESPs first, is mounted at
-  `/boot` (`storage: /boot is <device>`) and cannot be unmounted. New host test `fat-volume-test`.
-  See `docs/fs/FAT_ROADMAP.md`.
+- **A FAT driver, and the boot volume at `/boot`**: FAT12/16/32 with long names on FatFs
+  (`fat::driver()`), read and write. At boot the first FAT volume holding `boot/kernel.elf`, ESPs first,
+  is mounted at `/boot` (`storage: /boot is <device>`), writable by the system only, never unmounted.
+  New host test `fat-volume-test`. See `docs/fs/FAT_ROADMAP.md`.
 
 - **Disk Management** (`/bin/diskmgmt`, a SUN program under System): the volumes as a list and every
   disk as a map of its partitions and free space, with Properties (model, serial, GUIDs, usage).
@@ -121,6 +121,9 @@ Cut-off notes:
   `docs/build/BUILD_LINUX.md#the-qemu-window`.
 
 ### Changed
+
+- **The development boot drive is attached as `fat:<dir>,snapshot=on`** (`tools/run_qemu.py`): the guest
+  can write `/boot`, and its writes are discarded at exit instead of reaching `build/image`.
 
 - **Only a driver marked `can_be_root` mounts `/`** (`fs::Driver::can_be_root`; SxFS is): a FAT boot
   drive ahead of the system disk can never become the root. FatFs R0.16 is vendored under
