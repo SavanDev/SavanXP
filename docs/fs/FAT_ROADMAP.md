@@ -15,7 +15,9 @@ change outside it, and the phases.
 - **SxFS stays the only root.** Before any FAT driver is registered,
   `fs::mount_any` has to stop accepting a FAT volume as `/`.
 - **The ESP is mounted at `/boot`**, owned by the system, read-only first,
-  writable in a later phase. Nothing runs from it.
+  writable in a later phase. Nothing runs from it, and it is not unmounted.
+- **Disk Management mounts FAT volumes at `/mnt/<name>`** once the driver
+  exists: the storage calls already go through `fs::mount`.
 - **FAT12, FAT16 and FAT32 with long names. No exFAT.**
 - Effort: one to two weeks, most of it in the glue and the tests.
 
@@ -43,11 +45,27 @@ first one **any** registered driver claims. With a FAT driver registered:
   port 1, would mount the boot drive as `/`. The default virtio run survives
   only because virtio-blk registers before AHCI.
 
+The boot drive does not even need to be claimed as its partition: block
+devices are registered as `ahci0 ahci1 ahci0p1`, so the whole disk `ahci0`
+comes first, and FatFs, when sector 0 is not a FAT boot sector, looks for a FAT
+partition in the MBR and mounts that. See the next section.
+
 So `fs::Driver` gains a `can_be_root` field (SxFS: true, FAT: false), and
 `mount_any` skips drivers without it. This is a behavior change of its own,
 lands first, and is checked by `rescue-smoke` and the AHCI smoke before the FAT
 driver exists. The comment in `kernel_main.cpp` around `fs::attach` is still in
 Spanish and is translated in the same commit.
+
+## A whole disk is never mounted as FAT
+
+With `FF_MULTI_PARTITION` 0, FatFs's `f_mount` falls back to the first FAT
+partition in an MBR when sector 0 is not a FAT boot sector. On a partitioned
+disk that would mount the same volume twice, once through the disk and once
+through `<disk>p1`, with two independent copies of its FAT. So `probe` reads
+sector 0 itself and claims the device only when it is a FAT boot sector, the
+check `storage::detect` already makes, before calling `f_mount`.
+`storage::mount` already refuses a disk whose sector 0 is a partition table,
+but the boot path calls `fs::mount` directly and needs the driver's own check.
 
 ## How FatFs maps onto `fs::Driver`
 
@@ -113,6 +131,14 @@ Points worth knowing before writing it:
   `0755`, files `0644`, minus the write bits when the volume or the file
   (`AM_RDO`) is read-only. No execute bit on files, so nothing runs from a FAT
   volume.
+- **The whole tree is published at attach, and the VFS has 2048 nodes**
+  shared by the initramfs, `/dev` and every mounted volume
+  ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits)). The ESP has a few
+  dozen; a FAT stick mounted from Disk Management can have far more than what
+  is left. `attach` fails cleanly when the VFS runs out, and `fs::release`
+  takes back the part already published, as it does for a volume that never
+  attached. Publishing lazily, a directory when it is first opened, is the real
+  fix and a VFS change of its own.
 - **Priority below SxFS** (SxFS is 100). A FAT32 boot sector and an SxFS
   superblock must not be mistaken for each other; SxFS probes first.
 
@@ -120,12 +146,23 @@ Points worth knowing before writing it:
 
 At boot, after the root: the first partition `partition::info` flags as `esp`,
 mounted at `/boot`. In the development run there is no ESP partition; the boot
-drive is QEMU's virtual FAT (`-drive file=fat:rw:...`), a whole device. The
-rule there: the first FAT device that holds `boot/kernel.elf`.
+drive is QEMU's virtual FAT (`-drive file=fat:rw:...`), which presents an MBR
+disk with one FAT partition (`ahci0p1`), not of type `0xEF`. The rule there:
+the first FAT partition that holds `boot/kernel.elf`.
+
+**`/boot` is not unmounted.** `storage::unmount` refuses only `/` today, and
+Disk Management offers Unmount on any other mounted volume. It refuses `/boot`
+the same way, and Disk Management treats it as the system's.
 
 The SxFS image has no top-level `boot`, so the mount point does not hide
-anything. `fs::kMaxMounts` (4) holds root, ESP, the installer's target and one
-removable medium.
+anything. `fs::kMaxMounts` is 4, so with the ESP held for the whole session
+two slots are left for `/mnt` mounts, the installer's target among them.
+
+**Raw writes to the mounted ESP are refused.** `storage::write` returns
+`EBUSY` for a range that overlaps a mounted volume. Setup writes the ESP image
+of another disk and is not affected; the updater cannot rewrite the running
+system's ESP image while `/boot` is mounted, which is one more reason it
+replaces files instead (phase 3).
 
 **The development boot drive must not be written from the guest.** QEMU's
 `fat:rw:` writes back into the host's staging directory, and its write support
@@ -155,8 +192,11 @@ Each phase builds, boots and is verified on its own.
 3. **Consumers.** The updater replaces `boot/kernel.elf` and
    `boot/initramfs.cpio` as files and edits `limine.conf`, instead of rewriting
    the ESP image ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md),
-   phase 5). Removable media wait for a USB mass-storage driver, which does not
-   exist.
+   phase 5). Disk Management's Mount accepts FAT volumes, not only SxFS (the
+   check in `diskmgmt.c`; the kernel side needs nothing), and its
+   `diskmgmt-smoke` mounts a FAT partition on the blank disk. Formatting as
+   FAT from Disk Management would need FatFs in userland and is not planned.
+   Removable media wait for a USB mass-storage driver, which does not exist.
 
 When phase 1 lands, [`FILESYSTEMS.md`](../kernel/FILESYSTEMS.md) gains FAT in
 its tables and limits, and `SETUP_AND_UPDATES.md` stops saying the kernel has
@@ -168,10 +208,14 @@ no FAT driver.
 - Volumes up to 2 TiB (32-bit sector numbers).
 - No `chmod`/`chown` on FAT; ownership is fixed.
 - Unmount follows SxFS's (`fs::release`); the ESP at `/boot` stays mounted.
+- A FAT volume with more files and directories than the VFS has free nodes
+  does not mount.
 
 ## Open questions
 
 - Whether the ESP should stay read-only for everyone and be remounted writable
   only while the updater runs, rather than writable by the system all the time.
+  Userland can only mount at `/mnt/<name>`, so that remount would be a kernel
+  path of its own.
 - Whether `df` and `sysinfo` should list every mounted volume. Today they
   describe the root only.
