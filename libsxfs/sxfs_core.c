@@ -511,6 +511,33 @@ int sxfs_flush(struct sxfs_ctx* ctx) {
     return SXFS_OK;
 }
 
+int sxfs_mkfs(struct sxfs_ctx* ctx, uint32_t total_sectors,
+              uint32_t root_uid, uint32_t root_gid, uint16_t root_mode) {
+    int rc = sxfs_format(ctx, total_sectors);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    if (root_mode != 0) {
+        struct sxfs_inode* root = inode_at(ctx, SXFS_ROOT_INODE);
+        if (root == NULL || !sxfs_mode_matches_type(root_mode, SXFS_INODE_DIRECTORY)) {
+            return SXFS_ERR_INVALID;
+        }
+        root->uid = root_uid;
+        root->gid = root_gid;
+        root->mode = root_mode;
+    }
+    rc = sxfs_flush(ctx);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    uint8_t empty[SXFS_SECTOR_SIZE];
+    memset(empty, 0, sizeof(empty));
+    if (ctx->write(ctx->cookie, SXFS_JOURNAL_LBA, 1, empty) != 0) {
+        return SXFS_ERR_IO;
+    }
+    return SXFS_OK;
+}
+
 int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
     if (!sxfs_path_valid(relpath)) {
         return SXFS_ERR_INVALID;

@@ -786,6 +786,7 @@ set_target_properties(savanxp-doom-mus-test PROPERTIES CXX_STANDARD 20 CXX_STAND
 
 add_executable(savanxp-partition-test
     kernel/partition.cpp
+    libsxdisk/sxdisk.c
     tests/host/kernel_string_stubs.cpp
     tests/host/partition_test.cpp)
 target_include_directories(savanxp-partition-test PRIVATE
@@ -818,8 +819,19 @@ target_include_directories(savanxp-sxfs-volume-test PRIVATE
 target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# libsxdisk, the GPT writer Disk Management and setup share, and sxfs_mkfs.
+add_executable(savanxp-sxdisk-test
+    libsxdisk/sxdisk.c
+    libsxfs/sxfs_core.c
+    tests/host/sxdisk_test.cpp)
+target_include_directories(savanxp-sxdisk-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/libsxfs")
+target_compile_options(savanxp-sxdisk-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-sxdisk-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -830,6 +842,7 @@ add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
 add_test(NAME sximg-test COMMAND savanxp-sximg-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
+add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 

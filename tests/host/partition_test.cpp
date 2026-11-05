@@ -24,6 +24,7 @@
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
 #include "shared/crc32.h"
+#include "sxdisk/sxdisk.h"
 
 namespace console {
 void printf(const char* format, ...) {
@@ -493,6 +494,53 @@ void case_disk_schemes() {
           "an MBR partition knows its scheme and entry");
 }
 
+// The contract with libsxdisk: a table it writes is one this reader slices,
+// with the same numbers, types and names.
+int sxdisk_read_disk(void* cookie, uint64_t lba, uint32_t count, void* buffer) {
+    const size_t device = *static_cast<size_t*>(cookie);
+    return block::read(device, static_cast<uint32_t>(lba), count, buffer) ? 0 : -1;
+}
+
+int sxdisk_write_disk(void* cookie, uint64_t lba, uint32_t count, const void* buffer) {
+    const size_t device = *static_cast<size_t*>(cookie);
+    return block::write(device, static_cast<uint32_t>(lba), count, buffer) ? 0 : -1;
+}
+
+void sxdisk_fill(void*, void* out, size_t size) {
+    for (size_t index = 0; index < size; ++index) {
+        static_cast<uint8_t*>(out)[index] = static_cast<uint8_t>(0x30 + index);
+    }
+}
+
+void case_libsxdisk_tables_are_sliced() {
+    printf("case: a table written by libsxdisk\n");
+    reset_devices();
+    size_t disk = add_disk(131072, "ahci1", /*writable=*/true);
+    const sxdisk_io io = {&disk, &sxdisk_read_disk, &sxdisk_write_disk, &sxdisk_fill};
+    static sxdisk_gpt table;
+    check(sxdisk_gpt_init(&table, 131072, &io) == SXDISK_OK, "libsxdisk builds an empty table");
+    uint32_t number = 0;
+    check(sxdisk_gpt_add(&table, 2048, 8192, sxdisk_type_esp, "EFI system", &io, nullptr) == SXDISK_OK, "an ESP");
+    check(sxdisk_gpt_add(&table, 10240, 65536, sxdisk_type_sxfs, "SavanXP", &io, &number) == SXDISK_OK &&
+          number == 2, "an SxFS partition as entry 2");
+    check(sxdisk_gpt_remove(&table, 1) == SXDISK_OK, "the ESP removed again: entry 1 empty");
+    check(sxdisk_gpt_write(&table, &io) == SXDISK_OK, "libsxdisk writes it");
+    enumerate_partitions();
+
+    check(g_device_count == 2, "the disk and one partition");
+    partition::Info info = {};
+    if (check(partition::info(1, info), "the SxFS partition is sliced")) {
+        check(info.number == 2 && info.start_lba == 10240 && info.sector_count == 65536, "entry 2, its range");
+        check(memcmp(info.type_guid, sxdisk_type_sxfs, 16) == 0, "the SxFS type GUID");
+        check(strcmp(info.name, "SavanXP") == 0, "its name");
+    }
+    block::DeviceInfo device = {};
+    check(block::device_info(1, device) && strcmp(device.name, "ahci1p2") == 0, "named after its entry: ahci1p2");
+    const partition::DiskInfo found = partition::disk_info(disk);
+    check(found.scheme == partition::Scheme::gpt && !found.gpt_from_backup, "a clean GPT");
+    check(memcmp(found.disk_guid, table.disk_guid, 16) == 0, "the same disk GUID");
+}
+
 } // namespace
 
 // --- block:: ----------------------------------------------------------------
@@ -602,6 +650,7 @@ int main() {
     case_damaged_entries_use_backup();
     case_both_gpt_copies_damaged();
     case_disk_schemes();
+    case_libsxdisk_tables_are_sliced();
 
     reset_devices();
 

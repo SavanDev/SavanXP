@@ -89,6 +89,15 @@ int sxfs_open(struct sxfs_ctx* ctx);
  * backend. Los datos de archivos/directorios ya se escribieron in situ. */
 int sxfs_flush(struct sxfs_ctx* ctx);
 
+/* Formats a volume on the backend in one go: sxfs_format, the root directory
+ * owned by `root_uid`/`root_gid` with `root_mode` (0 leaves it to the path
+ * defaults, which make the root the system's), sxfs_flush, and a zeroed
+ * journal header. The last step is what sxfs_flush alone does not do: on a
+ * device that held an SxFS before, a leftover journal with `pending` set would
+ * be replayed over the new volume at its first mount. */
+int sxfs_mkfs(struct sxfs_ctx* ctx, uint32_t total_sectors,
+              uint32_t root_uid, uint32_t root_gid, uint16_t root_mode);
+
 /* Crea el directorio `relpath` (relativo a la raiz, separado por '/'),
  * creando los componentes intermedios que falten (mkdir -p). Idempotente si ya
  * existe como directorio. */
