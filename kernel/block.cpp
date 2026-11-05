@@ -15,6 +15,7 @@ constexpr size_t kMaxBlockDevices = 16;
 
 struct Device {
     bool present;
+    uint32_t id;
     const block::DeviceOps* ops;
     void* context;
     uint32_t sector_count;
@@ -29,6 +30,8 @@ struct Device {
 
 Device g_devices[kMaxBlockDevices] = {};
 size_t g_device_count = 0;
+uint32_t g_next_id = 1;
+uint32_t g_generation = 1;
 bool g_ready = false;
 
 const block::Driver* g_drivers[block::kMaxDrivers] = {};
@@ -286,6 +289,7 @@ bool register_device(
 
     Device& device = g_devices[g_device_count];
     device.present = true;
+    device.id = g_next_id++;
     device.ops = &ops;
     device.context = context;
     device.sector_count = sector_count;
@@ -294,6 +298,7 @@ bool register_device(
     device.name = name;
     device.identity = identity;
     ++g_device_count;
+    ++g_generation;
     g_ready = true;
     return true;
 }
@@ -331,6 +336,10 @@ bool ready() {
     return g_ready;
 }
 
+uint32_t generation() {
+    return g_generation;
+}
+
 size_t device_count() {
     return g_device_count;
 }
@@ -342,6 +351,7 @@ bool device_info(size_t index, DeviceInfo& info) {
     }
 
     info.present = device->present;
+    info.id = device->id;
     info.sector_count = device->sector_count;
     info.writable = device->writable;
     info.name = device->name;

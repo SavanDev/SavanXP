@@ -193,6 +193,12 @@ static inline long sxn_system_info(struct savanxp_system_info* out) {
     return sxn_trap(SXN_SYS_SYSTEM_INFO, (unsigned long)out, sizeof(*out), 0);
 }
 
+/* The index-th storage device: disks, partitions, the LiveCD volume, what is
+ * on each and where it is mounted. 1 when filled, 0 past the last one. */
+static inline long sxn_storage_snapshot(unsigned long index, struct sxn_storage_device* out) {
+    return sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, index, (unsigned long)out, sizeof(*out));
+}
+
 /* CreatePipe: handles[0] is the read end, handles[1] the write end. */
 static inline long sxn_pipe_create(int32_t handles[2]) {
     return sxn_trap(SXN_SYS_PIPE_CREATE, (unsigned long)handles, 0, 0);

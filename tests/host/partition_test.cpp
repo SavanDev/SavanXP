@@ -572,6 +572,7 @@ bool device_info(size_t index, DeviceInfo& info) {
         return false;
     }
     info.present = true;
+    info.id = static_cast<uint32_t>(index + 1);
     info.sector_count = g_devices[index].sector_count;
     info.writable = g_devices[index].writable;
     info.name = g_devices[index].name;

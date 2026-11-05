@@ -272,6 +272,15 @@ enum sxn_syscall_number {
      * tick counter, the cores that schedule. Writes at most `size` bytes.
      * Returns 0 or -EINVAL. GlobalMemoryStatus and GetSystemInfo in one. */
     SXN_SYS_SYSTEM_INFO = 0x102c,
+    /* rdi = index, rsi = struct sxn_storage_device (written), rdx = its size.
+     * The index-th storage device (disks, their partitions, the LiveCD's
+     * memory volume), what is on it and where it is mounted. Writes at most
+     * `size` bytes. Returns 1, 0 past the last device, or -EINVAL if the size
+     * is below SXN_STORAGE_DEVICE_V1_SIZE. Any process may list them; reaching
+     * their sectors is the system's (docs/userland/DISK_MANAGEMENT.md).
+     * SetupDiGetClassDevs and IOCTL_DISK_GET_DRIVE_LAYOUT_EX, one entry per
+     * call. */
+    SXN_SYS_STORAGE_SNAPSHOT = 0x102d,
 };
 
 /* SXN_SYS_WAKE_ADDRESS: release every waiter. */
@@ -310,6 +319,64 @@ struct sxn_identity {
     uint32_t gid;
     uint32_t reserved;
 };
+
+/* What a storage device is (sxn_storage_device.kind). */
+enum sxn_storage_kind {
+    SXN_STORAGE_DISK = 1,      /* a whole physical or virtual disk */
+    SXN_STORAGE_PARTITION = 2, /* a slice of a disk; parent_id names it */
+    SXN_STORAGE_MEMORY = 3,    /* a volume in RAM: the LiveCD's */
+};
+
+enum sxn_storage_flags {
+    SXN_STORAGE_WRITABLE = 1u << 0,
+    SXN_STORAGE_MOUNTED = 1u << 1,       /* this device is mounted */
+    SXN_STORAGE_CHILD_MOUNTED = 1u << 2, /* a partition of this disk is */
+    SXN_STORAGE_SYSTEM = 1u << 3,        /* holds "/", itself or a partition */
+    SXN_STORAGE_ESP = 1u << 4,           /* an EFI System Partition */
+    SXN_STORAGE_TRUNCATED = 1u << 5,     /* device_sectors > sector_count */
+    SXN_STORAGE_GPT_BACKUP = 1u << 6,    /* disk: primary GPT damaged, backup used */
+};
+
+/* How a disk is partitioned; for a partition, the table it came from. */
+enum sxn_storage_scheme {
+    SXN_STORAGE_SCHEME_NONE = 0,
+    SXN_STORAGE_SCHEME_MBR = 1,
+    SXN_STORAGE_SCHEME_GPT = 2,
+    SXN_STORAGE_SCHEME_DAMAGED = 3,  /* "EFI PART" with no valid copy */
+};
+
+#define SXN_STORAGE_NAME_CAPACITY 24u
+#define SXN_STORAGE_MOUNT_CAPACITY 32u
+
+/* SXN_SYS_STORAGE_SNAPSHOT. Grows at the end only. */
+struct sxn_storage_device {
+    uint32_t id;          /* stable for the device's life; never reused */
+    uint32_t generation;  /* bumps whenever any device or mount changes */
+    uint32_t kind;        /* enum sxn_storage_kind */
+    uint32_t flags;       /* enum sxn_storage_flags */
+    uint32_t parent_id;   /* partitions: the disk's id; 0 otherwise */
+    uint32_t scheme;      /* enum sxn_storage_scheme */
+    uint32_t partition_number; /* 1-based table entry; 0 for a disk */
+    uint32_t mbr_type;    /* MBR partitions only */
+    uint64_t sector_count;   /* 512-byte sectors, as reachable */
+    uint64_t start_lba;      /* partitions: offset in the parent */
+    uint64_t device_sectors; /* the size the device reports */
+    uint8_t type_guid[16];   /* GPT partitions: as stored on disk */
+    uint8_t unique_guid[16]; /* GPT partitions; GPT disks: the disk GUID */
+    char name[SXN_STORAGE_NAME_CAPACITY];   /* "ahci1", "ahci1p2" */
+    char model[48];
+    char serial[24];
+    char label[40];          /* the GPT partition name, ASCII */
+    char fs_name[16];        /* "sxfs", "fat" or "" when unknown */
+    char mount_point[SXN_STORAGE_MOUNT_CAPACITY]; /* "" when not mounted */
+    uint64_t total_bytes;    /* mounted volumes only */
+    uint64_t used_bytes;
+    uint64_t free_bytes;
+    uint32_t file_count;
+    uint32_t reserved;
+};
+
+#define SXN_STORAGE_DEVICE_V1_SIZE ((uint32_t)sizeof(struct sxn_storage_device))
 
 enum sxn_process_state {
     SXN_PROCESS_RUNNING = 1, /* alive: running, ready or blocked */

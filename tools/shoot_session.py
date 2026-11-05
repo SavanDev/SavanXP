@@ -1257,6 +1257,46 @@ def scenario_appwiz(s):
     s.shot("progman-rotulo")
 
 
+def scenario_diskmgmt(s):
+    """Disk Management (docs/userland/DISK_MANAGEMENT.md): the volume list,
+    the disk map and a volume's Properties.
+
+    The development run has two disks: QEMU's FAT view of the boot files
+    (MBR, one partition) and disk.img (a whole-disk SxFS volume mounted at /).
+    Nothing is changed: the operations that write are covered by
+    `build.sh smoke diskmgmt-smoke`, on a blank disk of its own.
+    """
+    s.run("diskmgmt")
+    image = s.shot("diskmgmt")
+    for _ in range(5):
+        time.sleep(2.0)
+        again = s.shot("diskmgmt")
+        if list(again.getdata()) == list(image.getdata()):
+            break
+        image = again
+    header = find_text(image, (0, 0, 1280, 770), "File System", TEXT, FACE)[0]
+    if header is None:
+        raise Failure("Disk Management does not show its volume list")
+    expect_text(image, (0, header[1], 1280, 770), "Online", TEXT, FACE,
+                "each disk's box says it is online")
+    expect_text(image, (0, header[1], 1280, 770), "Healthy (System)", TEXT, FIELD,
+                "the root volume is drawn on the map as the system's")
+    # The root's row, by its mount point, then Alt+Enter for Properties.
+    row = find_text(image, (0, header[1] + 8, 1280, header[1] + 120), "/", TEXT, FIELD)[0]
+    if row is None:
+        raise Failure("Disk Management does not list the root volume")
+    s.qmp.move_to(row[0] + 2, row[1] + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("diskmgmt-selected")
+    s.qmp.chord("alt", "ret")
+    time.sleep(3.0)
+    image = s.shot("diskmgmt-properties")
+    expect_text(image, (0, 0, 1280, 800), "Mounted at:", TEXT, FACE,
+                "Properties shows where the volume is mounted")
+    s.qmp.tap("esc", pause=2.0)
+
+
 def scenario_kbdlayout(s):
     """Selector de layout de teclado: click en el indicador de la taskbar
     abre el popup anclado, click en una fila lo aplica y lo cierra.
@@ -2484,6 +2524,7 @@ SCENARIOS = {
     "filesmenu": scenario_filesmenu,
     "filestoolbar": scenario_filestoolbar,
     "taskmgrmenu": scenario_taskmgrmenu,
+    "diskmgmt": scenario_diskmgmt,
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,

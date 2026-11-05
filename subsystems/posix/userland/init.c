@@ -63,6 +63,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "taskmgr")) {
         return "TASKMGR SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "diskmgmt")) {
+        return "DISKMGMT SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "mines")) {
         return "MINES SMOKE";
     }
@@ -128,6 +131,7 @@ static int run_automation_spec(const char* spec) {
     const char* sxetest_argv[] = {"/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* taskmgr_selftest_argv[] = {"/bin/taskmgr.sxe", "--selftest", 0};
+    const char* diskmgmt_selftest_argv[] = {"/bin/diskmgmt.sxe", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
@@ -201,6 +205,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "taskmgr-selftest") == 0 || strcmp(spec, "taskmgr") == 0) {
             path = "/bin/taskmgr.sxe";
             argv = taskmgr_selftest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "diskmgmt-selftest") == 0 || strcmp(spec, "diskmgmt") == 0) {
+            path = "/bin/diskmgmt.sxe";
+            argv = diskmgmt_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {
             path = "/bin/mines";

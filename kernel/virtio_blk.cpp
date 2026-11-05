@@ -64,7 +64,7 @@ virtio_pci::Device g_device = {};
 virtio_pci::Queue g_request_queue = {};
 bool g_ready = false;
 bool g_flush_supported = false;
-block::DeviceIdentity g_identity = {"VirtIO Block Device", "", 0};
+block::DeviceIdentity g_identity = {"VirtIO Block Device", "", 0, /*memory=*/false};
 
 volatile VirtioBlkConfig* device_cfg() {
     return reinterpret_cast<volatile VirtioBlkConfig*>(virtio_pci::device_cfg_base(g_device));

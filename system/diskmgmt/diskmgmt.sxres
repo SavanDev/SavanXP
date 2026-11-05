@@ -1,0 +1,10 @@
+# SXE resources of Disk Management. See docs/userland/SXE_FORMAT.md; as a SUN
+# program it also gets them compiled in (diskmgmt.sunres.h).
+name=Disk Management
+description=Disks, partitions and volumes
+version=system
+vendor=SavanXP
+subsystem=native
+accent=3f4f7f
+icon=app-diskmgmt
+category=System

@@ -17,10 +17,14 @@ struct DeviceIdentity {
     // numbers. Larger than DeviceInfo::sector_count on a disk past 2 TiB, which
     // a partition editor must refuse to touch (its end is out of reach).
     uint64_t full_sectors;
+    // The device is memory, not a disk (the LiveCD's volume).
+    bool memory;
 };
 
 struct DeviceInfo {
     bool present;
+    // Stable for the device's life and never reused, unlike its index.
+    uint32_t id;
     uint32_t sector_count;
     bool writable;
     const char* name;
@@ -92,6 +96,8 @@ bool register_device(
 void copy_ata_string(const uint16_t* identify, size_t first_word, size_t word_count, char* out, size_t capacity);
 
 bool ready();
+// Bumps whenever a device is registered or removed.
+uint32_t generation();
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);
 // Sees every write issued so far, including those still queued.

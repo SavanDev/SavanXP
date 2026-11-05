@@ -18,7 +18,7 @@ struct Image {
 };
 
 Image g_image = {};
-block::DeviceIdentity g_identity = {"SavanXP LiveCD (RAM)", "", 0};
+block::DeviceIdentity g_identity = {"SavanXP LiveCD (RAM)", "", 0, /*memory=*/true};
 
 // El rango de LBA y el permiso de escritura ya los valido block::read/write.
 bool read_op(void* context, uint32_t lba, uint32_t sector_count, void* buffer) {

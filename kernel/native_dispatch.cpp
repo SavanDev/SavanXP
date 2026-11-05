@@ -11,6 +11,7 @@
 #include "kernel/object.hpp"
 #include "kernel/process_detail.hpp"
 #include "kernel/string.hpp"
+#include "kernel/storage.hpp"
 #include "kernel/sx.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/vfs.hpp"
@@ -439,6 +440,23 @@ int native_system_info(uint64_t user_out, uint64_t size) {
         return sx::negative_error(SX_EINVAL);
     }
     return sx::copy_to_user(user_out, &info, length) ? 0 : sx::negative_error(SX_EINVAL);
+}
+
+// One storage device per call, as the process snapshot does.
+int native_storage_snapshot(uint64_t index, uint64_t user_out, uint64_t size) {
+    sxn_storage_device device = {};
+
+    if (size < SXN_STORAGE_DEVICE_V1_SIZE) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t length = size < sizeof(device) ? static_cast<size_t>(size) : sizeof(device);
+    if (!sx::validate_user_range(user_out, length, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (!storage::snapshot(static_cast<size_t>(index), device)) {
+        return 0;
+    }
+    return sx::copy_to_user(user_out, &device, length) ? 1 : sx::negative_error(SX_EINVAL);
 }
 
 // Whether `handle` names an open entry of the caller's table.
@@ -1067,6 +1085,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_SYSTEM_INFO:
             context->rax = static_cast<uint64_t>(native_system_info(context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_STORAGE_SNAPSHOT:
+            context->rax = static_cast<uint64_t>(
+                native_storage_snapshot(context->rdi, context->rsi, context->rdx));
             return context;
         default:
             break;

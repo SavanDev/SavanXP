@@ -71,3 +71,10 @@ savanxp_system_service(NAME console SOURCES console.c)
 # being a SUN program is what puts it in system/ rather than in the POSIX
 # userland.
 savanxp_system_service(NAME nightwood SOURCES nightwood.c nightwood_world.c nightwood_audio.c)
+
+# Disk Management (docs/userland/DISK_MANAGEMENT.md): the consumer of the
+# storage calls. libsxdisk and the SxFS core are shared with setup and the
+# host tools.
+savanxp_system_service(NAME diskmgmt SOURCES diskmgmt.c
+    SHARED_SOURCES libsxdisk/sxdisk.c libsxfs/sxfs_core.c)
+target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")

@@ -21,7 +21,7 @@ object/process factoring, not before.
   scheduling stay identical; only the call path moves.
 - The native dispatcher only uses the `sx::` surface
   ([`sx.hpp`](../../include/kernel/sx.hpp): current process, user-memory copy,
-  errors) plus `display::*` and `console::*`. It never reaches into
+  errors) plus `display::*`, `console::*` and `storage::*`. It never reaches into
   `process.cpp` internals.
 - `kernel/process.cpp` no longer implements user-memory copy itself: the
   single implementation lives in `kernel/sx.cpp`, and the `process::`
@@ -250,6 +250,27 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 28: storage for Disk Management
+
+What Disk Management needs ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md)).
+Native only. The dispatcher reaches block::, partition:: and fs:: through one
+facade, `storage::` (`kernel/storage.cpp`).
+
+- `SXN_SYS_STORAGE_SNAPSHOT` (`0x102d`): rdi = index, rsi = `struct
+  sxn_storage_device` (written), rdx = its size. The index-th block device:
+  its stable id, kind (disk, partition, memory), flags (writable, mounted, a
+  partition mounted, holds `/`, ESP, truncated, GPT read from the backup),
+  parent, scheme, entry number, range, type and unique GUIDs, name, model,
+  serial, GPT label, file system (the mounted driver, or `sxfs`/`fat` read from
+  its first sectors and cached per generation) and, when mounted, the mount
+  point and usage. 1 when filled, 0 past the last one, `-EINVAL` below
+  `SXN_STORAGE_DEVICE_V1_SIZE`. Any process may list them. The struct grows at
+  the end and the call writes at most the size passed.
+
+`nativetest` lists the devices and finds `/` mounted, flagged and holding
+SxFS whose usage adds up, checks ids are unique and every partition's parent
+is a listed disk, and that a short size and a bad pointer are `-EINVAL`.
 
 ## Slice 27: what a task list reads, and ending by owner
 

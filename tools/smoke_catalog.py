@@ -163,6 +163,12 @@ SCENARIOS: dict[str, Scenario] = {
         "TASKMGR SMOKE FAIL",
         "Task Manager process and CPU self-test",
     ),
+    "diskmgmt-smoke": _qemu_scenario(
+        "diskmgmt-selftest",
+        "DISKMGMT SMOKE PASS",
+        "DISKMGMT SMOKE FAIL",
+        "Disk Management storage listing self-test",
+    ),
     "mines-smoke": _qemu_scenario(
         "mines-selftest",
         "MINES SMOKE PASS",

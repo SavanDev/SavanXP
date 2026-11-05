@@ -1390,6 +1390,56 @@ int main(int argc, char** argv) {
         check(sxn_log("nativetest: process snapshot and system info done") == 0);
     }
 
+    /* STORAGE_SNAPSHOT (slice 28): the devices Disk Management lists. The
+     * scenario boots from a disk, so something is mounted at "/" and holds
+     * SxFS, and every partition's parent is a listed disk. */
+    {
+        struct sxn_storage_device device;
+        struct sxn_storage_device devices[32];
+        unsigned long index = 0;
+        int root = -1;
+        long result;
+        unsigned long count;
+        unsigned long other;
+
+        while (index < 32ul && (result = sxn_storage_snapshot(index, &devices[index])) == 1) {
+            if (streq(devices[index].mount_point, "/")) {
+                root = (int)index;
+            }
+            index += 1;
+        }
+        count = index;
+        check(count >= 1ul && (count == 32ul || result == 0));
+        check(root >= 0);
+        if (root >= 0) {
+            check(streq(devices[root].fs_name, "sxfs"));
+            check((devices[root].flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_SYSTEM)) ==
+                (SXN_STORAGE_MOUNTED | SXN_STORAGE_SYSTEM));
+            check(devices[root].total_bytes > 0u &&
+                devices[root].used_bytes + devices[root].free_bytes == devices[root].total_bytes);
+        }
+        for (index = 0; index < count; ++index) {
+            int parent_found = devices[index].kind != SXN_STORAGE_PARTITION;
+
+            check(devices[index].id != 0u && devices[index].generation == devices[0].generation);
+            for (other = 0; other < count; ++other) {
+                if (other != index) {
+                    check(devices[other].id != devices[index].id);
+                }
+                if (devices[index].kind == SXN_STORAGE_PARTITION && devices[other].id == devices[index].parent_id &&
+                    devices[other].kind != SXN_STORAGE_PARTITION) {
+                    parent_found = 1;
+                }
+            }
+            check(parent_found);
+        }
+        check(sxn_storage_snapshot(count, &device) == 0);
+        check(sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, 0, (unsigned long)&device, SXN_STORAGE_DEVICE_V1_SIZE - 1u) ==
+            -SAVANXP_EINVAL);
+        check(sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, 0, 16ul, sizeof(device)) == -SAVANXP_EINVAL);
+        check(sxn_log("nativetest: storage snapshot done") == 0);
+    }
+
     /* PIPE_CREATE: a pipe made by a native process, both ends in its table.
      * Data crosses, the read end is a wait target, and closing the write end
      * is end of stream. */

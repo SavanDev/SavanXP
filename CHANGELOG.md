@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Disk Management** (`/bin/diskmgmt`, a SUN program under System): the volumes as a list and every
+  disk as a map of its partitions and free space, with Properties (model, serial, GUIDs, usage). New
+  call `SXN_SYS_STORAGE_SNAPSHOT` (`sxn_storage_snapshot`). See `docs/userland/DISK_MANAGEMENT.md`.
+
 - **Files: Explorer toolbar and address bar**: Back, Forward, Up, Delete, Properties and Views,
   an editable address bar, a Go menu and a Properties dialog (Alt+Left/Right, Alt+Enter). SXGUI
   gains `sxgui_toolbar_button` (`SXGUI_FLAG_TOOLBAR`, `SXGUI_FLAG_DROPDOWN`) and `sxgui_separator`.

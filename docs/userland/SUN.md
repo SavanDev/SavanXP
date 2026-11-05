@@ -135,6 +135,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `WaitForSingleObject` / `WaitForMultipleObjects` | `sxn_wait_one`, `sxn_wait_many` (pipes and devices included) | done |
 | `GetExitCodeProcess` | `sxn_process_query` | done |
 | Toolhelp (`CreateToolhelp32Snapshot`, `Process32Next`), `GlobalMemoryStatus`, `GetSystemInfo` | `sxn_process_snapshot`, `sxn_system_info` | done (slice 27) |
+| `SetupDiGetClassDevs`, `IOCTL_DISK_GET_DRIVE_LAYOUT_EX`, `GetVolumeInformation` | `sxn_storage_snapshot` | done (slice 28, Disk Management) |
 | `ShellExecute` with `runas` | `sxn_elevate` (`sxn/sxnelevate.h`), through the elevation broker | done |
 | `CreateThread`, `ExitThread`, `GetExitCodeThread` | `sxn_thread_create`, `sxn_thread_exit`, `sxn_thread_exit_code`; the stack is the caller's | done (slice 23); threads of one process run in parallel on several cores |
 | `NtCurrentTeb` (the TEB at `%gs`), the TLS a `TlsAlloc` slot lives in | `sxn_set_thread_base` (`SXN_THREAD_BASE_GS`, or `_FS` for POSIX-style TLS) | done (slice 24) |

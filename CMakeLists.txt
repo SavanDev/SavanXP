@@ -214,6 +214,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/virtio_blk.cpp
     kernel/partition.cpp
     kernel/fs.cpp
+    kernel/storage.cpp
     kernel/fs_path.cpp
     kernel/ramdisk.cpp
     kernel/nic.cpp
@@ -626,6 +627,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/console"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/nightwood"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/taskmgr"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/diskmgmt"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS
