@@ -110,10 +110,14 @@ Rules that keep it honest:
 4. **POSIX keeps working.** SUN stands beside POSIX, not instead of it. A SUN
    program starts POSIX programs and talks to them over pipes; nothing in a
    POSIX program has to know its parent is native.
-5. **Apps may be SUN programs.** Until 2026-10-21 only the platform services
-   were native ([SYSTEM_LAYERING.md](SYSTEM_LAYERING.md)). An app may now be
-   written against SUN when SUN already has what it needs, or when the app is
-   the consumer of the slice that adds it. The Command Prompt is the first.
+5. **New programs are SUN programs.** Until 2026-10-21 only the platform
+   services were native ([SYSTEM_LAYERING.md](SYSTEM_LAYERING.md)); the
+   Command Prompt was the first app written against SUN. Since 2026-11-05
+   every new program in the tree is: when SUN lacks something it needs, the
+   program is the consumer of the slice that adds it (rule 1). The POSIX
+   programs already in the tree move to SUN one at a time, usually when they
+   are changed for another reason. POSIX stays for ports and external
+   programs ([AGENTS.md](../../AGENTS.md#new-programs-are-sun-programs)).
 
 ### Win32 counterparts
 

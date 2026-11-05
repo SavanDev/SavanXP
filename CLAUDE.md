@@ -73,6 +73,15 @@ environment or cache overrides. A new host tool belongs in CMake discovery and
 the documented dependency list — never as an absolute path in `build.sh` or
 the CMake files.
 
+### 6. New programs are written against SUN
+
+Every new app, tool, service or game uses the native API
+([`docs/userland/SUN.md`](docs/userland/SUN.md)), not POSIX. If SUN lacks
+something, the program is the consumer of the slice that adds it, with its
+`nativetest` assertion. Existing POSIX programs move to SUN one at a time, each
+in its own commit with its own changelog entry. POSIX stays for ports and
+external programs.
+
 ## Build commands
 
 Native Linux path:

@@ -79,6 +79,21 @@
   what keeps the bulk-rewrite rule from becoming a reason to carry Spanish
   into a new place.
 
+## New programs are SUN programs
+
+- Every new program in the tree (app, tool, service or game) is written
+  against SUN, the native API (`docs/userland/SUN.md`), not against the POSIX
+  subsystem.
+- If SUN lacks something the program needs, the program becomes the consumer
+  of the slice that adds it (`SUN.md`, rule 1), together with its `nativetest`
+  assertion. Missing SUN calls are not a reason to write it on POSIX.
+- The existing POSIX programs move to SUN gradually, one at a time, usually
+  when they are being changed for another reason. Each move is its own commit
+  with its own changelog entry, and the program keeps its name and its
+  behavior.
+- POSIX stays supported for ports and external programs (`ports/`,
+  `tools/build-user.sh`). Nothing here removes it.
+
 ## Repository rules
 
 - Do not break the persistence of external apps installed in `build/disk.img`.
