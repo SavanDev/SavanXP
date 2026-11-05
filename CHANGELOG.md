@@ -13,8 +13,11 @@ Cut-off notes:
 ### Added
 
 - **Disk Management** (`/bin/diskmgmt`, a SUN program under System): the volumes as a list and every
-  disk as a map of its partitions and free space, with Properties (model, serial, GUIDs, usage). New
-  call `SXN_SYS_STORAGE_SNAPSHOT` (`sxn_storage_snapshot`). See `docs/userland/DISK_MANAGEMENT.md`.
+  disk as a map of its partitions and free space, with Properties (model, serial, GUIDs, usage).
+  Initialize Disk (GPT), New Partition, Format (SxFS) and Delete Partition run elevated, never on the
+  ESP, the disk holding `/` or an MBR disk. New calls `SXN_SYS_STORAGE_SNAPSHOT`, `_READ`, `_WRITE`
+  and `_RESCAN` (raw sectors and rescans are the system's); smokes can attach a blank disk
+  (`extra_disk_mib`). See `docs/userland/DISK_MANAGEMENT.md`.
 
 - **Files: Explorer toolbar and address bar**: Back, Forward, Up, Delete, Properties and Views,
   an editable address bar, a Go menu and a Properties dialog (Alt+Left/Right, Alt+Enter). SXGUI

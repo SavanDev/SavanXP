@@ -350,6 +350,10 @@ def main() -> int:
     assert "./tools/restore_doom.sh" in catalog
     assert "build-user.sh" in catalog
     assert "taskbar-smoke" in catalog
+    # Disk Management writes only to a blank disk of its own, named by serial.
+    assert "extra_disk_mib=64" in catalog
+    assert "SXBLANK0" in (root / "tools" / "run_smoke.py").read_text(encoding="utf-8")
+    assert "extra_disks" in run_qemu
 
     for path in (
         root / "tools" / "run_qemu.py",

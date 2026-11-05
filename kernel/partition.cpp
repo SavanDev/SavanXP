@@ -14,10 +14,10 @@ namespace {
 // every disk's table.
 constexpr int kDriverPriority = -1000;
 
-// Four primaries per disk cover the installer's disk (ESP + root) and the
-// typical USB stick. When it fills up the rest stay unregistered and the
-// system keeps working.
-constexpr size_t kMaxSlices = 8;
+// Across every disk. Four primaries per disk cover the installer's disk (ESP +
+// root) and the typical USB stick, and Disk Management may add more. When it
+// fills up the rest stay unregistered and the system keeps working.
+constexpr size_t kMaxSlices = 16;
 
 // Disk records are indexed by block device index.
 constexpr size_t kMaxDisks = 32;
@@ -54,8 +54,9 @@ struct Slice {
     partition::Info info;
 };
 
+// A slot is free when !present: rescan removes a disk's slices and its
+// slots are reused.
 Slice g_slices[kMaxSlices] = {};
-size_t g_slice_count = 0;
 
 partition::DiskInfo g_disks[kMaxDisks] = {};
 
@@ -157,11 +158,18 @@ bool add_slice(
     uint32_t parent_sectors,
     const partition::Info& info)
 {
-    if (g_slice_count >= kMaxSlices || info.sector_count == 0 || info.start_lba >= parent_sectors) {
+    if (info.sector_count == 0 || info.start_lba >= parent_sectors) {
+        return false;
+    }
+    size_t slot = 0;
+    while (slot < kMaxSlices && g_slices[slot].present) {
+        ++slot;
+    }
+    if (slot >= kMaxSlices) {
         return false;
     }
 
-    Slice& slice = g_slices[g_slice_count];
+    Slice& slice = g_slices[slot];
     slice = {};
     slice.present = true;
     slice.parent_index = parent_index;
@@ -171,14 +179,13 @@ bool add_slice(
     if (slice.info.sector_count > available) {
         slice.info.sector_count = available;
     }
-    slice.device_index = block::device_count();
-
-    build_name(g_names[g_slice_count], sizeof(g_names[g_slice_count]), parent_name, info.number);
-    if (!block::register_device(kOps, &slice, slice.info.sector_count, parent_writable, g_names[g_slice_count])) {
-        slice.present = false;
+    build_name(g_names[slot], sizeof(g_names[slot]), parent_name, info.number);
+    slice.device_index =
+        block::register_device(kOps, &slice, slice.info.sector_count, parent_writable, g_names[slot]);
+    if (slice.device_index == block::kInvalidDevice) {
+        slice = {};
         return false;
     }
-    ++g_slice_count;
     return true;
 }
 
@@ -326,44 +333,58 @@ bool has_protective_mbr(const uint8_t* boot_sector) {
     return false;
 }
 
+bool is_slice(size_t device_index) {
+    for (size_t slot = 0; slot < kMaxSlices; ++slot) {
+        if (g_slices[slot].present && g_slices[slot].device_index == device_index) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Reads one disk's table and registers its partitions.
+void scan_disk(size_t index) {
+    g_disks[index] = {};
+    block::DeviceInfo info = {};
+    if (!block::device_info(index, info) || !info.present || info.sector_count < 2) {
+        return;
+    }
+
+    uint8_t boot_sector[block::kSectorSize] = {};
+    if (!block::read(index, 0, 1, boot_sector)) {
+        return;
+    }
+    if (load_le16(boot_sector + 510) != 0xaa55) {
+        return;
+    }
+
+    // Protective MBR: the 4-entry table lies on purpose (a single 0xEE
+    // partition covering the disk) and the real one is the GPT. The GPT is
+    // tried even without it, because there are hybrid images without 0xEE;
+    // the MBR is only read when there is no GPT at all.
+    const partition::Scheme gpt = scan_gpt(index, info.name, info.writable, info.sector_count);
+    if (gpt != partition::Scheme::none) {
+        g_disks[index].scheme = gpt;
+        return;
+    }
+    if (has_protective_mbr(boot_sector)) {
+        g_disks[index].scheme = partition::Scheme::damaged;
+        return;
+    }
+    g_disks[index].scheme = partition::Scheme::mbr;
+    scan_mbr(index, info.name, info.writable, info.sector_count, boot_sector);
+}
+
 void enumerate() {
     memset(g_slices, 0, sizeof(g_slices));
     memset(g_names, 0, sizeof(g_names));
     memset(g_disks, 0, sizeof(g_disks));
-    g_slice_count = 0;
 
     // Snapshot before the loop: add_slice registers new devices and the count
     // grows while iterating. Freezing it keeps a partition from being sliced.
     const size_t parents = block::device_count();
     for (size_t index = 0; index < parents && index < kMaxDisks; ++index) {
-        block::DeviceInfo info = {};
-        if (!block::device_info(index, info) || !info.present || info.sector_count < 2) {
-            continue;
-        }
-
-        uint8_t boot_sector[block::kSectorSize] = {};
-        if (!block::read(index, 0, 1, boot_sector)) {
-            continue;
-        }
-        if (load_le16(boot_sector + 510) != 0xaa55) {
-            continue;
-        }
-
-        // Protective MBR: the 4-entry table lies on purpose (a single 0xEE
-        // partition covering the disk) and the real one is the GPT. The GPT is
-        // tried even without it, because there are hybrid images without 0xEE;
-        // the MBR is only read when there is no GPT at all.
-        const partition::Scheme gpt = scan_gpt(index, info.name, info.writable, info.sector_count);
-        if (gpt != partition::Scheme::none) {
-            g_disks[index].scheme = gpt;
-            continue;
-        }
-        if (has_protective_mbr(boot_sector)) {
-            g_disks[index].scheme = partition::Scheme::damaged;
-            continue;
-        }
-        g_disks[index].scheme = partition::Scheme::mbr;
-        scan_mbr(index, info.name, info.writable, info.sector_count, boot_sector);
+        scan_disk(index);
     }
 }
 
@@ -381,7 +402,7 @@ namespace partition {
 const block::Driver& driver() { return kDriver; }
 
 bool info(size_t device_index, Info& out) {
-    for (size_t index = 0; index < g_slice_count; ++index) {
+    for (size_t index = 0; index < kMaxSlices; ++index) {
         const Slice& slice = g_slices[index];
         if (!slice.present || slice.device_index != device_index) {
             continue;
@@ -390,6 +411,29 @@ bool info(size_t device_index, Info& out) {
         return true;
     }
     return false;
+}
+
+bool rescan(size_t disk_index) {
+    if (disk_index >= kMaxDisks || is_slice(disk_index)) {
+        return false;
+    }
+    block::DeviceInfo info = {};
+    if (!block::device_info(disk_index, info) || !info.present) {
+        return false;
+    }
+    for (size_t slot = 0; slot < kMaxSlices; ++slot) {
+        Slice& slice = g_slices[slot];
+        if (!slice.present || slice.parent_index != disk_index) {
+            continue;
+        }
+        if (!block::unregister_device(slice.device_index)) {
+            return false;
+        }
+        slice = {};
+        memset(g_names[slot], 0, sizeof(g_names[slot]));
+    }
+    scan_disk(disk_index);
+    return true;
 }
 
 DiskInfo disk_info(size_t device_index) {

@@ -281,7 +281,24 @@ enum sxn_syscall_number {
      * SetupDiGetClassDevs and IOCTL_DISK_GET_DRIVE_LAYOUT_EX, one entry per
      * call. */
     SXN_SYS_STORAGE_SNAPSHOT = 0x102d,
+    /* rdi = device id, rsi = first sector, rdx = sector count (1 to
+     * SXN_STORAGE_MAX_TRANSFER), r10 = buffer. Reads 512-byte sectors of the
+     * device. The system only (-EPERM). 0, -ENODEV for an unknown id, -EINVAL
+     * for a range off the device, -EIO. */
+    SXN_SYS_STORAGE_READ = 0x102e,
+    /* As STORAGE_READ, writing. Durable when it returns. -EBUSY when the range
+     * overlaps a mounted volume on the same disk: the device itself, the disk
+     * it is on, or a partition inside it. */
+    SXN_SYS_STORAGE_WRITE = 0x102f,
+    /* rdi = disk id. Reads the disk's partition table again: the old
+     * partitions go (their ids are gone for good) and new ones appear. The
+     * system only. -EBUSY if the disk or a partition of it is mounted,
+     * -EINVAL for a partition. */
+    SXN_SYS_STORAGE_RESCAN = 0x1030,
 };
+
+/* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */
+#define SXN_STORAGE_MAX_TRANSFER 128u
 
 /* SXN_SYS_WAKE_ADDRESS: release every waiter. */
 #define SXN_WAKE_ALL 0xffffffffu

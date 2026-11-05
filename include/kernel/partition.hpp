@@ -62,6 +62,12 @@ struct DiskInfo {
     uint8_t disk_guid[kGuidSize];
 };
 
+// Reads a disk's table again: its partitions are removed from block:: and
+// registered anew from what is on the disk now. The caller makes sure none of
+// them, nor the disk, is mounted. false if `disk_index` is not a disk or a
+// partition could not be removed.
+bool rescan(size_t disk_index);
+
 // What partition:: found on a whole device. A device it never looked at (a
 // partition itself, a disk with fewer than 2 sectors) reads as Scheme::none.
 DiskInfo disk_info(size_t device_index);

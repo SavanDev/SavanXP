@@ -37,6 +37,13 @@ Only devices whose `DeviceOps::deferred_writes` is set queue: the physical disks
 (`ahci`, `ata`, `virtio-blk`). A partition forwards to its disk, which queues; a
 ramdisk is memory and is written through.
 
+Slots can be removed (`block::unregister_device`), when Disk Management makes
+`partition::rescan` read a disk's table again. Only partitions are ever removed,
+and their writes are queued under their disk's index, so no queued record
+names a slot that goes away; `unregister_device` refuses one that does
+anyway, and the rescan drains the queue first. A removed slot's index is
+reused; its id (`DeviceInfo::id`) never is.
+
 ## Keeping the order
 
 The queue is one FIFO of records for every disk. A record is a write, with its

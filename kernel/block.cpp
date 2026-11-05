@@ -8,10 +8,10 @@
 
 namespace {
 
-// Los 4 slots ATA + el ramdisk del LiveCD, mas las particiones que el driver
-// partition:: recorta encima de ellos (hasta 8), con lugar de sobra para lo
-// que sumen drivers nuevos sin volver a tocar el core.
-constexpr size_t kMaxBlockDevices = 16;
+// Four ATA slots, four AHCI ports, virtio-blk and the LiveCD's ramdisk, plus
+// the partitions partition:: cuts out of them (up to 16), with room left for
+// new drivers without touching the core.
+constexpr size_t kMaxBlockDevices = 32;
 
 struct Device {
     bool present;
@@ -275,7 +275,7 @@ bool register_driver(const Driver& driver) {
     return true;
 }
 
-bool register_device(
+size_t register_device(
     const DeviceOps& ops,
     void* context,
     uint32_t sector_count,
@@ -283,11 +283,19 @@ bool register_device(
     const char* name,
     const DeviceIdentity* identity)
 {
-    if (ops.read == nullptr || sector_count == 0 || g_device_count >= kMaxBlockDevices) {
-        return false;
+    if (ops.read == nullptr || sector_count == 0) {
+        return kInvalidDevice;
+    }
+    size_t slot = 0;
+    while (slot < kMaxBlockDevices && g_devices[slot].present) {
+        ++slot;
+    }
+    if (slot >= kMaxBlockDevices) {
+        return kInvalidDevice;
     }
 
-    Device& device = g_devices[g_device_count];
+    Device& device = g_devices[slot];
+    device = {};
     device.present = true;
     device.id = g_next_id++;
     device.ops = &ops;
@@ -297,9 +305,24 @@ bool register_device(
     device.writable = writable && ops.write != nullptr;
     device.name = name;
     device.identity = identity;
-    ++g_device_count;
+    if (slot + 1 > g_device_count) {
+        g_device_count = slot + 1;
+    }
     ++g_generation;
     g_ready = true;
+    return slot;
+}
+
+bool unregister_device(size_t index) {
+    Device* device = nullptr;
+    if (!device_for_index(index, device) || queue_has_device(index)) {
+        return false;
+    }
+    *device = {};
+    while (g_device_count > 0 && !g_devices[g_device_count - 1].present) {
+        --g_device_count;
+    }
+    ++g_generation;
     return true;
 }
 

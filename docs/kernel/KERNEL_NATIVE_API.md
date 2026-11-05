@@ -267,10 +267,27 @@ facade, `storage::` (`kernel/storage.cpp`).
   point and usage. 1 when filled, 0 past the last one, `-EINVAL` below
   `SXN_STORAGE_DEVICE_V1_SIZE`. Any process may list them. The struct grows at
   the end and the call writes at most the size passed.
+- `SXN_SYS_STORAGE_READ` (`0x102e`) and `SXN_SYS_STORAGE_WRITE` (`0x102f`):
+  rdi = id, rsi = first sector, rdx = count (at most
+  `SXN_STORAGE_MAX_TRANSFER`, 128), r10 = buffer, through a 64 KiB kernel
+  bounce buffer. The system only (`-EPERM`). A write is durable when it
+  returns and is `-EBUSY` when its range, placed on the physical disk,
+  overlaps any mounted volume of that disk.
+- `SXN_SYS_STORAGE_RESCAN` (`0x1030`): rdi = disk id. `partition::rescan`
+  removes the disk's partitions from `block::` and registers what its table
+  says now; their old ids are gone. The system only; `-EBUSY` if the disk or
+  any partition of it is mounted, `-EINVAL` for a partition.
+- Block slots became reusable for the rescan: `block::register_device` takes
+  the first free slot and returns its index, `block::unregister_device`
+  leaves a hole, and `partition::` keeps the index it was given instead of
+  assuming the next one ([BLOCK_WRITEBACK.md](BLOCK_WRITEBACK.md#the-contract)).
 
 `nativetest` lists the devices and finds `/` mounted, flagged and holding
 SxFS whose usage adds up, checks ids are unique and every partition's parent
-is a listed disk, and that a short size and a bad pointer are `-EINVAL`.
+is a listed disk, and that a short size and a bad pointer are `-EINVAL`. As
+the system it reads the root's superblock, is refused writing it back and
+rescanning its disk (`-EBUSY`), and gets `-EINVAL` and `-ENODEV` for bad
+ranges and ids; a child running as the user gets `-EPERM` from all three.
 
 ## Slice 27: what a task list reads, and ending by owner
 

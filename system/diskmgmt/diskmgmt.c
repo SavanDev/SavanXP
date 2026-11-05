@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "abi/savanxp_abi.h"
@@ -28,7 +29,9 @@
 #include "sxgfx/sxchrome.h"
 #include "sxgfx/sxgui.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnelevate.h"
 #include "sxn/sxngui.h"
+#include "sxfs_core.h"
 
 #include "diskmgmt.sunres.h"
 
@@ -148,6 +151,11 @@ static struct sx_rect g_legend_rect;
 enum dm_command {
     DM_CMD_EXIT = 1,
     DM_CMD_REFRESH,
+    DM_CMD_RESCAN,
+    DM_CMD_INITIALIZE,
+    DM_CMD_NEW_PARTITION,
+    DM_CMD_FORMAT,
+    DM_CMD_DELETE,
     DM_CMD_PROPERTIES,
     DM_CMD_ABOUT,
 };
@@ -156,11 +164,25 @@ static struct sxgui_menu_item k_file_items[] = {
     {"Exit", DM_CMD_EXIT, 0},
 };
 
+/* The original keeps the operations in Action > All Tasks; SXGUI's menus have
+ * one level, so they sit in Action itself. The indices below move the
+ * disabled marks and have to follow the table. */
 static struct sxgui_menu_item k_action_items[] = {
     {"Refresh\tF5", DM_CMD_REFRESH, 0},
+    {"Rescan Disks", DM_CMD_RESCAN, 0},
+    {0, 0, 0},
+    {"Initialize Disk...", DM_CMD_INITIALIZE, SXGUI_MENU_DISABLED},
+    {"New Partition...", DM_CMD_NEW_PARTITION, SXGUI_MENU_DISABLED},
+    {"Format...", DM_CMD_FORMAT, SXGUI_MENU_DISABLED},
+    {"Delete Partition...\tDel", DM_CMD_DELETE, SXGUI_MENU_DISABLED},
     {0, 0, 0},
     {"Properties\tAlt+Enter", DM_CMD_PROPERTIES, 0},
 };
+#define DM_ITEM_INITIALIZE 3
+#define DM_ITEM_NEW_PARTITION 4
+#define DM_ITEM_FORMAT 5
+#define DM_ITEM_DELETE 6
+#define DM_ITEM_PROPERTIES 8
 
 static struct sxgui_menu_item k_help_items[] = {
     {"About Disk Management", DM_CMD_ABOUT, 0},
@@ -173,7 +195,7 @@ static const struct sxgui_menu k_menus[] = {
 };
 
 /* The context menu is built for whatever was clicked. */
-static struct sxgui_menu_item g_context_items[8];
+static struct sxgui_menu_item g_context_items[10];
 static struct sxgui_menu g_context_menu = {"", g_context_items, 0};
 
 /* ---- dialogs -------------------------------------------------------------------- */
@@ -200,6 +222,42 @@ static struct sxgui_dialog g_message_dialog;
 static struct sxgui_widget g_message_widgets[3];
 static char g_message_line[96];
 static char g_message_detail[96];
+
+/* Yes/No, No by default: every question here is about erasing something. */
+#define DM_CONFIRM_WIDTH 440
+#define DM_CONFIRM_HEIGHT 120
+static struct sxgui_dialog g_confirm_dialog;
+static struct sxgui_widget g_confirm_widgets[4];
+static char g_confirm_line[128];
+static char g_confirm_detail[96];
+
+/* New Partition and Format share the label field; New Partition adds the
+ * size and the format check box. */
+#define DM_FORM_WIDTH 400
+#define DM_FORM_HEIGHT 200
+#define DM_LABEL_CAPACITY 37
+static struct sxgui_dialog g_new_dialog;
+static struct sxgui_widget g_new_widgets[8];
+static char g_new_size[16];
+static char g_new_label[DM_LABEL_CAPACITY];
+static char g_new_note[96];
+static struct sxgui_dialog g_format_dialog;
+static struct sxgui_widget g_format_widgets[6];
+static char g_format_label[DM_LABEL_CAPACITY];
+static char g_format_note[96];
+
+/* What the open dialog is about, copied when it opened: a refresh while it
+ * is up must not change what Yes does. */
+enum dm_pending {
+    DM_PENDING_NONE = 0,
+    DM_PENDING_INITIALIZE,
+    DM_PENDING_DELETE,
+};
+static int g_pending;
+static uint32_t g_pending_id;
+static char g_pending_name[SXN_STORAGE_NAME_CAPACITY];
+static uint64_t g_pending_start;
+static uint64_t g_pending_sectors;
 
 /* ---- formatting ---------------------------------------------------------------- */
 
@@ -672,6 +730,529 @@ static void reload(void)
     build_rows();
     revalidate_selection();
     sxngui_app_request_repaint(&g_app);
+}
+
+/* ---- the rules ---------------------------------------------------------------------
+ *
+ * One set of answers for both halves: the window greys out what they refuse,
+ * and the elevated copy asks them again on a fresh listing before it writes
+ * (docs/userland/DISK_MANAGEMENT.md#rules-for-the-operations-that-write). */
+
+/* A disk the system may lay a new GPT on: a real disk with no table and
+ * nothing on it, not past 2 TiB. */
+static int can_initialize(const struct sxn_storage_device *disk)
+{
+    return disk != 0 && disk->kind == SXN_STORAGE_DISK && disk->scheme == SXN_STORAGE_SCHEME_NONE &&
+        disk->fs_name[0] == '\0' && (disk->flags & SXN_STORAGE_WRITABLE) != 0u &&
+        (disk->flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_CHILD_MOUNTED | SXN_STORAGE_SYSTEM |
+                        SXN_STORAGE_TRUNCATED)) == 0u &&
+        disk->sector_count >= SXDISK_MIN_DISK_SECTORS;
+}
+
+/* A disk whose table may change: GPT, writable, not holding "/", nothing on
+ * it mounted (its partitions could not be read again), not past 2 TiB. */
+static int can_partition(const struct sxn_storage_device *disk)
+{
+    return disk != 0 && disk->kind == SXN_STORAGE_DISK && disk->scheme == SXN_STORAGE_SCHEME_GPT &&
+        (disk->flags & SXN_STORAGE_WRITABLE) != 0u &&
+        (disk->flags & (SXN_STORAGE_CHILD_MOUNTED | SXN_STORAGE_SYSTEM | SXN_STORAGE_TRUNCATED |
+                        SXN_STORAGE_GPT_BACKUP)) == 0u;
+}
+
+/* A partition that may be formatted or deleted: on such a disk, not the ESP,
+ * not mounted. */
+static int can_modify_partition(const struct sxn_storage_device *partition)
+{
+    int parent;
+
+    if (partition == 0 || partition->kind != SXN_STORAGE_PARTITION ||
+        partition->scheme != SXN_STORAGE_SCHEME_GPT ||
+        (partition->flags & (SXN_STORAGE_ESP | SXN_STORAGE_MOUNTED | SXN_STORAGE_SYSTEM)) != 0u)
+    {
+        return 0;
+    }
+    parent = find_device(partition->parent_id);
+    return parent >= 0 && can_partition(&g_devices[parent]);
+}
+
+/* ---- sector I/O ------------------------------------------------------------------- */
+
+/* The last error a storage call returned, so an operation can report why the
+ * library's "I/O error" happened: -EPERM for a caller who is not the system,
+ * -EBUSY for a mounted volume. */
+static long g_io_error;
+
+static int io_read(void *cookie, uint64_t lba, uint32_t count, void *buffer)
+{
+    uint32_t id = *(const uint32_t *)cookie;
+    uint8_t *bytes = (uint8_t *)buffer;
+
+    while (count > 0u)
+    {
+        uint32_t chunk = count > SXN_STORAGE_MAX_TRANSFER ? SXN_STORAGE_MAX_TRANSFER : count;
+        long result = sxn_storage_read(id, lba, chunk, bytes);
+
+        if (result < 0)
+        {
+            g_io_error = result;
+            return -1;
+        }
+        lba += chunk;
+        count -= chunk;
+        bytes += (size_t)chunk * SXDISK_SECTOR_SIZE;
+    }
+    return 0;
+}
+
+static int io_write(void *cookie, uint64_t lba, uint32_t count, const void *buffer)
+{
+    uint32_t id = *(const uint32_t *)cookie;
+    const uint8_t *bytes = (const uint8_t *)buffer;
+
+    while (count > 0u)
+    {
+        uint32_t chunk = count > SXN_STORAGE_MAX_TRANSFER ? SXN_STORAGE_MAX_TRANSFER : count;
+        long result = sxn_storage_write(id, lba, chunk, bytes);
+
+        if (result < 0)
+        {
+            g_io_error = result;
+            return -1;
+        }
+        lba += chunk;
+        count -= chunk;
+        bytes += (size_t)chunk * SXDISK_SECTOR_SIZE;
+    }
+    return 0;
+}
+
+static int sxfs_io_read(void *cookie, uint32_t lba, uint32_t count, void *buffer)
+{
+    return io_read(cookie, lba, count, buffer);
+}
+
+static int sxfs_io_write(void *cookie, uint32_t lba, uint32_t count, const void *buffer)
+{
+    return io_write(cookie, lba, count, buffer);
+}
+
+/* GUIDs only have to be unique, not secret: xorshift64* seeded from the clock
+ * and the pid. */
+static uint64_t g_random_state;
+
+static void io_random(void *cookie, void *out, size_t size)
+{
+    uint8_t *bytes = (uint8_t *)out;
+    size_t index;
+
+    (void)cookie;
+    if (g_random_state == 0u)
+    {
+        struct sxn_native_info info;
+
+        g_random_state = sxn_clock_ns() ^ 0x9e3779b97f4a7c15ull;
+        if (sxn_info(&info) == 0)
+        {
+            g_random_state ^= (uint64_t)info.pid << 32;
+        }
+    }
+    for (index = 0; index < size; ++index)
+    {
+        g_random_state ^= g_random_state >> 12;
+        g_random_state ^= g_random_state << 25;
+        g_random_state ^= g_random_state >> 27;
+        bytes[index] = (uint8_t)((g_random_state * 0x2545f4914f6cdd1dull) >> 56);
+    }
+}
+
+/* ---- the operations ----------------------------------------------------------------
+ *
+ * Run by the elevated copy (or directly when this process already acts as the
+ * system). Each takes what the window showed -- the id and name, the range --
+ * lists the devices again and refuses if the disk is no longer what the user
+ * looked at. They return 0 or a positive errno, which becomes the exit status
+ * the window reads back. */
+
+static struct sxdisk_gpt g_table;
+
+/* The device with this id, if its name still matches. */
+static const struct sxn_storage_device *recheck(uint32_t id, const char *name)
+{
+    int index;
+
+    (void)load_devices();
+    index = find_device(id);
+    if (index < 0 || name == 0 || strcmp(g_devices[index].name, name) != 0)
+    {
+        return 0;
+    }
+    return &g_devices[index];
+}
+
+static int io_status(int fallback)
+{
+    long error = g_io_error;
+
+    g_io_error = 0;
+    return error < 0 ? (int)-error : fallback;
+}
+
+static int rescan_disk(uint32_t id)
+{
+    long result = sxn_storage_rescan(id);
+
+    return result < 0 ? (int)-result : 0;
+}
+
+static int op_init(uint32_t id, const char *name)
+{
+    const struct sxn_storage_device *disk = recheck(id, name);
+    struct sxdisk_io io = {&id, io_read, io_write, io_random};
+
+    if (disk == 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_initialize(disk))
+    {
+        return SAVANXP_EBUSY;
+    }
+    g_io_error = 0;
+    if (sxdisk_gpt_init(&g_table, disk->sector_count, &io) != SXDISK_OK)
+    {
+        return SAVANXP_EINVAL;
+    }
+    if (sxdisk_gpt_write(&g_table, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    return rescan_disk(id);
+}
+
+/* Sets a GPT entry's type and, if given, its name, then reads the disk again. */
+static int retag_partition(uint32_t disk_id, uint64_t disk_sectors, uint32_t number, uint64_t start,
+                           const char *label)
+{
+    struct sxdisk_io io = {&disk_id, io_read, io_write, io_random};
+    struct sxdisk_gpt_entry *entry;
+
+    if (sxdisk_gpt_read(&g_table, disk_sectors, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    entry = sxdisk_gpt_entry_at(&g_table, number);
+    if (entry == 0 || entry->first_lba != start)
+    {
+        return SAVANXP_ENOENT;
+    }
+    memcpy(entry->type_guid, sxdisk_type_sxfs, SXDISK_GUID_SIZE);
+    if (label != 0)
+    {
+        sxdisk_entry_set_name(entry, label);
+    }
+    if (sxdisk_gpt_write(&g_table, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    return rescan_disk(disk_id);
+}
+
+/* The caller's real uid: the person behind an elevated copy, who should own
+ * the volume it formats. */
+static uint32_t real_uid(void)
+{
+    struct sxn_native_info info;
+    struct savanxp_process_info entry;
+    unsigned long index = 0;
+
+    if (sxn_info(&info) != 0)
+    {
+        return 0u;
+    }
+    while (sxn_process_snapshot(index, &entry) == 1)
+    {
+        if (entry.pid == info.pid)
+        {
+            return entry.uid;
+        }
+        index += 1;
+    }
+    return 0u;
+}
+
+/* The user's group (docs/kernel/USERS_AND_PERMISSIONS.md, "users"). */
+#define DM_USERS_GID 100u
+
+static int format_partition(const struct sxn_storage_device *partition, const char *label)
+{
+    struct sxfs_ctx *ctx;
+    uint32_t id = partition->id;
+    uint32_t disk_id = partition->parent_id;
+    uint32_t number = partition->partition_number;
+    uint64_t start = partition->start_lba;
+    uint64_t sectors = partition->sector_count;
+    uint64_t disk_sectors;
+    uint32_t uid = real_uid();
+    int parent = find_device(disk_id);
+    int rc;
+
+    if (parent < 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    disk_sectors = g_devices[parent].sector_count;
+    if (sectors > SXFS_MAX_TOTAL_SECTORS)
+    {
+        sectors = SXFS_MAX_TOTAL_SECTORS;
+    }
+    if (sectors <= SXFS_DATA_LBA)
+    {
+        return SAVANXP_ENOSPC;
+    }
+    ctx = (struct sxfs_ctx *)malloc(sizeof(*ctx));
+    if (ctx == 0)
+    {
+        return SAVANXP_ENOMEM;
+    }
+    g_io_error = 0;
+    sxfs_ctx_init(ctx, &id, sxfs_io_read, sxfs_io_write);
+    rc = sxfs_mkfs(ctx, (uint32_t)sectors, uid, uid == 0u ? 0u : DM_USERS_GID, 040755);
+    free(ctx);
+    if (rc != SXFS_OK)
+    {
+        return rc == SXFS_ERR_IO ? io_status(SAVANXP_EIO) : SAVANXP_EINVAL;
+    }
+    return retag_partition(disk_id, disk_sectors, number, start, label);
+}
+
+static int op_create(uint32_t disk_id, const char *name, uint64_t start, uint64_t sectors, int format,
+                     const char *label)
+{
+    const struct sxn_storage_device *disk = recheck(disk_id, name);
+    struct sxdisk_io io = {&disk_id, io_read, io_write, io_random};
+    struct sxdisk_extent extents[16];
+    size_t count;
+    size_t index;
+    int inside = 0;
+    int rc;
+
+    if (disk == 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_partition(disk))
+    {
+        return SAVANXP_EBUSY;
+    }
+    g_io_error = 0;
+    if (sxdisk_gpt_read(&g_table, disk->sector_count, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    count = sxdisk_gpt_free_extents(&g_table, extents, 16);
+    for (index = 0; index < count && index < 16; ++index)
+    {
+        if (start >= extents[index].first_lba &&
+            start + sectors <= extents[index].first_lba + extents[index].sector_count)
+        {
+            inside = 1;
+        }
+    }
+    if (!inside || sectors == 0u)
+    {
+        return SAVANXP_ENOSPC;
+    }
+    rc = sxdisk_gpt_add(&g_table, start, sectors, format ? sxdisk_type_sxfs : sxdisk_type_basic_data, label, &io, 0);
+    if (rc != SXDISK_OK)
+    {
+        return rc == SXDISK_ERR_FULL ? SAVANXP_ENOSPC : SAVANXP_EINVAL;
+    }
+    if (sxdisk_gpt_write(&g_table, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    rc = rescan_disk(disk_id);
+    if (rc != 0 || !format)
+    {
+        return rc;
+    }
+    (void)load_devices();
+    for (index = 0; index < (size_t)g_device_count; ++index)
+    {
+        if (g_devices[index].kind == SXN_STORAGE_PARTITION && g_devices[index].parent_id == disk_id &&
+            g_devices[index].start_lba == start)
+        {
+            return format_partition(&g_devices[index], 0);
+        }
+    }
+    return SAVANXP_ENOENT;
+}
+
+static int op_format(uint32_t id, const char *name, const char *label)
+{
+    const struct sxn_storage_device *partition = recheck(id, name);
+
+    if (partition == 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_modify_partition(partition))
+    {
+        return SAVANXP_EBUSY;
+    }
+    return format_partition(partition, label);
+}
+
+static int op_delete(uint32_t id, const char *name, uint64_t start)
+{
+    const struct sxn_storage_device *partition = recheck(id, name);
+    struct sxdisk_gpt_entry *entry;
+    uint32_t disk_id;
+    int parent;
+    struct sxdisk_io io;
+
+    if (partition == 0 || partition->start_lba != start)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_modify_partition(partition))
+    {
+        return SAVANXP_EBUSY;
+    }
+    disk_id = partition->parent_id;
+    parent = find_device(disk_id);
+    io = (struct sxdisk_io){&disk_id, io_read, io_write, io_random};
+    g_io_error = 0;
+    if (parent < 0 || sxdisk_gpt_read(&g_table, g_devices[parent].sector_count, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    entry = sxdisk_gpt_entry_at(&g_table, partition->partition_number);
+    if (entry == 0 || entry->first_lba != start)
+    {
+        return SAVANXP_ENOENT;
+    }
+    (void)sxdisk_gpt_remove(&g_table, partition->partition_number);
+    if (sxdisk_gpt_write(&g_table, &io) != SXDISK_OK)
+    {
+        return io_status(SAVANXP_EIO);
+    }
+    return rescan_disk(disk_id);
+}
+
+/* Rescan Disks: every disk with nothing mounted reads its table again. */
+static int op_rescan_all(void)
+{
+    uint32_t ids[DM_MAX_DEVICES];
+    int count = 0;
+    int index;
+    int failed = 0;
+
+    (void)load_devices();
+    for (index = 0; index < g_device_count; ++index)
+    {
+        const struct sxn_storage_device *device = &g_devices[index];
+
+        if (device->kind == SXN_STORAGE_DISK &&
+            (device->flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_CHILD_MOUNTED)) == 0u)
+        {
+            ids[count++] = device->id;
+        }
+    }
+    for (index = 0; index < count; ++index)
+    {
+        int rc = rescan_disk(ids[index]);
+
+        if (rc != 0)
+        {
+            failed = rc;
+        }
+    }
+    return failed;
+}
+
+static int parse_u64(const char *text, uint64_t *out)
+{
+    uint64_t value = 0;
+
+    if (text == 0 || *text == '\0')
+    {
+        return 0;
+    }
+    while (*text >= '0' && *text <= '9')
+    {
+        value = value * 10u + (uint64_t)(*text - '0');
+        text += 1;
+    }
+    *out = value;
+    return *text == '\0';
+}
+
+/* The command line of the elevated copy. Returns -1 when argv names no
+ * operation. */
+static int run_operation(int argc, char **argv)
+{
+    uint64_t id = 0;
+    uint64_t start = 0;
+    uint64_t sectors = 0;
+    const char *label = 0;
+    int format = 0;
+    int index;
+
+    if (argc < 2 || argv[1] == 0)
+    {
+        return -1;
+    }
+    for (index = 2; index + 1 < argc; ++index)
+    {
+        if (strcmp(argv[index], "--label") == 0)
+        {
+            label = argv[index + 1];
+        }
+    }
+    for (index = 2; index < argc; ++index)
+    {
+        if (strcmp(argv[index], "--format") == 0)
+        {
+            format = 1;
+        }
+    }
+    if (strcmp(argv[1], "--rescan") == 0)
+    {
+        return op_rescan_all();
+    }
+    if (argc < 4 || !parse_u64(argv[2], &id) || id == 0u || id > 0xffffffffull)
+    {
+        return strcmp(argv[1], "--init") == 0 || strcmp(argv[1], "--create") == 0 ||
+                       strcmp(argv[1], "--format") == 0 || strcmp(argv[1], "--delete") == 0
+                   ? SAVANXP_EINVAL
+                   : -1;
+    }
+    if (strcmp(argv[1], "--init") == 0)
+    {
+        return op_init((uint32_t)id, argv[3]);
+    }
+    if (strcmp(argv[1], "--format") == 0)
+    {
+        return op_format((uint32_t)id, argv[3], label);
+    }
+    if (strcmp(argv[1], "--delete") == 0)
+    {
+        if (argc < 5 || !parse_u64(argv[4], &start))
+        {
+            return SAVANXP_EINVAL;
+        }
+        return op_delete((uint32_t)id, argv[3], start);
+    }
+    if (strcmp(argv[1], "--create") == 0)
+    {
+        if (argc < 6 || !parse_u64(argv[4], &start) || !parse_u64(argv[5], &sectors))
+        {
+            return SAVANXP_EINVAL;
+        }
+        return op_create((uint32_t)id, argv[3], start, sectors, format, label);
+    }
+    return -1;
 }
 
 /* ---- layout ---------------------------------------------------------------------- */
@@ -1157,15 +1738,431 @@ static void show_properties(void)
 
 /* ---- commands --------------------------------------------------------------------- */
 
+#define DM_PATH "/bin/diskmgmt.sxe"
+
+static int acts_as_system(void)
+{
+    struct sxn_native_info info;
+    struct savanxp_process_info entry;
+    unsigned long index = 0;
+
+    if (sxn_info(&info) != 0)
+    {
+        return 0;
+    }
+    while (sxn_process_snapshot(index, &entry) == 1)
+    {
+        if (entry.pid == info.pid)
+        {
+            return (entry.flags & SAVANXP_PROC_FLAG_SYSTEM) != 0u;
+        }
+        index += 1;
+    }
+    return 0;
+}
+
+/* Runs an operation as the system: in this process if it already is, else in
+ * an elevated copy, which asks the user first. 0, a positive errno, or -1 when
+ * the user answered No. */
+static int perform(const char **argv, int argc)
+{
+    int status = -1;
+    long result;
+
+    if (acts_as_system())
+    {
+        return run_operation(argc, (char **)argv);
+    }
+    result = sxn_elevate(DM_PATH, argv, argc, &status);
+    if (result == -SAVANXP_EACCES)
+    {
+        return -1;
+    }
+    if (result < 0)
+    {
+        return SAVANXP_EPERM;
+    }
+    return status;
+}
+
+static const char *error_text(int code)
+{
+    switch (code)
+    {
+    case SAVANXP_EBUSY:
+        return "The disk or volume is in use, or holds the system.";
+    case SAVANXP_ENOENT:
+        return "The disk changed since it was shown. Refresh and try again.";
+    case SAVANXP_EPERM:
+    case SAVANXP_EACCES:
+        return "Access is denied.";
+    case SAVANXP_ENOSPC:
+        return "There is not enough free space for it.";
+    case SAVANXP_EIO:
+        return "The disk could not be read or written.";
+    case SAVANXP_ENOMEM:
+        return "There is not enough memory.";
+    default:
+        return "The disk could not be changed.";
+    }
+}
+
+static void report(const char *title, int code)
+{
+    reload();
+    if (code > 0)
+    {
+        show_message(title, "The operation could not be completed.", error_text(code));
+    }
+}
+
+static const struct dm_disk *disk_of_device(uint32_t id)
+{
+    int index;
+
+    for (index = 0; index < g_disk_count; ++index)
+    {
+        if (g_devices[g_disks[index].device].id == id)
+        {
+            return &g_disks[index];
+        }
+    }
+    return 0;
+}
+
+/* The selected free range and its disk, or 0. */
+static const struct dm_segment *selected_free(const struct sxn_storage_device **disk_out)
+{
+    const struct dm_disk *disk;
+    int segment;
+
+    if (g_select_kind != DM_SELECT_FREE || (disk = disk_of_device(g_select_id)) == 0)
+    {
+        return 0;
+    }
+    for (segment = 0; segment < disk->segment_count; ++segment)
+    {
+        const struct dm_segment *item = &disk->segments[segment];
+
+        if ((item->kind == DM_SEG_FREE || item->kind == DM_SEG_UNALLOCATED) && item->start == g_select_start)
+        {
+            *disk_out = &g_devices[disk->device];
+            return item;
+        }
+    }
+    return 0;
+}
+
+/* The disk Initialize would act on: the selected disk box, or an
+ * unallocated disk's segment. */
+static const struct sxn_storage_device *initialize_target(void)
+{
+    const struct sxn_storage_device *disk = 0;
+
+    if (g_select_kind == DM_SELECT_DISK)
+    {
+        disk = selected_device();
+    }
+    else if (selected_free(&disk) == 0)
+    {
+        disk = 0;
+    }
+    return can_initialize(disk) ? disk : 0;
+}
+
+/* The free range New Partition would use: the selected one, or, with a disk's
+ * box selected, the first free range of that disk. */
+static const struct dm_segment *new_partition_target(const struct sxn_storage_device **disk)
+{
+    const struct dm_segment *segment = 0;
+
+    if (g_select_kind == DM_SELECT_DISK)
+    {
+        const struct dm_disk *row = disk_of_device(g_select_id);
+        int index;
+
+        for (index = 0; row != 0 && index < row->segment_count; ++index)
+        {
+            if (row->segments[index].kind == DM_SEG_FREE)
+            {
+                segment = &row->segments[index];
+                *disk = &g_devices[row->device];
+                break;
+            }
+        }
+    }
+    else
+    {
+        segment = selected_free(disk);
+    }
+    return segment != 0 && segment->kind == DM_SEG_FREE && can_partition(*disk) ? segment : 0;
+}
+
+static const struct sxn_storage_device *partition_target(void)
+{
+    const struct sxn_storage_device *device = g_select_kind == DM_SELECT_DEVICE ? selected_device() : 0;
+
+    return can_modify_partition(device) ? device : 0;
+}
+
+static void set_item(struct sxgui_menu_item *item, int enabled)
+{
+    item->flags = enabled ? 0u : SXGUI_MENU_DISABLED;
+}
+
 static void update_menus(void)
 {
-    const struct sxn_storage_device *device = selected_device();
+    const struct sxn_storage_device *disk = 0;
 
-    k_action_items[2].flags = device != 0 ? 0u : SXGUI_MENU_DISABLED;
+    set_item(&k_action_items[DM_ITEM_INITIALIZE], initialize_target() != 0);
+    set_item(&k_action_items[DM_ITEM_NEW_PARTITION], new_partition_target(&disk) != 0);
+    set_item(&k_action_items[DM_ITEM_FORMAT], partition_target() != 0);
+    set_item(&k_action_items[DM_ITEM_DELETE], partition_target() != 0);
+    set_item(&k_action_items[DM_ITEM_PROPERTIES], selected_device() != 0);
+}
+
+static void disk_title(const struct sxn_storage_device *disk, char *out, size_t capacity)
+{
+    const struct dm_disk *row = disk_of_device(disk->id);
+    char size[24];
+
+    format_bytes(sectors_to_bytes(disk->sector_count), size, sizeof(size));
+    snprintf(out, capacity, "Disk %d (%s, %s)", row != 0 ? row->number : 0,
+             disk->model[0] != '\0' ? disk->model : disk->name, size);
+}
+
+static void begin_confirm(const char *title, const char *line, const char *detail)
+{
+    snprintf(g_confirm_line, sizeof(g_confirm_line), "%s", line);
+    snprintf(g_confirm_detail, sizeof(g_confirm_detail), "%s", detail);
+    memset(&g_confirm_dialog, 0, sizeof(g_confirm_dialog));
+    g_confirm_dialog.title = title;
+    g_confirm_dialog.widgets = g_confirm_widgets;
+    g_confirm_dialog.widget_count = 4;
+    g_confirm_dialog.initial_focus = 3;
+    g_confirm_dialog.default_button = 3;
+    sxgui_dialog_begin(&g_app.ui, &g_confirm_dialog, DM_CONFIRM_WIDTH, DM_CONFIRM_HEIGHT);
+}
+
+static void begin_initialize(void)
+{
+    const struct sxn_storage_device *disk = initialize_target();
+    char title[96];
+    char line[128];
+
+    if (disk == 0)
+    {
+        return;
+    }
+    g_pending = DM_PENDING_INITIALIZE;
+    g_pending_id = disk->id;
+    snprintf(g_pending_name, sizeof(g_pending_name), "%s", disk->name);
+    disk_title(disk, title, sizeof(title));
+    snprintf(line, sizeof(line), "Initialize %s with a GPT partition table?", title);
+    begin_confirm("Initialize Disk", line, "Its partitions can then be created here.");
+}
+
+static void begin_delete(void)
+{
+    const struct sxn_storage_device *partition = partition_target();
+    char name[48];
+    char size[24];
+    char line[128];
+
+    if (partition == 0)
+    {
+        return;
+    }
+    g_pending = DM_PENDING_DELETE;
+    g_pending_id = partition->id;
+    g_pending_start = partition->start_lba;
+    snprintf(g_pending_name, sizeof(g_pending_name), "%s", partition->name);
+    volume_name(partition, name, sizeof(name));
+    format_bytes(sectors_to_bytes(partition->sector_count), size, sizeof(size));
+    snprintf(line, sizeof(line), "Delete the partition %s (%s, %s)?", name, partition->name, size);
+    begin_confirm("Delete Partition", line, "All data on it will be lost.");
+}
+
+static void on_confirm_no(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    g_pending = DM_PENDING_NONE;
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+static void on_confirm_yes(struct sxgui_widget *widget, void *user)
+{
+    char id_text[16];
+    char start_text[24];
+    const char *argv[5];
+    int pending = g_pending;
+
+    (void)widget;
+    (void)user;
+    g_pending = DM_PENDING_NONE;
+    sxgui_dialog_end(&g_app.ui, 1);
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)g_pending_id);
+    snprintf(start_text, sizeof(start_text), "%lu", (unsigned long)g_pending_start);
+    argv[0] = "diskmgmt";
+    argv[2] = id_text;
+    argv[3] = g_pending_name;
+    if (pending == DM_PENDING_INITIALIZE)
+    {
+        argv[1] = "--init";
+        report("Initialize Disk", perform(argv, 4));
+    }
+    else if (pending == DM_PENDING_DELETE)
+    {
+        argv[1] = "--delete";
+        argv[4] = start_text;
+        report("Delete Partition", perform(argv, 5));
+    }
+}
+
+static void begin_new_partition(void)
+{
+    const struct sxn_storage_device *disk = 0;
+    const struct dm_segment *segment = new_partition_target(&disk);
+    char size[24];
+    uint64_t megabytes;
+
+    if (segment == 0)
+    {
+        return;
+    }
+    g_pending_id = disk->id;
+    g_pending_start = segment->start;
+    g_pending_sectors = segment->sectors;
+    snprintf(g_pending_name, sizeof(g_pending_name), "%s", disk->name);
+    megabytes = segment->sectors / SXDISK_ALIGN_SECTORS;
+    snprintf(g_new_size, sizeof(g_new_size), "%lu", (unsigned long)megabytes);
+    snprintf(g_new_label, sizeof(g_new_label), "%s", "New Volume");
+    format_bytes(sectors_to_bytes(segment->sectors), size, sizeof(size));
+    snprintf(g_new_note, sizeof(g_new_note), "Free space: %lu MB. SxFS uses at most %u MB of a partition.",
+             (unsigned long)megabytes, (unsigned)(SXFS_MAX_TOTAL_SECTORS / SXDISK_ALIGN_SECTORS));
+    g_new_widgets[1].caret = (int)strlen(g_new_size);
+    g_new_widgets[3].caret = (int)strlen(g_new_label);
+    g_new_widgets[4].value = 1;
+    memset(&g_new_dialog, 0, sizeof(g_new_dialog));
+    g_new_dialog.title = "New Partition";
+    g_new_dialog.widgets = g_new_widgets;
+    g_new_dialog.widget_count = 8;
+    g_new_dialog.initial_focus = 1;
+    g_new_dialog.default_button = 6;
+    sxgui_dialog_begin(&g_app.ui, &g_new_dialog, DM_FORM_WIDTH, DM_FORM_HEIGHT);
+}
+
+static void on_form_cancel(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+static void on_new_ok(struct sxgui_widget *widget, void *user)
+{
+    char id_text[16];
+    char start_text[24];
+    char sectors_text[24];
+    const char *argv[9];
+    int argc = 6;
+    uint64_t megabytes = 0;
+    uint64_t sectors;
+
+    (void)widget;
+    (void)user;
+    if (!parse_u64(g_new_size, &megabytes) || megabytes == 0u)
+    {
+        return;
+    }
+    sxgui_dialog_end(&g_app.ui, 1);
+    sectors = megabytes * SXDISK_ALIGN_SECTORS;
+    if (sectors > g_pending_sectors)
+    {
+        sectors = g_pending_sectors;
+    }
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)g_pending_id);
+    snprintf(start_text, sizeof(start_text), "%lu", (unsigned long)g_pending_start);
+    snprintf(sectors_text, sizeof(sectors_text), "%lu", (unsigned long)sectors);
+    argv[0] = "diskmgmt";
+    argv[1] = "--create";
+    argv[2] = id_text;
+    argv[3] = g_pending_name;
+    argv[4] = start_text;
+    argv[5] = sectors_text;
+    if (g_new_widgets[4].value != 0)
+    {
+        argv[argc++] = "--format";
+    }
+    if (g_new_label[0] != '\0')
+    {
+        argv[argc++] = "--label";
+        argv[argc++] = g_new_label;
+    }
+    report("New Partition", perform(argv, argc));
+}
+
+static void begin_format(void)
+{
+    const struct sxn_storage_device *partition = partition_target();
+
+    if (partition == 0)
+    {
+        return;
+    }
+    g_pending_id = partition->id;
+    snprintf(g_pending_name, sizeof(g_pending_name), "%s", partition->name);
+    snprintf(g_format_label, sizeof(g_format_label), "%s",
+             partition->label[0] != '\0' ? partition->label : "New Volume");
+    if (partition->sector_count > SXFS_MAX_TOTAL_SECTORS)
+    {
+        char size[24];
+
+        format_bytes(sectors_to_bytes(partition->sector_count), size, sizeof(size));
+        snprintf(g_format_note, sizeof(g_format_note), "SxFS uses its first %u MB of %s.",
+                 (unsigned)(SXFS_MAX_TOTAL_SECTORS / SXDISK_ALIGN_SECTORS), size);
+    }
+    else
+    {
+        snprintf(g_format_note, sizeof(g_format_note), "%s", "File system: SxFS.");
+    }
+    g_format_widgets[1].caret = (int)strlen(g_format_label);
+    memset(&g_format_dialog, 0, sizeof(g_format_dialog));
+    g_format_dialog.title = "Format";
+    g_format_dialog.widgets = g_format_widgets;
+    g_format_dialog.widget_count = 6;
+    g_format_dialog.initial_focus = 1;
+    g_format_dialog.default_button = 5;
+    sxgui_dialog_begin(&g_app.ui, &g_format_dialog, DM_FORM_WIDTH, DM_FORM_HEIGHT);
+}
+
+static void on_format_ok(struct sxgui_widget *widget, void *user)
+{
+    char id_text[16];
+    const char *argv[6];
+    int argc = 4;
+
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)g_pending_id);
+    argv[0] = "diskmgmt";
+    argv[1] = "--format";
+    argv[2] = id_text;
+    argv[3] = g_pending_name;
+    if (g_format_label[0] != '\0')
+    {
+        argv[argc++] = "--label";
+        argv[argc++] = g_format_label;
+    }
+    report("Format", perform(argv, argc));
 }
 
 static void on_menu_command(int id, void *user)
 {
+    const char *argv[2] = {"diskmgmt", "--rescan"};
+
     (void)user;
     switch (id)
     {
@@ -1174,6 +2171,21 @@ static void on_menu_command(int id, void *user)
         break;
     case DM_CMD_REFRESH:
         reload();
+        break;
+    case DM_CMD_RESCAN:
+        report("Rescan Disks", perform(argv, 2));
+        break;
+    case DM_CMD_INITIALIZE:
+        begin_initialize();
+        break;
+    case DM_CMD_NEW_PARTITION:
+        begin_new_partition();
+        break;
+    case DM_CMD_FORMAT:
+        begin_format();
+        break;
+    case DM_CMD_DELETE:
+        begin_delete();
         break;
     case DM_CMD_PROPERTIES:
         show_properties();
@@ -1185,18 +2197,55 @@ static void on_menu_command(int id, void *user)
     default:
         break;
     }
+    update_menus();
 }
 
-/* The context menu for what is selected now. */
+static void add_context_item(int *count, const char *text, int id, int enabled)
+{
+    g_context_items[*count] = (struct sxgui_menu_item){text, id, enabled ? 0u : SXGUI_MENU_DISABLED};
+    *count += 1;
+}
+
+/* The context menu for what is selected now, as the original builds one per
+ * kind of object. */
 static int build_context_menu(void)
 {
+    const struct sxn_storage_device *disk = 0;
     int count = 0;
 
-    if (selected_device() != 0)
+    if (g_select_kind == DM_SELECT_DISK)
     {
-        g_context_items[count++] = (struct sxgui_menu_item){"Properties", DM_CMD_PROPERTIES, 0};
+        add_context_item(&count, "Initialize Disk...", DM_CMD_INITIALIZE, initialize_target() != 0);
+        add_context_item(&count, "New Partition...", DM_CMD_NEW_PARTITION, new_partition_target(&disk) != 0);
+        add_context_item(&count, "Rescan Disks", DM_CMD_RESCAN, 1);
+        g_context_items[count++] = (struct sxgui_menu_item){0, 0, 0};
+        add_context_item(&count, "Properties", DM_CMD_PROPERTIES, 1);
     }
-    g_context_items[count++] = (struct sxgui_menu_item){"Refresh", DM_CMD_REFRESH, 0};
+    else if (g_select_kind == DM_SELECT_FREE)
+    {
+        if (selected_free(&disk) != 0 && disk->scheme == SXN_STORAGE_SCHEME_NONE)
+        {
+            add_context_item(&count, "Initialize Disk...", DM_CMD_INITIALIZE, initialize_target() != 0);
+        }
+        else
+        {
+            add_context_item(&count, "New Partition...", DM_CMD_NEW_PARTITION, new_partition_target(&disk) != 0);
+        }
+        add_context_item(&count, "Refresh", DM_CMD_REFRESH, 1);
+    }
+    else if (g_select_kind == DM_SELECT_DEVICE)
+    {
+        int modifiable = partition_target() != 0;
+
+        add_context_item(&count, "Format...", DM_CMD_FORMAT, modifiable);
+        add_context_item(&count, "Delete Partition...", DM_CMD_DELETE, modifiable);
+        g_context_items[count++] = (struct sxgui_menu_item){0, 0, 0};
+        add_context_item(&count, "Properties", DM_CMD_PROPERTIES, 1);
+    }
+    else
+    {
+        add_context_item(&count, "Refresh", DM_CMD_REFRESH, 1);
+    }
     g_context_menu.item_count = count;
     return count;
 }
@@ -1332,6 +2381,11 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     if (event->key == SAVANXP_KEY_F5)
     {
         reload();
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_DELETE)
+    {
+        begin_delete();
         return 1;
     }
     if (event->key == SAVANXP_KEY_ENTER && (event->modifiers & SAVANXP_KEY_MOD_ALT) != 0u)
@@ -1488,11 +2542,185 @@ static int selftest_layout(void)
     return root;
 }
 
+static int find_serial(const char *serial)
+{
+    int index;
+
+    for (index = 0; index < g_device_count; ++index)
+    {
+        if (g_devices[index].kind == SXN_STORAGE_DISK && strcmp(g_devices[index].serial, serial) == 0)
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/* The partitions of the disk with this id, and the first of them. */
+static int partitions_of(uint32_t disk_id, int *first)
+{
+    int index;
+    int count = 0;
+
+    *first = -1;
+    for (index = 0; index < g_device_count; ++index)
+    {
+        if (g_devices[index].kind == SXN_STORAGE_PARTITION && g_devices[index].parent_id == disk_id)
+        {
+            if (count++ == 0)
+            {
+                *first = index;
+            }
+        }
+    }
+    return count;
+}
+
+/* Runs `--init` on the blank disk as the user: the storage calls must refuse
+ * it, whatever the program would allow. */
+static int selftest_init_as_user(uint32_t id, const char *name)
+{
+    struct sxn_identity user = {1000u, 1000u, DM_USERS_GID, 0u};
+    struct sxn_spawn_request request;
+    char id_text[16];
+    char name_text[SXN_STORAGE_NAME_CAPACITY];
+    char *argv[4];
+    int status = -1;
+    long child;
+
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)id);
+    snprintf(name_text, sizeof(name_text), "%s", name);
+    argv[0] = DM_PATH;
+    argv[1] = "--init";
+    argv[2] = id_text;
+    argv[3] = name_text;
+    sxn_spawn_request_init(&request, DM_PATH, argv, 4);
+    child = sxn_spawn_ex_as(&request, &user);
+    if (child <= 0 || sxn_waitpid(child, &status) != child)
+    {
+        return -1;
+    }
+    return status;
+}
+
+/* The write half, on the scenario's blank disk (serial SXBLANK0), never on
+ * the system's: initialize, partition and format, relabel, delete. */
+static void selftest_writes(void)
+{
+    uint8_t sector[SXDISK_SECTOR_SIZE];
+    char name[SXN_STORAGE_NAME_CAPACITY];
+    uint32_t disk_id;
+    uint32_t part_id;
+    int disk;
+    int part;
+    int rc;
+
+    (void)load_devices();
+    disk = find_serial("SXBLANK0");
+    if (disk < 0)
+    {
+        selftest_fail("the blank disk SXBLANK0 is not attached");
+        return;
+    }
+    disk_id = g_devices[disk].id;
+    snprintf(name, sizeof(name), "%s", g_devices[disk].name);
+    if (!can_initialize(&g_devices[disk]))
+    {
+        selftest_fail("the blank disk is not offered for Initialize");
+        return;
+    }
+    if (selftest_init_as_user(disk_id, name) != SAVANXP_EPERM)
+    {
+        selftest_fail("the user could initialize a disk");
+    }
+
+    rc = op_init(disk_id, name);
+    (void)load_devices();
+    disk = find_device(disk_id);
+    if (rc != 0 || disk < 0 || g_devices[disk].scheme != SXN_STORAGE_SCHEME_GPT ||
+        partitions_of(disk_id, &part) != 0)
+    {
+        char detail[96];
+
+        snprintf(detail, sizeof(detail), "Initialize did not leave an empty GPT disk (status %d, scheme %d)", rc,
+                 disk >= 0 ? (int)g_devices[disk].scheme : -1);
+        selftest_fail(detail);
+        return;
+    }
+    if (sxn_storage_read(disk_id, 1, 1, sector) != 0 || memcmp(sector, "EFI PART", 8) != 0)
+    {
+        selftest_fail("the GPT header is not on LBA 1");
+    }
+    if (op_init(disk_id, name) != SAVANXP_EBUSY)
+    {
+        selftest_fail("a disk with a table was initialized again");
+    }
+
+    rc = op_create(disk_id, name, SXDISK_ALIGN_SECTORS, 32u * SXDISK_ALIGN_SECTORS, 1, "SXTEST");
+    (void)load_devices();
+    if (rc != 0 || partitions_of(disk_id, &part) != 1)
+    {
+        selftest_fail("New Partition did not add one partition");
+        return;
+    }
+    if (g_devices[part].start_lba != SXDISK_ALIGN_SECTORS || g_devices[part].sector_count != 32u * SXDISK_ALIGN_SECTORS ||
+        strcmp(g_devices[part].label, "SXTEST") != 0 || strcmp(g_devices[part].fs_name, "sxfs") != 0 ||
+        memcmp(g_devices[part].type_guid, sxdisk_type_sxfs, SXDISK_GUID_SIZE) != 0)
+    {
+        selftest_fail("the new partition is not a 32 MB SxFS named SXTEST at 1 MB");
+    }
+    part_id = g_devices[part].id;
+    if (sxn_storage_read(part_id, 0, 1, sector) != 0 || memcmp(sector, "SXFS", 4) != 0)
+    {
+        selftest_fail("the new partition does not start with an SxFS superblock");
+    }
+    if (op_create(disk_id, name, SXDISK_ALIGN_SECTORS, SXDISK_ALIGN_SECTORS, 0, "X") != SAVANXP_ENOSPC)
+    {
+        selftest_fail("a partition was created over another");
+    }
+
+    snprintf(name, sizeof(name), "%s", g_devices[part].name);
+    if (op_format(part_id, name, "RELABEL") != 0)
+    {
+        selftest_fail("Format failed");
+        return;
+    }
+    (void)load_devices();
+    if (partitions_of(disk_id, &part) != 1 || strcmp(g_devices[part].label, "RELABEL") != 0 ||
+        strcmp(g_devices[part].fs_name, "sxfs") != 0)
+    {
+        selftest_fail("Format did not keep an SxFS partition with the new label");
+        return;
+    }
+    part_id = g_devices[part].id;
+    snprintf(name, sizeof(name), "%s", g_devices[part].name);
+    if (op_delete(part_id, name, SXDISK_ALIGN_SECTORS + 1u) != SAVANXP_ENOENT)
+    {
+        selftest_fail("Delete accepted a start the partition does not have");
+    }
+    if (op_delete(part_id, name, SXDISK_ALIGN_SECTORS) != 0)
+    {
+        selftest_fail("Delete failed");
+        return;
+    }
+    (void)load_devices();
+    if (partitions_of(disk_id, &part) != 0)
+    {
+        selftest_fail("the deleted partition is still listed");
+    }
+    if (op_format(part_id, name, 0) != SAVANXP_ENOENT)
+    {
+        selftest_fail("a deleted partition could still be formatted");
+    }
+}
+
 static int selftest(void)
 {
     char text[128];
 
     (void)selftest_layout();
+    selftest_writes();
+    (void)load_devices();
     build_rows();
     if (g_row_count == 0)
     {
@@ -1512,6 +2740,63 @@ static int selftest(void)
 
 static void build_dialogs(void)
 {
+    int width = DM_FORM_WIDTH - DM_DIALOG_MARGIN * 2;
+    int field_x = DM_DIALOG_MARGIN + 80;
+    int y = DM_DIALOG_MARGIN;
+    int buttons_y = DM_FORM_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT;
+
+    g_confirm_widgets[0] = sxgui_label(
+        sx_rect_make(DM_DIALOG_MARGIN, DM_DIALOG_MARGIN, DM_CONFIRM_WIDTH - DM_DIALOG_MARGIN * 2, DM_TEXT_ROW),
+        g_confirm_line);
+    g_confirm_widgets[1] = sxgui_label(
+        sx_rect_make(DM_DIALOG_MARGIN, DM_DIALOG_MARGIN + DM_TEXT_ROW + 2, DM_CONFIRM_WIDTH - DM_DIALOG_MARGIN * 2,
+                     DM_TEXT_ROW),
+        g_confirm_detail);
+    g_confirm_widgets[2] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_CONFIRM_WIDTH, 2, 0),
+                     DM_CONFIRM_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT, SXGUI_BUTTON_WIDTH,
+                     SXGUI_BUTTON_HEIGHT),
+        "Yes", on_confirm_yes, 0);
+    g_confirm_widgets[3] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_CONFIRM_WIDTH, 2, 1),
+                     DM_CONFIRM_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT, SXGUI_BUTTON_WIDTH,
+                     SXGUI_BUTTON_HEIGHT),
+        "No", on_confirm_no, 0);
+
+    g_new_widgets[0] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y + 3, 76, DM_TEXT_ROW), "Size (MB):");
+    g_new_widgets[1] = sxgui_textfield(sx_rect_make(field_x, y, 96, SXGUI_FIELD_HEIGHT), g_new_size,
+                                       (int)sizeof(g_new_size));
+    y += SXGUI_FIELD_HEIGHT + SXGUI_GAP;
+    g_new_widgets[2] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y + 3, 76, DM_TEXT_ROW), "Label:");
+    g_new_widgets[3] = sxgui_textfield(sx_rect_make(field_x, y, width - 80, SXGUI_FIELD_HEIGHT), g_new_label,
+                                       (int)sizeof(g_new_label));
+    y += SXGUI_FIELD_HEIGHT + SXGUI_GAP;
+    g_new_widgets[4] = sxgui_checkbox(sx_rect_make(field_x, y, width - 80, DM_TEXT_ROW), "Format as SxFS", 1);
+    y += DM_TEXT_ROW + SXGUI_GAP;
+    g_new_widgets[5] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y, width, DM_TEXT_ROW), g_new_note);
+    g_new_widgets[6] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 0), buttons_y, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_new_ok, 0);
+    g_new_widgets[7] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 1), buttons_y, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_form_cancel, 0);
+
+    y = DM_DIALOG_MARGIN;
+    g_format_widgets[0] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y + 3, 76, DM_TEXT_ROW), "Label:");
+    g_format_widgets[1] = sxgui_textfield(sx_rect_make(field_x, y, width - 80, SXGUI_FIELD_HEIGHT),
+                                          g_format_label, (int)sizeof(g_format_label));
+    y += SXGUI_FIELD_HEIGHT + SXGUI_GAP * 2;
+    g_format_widgets[2] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y, width, DM_TEXT_ROW),
+                                      "Formatting erases ALL data on this partition.");
+    y += DM_TEXT_ROW + 2;
+    g_format_widgets[3] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y, width, DM_TEXT_ROW), g_format_note);
+    g_format_widgets[4] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 0), buttons_y, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Format", on_format_ok, 0);
+    g_format_widgets[5] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 1), buttons_y, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_form_cancel, 0);
+
     g_message_widgets[0] = sxgui_label(
         sx_rect_make(DM_DIALOG_MARGIN, DM_DIALOG_MARGIN, DM_MESSAGE_WIDTH - DM_DIALOG_MARGIN * 2, DM_TEXT_ROW),
         g_message_line);
@@ -1578,6 +2863,16 @@ int main(int argc, char **argv)
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
         sxn_exit(selftest());
+    }
+    if (argc > 1 && argv != 0)
+    {
+        /* The elevated half: no window, just the operation and its status. */
+        int status = run_operation(argc, argv);
+
+        if (status >= 0)
+        {
+            sxn_exit(status);
+        }
     }
     sxn_exit(run_window());
     return 0;

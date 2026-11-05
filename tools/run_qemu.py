@@ -76,12 +76,17 @@ def build_qemu_args(
     audio_device: str = "auto",
     wav_path: Path | None = None,
     disk_bus: str | None = None,
+    extra_disks: tuple[tuple[Path, str], ...] = (),
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
     Without --virtio the disk image goes on the q35 AHCI controller (DMA), or
     on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide". With no disk
     image the machine has no disk at all, which is how the rescue system boots.
+
+    extra_disks are (image, serial) pairs put on the next AHCI ports, for the
+    scenarios that need a disk of their own to write (Disk Management's). The
+    serial is how the guest tells them from the system's disk.
     """
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
     if disk_bus not in DISK_BUSES:
@@ -132,6 +137,9 @@ def build_qemu_args(
         ]
 
     drive = f"if=none,id=svdisk,media=disk,format=raw,file={disk_image}"
+    if virtio and extra_disks:
+        # virtio_blk drives a single device (vblk0) today.
+        raise SystemExit("extra disks need the AHCI machine: run without --virtio")
     if virtio:
         disk_devices = [] if disk_image is None else [
             "-drive",
@@ -169,6 +177,15 @@ def build_qemu_args(
             disk_devices = []
         else:
             disk_devices = ["-drive", drive, *disk_devices]
+        if extra_disks and disk_bus != "ahci":
+            raise SystemExit("extra disks go on the AHCI controller: run without SAVANXP_DISK_BUS=ide")
+        for index, (path, serial) in enumerate(extra_disks):
+            disk_devices += [
+                "-drive",
+                f"if=none,id=svextra{index},media=disk,format=raw,file={path}",
+                "-device",
+                f"ide-hd,drive=svextra{index},bus=ide.{2 + index},serial={serial}",
+            ]
         args_list += [
             "-device",
             "rtl8139,netdev=net0",
@@ -236,6 +253,8 @@ def main() -> int:
     parser.add_argument("--monitor-path", type=Path, help="QEMU HMP Unix socket path")
     parser.add_argument("--serial-log", type=Path, help="write guest serial output here")
     parser.add_argument("--vars-copy", type=Path, help="writable OVMF variable copy")
+    parser.add_argument("--extra-disk", type=Path,
+                        help="a second disk image (serial SXBLANK0) for Disk Management to write")
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
@@ -267,6 +286,7 @@ def main() -> int:
         qmp_path=args.qmp_path,
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,
+        extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
     )
     args_list[0] = qemu
 

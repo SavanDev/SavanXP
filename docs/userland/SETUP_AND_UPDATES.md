@@ -100,13 +100,13 @@ prepared is an open question. UEFI comes first; BIOS may land a phase later.
 
 ### In the kernel
 
-1. **Disks visible to the system, and only to it.** `/dev` publishes no block
-   device today, and there is no system call to reach one. Setup needs
-   `/dev/disk<n>` and its partitions, owned by the system with no access for
-   the user, and writes refused on a device that is mounted or that contains a
-   mounted partition.
-2. **Re-reading a partition table.** `partition::enumerate` runs once at boot.
-   After setup writes GPT, the new partitions have to appear without a reboot.
+1. **Disks visible to the system, and only to it.** Done for Disk Management,
+   as calls rather than `/dev/disk<n>` nodes
+   ([DISK_MANAGEMENT.md](DISK_MANAGEMENT.md#why-calls-not-devdiskn)): any
+   process lists the disks, only the system reaches their sectors, and a write
+   overlapping a mounted volume is refused.
+2. **Re-reading a partition table.** Done: `SXN_SYS_STORAGE_RESCAN`
+   (`partition::rescan`).
 3. **Mounting from userland.** A system-only call that mounts a device at a
    path (`/mnt/target`). There is no `unmount` and none is needed: setup ends
    with `sync` and a reboot
@@ -125,10 +125,11 @@ prepared is an open question. UEFI comes first; BIOS may land a phase later.
 ### In userland
 
 - **The engine** (`libsxsetup`, name not final) and the **`setup` command**
-  over it, scriptable and testable without a screen. Steps, each one
-  resumable or safe to redo: choose the disk, write GPT, write the ESP image,
-  format the root with `sxfs_core`, copy the files, write the install record,
-  `sync`.
+  over it, scriptable and testable without a screen. The engine builds on
+  `libsxdisk` (GPT) and `sxfs_mkfs`, which Disk Management already uses.
+  Steps, each one resumable or safe to redo: choose the disk, write GPT,
+  write the ESP image, format the root with `sxfs_core`, copy the files,
+  write the install record, `sync`.
 - **The wizard**: welcome, choose a disk (model and size), confirm the erase,
   progress, reboot. Opened full screen by the boot entry, and from an *Install
   SavanXP* icon on the live desktop.

@@ -1259,21 +1259,53 @@ def scenario_appwiz(s):
 
 def scenario_diskmgmt(s):
     """Disk Management (docs/userland/DISK_MANAGEMENT.md): the volume list,
-    the disk map and a volume's Properties.
+    the disk map, Properties, then Initialize and New Partition on a blank
+    disk through the real consent prompt.
 
-    The development run has two disks: QEMU's FAT view of the boot files
-    (MBR, one partition) and disk.img (a whole-disk SxFS volume mounted at /).
-    Nothing is changed: the operations that write are covered by
-    `build.sh smoke diskmgmt-smoke`, on a blank disk of its own.
+    shoot.sh attaches a blank 64 MB disk (serial SXBLANK0) for this scenario
+    only; the system's disks are never written. The writes themselves are
+    checked by `build.sh smoke diskmgmt-smoke`; this looks at the dialogs and
+    the map after each step.
     """
+    def settle(name):
+        image = s.shot(name)
+        for _ in range(5):
+            time.sleep(2.0)
+            again = s.shot(name)
+            if list(again.getdata()) == list(image.getdata()):
+                break
+            image = again
+        return image
+
+    def select_on_map(point, status, image):
+        # The pointer is relative and a step can be lost: click, then check
+        # the status bar names what was clicked, and try again if not.
+        for _ in range(3):
+            s.qmp.move_to(*point)
+            s.qmp.click()
+            time.sleep(1.5)
+            image = s.shot("diskmgmt-select")
+            if find_text(image, (0, 600, 1280, 680), status, TEXT, FACE)[0] is not None:
+                return image
+        raise Failure("the map did not select %r" % status)
+
+    def context_item(downs):
+        # Shift+F10 opens the selection's menu; each Down moves one item.
+        s.qmp.chord("shift", "f10")
+        time.sleep(1.5)
+        for _ in range(downs):
+            s.qmp.tap("down", pause=0.4)
+        s.qmp.tap("ret", pause=3.0)
+
+    def consent(name):
+        # The prompt arms after a moment; Y is the only answer that counts.
+        time.sleep(3.0)
+        s.shot(name)
+        s.qmp.tap("y", pause=0.0)
+        time.sleep(8.0)
+
     s.run("diskmgmt")
-    image = s.shot("diskmgmt")
-    for _ in range(5):
-        time.sleep(2.0)
-        again = s.shot("diskmgmt")
-        if list(again.getdata()) == list(image.getdata()):
-            break
-        image = again
+    image = settle("diskmgmt")
     header = find_text(image, (0, 0, 1280, 770), "File System", TEXT, FACE)[0]
     if header is None:
         raise Failure("Disk Management does not show its volume list")
@@ -1288,13 +1320,42 @@ def scenario_diskmgmt(s):
     s.qmp.move_to(row[0] + 2, row[1] + 6)
     s.qmp.click()
     time.sleep(1.5)
-    s.shot("diskmgmt-selected")
     s.qmp.chord("alt", "ret")
     time.sleep(3.0)
     image = s.shot("diskmgmt-properties")
     expect_text(image, (0, 0, 1280, 800), "Mounted at:", TEXT, FACE,
                 "Properties shows where the volume is mounted")
     s.qmp.tap("esc", pause=2.0)
+
+    # The blank disk: select its box, then Initialize from its context menu.
+    image = settle("diskmgmt-blank")
+    box = find_text(image, (0, header[1], 1280, 770), "Not Initialized", TEXT, FACE)[0]
+    if box is None:
+        raise Failure("the blank disk is not shown as Not Initialized")
+    select_on_map((box[0] + 4, box[1] + 4), "QEMU HARDDISK, 64 MB", image)
+    context_item(1)
+    image = s.shot("diskmgmt-initialize")
+    expect_text(image, (0, 0, 1280, 800), "with a GPT partition table?", TEXT, FACE,
+                "Initialize asks before writing")
+    # No has the focus; Tab moves it to Yes.
+    s.qmp.tap("tab", pause=0.5)
+    s.qmp.tap("ret", pause=0.5)
+    consent("diskmgmt-initialize-consent")
+    image = settle("diskmgmt-initialized")
+    expect_text(image, (0, header[1], 1280, 770), "Free space", TEXT, FIELD,
+                "the initialized disk shows its free space")
+
+    # New Partition from the same box: second in its menu, after the now
+    # disabled Initialize (Down stops on disabled items, as in Windows).
+    context_item(2)
+    image = s.shot("diskmgmt-new-partition")
+    expect_text(image, (0, 0, 1280, 800), "Format as SxFS", TEXT, FACE,
+                "New Partition offers to format")
+    s.qmp.tap("ret", pause=1.0)
+    consent("diskmgmt-new-partition-consent")
+    image = settle("diskmgmt-partitioned")
+    expect_text(image, (0, header[1], 1280, 770), "New Volume", TEXT, FIELD,
+                "the new partition is on the map with its label")
 
 
 def scenario_kbdlayout(s):

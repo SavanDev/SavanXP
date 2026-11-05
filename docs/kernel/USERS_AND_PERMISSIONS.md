@@ -229,7 +229,11 @@ ones that must not be:
   system, `windowd` claims both (`INPUT_IOC_CLAIM`,
   [`INPUT.md`](INPUT.md#who-reads-the-events)), and from then on nobody else
   can read them. No device node accepts events written into it.
-- Raw block devices, if they ever get a node.
+- Raw block devices. They have no node: their sectors are reached through the
+  storage calls (`SXN_SYS_STORAGE_READ`, `_WRITE`, `_RESCAN`), which refuse
+  any caller that does not act as the system with `EPERM`; listing them
+  (`SXN_SYS_STORAGE_SNAPSHOT`) is open
+  ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md)).
 
 ### The check
 
@@ -322,8 +326,9 @@ Shutdown stays unelevated, as it is on a desktop NT. Reading the system
 What enforces each, since phase 4: the VFS for the files; `kill` for another
 person's or the system's process (`EPERM`, POSIX's rule: the caller's real or
 effective uid against the target's real one); `SET_REALTIME` for the clock
-(`EPERM`). Raw devices have no node yet, and `fscheck` repair runs at boot as
-the system.
+(`EPERM`). The storage calls for raw sectors and partition tables (`EPERM`);
+Disk Management formats and partitions through its elevated copy, and
+`fscheck` repair runs at boot as the system.
 
 Uninstalling is writing `/bin` (and, with the box ticked, deleting a
 `data_dir`), so Add or Remove Programs asks for elevation: run by the user, it

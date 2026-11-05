@@ -14,7 +14,7 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 | Disk model and serial, GPT metadata, GPT CRC checks in the kernel | done |
 | `libsxdisk` (GPT read and write) and `sxfs_mkfs` | done |
 | `SXN_SYS_STORAGE_SNAPSHOT` and the read-only window | done |
-| Raw sector access, rescan; Initialize, New Partition, Format, Delete | planned |
+| Raw sector access, rescan; Initialize, New Partition, Format, Delete | done |
 | Mount and unmount | planned |
 
 ## The window
@@ -34,9 +34,33 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 - **Free space is what libsxdisk would offer**: the map builds the table the
   kernel sliced and asks `sxdisk_gpt_free_extents`, so free means 1 MiB
   aligned and at least 1 MiB long, exactly what New Partition can use.
-- A right click opens the menu of what is under the pointer; Alt+Enter or a
-  double click opens Properties (device, model, serial, partition style and
-  GUIDs, type, mount point and usage). The view refreshes every two seconds.
+- A right click opens the menu of what is under the pointer (Shift+F10 or the
+  Menu key for the selection); Alt+Enter or a double click opens Properties
+  (device, model, serial, partition style and GUIDs, type, mount point and
+  usage). The view refreshes every two seconds.
+
+## The operations
+
+| Operation | On | What it does |
+| --- | --- | --- |
+| Initialize Disk | a disk with no table and nothing on it | writes an empty GPT (protective MBR, both headers and arrays) |
+| New Partition | free space, or a GPT disk's box (its first free range) | adds a GPT entry, 1 MiB aligned; *Format as SxFS* (default) formats it and gives it the SxFS type, otherwise its type is Basic data |
+| Format | a partition | `sxfs_mkfs`, the root owned by the person who asked (uid, group `users`), the SxFS type, and the label as the GPT name |
+| Delete Partition | a partition | empties its GPT entry |
+| Rescan Disks | every disk with nothing mounted | reads its table again |
+
+Each one is the program run again as `diskmgmt --init <id> <name>`,
+`--create <disk id> <name> <start> <sectors> [--format] [--label <text>]`,
+`--format <id> <name> [--label <text>]`, `--delete <id> <name> <start>` or
+`--rescan`, through `sxn_elevate`; the prompt shows those arguments. The
+elevated copy exits with 0 or the errno, and the window says what went wrong
+(in use, changed since shown, access denied, no space). After writing a table
+it asks the kernel to read it again (`SXN_SYS_STORAGE_RESCAN`), so the new
+partitions appear at once with new ids.
+
+Sector I/O goes through `libsxdisk`'s and `sxfs_core`'s callbacks, split into
+the calls' 128-sector transfers. New GUIDs come from a xorshift generator
+seeded from the clock and the pid: they have to be unique, not secret.
 
 ## Why calls, not `/dev/disk<n>`
 
@@ -87,7 +111,14 @@ partition name (36 UTF-16 units, kept as ASCII).
 - `./build.sh smoke diskmgmt-smoke`: `diskmgmt --selftest` lists the devices
   and checks that ids are unique, partitions sit inside their disks, the root
   is mounted, flagged and adds up, and the map covers each disk without
-  overlaps.
-- `./build.sh smoke native-test`: the snapshot assertions of slice 28.
+  overlaps. The scenario attaches a blank 64 MiB disk with the serial
+  `SXBLANK0` (`extra_disk_mib` in `tools/smoke_catalog.py`), and on it alone the
+  self-test checks that the user's `--init` is refused (`EPERM`), then
+  initializes, creates and formats a 32 MiB `SXTEST`, reformats it with a new
+  label, refuses an overlapping partition and a wrong start, and deletes it.
+- `./build.sh smoke native-test`: the slice 28 assertions.
+- `./build.sh smoke elevation-smoke`: `diskmgmt --rescan` through the real
+  consent prompt.
 - `./tools/shoot.sh --scenario diskmgmt`: the window, the root volume drawn as
-  the system's, and Properties.
+  the system's, Properties, then Initialize and New Partition on a blank disk
+  (`--extra-disk`, only for this scenario) through the consent prompt.

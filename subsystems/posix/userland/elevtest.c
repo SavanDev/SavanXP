@@ -17,7 +17,7 @@
  *   - as the system: /dev/input0 is windowd's (a read and a claim are
  *     -EBUSY), and asking for elevation starts the program without a prompt;
  *   - lowered to the user (uid 1000): it cannot read the keyboard, windowd
- *     refuses to show it a prompt of its own, and it asks five times
+ *     refuses to show it a prompt of its own, and it asks six times
  *     (tools/qmp_elevation.py answers):
  *       1. with a forged "yes" written down its pipe behind the request; the
  *          host presses N, and the answer must be no;
@@ -30,7 +30,10 @@
  *          host presses Y, and it is gone;
  *       5. Task Manager's elevated half, `taskmgr --end`, on a process the
  *          system started and the user's kill is refused (EPERM); the host
- *          presses Y, and the process ends.
+ *          presses Y, and the process ends;
+ *       6. Disk Management's elevated half, `diskmgmt --rescan`, which reads
+ *          again the partition table of every disk with nothing mounted and
+ *          changes nothing; the host presses Y, and it reports success.
  *
  *     elevtest              the test (as init's smoke command)
  *     elevtest --elevated   what the broker starts: checks its own token
@@ -245,6 +248,19 @@ static void end_elevated(void)
     check(process_ended(g_victim), "the system's process has ended");
 }
 
+/* Rescan Disks: Disk Management's one elevated operation that writes
+ * nothing, so it can run against the smoke's own disks. */
+static void rescan_elevated(void)
+{
+    const char *diskmgmt_argv[] = {"diskmgmt", "--rescan", 0};
+    int status = -1;
+    long pid;
+
+    pid = elevate("/bin/diskmgmt.sxe", diskmgmt_argv, 2, &status);
+    check(pid > 0, "the rescan request is accepted");
+    check(pid > 0 && status == 0, "diskmgmt --rescan reports success");
+}
+
 static int run_user(void)
 {
     const char *elevated_argv[] = {"elevtest", "--elevated", 0};
@@ -276,6 +292,7 @@ static int run_user(void)
 
     uninstall_elevated();
     end_elevated();
+    rescan_elevated();
     return g_failures == 0 ? 0 : 1;
 }
 

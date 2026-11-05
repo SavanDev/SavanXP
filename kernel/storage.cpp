@@ -7,6 +7,7 @@
 #include "kernel/fs.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
+#include "kernel/sx.hpp"
 #include "sxfs/sxfs_format.h"
 
 namespace {
@@ -24,6 +25,68 @@ struct Detected {
 
 Detected g_detected[kMaxCache] = {};
 size_t g_detected_next = 0;
+
+// Bumped by every write through these calls: what a device holds may have
+// changed even though no device or mount did.
+uint32_t g_content_generation = 0;
+
+size_t index_of(uint32_t id) {
+    for (size_t index = 0; index < block::device_count(); ++index) {
+        block::DeviceInfo info = {};
+        if (block::device_info(index, info) && info.present && info.id == id) {
+            return index;
+        }
+    }
+    return block::kInvalidDevice;
+}
+
+// Where a device sits on its physical disk: the disk's index and the range.
+struct Extent {
+    size_t disk;
+    uint64_t start;
+    uint64_t sectors;
+};
+
+Extent extent_of(size_t device_index) {
+    block::DeviceInfo info = {};
+    (void)block::device_info(device_index, info);
+    partition::Info slice = {};
+    if (partition::info(device_index, slice)) {
+        return {slice.parent_index, slice.start_lba, slice.sector_count};
+    }
+    return {device_index, 0, info.sector_count};
+}
+
+// Whether any mounted volume on the same disk overlaps [start, start+count)
+// of that disk.
+bool overlaps_mounted(size_t disk, uint64_t start, uint64_t count) {
+    for (size_t index = 0; index < fs::mount_count(); ++index) {
+        fs::MountInfo mounted = {};
+        if (!fs::mount_info(index, mounted) || !mounted.attached) {
+            continue;
+        }
+        const Extent volume = extent_of(mounted.device_index);
+        if (volume.disk != disk) {
+            continue;
+        }
+        if (start < volume.start + volume.sectors && volume.start < start + count) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int check_range(size_t index, uint64_t lba, uint32_t count, const void* buffer) {
+    block::DeviceInfo info = {};
+    if (index == block::kInvalidDevice || !block::device_info(index, info) || !info.present) {
+        return sx::negative_error(SX_ENODEV);
+    }
+    if (buffer == nullptr || count == 0 || count > storage::kMaxTransferSectors ||
+        lba >= info.sector_count || count > info.sector_count - lba) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return 0;
+}
 
 void copy_string(char* out, size_t capacity, const char* text) {
     size_t length = 0;
@@ -105,7 +168,57 @@ sxn_storage_scheme to_abi(partition::Scheme scheme) {
 namespace storage {
 
 uint32_t generation() {
-    return block::generation();
+    return block::generation() + g_content_generation;
+}
+
+int read(uint32_t id, uint64_t lba, uint32_t count, void* buffer) {
+    const size_t index = index_of(id);
+    const int status = check_range(index, lba, count, buffer);
+    if (status != 0) {
+        return status;
+    }
+    return block::read(index, static_cast<uint32_t>(lba), count, buffer) ? 0 : sx::negative_error(SX_EIO);
+}
+
+int write(uint32_t id, uint64_t lba, uint32_t count, const void* buffer) {
+    const size_t index = index_of(id);
+    const int status = check_range(index, lba, count, buffer);
+    if (status != 0) {
+        return status;
+    }
+    block::DeviceInfo info = {};
+    (void)block::device_info(index, info);
+    if (!info.writable) {
+        return sx::negative_error(SX_EPERM);
+    }
+    const Extent device = extent_of(index);
+    if (overlaps_mounted(device.disk, device.start + lba, count)) {
+        return sx::negative_error(SX_EBUSY);
+    }
+    ++g_content_generation;
+    return block::write(index, static_cast<uint32_t>(lba), count, buffer) ? 0 : sx::negative_error(SX_EIO);
+}
+
+int rescan(uint32_t id) {
+    const size_t index = index_of(id);
+    if (index == block::kInvalidDevice) {
+        return sx::negative_error(SX_ENODEV);
+    }
+    partition::Info slice = {};
+    if (partition::info(index, slice)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    block::DeviceInfo info = {};
+    (void)block::device_info(index, info);
+    if (overlaps_mounted(index, 0, info.sector_count)) {
+        return sx::negative_error(SX_EBUSY);
+    }
+    // Nothing of the old partitions may be left in flight when their slots go.
+    if (!block::sync_all() || !partition::rescan(index)) {
+        return sx::negative_error(SX_EIO);
+    }
+    ++g_content_generation;
+    return 0;
 }
 
 bool snapshot(size_t wanted, sxn_storage_device& out) {

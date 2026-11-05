@@ -459,6 +459,46 @@ int native_storage_snapshot(uint64_t index, uint64_t user_out, uint64_t size) {
     return sx::copy_to_user(user_out, &device, length) ? 1 : sx::negative_error(SX_EINVAL);
 }
 
+// Raw sectors cross through here: user memory is never handed to a driver.
+// One transfer at a time, under the kernel lock.
+uint8_t g_storage_bounce[storage::kMaxTransferSectors * 512u];
+
+int native_storage_io(const Process& caller, bool write, uint64_t id, uint64_t lba, uint64_t count,
+    uint64_t user_buffer)
+{
+    if (!cred::acts_as_system(caller.credentials)) {
+        return sx::negative_error(SX_EPERM);
+    }
+    if (count == 0 || count > storage::kMaxTransferSectors || id > 0xffffffffull) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t bytes = static_cast<size_t>(count) * 512u;
+    if (!sx::validate_user_range(user_buffer, bytes, !write)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (write) {
+        if (!sx::copy_from_user(g_storage_bounce, user_buffer, bytes)) {
+            return sx::negative_error(SX_EINVAL);
+        }
+        return storage::write(static_cast<uint32_t>(id), lba, static_cast<uint32_t>(count), g_storage_bounce);
+    }
+    const int status = storage::read(static_cast<uint32_t>(id), lba, static_cast<uint32_t>(count), g_storage_bounce);
+    if (status != 0) {
+        return status;
+    }
+    return sx::copy_to_user(user_buffer, g_storage_bounce, bytes) ? 0 : sx::negative_error(SX_EINVAL);
+}
+
+int native_storage_rescan(const Process& caller, uint64_t id) {
+    if (!cred::acts_as_system(caller.credentials)) {
+        return sx::negative_error(SX_EPERM);
+    }
+    if (id > 0xffffffffull) {
+        return sx::negative_error(SX_ENODEV);
+    }
+    return storage::rescan(static_cast<uint32_t>(id));
+}
+
 // Whether `handle` names an open entry of the caller's table.
 bool handle_is_open(const Process& proc, int32_t handle) {
     return handle >= 0 && handle < static_cast<int32_t>(process::kMaxFileHandles) &&
@@ -1089,6 +1129,14 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_STORAGE_SNAPSHOT:
             context->rax = static_cast<uint64_t>(
                 native_storage_snapshot(context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_STORAGE_READ:
+        case SXN_SYS_STORAGE_WRITE:
+            context->rax = static_cast<uint64_t>(native_storage_io(*caller,
+                context->rax == SXN_SYS_STORAGE_WRITE, context->rdi, context->rsi, context->rdx, context->r10));
+            return context;
+        case SXN_SYS_STORAGE_RESCAN:
+            context->rax = static_cast<uint64_t>(native_storage_rescan(*caller, context->rdi));
             return context;
         default:
             break;

@@ -194,6 +194,9 @@ def main() -> int:
                              "paravirtual device the base machine does not have.")
     parser.add_argument("--no-disk", action="store_true",
                         help="Boot with no disk attached: the rescue system's scenario.")
+    parser.add_argument("--extra-disk-mib", type=int, default=0,
+                        help="Attach a blank disk of this size (serial SXBLANK0) for the "
+                             "scenario to write: Disk Management's.")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
@@ -260,6 +263,15 @@ def main() -> int:
         wav_path.parent.mkdir(parents=True, exist_ok=True)
         wav_path.unlink(missing_ok=True)
     machine_disk = None if args.no_disk else run_disk
+    # A fresh, sparse blank disk per run, next to the logs: never the
+    # developer's build/ and never a leftover of an earlier run.
+    blank_disk = log_dir / f"{run_tag}.blank.img"
+    extra_disks: tuple[tuple[Path, str], ...] = ()
+    if args.extra_disk_mib > 0:
+        blank_disk.unlink(missing_ok=True)
+        with blank_disk.open("wb") as handle:
+            handle.truncate(args.extra_disk_mib * 1024 * 1024)
+        extra_disks = ((blank_disk, "SXBLANK0"),)
     code, vars_copy = prepare_image(
         image_root=image_root,
         disk_image=machine_disk,
@@ -284,6 +296,7 @@ def main() -> int:
         qmp_path=qmp_path if (args.qmp_driver or args.qmp_callback) else None,
         audio_device=args.audio_device,
         wav_path=wav_path,
+        extra_disks=extra_disks,
     )
     qemu_args[0] = qemu
 
@@ -434,6 +447,7 @@ def main() -> int:
                 host_thread.join(timeout=2.0)
 
     run_disk.unlink(missing_ok=True)
+    blank_disk.unlink(missing_ok=True)
     lock_path.unlink(missing_ok=True)
     if status == 0 and wav_path is not None:
         if not wav_path.is_file() or wav_path.stat().st_size == 0:

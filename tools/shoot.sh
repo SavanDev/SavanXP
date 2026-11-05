@@ -127,7 +127,8 @@ serial_log="$OUT_DIR/shoot-serial.log"
 qmp_path="$OUT_DIR/$run_tag.qmp"
 hmp_path="$OUT_DIR/$run_tag.hmp"
 vars_copy="$OUT_DIR/shoot-vars.fd"
-rm -f "$run_disk" "$run_disk.lock" "$qmp_path" "$hmp_path" "$vars_copy" "$serial_log"
+blank_disk="$OUT_DIR/$run_tag.blank.img"
+rm -f "$run_disk" "$run_disk.lock" "$qmp_path" "$hmp_path" "$vars_copy" "$serial_log" "$blank_disk"
 
 cp -- "$DISK_IMAGE" "$run_disk"
 "$SXFS_CLI" check "$run_disk" >/dev/null
@@ -143,7 +144,7 @@ cleanup() {
         kill -- "-$qemu_pid" 2>/dev/null || kill "$qemu_pid" 2>/dev/null || true
         wait "$qemu_pid" 2>/dev/null || true
     fi
-    rm -f "$run_disk" "$run_disk.lock" "$qmp_path" "$hmp_path" "$vars_copy"
+    rm -f "$run_disk" "$run_disk.lock" "$qmp_path" "$hmp_path" "$vars_copy" "$blank_disk"
     exit "$status"
 }
 trap cleanup EXIT
@@ -161,6 +162,12 @@ qemu_args=(
     --vars-copy "$vars_copy"
 )
 if ((VIRTIO)); then qemu_args+=(--virtio); fi
+# Disk Management's scenario writes to a blank disk of its own, never to the
+# system's (docs/userland/DISK_MANAGEMENT.md).
+if [[ "$SCENARIO" == diskmgmt ]]; then
+    truncate -s 64M "$blank_disk"
+    qemu_args+=(--extra-disk "$blank_disk")
+fi
 setsid "${qemu_args[@]}" >"$OUT_DIR/shoot-qemu-out.log" 2>"$OUT_DIR/shoot-qemu-err.log" &
 qemu_pid=$!
 

@@ -79,16 +79,24 @@ bool register_driver(const Driver& driver);
 // Corre los enumerate de todos los drivers registrados, por prioridad
 // descendente. Devuelve cuantos devices quedaron registrados.
 size_t probe_all();
-// Drivers call it from their enumerate(). The core does not interpret the
-// context. `name` and `identity` are kept by pointer and must outlive the
-// device.
-bool register_device(
+constexpr size_t kInvalidDevice = static_cast<size_t>(-1);
+
+// Drivers call it from their enumerate(); partition:: also calls it when a
+// disk's table is read again. Takes the first free slot and returns its
+// index, or kInvalidDevice. The core does not interpret the context. `name`
+// and `identity` are kept by pointer and must outlive the device.
+size_t register_device(
     const DeviceOps& ops,
     void* context,
     uint32_t sector_count,
     bool writable,
     const char* name,
     const DeviceIdentity* identity = nullptr);
+
+// Removes a device, leaving a hole its index can be reused for. Refused while
+// the writeback queue still holds writes for it. The caller makes sure
+// nothing else (a mount, a partition) still uses the index.
+bool unregister_device(size_t index);
 
 // Copies an ATA IDENTIFY string (`word_count` words from `first_word`, two
 // characters per word, high byte first) into `out`, without the padding
@@ -98,6 +106,8 @@ void copy_ata_string(const uint16_t* identify, size_t first_word, size_t word_co
 bool ready();
 // Bumps whenever a device is registered or removed.
 uint32_t generation();
+// One past the highest slot in use: iterate [0, device_count()) and skip the
+// holes device_info() reports as absent.
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);
 // Sees every write issued so far, including those still queued.

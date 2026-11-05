@@ -199,6 +199,23 @@ static inline long sxn_storage_snapshot(unsigned long index, struct sxn_storage_
     return sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, index, (unsigned long)out, sizeof(*out));
 }
 
+/* Raw sectors of a storage device, by its snapshot id; at most
+ * SXN_STORAGE_MAX_TRANSFER per call. The system only. A write overlapping a
+ * mounted volume is -EBUSY. */
+static inline long sxn_storage_read(uint32_t id, uint64_t lba, uint32_t count, void* buffer) {
+    return sxn_trap4(SXN_SYS_STORAGE_READ, id, (unsigned long)lba, count, (unsigned long)buffer);
+}
+
+static inline long sxn_storage_write(uint32_t id, uint64_t lba, uint32_t count, const void* buffer) {
+    return sxn_trap4(SXN_SYS_STORAGE_WRITE, id, (unsigned long)lba, count, (unsigned long)buffer);
+}
+
+/* Reads a disk's partition table again. The system only; -EBUSY while the
+ * disk or one of its partitions is mounted. */
+static inline long sxn_storage_rescan(uint32_t disk_id) {
+    return sxn_trap(SXN_SYS_STORAGE_RESCAN, disk_id, 0, 0);
+}
+
 /* CreatePipe: handles[0] is the read end, handles[1] the write end. */
 static inline long sxn_pipe_create(int32_t handles[2]) {
     return sxn_trap(SXN_SYS_PIPE_CREATE, (unsigned long)handles, 0, 0);

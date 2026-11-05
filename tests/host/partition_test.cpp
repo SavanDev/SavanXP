@@ -541,25 +541,95 @@ void case_libsxdisk_tables_are_sliced() {
     check(memcmp(found.disk_guid, table.disk_guid, 16) == 0, "the same disk GUID");
 }
 
+// Disk Management's flow: a blank disk is initialized and partitioned while
+// the system runs, and rescan makes the partitions appear; deleting one and
+// rescanning again frees its slot, which the next partition reuses.
+void case_rescan_follows_the_disk() {
+    printf("case: rescan after the table changes\n");
+    reset_devices();
+    size_t other = add_disk(131072, "ata0", /*writable=*/true);
+    build_gpt(other, /*protective=*/true);
+    size_t disk = add_disk(131072, "ahci1", /*writable=*/true);
+    enumerate_partitions();
+    check(g_device_count == 4 && partition::disk_info(disk).scheme == partition::Scheme::none,
+          "the blank disk has no table and no partitions");
+
+    const sxdisk_io io = {&disk, &sxdisk_read_disk, &sxdisk_write_disk, &sxdisk_fill};
+    static sxdisk_gpt table;
+    sxdisk_gpt_init(&table, 131072, &io);
+    sxdisk_gpt_add(&table, 2048, 4096, sxdisk_type_sxfs, "A", &io, nullptr);
+    sxdisk_gpt_add(&table, 8192, 4096, sxdisk_type_sxfs, "B", &io, nullptr);
+    sxdisk_gpt_write(&table, &io);
+    check(partition::rescan(disk), "rescan the disk");
+    check(partition::disk_info(disk).scheme == partition::Scheme::gpt, "it reads as GPT now");
+
+    size_t found = 0;
+    size_t b_index = 0;
+    partition::Info info = {};
+    for (size_t index = 0; index < g_device_count; ++index) {
+        if (partition::info(index, info) && info.parent_index == disk) {
+            ++found;
+            if (strcmp(info.name, "B") == 0) {
+                b_index = index;
+            }
+        }
+    }
+    check(found == 2, "both new partitions are sliced");
+    check(!partition::rescan(b_index), "a partition cannot be rescanned");
+
+    sxdisk_gpt_remove(&table, 1);
+    sxdisk_gpt_write(&table, &io);
+    check(partition::rescan(disk), "rescan after deleting A");
+    found = 0;
+    for (size_t index = 0; index < g_device_count; ++index) {
+        if (partition::info(index, info) && info.parent_index == disk) {
+            ++found;
+            check(strcmp(info.name, "B") == 0 && info.number == 2, "B is left, still entry 2");
+        }
+    }
+    check(found == 1, "one partition left");
+    partition::Info first = {};
+    check(partition::info(2, first) && first.parent_index == other, "the other disk's partitions are untouched");
+}
+
 } // namespace
 
 // --- block:: ----------------------------------------------------------------
 
 namespace block {
 
-bool register_device(const DeviceOps& ops, void* context, uint32_t sector_count, bool writable, const char* name,
+size_t register_device(const DeviceOps& ops, void* context, uint32_t sector_count, bool writable, const char* name,
     const DeviceIdentity*) {
-    if (ops.read == nullptr || sector_count == 0 || g_device_count >= kMaxDevices) {
-        return false;
+    if (ops.read == nullptr || sector_count == 0) {
+        return kInvalidDevice;
     }
-    Device& device = g_devices[g_device_count];
+    // The first hole, as the kernel's core does.
+    size_t slot = 0;
+    while (slot < kMaxDevices && g_devices[slot].present) {
+        ++slot;
+    }
+    if (slot >= kMaxDevices) {
+        return kInvalidDevice;
+    }
+    Device& device = g_devices[slot];
+    device = {};
     device.present = true;
     device.ops = &ops;
     device.context = context;
     device.sector_count = sector_count;
     device.writable = writable && ops.write != nullptr;
     device.name = name;
-    ++g_device_count;
+    if (slot + 1 > g_device_count) {
+        g_device_count = slot + 1;
+    }
+    return slot;
+}
+
+bool unregister_device(size_t index) {
+    if (index >= g_device_count || !g_devices[index].present || g_devices[index].ops == nullptr) {
+        return false;
+    }
+    g_devices[index] = {};
     return true;
 }
 
@@ -652,6 +722,7 @@ int main() {
     case_both_gpt_copies_damaged();
     case_disk_schemes();
     case_libsxdisk_tables_are_sliced();
+    case_rescan_follows_the_disk();
 
     reset_devices();
 

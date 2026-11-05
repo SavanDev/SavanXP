@@ -221,6 +221,32 @@ static void run_user_terminate_child(int argc, char** argv) {
     sxn_exit(0);
 }
 
+/* Storage child, run as the user: listing is open, sectors and rescans are
+ * the system's. argv[2] is the id of the device mounted at "/". */
+static void run_storage_user_child(int argc, char** argv) {
+    static uint8_t sector[512];
+    struct sxn_storage_device device;
+    uint32_t id;
+
+    if (argc < 3) {
+        sxn_exit(2);
+    }
+    id = (uint32_t)atou(argv[2]);
+    if (sxn_storage_snapshot(0, &device) != 1) {
+        sxn_exit(3);
+    }
+    if (sxn_storage_read(id, 0, 1, sector) != -SAVANXP_EPERM) {
+        sxn_exit(4);
+    }
+    if (sxn_storage_write(id, 0, 1, sector) != -SAVANXP_EPERM) {
+        sxn_exit(5);
+    }
+    if (sxn_storage_rescan(id) != -SAVANXP_EPERM) {
+        sxn_exit(6);
+    }
+    sxn_exit(0);
+}
+
 /* Port child: connects to the parent's port by name, says ping, reads pong,
  * takes the event the parent handed over and signals it. Native calls only. */
 static void run_port_child(void) {
@@ -1005,6 +1031,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "userterm")) {
         run_user_terminate_child(argc, argv);
     }
+    if (argc > 1 && streq(argv[1], "storageuser")) {
+        run_storage_user_child(argc, argv);
+    }
 
     check(sxn_info(&info) == 0);
     check(info.abi_version == SXN_ABI_VERSION);
@@ -1438,6 +1467,47 @@ int main(int argc, char** argv) {
             -SAVANXP_EINVAL);
         check(sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, 0, 16ul, sizeof(device)) == -SAVANXP_EINVAL);
         check(sxn_log("nativetest: storage snapshot done") == 0);
+
+        /* STORAGE_READ, WRITE and RESCAN. The root's first sector is its SxFS
+         * superblock; writing it back is refused while it is mounted, so the
+         * image is never touched even if the check were broken: the bytes are
+         * the ones just read. */
+        if (root >= 0) {
+            static uint8_t sector[512];
+            struct sxn_identity user = {1000u, 1000u, 100u, 0u};
+            struct sxn_spawn_request request;
+            char* child_argv[3];
+            char id_text[16];
+            uint32_t root_id = devices[root].id;
+            uint32_t disk_id = devices[root].kind == SXN_STORAGE_PARTITION ? devices[root].parent_id : root_id;
+            int status = -1;
+            long child;
+
+            check(sxn_storage_read(root_id, 0, 1, sector) == 0);
+            check(sector[0] == 'S' && sector[1] == 'X' && sector[2] == 'F' && sector[3] == 'S');
+            check(sxn_storage_write(root_id, 0, 1, sector) == -SAVANXP_EBUSY);
+            check(sxn_storage_write(disk_id, 0, 1, sector) == -SAVANXP_EBUSY || disk_id == root_id);
+            check(sxn_storage_rescan(disk_id) == -SAVANXP_EBUSY);
+            check(sxn_storage_read(root_id, 0, 0, sector) == -SAVANXP_EINVAL);
+            check(sxn_storage_read(root_id, 0, SXN_STORAGE_MAX_TRANSFER + 1u, sector) == -SAVANXP_EINVAL);
+            check(sxn_storage_read(root_id, devices[root].sector_count, 1, sector) == -SAVANXP_EINVAL);
+            check(sxn_storage_read(0xfffffff0u, 0, 1, sector) == -SAVANXP_ENODEV);
+            for (index = 0; index < count; ++index) {
+                if (devices[index].kind == SXN_STORAGE_PARTITION) {
+                    check(sxn_storage_rescan(devices[index].id) == -SAVANXP_EINVAL);
+                    break;
+                }
+            }
+
+            itoau((long)root_id, id_text);
+            child_argv[0] = "/bin/nativetest.sxe";
+            child_argv[1] = "storageuser";
+            child_argv[2] = id_text;
+            sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 3);
+            child = sxn_spawn_ex_as(&request, &user);
+            check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
+            check(sxn_log("nativetest: storage read, write and rescan done") == 0);
+        }
     }
 
     /* PIPE_CREATE: a pipe made by a native process, both ends in its table.
