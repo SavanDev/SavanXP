@@ -756,12 +756,34 @@ bool append_extent(Inode& inode, uint32_t start_lba, uint32_t sector_count) {
     return true;
 }
 
+uint32_t popcount64(uint64_t value) {
+    // SWAR: the kernel has no popcnt guarantee and no libgcc to call.
+    value = value - ((value >> 1) & 0x5555555555555555ull);
+    value = (value & 0x3333333333333333ull) + ((value >> 2) & 0x3333333333333333ull);
+    value = (value + (value >> 4)) & 0x0f0f0f0f0f0f0f0full;
+    return static_cast<uint32_t>((value * 0x0101010101010101ull) >> 56);
+}
+
+// Counted a word at a time: one bit at a time it took a third of a second
+// under the kernel lock on a 1 GiB volume, every time anything asked for the
+// volume's usage (Task Manager does each second), and input was lost meanwhile.
 uint32_t allocated_data_sector_count(Volume& volume) {
     uint32_t count = 0;
-    for (uint32_t sector = volume.superblock.data_lba; sector < volume.superblock.total_sectors; ++sector) {
-        if (bitmap_test(volume.block_bitmap, sector)) {
-            ++count;
-        }
+    uint32_t sector = volume.superblock.data_lba;
+    const uint32_t end = volume.superblock.total_sectors;
+    while (sector < end && (sector % 64u) != 0) {
+        count += bitmap_test(volume.block_bitmap, sector) ? 1u : 0u;
+        ++sector;
+    }
+    while (end - sector >= 64u) {
+        uint64_t word = 0;
+        memcpy(&word, volume.block_bitmap + sector / 8u, sizeof(word));
+        count += popcount64(word);
+        sector += 64u;
+    }
+    while (sector < end) {
+        count += bitmap_test(volume.block_bitmap, sector) ? 1u : 0u;
+        ++sector;
     }
     return count;
 }
@@ -2215,7 +2237,7 @@ bool driver_stats(VolumeId volume, fs::VolumeStats& out) {
     out.file_count = file_count(volume);
     out.total_bytes = total_bytes(volume);
     out.used_bytes = used_bytes(volume);
-    out.free_bytes = free_bytes(volume);
+    out.free_bytes = out.total_bytes >= out.used_bytes ? out.total_bytes - out.used_bytes : 0;
     return true;
 }
 

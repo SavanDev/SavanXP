@@ -223,6 +223,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Asking for a volume's usage no longer stalls the system**: SxFS counted its used sectors one bit at a
+  time, a third of a second under the kernel lock on a 1 GiB volume, each time Task Manager, `sysinfo` or
+  `df` asked; mouse input was lost meanwhile. It now counts 64 bits at a time (about 100 times faster).
+
 - **POSIX `open` with no access mode returns `EINVAL`** instead of a read handle that skipped the
   permission check (a `0600` file or an unreadable directory could be read). The kernel keeps it as a
   query open ([`KERNEL_SECURITY.md`](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E1).
