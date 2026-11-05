@@ -99,7 +99,7 @@ slot → `device_index` table.
 | `stats` | `f_getfree` and the volume size |
 | `sync` | `CTRL_SYNC`; files are already flushed on `f_close` |
 | `set_ownership` | `nullptr`: FAT has no owners, so `chmod`/`chown` are refused |
-| `unmount` | `nullptr`, as SxFS, until the VFS can detach a subtree |
+| `unmount` | `f_unmount` and free the slot. `fs::release` has already synced the volume and detached its tree (refused while a file is open), as for SxFS ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)) |
 
 Points worth knowing before writing it:
 
@@ -167,7 +167,7 @@ no FAT driver.
 - No exFAT, no FAT volume as `/`, no executables on FAT.
 - Volumes up to 2 TiB (32-bit sector numbers).
 - No `chmod`/`chown` on FAT; ownership is fixed.
-- No unmount, as for SxFS.
+- Unmount follows SxFS's (`fs::release`); the ESP at `/boot` stays mounted.
 
 ## Open questions
 
