@@ -17,6 +17,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/fb_gpu.hpp"
+#include "kernel/fat.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/gpu_device.hpp"
 #include "kernel/heap.hpp"
@@ -37,6 +38,7 @@
 #include "kernel/serial_dev.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
+#include "kernel/storage.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
@@ -309,6 +311,7 @@ namespace
     fs::initialize();
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
+    fs::register_driver(fat::driver());
     const size_t root_mount = fs::mount_any(fs::kRootMountPoint);
 
     if (!vfs::ready())
@@ -318,6 +321,10 @@ namespace
     // attach is separate from mount because the metadata is read before vfs::
     // is ready to receive vnodes.
     const bool disk_mounted = fs::attach(root_mount);
+    // The boot volume at /boot, read-only: what Limine loaded the kernel from.
+    if (disk_mounted) {
+        (void)storage::mount_boot_volume();
+    }
 
     const MemorySummary memory = summarize_memory(boot_info);
     savanxp_system_info system_info = {};

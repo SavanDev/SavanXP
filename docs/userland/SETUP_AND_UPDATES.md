@@ -81,11 +81,13 @@ sectors (`SXFS_BLOCK_BITMAP_SECTORS`) cover 2^21 sectors, and
 `SXFS_MAX_INODES` is 4096. Lifting either is a format change
 ([SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md)), not setup's job.
 
-**The ESP is written as an image, not as files.** The kernel has no FAT driver,
-and Limine reads only FAT and ISO9660, so the kernel and the initramfs must sit
-on FAT. Rather than write a FAT driver for setup, the build produces the ESP as
-a ready image (next to `disk.img` in the ISO) and setup copies it to partition 1
-sector by sector. The same trick lets the updater replace the kernel later.
+**The ESP is written as an image, not as files.** Limine reads only FAT and
+ISO9660, so the kernel and the initramfs must sit on FAT. The build produces
+the ESP as a ready image (next to `disk.img` in the ISO) and setup copies it to
+partition 1 sector by sector. The kernel now has a FAT driver, read-only so
+far, and mounts the running system's ESP at `/boot`; once it writes, the
+updater replaces the kernel there as files
+([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)).
 
 **The installed `limine.conf` has no `module_path` for `disk.img`.** It is the
 development configuration (`boot/limine-dev.conf`): the root comes from the

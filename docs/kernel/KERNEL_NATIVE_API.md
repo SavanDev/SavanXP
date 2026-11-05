@@ -283,7 +283,7 @@ facade, `storage::` (`kernel/storage.cpp`).
   overlapping one is mounted, `-EINVAL` for a partitioned disk, `-EEXIST`,
   `-EIO` when no driver recognises it. `SXN_SYS_STORAGE_UNMOUNT` (`0x1032`):
   rdi = the mount point; `-EBUSY` while a file of the volume is open or a
-  program of it is mapped, `-EINVAL` for `/`. Both the system only. See
+  program of it is mapped, `-EINVAL` for `/` and `/boot`. Both the system only. See
   [FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time).
 - Block slots became reusable for the rescan: `block::register_device` takes
   the first free slot and returns its index, `block::unregister_device`

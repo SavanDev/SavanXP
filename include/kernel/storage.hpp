@@ -35,9 +35,16 @@ int write(uint32_t id, uint64_t lba, uint32_t count, const void* buffer);
 // its disk, is already mounted), -EIO (no driver recognised the device, no
 // mount or volume slot was left, or it failed to attach).
 int mount(uint32_t id, const char* path);
-// Unmounts the volume at `path`. -EINVAL for "/" or nothing mounted there,
-// -EBUSY while a file of it is open or a program of it is mapped.
+// Unmounts the volume at `path`. -EINVAL for "/", fs::kBootMountPoint or
+// nothing mounted there, -EBUSY while a file of it is open or a program of it
+// is mapped.
 int unmount(const char* path);
+
+// At boot, after the root: mounts the boot volume at fs::kBootMountPoint, the
+// first FAT volume that holds boot/kernel.elf, EFI System Partitions first.
+// Returns the mount index, or fs::kInvalidMount when there is none (a LiveCD
+// boot) or the root already has a /boot of its own.
+size_t mount_boot_volume();
 
 // Reads a disk's partition table again. -EBUSY if the disk or any of its
 // partitions is mounted, -EINVAL for a partition.

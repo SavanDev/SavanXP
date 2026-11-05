@@ -9,9 +9,9 @@ Three pieces, each knowing only the one below it:
 | A filesystem driver (`kernel/sxfs.cpp`) | One on-disk format: probing it, publishing its tree, reading and writing it | Other formats, other volumes' drivers |
 
 The only place that names a driver is the boot sequence in `kernel_main`,
-which registers it (`fs::register_driver(sxfs::driver())`). Adding a format
-(FAT for a USB stick, ISO9660 for a CD) means writing a driver and registering
-it. `vfs.cpp` does not change.
+which registers them: `sxfs::driver()` and `fat::driver()`
+([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)). Adding a format (ISO9660 for a CD)
+means writing a driver and registering it. `vfs.cpp` does not change.
 
 ## The root is the system disk
 
@@ -21,7 +21,8 @@ user's files are that volume's.
 
 | path | what it is | backed by |
 | --- | --- | --- |
-| `/` and everything below, except the two rows under it | the system disk | SxFS (`build/disk.img`, or the LiveCD module) |
+| `/` and everything below, except the rows under it | the system disk | SxFS (`build/disk.img`, or the LiveCD module) |
+| `/boot` | the boot volume: what Limine loaded the kernel from, read-only | FAT (the ESP, or the development boot drive) |
 | `/dev` | devices | in memory, published by the drivers |
 | `/rescue` | the initramfs: a rescue system | in memory, loaded by Limine |
 
@@ -170,15 +171,27 @@ file (`object::section_uses_vnode`), which is what a running program from the
 volume has. Under the kernel lock nothing else can be holding a vnode between
 two system calls, so when nothing is found nothing points at the subtree, and
 its node slots go to a free list `add_node` takes from first. The root
-(`/`) cannot be released.
+(`/`) and the boot volume (`/boot`) cannot be released.
+
+## The boot volume at `/boot`
+
+Right after the root, `storage::mount_boot_volume` mounts the first FAT volume
+holding `boot/kernel.elf` at `fs::kBootMountPoint`, trying EFI System
+Partitions before anything else, and logs `storage: /boot is <device>`. On the
+development path that is the QEMU boot drive's partition (`ahci0p1`); on an
+installed system, the ESP; a LiveCD boot has none. Only the FAT driver is tried
+there (`fs::mount` with a driver name), so no other volume is opened, let alone
+written, to look for it. A root that carries its own `boot` keeps it and no
+boot volume is mounted. It is read-only for now and is never unmounted.
 
 ## Limits
 
-- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4 (root, ESP, installer
-  target, one more). SxFS holds 3 volumes at once (`kMaxVolumes`, about
+- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4: root, `/boot`, and two
+  for `/mnt` (the installer's target among them). SxFS holds 3 volumes at once (`kMaxVolumes`, about
   3 MiB of kernel memory each).
 - The VFS holds 2048 nodes (`kMaxNodes`) for the initramfs, `/dev` and every
-  mounted volume's files and directories together.
+  mounted volume's files and directories together. A volume whose tree does
+  not fit does not mount: FAT publishes its whole tree at attach.
 - Directories on a volume are plain in-memory vnodes (`Backend::memory`). They
   find their driver by path, not by a stamp. That is enough while every
   directory operation starts from a path.

@@ -34,6 +34,10 @@ constexpr size_t kMountPointCapacity = 32;
 // Where the system disk is mounted: it is the root of the tree. The
 // in-memory subtrees (vfs::is_memory_path) stay outside it.
 constexpr const char* kRootMountPoint = "/";
+// Where the boot volume (the ESP, or the development boot drive) is mounted:
+// the one holding boot/kernel.elf (storage::mount_boot_volume). Never
+// unmounted.
+constexpr const char* kBootMountPoint = "/boot";
 
 struct VolumeStats {
     bool writable;
@@ -111,8 +115,9 @@ bool register_driver(const Driver& driver);
 
 // Tries the drivers on a device, by descending priority, and stops at the
 // first that claims it; for kRootMountPoint, only those with can_be_root.
-// Returns the mount index or kInvalidMount.
-size_t mount(size_t device_index, const char* mount_point);
+// With `driver_name`, only that driver is tried. Returns the mount index or
+// kInvalidMount.
+size_t mount(size_t device_index, const char* mount_point, const char* driver_name = nullptr);
 // The same over every block device in order: the first one some driver claims
 // wins. It is the boot path.
 size_t mount_any(const char* mount_point);

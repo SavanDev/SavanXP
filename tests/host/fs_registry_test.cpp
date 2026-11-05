@@ -8,7 +8,8 @@
  *     device ahead of the system disk is claimed by another driver (a FAT
  *     boot drive on AHCI port 0), and even when that driver probes first;
  *   - with no device a root driver claims, there is no root (the rescue boot);
- *   - outside "/", any driver may mount, by priority as before.
+ *   - outside "/", any driver may mount, by priority as before;
+ *   - a mount that names its driver tries that one only.
  */
 
 #include <stdio.h>
@@ -95,7 +96,17 @@ const fs::Driver kRootDriver = {
     .attach = &attach,
     .unmount = &unmount,
     .read = &read,
+    .write = nullptr,
+    .truncate = nullptr,
+    .unlink = nullptr,
+    .remove_directory = nullptr,
     .refresh = &refresh,
+    .create_file = nullptr,
+    .create_directory = nullptr,
+    .rename = nullptr,
+    .set_ownership = nullptr,
+    .stats = nullptr,
+    .sync = nullptr,
 };
 
 // Probes before the root driver on purpose: priority alone must not let it
@@ -108,7 +119,17 @@ const fs::Driver kFatDriver = {
     .attach = &attach,
     .unmount = &unmount,
     .read = &read,
+    .write = nullptr,
+    .truncate = nullptr,
+    .unlink = nullptr,
+    .remove_directory = nullptr,
     .refresh = &refresh,
+    .create_file = nullptr,
+    .create_directory = nullptr,
+    .rename = nullptr,
+    .set_ownership = nullptr,
+    .stats = nullptr,
+    .sync = nullptr,
 };
 
 void reset(bool root0, bool root1, bool root2, bool fat0, bool fat1, bool fat2) {
@@ -162,6 +183,12 @@ void elsewhere_any_driver() {
     reset(true, true, false, true, false, false);
     const size_t other = fs::mount(0, "/mnt/both");
     check(strcmp(driver_of(other), "fat") == 0, "below /, the higher priority wins");
+
+    // Naming a driver tries only that one, whatever the priorities.
+    reset(true, true, false, true, false, false);
+    const size_t named = fs::mount(0, "/mnt/named", "rootfs");
+    check(strcmp(driver_of(named), "rootfs") == 0, "a named driver is the only one tried");
+    check(fs::mount(1, "/mnt/nofat", "fat") == fs::kInvalidMount, "and it does not fall back to another");
 }
 
 } // namespace

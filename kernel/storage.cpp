@@ -5,7 +5,9 @@
 
 #include "kernel/block.hpp"
 #include "kernel/credentials.hpp"
+#include "kernel/fat.hpp"
 #include "kernel/fs.hpp"
+#include "kernel/console.hpp"
 #include "kernel/object.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
@@ -158,8 +160,7 @@ void detect(size_t device_index, char* out, size_t capacity) {
         copy_string(out, capacity, "sxfs");
         return;
     }
-    const bool boot_signature = sector[510] == 0x55 && sector[511] == 0xaa;
-    if (boot_signature && (memcmp(sector + 54, "FAT", 3) == 0 || memcmp(sector + 82, "FAT32", 5) == 0)) {
+    if (fat::is_boot_sector(sector)) {
         copy_string(out, capacity, "fat");
         return;
     }
@@ -247,10 +248,50 @@ int unmount(const char* path) {
         return sx::negative_error(SX_EINVAL);
     }
     const size_t mounted = fs::find(path);
-    if (mounted == fs::kInvalidMount || strcmp(path, fs::kRootMountPoint) == 0) {
+    if (mounted == fs::kInvalidMount || strcmp(path, fs::kRootMountPoint) == 0 ||
+        strcmp(path, fs::kBootMountPoint) == 0) {
         return sx::negative_error(SX_EINVAL);
     }
     return fs::release(mounted, &vnode_referenced);
+}
+
+size_t mount_boot_volume() {
+    // A root carrying its own /boot keeps it: mounting over it would hide it.
+    if (vfs::resolve(fs::kBootMountPoint) != nullptr) {
+        console::printf("storage: the root has a %s of its own; no boot volume mounted\n", fs::kBootMountPoint);
+        return fs::kInvalidMount;
+    }
+    char kernel_path[vfs::kMaxPathLength] = {};
+    if (!fs::join_mount_path(fs::kBootMountPoint, "boot/kernel.elf", kernel_path, sizeof(kernel_path))) {
+        return fs::kInvalidMount;
+    }
+    // Two passes: EFI System Partitions, then everything else (the
+    // development boot drive is an MBR partition of another type).
+    for (int pass = 0; pass < 2; ++pass) {
+        for (size_t index = 0; index < block::device_count(); ++index) {
+            block::DeviceInfo info = {};
+            if (!block::device_info(index, info) || !info.present || mount_of(index) != fs::kInvalidMount) {
+                continue;
+            }
+            partition::Info slice = {};
+            const bool esp = partition::info(index, slice) && slice.esp;
+            if (esp != (pass == 0)) {
+                continue;
+            }
+            const size_t mounted = fs::mount(index, fs::kBootMountPoint, fat::driver().name);
+            if (mounted == fs::kInvalidMount) {
+                continue;
+            }
+            const vfs::Vnode* kernel = fs::attach(mounted) ? vfs::resolve(kernel_path) : nullptr;
+            if (kernel != nullptr && kernel->type == vfs::NodeType::file) {
+                console::printf("storage: %s is %s\n", fs::kBootMountPoint, info.name != nullptr ? info.name : "?");
+                return mounted;
+            }
+            // Nothing can hold a node of a volume nobody has seen yet.
+            (void)fs::release(mounted, nullptr);
+        }
+    }
+    return fs::kInvalidMount;
 }
 
 int read(uint32_t id, uint64_t lba, uint32_t count, void* buffer) {

@@ -45,8 +45,9 @@ which is why both go into the registry.
 - Decision: `Adopt`, over a port of Microsoft's `fastfat` (written against the
   NT executive, MS-PL) and a driver of our own
   ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md#decision-fatfs-not-fastfat-not-our-own))
-- Distributed in: not yet. It is built with the kernel's freestanding C flags
-  (`savanxp_fatfs_objects`) but not linked until the FAT driver exists.
+- Distributed in: the kernel binary; built with the kernel's freestanding C
+  flags (`savanxp_fatfs_objects`) and integrated through `kernel/fat.cpp` and
+  `kernel/fat_diskio.cpp`
 
 ### Doom (DoomGeneric)
 

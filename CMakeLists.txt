@@ -250,6 +250,8 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/vfs.cpp
     kernel/block.cpp
     kernel/sxfs.cpp
+    kernel/fat.cpp
+    kernel/fat_diskio.cpp
     kernel/elf.cpp
     kernel/process.cpp
     kernel/native_dispatch.cpp
@@ -272,6 +274,8 @@ target_include_directories(savanxp_kernel_objects PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
     "${CMAKE_SOURCE_DIR}/vendor"
     "${CMAKE_SOURCE_DIR}/vendor/uacpi/include"
+    "${CMAKE_SOURCE_DIR}/kernel/fatfs"
+    "${CMAKE_SOURCE_DIR}/vendor/fatfs/source"
     "${SAVANXP_GENERATED_ROOT}"
 )
 target_compile_options(savanxp_kernel_objects PRIVATE ${SAVANXP_KERNEL_COMPILE_OPTIONS})
@@ -295,10 +299,8 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
     C_EXTENSIONS YES
 )
 
-# FatFs (vendor/fatfs, unmodified), configured by kernel/fatfs/ffconf.h. Built
-# with the kernel so a toolchain or configuration change that breaks it shows
-# up now, but not linked yet: nothing calls it until the FAT driver exists
-# (docs/fs/FAT_ROADMAP.md, phase 1).
+# FatFs (vendor/fatfs, unmodified), configured by kernel/fatfs/ffconf.h, under
+# the FAT driver (kernel/fat.cpp, kernel/fat_diskio.cpp; docs/fs/FAT_ROADMAP.md).
 set(SAVANXP_FATFS_SOURCES
     "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.c"
     "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ffunicode.c"
@@ -702,6 +704,7 @@ add_custom_target(savanxp_kernel
             -o "${SAVANXP_KERNEL_ELF}"
             $<TARGET_OBJECTS:savanxp_kernel_objects>
             $<TARGET_OBJECTS:savanxp_uacpi_objects>
+            $<TARGET_OBJECTS:savanxp_fatfs_objects>
     COMMAND_EXPAND_LISTS
     DEPENDS savanxp_kernel_objects savanxp_uacpi_objects savanxp_fatfs_objects
     COMMENT "Linking SavanXP kernel"
@@ -841,6 +844,26 @@ target_include_directories(savanxp-sxfs-volume-test PRIVATE
 target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# The FAT driver over FatFs, against images FatFs itself formats in memory.
+# kernel/fatfs comes first so ff.c's <string.h> is the kernel's stand-in, as
+# in the kernel build.
+add_executable(savanxp-fat-volume-test
+    kernel/fat.cpp
+    kernel/fat_diskio.cpp
+    kernel/fs_path.cpp
+    vendor/fatfs/source/ff.c
+    vendor/fatfs/source/ffunicode.c
+    tests/host/kernel_string_stubs.cpp
+    tests/host/sxfs_host_stubs.cpp
+    tests/host/fat_volume_test.cpp)
+target_include_directories(savanxp-fat-volume-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/kernel/fatfs"
+    "${CMAKE_SOURCE_DIR}/vendor/fatfs/source"
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/tests/host")
+target_compile_options(savanxp-fat-volume-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-fat-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 # The filesystem registry: which driver may mount what, and where.
 add_executable(savanxp-fs-registry-test
     kernel/fs.cpp
@@ -864,7 +887,7 @@ target_compile_options(savanxp-sxdisk-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sxdisk-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -879,6 +902,7 @@ add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 add_test(NAME fs-registry-test COMMAND savanxp-fs-registry-test)
+add_test(NAME fat-volume-test COMMAND savanxp-fat-volume-test)
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"

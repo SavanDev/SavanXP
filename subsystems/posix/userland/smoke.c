@@ -83,6 +83,42 @@ static int validate_file_contains(const char* path, const char* needle) {
     return 1;
 }
 
+/* The boot volume (FAT, read-only): the development boot drive mounted at
+ * /boot. Its limine.conf reads back, the kernel it booted starts with the ELF
+ * magic, and nothing can be created or written there. */
+static int validate_boot_volume(void) {
+    char magic[4] = {};
+    long fd;
+
+    if (!validate_file_contains("/boot/limine.conf", "default_entry")) {
+        return 0;
+    }
+    fd = savanxp_open("/boot/boot/kernel.elf");
+    if (fd < 0 || savanxp_read((int)fd, magic, sizeof(magic)) != (long)sizeof(magic) ||
+        magic[0] != 0x7f || magic[1] != 'E' || magic[2] != 'L' || magic[3] != 'F') {
+        if (fd >= 0) {
+            savanxp_close((int)fd);
+        }
+        puts_out("SMOKE FAIL /boot/boot/kernel.elf does not read as ELF\n");
+        return 0;
+    }
+    savanxp_close((int)fd);
+    fd = savanxp_open_mode("/boot/smoke.txt", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    if (fd >= 0) {
+        savanxp_close((int)fd);
+        puts_out("SMOKE FAIL created a file on the read-only /boot\n");
+        return 0;
+    }
+    fd = savanxp_open_mode("/boot/limine.conf", SAVANXP_OPEN_WRITE);
+    if (fd >= 0) {
+        savanxp_close((int)fd);
+        puts_out("SMOKE FAIL opened /boot/limine.conf for writing\n");
+        return 0;
+    }
+    printf("smoke: validated /boot (read-only FAT)\n");
+    return 1;
+}
+
 static int file_missing(const char* path) {
     return !file_exists(path);
 }
@@ -250,6 +286,7 @@ int main(void) {
         !run_and_expect("/bin/seltest", seltest_argv, 1, 0) ||
         !run_and_expect("/bin/mmaptest", mmaptest_argv, 1, 0) ||
         !run_and_expect("/bin/heaptest", heaptest_argv, 1, 0) ||
+        !validate_boot_volume() ||
         !prepare_smoke_directory() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/smoke/sh.txt", "shell-redirect") ||

@@ -70,7 +70,7 @@ bool register_driver(const Driver& driver) {
     return true;
 }
 
-size_t mount(size_t device_index, const char* mount_point) {
+size_t mount(size_t device_index, const char* mount_point, const char* driver_name) {
     if (find(mount_point) != kInvalidMount) {
         return kInvalidMount;
     }
@@ -95,7 +95,8 @@ size_t mount(size_t device_index, const char* mount_point) {
             break;
         }
         tried[index] = true;
-        if (root && !g_drivers[index]->can_be_root) {
+        if ((root && !g_drivers[index]->can_be_root) ||
+            (driver_name != nullptr && strcmp(g_drivers[index]->name, driver_name) != 0)) {
             continue;
         }
 

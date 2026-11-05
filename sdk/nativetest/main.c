@@ -1513,6 +1513,20 @@ int main(int argc, char** argv) {
             check(sxn_storage_mount(0xfffffff0u, "/mnt/x") == -SAVANXP_ENODEV);
             check(sxn_storage_unmount("/") == -SAVANXP_EINVAL);
             check(sxn_storage_unmount("/mnt/nothing") == -SAVANXP_EINVAL);
+            /* The boot volume: the development boot drive's FAT partition,
+             * mounted at /boot by the kernel and never unmounted. */
+            {
+                int boot = -1;
+
+                for (index = 0; index < count; ++index) {
+                    if ((devices[index].flags & SXN_STORAGE_MOUNTED) != 0u && streq(devices[index].mount_point, "/boot")) {
+                        boot = (int)index;
+                    }
+                }
+                check(boot >= 0 && streq(devices[boot].fs_name, "fat"));
+                check(boot >= 0 && devices[boot].kind == SXN_STORAGE_PARTITION);
+                check(sxn_storage_unmount("/boot") == -SAVANXP_EINVAL);
+            }
             for (index = 0; index < count; ++index) {
                 if (devices[index].kind == SXN_STORAGE_DISK && devices[index].scheme != SXN_STORAGE_SCHEME_NONE &&
                     (devices[index].flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_CHILD_MOUNTED)) == 0u) {

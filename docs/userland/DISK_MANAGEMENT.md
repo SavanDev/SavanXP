@@ -48,7 +48,7 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 | Format | a partition | `sxfs_mkfs`, the root owned by the person who asked (uid, group `users`), the SxFS type, and the label as the GPT name |
 | Delete Partition | a partition | empties its GPT entry |
 | Mount | an SxFS volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case |
-| Unmount | a mounted volume but `/` | syncs and releases it; refused while a file of it is open |
+| Unmount | a mounted volume but `/` and `/boot` | syncs and releases it; refused while a file of it is open |
 | Rescan Disks | every disk with nothing mounted | reads its table again |
 
 Each one is the program run again as `diskmgmt --init <id> <name>`,

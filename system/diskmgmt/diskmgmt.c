@@ -799,7 +799,9 @@ static int can_mount(const struct sxn_storage_device *device)
 /* Anything mounted but the system's root. */
 static int can_unmount(const struct sxn_storage_device *device)
 {
-    return device != 0 && (device->flags & SXN_STORAGE_MOUNTED) != 0u && strcmp(device->mount_point, "/") != 0;
+    /* Neither the root nor the boot volume: the kernel refuses both. */
+    return device != 0 && (device->flags & SXN_STORAGE_MOUNTED) != 0u && strcmp(device->mount_point, "/") != 0 &&
+        strcmp(device->mount_point, "/boot") != 0;
 }
 
 /* ---- sector I/O ------------------------------------------------------------------- */

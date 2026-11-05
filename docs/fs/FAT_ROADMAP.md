@@ -1,13 +1,13 @@
 # FAT — a second filesystem driver, on FatFs
 
-Status: **phase 0 done** (the root guard; FatFs vendored and compiled, not
-linked). The driver itself is not written yet.
+Status: **phase 1 done**: a read-only FAT driver (`kernel/fat.cpp`), and the
+boot volume mounted at `/boot`. Writes are phase 2.
 
-SavanXP reads and writes only SxFS. The one FAT volume that matters today, the
-EFI System Partition, is written as a whole image because "the kernel has no
-FAT driver" ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md#what-the-target-disk-looks-like)).
-This page plans that driver: which code, how it plugs into `fs::`, what has to
-change outside it, and the phases.
+Before this driver SavanXP read only SxFS, and the one FAT volume that matters,
+the EFI System Partition, could only be written as a whole image
+([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md#what-the-target-disk-looks-like)).
+This page is the driver's design: which code, how it plugs into `fs::`, what
+had to change outside it, and the phases.
 
 ## The short version
 
@@ -82,7 +82,7 @@ but the boot path calls `fs::mount` directly and needs the driver's own check.
 | `FF_LFN_UNICODE` | 2 | UTF-8 in and out, as every path in the system is |
 | `FF_CODE_PAGE` | 437 | Only for short names; avoids carrying every code page table |
 | `FF_FS_EXFAT` | 0 | No exFAT |
-| `FF_USE_FASTSEEK` | 1 | `read` at an offset without walking the cluster chain every time |
+| `FF_USE_FASTSEEK` | 1 | Lets a later per-vnode open file keep a cluster link map; unused while every `read` reopens the file |
 | `FF_USE_MKFS` | 1 | The host test formats its images with it; small |
 | `FF_FS_NORTC` | 0 | `get_fattime` from `rtc::epoch_seconds` |
 | `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](../kernel/SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
@@ -141,7 +141,16 @@ Points worth knowing before writing it:
 - **Ownership is synthesized.** Everything is owned by the system: directories
   `0755`, files `0644`, minus the write bits when the volume or the file
   (`AM_RDO`) is read-only. No execute bit on files, so nothing runs from a FAT
-  volume.
+  volume. While the driver is read-only, that is `0555` and `0444` everywhere;
+  the system passes the permission check for writing anyway, so what refuses
+  it is the vnode published without `writable` and the write operations, which
+  exist (the VFS calls them unchecked) and fail. `mtime` is the FAT date, local
+  time like the RTC's, in 2-second steps.
+- **What attach leaves out.** A name longer than a VFS path component (63
+  bytes), a path longer than 255, and anything below 24 levels of directories.
+  They are counted and logged (`fat: /boot: N entries left out ...`), never
+  truncated. Each directory level being published is on the heap, not on the
+  32 KiB kernel stack.
 - **The whole tree is published at attach, and the VFS has 2048 nodes**
   shared by the initramfs, `/dev` and every mounted volume
   ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits)). The ESP has a few
@@ -155,15 +164,21 @@ Points worth knowing before writing it:
 
 ## Where the ESP is mounted
 
-At boot, after the root: the first partition `partition::info` flags as `esp`,
-mounted at `/boot`. In the development run there is no ESP partition; the boot
-drive is QEMU's virtual FAT (`-drive file=fat:rw:...`), which presents an MBR
-disk with one FAT partition (`ahci0p1`), not of type `0xEF`. The rule there:
-the first FAT partition that holds `boot/kernel.elf`.
+At boot, right after the root, `storage::mount_boot_volume` mounts at `/boot`
+the first FAT volume that holds `boot/kernel.elf`, trying the partitions
+`partition::info` flags as `esp` first. In the development run there is no ESP
+partition; the boot drive is QEMU's virtual FAT (`-drive file=fat:rw:...`),
+which presents an MBR disk with one FAT16 partition (`ahci0p1`), not of type
+`0xEF`, and the boot log says `storage: /boot is ahci0p1`. Requiring
+`boot/kernel.elf` keeps another system's ESP from being taken for ours.
 
-**`/boot` is not unmounted.** `storage::unmount` refuses only `/` today, and
-Disk Management offers Unmount on any other mounted volume. It refuses `/boot`
-the same way, and Disk Management treats it as the system's.
+Only the FAT driver is tried at `/boot` (`fs::mount` with a driver name): a
+candidate that is not the boot volume is attached, looked at and released, and
+an SxFS volume must not go through that, since mounting one can replay its
+journal onto the disk.
+
+**`/boot` is not unmounted.** `storage::unmount` refuses it as it refuses `/`
+(`EINVAL`), and Disk Management does not offer Unmount on it.
 
 The SxFS image has no top-level `boot`, so the mount point does not hide
 anything. `fs::kMaxMounts` is 4, so with the ESP held for the whole session
@@ -190,12 +205,16 @@ Each phase builds, boots and is verified on its own.
    boot drive ahead of the system disk, a boot with only FAT, mounts outside
    `/`); `vendor/fatfs/`, `kernel/fatfs/ffconf.h`, the CMake object library
    and the provenance record. Nothing calls FatFs yet.
-1. **Read-only driver.** `probe`, `attach`, `read`, `refresh`, `stats`; the ESP
-   (or the development boot drive) at `/boot`. A host test,
-   `savanxp-fat-volume-test`, that formats FAT12, FAT16 and FAT32 images in
-   memory with `f_mkfs`, mounts them at `/boot` and reads them back, long UTF-8
-   names included. A smoke asserting that `cat /boot/limine.conf` works and the
-   root is still SxFS. About a week.
+1. **Read-only driver. Done.** `probe`, `attach`, `read`, `refresh`, `stats`,
+   the boot volume at `/boot`, its unmount refused. `fat-volume-test` formats
+   FAT12, FAT16 and FAT32 images with FatFs through the kernel's own disk layer
+   (`fat_disk::bind`), mounts them at `/boot` and reads them back: long UTF-8
+   names, reads at any offset of a multi-cluster file, ownership, refused
+   writes, a name left out, a partitioned disk not claimed although FatFs alone
+   would mount it, a tree larger than the VFS, dates. The core `smoke` reads
+   `/boot/limine.conf` and the ELF magic of `/boot/boot/kernel.elf` and is
+   refused creating or writing there; `native-test` checks `/boot` is the
+   `fat` partition and that its unmount is `EINVAL`.
 2. **Writes.** The rest of the operations; the read-only development drive.
    The host test covers create, write, truncate, rename of a directory with
    files inside, unlink, a full volume and a read-only file. A smoke that
@@ -209,10 +228,6 @@ Each phase builds, boots and is verified on its own.
    `diskmgmt-smoke` mounts a FAT partition on the blank disk. Formatting as
    FAT from Disk Management would need FatFs in userland and is not planned.
    Removable media wait for a USB mass-storage driver, which does not exist.
-
-When phase 1 lands, [`FILESYSTEMS.md`](../kernel/FILESYSTEMS.md) gains FAT in
-its tables and limits, and `SETUP_AND_UPDATES.md` stops saying the kernel has
-no FAT driver.
 
 ## Limits accepted
 
