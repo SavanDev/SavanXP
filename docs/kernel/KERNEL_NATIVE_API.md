@@ -281,9 +281,11 @@ facade, `storage::` (`kernel/storage.cpp`).
   Mounts at `/mnt/<name>` (`[A-Za-z0-9._-]`, 1 to 24 characters, not existing
   yet; `/mnt` is made on the root if missing). `-EBUSY` when the device or an
   overlapping one is mounted, `-EINVAL` for a partitioned disk, `-EEXIST`,
-  `-EIO` when no driver recognises it. `SXN_SYS_STORAGE_UNMOUNT` (`0x1032`):
-  rdi = the mount point; `-EBUSY` while a file of the volume is open or a
-  program of it is mapped, `-EINVAL` for `/` and `/boot`. Both the system only. See
+  `-EIO` when no driver recognises it. A format with no owners (FAT) is
+  published as the caller's real uid and gid. `SXN_SYS_STORAGE_UNMOUNT`
+  (`0x1032`): rdi = the mount point; `-EBUSY` while a file of the volume is
+  open or a program of it is mapped, `-EINVAL` for `/` and `/boot`. Both the
+  system only. See
   [FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time).
 - Block slots became reusable for the rescan: `block::register_device` takes
   the first free slot and returns its index, `block::unregister_device`

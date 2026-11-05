@@ -109,6 +109,10 @@ partition name (36 UTF-16 units, kept as ASCII).
 - **A disk with a mounted partition is not repartitioned**, and a mounted
   partition is neither formatted nor deleted: unmount it first. The kernel
   refuses the writes anyway; the window does not offer them.
+- **A mounted FAT volume is the person's who mounted it.** FAT has no owners;
+  the kernel publishes everything on it as the real uid and gid of the caller,
+  which the elevated copy still carries
+  ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)). SxFS keeps the owners it records.
 - **Mount points are `/mnt/<name>`**, one level, `[A-Za-z0-9._-]`, at most 24
   characters, not existing yet. Mounts do not survive a reboot.
 
@@ -128,9 +132,9 @@ partition name (36 UTF-16 units, kept as ASCII).
   finds both files, refuses an overlapping partition and a wrong start, and
   deletes it. It also attaches a 16 MiB FAT disk, serial `SXFAT0`, that the
   smoke runner builds with `build/tools/fat-image` (`fat_disk_mib`): the
-  self-test mounts it at `/mnt/fattest`, writes through `/bin/sh`, unmounts,
-  mounts again and finds the file. A FAT volume is the system's, so only the
-  system writes it ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md#open-questions)).
+  self-test mounts it at `/mnt/fattest` as an elevated user 1000 would, checks
+  that user writes it and user 1001 cannot, unmounts, mounts again and finds
+  the file.
 - `./build.sh smoke native-test`: the slice 28 assertions.
 - `./build.sh smoke elevation-smoke`: `diskmgmt --rescan` through the real
   consent prompt.

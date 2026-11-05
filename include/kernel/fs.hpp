@@ -39,6 +39,13 @@ constexpr const char* kRootMountPoint = "/";
 // unmounted.
 constexpr const char* kBootMountPoint = "/boot";
 
+// Who a volume belongs to when its format records no owners of its own
+// (FAT): the person who asked to mount it. See Driver::adopt_owner.
+struct Owner {
+    uint32_t uid;
+    uint32_t gid;
+};
+
 struct VolumeStats {
     bool writable;
     size_t file_count;
@@ -96,6 +103,10 @@ struct Driver {
     bool (*stats)(VolumeId volume, VolumeStats& out);
     // Makes the volume's metadata durable and marks it clean. May be nullptr.
     bool (*sync)(VolumeId volume);
+    // For a format with no owners of its own: everything on the volume is
+    // published as `owner`'s. Called by mount() between probe and attach.
+    // nullptr: the format records owners itself, and the owner is ignored.
+    void (*adopt_owner)(VolumeId volume, const Owner& owner);
 };
 
 struct MountInfo {
@@ -115,9 +126,11 @@ bool register_driver(const Driver& driver);
 
 // Tries the drivers on a device, by descending priority, and stops at the
 // first that claims it; for kRootMountPoint, only those with can_be_root.
-// With `driver_name`, only that driver is tried. Returns the mount index or
-// kInvalidMount.
-size_t mount(size_t device_index, const char* mount_point, const char* driver_name = nullptr);
+// With `driver_name`, only that driver is tried. With `owner`, a format that
+// has no owners publishes everything as that person's (adopt_owner); without,
+// as the system's. Returns the mount index or kInvalidMount.
+size_t mount(size_t device_index, const char* mount_point, const char* driver_name = nullptr,
+             const Owner* owner = nullptr);
 // The same over every block device in order: the first one some driver claims
 // wins. It is the boot path.
 size_t mount_any(const char* mount_point);

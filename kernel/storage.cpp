@@ -204,7 +204,7 @@ uint32_t generation() {
     return block::generation() + fs::generation() + g_content_generation;
 }
 
-int mount(uint32_t id, const char* path) {
+int mount(uint32_t id, const char* path, const fs::Owner& owner) {
     const size_t index = index_of(id);
     if (index == block::kInvalidDevice) {
         return sx::negative_error(SX_ENODEV);
@@ -232,7 +232,7 @@ int mount(uint32_t id, const char* path) {
     if (parent == nullptr || parent->type != vfs::NodeType::directory) {
         return sx::negative_error(SX_EIO);
     }
-    const size_t mounted = fs::mount(index, path);
+    const size_t mounted = fs::mount(index, path, nullptr, &owner);
     if (mounted == fs::kInvalidMount) {
         return sx::negative_error(SX_EIO);
     }

@@ -2813,6 +2813,49 @@ static long selftest_shell(const char *command, int32_t stdin_handle)
     return sxn_spawn_ex(&request);
 }
 
+/* The same, as someone else: who is in `identity`. */
+static long selftest_shell_as(const char *command, const struct sxn_identity *identity)
+{
+    struct sxn_spawn_request request;
+    char *argv[3];
+
+    argv[0] = "/bin/sh";
+    argv[1] = "-c";
+    argv[2] = (char *)command;
+    sxn_spawn_request_init(&request, "/bin/sh", argv, 3);
+    return sxn_spawn_ex_as(&request, identity);
+}
+
+/* `diskmgmt --mount` run the way the elevation broker runs it for user 1000:
+ * acting as the system, still that person underneath. */
+static int selftest_mount_elevated(uint32_t id, const char *name, const char *path)
+{
+    struct sxn_identity elevated = {1000u, 0u, DM_USERS_GID, 0u};
+    struct sxn_spawn_request request;
+    char id_text[16];
+    char name_text[SXN_STORAGE_NAME_CAPACITY];
+    char path_text[SXN_STORAGE_MOUNT_CAPACITY];
+    char *argv[5];
+    int status = -1;
+    long child;
+
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)id);
+    snprintf(name_text, sizeof(name_text), "%s", name);
+    snprintf(path_text, sizeof(path_text), "%s", path);
+    argv[0] = DM_PATH;
+    argv[1] = "--mount";
+    argv[2] = id_text;
+    argv[3] = name_text;
+    argv[4] = path_text;
+    sxn_spawn_request_init(&request, DM_PATH, argv, 5);
+    child = sxn_spawn_ex_as(&request, &elevated);
+    if (child <= 0 || sxn_waitpid(child, &status) != child)
+    {
+        return -1;
+    }
+    return status;
+}
+
 static const struct sxn_storage_device *selftest_device(uint32_t id)
 {
     int index;
@@ -2938,11 +2981,14 @@ static void selftest_mount(uint32_t part_id, const char *name)
 }
 
 /* The FAT disk the scenario attaches (serial SXFAT0, a whole-disk volume the
- * smoke runner built with /hello.txt on it): offered for Mount, mounted at
- * /mnt/fattest, read and written through /bin/sh, unmounted, and mounted
- * again with the new file still there. */
+ * smoke runner built with /hello.txt on it): offered for Mount, and mounted
+ * at /mnt/fattest by user 1000 through an elevated copy. FAT has no owners,
+ * so the volume is that person's: they write it, another user does not.
+ * Then unmounted and mounted again with the new file still there. */
 static void selftest_fat(void)
 {
+    const struct sxn_identity user = {1000u, 1000u, DM_USERS_GID, 0u};
+    const struct sxn_identity other = {1001u, 1001u, DM_USERS_GID, 0u};
     const struct sxn_storage_device *device;
     char name[SXN_STORAGE_NAME_CAPACITY];
     uint32_t id;
@@ -2966,9 +3012,9 @@ static void selftest_fat(void)
     }
     id = device->id;
     snprintf(name, sizeof(name), "%s", device->name);
-    if (op_mount(id, name, "/mnt/fattest") != 0)
+    if (selftest_mount_elevated(id, name, "/mnt/fattest") != 0)
     {
-        selftest_fail("Mount of the FAT disk failed");
+        selftest_fail("Mount of the FAT disk by an elevated user failed");
         return;
     }
     device = selftest_device(id);
@@ -2979,15 +3025,20 @@ static void selftest_fat(void)
         return;
     }
     files = device->file_count;
-    child = selftest_shell("cat /mnt/fattest/hello.txt > /mnt/fattest/copy.txt", -1);
+    child = selftest_shell_as("cat /mnt/fattest/hello.txt > /mnt/fattest/copy.txt", &user);
     if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
     {
-        selftest_fail("the FAT volume cannot be read and written");
+        selftest_fail("the user who mounted the FAT volume cannot write it");
+    }
+    child = selftest_shell_as("echo other > /mnt/fattest/other.txt", &other);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status == 0)
+    {
+        selftest_fail("another user wrote the FAT volume someone else mounted");
     }
     device = selftest_device(id);
     if (device == 0 || device->file_count != files + 1u)
     {
-        selftest_fail("the file written on the FAT volume is not counted");
+        selftest_fail("the FAT volume's file count is not one more");
     }
     if (op_unmount(id, name) != 0 || op_mount(id, name, "/mnt/fattest") != 0)
     {
@@ -3009,7 +3060,7 @@ static void selftest_fat(void)
         selftest_fail("the FAT volume's second unmount failed");
         return;
     }
-    (void)sxn_log("diskmgmt: mounted the FAT disk at /mnt/fattest, wrote, unmounted and remounted it");
+    (void)sxn_log("diskmgmt: user 1000 mounted the FAT disk at /mnt/fattest and wrote it, user 1001 could not; unmounted and remounted");
 }
 
 /* The write half, on the scenario's blank disk (serial SXBLANK0), never on

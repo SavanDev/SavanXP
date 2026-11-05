@@ -41,6 +41,9 @@ struct Volume {
     bool in_use;
     // The device is writable: what every vnode of the volume starts from.
     bool writable;
+    // FAT has no owners: everything on the volume is published as this one's.
+    // The system unless fs::mount was told otherwise (adopt_owner).
+    fs::Owner owner;
     size_t device_index;
     FATFS fs;
     char mount_point[fs::kMountPointCapacity];
@@ -106,15 +109,17 @@ Node* directory_from_vnode(const vfs::Vnode& node) {
     return nullptr;
 }
 
-// FAT has no owners. Everything is the system's: 0755 and 0644, without the
-// write bits on a read-only volume or a file with FAT's read-only attribute.
-// Files never get an execute bit, so nothing runs from a FAT volume.
-void publish_ownership(vfs::Vnode& node, bool directory, bool writable, uint16_t date, uint16_t time) {
+// FAT has no owners. Everything is the volume's owner's (the system's, or the
+// person who mounted it): 0755 and 0644, without the write bits on a
+// read-only volume or a file with FAT's read-only attribute. Files never get
+// an execute bit, so nothing runs from a FAT volume.
+void publish_ownership(vfs::Vnode& node, const Volume& volume, bool directory, bool writable, uint16_t date,
+                       uint16_t time) {
     uint16_t mode = directory ? (vfs::kModeDirectory | 0755) : (vfs::kModeFile | 0644);
     if (!writable) {
         mode &= static_cast<uint16_t>(~0222);
     }
-    vfs::set_ownership(node, cred::kSystemUid, cred::kSystemGid, mode);
+    vfs::set_ownership(node, volume.owner.uid, volume.owner.gid, mode);
     node.mtime = fat_disk::epoch_seconds(date, time);
 }
 
@@ -241,7 +246,7 @@ bool publish_directory(Volume& volume, uint8_t id, const char* inner, size_t dep
             ok = false;
             break;
         }
-        publish_ownership(*entry->vnode, directory, writable, level->info.fdate, level->info.ftime);
+        publish_ownership(*entry->vnode, volume, directory, writable, level->info.fdate, level->info.ftime);
         link_node(volume, entry);
 
         if (directory) {
@@ -320,6 +325,7 @@ fs::VolumeId probe(size_t device_index, const char* mount_point) {
         }
         volume.in_use = true;
         volume.writable = info.writable;
+        volume.owner = {cred::kSystemUid, cred::kSystemGid};
         volume.device_index = device_index;
         memcpy(volume.mount_point, mount_point, strlen(mount_point) + 1);
         return id;
@@ -336,7 +342,7 @@ bool attach(fs::VolumeId id) {
     if (root == nullptr) {
         return false;
     }
-    publish_ownership(*root, true, volume->writable, 0, 0);
+    publish_ownership(*root, *volume, true, volume->writable, 0, 0);
     if (!publish_directory(*volume, static_cast<uint8_t>(id), "", 0)) {
         console::printf("fat: %s: the tree does not fit in the VFS, not mounted\n", volume->mount_point);
         return false;
@@ -495,7 +501,7 @@ vfs::Vnode* create_file(fs::VolumeId id, const char* path, const vfs::Ownership&
         return nullptr;
     }
     const uint32_t now = get_fattime();
-    publish_ownership(*entry->vnode, false, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
+    publish_ownership(*entry->vnode, *volume, false, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
     link_node(*volume, entry);
     return entry->vnode;
 }
@@ -522,7 +528,7 @@ vfs::Vnode* create_directory(fs::VolumeId id, const char* path, const vfs::Owner
         return nullptr;
     }
     const uint32_t now = get_fattime();
-    publish_ownership(*entry->vnode, true, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
+    publish_ownership(*entry->vnode, *volume, true, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
     link_node(*volume, entry);
     return entry->vnode;
 }
@@ -589,7 +595,7 @@ void refresh(vfs::Vnode& node) {
         const bool writable = file_writable(*volume, info.fattrib);
         node.size = info.fsize;
         node.writable = writable;
-        publish_ownership(node, false, writable, info.fdate, info.ftime);
+        publish_ownership(node, *volume, false, writable, info.fdate, info.ftime);
     }
 }
 
@@ -625,6 +631,13 @@ bool sync(fs::VolumeId id) {
     return !volume->writable || block::sync(volume->device_index);
 }
 
+void adopt_owner(fs::VolumeId id, const fs::Owner& owner) {
+    Volume* volume = volume_for_id(id);
+    if (volume != nullptr) {
+        volume->owner = owner;
+    }
+}
+
 const fs::Driver kDriver = {
     .name = "fat",
     // Below SxFS (100): it probes first.
@@ -646,6 +659,7 @@ const fs::Driver kDriver = {
     .set_ownership = nullptr,
     .stats = &stats,
     .sync = &sync,
+    .adopt_owner = &adopt_owner,
 };
 
 const fs::Driver& driver_ref() {

@@ -139,10 +139,16 @@ Points worth knowing before writing it:
 - **Every `read` opens the file again**, which walks the directories on the
   way. Fine for `limine.conf` and a kernel image; a per-vnode open `FIL` cache
   is a later optimisation, not part of the first version.
-- **Ownership is synthesized.** Everything is owned by the system: directories
-  `0755`, files `0644`, minus the write bits when the device is read-only or
-  the file has FAT's read-only attribute (`AM_RDO`). No execute bit on files,
-  so nothing runs from a FAT volume, and a user can read but not write. The
+- **Ownership is synthesized.** Everything on a volume belongs to one owner:
+  directories `0755`, files `0644`, minus the write bits when the device is
+  read-only or the file has FAT's read-only attribute (`AM_RDO`). No execute
+  bit on files, so nothing runs from a FAT volume. The owner is the system
+  unless `fs::mount` is given one (`fs::Owner`), which reaches the driver
+  through `fs::Driver::adopt_owner` between probe and attach: `/boot` is the
+  system's, and a volume mounted at `/mnt` through the storage calls is the
+  real uid and gid of whoever asked. An elevated Disk Management is still
+  that person underneath (uid 1000, euid 0), so a stick a user mounts is
+  theirs to write and only readable by others. The
   system passes the permission check for writing whatever the bits say, so on
   a read-only volume what refuses it is the vnode published without
   `writable` and the write operations, which exist (the VFS calls them
@@ -247,9 +253,10 @@ Each phase builds, boots and is verified on its own.
      `fat_disk_mib` in `tools/smoke_catalog.py`) that the smoke runner builds
      with `fat-image`, a host tool over the same FatFs (`tools/fat_image.c`,
      `build/tools/fat-image create|put`). The self-test mounts it at
-     `/mnt/fattest`, reads and writes through `/bin/sh`, unmounts, mounts
-     again and finds the new file; `fsck.fat` on the image afterwards finds
-     it clean. Formatting as FAT from Disk Management is not planned.
+     `/mnt/fattest` through `diskmgmt --mount` run as an elevated user 1000,
+     checks that user writes it and user 1001 cannot, unmounts, mounts again
+     and finds the new file; `fsck.fat` on the image afterwards finds it
+     clean. Formatting as FAT from Disk Management is not planned.
    - **The superfloppy fix this needed.** A FAT volume holding a whole disk,
      with no partition table, ends its boot sector in `0x55AA` like an MBR,
      and `partition::` sliced its boot code as a table. A disk whose sector 0
@@ -273,11 +280,6 @@ Each phase builds, boots and is verified on its own.
 
 ## Open questions
 
-- Who owns a FAT volume mounted at `/mnt`. Everything on FAT is published as
-  the system's, so a user can read a mounted stick but not write it. The
-  elevated copy of Disk Management that mounts it still carries the user's
-  real uid; giving the volume that owner, as Format does for SxFS, would need
-  the owner passed down through `fs::mount` to the driver.
 
 - Whether the ESP should stay read-only for everyone and be remounted writable
   only while the updater runs, rather than writable by the system all the time.

@@ -70,7 +70,7 @@ bool register_driver(const Driver& driver) {
     return true;
 }
 
-size_t mount(size_t device_index, const char* mount_point, const char* driver_name) {
+size_t mount(size_t device_index, const char* mount_point, const char* driver_name, const Owner* owner) {
     if (find(mount_point) != kInvalidMount) {
         return kInvalidMount;
     }
@@ -105,6 +105,9 @@ size_t mount(size_t device_index, const char* mount_point, const char* driver_na
             continue;
         }
 
+        if (owner != nullptr && g_drivers[index]->adopt_owner != nullptr) {
+            g_drivers[index]->adopt_owner(volume, *owner);
+        }
         slot.in_use = true;
         slot.driver = g_drivers[index];
         slot.volume = volume;

@@ -2273,6 +2273,8 @@ const fs::Driver kDriver = {
     .set_ownership = &driver_set_ownership,
     .stats = &driver_stats,
     .sync = &sync,
+    // SxFS records owners per inode.
+    .adopt_owner = nullptr,
 };
 
 } // namespace

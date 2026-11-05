@@ -507,7 +507,10 @@ int native_storage_mount(const Process& caller, uint64_t id, uint64_t user_path,
     if (flags != 0 || id > 0xffffffffull || !sx::copy_user_string(path, sizeof(path), user_path)) {
         return sx::negative_error(SX_EINVAL);
     }
-    return storage::mount(static_cast<uint32_t>(id), path);
+    // The person who asked owns what a format without owners holds (a FAT
+    // stick): the real uid, which an elevated Disk Management still carries.
+    const fs::Owner owner = {caller.credentials.uid, caller.credentials.gid};
+    return storage::mount(static_cast<uint32_t>(id), path, owner);
 }
 
 int native_storage_unmount(const Process& caller, uint64_t user_path) {

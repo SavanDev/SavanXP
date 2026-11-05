@@ -12,8 +12,9 @@ Cut-off notes:
 
 ### Added
 
-- **Disk Management mounts FAT volumes**, not only SxFS. New host tool `fat-image` (`create`, `put`)
-  builds FAT images with the kernel's FatFs; smokes can attach one (`fat_disk_mib`, serial `SXFAT0`).
+- **Disk Management mounts FAT volumes**, owned by the person who mounts them (`fs::Owner`,
+  `fs::Driver::adopt_owner`). New host tool `fat-image` (`create`, `put`) builds FAT images with the
+  kernel's FatFs; smokes can attach one (`fat_disk_mib`, serial `SXFAT0`).
 
 - **A FAT driver, and the boot volume at `/boot`**: FAT12/16/32 with long names on FatFs
   (`fat::driver()`), read and write. At boot the first FAT volume holding `boot/kernel.elf`, ESPs first,

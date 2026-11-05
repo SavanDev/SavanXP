@@ -16,6 +16,7 @@
  *     unmount and a new mount;
  *   - FAT's read-only bit makes a file read-only, a full volume writes what
  *     fits, and a read-only device mounts read-only with every write refused;
+ *   - a volume mounted for someone is theirs, found and created alike;
  *   - a name the VFS cannot hold is left out, not truncated;
  *   - a partitioned disk is never claimed as a whole, although FatFs alone
  *     would mount its first partition through it;
@@ -374,6 +375,44 @@ void read_only_device() {
     free(image);
 }
 
+// A volume mounted for someone (a stick mounted from Disk Management) is
+// published as theirs: what attach finds, and what is created later.
+void owner_is_adopted() {
+    printf("fat-volume-test: an adopted owner\n");
+    constexpr uint32_t kSectors = 4096;
+    uint8_t* image = static_cast<uint8_t*>(malloc(static_cast<size_t>(kSectors) * kSector));
+    build_image(image, kSectors, FM_FAT, 0);
+    const fs::Driver& driver = fat::driver();
+    hoststub::reset_vfs();
+    const fs::VolumeId id = driver.probe(0, "/mnt/stick");
+    check(id != fs::kInvalidVolume, "probe");
+    check(driver.adopt_owner != nullptr, "FAT adopts an owner");
+    driver.adopt_owner(id, {1000, 100});
+    check(driver.attach(id), "attach");
+    vfs::Vnode* root = hoststub::find_node("/mnt/stick");
+    vfs::Vnode* conf = hoststub::find_node("/mnt/stick/boot/limine.conf");
+    check(root != nullptr && root->uid == 1000 && root->gid == 100, "the mount point is the owner's");
+    check(conf != nullptr && conf->uid == 1000 && conf->gid == 100 && conf->mode == (vfs::kModeFile | 0644),
+          "a file found at attach is the owner's, 0644");
+    vfs::Vnode* created = driver.create_file(id, "/mnt/stick/new.txt", kNewFile);
+    check(created != nullptr && created->uid == 1000 && created->gid == 100, "a created file is the owner's");
+    if (conf != nullptr) {
+        driver.refresh(*conf);
+        check(conf->uid == 1000, "refresh keeps the owner");
+    }
+    driver.unmount(id);
+
+    // The next volume in that slot starts as the system's again.
+    hoststub::reset_vfs();
+    const fs::VolumeId again = driver.probe(0, "/mnt/stick");
+    check(again != fs::kInvalidVolume && driver.attach(again), "mount it again without an owner");
+    vfs::Vnode* plain = hoststub::find_node("/mnt/stick/boot/limine.conf");
+    check(plain != nullptr && plain->uid == 0 && plain->gid == 0, "without an owner, the system's");
+    driver.unmount(again);
+    hoststub::detach_device();
+    free(image);
+}
+
 void partitioned_disk_is_not_claimed() {
     printf("fat-volume-test: a partitioned disk\n");
     constexpr uint32_t kVolumeSectors = 8192;
@@ -454,6 +493,7 @@ int main() {
     writes_round_trip();
     full_volume_writes_what_fits();
     read_only_device();
+    owner_is_adopted();
     partitioned_disk_is_not_claimed();
     tree_larger_than_the_vfs();
     dates_convert();
