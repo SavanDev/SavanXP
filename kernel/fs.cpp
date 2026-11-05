@@ -1,5 +1,6 @@
 #include "kernel/fs.hpp"
 
+#include "abi/savanxp_abi.h"
 #include "kernel/block.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
@@ -19,7 +20,9 @@ const fs::Driver* g_drivers[fs::kMaxDrivers] = {};
 size_t g_driver_count = 0;
 
 Mount g_mounts[fs::kMaxMounts] = {};
+// One past the highest slot in use; released slots leave holes.
 size_t g_mount_count = 0;
+uint32_t g_generation = 0;
 
 bool copy_mount_point(char* out, const char* mount_point) {
     if (mount_point == nullptr || *mount_point != '/') {
@@ -68,11 +71,18 @@ bool register_driver(const Driver& driver) {
 }
 
 size_t mount(size_t device_index, const char* mount_point) {
-    if (g_mount_count >= kMaxMounts || find(mount_point) != kInvalidMount) {
+    if (find(mount_point) != kInvalidMount) {
+        return kInvalidMount;
+    }
+    size_t slot_index = 0;
+    while (slot_index < kMaxMounts && g_mounts[slot_index].in_use) {
+        ++slot_index;
+    }
+    if (slot_index >= kMaxMounts) {
         return kInvalidMount;
     }
 
-    Mount& slot = g_mounts[g_mount_count];
+    Mount& slot = g_mounts[slot_index];
     if (!copy_mount_point(slot.mount_point, mount_point)) {
         return kInvalidMount;
     }
@@ -95,7 +105,11 @@ size_t mount(size_t device_index, const char* mount_point) {
         slot.volume = volume;
         slot.device_index = device_index;
         slot.attached = false;
-        return g_mount_count++;
+        if (slot_index + 1 > g_mount_count) {
+            g_mount_count = slot_index + 1;
+        }
+        ++g_generation;
+        return slot_index;
     }
 
     memset(slot.mount_point, 0, sizeof(slot.mount_point));
@@ -131,17 +145,36 @@ bool attach(size_t mount_index) {
     return slot.attached;
 }
 
-void unmount(size_t mount_index) {
+int release(size_t mount_index, bool (*referenced)(const vfs::Vnode& node)) {
     if (mount_index >= g_mount_count || !g_mounts[mount_index].in_use) {
-        return;
+        return -SX_EINVAL;
     }
     Mount& slot = g_mounts[mount_index];
-    if (slot.driver->unmount != nullptr) {
-        slot.driver->unmount(slot.volume);
+    if (strcmp(slot.mount_point, kRootMountPoint) == 0 || slot.driver->unmount == nullptr) {
+        return -SX_EINVAL;
     }
+    if (slot.attached && slot.driver->sync != nullptr && !slot.driver->sync(slot.volume)) {
+        return -SX_EIO;
+    }
+    // A volume that never attached may still have published part of its tree
+    // before it failed, or nothing at all.
+    if (!vfs::detach_subtree(slot.mount_point, referenced) &&
+        (slot.attached || vfs::last_error() != SX_EINVAL)) {
+        return -vfs::last_error();
+    }
+    slot.driver->unmount(slot.volume);
     memset(&slot, 0, sizeof(slot));
-    // El slot queda libre pero el conteo no baja: los indices de montaje ya
-    // entregados tienen que seguir apuntando a lo mismo.
+    // The slot is free for the next mount; indices handed out for other
+    // mounts keep naming what they named.
+    while (g_mount_count > 0 && !g_mounts[g_mount_count - 1].in_use) {
+        --g_mount_count;
+    }
+    ++g_generation;
+    return 0;
+}
+
+uint32_t generation() {
+    return g_generation;
 }
 
 size_t mount_count() {

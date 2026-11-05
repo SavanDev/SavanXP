@@ -295,6 +295,17 @@ enum sxn_syscall_number {
      * system only. -EBUSY if the disk or a partition of it is mounted,
      * -EINVAL for a partition. */
     SXN_SYS_STORAGE_RESCAN = 0x1030,
+    /* rdi = device id, rsi = const char* path, rdx = flags (0). Mounts the
+     * device at /mnt/<name> ([A-Za-z0-9._-], 1 to 24 characters, not there
+     * yet; /mnt is made if missing). The system only. 0, -ENODEV, -EINVAL (the
+     * path, the flags, or a partitioned disk), -EEXIST (the path exists),
+     * -EBUSY (it or an overlapping device is mounted), -EIO (not a volume any
+     * driver knows, or no slot left). SetVolumeMountPoint. */
+    SXN_SYS_STORAGE_MOUNT = 0x1031,
+    /* rdi = const char* mount point. Syncs and releases the volume. The
+     * system only. -EINVAL for "/" or nothing mounted there, -EBUSY while a
+     * file of it is open or a program of it is mapped. DeleteVolumeMountPoint. */
+    SXN_SYS_STORAGE_UNMOUNT = 0x1032,
 };
 
 /* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */

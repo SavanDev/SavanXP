@@ -113,8 +113,17 @@ size_t mount(size_t device_index, const char* mount_point);
 size_t mount_any(const char* mount_point);
 
 bool attach(size_t mount_index);
-void unmount(size_t mount_index);
+// Detaches the volume from the VFS and releases it: synced, its tree gone
+// from the VFS (vfs::detach_subtree), the driver's state freed, the slot
+// free. 0; -EBUSY when `referenced` says a node of it is still held (an open
+// file, a mapped program), and nothing changes; -EINVAL for "/" or a driver
+// without unmount; -EIO if the sync failed.
+int release(size_t mount_index, bool (*referenced)(const vfs::Vnode& node));
+// Bumps on every mount and release.
+uint32_t generation();
 
+// One past the highest mount slot in use: iterate and skip the holes
+// mount_info() reports as false.
 size_t mount_count();
 bool mount_info(size_t mount_index, MountInfo& out);
 // Index of the volume mounted exactly at mount_point, or kInvalidMount.

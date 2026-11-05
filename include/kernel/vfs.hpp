@@ -116,6 +116,14 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
 Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable);
 // What a filesystem driver calls from attach/create_file to publish a file.
 // `data` is the driver's own record; the VFS does not read it.
+// Releases the subtree rooted at the directory `path` -- a volume's mount
+// point, at unmount -- and the directory itself: they leave the tree and
+// their slots are reused. Refused, touching nothing, when `referenced` says
+// any node of it is still held (last_error() is EBUSY), or when `path` is not
+// a directory below "/" (EINVAL). Nodes are pointers others may keep; the
+// predicate is how the caller proves nobody does.
+bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node));
+
 Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable);
 bool unlink(const cred::Credentials& who, const char* path);
 bool rmdir(const cred::Credentials& who, const char* path);

@@ -44,7 +44,10 @@ Two things are deliberately missing:
   range backed — the range matters because "the whole file" and "one slice of it"
   are different sections, and keying on the file alone mapped a segment with the
   whole image behind it. The vnode, unlike an inode number, is unique across
-  mounted volumes and not reused after an unlink. But a write keeps the same
+  mounted volumes and not reused after an unlink. (Unmount does reuse node
+  slots, but only after checking that no live section names any node of the
+  volume: see [FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time).)
+  But a write keeps the same
   vnode, so overwriting a library's bytes in place would leave the
   cache serving the old image. This is unreachable today and must stay
   that way until it is handled: **there is no install syscall**, Add/Remove

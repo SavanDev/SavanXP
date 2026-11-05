@@ -499,6 +499,28 @@ int native_storage_rescan(const Process& caller, uint64_t id) {
     return storage::rescan(static_cast<uint32_t>(id));
 }
 
+int native_storage_mount(const Process& caller, uint64_t id, uint64_t user_path, uint64_t flags) {
+    char path[64] = {};
+    if (!cred::acts_as_system(caller.credentials)) {
+        return sx::negative_error(SX_EPERM);
+    }
+    if (flags != 0 || id > 0xffffffffull || !sx::copy_user_string(path, sizeof(path), user_path)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return storage::mount(static_cast<uint32_t>(id), path);
+}
+
+int native_storage_unmount(const Process& caller, uint64_t user_path) {
+    char path[64] = {};
+    if (!cred::acts_as_system(caller.credentials)) {
+        return sx::negative_error(SX_EPERM);
+    }
+    if (!sx::copy_user_string(path, sizeof(path), user_path)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return storage::unmount(path);
+}
+
 // Whether `handle` names an open entry of the caller's table.
 bool handle_is_open(const Process& proc, int32_t handle) {
     return handle >= 0 && handle < static_cast<int32_t>(process::kMaxFileHandles) &&
@@ -1137,6 +1159,13 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_STORAGE_RESCAN:
             context->rax = static_cast<uint64_t>(native_storage_rescan(*caller, context->rdi));
+            return context;
+        case SXN_SYS_STORAGE_MOUNT:
+            context->rax = static_cast<uint64_t>(
+                native_storage_mount(*caller, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_STORAGE_UNMOUNT:
+            context->rax = static_cast<uint64_t>(native_storage_unmount(*caller, context->rdi));
             return context;
         default:
             break;

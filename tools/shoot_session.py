@@ -1357,6 +1357,23 @@ def scenario_diskmgmt(s):
     expect_text(image, (0, header[1], 1280, 770), "New Volume", TEXT, FIELD,
                 "the new partition is on the map with its label")
 
+    # Mount it: select its segment, then Mount... (Format, Delete, Mount).
+    volume = find_text(image, (0, header[1] + 120, 1280, 770), "New Volume", TEXT, FIELD)[0]
+    if volume is None:
+        raise Failure("the new partition is not on the map")
+    select_on_map((volume[0] + 4, volume[1] + 4), "SavanXP SxFS", image)
+    context_item(3)
+    image = s.shot("diskmgmt-mount")
+    expect_text(image, (0, 0, 1280, 800), "Mount the volume as a folder under /mnt:", TEXT, FACE,
+                "Mount asks for the folder")
+    s.qmp.tap("ret", pause=1.0)
+    consent("diskmgmt-mount-consent")
+    image = settle("diskmgmt-mounted")
+    # In the list, where its row is the selected one: on the map the pointer
+    # and the selection's hatch sit over the text.
+    expect_text(image, (0, header[1], 1280, header[1] + 120), "/mnt/new-volume", SELECT_TEXT, SELECT,
+                "the mounted volume is named by its mount point")
+
 
 def scenario_kbdlayout(s):
     """Selector de layout de teclado: click en el indicador de la taskbar

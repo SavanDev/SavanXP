@@ -102,9 +102,10 @@ struct Volume {
     uint64_t metadata_bytes_written;
 };
 
-// Raiz + destino del instalador. Cada volumen pesa ~185 KiB de BSS (bitmaps,
-// tabla de inodos, cache de records y snapshot), asi que subirlo no es gratis.
-constexpr size_t kMaxVolumes = 2;
+// The root, the installer's target, and one more volume Disk Management mounts
+// under /mnt. Each volume is about 3 MiB of BSS (bitmaps, inode table, record
+// cache and snapshot), so raising it is not free.
+constexpr size_t kMaxVolumes = 3;
 Volume g_volumes[kMaxVolumes] = {};
 
 size_t volume_index(const Volume& volume) {
@@ -2241,15 +2242,24 @@ bool driver_stats(VolumeId volume, fs::VolumeStats& out) {
     return true;
 }
 
-// unmount stays nullptr on purpose: vfs:: cannot detach a subtree yet, so
-// releasing the volume would leave vnodes pointing at freed records. The
-// installer finishes with sync(), which is enough.
+// fs::release has already synced the volume and taken its tree out of the VFS
+// (vfs::detach_subtree), after checking nothing held any of its vnodes: no
+// record is reachable any more, so its state can go.
+void driver_unmount(VolumeId id) {
+    Volume* volume = volume_for_id(id);
+    if (volume == nullptr) {
+        return;
+    }
+    (void)block::sync_all();
+    memset(volume, 0, sizeof(*volume));
+}
+
 const fs::Driver kDriver = {
     .name = "sxfs",
     .priority = 100,
     .probe = &probe,
     .attach = &attach,
-    .unmount = nullptr,
+    .unmount = &driver_unmount,
     .read = &driver_read,
     .write = &driver_write,
     .truncate = &driver_truncate,

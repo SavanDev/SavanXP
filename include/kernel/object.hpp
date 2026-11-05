@@ -260,6 +260,10 @@ bool can_satisfy_wait(const Header* object);
 // Secciones vivas en la tabla, y cuantas respaldan un archivo. Es lo que hace
 // observable el cache por inode: dos procesos con la misma libreria tienen que
 // sumar 1 entre los dos, no 2.
-void section_live_counts(uint32_t& live, uint32_t& file_backed);bool try_acquire_wait(Header* object);
+void section_live_counts(uint32_t& live, uint32_t& file_backed);
+// True while a live file-backed section was made from this vnode: a program
+// or library mapped from it. Unmount refuses such a volume.
+bool section_uses_vnode(const vfs::Vnode& node);
+bool try_acquire_wait(Header* object);
 
 } // namespace object

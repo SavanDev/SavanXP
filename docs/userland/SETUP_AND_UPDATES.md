@@ -107,10 +107,9 @@ prepared is an open question. UEFI comes first; BIOS may land a phase later.
    overlapping a mounted volume is refused.
 2. **Re-reading a partition table.** Done: `SXN_SYS_STORAGE_RESCAN`
    (`partition::rescan`).
-3. **Mounting from userland.** A system-only call that mounts a device at a
-   path (`/mnt/target`). There is no `unmount` and none is needed: setup ends
-   with `sync` and a reboot
-   ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits)).
+3. **Mounting from userland.** Done: `SXN_SYS_STORAGE_MOUNT` mounts at
+   `/mnt/<name>`, system only, and `SXN_SYS_STORAGE_UNMOUNT` releases it
+   ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)).
 4. **Choosing the root from the command line.** `fs::mount_any` keeps the first
    volume a driver claims, in priority order: virtio-blk 110, AHCI and ATA 100,
    the LiveCD ramdisk 10. Booting the LiveCD on a machine that already has

@@ -4,10 +4,14 @@
 #include <stdint.h>
 
 #include "kernel/block.hpp"
+#include "kernel/credentials.hpp"
 #include "kernel/fs.hpp"
+#include "kernel/object.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/sx.hpp"
+#include "kernel/vfs.hpp"
 #include "sxfs/sxfs_format.h"
 
 namespace {
@@ -74,6 +78,34 @@ bool overlaps_mounted(size_t disk, uint64_t start, uint64_t count) {
         }
     }
     return false;
+}
+
+// Whether anything still holds a vnode: an open file or directory handle, or a
+// section mapped from it.
+bool vnode_referenced(const vfs::Vnode& node) {
+    return process::detail::vnode_has_open_references(node) || object::section_uses_vnode(node);
+}
+
+constexpr const char kMountParent[] = "/mnt";
+constexpr size_t kMaxMountName = 24;
+
+// "/mnt/<name>", the name one component of [A-Za-z0-9._-], not "." or "..".
+bool valid_mount_path(const char* path) {
+    const size_t prefix = sizeof(kMountParent) - 1;
+    if (path == nullptr || strncmp(path, kMountParent, prefix) != 0 || path[prefix] != '/') {
+        return false;
+    }
+    const char* name = path + prefix + 1;
+    size_t length = 0;
+    for (; name[length] != 0; ++length) {
+        const char c = name[length];
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '.' || c == '_' || c == '-';
+        if (!ok || length >= kMaxMountName) {
+            return false;
+        }
+    }
+    return length > 0 && strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
 }
 
 int check_range(size_t index, uint64_t lba, uint32_t count, const void* buffer) {
@@ -168,7 +200,57 @@ sxn_storage_scheme to_abi(partition::Scheme scheme) {
 namespace storage {
 
 uint32_t generation() {
-    return block::generation() + g_content_generation;
+    return block::generation() + fs::generation() + g_content_generation;
+}
+
+int mount(uint32_t id, const char* path) {
+    const size_t index = index_of(id);
+    if (index == block::kInvalidDevice) {
+        return sx::negative_error(SX_ENODEV);
+    }
+    if (!valid_mount_path(path)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (vfs::resolve(path) != nullptr || fs::find(path) != fs::kInvalidMount) {
+        return sx::negative_error(SX_EEXIST);
+    }
+    // A partitioned disk is its table, not a volume; and nothing may be
+    // mounted twice, nor over a mounted partition or disk.
+    partition::Info slice = {};
+    if (!partition::info(index, slice) && partition::disk_info(index).scheme != partition::Scheme::none) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const Extent device = extent_of(index);
+    if (overlaps_mounted(device.disk, device.start, device.sectors)) {
+        return sx::negative_error(SX_EBUSY);
+    }
+    const vfs::Vnode* parent = vfs::resolve(kMountParent);
+    if (parent == nullptr) {
+        parent = vfs::mkdir(cred::system(), kMountParent, 0755);
+    }
+    if (parent == nullptr || parent->type != vfs::NodeType::directory) {
+        return sx::negative_error(SX_EIO);
+    }
+    const size_t mounted = fs::mount(index, path);
+    if (mounted == fs::kInvalidMount) {
+        return sx::negative_error(SX_EIO);
+    }
+    if (!fs::attach(mounted)) {
+        (void)fs::release(mounted, nullptr);
+        return sx::negative_error(SX_EIO);
+    }
+    return 0;
+}
+
+int unmount(const char* path) {
+    if (path == nullptr) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t mounted = fs::find(path);
+    if (mounted == fs::kInvalidMount || strcmp(path, fs::kRootMountPoint) == 0) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return fs::release(mounted, &vnode_referenced);
 }
 
 int read(uint32_t id, uint64_t lba, uint32_t count, void* buffer) {

@@ -150,11 +150,32 @@ Block-device diagnostics that used to be called from the VFS write path (ATA's
 polling margins) are now `block::report_health`, called by the filesystem
 driver and answered by whichever block driver has something to say.
 
+## Mounting and unmounting at run time
+
+Besides the root at boot, the system can mount a volume at `/mnt/<name>` and
+release it (`SXN_SYS_STORAGE_MOUNT`, `_UNMOUNT`;
+[DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md)). Mount slots are
+reused: `fs::mount` takes the first free one.
+
+`fs::release` is the unmount. It syncs the volume, then asks
+`vfs::detach_subtree` to take the mount point and everything below it out of
+the tree, and only then lets the driver free its state (`unmount`). The detach
+first walks the subtree, unlinked nodes included, and refuses with `EBUSY` if
+any node is still held: an open file or directory handle
+(`process::detail::vnode_has_open_references`) or a live section mapped from a
+file (`object::section_uses_vnode`), which is what a running program from the
+volume has. Under the kernel lock nothing else can be holding a vnode between
+two system calls, so when nothing is found nothing points at the subtree, and
+its node slots go to a free list `add_node` takes from first. The root
+(`/`) cannot be released.
+
 ## Limits
 
-- No `unmount` for SxFS: the VFS cannot detach a subtree yet, so a released
-  volume would leave vnodes pointing at freed records.
-- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4.
+- `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4 (root, ESP, installer
+  target, one more). SxFS holds 3 volumes at once (`kMaxVolumes`, about
+  3 MiB of kernel memory each).
+- The VFS holds 2048 nodes (`kMaxNodes`) for the initramfs, `/dev` and every
+  mounted volume's files and directories together.
 - Directories on a volume are plain in-memory vnodes (`Backend::memory`). They
   find their driver by path, not by a stamp. That is enough while every
   directory operation starts from a path.

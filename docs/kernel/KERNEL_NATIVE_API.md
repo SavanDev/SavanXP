@@ -277,6 +277,14 @@ facade, `storage::` (`kernel/storage.cpp`).
   removes the disk's partitions from `block::` and registers what its table
   says now; their old ids are gone. The system only; `-EBUSY` if the disk or
   any partition of it is mounted, `-EINVAL` for a partition.
+- `SXN_SYS_STORAGE_MOUNT` (`0x1031`): rdi = id, rsi = path, rdx = flags (0).
+  Mounts at `/mnt/<name>` (`[A-Za-z0-9._-]`, 1 to 24 characters, not existing
+  yet; `/mnt` is made on the root if missing). `-EBUSY` when the device or an
+  overlapping one is mounted, `-EINVAL` for a partitioned disk, `-EEXIST`,
+  `-EIO` when no driver recognises it. `SXN_SYS_STORAGE_UNMOUNT` (`0x1032`):
+  rdi = the mount point; `-EBUSY` while a file of the volume is open or a
+  program of it is mapped, `-EINVAL` for `/`. Both the system only. See
+  [FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time).
 - Block slots became reusable for the rescan: `block::register_device` takes
   the first free slot and returns its index, `block::unregister_device`
   leaves a hole, and `partition::` keeps the index it was given instead of
@@ -287,7 +295,11 @@ SxFS whose usage adds up, checks ids are unique and every partition's parent
 is a listed disk, and that a short size and a bad pointer are `-EINVAL`. As
 the system it reads the root's superblock, is refused writing it back and
 rescanning its disk (`-EBUSY`), and gets `-EINVAL` and `-ENODEV` for bad
-ranges and ids; a child running as the user gets `-EPERM` from all three.
+ranges and ids. Mounting the root again is `-EBUSY`, paths outside `/mnt`,
+nested or `..` are `-EINVAL`, as are bad flags, a partitioned disk and
+unmounting `/` or nothing. A child running as the user gets `-EPERM` from every
+call but the snapshot. Diskmgmt's self-test covers a mount that succeeds, and
+an unmount refused while a file is open.
 
 ## Slice 27: what a task list reads, and ending by owner
 

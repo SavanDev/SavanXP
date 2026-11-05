@@ -313,6 +313,15 @@ void section_live_counts(uint32_t& live, uint32_t& file_backed) {
     }
 }
 
+bool section_uses_vnode(const vfs::Vnode& node) {
+    for (const SectionObject& section_object : g_section_objects) {
+        if (section_object.in_use && section_object.file_backed != 0 && section_object.source_node == &node) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static SectionObject* find_file_section(const vfs::Vnode* source, uint64_t offset, uint64_t length) {
     if (source == nullptr) {
         return nullptr;

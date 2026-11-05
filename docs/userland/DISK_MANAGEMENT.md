@@ -15,7 +15,7 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 | `libsxdisk` (GPT read and write) and `sxfs_mkfs` | done |
 | `SXN_SYS_STORAGE_SNAPSHOT` and the read-only window | done |
 | Raw sector access, rescan; Initialize, New Partition, Format, Delete | done |
-| Mount and unmount | planned |
+| Mount and unmount | done |
 
 ## The window
 
@@ -47,12 +47,15 @@ It shares its partition-table code, `libsxdisk`, with the planned installer
 | New Partition | free space, or a GPT disk's box (its first free range) | adds a GPT entry, 1 MiB aligned; *Format as SxFS* (default) formats it and gives it the SxFS type, otherwise its type is Basic data |
 | Format | a partition | `sxfs_mkfs`, the root owned by the person who asked (uid, group `users`), the SxFS type, and the label as the GPT name |
 | Delete Partition | a partition | empties its GPT entry |
+| Mount | an SxFS volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case |
+| Unmount | a mounted volume but `/` | syncs and releases it; refused while a file of it is open |
 | Rescan Disks | every disk with nothing mounted | reads its table again |
 
 Each one is the program run again as `diskmgmt --init <id> <name>`,
 `--create <disk id> <name> <start> <sectors> [--format] [--label <text>]`,
-`--format <id> <name> [--label <text>]`, `--delete <id> <name> <start>` or
-`--rescan`, through `sxn_elevate`; the prompt shows those arguments. The
+`--format <id> <name> [--label <text>]`, `--delete <id> <name> <start>`,
+`--mount <id> <name> <path>`, `--unmount <id> <name>` or `--rescan`, through
+`sxn_elevate`; the prompt shows those arguments. The
 elevated copy exits with 0 or the errno, and the window says what went wrong
 (in use, changed since shown, access denied, no space). After writing a table
 it asks the kernel to read it again (`SXN_SYS_STORAGE_RESCAN`), so the new
@@ -103,6 +106,11 @@ partition name (36 UTF-16 units, kept as ASCII).
   ([SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md)); a larger partition is formatted
   to its first 1 GiB, and the dialog says so.
 - Every confirmation has *Cancel* as its default button.
+- **A disk with a mounted partition is not repartitioned**, and a mounted
+  partition is neither formatted nor deleted: unmount it first. The kernel
+  refuses the writes anyway; the window does not offer them.
+- **Mount points are `/mnt/<name>`**, one level, `[A-Za-z0-9._-]`, at most 24
+  characters, not existing yet. Mounts do not survive a reboot.
 
 ## Tests
 
@@ -115,10 +123,14 @@ partition name (36 UTF-16 units, kept as ASCII).
   `SXBLANK0` (`extra_disk_mib` in `tools/smoke_catalog.py`), and on it alone the
   self-test checks that the user's `--init` is refused (`EPERM`), then
   initializes, creates and formats a 32 MiB `SXTEST`, reformats it with a new
-  label, refuses an overlapping partition and a wrong start, and deletes it.
+  label, mounts it at `/mnt/sxtest`, writes a file through `/bin/sh`, is
+  refused unmounting while `cat` holds a file open, unmounts, mounts again and
+  finds both files, refuses an overlapping partition and a wrong start, and
+  deletes it.
 - `./build.sh smoke native-test`: the slice 28 assertions.
 - `./build.sh smoke elevation-smoke`: `diskmgmt --rescan` through the real
   consent prompt.
 - `./tools/shoot.sh --scenario diskmgmt`: the window, the root volume drawn as
-  the system's, Properties, then Initialize and New Partition on a blank disk
-  (`--extra-disk`, only for this scenario) through the consent prompt.
+  the system's, Properties, then Initialize, New Partition and Mount on a
+  blank disk (`--extra-disk`, only for this scenario) through the consent
+  prompt.

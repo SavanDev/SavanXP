@@ -156,6 +156,8 @@ enum dm_command {
     DM_CMD_NEW_PARTITION,
     DM_CMD_FORMAT,
     DM_CMD_DELETE,
+    DM_CMD_MOUNT,
+    DM_CMD_UNMOUNT,
     DM_CMD_PROPERTIES,
     DM_CMD_ABOUT,
 };
@@ -176,13 +178,18 @@ static struct sxgui_menu_item k_action_items[] = {
     {"Format...", DM_CMD_FORMAT, SXGUI_MENU_DISABLED},
     {"Delete Partition...\tDel", DM_CMD_DELETE, SXGUI_MENU_DISABLED},
     {0, 0, 0},
+    {"Mount...", DM_CMD_MOUNT, SXGUI_MENU_DISABLED},
+    {"Unmount", DM_CMD_UNMOUNT, SXGUI_MENU_DISABLED},
+    {0, 0, 0},
     {"Properties\tAlt+Enter", DM_CMD_PROPERTIES, 0},
 };
 #define DM_ITEM_INITIALIZE 3
 #define DM_ITEM_NEW_PARTITION 4
 #define DM_ITEM_FORMAT 5
 #define DM_ITEM_DELETE 6
-#define DM_ITEM_PROPERTIES 8
+#define DM_ITEM_MOUNT 8
+#define DM_ITEM_UNMOUNT 9
+#define DM_ITEM_PROPERTIES 11
 
 static struct sxgui_menu_item k_help_items[] = {
     {"About Disk Management", DM_CMD_ABOUT, 0},
@@ -195,7 +202,7 @@ static const struct sxgui_menu k_menus[] = {
 };
 
 /* The context menu is built for whatever was clicked. */
-static struct sxgui_menu_item g_context_items[10];
+static struct sxgui_menu_item g_context_items[12];
 static struct sxgui_menu g_context_menu = {"", g_context_items, 0};
 
 /* ---- dialogs -------------------------------------------------------------------- */
@@ -245,6 +252,12 @@ static struct sxgui_dialog g_format_dialog;
 static struct sxgui_widget g_format_widgets[6];
 static char g_format_label[DM_LABEL_CAPACITY];
 static char g_format_note[96];
+
+/* Mount: the name under /mnt. */
+#define DM_MOUNT_HEIGHT 130
+static struct sxgui_dialog g_mount_dialog;
+static struct sxgui_widget g_mount_widgets[5];
+static char g_mount_name[25];
 
 /* What the open dialog is about, copied when it opened: a refresh while it
  * is up must not change what Yes does. */
@@ -775,6 +788,20 @@ static int can_modify_partition(const struct sxn_storage_device *partition)
     return parent >= 0 && can_partition(&g_devices[parent]);
 }
 
+/* A volume that may be mounted: SxFS, not mounted, not the ESP. */
+static int can_mount(const struct sxn_storage_device *device)
+{
+    return device != 0 && device->kind != SXN_STORAGE_MEMORY && strcmp(device->fs_name, "sxfs") == 0 &&
+        (device->flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_ESP)) == 0u &&
+        (device->kind == SXN_STORAGE_PARTITION || device->scheme == SXN_STORAGE_SCHEME_NONE);
+}
+
+/* Anything mounted but the system's root. */
+static int can_unmount(const struct sxn_storage_device *device)
+{
+    return device != 0 && (device->flags & SXN_STORAGE_MOUNTED) != 0u && strcmp(device->mount_point, "/") != 0;
+}
+
 /* ---- sector I/O ------------------------------------------------------------------- */
 
 /* The last error a storage call returned, so an operation can report why the
@@ -1140,6 +1167,42 @@ static int op_delete(uint32_t id, const char *name, uint64_t start)
     return rescan_disk(disk_id);
 }
 
+static int op_mount(uint32_t id, const char *name, const char *path)
+{
+    const struct sxn_storage_device *device = recheck(id, name);
+    long result;
+
+    if (device == 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_mount(device))
+    {
+        return SAVANXP_EBUSY;
+    }
+    result = sxn_storage_mount(id, path);
+    return result < 0 ? (int)-result : 0;
+}
+
+static int op_unmount(uint32_t id, const char *name)
+{
+    const struct sxn_storage_device *device = recheck(id, name);
+    char path[SXN_STORAGE_MOUNT_CAPACITY];
+    long result;
+
+    if (device == 0)
+    {
+        return SAVANXP_ENOENT;
+    }
+    if (!can_unmount(device))
+    {
+        return SAVANXP_EINVAL;
+    }
+    snprintf(path, sizeof(path), "%s", device->mount_point);
+    result = sxn_storage_unmount(path);
+    return result < 0 ? (int)-result : 0;
+}
+
 /* Rescan Disks: every disk with nothing mounted reads its table again. */
 static int op_rescan_all(void)
 {
@@ -1224,9 +1287,18 @@ static int run_operation(int argc, char **argv)
     if (argc < 4 || !parse_u64(argv[2], &id) || id == 0u || id > 0xffffffffull)
     {
         return strcmp(argv[1], "--init") == 0 || strcmp(argv[1], "--create") == 0 ||
-                       strcmp(argv[1], "--format") == 0 || strcmp(argv[1], "--delete") == 0
+                       strcmp(argv[1], "--format") == 0 || strcmp(argv[1], "--delete") == 0 ||
+                       strcmp(argv[1], "--mount") == 0 || strcmp(argv[1], "--unmount") == 0
                    ? SAVANXP_EINVAL
                    : -1;
+    }
+    if (strcmp(argv[1], "--unmount") == 0)
+    {
+        return op_unmount((uint32_t)id, argv[3]);
+    }
+    if (strcmp(argv[1], "--mount") == 0)
+    {
+        return argc < 5 ? SAVANXP_EINVAL : op_mount((uint32_t)id, argv[3], argv[4]);
     }
     if (strcmp(argv[1], "--init") == 0)
     {
@@ -1905,6 +1977,20 @@ static const struct sxn_storage_device *partition_target(void)
     return can_modify_partition(device) ? device : 0;
 }
 
+static const struct sxn_storage_device *mount_target(void)
+{
+    const struct sxn_storage_device *device = g_select_kind == DM_SELECT_DEVICE ? selected_device() : 0;
+
+    return can_mount(device) ? device : 0;
+}
+
+static const struct sxn_storage_device *unmount_target(void)
+{
+    const struct sxn_storage_device *device = g_select_kind == DM_SELECT_DEVICE ? selected_device() : 0;
+
+    return can_unmount(device) ? device : 0;
+}
+
 static void set_item(struct sxgui_menu_item *item, int enabled)
 {
     item->flags = enabled ? 0u : SXGUI_MENU_DISABLED;
@@ -1918,6 +2004,8 @@ static void update_menus(void)
     set_item(&k_action_items[DM_ITEM_NEW_PARTITION], new_partition_target(&disk) != 0);
     set_item(&k_action_items[DM_ITEM_FORMAT], partition_target() != 0);
     set_item(&k_action_items[DM_ITEM_DELETE], partition_target() != 0);
+    set_item(&k_action_items[DM_ITEM_MOUNT], mount_target() != 0);
+    set_item(&k_action_items[DM_ITEM_UNMOUNT], unmount_target() != 0);
     set_item(&k_action_items[DM_ITEM_PROPERTIES], selected_device() != 0);
 }
 
@@ -2159,6 +2247,101 @@ static void on_format_ok(struct sxgui_widget *widget, void *user)
     report("Format", perform(argv, argc));
 }
 
+/* A default name under /mnt: the label, else the device name, reduced to the
+ * characters a mount point may have. */
+static void default_mount_name(const struct sxn_storage_device *device, char *out, size_t capacity)
+{
+    const char *source = device->label[0] != '\0' ? device->label : device->name;
+    size_t length = 0;
+
+    for (; *source != '\0' && length + 1 < capacity; ++source)
+    {
+        char c = *source;
+
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = (char)(c - 'A' + 'a');
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')
+        {
+            out[length++] = c;
+        }
+        else if (c == ' ' && length > 0 && out[length - 1] != '-')
+        {
+            out[length++] = '-';
+        }
+    }
+    out[length] = '\0';
+    if (length == 0)
+    {
+        snprintf(out, capacity, "%s", "volume");
+    }
+}
+
+static void begin_mount(void)
+{
+    const struct sxn_storage_device *device = mount_target();
+
+    if (device == 0)
+    {
+        return;
+    }
+    g_pending_id = device->id;
+    snprintf(g_pending_name, sizeof(g_pending_name), "%s", device->name);
+    default_mount_name(device, g_mount_name, sizeof(g_mount_name));
+    g_mount_widgets[2].caret = (int)strlen(g_mount_name);
+    memset(&g_mount_dialog, 0, sizeof(g_mount_dialog));
+    g_mount_dialog.title = "Mount";
+    g_mount_dialog.widgets = g_mount_widgets;
+    g_mount_dialog.widget_count = 5;
+    g_mount_dialog.initial_focus = 2;
+    g_mount_dialog.default_button = 3;
+    sxgui_dialog_begin(&g_app.ui, &g_mount_dialog, DM_FORM_WIDTH, DM_MOUNT_HEIGHT);
+}
+
+static void on_mount_ok(struct sxgui_widget *widget, void *user)
+{
+    char id_text[16];
+    char path[SXN_STORAGE_MOUNT_CAPACITY];
+    const char *argv[5];
+
+    (void)widget;
+    (void)user;
+    if (g_mount_name[0] == '\0')
+    {
+        return;
+    }
+    sxgui_dialog_end(&g_app.ui, 1);
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)g_pending_id);
+    snprintf(path, sizeof(path), "/mnt/%s", g_mount_name);
+    argv[0] = "diskmgmt";
+    argv[1] = "--mount";
+    argv[2] = id_text;
+    argv[3] = g_pending_name;
+    argv[4] = path;
+    report("Mount", perform(argv, 5));
+}
+
+static void do_unmount(void)
+{
+    const struct sxn_storage_device *device = unmount_target();
+    char id_text[16];
+    char name[SXN_STORAGE_NAME_CAPACITY];
+    const char *argv[4];
+
+    if (device == 0)
+    {
+        return;
+    }
+    snprintf(id_text, sizeof(id_text), "%u", (unsigned)device->id);
+    snprintf(name, sizeof(name), "%s", device->name);
+    argv[0] = "diskmgmt";
+    argv[1] = "--unmount";
+    argv[2] = id_text;
+    argv[3] = name;
+    report("Unmount", perform(argv, 4));
+}
+
 static void on_menu_command(int id, void *user)
 {
     const char *argv[2] = {"diskmgmt", "--rescan"};
@@ -2186,6 +2369,12 @@ static void on_menu_command(int id, void *user)
         break;
     case DM_CMD_DELETE:
         begin_delete();
+        break;
+    case DM_CMD_MOUNT:
+        begin_mount();
+        break;
+    case DM_CMD_UNMOUNT:
+        do_unmount();
         break;
     case DM_CMD_PROPERTIES:
         show_properties();
@@ -2239,6 +2428,9 @@ static int build_context_menu(void)
 
         add_context_item(&count, "Format...", DM_CMD_FORMAT, modifiable);
         add_context_item(&count, "Delete Partition...", DM_CMD_DELETE, modifiable);
+        g_context_items[count++] = (struct sxgui_menu_item){0, 0, 0};
+        add_context_item(&count, "Mount...", DM_CMD_MOUNT, mount_target() != 0);
+        add_context_item(&count, "Unmount", DM_CMD_UNMOUNT, unmount_target() != 0);
         g_context_items[count++] = (struct sxgui_menu_item){0, 0, 0};
         add_context_item(&count, "Properties", DM_CMD_PROPERTIES, 1);
     }
@@ -2603,6 +2795,145 @@ static int selftest_init_as_user(uint32_t id, const char *name)
     return status;
 }
 
+/* Runs `command` with /bin/sh -c, its stdin the handle given (-1: ours).
+ * Returns the pid. */
+static long selftest_shell(const char *command, int32_t stdin_handle)
+{
+    struct sxn_spawn_request request;
+    char *argv[3];
+
+    argv[0] = "/bin/sh";
+    argv[1] = "-c";
+    argv[2] = (char *)command;
+    sxn_spawn_request_init(&request, "/bin/sh", argv, 3);
+    request.std_handles[0] = stdin_handle;
+    return sxn_spawn_ex(&request);
+}
+
+static const struct sxn_storage_device *selftest_device(uint32_t id)
+{
+    int index;
+
+    (void)load_devices();
+    index = find_device(id);
+    return index >= 0 ? &g_devices[index] : 0;
+}
+
+/* Mount, write, refuse to unmount while a file is open, unmount, mount again
+ * and find the files, unmount. On the blank disk's SxFS partition. */
+static void selftest_mount(uint32_t part_id, const char *name)
+{
+    const struct sxn_storage_device *device;
+    int32_t pipe_handles[2] = {-1, -1};
+    uint32_t files;
+    int status = -1;
+    long child;
+    int tries;
+
+    if (op_mount(part_id, name, "/mnt/../x") != SAVANXP_EINVAL || op_mount(part_id, name, "/tmp/x") != SAVANXP_EINVAL)
+    {
+        selftest_fail("a mount point outside /mnt was accepted");
+    }
+    if (op_mount(part_id, name, "/mnt/sxtest") != 0)
+    {
+        selftest_fail("Mount failed");
+        return;
+    }
+    device = selftest_device(part_id);
+    if (device == 0 || (device->flags & SXN_STORAGE_MOUNTED) == 0u || strcmp(device->mount_point, "/mnt/sxtest") != 0 ||
+        device->total_bytes == 0u)
+    {
+        selftest_fail("the mounted partition is not listed at /mnt/sxtest");
+        return;
+    }
+    files = device->file_count;
+    if (find_device(device->parent_id) < 0 ||
+        (g_devices[find_device(device->parent_id)].flags & SXN_STORAGE_CHILD_MOUNTED) == 0u)
+    {
+        selftest_fail("the disk is not flagged as holding a mounted partition");
+    }
+    if (op_delete(part_id, name, device->start_lba) != SAVANXP_EBUSY || op_mount(part_id, name, "/mnt/other") != SAVANXP_EBUSY)
+    {
+        selftest_fail("a mounted partition could be deleted or mounted twice");
+    }
+
+    child = selftest_shell("echo hello > /mnt/sxtest/hello.txt", -1);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
+    {
+        selftest_fail("a file could not be written on the mounted volume");
+    }
+    device = selftest_device(part_id);
+    if (device == 0 || device->file_count != files + 1u)
+    {
+        selftest_fail("the new file is not counted on the volume");
+    }
+
+    /* cat keeps held.txt open for as long as its stdin, our pipe, is open. */
+    if (sxn_pipe_create(pipe_handles) != 0)
+    {
+        selftest_fail("no pipe for the open-file check");
+        return;
+    }
+    child = selftest_shell("cat > /mnt/sxtest/held.txt", pipe_handles[0]);
+    for (tries = 0; tries < 100; ++tries)
+    {
+        device = selftest_device(part_id);
+        if (device != 0 && device->file_count == files + 2u)
+        {
+            break;
+        }
+        (void)sxn_wait_one(pipe_handles[1], 50);
+    }
+    if (child <= 0 || tries == 100)
+    {
+        selftest_fail("the held file never appeared");
+    }
+    else if (op_unmount(part_id, name) != SAVANXP_EBUSY)
+    {
+        selftest_fail("a volume with an open file was unmounted");
+    }
+    (void)sxn_write(pipe_handles[1], "held\n", 5);
+    (void)sxn_close(pipe_handles[1]);
+    (void)sxn_close(pipe_handles[0]);
+    if (child > 0)
+    {
+        (void)sxn_waitpid(child, &status);
+    }
+
+    if (op_unmount(part_id, name) != 0)
+    {
+        selftest_fail("Unmount failed once nothing held the volume");
+        return;
+    }
+    device = selftest_device(part_id);
+    if (device == 0 || (device->flags & SXN_STORAGE_MOUNTED) != 0u || device->mount_point[0] != '\0')
+    {
+        selftest_fail("the partition is still listed as mounted");
+        return;
+    }
+    if (op_mount(part_id, name, "/mnt/sxtest") != 0)
+    {
+        selftest_fail("the volume could not be mounted again");
+        return;
+    }
+    device = selftest_device(part_id);
+    if (device == 0 || device->file_count != files + 2u)
+    {
+        selftest_fail("the files written before the unmount are gone");
+    }
+    child = selftest_shell("cat /mnt/sxtest/held.txt > /mnt/sxtest/copy.txt", -1);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
+    {
+        selftest_fail("the remounted volume cannot be read and written");
+    }
+    if (op_unmount(part_id, name) != 0)
+    {
+        selftest_fail("the second unmount failed");
+        return;
+    }
+    (void)sxn_log("diskmgmt: mounted, wrote, refused a busy unmount, unmounted and remounted /mnt/sxtest");
+}
+
 /* The write half, on the scenario's blank disk (serial SXBLANK0), never on
  * the system's: initialize, partition and format, relabel, delete. */
 static void selftest_writes(void)
@@ -2694,6 +3025,13 @@ static void selftest_writes(void)
     }
     part_id = g_devices[part].id;
     snprintf(name, sizeof(name), "%s", g_devices[part].name);
+    selftest_mount(part_id, name);
+    (void)load_devices();
+    if (find_device(part_id) < 0)
+    {
+        selftest_fail("the partition changed id across mount and unmount");
+        return;
+    }
     if (op_delete(part_id, name, SXDISK_ALIGN_SECTORS + 1u) != SAVANXP_ENOENT)
     {
         selftest_fail("Delete accepted a start the partition does not have");
@@ -2779,6 +3117,22 @@ static void build_dialogs(void)
         "OK", on_new_ok, 0);
     g_new_widgets[7] = sxgui_button(
         sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 1), buttons_y, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_form_cancel, 0);
+
+    y = DM_DIALOG_MARGIN;
+    g_mount_widgets[0] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y, width, DM_TEXT_ROW),
+                                     "Mount the volume as a folder under /mnt:");
+    y += DM_TEXT_ROW + SXGUI_GAP;
+    g_mount_widgets[1] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y + 3, 76, DM_TEXT_ROW), "/mnt/");
+    g_mount_widgets[2] = sxgui_textfield(sx_rect_make(field_x, y, width - 80, SXGUI_FIELD_HEIGHT), g_mount_name,
+                                         (int)sizeof(g_mount_name));
+    g_mount_widgets[3] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 0), DM_MOUNT_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_mount_ok, 0);
+    g_mount_widgets[4] = sxgui_button(
+        sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 1), DM_MOUNT_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
         "Cancel", on_form_cancel, 0);
 
     y = DM_DIALOG_MARGIN;

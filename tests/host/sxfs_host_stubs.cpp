@@ -291,6 +291,11 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
 void report_health(bool) {
 }
 
+// One device here: draining everything is flushing it.
+bool sync_all() {
+    return flush(0);
+}
+
 } // namespace block
 
 // --- rtc:: ------------------------------------------------------------------

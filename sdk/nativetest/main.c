@@ -244,6 +244,9 @@ static void run_storage_user_child(int argc, char** argv) {
     if (sxn_storage_rescan(id) != -SAVANXP_EPERM) {
         sxn_exit(6);
     }
+    if (sxn_storage_mount(id, "/mnt/user") != -SAVANXP_EPERM || sxn_storage_unmount("/") != -SAVANXP_EPERM) {
+        sxn_exit(7);
+    }
     sxn_exit(0);
 }
 
@@ -1499,6 +1502,26 @@ int main(int argc, char** argv) {
                 }
             }
 
+            /* MOUNT and UNMOUNT: what they refuse. The root is mounted, so
+             * mounting it again is busy; mount points live under /mnt only. */
+            check(sxn_storage_mount(root_id, "/mnt/again") == -SAVANXP_EBUSY);
+            check(sxn_storage_mount(root_id, "/tmp/x") == -SAVANXP_EINVAL);
+            check(sxn_storage_mount(root_id, "/mnt/") == -SAVANXP_EINVAL);
+            check(sxn_storage_mount(root_id, "/mnt/a/b") == -SAVANXP_EINVAL);
+            check(sxn_storage_mount(root_id, "/mnt/..") == -SAVANXP_EINVAL);
+            check(sxn_trap(SXN_SYS_STORAGE_MOUNT, root_id, (unsigned long)"/mnt/x", 1) == -SAVANXP_EINVAL);
+            check(sxn_storage_mount(0xfffffff0u, "/mnt/x") == -SAVANXP_ENODEV);
+            check(sxn_storage_unmount("/") == -SAVANXP_EINVAL);
+            check(sxn_storage_unmount("/mnt/nothing") == -SAVANXP_EINVAL);
+            for (index = 0; index < count; ++index) {
+                if (devices[index].kind == SXN_STORAGE_DISK && devices[index].scheme != SXN_STORAGE_SCHEME_NONE &&
+                    (devices[index].flags & (SXN_STORAGE_MOUNTED | SXN_STORAGE_CHILD_MOUNTED)) == 0u) {
+                    /* A partitioned disk's first sector is its table. */
+                    check(sxn_storage_mount(devices[index].id, "/mnt/table") == -SAVANXP_EINVAL);
+                    break;
+                }
+            }
+
             itoau((long)root_id, id_text);
             child_argv[0] = "/bin/nativetest.sxe";
             child_argv[1] = "storageuser";
@@ -1506,7 +1529,7 @@ int main(int argc, char** argv) {
             sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 3);
             child = sxn_spawn_ex_as(&request, &user);
             check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
-            check(sxn_log("nativetest: storage read, write and rescan done") == 0);
+            check(sxn_log("nativetest: storage read, write, rescan, mount and unmount done") == 0);
         }
     }
 

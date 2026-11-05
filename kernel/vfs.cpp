@@ -8,7 +8,8 @@
 
 namespace {
 
-constexpr size_t kMaxNodes = 768;
+// The initramfs, /dev, and every file and directory of the mounted volumes.
+constexpr size_t kMaxNodes = 2048;
 constexpr size_t kMaxNameLength = vfs::kMaxPathComponentLength;
 constexpr size_t kMaxDynamicFiles = 32;
 constexpr size_t kDynamicFileCapacity = 16384;
@@ -28,6 +29,10 @@ struct DynamicFile {
 NodeSlot g_nodes[kMaxNodes] = {};
 DynamicFile g_dynamic_files[kMaxDynamicFiles] = {};
 size_t g_node_count = 0;
+// Slots given back by detach_subtree, linked through vnode.next_sibling. Only
+// those are reused: a node invalidated by unlink never is, which is what lets
+// the section cache key on vnode pointers (docs/kernel/SECTIONS.md).
+int g_free_nodes = -1;
 bool g_ready = false;
 int g_last_error = SX_ENOENT;
 
@@ -52,11 +57,17 @@ bool parse_hex_u32(const char* text, size_t count, uint32_t& value_out) {
 }
 
 int add_node(vfs::NodeType type, const char* name, int parent) {
-    if (g_node_count == kMaxNodes) {
+    int node_index = -1;
+    if (g_free_nodes >= 0) {
+        node_index = g_free_nodes;
+        g_free_nodes = g_nodes[node_index].vnode.next_sibling;
+    } else if (g_node_count < kMaxNodes) {
+        node_index = static_cast<int>(g_node_count++);
+    } else {
         return -1;
     }
 
-    NodeSlot& slot = g_nodes[g_node_count];
+    NodeSlot& slot = g_nodes[node_index];
     memset(&slot, 0, sizeof(slot));
     strcpy(slot.name, name);
     slot.vnode.type = type;
@@ -66,7 +77,6 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     slot.vnode.first_child = -1;
     slot.vnode.next_sibling = -1;
 
-    const int node_index = static_cast<int>(g_node_count++);
     if (parent >= 0) {
         NodeSlot& parent_slot = g_nodes[parent];
         if (parent_slot.vnode.first_child < 0) {
@@ -398,6 +408,25 @@ void invalidate_node(vfs::Vnode& node) {
     node.writable = false;
 }
 
+// The whole subtree under `root`, root first, into g_subtree. Iterative: a
+// volume can be deeper than the kernel stack is kind to.
+int g_subtree[kMaxNodes];
+
+size_t collect_subtree(int root) {
+    size_t count = 0;
+    g_subtree[count++] = root;
+    for (size_t at = 0; at < count; ++at) {
+        for (int child = g_nodes[g_subtree[at]].vnode.first_child; child >= 0;
+             child = g_nodes[child].vnode.next_sibling) {
+            if (count >= kMaxNodes) {
+                return count;
+            }
+            g_subtree[count++] = child;
+        }
+    }
+    return count;
+}
+
 // Every directory above `index` lets `who` search it.
 bool ancestors_searchable(const cred::Credentials& who, int index) {
     int ancestor = g_nodes[index].vnode.parent;
@@ -593,6 +622,7 @@ void initialize(const void* archive, size_t size) {
     memset(g_nodes, 0, sizeof(g_nodes));
     memset(g_dynamic_files, 0, sizeof(g_dynamic_files));
     g_node_count = 0;
+    g_free_nodes = -1;
     g_ready = false;
 
     if (add_node(NodeType::directory, "/", -1) != 0) {
@@ -875,6 +905,38 @@ Vnode* ensure_directory(const char* path) {
             ++cursor;
         }
     }
+}
+
+bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node)) {
+    char normalized[kMaxPathLength] = {};
+    if (!g_ready || path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+        g_last_error = SX_EINVAL;
+        return false;
+    }
+    const int root = resolve_index(normalized);
+    if (root <= 0 || g_nodes[root].vnode.type != NodeType::directory) {
+        g_last_error = SX_EINVAL;
+        return false;
+    }
+    const size_t count = collect_subtree(root);
+    // Invalidated nodes count too: an unlinked file can still be open.
+    for (size_t index = 0; referenced != nullptr && index < count; ++index) {
+        if (referenced(g_nodes[g_subtree[index]].vnode)) {
+            g_last_error = SX_EBUSY;
+            return false;
+        }
+    }
+    detach_node(root);
+    for (size_t index = 0; index < count; ++index) {
+        const int node = g_subtree[index];
+        memset(&g_nodes[node], 0, sizeof(g_nodes[node]));
+        g_nodes[node].vnode.type = NodeType::invalid;
+        g_nodes[node].vnode.parent = -1;
+        g_nodes[node].vnode.first_child = -1;
+        g_nodes[node].vnode.next_sibling = g_free_nodes;
+        g_free_nodes = node;
+    }
+    return true;
 }
 
 Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permissions) {

@@ -216,6 +216,16 @@ static inline long sxn_storage_rescan(uint32_t disk_id) {
     return sxn_trap(SXN_SYS_STORAGE_RESCAN, disk_id, 0, 0);
 }
 
+/* Mounts a storage device at /mnt/<name>, and releases it. The system only.
+ * Unmount is -EBUSY while a file of the volume is open. */
+static inline long sxn_storage_mount(uint32_t id, const char* path) {
+    return sxn_trap(SXN_SYS_STORAGE_MOUNT, id, (unsigned long)path, 0);
+}
+
+static inline long sxn_storage_unmount(const char* path) {
+    return sxn_trap(SXN_SYS_STORAGE_UNMOUNT, (unsigned long)path, 0, 0);
+}
+
 /* CreatePipe: handles[0] is the read end, handles[1] the write end. */
 static inline long sxn_pipe_create(int32_t handles[2]) {
     return sxn_trap(SXN_SYS_PIPE_CREATE, (unsigned long)handles, 0, 0);
