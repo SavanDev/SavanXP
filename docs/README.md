@@ -147,6 +147,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Filesystem — `fs/`
 
+- [`FAT_ROADMAP.md`](fs/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
+  under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
+  ESP at `/boot`, and the phases.
 - [`SXFS_CHECK.md`](fs/SXFS_CHECK.md) — the `fscheck` consistency report: what
   mounting does not validate, what a leak looks like from the guest, and why
   there is no repair yet.
