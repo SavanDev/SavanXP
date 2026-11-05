@@ -1,27 +1,38 @@
 /*
- * partition_test.cpp -- Test de host del driver de particiones
- * (kernel/partition.cpp), corriendo el driver REAL contra un block:: de
- * mentira y tablas MBR/GPT armadas en memoria.
+ * partition_test.cpp -- host test of the partition driver
+ * (kernel/partition.cpp), running the REAL driver against a fake block:: and
+ * MBR/GPT tables built in memory.
  *
- * Por que en el host y no en un smoke de QEMU: el kernel no expone las tablas
- * de particiones a userland, y build/disk.img es un SxFS crudo sin tabla, asi
- * que un arranque solo puede verificar el caso "no hay nada que rebanar". Los
- * casos que importan -- una GPT valida, una tabla que miente el tamano, una
- * particion que se sale del disco -- se arman aca en dos lineas.
+ * Why on the host and not in a QEMU smoke: the cases that matter -- a valid
+ * GPT, a damaged primary header, a table that lies about a size, a partition
+ * that runs off the disk -- take two lines each here, and no disk image has to
+ * be prepared for each of them.
  *
- * El block:: de mentira vive en este mismo TU (y no en sxfs_host_stubs.cpp) a
- * proposito: el del test de SxFS es de un solo device y sin register_device,
- * mientras que aca el registro de devices ES lo que esta bajo prueba, porque
- * partition:: se cuelga de el para publicar cada rebanada.
+ * The fake block:: lives in this translation unit (not in
+ * sxfs_host_stubs.cpp) on purpose: the SxFS test's has a single device and no
+ * register_device, while here the device registry IS what is under test,
+ * because partition:: publishes each slice through it.
  */
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "kernel/block.hpp"
+#include "kernel/console.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
+#include "shared/crc32.h"
+
+namespace console {
+void printf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    ::vprintf(format, args);
+    va_end(args);
+}
+} // namespace console
 
 namespace {
 
@@ -39,13 +50,12 @@ bool check(bool ok, const char* what) {
     return ok;
 }
 
-// --- block:: de mentira -----------------------------------------------------
-// Dos clases de device conviven, igual que en el kernel: los "crudos" que
-// respalda una imagen en memoria (el disco fisico) y los que registra
-// partition:: con sus propias DeviceOps (las rebanadas). La validacion de rango
-// y del flag de solo-lectura la hace el core de block:: en el kernel, asi que
-// se replica aca: sin eso el test no podria comprobar que una lectura fuera de
-// la particion se rechaza.
+// --- Fake block:: -----------------------------------------------------------
+// Two kinds of device live together, as in the kernel: "raw" ones backed by
+// an in-memory image (the physical disk) and the ones partition:: registers
+// with its own DeviceOps (the slices). The kernel's block:: core checks the
+// range and the read-only flag, so it is replicated here: without it the test
+// could not show that a read past the partition is refused.
 
 constexpr size_t kMaxDevices = 16;
 
@@ -54,7 +64,7 @@ struct Device {
     bool writable;
     const char* name;
     uint32_t sector_count;
-    // Device crudo: bytes propios. Rebanada: ops + context del driver.
+    // Raw device: its own bytes. Slice: the driver's ops and context.
     uint8_t* image;
     const block::DeviceOps* ops;
     void* context;
@@ -71,7 +81,7 @@ void reset_devices() {
     g_device_count = 0;
 }
 
-// Disco fisico en blanco. Devuelve su indice de device.
+// A blank physical disk. Returns its device index.
 size_t add_disk(uint32_t sector_count, const char* name, bool writable) {
     Device& device = g_devices[g_device_count];
     device.present = true;
@@ -101,7 +111,7 @@ size_t byte_length(uint32_t sector_count) {
     return static_cast<size_t>(sector_count) * block::kSectorSize;
 }
 
-// --- Armado de tablas -------------------------------------------------------
+// --- Building tables --------------------------------------------------------
 
 void put32(uint8_t* out, uint32_t value) {
     out[0] = static_cast<uint8_t>(value);
@@ -118,12 +128,12 @@ void put64(uint8_t* out, uint64_t value) {
 constexpr size_t kMbrTableOffset = 446;
 constexpr size_t kMbrEntrySize = 16;
 
-// GUID de EFI System Partition tal como queda en disco.
+// The EFI System Partition type GUID as stored on disk.
 const uint8_t kEspTypeGuid[16] = {
     0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11,
     0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
 };
-// Basic data partition, para la segunda entrada.
+// Basic data partition, for the second entry.
 const uint8_t kDataTypeGuid[16] = {
     0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44,
     0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7,
@@ -138,9 +148,43 @@ uint8_t* mbr_entry(uint8_t* image, size_t index) {
     return image + kMbrTableOffset + (index * kMbrEntrySize);
 }
 
-// GPT con dos particiones: una ESP de 16 MiB en el LBA 2048 y el resto de
-// datos. Con `protective`, ademas el MBR 0xEE que pone cualquier herramienta
-// real; sin el, un hibrido, que tambien tiene que montar.
+constexpr uint32_t kGptEntryCount = 128;
+constexpr uint32_t kGptEntrySize = 128;
+constexpr uint32_t kGptArraySectors = kGptEntryCount * kGptEntrySize / block::kSectorSize;
+
+void put_name(uint8_t* entry, const char* name) {
+    for (size_t index = 0; name[index] != 0 && index < 36; ++index) {
+        entry[56 + index * 2] = static_cast<uint8_t>(name[index]);
+    }
+}
+
+// Writes one GPT header at `header_lba` describing the array at `entry_lba`,
+// with both CRCs, as any real tool does.
+void write_gpt_header(uint8_t* image, uint32_t sectors, uint32_t header_lba, uint32_t alternate_lba,
+    uint32_t entry_lba)
+{
+    uint8_t* header = image + static_cast<size_t>(header_lba) * block::kSectorSize;
+    memset(header, 0, block::kSectorSize);
+    memcpy(header, "EFI PART", 8);
+    put32(header + 8, 0x00010000u);
+    put32(header + 12, 92);
+    put64(header + 24, header_lba);
+    put64(header + 32, alternate_lba);
+    put64(header + 40, 2 + kGptArraySectors);
+    put64(header + 48, sectors - 2 - kGptArraySectors);
+    header[56] = 0xd1; // disk GUID
+    header[71] = 0x5c;
+    put64(header + 72, entry_lba);
+    put32(header + 80, kGptEntryCount);
+    put32(header + 84, kGptEntrySize);
+    const uint8_t* entries = image + static_cast<size_t>(entry_lba) * block::kSectorSize;
+    put32(header + 88, sx_crc32(entries, kGptEntryCount * kGptEntrySize));
+    put32(header + 16, sx_crc32(header, 92));
+}
+
+// A GPT with two partitions: a 16 MiB ESP at LBA 2048 and data for the rest.
+// With `protective`, also the 0xEE MBR any real tool writes; without it, a
+// hybrid, which must still be read. The backup copy goes at the end.
 void build_gpt(size_t device, bool protective) {
     uint8_t* image = disk_bytes(device);
     const uint32_t sectors = g_devices[device].sector_count;
@@ -153,27 +197,29 @@ void build_gpt(size_t device, bool protective) {
         put32(entry + 12, sectors - 1);
     }
 
-    uint8_t* header = image + block::kSectorSize;
-    memcpy(header, "EFI PART", 8);
-    put64(header + 72, 2);    // LBA del array de entries
-    put32(header + 80, 128);  // cantidad de entries
-    put32(header + 84, 128);  // tamano de cada entry
-
     uint8_t* first = image + 2 * block::kSectorSize;
     memcpy(first, kEspTypeGuid, sizeof(kEspTypeGuid));
-    first[16] = 0x11; // GUID unico != 0, o la entry cuenta como vacia
+    first[16] = 0x11; // a unique GUID != 0, or the entry counts as empty
     put64(first + 32, 2048);
     put64(first + 40, 2048 + 32768 - 1);
+    put_name(first, "EFI system");
 
-    uint8_t* second = first + 128;
+    uint8_t* second = first + kGptEntrySize;
     memcpy(second, kDataTypeGuid, sizeof(kDataTypeGuid));
     second[16] = 0x22;
     put64(second + 32, 2048 + 32768);
-    put64(second + 40, sectors - 34); // ultimo LBA usable, antes de la GPT de respaldo
+    put64(second + 40, sectors - 34); // last usable LBA, before the backup GPT
+    put_name(second, "Data");
+
+    const uint32_t backup_entries = sectors - 1 - kGptArraySectors;
+    memcpy(image + static_cast<size_t>(backup_entries) * block::kSectorSize, first,
+        kGptArraySectors * block::kSectorSize);
+    write_gpt_header(image, sectors, 1, sectors - 1, 2);
+    write_gpt_header(image, sectors, sectors - 1, 1, backup_entries);
 }
 
-// MBR clasico: una FAT32, una extendida (que hay que saltear), una ESP por tipo
-// 0xEF, y una ultima que miente el tamano y tiene que quedar recortada.
+// A classic MBR: a FAT32, an extended one (to be skipped), an ESP by type
+// 0xEF, and a last one that lies about its size and must be clipped.
 void build_mbr(size_t device) {
     uint8_t* image = disk_bytes(device);
     write_boot_signature(image);
@@ -203,40 +249,40 @@ void enumerate_partitions() {
     partition::driver().enumerate();
 }
 
-// --- Casos ------------------------------------------------------------------
+// --- Cases ------------------------------------------------------------------
 
-// Una GPT valida se rebana en devices propios, con la ESP marcada y el nombre
-// derivado del padre.
+// A valid GPT is sliced into devices of their own, with the ESP flagged and the
+// name derived from the parent.
 void case_gpt_publishes_partitions() {
-    printf("caso: GPT con MBR protectivo\n");
+    printf("case: GPT with a protective MBR\n");
     reset_devices();
     const size_t disk = add_disk(131072, "ata0", /*writable=*/true); // 64 MiB
     build_gpt(disk, /*protective=*/true);
     enumerate_partitions();
 
-    check(g_device_count == 3, "el disco mas sus dos particiones");
+    check(g_device_count == 3, "the disk plus its two partitions");
 
     partition::Info info = {};
-    check(!partition::info(disk, info), "el disco entero no es una particion");
-    if (check(partition::info(1, info), "la primera rebanada es una particion")) {
-        check(info.parent_index == disk, "apunta a su disco padre");
-        check(info.start_lba == 2048 && info.sector_count == 32768, "offset y tamano de la ESP");
-        check(info.esp, "reconocida como ESP por su type GUID");
-        check(info.mbr_type == 0, "sin tipo MBR: viene de una GPT");
+    check(!partition::info(disk, info), "the whole disk is not a partition");
+    if (check(partition::info(1, info), "the first slice is a partition")) {
+        check(info.parent_index == disk, "it points at its parent disk");
+        check(info.start_lba == 2048 && info.sector_count == 32768, "ESP offset and size");
+        check(info.esp, "recognised as the ESP by its type GUID");
+        check(info.mbr_type == 0, "no MBR type: it comes from a GPT");
     }
-    if (check(partition::info(2, info), "la segunda rebanada es una particion")) {
-        check(info.start_lba == 34816, "arranca donde termina la ESP");
-        check(!info.esp, "la de datos no es ESP");
+    if (check(partition::info(2, info), "the second slice is a partition")) {
+        check(info.start_lba == 34816, "it starts where the ESP ends");
+        check(!info.esp, "the data one is not an ESP");
     }
 
     block::DeviceInfo device = {};
-    check(block::device_info(1, device) && strcmp(device.name, "ata0p1") == 0, "nombre ata0p1");
-    check(block::device_info(2, device) && strcmp(device.name, "ata0p2") == 0, "nombre ata0p2");
+    check(block::device_info(1, device) && strcmp(device.name, "ata0p1") == 0, "named ata0p1");
+    check(block::device_info(2, device) && strcmp(device.name, "ata0p2") == 0, "named ata0p2");
 }
 
-// Lo que hace util a la capa: la particion es un device con su LBA 0 propio.
+// What makes the layer useful: a partition is a device with its own LBA 0.
 void case_partition_offsets_reach_the_parent() {
-    printf("caso: el LBA 0 de la particion cae en el offset del padre\n");
+    printf("case: the partition's LBA 0 lands at the parent's offset\n");
     reset_devices();
     const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
     build_gpt(disk, /*protective=*/true);
@@ -244,74 +290,74 @@ void case_partition_offsets_reach_the_parent() {
 
     uint8_t sector[block::kSectorSize];
     memset(sector, 0xa5, sizeof(sector));
-    check(block::write(1, 0, 1, sector), "escritura al LBA 0 de la particion");
+    check(block::write(1, 0, 1, sector), "write to the partition's LBA 0");
 
     uint8_t readback[block::kSectorSize] = {};
     check(block::read(disk, 2048, 1, readback) && readback[0] == 0xa5,
-          "aterrizo en el LBA 2048 del disco");
+          "it landed on the disk's LBA 2048");
 
-    check(!block::read(1, 32768, 1, readback), "leer un sector despues del final se rechaza");
-    check(block::read(1, 32767, 1, readback), "el ultimo sector de la particion si se lee");
+    check(!block::read(1, 32768, 1, readback), "reading a sector past the end is refused");
+    check(block::read(1, 32767, 1, readback), "the partition's last sector does read");
 }
 
-// Sin el MBR 0xEE la GPT tiene que ganar igual: hay imagenes hibridas asi.
+// Without the 0xEE MBR the GPT must still win: hybrid images look like this.
 void case_gpt_without_protective_mbr() {
-    printf("caso: GPT sin MBR protectivo\n");
+    printf("case: GPT without a protective MBR\n");
     reset_devices();
     const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
     build_gpt(disk, /*protective=*/false);
     enumerate_partitions();
-    check(g_device_count == 3, "la GPT gana sin el 0xEE");
+    check(g_device_count == 3, "the GPT wins without the 0xEE");
 }
 
 void case_mbr_table() {
-    printf("caso: MBR clasico\n");
+    printf("case: classic MBR\n");
     reset_devices();
     const size_t disk = add_disk(65536, "ata0", /*writable=*/true); // 32 MiB
     build_mbr(disk);
     enumerate_partitions();
 
-    check(g_device_count == 4, "tres primarias: la extendida se saltea");
+    check(g_device_count == 4, "three primaries: the extended one is skipped");
 
     partition::Info info = {};
-    if (check(partition::info(1, info), "primera primaria registrada")) {
-        check(info.mbr_type == 0x0c && info.start_lba == 2048, "FAT32 en el LBA 2048");
+    if (check(partition::info(1, info), "first primary registered")) {
+        check(info.mbr_type == 0x0c && info.start_lba == 2048, "FAT32 at LBA 2048");
     }
-    if (check(partition::info(2, info), "segunda primaria registrada")) {
-        check(info.mbr_type == 0xef && info.esp, "ESP reconocida por el tipo 0xEF");
+    if (check(partition::info(2, info), "second primary registered")) {
+        check(info.mbr_type == 0xef && info.esp, "ESP recognised by type 0xEF");
     }
-    if (check(partition::info(3, info), "tercera primaria registrada")) {
-        // La tabla declara 0xffffffff sectores desde el 23552 sobre un disco de
-        // 65536: sin el recorte, block:: aceptaria lecturas fuera del device.
-        check(info.sector_count == 65536 - 23552, "recortada al tamano real del padre");
+    if (check(partition::info(3, info), "third primary registered")) {
+        // The table declares 0xffffffff sectors from 23552 on a 65536-sector
+        // disk: without the clip, block:: would accept reads off the device.
+        check(info.sector_count == 65536 - 23552, "clipped to the parent's real size");
     }
 }
 
 void case_read_only_disk_yields_read_only_partitions() {
-    printf("caso: disco de solo lectura\n");
+    printf("case: read-only disk\n");
     reset_devices();
     const size_t disk = add_disk(131072, "cd0", /*writable=*/false);
     build_gpt(disk, /*protective=*/true);
     enumerate_partitions();
 
     block::DeviceInfo device = {};
-    check(block::device_info(1, device) && !device.writable, "la particion hereda el solo-lectura");
+    check(block::device_info(1, device) && !device.writable, "the partition inherits read-only");
 
     uint8_t sector[block::kSectorSize] = {};
-    check(!block::write(1, 0, 1, sector), "escribirle se rechaza");
+    check(!block::write(1, 0, 1, sector), "writing to it is refused");
 }
 
-// El disco de SavanXP hoy es un SxFS crudo sin tabla: no se toca.
+// SavanXP's disk is a raw SxFS with no table today: it is left alone.
 void case_raw_disk_is_left_alone() {
-    printf("caso: disco crudo sin tabla\n");
+    printf("case: raw disk with no table\n");
     reset_devices();
     add_disk(4096, "ata0", /*writable=*/true);
     enumerate_partitions();
-    check(g_device_count == 1, "sin firma 0xAA55 no se rebana nada");
+    check(g_device_count == 1, "without the 0xAA55 signature nothing is sliced");
 }
 
 void case_bogus_entries_are_discarded() {
-    printf("caso: entries MBR invalidas\n");
+    printf("case: invalid MBR entries\n");
     reset_devices();
     const size_t disk = add_disk(4096, "ata0", /*writable=*/true);
     uint8_t* image = disk_bytes(disk);
@@ -319,21 +365,21 @@ void case_bogus_entries_are_discarded() {
 
     uint8_t* out_of_range = mbr_entry(image, 0);
     out_of_range[4] = 0x83;
-    put32(out_of_range + 8, 999999); // arranca fuera del disco
+    put32(out_of_range + 8, 999999); // starts off the disk
     put32(out_of_range + 12, 100);
 
     uint8_t* empty = mbr_entry(image, 1);
     empty[4] = 0x83;
     put32(empty + 8, 100);
-    put32(empty + 12, 0); // tamano cero
+    put32(empty + 12, 0); // zero size
 
     enumerate_partitions();
-    check(g_device_count == 1, "las entries fuera de rango o vacias se descartan");
+    check(g_device_count == 1, "out-of-range or empty entries are discarded");
 }
 
-// Varios discos a la vez: cada rebanada tiene que quedar atada a SU padre.
+// Several disks at once: each slice must stay tied to ITS parent.
 void case_two_disks_do_not_cross() {
-    printf("caso: dos discos particionados\n");
+    printf("case: two partitioned disks\n");
     reset_devices();
     const size_t first = add_disk(131072, "ata0", /*writable=*/true);
     const size_t second = add_disk(65536, "ata1", /*writable=*/true);
@@ -341,7 +387,7 @@ void case_two_disks_do_not_cross() {
     build_mbr(second);
     enumerate_partitions();
 
-    check(g_device_count == 2 + 2 + 3, "dos discos, dos rebanadas y tres rebanadas");
+    check(g_device_count == 2 + 2 + 3, "two disks, two slices and three slices");
 
     partition::Info info = {};
     size_t from_first = 0;
@@ -356,11 +402,95 @@ void case_two_disks_do_not_cross() {
             ++from_second;
         }
     }
-    check(from_first == 2 && from_second == 3, "cada rebanada apunta a su propio disco");
+    check(from_first == 2 && from_second == 3, "each slice points at its own disk");
 
     block::DeviceInfo device = {};
     check(block::device_info(4, device) && strcmp(device.name, "ata1p1") == 0,
-          "las del segundo disco se llaman ata1pN");
+          "the second disk's are named ata1pN");
+}
+
+// What a partition editor needs: the type and unique GUIDs, the name, the
+// entry number, and the disk's scheme.
+void case_gpt_metadata() {
+    printf("case: GPT metadata\n");
+    reset_devices();
+    const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
+    build_gpt(disk, /*protective=*/true);
+    enumerate_partitions();
+
+    const partition::DiskInfo table = partition::disk_info(disk);
+    check(table.scheme == partition::Scheme::gpt, "the disk reads as GPT");
+    check(!table.gpt_from_backup, "from the primary header");
+    check(table.disk_guid[0] == 0xd1 && table.disk_guid[15] == 0x5c, "the disk GUID is kept");
+
+    partition::Info info = {};
+    if (check(partition::info(1, info), "the ESP is there")) {
+        check(info.scheme == partition::Scheme::gpt && info.number == 1, "entry 1 of a GPT");
+        check(memcmp(info.type_guid, kEspTypeGuid, 16) == 0, "its type GUID is kept");
+        check(info.unique_guid[0] == 0x11, "its unique GUID is kept");
+        check(strcmp(info.name, "EFI system") == 0, "its name is read from UTF-16");
+    }
+    if (check(partition::info(2, info), "the data partition is there")) {
+        check(info.number == 2 && strcmp(info.name, "Data") == 0, "entry 2, named Data");
+    }
+}
+
+// A primary header that fails its CRC falls back to the backup at the end.
+void case_damaged_primary_uses_backup() {
+    printf("case: damaged primary GPT\n");
+    reset_devices();
+    const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
+    build_gpt(disk, /*protective=*/true);
+    disk_bytes(disk)[block::kSectorSize + 60] ^= 0xff; // breaks the header CRC
+    enumerate_partitions();
+
+    check(g_device_count == 3, "both partitions come from the backup");
+    const partition::DiskInfo table = partition::disk_info(disk);
+    check(table.scheme == partition::Scheme::gpt && table.gpt_from_backup, "flagged as read from the backup");
+}
+
+// A damaged entry array breaks the primary too: its CRC is in the header.
+void case_damaged_entries_use_backup() {
+    printf("case: damaged primary entry array\n");
+    reset_devices();
+    const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
+    build_gpt(disk, /*protective=*/true);
+    disk_bytes(disk)[2 * block::kSectorSize + 40] ^= 0x01; // the ESP's end LBA
+    enumerate_partitions();
+
+    partition::Info info = {};
+    check(partition::info(1, info) && info.sector_count == 32768, "the backup's ESP, unchanged");
+    check(partition::disk_info(disk).gpt_from_backup, "flagged as read from the backup");
+}
+
+// Both copies broken: nothing is sliced, and the protective MBR is not taken
+// for a real one.
+void case_both_gpt_copies_damaged() {
+    printf("case: both GPT copies damaged\n");
+    reset_devices();
+    const size_t disk = add_disk(131072, "ata0", /*writable=*/true);
+    build_gpt(disk, /*protective=*/true);
+    disk_bytes(disk)[block::kSectorSize + 60] ^= 0xff;
+    disk_bytes(disk)[static_cast<size_t>(131071) * block::kSectorSize + 60] ^= 0xff;
+    enumerate_partitions();
+
+    check(g_device_count == 1, "nothing is sliced");
+    check(partition::disk_info(disk).scheme == partition::Scheme::damaged, "the disk reads as damaged");
+}
+
+void case_disk_schemes() {
+    printf("case: schemes of MBR and raw disks\n");
+    reset_devices();
+    const size_t mbr = add_disk(65536, "ata0", /*writable=*/true);
+    const size_t raw = add_disk(4096, "ata1", /*writable=*/true);
+    build_mbr(mbr);
+    enumerate_partitions();
+
+    check(partition::disk_info(mbr).scheme == partition::Scheme::mbr, "an MBR disk reads as MBR");
+    check(partition::disk_info(raw).scheme == partition::Scheme::none, "a raw disk reads as none");
+    partition::Info info = {};
+    check(partition::info(2, info) && info.scheme == partition::Scheme::mbr && info.number == 1,
+          "an MBR partition knows its scheme and entry");
 }
 
 } // namespace
@@ -369,7 +499,8 @@ void case_two_disks_do_not_cross() {
 
 namespace block {
 
-bool register_device(const DeviceOps& ops, void* context, uint32_t sector_count, bool writable, const char* name) {
+bool register_device(const DeviceOps& ops, void* context, uint32_t sector_count, bool writable, const char* name,
+    const DeviceIdentity*) {
     if (ops.read == nullptr || sector_count == 0 || g_device_count >= kMaxDevices) {
         return false;
     }
@@ -396,6 +527,7 @@ bool device_info(size_t index, DeviceInfo& info) {
     info.sector_count = g_devices[index].sector_count;
     info.writable = g_devices[index].writable;
     info.name = g_devices[index].name;
+    info.identity = nullptr;
     return true;
 }
 
@@ -465,10 +597,15 @@ int main() {
     case_raw_disk_is_left_alone();
     case_bogus_entries_are_discarded();
     case_two_disks_do_not_cross();
+    case_gpt_metadata();
+    case_damaged_primary_uses_backup();
+    case_damaged_entries_use_backup();
+    case_both_gpt_copies_damaged();
+    case_disk_schemes();
 
     reset_devices();
 
-    printf("%s (%d checks, %d fallas)\n",
+    printf("%s (%d checks, %d failures)\n",
            g_failures == 0 ? "PARTITION TEST PASS" : "PARTITION TEST FAIL",
            g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -20,6 +20,7 @@ struct Device {
     uint32_t sector_count;
     bool writable;
     const char* name;
+    const block::DeviceIdentity* identity;
     // Writeback state: the device took writes since its last flush, or a
     // background write failed and the queue for it is stuck (see fail()).
     bool unflushed;
@@ -276,7 +277,8 @@ bool register_device(
     void* context,
     uint32_t sector_count,
     bool writable,
-    const char* name)
+    const char* name,
+    const DeviceIdentity* identity)
 {
     if (ops.read == nullptr || sector_count == 0 || g_device_count >= kMaxBlockDevices) {
         return false;
@@ -287,9 +289,10 @@ bool register_device(
     device.ops = &ops;
     device.context = context;
     device.sector_count = sector_count;
-    // Un driver sin write op queda solo-lectura aunque lo pida escribible.
+    // A driver with no write op is read-only even if it asks to be writable.
     device.writable = writable && ops.write != nullptr;
     device.name = name;
+    device.identity = identity;
     ++g_device_count;
     g_ready = true;
     return true;
@@ -342,7 +345,37 @@ bool device_info(size_t index, DeviceInfo& info) {
     info.sector_count = device->sector_count;
     info.writable = device->writable;
     info.name = device->name;
+    info.identity = device->identity;
     return true;
+}
+
+void copy_ata_string(const uint16_t* identify, size_t first_word, size_t word_count, char* out, size_t capacity) {
+    if (out == nullptr || capacity == 0) {
+        return;
+    }
+    size_t length = 0;
+    for (size_t word = 0; word < word_count && length + 2 < capacity; ++word) {
+        const uint16_t value = identify[first_word + word];
+        out[length++] = static_cast<char>(value >> 8);
+        out[length++] = static_cast<char>(value & 0xff);
+    }
+    // Keep printable ASCII only; firmware pads with spaces (and some with NULs).
+    size_t kept = 0;
+    for (size_t index = 0; index < length; ++index) {
+        const char c = out[index];
+        out[kept++] = (c >= 0x20 && c < 0x7f) ? c : ' ';
+    }
+    size_t start = 0;
+    while (start < kept && out[start] == ' ') {
+        ++start;
+    }
+    while (kept > start && out[kept - 1] == ' ') {
+        --kept;
+    }
+    if (start > 0) {
+        memmove(out, out + start, kept - start);
+    }
+    out[kept - start] = 0;
 }
 
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {

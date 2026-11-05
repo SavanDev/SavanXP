@@ -18,6 +18,7 @@ struct Image {
 };
 
 Image g_image = {};
+block::DeviceIdentity g_identity = {"SavanXP LiveCD (RAM)", "", 0};
 
 // El rango de LBA y el permiso de escritura ya los valido block::read/write.
 bool read_op(void* context, uint32_t lba, uint32_t sector_count, void* buffer) {
@@ -49,7 +50,8 @@ void enumerate() {
     if (g_image.base == nullptr || g_image.sector_count == 0) {
         return;
     }
-    (void)block::register_device(kOps, &g_image, g_image.sector_count, g_image.writable, g_image.name);
+    g_identity.full_sectors = g_image.sector_count;
+    (void)block::register_device(kOps, &g_image, g_image.sector_count, g_image.writable, g_image.name, &g_identity);
 }
 
 const block::Driver kDriver = {

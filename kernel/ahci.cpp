@@ -121,6 +121,7 @@ struct Disk {
     uint32_t sector_count;
     uint8_t port_index;
     char name[8];
+    block::DeviceIdentity identity;
 };
 
 volatile uint8_t* g_abar = nullptr;
@@ -365,8 +366,12 @@ bool bring_up_port(uint8_t port_index, Disk& disk) {
         return false;
     }
     // block:: addresses 32-bit sector counts; a bigger disk is exposed up to
-    // its first 2 TiB.
+    // its first 2 TiB. full_sectors keeps the truth for whoever edits tables.
     disk.sector_count = sectors > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(sectors);
+    disk.identity.full_sectors = sectors;
+    // Words 27-46: model, 10-19: serial.
+    block::copy_ata_string(identify, 27, 20, disk.identity.model, sizeof(disk.identity.model));
+    block::copy_ata_string(identify, 10, 10, disk.identity.serial, sizeof(disk.identity.serial));
     return true;
 }
 
@@ -427,9 +432,10 @@ void enumerate() {
             continue;
         }
         ++g_disk_count;
-        (void)block::register_device(kOps, &disk, disk.sector_count, /*writable=*/true, disk.name);
-        console::printf("ahci: %s port %u, %u sectors\n", disk.name,
-            static_cast<unsigned>(port_index), static_cast<unsigned>(disk.sector_count));
+        (void)block::register_device(kOps, &disk, disk.sector_count, /*writable=*/true, disk.name, &disk.identity);
+        console::printf("ahci: %s port %u, %u sectors, \"%s\" serial \"%s\"\n", disk.name,
+            static_cast<unsigned>(port_index), static_cast<unsigned>(disk.sector_count),
+            disk.identity.model, disk.identity.serial);
     }
 }
 

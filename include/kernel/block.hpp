@@ -7,11 +7,25 @@ namespace block {
 
 constexpr uint32_t kSectorSize = 512;
 
+// What the device says it is. A driver that can ask (ATA IDENTIFY) fills it;
+// one that cannot uses a fixed description. Kept by pointer, like the name, so
+// it lives in the driver's own storage.
+struct DeviceIdentity {
+    char model[48];
+    char serial[24];
+    // The size the device reports, before block:: clamps it to 32-bit sector
+    // numbers. Larger than DeviceInfo::sector_count on a disk past 2 TiB, which
+    // a partition editor must refuse to touch (its end is out of reach).
+    uint64_t full_sectors;
+};
+
 struct DeviceInfo {
     bool present;
     uint32_t sector_count;
     bool writable;
     const char* name;
+    // nullptr when the driver gave none (a partition: ask partition::info).
+    const DeviceIdentity* identity;
 };
 
 // Operaciones dependientes del medio. Cada driver llena una instancia estatica
@@ -61,13 +75,21 @@ bool register_driver(const Driver& driver);
 // Corre los enumerate de todos los drivers registrados, por prioridad
 // descendente. Devuelve cuantos devices quedaron registrados.
 size_t probe_all();
-// La llaman los drivers desde su enumerate(). El core no interpreta el context.
+// Drivers call it from their enumerate(). The core does not interpret the
+// context. `name` and `identity` are kept by pointer and must outlive the
+// device.
 bool register_device(
     const DeviceOps& ops,
     void* context,
     uint32_t sector_count,
     bool writable,
-    const char* name);
+    const char* name,
+    const DeviceIdentity* identity = nullptr);
+
+// Copies an ATA IDENTIFY string (`word_count` words from `first_word`, two
+// characters per word, high byte first) into `out`, without the padding
+// spaces. Shared by the AHCI and ATA drivers.
+void copy_ata_string(const uint16_t* identify, size_t first_word, size_t word_count, char* out, size_t capacity);
 
 bool ready();
 size_t device_count();

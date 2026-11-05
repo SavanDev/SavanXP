@@ -64,6 +64,7 @@ virtio_pci::Device g_device = {};
 virtio_pci::Queue g_request_queue = {};
 bool g_ready = false;
 bool g_flush_supported = false;
+block::DeviceIdentity g_identity = {"VirtIO Block Device", "", 0};
 
 volatile VirtioBlkConfig* device_cfg() {
     return reinterpret_cast<volatile VirtioBlkConfig*>(virtio_pci::device_cfg_base(g_device));
@@ -278,7 +279,8 @@ void enumerate() {
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
     g_ready = true;
 
-    (void)block::register_device(kOps, nullptr, static_cast<uint32_t>(capacity_sectors), !read_only, "vblk0");
+    g_identity.full_sectors = capacity_sectors;
+    (void)block::register_device(kOps, nullptr, static_cast<uint32_t>(capacity_sectors), !read_only, "vblk0", &g_identity);
 
     console::printf(
         "virtio-blk: ready pci=%x:%x.%u capacity=%u sectors flush=%s\n",

@@ -110,6 +110,10 @@ Cut-off notes:
 
 ### Changed
 
+- **GPT tables are checked before they are used**: both CRCs, falling back to the backup header
+  (`partition: <disk>: primary GPT damaged, using the backup`); a disk with neither is left whole. The
+  AHCI and ATA boot lines show each disk's model and serial.
+
 - **The version shows the build number**, `0.4.2 (Build 588)` (the commit count): boot screen,
   kernel log, desktop stamp, About, the console banner and a new `build` line in `sysinfo`. Master now carries the
   next version (0.4.2); the build warns if `version.h` names an already tagged release.

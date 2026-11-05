@@ -58,13 +58,14 @@ struct Slot {
     uint16_t control_base;
     uint8_t drive_select;
     uint32_t sector_count;
+    block::DeviceIdentity identity;
 };
 
 Slot g_slots[kSlotCount] = {
-    {kPrimaryIoBase, kPrimaryControlBase, 0x00, 0},
-    {kPrimaryIoBase, kPrimaryControlBase, 0x10, 0},
-    {kSecondaryIoBase, kSecondaryControlBase, 0x00, 0},
-    {kSecondaryIoBase, kSecondaryControlBase, 0x10, 0},
+    {kPrimaryIoBase, kPrimaryControlBase, 0x00, 0, {}},
+    {kPrimaryIoBase, kPrimaryControlBase, 0x10, 0, {}},
+    {kSecondaryIoBase, kSecondaryControlBase, 0x00, 0, {}},
+    {kSecondaryIoBase, kSecondaryControlBase, 0x10, 0, {}},
 };
 
 const char* const kSlotNames[kSlotCount] = {"ata0", "ata1", "ata2", "ata3"};
@@ -173,6 +174,7 @@ bool poll_status(const Slot& slot, bool require_drq) {
 
 bool identify(Slot& slot) {
     slot.sector_count = 0;
+    slot.identity = {};
 
     select_drive(slot, 0);
     out8(static_cast<uint16_t>(slot.control_base), 0);
@@ -210,6 +212,15 @@ bool identify(Slot& slot) {
     }
 
     slot.sector_count = sector_count;
+    // This driver speaks LBA28 only, so the 28-bit count is all it can reach;
+    // words 100-103 say how big the disk really is.
+    const uint64_t lba48 = static_cast<uint64_t>(identify_data[100]) |
+        (static_cast<uint64_t>(identify_data[101]) << 16) |
+        (static_cast<uint64_t>(identify_data[102]) << 32) |
+        (static_cast<uint64_t>(identify_data[103]) << 48);
+    slot.identity.full_sectors = lba48 > sector_count ? lba48 : sector_count;
+    block::copy_ata_string(identify_data, 27, 20, slot.identity.model, sizeof(slot.identity.model));
+    block::copy_ata_string(identify_data, 10, 10, slot.identity.serial, sizeof(slot.identity.serial));
     return true;
 }
 
@@ -421,8 +432,11 @@ const block::DeviceOps kOps = {
 void enumerate() {
     for (size_t index = 0; index < kSlotCount; ++index) {
         if (identify(g_slots[index])) {
-            (void)block::register_device(
-                kOps, &g_slots[index], g_slots[index].sector_count, /*writable=*/true, kSlotNames[index]);
+            (void)block::register_device(kOps, &g_slots[index], g_slots[index].sector_count,
+                /*writable=*/true, kSlotNames[index], &g_slots[index].identity);
+            console::printf("ata: %s %u sectors, \"%s\" serial \"%s\"\n", kSlotNames[index],
+                static_cast<unsigned>(g_slots[index].sector_count),
+                g_slots[index].identity.model, g_slots[index].identity.serial);
         }
         io_wait();
     }
