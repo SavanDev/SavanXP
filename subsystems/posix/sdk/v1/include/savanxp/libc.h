@@ -46,9 +46,12 @@ long savanxp_access(const char* path, unsigned long want);
  * "/" for the system. getenv("HOME") says the same. */
 const char* savanxp_profile_dir(void);
 /* Where the caller keeps the settings file `name` (a bare file name): in its
- * profile. For reading (for_write 0), when the profile has no copy yet and
- * the root still has the one from before profiles, that one, so an existing
- * image keeps its settings until the first save moves them. 0 or -errno. */
+ * profile's Settings folder, made if missing; the system's stay loose at the
+ * root. A copy loose in the profile, from before the folder, is moved in.
+ * For reading (for_write 0), when there is none and the root still has the
+ * one from before profiles, that one, so an existing image keeps its
+ * settings until the first save. 0 or -errno. */
+#define SAVANXP_SETTINGS_DIR "Settings"
 int savanxp_settings_path(const char* name, int for_write, char* out, size_t capacity);
 long savanxp_chmod(const char* path, unsigned long permissions);
 long savanxp_chown(const char* path, unsigned long uid, unsigned long gid);

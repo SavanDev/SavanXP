@@ -420,6 +420,7 @@ static const struct passwd* the_user(void) {
 
 static void ensure_user_profile(void) {
     const struct passwd* user = the_user();
+    char settings[256];
 
     if (user == 0) {
         return;
@@ -429,18 +430,28 @@ static void ensure_user_profile(void) {
         (void)chown(user->pw_dir, user->pw_uid, user->pw_gid);
         printf("init: made the profile %s\n", user->pw_dir);
     }
+    snprintf(settings, sizeof(settings), "%s/%s", user->pw_dir, SAVANXP_SETTINGS_DIR);
+    if (mkdir(settings, 0700) == 0) {
+        (void)chown(settings, user->pw_uid, user->pw_gid);
+    }
 }
 
-/* A setting of the user's, which init applies before anybody logs in: the
- * profile's copy, or the one at the root from before profiles. */
+/* A setting of the user's, which init applies before anybody logs in, looked
+ * up as savanxp_settings_path does for the user (init is the system, so it
+ * cannot ask it): Settings, then loose in the profile, then the root. Moving
+ * a loose copy is left to the user's own programs. */
 static long open_user_setting(const char* name) {
     const struct passwd* user = the_user();
     char path[256];
     long fd = -1;
 
     if (user != 0) {
-        snprintf(path, sizeof(path), "%s/%s", user->pw_dir, name);
+        snprintf(path, sizeof(path), "%s/%s/%s", user->pw_dir, SAVANXP_SETTINGS_DIR, name);
         fd = savanxp_open(path);
+        if (fd < 0) {
+            snprintf(path, sizeof(path), "%s/%s", user->pw_dir, name);
+            fd = savanxp_open(path);
+        }
     }
     if (fd < 0) {
         snprintf(path, sizeof(path), "/%s", name);

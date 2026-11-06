@@ -169,17 +169,23 @@ volume and the keyboard layout are per user too:
 | `assoc.ini`, `mimeicon.ini` | file associations and icons, hand-written |
 | `keyboard.cfg`, `audio.cfg` | the layout and the volume; init applies them at boot from the one user's profile |
 
-They live in the profile, `/users/<name>`, NT's `Users\<name>`.
-`savanxp_settings_path()` in the runtime says where: the profile of the real
-uid, so an elevated program finds the same one, and for reading, when the
-profile has no copy yet, the old one at the root, so an existing image keeps
-its menu and wallpaper until the first save moves them. The system's profile
-is the root itself, which is why the smokes, which run as the system, read and
-write where they always did. `getenv("HOME")` answers the same directory.
+They live in the profile's `Settings` folder, `/users/<name>/Settings`, so
+the profile itself, `/users/<name>` (NT's `Users\<name>`), holds only the
+person's own files. `savanxp_settings_path()` in the runtime says where: the
+profile of the real uid, so an elevated program finds the same one. Looking
+for a file, it makes `Settings` if it is missing (the person's, 0700, even
+from an elevated program) and moves in a copy left loose in the profile from
+before the folder. For reading, when there is neither, the old one at the
+root, so an existing image keeps its menu and wallpaper; the root is the
+system's, so that copy stays and the first save goes to `Settings`. The
+system's profile is the root itself and its settings stay loose there, which
+is why the smokes, which run as the system, read and write where they always
+did. `getenv("HOME")` answers the profile, not `Settings`.
 `/system` holds no setting yet; it is where a machine-wide one would go, and
 writing it would take elevation.
 
-init makes `/users/user` at boot (0700, the user's) if it is missing. The
+init makes `/users/user` and its `Settings` at boot (0700, the user's) if they are missing,
+and reads `keyboard.cfg` and `audio.cfg` in the same order as the runtime. The
 desktop works in it, so a file saved under a bare name lands there; Paint and
 Notepad offer it for a new document, and Files opens on it. Doom keeps its
 settings and saves in `$HOME/doom`; the game's directory, `/games/doom`, is

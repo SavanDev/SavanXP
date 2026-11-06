@@ -126,6 +126,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The user's settings live in `/users/user/Settings`** instead of loose in the profile:
+  `savanxp_settings_path` makes the folder and moves an older loose `.cfg`/`.ini` in on first use;
+  the system's stay at the root. See `docs/kernel/USERS_AND_PERMISSIONS.md`.
+
 - **The development boot drive is attached as `fat:<dir>,snapshot=on`** (`tools/run_qemu.py`): the guest
   can write `/boot`, and its writes are discarded at exit instead of reaching `build/image`.
 

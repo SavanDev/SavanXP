@@ -4487,21 +4487,57 @@ static int sx_join_profile(const char* directory, const char* name, char* out, s
     return written > 0 && (size_t)written < capacity ? 0 : -SAVANXP_E2BIG;
 }
 
+/* The profile's Settings folder, made the person's if it is missing. An
+ * elevated program (euid 0) would otherwise leave it owned by the system. */
+static void sx_ensure_settings_dir(const char* directory) {
+    struct savanxp_stat info;
+    struct savanxp_identity identity;
+
+    if (savanxp_stat(directory, &info) == 0 || savanxp_mkdir_mode(directory, 0700) < 0) {
+        return;
+    }
+    if (savanxp_get_identity(&identity) == 0 && identity.euid != identity.uid) {
+        (void)savanxp_chown(directory, identity.uid, identity.gid);
+    }
+}
+
 int savanxp_settings_path(const char* name, int for_write, char* out, size_t capacity) {
     const char* profile = savanxp_profile_dir();
     struct savanxp_stat info;
+    char directory[256];
+    char loose[256];
 
     if (name == 0 || name[0] == '\0' || name[0] == '/' || out == 0 || capacity == 0) {
         return -SAVANXP_EINVAL;
     }
-    if (sx_join_profile(profile, name, out, capacity) < 0) {
+    /* The system's profile is the root, and its settings stay loose there. */
+    if (sx_strcmp(profile, "/") == 0) {
+        return sx_join_profile(profile, name, out, capacity);
+    }
+    if (sx_join_profile(profile, SAVANXP_SETTINGS_DIR, directory, sizeof(directory)) < 0 ||
+        sx_join_profile(directory, name, out, capacity) < 0 ||
+        sx_join_profile(profile, name, loose, sizeof(loose)) < 0) {
         return -SAVANXP_E2BIG;
     }
-    if (for_write || sx_strcmp(profile, "/") == 0 || savanxp_stat(out, &info) == 0) {
+    if (savanxp_stat(out, &info) == 0) {
         return 0;
     }
-    /* Not in the profile yet: the copy at the root from before profiles,
-     * if there is one. The first save moves it into the profile. */
+    /* Not in Settings yet: a copy loose in the profile, from before the
+     * folder, moves in. If it cannot, a read still finds it where it is. */
+    sx_ensure_settings_dir(directory);
+    if (savanxp_stat(loose, &info) == 0) {
+        if (savanxp_rename(loose, out) == 0 || for_write) {
+            return 0;
+        }
+        sx_memcpy(out, loose, sx_strlen(loose) + 1u);
+        return 0;
+    }
+    if (for_write) {
+        return 0;
+    }
+    /* Nor in the profile: the copy at the root from before profiles, if there
+     * is one. The root is the system's, so it stays; the first save goes to
+     * Settings. */
     {
         char legacy[256];
 

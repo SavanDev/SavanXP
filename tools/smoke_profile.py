@@ -22,10 +22,11 @@ import sys
 from pathlib import Path
 
 # Where savanxp_settings_path (subsystems/posix/sdk/v1/runtime/posix.c) looks
-# for display.cfg: the profile of each account in its passwd table, then the
-# root of the volume, which is root's profile and also where settings lived
-# before profiles existed.
+# for display.cfg: the user's Settings folder, then loose in the profile (from
+# before the folder), then the root of the volume, which is root's profile and
+# also where settings lived before profiles existed.
 DISPLAY_PREFERENCE_PATHS = (
+    "users/user/Settings/display.cfg",
     "users/user/display.cfg",
     "display.cfg",
 )
