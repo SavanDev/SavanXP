@@ -12,6 +12,8 @@ Cut-off notes:
 
 ### Added
 
+- **System Properties** keeps a short note of thanks behind its logo.
+
 - **Disk Management mounts FAT volumes**, owned by the person who mounts them (`fs::Owner`,
   `fs::Driver::adopt_owner`). New host tool `fat-image` (`create`, `put`) builds FAT images with the
   kernel's FatFs; smokes can attach one (`fat_disk_mib`, serial `SXFAT0`).

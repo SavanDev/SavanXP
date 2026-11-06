@@ -95,6 +95,31 @@ static int g_hardware_count;
 
 static struct sx_bitmap g_logo;
 
+/* What the logo keeps for whoever double clicks it with Ctrl+Shift held, as
+ * the About boxes of the period did. It replaces the General page until the
+ * tab changes, F5 rebuilds the data or the same gesture is made again. */
+static const struct about_block k_note_company = {
+    "In good company:",
+    {"ReactOS",
+     "Another classic desktop rebuilt from scratch,",
+     "one open source line at a time."},
+    3,
+};
+static const struct about_block k_note_reply = {
+    "From SavanXP:",
+    {"Same road, a different engine.",
+     "Hats off, and good luck to both of us."},
+    2,
+};
+static int g_note_shown;
+
+/* Pointer events carry no modifiers; key events do, with the state the
+ * driver keeps, so the last one seen is the state to check a click against. */
+static uint32_t g_modifiers;
+static uint32_t g_last_buttons;
+static unsigned long g_last_logo_click_ms;
+static int g_logo_clicks;
+
 static char *block_line(struct about_block *block)
 {
     if (block->line_count >= (int)(sizeof(block->lines) / sizeof(block->lines[0])))
@@ -389,6 +414,13 @@ static void paint_general(struct sx_painter *painter, struct sx_rect page)
 
     sx_painter_blit_bitmap(painter, &g_logo, page.x + ABOUT_PAGE_PAD, page.y + ABOUT_PAGE_PAD + 4);
 
+    if (g_note_shown)
+    {
+        y = paint_block(painter, &k_note_company, x, y) + ABOUT_BLOCK_GAP;
+        (void)paint_block(painter, &k_note_reply, x, y);
+        return;
+    }
+
     y = paint_block(painter, &g_system, x, y) + ABOUT_BLOCK_GAP;
     y = paint_block(painter, &g_install, x, y) + ABOUT_BLOCK_GAP;
     (void)paint_block(painter, &g_computer, x, y);
@@ -448,6 +480,7 @@ static void on_paint(struct sxgui_app *app)
 static void on_tab_changed(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
+    g_note_shown = 0;
     sxgui_app_request_repaint((struct sxgui_app *)user);
 }
 
@@ -459,13 +492,55 @@ static void on_ok(struct sxgui_widget *widget, void *user)
 
 static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
 {
+    g_modifiers = event->modifiers;
     if (event->type == SAVANXP_INPUT_EVENT_KEY_DOWN && event->key == SAVANXP_KEY_F5)
     {
+        g_note_shown = 0;
         refresh_info();
         sxgui_app_request_repaint(app);
         return 1;
     }
     return 0;
+}
+
+static struct sx_rect logo_rect(void)
+{
+    struct sx_rect page = sxgui_tabs_page(ABOUT_TABS);
+
+    return sx_rect_make(page.x + ABOUT_PAGE_PAD, page.y + ABOUT_PAGE_PAD + 4,
+                        SX_BRAND_LOGO_W, SX_BRAND_LOGO_H);
+}
+
+static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
+{
+    const uint32_t wanted = SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_SHIFT;
+    int pressed = (event->buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0u &&
+                  (g_last_buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0u;
+    unsigned long now;
+
+    (void)app;
+    g_last_buttons = event->buttons;
+    if (!pressed)
+    {
+        return 0;
+    }
+    if (ABOUT_TABS->value != ABOUT_TAB_GENERAL || (g_modifiers & wanted) != wanted ||
+        !sx_rect_contains_point(logo_rect(), event->x, event->y))
+    {
+        g_logo_clicks = 0;
+        return 0;
+    }
+
+    now = uptime_ms();
+    if (g_logo_clicks > 0 && now - g_last_logo_click_ms <= SXGUI_DOUBLE_CLICK_MS)
+    {
+        g_logo_clicks = 0;
+        g_note_shown = !g_note_shown;
+        return 1;
+    }
+    g_logo_clicks = 1;
+    g_last_logo_click_ms = now;
+    return 1;
 }
 
 int main(void)
@@ -508,6 +583,7 @@ int main(void)
         ABOUT_OK->rect.y + SXGUI_BUTTON_HEIGHT + ABOUT_MARGIN);
     g_app.on_paint = on_paint;
     g_app.on_key = on_key;
+    g_app.on_pointer = on_pointer;
     /* El foco arranca en las pestanias: es el unico control con el que hay algo
      * que recorrer, y dejarlo en el boton haria que las flechas no hicieran
      * nada en una ventana que justamente se navega con flechas. */
