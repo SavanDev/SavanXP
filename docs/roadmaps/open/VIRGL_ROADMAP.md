@@ -37,18 +37,21 @@ reference the GPU output is checked against.
 - **SxGL makes the ioctls itself.** The GPU backend opens `/dev/gpu0`; the
   software rasterizer underneath stays syscall-free, so the host test still
   links it.
-- **`--gl` selects the machine.** `run`, `smoke` and `shoot` take `--gl`, which
+- **`--gl` selects the machine.** `run` and `smoke` take `--gl`, which
   implies `--virtio` and swaps `virtio-vga` for `virtio-vga-gl` with a GL
   display (`egl-headless` when headless). Without `--gl` nothing changes and the
-  host needs no virglrenderer.
+  host needs no virglrenderer. `tools/shoot.sh` does not take it: under
+  `virtio-vga-gl` the scanout is a GL texture and QEMU 11's `screendump`
+  answers `no surface` with `egl-headless`. On that machine the checks read
+  pixels back inside the guest, as `nativetest` does.
 
 ## The kernel interface
 
 Seven ioctls on `/dev/gpu0`, `GPU_IOC_3D_GET_CAPSET` to `GPU_IOC_3D_TRANSFER`,
 declared with their structs in `include/abi/savanxp_abi.h`. They skip the
-display-session check; ownership is by pid. A context's virtio id is its slot
-+ 1 (16 slots); a resource's is `0x10000` + its slot (256 slots), far above the
-2D ids. A command buffer is at most `SAVANXP_GPU_3D_MAX_SUBMIT_BYTES` (one
+display-session check; ownership is by pid. A context's virtio id is its
+slot plus one (16 slots); a resource's is `0x10000` plus its slot (256 slots),
+far above the 2D ids. A command buffer is at most `SAVANXP_GPU_3D_MAX_SUBMIT_BYTES` (one
 command slot). The wire values the tree sends are in
 `include/sxgfx/virgl_protocol.h`, written from the protocol and grown only with
 what is used.
