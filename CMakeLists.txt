@@ -212,6 +212,8 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/display.cpp
     kernel/ahci.cpp
     kernel/ata.cpp
+    kernel/usb/usb.cpp
+    kernel/usb/xhci.cpp
     kernel/virtio_blk.cpp
     kernel/partition.cpp
     kernel/fs.cpp

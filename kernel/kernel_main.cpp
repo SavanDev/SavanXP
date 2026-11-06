@@ -39,6 +39,7 @@
 #include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/storage.hpp"
+#include "kernel/usb.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
@@ -189,6 +190,10 @@ namespace
     uacpi_glue::dump_pci_routing();
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
+    // USB before input and storage: its class drivers register keyboards,
+    // pointers and disks like any other driver (docs/roadmaps/open/USB_ROADMAP.md).
+    boot_screen::show("Starting USB");
+    usb::initialize();
     boot_screen::show("Initializing input");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();

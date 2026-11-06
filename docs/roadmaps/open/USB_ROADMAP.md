@@ -1,9 +1,10 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phase 0 done (the QEMU harness).** No USB driver exists yet. This
-> document fixes the decisions before the code, says which parts of OpenBSD's
-> stack are used and how, and orders the work so that every phase boots and can
-> be checked in QEMU on its own.
+> **Status: phases 0 to 2 done.** The QEMU harness exists, xHCI controllers
+> start, and the devices on their root ports are addressed, configured and
+> logged. No class drivers yet. This document fixes the decisions, says which
+> parts of OpenBSD's stack are used and how, and orders the work so that every
+> phase boots and can be checked in QEMU on its own.
 
 ## The short version
 
@@ -192,11 +193,26 @@ allocate the device context array, scratchpad buffers, command ring and one
 event ring, start it, and round-trip a `No Op` command.
 Log: `xhci: <bus:slot.fn>, <n> ports, <n> slots`.
 
+**Done** (`kernel/usb/xhci.cpp`). QEMU logs
+`xhci: 0:3.0 1b36:d, 8 ports, 32 slots, 32-byte contexts`. Every controller
+found is started, up to four.
+
 ### Phase 2: enumeration on root ports
 
 Port reset with real delays, `Enable Slot`, `Address Device`, the device and
 configuration descriptors, `SET_CONFIGURATION`. No class drivers yet: every
 device is only logged. Log: `usb: port <n> <vid>:<pid> class <c> <speed>`.
+
+**Done** (`kernel/usb/usb.cpp`). The log line carries the product string, and
+every interface no driver claims gets a line of its own:
+
+```text
+usb: port 5 627:1 class 0 high-speed "QEMU USB Keyboard"
+usb: 627:1 interface 0 class 3.1.1: no driver
+```
+
+QEMU puts `usb-storage` on a USB 3 port, so the stick enumerates at super
+speed with a 512-byte endpoint 0.
 
 ### Phase 3: HID keyboard and mouse
 

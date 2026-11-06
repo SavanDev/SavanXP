@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **USB: xHCI controllers and device enumeration.** At boot every xHCI controller is taken from the
+  firmware and started (`xhci:` log line), and the devices on its root ports are addressed and configured
+  (`usb: port <n> <vid>:<pid> ...`). No class drivers yet. See `docs/roadmaps/open/USB_ROADMAP.md`.
+
 - **QEMU machines with USB**: `./build.sh run --usb` (or `SAVANXP_USB=ON`) adds a `qemu-xhci` controller
   with a USB keyboard and tablet; smokes can ask for them (`usb`) and for a FAT USB stick (`usb_stick_mib`,
   serial `SXUSB0`). No driver yet: see `docs/roadmaps/open/USB_ROADMAP.md`.
