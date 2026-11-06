@@ -8,7 +8,7 @@ Cut-off notes:
 - `v0.1.1` covers the changes after `v0.1.0`, including work already merged into
   the tree but not yet tagged in git.
 
-## [Unreleased]
+## [0.4.2] - 2026-11-06
 
 ### Added
 
