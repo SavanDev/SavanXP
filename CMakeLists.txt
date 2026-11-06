@@ -214,6 +214,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/ata.cpp
     kernel/usb/hid.cpp
     kernel/usb/hid_report.cpp
+    kernel/usb/umass.cpp
     kernel/usb/usb.cpp
     kernel/usb/xhci.cpp
     kernel/virtio_blk.cpp

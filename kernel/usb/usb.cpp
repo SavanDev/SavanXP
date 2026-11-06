@@ -71,8 +71,10 @@ void format_path(const Device& device, char* out, size_t capacity) {
     out[written] = 0;
 }
 
+} // namespace
+
 // ASCII of a string descriptor in US English, '?' for anything else.
-void read_string(Device& device, uint8_t index, char* out, size_t capacity) {
+void usb::read_string(Device& device, uint8_t index, char* out, size_t capacity) {
     out[0] = 0;
     if (index == 0) {
         return;
@@ -92,6 +94,8 @@ void read_string(Device& device, uint8_t index, char* out, size_t capacity) {
     }
     out[length] = 0;
 }
+
+namespace {
 
 // Reads the device's first configuration, whole.
 bool read_configuration(Device& device) {
@@ -341,7 +345,7 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
     }
 
     char product[48] = {};
-    read_string(device, device.descriptor.product_index, product, sizeof(product));
+    usb::read_string(device, device.descriptor.product_index, product, sizeof(product));
     console::printf("usb: port %s %x:%x class %x %s-speed \"%s\"\n", path,
         static_cast<unsigned>(device.descriptor.vendor_id), static_cast<unsigned>(device.descriptor.product_id),
         static_cast<unsigned>(device.descriptor.device_class), speed_name(speed), product);
@@ -377,6 +381,7 @@ void initialize() {
     }
     g_ready = true;
     register_hid_driver();
+    register_storage_driver();
     for (uint8_t controller = 0; controller < hc::controller_count(); ++controller) {
         // Every port once: what is there at boot. Its change bits go with it.
         (void)hc::take_port_changes(controller);

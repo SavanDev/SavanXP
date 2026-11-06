@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **USB sticks**: Bulk-Only mass storage as block devices `usb0`, `usb1`... (`usb-storage:` log line),
+  with model and serial in Disk Management, which mounts them like any FAT disk. `diskmgmt-smoke` now also
+  attaches a USB stick (serial `SXUSB0`) and mounts, writes and remounts it.
+
 - **USB keyboards, mice and tablets** (`usb-hid`), next to PS/2 and virtio ones: none silences the
   others, and a keyboard plugged in later works. Smokes `usb-kbd-smoke`, `usb-pointer-smoke` and
   `usb-mouse-smoke` boot without an 8042 (`no_ps2`); smokes get a USB mouse unless they ask for the tablet.

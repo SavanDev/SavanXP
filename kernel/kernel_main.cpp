@@ -276,6 +276,7 @@ namespace
     block::register_driver(ahci::driver());
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());
+    block::register_driver(usb::storage_driver());
     // Ultimo en la fila (prioridad negativa): rebana en devices propios
     // las particiones MBR/GPT de los discos que enumeraron los de arriba.
     block::register_driver(partition::driver());

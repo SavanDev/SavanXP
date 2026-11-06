@@ -1,5 +1,7 @@
 #pragma once
 
+#include "kernel/block.hpp"
+
 // The USB stack (kernel/usb/): xHCI controllers, the devices on their ports,
 // and the class drivers that turn them into keyboards, pointers and disks.
 // Polled, like every driver here. See docs/roadmaps/open/USB_ROADMAP.md.
@@ -15,5 +17,8 @@ void start_input();
 bool ready();
 // Drains the controllers' events and lets the class drivers act on them.
 void poll();
+// USB sticks as block devices (usb0, usb1...), below the system disk and the
+// LiveCD's volume in the probe order.
+const block::Driver& storage_driver();
 
 } // namespace usb

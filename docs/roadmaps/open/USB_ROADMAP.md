@@ -1,8 +1,9 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phases 0 to 3 done.** The QEMU harness exists, xHCI controllers
-> start, the devices on their root ports are enumerated, and USB keyboards,
-> mice and tablets work next to PS/2 and virtio ones. This document fixes the decisions, says which
+> **Status: phases 0 to 4 done.** The QEMU harness exists, xHCI controllers
+> start, the devices on their root ports are enumerated, USB keyboards, mice
+> and tablets work next to PS/2 and virtio ones, and USB sticks are block
+> devices Disk Management mounts. This document fixes the decisions, says which
 > parts of OpenBSD's stack are used and how, and orders the work so that every
 > phase boots and can be checked in QEMU on its own.
 
@@ -100,7 +101,16 @@ Every stick speaks BOT with SCSI commands: `INQUIRY`, `TEST UNIT READY`,
 `READ CAPACITY (10)` and `(16)`, `READ (10)`, `WRITE (10)`, `REQUEST SENSE`,
 `SYNCHRONIZE CACHE`. UAS (USB Attached SCSI) is faster and optional on the
 device side; it waits. The result is one `block::Driver` like the others, and
-it never becomes the root: `fs::mount_any` keeps preferring the system disk.
+it never becomes the root: its priority (5) is below the ramdisk's (10), and
+`fs::mount_any` takes the first device it recognizes in that order, so the
+system disk and the LiveCD's volume always come first.
+
+A stick is **written through** (`deferred_writes = false`): it can be pulled
+out, and writes held in the writeback queue
+([BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md)) would be lost with it
+and would keep its block device from being unregistered. Only 512-byte
+sectors and direct-access devices (SCSI type 0) are taken; a card reader's
+other LUNs, CD drives and 4 KiB-sector disks are logged and left alone.
 
 ### USB input coexists with every other input driver
 
@@ -248,6 +258,17 @@ waited forever on a controller that is not there.
 BOT plus the SCSI subset as a `block::Driver`. A stick present at boot shows
 up in Disk Management and mounts at `/mnt` through the FAT driver.
 Test: a smoke with `--usb-stick` that reads a known file and writes one back.
+
+**Done** (`kernel/usb/umass.cpp`). A stick is `usb0`, `usb1`... with the
+INQUIRY vendor and product as its model and the USB serial string as its
+serial: `usb-storage: usb0 "QEMU QEMU HARDDISK" serial "SXUSB0", 32768 sectors`.
+Stalls in the data phase are cleared and the CSW still read; a bad CSW or a
+failed transport runs BOT reset recovery. A stick found at boot waits for
+`block::probe_all()`, which would wipe an earlier registration; one found
+later registers at once. `diskmgmt-smoke` now attaches a FAT stick and runs
+the same mount, write, permission and remount checks on it as on the SATA
+FAT disk. Checked by hand on a USB 2 only controller (`qemu-xhci,p3=0`) too:
+QEMU otherwise puts `usb-storage` on a USB 3 port.
 
 ### Phase 5: hubs
 

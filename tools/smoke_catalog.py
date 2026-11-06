@@ -186,10 +186,11 @@ SCENARIOS: dict[str, Scenario] = {
         "DISKMGMT SMOKE PASS",
         "DISKMGMT SMOKE FAIL",
         "Disk Management: listing, then initialize, partition, format and delete on a blank disk, "
-        "and mount a FAT disk",
+        "and mount a FAT disk and a FAT USB stick",
         timeout=300.0,
         extra_disk_mib=64,
         fat_disk_mib=16,
+        usb_stick_mib=16,
     ),
     "mines-smoke": _qemu_scenario(
         "mines-selftest",

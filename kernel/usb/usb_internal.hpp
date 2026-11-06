@@ -189,6 +189,10 @@ const char* status_name(int status);
 
 // The class drivers, registered by usb::initialize().
 void register_hid_driver();
+void register_storage_driver();
+const ClassDriver& storage_class_driver();
+// A stick's block device is going away with its device (umass.cpp).
+void storage_removed(size_t block_index);
 
 // The core (usb.cpp).
 bool register_class_driver(const ClassDriver& driver);
@@ -206,6 +210,10 @@ void* driver_data(Device& device, const ClassDriver& driver);
 void set_driver_data(Device& device, const ClassDriver& driver, void* data);
 // Busy-waits, with interrupts as they are. USB timing is in milliseconds.
 void delay_ms(uint32_t milliseconds);
+
+// ASCII of a string descriptor, US English, '?' for anything else; empty if
+// the device has none.
+void read_string(Device& device, uint8_t index, char* out, size_t capacity);
 
 // Standard requests on top of hc::control.
 int get_descriptor(Device& device, uint8_t type, uint8_t index, void* buffer, uint16_t length);
