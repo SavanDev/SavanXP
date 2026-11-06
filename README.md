@@ -141,7 +141,7 @@ smokes and `gpu-soak`). The audio harnesses that measure one specific driver
 
 `--usb` (or `SAVANXP_USB=ON`) adds an xHCI controller with a USB keyboard and
 tablet, on either machine. The USB stack is being built against it
-([`USB_ROADMAP.md`](docs/roadmaps/open/USB_ROADMAP.md)).
+([`USB_ROADMAP.md`](docs/roadmaps/done/USB_ROADMAP.md)).
 
 Other available targets:
 

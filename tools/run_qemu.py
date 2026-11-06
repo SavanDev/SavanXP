@@ -102,7 +102,7 @@ def build_qemu_args(
     usb adds an xHCI controller with a keyboard and a pointer on it (a tablet,
     or a relative mouse with usb_pointer="mouse"); usb_stick
     adds a raw image as a USB mass-storage device on the same controller
-    (docs/roadmaps/open/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
+    (docs/roadmaps/done/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
     usb_xhci_* trace events to PATH.
     """
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")

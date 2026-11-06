@@ -21,7 +21,7 @@ pointer or both, plus its callbacks.
 
 Today there are three drivers: `virtio-input` (tablet and keyboard), `ps2`
 (the 8042 keyboard and mouse) and `usb-hid` (USB keyboards, mice and tablets,
-[USB_ROADMAP.md](../roadmaps/open/USB_ROADMAP.md)).
+[USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md)).
 
 ## Registration order is priority
 

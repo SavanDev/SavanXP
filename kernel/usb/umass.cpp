@@ -1,7 +1,7 @@
 // USB mass storage: Bulk-Only Transport carrying a SCSI subset, exposed as
 // block devices named usb0, usb1... Written from the USB Mass Storage Class
 // Bulk-Only Transport 1.0 specification and SBC, with OpenBSD's umass.c and
-// umass_scsi.c as reference. See docs/roadmaps/open/USB_ROADMAP.md.
+// umass_scsi.c as reference. See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include <stddef.h>
 #include <stdint.h>

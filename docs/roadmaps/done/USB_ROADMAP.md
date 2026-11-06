@@ -1,12 +1,14 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phases 0 to 6 done in QEMU; phase 7's code done, its check on
-> real hardware deferred.** xHCI controllers start, devices are enumerated on
-> root ports and behind hubs, USB keyboards, mice and tablets work next to
-> PS/2 and virtio ones, USB sticks are block devices Disk Management mounts,
-> and devices can be plugged in and pulled out while the system runs. What is
-> left is booting the ISO on the first target machine; the roadmap moves to
-> `done/` once that run is in.
+> **Status: done.** Phases 0 to 6 were built and checked in QEMU, and phase 7
+> on real hardware: the ISO boots from a USB stick on the development machine
+> and its USB keyboard and mouse drive the desktop. xHCI controllers start,
+> devices are enumerated on root ports and behind hubs, USB keyboards, mice
+> and tablets work next to PS/2 and virtio ones, USB sticks are block devices
+> Disk Management mounts, and devices can be plugged in and pulled out while
+> the system runs. What was left out, and what was not checked on the
+> machine, is listed at the end of phase 7 and under
+> [Out of scope](#out-of-scope).
 
 ## The short version
 
@@ -37,7 +39,7 @@ Without USB, SavanXP on a modern machine has:
 - **no external mouse**, and no touchpad on machines that wire it over USB
   ([REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md), item 5);
 - **no removable media**: the FAT driver and Disk Management are ready for a
-  stick, but nothing can reach one ([FAT_ROADMAP.md](FAT_ROADMAP.md));
+  stick, but nothing can reach one ([FAT_ROADMAP.md](../open/FAT_ROADMAP.md));
 - **no install source or target** beyond SATA, IDE and virtio
   ([SETUP_AND_UPDATES.md](../../userland/SETUP_AND_UPDATES.md), "Limits accepted").
 
@@ -361,16 +363,17 @@ The real-hardware code from OpenBSD's `xhci_pci.c` (reference) is in:
 AMD's one quirk there, `XHCI_NOCSS`, is about saving controller state across
 suspend, which this driver never does.
 
-**Deferred: the run on the machine.** It needs the development machine and
-its only stick, which the ISO occupies, so the check is: the boot log lines
-(`xhci:`, `usb:`, `usb-hid:`) from the **boot log on screen** entry, the USB
-keyboard and mouse on the desktop, and one of them pulled out and plugged
-back in. The stick itself shows up as `usb0` with the ISO's partitions, which
-covers mass storage without a second stick.
+**Done: the run on the machine** (2026-11-06). The development machine, an
+AMD 400-series chipset xHCI (`1022:43d5`) and a Zeppelin xHCI (`1022:145f`)
+under UEFI, booted the ISO written with `dd` to a Kingston DataTraveler 3.0,
+and its USB keyboard and mouse drove the desktop. That is the part QEMU
+could not show: the firmware let go of the controllers, no PS/2 emulation was
+left to carry the input, and the driver enumerated real devices.
 
-The first target is the development machine: an AMD 400-series chipset
-xHCI (`1022:43d5`) and a Zeppelin xHCI (`1022:145f`), with an NVMe system
-disk the kernel does not see.
+Not seen on the machine: the boot log lines themselves (the run did not
+capture them), the stick as `usb0`, hubs, and hot plug. Those paths are
+covered in QEMU only. The machine also has four SATA disks on AHCI, which the
+kernel does see; the run did not touch them.
 
 ## Out of scope
 

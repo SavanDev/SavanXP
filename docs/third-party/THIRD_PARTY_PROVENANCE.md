@@ -63,7 +63,7 @@ which is why both go into the registry.
   from `void *` that C++ needs. The shims carry the same origin note.
 - Distributed in: the kernel binary, used by `kernel/usb/hid.cpp` to read the
   report descriptors of USB pointers
-  ([USB_ROADMAP.md](../roadmaps/open/USB_ROADMAP.md))
+  ([USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md))
 
 ### Doom (DoomGeneric)
 

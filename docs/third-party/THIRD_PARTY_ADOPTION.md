@@ -81,7 +81,7 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
   additional non-alloc section
 - USB: `sys/dev/usb/usb.h` and `xhcireg.h` (descriptors and registers, pure
   data), `sys/dev/hid/hid.c` (the HID report parser) and `usbdevs`. The plan
-  is in [`USB_ROADMAP.md`](../roadmaps/open/USB_ROADMAP.md)
+  is in [`USB_ROADMAP.md`](../roadmaps/done/USB_ROADMAP.md)
 
 `Reference`:
 

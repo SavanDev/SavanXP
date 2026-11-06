@@ -2,7 +2,7 @@
 
 // Shared between the files of the USB stack (kernel/usb/). Nothing outside
 // kernel/usb includes it: the rest of the kernel sees include/kernel/usb.hpp.
-// See docs/roadmaps/open/USB_ROADMAP.md.
+// See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include <stddef.h>
 #include <stdint.h>

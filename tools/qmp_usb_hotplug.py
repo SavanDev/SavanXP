@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host side of usb-hotplug-smoke (docs/roadmaps/open/USB_ROADMAP.md).
+"""Host side of usb-hotplug-smoke (docs/roadmaps/done/USB_ROADMAP.md).
 
 Runs when kbdtest prints KBD SMOKE READY, on a machine with no 8042 and one
 USB keyboard. It pulls the keyboard out and plugs a new one in, plugs a USB

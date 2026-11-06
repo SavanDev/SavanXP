@@ -359,7 +359,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     # kbd-smoke's keys on a machine whose only keyboard is QEMU's usb-kbd (no
     # 8042): they reach the guest through xHCI and usb-hid or not at all
-    # (docs/roadmaps/open/USB_ROADMAP.md).
+    # (docs/roadmaps/done/USB_ROADMAP.md).
     "usb-kbd-smoke": _qemu_scenario(
         "kbdtest",
         "KBD SMOKE PASS",

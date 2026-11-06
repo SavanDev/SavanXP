@@ -1,6 +1,6 @@
 // The USB core: finds devices on the controllers' ports, reads their
 // descriptors, configures them and hands their interfaces to the class
-// drivers. See docs/roadmaps/open/USB_ROADMAP.md.
+// drivers. See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include "kernel/usb.hpp"
 

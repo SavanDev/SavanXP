@@ -2,7 +2,7 @@
 // OpenBSD's sys/dev/usb/xhci.c and sys/dev/pci/xhci_pci.c as reference (see
 // docs/third-party/THIRD_PARTY_ADOPTION.md). Polled: interrupts stay off and
 // every completion is found by draining the event ring, like the other
-// drivers here. See docs/roadmaps/open/USB_ROADMAP.md.
+// drivers here. See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include <stddef.h>
 #include <stdint.h>

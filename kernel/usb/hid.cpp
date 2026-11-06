@@ -3,7 +3,7 @@
 // (hid_report.cpp). Reports arrive on an interrupt IN endpoint; the
 // callback only queues them, and usb::poll() turns them into input events.
 // USB keyboards and pointers coexist with PS/2 and virtio ones: none
-// silences the others. See docs/roadmaps/open/USB_ROADMAP.md.
+// silences the others. See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include <stddef.h>
 #include <stdint.h>

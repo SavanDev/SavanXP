@@ -167,12 +167,12 @@ all its phases have landed; the links to it move with it.
   layer and its planned role in the desktop stack.
 - [`SXGL_ROADMAP.md`](roadmaps/done/SXGL_ROADMAP.md) — why the 3D layer sits beside SxGFX, the
   design it was built against, and how its batches landed.
+- [`USB_ROADMAP.md`](roadmaps/done/USB_ROADMAP.md) — the USB stack: xHCI only and polled,
+  HID, mass storage, hubs and hot plug, what was copied from OpenBSD and what
+  was only read, the QEMU harness, and the run on real hardware.
 
 ### Open — `roadmaps/open/`
 
-- [`USB_ROADMAP.md`](roadmaps/open/USB_ROADMAP.md) — the planned USB stack: xHCI only and
-  polled, HID boot protocol and mass storage, what is copied from OpenBSD and
-  what is only read, the QEMU harness, and the phases.
 - [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer on NetSurf's
   MIT libraries (libhubbub, libdom, libcss): what is adopted, the clean-room rule
   against the GPL core, and the phases up to its own CSS 2.1 layout engine.

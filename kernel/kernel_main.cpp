@@ -199,7 +199,7 @@ namespace
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
     // USB before input and storage: its class drivers register keyboards,
-    // pointers and disks like any other driver (docs/roadmaps/open/USB_ROADMAP.md).
+    // pointers and disks like any other driver (docs/roadmaps/done/USB_ROADMAP.md).
     boot_screen::show("Starting USB");
     // `nousb` leaves the xHCI controllers to the firmware: the way to boot a
     // machine whose controller the driver cannot handle.

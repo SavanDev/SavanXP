@@ -3,7 +3,7 @@
 // chapter 11 and USB 3.2 chapter 10, with OpenBSD's uhub.c as reference.
 // Ports are scanned once when the hub attaches; after that the hub's status
 // change endpoint says which port changed, and usb::service() handles it.
-// See docs/roadmaps/open/USB_ROADMAP.md.
+// See docs/roadmaps/done/USB_ROADMAP.md.
 
 #include <stddef.h>
 #include <stdint.h>

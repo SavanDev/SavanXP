@@ -16,9 +16,9 @@ Cut-off notes:
   (`verbose`, no splash) and **no USB** (`nousb`). The kernel reads the entry's `cmdline:` and logs
   `boot: options "..."`.
 
-- **xHCI on real hardware**: controllers left in a low-power state are woken (`was in D3, waking it`),
-  dead ones are skipped (`does not answer`), the firmware gets 5 s to release one, and Intel ports are
-  moved from EHCI to xHCI.
+- **xHCI on real hardware**, checked on an AMD machine booting the ISO from a USB stick: low-power
+  controllers are woken (`was in D3, waking it`), dead ones skipped (`does not answer`), the firmware
+  gets 5 s to release one, and Intel ports are moved from EHCI to xHCI.
 
 - **USB hubs and hot plug**: devices behind USB 2 and USB 3 hubs (`usb-hub:` log line), and devices plugged
   in or pulled out while running; a pulled stick's volumes are released and its block device removed.
@@ -34,11 +34,11 @@ Cut-off notes:
 
 - **USB: xHCI controllers and device enumeration.** At boot every xHCI controller is taken from the
   firmware and started (`xhci:` log line), and the devices on its root ports are addressed and configured
-  (`usb: port <n> <vid>:<pid> ...`). No class drivers yet. See `docs/roadmaps/open/USB_ROADMAP.md`.
+  (`usb: port <n> <vid>:<pid> ...`). No class drivers yet. See `docs/roadmaps/done/USB_ROADMAP.md`.
 
 - **QEMU machines with USB**: `./build.sh run --usb` (or `SAVANXP_USB=ON`) adds a `qemu-xhci` controller
   with a USB keyboard and tablet; smokes can ask for them (`usb`) and for a FAT USB stick (`usb_stick_mib`,
-  serial `SXUSB0`). No driver yet: see `docs/roadmaps/open/USB_ROADMAP.md`.
+  serial `SXUSB0`). No driver yet: see `docs/roadmaps/done/USB_ROADMAP.md`.
 
 - **System Properties** keeps a short note of thanks behind its logo.
 
