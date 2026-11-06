@@ -67,6 +67,11 @@ struct DiskInfo {
 // them, nor the disk, is mounted. false if `disk_index` is not a disk or a
 // partition could not be removed.
 bool rescan(size_t disk_index);
+// Removes a disk's partitions from block:: and forgets its table, without
+// reading the disk: it is going away (a USB stick pulled out). The caller
+// makes sure none of them is mounted. false if `disk_index` is not a disk or
+// a partition could not be removed.
+bool drop(size_t disk_index);
 
 // What partition:: found on a whole device. A device it never looked at (a
 // partition itself, a disk with fewer than 2 sectors) reads as Scheme::none.

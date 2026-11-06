@@ -52,4 +52,11 @@ size_t mount_boot_volume();
 // partitions is mounted, -EINVAL for a partition.
 int rescan(uint32_t id);
 
+// A disk is gone (a USB stick pulled out): release every volume mounted from
+// it or its partitions, then remove its partitions and the disk from
+// block::. false while something still holds a node of one of those volumes,
+// or it is the root or /boot; the caller tries again later, and meanwhile
+// every I/O on the disk fails.
+bool forget_disk(size_t index);
+
 } // namespace storage

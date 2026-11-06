@@ -322,6 +322,31 @@ int write(uint32_t id, uint64_t lba, uint32_t count, const void* buffer) {
     return block::write(index, static_cast<uint32_t>(lba), count, buffer) ? 0 : sx::negative_error(SX_EIO);
 }
 
+bool forget_disk(size_t index) {
+    block::DeviceInfo info = {};
+    if (!block::device_info(index, info) || !info.present) {
+        return true;
+    }
+    // Every volume on the disk or one of its partitions, unless something
+    // still holds a node of it.
+    for (size_t mount = 0; mount < fs::mount_count(); ++mount) {
+        fs::MountInfo mounted = {};
+        if (!fs::mount_info(mount, mounted) || extent_of(mounted.device_index).disk != index) {
+            continue;
+        }
+        if (is_root_mount(mount) || strcmp(mounted.mount_point, fs::kBootMountPoint) == 0 ||
+            fs::release(mount, &vnode_referenced) != 0) {
+            return false;
+        }
+        console::printf("storage: %s released, its disk is gone\n", mounted.mount_point);
+    }
+    if (!partition::drop(index) || !block::unregister_device(index)) {
+        return false;
+    }
+    ++g_content_generation;
+    return true;
+}
+
 int rescan(uint32_t id) {
     const size_t index = index_of(id);
     if (index == block::kInvalidDevice) {

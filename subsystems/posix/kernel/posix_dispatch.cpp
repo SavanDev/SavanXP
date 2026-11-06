@@ -1,5 +1,6 @@
 #include "kernel/process.hpp"
 #include "kernel/block.hpp"
+#include "kernel/usb.hpp"
 
 // The POSIX layer speaks the POSIX surface. This is the ONLY place in the
 // kernel image allowed to include it: kernel/ and include/kernel/ use the
@@ -189,9 +190,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             // Before halting, an idle core moves one bounded piece of the disk
             // writeback queue: that is where deferred writes reach the disk,
             // in time nobody else wanted. One piece per yield, so a process
-            // that becomes runnable gets the core back within one step.
+            // that becomes runnable gets the core back within one step. USB
+            // hot plug runs here too: enumerating a device takes long waits
+            // that do not belong in the timer tick.
             if (caller.idle && !has_runnable_non_idle() &&
-                !block::writeback_step()) {
+                !block::writeback_step() && !usb::service()) {
                 smp::wait_for_interrupt();
             }
             self.state = State::ready;

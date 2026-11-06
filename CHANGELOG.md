@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **USB hubs and hot plug**: devices behind USB 2 and USB 3 hubs (`usb-hub:` log line), and devices plugged
+  in or pulled out while running; a pulled stick's volumes are released and its block device removed.
+  New `storage::forget_disk`, `partition::drop`, smokes `usb-hub-smoke` and `usb-hotplug-smoke`.
+
 - **USB sticks**: Bulk-Only mass storage as block devices `usb0`, `usb1`... (`usb-storage:` log line),
   with model and serial in Disk Management, which mounts them like any FAT disk. `diskmgmt-smoke` now also
   attaches a USB stick (serial `SXUSB0`) and mounts, writes and remounts it.

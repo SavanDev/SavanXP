@@ -87,6 +87,7 @@ def build_qemu_args(
     usb_stick: Path | None = None,
     ps2: bool = True,
     usb_pointer: str = "tablet",
+    usb_hub: bool = False,
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -221,11 +222,16 @@ def build_qemu_args(
     if usb:
         if usb_pointer not in USB_POINTERS:
             raise SystemExit(f"unknown USB pointer {usb_pointer!r}; expected one of {', '.join(USB_POINTERS)}")
+        # Behind the hub the devices name their port: 1.1 is port 1 of the hub
+        # on root port 1.
+        hub_ports = (",port=1.1", ",port=1.2") if usb_hub else ("", "")
+        if usb_hub:
+            args_list += ["-device", "usb-hub,bus=xhci.0,port=1,id=usbhub"]
         args_list += [
             "-device",
-            "usb-kbd,bus=xhci.0,id=usbkbd",
+            f"usb-kbd,bus=xhci.0,id=usbkbd{hub_ports[0]}",
             "-device",
-            f"usb-{usb_pointer},bus=xhci.0,id=usb{usb_pointer}",
+            f"usb-{usb_pointer},bus=xhci.0,id=usb{usb_pointer}{hub_ports[1]}",
         ]
     if usb_stick is not None:
         args_list += [

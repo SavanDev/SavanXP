@@ -52,6 +52,7 @@ tools/*
 !tools/glyphs.py
 !tools/qmp_native_hw.py
 !tools/qmp_elevation.py
+!tools/qmp_usb_hotplug.py
 !tools/font/
 !tools/font/**
 *.log

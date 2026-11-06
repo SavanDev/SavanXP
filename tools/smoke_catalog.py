@@ -37,6 +37,7 @@ class Scenario:
     usb_stick_mib: int = 0
     no_ps2: bool = False
     usb_pointer: str = "mouse"
+    usb_hub: bool = False
 
 
 def _qemu_scenario(
@@ -65,6 +66,7 @@ def _qemu_scenario(
     usb_stick_mib: int = 0,
     no_ps2: bool = False,
     usb_pointer: str = "mouse",
+    usb_hub: bool = False,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -92,6 +94,7 @@ def _qemu_scenario(
         usb_stick_mib=usb_stick_mib,
         no_ps2=no_ps2,
         usb_pointer=usb_pointer,
+        usb_hub=usb_hub,
     )
 
 
@@ -365,6 +368,34 @@ SCENARIOS: dict[str, Scenario] = {
         180.0,
         "KBD SMOKE READY",
         "kbd",
+        usb=True,
+        no_ps2=True,
+    ),
+    # usb-kbd-smoke with the keyboard behind a full-speed usb-hub: the hub
+    # driver, route strings and a device below the root port.
+    "usb-hub-smoke": _qemu_scenario(
+        "kbdtest",
+        "KBD SMOKE PASS",
+        "KBD SMOKE FAIL",
+        "USB keyboard behind a USB hub",
+        180.0,
+        "KBD SMOKE READY",
+        "kbd",
+        usb=True,
+        no_ps2=True,
+        usb_hub=True,
+    ),
+    # kbd-smoke's keys, typed on a USB keyboard plugged in after the old one
+    # was pulled out; a stick is plugged in and pulled out on the way
+    # (tools/qmp_usb_hotplug.py checks the guest's log for it).
+    "usb-hotplug-smoke": _qemu_scenario(
+        "kbdtest",
+        "KBD SMOKE PASS",
+        "KBD SMOKE FAIL",
+        "USB keyboard and stick plugged in and pulled out while running",
+        180.0,
+        "KBD SMOKE READY",
+        qmp_callback="./tools/qmp_usb_hotplug.py",
         usb=True,
         no_ps2=True,
     ),
@@ -702,6 +733,7 @@ def main() -> int:
             "usb_stick_mib",
             "no_ps2",
             "usb_pointer",
+            "usb_hub",
         ),
         required=False,
     )

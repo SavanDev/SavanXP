@@ -1,9 +1,10 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phases 0 to 4 done.** The QEMU harness exists, xHCI controllers
-> start, the devices on their root ports are enumerated, USB keyboards, mice
-> and tablets work next to PS/2 and virtio ones, and USB sticks are block
-> devices Disk Management mounts. This document fixes the decisions, says which
+> **Status: phases 0 to 6 done in QEMU; phase 7 (real hardware) open.** xHCI
+> controllers start, devices are enumerated on root ports and behind hubs,
+> USB keyboards, mice and tablets work next to PS/2 and virtio ones, USB
+> sticks are block devices Disk Management mounts, and devices can be
+> plugged in and pulled out while the system runs. This document fixes the decisions, says which
 > parts of OpenBSD's stack are used and how, and orders the work so that every
 > phase boots and can be checked in QEMU on its own.
 
@@ -276,12 +277,59 @@ QEMU otherwise puts `usb-storage` on a USB 3 port.
 card readers, the Intel rate-matching hubs), so this is required before real
 hardware, not optional.
 
+**Done** (`kernel/usb/hub.cpp`). USB 2 and USB 3 hubs: the hub descriptor,
+`set_hub` (the slot context's hub bit and port count, through Configure
+Endpoint), `SET_HUB_DEPTH` on USB 3, port power and the power-good wait, then
+every connected port reset and attached at once, so a keyboard or a stick
+behind a hub is there before input and storage are probed. Devices behind a
+hub get a route string, and a low- or full-speed one behind a high-speed hub
+gets that hub's slot and port as its transaction translator (single TT; a
+multi-TT hub is driven as a single-TT one). Log: `usb-hub: 8 ports on
+409:55aa`, then `usb: port 5.1 ...` for a device on its port 1.
+`usb-hub-smoke` runs kbd-smoke with the keyboard behind QEMU's `usb-hub`
+(`--usb-hub`, catalog `usb_hub`). QEMU's hub is full speed, so the TT and
+USB 3 hub paths are not exercised in QEMU.
+
 ### Phase 6: hot plug
 
 Port status change events: attach a device after boot, and detach one. A
 removed stick unregisters its block device; a mounted volume on it is released,
 and what was not yet written is lost. QEMU's `device_add` and `device_del`
 drive it from a smoke.
+
+**Done.** Enumeration takes hundreds of milliseconds of waits, so it does
+not run from the timer tick. `usb::poll()` (the tick, through the input
+layer) only drains events and hands out keys and pointer moves;
+`usb::service()` does the long work and runs where the disk writeback queue
+drains, when a core is idle (the idle process's yield). A system busy on
+every core therefore sees a plug only once a core frees up.
+
+- A root port is acted on only when its **connect** change bit is set: the
+  reset of a port raises a change event too, and acting on that would
+  enumerate the device again forever.
+- A hub's status change endpoint flags its ports; `service()` reads each
+  flagged port's status, detaches what was there and attaches what is.
+- A plug pushed in is debounced 100 ms before its reset.
+- A pulled device is detached children first; its class drivers forget it.
+  A pulled keyboard releases every key it held.
+- A pulled stick goes through `storage::forget_disk()`: every volume on it
+  or its partitions is released (`storage: <path> released, its disk is
+  gone`), then `partition::drop()` and `block::unregister_device()`. If a
+  file or a mapped section still holds a node of one of its volumes, the
+  volume stays mounted with every I/O failing, and the release is tried
+  again every second until it succeeds (`usb-storage: usb0 pulled out while
+  in use; ...`). A stick's flush succeeds once it is gone, so a FAT volume
+  can be released; an SxFS volume, whose release writes, cannot, and stays
+  until reboot.
+- A stick plugged in after boot registers at once and its partition table is
+  read (`partition::rescan`).
+
+`usb-hotplug-smoke`: on a machine with no 8042, `tools/qmp_usb_hotplug.py`
+pulls the keyboard out, plugs a new one in, plugs a stick in and pulls it out,
+checking the guest's log after each step (run_smoke gives callbacks the log
+as `SAVANXP_SMOKE_SERIAL_LOG`); then it types kbd-smoke's keys, which only
+the hot-plugged keyboard can deliver. Pulling a stick whose volume is mounted
+and in use is not covered by a smoke.
 
 ### Phase 7: real hardware
 

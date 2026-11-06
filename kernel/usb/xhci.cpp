@@ -60,6 +60,7 @@ constexpr uint32_t kPortConnected = 1u << 0;
 constexpr uint32_t kPortEnabled = 1u << 1;
 constexpr uint32_t kPortReset = 1u << 4;
 constexpr uint32_t kPortPower = 1u << 9;
+constexpr uint32_t kPortConnectChange = 1u << 17;
 constexpr uint32_t kPortResetChange = 1u << 21;
 constexpr uint32_t kPortWarmResetChange = 1u << 19;
 constexpr uint32_t kPortWarmReset = 1u << 31;
@@ -128,7 +129,9 @@ constexpr uint32_t kRingTrbs = memory::kPageSize / 16;
 constexpr size_t kMaxControllers = 4;
 constexpr size_t kMaxSlots = 32;
 constexpr size_t kMaxPorts = 64;
-constexpr size_t kMaxScratchpads = 64;
+// The specification's ceiling: 1023 pages; the array of their addresses must
+// fit one page.
+constexpr size_t kMaxScratchpads = memory::kPageSize / sizeof(uint64_t);
 constexpr size_t kMaxTdTrbs = 4;
 constexpr uint32_t kCommandTimeoutMs = 1000;
 constexpr uint32_t kControlTimeoutMs = 1000;
@@ -203,8 +206,7 @@ struct Controller {
     bool ac64;
     memory::PageAllocation dcbaa;
     memory::PageAllocation scratch_array;
-    memory::PageAllocation scratch[kMaxScratchpads];
-    size_t scratch_count;
+    memory::PageAllocation scratch;
     Ring commands;
     memory::PageAllocation event_page;
     memory::PageAllocation erst;
@@ -634,13 +636,16 @@ bool set_up_memory(Controller& controller) {
         if (!allocate_zeroed(controller, controller.scratch_array)) {
             return false;
         }
+        // One contiguous run: the controller only needs page-aligned pages,
+        // and one allocation is one thing to keep.
+        if (!memory::allocate_contiguous_pages(scratchpads, controller.scratch) ||
+            !fits(controller, controller.scratch.physical_address)) {
+            return false;
+        }
+        memset(controller.scratch.virtual_address, 0, scratchpads * memory::kPageSize);
         auto* array = static_cast<uint64_t*>(controller.scratch_array.virtual_address);
         for (size_t i = 0; i < scratchpads; ++i) {
-            if (!allocate_zeroed(controller, controller.scratch[i])) {
-                return false;
-            }
-            array[i] = controller.scratch[i].physical_address;
-            ++controller.scratch_count;
+            array[i] = controller.scratch.physical_address + i * memory::kPageSize;
         }
         dcbaa[0] = controller.scratch_array.physical_address;
     }
@@ -700,6 +705,8 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     controller.slots = static_cast<uint8_t>((params1 & 0xff) < kMaxSlots ? (params1 & 0xff) : kMaxSlots);
     controller.ports = static_cast<uint8_t>(params1 >> 24);
     if (controller.ports > kMaxPorts) {
+        console::printf("xhci: %u ports, only the first %u are used\n", static_cast<unsigned>(controller.ports),
+            static_cast<unsigned>(kMaxPorts));
         controller.ports = kMaxPorts;
     }
     controller.context_size = (hcc & kHccContextSize) != 0 ? 64 : 32;
@@ -862,19 +869,31 @@ Speed reset_port(uint8_t index, uint8_t port) {
     return static_cast<Speed>((portsc >> 10) & 0x0f);
 }
 
-uint64_t take_port_changes(uint8_t index) {
+uint64_t take_port_changes(uint8_t index, bool all) {
     Controller& controller = g_controllers[index];
     drain(controller);
-    uint64_t changes = controller.port_changes;
+    const uint64_t flagged = all ? ~0ull : controller.port_changes;
     controller.port_changes = 0;
+    uint64_t connect_changes = 0;
     for (uint8_t port = 1; port <= controller.ports; ++port) {
+        if ((flagged & (1ull << (port - 1))) == 0) {
+            continue;
+        }
         const uint32_t portsc = read_port(controller, port);
+        // Only a connect change means a device came or went: the reset of a
+        // port flags a change too, and must not set off another enumeration.
+        if ((portsc & kPortConnectChange) != 0) {
+            connect_changes |= 1ull << (port - 1);
+        }
         if ((portsc & kPortChangeBits) != 0) {
-            changes |= 1ull << (port - 1);
             write_port(controller, port, portsc, portsc & kPortChangeBits);
         }
     }
-    return changes;
+    return connect_changes;
+}
+
+bool port_events_pending(uint8_t index) {
+    return g_controllers[index].port_changes != 0;
 }
 
 bool enable_device(Device& device) {

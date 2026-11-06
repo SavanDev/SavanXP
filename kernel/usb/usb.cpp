@@ -167,7 +167,10 @@ void offer_interfaces(Device& device) {
     }
 }
 
-void scan_root_ports(uint8_t controller, uint64_t ports) {
+// The root ports in `ports`: what was on them goes, what is there now is
+// attached. `debounce` waits out the bouncing of a plug just pushed in
+// (USB 2.0, 7.1.7.3); what is there at boot has long settled.
+void scan_root_ports(uint8_t controller, uint64_t ports, bool debounce) {
     for (uint8_t port = 1; port <= usb::hc::port_count(controller) && port <= 64; ++port) {
         if ((ports & (1ull << (port - 1))) == 0) {
             continue;
@@ -181,6 +184,9 @@ void scan_root_ports(uint8_t controller, uint64_t ports) {
         }
         if (!usb::hc::port_connected(controller, port)) {
             continue;
+        }
+        if (debounce) {
+            usb::delay_ms(100);
         }
         const Speed speed = usb::hc::reset_port(controller, port);
         if (speed == Speed::unknown) {
@@ -380,12 +386,13 @@ void initialize() {
         return;
     }
     g_ready = true;
+    register_hub_driver();
     register_hid_driver();
     register_storage_driver();
     for (uint8_t controller = 0; controller < hc::controller_count(); ++controller) {
         // Every port once: what is there at boot. Its change bits go with it.
-        (void)hc::take_port_changes(controller);
-        scan_root_ports(controller, ~0ull);
+        (void)hc::take_port_changes(controller, true);
+        scan_root_ports(controller, ~0ull, false);
     }
 }
 
@@ -403,6 +410,30 @@ void poll() {
             g_class_drivers[i]->poll();
         }
     }
+}
+
+bool service() {
+    if (!g_ready) {
+        return false;
+    }
+    hc::poll();
+    bool worked = false;
+    for (uint8_t controller = 0; controller < hc::controller_count(); ++controller) {
+        if (!hc::port_events_pending(controller)) {
+            continue;
+        }
+        const uint64_t changes = hc::take_port_changes(controller, false);
+        if (changes != 0) {
+            scan_root_ports(controller, changes, true);
+        }
+        worked = true;
+    }
+    for (size_t i = 0; i < g_class_driver_count; ++i) {
+        if (g_class_drivers[i]->service != nullptr && g_class_drivers[i]->service()) {
+            worked = true;
+        }
+    }
+    return worked;
 }
 
 } // namespace usb

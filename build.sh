@@ -176,6 +176,7 @@ SMOKE_USB=False
 SMOKE_USB_STICK_MIB=0
 SMOKE_NO_PS2=False
 SMOKE_USB_POINTER=mouse
+SMOKE_USB_HUB=False
 if [[ "$COMMAND" == smoke ]]; then
     [[ -n "$SMOKE_SCENARIO" ]] || SMOKE_SCENARIO=smoke
     if [[ -n "$SMOKE_COMMAND_OVERRIDE" ]]; then
@@ -210,6 +211,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_USB_STICK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_stick_mib)
         SMOKE_NO_PS2=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_ps2)
         SMOKE_USB_POINTER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_pointer)
+        SMOKE_USB_HUB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_hub)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -477,6 +479,7 @@ case "$COMMAND" in
         fi
         [[ "$SMOKE_USB" == True || "$USB" == ON ]] && SMOKE_ARGS+=(--usb --usb-pointer "$SMOKE_USB_POINTER")
         [[ "$SMOKE_NO_PS2" == True ]] && SMOKE_ARGS+=(--no-ps2)
+        [[ "$SMOKE_USB_HUB" == True ]] && SMOKE_ARGS+=(--usb-hub)
         if [[ "$SMOKE_USB_STICK_MIB" != 0 ]]; then
             build_target savanxp_fat_image
             SMOKE_ARGS+=(--usb-stick-mib "$SMOKE_USB_STICK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")

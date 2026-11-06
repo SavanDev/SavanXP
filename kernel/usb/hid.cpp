@@ -588,6 +588,7 @@ const usb::ClassDriver kHidDriver = {
     &probe,
     &detach,
     &poll,
+    nullptr,
 };
 
 void input_poll() {

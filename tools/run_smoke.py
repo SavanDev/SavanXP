@@ -129,12 +129,15 @@ def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str
         "--out-dir",
         str(output_dir),
     ]
+    # The guest's serial log, for a callback that checks what the guest saw.
+    environment = dict(os.environ, SAVANXP_SMOKE_SERIAL_LOG=str(log_dir / f"{run_tag}.serial.log"))
     try:
         result = subprocess.run(
             command,
             text=True,
             capture_output=True,
             check=False,
+            env=environment,
             # A callback may answer several prompts in turn (qmp_elevation.py
             # takes about 15 s); this only catches one that hangs.
             timeout=60.0,
@@ -205,6 +208,8 @@ def main() -> int:
     parser.add_argument("--usb-pointer", choices=USB_POINTERS, default="mouse",
                         help="The pointer --usb adds. A relative mouse by default: next to the "
                              "PS/2 mouse a tablet would take the clicks (run_qemu.USB_POINTERS).")
+    parser.add_argument("--usb-hub", action="store_true",
+                        help="Put the USB keyboard and pointer behind a usb-hub.")
     parser.add_argument("--no-ps2", action="store_true",
                         help="Boot without the 8042 PS/2 controller (i8042=off), so input can "
                              "only arrive through the other devices.")
@@ -339,6 +344,7 @@ def main() -> int:
         usb_stick=usb_stick,
         ps2=not args.no_ps2,
         usb_pointer=args.usb_pointer,
+        usb_hub=args.usb_hub,
     )
     qemu_args[0] = qemu
 

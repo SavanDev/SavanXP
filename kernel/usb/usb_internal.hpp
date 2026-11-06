@@ -145,10 +145,14 @@ struct ClassDriver {
     bool (*probe)(Device& device, const InterfaceDescriptor& interface, const uint8_t* extra,
         size_t extra_length);
     void (*detach)(Device& device);
-    // Called after the controller's events are drained, outside any of the
-    // stack's own callbacks: where a driver does work that needs transfers
-    // of its own (a keyboard's LEDs, a hub's port changes).
+    // Called from the timer tick after the controller's events are drained,
+    // outside any of the stack's own callbacks: short work that needs
+    // transfers of its own (a keyboard's LEDs).
     void (*poll)();
+    // Called from usb::service(), when a core has nothing else to do: long
+    // work (a hub enumerating its ports, a pulled stick released). Returns
+    // whether it did something.
+    bool (*service)();
 };
 
 constexpr size_t kMaxClassDrivers = 4;
@@ -190,9 +194,8 @@ const char* status_name(int status);
 // The class drivers, registered by usb::initialize().
 void register_hid_driver();
 void register_storage_driver();
+void register_hub_driver();
 const ClassDriver& storage_class_driver();
-// A stick's block device is going away with its device (umass.cpp).
-void storage_removed(size_t block_index);
 
 // The core (usb.cpp).
 bool register_class_driver(const ClassDriver& driver);
@@ -232,9 +235,13 @@ bool port_connected(uint8_t controller, uint8_t port);
 // Resets the port and returns the speed of what is behind it, or
 // Speed::unknown if nothing came up.
 Speed reset_port(uint8_t controller, uint8_t port);
-// Ports whose status changed since the last call, as a bitmap (bit n = port
-// n), and the change bits cleared.
-uint64_t take_port_changes(uint8_t controller);
+// Ports whose connection changed, as a bitmap (bit n-1 = port n), with
+// every change bit cleared: those the controller reported in an event since
+// the last call, or every port with `all`.
+uint64_t take_port_changes(uint8_t controller, bool all);
+// Whether a port status change event arrived since the last
+// take_port_changes(). Cheap: no register is read.
+bool port_events_pending(uint8_t controller);
 
 // Gives the device a slot and an address. Fills device.slot.
 bool enable_device(Device& device);

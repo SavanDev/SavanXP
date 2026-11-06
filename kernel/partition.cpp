@@ -419,12 +419,8 @@ bool info(size_t device_index, Info& out) {
     return false;
 }
 
-bool rescan(size_t disk_index) {
+bool drop(size_t disk_index) {
     if (disk_index >= kMaxDisks || is_slice(disk_index)) {
-        return false;
-    }
-    block::DeviceInfo info = {};
-    if (!block::device_info(disk_index, info) || !info.present) {
         return false;
     }
     for (size_t slot = 0; slot < kMaxSlices; ++slot) {
@@ -437,6 +433,21 @@ bool rescan(size_t disk_index) {
         }
         slice = {};
         memset(g_names[slot], 0, sizeof(g_names[slot]));
+    }
+    g_disks[disk_index] = {};
+    return true;
+}
+
+bool rescan(size_t disk_index) {
+    if (disk_index >= kMaxDisks || is_slice(disk_index)) {
+        return false;
+    }
+    block::DeviceInfo info = {};
+    if (!block::device_info(disk_index, info) || !info.present) {
+        return false;
+    }
+    if (!drop(disk_index)) {
+        return false;
     }
     scan_disk(disk_index);
     return true;

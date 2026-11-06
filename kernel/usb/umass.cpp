@@ -8,7 +8,10 @@
 
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
+#include "kernel/partition.hpp"
+#include "kernel/storage.hpp"
 #include "kernel/string.hpp"
+#include "kernel/timer.hpp"
 #include "kernel/usb.hpp"
 #include "usb_internal.hpp"
 
@@ -39,6 +42,8 @@ constexpr uint8_t kScsiReadCapacity16 = 0x10;
 constexpr size_t kMaxDisks = 4;
 constexpr uint32_t kSectorsPerTransfer = usb::hc::kMaxBulkBytes / block::kSectorSize;
 constexpr uint32_t kCommandTimeoutMs = 10000;
+// How often a pulled stick whose volume is still in use is tried again.
+constexpr uint64_t kForgetRetryMs = 1000;
 
 // Below the ramdisk (10): a stick never becomes the root ahead of the
 // system disk or the LiveCD's volume, since fs::mount_any takes the first
@@ -75,6 +80,10 @@ struct Disk {
     uint32_t sector_count;
     size_t block_index;
     bool registered;
+    // The stick was pulled out while its block device was registered: the
+    // slot stays (block:: holds a pointer to it) until storage:: lets go.
+    bool gone;
+    uint64_t retry_at;
     char name[8];
     block::DeviceIdentity identity;
 };
@@ -83,7 +92,7 @@ Disk g_disks[kMaxDisks] = {};
 uint32_t g_next_number = 0;
 
 bool alive(const Disk& disk) {
-    return disk.active && disk.device != nullptr && disk.device->present &&
+    return disk.active && !disk.gone && disk.device != nullptr && disk.device->present &&
         disk.device->generation == disk.generation;
 }
 
@@ -210,8 +219,10 @@ bool write_op(void* context, uint32_t lba, uint32_t count, const void* buffer) {
 
 bool flush_op(void* context) {
     Disk& disk = *static_cast<Disk*>(context);
+    // A pulled stick has nothing left to commit, and refusing would keep its
+    // volume from ever being released.
     if (!alive(disk)) {
-        return false;
+        return true;
     }
     uint8_t command[10] = {kScsiSynchronizeCache10};
     // Many sticks have no cache to commit and reject the command; that is
@@ -280,6 +291,15 @@ void register_disk(Disk& disk) {
     disk.block_index = block::register_device(kOps, &disk, disk.sector_count, /*writable=*/true, disk.name,
         &disk.identity);
     disk.registered = disk.block_index != block::kInvalidDevice;
+}
+
+void forget(Disk& disk) {
+    if (!storage::forget_disk(disk.block_index)) {
+        disk.retry_at = timer::monotonic_ms() + kForgetRetryMs;
+        return;
+    }
+    console::printf("usb-storage: %s removed\n", disk.name);
+    disk = {};
 }
 
 bool probe(Device& device, const usb::InterfaceDescriptor& interface, const uint8_t* extra, size_t extra_length) {
@@ -402,17 +422,42 @@ bool probe(Device& device, const usb::InterfaceDescriptor& interface, const uint
     // yet and would wipe the table; enumerate() registers it then.
     if (block::ready()) {
         register_disk(disk);
+        if (disk.registered) {
+            (void)partition::rescan(disk.block_index);
+        }
     }
     return true;
 }
 
 void detach(Device& device) {
     for (Disk& disk : g_disks) {
-        if (disk.active && disk.device == &device) {
-            usb::storage_removed(disk.registered ? disk.block_index : block::kInvalidDevice);
+        if (!disk.active || disk.gone || disk.device != &device) {
+            continue;
+        }
+        if (!disk.registered) {
             disk = {};
+            continue;
+        }
+        disk.gone = true;
+        forget(disk);
+        if (disk.active) {
+            console::printf("usb-storage: %s pulled out while in use; its volume fails until released\n",
+                disk.name);
         }
     }
+}
+
+// Pulled sticks whose volumes were still in use: try again.
+bool service() {
+    bool worked = false;
+    const uint64_t now = timer::monotonic_ms();
+    for (Disk& disk : g_disks) {
+        if (disk.active && disk.gone && now >= disk.retry_at) {
+            forget(disk);
+            worked = true;
+        }
+    }
+    return worked;
 }
 
 const usb::ClassDriver kStorageDriver = {
@@ -420,6 +465,7 @@ const usb::ClassDriver kStorageDriver = {
     &probe,
     &detach,
     nullptr,
+    &service,
 };
 
 void enumerate() {
@@ -440,15 +486,6 @@ const block::Driver kBlockDriver = {
 } // namespace
 
 namespace usb {
-
-void storage_removed(size_t block_index) {
-    if (block_index == block::kInvalidDevice) {
-        return;
-    }
-    if (!block::unregister_device(block_index)) {
-        console::write_line("usb-storage: the removed stick's device is still in use");
-    }
-}
 
 const ClassDriver& storage_class_driver() {
     return kStorageDriver;
