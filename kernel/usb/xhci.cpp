@@ -26,6 +26,16 @@ constexpr uint8_t kClassSerialBus = 0x0c;
 constexpr uint8_t kSubclassUsb = 0x03;
 constexpr uint8_t kProgIfXhci = 0x30;
 
+constexpr uint16_t kVendorIntel = 0x8086;
+// Intel's EHCI/xHCI port switching (8 Series and later): which ports the
+// firmware may hand over, and the registers that hand them over.
+constexpr uint8_t kIntelXusb2pr = 0xd0;
+constexpr uint8_t kIntelXusb2prm = 0xd4;
+constexpr uint8_t kIntelUsb3Pssen = 0xd8;
+constexpr uint8_t kIntelUsb3prm = 0xdc;
+// PCI power management capability: PMCSR bits 0-1 are the power state.
+constexpr uint8_t kPciCapabilityPowerManagement = 0x01;
+
 constexpr uint8_t kPciCommandOffset = 0x04;
 constexpr uint16_t kPciCommandMemory = 1u << 1;
 constexpr uint16_t kPciCommandBusMaster = 1u << 2;
@@ -541,10 +551,15 @@ void take_from_firmware(Controller& controller) {
     uint32_t offset = ((read32(controller.cap, kHccParams1) >> 16) & 0xffffu) * 4u;
     while (offset != 0) {
         const uint32_t value = read32(controller.cap, offset);
+        if (value == 0xffffffffu) {
+            return;
+        }
         if ((value & 0xff) == kExtCapLegacy) {
             if ((value & kLegacyBiosOwned) != 0) {
                 write32(controller.cap, offset, value | kLegacyOsOwned);
-                const uint64_t deadline = now_ms() + 1000;
+                // OpenBSD's xhci_pci.c gives the firmware 5 s; some take
+                // seconds to stop their legacy emulation.
+                const uint64_t deadline = now_ms() + 5000;
                 while ((read32(controller.cap, offset) & kLegacyBiosOwned) != 0 && now_ms() < deadline) {
                     arch::cpu_relax();
                 }
@@ -569,6 +584,9 @@ void read_protocols(Controller& controller) {
     uint32_t offset = ((read32(controller.cap, kHccParams1) >> 16) & 0xffffu) * 4u;
     while (offset != 0) {
         const uint32_t value = read32(controller.cap, offset);
+        if (value == 0xffffffffu) {
+            return;
+        }
         if ((value & 0xff) == kExtCapProtocol) {
             const uint8_t major = static_cast<uint8_t>(value >> 24);
             const uint32_t ports = read32(controller.cap, offset + 8);
@@ -677,6 +695,37 @@ bool set_up_memory(Controller& controller) {
     return true;
 }
 
+// A controller the firmware left in a low-power state answers every read
+// with all ones: bring it to D0 first (PCI PM 1.2, 10 ms to recover from D3).
+void power_up(const pci::DeviceInfo& info) {
+    uint8_t capability = 0;
+    if (!pci::find_capability(info, kPciCapabilityPowerManagement, capability)) {
+        return;
+    }
+    const uint8_t pmcsr = static_cast<uint8_t>(capability + 4);
+    const uint16_t control = pci::read_config_u16(info.bus, info.slot, info.function, pmcsr);
+    if ((control & 0x3u) == 0) {
+        return;
+    }
+    console::printf("xhci: %x:%x.%u was in D%u, waking it\n", static_cast<unsigned>(info.bus),
+        static_cast<unsigned>(info.slot), static_cast<unsigned>(info.function), static_cast<unsigned>(control & 0x3u));
+    pci::write_config_u16(info.bus, info.slot, info.function, pmcsr, static_cast<uint16_t>(control & ~0x3u));
+    usb::delay_ms(10);
+}
+
+// Intel 8 Series and later boot with their USB 2 and USB 3 ports routed to
+// the EHCI controller; the firmware says which may move to xHCI, and this
+// moves them (OpenBSD's xhci_pci_port_route).
+void route_intel_ports(const pci::DeviceInfo& info) {
+    if (info.vendor_id != kVendorIntel) {
+        return;
+    }
+    pci::write_config_u32(info.bus, info.slot, info.function, kIntelUsb3Pssen,
+        pci::read_config_u32(info.bus, info.slot, info.function, kIntelUsb3prm));
+    pci::write_config_u32(info.bus, info.slot, info.function, kIntelXusb2pr,
+        pci::read_config_u32(info.bus, info.slot, info.function, kIntelXusb2prm));
+}
+
 bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     controller = {};
     controller.pci = info;
@@ -695,8 +744,14 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     pci_command = static_cast<uint16_t>(pci_command | kPciCommandMemory | kPciCommandBusMaster |
         kPciCommandInterruptDisable);
     pci::write_config_u16(info.bus, info.slot, info.function, kPciCommandOffset, pci_command);
+    power_up(info);
 
     controller.cap = static_cast<volatile uint8_t*>(base);
+    if (read32(controller.cap, kHccParams1) == 0xffffffffu) {
+        console::printf("xhci: %x:%x.%u does not answer\n", static_cast<unsigned>(info.bus),
+            static_cast<unsigned>(info.slot), static_cast<unsigned>(info.function));
+        return false;
+    }
     controller.op = controller.cap + (read32(controller.cap, kCapLength) & 0xff);
     controller.rt = controller.cap + (read32(controller.cap, kRtsOff) & ~0x1fu);
     controller.db = controller.cap + (read32(controller.cap, kDbOff) & ~0x3u);
@@ -734,6 +789,7 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
         console::write_line("xhci: no answer to a No Op command");
         return false;
     }
+    route_intel_ports(info);
     // Ports without power (no Port Power Control, or the firmware left it
     // off) get it now; a device needs 20 ms after power to connect.
     bool powered = false;

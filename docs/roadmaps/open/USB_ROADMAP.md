@@ -1,12 +1,12 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phases 0 to 6 done in QEMU; phase 7 (real hardware) open.** xHCI
-> controllers start, devices are enumerated on root ports and behind hubs,
-> USB keyboards, mice and tablets work next to PS/2 and virtio ones, USB
-> sticks are block devices Disk Management mounts, and devices can be
-> plugged in and pulled out while the system runs. This document fixes the decisions, says which
-> parts of OpenBSD's stack are used and how, and orders the work so that every
-> phase boots and can be checked in QEMU on its own.
+> **Status: phases 0 to 6 done in QEMU; phase 7's code done, its check on
+> real hardware deferred.** xHCI controllers start, devices are enumerated on
+> root ports and behind hubs, USB keyboards, mice and tablets work next to
+> PS/2 and virtio ones, USB sticks are block devices Disk Management mounts,
+> and devices can be plugged in and pulled out while the system runs. What is
+> left is booting the ISO on the first target machine; the roadmap moves to
+> `done/` once that run is in.
 
 ## The short version
 
@@ -345,6 +345,28 @@ USB stick works in QEMU (OVMF booting `usb-storage`, no 8042): the root is the
 partitions, and nothing on it is mounted, since its EFI partition holds no
 `boot/kernel.elf`. Scratchpad pages, which real controllers ask for by the
 hundred, are allocated up to the specification's 512.
+
+The real-hardware code from OpenBSD's `xhci_pci.c` (reference) is in:
+
+- a controller the firmware left in D1-D3 is brought to D0 through its PCI
+  power management capability, with the 10 ms D3 recovery
+  (`xhci: <bdf> was in D3, waking it`);
+- a controller whose registers read all ones is skipped
+  (`xhci: <bdf> does not answer`), and the extended-capability walks stop on
+  all ones instead of looping;
+- the firmware gets 5 s, not 1, to release the controller;
+- on Intel (8 Series and later) the ports the firmware allows are moved from
+  EHCI to xHCI (`USB3_PSSEN` from `USB3PRM`, `XUSB2PR` from `XUSB2PRM`).
+
+AMD's one quirk there, `XHCI_NOCSS`, is about saving controller state across
+suspend, which this driver never does.
+
+**Deferred: the run on the machine.** It needs the development machine and
+its only stick, which the ISO occupies, so the check is: the boot log lines
+(`xhci:`, `usb:`, `usb-hid:`) from the **boot log on screen** entry, the USB
+keyboard and mouse on the desktop, and one of them pulled out and plugged
+back in. The stick itself shows up as `usb0` with the ISO's partitions, which
+covers mass storage without a second stick.
 
 The first target is the development machine: an AMD 400-series chipset
 xHCI (`1022:43d5`) and a Zeppelin xHCI (`1022:145f`), with an NVMe system

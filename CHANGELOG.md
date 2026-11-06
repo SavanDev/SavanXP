@@ -16,6 +16,10 @@ Cut-off notes:
   (`verbose`, no splash) and **no USB** (`nousb`). The kernel reads the entry's `cmdline:` and logs
   `boot: options "..."`.
 
+- **xHCI on real hardware**: controllers left in a low-power state are woken (`was in D3, waking it`),
+  dead ones are skipped (`does not answer`), the firmware gets 5 s to release one, and Intel ports are
+  moved from EHCI to xHCI.
+
 - **USB hubs and hot plug**: devices behind USB 2 and USB 3 hubs (`usb-hub:` log line), and devices plugged
   in or pulled out while running; a pulled stick's volumes are released and its block device removed.
   New `storage::forget_disk`, `partition::drop`, smokes `usb-hub-smoke` and `usb-hotplug-smoke`.
