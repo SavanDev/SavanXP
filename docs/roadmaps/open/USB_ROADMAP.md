@@ -1,8 +1,8 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: phases 0 to 2 done.** The QEMU harness exists, xHCI controllers
-> start, and the devices on their root ports are addressed, configured and
-> logged. No class drivers yet. This document fixes the decisions, says which
+> **Status: phases 0 to 3 done.** The QEMU harness exists, xHCI controllers
+> start, the devices on their root ports are enumerated, and USB keyboards,
+> mice and tablets work next to PS/2 and virtio ones. This document fixes the decisions, says which
 > parts of OpenBSD's stack are used and how, and orders the work so that every
 > phase boots and can be checked in QEMU on its own.
 
@@ -102,15 +102,16 @@ Every stick speaks BOT with SCSI commands: `INQUIRY`, `TEST UNIT READY`,
 device side; it waits. The result is one `block::Driver` like the others, and
 it never becomes the root: `fs::mount_any` keeps preferring the system disk.
 
-### The rule that one keyboard wins has to change
+### USB input coexists with every other input driver
 
-[INPUT.md](../../kernel/INPUT.md) silences any keyboard registered after the first, because
-QEMU feeds the host keyboard to every backend at once. On real hardware that
-is wrong: a laptop's internal PS/2 keyboard and a USB keyboard are both real,
-and both must work. The fix belongs to the input layer, not to the USB driver,
-and has to land before USB HID is enabled on real hardware. Until then the
-harness keeps the old behavior by registering USB HID after `ps2`, so QEMU's
-PS/2 keyboard keeps winning unless a scenario turns it off.
+[INPUT.md](../../kernel/INPUT.md) silences any keyboard registered after the first. On real
+hardware that is wrong for USB: a laptop's internal PS/2 keyboard and a USB
+keyboard are both real, and both must work. **Decided: USB keyboards and
+pointers coexist with PS/2 and virtio ones.** `usb-hid` registers after
+`ps2`, silences nothing and is never silenced, and registers whenever a
+controller started, so a keyboard plugged in later works. QEMU delivers each
+event to one device only, so nothing arrives twice; the PS/2-versus-virtio
+rule stays as it was.
 
 ## What comes from OpenBSD
 
@@ -154,6 +155,12 @@ adds:
 -device usb-tablet,bus=xhci.0,id=usbtablet
 ```
 
+The pointer is a tablet for a QEMU window, where the host pointer maps onto
+it. Smokes get `usb-mouse` instead (`--usb-pointer mouse`, the catalog's
+`usb_pointer`): QEMU sends relative moves to a relative mouse but buttons to
+whichever pointer it activated last, so a tablet next to the PS/2 mouse takes
+clicks the mouse moved for, at its own position.
+
 and `run_qemu.py --usb-stick PATH` adds a raw image as `usb-storage` (serial
 `SXUSB0`) on the same controller. Both work on the AHCI machine and with
 `--virtio`. A smoke scenario asks for them with `usb=True` and
@@ -168,8 +175,11 @@ Debugging aids:
   doorbell, command and event as QEMU sees it) to PATH, so a hung ring shows
   which side stopped.
 - `info usb` in the monitor lists what is attached and at which speed.
-- QMP `input-send-event` takes a `device` argument, so a smoke can type into
-  `usbkbd` specifically and prove the key arrived through USB, not PS/2.
+- To prove an event travelled USB, take the other devices away: a scenario
+  with `no_ps2=True` boots with `i8042=off`, so USB is the only keyboard and
+  pointer. QMP `input-send-event` has a `device` argument for this, but
+  QEMU 11.1 aborts on it (`Property 'qemu-fixed-text-console.device' not
+  found`).
 
 Under UEFI, OVMF drives the controller before the kernel starts. The driver
 has to halt and reset it (`HCRST`) and never assume a clean state, which is
@@ -219,6 +229,19 @@ speed with a 512-byte endpoint 0.
 Boot protocol, an interrupt endpoint per device, the usage table, LEDs. Then
 the HID parser for `usb-tablet` and report-protocol devices.
 Test: a smoke that types through `usbkbd` with QMP and moves `usbtablet`.
+
+**Done** (`kernel/usb/hid.cpp`, the parser in `kernel/usb/hid_report.cpp`).
+Keyboards use the boot protocol, with LEDs through `SET_REPORT` from `poll`
+and a typematic of their own (500 ms, then every 33 ms), since a USB keyboard
+does not repeat. Pointers read their report descriptor first, which gives a
+mouse its wheel and a tablet its absolute axes; only a boot mouse whose
+descriptor cannot be read falls back to the 3-byte boot report. Log lines:
+`usb-hid: keyboard on <vid>:<pid>`, `usb-hid: mouse ...`,
+`usb-hid: absolute pointer ...`. Three smokes, each on a machine with no
+8042: `usb-kbd-smoke` (kbd-smoke's keys), `usb-pointer-smoke` (the tablet,
+pointer-smoke's moves) and `usb-mouse-smoke` (taskbar-smoke driven by
+`usb-mouse`). Booting without an 8042 found a `ps2` bug on the way: it
+waited forever on a controller that is not there.
 
 ### Phase 4: mass storage
 

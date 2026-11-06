@@ -35,6 +35,8 @@ class Scenario:
     fat_disk_mib: int = 0
     usb: bool = False
     usb_stick_mib: int = 0
+    no_ps2: bool = False
+    usb_pointer: str = "mouse"
 
 
 def _qemu_scenario(
@@ -61,6 +63,8 @@ def _qemu_scenario(
     fat_disk_mib: int = 0,
     usb: bool = False,
     usb_stick_mib: int = 0,
+    no_ps2: bool = False,
+    usb_pointer: str = "mouse",
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -86,6 +90,8 @@ def _qemu_scenario(
         fat_disk_mib=fat_disk_mib,
         usb=usb,
         usb_stick_mib=usb_stick_mib,
+        no_ps2=no_ps2,
+        usb_pointer=usb_pointer,
     )
 
 
@@ -347,6 +353,34 @@ SCENARIOS: dict[str, Scenario] = {
         "KBD SMOKE READY",
         "kbd",
     ),
+    # kbd-smoke's keys on a machine whose only keyboard is QEMU's usb-kbd (no
+    # 8042): they reach the guest through xHCI and usb-hid or not at all
+    # (docs/roadmaps/open/USB_ROADMAP.md).
+    "usb-kbd-smoke": _qemu_scenario(
+        "kbdtest",
+        "KBD SMOKE PASS",
+        "KBD SMOKE FAIL",
+        "USB keyboard input through xHCI and usb-hid",
+        180.0,
+        "KBD SMOKE READY",
+        "kbd",
+        usb=True,
+        no_ps2=True,
+    ),
+    # pointer-smoke's moves and click on a machine whose only pointer is
+    # QEMU's usb-tablet: absolute positions through the HID report parser.
+    "usb-pointer-smoke": _qemu_scenario(
+        "mousetest --selftest",
+        "POINTER SMOKE PASS",
+        "POINTER SMOKE FAIL",
+        "USB tablet position and button path",
+        120.0,
+        ready="POINTER SMOKE READY",
+        qmp_driver="pointer",
+        usb=True,
+        no_ps2=True,
+        usb_pointer="tablet",
+    ),
     "taskbar-smoke": _qemu_scenario(
         "",
         "TASKBAR SMOKE PASS",
@@ -357,6 +391,22 @@ SCENARIOS: dict[str, Scenario] = {
         "taskbar",
         completion="host",
         ready_wait=45.0,
+    ),
+    # taskbar-smoke on a machine whose only keyboard and pointer are QEMU's
+    # usb-kbd and usb-mouse: every relative move and click travels xHCI and
+    # the HID report parser.
+    "usb-mouse-smoke": _qemu_scenario(
+        "",
+        "TASKBAR SMOKE PASS",
+        "TASKBAR SMOKE FAIL",
+        "Desktop taskbar driven by a USB mouse and keyboard",
+        300.0,
+        "handoff: starting /bin/init",
+        "taskbar",
+        completion="host",
+        ready_wait=45.0,
+        usb=True,
+        no_ps2=True,
     ),
     # No disk attached: the kernel starts /rescue/bin/init, and the rescue
     # system has to work from the initramfs alone (docs/kernel/FILESYSTEMS.md).
@@ -649,6 +699,8 @@ def main() -> int:
             "fat_disk_mib",
             "usb",
             "usb_stick_mib",
+            "no_ps2",
+            "usb_pointer",
         ),
         required=False,
     )

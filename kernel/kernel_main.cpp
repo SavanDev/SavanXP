@@ -197,6 +197,7 @@ namespace
     boot_screen::show("Initializing input");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
+    usb::start_input();
     process::initialize();
     if (subsystem::dispatcher_for(subsystem::Id::posix) == nullptr ||
         subsystem::dispatcher_for(subsystem::Id::native) == nullptr ||

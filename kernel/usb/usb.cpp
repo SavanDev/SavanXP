@@ -376,6 +376,7 @@ void initialize() {
         return;
     }
     g_ready = true;
+    register_hid_driver();
     for (uint8_t controller = 0; controller < hc::controller_count(); ++controller) {
         // Every port once: what is there at boot. Its change bits go with it.
         (void)hc::take_port_changes(controller);

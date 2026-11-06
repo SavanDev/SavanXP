@@ -88,20 +88,27 @@ class QmpClient:
                 raise QmpError(f"QMP {command} failed: {response['error']}")
             return response
 
+    def send_input(self, events: list[dict[str, Any]]) -> None:
+        """input-send-event to whichever handler QEMU picks.
+
+        Its "device" argument would aim the events at one device, but QEMU
+        11.1 aborts on it ("Property 'qemu-fixed-text-console.device' not
+        found"). A scenario that must prove one path takes the other devices
+        away instead (the USB smokes boot with i8042=off).
+        """
+        self.execute("input-send-event", {"events": events})
+
     def key(self, qcode: str, down: bool) -> None:
-        self.execute(
-            "input-send-event",
-            {
-                "events": [
-                    {
-                        "type": "key",
-                        "data": {
-                            "down": down,
-                            "key": {"type": "qcode", "data": qcode},
-                        },
-                    }
-                ]
-            },
+        self.send_input(
+            [
+                {
+                    "type": "key",
+                    "data": {
+                        "down": down,
+                        "key": {"type": "qcode", "data": qcode},
+                    },
+                }
+            ]
         )
 
     def tap(self, qcode: str, hold: float = 0.05, pause: float = 0.12) -> None:
@@ -122,42 +129,29 @@ class QmpClient:
         time.sleep(0.40)
 
     def relative(self, dx: int, dy: int) -> None:
-        self.execute(
-            "input-send-event",
-            {
-                "events": [
-                    {"type": "rel", "data": {"axis": "x", "value": dx}},
-                    {"type": "rel", "data": {"axis": "y", "value": dy}},
-                ]
-            },
+        self.send_input(
+            [
+                {"type": "rel", "data": {"axis": "x", "value": dx}},
+                {"type": "rel", "data": {"axis": "y", "value": dy}},
+            ]
         )
 
     def absolute(self, x: int, y: int) -> None:
         """Place the pointer at an absolute device position.
 
         The values are in the device's own coordinate space, not screen pixels:
-        virtio-tablet publishes 0..32767 for both axes. Only a device with an
-        absolute handler takes these, so this is virtio-only.
+        virtio-tablet and usb-tablet publish 0..32767 for both axes. Only a
+        device with an absolute handler takes these.
         """
-        self.execute(
-            "input-send-event",
-            {
-                "events": [
-                    {"type": "abs", "data": {"axis": "x", "value": x}},
-                    {"type": "abs", "data": {"axis": "y", "value": y}},
-                ]
-            },
+        self.send_input(
+            [
+                {"type": "abs", "data": {"axis": "x", "value": x}},
+                {"type": "abs", "data": {"axis": "y", "value": y}},
+            ]
         )
 
     def button(self, name: str, down: bool) -> None:
-        self.execute(
-            "input-send-event",
-            {
-                "events": [
-                    {"type": "btn", "data": {"down": down, "button": name}}
-                ]
-            },
-        )
+        self.send_input([{"type": "btn", "data": {"down": down, "button": name}}])
 
     def screenshot(self, path: Path) -> None:
         self.execute("screendump", {"filename": str(path)})

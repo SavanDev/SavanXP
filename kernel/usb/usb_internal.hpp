@@ -187,6 +187,9 @@ struct Device {
 
 const char* status_name(int status);
 
+// The class drivers, registered by usb::initialize().
+void register_hid_driver();
+
 // The core (usb.cpp).
 bool register_class_driver(const ClassDriver& driver);
 // A device was found on a port: address it, read its descriptors,

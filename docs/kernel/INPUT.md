@@ -19,8 +19,9 @@ pointer or both, plus its callbacks.
 | `set_screen_extent` | absolute pointers | The screen size the device's range maps onto. Sent again after every mode change. |
 | `reset_pointer` | absolute pointers | Forget the last position at the start and end of a graphics session, so the next sample is a jump, not a delta. |
 
-Today there are two drivers: `virtio-input` (tablet and keyboard) and `ps2`
-(the 8042 keyboard and mouse).
+Today there are three drivers: `virtio-input` (tablet and keyboard), `ps2`
+(the 8042 keyboard and mouse) and `usb-hid` (USB keyboards, mice and tablets,
+[USB_ROADMAP.md](../roadmaps/open/USB_ROADMAP.md)).
 
 ## Registration order is priority
 
@@ -32,6 +33,22 @@ machine the 8042 keeps its keyboard and mouse ports quiet and logs
 `ps2: skipping keyboard, another input driver provides one`. The order of the
 initialize calls is the policy. A new driver goes into that order according to
 how much it should be trusted over the others.
+
+**USB is the exception: it coexists with everything.** On real hardware a
+laptop's PS/2 keyboard and a USB keyboard plugged into it are both real, and
+both must work, so `usb-hid` registers last (`usb::start_input()`, after
+`ps2`) and silences nothing; and it registers whenever a controller started,
+with or without a keyboard, so one plugged in later works too. QEMU does not
+deliver an event twice: each one goes to a single device, so a machine with
+PS/2 and USB keyboards gets every key once (`kbd-smoke` passes with
+`SAVANXP_USB=ON`). What QEMU does do is send relative moves to a relative
+mouse and buttons to whichever pointer it activated last, so a USB tablet next
+to the PS/2 mouse would take clicks the mouse moved for; smokes therefore get
+a relative `usb-mouse` unless they ask for the tablet.
+
+A machine may have no 8042 at all (recent hardware, QEMU's `i8042=off`): the
+status port then reads `0xff`, and `ps2` logs `ps2: no 8042 controller` and
+stays out.
 
 `input::keyboard_available()` is what `savanxp_system_info.input_ready`
 reports.

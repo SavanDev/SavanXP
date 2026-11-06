@@ -160,8 +160,10 @@ bool read_output_byte(uint8_t& value, bool& auxiliary) {
     return true;
 }
 
+// Bounded: with no 8042 at all the status port reads 0xff, which looks like
+// a byte always waiting, and an unbounded drain never ends.
 void flush_controller_output() {
-    while ((in8(kStatusPort) & kStatusOutputReady) != 0) {
+    for (uint32_t i = 0; i < 64 && (in8(kStatusPort) & kStatusOutputReady) != 0; ++i) {
         (void)in8(kDataPort);
     }
 }
@@ -868,6 +870,14 @@ void initialize() {
     g_keyboard_active = false;
     clear_raw_queue();
     reset_input_state();
+
+    // An absent controller floats the bus: every bit of the status port set.
+    // Machines without an 8042 exist (QEMU's i8042=off, recent hardware with
+    // only USB input), and nothing below may wait on one.
+    if (in8(kStatusPort) == 0xff) {
+        console::write_line("ps2: no 8042 controller");
+        return;
+    }
 
     bool second_port_present = false;
     if (!initialize_controller(second_port_present)) {

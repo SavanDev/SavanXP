@@ -20,7 +20,7 @@ from sxfs_sync import copy_preserving_holes
 from smoke_profile import reset_display_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
-from run_qemu import build_qemu_args, find_qemu, prepare_image
+from run_qemu import USB_POINTERS, build_qemu_args, find_qemu, prepare_image
 
 
 def _die_with_parent() -> None:
@@ -201,7 +201,13 @@ def main() -> int:
                         help="Attach a FAT disk of this size (serial SXFAT0), built by "
                              "--fat-image with /hello.txt on it: Disk Management's.")
     parser.add_argument("--usb", action="store_true",
-                        help="Add an xHCI controller with a USB keyboard (usbkbd) and tablet (usbtablet).")
+                        help="Add an xHCI controller with a USB keyboard and pointer.")
+    parser.add_argument("--usb-pointer", choices=USB_POINTERS, default="mouse",
+                        help="The pointer --usb adds. A relative mouse by default: next to the "
+                             "PS/2 mouse a tablet would take the clicks (run_qemu.USB_POINTERS).")
+    parser.add_argument("--no-ps2", action="store_true",
+                        help="Boot without the 8042 PS/2 controller (i8042=off), so input can "
+                             "only arrive through the other devices.")
     parser.add_argument("--usb-stick-mib", type=int, default=0,
                         help="Attach a FAT USB stick of this size (serial SXUSB0), built by "
                              "--fat-image with /hello.txt on it.")
@@ -331,6 +337,8 @@ def main() -> int:
         extra_disks=extra_disks,
         usb=args.usb,
         usb_stick=usb_stick,
+        ps2=not args.no_ps2,
+        usb_pointer=args.usb_pointer,
     )
     qemu_args[0] = qemu
 

@@ -39,6 +39,12 @@ def find_ovmf(name: str) -> Path | None:
 
 DISK_BUSES = ("ahci", "ide")
 
+# A tablet is what a QEMU window wants (the host pointer maps straight onto
+# it). Next to the PS/2 mouse it is wrong for relative scenarios: QEMU sends
+# relative moves to the mouse but buttons to whichever pointer it last
+# activated, and the tablet reports a click at its own position.
+USB_POINTERS = ("tablet", "mouse")
+
 # The window QEMU shows. GTK is the default: it scales and has menus. Its pointer
 # grab cannot confine the host pointer on a Wayland session, so a game that
 # captures the pointer (Nightwood's mouse look) sees the mouse leave the window;
@@ -79,6 +85,8 @@ def build_qemu_args(
     extra_disks: tuple[tuple[Path, str], ...] = (),
     usb: bool = False,
     usb_stick: Path | None = None,
+    ps2: bool = True,
+    usb_pointer: str = "tablet",
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -90,7 +98,8 @@ def build_qemu_args(
     scenarios that need a disk of their own to write (Disk Management's). The
     serial is how the guest tells them from the system's disk.
 
-    usb adds an xHCI controller with a keyboard and a tablet on it; usb_stick
+    usb adds an xHCI controller with a keyboard and a pointer on it (a tablet,
+    or a relative mouse with usb_pointer="mouse"); usb_stick
     adds a raw image as a USB mass-storage device on the same controller
     (docs/roadmaps/open/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
     usb_xhci_* trace events to PATH.
@@ -101,7 +110,7 @@ def build_qemu_args(
     args_list = [
         "qemu-system-x86_64",
         "-machine",
-        "q35,pcspk-audiodev=audio0",
+        "q35,pcspk-audiodev=audio0" + ("" if ps2 else ",i8042=off"),
         "-accel",
         accel,
         "-m",
@@ -210,11 +219,13 @@ def build_qemu_args(
         if trace_path:
             args_list += ["-trace", f"enable=usb_xhci_*,file={trace_path}"]
     if usb:
+        if usb_pointer not in USB_POINTERS:
+            raise SystemExit(f"unknown USB pointer {usb_pointer!r}; expected one of {', '.join(USB_POINTERS)}")
         args_list += [
             "-device",
             "usb-kbd,bus=xhci.0,id=usbkbd",
             "-device",
-            "usb-tablet,bus=xhci.0,id=usbtablet",
+            f"usb-{usb_pointer},bus=xhci.0,id=usb{usb_pointer}",
         ]
     if usb_stick is not None:
         args_list += [
@@ -287,6 +298,8 @@ def main() -> int:
                         help="a second disk image (serial SXBLANK0) for Disk Management to write")
     parser.add_argument("--usb", action="store_true",
                         help="add an xHCI controller with a USB keyboard and tablet")
+    parser.add_argument("--usb-pointer", choices=USB_POINTERS, default="tablet",
+                        help="the pointer --usb adds (default: tablet)")
     parser.add_argument("--usb-stick", type=Path,
                         help="attach this raw image as a USB mass-storage device")
     args = parser.parse_args()
@@ -323,6 +336,7 @@ def main() -> int:
         extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
         usb=args.usb,
         usb_stick=args.usb_stick.resolve() if args.usb_stick else None,
+        usb_pointer=args.usb_pointer,
     )
     args_list[0] = qemu
 

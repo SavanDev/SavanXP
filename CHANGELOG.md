@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **USB keyboards, mice and tablets** (`usb-hid`), next to PS/2 and virtio ones: none silences the
+  others, and a keyboard plugged in later works. Smokes `usb-kbd-smoke`, `usb-pointer-smoke` and
+  `usb-mouse-smoke` boot without an 8042 (`no_ps2`); smokes get a USB mouse unless they ask for the tablet.
+
 - **USB: xHCI controllers and device enumeration.** At boot every xHCI controller is taken from the
   firmware and started (`xhci:` log line), and the devices on its root ports are addressed and configured
   (`usb: port <n> <vid>:<pid> ...`). No class drivers yet. See `docs/roadmaps/open/USB_ROADMAP.md`.
@@ -255,6 +259,8 @@ Cut-off notes:
   name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
 
 ### Fixed
+
+- **Booting without a PS/2 controller hung** in `ps2` initialization; it now logs `ps2: no 8042 controller`.
 
 - **A FAT volume over a whole disk is no longer read as an MBR**: its boot sector ends in `0x55AA` too,
   and `partition::` sliced its boot code as a table. Such a disk now has no scheme and mounts whole.

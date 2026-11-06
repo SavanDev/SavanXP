@@ -49,6 +49,22 @@ which is why both go into the registry.
   flags (`savanxp_fatfs_objects`) and integrated through `kernel/fat.cpp` and
   `kernel/fat_diskio.cpp`
 
+### OpenBSD HID report parser
+
+- Origin: OpenBSD `sys/dev/hid/hid.c` (rev 1.10) and `sys/dev/hid/hid.h`,
+  https://github.com/openbsd/src
+- Pinned version: commit `4112720b9484adea19b5d2c5525b08be6066bf95`
+- Versioned: yes, `kernel/usb/hid_report.cpp` and `kernel/usb/hid_report.h`
+- License reviewed: BSD-2-Clause, Copyright (c) 1998 The NetBSD Foundation,
+  Inc. The notice stays at the top of both files.
+- Decision: `Selective port`. The parser is unchanged; the OpenBSD includes
+  are replaced by `kernel/usb/hid_compat.hpp` and `hid_types.hpp` (malloc and
+  free on the kernel heap, the `u_int` types), and `hid.c` gains the two casts
+  from `void *` that C++ needs. The shims carry the same origin note.
+- Distributed in: the kernel binary, used by `kernel/usb/hid.cpp` to read the
+  report descriptors of USB pointers
+  ([USB_ROADMAP.md](../roadmaps/open/USB_ROADMAP.md))
+
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit
