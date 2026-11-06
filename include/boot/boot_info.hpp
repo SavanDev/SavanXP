@@ -88,6 +88,32 @@ struct BootInfo {
     const MemoryRegion* memory_map;
     size_t memory_map_entries;
     SmpInfo smp;
+    // The boot entry's command line (limine.conf `cmdline:`), words separated
+    // by spaces; nullptr when the loader gave none. See boot::has_option.
+    const char* cmdline;
 };
+
+// Whether `option` is one of the space-separated words of `cmdline`.
+inline bool has_option(const char* cmdline, const char* option) {
+    if (cmdline == nullptr || option == nullptr || option[0] == 0) {
+        return false;
+    }
+    for (const char* word = cmdline; *word != 0;) {
+        while (*word == ' ') {
+            ++word;
+        }
+        size_t i = 0;
+        while (option[i] != 0 && word[i] == option[i]) {
+            ++i;
+        }
+        if (option[i] == 0 && (word[i] == ' ' || word[i] == 0)) {
+            return true;
+        }
+        while (*word != 0 && *word != ' ') {
+            ++word;
+        }
+    }
+    return false;
+}
 
 } // namespace boot

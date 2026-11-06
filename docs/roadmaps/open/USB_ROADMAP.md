@@ -337,6 +337,19 @@ The handoff on real firmware, vendor quirks from `xhci_pci.c`, slow devices,
 and the one-keyboard rule fixed in the input layer. Checked on the machine,
 with the boot log over serial or on screen.
 
+**Prepared.** The ISO menu has a **boot log on screen** entry (`verbose`) and a
+**no USB** one (`nousb`), so a machine without a serial port shows where USB
+stops it, and still boots if it does (BUILD_LINUX.md). Booting the ISO from a
+USB stick works in QEMU (OVMF booting `usb-storage`, no 8042): the root is the
+`livecd` ramdisk, the stick itself shows up as `usb0` with the ISO's three
+partitions, and nothing on it is mounted, since its EFI partition holds no
+`boot/kernel.elf`. Scratchpad pages, which real controllers ask for by the
+hundred, are allocated up to the specification's 512.
+
+The first target is the development machine: an AMD 400-series chipset
+xHCI (`1022:43d5`) and a Zeppelin xHCI (`1022:145f`), with an NVMe system
+disk the kernel does not see.
+
 ## Out of scope
 
 - EHCI, OHCI, UHCI, until a target machine needs them.
@@ -352,5 +365,4 @@ with the boot log over serial or on screen.
   delivering every event twice.
 - Whether HID polling at the timer tick is good enough for a mouse at 1000 Hz,
   or whether the event ring needs draining more often.
-- Which real machine is the first target, which decides whether EHCI is ever
-  needed.
+- Whether EHCI is ever needed: the first target machine has only xHCI.

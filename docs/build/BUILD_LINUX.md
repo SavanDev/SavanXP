@@ -207,6 +207,13 @@ the system two different ways, and only one of them belongs to each path:
 | `run`, `debug`, smokes, `gpu-soak` | QEMU attaches `build/disk.img` as an ATA or virtio-blk disk | `boot/limine-dev.conf` |
 | ISO / LiveCD | a Limine module, mounted as the `livecd` ramdisk | `boot/limine.conf` |
 
+The ISO's menu waits 3 seconds and has two more entries for real hardware,
+where there is no serial port: **SavanXP (boot log on screen)** passes
+`verbose`, which leaves the kernel log on screen instead of the splash, and
+**SavanXP (no USB, boot log on screen)** adds `nousb`, which leaves the xHCI
+controllers to the firmware. The kernel reads them from the entry's `cmdline:`
+(`boot::has_option`) and logs what it got as `boot: options "..."`.
+
 In the development path the module was pure overhead. `kernel_main.cpp` registers
 it as a `livecd` ramdisk with priority 10, against ATA's 100 and virtio-blk's
 110, and `fs::mount_any` takes the first device that claims the root — so Limine

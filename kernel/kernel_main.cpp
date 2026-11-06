@@ -132,7 +132,14 @@ namespace
     // su barra durante todo ese tramo.
     timer::calibrate_monotonic();
 
-    boot_screen::initialize(boot_info.framebuffer);
+    // `verbose` keeps the boot log on screen instead of the splash: on a
+    // machine without a serial port it is the only way to see where a boot
+    // stops.
+    const bool verbose = boot::has_option(boot_info.cmdline, "verbose");
+    if (!verbose)
+    {
+        boot_screen::initialize(boot_info.framebuffer);
+    }
     if (boot_screen::ready())
     {
         console::set_framebuffer_console_enabled(false);
@@ -140,6 +147,7 @@ namespace
     }
 
     console::printf("%s %s booting...\n", SAVANXP_SYSTEM_NAME, SAVANXP_FULL_VERSION_STRING);
+    console::printf("boot: options \"%s\"\n", boot_info.cmdline != nullptr ? boot_info.cmdline : "");
 
     boot_screen::show("Initializing physical memory");
     memory::initialize(boot_info);
@@ -193,7 +201,16 @@ namespace
     // USB before input and storage: its class drivers register keyboards,
     // pointers and disks like any other driver (docs/roadmaps/open/USB_ROADMAP.md).
     boot_screen::show("Starting USB");
-    usb::initialize();
+    // `nousb` leaves the xHCI controllers to the firmware: the way to boot a
+    // machine whose controller the driver cannot handle.
+    if (boot::has_option(boot_info.cmdline, "nousb"))
+    {
+        console::write_line("usb: disabled by the nousb boot option");
+    }
+    else
+    {
+        usb::initialize();
+    }
     boot_screen::show("Initializing input");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();

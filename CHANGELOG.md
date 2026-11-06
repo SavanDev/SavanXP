@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Boot options for real hardware**: the ISO menu now waits 3 s and adds **boot log on screen**
+  (`verbose`, no splash) and **no USB** (`nousb`). The kernel reads the entry's `cmdline:` and logs
+  `boot: options "..."`.
+
 - **USB hubs and hot plug**: devices behind USB 2 and USB 3 hubs (`usb-hub:` log line), and devices plugged
   in or pulled out while running; a pulled stick's volumes are released and its block device removed.
   New `storage::forget_disk`, `partition::drop`, smokes `usb-hub-smoke` and `usb-hotplug-smoke`.

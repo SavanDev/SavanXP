@@ -8,6 +8,23 @@
 #include "kernel/panic.hpp"
 #include "limine.h"
 
+// The executable command line request, from the Limine protocol's limine.h
+// (vendor/limine.h is a trimmed copy without it). The answer is the entry's
+// `cmdline:` in limine.conf.
+#define SAVANXP_LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID \
+    { LIMINE_COMMON_MAGIC, 0x4b161536e598651e, 0xb390ad4a2f1f303a }
+
+struct limine_executable_cmdline_response {
+    uint64_t revision;
+    LIMINE_PTR(char*) cmdline;
+};
+
+struct limine_executable_cmdline_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(limine_executable_cmdline_response*) response;
+};
+
 namespace {
 
 constexpr size_t kMaxMemoryMapEntries = 512;
@@ -109,6 +126,13 @@ volatile limine_mp_request g_mp_request = {
     .flags = LIMINE_MP_REQUEST_X86_64_X2APIC,
 };
 
+[[gnu::used, gnu::section(".limine_requests")]]
+volatile limine_executable_cmdline_request g_cmdline_request = {
+    .id = SAVANXP_LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+};
+
 [[gnu::used, gnu::section(".limine_requests_end_marker")]]
 volatile uint64_t g_limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
@@ -188,6 +212,10 @@ boot::BootInfo build_boot_info() {
         info.framebuffer.pitch = framebuffer->pitch;
         info.framebuffer.bpp = framebuffer->bpp;
         info.framebuffer.available = true;
+    }
+
+    if (g_cmdline_request.response != nullptr) {
+        info.cmdline = g_cmdline_request.response->cmdline;
     }
 
     if (g_module_request.response != nullptr) {
