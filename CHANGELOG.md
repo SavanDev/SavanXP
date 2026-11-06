@@ -20,6 +20,11 @@ Cut-off notes:
   contexts, section-backed resources, synchronous `SUBMIT_3D` and transfers, freed on exit and
   marked lost (`SX_EIO`) by a device reset. `nativetest` clears a render target on the GPU.
 
+- **SxGL GPU backend over virgl**, opt-in with `sxgl_context_create_ex(bitmap, SXGL_CONTEXT_GPU)`
+  (`sxgl_context_backend` says which is in use): the host GPU rasterizes, `sxgl_swap_buffers` reads
+  the frame back. No textures yet. `smoke sxgl-gpu-test --gl` compares it with the software image.
+- **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
+
 ### Fixed
 
 - **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was

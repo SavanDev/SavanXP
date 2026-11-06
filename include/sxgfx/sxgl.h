@@ -210,6 +210,20 @@ struct sxgl_context;
  * size. The viewport and scissor start as the whole bitmap. NULL when out of
  * memory or the bitmap is unusable. */
 struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour);
+
+/* The same, choosing the backend (docs/roadmaps/open/VIRGL_ROADMAP.md).
+ * SXGL_CONTEXT_GPU asks for the virgl backend: the host GPU rasterizes and
+ * sxgl_swap_buffers (or glFinish) copies the result into `colour`. Without a
+ * 3D device, or if it fails later, the context rasterizes in software.
+ * SXGL_CONTEXT_SOFTWARE never touches the GPU. */
+#define SXGL_CONTEXT_SOFTWARE 0x1u
+#define SXGL_CONTEXT_GPU 0x2u
+struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsigned flags);
+
+/* Which backend the context is drawing with right now. */
+#define SXGL_BACKEND_SOFTWARE 0
+#define SXGL_BACKEND_GPU 1
+int sxgl_context_backend(const struct sxgl_context* context);
 /* Retargets the context after the window was resized: new colour bitmap, depth
  * buffer reallocated (and cleared to 1.0), viewport and scissor reset to the
  * whole bitmap. Call it between frames, never between glBegin and glEnd. 0, or

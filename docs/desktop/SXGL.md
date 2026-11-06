@@ -16,10 +16,12 @@ in, what is not, and where SxGL deliberately differs from the specification.
 ## Where it lives and who presents
 
 SxGL is platform code, like SxGFX and SXCHROME
-([PLATFORM_GRAPHICS.md](PLATFORM_GRAPHICS.md)): it makes no system call. It
-asks the runtime for `malloc`, `free`, `memset`, `memcpy` and libm, and nothing
-else, so the same object links into POSIX programs, SUN programs and the host
-test.
+([PLATFORM_GRAPHICS.md](PLATFORM_GRAPHICS.md)). The rasterizer makes no system
+call: it asks the runtime for `malloc`, `free`, `memset`, `memcpy` and libm, and
+nothing else, so the same object links into POSIX programs, SUN programs and
+the host test. The GPU backend (below) is the exception, and it is fenced into
+one file, `system/gfx/sxgl_gpu_device.c`, which uses the native object calls
+every subsystem may make; the host test links a stand-in with no device.
 
 It is part of the static user runtime (group `gl`), the way libm is, and every
 in-tree program can call it. The userland links with `--gc-sections`, so a
@@ -51,10 +53,36 @@ construction: SxGL has no way to reach the compositor.
 |---|---|
 | `sxgl_context_create(bitmap)` | A context over the caller's `sx_bitmap` (`BGRX8888` or `BGRA8888`). The pixels stay the caller's; the context allocates its depth buffer at the same size. Viewport and scissor start as the whole bitmap. |
 | `sxgl_context_resize(ctx, bitmap)` | After a window resize: new bitmap, depth buffer reallocated and cleared, viewport and scissor reset to the whole bitmap. Between frames only. Fails (and keeps the old size) when out of memory. |
+| `sxgl_context_create_ex(bitmap, flags)` | The same, choosing the backend: `SXGL_CONTEXT_GPU` asks for the virgl one, `SXGL_CONTEXT_SOFTWARE` never touches the GPU. `sxgl_context_create` is `SXGL_CONTEXT_SOFTWARE` for now. |
+| `sxgl_context_backend(ctx)` | `SXGL_BACKEND_GPU` or `SXGL_BACKEND_SOFTWARE`: what the context draws with right now. |
 | `sxgl_make_current`, `sxgl_get_current` | One current context per process; SxGL is single-threaded. |
 | `sxgl_swap_buffers(ctx, &damage)` | See above. |
 | `sxgl_set_debug_sink(ctx, fn, user)` | The debug layer: every error is reported at the call, by name and with the reason (`glTexImage2D: GL_INVALID_VALUE (size is not a power of two up to 1024)`). `glGetError` keeps GL's sticky semantics either way. Programs route it to the serial line (POSIX) or `sxn_log` (SUN). |
 | `sxgl_get_stats`, `sxgl_reset_stats` | Triangles submitted and rasterized, fragments written: the numbers behind triangles per second. |
+
+### The GPU backend
+
+On a machine with virgl (QEMU's `virtio-vga-gl`, `./build.sh run --gl`) a
+context created with `SXGL_CONTEXT_GPU` keeps SxGL's transform, lighting and
+fog-factor code on the CPU and hands clip-space triangles to the host GPU, which
+clips, culls, rasterizes, tests depth and alpha, blends and applies fog. The
+image lives on the host until `sxgl_swap_buffers` (or `glFinish`) copies the
+damaged rectangle into the caller's bitmap, so the program presents exactly as
+before. The design and the order of work are in
+[VIRGL_ROADMAP.md](../roadmaps/open/VIRGL_ROADMAP.md).
+
+- **The two backends agree to the edge pixel.** The shaders interpolate colour
+  and fog linearly in screen space, as the software spans do. `sxgltest`
+  (`./build.sh smoke sxgl-gpu-test --gl`) draws one scene with both and allows
+  0.5% of the pixels past a tolerance of 6 per channel; today 2 of 19200 differ.
+- **Without a 3D device, or when the GPU refuses a call later, the context
+  rasterizes in software.** A failure mid-frame loses what that frame drew on
+  the GPU. Textures are not on the GPU yet: a textured draw sends the context
+  back to software.
+- **The counters change meaning.** `triangles_rasterized` counts triangles
+  handed to the GPU (it culls and clips them), and `fragments_written` stays 0.
+- **The damage is coarse.** Each draw damages the viewport within the write
+  region, since only the GPU knows which pixels it covered.
 
 The answers to the roadmap's open questions:
 

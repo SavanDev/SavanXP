@@ -1,7 +1,7 @@
 # VirGL — a hardware backend for SxGL
 
-> **Status: phases 1–3 done (the kernel side); phase 4 (the SxGL backend) is
-> next.** This document is the order of work, written before the work, and the
+> **Status: phases 1–4 done; phase 5 (textures, then the GPU as the default)
+> is next.** This document is the order of work, written before the work, and the
 > decisions that shape it.
 
 SxGL is a software rasterizer ([SXGL.md](../../desktop/SXGL.md)) because the
@@ -34,9 +34,18 @@ reference the GPU output is checked against.
 - **Resources are backed by the caller's sections**, as `import_surface` already
   does: the readback lands in memory the application maps, with no copy in the
   kernel.
-- **SxGL makes the ioctls itself.** The GPU backend opens `/dev/gpu0`; the
-  software rasterizer underneath stays syscall-free, so the host test still
-  links it.
+- **SxGL makes the ioctls itself.** The GPU backend opens `/dev/gpu0` with the
+  native object calls, which the kernel opens to every subsystem, so one object
+  serves `gears` (POSIX) and `nightwood` (SUN). Those calls live in
+  `sxgl_gpu_device.c` alone; the host test links a stand-in without a device.
+- **T&L stays on the CPU.** SxGL transforms, lights and computes the fog factor
+  as it always did and sends clip-space vertices; one pass-through vertex
+  shader and two fragment shaders (colour, colour with fog) cover the subset.
+- **Automatic selection, with a way to force software.** The finished backend
+  is picked at context creation when the device has 3D;
+  `SXGL_CONTEXT_SOFTWARE` keeps a context in software. Until textures are on
+  the GPU, `sxgl_context_create` stays software and the GPU is asked for with
+  `SXGL_CONTEXT_GPU`.
 - **`--gl` selects the machine.** `run` and `smoke` take `--gl`, which
   implies `--virtio` and swaps `virtio-vga` for `virtio-vga-gl` with a GL
   display (`egl-headless` when headless). Without `--gl` nothing changes and the
@@ -60,6 +69,17 @@ A device reset (recovery) destroys every host object. The tables keep the
 entries, marked lost: every later call on them fails with `SX_EIO`, the owner
 destroys them, and the boot log says `virtio-gpu: reset lost N 3d context(s)`.
 Nothing is replayed; the caller falls back to software.
+
+**What virglrenderer 1.3 does that the protocol does not say.** Found by
+`sxgltest`; `SAVANXP_QEMU_STDERR=PATH VREND_DEBUG=err` on a smoke shows the
+host's complaints.
+
+- `Z24_UNORM_S8_UINT` is not a depth format it accepts (`Unknown format is
+  19`), and a refused object puts the whole context in error. The capset's
+  depth/stencil mask is empty; the depth formats it can attach are listed in
+  the sampler mask. SxGL picks the first of Z24X8, S8Z24, Z32F, Z16 there.
+- `front_ccw` is GL's sense even with a viewport that flips y: the host
+  accounts for the flip itself.
 
 **Known limitation: the wait spins.** A fenced 3D command is waited for the way
 2D commands are, spinning with the kernel lock held, for up to 2 s instead of

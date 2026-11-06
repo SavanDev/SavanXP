@@ -4277,27 +4277,34 @@ int gpu3d_create_resource(uint32_t pid, savanxp_gpu_3d_resource& request) {
         return context_status;
     }
     if (request.width == 0 || request.height == 0 || request.depth == 0 || request.array_size == 0 ||
-        request.backing_size == 0 || (request.section_offset % memory::kPageSize) != 0) {
+        (request.section_offset % memory::kPageSize) != 0) {
         return negative_status(SX_EINVAL);
     }
 
-    process::Process* current = process::current();
-    if (current == nullptr || request.section_handle < 0 ||
-        static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
-        return negative_status(SX_EINVAL);
-    }
-    process::HandleEntry& entry = current->handles[request.section_handle];
-    if (entry.object == nullptr || (entry.granted_access & object::access_read) == 0) {
-        return negative_status(SX_EINVAL);
-    }
-    object::SectionObject* section = object::as_section(entry.object);
-    if (section == nullptr || section->physical_pages == nullptr) {
-        return negative_status(SX_EINVAL);
-    }
-    const uint64_t page_count = page_count_for_bytes(request.backing_size);
-    const uint64_t page_offset = request.section_offset / memory::kPageSize;
-    if (page_offset + page_count > section->page_count) {
-        return negative_status(SX_EINVAL);
+    // No backing (backing_size 0) is a resource that lives only on the host,
+    // like a depth buffer: it can be drawn to but never transferred.
+    object::SectionObject* section = nullptr;
+    uint64_t page_count = 0;
+    uint64_t page_offset = 0;
+    if (request.backing_size != 0) {
+        process::Process* current = process::current();
+        if (current == nullptr || request.section_handle < 0 ||
+            static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
+            return negative_status(SX_EINVAL);
+        }
+        process::HandleEntry& entry = current->handles[request.section_handle];
+        if (entry.object == nullptr || (entry.granted_access & object::access_read) == 0) {
+            return negative_status(SX_EINVAL);
+        }
+        section = object::as_section(entry.object);
+        if (section == nullptr || section->physical_pages == nullptr) {
+            return negative_status(SX_EINVAL);
+        }
+        page_count = page_count_for_bytes(request.backing_size);
+        page_offset = request.section_offset / memory::kPageSize;
+        if (page_offset + page_count > section->page_count) {
+            return negative_status(SX_EINVAL);
+        }
     }
 
     uint32_t index = k3dResourceCount;
@@ -4334,12 +4341,14 @@ int gpu3d_create_resource(uint32_t pid, savanxp_gpu_3d_resource& request) {
     resource.owner_pid = pid;
     resource.context_index = context_index;
     resource.section = section;
-    object::retain(&section->header);
+    if (section != nullptr) {
+        object::retain(&section->header);
+    }
 
     VirtioGpuCtxResource attach = {};
     initialize_header(attach.header, kVirtioGpuCmdCtxAttachResource);
     attach.resource_id = resource_id;
-    if (!attach_resource_backing(resource_id, section->physical_pages + page_offset, page_count) ||
+    if ((section != nullptr && !attach_resource_backing(resource_id, section->physical_pages + page_offset, page_count)) ||
         !send_3d_command(&attach, sizeof(attach), context_index + 1u)) {
         (void)destroy_resource(resource_id);
         forget_resource(resource);
@@ -4405,8 +4414,9 @@ int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& transfer) {
     if (status != 0) {
         return status;
     }
-    if (transfer.direction != SAVANXP_GPU_3D_TRANSFER_TO_HOST &&
-        transfer.direction != SAVANXP_GPU_3D_TRANSFER_FROM_HOST) {
+    if (g_adapter.virgl.resources[resource_index].section == nullptr ||
+        (transfer.direction != SAVANXP_GPU_3D_TRANSFER_TO_HOST &&
+         transfer.direction != SAVANXP_GPU_3D_TRANSFER_FROM_HOST)) {
         return negative_status(SX_EINVAL);
     }
     VirtioGpuTransferHost3d request = {};

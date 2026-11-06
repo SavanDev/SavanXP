@@ -739,8 +739,10 @@ set_target_properties(savanxp-gfx2d-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD
 # triangles-per-second figure (docs/roadmaps/done/SXGL_ROADMAP.md#verification).
 add_executable(savanxp-sxgl-test
     system/gfx/sxgl.c
+    system/gfx/sxgl_gpu.c
+    tests/host/sxgl_gpu_device_stub.c
     tests/host/sxgl_test.cpp)
-target_include_directories(savanxp-sxgl-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_include_directories(savanxp-sxgl-test PRIVATE "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/system/gfx")
 set_target_properties(savanxp-sxgl-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 find_library(SAVANXP_HOST_LIBM m)
 if(SAVANXP_HOST_LIBM)

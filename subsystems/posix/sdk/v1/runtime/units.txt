@@ -31,4 +31,6 @@ gui     subsystems/posix/sdk/v1/runtime/sxgui_app.c
 audio   subsystems/posix/sdk/v1/runtime/audio.c
 midi    subsystems/posix/sdk/v1/runtime/sxmidi.c
 gl      system/gfx/sxgl.c
+gl      system/gfx/sxgl_gpu.c
+gl      system/gfx/sxgl_gpu_device.c
 setjmp  subsystems/posix/sdk/v1/runtime/setjmp.S

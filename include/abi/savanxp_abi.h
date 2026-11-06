@@ -692,7 +692,9 @@ struct savanxp_gpu_3d_context {
 /* A virgl resource. target, format, bind and the rest are Gallium's values
  * (PIPE_TEXTURE_2D, VIRGL_FORMAT_*, VIRGL_BIND_*), passed through unchanged.
  * The backing is a page-aligned range of a section the caller holds; it is
- * where TRANSFER_TO_HOST reads from and TRANSFER_FROM_HOST writes to. */
+ * where TRANSFER_TO_HOST reads from and TRANSFER_FROM_HOST writes to. With
+ * backing_size 0 the resource has none (a depth buffer): it can be drawn to
+ * and sampled, never transferred. */
 struct savanxp_gpu_3d_resource {
     uint32_t context_id;
     uint32_t resource_id;    /* out */
@@ -708,7 +710,7 @@ struct savanxp_gpu_3d_resource {
     uint32_t flags;
     int32_t section_handle;
     uint32_t section_offset; /* page-aligned */
-    uint32_t backing_size;   /* bytes; rounded up to whole pages */
+    uint32_t backing_size;   /* bytes, rounded up to whole pages; 0 for none */
     uint32_t reserved;
 };
 

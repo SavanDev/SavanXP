@@ -23,6 +23,8 @@
 
 #include "sxgfx/sxgl.h"
 
+#include "sxgl_gpu.h"
+
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -155,6 +157,8 @@ struct sxgl_pipeline {
 
 struct sxgl_context {
     struct sx_bitmap colour;
+    /* The virgl backend, or NULL when rasterizing in software. */
+    struct sxgl_gpu* gpu;
     uint32_t alpha_bits;
     float* depth;
     int width;
@@ -493,6 +497,11 @@ static void sxgl_set4(float out[4], float a, float b, float c, float d)
 
 struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour)
 {
+    return sxgl_context_create_ex(colour, SXGL_CONTEXT_SOFTWARE);
+}
+
+struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsigned flags)
+{
     struct sxgl_context* context;
     int index;
 
@@ -560,7 +569,26 @@ struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour)
     context->damage_x0 = context->width;
     context->damage_y0 = context->height;
     context->pipeline_dirty = 1;
+    if ((flags & SXGL_CONTEXT_GPU) != 0 && (flags & SXGL_CONTEXT_SOFTWARE) == 0) {
+        context->gpu = sxgl_gpu_create(context->width, context->height);
+    }
     return context;
+}
+
+int sxgl_context_backend(const struct sxgl_context* context)
+{
+    return context != 0 && context->gpu != 0 ? SXGL_BACKEND_GPU : SXGL_BACKEND_SOFTWARE;
+}
+
+/* The GPU refused a call (a lost device, a full table): drop it for good and
+ * carry on in software. What it had drawn this frame is lost. */
+static void sxgl_gpu_lost(struct sxgl_context* context)
+{
+    sxgl_gpu_destroy(context->gpu);
+    context->gpu = 0;
+    if (context->sink != 0) {
+        context->sink("sxgl: the GPU backend failed; rasterizing in software", context->sink_user);
+    }
 }
 
 int sxgl_context_resize(struct sxgl_context* context, const struct sx_bitmap* colour)
@@ -570,6 +598,9 @@ int sxgl_context_resize(struct sxgl_context* context, const struct sx_bitmap* co
     }
     if (sxgl_attach(context, colour) != 0) {
         return -1;
+    }
+    if (context->gpu != 0 && sxgl_gpu_resize(context->gpu, context->width, context->height) != 0) {
+        sxgl_gpu_lost(context);
     }
     context->damage_x0 = 0;
     context->damage_y0 = 0;
@@ -596,6 +627,7 @@ void sxgl_context_destroy(struct sxgl_context* context)
     }
     free(context->textures);
     free(context->depth);
+    sxgl_gpu_destroy(context->gpu);
     free(context);
 }
 
@@ -645,6 +677,11 @@ void sxgl_swap_buffers(struct sxgl_context* context, struct sx_rect* damage)
     }
     if (context == 0) {
         return;
+    }
+    if (context->gpu != 0 && context->damage_x1 > context->damage_x0 && context->damage_y1 > context->damage_y0 &&
+        sxgl_gpu_read(context->gpu, &context->colour, context->alpha_bits, context->damage_x0, context->damage_y0,
+            context->damage_x1, context->damage_y1) != 0) {
+        sxgl_gpu_lost(context);
     }
     if (damage != 0 && context->damage_x1 > context->damage_x0 && context->damage_y1 > context->damage_y0) {
         damage->x = context->damage_x0;
@@ -714,7 +751,7 @@ const GLubyte* glGetString(GLenum name)
     case GL_VENDOR:
         return (const GLubyte*)"SavanXP";
     case GL_RENDERER:
-        return (const GLubyte*)"SxGL software rasterizer";
+        return (const GLubyte*)(context->gpu != 0 ? "SxGL on virgl" : "SxGL software rasterizer");
     case GL_VERSION:
         /* Not "1.1": the subset is documented, and a version string that
          * claims the whole of 1.1 would send a port looking for calls that
@@ -812,11 +849,27 @@ void glGetFloatv(GLenum name, GLfloat* out)
 
 void glFlush(void)
 {
-    /* Every call completes before it returns: there is nothing queued. */
+    /* In software every call completes before it returns. The GPU backend
+     * queues triangles: send them. */
+    struct sxgl_context* context = sxgl_enter("glFlush");
+
+    if (context != 0 && context->gpu != 0 && sxgl_gpu_flush(context->gpu) != 0) {
+        sxgl_gpu_lost(context);
+    }
 }
 
 void glFinish(void)
 {
+    /* With the GPU backend, what was drawn reaches the colour buffer here or
+     * at the swap. */
+    struct sxgl_context* context = sxgl_enter("glFinish");
+
+    if (context != 0 && context->gpu != 0 && context->damage_x1 > context->damage_x0 &&
+        context->damage_y1 > context->damage_y0 &&
+        sxgl_gpu_read(context->gpu, &context->colour, context->alpha_bits, context->damage_x0, context->damage_y0,
+            context->damage_x1, context->damage_y1) != 0) {
+        sxgl_gpu_lost(context);
+    }
 }
 
 void glHint(GLenum target, GLenum mode)
@@ -1036,6 +1089,18 @@ void glClear(GLbitfield mask)
     sxgl_write_region(context, &x0, &y0, &x1, &y1);
     if (x0 >= x1 || y0 >= y1) {
         return;
+    }
+    if (context->gpu != 0) {
+        const int colour = (mask & GL_COLOR_BUFFER_BIT) != 0;
+        const int depth = (mask & GL_DEPTH_BUFFER_BIT) != 0 && context->depth_mask;
+        if (sxgl_gpu_clear(context->gpu, colour, depth, context->clear_colour, context->clear_depth, x0, y0, x1, y1) ==
+            0) {
+            if (colour) {
+                sxgl_damage(context, x0, y0, x1, y1);
+            }
+            return;
+        }
+        sxgl_gpu_lost(context);
     }
     if ((mask & GL_COLOR_BUFFER_BIT) != 0) {
         uint32_t pixel = context->alpha_bits |
@@ -2817,6 +2882,86 @@ static void sxgl_to_window(const struct sxgl_context* context, const struct sxgl
     out->fog = in->fog;
 }
 
+/* Hands a triangle to the GPU backend. Clipping and culling happen there; the
+ * damage is the region the triangle may touch, the viewport within the write
+ * region, since only the GPU knows which pixels it covered. */
+static int sxgl_gpu_draw(struct sxgl_context* context, const struct sxgl_vertex* a, const struct sxgl_vertex* b,
+    const struct sxgl_vertex* c)
+{
+    struct sxgl_gpu_state state;
+    struct sxgl_gpu_vertex vertices[3];
+    const struct sxgl_vertex* source[3];
+    int x0, y0, x1, y1;
+    int index;
+
+    /* Textures are not on the GPU yet (VIRGL_ROADMAP.md, phase 5): a
+     * textured draw sends the context back to software. */
+    if (context->texture_2d && sxgl_texture_object(context, context->bound_texture) != 0) {
+        return -1;
+    }
+
+    memset(&state, 0, sizeof(state));
+    state.viewport[0] = context->viewport_x;
+    state.viewport[1] = context->viewport_y;
+    state.viewport[2] = context->viewport_width;
+    state.viewport[3] = context->viewport_height;
+    state.depth_range[0] = context->depth_near;
+    state.depth_range[1] = context->depth_far;
+    state.scissor_test = context->scissor_test;
+    if (context->scissor_test) {
+        state.scissor[0] = context->scissor_x;
+        state.scissor[1] = context->scissor_y;
+        state.scissor[2] = context->scissor_width;
+        state.scissor[3] = context->scissor_height;
+    }
+    state.depth_test = context->depth_test;
+    state.depth_func = context->depth_func;
+    state.depth_mask = context->depth_mask;
+    state.cull_face = context->cull_face;
+    state.cull_mode = context->cull_mode;
+    state.front_face = context->front_face;
+    state.alpha_test = context->alpha_test;
+    state.alpha_func = context->alpha_func;
+    state.alpha_reference = context->alpha_reference;
+    state.blend = context->blend;
+    state.blend_source = context->blend_source;
+    state.blend_destination = context->blend_destination;
+    state.fog = context->fog;
+    if (context->fog) {
+        memcpy(state.fog_colour, context->fog_colour, sizeof(state.fog_colour));
+    }
+
+    source[0] = a;
+    source[1] = b;
+    source[2] = c;
+    for (index = 0; index < 3; ++index) {
+        memcpy(vertices[index].clip, source[index]->clip, sizeof(vertices[index].clip));
+        memcpy(vertices[index].colour, source[index]->colour, sizeof(vertices[index].colour));
+        vertices[index].tex[0] = source[index]->tex[0];
+        vertices[index].tex[1] = source[index]->tex[1];
+        vertices[index].fog = source[index]->fog;
+        vertices[index].unused = 0.0f;
+    }
+    if (sxgl_gpu_triangle(context->gpu, &state, &vertices[0], &vertices[1], &vertices[2]) != 0) {
+        return -1;
+    }
+    context->stats.triangles_rasterized += 1;
+
+    sxgl_write_region(context, &x0, &y0, &x1, &y1);
+    {
+        int left = context->viewport_x;
+        int right = context->viewport_x + context->viewport_width;
+        int top = context->height - (context->viewport_y + context->viewport_height);
+        int bottom = context->height - context->viewport_y;
+        x0 = left > x0 ? left : x0;
+        x1 = right < x1 ? right : x1;
+        y0 = top > y0 ? top : y0;
+        y1 = bottom < y1 ? bottom : y1;
+    }
+    sxgl_damage(context, x0, y0, x1, y1);
+    return 0;
+}
+
 static void sxgl_draw_triangle(struct sxgl_context* context, const struct sxgl_vertex* a, const struct sxgl_vertex* b,
     const struct sxgl_vertex* c, const struct sxgl_vertex* provoking)
 {
@@ -2839,6 +2984,13 @@ static void sxgl_draw_triangle(struct sxgl_context* context, const struct sxgl_v
         for (index = 0; index < 3; ++index) {
             memcpy(buffers[0][index].colour, provoking->colour, sizeof(provoking->colour));
         }
+    }
+
+    if (context->gpu != 0) {
+        if (sxgl_gpu_draw(context, &buffers[0][0], &buffers[0][1], &buffers[0][2]) == 0) {
+            return;
+        }
+        sxgl_gpu_lost(context);
     }
 
     for (index = 0; index < 3; ++index) {

@@ -11,12 +11,19 @@
 # SOURCES are the service's own, relative to system/<name>; SHARED_SOURCES are
 # relative to the repository root, for a unit a service shares with programs
 # elsewhere.
+#
+# TEST marks a diagnostic program, left out when SAVANXP_INCLUDE_TEST_APPS is
+# off, like savanxp_program's TEST.
 function(savanxp_system_service)
+    set(options TEST)
     set(oneValueArgs NAME)
     set(multiValueArgs SOURCES SHARED_SOURCES)
-    cmake_parse_arguments(S "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    cmake_parse_arguments(S "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(S_UNPARSED_ARGUMENTS OR NOT S_NAME OR NOT S_SOURCES)
-        message(FATAL_ERROR "savanxp_system_service: NAME, SOURCES and SHARED_SOURCES only")
+        message(FATAL_ERROR "savanxp_system_service: TEST, NAME, SOURCES and SHARED_SOURCES only")
+    endif()
+    if(S_TEST AND NOT SAVANXP_INCLUDE_TEST_APPS)
+        return()
     endif()
     set(sources "")
     foreach(source IN LISTS S_SOURCES)
@@ -71,6 +78,10 @@ savanxp_system_service(NAME console SOURCES console.c)
 # being a SUN program is what puts it in system/ rather than in the POSIX
 # userland.
 savanxp_system_service(NAME nightwood SOURCES nightwood.c nightwood_world.c nightwood_audio.c)
+
+# sxgltest (docs/roadmaps/open/VIRGL_ROADMAP.md): SxGL's GPU backend drawn
+# against its software rasterizer, pixel by pixel.
+savanxp_system_service(NAME sxgltest TEST SOURCES sxgltest.c)
 
 # Disk Management (docs/userland/DISK_MANAGEMENT.md): the consumer of the
 # storage calls. libsxdisk and the SxFS core are shared with setup and the

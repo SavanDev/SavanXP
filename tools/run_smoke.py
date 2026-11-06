@@ -367,11 +367,16 @@ def main() -> int:
     host_thread: threading.Thread | None = None
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        # SAVANXP_QEMU_STDERR=PATH keeps what QEMU and its libraries print,
+        # which is where virglrenderer reports a rejected command
+        # (VREND_DEBUG=err). Silent by default.
+        stderr_path = os.environ.get("SAVANXP_QEMU_STDERR")
+        stderr_target = open(stderr_path, "wb") if stderr_path else subprocess.DEVNULL
         process = subprocess.Popen(
             qemu_args,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr_target,
             start_new_session=True,
             preexec_fn=_die_with_parent,
         )

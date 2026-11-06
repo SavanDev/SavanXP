@@ -158,6 +158,7 @@ static int run_automation_spec(const char* spec) {
     const char* floatsmoke_argv[] = {"/bin/floatsmoke", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nightwood_argv[] = {"/bin/nightwood.sxe", "--selftest", 0};
+    const char* sxgltest_argv[] = {"/bin/sxgltest.sxe", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
     const char* elevtest_argv[] = {"/bin/elevtest", 0};
@@ -303,6 +304,10 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/nightwood.sxe";
             argv = nightwood_argv;
             argc = 2;
+        } else if (strcmp(spec, "sxgltest") == 0) {
+            path = "/bin/sxgltest.sxe";
+            argv = sxgltest_argv;
+            argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
             path = "/bin/ccleste";
             argv = ccleste_argv;

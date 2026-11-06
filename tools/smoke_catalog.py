@@ -533,6 +533,12 @@ SCENARIOS: dict[str, Scenario] = {
         "Nightwood (SUN) builds its forest, reaches every photograph and renders it with SxGL",
         180.0,
     ),
+    "sxgl-gpu-test": _qemu_scenario(
+        "sxgltest",
+        "SXGLTEST PASS",
+        "SXGLTEST FAIL",
+        "SxGL's GPU backend against its software rasterizer (run with --gl for virgl)",
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
