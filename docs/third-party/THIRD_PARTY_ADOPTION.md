@@ -79,6 +79,9 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
   devices in pci.cpp and in the sysinfo and netinfo views
 - `signify`: Ed25519 signing in ~1000 lines of ISC, for SXE binaries as an
   additional non-alloc section
+- USB: `sys/dev/usb/usb.h` and `xhcireg.h` (descriptors and registers, pure
+  data), `sys/dev/hid/hid.c` (the HID report parser) and `usbdevs`. The plan
+  is in [`USB_ROADMAP.md`](../kernel/USB_ROADMAP.md)
 
 `Reference`:
 
@@ -97,6 +100,10 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
 - `src/regress`: how the regression tests are organized
 - `tcp_input.c`: read-only, for retransmission timers, sliding window and close
   states. Coupled to mbuf, not portable
+- USB drivers: `xhci.c`, `xhci_pci.c` (BIOS handoff and vendor quirks),
+  `uhub.c`, `umass.c`, `usb_quirks.c` and the HID keyboard and mouse drivers.
+  Coupled to `autoconf`, `bus_dma` and interrupt-driven sleeping, so they are
+  read, not ported
 
 `Do not adopt`:
 

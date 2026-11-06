@@ -47,6 +47,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   core that turns set 1 key positions into keys, text and modifiers.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
+- [`USB_ROADMAP.md`](kernel/USB_ROADMAP.md) — the planned USB stack: xHCI only and
+  polled, HID boot protocol and mass storage, what is copied from OpenBSD and
+  what is only read, the QEMU harness, and the phases.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
