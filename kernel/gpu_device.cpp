@@ -5,6 +5,7 @@
 
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
+#include "kernel/heap.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ui.hpp"
 #include "abi/savanxp_abi.h"
@@ -36,15 +37,119 @@ bool gpu_ioctl_is_query(uint64_t request) {
         case GPU_IOC_WAIT_PRESENT:
         case GPU_IOC_GET_CONNECTOR_PROPERTIES:
         case GPU_IOC_GET_SCANOUTS:
+        case GPU_IOC_3D_GET_CAPSET:
             return true;
         default:
             return false;
     }
 }
 
+// The 3D ioctls (docs/roadmaps/open/VIRGL_ROADMAP.md). None of them looks at
+// the display session: a context belongs to the process that made it.
+int gpu3d_ioctl(uint64_t request, uint64_t argument) {
+    const uint32_t pid = process::current_pid();
+    switch (request) {
+        case GPU_IOC_3D_GET_CAPSET: {
+            savanxp_gpu_3d_capset capset = {};
+            if (!process::validate_user_range(argument, sizeof(capset), true) ||
+                !process::copy_from_user(&capset, argument, sizeof(capset))) {
+                return negative_error(SX_EINVAL);
+            }
+            const uint8_t* data = nullptr;
+            uint32_t size = 0;
+            const int status = display::gpu3d_capset(capset.capset_id, capset.capset_version, data, size);
+            if (status != 0) {
+                return status;
+            }
+            if (capset.data != 0) {
+                const uint32_t copied = size < capset.size ? size : capset.size;
+                if (!process::validate_user_range(capset.data, copied, true) ||
+                    !process::copy_to_user(capset.data, data, copied)) {
+                    return negative_error(SX_EINVAL);
+                }
+            }
+            capset.size = size;
+            return process::copy_to_user(argument, &capset, sizeof(capset)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case GPU_IOC_3D_CREATE_CONTEXT: {
+            savanxp_gpu_3d_context context = {};
+            if (!process::validate_user_range(argument, sizeof(context), true) ||
+                !process::copy_from_user(&context, argument, sizeof(context))) {
+                return negative_error(SX_EINVAL);
+            }
+            context.debug_name[sizeof(context.debug_name) - 1u] = '\0';
+            const int status = display::gpu3d_create_context(pid, context.debug_name, context.context_id);
+            if (status != 0) {
+                return status;
+            }
+            return process::copy_to_user(argument, &context, sizeof(context)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case GPU_IOC_3D_DESTROY_CONTEXT:
+            return display::gpu3d_destroy_context(pid, static_cast<uint32_t>(argument));
+        case GPU_IOC_3D_CREATE_RESOURCE: {
+            savanxp_gpu_3d_resource resource = {};
+            if (!process::validate_user_range(argument, sizeof(resource), true) ||
+                !process::copy_from_user(&resource, argument, sizeof(resource))) {
+                return negative_error(SX_EINVAL);
+            }
+            const int status = display::gpu3d_create_resource(pid, resource);
+            if (status != 0) {
+                return status;
+            }
+            return process::copy_to_user(argument, &resource, sizeof(resource)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case GPU_IOC_3D_DESTROY_RESOURCE: {
+            savanxp_gpu_3d_resource_ref ref = {};
+            if (!process::validate_user_range(argument, sizeof(ref), false) ||
+                !process::copy_from_user(&ref, argument, sizeof(ref))) {
+                return negative_error(SX_EINVAL);
+            }
+            return display::gpu3d_destroy_resource(pid, ref.context_id, ref.resource_id);
+        }
+        case GPU_IOC_3D_SUBMIT: {
+            savanxp_gpu_3d_submit submit = {};
+            if (!process::validate_user_range(argument, sizeof(submit), false) ||
+                !process::copy_from_user(&submit, argument, sizeof(submit))) {
+                return negative_error(SX_EINVAL);
+            }
+            if (submit.size == 0 || (submit.size % 4u) != 0 || submit.size > SAVANXP_GPU_3D_MAX_SUBMIT_BYTES ||
+                !process::validate_user_range(submit.commands, submit.size, false)) {
+                return negative_error(SX_EINVAL);
+            }
+            void* commands = heap::allocate(submit.size, alignof(uint32_t));
+            if (commands == nullptr) {
+                return negative_error(SX_ENOMEM);
+            }
+            int status = negative_error(SX_EINVAL);
+            if (process::copy_from_user(commands, submit.commands, submit.size)) {
+                status = display::gpu3d_submit(pid, submit.context_id, commands, submit.size);
+            }
+            heap::free(commands);
+            return status;
+        }
+        case GPU_IOC_3D_TRANSFER: {
+            savanxp_gpu_3d_transfer transfer = {};
+            if (!process::validate_user_range(argument, sizeof(transfer), false) ||
+                !process::copy_from_user(&transfer, argument, sizeof(transfer))) {
+                return negative_error(SX_EINVAL);
+            }
+            return display::gpu3d_transfer(pid, transfer);
+        }
+        default:
+            return negative_error(SX_ENOSYS);
+    }
+}
+
+bool gpu_ioctl_is_3d(uint64_t request) {
+    return request >= GPU_IOC_3D_GET_CAPSET && request <= GPU_IOC_3D_TRANSFER;
+}
+
 int gpu_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (!gpu_ioctl_is_query(request) && (granted_access & object::access_write) == 0) {
         return negative_error(SX_EACCES);
+    }
+    if (gpu_ioctl_is_3d(request)) {
+        return gpu3d_ioctl(request, argument);
     }
     switch (request) {
         case GPU_IOC_GET_INFO: {

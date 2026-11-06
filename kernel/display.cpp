@@ -102,4 +102,44 @@ void release_session_resources() { if (g_backend != nullptr) { g_backend->releas
 int create_present_event() { return g_backend != nullptr ? g_backend->create_present_event() : -static_cast<int>(SX_ENOSYS); }
 int create_scanout_event() { return g_backend != nullptr ? g_backend->create_scanout_event() : -static_cast<int>(SX_ENOSYS); }
 
+namespace {
+
+constexpr int kNo3d = -static_cast<int>(SX_ENODEV);
+
+} // namespace
+
+int gpu3d_capset(uint32_t& capset_id, uint32_t& capset_version, const uint8_t*& data, uint32_t& size) {
+    return g_backend != nullptr && g_backend->gpu3d_capset != nullptr
+        ? g_backend->gpu3d_capset(capset_id, capset_version, data, size) : kNo3d;
+}
+int gpu3d_create_context(uint32_t pid, const char* debug_name, uint32_t& context_id) {
+    return g_backend != nullptr && g_backend->gpu3d_create_context != nullptr
+        ? g_backend->gpu3d_create_context(pid, debug_name, context_id) : kNo3d;
+}
+int gpu3d_destroy_context(uint32_t pid, uint32_t context_id) {
+    return g_backend != nullptr && g_backend->gpu3d_destroy_context != nullptr
+        ? g_backend->gpu3d_destroy_context(pid, context_id) : kNo3d;
+}
+int gpu3d_create_resource(uint32_t pid, savanxp_gpu_3d_resource& request) {
+    return g_backend != nullptr && g_backend->gpu3d_create_resource != nullptr
+        ? g_backend->gpu3d_create_resource(pid, request) : kNo3d;
+}
+int gpu3d_destroy_resource(uint32_t pid, uint32_t context_id, uint32_t resource_id) {
+    return g_backend != nullptr && g_backend->gpu3d_destroy_resource != nullptr
+        ? g_backend->gpu3d_destroy_resource(pid, context_id, resource_id) : kNo3d;
+}
+int gpu3d_submit(uint32_t pid, uint32_t context_id, const void* commands, uint32_t size) {
+    return g_backend != nullptr && g_backend->gpu3d_submit != nullptr
+        ? g_backend->gpu3d_submit(pid, context_id, commands, size) : kNo3d;
+}
+int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& request) {
+    return g_backend != nullptr && g_backend->gpu3d_transfer != nullptr
+        ? g_backend->gpu3d_transfer(pid, request) : kNo3d;
+}
+void gpu3d_release_for(uint32_t pid) {
+    if (g_backend != nullptr && g_backend->gpu3d_release_for != nullptr) {
+        g_backend->gpu3d_release_for(pid);
+    }
+}
+
 } // namespace display

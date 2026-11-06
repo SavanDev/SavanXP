@@ -36,6 +36,14 @@ constexpr uint32_t kVirtioGpuCmdTransferToHost2d = 0x0105u;
 constexpr uint32_t kVirtioGpuCmdResourceAttachBacking = 0x0106u;
 constexpr uint32_t kVirtioGpuCmdGetCapsetInfo = 0x0108u;
 constexpr uint32_t kVirtioGpuCmdGetCapset = 0x0109u;
+constexpr uint32_t kVirtioGpuCmdCtxCreate = 0x0200u;
+constexpr uint32_t kVirtioGpuCmdCtxDestroy = 0x0201u;
+constexpr uint32_t kVirtioGpuCmdCtxAttachResource = 0x0202u;
+constexpr uint32_t kVirtioGpuCmdCtxDetachResource = 0x0203u;
+constexpr uint32_t kVirtioGpuCmdResourceCreate3d = 0x0204u;
+constexpr uint32_t kVirtioGpuCmdTransferToHost3d = 0x0205u;
+constexpr uint32_t kVirtioGpuCmdTransferFromHost3d = 0x0206u;
+constexpr uint32_t kVirtioGpuCmdSubmit3d = 0x0207u;
 constexpr uint32_t kVirtioGpuCmdUpdateCursor = 0x0300u;
 constexpr uint32_t kVirtioGpuCmdMoveCursor = 0x0301u;
 constexpr uint32_t kVirtioGpuRespOkNoData = 0x1100u;
@@ -50,6 +58,13 @@ constexpr uint32_t kVirtioGpuCapsetVirgl2 = 2u;
 // The largest capset kept. virglrenderer's virgl2 capset is well under this;
 // a bigger one is reported and ignored rather than truncated.
 constexpr uint32_t kVirglCapsetMaxBytes = 4096u;
+constexpr uint32_t k3dContextCount = 16u;
+constexpr uint32_t k3dResourceCount = 256u;
+// 3D resource ids sit far above the 2D ones (surfaces, imports, cursor).
+constexpr uint32_t kFirst3dResourceId = 0x10000u;
+// A fenced 3D command answers when the host has finished it, which can take
+// far longer than a 2D command (the first draw compiles shaders on the host).
+constexpr uint64_t k3dCommandWaitMs = 2000u;
 constexpr uint32_t kVirtioGpuEventDisplay = 1u << 0;
 constexpr uint32_t kGpuSurfaceCount = 3u;
 constexpr uint32_t kImportedSurfaceCount = 8u;
@@ -134,6 +149,60 @@ struct [[gnu::packed]] VirtioGpuGetCapset {
     VirtioGpuCtrlHdr header;
     uint32_t capset_id;
     uint32_t capset_version;
+};
+
+struct [[gnu::packed]] VirtioGpuCtxCreate {
+    VirtioGpuCtrlHdr header;
+    uint32_t nlen;
+    uint32_t context_init;
+    char debug_name[64];
+};
+
+struct [[gnu::packed]] VirtioGpuCtxResource {
+    VirtioGpuCtrlHdr header;
+    uint32_t resource_id;
+    uint32_t padding;
+};
+
+struct [[gnu::packed]] VirtioGpuResourceCreate3d {
+    VirtioGpuCtrlHdr header;
+    uint32_t resource_id;
+    uint32_t target;
+    uint32_t format;
+    uint32_t bind;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t array_size;
+    uint32_t last_level;
+    uint32_t nr_samples;
+    uint32_t flags;
+    uint32_t padding;
+};
+
+struct [[gnu::packed]] VirtioGpuBox {
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+    uint32_t w;
+    uint32_t h;
+    uint32_t d;
+};
+
+struct [[gnu::packed]] VirtioGpuTransferHost3d {
+    VirtioGpuCtrlHdr header;
+    VirtioGpuBox box;
+    uint64_t offset;
+    uint32_t resource_id;
+    uint32_t level;
+    uint32_t stride;
+    uint32_t layer_stride;
+};
+
+struct [[gnu::packed]] VirtioGpuCmdSubmit {
+    VirtioGpuCtrlHdr header;
+    uint32_t size;
+    uint32_t padding;
 };
 
 struct [[gnu::packed]] VirtioGpuResourceCreate2d {
@@ -405,7 +474,24 @@ struct ScanoutRefreshSnapshot {
 
 // What the device said about 3D. Filled once at probe and kept across
 // recovery: a reset renegotiates the same features.
+struct Context3d {
+    bool in_use;
+    // The device was reset after this context was made: the host no longer
+    // knows it. Every call on it fails until the owner destroys it.
+    bool lost;
+    uint32_t owner_pid;
+};
+
+struct Resource3d {
+    bool in_use;
+    uint32_t owner_pid;
+    uint32_t context_index;
+    object::SectionObject* section;
+};
+
 struct VirglState {
+    Context3d contexts[k3dContextCount];
+    Resource3d resources[k3dResourceCount];
     bool negotiated;
     bool capset_ready;
     uint32_t capset_count;
@@ -695,6 +781,22 @@ const char* request_type_name(uint32_t type) {
             return "GET_CAPSET_INFO";
         case kVirtioGpuCmdGetCapset:
             return "GET_CAPSET";
+        case kVirtioGpuCmdCtxCreate:
+            return "CTX_CREATE";
+        case kVirtioGpuCmdCtxDestroy:
+            return "CTX_DESTROY";
+        case kVirtioGpuCmdCtxAttachResource:
+            return "CTX_ATTACH_RESOURCE";
+        case kVirtioGpuCmdCtxDetachResource:
+            return "CTX_DETACH_RESOURCE";
+        case kVirtioGpuCmdResourceCreate3d:
+            return "RESOURCE_CREATE_3D";
+        case kVirtioGpuCmdTransferToHost3d:
+            return "TRANSFER_TO_HOST_3D";
+        case kVirtioGpuCmdTransferFromHost3d:
+            return "TRANSFER_FROM_HOST_3D";
+        case kVirtioGpuCmdSubmit3d:
+            return "SUBMIT_3D";
         default:
             return nullptr;
     }
@@ -1733,7 +1835,7 @@ bool service_background_pass() {
     return true;
 }
 
-bool wait_for_command_slot(uint16_t slot_index) {
+bool wait_for_command_slot(uint16_t slot_index, uint64_t wait_ms = kCommandWaitMs) {
     if (slot_index >= g_command_slot_capacity || !g_command_slots[slot_index].in_use) {
         return false;
     }
@@ -1747,7 +1849,7 @@ bool wait_for_command_slot(uint16_t slot_index) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kCommandWaitMs);
+    const uint64_t deadline_tick = wait_deadline(wait_ms);
     for (;;) {
         service_queue_progress();
         if (g_command_slots[slot_index].completed) {
@@ -1768,7 +1870,8 @@ bool wait_for_command_slot(uint16_t slot_index) {
     return false;
 }
 
-bool submit_command(const void* request, size_t request_bytes, void* response, size_t response_bytes) {
+bool submit_command(const void* request, size_t request_bytes, void* response, size_t response_bytes,
+                    uint64_t wait_ms = kCommandWaitMs) {
     if (response == nullptr) {
         return false;
     }
@@ -1780,7 +1883,8 @@ bool submit_command(const void* request, size_t request_bytes, void* response, s
 
     g_command_slots[slot_index].stage = kCommandStageSync;
     g_command_slots[slot_index].pending_present_index = 0;
-    if (!submit_command_slot(slot_index, request, request_bytes, response_bytes) || !wait_for_command_slot(slot_index)) {
+    if (!submit_command_slot(slot_index, request, request_bytes, response_bytes) ||
+        !wait_for_command_slot(slot_index, wait_ms)) {
         release_command_slot(slot_index);
         return false;
     }
@@ -1875,6 +1979,126 @@ bool load_virgl_capset() {
     virgl.capset_ready = true;
     return true;
 }
+
+bool destroy_resource(uint32_t resource_id);
+bool attach_resource_backing(uint32_t resource_id, const uint64_t* physical_pages, uint64_t page_count);
+
+// --- 3D (virgl) ------------------------------------------------------------
+//
+// Contexts and resources live in fixed tables. A context's virtio id is its
+// index + 1; a resource's is kFirst3dResourceId + its index. Every command is
+// fenced and waited for, so a call returns once the host has finished it.
+
+int negative_status(sx_status code) {
+    return -static_cast<int>(code);
+}
+
+bool send_3d_command(void* request, size_t request_bytes, uint32_t context_id) {
+    VirtioGpuCtrlHdr* header = static_cast<VirtioGpuCtrlHdr*>(request);
+    // initialize_header already fenced it: the answer waits for the host.
+    header->ctx_id = context_id;
+    VirtioGpuCtrlHdr response = {};
+    if (!submit_command(request, request_bytes, &response, sizeof(response), k3dCommandWaitMs)) {
+        g_last_response_type = 0;
+        log_command_failure(request_type_name(header->type));
+        return false;
+    }
+    g_last_response_type = response.type;
+    if (response.type != kVirtioGpuRespOkNoData) {
+        log_command_failure(request_type_name(header->type));
+        return false;
+    }
+    return true;
+}
+
+// Resolves a context id the caller passed. SX_EIO for a context the device
+// lost in a reset, SX_EINVAL for one that is not the caller's.
+int lookup_context(uint32_t pid, uint32_t context_id, uint32_t& index) {
+    if (context_id == 0 || context_id > k3dContextCount) {
+        return negative_status(SX_EINVAL);
+    }
+    const Context3d& context = g_adapter.virgl.contexts[context_id - 1u];
+    if (!context.in_use || context.owner_pid != pid) {
+        return negative_status(SX_EINVAL);
+    }
+    if (context.lost) {
+        return negative_status(SX_EIO);
+    }
+    index = context_id - 1u;
+    return 0;
+}
+
+int lookup_resource(uint32_t pid, uint32_t context_index, uint32_t resource_id, uint32_t& index) {
+    if (resource_id < kFirst3dResourceId || resource_id >= kFirst3dResourceId + k3dResourceCount) {
+        return negative_status(SX_EINVAL);
+    }
+    const Resource3d& resource = g_adapter.virgl.resources[resource_id - kFirst3dResourceId];
+    if (!resource.in_use || resource.owner_pid != pid || resource.context_index != context_index) {
+        return negative_status(SX_EINVAL);
+    }
+    index = resource_id - kFirst3dResourceId;
+    return 0;
+}
+
+void forget_resource(Resource3d& resource) {
+    if (resource.section != nullptr) {
+        object::Header* header = &resource.section->header;
+        object::release(header);
+    }
+    memset(&resource, 0, sizeof(resource));
+}
+
+// Detach and unref on the host (unless the device was reset), then drop the
+// section reference.
+void destroy_resource_slot(uint32_t index, bool host_alive) {
+    Resource3d& resource = g_adapter.virgl.resources[index];
+    const uint32_t resource_id = kFirst3dResourceId + index;
+    if (host_alive && g_ready) {
+        VirtioGpuCtxResource detach = {};
+        initialize_header(detach.header, kVirtioGpuCmdCtxDetachResource);
+        detach.resource_id = resource_id;
+        (void)send_3d_command(&detach, sizeof(detach), resource.context_index + 1u);
+        (void)destroy_resource(resource_id);
+    }
+    forget_resource(resource);
+}
+
+void destroy_context_slot(uint32_t index) {
+    Context3d& context = g_adapter.virgl.contexts[index];
+    const bool host_alive = !context.lost;
+    for (uint32_t resource = 0; resource < k3dResourceCount; ++resource) {
+        const Resource3d& slot = g_adapter.virgl.resources[resource];
+        if (slot.in_use && slot.context_index == index) {
+            destroy_resource_slot(resource, host_alive);
+        }
+    }
+    if (host_alive && g_ready) {
+        VirtioGpuCtrlHdr request = {};
+        initialize_header(request, kVirtioGpuCmdCtxDestroy);
+        (void)send_3d_command(&request, sizeof(request), index + 1u);
+    }
+    memset(&context, 0, sizeof(context));
+}
+
+// A reset wipes every host object. The tables keep their entries so that the
+// owners get SX_EIO instead of someone else's context, and free them later.
+void mark_3d_contexts_lost() {
+    uint32_t lost = 0;
+    for (Context3d& context : g_adapter.virgl.contexts) {
+        if (context.in_use && !context.lost) {
+            context.lost = true;
+            lost += 1u;
+        }
+    }
+    if (lost != 0) {
+        console::printf("virtio-gpu: reset lost %u 3d context(s)\n", static_cast<unsigned>(lost));
+    }
+}
+
+bool virgl_available() {
+    return g_ready && !g_degraded && g_adapter.virgl.capset_ready;
+}
+
 
 bool get_display_info(VirtioGpuRespDisplayInfo& display_info) {
     VirtioGpuCtrlHdr request = {};
@@ -3377,6 +3601,7 @@ bool recover_device(const char* reason) {
     }
 
     g_degraded = false;
+    mark_3d_contexts_lost();
     refresh_gpu_info_flags();
     g_gpu_stats.recovery_successes += 1u;
     return true;
@@ -3983,6 +4208,229 @@ int create_scanout_event() {
     return export_driver_event_handle(g_scanout_event);
 }
 
+int gpu3d_capset(uint32_t& capset_id, uint32_t& capset_version, const uint8_t*& data, uint32_t& size) {
+    if (!virgl_available()) {
+        return negative_status(SX_ENODEV);
+    }
+    capset_id = g_adapter.virgl.capset_id;
+    capset_version = g_adapter.virgl.capset_version;
+    data = g_adapter.virgl.capset;
+    size = g_adapter.virgl.capset_size;
+    return 0;
+}
+
+int gpu3d_create_context(uint32_t pid, const char* debug_name, uint32_t& context_id) {
+    DriverBusyGuard guard;
+    if (!virgl_available()) {
+        return negative_status(SX_ENODEV);
+    }
+    uint32_t index = k3dContextCount;
+    for (uint32_t candidate = 0; candidate < k3dContextCount; ++candidate) {
+        if (!g_adapter.virgl.contexts[candidate].in_use) {
+            index = candidate;
+            break;
+        }
+    }
+    if (index == k3dContextCount) {
+        return negative_status(SX_EBUSY);
+    }
+
+    VirtioGpuCtxCreate request = {};
+    initialize_header(request.header, kVirtioGpuCmdCtxCreate);
+    uint32_t length = 0;
+    if (debug_name != nullptr) {
+        while (length < sizeof(request.debug_name) - 1u && debug_name[length] != '\0') {
+            request.debug_name[length] = debug_name[length];
+            ++length;
+        }
+    }
+    request.nlen = length;
+    if (!send_3d_command(&request, sizeof(request), index + 1u)) {
+        return negative_status(SX_EIO);
+    }
+    Context3d& context = g_adapter.virgl.contexts[index];
+    context.in_use = true;
+    context.lost = false;
+    context.owner_pid = pid;
+    context_id = index + 1u;
+    return 0;
+}
+
+int gpu3d_destroy_context(uint32_t pid, uint32_t context_id) {
+    DriverBusyGuard guard;
+    if (context_id == 0 || context_id > k3dContextCount) {
+        return negative_status(SX_EINVAL);
+    }
+    const Context3d& context = g_adapter.virgl.contexts[context_id - 1u];
+    if (!context.in_use || context.owner_pid != pid) {
+        return negative_status(SX_EINVAL);
+    }
+    destroy_context_slot(context_id - 1u);
+    return 0;
+}
+
+int gpu3d_create_resource(uint32_t pid, savanxp_gpu_3d_resource& request) {
+    DriverBusyGuard guard;
+    uint32_t context_index = 0;
+    const int context_status = lookup_context(pid, request.context_id, context_index);
+    if (context_status != 0) {
+        return context_status;
+    }
+    if (request.width == 0 || request.height == 0 || request.depth == 0 || request.array_size == 0 ||
+        request.backing_size == 0 || (request.section_offset % memory::kPageSize) != 0) {
+        return negative_status(SX_EINVAL);
+    }
+
+    process::Process* current = process::current();
+    if (current == nullptr || request.section_handle < 0 ||
+        static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
+        return negative_status(SX_EINVAL);
+    }
+    process::HandleEntry& entry = current->handles[request.section_handle];
+    if (entry.object == nullptr || (entry.granted_access & object::access_read) == 0) {
+        return negative_status(SX_EINVAL);
+    }
+    object::SectionObject* section = object::as_section(entry.object);
+    if (section == nullptr || section->physical_pages == nullptr) {
+        return negative_status(SX_EINVAL);
+    }
+    const uint64_t page_count = page_count_for_bytes(request.backing_size);
+    const uint64_t page_offset = request.section_offset / memory::kPageSize;
+    if (page_offset + page_count > section->page_count) {
+        return negative_status(SX_EINVAL);
+    }
+
+    uint32_t index = k3dResourceCount;
+    for (uint32_t candidate = 0; candidate < k3dResourceCount; ++candidate) {
+        if (!g_adapter.virgl.resources[candidate].in_use) {
+            index = candidate;
+            break;
+        }
+    }
+    if (index == k3dResourceCount) {
+        return negative_status(SX_EBUSY);
+    }
+    const uint32_t resource_id = kFirst3dResourceId + index;
+
+    VirtioGpuResourceCreate3d create = {};
+    initialize_header(create.header, kVirtioGpuCmdResourceCreate3d);
+    create.resource_id = resource_id;
+    create.target = request.target;
+    create.format = request.format;
+    create.bind = request.bind;
+    create.width = request.width;
+    create.height = request.height;
+    create.depth = request.depth;
+    create.array_size = request.array_size;
+    create.last_level = request.last_level;
+    create.nr_samples = request.nr_samples;
+    create.flags = request.flags;
+    if (!send_3d_command(&create, sizeof(create), context_index + 1u)) {
+        return negative_status(SX_EIO);
+    }
+
+    Resource3d& resource = g_adapter.virgl.resources[index];
+    resource.in_use = true;
+    resource.owner_pid = pid;
+    resource.context_index = context_index;
+    resource.section = section;
+    object::retain(&section->header);
+
+    VirtioGpuCtxResource attach = {};
+    initialize_header(attach.header, kVirtioGpuCmdCtxAttachResource);
+    attach.resource_id = resource_id;
+    if (!attach_resource_backing(resource_id, section->physical_pages + page_offset, page_count) ||
+        !send_3d_command(&attach, sizeof(attach), context_index + 1u)) {
+        (void)destroy_resource(resource_id);
+        forget_resource(resource);
+        return negative_status(SX_EIO);
+    }
+    request.resource_id = resource_id;
+    return 0;
+}
+
+int gpu3d_destroy_resource(uint32_t pid, uint32_t context_id, uint32_t resource_id) {
+    DriverBusyGuard guard;
+    if (context_id == 0 || context_id > k3dContextCount) {
+        return negative_status(SX_EINVAL);
+    }
+    const Context3d& context = g_adapter.virgl.contexts[context_id - 1u];
+    if (!context.in_use || context.owner_pid != pid) {
+        return negative_status(SX_EINVAL);
+    }
+    uint32_t index = 0;
+    const int status = lookup_resource(pid, context_id - 1u, resource_id, index);
+    if (status != 0) {
+        return status;
+    }
+    destroy_resource_slot(index, !context.lost);
+    return 0;
+}
+
+int gpu3d_submit(uint32_t pid, uint32_t context_id, const void* commands, uint32_t size) {
+    DriverBusyGuard guard;
+    uint32_t context_index = 0;
+    const int status = lookup_context(pid, context_id, context_index);
+    if (status != 0) {
+        return status;
+    }
+    if (commands == nullptr || size == 0 || (size % 4u) != 0 ||
+        size > kRequestBufferBytes - sizeof(VirtioGpuCmdSubmit)) {
+        return negative_status(SX_EINVAL);
+    }
+    const size_t request_bytes = sizeof(VirtioGpuCmdSubmit) + size;
+    uint8_t* request_buffer = static_cast<uint8_t*>(heap::allocate(request_bytes, alignof(VirtioGpuCmdSubmit)));
+    if (request_buffer == nullptr) {
+        return negative_status(SX_ENOMEM);
+    }
+    VirtioGpuCmdSubmit* request = reinterpret_cast<VirtioGpuCmdSubmit*>(request_buffer);
+    memset(request, 0, sizeof(*request));
+    initialize_header(request->header, kVirtioGpuCmdSubmit3d);
+    request->size = size;
+    memcpy(request_buffer + sizeof(*request), commands, size);
+    const bool ok = send_3d_command(request_buffer, request_bytes, context_index + 1u);
+    heap::free(request_buffer);
+    return ok ? 0 : negative_status(SX_EIO);
+}
+
+int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& transfer) {
+    DriverBusyGuard guard;
+    uint32_t context_index = 0;
+    int status = lookup_context(pid, transfer.context_id, context_index);
+    if (status != 0) {
+        return status;
+    }
+    uint32_t resource_index = 0;
+    status = lookup_resource(pid, context_index, transfer.resource_id, resource_index);
+    if (status != 0) {
+        return status;
+    }
+    if (transfer.direction != SAVANXP_GPU_3D_TRANSFER_TO_HOST &&
+        transfer.direction != SAVANXP_GPU_3D_TRANSFER_FROM_HOST) {
+        return negative_status(SX_EINVAL);
+    }
+    VirtioGpuTransferHost3d request = {};
+    initialize_header(request.header, transfer.direction == SAVANXP_GPU_3D_TRANSFER_TO_HOST
+        ? kVirtioGpuCmdTransferToHost3d : kVirtioGpuCmdTransferFromHost3d);
+    request.box = {transfer.x, transfer.y, transfer.z, transfer.width, transfer.height, transfer.depth};
+    request.offset = transfer.offset;
+    request.resource_id = transfer.resource_id;
+    request.level = transfer.level;
+    request.stride = transfer.stride;
+    request.layer_stride = transfer.layer_stride;
+    return send_3d_command(&request, sizeof(request), context_index + 1u) ? 0 : negative_status(SX_EIO);
+}
+
+void gpu3d_release_for(uint32_t pid) {
+    DriverBusyGuard guard;
+    for (uint32_t index = 0; index < k3dContextCount; ++index) {
+        const Context3d& context = g_adapter.virgl.contexts[index];
+        if (context.in_use && context.owner_pid == pid) {
+            destroy_context_slot(index);
+        }
+    }
+}
+
 namespace {
 const display::Backend kBackend = {
     ready,
@@ -4011,6 +4459,14 @@ const display::Backend kBackend = {
     release_session_resources,
     create_present_event,
     create_scanout_event,
+    gpu3d_capset,
+    gpu3d_create_context,
+    gpu3d_destroy_context,
+    gpu3d_create_resource,
+    gpu3d_destroy_resource,
+    gpu3d_submit,
+    gpu3d_transfer,
+    gpu3d_release_for,
 };
 } // namespace
 

@@ -999,6 +999,15 @@ const display::Backend kBackend = {
     release_session_resources,
     create_present_event,
     create_scanout_event,
+    // A plain framebuffer has no 3D.
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
 };
 
 } // namespace

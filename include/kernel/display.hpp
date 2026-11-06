@@ -48,6 +48,18 @@ struct Backend {
     // asíncronos. Backends síncronos (framebuffer plano) devuelven -ENOSYS.
     int (*create_present_event)();
     int (*create_scanout_event)();
+    // 3D (virgl), docs/roadmaps/open/VIRGL_ROADMAP.md. Optional: a backend
+    // without 3D leaves them null and display:: answers SX_ENODEV. They return
+    // 0 or a negative sx_status, and take the calling pid because contexts and
+    // resources belong to a process, not to the display session.
+    int (*gpu3d_capset)(uint32_t& capset_id, uint32_t& capset_version, const uint8_t*& data, uint32_t& size);
+    int (*gpu3d_create_context)(uint32_t pid, const char* debug_name, uint32_t& context_id);
+    int (*gpu3d_destroy_context)(uint32_t pid, uint32_t context_id);
+    int (*gpu3d_create_resource)(uint32_t pid, savanxp_gpu_3d_resource& request);
+    int (*gpu3d_destroy_resource)(uint32_t pid, uint32_t context_id, uint32_t resource_id);
+    int (*gpu3d_submit)(uint32_t pid, uint32_t context_id, const void* commands, uint32_t size);
+    int (*gpu3d_transfer)(uint32_t pid, const savanxp_gpu_3d_transfer& request);
+    void (*gpu3d_release_for)(uint32_t pid);
 };
 
 // Un driver de display candidato. El core no conoce a ninguno por nombre: cada
@@ -121,5 +133,16 @@ bool wait_present(savanxp_gpu_present_wait& request);
 void release_session_resources();
 int create_present_event();
 int create_scanout_event();
+
+// 3D (virgl). SX_ENODEV when the bound backend has no 3D.
+int gpu3d_capset(uint32_t& capset_id, uint32_t& capset_version, const uint8_t*& data, uint32_t& size);
+int gpu3d_create_context(uint32_t pid, const char* debug_name, uint32_t& context_id);
+int gpu3d_destroy_context(uint32_t pid, uint32_t context_id);
+int gpu3d_create_resource(uint32_t pid, savanxp_gpu_3d_resource& request);
+int gpu3d_destroy_resource(uint32_t pid, uint32_t context_id, uint32_t resource_id);
+int gpu3d_submit(uint32_t pid, uint32_t context_id, const void* commands, uint32_t size);
+int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& request);
+// Destroys every 3D context and resource `pid` owns. Called on process exit.
+void gpu3d_release_for(uint32_t pid);
 
 } // namespace display

@@ -50,6 +50,7 @@
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
 #include "sxn/sxnaudio.h"
+#include "sxgfx/virgl_protocol.h"
 
 #define SXN_CHILD_STATUS 42
 #define SXN_PARENT_MARKER 0x5EED1u
@@ -92,6 +93,121 @@ static void check_at(int ok, int line) {
 }
 
 #define check(ok) check_at((ok), __LINE__)
+
+/* 3D through virgl (docs/roadmaps/open/VIRGL_ROADMAP.md): on a device with
+ * virgl, clear a render target on the host and read it back; without it, the
+ * 3D ioctls must say there is no 3D instead of pretending. */
+static void check_gpu_3d(long gpu, const struct savanxp_gpu_info* info)
+{
+    enum { size = 64, bytes = size * size * 4 };
+    struct savanxp_gpu_3d_capset capset = {0};
+    struct savanxp_gpu_3d_context context = {0};
+    struct savanxp_gpu_3d_resource target = {0};
+    struct savanxp_gpu_3d_resource_ref ref = {0};
+    struct savanxp_gpu_3d_submit submit = {0};
+    struct savanxp_gpu_3d_transfer transfer = {0};
+    uint32_t caps[16];
+    uint32_t commands[32];
+    unsigned count = 0;
+    union { float f; uint32_t u; } red = {1.0f}, green = {0.5f}, blue = {0.0f}, alpha = {1.0f};
+    const uint32_t* pixels;
+    long section;
+    long view;
+    int matches = 1;
+
+    capset.data = (uint64_t)(uintptr_t)caps;
+    capset.size = sizeof(caps);
+    if ((info->flags & SAVANXP_GPU_INFO_FLAG_3D) == 0) {
+        check(sxn_device_control(gpu, GPU_IOC_3D_GET_CAPSET, (unsigned long)&capset) == -SAVANXP_ENODEV);
+        check(sxn_device_control(gpu, GPU_IOC_3D_CREATE_CONTEXT, (unsigned long)&context) == -SAVANXP_ENODEV);
+        (void)sxn_log("nativetest: gpu 3d absent");
+        return;
+    }
+
+    check(sxn_device_control(gpu, GPU_IOC_3D_GET_CAPSET, (unsigned long)&capset) == 0);
+    check(capset.capset_id == 1u || capset.capset_id == 2u);
+    check(capset.size > sizeof(caps));
+    /* Another process's context id is not ours to use. */
+    check(sxn_device_control(gpu, GPU_IOC_3D_DESTROY_CONTEXT, 16) == -SAVANXP_EINVAL);
+
+    context.debug_name[0] = 'n';
+    context.debug_name[1] = 't';
+    check(sxn_device_control(gpu, GPU_IOC_3D_CREATE_CONTEXT, (unsigned long)&context) == 0);
+    section = sxn_section_create(bytes, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    view = section >= 0 ? sxn_map_view(section, SXN_SECTION_READ | SXN_SECTION_WRITE) : -1;
+    check(context.context_id != 0u && section >= 0 && view > 0);
+    if (context.context_id == 0u || view <= 0) {
+        return;
+    }
+
+    target.context_id = context.context_id;
+    target.target = PIPE_TEXTURE_2D;
+    target.format = VIRGL_FORMAT_B8G8R8A8_UNORM;
+    target.bind = VIRGL_BIND_RENDER_TARGET;
+    target.width = size;
+    target.height = size;
+    target.depth = 1u;
+    target.array_size = 1u;
+    target.section_handle = (int32_t)section;
+    target.backing_size = bytes;
+    check(sxn_device_control(gpu, GPU_IOC_3D_CREATE_RESOURCE, (unsigned long)&target) == 0);
+
+    /* A surface on the resource, bound as colour buffer 0, cleared to orange. */
+    commands[count++] = VIRGL_CMD_HEADER(VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SURFACE, VIRGL_OBJ_SURFACE_SIZE);
+    commands[count++] = 1u;
+    commands[count++] = target.resource_id;
+    commands[count++] = VIRGL_FORMAT_B8G8R8A8_UNORM;
+    commands[count++] = 0u;
+    commands[count++] = 0u;
+    commands[count++] = VIRGL_CMD_HEADER(VIRGL_CCMD_SET_FRAMEBUFFER_STATE, 0, VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1u));
+    commands[count++] = 1u;
+    commands[count++] = 0u;
+    commands[count++] = 1u;
+    commands[count++] = VIRGL_CMD_HEADER(VIRGL_CCMD_CLEAR, 0, VIRGL_OBJ_CLEAR_SIZE);
+    commands[count++] = PIPE_CLEAR_COLOR0;
+    commands[count++] = red.u;
+    commands[count++] = green.u;
+    commands[count++] = blue.u;
+    commands[count++] = alpha.u;
+    commands[count++] = 0u;
+    commands[count++] = 0u;
+    commands[count++] = 0u;
+    submit.context_id = context.context_id;
+    submit.size = count * 4u;
+    submit.commands = (uint64_t)(uintptr_t)commands;
+    check(sxn_device_control(gpu, GPU_IOC_3D_SUBMIT, (unsigned long)&submit) == 0);
+
+    transfer.context_id = context.context_id;
+    transfer.resource_id = target.resource_id;
+    transfer.direction = SAVANXP_GPU_3D_TRANSFER_FROM_HOST;
+    transfer.width = size;
+    transfer.height = size;
+    transfer.depth = 1u;
+    transfer.stride = size * 4u;
+    check(sxn_device_control(gpu, GPU_IOC_3D_TRANSFER, (unsigned long)&transfer) == 0);
+
+    /* B8G8R8A8 in memory is 0xAARRGGBB as a little-endian word; 0.5 rounds to
+     * 0x80 or 0x7f depending on the host's GL. */
+    pixels = (const uint32_t*)(uintptr_t)view;
+    for (unsigned index = 0; index < size * size; ++index) {
+        const uint32_t pixel = pixels[index];
+        if ((pixel & 0xffff00ffu) != 0xffff0000u || ((pixel >> 8) & 0xffu) < 0x7fu ||
+            ((pixel >> 8) & 0xffu) > 0x80u) {
+            matches = 0;
+            break;
+        }
+    }
+    check(matches);
+
+    ref.context_id = context.context_id;
+    ref.resource_id = target.resource_id;
+    check(sxn_device_control(gpu, GPU_IOC_3D_DESTROY_RESOURCE, (unsigned long)&ref) == 0);
+    check(sxn_device_control(gpu, GPU_IOC_3D_DESTROY_RESOURCE, (unsigned long)&ref) == -SAVANXP_EINVAL);
+    check(sxn_device_control(gpu, GPU_IOC_3D_DESTROY_CONTEXT, context.context_id) == 0);
+    check(sxn_unmap_view((uint64_t)view) == 0);
+    check(sxn_close(section) == 0);
+    (void)sxn_log(matches ? "nativetest: gpu 3d clear read back" : "nativetest: gpu 3d clear mismatch");
+}
 
 static int streq(const char* a, const char* b) {
     while (*a != '\0' && *a == *b) {
@@ -1167,6 +1283,7 @@ int main(int argc, char** argv) {
             gpu_info.width = 0;
             check(sxn_device_control(gpu, GPU_IOC_GET_INFO, (unsigned long)&gpu_info) == 0);
             check(gpu_info.width != 0u && gpu_info.height != 0u);
+            check_gpu_3d(gpu, &gpu_info);
             check(sxn_close(gpu) == 0);
         }
         serial = sxn_open_device("serial", SXN_DEVICE_WRITE);

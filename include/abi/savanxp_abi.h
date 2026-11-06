@@ -456,6 +456,15 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_CREATE_PRESENT_EVENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 19),
     GPU_IOC_CREATE_SCANOUT_EVENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 20),
     GPU_IOC_PRESENT_SURFACE_BATCH = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 21),
+    /* 3D (virgl). Any process may call these: they are not part of the
+     * display session. docs/roadmaps/open/VIRGL_ROADMAP.md. */
+    GPU_IOC_3D_GET_CAPSET = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 22),
+    GPU_IOC_3D_CREATE_CONTEXT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 23),
+    GPU_IOC_3D_DESTROY_CONTEXT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 24),
+    GPU_IOC_3D_CREATE_RESOURCE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 25),
+    GPU_IOC_3D_DESTROY_RESOURCE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 26),
+    GPU_IOC_3D_SUBMIT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 27),
+    GPU_IOC_3D_TRANSFER = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 28),
 };
 
 enum savanxp_audio_ioctl {
@@ -651,6 +660,88 @@ struct savanxp_gpu_connector_properties {
     uint32_t max_height;
     uint32_t max_bytes;
     uint32_t reserved;
+};
+
+/* 3D (virgl) -------------------------------------------------------------
+ *
+ * Every call is synchronous: it returns once the host has finished it, so a
+ * TRANSFER_FROM_HOST has landed in the backing section when the ioctl returns.
+ * Contexts and resources belong to the calling process and are destroyed when
+ * it exits. A device reset loses them all: every later call on a lost context
+ * fails with SX_EIO, and the caller is expected to fall back to software. */
+
+/* The largest command buffer one GPU_IOC_3D_SUBMIT carries. */
+#define SAVANXP_GPU_3D_MAX_SUBMIT_BYTES 32704u
+/* How many bytes of capset a GPU_IOC_3D_GET_CAPSET may return. */
+#define SAVANXP_GPU_3D_MAX_CAPSET_BYTES 4096u
+
+struct savanxp_gpu_3d_capset {
+    uint32_t capset_id;      /* out: 1 virgl, 2 virgl2 */
+    uint32_t capset_version; /* out */
+    uint32_t size;           /* in: capacity of data; out: bytes written */
+    uint32_t reserved;
+    uint64_t data;           /* user buffer */
+};
+
+struct savanxp_gpu_3d_context {
+    uint32_t context_id;     /* out */
+    uint32_t reserved;
+    char debug_name[32];     /* in: shown in the host's virgl debug output */
+};
+
+/* A virgl resource. target, format, bind and the rest are Gallium's values
+ * (PIPE_TEXTURE_2D, VIRGL_FORMAT_*, VIRGL_BIND_*), passed through unchanged.
+ * The backing is a page-aligned range of a section the caller holds; it is
+ * where TRANSFER_TO_HOST reads from and TRANSFER_FROM_HOST writes to. */
+struct savanxp_gpu_3d_resource {
+    uint32_t context_id;
+    uint32_t resource_id;    /* out */
+    uint32_t target;
+    uint32_t format;
+    uint32_t bind;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t array_size;
+    uint32_t last_level;
+    uint32_t nr_samples;
+    uint32_t flags;
+    int32_t section_handle;
+    uint32_t section_offset; /* page-aligned */
+    uint32_t backing_size;   /* bytes; rounded up to whole pages */
+    uint32_t reserved;
+};
+
+struct savanxp_gpu_3d_resource_ref {
+    uint32_t context_id;
+    uint32_t resource_id;
+};
+
+struct savanxp_gpu_3d_submit {
+    uint32_t context_id;
+    uint32_t size;           /* bytes, a multiple of 4, at most MAX_SUBMIT_BYTES */
+    uint64_t commands;       /* user buffer holding the virgl command stream */
+};
+
+enum savanxp_gpu_3d_transfer_direction {
+    SAVANXP_GPU_3D_TRANSFER_TO_HOST = 0,
+    SAVANXP_GPU_3D_TRANSFER_FROM_HOST = 1,
+};
+
+struct savanxp_gpu_3d_transfer {
+    uint32_t context_id;
+    uint32_t resource_id;
+    uint32_t direction;      /* enum savanxp_gpu_3d_transfer_direction */
+    uint32_t level;
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t stride;
+    uint32_t layer_stride;
+    uint64_t offset;         /* byte offset in the backing */
 };
 
 struct savanxp_gpu_dirty_rect {

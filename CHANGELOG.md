@@ -16,6 +16,10 @@ Cut-off notes:
   `virtio-gpu: virgl capset=...` and sets `SAVANXP_GPU_INFO_FLAG_3D`. `--gl` (`SAVANXP_GL=ON`) boots
   QEMU with `virtio-vga-gl`; plan in `docs/roadmaps/open/VIRGL_ROADMAP.md`.
 
+- **3D ioctls on `/dev/gpu0`** (`GPU_IOC_3D_GET_CAPSET` to `GPU_IOC_3D_TRANSFER`): per-process virgl
+  contexts, section-backed resources, synchronous `SUBMIT_3D` and transfers, freed on exit and
+  marked lost (`SX_EIO`) by a device reset. `nativetest` clears a render target on the GPU.
+
 ### Fixed
 
 - **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was
