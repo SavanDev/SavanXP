@@ -557,6 +557,9 @@ enum savanxp_gpu_info_flags {
     SAVANXP_GPU_INFO_FLAG_SCANOUT_ENUMERATION = 1u << 2,
     SAVANXP_GPU_INFO_FLAG_HOTPLUG_REFRESH = 1u << 3,
     SAVANXP_GPU_INFO_FLAG_ASYNC_PRESENT_EVENTS = 1u << 4,
+    /* The device negotiated virgl and handed over a capset
+     * (docs/roadmaps/open/VIRGL_ROADMAP.md). */
+    SAVANXP_GPU_INFO_FLAG_3D = 1u << 5,
 };
 
 enum savanxp_gpu_surface_format {

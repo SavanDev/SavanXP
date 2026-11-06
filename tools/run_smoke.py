@@ -192,6 +192,8 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=2)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--gl", action="store_true",
+                        help="virtio machine with virtio-vga-gl (virgl); implies --virtio")
     parser.add_argument("--requires-virtio", action="store_true",
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
@@ -224,6 +226,7 @@ def main() -> int:
         parser.error("--smp must be between 1 and 32")
     if args.qmp_driver not in ("", "kbd", "taskbar", "pointer"):
         parser.error(f"unsupported QMP driver: {args.qmp_driver}")
+    args.virtio = args.virtio or args.gl
     if args.requires_virtio and not args.virtio:
         parser.error("this scenario needs the virtio machine: pass --virtio")
     if args.qmp_driver == "taskbar" and args.virtio:
@@ -332,6 +335,7 @@ def main() -> int:
         accel=args.accel,
         smp=args.smp,
         virtio=args.virtio,
+        gl=args.gl,
         headless=True,
         debug=False,
         monitor_path=monitor_path,

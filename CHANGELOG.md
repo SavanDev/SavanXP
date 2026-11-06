@@ -10,6 +10,12 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Added
+
+- **virtio-gpu negotiates virgl**: on a device that offers it the kernel reads the capset, logs
+  `virtio-gpu: virgl capset=...` and sets `SAVANXP_GPU_INFO_FLAG_3D`. `--gl` (`SAVANXP_GL=ON`) boots
+  QEMU with `virtio-vga-gl`; plan in `docs/roadmaps/open/VIRGL_ROADMAP.md`.
+
 ### Fixed
 
 - **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was

@@ -165,3 +165,18 @@ remains is cosmetic. The guest cursor is a real hardware plane on `virtio-gpu`
 (`MOVE_CURSOR`, driven by `compositord` from the cursor in each scene commit);
 where the backend has no cursor plane, `compositord` draws a software cursor.
 
+## virgl is a feature bit the device may not offer
+
+`virtio-gpu` offers `VIRTIO_GPU_F_VIRGL` (feature word 0, bit 0) only when the
+host renders with GL: QEMU's `virtio-vga-gl`, not `virtio-vga`. The driver reads
+the device's word 0 first and asks for virgl only when it is there, because
+`negotiate_features` rejects a request for a bit the device does not offer and
+that would leave the GPU dead. Recovery renegotiates the same set.
+
+With virgl negotiated, `num_capsets` in the device config says how many
+`GET_CAPSET_INFO` indices to ask about. The driver keeps the newest virgl capset
+(id 2, virgl2, over id 1), copies it with `GET_CAPSET` and sets
+`SAVANXP_GPU_INFO_FLAG_3D`. `GET_CAPSET` is the biggest response the control
+queue carries (1408 bytes for virgl2 under virglrenderer 1.3), which is what
+sizes each command slot's response buffer. The plan for the rest is
+[VIRGL_ROADMAP.md](../roadmaps/open/VIRGL_ROADMAP.md).

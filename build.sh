@@ -11,6 +11,7 @@ INCLUDE_TEST_APPS=${SAVANXP_INCLUDE_TEST_APPS:-ON}
 ACCEL=${SAVANXP_ACCEL:-tcg}
 SMP=${SAVANXP_SMP:-2}
 VIRTIO=${SAVANXP_VIRTIO:-OFF}
+GL=${SAVANXP_GL:-OFF}
 USB=${SAVANXP_USB:-OFF}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
@@ -64,6 +65,11 @@ while [[ $# -gt 0 ]]; do
             VIRTIO=ON
             shift
             ;;
+        --gl)
+            GL=ON
+            VIRTIO=ON
+            shift
+            ;;
         --usb)
             USB=ON
             shift
@@ -109,6 +115,7 @@ Options:
   --accel tcg|kvm   select the QEMU accelerator
   --smp N           set the number of virtual CPUs (default: 2)
   --virtio          use QEMU virtio hardware
+  --gl              virtio hardware with virtio-vga-gl (virgl); needs virglrenderer
   --usb             add a QEMU xHCI controller with a USB keyboard and tablet
   --headless        do not open a graphical QEMU window
   --jobs N          pass a parallelism limit to Ninja
@@ -467,6 +474,7 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && SMOKE_ARGS+=(--virtio)
+        [[ "$GL" == ON ]] && SMOKE_ARGS+=(--gl)
         # Un escenario que necesita un device paravirtualizado no puede correr
         # en la maquina base: sin --virtio no hay tablet y el fallo seria del
         # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
@@ -517,6 +525,7 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && QEMU_ARGS+=(--virtio)
+        [[ "$GL" == ON ]] && QEMU_ARGS+=(--gl)
         [[ "$USB" == ON ]] && QEMU_ARGS+=(--usb)
         [[ "$HEADLESS" == ON ]] && QEMU_ARGS+=(--headless)
         [[ "$COMMAND" == debug ]] && QEMU_ARGS+=(--debug)

@@ -188,6 +188,9 @@ all its phases have landed; the links to it move with it.
 - [`NETSURF_ROADMAP.md`](roadmaps/open/NETSURF_ROADMAP.md) — porting NetSurf as the
   reference browser Web Viewer is compared against: the license (GPL-2.0-only
   core, MIT libraries), one shared copy of the libraries, and the steps.
+- [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
+  virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
+  encoder, readback into the window surface, and the `--gl` QEMU machine.
 
 ## Third-party code — `third-party/`
 

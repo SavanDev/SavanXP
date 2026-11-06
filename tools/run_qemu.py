@@ -64,6 +64,13 @@ def qemu_display() -> str:
     return QEMU_DISPLAYS[name]
 
 
+def qemu_display_arg(*, headless: bool, gl: bool) -> str:
+    if headless:
+        return "egl-headless" if gl else "none"
+    display = qemu_display()
+    return display + ",gl=on" if gl else display
+
+
 def build_qemu_args(
     *,
     image_root: Path,
@@ -76,6 +83,7 @@ def build_qemu_args(
     virtio: bool,
     headless: bool,
     debug: bool,
+    gl: bool = False,
     monitor_path: Path | None = None,
     serial_path: Path | None = None,
     qmp_path: Path | None = None,
@@ -95,6 +103,10 @@ def build_qemu_args(
     on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide". With no disk
     image the machine has no disk at all, which is how the rescue system boots.
 
+    gl implies virtio and swaps virtio-vga for virtio-vga-gl, which offers
+    virgl to the guest (docs/roadmaps/open/VIRGL_ROADMAP.md). It needs a GL
+    display: gl=on on the window, egl-headless when headless.
+
     extra_disks are (image, serial) pairs put on the next AHCI ports, for the
     scenarios that need a disk of their own to write (Disk Management's). The
     serial is how the guest tells them from the system's disk.
@@ -105,6 +117,7 @@ def build_qemu_args(
     (docs/roadmaps/done/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
     usb_xhci_* trace events to PATH.
     """
+    virtio = virtio or gl
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
     if disk_bus not in DISK_BUSES:
         raise SystemExit(f"unknown disk bus {disk_bus!r}; expected one of {', '.join(DISK_BUSES)}")
@@ -123,7 +136,7 @@ def build_qemu_args(
         "-audiodev",
         "none,id=audio0" if headless else "sdl,id=audio0",
         "-display",
-        "none" if headless else qemu_display(),
+        qemu_display_arg(headless=headless, gl=gl),
         "-rtc",
         "base=localtime",
         "-drive",
@@ -173,7 +186,7 @@ def build_qemu_args(
             "virtio-net-pci,netdev=net0",
             *disk_devices,
             "-device",
-            "virtio-vga,xres=1280,yres=800",
+            ("virtio-vga-gl" if gl else "virtio-vga") + ",xres=1280,yres=800",
             "-device",
             "virtio-tablet-pci",
             "-device",
@@ -292,6 +305,8 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=2)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--gl", action="store_true",
+                        help="virtio machine with virtio-vga-gl (virgl); implies --virtio")
     parser.add_argument("--disk-bus", choices=DISK_BUSES,
                         help="disk controller without --virtio (default: SAVANXP_DISK_BUS or ahci)")
     parser.add_argument("--headless", action="store_true")
@@ -335,6 +350,7 @@ def main() -> int:
         virtio=args.virtio,
         headless=args.headless,
         debug=args.debug,
+        gl=args.gl,
         disk_bus=args.disk_bus,
         qmp_path=args.qmp_path,
         monitor_path=args.monitor_path,

@@ -34,10 +34,22 @@ constexpr uint32_t kVirtioGpuCmdSetScanout = 0x0103u;
 constexpr uint32_t kVirtioGpuCmdResourceFlush = 0x0104u;
 constexpr uint32_t kVirtioGpuCmdTransferToHost2d = 0x0105u;
 constexpr uint32_t kVirtioGpuCmdResourceAttachBacking = 0x0106u;
+constexpr uint32_t kVirtioGpuCmdGetCapsetInfo = 0x0108u;
+constexpr uint32_t kVirtioGpuCmdGetCapset = 0x0109u;
 constexpr uint32_t kVirtioGpuCmdUpdateCursor = 0x0300u;
 constexpr uint32_t kVirtioGpuCmdMoveCursor = 0x0301u;
 constexpr uint32_t kVirtioGpuRespOkNoData = 0x1100u;
 constexpr uint32_t kVirtioGpuRespOkDisplayInfo = 0x1101u;
+constexpr uint32_t kVirtioGpuRespOkCapsetInfo = 0x1102u;
+constexpr uint32_t kVirtioGpuRespOkCapset = 0x1103u;
+// Feature word 0. The device offers virgl only when the host runs it with GL
+// (QEMU's virtio-vga-gl); a plain virtio-vga never sets the bit.
+constexpr uint32_t kVirtioGpuFeatureVirgl = 1u << 0;
+constexpr uint32_t kVirtioGpuCapsetVirgl = 1u;
+constexpr uint32_t kVirtioGpuCapsetVirgl2 = 2u;
+// The largest capset kept. virglrenderer's virgl2 capset is well under this;
+// a bigger one is reported and ignored rather than truncated.
+constexpr uint32_t kVirglCapsetMaxBytes = 4096u;
 constexpr uint32_t kVirtioGpuEventDisplay = 1u << 0;
 constexpr uint32_t kGpuSurfaceCount = 3u;
 constexpr uint32_t kImportedSurfaceCount = 8u;
@@ -45,7 +57,8 @@ constexpr uint32_t kPendingPresentCapacity = kGpuSurfaceCount + kImportedSurface
 constexpr uint32_t kRetiredPresentHistoryCapacity = 64u;
 constexpr uint32_t kFirstGpuResourceId = 1u;
 constexpr size_t kRequestBufferBytes = 32768;
-constexpr size_t kResponseBufferBytes = 512;
+// Large enough for GET_CAPSET, the biggest response the driver asks for.
+constexpr size_t kResponseBufferBytes = 64 + kVirglCapsetMaxBytes;
 constexpr size_t kCommandSlotBytes = kRequestBufferBytes + kResponseBufferBytes;
 constexpr uint16_t kCommandSlotCount = kVirtioGpuQueueDescriptorLimit / 2u;
 constexpr size_t kQueueExtraBytes = kCommandSlotBytes * kCommandSlotCount;
@@ -101,6 +114,26 @@ struct [[gnu::packed]] VirtioGpuConfig {
     uint32_t events_clear;
     uint32_t num_scanouts;
     uint32_t num_capsets;
+};
+
+struct [[gnu::packed]] VirtioGpuGetCapsetInfo {
+    VirtioGpuCtrlHdr header;
+    uint32_t capset_index;
+    uint32_t padding;
+};
+
+struct [[gnu::packed]] VirtioGpuRespCapsetInfo {
+    VirtioGpuCtrlHdr header;
+    uint32_t capset_id;
+    uint32_t capset_max_version;
+    uint32_t capset_max_size;
+    uint32_t padding;
+};
+
+struct [[gnu::packed]] VirtioGpuGetCapset {
+    VirtioGpuCtrlHdr header;
+    uint32_t capset_id;
+    uint32_t capset_version;
 };
 
 struct [[gnu::packed]] VirtioGpuResourceCreate2d {
@@ -370,8 +403,21 @@ struct ScanoutRefreshSnapshot {
     uint32_t scanout_height;
 };
 
+// What the device said about 3D. Filled once at probe and kept across
+// recovery: a reset renegotiates the same features.
+struct VirglState {
+    bool negotiated;
+    bool capset_ready;
+    uint32_t capset_count;
+    uint32_t capset_id;
+    uint32_t capset_version;
+    uint32_t capset_size;
+    uint8_t capset[kVirglCapsetMaxBytes];
+};
+
 struct Adapter {
     device::Device node;
+    VirglState virgl;
     TransportState transport;
     CursorState cursor;
     DisplayState display;
@@ -443,6 +489,7 @@ void reset_adapter_state() {
     memset(&g_adapter.presents, 0, sizeof(g_adapter.presents));
     memset(&g_adapter.runtime, 0, sizeof(g_adapter.runtime));
     memset(&g_adapter.events, 0, sizeof(g_adapter.events));
+    memset(&g_adapter.virgl, 0, sizeof(g_adapter.virgl));
     g_gpu_msix_enabled = false;
     g_next_fence_id = 1;
     g_next_present_sequence = 1;
@@ -644,6 +691,10 @@ const char* request_type_name(uint32_t type) {
             return "UPDATE_CURSOR";
         case kVirtioGpuCmdMoveCursor:
             return "MOVE_CURSOR";
+        case kVirtioGpuCmdGetCapsetInfo:
+            return "GET_CAPSET_INFO";
+        case kVirtioGpuCmdGetCapset:
+            return "GET_CAPSET";
         default:
             return nullptr;
     }
@@ -662,6 +713,9 @@ uint32_t current_gpu_info_flags() {
         flags |= SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE;
     }
     flags |= SAVANXP_GPU_INFO_FLAG_ASYNC_PRESENT_EVENTS;
+    if (g_adapter.virgl.capset_ready) {
+        flags |= SAVANXP_GPU_INFO_FLAG_3D;
+    }
     return flags;
 }
 
@@ -1744,6 +1798,82 @@ bool send_ok_nodata_command(const void* request, size_t request_bytes) {
     }
     g_last_response_type = response.type;
     return response.type == kVirtioGpuRespOkNoData;
+}
+
+bool device_offers_virgl() {
+    volatile virtio_pci::CommonCfg* cfg = virtio_pci::common_cfg(g_device);
+    cfg->device_feature_select = 0;
+    virtio_pci::memory_barrier();
+    return (cfg->device_feature & kVirtioGpuFeatureVirgl) != 0;
+}
+
+uint32_t driver_features_word0() {
+    return g_adapter.virgl.negotiated ? kVirtioGpuFeatureVirgl : 0u;
+}
+
+bool get_capset_info(uint32_t index, VirtioGpuRespCapsetInfo& info) {
+    VirtioGpuGetCapsetInfo request = {};
+    initialize_header(request.header, kVirtioGpuCmdGetCapsetInfo);
+    request.capset_index = index;
+    if (!submit_command(&request, sizeof(request), &info, sizeof(info))) {
+        g_last_response_type = 0;
+        return false;
+    }
+    g_last_response_type = info.header.type;
+    return info.header.type == kVirtioGpuRespOkCapsetInfo;
+}
+
+// Picks the newest capset the device describes (virgl2 over virgl) and copies
+// it. Without one the device still works, in 2D only.
+bool load_virgl_capset() {
+    VirglState& virgl = g_adapter.virgl;
+    const uint32_t count = device_cfg()->num_capsets;
+    virgl.capset_count = count;
+    VirtioGpuRespCapsetInfo best = {};
+    for (uint32_t index = 0; index < count; ++index) {
+        VirtioGpuRespCapsetInfo info = {};
+        if (!get_capset_info(index, info)) {
+            log_command_failure("GET_CAPSET_INFO");
+            continue;
+        }
+        if (info.capset_id != kVirtioGpuCapsetVirgl && info.capset_id != kVirtioGpuCapsetVirgl2) {
+            continue;
+        }
+        if (info.capset_max_size == 0 || info.capset_max_size > kVirglCapsetMaxBytes) {
+            console::printf("virtio-gpu: virgl capset=%u size=%u too large, ignored\n",
+                static_cast<unsigned>(info.capset_id), static_cast<unsigned>(info.capset_max_size));
+            continue;
+        }
+        if (info.capset_id > best.capset_id) {
+            best = info;
+        }
+    }
+    if (best.capset_id == 0) {
+        return false;
+    }
+
+    VirtioGpuGetCapset request = {};
+    initialize_header(request.header, kVirtioGpuCmdGetCapset);
+    request.capset_id = best.capset_id;
+    request.capset_version = best.capset_max_version;
+    static uint8_t response[sizeof(VirtioGpuCtrlHdr) + kVirglCapsetMaxBytes];
+    const size_t response_bytes = sizeof(VirtioGpuCtrlHdr) + best.capset_max_size;
+    if (!submit_command(&request, sizeof(request), response, response_bytes)) {
+        log_command_failure("GET_CAPSET");
+        return false;
+    }
+    const VirtioGpuCtrlHdr* header = reinterpret_cast<const VirtioGpuCtrlHdr*>(response);
+    g_last_response_type = header->type;
+    if (header->type != kVirtioGpuRespOkCapset) {
+        log_command_failure("GET_CAPSET");
+        return false;
+    }
+    memcpy(virgl.capset, response + sizeof(VirtioGpuCtrlHdr), best.capset_max_size);
+    virgl.capset_id = best.capset_id;
+    virgl.capset_version = best.capset_max_version;
+    virgl.capset_size = best.capset_max_size;
+    virgl.capset_ready = true;
+    return true;
 }
 
 bool get_display_info(VirtioGpuRespDisplayInfo& display_info) {
@@ -3225,7 +3355,7 @@ bool recover_device(const char* reason) {
     virtio_pci::set_device_status(g_device, 0);
     virtio_pci::memory_barrier();
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-    if (!virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit) ||
+    if (!virtio_pci::negotiate_features(g_device, driver_features_word0(), virtio_pci::kFeatureVersion1Bit) ||
         !setup_control_queue()) {
         fail_device("recovery failed to restore queues");
         return false;
@@ -3363,7 +3493,8 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     virtio_pci::memory_barrier();
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
 
-    if (!virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit)) {
+    g_adapter.virgl.negotiated = device_offers_virgl();
+    if (!virtio_pci::negotiate_features(g_device, driver_features_word0(), virtio_pci::kFeatureVersion1Bit)) {
         fail_device("feature negotiation failed");
         return;
     }
@@ -3410,6 +3541,18 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         console::write_line("virtio-gpu: IRQ unavailable, keeping polling fallback");
     }
     log_init_stage("driver ok");
+
+    if (!g_adapter.virgl.negotiated) {
+        console::write_line("virtio-gpu: virgl not offered, 2d only");
+    } else if (load_virgl_capset()) {
+        console::printf("virtio-gpu: virgl capset=%u version=%u size=%u\n",
+            static_cast<unsigned>(g_adapter.virgl.capset_id),
+            static_cast<unsigned>(g_adapter.virgl.capset_version),
+            static_cast<unsigned>(g_adapter.virgl.capset_size));
+    } else {
+        console::printf("virtio-gpu: virgl negotiated but no usable capset (count=%u), 2d only\n",
+            static_cast<unsigned>(g_adapter.virgl.capset_count));
+    }
 
     VirtioGpuRespDisplayInfo display_info = {};
     log_init_stage("query display info");

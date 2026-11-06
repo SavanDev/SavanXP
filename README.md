@@ -180,6 +180,12 @@ The switch applies to every command that launches QEMU (`run`, `debug`, the
 smokes and `gpu-soak`). The audio harnesses that measure one specific driver
 (`ac97-count`, `virtio-count`, ...) force their device and ignore it.
 
+`--gl` (or `SAVANXP_GL=ON`) is the virtio machine with `virtio-vga-gl`, which
+offers virgl to the guest. It needs a QEMU built with virglrenderer and a GL
+display (`egl-headless` for the smokes). The kernel logs `virtio-gpu: virgl
+capset=...` when it gets one; 3D work is tracked in
+[VIRGL_ROADMAP.md](docs/roadmaps/open/VIRGL_ROADMAP.md).
+
 `--usb` (or `SAVANXP_USB=ON`) adds an xHCI controller with a USB keyboard and
 tablet, on either machine. The `usb-*-smoke` scenarios drive the USB stack
 against it, with a machine that has no PS/2 controller at all
