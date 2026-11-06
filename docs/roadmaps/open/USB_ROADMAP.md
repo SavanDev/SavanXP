@@ -1,10 +1,9 @@
 # USB: an xHCI stack, built in QEMU first
 
-> **Status: plan only. Nothing here is implemented.** The tree has no USB code
-> at all: no host controller driver, no HID, no mass storage. This document
-> fixes the decisions before the first line is written, says which parts of
-> OpenBSD's stack are used and how, and orders the work so that every phase
-> boots and can be checked in QEMU on its own.
+> **Status: phase 0 done (the QEMU harness).** No USB driver exists yet. This
+> document fixes the decisions before the code, says which parts of OpenBSD's
+> stack are used and how, and orders the work so that every phase boots and can
+> be checked in QEMU on its own.
 
 ## The short version
 
@@ -145,7 +144,8 @@ drivers impossible to lift, and SavanXP's registries already do that job.
 
 ## The QEMU harness
 
-`tools/run_qemu.py` gains `--usb`, which adds:
+`./build.sh run --usb` (or `SAVANXP_USB=ON`, or `tools/run_qemu.py --usb`)
+adds:
 
 ```text
 -device qemu-xhci,id=xhci
@@ -153,13 +153,19 @@ drivers impossible to lift, and SavanXP's registries already do that job.
 -device usb-tablet,bus=xhci.0,id=usbtablet
 ```
 
-and `--usb-stick PATH`, which adds a raw image as `usb-storage` on the same
-controller. Both work on the AHCI machine and with `--virtio`.
+and `run_qemu.py --usb-stick PATH` adds a raw image as `usb-storage` (serial
+`SXUSB0`) on the same controller. Both work on the AHCI machine and with
+`--virtio`. A smoke scenario asks for them with `usb=True` and
+`usb_stick_mib=N`; the stick is a fresh FAT image per run, built by
+`fat-image` with `/hello.txt` on it, like `fat_disk_mib`. `SAVANXP_USB=ON`
+also adds the devices to any smoke, which is how every existing scenario is
+checked against a machine that has USB.
 
 Debugging aids:
 
-- `-trace 'usb_xhci_*'` logs every doorbell, command and event as QEMU sees
-  it, so a hung ring shows which side stopped.
+- `SAVANXP_USB_TRACE=PATH` writes QEMU's `usb_xhci_*` trace events (every
+  doorbell, command and event as QEMU sees it) to PATH, so a hung ring shows
+  which side stopped.
 - `info usb` in the monitor lists what is attached and at which speed.
 - QMP `input-send-event` takes a `device` argument, so a smoke can type into
   `usbkbd` specifically and prove the key arrived through USB, not PS/2.
@@ -175,8 +181,9 @@ or test that proves it.
 
 ### Phase 0: harness
 
-`--usb` and `--usb-stick` in `run_qemu.py` and the smoke runner. No driver.
-The boot log is unchanged, and QEMU's `info usb` shows the devices.
+**Done.** `--usb` and `--usb-stick` in `run_qemu.py`, the smoke runner and
+`build.sh`. No driver: the boot log is unchanged, and `smoke` passes with
+`SAVANXP_USB=ON`.
 
 ### Phase 1: the controller
 

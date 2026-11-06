@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **QEMU machines with USB**: `./build.sh run --usb` (or `SAVANXP_USB=ON`) adds a `qemu-xhci` controller
+  with a USB keyboard and tablet; smokes can ask for them (`usb`) and for a FAT USB stick (`usb_stick_mib`,
+  serial `SXUSB0`). No driver yet: see `docs/roadmaps/open/USB_ROADMAP.md`.
+
 - **System Properties** keeps a short note of thanks behind its logo.
 
 - **Disk Management mounts FAT volumes**, owned by the person who mounts them (`fs::Owner`,

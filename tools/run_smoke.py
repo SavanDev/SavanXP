@@ -200,6 +200,11 @@ def main() -> int:
     parser.add_argument("--fat-disk-mib", type=int, default=0,
                         help="Attach a FAT disk of this size (serial SXFAT0), built by "
                              "--fat-image with /hello.txt on it: Disk Management's.")
+    parser.add_argument("--usb", action="store_true",
+                        help="Add an xHCI controller with a USB keyboard (usbkbd) and tablet (usbtablet).")
+    parser.add_argument("--usb-stick-mib", type=int, default=0,
+                        help="Attach a FAT USB stick of this size (serial SXUSB0), built by "
+                             "--fat-image with /hello.txt on it.")
     parser.add_argument("--fat-image", type=Path,
                         help="The fat-image host tool (build/tools/fat-image).")
     parser.add_argument("--log-dir", type=Path)
@@ -288,6 +293,17 @@ def main() -> int:
         subprocess.run([tool, "create", str(fat_disk), str(args.fat_disk_mib)], check=True)
         subprocess.run([tool, "put", str(fat_disk), str(hello), "/hello.txt"], check=True)
         extra_disks = extra_disks + ((fat_disk, "SXFAT0"),)
+    usb_stick: Path | None = None
+    if args.usb_stick_mib > 0:
+        if args.fat_image is None:
+            raise SystemExit("--usb-stick-mib needs --fat-image")
+        usb_stick = log_dir / f"{run_tag}.usb.img"
+        hello = log_dir / f"{run_tag}.usb-hello.txt"
+        usb_stick.unlink(missing_ok=True)
+        hello.write_text("usb-hello\n")
+        tool = str(args.fat_image.resolve())
+        subprocess.run([tool, "create", str(usb_stick), str(args.usb_stick_mib)], check=True)
+        subprocess.run([tool, "put", str(usb_stick), str(hello), "/hello.txt"], check=True)
     code, vars_copy = prepare_image(
         image_root=image_root,
         disk_image=machine_disk,
@@ -313,6 +329,8 @@ def main() -> int:
         audio_device=args.audio_device,
         wav_path=wav_path,
         extra_disks=extra_disks,
+        usb=args.usb,
+        usb_stick=usb_stick,
     )
     qemu_args[0] = qemu
 
@@ -464,6 +482,8 @@ def main() -> int:
 
     run_disk.unlink(missing_ok=True)
     blank_disk.unlink(missing_ok=True)
+    if usb_stick is not None:
+        usb_stick.unlink(missing_ok=True)
     lock_path.unlink(missing_ok=True)
     if status == 0 and wav_path is not None:
         if not wav_path.is_file() or wav_path.stat().st_size == 0:

@@ -139,6 +139,10 @@ The switch applies to every command that launches QEMU (`run`, `debug`, the
 smokes and `gpu-soak`). The audio harnesses that measure one specific driver
 (`ac97-count`, `virtio-count`, ...) force their device and ignore it.
 
+`--usb` (or `SAVANXP_USB=ON`) adds an xHCI controller with a USB keyboard and
+tablet, on either machine. The USB stack is being built against it
+([`USB_ROADMAP.md`](docs/roadmaps/open/USB_ROADMAP.md)).
+
 Other available targets:
 
 ```bash

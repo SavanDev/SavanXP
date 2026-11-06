@@ -11,6 +11,7 @@ INCLUDE_TEST_APPS=${SAVANXP_INCLUDE_TEST_APPS:-ON}
 ACCEL=${SAVANXP_ACCEL:-tcg}
 SMP=${SAVANXP_SMP:-2}
 VIRTIO=${SAVANXP_VIRTIO:-OFF}
+USB=${SAVANXP_USB:-OFF}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
 SMOKE_SCENARIO=""
@@ -63,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             VIRTIO=ON
             shift
             ;;
+        --usb)
+            USB=ON
+            shift
+            ;;
         --headless)
             HEADLESS=ON
             shift
@@ -104,6 +109,7 @@ Options:
   --accel tcg|kvm   select the QEMU accelerator
   --smp N           set the number of virtual CPUs (default: 2)
   --virtio          use QEMU virtio hardware
+  --usb             add a QEMU xHCI controller with a USB keyboard and tablet
   --headless        do not open a graphical QEMU window
   --jobs N          pass a parallelism limit to Ninja
   --scenario NAME   smoke scenario (for the smoke command)
@@ -166,6 +172,8 @@ SMOKE_HOST_SERVER=""
 SMOKE_HOST_TEST=""
 SMOKE_HOST_ACTION="taskbar"
 SMOKE_VISUAL_SCENARIO=""
+SMOKE_USB=False
+SMOKE_USB_STICK_MIB=0
 if [[ "$COMMAND" == smoke ]]; then
     [[ -n "$SMOKE_SCENARIO" ]] || SMOKE_SCENARIO=smoke
     if [[ -n "$SMOKE_COMMAND_OVERRIDE" ]]; then
@@ -196,6 +204,8 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
         SMOKE_FAT_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field fat_disk_mib)
+        SMOKE_USB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb)
+        SMOKE_USB_STICK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_stick_mib)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -461,6 +471,11 @@ case "$COMMAND" in
             build_target savanxp_fat_image
             SMOKE_ARGS+=(--fat-disk-mib "$SMOKE_FAT_DISK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")
         fi
+        [[ "$SMOKE_USB" == True || "$USB" == ON ]] && SMOKE_ARGS+=(--usb)
+        if [[ "$SMOKE_USB_STICK_MIB" != 0 ]]; then
+            build_target savanxp_fat_image
+            SMOKE_ARGS+=(--usb-stick-mib "$SMOKE_USB_STICK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")
+        fi
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then
@@ -494,6 +509,7 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && QEMU_ARGS+=(--virtio)
+        [[ "$USB" == ON ]] && QEMU_ARGS+=(--usb)
         [[ "$HEADLESS" == ON ]] && QEMU_ARGS+=(--headless)
         [[ "$COMMAND" == debug ]] && QEMU_ARGS+=(--debug)
         exec python3 "$ROOT/tools/run_qemu.py" "${QEMU_ARGS[@]}"

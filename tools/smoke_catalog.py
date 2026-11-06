@@ -33,6 +33,8 @@ class Scenario:
     no_disk: bool = False
     extra_disk_mib: int = 0
     fat_disk_mib: int = 0
+    usb: bool = False
+    usb_stick_mib: int = 0
 
 
 def _qemu_scenario(
@@ -57,6 +59,8 @@ def _qemu_scenario(
     no_disk: bool = False,
     extra_disk_mib: int = 0,
     fat_disk_mib: int = 0,
+    usb: bool = False,
+    usb_stick_mib: int = 0,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -80,6 +84,8 @@ def _qemu_scenario(
         no_disk=no_disk,
         extra_disk_mib=extra_disk_mib,
         fat_disk_mib=fat_disk_mib,
+        usb=usb,
+        usb_stick_mib=usb_stick_mib,
     )
 
 
@@ -641,6 +647,8 @@ def main() -> int:
             "no_disk",
             "extra_disk_mib",
             "fat_disk_mib",
+            "usb",
+            "usb_stick_mib",
         ),
         required=False,
     )

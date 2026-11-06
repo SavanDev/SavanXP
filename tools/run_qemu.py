@@ -77,6 +77,8 @@ def build_qemu_args(
     wav_path: Path | None = None,
     disk_bus: str | None = None,
     extra_disks: tuple[tuple[Path, str], ...] = (),
+    usb: bool = False,
+    usb_stick: Path | None = None,
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -87,6 +89,11 @@ def build_qemu_args(
     extra_disks are (image, serial) pairs put on the next AHCI ports, for the
     scenarios that need a disk of their own to write (Disk Management's). The
     serial is how the guest tells them from the system's disk.
+
+    usb adds an xHCI controller with a keyboard and a tablet on it; usb_stick
+    adds a raw image as a USB mass-storage device on the same controller
+    (docs/roadmaps/open/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
+    usb_xhci_* trace events to PATH.
     """
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
     if disk_bus not in DISK_BUSES:
@@ -197,6 +204,25 @@ def build_qemu_args(
             "-device",
             "VGA,edid=on,xres=1280,yres=800",
         ]
+    if usb or usb_stick is not None:
+        args_list += ["-device", "qemu-xhci,id=xhci"]
+        trace_path = os.environ.get("SAVANXP_USB_TRACE")
+        if trace_path:
+            args_list += ["-trace", f"enable=usb_xhci_*,file={trace_path}"]
+    if usb:
+        args_list += [
+            "-device",
+            "usb-kbd,bus=xhci.0,id=usbkbd",
+            "-device",
+            "usb-tablet,bus=xhci.0,id=usbtablet",
+        ]
+    if usb_stick is not None:
+        args_list += [
+            "-drive",
+            f"if=none,id=usbstick,media=disk,format=raw,file={usb_stick}",
+            "-device",
+            "usb-storage,bus=xhci.0,drive=usbstick,id=usbstorage,serial=SXUSB0",
+        ]
     if wav_path is not None:
         audio1 = f"wav,id=audio1,path={wav_path}"
     else:
@@ -259,6 +285,10 @@ def main() -> int:
     parser.add_argument("--vars-copy", type=Path, help="writable OVMF variable copy")
     parser.add_argument("--extra-disk", type=Path,
                         help="a second disk image (serial SXBLANK0) for Disk Management to write")
+    parser.add_argument("--usb", action="store_true",
+                        help="add an xHCI controller with a USB keyboard and tablet")
+    parser.add_argument("--usb-stick", type=Path,
+                        help="attach this raw image as a USB mass-storage device")
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
@@ -291,6 +321,8 @@ def main() -> int:
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,
         extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
+        usb=args.usb,
+        usb_stick=args.usb_stick.resolve() if args.usb_stick else None,
     )
     args_list[0] = qemu
 
