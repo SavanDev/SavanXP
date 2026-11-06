@@ -73,6 +73,10 @@ struct sxgl_texture {
     GLenum mag_filter;
     GLenum wrap_s;
     GLenum wrap_t;
+    /* Moves whenever the texels change, so the GPU backend uploads again. */
+    uint32_t generation;
+    /* The GPU backend's copy, or NULL. */
+    struct sxgl_gpu_texture* gpu;
 };
 
 struct sxgl_array {
@@ -497,7 +501,7 @@ static void sxgl_set4(float out[4], float a, float b, float c, float d)
 
 struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour)
 {
-    return sxgl_context_create_ex(colour, SXGL_CONTEXT_SOFTWARE);
+    return sxgl_context_create_ex(colour, 0u);
 }
 
 struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsigned flags)
@@ -569,7 +573,7 @@ struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsi
     context->damage_x0 = context->width;
     context->damage_y0 = context->height;
     context->pipeline_dirty = 1;
-    if ((flags & SXGL_CONTEXT_GPU) != 0 && (flags & SXGL_CONTEXT_SOFTWARE) == 0) {
+    if ((flags & SXGL_CONTEXT_SOFTWARE) == 0) {
         context->gpu = sxgl_gpu_create(context->width, context->height);
     }
     return context;
@@ -619,6 +623,9 @@ void sxgl_context_destroy(struct sxgl_context* context)
     if (g_sxgl_current == context) {
         g_sxgl_current = 0;
     }
+    /* First: it clears the textures' pointers to their GPU copies. */
+    sxgl_gpu_destroy(context->gpu);
+    context->gpu = 0;
     for (index = 0; index < context->texture_capacity; ++index) {
         if (context->textures[index] != 0) {
             free(context->textures[index]->texels);
@@ -627,7 +634,6 @@ void sxgl_context_destroy(struct sxgl_context* context)
     }
     free(context->textures);
     free(context->depth);
-    sxgl_gpu_destroy(context->gpu);
     free(context);
 }
 
@@ -1781,6 +1787,7 @@ void glDeleteTextures(GLsizei count, const GLuint* names)
         if (texture == 0) {
             continue;
         }
+        sxgl_gpu_texture_free(context->gpu, &texture->gpu);
         free(texture->texels);
         free(texture);
         context->textures[names[index] - 1] = 0;
@@ -1935,6 +1942,7 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format, GLsizei wid
     } else {
         memset(texels, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
     }
+    texture->generation += 1u;
     context->pipeline_dirty = 1;
 }
 
@@ -1963,6 +1971,7 @@ void glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei width
     }
     if (pixels != 0) {
         sxgl_copy_texels(texture, x, y, width, height, format, (const unsigned char*)pixels);
+        texture->generation += 1u;
     }
 }
 
@@ -2894,12 +2903,6 @@ static int sxgl_gpu_draw(struct sxgl_context* context, const struct sxgl_vertex*
     int x0, y0, x1, y1;
     int index;
 
-    /* Textures are not on the GPU yet (VIRGL_ROADMAP.md, phase 5): a
-     * textured draw sends the context back to software. */
-    if (context->texture_2d && sxgl_texture_object(context, context->bound_texture) != 0) {
-        return -1;
-    }
-
     memset(&state, 0, sizeof(state));
     state.viewport[0] = context->viewport_x;
     state.viewport[1] = context->viewport_y;
@@ -2929,6 +2932,21 @@ static int sxgl_gpu_draw(struct sxgl_context* context, const struct sxgl_vertex*
     state.fog = context->fog;
     if (context->fog) {
         memcpy(state.fog_colour, context->fog_colour, sizeof(state.fog_colour));
+    }
+    if (context->texture_2d) {
+        struct sxgl_texture* texture = sxgl_texture_object(context, context->bound_texture);
+        if (texture != 0 && texture->texels != 0) {
+            state.texture = &texture->gpu;
+            state.texels = texture->texels;
+            state.texture_width = texture->width;
+            state.texture_height = texture->height;
+            state.texture_generation = texture->generation;
+            state.texture_env = context->texture_env;
+            state.min_filter = texture->min_filter;
+            state.mag_filter = texture->mag_filter;
+            state.wrap_s = texture->wrap_s;
+            state.wrap_t = texture->wrap_t;
+        }
     }
 
     source[0] = a;

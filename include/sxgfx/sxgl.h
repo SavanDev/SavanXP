@@ -208,14 +208,16 @@ struct sxgl_context;
 /* A context that renders into `colour` (BGRX8888 or BGRA8888). The bitmap's
  * pixels stay the caller's; the context allocates its depth buffer at the same
  * size. The viewport and scissor start as the whole bitmap. NULL when out of
- * memory or the bitmap is unusable. */
+ * memory or the bitmap is unusable. It draws on the GPU when the machine has a
+ * 3D device and in software otherwise: either way the image is in `colour`
+ * after sxgl_swap_buffers or glFinish, and only then. */
 struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour);
 
 /* The same, choosing the backend (docs/roadmaps/open/VIRGL_ROADMAP.md).
- * SXGL_CONTEXT_GPU asks for the virgl backend: the host GPU rasterizes and
- * sxgl_swap_buffers (or glFinish) copies the result into `colour`. Without a
- * 3D device, or if it fails later, the context rasterizes in software.
- * SXGL_CONTEXT_SOFTWARE never touches the GPU. */
+ * 0 or SXGL_CONTEXT_GPU take the virgl backend when there is one: the host
+ * GPU rasterizes and sxgl_swap_buffers (or glFinish) copies the result into
+ * `colour`. Without a 3D device, or if it fails later, the context rasterizes
+ * in software. SXGL_CONTEXT_SOFTWARE never touches the GPU. */
 #define SXGL_CONTEXT_SOFTWARE 0x1u
 #define SXGL_CONTEXT_GPU 0x2u
 struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsigned flags);

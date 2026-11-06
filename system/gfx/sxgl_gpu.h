@@ -18,6 +18,10 @@
 #include "sxgfx/sxgl.h"
 
 struct sxgl_gpu;
+/* A texture's copy on the host, owned by the backend; SxGL keeps a pointer to
+ * it in each texture object and the backend clears that pointer when it lets
+ * the copy go. */
+struct sxgl_gpu_texture;
 
 /* A vertex as SxGL hands it over: clip-space position, colour 0..1, texture
  * coordinates and the fog factor (1 = no fog). */
@@ -50,6 +54,19 @@ struct sxgl_gpu_state {
     GLenum blend_destination;
     int fog;
     float fog_colour[4];
+    /* Texturing: `texture` is NULL when it is off. It points at the texture
+     * object's slot for its host copy; the texels are uploaded again whenever
+     * `texture_generation` moves. */
+    struct sxgl_gpu_texture** texture;
+    const uint32_t* texels; /* 0xAARRGGBB, row 0 is t = 0 */
+    int texture_width;
+    int texture_height;
+    uint32_t texture_generation;
+    GLenum texture_env;
+    GLenum min_filter;
+    GLenum mag_filter;
+    GLenum wrap_s;
+    GLenum wrap_t;
 };
 
 /* NULL when there is no 3D device (or it refused): SxGL then rasterizes in
@@ -64,6 +81,8 @@ int sxgl_gpu_clear(struct sxgl_gpu* gpu, int clear_colour, int clear_depth, cons
     int x0, int y0, int x1, int y1);
 int sxgl_gpu_triangle(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* state, const struct sxgl_gpu_vertex* a,
     const struct sxgl_gpu_vertex* b, const struct sxgl_gpu_vertex* c);
+/* Lets a texture's host copy go (glDeleteTextures). */
+void sxgl_gpu_texture_free(struct sxgl_gpu* gpu, struct sxgl_gpu_texture** texture);
 /* Sends what is queued. */
 int sxgl_gpu_flush(struct sxgl_gpu* gpu);
 /* Flushes, waits, and copies the region of the render target into `colour`,

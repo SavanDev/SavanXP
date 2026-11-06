@@ -1,7 +1,7 @@
 # VirGL — a hardware backend for SxGL
 
-> **Status: phases 1–4 done; phase 5 (textures, then the GPU as the default)
-> is next.** This document is the order of work, written before the work, and the
+> **Status: phases 1–5 done: SxGL draws on the GPU by default where virgl
+> exists. Phase 6 (measurement) is next.** This document is the order of work, written before the work, and the
 > decisions that shape it.
 
 SxGL is a software rasterizer ([SXGL.md](../../desktop/SXGL.md)) because the
@@ -41,11 +41,10 @@ reference the GPU output is checked against.
 - **T&L stays on the CPU.** SxGL transforms, lights and computes the fog factor
   as it always did and sends clip-space vertices; one pass-through vertex
   shader and two fragment shaders (colour, colour with fog) cover the subset.
-- **Automatic selection, with a way to force software.** The finished backend
-  is picked at context creation when the device has 3D;
-  `SXGL_CONTEXT_SOFTWARE` keeps a context in software. Until textures are on
-  the GPU, `sxgl_context_create` stays software and the GPU is asked for with
-  `SXGL_CONTEXT_GPU`.
+- **Automatic selection, with a way to force software.** The backend is
+  picked at context creation when the device has 3D; `SXGL_CONTEXT_SOFTWARE`
+  keeps a context in software. One fragment shader per texture environment
+  and fog, written the first time a draw needs it.
 - **`--gl` selects the machine.** `run` and `smoke` take `--gl`, which
   implies `--virtio` and swaps `virtio-vga` for `virtio-vga-gl` with a GL
   display (`egl-headless` when headless). Without `--gl` nothing changes and the
@@ -107,6 +106,9 @@ Phase 6 measures what the spin costs before anything changes.
 5. **SxGL backend: the rest of the subset.** Lighting, textures, blending,
    alpha test, fog, scissor, culling, against the host test's reference images
    with a stated tolerance.
+   First figure, Nightwood's selftest at 320x240 under KVM: 7.4 ms a frame on
+   the GPU against 11.0 ms in software. The CPU still does T&L, the readback
+   and the spinning wait.
 6. **Measure.** `gears` and `nightwood` on both backends, figures recorded in
    [SXGL.md](../../desktop/SXGL.md) next to the software ones.
 

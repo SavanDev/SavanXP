@@ -51,29 +51,102 @@ static const char k_vertex_shader[] =
     "  3: MOV OUT[3], IN[3]\n"
     "  4: END\n";
 
-/* The software rasterizer interpolates colour and fog linearly in screen
- * space and texture coordinates with perspective; the shaders do the same, so
- * both backends agree. */
-static const char k_fragment_shader_colour[] =
-    "FRAG\n"
-    "PROPERTY FS_COLOR0_WRITES_ALL_CBUFS 1\n"
-    "DCL IN[0], COLOR, LINEAR\n"
-    "DCL OUT[0], COLOR\n"
-    "  0: MOV OUT[0], IN[0]\n"
-    "  1: END\n";
+/* Fragment shaders, one per texture environment and fog, written the first
+ * time a draw needs one. The software rasterizer interpolates colour and fog
+ * linearly in screen space and texture coordinates with perspective; the
+ * declarations do the same, so both backends agree. The arithmetic follows
+ * the software spans: MODULATE multiplies, REPLACE takes the texel, DECAL
+ * blends the texel's colour in by its alpha and keeps the fragment's alpha,
+ * and fog mixes the fog colour in by (1 - factor). */
+#define SXGL_GPU_ENV_NONE 0u
+#define SXGL_GPU_ENV_MODULATE 1u
+#define SXGL_GPU_ENV_REPLACE 2u
+#define SXGL_GPU_ENV_DECAL 3u
+#define SXGL_GPU_FRAGMENT_VARIANTS 8u
 
-/* colour.rgb = fog * colour + (1 - fog) * fog colour; alpha untouched. */
-static const char k_fragment_shader_fog[] =
-    "FRAG\n"
-    "PROPERTY FS_COLOR0_WRITES_ALL_CBUFS 1\n"
-    "DCL IN[0], COLOR, LINEAR\n"
-    "DCL IN[1], GENERIC[1], LINEAR\n"
-    "DCL OUT[0], COLOR\n"
-    "DCL TEMP[0]\n"
-    "  0: LRP TEMP[0].xyz, IN[1].wwww, IN[0], IN[1]\n"
-    "  1: MOV TEMP[0].w, IN[0].wwww\n"
-    "  2: MOV OUT[0], TEMP[0]\n"
-    "  3: END\n";
+struct sxgl_gpu_text {
+    char text[768];
+    uint32_t length;
+    unsigned line;
+};
+
+static void sxgl_gpu_text_add(struct sxgl_gpu_text* out, const char* text)
+{
+    while (*text != '\0' && out->length + 1u < sizeof(out->text)) {
+        out->text[out->length++] = *text++;
+    }
+    out->text[out->length] = '\0';
+}
+
+/* An instruction, numbered the way TGSI text numbers them. */
+static void sxgl_gpu_text_op(struct sxgl_gpu_text* out, const char* text)
+{
+    char label[8];
+    unsigned line = out->line++;
+    unsigned used = 0;
+
+    label[used++] = ' ';
+    label[used++] = ' ';
+    if (line >= 10u) {
+        label[used++] = (char)('0' + line / 10u);
+    }
+    label[used++] = (char)('0' + line % 10u);
+    label[used++] = ':';
+    label[used++] = ' ';
+    label[used] = '\0';
+    sxgl_gpu_text_add(out, label);
+    sxgl_gpu_text_add(out, text);
+    sxgl_gpu_text_add(out, "\n");
+}
+
+static void sxgl_gpu_fragment_text(struct sxgl_gpu_text* out, uint32_t env, int fog)
+{
+    memset(out, 0, sizeof(*out));
+    sxgl_gpu_text_add(out, "FRAG\nPROPERTY FS_COLOR0_WRITES_ALL_CBUFS 1\nDCL IN[0], COLOR, LINEAR\n");
+    if (env != SXGL_GPU_ENV_NONE) {
+        sxgl_gpu_text_add(out, "DCL IN[1], GENERIC[0], PERSPECTIVE\n");
+    }
+    if (fog) {
+        sxgl_gpu_text_add(out, env != SXGL_GPU_ENV_NONE ? "DCL IN[2], GENERIC[1], LINEAR\n"
+                                                        : "DCL IN[1], GENERIC[1], LINEAR\n");
+    }
+    sxgl_gpu_text_add(out, "DCL OUT[0], COLOR\n");
+    if (env != SXGL_GPU_ENV_NONE) {
+        sxgl_gpu_text_add(out, "DCL SAMP[0]\nDCL SVIEW[0], 2D, FLOAT\n");
+    }
+    sxgl_gpu_text_add(out, "DCL TEMP[0..1]\n");
+    sxgl_gpu_text_op(out, "MOV TEMP[0], IN[0]");
+    if (env != SXGL_GPU_ENV_NONE) {
+        sxgl_gpu_text_op(out, "TEX TEMP[1], IN[1], SAMP[0], 2D");
+        if (env == SXGL_GPU_ENV_MODULATE) {
+            sxgl_gpu_text_op(out, "MUL TEMP[0], TEMP[0], TEMP[1]");
+        } else if (env == SXGL_GPU_ENV_REPLACE) {
+            sxgl_gpu_text_op(out, "MOV TEMP[0], TEMP[1]");
+        } else {
+            sxgl_gpu_text_op(out, "LRP TEMP[0].xyz, TEMP[1].wwww, TEMP[1], TEMP[0]");
+        }
+    }
+    if (fog) {
+        sxgl_gpu_text_op(out, env != SXGL_GPU_ENV_NONE ? "LRP TEMP[0].xyz, IN[2].wwww, TEMP[0], IN[2]"
+                                                       : "LRP TEMP[0].xyz, IN[1].wwww, TEMP[0], IN[1]");
+    }
+    sxgl_gpu_text_op(out, "MOV OUT[0], TEMP[0]");
+    sxgl_gpu_text_op(out, "END");
+    out->length += 1u; /* the NUL travels with the text */
+}
+
+struct sxgl_gpu_texture {
+    struct sxgl_gpu_texture* next;
+    struct sxgl_gpu_texture** owner;
+    long section;
+    uint32_t* texels;
+    uint32_t resource;
+    uint32_t view;
+    int width;
+    int height;
+    uint32_t generation;
+    int uploaded;
+};
 
 struct sxgl_gpu {
     long device;
@@ -95,9 +168,13 @@ struct sxgl_gpu {
     uint32_t colour_surface;
     uint32_t depth_surface;
     uint32_t vertex_shader;
-    uint32_t fragment_colour;
-    uint32_t fragment_fog;
+    uint32_t fragment[SXGL_GPU_FRAGMENT_VARIANTS];
+    uint32_t bound_fragment;
     uint32_t vertex_elements;
+    uint32_t sampler;
+    GLenum sampler_params[4]; /* min, mag, wrap s, wrap t of `sampler` */
+    uint32_t bound_view;
+    struct sxgl_gpu_texture* textures;
     uint32_t blend;
     uint32_t dsa;
     uint32_t rasterizer;
@@ -436,6 +513,195 @@ static uint32_t sxgl_gpu_cull(const struct sxgl_gpu_state* state)
     return PIPE_FACE_BACK;
 }
 
+static uint32_t sxgl_gpu_env(const struct sxgl_gpu_state* state)
+{
+    if (state->texture == 0) {
+        return SXGL_GPU_ENV_NONE;
+    }
+    if (state->texture_env == GL_REPLACE) {
+        return SXGL_GPU_ENV_REPLACE;
+    }
+    if (state->texture_env == GL_DECAL) {
+        return SXGL_GPU_ENV_DECAL;
+    }
+    return SXGL_GPU_ENV_MODULATE;
+}
+
+static uint32_t sxgl_gpu_resource(struct sxgl_gpu* gpu, uint32_t target, uint32_t format, uint32_t bind,
+    uint32_t width, uint32_t height, long section, uint32_t bytes);
+
+/* The host copy of the texture `state` names, made or remade at its size. */
+static struct sxgl_gpu_texture* sxgl_gpu_texture_for(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* state)
+{
+    struct sxgl_gpu_texture* texture = *state->texture;
+    uint32_t bytes = (uint32_t)state->texture_width * (uint32_t)state->texture_height * 4u;
+    void* view = 0;
+    uint32_t* out;
+
+    if (texture != 0 && texture->width == state->texture_width && texture->height == state->texture_height) {
+        return texture;
+    }
+    if (texture != 0) {
+        sxgl_gpu_texture_free(gpu, state->texture);
+    }
+    texture = (struct sxgl_gpu_texture*)malloc(sizeof(*texture));
+    if (texture == 0) {
+        gpu->failed = 1;
+        return 0;
+    }
+    memset(texture, 0, sizeof(*texture));
+    texture->section = sxgl_gpu_device_section(bytes, &view);
+    texture->texels = (uint32_t*)view;
+    texture->width = state->texture_width;
+    texture->height = state->texture_height;
+    if (texture->section < 0) {
+        free(texture);
+        gpu->failed = 1;
+        return 0;
+    }
+    texture->resource = sxgl_gpu_resource(gpu, PIPE_TEXTURE_2D, VIRGL_FORMAT_B8G8R8A8_UNORM,
+        VIRGL_BIND_SAMPLER_VIEW, (uint32_t)texture->width, (uint32_t)texture->height, texture->section, bytes);
+    texture->view = sxgl_gpu_handle(gpu);
+    out = sxgl_gpu_reserve(gpu, 1u + VIRGL_OBJ_SAMPLER_VIEW_SIZE);
+    if (out != 0) {
+        out[0] = VIRGL_CMD_HEADER(VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SAMPLER_VIEW, VIRGL_OBJ_SAMPLER_VIEW_SIZE);
+        out[1] = texture->view;
+        out[2] = texture->resource;
+        out[3] = VIRGL_FORMAT_B8G8R8A8_UNORM | (PIPE_TEXTURE_2D << 24);
+        out[4] = 0u;
+        out[5] = 0u;
+        out[6] = VIRGL_OBJ_SAMPLER_VIEW_SWIZZLE_IDENTITY;
+    }
+    texture->owner = state->texture;
+    texture->next = gpu->textures;
+    gpu->textures = texture;
+    *state->texture = texture;
+    return texture;
+}
+
+static uint32_t sxgl_gpu_wrap(GLenum wrap)
+{
+    return wrap == GL_REPEAT ? PIPE_TEX_WRAP_REPEAT : PIPE_TEX_WRAP_CLAMP_TO_EDGE;
+}
+
+static uint32_t sxgl_gpu_filter(GLenum filter)
+{
+    return filter == GL_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+}
+
+/* Uploads the texels when they changed, binds the view, and replaces the
+ * sampler when the filters or wrap modes changed. */
+static void sxgl_gpu_apply_texture(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* state)
+{
+    struct sxgl_gpu_texture* texture = sxgl_gpu_texture_for(gpu, state);
+    uint32_t* out;
+
+    if (texture == 0 || gpu->failed) {
+        return;
+    }
+    if (!texture->uploaded || texture->generation != state->texture_generation) {
+        struct savanxp_gpu_3d_transfer transfer;
+        uint32_t bytes = (uint32_t)texture->width * (uint32_t)texture->height * 4u;
+
+        /* Queued draws may still sample the old texels: send them first. */
+        if (sxgl_gpu_flush(gpu) != 0) {
+            return;
+        }
+        memcpy(texture->texels, state->texels, bytes);
+        memset(&transfer, 0, sizeof(transfer));
+        transfer.context_id = gpu->context;
+        transfer.resource_id = texture->resource;
+        transfer.direction = SAVANXP_GPU_3D_TRANSFER_TO_HOST;
+        transfer.width = (uint32_t)texture->width;
+        transfer.height = (uint32_t)texture->height;
+        transfer.depth = 1u;
+        transfer.stride = (uint32_t)texture->width * 4u;
+        if (sxgl_gpu_control(gpu, GPU_IOC_3D_TRANSFER, &transfer) != 0) {
+            return;
+        }
+        texture->generation = state->texture_generation;
+        texture->uploaded = 1;
+    }
+    if (gpu->bound_view != texture->view) {
+        out = sxgl_gpu_reserve(gpu, 1u + VIRGL_SET_SAMPLER_VIEWS_SIZE(1u));
+        if (out != 0) {
+            out[0] = VIRGL_CMD_HEADER(VIRGL_CCMD_SET_SAMPLER_VIEWS, 0, VIRGL_SET_SAMPLER_VIEWS_SIZE(1u));
+            out[1] = PIPE_SHADER_FRAGMENT;
+            out[2] = 0u;
+            out[3] = texture->view;
+        }
+        gpu->bound_view = texture->view;
+    }
+    if (gpu->sampler == 0u || gpu->sampler_params[0] != state->min_filter ||
+        gpu->sampler_params[1] != state->mag_filter || gpu->sampler_params[2] != state->wrap_s ||
+        gpu->sampler_params[3] != state->wrap_t) {
+        uint32_t handle = sxgl_gpu_handle(gpu);
+        out = sxgl_gpu_reserve(gpu, 1u + VIRGL_OBJ_SAMPLER_STATE_SIZE);
+        if (out == 0) {
+            return;
+        }
+        memset(out, 0, (1u + VIRGL_OBJ_SAMPLER_STATE_SIZE) * 4u);
+        out[0] = VIRGL_CMD_HEADER(VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SAMPLER_STATE, VIRGL_OBJ_SAMPLER_STATE_SIZE);
+        out[1] = handle;
+        out[2] = VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_S(sxgl_gpu_wrap(state->wrap_s)) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_T(sxgl_gpu_wrap(state->wrap_t)) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_R(PIPE_TEX_WRAP_CLAMP_TO_EDGE) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_MIN_IMG_FILTER(sxgl_gpu_filter(state->min_filter)) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_MIN_MIP_FILTER(PIPE_TEX_MIPFILTER_NONE) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_MAG_IMG_FILTER(sxgl_gpu_filter(state->mag_filter));
+        out = sxgl_gpu_reserve(gpu, 1u + VIRGL_BIND_SAMPLER_STATES_SIZE(1u));
+        if (out != 0) {
+            out[0] = VIRGL_CMD_HEADER(VIRGL_CCMD_BIND_SAMPLER_STATES, 0, VIRGL_BIND_SAMPLER_STATES_SIZE(1u));
+            out[1] = PIPE_SHADER_FRAGMENT;
+            out[2] = 0u;
+            out[3] = handle;
+        }
+        sxgl_gpu_destroy_object(gpu, VIRGL_OBJECT_SAMPLER_STATE, gpu->sampler);
+        gpu->sampler = handle;
+        gpu->sampler_params[0] = state->min_filter;
+        gpu->sampler_params[1] = state->mag_filter;
+        gpu->sampler_params[2] = state->wrap_s;
+        gpu->sampler_params[3] = state->wrap_t;
+    }
+}
+
+void sxgl_gpu_texture_free(struct sxgl_gpu* gpu, struct sxgl_gpu_texture** slot)
+{
+    struct sxgl_gpu_texture* texture = slot != 0 ? *slot : 0;
+    struct sxgl_gpu_texture** link;
+
+    if (gpu == 0 || texture == 0) {
+        return;
+    }
+    for (link = &gpu->textures; *link != 0; link = &(*link)->next) {
+        if (*link == texture) {
+            *link = texture->next;
+            break;
+        }
+    }
+    /* Queued draws may sample it: send them before it goes. */
+    (void)sxgl_gpu_flush(gpu);
+    if (!gpu->failed) {
+        struct savanxp_gpu_3d_resource_ref ref;
+        sxgl_gpu_destroy_object(gpu, VIRGL_OBJECT_SAMPLER_VIEW, texture->view);
+        (void)sxgl_gpu_flush(gpu);
+        ref.context_id = gpu->context;
+        ref.resource_id = texture->resource;
+        if (texture->resource != 0u) {
+            (void)sxgl_gpu_device_control(gpu->device, GPU_IOC_3D_DESTROY_RESOURCE, &ref);
+        }
+    }
+    if (gpu->bound_view == texture->view) {
+        gpu->bound_view = 0;
+    }
+    if (gpu->state_valid && gpu->state.texture == slot) {
+        gpu->state_valid = 0;
+    }
+    sxgl_gpu_device_section_free(texture->section, texture->texels);
+    free(texture);
+    *slot = 0;
+}
+
 /* Brings the host state to `state`, emitting only what changed. The open run
  * is drawn first: it was queued under the old state. */
 static void sxgl_gpu_apply(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* state)
@@ -489,8 +755,21 @@ static void sxgl_gpu_apply(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* st
         old->blend_destination != state->blend_destination) {
         sxgl_gpu_emit_blend(gpu, state->blend, state->blend_source, state->blend_destination, PIPE_MASK_RGBA);
     }
-    if (old == 0 || old->fog != state->fog) {
-        sxgl_gpu_bind_shader(gpu, state->fog ? gpu->fragment_fog : gpu->fragment_colour, PIPE_SHADER_FRAGMENT);
+    if (state->texture != 0) {
+        sxgl_gpu_apply_texture(gpu, state);
+    }
+    {
+        uint32_t env = sxgl_gpu_env(state);
+        uint32_t variant = env * 2u + (state->fog ? 1u : 0u);
+        if (gpu->fragment[variant] == 0u) {
+            struct sxgl_gpu_text text;
+            sxgl_gpu_fragment_text(&text, env, state->fog);
+            gpu->fragment[variant] = sxgl_gpu_create_shader(gpu, PIPE_SHADER_FRAGMENT, text.text, text.length);
+        }
+        if (gpu->bound_fragment != gpu->fragment[variant]) {
+            sxgl_gpu_bind_shader(gpu, gpu->fragment[variant], PIPE_SHADER_FRAGMENT);
+            gpu->bound_fragment = gpu->fragment[variant];
+        }
     }
     gpu->state = *state;
     gpu->state_valid = 1;
@@ -684,10 +963,6 @@ struct sxgl_gpu* sxgl_gpu_create(int width, int height)
 
     gpu->vertex_shader =
         sxgl_gpu_create_shader(gpu, PIPE_SHADER_VERTEX, k_vertex_shader, (uint32_t)sizeof(k_vertex_shader));
-    gpu->fragment_colour = sxgl_gpu_create_shader(
-        gpu, PIPE_SHADER_FRAGMENT, k_fragment_shader_colour, (uint32_t)sizeof(k_fragment_shader_colour));
-    gpu->fragment_fog = sxgl_gpu_create_shader(
-        gpu, PIPE_SHADER_FRAGMENT, k_fragment_shader_fog, (uint32_t)sizeof(k_fragment_shader_fog));
     sxgl_gpu_bind_shader(gpu, gpu->vertex_shader, PIPE_SHADER_VERTEX);
 
     gpu->vertex_elements = sxgl_gpu_handle(gpu);
@@ -723,6 +998,15 @@ void sxgl_gpu_destroy(struct sxgl_gpu* gpu)
 {
     if (gpu == 0) {
         return;
+    }
+    /* The textures' host copies go with the context; only the sections and
+     * the owners' pointers are left to clear. */
+    while (gpu->textures != 0) {
+        struct sxgl_gpu_texture* texture = gpu->textures;
+        gpu->textures = texture->next;
+        *texture->owner = 0;
+        sxgl_gpu_device_section_free(texture->section, texture->texels);
+        free(texture);
     }
     /* Destroying the context destroys every resource in it. */
     if (gpu->context != 0u) {

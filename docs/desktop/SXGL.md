@@ -53,7 +53,7 @@ construction: SxGL has no way to reach the compositor.
 |---|---|
 | `sxgl_context_create(bitmap)` | A context over the caller's `sx_bitmap` (`BGRX8888` or `BGRA8888`). The pixels stay the caller's; the context allocates its depth buffer at the same size. Viewport and scissor start as the whole bitmap. |
 | `sxgl_context_resize(ctx, bitmap)` | After a window resize: new bitmap, depth buffer reallocated and cleared, viewport and scissor reset to the whole bitmap. Between frames only. Fails (and keeps the old size) when out of memory. |
-| `sxgl_context_create_ex(bitmap, flags)` | The same, choosing the backend: `SXGL_CONTEXT_GPU` asks for the virgl one, `SXGL_CONTEXT_SOFTWARE` never touches the GPU. `sxgl_context_create` is `SXGL_CONTEXT_SOFTWARE` for now. |
+| `sxgl_context_create_ex(bitmap, flags)` | The same, choosing the backend. `sxgl_context_create` (flags 0) takes the GPU when the machine has a 3D device; `SXGL_CONTEXT_SOFTWARE` never touches it. |
 | `sxgl_context_backend(ctx)` | `SXGL_BACKEND_GPU` or `SXGL_BACKEND_SOFTWARE`: what the context draws with right now. |
 | `sxgl_make_current`, `sxgl_get_current` | One current context per process; SxGL is single-threaded. |
 | `sxgl_swap_buffers(ctx, &damage)` | See above. |
@@ -62,23 +62,32 @@ construction: SxGL has no way to reach the compositor.
 
 ### The GPU backend
 
-On a machine with virgl (QEMU's `virtio-vga-gl`, `./build.sh run --gl`) a
-context created with `SXGL_CONTEXT_GPU` keeps SxGL's transform, lighting and
-fog-factor code on the CPU and hands clip-space triangles to the host GPU, which
+On a machine with virgl (QEMU's `virtio-vga-gl`, `./build.sh run --gl`) every
+context draws on the GPU unless made with `SXGL_CONTEXT_SOFTWARE`. It keeps
+SxGL's transform, lighting and fog-factor code on the CPU and hands clip-space triangles to the host GPU, which
 clips, culls, rasterizes, tests depth and alpha, blends and applies fog. The
 image lives on the host until `sxgl_swap_buffers` (or `glFinish`) copies the
 damaged rectangle into the caller's bitmap, so the program presents exactly as
-before. The design and the order of work are in
+before. **The image is in the bitmap only after `sxgl_swap_buffers` or
+`glFinish`**, as GL promises and no more: a program that reads its colour
+buffer mid-frame calls `glFinish` first (Nightwood's selftest does). The design
+and the order of work are in
 [VIRGL_ROADMAP.md](../roadmaps/open/VIRGL_ROADMAP.md).
 
 - **The two backends agree to the edge pixel.** The shaders interpolate colour
   and fog linearly in screen space, as the software spans do. `sxgltest`
-  (`./build.sh smoke sxgl-gpu-test --gl`) draws one scene with both and allows
-  0.5% of the pixels past a tolerance of 6 per channel; today 2 of 19200 differ.
+  (`./build.sh smoke sxgl-gpu-test --gl`) draws two scenes with both, one of
+  state and one of textures, and allows 0.5% of the pixels past a tolerance of
+  6 per channel; today 2 and 20 of 19200 differ. Where a texel edge falls
+  exactly on a pixel centre the two may pick different texels.
 - **Without a 3D device, or when the GPU refuses a call later, the context
   rasterizes in software.** A failure mid-frame loses what that frame drew on
-  the GPU. Textures are not on the GPU yet: a textured draw sends the context
-  back to software.
+  the GPU.
+- **Textures are uploaded when they change.** Each texture object gets a host
+  copy the first time a draw uses it, sent again after `glTexImage2D` or
+  `glTexSubImage2D` (after the draws queued before it, which still see the old
+  texels). The GPU picks the minifying or magnifying filter per pixel; the
+  software spans pick per triangle.
 - **The counters change meaning.** `triangles_rasterized` counts triangles
   handed to the GPU (it culls and clips them), and `fragments_written` stays 0.
 - **The damage is coarse.** Each draw damages the viewport within the write

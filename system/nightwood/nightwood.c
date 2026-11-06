@@ -932,6 +932,9 @@ static int nw_selftest(void)
         nw_world_render(&g_game.world, &g_game.camera, &g_game.warden, 1,
             (float)g_game.render_width / (float)g_game.render_height);
     }
+    /* On the GPU backend the frames are queued: wait for them, and for the
+     * image to reach the render target, before timing and reading it. */
+    glFinish();
     elapsed = sxn_clock_ns() - start;
     sxgl_get_stats(g_game.gl, &stats);
     nw_check(glGetError() == GL_NO_ERROR, "the frame raises no GL error");

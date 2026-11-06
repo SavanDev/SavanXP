@@ -26,7 +26,9 @@
 #define VIRGL_CCMD_CLEAR 7u
 #define VIRGL_CCMD_DRAW_VBO 8u
 #define VIRGL_CCMD_RESOURCE_INLINE_WRITE 9u
+#define VIRGL_CCMD_SET_SAMPLER_VIEWS 10u
 #define VIRGL_CCMD_SET_SCISSOR_STATE 15u
+#define VIRGL_CCMD_BIND_SAMPLER_STATES 18u
 #define VIRGL_CCMD_BIND_SHADER 31u
 
 /* Object types */
@@ -117,6 +119,33 @@
 #define PIPE_BLENDFACTOR_INV_SRC_ALPHA 0x13u
 #define PIPE_BLENDFACTOR_INV_DST_ALPHA 0x14u
 #define PIPE_BLENDFACTOR_INV_DST_COLOR 0x15u
+
+/* CREATE_OBJECT(SAMPLER_VIEW): handle, resource, format | target << 24,
+ * first | last layer << 16, first | last level << 8, swizzle (3 bits each,
+ * r g b a) */
+#define VIRGL_OBJ_SAMPLER_VIEW_SIZE 6u
+#define VIRGL_OBJ_SAMPLER_VIEW_SWIZZLE_IDENTITY (0u | (1u << 3) | (2u << 6) | (3u << 9))
+
+/* CREATE_OBJECT(SAMPLER_STATE): handle, S0, lod bias, min lod, max lod,
+ * border colour as four dwords */
+#define VIRGL_OBJ_SAMPLER_STATE_SIZE 9u
+#define VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_S(x) (((uint32_t)(x) & 0x7u) << 0)
+#define VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_T(x) (((uint32_t)(x) & 0x7u) << 3)
+#define VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_R(x) (((uint32_t)(x) & 0x7u) << 6)
+#define VIRGL_OBJ_SAMPLER_STATE_S0_MIN_IMG_FILTER(x) (((uint32_t)(x) & 0x3u) << 9)
+#define VIRGL_OBJ_SAMPLER_STATE_S0_MIN_MIP_FILTER(x) (((uint32_t)(x) & 0x3u) << 11)
+#define VIRGL_OBJ_SAMPLER_STATE_S0_MAG_IMG_FILTER(x) (((uint32_t)(x) & 0x3u) << 13)
+
+/* SET_SAMPLER_VIEWS and BIND_SAMPLER_STATES: shader type, first slot, then
+ * one handle per slot */
+#define VIRGL_SET_SAMPLER_VIEWS_SIZE(n) ((n) + 2u)
+#define VIRGL_BIND_SAMPLER_STATES_SIZE(n) ((n) + 2u)
+
+#define PIPE_TEX_WRAP_REPEAT 0u
+#define PIPE_TEX_WRAP_CLAMP_TO_EDGE 2u
+#define PIPE_TEX_FILTER_NEAREST 0u
+#define PIPE_TEX_FILTER_LINEAR 1u
+#define PIPE_TEX_MIPFILTER_NONE 2u
 
 /* CREATE_OBJECT(SURFACE): handle, resource, format, level, first | last << 16 */
 #define VIRGL_OBJ_SURFACE_SIZE 5u

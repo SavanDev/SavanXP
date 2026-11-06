@@ -20,9 +20,11 @@ Cut-off notes:
   contexts, section-backed resources, synchronous `SUBMIT_3D` and transfers, freed on exit and
   marked lost (`SX_EIO`) by a device reset. `nativetest` clears a render target on the GPU.
 
-- **SxGL GPU backend over virgl**, opt-in with `sxgl_context_create_ex(bitmap, SXGL_CONTEXT_GPU)`
-  (`sxgl_context_backend` says which is in use): the host GPU rasterizes, `sxgl_swap_buffers` reads
-  the frame back. No textures yet. `smoke sxgl-gpu-test --gl` compares it with the software image.
+- **SxGL draws on the GPU where virgl exists** (`--gl`), Nightwood and Gears included: the host
+  rasterizes and textures, `sxgl_swap_buffers`/`glFinish` read the frame back, and any failure
+  falls back to software. `sxgl_context_create_ex(..., SXGL_CONTEXT_SOFTWARE)` opts out;
+  `sxgl_context_backend` says which is in use. `smoke sxgl-gpu-test --gl` compares both backends.
+
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Fixed
