@@ -37,6 +37,9 @@ built independently with `./ports/doomgeneric/build.sh`,
 
 - `x86_64` kernel booting over UEFI or legacy BIOS via Limine: the ISO is
   hybrid, and `./build.sh run` boots the development tree with UEFI (OVMF).
+- **It runs on real hardware**: the ISO, written to a USB stick, boots a
+  desktop PC and is driven by its USB keyboard and mouse
+  ([Running on real hardware](#running-on-real-hardware)).
 - Framebuffer console and early serial output.
 - Userland with `ELF64` processes, syscalls and a preemptive scheduler.
 - Shell with `pipes`, redirections and basic builtins.
@@ -45,16 +48,26 @@ built independently with `./ports/doomgeneric/build.sh`,
   Alt+Tab switcher, and the shell as clients of it: one `desktop` process
   (wallpaper, a taskbar listing the open windows, the Start menu on Ctrl+Esc,
   and volume, clock and ES/EN keyboard layout popups) plus Program Manager.
-- Built-in apps: Files, Notepad, a Command Prompt in the style of Windows 2000
-  ([docs/desktop/CONSOLE.md](docs/desktop/CONSOLE.md), Ctrl+Alt+T), Add/Remove
-  Programs, System Properties
-  and a Task Manager with live CPU and memory per process
-  ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Media Player is an optional port
+- Built-in apps: Files, Notepad, Paint, Calculator, a Command Prompt in the
+  style of Windows 2000 ([docs/desktop/CONSOLE.md](docs/desktop/CONSOLE.md),
+  Ctrl+Alt+T), Web Viewer (an in-tree browser prototype), Add/Remove Programs,
+  System Properties, Disk Management
+  ([docs/userland/DISK_MANAGEMENT.md](docs/userland/DISK_MANAGEMENT.md)) and a
+  Task Manager with live CPU and memory per process
+  ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Games: Minesweeper and
+  Nightwood, a 3D forest ([docs/userland/NIGHTWOOD.md](docs/userland/NIGHTWOOD.md)).
+  Media Player is an optional port
   ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).
-- Persistent `SxFS` volume mounted at `/`.
+- Persistent `SxFS` volume mounted at `/`; FAT volumes (the boot volume at
+  `/boot`, and disks or USB sticks Disk Management mounts under `/mnt`).
 - POSIX base and SDK v1 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
-- Initial support for network, audio, input, GPU and storage.
+- USB: xHCI controllers, keyboards, mice and tablets next to the PS/2 and
+  virtio ones, USB sticks as disks, hubs, and devices plugged in or pulled
+  out while running ([docs/roadmaps/done/USB_ROADMAP.md](docs/roadmaps/done/USB_ROADMAP.md)).
+- Drivers for network (rtl8139, virtio-net), audio (AC'97, virtio-sound),
+  display (the firmware framebuffer, virtio-gpu) and storage (AHCI, IDE,
+  virtio-blk, USB). NVMe is not supported yet.
 
 ## Requirements
 
@@ -113,6 +126,34 @@ boots it both ways in QEMU.
 To keep the disk's data when booting under VirtualBox or another hypervisor,
 attach `build/disk.img` as an extra disk as well.
 
+### Running on real hardware
+
+The ISO boots a real PC from a USB stick. First reached on 2026-11-06 on an
+AMD desktop (Zen, 400-series chipset, UEFI): the system came up from the
+stick and its USB keyboard and mouse drove the desktop. The machine needs an
+`x86_64` CPU with NX, and Secure Boot turned off (Limine is not signed).
+
+On Linux, write the ISO to the whole stick, not to a partition (this erases
+it; check the device name with `lsblk` first):
+
+```bash
+sudo dd if=build/SavanXP.iso of=/dev/sdX bs=4M conv=fsync oflag=direct status=progress
+```
+
+On Windows, Rufus does the same in its DD image mode. Then boot the stick
+from the firmware's boot menu. The Limine menu waits 3 seconds and offers two
+more entries: **boot log on screen** shows the kernel log instead of the
+splash, the only way to see where a boot stops on a machine without a serial
+port, and **no USB** leaves the USB controllers to the firmware.
+
+The live system runs from memory and keeps nothing across reboots. It does
+see the machine's SATA disks and USB disks (not NVMe ones). At boot it only
+reads them, with one exception: a disk holding an SxFS volume is mounted as
+`/` instead of the live system, and mounting replays its journal. After that,
+only Disk Management writes to a disk, and only when asked to. What is
+known about older machines is in
+[docs/kernel/REAL_HARDWARE.md](docs/kernel/REAL_HARDWARE.md).
+
 ## Running
 
 ```bash
@@ -140,7 +181,8 @@ smokes and `gpu-soak`). The audio harnesses that measure one specific driver
 (`ac97-count`, `virtio-count`, ...) force their device and ignore it.
 
 `--usb` (or `SAVANXP_USB=ON`) adds an xHCI controller with a USB keyboard and
-tablet, on either machine. The USB stack is being built against it
+tablet, on either machine. The `usb-*-smoke` scenarios drive the USB stack
+against it, with a machine that has no PS/2 controller at all
 ([`USB_ROADMAP.md`](docs/roadmaps/done/USB_ROADMAP.md)).
 
 Other available targets:
@@ -258,10 +300,13 @@ such as the ones `doomgeneric` uses.
 - `arch/`: architecture-specific code
 - `kernel/`: kernel and base subsystems
 - `subsystems/posix/`: POSIX layer, SDK and main userland
-- `system/`: native platform services (`compositord`, `windowd`, `sessiond`)
+- `system/`: native (SUN) programs: the platform services (`compositord`,
+  `windowd`, `sessiond`, `elevationd`), the Command Prompt, Disk Management,
+  Task Manager and Nightwood
 - `libsxfs/`: portable core of the `SxFS` filesystem and `sxfs-cli`, the host
   tool that does all disk image writing
-- `rootfs/`: contents of the `initramfs`
+- `rootfs/`: contents of the `initramfs`, the rescue system published under
+  `/rescue`
 - `diskfs/`: initial contents of the persistent volume
 - `sdk/`: SDK examples
 - `ports/`: versioned official third-party ports with independent build flows
@@ -288,6 +333,7 @@ keep building on:
 - a graphics path under a compositor
 - real persistence over `/`
 - support for ports and external applications
+- a first boot on real hardware, with its own USB stack
 
 It is still an experimental system, with APIs and subsystems in flux, but it is
 already aiming to be a consistent, demonstrable working base.
