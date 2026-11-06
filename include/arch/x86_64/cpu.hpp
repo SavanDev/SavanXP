@@ -136,7 +136,7 @@ void fpu_save(void* area);
 void fpu_restore(const void* area);
 void fpu_init_area(void* area);
 
-/* --- user FS/GS bases (docs/kernel/THREADS_ROADMAP.md, phase 3) -------------
+/* --- user FS/GS bases (docs/roadmaps/done/THREADS_ROADMAP.md, phase 3) -------------
  * IA32_FS_BASE and IA32_GS_BASE belong to the user thread running on this
  * core, like the FPU: the kernel never uses either segment (cpu_index() reads
  * TR, and there is no swapgs), so they stay loaded across kernel entries and

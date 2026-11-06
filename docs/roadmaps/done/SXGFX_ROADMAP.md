@@ -2,7 +2,7 @@
 
 > **Status: ALL THREE BATCHES COMPLETE, on master.** This document is the plan:
 > what SxGFX is missing measured against the role
-> [SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md) assigns it — **GDI32**, the 2D
+> [SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md) assigns it — **GDI32**, the 2D
 > rasterization layer underneath SXGUI-C — and in what order to attack it.
 >
 > What batch 1 built:
@@ -33,13 +33,13 @@
 > batch 1 is a refactor with no change in appearance.
 >
 > The code in question is
-> [sxgfx/gfx2d.h](../../include/sxgfx/gfx2d.h) (public
-> API), [system/gfx/gfx2d.c](../../system/gfx/gfx2d.c) (the
+> [sxgfx/gfx2d.h](../../../include/sxgfx/gfx2d.h) (public
+> API), [system/gfx/gfx2d.c](../../../system/gfx/gfx2d.c) (the
 > painter and the rect sets) and
-> [system/gfx/pixels.c](../../system/gfx/pixels.c) (the
+> [system/gfx/pixels.c](../../../system/gfx/pixels.c) (the
 > raw primitives over the buffer, and text). Until 2026-10-27 the first two lived
 > in the POSIX SDK and the primitives inside its window client, `gfx_impl.inc`
-> ([PLATFORM_GRAPHICS.md](PLATFORM_GRAPHICS.md)).
+> ([PLATFORM_GRAPHICS.md](../../desktop/PLATFORM_GRAPHICS.md)).
 >
 > **From the "Batch 1" section down, this document is the record of the
 > original plan** — with the reasoning and the evidence exactly as they were.

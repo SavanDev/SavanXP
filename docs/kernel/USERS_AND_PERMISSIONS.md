@@ -109,7 +109,7 @@ grants, and the existing check enforces it from there.
 36 bytes of the inode stay reserved. Modification time is not in it yet: keeping
 it current dirties the inode on every write, and that cost belongs with `stat`
 in phase 2, measured against `bytes_per_commit`
-([`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md)).
+([`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md)).
 
 **It fits in SxFS v2, with no version bump.** Neither the kernel driver nor
 `libsxfs` validated the reserved bytes, and both modify an inode in place,

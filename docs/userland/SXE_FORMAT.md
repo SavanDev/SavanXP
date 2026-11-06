@@ -666,7 +666,7 @@ reason — it opens every installed executable. `progman-smoke` reports it as
 prints `catalog build=` and `signature=` in milliseconds.
 
 **Reading a section is three reads plus its data.** SxFS caches no reads (see
-[`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md#7-nothing-caches-reads)), so every
+[`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md#7-nothing-caches-reads)), so every
 `read` is a device request. `sxe_file_open()` reads the ELF header, the whole
 section header table and the whole `.shstrtab` once each, and finding a section
 after that happens in memory. Walking the headers one 64-byte read at a time,
@@ -684,7 +684,7 @@ the same size, and an `.ini` item pointing outside `/bin` at a path that did not
 exist at the last build and has appeared since (it was pruned, so the signature
 no longer names it; restarting the session picks it up). The first is an SxFS
 limit, recorded in
-[`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md#8-a-directorys-mtime-does-not-move-and-an-mtime-is-whole-seconds).
+[`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md#8-a-directorys-mtime-does-not-move-and-an-mtime-is-whole-seconds).
 `progman` itself still rebuilds on `F5`.
 
 ### Uninstalling: the other half of the same idea

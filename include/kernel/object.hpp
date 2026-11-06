@@ -146,7 +146,7 @@ struct SectionObject {
     uint64_t* physical_pages;
     // Views of this section unmapped from an address space that other cores
     // had loaded: their references wait on vm's deferred list until those
-    // cores flush their TLB (docs/kernel/THREADS_ROADMAP.md, phase 2).
+    // cores flush their TLB (docs/roadmaps/done/THREADS_ROADMAP.md, phase 2).
     SectionObject* deferred_next;
     uint32_t deferred_refs;
     uint32_t deferred_cpus;
@@ -159,7 +159,7 @@ struct SemaphoreObject {
     int32_t max_count;
 };
 
-/* What a handle to a thread names (docs/kernel/THREADS_ROADMAP.md). The
+/* What a handle to a thread names (docs/roadmaps/done/THREADS_ROADMAP.md). The
  * thread holds one reference while it exists and each handle another, so the
  * object outlives the thread: it is how a waiter learns the thread ended and
  * with which code. Waitable and manual-reset: signaled once, at the end, and

@@ -12,7 +12,7 @@ The code is in [`kernel/block.cpp`](../../kernel/block.cpp); the API is in
 
 The kernel is non-preemptible: a syscall runs with interrupts off from entry to
 exit, and the storage drivers poll the device to completion inside it
-([`SMP_ROADMAP.md`](SMP_ROADMAP.md)). Any disk write therefore froze the whole
+([`SMP_ROADMAP.md`](../roadmaps/done/SMP_ROADMAP.md)). Any disk write therefore froze the whole
 system, cursor and audio included, for as long as the device took, and on QEMU a
 device flush is an `fsync` of the image on the host. Quitting Doom from its menu
 spent 247–293 ms frozen inside the write syscalls even after the journal work in

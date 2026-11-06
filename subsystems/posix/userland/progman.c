@@ -1359,7 +1359,7 @@ static int progman_selftest(void)
      * commit rewrote the whole 1537-sector metadata region over PIO. Under KVM
      * it now takes about 5 s on AHCI or IDE, most of it the four host fsyncs
      * of each of the ~48 commits (one per 8 KiB append); with flushes ignored
-     * it is 0.33 s on AHCI and 2 s on IDE. See docs/fs/SXFS_ROADMAP.md.
+     * it is 0.33 s on AHCI and 2 s on IDE. See docs/roadmaps/open/SXFS_ROADMAP.md.
      *
      * The number is printed because without it this was a smoke that "did not
      * finish" and nobody could say where. */

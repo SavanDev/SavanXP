@@ -8,7 +8,7 @@ struct Driver;
 }
 
 /* FAT12, FAT16 and FAT32 with long names, on FatFs (vendor/fatfs), as an
- * fs::Driver (docs/fs/FAT_ROADMAP.md). Read-only for now: every vnode is
+ * fs::Driver (docs/roadmaps/open/FAT_ROADMAP.md). Read-only for now: every vnode is
  * published without write permission and the write operations refuse.
  *
  * Never the root (can_be_root is false), and a whole disk is never claimed:

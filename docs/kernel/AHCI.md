@@ -64,13 +64,13 @@ ignored (`cache=unsafe`) so only the transfer is measured:
 With flushes honoured both take about 5 s, because each of the 48 commits
 flushes four times and each flush is an `fsync` of the image on the host. The
 transfer is no longer what a write costs; the flushes and the frozen system
-around them are. See [`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md#where-the-remaining-cost-is).
+around them are. See [`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md#where-the-remaining-cost-is).
 
 ## Not done
 
 - **Interrupts.** Completion is polled with interrupts disabled, like every
   storage driver here: the kernel's syscalls cannot sleep on a kernel stack
-  ([`SMP_ROADMAP.md`](SMP_ROADMAP.md)). NCQ and multiple slots buy nothing
+  ([`SMP_ROADMAP.md`](../roadmaps/done/SMP_ROADMAP.md)). NCQ and multiple slots buy nothing
   until requests can overlap.
 - **Port multipliers, hot plug, link power management.** Ports are probed once
   at boot.

@@ -74,7 +74,7 @@ uint8_t g_pipe_storage[process::detail::kMaxPipeCount][process::detail::kPipeCap
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
 // One counter for pids and tids: a process's first thread takes the pid as
 // its tid, and every other thread draws a fresh id, so no tid ever equals
-// another process's pid (docs/kernel/THREADS_ROADMAP.md).
+// another process's pid (docs/roadmaps/done/THREADS_ROADMAP.md).
 uint32_t g_next_pid = 1;
 uint32_t g_init_pid = 0;
 // Shared between cores on purpose: it is the cursor of the single ready queue

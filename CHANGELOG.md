@@ -21,7 +21,7 @@ Cut-off notes:
 - **A FAT driver, and the boot volume at `/boot`**: FAT12/16/32 with long names on FatFs
   (`fat::driver()`), read and write. At boot the first FAT volume holding `boot/kernel.elf`, ESPs first,
   is mounted at `/boot` (`storage: /boot is <device>`), writable by the system only, never unmounted.
-  New host test `fat-volume-test`. See `docs/fs/FAT_ROADMAP.md`.
+  New host test `fat-volume-test`. See `docs/roadmaps/open/FAT_ROADMAP.md`.
 
 - **Disk Management** (`/bin/diskmgmt`, a SUN program under System): the volumes as a list and every
   disk as a map of its partitions and free space, with Properties (model, serial, GUIDs, usage).
@@ -61,7 +61,7 @@ Cut-off notes:
 
 - **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
   point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See
-  `docs/kernel/SMP_ROADMAP.md#reading-smp-stats`.
+  `docs/roadmaps/done/SMP_ROADMAP.md#reading-smp-stats`.
 
 - **Task Manager: Applications tab** (End Task, Switch To, New Task). Any WM client can read the
   task list and switch to or close a task (`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`/`_ACTIVATE`/`_CLOSE`,
@@ -137,7 +137,7 @@ Cut-off notes:
 
 - **Only a driver marked `can_be_root` mounts `/`** (`fs::Driver::can_be_root`; SxFS is): a FAT boot
   drive ahead of the system disk can never become the root. FatFs R0.16 is vendored under
-  `vendor/fatfs/`. See `docs/fs/FAT_ROADMAP.md`.
+  `vendor/fatfs/`. See `docs/roadmaps/open/FAT_ROADMAP.md`.
 
 - **GPT tables are checked before they are used**: both CRCs, falling back to the backup header
   (`partition: <disk>: primary GPT damaged, using the backup`); a disk with neither is left whole. The
@@ -169,7 +169,7 @@ Cut-off notes:
 
 - **QEMU boots two cores by default** (`build.sh`, `tools/run_qemu.py`, `tools/run_smoke.py`,
   `tools/shoot.sh`, `SAVANXP_SMP`), smokes included; `--smp 1` keeps one. See
-  `docs/kernel/SMP_ROADMAP.md#two-cores-by-default`.
+  `docs/roadmaps/done/SMP_ROADMAP.md#two-cores-by-default`.
 
 - **Task Manager is a SUN program**, `/bin/taskmgr.sxe`, built from `system/taskmgr`; the POSIX
   `/bin/taskmgr` is removed from the image. It looks and behaves as before, and its idle window no

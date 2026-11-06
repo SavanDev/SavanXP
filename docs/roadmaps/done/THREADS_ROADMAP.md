@@ -6,14 +6,14 @@
 > phase boots and can be verified on its own.
 >
 > Phase 0 landed as `process::Thread` in
-> [process.hpp](../../include/kernel/process.hpp): the scheduler, every waker
+> [process.hpp](../../../include/kernel/process.hpp): the scheduler, every waker
 > and every blocking call work on threads, and a process has exactly one.
 > [What it took](#phase-0--the-split-one-thread-per-process--done) differs from
 > the plan in three small ways, recorded there.
 >
 > Phase 1 gave native processes more than one thread
 > (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`, slice 23 of
-> [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)), taking turns on the CPU.
+> [KERNEL_NATIVE_API.md](../../kernel/KERNEL_NATIVE_API.md)), taking turns on the CPU.
 > Phase 2 lets them run on several cores at once, with a user-space TLB
 > shootdown that never waits for the other cores. Phase 3 gives each thread
 > its own `%fs` and `%gs` (`SXN_SYS_SET_THREAD_BASE`, slice 24). Phase 4
@@ -375,7 +375,7 @@ What landed:
   without the kernel knowing, and `CR4.FSGSBASE` would let `wrfsbase` do it
   too; reading them back on the way out keeps either from going stale.
 - `SXN_SYS_SET_THREAD_BASE` (slice 24 of
-  [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)): user addresses or 0 only,
+  [KERNEL_NATIVE_API.md](../../kernel/KERNEL_NATIVE_API.md)): user addresses or 0 only,
   since a non-canonical base is a `#GP` on the kernel's `wrmsr`.
 - `exec` resets both to 0; POSIX `fork` copies them from the calling thread
   (from the MSRs when it is the one running, as with the FPU).
@@ -402,7 +402,7 @@ What landed:
 
 - `SXN_SYS_WAIT_ADDRESS` (address, expected value, size, timeout) and
   `SXN_SYS_WAKE_ADDRESS` (address, count), slice 25 of
-  [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md). A parked thread is
+  [KERNEL_NATIVE_API.md](../../kernel/KERNEL_NATIVE_API.md). A parked thread is
   `State::blocked_wait` with `WaitReason::address`, the address in
   `Thread::wait_address`; the tick's `wake_wait_timeouts` expires its
   deadline like an object wait's.

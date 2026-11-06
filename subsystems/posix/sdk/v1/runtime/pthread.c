@@ -1,5 +1,5 @@
 /*
- * POSIX threads and thread-local storage (docs/kernel/THREADS_ROADMAP.md,
+ * POSIX threads and thread-local storage (docs/roadmaps/done/THREADS_ROADMAP.md,
  * phase 5).
  *
  * A pthread is a native thread of the process (SXN_SYS_THREAD_CREATE): the

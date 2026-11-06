@@ -79,14 +79,14 @@ There is no dual boot and no resizing of other systems' partitions.
 **The root is capped at 1 GiB and 4096 inodes** by the format: 512 bitmap
 sectors (`SXFS_BLOCK_BITMAP_SECTORS`) cover 2^21 sectors, and
 `SXFS_MAX_INODES` is 4096. Lifting either is a format change
-([SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md)), not setup's job.
+([SXFS_ROADMAP.md](../roadmaps/open/SXFS_ROADMAP.md)), not setup's job.
 
 **The ESP is written as an image, not as files.** Limine reads only FAT and
 ISO9660, so the kernel and the initramfs must sit on FAT. The build produces
 the ESP as a ready image (next to `disk.img` in the ISO) and setup copies it to
 partition 1 sector by sector. The kernel has a FAT driver and mounts the
 running system's ESP at `/boot`, writable by the system, so the updater can
-replace the kernel there as files ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)).
+replace the kernel there as files ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)).
 
 **The installed `limine.conf` has no `module_path` for `disk.img`.** It is the
 development configuration (`boot/limine-dev.conf`): the root comes from the

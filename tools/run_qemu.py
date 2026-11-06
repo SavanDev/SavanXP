@@ -115,7 +115,7 @@ def build_qemu_args(
         f"if=pflash,format=raw,file={vars_copy}",
         # The boot drive: QEMU's virtual FAT over the staging tree, read-only,
         # under a throwaway overlay. The guest sees a writable disk (/boot,
-        # docs/fs/FAT_ROADMAP.md) and its writes vanish at exit: they never
+        # docs/roadmaps/open/FAT_ROADMAP.md) and its writes vanish at exit: they never
         # reach build/image, and vvfat's own write-back never runs.
         "-drive",
         f"file=fat:{image_root},format=raw,snapshot=on",

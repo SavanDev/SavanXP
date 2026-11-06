@@ -1,6 +1,6 @@
 /*
  * pthreadtest: POSIX threads over the native thread calls
- * (docs/kernel/THREADS_ROADMAP.md, phase 5).
+ * (docs/roadmaps/done/THREADS_ROADMAP.md, phase 5).
  *
  * Several threads on several cores hammer what a threaded port leans on: a
  * mutex-protected counter, malloc and free, errno, __thread variables,

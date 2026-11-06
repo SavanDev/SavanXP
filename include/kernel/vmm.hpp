@@ -136,7 +136,7 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
 
 /* --- TLB coherence across cores ----------------------------------------------
  *
- * KERNEL HALF (docs/kernel/SMP_ROADMAP.md, phase 3). Every core shares it, and
+ * KERNEL HALF (docs/roadmaps/done/SMP_ROADMAP.md, phase 3). Every core shares it, and
  * an invlpg only clears the TLB of the core that runs it. It is solved without
  * IPIs, on top of the big kernel lock: every access to kernel memory that can
  * be unmapped happens with the lock held, so a core only has to catch up
@@ -148,7 +148,7 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
  * memory is ever touched without the lock (SMP phase 4), this stops being
  * enough.
  *
- * USER HALF (docs/kernel/THREADS_ROADMAP.md, phase 2). Threads of one process
+ * USER HALF (docs/roadmaps/done/THREADS_ROADMAP.md, phase 2). Threads of one process
  * run on several cores at once, so one address space can be loaded on several
  * cores. Every CR3 load of a thread's space goes through load_address_space(),
  * which records which space each core holds. Unmapping a user page from a

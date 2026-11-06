@@ -1,7 +1,7 @@
 # FatFs, vendored
 
 FatFs R0.16 by ChaN, the generic FAT module SavanXP's FAT driver is built on
-([`docs/fs/FAT_ROADMAP.md`](../../docs/fs/FAT_ROADMAP.md)). The release and the
+([`docs/roadmaps/open/FAT_ROADMAP.md`](../../docs/roadmaps/open/FAT_ROADMAP.md)). The release and the
 zip's checksum are in `FATFS_RELEASE.txt`; the license is `LICENSE.txt`.
 
 The files under `source/` are byte-for-byte the release's, CRLF line endings

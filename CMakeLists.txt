@@ -301,7 +301,7 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 )
 
 # FatFs (vendor/fatfs, unmodified), configured by kernel/fatfs/ffconf.h, under
-# the FAT driver (kernel/fat.cpp, kernel/fat_diskio.cpp; docs/fs/FAT_ROADMAP.md).
+# the FAT driver (kernel/fat.cpp, kernel/fat_diskio.cpp; docs/roadmaps/open/FAT_ROADMAP.md).
 set(SAVANXP_FATFS_SOURCES
     "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ff.c"
     "${CMAKE_SOURCE_DIR}/vendor/fatfs/source/ffunicode.c"
@@ -730,7 +730,7 @@ target_include_directories(savanxp-gfx2d-test PRIVATE
 set_target_properties(savanxp-gfx2d-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 # SxGL on the host: the real rasterizer against a bitmap in memory, plus the
-# triangles-per-second figure (docs/desktop/SXGL_ROADMAP.md#verification).
+# triangles-per-second figure (docs/roadmaps/done/SXGL_ROADMAP.md#verification).
 add_executable(savanxp-sxgl-test
     system/gfx/sxgl.c
     tests/host/sxgl_test.cpp)

@@ -218,7 +218,7 @@ In the order they unblock each other.
    frame stops freezing input. It also turns on FFmpeg's frame and slice
    threading, which is where most H.264/HEVC throughput on more cores comes
    from. No longer blocked on the kernel, which has pthreads
-   ([`THREADS_ROADMAP.md`](../kernel/THREADS_ROADMAP.md)); the player does not
+   ([`THREADS_ROADMAP.md`](../roadmaps/done/THREADS_ROADMAP.md)); the player does not
    use them yet and the FFmpeg port is configured with `--disable-pthreads`.
 3. **Assembly.** `--disable-asm` leaves every DSP routine in scalar C: that is
    the other large throughput factor. Needs `nasm` pinned in the toolchain.

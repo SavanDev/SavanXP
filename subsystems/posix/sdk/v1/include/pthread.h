@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * POSIX threads over the native thread calls (docs/kernel/THREADS_ROADMAP.md,
+ * POSIX threads over the native thread calls (docs/roadmaps/done/THREADS_ROADMAP.md,
  * phase 5): a thread is a native thread of the process, a mutex or condition
  * variable is a word user space waits on with SXN_SYS_WAIT_ADDRESS.
  *

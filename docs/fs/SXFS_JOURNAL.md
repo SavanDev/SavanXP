@@ -79,7 +79,7 @@ Within a step the order does not matter: the superblocks of step 2 only clear
 A mutation that commits nothing (an overwrite inside a file's current size)
 places one ordering point after its data. Before `block::flush` existed every `block::write`
 flushed, which made a commit about ten flushes, and on IDE none of them
-happened: see [the roadmap](SXFS_ROADMAP.md#where-the-remaining-cost-is).
+happened: see [the roadmap](../roadmaps/open/SXFS_ROADMAP.md#where-the-remaining-cost-is).
 
 ## Recovery
 
@@ -160,7 +160,7 @@ measure that does not move:
 The 88 ms row is not a cost that was later lost: it is what IDE took while its
 flushes were being dropped. With the flushes honoured the four ordering points
 halve the cost on both devices. Where the rest goes is in
-[the roadmap](SXFS_ROADMAP.md#where-the-remaining-cost-is).
+[the roadmap](../roadmaps/open/SXFS_ROADMAP.md#where-the-remaining-cost-is).
 
 ## Tests
 

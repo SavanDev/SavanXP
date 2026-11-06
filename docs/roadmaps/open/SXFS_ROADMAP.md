@@ -6,7 +6,7 @@
 > each one whether it is reachable without moving the on-disk format. Where an
 > item is *not* reachable in v2, that is stated, because that is the boundary.
 >
-> The last line of defence for any of this is [`fscheck`](./SXFS_CHECK.md), which
+> The last line of defence for any of this is [`fscheck`](../../fs/SXFS_CHECK.md), which
 > reports the volume's consistency from inside the system and is what makes a
 > change to the format verifiable without a second machine.
 
@@ -48,7 +48,7 @@ v2 wrote 16× that. With sparse journals (item 1) the same measurement gives
 
 A commit now logs and rewrites only the metadata sectors that changed since the
 mutation's snapshot, a sparse journal described in
-[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md). `bytes_per_commit` went from 1 575 424 to
+[`SXFS_JOURNAL.md`](../../fs/SXFS_JOURNAL.md). `bytes_per_commit` went from 1 575 424 to
 3 872 on the core smoke, and quitting Doom from its menu (22 commits then) went from a
 70.7 s system freeze to 0.53 s on the default IDE disk. The format stayed v2:
 the discriminator lives in what used to be a reserved header field, and old full
@@ -60,7 +60,7 @@ journals still replay. The crash path is tested at every sector of a transaction
 Measured on Doom's quit, which rewrites two small config files: QEMU under KVM,
 `--smp 1`, disk image on a rotational host disk, time spent inside
 `sxfs::write_file` as logged by the kernel. The full history is in
-[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs).
+[`SXFS_JOURNAL.md`](../../fs/SXFS_JOURNAL.md#what-it-costs).
 
 | before block writeback | IDE (PIO) | virtio-blk |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ section), but it is still the cost of the work.
 
 **Every millisecond of it is a frozen system, not a slow program.** The syscall
 gate is an interrupt gate and nothing re-enables interrupts in the syscall path
-(see [`SMP_ROADMAP.md`](../kernel/SMP_ROADMAP.md)), and both block drivers poll
+(see [`SMP_ROADMAP.md`](../done/SMP_ROADMAP.md)), and both block drivers poll
 the device to completion inside the syscall. Until a write returns, no other
 process runs and no timer is serviced, cursor included.
 
@@ -101,7 +101,7 @@ the port accesses.
 
 The fix was DMA, and **not on that controller**: `isa-ide` is an ISA device and
 has no bus master. The default QEMU disk is now on the `q35` board's AHCI
-controller ([`AHCI.md`](../kernel/AHCI.md)), where a command moves up to 256
+controller ([`AHCI.md`](../../kernel/AHCI.md)), where a command moves up to 256
 sectors. With host flushes ignored, `progman-smoke`'s 390 KB copy takes 0.33 s on
 AHCI against 1.99 s on IDE; with flushes honoured both take about 5 s, so large
 writes are now bound by flushes too.
@@ -115,7 +115,7 @@ through 256 bytes at a time, which costs sector reads, not commits.
 
 **Writes no longer freeze the system for their whole length.** Physical disks
 now queue their writes in the block layer and drain them in bounded steps while
-the CPU is idle ([`BLOCK_WRITEBACK.md`](../kernel/BLOCK_WRITEBACK.md)): Doom's
+the CPU is idle ([`BLOCK_WRITEBACK.md`](../../kernel/BLOCK_WRITEBACK.md)): Doom's
 quit spends 8–13 ms in write syscalls, and the longest single stop is one device
 flush, 24–35 ms. Removing that last stop needs device I/O that does not poll
 inside the kernel, which is the non-preemptible kernel's limit, not the
@@ -123,7 +123,7 @@ filesystem's.
 
 ## 2. `fscheck` reports, and nothing repairs
 
-**What exists.** [`fscheck`](./SXFS_CHECK.md) reconciles the block bitmap against
+**What exists.** [`fscheck`](../../fs/SXFS_CHECK.md) reconciles the block bitmap against
 the inodes in both directions and walks the tree for unreachable inodes, aliased
 entries and duplicate names. It is read-only by construction and exits non-zero
 on findings.
@@ -273,7 +273,7 @@ Start menu's cache accepts that edge.
 
 Writing the FAT driver ([FAT_ROADMAP.md](FAT_ROADMAP.md)) was the first time
 anything but SxFS sat under the VFS. What it showed about the VFS itself is in
-[FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits); these are SxFS's.
+[FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#limits); these are SxFS's.
 
 - **Mounting is not read-only.** `probe` replays the journal
   (`recover_journal`) before it validates the home metadata, and the replay
@@ -294,7 +294,7 @@ anything but SxFS sat under the VFS. What it showed about the VFS itself is in
   already hands the record to the VFS as `vnode.data`, and nothing reads it
   back. FAT reads it; SxFS could too, leaving the search to directories.
 - **No volume label.** SxFS has none; Disk Management shows and sets the GPT
-  partition name instead ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md)),
+  partition name instead ([DISK_MANAGEMENT.md](../../userland/DISK_MANAGEMENT.md)),
   so a whole-disk SxFS volume has no name at all. A label in the superblock's
   reserved tail would not need a new version, as ownership did not.
 - **`write(..., truncate)` ignores the offset.** With `truncate` the file is
@@ -313,7 +313,7 @@ anything but SxFS sat under the VFS. What it showed about the VFS itself is in
 - **Ownership did not need a v3.** uid, gid and mode took bytes the inode had
   reserved, and a feature bit in the superblock's reserved tail says they are
   recorded; a volume without it is stamped on its first writable mount. See
-  [`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#what-each-inode-stores).
+  [`USERS_AND_PERMISSIONS.md`](../../kernel/USERS_AND_PERMISSIONS.md#what-each-inode-stores).
 - **`sxfs_walk` refuses to follow aliases.** SxFS has no hard links —
   `create_file` writes `link_count = 1` and nothing raises it — so a second path
   to one inode is a defect. The host validator fails the image on it; `fscheck`

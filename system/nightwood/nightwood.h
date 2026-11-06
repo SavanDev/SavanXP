@@ -2,7 +2,7 @@
 
 /* Nightwood: a night in a forest, eight photographs, and something that
  * watches. The first game written against SUN (docs/userland/SUN.md) and the
- * consumer that drove batches 3 and 4 of SxGL (docs/desktop/SXGL_ROADMAP.md).
+ * consumer that drove batches 3 and 4 of SxGL (docs/roadmaps/done/SXGL_ROADMAP.md).
  * The design of the game itself is in docs/userland/NIGHTWOOD.md.
  *
  * Three units:

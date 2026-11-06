@@ -1,5 +1,5 @@
 /*
- * FatFs configuration for SavanXP (docs/fs/FAT_ROADMAP.md).
+ * FatFs configuration for SavanXP (docs/roadmaps/open/FAT_ROADMAP.md).
  *
  * This is FatFs R0.16's ffconf.h with SavanXP's values; its comments are the
  * original ones. It lives here, not in vendor/fatfs/source, so the vendored

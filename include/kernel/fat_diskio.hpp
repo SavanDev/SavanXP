@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /* FatFs's disk layer (disk_*, get_fattime, ff_memalloc/ff_memfree) over
- * block::, rtc:: and heap:: (docs/fs/FAT_ROADMAP.md#the-disk-layer-diskio).
+ * block::, rtc:: and heap:: (docs/roadmaps/open/FAT_ROADMAP.md#the-disk-layer-diskio).
  *
  * FatFs names a disk by a drive number, one per FatFs volume. The FAT driver
  * binds a drive to a block device before f_mount and unbinds it after

@@ -6,7 +6,7 @@ from inside SavanXP: what does the volume think it is holding.
 It also records why the answer is a report and not a repair, and what would have
 to be true before a repair is possible. For the wider picture — what is left to
 do in SxFS and what each item costs — see
-[`SXFS_ROADMAP.md`](./SXFS_ROADMAP.md).
+[`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md).
 
 ## The gap that motivated it
 

@@ -368,7 +368,7 @@ consent request from the user.
 
 ## Slice 23: threads
 
-Phases 1 and 2 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): threads of one
+Phases 1 and 2 of [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): threads of one
 process run on several cores at once. Open to every subsystem since phase 5:
 POSIX builds `pthread.h` on these calls and slices 24 and 25.
 
@@ -401,7 +401,7 @@ read on through a stale translation on another core.
 
 ## Slice 25: wait on an address
 
-Phase 4 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): what a user-space lock
+Phase 4 of [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): what a user-space lock
 sleeps on. The uncontended path never enters the kernel; a thread calls in
 only to sleep until another one changes the word and says so.
 
@@ -428,7 +428,7 @@ under four threads.
 
 ## Slice 24: per-thread `%fs` and `%gs`
 
-Phase 3 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): the base of
+Phase 3 of [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): the base of
 thread-local storage.
 
 - `SXN_SYS_SET_THREAD_BASE` (`0x1026`): rdi = `SXN_THREAD_BASE_FS` (1) or

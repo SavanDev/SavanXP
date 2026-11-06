@@ -8,7 +8,7 @@
  * skipped.
  *
  * It also prints the triangles-per-second and fragments-per-second figures
- * docs/desktop/SXGL_ROADMAP.md asks to record with every batch.
+ * docs/roadmaps/done/SXGL_ROADMAP.md asks to record with every batch.
  */
 
 #include <chrono>

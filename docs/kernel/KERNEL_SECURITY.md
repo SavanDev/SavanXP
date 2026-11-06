@@ -74,7 +74,7 @@ The audit confirmed the following defenses were already present:
 - When CPUID advertises SMEP, every logical processor also sets `CR4.SMEP` and
   `CR0.WP`. The baseline is the BSP's: on a CPU without SMEP every core runs
   without it, and an AP that cannot match a BSP that has it remains offline.
-  (Until phase 4 of [SMP_ROADMAP.md](SMP_ROADMAP.md) the APs demanded SMEP
+  (Until phase 4 of [SMP_ROADMAP.md](../roadmaps/done/SMP_ROADMAP.md) the APs demanded SMEP
   outright, so on such a CPU they all stayed offline.) SMAP is not enabled yet.
 - ELF `PT_LOAD` segments marked both writable and executable are rejected.
   Executable segments are mapped without `PF_W`; non-executable segments, BSS

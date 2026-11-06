@@ -1,6 +1,6 @@
 /* SxGL: the software rasterizer behind sxgfx/sxgl.h.
  *
- * The design is in docs/desktop/SXGL_ROADMAP.md and the subset in
+ * The design is in docs/roadmaps/done/SXGL_ROADMAP.md and the subset in
  * docs/desktop/SXGL.md. Four stages, in the order a vertex goes through them:
  *
  *   1. Vertex: modelview, lighting, fog factor, projection -- per vertex, in

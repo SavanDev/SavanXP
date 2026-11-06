@@ -244,7 +244,7 @@ Practical limits of the POSIX layer:
   more), and each thread holds one of the process's 64 handles while it
   exists. `errno` is per thread; the heap and stdio take a lock once a second
   thread exists. `fork` copies only the calling thread and `exec` ends the
-  others. See `docs/kernel/THREADS_ROADMAP.md`.
+  others. See `docs/roadmaps/done/THREADS_ROADMAP.md`.
 
 ## No incluido en v1
 

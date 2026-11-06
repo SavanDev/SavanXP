@@ -11,7 +11,7 @@
 
 #include "ff.h"
 
-/* The FAT driver (docs/fs/FAT_ROADMAP.md). FatFs does the format; this file
+/* The FAT driver (docs/roadmaps/open/FAT_ROADMAP.md). FatFs does the format; this file
  * maps it onto fs::Driver: probe mounts a FatFs volume, attach publishes its
  * whole tree, and every operation reopens the file by its path, because FatFs
  * names files by path, not by cluster. */

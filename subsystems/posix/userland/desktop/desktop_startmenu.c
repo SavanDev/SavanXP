@@ -345,7 +345,7 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
         return;
     }
     /* A binary with only a large icon: shrinking averages (bilinear), which
-     * is what docs/desktop/SXGFX_ROADMAP.md asks for icons. */
+     * is what docs/roadmaps/done/SXGFX_ROADMAP.md asks for icons. */
     sx_painter_draw_scaled_bitmap(
         painter,
         &bitmap,

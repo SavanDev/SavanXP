@@ -27,7 +27,7 @@
  * libsximg. There is no PNG encoder, so a .png name never receives BMP bytes.
  *
  * Everything is 1 px and opaque: there is no sx_pen, no alpha and no flood
- * fill in sxgfx (docs/desktop/SXGFX_ROADMAP.md).
+ * fill in sxgfx (docs/roadmaps/done/SXGFX_ROADMAP.md).
  */
 
 /* --- document ------------------------------------------------------------- */

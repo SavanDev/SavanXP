@@ -1,4 +1,4 @@
-/* Gears: the first consumer of SxGL (docs/desktop/SXGL_ROADMAP.md).
+/* Gears: the first consumer of SxGL (docs/roadmaps/done/SXGL_ROADMAP.md).
  *
  * Until SxGL existed this file rasterized by hand, in three blocks: matrices,
  * a rasterizer and the scene. The first two were what batches 1 and 2 of the

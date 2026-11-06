@@ -103,7 +103,7 @@ partition name (36 UTF-16 units, kept as ASCII).
   on it. A disk past 2 TiB (`SXN_STORAGE_TRUNCATED`) is refused: its backup
   GPT would land in the wrong place.
 - SxFS v2 volumes stop at 1 GiB and 4096 files
-  ([SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md)); a larger partition is formatted
+  ([SXFS_ROADMAP.md](../roadmaps/open/SXFS_ROADMAP.md)); a larger partition is formatted
   to its first 1 GiB, and the dialog says so.
 - Every confirmation has *Cancel* as its default button.
 - **A disk with a mounted partition is not repartitioned**, and a mounted
@@ -112,7 +112,7 @@ partition name (36 UTF-16 units, kept as ASCII).
 - **A mounted FAT volume is the person's who mounted it.** FAT has no owners;
   the kernel publishes everything on it as the real uid and gid of the caller,
   which the elevated copy still carries
-  ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)). SxFS keeps the owners it records.
+  ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)). SxFS keeps the owners it records.
 - **Mount points are `/mnt/<name>`**, one level, `[A-Za-z0-9._-]`, at most 24
   characters, not existing yet. Mounts do not survive a reboot.
 

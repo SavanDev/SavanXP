@@ -3,7 +3,7 @@
 > **Status: not started.** This is the order of work for turning Web Viewer
 > from a CSS1 subset into a CSS 2.1 browser, keeping it MIT, native (SXGUI) and
 > in the base image. What it renders today is pinned in
-> [WEBVIEWER.md](WEBVIEWER.md); that contract changes phase by phase.
+> [WEBVIEWER.md](../../desktop/WEBVIEWER.md); that contract changes phase by phase.
 
 ## The decision
 
@@ -14,7 +14,7 @@ lives in the core.
 
 So Web Viewer adopts the libraries and writes its own layout. It stays in the
 tree, MIT, with the system's own chrome. The NetSurf port
-([NETSURF_ROADMAP.md](../ports/NETSURF_ROADMAP.md)) runs next to it as the
+([NETSURF_ROADMAP.md](NETSURF_ROADMAP.md)) runs next to it as the
 reference: the same page, opened in both, inside SavanXP.
 
 The price is explicit: NetSurf's layout, box construction, redraw and forms
@@ -26,7 +26,7 @@ long while.
 
 Whole libraries, unmodified, under `vendor/netsurf/<library>/`, as uACPI is
 under `vendor/uacpi/`. Each one gets its entry in
-[THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md) in the
+[THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md) in the
 commit that vendors it.
 
 | Library | Role | Phase |

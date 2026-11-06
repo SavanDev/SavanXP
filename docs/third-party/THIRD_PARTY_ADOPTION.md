@@ -81,7 +81,7 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
   additional non-alloc section
 - USB: `sys/dev/usb/usb.h` and `xhcireg.h` (descriptors and registers, pure
   data), `sys/dev/hid/hid.c` (the HID report parser) and `usbdevs`. The plan
-  is in [`USB_ROADMAP.md`](../kernel/USB_ROADMAP.md)
+  is in [`USB_ROADMAP.md`](../roadmaps/open/USB_ROADMAP.md)
 
 `Reference`:
 
@@ -120,8 +120,8 @@ losing them is the easy mistake to make.
 ## NetSurf
 
 NetSurf is split by license, and the decision follows the split. The plan is
-in [`WEBVIEWER_ROADMAP.md`](../desktop/WEBVIEWER_ROADMAP.md) and
-[`NETSURF_ROADMAP.md`](../ports/NETSURF_ROADMAP.md).
+in [`WEBVIEWER_ROADMAP.md`](../roadmaps/open/WEBVIEWER_ROADMAP.md) and
+[`NETSURF_ROADMAP.md`](../roadmaps/open/NETSURF_ROADMAP.md).
 
 `Adopt` (MIT, under `vendor/netsurf/`, for Web Viewer):
 

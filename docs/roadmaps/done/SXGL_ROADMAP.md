@@ -2,7 +2,7 @@
 
 > **Status: batches 0 to 4 landed.** SxGL exists: `include/sxgfx/sxgl.h` and
 > `system/gfx/sxgl.c`, a documented GL 1.1 fixed-function subset with its own
-> reference in [SXGL.md](SXGL.md). It has two consumers, one per subsystem:
+> reference in [SXGL.md](../../desktop/SXGL.md). It has two consumers, one per subsystem:
 > `/bin/gears` (POSIX), which defined batches 1 and 2, and the forest game
 > `/bin/nightwood.sxe` (SUN), which defined batches 3 and 4. What follows is the
 > design the implementation was measured against, kept because the reasons
@@ -75,7 +75,7 @@ The Windows analogy is exact, and it is the one to hold on to:
 `opengl32.dll` is **not** built on GDI. It asks the `HDC` for a pixel format,
 writes its own colour buffer, and presents. The relationship here is the same
 one, and it extends
-[SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#analogy-to-fix-the-mental-model)'s table
+[SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md#analogy-to-fix-the-mental-model)'s table
 with one row rather than changing any of its existing ones.
 
 ## The seam: what SxGL would actually consume
@@ -121,7 +121,7 @@ mean `--sse`, and `--sse` means `tools/build-user.sh` and a binary installed int
 `/bin` instead of the image's `/bin`. The in-tree userland now compiles
 with `-msse2` and links the libm, so a `float` no longer decides where a binary
 lives — see
-[SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point). The
+[SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point). The
 OS side was already in place: the kernel saves and restores FPU/SSE per process
 (`fxsave64`/`fxrstor64`) and `crt0.S` aligns `rsp` to 16 before the first call.
 
@@ -138,7 +138,7 @@ SDK's runtime, next to `runtime/math.c`, with `gfx_present_region` as its
 out to be a SUN program, the placement changed to the one SxGFX already had:
 **platform code** (`system/gfx/sxgl.c`, `include/sxgfx/sxgl.h`) that makes no
 system call, linked by both subsystems, with presentation left to the caller
-([PLATFORM_GRAPHICS.md](PLATFORM_GRAPHICS.md)). It is a unit of the static
+([PLATFORM_GRAPHICS.md](../../desktop/PLATFORM_GRAPHICS.md)). It is a unit of the static
 runtime (group `gl` of `units.txt`), so a program pays for SxGL only if it calls
 it. The layering rule it respects is the platform one: SxGL binds to an
 `sx_bitmap` the caller hands it and to nothing else — never to `windowd`, never
@@ -225,7 +225,7 @@ is call-free and cannot open `/dev/serial` itself: `sxgl_set_debug_sink` hands
 every error, named and with its reason, to the program, which writes it to
 the serial line (POSIX, the channel `windowd-stats` uses so that measuring does
 not corrupt what is measured,
-[GRAPHICS_PERF.md](./GRAPHICS_PERF.md#why-devserial-and-not-stderr)) or to
+[GRAPHICS_PERF.md](../../desktop/GRAPHICS_PERF.md#why-devserial-and-not-stderr)) or to
 `sxn_log` (SUN).
 
 ### And the precedent: WARP
@@ -338,7 +338,7 @@ glow. Batch 1 was not landed on its own as this section recommended; the seam
 with `windowd` it was meant to prove is the same `sx_bitmap` plus the
 subsystem's present that every 2D client already uses, and both consumers
 exercise it under `tools/shoot.sh`. The subset as it stands, and every
-deliberate difference from GL 1.1, are in [SXGL.md](SXGL.md).
+deliberate difference from GL 1.1, are in [SXGL.md](../../desktop/SXGL.md).
 
 ## Verification
 
@@ -380,7 +380,7 @@ to it accumulates slowdowns nobody notices until a port is unusable.
 ## Open questions — answered
 
 The three questions this section held before batch 1 are answered in
-[SXGL.md](SXGL.md#the-context-sxgls-wgl): GL may share a window's client area
+[SXGL.md](../../desktop/SXGL.md#the-context-sxgls-wgl): GL may share a window's client area
 with 2D drawing (viewport plus scissor, and the swap reports only what GL
 wrote); the depth buffer is per context; and a resize is applied between
 frames with `sxgl_context_resize`, never in the middle of one.

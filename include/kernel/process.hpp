@@ -22,7 +22,7 @@ namespace process {
 
 constexpr size_t kMaxProcesses = 64;
 // Threads in the whole system. One per process today; the table is sized for
-// the multithreaded processes of docs/kernel/THREADS_ROADMAP.md, phase 1.
+// the multithreaded processes of docs/roadmaps/done/THREADS_ROADMAP.md, phase 1.
 constexpr size_t kMaxThreads = 256;
 constexpr size_t kMaxFileHandles = 64;
 constexpr size_t kMaxWaitHandles = 16;
@@ -118,7 +118,7 @@ struct HandleEntry {
 };
 
 // A process is the container: an address space, a handle table, an identity
-// and a lifecycle. What runs is a Thread (docs/kernel/THREADS_ROADMAP.md).
+// and a lifecycle. What runs is a Thread (docs/roadmaps/done/THREADS_ROADMAP.md).
 enum class Lifecycle : uint8_t {
     unused = 0,
     alive = 1,
@@ -395,7 +395,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 // corriendo. Arranca por su idle o por lo que haya listo.
 [[noreturn]] void run_secondary_core();
 void terminate_current(int exit_code);
-// Native thread calls (docs/kernel/THREADS_ROADMAP.md, phase 1). create_thread
+// Native thread calls (docs/roadmaps/done/THREADS_ROADMAP.md, phase 1). create_thread
 // starts a thread of `proc` at `entry` with `argument` in rdi and its stack at
 // `stack_top`, and returns a handle to it (synchronize + query) or -errno;
 // *tid gets its id. exit_current_thread ends the calling thread; the last

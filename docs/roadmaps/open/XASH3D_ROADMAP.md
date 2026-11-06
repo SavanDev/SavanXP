@@ -54,7 +54,7 @@ Each step names its acceptance condition. A step without one is a wish.
 `<dlfcn.h>` in the SDK: `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, with
 per-handle scopes, `RTLD_LOCAL`/`RTLD_GLOBAL`, `RTLD_NOLOAD`, constructors for what
 `dlopen` brings, and a failed `dlopen` that leaves nothing behind. The semantics and their limits are in
-[SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#dlopen).
+[SHARED_LIBRARIES.md](../../kernel/SHARED_LIBRARIES.md#dlopen).
 
 **Done when:** `dltest` proves that two libraries defining the same symbol stay
 apart, that `dlsym` reaches a dependency, that a constructor ran, that `dladdr`
@@ -67,7 +67,7 @@ the port is abandoned: the next port with plugins needs exactly this.
 
 ### Step 2 — the engine with `ref_soft` and a SavanXP backend
 
-`ports/xash3d/`, following the [port layout](../../ports/README.md): pinned
+`ports/xash3d/`, following the [port layout](../../../ports/README.md): pinned
 upstream, small patches, the backend in `overlay/`.
 
 - `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
@@ -86,7 +86,7 @@ and a save game round-trips (which is the `dladdr` check, end to end).
 
 ### Step 3 — SxGL, with `ref_gl` as its consumer
 
-[SXGL_ROADMAP.md](../desktop/SXGL_ROADMAP.md) batches 1–4. `ref_gl` speaks
+[SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md) batches 1–4. `ref_gl` speaks
 fixed-function GL 1.x — the subset that roadmap already chose — and needs what its
 batches 3 and 4 list: texturing, blending, alpha test, fog.
 
@@ -104,7 +104,7 @@ for recorded.
 Neither is on this port's path, and that is why they are last.
 
 - **Threads are kernel work** — scheduling, TLS, a futex or equivalent, a C runtime
-  that is safe to share. [SMP_ROADMAP.md](../kernel/SMP_ROADMAP.md) records that
+  that is safe to share. [SMP_ROADMAP.md](../done/SMP_ROADMAP.md) records that
   user space has none today and leans on that. A consumer that runs fine on one
   thread cannot validate them.
 - **SDL** would unlock the largest number of future ports, and would let this one

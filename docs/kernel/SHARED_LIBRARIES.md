@@ -1005,7 +1005,7 @@ it.
   resident memory, not mapped memory, and `memory_bytes` counts mapped-present
   pages, so Task Manager shows the same per-process figure either way.
 - **Unloading in `dlclose`.** `dlopen` arrived with the port that needs it,
-  [Xash3D FWGS](../ports/XASH3D_ROADMAP.md), as predicted here; unloading did not,
+  [Xash3D FWGS](../roadmaps/open/XASH3D_ROADMAP.md), as predicted here; unloading did not,
   because nothing needs it yet. See [`dlopen`](#dlopen).
 
 ## FFmpeg as one library, and what it cost to find out
@@ -1373,7 +1373,7 @@ no se pudieron cargar 4 librerias; la primera es libffmpeg.so.0.4
 
 The other half of this was the PIO data phase. `rw_chunk` delivers one sector per
 backend request and reaches it through the data port; the reasoning and the numbers
-are in [`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md) item 1, which concludes that DMA is the
+are in [`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md) item 1, which concludes that DMA is the
 only thing that removes the per-sector cost.
 
 It was written — descriptor table in kernel-contiguous pages, the BM registers, a
@@ -1499,7 +1499,7 @@ player, which is a program of the tree, rather than to anything the port install
 `<dlfcn.h>` is implemented in `ldso.c`, on the same slot table as the startup
 loader, so it exists in every PIE program and in no STATIC one — where a call is a
 link error rather than a silent no-op. It was built for
-[Xash3D FWGS](../ports/XASH3D_ROADMAP.md), whose engine loads its renderer, menu,
+[Xash3D FWGS](../roadmaps/open/XASH3D_ROADMAP.md), whose engine loads its renderer, menu,
 client and game logic by name, and its shape is what that port calls:
 `dlopen(path, RTLD_NOW)`, `dlsym` through the handle's dependencies, `dlclose`,
 `dlerror`, `dladdr` for save/restore, and constructors for its C++ modules.

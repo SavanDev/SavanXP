@@ -107,7 +107,7 @@ What holds for both, by the same rules that hold for POSIX:
   binary is routed to its subsystem, by `EI_OSABI` today, has to learn to
   recognise PE images and Linux ELF.
 - **Kernel prerequisites come first and are not subsystem work.** The ones
-  already named in [THREADS_ROADMAP.md](../kernel/THREADS_ROADMAP.md): threads
+  already named in [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): threads
   and per-thread `%fs`/`%gs` (done), exceptions delivered to user mode, and
   reserve/commit virtual memory. Each lands with a SavanXP consumer of its
   own.
@@ -147,7 +147,7 @@ The platform, always:
   (`system/gfx/gfx2d.c`, `include/sxgfx/gfx2d.h`, over the pixel primitives and
   fonts in `system/gfx/pixels.c`): surfaces, painter, blit, clipping,
   damage. The analogue of GDI; the gaps against GDI32 and the order for closing
-  them are in [SXGFX_ROADMAP.md](../desktop/SXGFX_ROADMAP.md).
+  them are in [SXGFX_ROADMAP.md](../roadmaps/done/SXGFX_ROADMAP.md).
 - **SXCHROME** — the system's 3D edges and the disabled relief
   (`system/gfx/sxchrome.c`, `include/sxgfx/sxchrome.h`), between SXGFX and SXGUI-C. Not
   part of the toolkit because the toolkit is not the only thing that paints

@@ -2,7 +2,7 @@
 
 > This contract changes phase by phase as Web Viewer moves onto NetSurf's MIT
 > libraries and grows its own layout engine. See
-> [WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md).
+> [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 
 `/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
 of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and

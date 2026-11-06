@@ -3,7 +3,7 @@
 SxGL is the platform's 3D rasterizer: a software implementation of a
 documented subset of OpenGL 1.1 fixed-function. Why it exists, why it sits
 beside SxGFX and not on top of it, and how it was built are in
-[SXGL_ROADMAP.md](SXGL_ROADMAP.md). This document is the reference: what is
+[SXGL_ROADMAP.md](../roadmaps/done/SXGL_ROADMAP.md). This document is the reference: what is
 in, what is not, and where SxGL deliberately differs from the specification.
 
 | | |

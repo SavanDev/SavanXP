@@ -1,6 +1,6 @@
 #pragma once
 
-/* SxGL: the platform's 3D rasterizer (docs/desktop/SXGL_ROADMAP.md).
+/* SxGL: the platform's 3D rasterizer (docs/roadmaps/done/SXGL_ROADMAP.md).
  *
  * A software implementation of a documented subset of OpenGL 1.1
  * fixed-function, beside SxGFX and not on top of it. Like SxGFX it makes no

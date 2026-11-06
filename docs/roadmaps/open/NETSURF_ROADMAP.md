@@ -8,7 +8,7 @@
 ## Why port it
 
 Web Viewer grows its own layout engine on top of NetSurf's MIT libraries
-([WEBVIEWER_ROADMAP.md](../desktop/WEBVIEWER_ROADMAP.md)). Every phase of that
+([WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md)). Every phase of that
 work needs an answer to "what should this page look like?". Answering it with
 NetSurf running on SavanXP, with the same libraries and the same window size,
 removes every difference except the layout itself.
@@ -30,7 +30,7 @@ library heads of the same week), not remembered:
 What that means for SavanXP (MIT):
 
 - **NetSurf is a port, never part of the base tree.** It lives in
-  `ports/netsurf/` under the [port layout](../../ports/README.md), as a separate
+  `ports/netsurf/` under the [port layout](../../../ports/README.md), as a separate
   program, like `doomgeneric` (GPL-2.0). A GPL program installed into the image
   does not relicense the system.
 - **No code of NetSurf's core moves into the MIT tree**, and Web Viewer does
@@ -47,7 +47,7 @@ What that means for SavanXP (MIT):
   GPL-2.0-or-later option. The default choice is BearSSL, which needs no
   exception at all.
 - **Each piece gets an entry** in
-  [THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md) when
+  [THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md) when
   the port lands, including data files such as a CA bundle.
 
 ## One copy of the libraries
@@ -115,7 +115,7 @@ the persistence check holds (`./ports/netsurf/build.sh`, then
 ### Step 2 — the comparison scenario
 
 The scenario described in
-[WEBVIEWER_ROADMAP.md](../desktop/WEBVIEWER_ROADMAP.md#comparing): every page
+[WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md#comparing): every page
 of `tools/webview-test-www/` opened in both browsers, at the same window size,
 both screenshots kept. Its Start menu entry points to `/bin/netsurf` and
 disappears when the port is not installed, like Doom's
@@ -130,7 +130,7 @@ Prerequisites, each useful without the browser:
 
 - **`getaddrinfo` in the SDK** (`<netdb.h>`), built from the DNS client that
   lives in Web Viewer today (see
-  [NETWORKING.md](../net/NETWORKING.md#name-resolution-the-minimal-dns-client)).
+  [NETWORKING.md](../../net/NETWORKING.md#name-resolution-the-minimal-dns-client)).
   Web Viewer, `ntpsync` and every other numeric-only tool use it too.
 - **libcurl**, built for HTTP only. What it asks of the socket layer —
   non-blocking `connect`, `poll` or `select` on sockets — is checked here, not
@@ -152,7 +152,7 @@ Prerequisites, shared with Web Viewer:
 - **BearSSL** under libcurl.
 - **A CA bundle** in the image, with its provenance recorded.
 - **A correct clock**, since certificate validity depends on it (`ntpsync`,
-  [TIME.md](../kernel/TIME.md)).
+  [TIME.md](../../kernel/TIME.md)).
 
 **Done when:** a page loads over HTTPS from a local test server with a test CA,
 and a page with a bad certificate is refused.

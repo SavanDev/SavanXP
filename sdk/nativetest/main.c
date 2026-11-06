@@ -30,7 +30,7 @@
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
  * then ended with that status, then gone. And the heap
  * (docs/userland/NATIVE_HEAP.md): several MiB across arenas from the native
- * page source. And threads (docs/kernel/THREADS_ROADMAP.md): workers that
+ * page source. And threads (docs/roadmaps/done/THREADS_ROADMAP.md): workers that
  * share memory and end with their own codes, joined through their handles; a
  * process killed with threads blocked and running; the last thread ending the
  * process; SXN_SYS_EXIT from a second thread ending them all. The first
@@ -310,7 +310,7 @@ static void run_middle_child(void) {
     sxn_exit(status);
 }
 
-/* --- threads (docs/kernel/THREADS_ROADMAP.md, phase 1) ------------------ */
+/* --- threads (docs/roadmaps/done/THREADS_ROADMAP.md, phase 1) ------------------ */
 
 #define SXN_THREAD_STACK_BYTES (64ul * 1024ul)
 #define SXN_THREAD_WORKERS 3

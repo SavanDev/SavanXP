@@ -33,11 +33,11 @@ Without USB, SavanXP on a modern machine has:
   Firmware emulates PS/2 for a USB keyboard only under legacy BIOS, and that
   emulation stops at `ExitBootServices` on a UEFI boot;
 - **no external mouse**, and no touchpad on machines that wire it over USB
-  ([REAL_HARDWARE.md](REAL_HARDWARE.md), item 5);
+  ([REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md), item 5);
 - **no removable media**: the FAT driver and Disk Management are ready for a
-  stick, but nothing can reach one ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md));
+  stick, but nothing can reach one ([FAT_ROADMAP.md](FAT_ROADMAP.md));
 - **no install source or target** beyond SATA, IDE and virtio
-  ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md), "Limits accepted").
+  ([SETUP_AND_UPDATES.md](../../userland/SETUP_AND_UPDATES.md), "Limits accepted").
 
 ## What already fits
 
@@ -47,9 +47,9 @@ to change shape:
 | Need | What exists |
 | --- | --- |
 | Find the controller | `pci::` enumeration, `pci::bar_info`, `pci::find_capability`; class `0x0C`, subclass `0x03`, prog-if `0x30` is xHCI |
-| DMA memory | `memory::allocate_page` and `memory::allocate_contiguous_pages`, as AHCI uses them ([AHCI.md](AHCI.md)) |
+| DMA memory | `memory::allocate_page` and `memory::allocate_contiguous_pages`, as AHCI uses them ([AHCI.md](../../kernel/AHCI.md)) |
 | Real delays | `timer::monotonic_ns()`. USB needs wall-clock waits (50 ms port reset, 10 ms recovery); AHCI's spin budgets in register reads are not enough here |
-| Keyboard and pointer | `input::register_driver`; `poll` runs from the timer tick and from blocking reads ([INPUT.md](INPUT.md)) |
+| Keyboard and pointer | `input::register_driver`; `poll` runs from the timer tick and from blocking reads ([INPUT.md](../../kernel/INPUT.md)) |
 | A disk | `block::register_driver`; `partition::` slices it, `fat::` and Disk Management mount it at `/mnt` |
 | A disk that goes away | `block::generation()` already bumps on removal, and `fs::kMaxMounts` reserves a slot for one removable medium |
 | Firmware handoff | AHCI already does BIOS/OS handoff (`BOHC`); xHCI's `USBLEGSUP` capability is the same idea |
@@ -61,7 +61,7 @@ to change shape:
 xHCI covers low, full, high and super speed on one controller, so one driver
 reaches every device on a modern machine. Older machines route USB 1.1 and
 2.0 ports to UHCI/OHCI plus EHCI companions, which is three drivers and a
-routing problem. The [Compaq](REAL_HARDWARE.md) is one of those machines, but
+routing problem. The [Compaq](../../kernel/REAL_HARDWARE.md) is one of those machines, but
 it cannot run master at all, so it does not drive this decision.
 
 ### Polled, no interrupts
@@ -69,7 +69,7 @@ it cannot run master at all, so it does not drive this decision.
 The same model as `ahci`, `ata` and `virtio-blk`: completion is found by
 reading the event ring. One interrupter, its ring drained by whoever needs a
 result. The kernel cannot sleep on a kernel stack
-([SMP_ROADMAP.md](SMP_ROADMAP.md)), so an interrupt would have nothing to wake.
+([SMP_ROADMAP.md](../done/SMP_ROADMAP.md)), so an interrupt would have nothing to wake.
 MSI or MSI-X comes when the kernel can block, not before.
 
 The cost is latency on HID: a key is seen at the next tick, which is the same
@@ -88,7 +88,7 @@ without touching HID or storage.
 Keyboards and mice support the fixed 8-byte "boot protocol" (`SET_PROTOCOL`
 0), so no report descriptor has to be parsed to get a keyboard and a relative
 mouse working. Usages map to set 1 positions at the driver's edge with a
-table, as [INPUT.md](INPUT.md) already says a USB keyboard would. Lock LEDs go
+table, as [INPUT.md](../../kernel/INPUT.md) already says a USB keyboard would. Lock LEDs go
 out with `SET_REPORT` from `poll`, never from `set_keyboard_leds` itself.
 
 `usb-tablet` and most real touchpads only speak the report protocol. They
@@ -104,7 +104,7 @@ it never becomes the root: `fs::mount_any` keeps preferring the system disk.
 
 ### The rule that one keyboard wins has to change
 
-[INPUT.md](INPUT.md) silences any keyboard registered after the first, because
+[INPUT.md](../../kernel/INPUT.md) silences any keyboard registered after the first, because
 QEMU feeds the host keyboard to every backend at once. On real hardware that
 is wrong: a laptop's internal PS/2 keyboard and a USB keyboard are both real,
 and both must work. The fix belongs to the input layer, not to the USB driver,
@@ -114,9 +114,9 @@ PS/2 keyboard keeps winning unless a scenario turns it off.
 
 ## What comes from OpenBSD
 
-Categories as in [THIRD_PARTY_ADOPTION.md](../third-party/THIRD_PARTY_ADOPTION.md).
+Categories as in [THIRD_PARTY_ADOPTION.md](../../third-party/THIRD_PARTY_ADOPTION.md).
 Everything copied gets an entry in
-[THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md) with
+[THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md) with
 the pinned OpenBSD commit, in the commit that copies it.
 
 `Selective port` (copied, ISC header kept):

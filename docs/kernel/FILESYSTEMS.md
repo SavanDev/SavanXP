@@ -10,7 +10,7 @@ Three pieces, each knowing only the one below it:
 
 The only place that names a driver is the boot sequence in `kernel_main`,
 which registers them: `sxfs::driver()` and `fat::driver()`
-([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)). Adding a format (ISO9660 for a CD)
+([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)). Adding a format (ISO9660 for a CD)
 means writing a driver and registering it. `vfs.cpp` does not change.
 
 ## The root is the system disk
@@ -190,10 +190,10 @@ so only the system writes there, and it is never unmounted.
 ## Limits
 
 What the VFS and the registry cannot do today. Most of it showed up writing the
-second driver, FAT ([FAT_ROADMAP.md](../fs/FAT_ROADMAP.md)): SxFS was shaped
+second driver, FAT ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)): SxFS was shaped
 with the VFS and never ran into it. Each entry says what breaks and, where it
 is known, what the fix is. The SxFS side is in
-[SXFS_ROADMAP.md](../fs/SXFS_ROADMAP.md#what-a-second-driver-showed).
+[SXFS_ROADMAP.md](../roadmaps/open/SXFS_ROADMAP.md#what-a-second-driver-showed).
 
 ### Capacity
 

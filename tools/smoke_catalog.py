@@ -130,7 +130,7 @@ SCENARIOS: dict[str, Scenario] = {
     # and prints how long the copy took. It used to take 365930 ms under TCG,
     # when every metadata commit rewrote the whole metadata region over PIO;
     # with sparse journals and AHCI it is a few seconds under KVM, most of it
-    # host fsyncs (see docs/fs/SXFS_ROADMAP.md). The 900 s timeout is kept as
+    # host fsyncs (see docs/roadmaps/open/SXFS_ROADMAP.md). The 900 s timeout is kept as
     # margin for TCG on a loaded host and for SAVANXP_DISK_BUS=ide.
     "progman-smoke": _qemu_scenario(
         "progman-selftest",

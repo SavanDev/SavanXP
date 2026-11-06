@@ -6,7 +6,7 @@ FAT volumes. The updater, the other consumer, waits for the updater itself.
 
 Before this driver SavanXP read only SxFS, and the one FAT volume that matters,
 the EFI System Partition, could only be written as a whole image
-([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md#what-the-target-disk-looks-like)).
+([SETUP_AND_UPDATES.md](../../userland/SETUP_AND_UPDATES.md#what-the-target-disk-looks-like)).
 This page is the driver's design: which code, how it plugs into `fs::`, what
 had to change outside it, and the phases.
 
@@ -35,7 +35,7 @@ FatFs is published as a zip on elm-chan.org, not as a git repository. The pin
 is the release name (R0.16) plus the zip's SHA-256, in
 `vendor/fatfs/FATFS_RELEASE.txt`, next to its license file. Only the module
 sources are vendored; `vendor/fatfs/README.md` lists what is left out and why. The adoption is
-recorded in [`THIRD_PARTY_PROVENANCE.md`](../third-party/THIRD_PARTY_PROVENANCE.md).
+recorded in [`THIRD_PARTY_PROVENANCE.md`](../../third-party/THIRD_PARTY_PROVENANCE.md).
 
 ## Prerequisite: the root is never FAT
 
@@ -86,7 +86,7 @@ but the boot path calls `fs::mount` directly and needs the driver's own check.
 | `FF_USE_FASTSEEK` | 1 | Lets a later per-vnode open file keep a cluster link map; unused while every `read` reopens the file |
 | `FF_USE_MKFS` | 1 | The host test formats its images with it; small |
 | `FF_FS_NORTC` | 0 | `get_fattime` from `rtc::epoch_seconds` |
-| `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](../kernel/SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
+| `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](../done/SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
 | `FF_LBA64` | 0 | `block::` addresses sectors with 32 bits |
 
 FatFs is C. It builds as an object library with the kernel's freestanding
@@ -129,7 +129,7 @@ slot → `device_index` table.
 | `stats` | `f_getfree` and the volume size |
 | `sync` | `CTRL_SYNC`; files are already flushed on `f_close` |
 | `set_ownership` | `nullptr`: FAT has no owners, so `chmod`/`chown` are refused |
-| `unmount` | `f_unmount` and free the slot. `fs::release` has already synced the volume and detached its tree (refused while a file is open), as for SxFS ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)) |
+| `unmount` | `f_unmount` and free the slot. `fs::release` has already synced the volume and detached its tree (refused while a file is open), as for SxFS ([FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)) |
 
 Points worth knowing before writing it:
 
@@ -172,7 +172,7 @@ Points worth knowing before writing it:
   32 KiB kernel stack.
 - **The whole tree is published at attach, and the VFS has 2048 nodes**
   shared by the initramfs, `/dev` and every mounted volume
-  ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#limits)). The ESP has a few
+  ([FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#limits)). The ESP has a few
   dozen; a FAT stick mounted from Disk Management can have far more than what
   is left. `attach` fails cleanly when the VFS runs out, and `fs::release`
   takes back the part already published, as it does for a volume that never
@@ -265,7 +265,7 @@ Each phase builds, boots and is verified on its own.
      factory USB sticks are often formatted this way.
    - **The updater. Waiting.** It replaces `boot/kernel.elf` and
      `boot/initramfs.cpio` as files and edits `limine.conf`, instead of
-     rewriting the ESP image ([SETUP_AND_UPDATES.md](../userland/SETUP_AND_UPDATES.md),
+     rewriting the ESP image ([SETUP_AND_UPDATES.md](../../userland/SETUP_AND_UPDATES.md),
      phase 5). There is no updater yet.
    - Removable media wait for a USB mass-storage driver, which does not exist.
 

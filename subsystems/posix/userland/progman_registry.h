@@ -236,7 +236,7 @@ int progman_registry_scan_programs(progman_path_exists_fn exists);
  * rebuilds only when it differs.
  *
  * It cannot see a binary rewritten in place within the same second with the
- * same size: SxFS mtimes are whole seconds. See docs/fs/SXFS_ROADMAP.md.
+ * same size: SxFS mtimes are whole seconds. See docs/roadmaps/open/SXFS_ROADMAP.md.
  */
 uint32_t progman_registry_disk_signature(void);
 

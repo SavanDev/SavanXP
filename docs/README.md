@@ -32,10 +32,6 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SHARED_LIBRARIES.md`](kernel/SHARED_LIBRARIES.md) — the shared-library subsystem: what
   is built and measured, the decisions and the bugs behind them, and the remaining
   work as ordered phases with the dependencies between them.
-- [`SMP_ROADMAP.md`](kernel/SMP_ROADMAP.md) — multi-core startup, scheduler locking,
-  and TLB shootdown work.
-- [`THREADS_ROADMAP.md`](kernel/THREADS_ROADMAP.md) — threads: what moves from the
-  process to the thread, the decisions taken, and the phases to get there.
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`FILESYSTEMS.md`](kernel/FILESYSTEMS.md) — the VFS, the `fs::` registry and
   what a filesystem driver provides: the system disk as the root, `/dev` and
@@ -47,9 +43,6 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   core that turns set 1 key positions into keys, text and modifiers.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
-- [`USB_ROADMAP.md`](kernel/USB_ROADMAP.md) — the planned USB stack: xHCI only and
-  polled, HID boot protocol and mass storage, what is copied from OpenBSD and
-  what is only read, the QEMU harness, and the phases.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
@@ -101,12 +94,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`PLATFORM_GRAPHICS.md`](desktop/PLATFORM_GRAPHICS.md) — SXGFX, SXCHROME and
   SXGUI-C as platform code: the no-system-call rule, what stays in each
   subsystem (the window client, the application frame), and the toolkit's host.
-- [`SXGFX_ROADMAP.md`](desktop/SXGFX_ROADMAP.md) — hardening of the 2D rasterization
-  layer and its planned role in the desktop stack.
 - [`SXGL.md`](desktop/SXGL.md) — SxGL, the 3D rasterizer: the GL 1.1 subset call by
   call, who presents, and every deliberate difference from the specification.
-- [`SXGL_ROADMAP.md`](desktop/SXGL_ROADMAP.md) — why the 3D layer sits beside SxGFX, the
-  design it was built against, and how its batches landed.
 - [`GRAPHICS_PERF.md`](desktop/GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
@@ -134,9 +123,6 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   selftest plus visual scenario.
 - [`WEBVIEWER.md`](desktop/WEBVIEWER.md) — Web Viewer, the in-tree browser prototype:
   its rendering contract, the CSS subset, and what each milestone leaves out.
-- [`WEBVIEWER_ROADMAP.md`](desktop/WEBVIEWER_ROADMAP.md) — Web Viewer on NetSurf's
-  MIT libraries (libhubbub, libdom, libcss): what is adopted, the clean-room rule
-  against the GPL core, and the phases up to its own CSS 2.1 layout engine.
 
 ## Media — `media/`
 
@@ -153,30 +139,53 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Filesystem — `fs/`
 
-- [`FAT_ROADMAP.md`](fs/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
-  under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
-  ESP at `/boot`, and the phases.
 - [`SXFS_CHECK.md`](fs/SXFS_CHECK.md) — the `fscheck` consistency report: what
   mounting does not validate, what a leak looks like from the guest, and why
   there is no repair yet.
 - [`SXFS_JOURNAL.md`](fs/SXFS_JOURNAL.md) — the sparse metadata journal: format,
   the write order that makes a commit crash-safe, and the snapshot invariant that
   tells the driver which sectors changed.
-- [`SXFS_ROADMAP.md`](fs/SXFS_ROADMAP.md) — the SxFS work left after format v2, the
-  measured baseline to compare against, and which of it can land without moving
-  the on-disk format.
 
 ## Networking — `net/`
 
 - [`NETWORKING.md`](net/NETWORKING.md) — TCP guarantees, retransmission, windows,
   fault injection, and the minimal DNS client.
 
-## Ports — `ports/`
+## Roadmaps — `roadmaps/`
 
-- [`XASH3D_ROADMAP.md`](ports/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
+The order of work for the larger efforts, phase by phase. A roadmap lives in
+`roadmaps/open/` while any phase is pending and moves to `roadmaps/done/` once
+all its phases have landed; the links to it move with it.
+
+### Done — `roadmaps/done/`
+
+- [`SMP_ROADMAP.md`](roadmaps/done/SMP_ROADMAP.md) — multi-core startup, scheduler locking,
+  and TLB shootdown work.
+- [`THREADS_ROADMAP.md`](roadmaps/done/THREADS_ROADMAP.md) — threads: what moves from the
+  process to the thread, the decisions taken, and the phases to get there.
+- [`SXGFX_ROADMAP.md`](roadmaps/done/SXGFX_ROADMAP.md) — hardening of the 2D rasterization
+  layer and its planned role in the desktop stack.
+- [`SXGL_ROADMAP.md`](roadmaps/done/SXGL_ROADMAP.md) — why the 3D layer sits beside SxGFX, the
+  design it was built against, and how its batches landed.
+
+### Open — `roadmaps/open/`
+
+- [`USB_ROADMAP.md`](roadmaps/open/USB_ROADMAP.md) — the planned USB stack: xHCI only and
+  polled, HID boot protocol and mass storage, what is copied from OpenBSD and
+  what is only read, the QEMU harness, and the phases.
+- [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer on NetSurf's
+  MIT libraries (libhubbub, libdom, libcss): what is adopted, the clean-room rule
+  against the GPL core, and the phases up to its own CSS 2.1 layout engine.
+- [`FAT_ROADMAP.md`](roadmaps/open/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
+  under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
+  ESP at `/boot`, and the phases.
+- [`SXFS_ROADMAP.md`](roadmaps/open/SXFS_ROADMAP.md) — the SxFS work left after format v2, the
+  measured baseline to compare against, and which of it can land without moving
+  the on-disk format.
+- [`XASH3D_ROADMAP.md`](roadmaps/open/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
   engine needs from the platform, and the order that makes it pay for `dlopen` and
   SxGL without pulling in threads or SDL.
-- [`NETSURF_ROADMAP.md`](ports/NETSURF_ROADMAP.md) — porting NetSurf as the
+- [`NETSURF_ROADMAP.md`](roadmaps/open/NETSURF_ROADMAP.md) — porting NetSurf as the
   reference browser Web Viewer is compared against: the license (GPL-2.0-only
   core, MIT libraries), one shared copy of the libraries, and the steps.
 

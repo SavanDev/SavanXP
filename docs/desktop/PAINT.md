@@ -37,7 +37,7 @@ The status bar reads `<name> | <tool> | undo <n>`, with a `*` while dirty.
 | Line, Rectangle, Ellipse | 1 px opaque shapes |
 
 Everything is 1 px and opaque: no pen, no alpha, no flood fill in SXGFX
-itself (see [`SXGFX_ROADMAP.md`](SXGFX_ROADMAP.md)).
+itself (see [`SXGFX_ROADMAP.md`](../roadmaps/done/SXGFX_ROADMAP.md)).
 
 ## Undo
 
