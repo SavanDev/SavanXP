@@ -66,7 +66,14 @@ def run_boot(
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
-            if "handoff: starting /bin/init" in text or "SMOKE PASS" in text:
+            # The tokens checked below sit on the handoff line itself, so wait
+            # for that line to be whole: read half-written, "root mounted" is
+            # not there yet and a good boot fails.
+            handoff = text.find("handoff: starting /bin/init")
+            if handoff >= 0 and "\n" not in text[handoff:]:
+                time.sleep(0.2)
+                continue
+            if handoff >= 0 or "SMOKE PASS" in text:
                 missing = [token for token in require if token not in text]
                 if missing:
                     raise RuntimeError(f"{label}: booted but missing {missing!r} in the serial log")

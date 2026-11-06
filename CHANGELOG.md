@@ -8,6 +8,13 @@ Cut-off notes:
 - `v0.1.1` covers the changes after `v0.1.0`, including work already merged into
   the tree but not yet tagged in git.
 
+## [Unreleased]
+
+### Fixed
+
+- **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was
+  whole, which left out the `root mounted` it checks.
+
 ## [0.4.2] - 2026-11-06
 
 ### Added
