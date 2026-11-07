@@ -27,6 +27,12 @@ Cut-off notes:
 
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
+### Changed
+
+- **The Start menu looks like Windows NT 4.0's**: black-to-blue banner with `SavanXP` in the
+  caption face and the system edition rotated along it, 16x16 icons on 28px rows, a two-pixel
+  raised frame and an etched separator above `Shut Down...`/`Restart...`.
+
 ### Fixed
 
 - **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was

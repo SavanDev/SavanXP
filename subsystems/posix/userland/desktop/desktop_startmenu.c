@@ -2,6 +2,7 @@
 
 #include "progman_registry.h"
 #include "desktop_icons.h"
+#include "shared/version.h"
 #include "start_logo.h"
 
 /*
@@ -17,22 +18,37 @@
  * wheel, or, as in Windows 98, by resting the pointer on the arrow strips the
  * list grows at its top and bottom when it overflows. The real Yes powers the
  * VM off and is not exercised in automation.
+ *
+ * The look is Windows NT 4.0's Start menu: a raised 2px frame, the vertical
+ * banner black at the top and blue at the bottom with the system name and its
+ * edition rotated along it (read bottom to top), 16x16 icons on 28px rows, and
+ * an etched separator above Shut Down.
  */
 
 #define STARTMENU_WIDTH 232
 #define STARTMENU_HEIGHT 512
 #define STARTMENU_MARGIN 2
-#define STARTMENU_ROW_HEIGHT 24
+#define STARTMENU_ROW_HEIGHT 28
 #define STARTMENU_HEADER_HEIGHT 20
 #define STARTMENU_ICON_SIZE 16
+#define STARTMENU_ICON_GAP 6
 #define STARTMENU_STRIP_WIDTH 24
 #define STARTMENU_FOOTER_ROWS 2
-/* Margen de separacion entre el listado y el pie: cara pelada, sin linea. */
-#define STARTMENU_FOOTER_GAP 6
-#define STARTMENU_FOOTER_HEIGHT (STARTMENU_FOOTER_GAP + 1 + STARTMENU_FOOTER_ROWS * STARTMENU_ROW_HEIGHT)
+/* Between the list and the footer: the etched separator (2px) and the gap
+ * under it, before the first footer row. */
+#define STARTMENU_FOOTER_GAP 5
+#define STARTMENU_FOOTER_HEIGHT (2 + STARTMENU_FOOTER_GAP + STARTMENU_FOOTER_ROWS * STARTMENU_ROW_HEIGHT)
+/* The banner caption is the system name in the caption face followed by the
+ * edition in the UI face, rotated bottom to top, as in NT 4. */
+#define STARTMENU_CAPTION_GAP 4
+/* Off-screen strike the caption is drawn into before it is turned 90 degrees.
+ * The caption face is 17px tall, the UI one 13; the strike leaves room for
+ * both. */
+#define STARTMENU_CAPTION_MAX_WIDTH 200
+#define STARTMENU_CAPTION_HEIGHT 20
 #define STARTMENU_MAX_ROWS (PROGMAN_MAX_GROUPS + PROGMAN_MAX_ITEMS)
 /* The arrow strips of an overflowing list, and how fast resting on one
- * scrolls it: 8 pixels every 40 ms, a 24px row in about a tenth of a second. */
+ * scrolls it: 8 pixels every 40 ms, a 28px row in about a tenth of a second. */
 #define STARTMENU_SCROLL_STRIP_HEIGHT 12
 #define STARTMENU_SCROLL_STEP 8
 #define STARTMENU_SCROLL_INTERVAL_MS 40ul
@@ -57,10 +73,11 @@ struct startmenu_row
 static struct startmenu_row g_rows[STARTMENU_MAX_ROWS];
 static int g_row_count = 0;
 
-/* Franja lateral: degradado vertical en el tono de la base del titulo
- * (Windows Standard, sin acento), de oscuro arriba a claro abajo. 24 bandas
- * como el caption de windowd_render.c, por el mismo motivo. */
-#define STARTMENU_STRIP_BANDS 24
+/* The banner: the NT 4 gradient, black across the top and blue at the bottom.
+ * The ramp is squared so the black holds most of the strip's height and the
+ * blue appears only near the bottom, which is what the NT 4 banner looks like.
+ * A light line closes it above the menu's bottom edge. */
+#define STARTMENU_STRIP_BANDS 32
 static void startmenu_strip(struct sx_painter *painter, int x, int y, int height)
 {
     int band;
@@ -70,14 +87,169 @@ static void startmenu_strip(struct sx_painter *painter, int x, int y, int height
         int y0 = y + (height * band) / STARTMENU_STRIP_BANDS;
         int y1 = y + (height * (band + 1)) / STARTMENU_STRIP_BANDS;
         int amount = (STARTMENU_STRIP_BANDS > 1) ? (band * 255) / (STARTMENU_STRIP_BANDS - 1) : 0;
+        int ramp = (amount * amount) / 255;
         uint32_t colour = SXCHROME_RGB(
-            (uint8_t)((((int)16 - 0) * amount + 127) / 255),
-            (uint8_t)((((int)132 - 0) * amount + 127) / 255),
-            (uint8_t)(128 + (((int)208 - 128) * amount + 127) / 255));
+            (uint8_t)((16 * ramp + 127) / 255),
+            (uint8_t)((132 * ramp + 127) / 255),
+            (uint8_t)((208 * ramp + 127) / 255));
 
         if (y1 > y0)
         {
             sx_painter_fill_rect(painter, sx_rect_make(x, y0, STARTMENU_STRIP_WIDTH, y1 - y0), colour);
+        }
+    }
+    sx_painter_fill_rect(painter, sx_rect_make(x, y + height - 2, STARTMENU_STRIP_WIDTH, 2), SXCHROME_COLOR_LIGHT);
+}
+
+/* The caption strike, painted once: white glyphs on black, taken later pixel
+ * by pixel and turned a quarter turn counter-clockwise. */
+static uint32_t g_caption_source[STARTMENU_CAPTION_MAX_WIDTH * STARTMENU_CAPTION_HEIGHT];
+static int g_caption_width = 0;
+/* The rows of the strike the glyphs really use: the banner centres that band,
+ * not the font's line box, which is what puts both words on one centreline. */
+static int g_caption_top = 0;
+static int g_caption_bottom = -1;
+static int g_caption_ready = 0;
+
+/* First and last row with a pixel between columns [x0, x1). */
+static void startmenu_measure_caption(int x0, int x1, int *top, int *bottom)
+{
+    int x;
+    int y;
+
+    *top = 0;
+    *bottom = -1;
+    for (y = 0; y < STARTMENU_CAPTION_HEIGHT; ++y)
+    {
+        for (x = x0; x < x1 && x < STARTMENU_CAPTION_MAX_WIDTH; ++x)
+        {
+            if (g_caption_source[y * STARTMENU_CAPTION_MAX_WIDTH + x] != 0)
+            {
+                if (*bottom < 0)
+                {
+                    *top = y;
+                }
+                *bottom = y;
+                break;
+            }
+        }
+    }
+}
+
+static void startmenu_build_caption(void)
+{
+    struct savanxp_fb_info info;
+    struct sx_bitmap source;
+    struct sx_painter painter;
+    int title_width;
+    int edition_width;
+    int edition_x;
+    int shift = 0;
+    int title_top;
+    int title_bottom;
+    int edition_top;
+    int edition_bottom;
+
+    if (g_caption_ready)
+    {
+        return;
+    }
+    memset(g_caption_source, 0, sizeof(g_caption_source));
+    memset(&info, 0, sizeof(info));
+    info.width = STARTMENU_CAPTION_MAX_WIDTH;
+    info.height = STARTMENU_CAPTION_HEIGHT;
+    info.pitch = info.width * (uint32_t)sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * info.height;
+    sx_bitmap_wrap(&source, g_caption_source, &info, SX_PIXEL_FORMAT_BGRX8888);
+    sx_painter_init(&painter, &source);
+
+    /* First pass, both parts at the top, only to measure each one's glyph
+     * band: RetroSans and the UI face have different line boxes, so aligning
+     * their boxes leaves the words off each other's centreline. */
+    (void)sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
+    sx_painter_draw_text(&painter, 0, 0, SAVANXP_SYSTEM_NAME, SXCHROME_COLOR_LIGHT);
+    title_width = sx_painter_text_width(&painter, SAVANXP_SYSTEM_NAME);
+    (void)sx_painter_set_font(&painter, SX_FONT_UI);
+    edition_x = title_width + STARTMENU_CAPTION_GAP;
+    sx_painter_draw_text(&painter, edition_x, 0, SAVANXP_EDITION, SXCHROME_COLOR_LIGHT);
+    edition_width = sx_painter_text_width(&painter, SAVANXP_EDITION);
+    startmenu_measure_caption(0, title_width, &title_top, &title_bottom);
+    startmenu_measure_caption(edition_x, edition_x + edition_width, &edition_top, &edition_bottom);
+
+    if (title_bottom >= title_top && edition_bottom >= edition_top)
+    {
+        shift = ((title_top + title_bottom) - (edition_top + edition_bottom)) / 2;
+        if (shift > 0 && edition_bottom + shift >= STARTMENU_CAPTION_HEIGHT)
+        {
+            shift = STARTMENU_CAPTION_HEIGHT - 1 - edition_bottom;
+        }
+        if (shift < 0 && edition_top + shift < 0)
+        {
+            shift = -edition_top;
+        }
+    }
+
+    /* Second pass with the edition on the name's centreline. */
+    memset(g_caption_source, 0, sizeof(g_caption_source));
+    (void)sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
+    sx_painter_draw_text(&painter, 0, 0, SAVANXP_SYSTEM_NAME, SXCHROME_COLOR_LIGHT);
+    (void)sx_painter_set_font(&painter, SX_FONT_UI);
+    sx_painter_draw_text(&painter, edition_x, shift, SAVANXP_EDITION, SXCHROME_COLOR_LIGHT);
+
+    g_caption_width = edition_x + edition_width;
+    if (g_caption_width > STARTMENU_CAPTION_MAX_WIDTH)
+    {
+        g_caption_width = STARTMENU_CAPTION_MAX_WIDTH;
+    }
+    startmenu_measure_caption(0, g_caption_width, &g_caption_top, &g_caption_bottom);
+    g_caption_ready = 1;
+}
+
+/* Draws the caption along the banner, starting at its bottom: a 90-degree
+ * counter-clockwise turn, so it is read bottom to top with the glyph tops on
+ * the left, as in NT 4. */
+static void startmenu_paint_caption(struct sx_painter *painter, int strip_x, int strip_y, int strip_height)
+{
+    int column;
+    int row;
+    int band_width;
+    int block_x;
+    int block_y;
+
+    startmenu_build_caption();
+    if (g_caption_width == 0 || g_caption_bottom < g_caption_top)
+    {
+        return;
+    }
+    band_width = g_caption_bottom - g_caption_top + 1;
+    block_x = strip_x + (STARTMENU_STRIP_WIDTH - band_width) / 2 - g_caption_top;
+    if (block_x < strip_x)
+    {
+        block_x = strip_x;
+    }
+    block_y = strip_y + strip_height - 10 - g_caption_width;
+    if (block_y < strip_y)
+    {
+        block_y = strip_y;
+    }
+    for (row = 0; row < g_caption_width; ++row)
+    {
+        int y = block_y + g_caption_width - 1 - row;
+
+        if (y < strip_y || y >= strip_y + strip_height)
+        {
+            continue;
+        }
+        for (column = 0; column < STARTMENU_CAPTION_HEIGHT; ++column)
+        {
+            int x = block_x + column;
+
+            if (x >= strip_x && x < strip_x + STARTMENU_STRIP_WIDTH &&
+                g_caption_source[column * STARTMENU_CAPTION_MAX_WIDTH + row] != 0)
+            {
+                sx_painter_set_pixel(painter, x, y, SXCHROME_COLOR_CAPTION_TEXT);
+            }
         }
     }
 }
@@ -344,17 +516,43 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
         sx_painter_blit_bitmap(painter, &bitmap, x, y);
         return;
     }
-    /* A binary with only a large icon: shrinking averages (bilinear), which
-     * is what docs/roadmaps/done/SXGFX_ROADMAP.md asks for icons. */
+    /* Shrinking averages (bilinear), which is what
+     * docs/roadmaps/done/SXGFX_ROADMAP.md asks for icons; growing a 16x16
+     * drawing doubles its pixels instead of blurring it. */
     sx_painter_draw_scaled_bitmap(
         painter,
         &bitmap,
         sx_rect_make(x, y, STARTMENU_ICON_SIZE, STARTMENU_ICON_SIZE),
         sx_rect_make(0, 0, (int)icon->width, (int)icon->height),
-        SX_SCALE_BILINEAR);
+        (icon->width > STARTMENU_ICON_SIZE || icon->height > STARTMENU_ICON_SIZE)
+            ? SX_SCALE_BILINEAR
+            : SX_SCALE_NEAREST);
 }
 
-static const char *k_footer_labels[STARTMENU_FOOTER_ROWS] = {"Shut Down", "Restart"};
+/* A bitmap from start_logo.h (the Shut Down icon). */
+static void startmenu_draw_asset(
+    struct sx_painter *painter,
+    const struct savanxp_embedded_bitmap_asset *asset,
+    int x,
+    int y)
+{
+    struct savanxp_fb_info info;
+    struct sx_bitmap bitmap;
+
+    if (asset == 0 || asset->pixels == 0 || asset->width == 0 || asset->height == 0)
+    {
+        return;
+    }
+    info.width = asset->width;
+    info.height = asset->height;
+    info.pitch = asset->width * 4u;
+    info.bpp = 32;
+    info.buffer_size = info.pitch * asset->height;
+    sx_bitmap_wrap(&bitmap, (uint32_t *)asset->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_blit_bitmap(painter, &bitmap, x, y);
+}
+
+static const char *k_footer_labels[STARTMENU_FOOTER_ROWS] = {"Shut Down...", "Restart..."};
 static const char *k_footer_armed_labels[STARTMENU_FOOTER_ROWS] = {"Yes, shut down", "Yes, restart"};
 static const char *k_footer_armed_cancel = "No";
 
@@ -365,7 +563,7 @@ static struct sx_rect startmenu_footer_rect(int view_x, int view_bottom, int vie
 {
     return sx_rect_make(
         view_x,
-        view_bottom + 1 + STARTMENU_FOOTER_GAP + action * STARTMENU_ROW_HEIGHT,
+        view_bottom + 2 + STARTMENU_FOOTER_GAP + action * STARTMENU_ROW_HEIGHT,
         view_width,
         STARTMENU_ROW_HEIGHT);
 }
@@ -387,8 +585,15 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
 
     frame = sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height);
     sx_painter_fill_rect(&painter, frame, SXGUI_COLOR_FACE);
-    desktop_bevel(&painter, frame, 0);
+    /* The NT 4 frame is two pixels of light and shadow, not the taskbar's
+     * single line. */
+    sxchrome_draw_raised(&painter, frame);
     startmenu_strip(
+        &painter,
+        frame.x + STARTMENU_MARGIN,
+        frame.y + STARTMENU_MARGIN,
+        frame.height - (STARTMENU_MARGIN * 2));
+    startmenu_paint_caption(
         &painter,
         frame.x + STARTMENU_MARGIN,
         frame.y + STARTMENU_MARGIN,
@@ -465,8 +670,8 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
                     continue;
                 }
                 sx_painter_fill_rect(&painter, rect, background);
-                /* The 16x16 drawing first; the 32x32 shrunk only when the
-                 * binary has no small icon of its own. */
+                /* The 16x16 drawing first, the size this menu shows; the
+                 * large one is reduced only when the binary has no small icon. */
                 icon = progman_item_icon_small(item);
                 if (icon == 0)
                 {
@@ -479,9 +684,9 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
                 startmenu_draw_icon(
                     &painter,
                     icon,
-                    rect.x + 4,
+                    rect.x + STARTMENU_ICON_GAP,
                     y + (height - STARTMENU_ICON_SIZE) / 2);
-                text_x = rect.x + 4 + STARTMENU_ICON_SIZE + 4;
+                text_x = rect.x + STARTMENU_ICON_GAP + STARTMENU_ICON_SIZE + STARTMENU_ICON_GAP;
                 text_y = y + (height - gfx_text_height()) / 2;
                 if (sx_painter_push_clip(&painter, sx_rect_make(text_x, y, rect.x + rect.width - 2 - text_x, height)))
                 {
@@ -493,14 +698,11 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         sx_painter_pop_clip(&painter);
     }
 
-    /* Pie fijo: separador y las dos acciones, pegadas a la barra. Sin armar
-     * son Shut Down / Restart; armada una, la fila 0 confirma y la 1 cancela. */
-    sx_painter_hline(
-        &painter,
-        view.x,
-        view.y + view.height,
-        view.width,
-        SXGUI_COLOR_SHADOW);
+    /* Fixed footer: the NT 4 etched separator and two actions above the taskbar.
+     * Normally Shut Down... / Restart...; when armed, row 0 confirms and row 1
+     * cancels. */
+    sx_painter_hline(&painter, view.x, view.y + view.height, view.width, SXGUI_COLOR_SHADOW);
+    sx_painter_hline(&painter, view.x, view.y + view.height + 1, view.width, SXGUI_COLOR_LIGHT);
     for (action = 0; action < STARTMENU_FOOTER_ROWS; ++action)
     {
         struct sx_rect rect = startmenu_footer_rect(view.x, view.y + view.height, view.width, action);
@@ -508,7 +710,7 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         uint32_t background = selected ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE;
         uint32_t text_color = selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT;
         const char *label = k_footer_labels[action];
-        int text_x = rect.x + 4 + STARTMENU_ICON_SIZE + 4;
+        int text_x = rect.x + STARTMENU_ICON_GAP + STARTMENU_ICON_SIZE + STARTMENU_ICON_GAP;
         int text_y = rect.y + (rect.height - gfx_text_height()) / 2;
 
         sx_painter_fill_rect(&painter, rect, background);
@@ -516,19 +718,10 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         {
             if (action == STARTMENU_ACTION_SHUTDOWN)
             {
-                struct savanxp_fb_info icon_info;
-                struct sx_bitmap icon_bitmap;
-
-                icon_info.width = k_shutdown_icon.width;
-                icon_info.height = k_shutdown_icon.height;
-                icon_info.pitch = k_shutdown_icon.width * 4u;
-                icon_info.bpp = 32;
-                icon_info.buffer_size = icon_info.pitch * k_shutdown_icon.height;
-                sx_bitmap_wrap(&icon_bitmap, (uint32_t *)k_shutdown_icon.pixels, &icon_info, SX_PIXEL_FORMAT_BGRA8888);
-                sx_painter_blit_bitmap(
+                startmenu_draw_asset(
                     &painter,
-                    &icon_bitmap,
-                    rect.x + 4,
+                    &k_shutdown_icon,
+                    rect.x + STARTMENU_ICON_GAP,
                     rect.y + (rect.height - (int)k_shutdown_icon.height) / 2);
             }
         }

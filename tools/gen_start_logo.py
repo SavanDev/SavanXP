@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Convierte el arte del menu Inicio a build/generated/start_logo.h.
+"""Packs the Start menu art into build/generated/start_logo.h.
 
-Usa Pillow para convertir los PNG versionados a un header C, con el mismo
-formato que tools/gen_desktop_icon_assets.py (struct
-savanxp_embedded_bitmap_asset, pixeles ARGB): el logo del boton Start desde
-assets/brand/start_logo.png, el icono de Apagar desde
-assets/desktop/icons/16x16/shutdown.png y el altavoz de la taskbar en sus
-cuatro niveles desde los iconos del reproductor. El build normal solo
-empaqueta esos PNG: no crea ni reemplaza el arte fuente.
+Pillow turns the versioned PNGs into a C header with the same format as
+tools/gen_desktop_icon_assets.py (struct savanxp_embedded_bitmap_asset, ARGB
+pixels): the Start button logo from assets/brand/start_logo.png, the Shut Down
+icon from assets/desktop/icons/16x16/shutdown.png and the taskbar speaker at
+its four levels from the media player's icons. The normal build only packages those PNGs: it
+never creates or replaces the source art.
 
-Uso:  python tools/gen_start_logo.py --project-root DIR --output start_logo.h
+Usage: python tools/gen_start_logo.py --project-root DIR --output start_logo.h
 """
 
 import argparse

@@ -434,10 +434,16 @@ TASKBAR_BUTTON_GAP = 2
 STARTMENU_WIDTH = 232
 STARTMENU_HEIGHT = 512
 STARTMENU_STRIP_WIDTH = 24
-# desktop_startmenu.c: the view is the menu minus its 2px margins and the
-# 55px footer; when the catalog overflows it, a 12px arrow strip sits at its
-# top and bottom, each arrow 7px wide centred in the strip.
-STARTMENU_VIEW_HEIGHT = STARTMENU_HEIGHT - 4 - 55
+STARTMENU_MARGIN = 2
+# The NT 4 proportions of desktop_startmenu.c: 28px rows, and a footer of two
+# etched separator lines, the gap under them and two rows.
+STARTMENU_ROW_HEIGHT = 28
+STARTMENU_FOOTER_GAP = 5
+STARTMENU_FOOTER_HEIGHT = 2 + STARTMENU_FOOTER_GAP + 2 * STARTMENU_ROW_HEIGHT
+# The view is the menu minus its 2px margins and that footer; when the catalog
+# overflows it, a 12px arrow strip sits at its top and bottom, each arrow 7px
+# wide centred in the strip.
+STARTMENU_VIEW_HEIGHT = STARTMENU_HEIGHT - 2 * STARTMENU_MARGIN - STARTMENU_FOOTER_HEIGHT
 STARTMENU_SCROLL_STRIP_HEIGHT = 12
 
 
@@ -1730,7 +1736,7 @@ def scenario_startmenu(s):
     expect_pixel(image, mx + 2 + STARTMENU_STRIP_WIDTH + 2, my + 4, FACE, "menu abierto: contenido en cara")
     # First program row (Calculator, the first Accessories item), below the
     # 20px header from the 2px margin. A list that overflows puts a 12px arrow
-    # strip above it, so the row is [22,46) or [34,58): y 40 is in both.
+    # strip above it, so the row is [22,50) or [34,62): y 40 is in both.
     s.qmp.move_to(mx + 100, my + 40)
     s.qmp.click()
     time.sleep(3.0)
@@ -1750,30 +1756,28 @@ def scenario_startmenu(s):
     rx, ry, rw, rh = startmenu_rect(reopened)
     expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
     check_startmenu_arrows(s, reopened)
-    # Confirmacion en dos pasos: click en Shut Down arma ("Yes, shut down"),
-    # click en No desarma. El Si real apaga la VM y no se clickea.
-    footer_y = ry + 2 + (512 - 4 - 55)
-    # Caja holgada en vertical: incluye ascendentes y descendentes ("Yes,
-    # shut down" tiene 'y'). find_text exige TODOS los pixeles del patron
-    # dentro de la region, asi que recortar un descendente falla siempre.
-    shutdown_box = (rx + 28, footer_y + 3, rx + 230, footer_y + 35)
-    s.qmp.move_to(rx + 129, footer_y + 19)
+    # Two-step confirmation: Shut Down arms the action ("Yes, shut down"),
+    # No cancels it. The real Yes powers off the VM and is not clicked.
+    footer_y = ry + STARTMENU_MARGIN + STARTMENU_VIEW_HEIGHT + 2 + STARTMENU_FOOTER_GAP
+    # Leave room for ascenders and descenders (the 'y' in "Yes, shut down").
+    # find_text requires every pattern pixel to fit inside the region.
+    shutdown_box = (rx + 40, footer_y + 2, rx + 230, footer_y + STARTMENU_ROW_HEIGHT)
+    s.qmp.move_to(rx + 129, footer_y + STARTMENU_ROW_HEIGHT // 2)
     s.qmp.click()
     time.sleep(1.0)
-    # Al extremo derecho de la misma fila: sigue seleccionada pero el cursor
-    # no tapa los glifos (la afirmacion exige todos los pixeles del patron).
-    s.qmp.move_to(rx + 210, footer_y + 19)
+    # Keep the pointer at the row's right edge: selection stays active without
+    # covering glyphs whose pixels the assertion needs.
+    s.qmp.move_to(rx + 210, footer_y + STARTMENU_ROW_HEIGHT // 2)
     time.sleep(0.5)
     armed = s.shot("menu-armado")
-    # El cursor quedo sobre la fila: se pinta seleccionada (blanco sobre azul).
-    # solid_only: el borde antialiaseado sobre degradado no se predice con un
-    # solo color (ver find_text); el nucleo basta para identificar la letra.
+    # The pointer selects the row (white on blue). solid_only checks the glyph
+    # core; an antialiased edge cannot be predicted with one colour.
     expect_text(armed, shutdown_box, "Yes, shut down", SELECT_TEXT, SELECT, "el pie pide confirmacion",
                 solid_only=True)
-    s.qmp.move_to(rx + 129, footer_y + 43)
+    s.qmp.move_to(rx + 129, footer_y + STARTMENU_ROW_HEIGHT + STARTMENU_ROW_HEIGHT // 2)
     s.qmp.click()
     time.sleep(1.0)
-    s.qmp.move_to(rx + 210, footer_y + 43)
+    s.qmp.move_to(rx + 210, footer_y + STARTMENU_ROW_HEIGHT + STARTMENU_ROW_HEIGHT // 2)
     time.sleep(0.5)
     disarmed = s.shot("menu-desarmado")
     expect_text(disarmed, shutdown_box, "Shut Down", TEXT, FACE, "el No desarma el pie", solid_only=True)
