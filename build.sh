@@ -183,6 +183,7 @@ SMOKE_VISUAL_SCENARIO=""
 SMOKE_USB=False
 SMOKE_USB_STICK_MIB=0
 SMOKE_NO_PS2=False
+SMOKE_NO_NETWORK=False
 SMOKE_USB_POINTER=mouse
 SMOKE_USB_HUB=False
 if [[ "$COMMAND" == smoke ]]; then
@@ -213,6 +214,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_HOST_ACTION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_action)
         SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
         SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
+        SMOKE_NO_NETWORK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_network)
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
         SMOKE_FAT_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field fat_disk_mib)
@@ -481,6 +483,7 @@ case "$COMMAND" in
         # en la maquina base: sin --virtio no hay tablet y el fallo seria del
         # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
         [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
+        [[ "$SMOKE_NO_NETWORK" == True ]] && SMOKE_ARGS+=(--no-network)
         [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ "$SMOKE_EXTRA_DISK_MIB" == 0 ]] || SMOKE_ARGS+=(--extra-disk-mib "$SMOKE_EXTRA_DISK_MIB")
         if [[ "$SMOKE_FAT_DISK_MIB" != 0 ]]; then

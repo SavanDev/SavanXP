@@ -1068,6 +1068,14 @@ static void test_audio(void) {
         (void)sxn_wait_one(pause, 50);
     }
     check(attempt < 100);
+    /* The native name enforces singleton startup even without UDP/NIC. */
+    {
+        long duplicate = sxn_spawn("/bin/audiod", audiod_argv, 1);
+        int duplicate_status = -1;
+        check(duplicate > 0);
+        if (duplicate > 0)
+            check(sxn_waitpid(duplicate, &duplicate_status) == duplicate && duplicate_status == 0);
+    }
 
     result = sxnaudio_open(&stream, "nativetest");
     check(result == 0 && stream.mode == SXNAUDIO_MODE_DAEMON);

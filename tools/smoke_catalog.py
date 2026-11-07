@@ -31,6 +31,7 @@ class Scenario:
     host_action: str = ""
     visual_scenario: str = ""
     requires_virtio: bool = False
+    no_network: bool = False
     no_disk: bool = False
     extra_disk_mib: int = 0
     fat_disk_mib: int = 0
@@ -61,6 +62,7 @@ def _qemu_scenario(
     host_action: str = "",
     visual_scenario: str = "",
     requires_virtio: bool = False,
+    no_network: bool = False,
     no_disk: bool = False,
     extra_disk_mib: int = 0,
     fat_disk_mib: int = 0,
@@ -90,6 +92,7 @@ def _qemu_scenario(
         host_action=host_action,
         visual_scenario=visual_scenario,
         requires_virtio=requires_virtio,
+        no_network=no_network,
         no_disk=no_disk,
         extra_disk_mib=extra_disk_mib,
         fat_disk_mib=fat_disk_mib,
@@ -559,6 +562,12 @@ SCENARIOS: dict[str, Scenario] = {
         "SXGLTEST FAIL",
         "SxGL's GPU backend against its software rasterizer (run with --gl for virgl)",
     ),
+    "audio-offline": _qemu_scenario(
+        "nativetest", "NATIVE TEST PASS", "NATIVE TEST FAIL",
+        "SUN playback and mixer controls without a network card",
+        audio_device="hda", no_network=True,
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
@@ -753,6 +762,7 @@ def main() -> int:
             "host_action",
             "visual_scenario",
             "requires_virtio",
+            "no_network",
             "no_disk",
             "extra_disk_mib",
             "fat_disk_mib",

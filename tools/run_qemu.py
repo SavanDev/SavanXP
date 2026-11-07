@@ -93,6 +93,7 @@ def build_qemu_args(
     extra_disks: tuple[tuple[Path, str], ...] = (),
     usb: bool = False,
     usb_stick: Path | None = None,
+    network: bool = True,
     ps2: bool = True,
     usb_pointer: str = "tablet",
     usb_hub: bool = False,
@@ -149,8 +150,6 @@ def build_qemu_args(
         # reach build/image, and vvfat's own write-back never runs.
         "-drive",
         f"file=fat:{image_root},format=raw,snapshot=on",
-        "-netdev",
-        "user,id=net0",
         "-serial",
         f"file:{serial_path}" if serial_path is not None else "stdio",
         "-debugcon",
@@ -158,6 +157,7 @@ def build_qemu_args(
         "-global",
         "isa-debugcon.iobase=0xe9",
     ]
+    args_list += ["-netdev", "user,id=net0"] if network else ["-nic", "none"]
     if monitor_path is not None:
         args_list += ["-no-reboot", "-no-shutdown"]
         args_list += [
@@ -182,8 +182,7 @@ def build_qemu_args(
             "virtio-blk-pci,drive=svdisk",
         ]
         args_list += [
-            "-device",
-            "virtio-net-pci,netdev=net0",
+            *(["-device", "virtio-net-pci,netdev=net0"] if network else []),
             *disk_devices,
             "-device",
             ("virtio-vga-gl" if gl else "virtio-vga") + ",xres=1280,yres=800",
@@ -221,8 +220,7 @@ def build_qemu_args(
                 f"ide-hd,drive=svextra{index},bus=ide.{2 + index},serial={serial}",
             ]
         args_list += [
-            "-device",
-            "rtl8139,netdev=net0",
+            *(["-device", "rtl8139,netdev=net0"] if network else []),
             *disk_devices,
             "-device",
             "VGA,edid=on,xres=1280,yres=800",
@@ -311,6 +309,7 @@ def main() -> int:
                         help="virtio machine with virtio-vga-gl (virgl); implies --virtio")
     parser.add_argument("--disk-bus", choices=DISK_BUSES,
                         help="disk controller without --virtio (default: SAVANXP_DISK_BUS or ahci)")
+    parser.add_argument("--no-network", action="store_true", help="omit every NIC and network backend")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--qmp-path", type=Path, help="QMP Unix socket path")
@@ -359,6 +358,7 @@ def main() -> int:
         qmp_path=args.qmp_path,
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,
+        network=not args.no_network,
         audio_device=args.audio_device,
         extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
         usb=args.usb,

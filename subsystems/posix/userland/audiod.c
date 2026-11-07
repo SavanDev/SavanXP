@@ -6,26 +6,13 @@
 #include <string.h>
 
 /*
- * audiod: el que mezcla cuando suenan varios a la vez.
- *
- * /dev/audio0 admite un solo escritor, y el mixer del SDK vive uno por
- * proceso: dos programas nunca podian sonar juntos (el segundo recibia
- * EBUSY). Este demonio es el unico escritor del device y suma los submixes
- * que le llegan por UDP loopback; cada cliente sigue mezclando sus voces en
- * su proceso y manda stereo ya mezclado. El volumen maestro sigue en el
- * kernel (el popup no se entero), y sin demonio todo sigue directo como
- * antes: el cliente lo detecta con el primer write (EBUSY = remoto).
- *
- * Sin red no hay demonio (el loopback necesita la pila, que pide NIC): sale
- * 0 y el sistema sigue por turnos. Sin audio tampoco (exit 1). Si otro
- * audiod ya escucha, el bind da EBUSY y sale 0: singleton por construccion.
- * init lo lanza antes de windowd y lo relanza si muere sirviendo; una salida
- * deliberada de arranque (sin red, sin audio, otro demonio) lo deja parado y
- * el sistema sigue directo por turnos (el device se recupera solo cuando el
- * dueño anterior cierra).
- *
- * `audiod --selftest` ejercita el camino completo en el invitado: dos
- * clientes, un datagrama roto, mezcla exacta y escritura real al device.
+ * audiod is the single PCM writer and mixes each application's stereo stream.
+ * SUN clients use the native audiod port; existing POSIX clients use UDP
+ * loopback when networking is available. The native port reserves the service
+ * name before acquiring the device and makes duplicate startup harmless even
+ * on a machine without a network driver. Master gain remains in the kernel.
+ * init starts the service before windowd and restarts it after a serving crash.
+ * `audiod --selftest` checks exact mixed samples and a real device write.
  */
 
 #define AUDIOD_MAX_STREAMS SAVANXP_AUDIOD_MAX_STREAMS
@@ -781,7 +768,7 @@ static int audiod_open_socket(void)
             return (int)bound;
         }
     }
-    /* Sin bloqueo: el loop drena lo que haya y duerme por reloj. */
+    /* Nonblocking: drain available packets and pace rendering by the clock. */
     if (savanxp_fcntl((int)fd, SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         savanxp_close((int)fd);
@@ -790,8 +777,7 @@ static int audiod_open_socket(void)
     return (int)fd;
 }
 
-/* El loopback tiene que funcionar antes de tocar el device: sin red el
- * demonio es sordo y el sistema sigue por turnos sin el. */
+/* UDP is optional. Verify its loopback before advertising that transport. */
 static int audiod_check_loopback(int fd)
 {
     struct savanxp_sockaddr_in address;
@@ -865,7 +851,7 @@ static int audiod_serve(int sock_fd, int audio_fd)
         size_t bytes;
         long written;
 
-        while ((got = savanxp_recvfrom(
+        while (sock_fd >= 0 && (got = savanxp_recvfrom(
                     sock_fd, datagram, sizeof(datagram), &source, 0)) > 0)
         {
             audiod_handle_datagram(sock_fd, datagram, (size_t)got, &source, now_ms);
@@ -1435,39 +1421,38 @@ int main(int argc, char** argv)
     }
     if (argc >= 2)
     {
-        eprintf("uso: audiod [--selftest]\n");
+        eprintf("usage: audiod [--selftest]\n");
         return 1;
     }
 
-    sock_fd = audiod_open_socket();
-    if (sock_fd == -SAVANXP_EBUSY)
-    {
-        eprintf("audiod: otro demonio ya escucha\n");
+    /* Reserve the native name first, before waiting for the PCM writer. */
+    g_native_port = sxn_port_create(SAVANXP_AUDIOD_PORT_NAME);
+    if (g_native_port == -SAVANXP_EEXIST) {
+        eprintf("audiod: service already running\n");
         return 0;
     }
-    if (sock_fd < 0)
-    {
-        eprintf("audiod: no se pudo escuchar (%s)\n", result_error_string(sock_fd));
+    if (g_native_port < 0) {
+        eprintf("audiod: cannot create native port (%s)\n", result_error_string(g_native_port));
         return 1;
     }
-    if (audiod_check_loopback((int)sock_fd) < 0)
-    {
-        eprintf("audiod: sin loopback (sin red); sale sin tomar el device\n");
-        savanxp_close((int)sock_fd);
-        return 0;
+    sock_fd = audiod_open_socket();
+    if (sock_fd < 0 || audiod_check_loopback((int)sock_fd) < 0) {
+        if (sock_fd >= 0) savanxp_close((int)sock_fd);
+        sock_fd = -1;
+        eprintf("audiod: UDP unavailable; serving native clients\n");
     }
 
     audio_fd = (long)audio_open();
     if (audio_fd < 0)
     {
-        eprintf("audiod: /dev/audio0 no disponible (%s)\n", result_error_string(audio_fd));
+        eprintf("audiod: /dev/audio0 unavailable (%s)\n", result_error_string(audio_fd));
         savanxp_close((int)sock_fd);
         return 1;
     }
     if (audio_get_info((int)audio_fd, &info) < 0 || info.sample_rate_hz == 0 ||
         info.channels != 2 || info.bits_per_sample != 16 || info.frame_bytes != 4)
     {
-        eprintf("audiod: formato de audio inesperado\n");
+        eprintf("audiod: unexpected audio format\n");
         savanxp_close((int)sock_fd);
         savanxp_close((int)audio_fd);
         return 1;
@@ -1475,19 +1460,11 @@ int main(int argc, char** argv)
     g_device_rate_hz = info.sample_rate_hz;
     if (audiod_acquire_device((int)audio_fd, &info) < 0)
     {
-        eprintf("audiod: /dev/audio0 no se deja escribir\n");
+        eprintf("audiod: cannot write /dev/audio0\n");
         savanxp_close((int)sock_fd);
         savanxp_close((int)audio_fd);
         return 1;
     }
-    /* The port for SUN clients. Without it the daemon still serves UDP: a
-     * name taken by someone else costs the native clients, not the rest. */
-    g_native_port = sxn_port_create(SAVANXP_AUDIOD_PORT_NAME);
-    if (g_native_port < 0)
-    {
-        eprintf("audiod: no native port (%s)\n", result_error_string(g_native_port));
-        g_native_port = -1;
-    }
-    eprintf("audiod: mezclando a %u Hz\n", g_device_rate_hz);
+    eprintf("audiod: mixing at %u Hz\n", g_device_rate_hz);
     return audiod_serve((int)sock_fd, (int)audio_fd);
 }

@@ -199,6 +199,7 @@ def main() -> int:
     parser.add_argument("--requires-virtio", action="store_true",
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
+    parser.add_argument("--no-network", action="store_true", help="boot without a NIC")
     parser.add_argument("--no-disk", action="store_true",
                         help="Boot with no disk attached: the rescue system's scenario.")
     parser.add_argument("--extra-disk-mib", type=int, default=0,
@@ -346,6 +347,7 @@ def main() -> int:
         monitor_path=monitor_path,
         serial_path=log_path,
         qmp_path=qmp_path if (args.qmp_driver or args.qmp_callback) else None,
+        network=not args.no_network,
         audio_device=args.audio_device,
         wav_path=wav_path,
         extra_disks=extra_disks,

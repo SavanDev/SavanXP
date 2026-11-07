@@ -43,6 +43,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Native audio mixing and Sound controls work without a network card.**
+  `audiod` keeps serving SUN clients when UDP is unavailable; `smoke audio-offline` covers this boot.
+
 - **Doom FM music preserves additive instrument timbres and independent operator envelopes.**
   Tremolo and vibrato follow each operator, and channel volume changes affect sounding notes.
 

@@ -83,7 +83,7 @@ The record size is the whole design:
   Closing the pipe ends the connection, and the stream expires with its
   silence like a UDP one.
 
-Without a daemon (smoke mode, no NIC) there is no port, and `sxnaudio_open`
+Without a daemon (a session that never started one) there is no port, and `sxnaudio_open`
 falls back to writing `/dev/audio0` directly -- the same "first writer wins"
 rule as below. `nativetest` asserts both paths: direct with no daemon, then
 through the port of a real `/bin/audiod` it starts, finding its declared name
@@ -105,17 +105,26 @@ gain/mute at render time, so muting an application also silences its concealed
 frames. Native-control assertions live in `nativetest`, and `audiod --selftest`
 compares the actual mixed samples for independent mute/gain and stale ids.
 
+## Startup without networking
+
+The native port is reserved before acquiring the PCM writer; an existing port
+makes a duplicate daemon exit successfully. UDP is an optional compatibility
+transport. A failed socket/loopback check logs `UDP unavailable; serving native
+clients` and leaves the native mixer running. No NIC or network driver is
+needed for SUN playback and Sound controls. `smoke audio-offline` runs the real
+native audio assertions on HDA with QEMU's NIC and network backend removed.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod
 before windowd, so in the steady state the daemon always wins and every
 client learns remote with its first write (`EBUSY` means someone mixes).
-Without a daemon -- smoke mode, no NIC, old image -- the same first write
+Without a daemon -- smoke mode or an old image -- the same first write
 succeeds and everything behaves exactly as before, with zero new code paths
 for the no-daemon case. If the daemon dies serving, init relaunches it and
 clients notice on the next send, probing direct until it is back, so the
 system degrades to turn-taking instead of going silent; a deliberate startup
-exit (no network, no device, another daemon already listening) is left alone
+exit (no device or another daemon already listening) is left alone
 rather than respawned. If a direct holder outlives a daemon restart, the
 daemon waits its turn.
 

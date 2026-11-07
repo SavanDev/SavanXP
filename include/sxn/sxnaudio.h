@@ -5,8 +5,8 @@
  * A SUN program has no sockets, so it cannot reach audiod over UDP the way a
  * POSIX program does. It connects to the daemon's native port instead
  * (audio/audiod_protocol.h) and sends the same datagrams wrapped in
- * fixed-size records. When there is no daemon -- no network, or a session
- * that never started one -- the stream writes to /dev/audio0 directly, which
+ * fixed-size records. When a session has no daemon, the stream writes to
+ * /dev/audio0 directly, which
  * works as long as nobody else is playing: the device has one writer.
  *
  * The format is the device's: signed 16-bit stereo at stream->rate_hz. The
