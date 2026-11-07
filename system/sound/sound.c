@@ -15,10 +15,16 @@ static struct sxnaudio_control g_control = {-1,-1};
 static struct savanxp_audiod_snapshot g_snapshot;
 static long g_device = -1;
 static uint32_t g_volume = 100, g_muted, g_selected;
-static uint32_t g_sequence, g_pending;
+static uint32_t g_sequence, g_pending, g_route_pending;
+static uint64_t g_route_ms, g_route_error_until;
+static struct savanxp_audio_endpoint g_outputs[SAVANXP_AUDIO_MAX_ENDPOINTS];
+static uint32_t g_output_count;
+static char g_output_rows[SAVANXP_AUDIO_MAX_ENDPOINTS][100];
+static const char* g_output_ptrs[SAVANXP_AUDIO_MAX_ENDPOINTS];
+static char g_route_error[100];
 static uint64_t g_query_ms, g_retry_ms, g_device_retry_ms;
 static int g_online;
-static char g_output[100], g_master_text[32], g_selected_text[64], g_app_text[32], g_status[100];
+static char g_master_text[32], g_selected_text[64], g_app_text[32], g_status[100];
 static char g_rows[SAVANXP_AUDIOD_MAX_STREAMS][100];
 static const char* g_row_ptrs[SAVANXP_AUDIOD_MAX_STREAMS];
 static const struct sxgui_column g_columns[] = {
@@ -34,6 +40,29 @@ static struct savanxp_audiod_stream_state* selected(void) {
 static int peak(uint16_t left, uint16_t right) {
     return (int)((uint32_t)(left > right ? left : right) * 100 / 32768);
 }
+static void refresh_outputs(void) {
+    uint32_t index;
+    int active = -1;
+    struct savanxp_audio_endpoint endpoint;
+    g_output_count = 0;
+    if (g_device >= 0) {
+        for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index) {
+            if (sxnaudio_endpoint_get(g_device,index,&endpoint) < 0) break;
+            if (!(endpoint.flags & SAVANXP_AUDIO_PLAYBACK)) continue;
+            g_outputs[g_output_count] = endpoint;
+            (void)snprintf(g_output_rows[g_output_count],sizeof(g_output_rows[0]),"%s - %s",
+                           endpoint.device_name,endpoint.name);
+            g_output_ptrs[g_output_count] = g_output_rows[g_output_count];
+            if (endpoint.flags & SAVANXP_AUDIO_SELECTED) active = (int)g_output_count;
+            ++g_output_count;
+        }
+    }
+    g_widgets[OUTPUT].item_count = (int)g_output_count;
+    g_widgets[OUTPUT].value = active;
+    if (g_output_count && g_online && !g_route_pending) g_widgets[OUTPUT].flags &= ~SXGUI_FLAG_DISABLED;
+    else g_widgets[OUTPUT].flags |= SXGUI_FLAG_DISABLED;
+}
+
 static void refresh_controls(void) {
     struct savanxp_audiod_stream_state* stream = selected();
     uint32_t i;
@@ -77,13 +106,14 @@ static void refresh_controls(void) {
 static void disconnect(void) {
     sxnaudio_control_close(&g_control);
     memset(&g_snapshot,0,sizeof(g_snapshot));
-    g_online = 0; g_pending = 0; g_selected = 0;
+    g_online = 0; g_pending = 0; g_selected = 0; g_route_pending = 0;
     (void)snprintf(g_status,sizeof(g_status), "Audio service unavailable. Master controls remain available.");
     g_retry_ms = sxn_clock_ns() / 1000000 + 1000;
 }
 static void on_tick(struct sxngui_app* app) {
     uint64_t now = sxn_clock_ns() / 1000000;
     struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_endpoint_reply endpoint_reply;
     long result;
     if (g_device >= 0 && sxnaudio_master_get(g_device,&g_volume,&g_muted) < 0) {
         (void)sxn_close(g_device); g_device = -1;
@@ -95,29 +125,36 @@ static void on_tick(struct sxngui_app* app) {
     if (g_device < 0) {
         g_widgets[MASTER].flags |= SXGUI_FLAG_DISABLED;
         g_widgets[MASTER_MUTE].flags |= SXGUI_FLAG_DISABLED;
-        (void)snprintf(g_output,sizeof(g_output), "No audio device available");
+        (void)snprintf(g_status,sizeof(g_status), "No audio device available");
     } else {
-        struct savanxp_audio_info info;
         g_widgets[MASTER].flags &= ~SXGUI_FLAG_DISABLED;
         g_widgets[MASTER_MUTE].flags &= ~SXGUI_FLAG_DISABLED;
-        if (sxn_device_control(g_device,AUDIO_IOC_GET_INFO,(unsigned long)(uintptr_t)&info) >= 0) {
-            const char* name = info.backend == SAVANXP_AUDIO_BACKEND_HDA ? "HD Audio" :
-                info.backend == SAVANXP_AUDIO_BACKEND_AC97 ? "AC'97" : "Virtio sound";
-            (void)snprintf(g_output,sizeof(g_output), "%s - %u Hz, stereo",name,info.sample_rate_hz);
-        }
+
     }
     if (g_control.request < 0 && now >= g_retry_ms) {
         if (sxnaudio_control_open(&g_control) < 0) disconnect();
     }
     if (g_control.request >= 0) {
-        while ((result = sxnaudio_control_read(&g_control,&snapshot)) > 0) {
+        while ((result = sxnaudio_control_receive(&g_control,&snapshot,&endpoint_reply)) > 0) {
+            if (result == 2) {
+                if (g_route_pending && endpoint_reply.request_id == g_route_pending) {
+                    g_route_pending = 0;
+                    if (endpoint_reply.result < 0) {
+                        (void)snprintf(g_route_error,sizeof(g_route_error),"Output change failed (%d). %s",
+                            endpoint_reply.result, endpoint_reply.endpoint_id ? "Previous output retained." : "Select an output to retry.");
+                        g_route_error_until = now + 10000;
+                    } else g_route_error_until = 0;
+                }
+                continue;
+            }
             if (g_pending && snapshot.request_id == g_pending) {
                 g_snapshot = snapshot; g_pending = 0; g_online = 1;
                 (void)snprintf(g_status,sizeof(g_status), "%u application%s%s",snapshot.count,
                     snapshot.count == 1 ? "" : "s", snapshot.count ? " - select one to adjust" : " playing");
             }
         }
-        if (result < 0 || (g_pending && now - g_query_ms > 1000)) disconnect();
+        if (result < 0 || (g_pending && now - g_query_ms > 1000) ||
+            (g_route_pending && now - g_route_ms > 1000)) disconnect();
         else if (!g_pending) {
             ++g_sequence; if (!g_sequence) ++g_sequence;
             result = sxnaudio_control_query(&g_control,g_sequence);
@@ -125,6 +162,9 @@ static void on_tick(struct sxngui_app* app) {
             else if (result != -SAVANXP_EAGAIN) disconnect();
         }
     }
+    if (g_route_pending) (void)snprintf(g_status,sizeof(g_status),"Changing output...");
+    else if (now < g_route_error_until) (void)snprintf(g_status,sizeof(g_status),"%s",g_route_error);
+    refresh_outputs();
     refresh_controls();
     sxngui_app_request_repaint(app);
 }
@@ -132,7 +172,14 @@ static void on_control(struct sxgui_widget* widget, void* user) {
     struct savanxp_audiod_stream_state* stream = selected();
     long result = 0;
     (void)user;
-    if (widget == &g_widgets[MASTER]) {
+    if (widget == &g_widgets[OUTPUT]) {
+        if (g_online && !g_route_pending && widget->value >= 0 && (uint32_t)widget->value < g_output_count) {
+            ++g_sequence; if (!g_sequence) ++g_sequence;
+            result = sxnaudio_endpoint_select(&g_control,g_sequence,g_outputs[widget->value].id,SAVANXP_AUDIO_PLAYBACK);
+            if (result == 0) { g_route_pending = g_sequence; g_route_ms = sxn_clock_ns()/1000000; }
+            refresh_outputs();
+        }
+    } else if (widget == &g_widgets[MASTER]) {
         result = sxnaudio_master_volume(g_device,(uint32_t)widget->value);
         if (result >= 0) g_volume = (uint32_t)widget->value;
     } else if (widget == &g_widgets[MASTER_MUTE]) {
@@ -181,7 +228,8 @@ static void layout(struct sxngui_app* app) {
 int main(int argc, char** argv) {
     int result;
     (void)argc; (void)argv;
-    g_widgets[OUTPUT] = sxgui_label(sx_rect_make(0,0,0,0),g_output);
+    g_widgets[OUTPUT] = sxgui_combobox(sx_rect_make(0,0,0,0),g_output_ptrs,0,-1);
+    g_widgets[OUTPUT].on_action = on_control;
     g_widgets[MASTER] = sxgui_trackbar(sx_rect_make(0,0,0,0),0,100,100);
     g_widgets[MASTER_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
     g_widgets[MASTER_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);

@@ -19,6 +19,7 @@ struct Hardware {
     std::map<std::tuple<unsigned,unsigned,unsigned>,uint32_t> replies;
     std::vector<std::tuple<unsigned,unsigned,unsigned>> commands;
     unsigned wp = 0;
+    std::tuple<unsigned,unsigned,unsigned> fail_once = {~0u,0,0};
     bool answer = true, saw_full_bdl = false;
     bdlist_entry_t bdl[32] = {};
     unsigned char pcm[32 * 4096] = {};
@@ -41,6 +42,9 @@ struct Hardware {
             unsigned nid = (word >> 20) & 0xff, verb = (word >> 8) & 0xfff, payload = word & 0xff;
             if (((word >> 16) & 0xf) < 7) { verb &= 0xf00; payload = word & 0xffff; }
             h.commands.emplace_back(nid,verb,payload);
+            if (h.fail_once == std::tuple{nid,verb,payload}) {
+                h.fail_once = {~0u,0,0}; return;
+            }
             const unsigned entries = h.az.rirb_entries;
             h.wp = (h.wp + 1) % entries;
             h.rirb[h.wp] = {h.replies[{nid,verb,payload}], word >> 28};
@@ -113,6 +117,54 @@ int main() {
           "program the selected connection instead of relying on firmware defaults");
     c->w[0x14].widgetcap |= 0x200;
     check(!find_output(c.get(),path), "HDMI/digital codec cannot claim analog output");
+    {
+        Hardware routes;
+        check(azalia_init_rings(&routes.az) == 0, "route transport setup");
+        alc892(routes);
+        // ALC892 front headphone path: pin 0x1b -> mixer 0x0f -> DAC 0x05.
+        routes.param(5,9,0x41d); routes.param(5,0x0b,1); routes.param(5,0x0a,0x00020040);
+        routes.param(5,0x12,0x00034040);
+        routes.param(0x0f,9,0x20010b); routes.param(0x0f,0x0d,0x80000000);
+        routes.param(0x0f,0x0e,2); routes.replies[{0x0f,0xf02,0}] = 0x00000b05;
+        routes.param(0x1b,9,0x40058f); routes.param(0x1b,0x0c,0x1373e);
+        routes.param(0x1b,0x0d,0x00270300);
+        routes.param(0x1b,0x12,0x80000000); routes.replies[{0x1b,0xf1c,0}] = 0x02214020;
+        routes.replies[{0x1b,0xf01,0}] = 3;
+        routes.param(0x1b,0x0e,5); routes.replies[{0x1b,0xf02,0}] = 0x0f0e0d0c;
+        routes.replies[{0x1b,0xf02,4}] = 0x26;
+        auto codec = std::make_unique<codec_t>(); codec->az = &routes.az;
+        check(probe_codec(codec.get()) == 0, "enumerate rear and front connectors");
+        Path rear, front, disabled;
+        check(output_path(codec.get(),0x14,rear) && output_path(codec.get(),0x1b,front),
+              "both usable analog pins are enumerable");
+        check(!output_path(codec.get(),0x15,disabled), "disconnected firmware speaker is not selectable");
+        check(front.nodes[front.count-1] == 5 && front.inputs[0] == 3,
+              "headphone route records its distinct DAC and fourth connection");
+        Path current;
+        routes.commands.clear();
+        check(switch_output(codec.get(),current,rear) == 0 && routes.sent(0x1b,0x707,0),
+              "initial selection disables other valid connectors before enabling rear output");
+        routes.commands.clear();
+        check(switch_output(codec.get(),current,front) == 0 && current.nodes[0] == 0x1b,
+              "commit manual selection only after configuring the new path");
+        check(routes.sent(0x14,0x707,0) && routes.sent(2,0x706,0),
+              "silence old connector and detach old DAC");
+        check(routes.sent(0x1b,0x701,3) && routes.sent(0x1b,0x707,0xc0) &&
+              routes.sent(0x1b,0x70c,2) && routes.sent(5,0x300,0xb040),
+              "front path selects connection, headphone mode, EAPD and DAC unity gain");
+        for (const auto& [nid,verb,payload] : routes.commands)
+            check(nid != 0x1b || verb != 0x300 || (payload & 0x8000),
+                  "headphone playback never programs the bidirectional pin's microphone boost amp");
+        check(switch_output(codec.get(),current,rear) == 0, "manual switch back to line-out");
+        routes.commands.clear(); routes.fail_once = {0x1b,0x707,0xc0};
+        check(switch_output(codec.get(),current,front) != 0 && current.nodes[0] == 0x14,
+              "a failed headphone command restores the effective rear route");
+        check(routes.sent(0x1b,0x707,0) && routes.sent(0x14,0x707,0x40) &&
+              routes.sent(0x0c,0x300,0x7000), "rollback silences candidate and restores old pin/mixer");
+        routes.answer = false;
+        check(switch_output(codec.get(),current,front) != 0 && !current.count,
+              "failed rollback reports no usable effective route");
+    }
     // Exercise both wire encodings, range expansion, and malformed ranges.
     widget_t w; w.nid = 0x22; w.widgetcap = 0x100;
     h.param(0x22,0x0e,2); h.replies[{0x22,0xf02,0}] = 0x00008502;

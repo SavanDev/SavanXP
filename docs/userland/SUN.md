@@ -71,6 +71,10 @@ The [Sound panel](../media/SOUND.md) consumes the SUN audio-control slice:
 `sxnaudio_control_change`, plus typed master gain/mute helpers. Control traffic
 uses its own native connection and never claims a PCM writer. `nativetest`
 asserts the helpers with the real daemon, including census and meter values.
+The same slice now includes `sxnaudio_endpoint_get`, acknowledged
+`sxnaudio_endpoint_select` and `sxnaudio_control_receive`: stable hardware
+inventory and coordinated output selection, with access/ownership assertions.
+`audio-offline` runs the native assertions on HDA without a NIC.
 
 ### Resources compiled in
 

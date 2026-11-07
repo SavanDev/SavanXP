@@ -150,6 +150,25 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 ? 0
                 : negative_error(SX_EINVAL);
         }
+        case AUDIO_IOC_GET_ENDPOINT: {
+            savanxp_audio_endpoint_query query = {};
+            if (!process::validate_user_range(argument, sizeof(query), true) ||
+                !process::copy_from_user(&query, argument, sizeof(query)) || query.reserved)
+                return negative_error(SX_EINVAL);
+            if (!audio::endpoint(query.index, query.endpoint)) return negative_error(SX_ENOENT);
+            return process::copy_to_user(argument, &query, sizeof(query)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case AUDIO_IOC_SELECT_ENDPOINT: {
+            if (!(granted_access & object::access_write)) return negative_error(SX_EACCES);
+            savanxp_audio_endpoint_selection selection = {};
+            if (!process::validate_user_range(argument, sizeof(selection), false) ||
+                !process::copy_from_user(&selection, argument, sizeof(selection)) || selection.reserved ||
+                (selection.direction != SAVANXP_AUDIO_PLAYBACK && selection.direction != SAVANXP_AUDIO_CAPTURE))
+                return negative_error(SX_EINVAL);
+            const uint32_t owner = selection.direction == SAVANXP_AUDIO_PLAYBACK ? g_owner_pid : g_capture_owner_pid;
+            if (owner && owner != process::current_pid()) return negative_error(SX_EBUSY);
+            return audio::select_endpoint(selection.id, selection.direction);
+        }
         case AUDIO_IOC_SET_VOLUME:
         case AUDIO_IOC_SET_MUTED: {
             // Mismo corte que INPUT_IOC_SET_LAYOUT: mutar el estado

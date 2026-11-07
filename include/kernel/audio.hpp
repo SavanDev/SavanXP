@@ -7,61 +7,49 @@
 
 namespace audio {
 
-// Hardware-dependent audio operations. Each backend (virtio-sound, azalia,
-// AC'97) supplies a static table; audio:: dispatches like display::Backend.
-// Shared device registration, ownership, user-buffer validation and period
-// splitting live in audio_device.cpp.
+// Hardware operations. Ownership, validation and period splitting live in
+// audio_device.cpp; optional endpoint callbacks describe real connectors.
 struct Backend {
     bool (*ready)();
     bool (*get_info)(savanxp_audio_info& info);
-    // Prepara el stream para reproducir (idempotente). Se llama antes del primer
-    // periodo de cada escritura; el backend cachea el estado ya preparado.
+    // Prepare playback idempotently before submitting a period.
     bool (*configure)();
-    // Envia un periodo de PCM leido de memoria de usuario. Devuelve 0 en exito o
-    // un -errno negativo. El troceado a period_bytes lo hace el llamador.
+    // Submit user PCM; return zero or negative errno.
     int (*submit_period)(uint64_t user_buffer, uint32_t byte_count);
-    // Detiene y libera el stream (fin de la sesion de escritura / close del fd).
+    // Stop and release the playback session.
     void (*stop)();
 
-    // Direccion de entrada (microfono), simetrica a la de arriba pero opcional:
-    // un backend que no captura (AC97, o virtio-sound sin stream de input) deja
-    // estos cuatro punteros en nullptr via el inicializador designado, y
-    // audio:: los trata como "no soportado" en vez de crashear.
+    // Optional independent capture direction.
     bool (*capture_ready)();
     bool (*capture_configure)();
-    // Llena un periodo de PCM en memoria de usuario leyendo del device. Devuelve
-    // 0 en exito o un -errno negativo. El troceado a period_bytes lo hace el
-    // llamador, igual que con submit_period.
+    // Copy captured PCM to user memory; zero or negative errno.
     int (*capture_read_period)(uint64_t user_buffer, uint32_t byte_count);
     void (*capture_stop)();
+    bool (*endpoint)(uint32_t index, savanxp_audio_endpoint&) = nullptr;
+    int (*select_endpoint)(uint64_t id, uint32_t direction) = nullptr;
 };
 
-// Driver de audio candidato, espejo de display::Driver. Los probes corren por
-// prioridad y el primero que reclama el hardware se lleva el backend; si
-// ninguno lo hace no queda backend atado y audio_device no registra /dev/audio0.
+// Registered hardware driver, probed by descending priority.
 struct Driver {
     const char* name;
-    // Mayor gana. El orden de registro no importa.
+    // Larger priority wins, independently of registration order.
     int priority;
-    // Inicializa el driver y responde si reclama el hardware. bind_best() corta
-    // en el primer true: un driver descartado por prioridad no se inicializa.
+    // Initialize hardware and report whether the backend is usable.
     bool (*probe)();
-    // Solo valido despues de un probe() que devolvio true.
+    // Valid after a successful probe.
     const Backend& (*backend)();
 };
 
 constexpr size_t kMaxDrivers = 8;
 
-// false si la tabla esta llena o el driver viene incompleto.
 bool register_driver(const Driver& driver);
-// Corre los probes por prioridad descendente y ata el backend del primero que
-// reclama el hardware. Devuelve el driver elegido, o nullptr si no hay sonido.
 const Driver* bind_best();
-// El driver que ato bind_best(), o nullptr.
 const Driver* bound_driver();
-
-// Mecanismo de bajo nivel detras de bind_best().
 void set_backend(const Backend& backend);
+// Indexed enumeration ends with false. Selection reports a negative errno;
+// a failed transition must retain the previous effective endpoint if possible.
+bool endpoint(uint32_t index, savanxp_audio_endpoint& info);
+int select_endpoint(uint64_t id, uint32_t direction);
 
 bool ready();
 bool get_info(savanxp_audio_info& info);
@@ -69,18 +57,14 @@ bool configure();
 int submit_period(uint64_t user_buffer, uint32_t byte_count);
 void stop();
 
-// Volumen maestro de reproduccion, compartido por todos los escritores de
-// /dev/audio0. 0..100, 100 de arranque; el silencio va aparte para no perder
-// el nivel al mutear. Los backends lo aplican al PCM ya copiado con
-// apply_playback_gain, asi que el coste es cero a 100 y el control no necesita
-// ser dueno del dispositivo para moverlo.
+// Shared software master gain (0..100), with independent mute. Backends
+// apply it after copying PCM so controls do not need the writer slot.
 uint32_t master_volume();
 bool set_master_volume(uint32_t volume);
 bool master_muted();
 void set_master_muted(bool muted);
-// Escala `byte_count` bytes de PCM S16LE (estereo o no: la ganancia es por
-// muestra) in situ. Mudo escribe ceros, 100 no toca nada. Un resto impar se
-// deja tal cual; los periodos del ABI son multiplos de 4.
+// Scale S16LE samples in place. Mute clears them; 100 is identity.
+// An odd trailing byte is left untouched.
 void apply_playback_gain(void* frames, uint32_t byte_count);
 
 bool capture_ready();

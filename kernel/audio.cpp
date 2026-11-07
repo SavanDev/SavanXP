@@ -55,6 +55,36 @@ const Driver* bind_best() {
 
 const Driver* bound_driver() { return g_bound_driver; }
 
+bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
+    if (!g_backend || index >= SAVANXP_AUDIO_MAX_ENDPOINTS) return false;
+    if (g_backend->endpoint) return g_backend->endpoint(index, info);
+    savanxp_audio_info format = {};
+    if (!g_backend->get_info(format) || index > 1 ||
+        (index == 1 && !capture_ready())) return false;
+    info = {};
+    info.device_id = static_cast<uint64_t>(format.backend) << 56;
+    info.id = info.device_id | (index + 1);
+    info.backend = format.backend;
+    info.flags = (index ? SAVANXP_AUDIO_CAPTURE : SAVANXP_AUDIO_PLAYBACK) |
+        SAVANXP_AUDIO_AVAILABLE | SAVANXP_AUDIO_SELECTED;
+    const char* name = index ? "Default input" : "Default output";
+    const char* device = format.backend == SAVANXP_AUDIO_BACKEND_AC97 ? "AC'97" : "Virtio sound";
+    for (unsigned i = 0; name[i] && i + 1 < sizeof(info.name); ++i) info.name[i] = name[i];
+    for (unsigned i = 0; device[i] && i + 1 < sizeof(info.device_name); ++i) info.device_name[i] = device[i];
+    return true;
+}
+int select_endpoint(uint64_t id, uint32_t direction) {
+    if (direction != SAVANXP_AUDIO_PLAYBACK && direction != SAVANXP_AUDIO_CAPTURE) return -SX_EINVAL;
+    savanxp_audio_endpoint info;
+    for (uint32_t i = 0; endpoint(i, info); ++i) {
+        if (info.id != id || !(info.flags & direction)) continue;
+        if (!(info.flags & SAVANXP_AUDIO_AVAILABLE)) return -SX_ENODEV;
+        if (info.flags & SAVANXP_AUDIO_SELECTED) return 0;
+        return g_backend->select_endpoint ? g_backend->select_endpoint(id, direction) : -SX_ENOSYS;
+    }
+    return -SX_ENOENT;
+}
+
 bool ready() { return g_backend != nullptr && g_backend->ready(); }
 bool get_info(savanxp_audio_info& info) { return g_backend != nullptr && g_backend->get_info(info); }
 bool configure() { return g_backend != nullptr && g_backend->configure(); }

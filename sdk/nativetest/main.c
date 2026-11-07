@@ -1045,6 +1045,28 @@ static void test_audio(void) {
     }
     check(result == 0);
     check(stream.mode == SXNAUDIO_MODE_DIRECT);
+    {
+        struct savanxp_audio_endpoint first, again;
+        struct savanxp_audio_endpoint_selection selection;
+        struct savanxp_audio_endpoint_query invalid = {0};
+        long readonly = sxn_open_device("audio0",SXN_DEVICE_READ);
+        check(sxnaudio_endpoint_get(stream.device,0,&first) == 0);
+        check(sxnaudio_endpoint_get(stream.device,0,&again) == 0 && first.id == again.id &&
+              first.device_id == again.device_id && first.name[0] && first.device_name[0]);
+        check((first.flags & (SAVANXP_AUDIO_PLAYBACK|SAVANXP_AUDIO_AVAILABLE|SAVANXP_AUDIO_SELECTED)) ==
+              (SAVANXP_AUDIO_PLAYBACK|SAVANXP_AUDIO_AVAILABLE|SAVANXP_AUDIO_SELECTED));
+        check(sxnaudio_endpoint_get(stream.device,SAVANXP_AUDIO_MAX_ENDPOINTS,&again) == -SAVANXP_ENOENT);
+        selection.id = first.id; selection.direction = SAVANXP_AUDIO_PLAYBACK; selection.reserved = 0;
+        check(readonly >= 0 && sxn_device_control(readonly,AUDIO_IOC_SELECT_ENDPOINT,
+              (unsigned long)(uintptr_t)&selection) == -SAVANXP_EACCES);
+        if (readonly >= 0) (void)sxn_close(readonly);
+        invalid.reserved = 1;
+        check(sxn_device_control(stream.device,AUDIO_IOC_GET_ENDPOINT,
+              (unsigned long)(uintptr_t)&invalid) == -SAVANXP_EINVAL);
+        selection.direction = 3;
+        check(sxn_device_control(stream.device,AUDIO_IOC_SELECT_ENDPOINT,
+              (unsigned long)(uintptr_t)&selection) == -SAVANXP_EINVAL);
+    }
     check(stream.rate_hz >= 8000u);
     check(sxnaudio_frames_due(&stream, 50) > 0);
     check(sxnaudio_write(&stream, frames, 480u) == 480);
@@ -1126,6 +1148,34 @@ static void test_audio(void) {
             check(sxnaudio_master_volume(stream.device, old_volume) == 0);
             check(sxnaudio_master_muted(stream.device, old_muted) == 0);
             check(sxnaudio_control_open(&control) == 0);
+            {
+                struct savanxp_audio_endpoint output;
+                struct savanxp_audio_endpoint_selection direct = {0};
+                uint32_t case_index;
+                check(sxnaudio_endpoint_get(stream.device,0,&output) == 0);
+                direct.id = output.id; direct.direction = SAVANXP_AUDIO_PLAYBACK;
+                check(sxn_device_control(stream.device,AUDIO_IOC_SELECT_ENDPOINT,
+                    (unsigned long)(uintptr_t)&direct) == -SAVANXP_EBUSY);
+                for (case_index = 0; case_index < 2; ++case_index) {
+                    struct savanxp_audiod_endpoint_reply reply;
+                    int acknowledged = 0;
+                    check(sxnaudio_endpoint_select(&control,500+case_index,
+                        case_index ? UINT64_MAX : output.id,SAVANXP_AUDIO_PLAYBACK) == 0);
+                    for (attempt = 0; attempt < 50 && !acknowledged; ++attempt) {
+                        long received;
+                        (void)sxn_wait_one(pause,20);
+                        received = sxnaudio_control_receive(&control,&snapshot,&reply);
+                        if (received == 2 && reply.request_id == 500+case_index) {
+                            check(reply.result == (case_index ? -SAVANXP_ENOENT : 0));
+                            check(reply.endpoint_id == output.id && reply.direction == SAVANXP_AUDIO_PLAYBACK);
+                            acknowledged = 1;
+                        }
+                    }
+                    check(acknowledged);
+                }
+                check(sxn_log("nativetest: stable endpoints, ownership and acknowledged selection") == 0);
+            }
+
             for (attempt = 0; attempt < 30 && !have_target; ++attempt) {
                 uint32_t row;
                 (void)sxnaudio_write(&stream, frames, 480);

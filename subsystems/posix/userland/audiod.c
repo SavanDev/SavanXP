@@ -73,6 +73,7 @@ struct audiod_native_client {
 
 static struct audiod_native_client g_native[SAVANXP_AUDIOD_NATIVE_SLOTS];
 static long g_native_port = -1;
+static int g_audio_fd = -1;
 static uint32_t g_next_stream_id = 1;
 static uint16_t g_peak_left, g_peak_right;
 static uint64_t g_peak_ms;
@@ -589,6 +590,37 @@ static void audiod_handle_stream_control(const unsigned char* data, size_t lengt
     stream->peak_left = stream->peak_right = 0;
 }
 
+static void audiod_handle_endpoint(struct audiod_native_client* client,
+                                   const unsigned char* data, size_t length)
+{
+    struct savanxp_audiod_endpoint_request request;
+    struct savanxp_audiod_endpoint_reply reply = {0};
+    struct savanxp_audio_endpoint_selection selection = {0};
+    struct savanxp_audio_endpoint_query query = {0};
+    struct savanxp_audiod_record record = {0};
+    if (length != sizeof(request)) return;
+    memcpy(&request,data,sizeof(request));
+    if (request.version != SAVANXP_AUDIOD_CONTROL_VERSION) return;
+    selection.id = request.endpoint_id; selection.direction = request.direction;
+    reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    reply.kind = SAVANXP_AUDIOD_ENDPOINT_REPLY;
+    reply.request_id = request.request_id; reply.direction = request.direction;
+    /* This process owns playback. The kernel rejects another owner's capture
+     * direction and rolls back a failed backend transition before returning. */
+    reply.result = (int32_t)savanxp_ioctl(g_audio_fd,AUDIO_IOC_SELECT_ENDPOINT,
+                                         (unsigned long)(uintptr_t)&selection);
+    for (query.index = 0; query.index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++query.index) {
+        if (savanxp_ioctl(g_audio_fd,AUDIO_IOC_GET_ENDPOINT,(unsigned long)(uintptr_t)&query) < 0) break;
+        if ((query.endpoint.flags & request.direction) && (query.endpoint.flags & SAVANXP_AUDIO_SELECTED)) {
+            reply.endpoint_id = query.endpoint.id; break;
+        }
+    }
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(reply);
+    memcpy(record.payload,&reply,sizeof(reply));
+    (void)sxn_write(client->write_handle,&record,sizeof(record));
+}
+
 static void audiod_handle_native_datagram(
     struct audiod_native_client* client,
     const unsigned char* data,
@@ -627,6 +659,10 @@ static void audiod_handle_native_datagram(
     else if (kind == SAVANXP_AUDIOD_SNAPSHOT)
     {
         audiod_handle_snapshot(client, data, length);
+    }
+    else if (kind == SAVANXP_AUDIOD_SELECT_ENDPOINT)
+    {
+        audiod_handle_endpoint(client, data, length);
     }
     else if (kind == SAVANXP_AUDIOD_STREAM_VOLUME || kind == SAVANXP_AUDIOD_STREAM_MUTED)
     {
@@ -1465,6 +1501,7 @@ int main(int argc, char** argv)
         savanxp_close((int)audio_fd);
         return 1;
     }
+    g_audio_fd = (int)audio_fd;
     eprintf("audiod: mixing at %u Hz\n", g_device_rate_hz);
     return audiod_serve((int)sock_fd, (int)audio_fd);
 }

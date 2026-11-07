@@ -483,6 +483,11 @@ enum savanxp_audio_ioctl {
      * al quitarlo volver al nivel anterior. */
     AUDIO_IOC_SET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 4),
     AUDIO_IOC_GET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 5),
+    /* GET takes savanxp_audio_endpoint_query; ENOENT ends enumeration.
+     * SELECT takes savanxp_audio_endpoint_selection and requires write access
+     * plus ownership of the affected PCM direction, or an idle direction. */
+    AUDIO_IOC_GET_ENDPOINT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 6),
+    AUDIO_IOC_SELECT_ENDPOINT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 7),
 };
 
 enum savanxp_power_ioctl {
@@ -909,6 +914,38 @@ enum savanxp_audio_backend {
     SAVANXP_AUDIO_BACKEND_VIRTIO = 1,
     SAVANXP_AUDIO_BACKEND_AC97 = 2,
     SAVANXP_AUDIO_BACKEND_HDA = 3,
+};
+
+#define SAVANXP_AUDIO_PLAYBACK 0x0001u
+#define SAVANXP_AUDIO_CAPTURE 0x0002u
+#define SAVANXP_AUDIO_AVAILABLE 0x0004u
+#define SAVANXP_AUDIO_SELECTED 0x0008u
+#define SAVANXP_AUDIO_DIGITAL 0x0010u
+#define SAVANXP_AUDIO_JACK 0x0020u
+#define SAVANXP_AUDIO_PRESENCE_VALID 0x0040u
+#define SAVANXP_AUDIO_CONNECTED 0x0080u
+#define SAVANXP_AUDIO_MAX_ENDPOINTS 32u
+
+/* Stable hardware identity, independent of enumeration order. A connector is
+ * an endpoint; device_id groups the connectors of a controller/codec. Names
+ * are UTF-8 with a terminating NUL. SELECTED describes effective state. */
+struct savanxp_audio_endpoint {
+    uint64_t id;
+    uint64_t device_id;
+    uint32_t flags;
+    uint32_t backend;
+    char name[48];
+    char device_name[48];
+};
+struct savanxp_audio_endpoint_query {
+    uint32_t index;
+    uint32_t reserved;
+    struct savanxp_audio_endpoint endpoint;
+};
+struct savanxp_audio_endpoint_selection {
+    uint64_t id;
+    uint32_t direction; /* PLAYBACK or CAPTURE, not a mask */
+    uint32_t reserved;
 };
 
 struct savanxp_audio_info {

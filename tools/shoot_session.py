@@ -2628,6 +2628,19 @@ def scenario_sound(s):
     row_b = app_row(image,"ToneB")
     expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")
     expect_pixel(image,x+16,y+85,SELECT,"master meter shows mixed PCM")
+    expect_text(image,(x+12,y+12,x+588,y+34),"AC'97 - Default output",TEXT,FIELD,
+                "output selector names the effective device and connector")
+    s.qmp.move_to(x+575,y+22)
+    s.qmp.click()
+    image = settle("sound-output-list")
+    expect_text(image,(x+12,y+32,x+588,y+65),"AC'97 - Default output",SELECT_TEXT,SELECT,
+                "output dropdown lists the selected connector")
+    s.qmp.tap("ret")
+    s.qmp.move_to(1000,120)
+    image = settle("sound-output-selected")
+    expect_text(image,(x+12,y+12,x+588,y+34),"AC'97 - Default output",TEXT,FIELD,
+                "acknowledged selection preserves the effective connector")
+    expect_pixel(image,x+16,y+85,SELECT,"output selection keeps mixed PCM active")
     # Select B, mute it, and check its meter clears while master still has A.
     s.qmp.move_to(row_b[0]+8,row_b[1]+4)
     s.qmp.click()

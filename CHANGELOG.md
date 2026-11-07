@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Sound lists the effective audio device and connector and can select analog HD Audio outputs.**
+  SUN exposes stable endpoint ids; failed changes restore the previous route when possible.
+  See [SOUND.md](docs/media/SOUND.md) and [AZALIA.md](docs/kernel/AZALIA.md).
+
 - **The SUN Sound panel controls master and application volume, mute and live levels.**
   Open `sound.sxe` from **Sound settings...** in the speaker popup or the System group.
   See [SOUND.md](docs/media/SOUND.md); `smoke sound-smoke` checks the panel and its controls.

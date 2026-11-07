@@ -3,8 +3,9 @@
 The x86_64 hardware target is the AMD `1022:1457` HDA controller and its
 Realtek ALC892 codec on the [development host](REAL_HARDWARE.md). The backend
 is a selective port, not the full OpenBSD audio subsystem. It supports one
-analog output, 48 kHz stereo S16 PCM, and software master gain. AC'97 and
-virtio-sound remain separate backends. HDMI, capture, jack switching, power
+active analog output at a time, selected from valid codec paths, 48 kHz stereo
+S16 PCM, and software master gain. AC'97 and virtio-sound remain separate
+backends. HDMI, capture, automatic jack switching, power
 management and most codec-specific quirks are not implemented.
 
 ## Source and license
@@ -56,8 +57,20 @@ connected, non-digital pin and a path to a stereo converter supporting PCM,
 48 kHz and 16-bit samples. Disconnected firmware pins and HDMI pins are
 excluded. Speakers precede line-out, which precedes headphones; firmware
 sequence breaks ties. The walk records each connection index and programs
-the selectors and input amps along that route. It rejects cycles, paths
+the selectors and input amps along that route. A valid firmware-selected
+connection is tried first (the ALC892 front pin commonly selects mixer 0x0f /
+DAC 0x05). It rejects cycles, paths
 beyond ten nodes and connection lists beyond the bounded storage.
+
+The endpoint catalog exposes every valid analog output with a stable id formed
+from backend, PCI function, codec address and pin node. A manual selection stops
+DMA, disables the old pin, detaches its converter, configures the new path and
+restarts with a silence-filled buffer when playback was active. Initial setup
+also disables other valid output pins. A failed setup restores every old
+selector, amp and pin; a failed restart attempts the same rollback. If rollback
+fails, the catalog has no effective selection and PCM is refused until a
+successful selection. Kernel ownership prevents a control-only process from
+rerouting another PCM writer; Sound sends the request to that writer (`audiod`).
 
 The register space stays mapped for an abandoned controller because the
 current VMM has no MMIO unmap. Command DMA is stopped before another candidate
@@ -89,7 +102,9 @@ interrupts are disabled. No CPU-iteration count is treated as milliseconds.
 - `azalia-test`: the actual ported routines against simulated MMIO, 2/16/256
   entry ring wrapping, an ALC892-shaped graph from the Linux host dump,
   disconnected/digital pins, non-default selector inputs, mute-only amps,
-  short/long range lists, complete BDL before RUN and unresponsive codecs.
+  short/long range lists, complete BDL before RUN and unresponsive codecs;
+  front/rear routing, selector preference, exact headphone/EAPD verbs, failure
+  rollback and loss of effective selection when rollback fails.
 - `audio-wav-test`: independently generated valid/invalid captures. Silence,
   internal holes, wrong gain, wrong frequency, wrong rate and unequal channels
   must fail the audio oracle.

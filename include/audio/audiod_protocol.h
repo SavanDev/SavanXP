@@ -120,6 +120,8 @@ struct savanxp_audiod_record {
 #define SAVANXP_AUDIOD_SNAPSHOT_REPLY 6u
 #define SAVANXP_AUDIOD_STREAM_VOLUME 7u
 #define SAVANXP_AUDIOD_STREAM_MUTED 8u
+#define SAVANXP_AUDIOD_SELECT_ENDPOINT 9u
+#define SAVANXP_AUDIOD_ENDPOINT_REPLY 10u
 
 struct savanxp_audiod_snapshot_query {
     uint32_t magic;
@@ -154,6 +156,27 @@ struct savanxp_audiod_stream_control {
     uint16_t port;
     uint8_t value;
     uint8_t reserved;
+};
+
+/* Route changes are acknowledged, including negative kernel errors and the
+ * effective connector after rollback. These messages do not register PCM. */
+struct savanxp_audiod_endpoint_request {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    uint32_t direction;
+    uint64_t endpoint_id;
+};
+struct savanxp_audiod_endpoint_reply {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    int32_t result;
+    uint32_t direction;
+    uint32_t reserved;
+    uint64_t endpoint_id;
 };
 
 /* Wire snapshots must remain atomic within the native record payload. */

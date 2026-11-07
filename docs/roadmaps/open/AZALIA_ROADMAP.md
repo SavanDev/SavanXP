@@ -1,7 +1,8 @@
 # Azalia: OpenBSD HDA port for the x86_64 host
 
-Status: selective playback port implemented; host tests, QEMU recorded-PCM
-acceptance and persistence regression pass. **Physical playback on the
+Status: selective playback port plus SUN device inventory and manual analog
+output selection implemented. Host tests, QEMU recorded-PCM acceptance and
+persistence regression pass. **Physical playback on the
 Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
 target remains separate.
 
@@ -95,3 +96,25 @@ analog routing and jack changes; microphone/line-in and simultaneous playback;
 Vega HDMI with a connected compatible receiver; restart/recovery on the target.
 The earlier user-confirmed analog playback result remains valid only for that
 previous implementation and does not certify these new features.
+
+### Follow-up software evidence
+
+- Stage 1: `audio-offline` boots HDA with no NIC/network backend and runs the
+  real native direct/daemon PCM, census, gain/mute, meter and singleton checks.
+  `7cd7c34` removes the daemon's network dependency. Native assertions also
+  verify stable endpoint ids, names and read-only enumeration.
+- Stage 2: `azalia-test` verifies ALC892 rear/front paths, the front pin's fourth
+  selector input and DAC 0x05, exact headphone/EAPD/amp commands, no playback
+  writes to the pin's microphone boost, rollback and failed rollback. Native
+  tests check owner-only selection and acknowledged success/unknown-id failure.
+  `sound-smoke` checks the output dropdown, effective selected connector and
+  all previous gain/mute/meters with two SUN sources (14 screenshots).
+- Playback regressions: HDA full/half volume retain about 2.4 s at 440 Hz,
+  RMS 12000/6000 and no internal silence; AC'97 and virtio streams pass.
+  Native tests pass on AC'97 and HDA without NIC; the daemon sample assertions
+  pass. The host suite is 24/24 and the isolated Doom persistence check passes.
+  Extracted Sound/audiod binaries match the new image payload; Doom executable
+  and WAD remain present. `sxgui-smoke` passes its eight glyph/scroll/taskbar
+  screenshots. These results do not cover physical jack changes.
+- Stages 3–6 remain implementation work. The output catalog currently covers
+  the bound backend; independent controllers/codecs and HDMI belong to stage 5.

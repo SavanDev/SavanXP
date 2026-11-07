@@ -207,7 +207,16 @@ bool trace(codec_t* c, int node, Path& path) {
         if (pcm) return true;
     } else if (path.count == 1 || w.type == COP_AWTYPE_AUDIO_MIXER || w.type == COP_AWTYPE_AUDIO_SELECTOR) {
         const unsigned here = path.count - 1;
+        // Respect a valid firmware selector first. On ALC892 the front pin
+        // can reach four DAC mixers and commonly selects DAC 0x05 (index 3).
+        const int preferred = w.type != COP_AWTYPE_AUDIO_MIXER && w.selected >= 0 &&
+            w.selected < w.nconnections ? w.selected : -1;
+        if (preferred >= 0) {
+            path.inputs[here] = preferred;
+            if (trace(c, w.connections[preferred], path)) return true;
+        }
         for (int i = 0; i < w.nconnections; ++i) {
+            if (i == preferred) continue;
             path.inputs[here] = i;
             if (trace(c, w.connections[i], path)) return true;
         }
@@ -226,6 +235,18 @@ int amp(codec_t* c, int nid, bool output, unsigned input, uint32_t cap, bool mut
         gain | ((mute && (cap & COP_AMPCAP_MUTE)) ? CORB_AGM_MUTE : 0);
     return azalia_comresp(c, nid, CORB_SET_AMPLIFIER_GAIN_MUTE, payload, nullptr);
 }
+}
+
+bool output_path(codec_t* c, int pin, Path& path) {
+    path = {};
+    if (!azalia_widget_enabled(c, pin)) return false;
+    const auto& w = c->w[pin];
+    if (w.type != COP_AWTYPE_PIN_COMPLEX ||
+        (w.widgetcap & COP_AWCAP_DIGITAL) || !(w.d.pin.cap & COP_PINCAP_OUTPUT) ||
+        (w.d.pin.cap & COP_PINCAP_HDMI)) return false;
+    const unsigned device = CORB_CD_DEVICE(w.d.pin.config);
+    if (device != CORB_CD_SPEAKER && device != CORB_CD_LINEOUT && device != CORB_CD_HEADPHONE) return false;
+    return trace(c, pin, path);
 }
 
 bool find_output(codec_t* c, Path& best) {
@@ -259,7 +280,9 @@ int configure_path(codec_t* c, const Path& path) {
         if (input >= 0 && w.type != COP_AWTYPE_AUDIO_MIXER) {
             if (azalia_comresp(c, nid, CORB_SET_CONNECTION_SELECT_CONTROL, input, nullptr)) return kIoError;
         }
-        if (w.widgetcap & COP_AWCAP_INAMP) {
+        // A bidirectional pin's input amp is its microphone boost, not a
+        // per-connection playback mixer. Leave it alone on an output route.
+        if ((w.widgetcap & COP_AWCAP_INAMP) && w.type != COP_AWTYPE_PIN_COMPLEX) {
             if (w.nconnections > 16) return kInvalid; // amplifier index is four bits
             for (int j = 0; j < w.nconnections; ++j)
                 if (amp(c, nid, false, j, w.inamp_cap, j != input)) return kIoError;
@@ -273,6 +296,34 @@ int configure_path(codec_t* c, const Path& path) {
         return azalia_comresp(c, pin.nid, CORB_SET_PIN_WIDGET_CONTROL,
                              CORB_PWC_OUTPUT | CORB_PWC_HEADPHONE, nullptr);
     return 0;
+}
+
+int switch_output(codec_t* c, Path& current, const Path& next) {
+    // Rebuild from the pin rather than trusting a caller-supplied path.
+    Path candidate;
+    if (!next.count || !output_path(c, next.nodes[0], candidate)) return kInvalid;
+    if (current.count && current.nodes[0] == candidate.nodes[0]) return 0;
+    const Path previous = current;
+    int err = 0;
+    if (previous.count) {
+        err = azalia_comresp(c, previous.nodes[0], CORB_SET_PIN_WIDGET_CONTROL, 0, nullptr);
+        if (!err) err = azalia_comresp(c, previous.nodes[previous.count - 1],
+                                      CORB_SET_CONVERTER_STREAM_CHANNEL, 0, nullptr);
+    }
+    for (int nid = c->wstart; !err && nid < c->wend; ++nid) {
+        if (nid == candidate.nodes[0] || (previous.count && nid == previous.nodes[0])) continue;
+        Path unused;
+        if (output_path(c,nid,unused))
+            err = azalia_comresp(c,nid,CORB_SET_PIN_WIDGET_CONTROL,0,nullptr);
+    }
+    if (!err) err = configure_path(c, candidate);
+    if (!err) { current = candidate; return 0; }
+    // The candidate may have been partially enabled. Silence it, then restore
+    // every old selector and amp, including shared widgets affected above.
+    const int quiet = azalia_comresp(c, candidate.nodes[0], CORB_SET_PIN_WIDGET_CONTROL, 0, nullptr);
+    if (quiet || (previous.count && configure_path(c, previous))) current = {};
+    else current = previous;
+    return kIoError;
 }
 
 int azalia_codec_connect_stream(stream_t* s) {

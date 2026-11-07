@@ -67,10 +67,14 @@ int azalia_stream_reset(stream_t*);
 int azalia_stream_start(stream_t*);
 int azalia_codec_connect_stream(stream_t*);
 
-// Playback-only adaptation of codec initialization/routing/mixer setup.
+// Codec initialization and bounded analog routing/mixer setup.
 struct Path { int nodes[10] = {}, inputs[10] = {}; unsigned count = 0; };
 int probe_codec(codec_t*);
+bool output_path(codec_t*, int pin, Path&);
 bool find_output(codec_t*, Path&);
+// Configuration is transactional: update current only after success. A failed
+// rollback clears current, so callers cannot report a route that is unusable.
+int switch_output(codec_t*, Path& current, const Path& next);
 int configure_path(codec_t*, const Path&);
 int read_connections(widget_t*, const codec_t*);
 

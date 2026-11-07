@@ -54,6 +54,7 @@ bool g_ready = false, g_prepared = false;
 uint64_t g_played = 0, g_written = 0, g_last_poll_ns = 0;
 uint32_t g_last_position = 0, g_dropped = 0, g_underruns = 0;
 uint8_t g_scratch[kPeriod];
+uint64_t g_device_id = 0;
 
 uint32_t mmio_read(void*, uint16_t offset, unsigned width) {
     if (width == 1) return *reinterpret_cast<volatile uint8_t*>(g_mmio + offset);
@@ -149,8 +150,10 @@ bool probe() {
                 console::printf("azalia: codec %u probe failed (%d)\n", address, codec_error);
                 continue;
             }
-            if (!find_output(&g_codec, g_path)) continue;
-            const int path_error = configure_path(&g_codec, g_path);
+            Path initial;
+            if (!find_output(&g_codec, initial)) continue;
+            g_path = {};
+            const int path_error = switch_output(&g_codec, g_path, initial);
             if (path_error) {
                 console::printf("azalia: codec %u path setup failed (%d)\n", address, path_error);
                 continue;
@@ -173,6 +176,11 @@ bool probe() {
                            g_pcm.physical_address + memory::kPageSize};
         g_stream.bufsize = kBytes; g_stream.blk = kPeriod; g_stream.fmt = kFormat;
         g_stream.converter = g_path.nodes[g_path.count - 1];
+        // PCI function + codec address identify hardware across enumeration
+        // order changes; the low byte is reserved for the connector node id.
+        g_device_id = (uint64_t{SAVANXP_AUDIO_BACKEND_HDA} << 56) |
+            (static_cast<uint64_t>((bus << 8) | (slot << 3) | function) << 16) |
+            (static_cast<uint64_t>(g_codec.address) << 8);
         g_ready = true;
         console::printf("azalia: ready %x:%x.%u codec=0x%x pin=0x%x dac=0x%x rings=%u/%u\n",
             bus, slot, function, g_codec.vid, g_path.nodes[0], g_stream.converter,
@@ -187,14 +195,14 @@ bool probe() {
     return false;
 }
 
-bool ready() { return g_ready; }
+bool ready() { return g_ready && g_path.count; }
 bool get_info(savanxp_audio_info& info) {
     if (!g_ready) return false;
     info = {48000, 2, 16, 4, kPeriod, kLead, SAVANXP_AUDIO_BACKEND_HDA, 0};
     return true;
 }
 bool configure() {
-    if (!g_ready) return false;
+    if (!ready()) return false;
     if (g_prepared) return true;
     memset(g_pcm.virtual_address, 0, (1 + kSlots) * memory::kPageSize);
     g_played = 0; g_written = kLead; g_last_position = 0;
@@ -237,7 +245,54 @@ void stop() {
         g_dropped, g_underruns);
     (void)azalia_comresp(&g_codec, g_stream.converter, CORB_SET_CONVERTER_STREAM_CHANNEL, 0, nullptr);
 }
-const audio::Backend g_backend = {ready, get_info, configure, submit, stop, nullptr, nullptr, nullptr, nullptr};
+bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
+    if (!g_ready) return false;
+    for (int nid = g_codec.wstart; nid < g_codec.wend; ++nid) {
+        Path path;
+        if (!output_path(&g_codec, nid, path)) continue;
+        if (index--) continue;
+        const auto& pin = g_codec.w[nid];
+        info = {};
+        info.id = g_device_id | static_cast<unsigned>(nid);
+        info.device_id = g_device_id;
+        info.backend = SAVANXP_AUDIO_BACKEND_HDA;
+        info.flags = SAVANXP_AUDIO_PLAYBACK | SAVANXP_AUDIO_AVAILABLE;
+        if (g_path.count && g_path.nodes[0] == nid) info.flags |= SAVANXP_AUDIO_SELECTED;
+        if (CORB_CD_PORT(pin.d.pin.config) == CORB_CD_JACK) info.flags |= SAVANXP_AUDIO_JACK;
+        const unsigned location = CORB_CD_LOC_GEO(pin.d.pin.config);
+        const char* position = location == CORB_CD_FRONT ? "Front " : location == CORB_CD_REAR ? "Rear " : "";
+        const char* name = pin.d.pin.device == CORB_CD_HEADPHONE ? "headphones" :
+            pin.d.pin.device == CORB_CD_SPEAKER ? "speakers" : "line-out";
+        strcpy(info.name, position);
+        strcpy(info.name + strlen(info.name), name);
+        strcpy(info.device_name, g_codec.vid == 0x10ec0892 ? "Realtek ALC892 (HD Audio)" : "HD Audio analog codec");
+        return true;
+    }
+    return false;
+}
+int select_endpoint(uint64_t id, uint32_t direction) {
+    if (!g_ready || direction != SAVANXP_AUDIO_PLAYBACK || (id & ~uint64_t{0xff}) != g_device_id)
+        return -SX_ENOENT;
+    Path candidate;
+    if (!output_path(&g_codec, id & 0xff, candidate)) return -SX_ENOENT;
+    const Path previous = g_path;
+    const bool running = g_prepared;
+    stop();
+    const int changed = switch_output(&g_codec, g_path, candidate);
+    if (g_path.count) g_stream.converter = g_path.nodes[g_path.count - 1];
+    if (!changed && (!running || configure())) return 0;
+    // Route setup or restarting DMA failed. Restore the old route and resume
+    // it if possible; never report the requested connector as effective.
+    stop();
+    if (!changed && previous.count) {
+        (void)switch_output(&g_codec, g_path, previous);
+        if (g_path.count) g_stream.converter = g_path.nodes[g_path.count - 1];
+    }
+    if (running && g_path.count && !configure()) g_path = {};
+    return -SX_EIO;
+}
+const audio::Backend g_backend = {ready, get_info, configure, submit, stop,
+    nullptr, nullptr, nullptr, nullptr, endpoint, select_endpoint};
 const audio::Backend& backend() { return g_backend; }
 const audio::Driver g_driver = {"azalia", 60, probe, backend};
 } // namespace

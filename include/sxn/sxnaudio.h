@@ -280,30 +280,69 @@ static inline long sxnaudio_control_query(struct sxnaudio_control* control, uint
     return sxnaudio_control_send(control, &query, sizeof(query));
 }
 
-/* 1 with a valid snapshot, 0 with nothing waiting, negative errno otherwise.
- * An obsolete daemon's reply is an error, never an empty list of applications. */
-static inline long sxnaudio_control_read(struct sxnaudio_control* control,
-                                       struct savanxp_audiod_snapshot* snapshot) {
+/* Receive one native control reply: 1 snapshot, 2 endpoint acknowledgement,
+ * 0 when nothing is waiting, negative errno for EOF/malformed data. */
+static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
+    struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint) {
     struct savanxp_audiod_record record;
-    const unsigned char* source = record.payload;
-    unsigned char* out = (unsigned char*)snapshot;
+    const struct savanxp_audiod_list_query* header = (const struct savanxp_audiod_list_query*)record.payload;
+    unsigned char* out;
     uint32_t i;
     long got = sxn_read(control->reply, &record, sizeof(record));
     if (got == -SAVANXP_EAGAIN) return 0;
     if (got < 0) return got;
     if (got != sizeof(record) || record.magic != SAVANXP_AUDIOD_RECORD_MAGIC ||
-        record.length != sizeof(*snapshot)) return -SAVANXP_EIO;
-    for (i = 0; i < sizeof(*snapshot); ++i) out[i] = source[i];
-    if (snapshot->magic != SAVANXP_AUDIOD_CONTROL_MAGIC ||
-        snapshot->version != SAVANXP_AUDIOD_CONTROL_VERSION ||
-        snapshot->kind != SAVANXP_AUDIOD_SNAPSHOT_REPLY ||
-        snapshot->count > SAVANXP_AUDIOD_MAX_STREAMS) return -SAVANXP_EIO;
+        record.length < sizeof(*header) || header->magic != SAVANXP_AUDIOD_CONTROL_MAGIC ||
+        header->version != SAVANXP_AUDIOD_CONTROL_VERSION) return -SAVANXP_EIO;
+    if (header->kind == SAVANXP_AUDIOD_ENDPOINT_REPLY && record.length == sizeof(*endpoint) && endpoint) {
+        out = (unsigned char*)endpoint;
+        for (i = 0; i < sizeof(*endpoint); ++i) out[i] = record.payload[i];
+        if (endpoint->reserved || (endpoint->direction != SAVANXP_AUDIO_PLAYBACK &&
+            endpoint->direction != SAVANXP_AUDIO_CAPTURE)) return -SAVANXP_EIO;
+        return 2;
+    }
+    if (header->kind != SAVANXP_AUDIOD_SNAPSHOT_REPLY || record.length != sizeof(*snapshot) || !snapshot)
+        return -SAVANXP_EIO;
+    out = (unsigned char*)snapshot;
+    for (i = 0; i < sizeof(*snapshot); ++i) out[i] = record.payload[i];
+    if (snapshot->count > SAVANXP_AUDIOD_MAX_STREAMS) return -SAVANXP_EIO;
     for (i = 0; i < snapshot->count; ++i) {
         if (!snapshot->streams[i].id || snapshot->streams[i].volume > 100 ||
             snapshot->streams[i].muted > 1) return -SAVANXP_EIO;
         snapshot->streams[i].name[SAVANXP_AUDIOD_NAME_BYTES - 1] = '\0';
     }
     return 1;
+}
+static inline long sxnaudio_control_read(struct sxnaudio_control* control,
+                                        struct savanxp_audiod_snapshot* snapshot) {
+    return sxnaudio_control_receive(control,snapshot,0);
+}
+
+/* Read-only hardware inventory never claims PCM. Enumeration ends at ENOENT;
+ * each id describes hardware, rather than this process's handles or row order. */
+static inline long sxnaudio_endpoint_get(long device, uint32_t index,
+                                        struct savanxp_audio_endpoint* endpoint) {
+    struct savanxp_audio_endpoint_query query;
+    long result;
+    query.index = index; query.reserved = 0;
+    result = sxn_device_control(device,AUDIO_IOC_GET_ENDPOINT,(unsigned long)(uintptr_t)&query);
+    if (result < 0) return result;
+    *endpoint = query.endpoint;
+    if (!endpoint->id || !endpoint->device_id) return -SAVANXP_EIO;
+    endpoint->name[sizeof(endpoint->name)-1] = '\0';
+    endpoint->device_name[sizeof(endpoint->device_name)-1] = '\0';
+    return 0;
+}
+static inline long sxnaudio_endpoint_select(struct sxnaudio_control* control,
+                                           uint32_t request_id, uint64_t endpoint_id, uint32_t direction) {
+    struct savanxp_audiod_endpoint_request request;
+    if (!endpoint_id || (direction != SAVANXP_AUDIO_PLAYBACK && direction != SAVANXP_AUDIO_CAPTURE))
+        return -SAVANXP_EINVAL;
+    request.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    request.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    request.kind = SAVANXP_AUDIOD_SELECT_ENDPOINT;
+    request.request_id = request_id; request.direction = direction; request.endpoint_id = endpoint_id;
+    return sxnaudio_control_send(control,&request,sizeof(request));
 }
 
 static inline long sxnaudio_control_change(struct sxnaudio_control* control,

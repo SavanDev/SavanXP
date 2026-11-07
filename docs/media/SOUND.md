@@ -13,13 +13,29 @@ concealment. Stream volume and mute last for that stream's lifetime. This
 first panel applies live controls; it does not write persistent preferences.
 The existing popup and `volume` command still save master settings as before.
 
-The active backend and PCM format are shown above the master controls. There
-is no device/connector selector, capture control or HDMI configuration yet.
+The output dropdown above the master controls names the effective audio device
+and connector. HD Audio lists each valid analog path (rear line-out and front
+headphones on ALC892); firmware-disconnected pins are excluded. AC'97 and
+virtio-sound expose their default connector. Selection goes through `audiod`,
+the PCM writer, and waits for its acknowledgement. A failed route change
+reports the error and queries the effective connector after rollback. If
+rollback also fails, no connector is shown as selected; selecting one retries.
+Capture controls and HDMI configuration are not implemented yet.
 Without `audiod`, the panel explains that application controls are unavailable
 while leaving master controls usable. Without an audio device those controls
 are disabled too. A disconnected service is retried once a second.
 
 ## Native control API
+
+`sxnaudio_endpoint_get` enumerates the kernel inventory without claiming PCM.
+An endpoint identifies a hardware connector and groups it under a device id;
+it reports direction, backend, availability and effective selection. HDA ids
+encode PCI function, codec address and pin node, independently of row order.
+`AUDIO_IOC_SELECT_ENDPOINT` requires write access and ownership of the affected
+PCM direction, or an idle direction. A panel therefore uses
+`sxnaudio_endpoint_select` on the native service connection, receiving a
+request-correlated acknowledgement and the effective endpoint id. Inventory
+reads are available without the daemon; selection is disabled until it responds.
 
 The helpers in `sxn/sxnaudio.h` provide a control-only connection, separate from
 `sxnaudio_stream`: `sxnaudio_control_open/close`, `sxnaudio_control_query/read`,
@@ -59,7 +75,11 @@ not prove that a physical amplifier is enabled or speakers are connected.
 ## Verification
 
 - `./build.sh smoke native-test`: SUN master controls, control-only snapshot,
-  application gain/mute and live peaks through the native daemon port.
+  application gain/mute and live peaks through the native daemon port, stable
+  endpoint inventory, read-only access, PCM ownership, acknowledged selection
+  and rejection of an unknown id with the effective output retained.
+- `./build.sh smoke audio-offline` runs those same native assertions with HDA
+  and no NIC/network backend.
 - `./build.sh smoke audiod-smoke`: exact rendered samples from two clients,
   independent gain/mute, mute during concealment, unmute preserving gain,
   peak values and rejection of commands targeting a reused port.
@@ -74,6 +94,6 @@ not prove that a physical amplifier is enabled or speakers are connected.
 - `sxgui-smoke` still asserts real toolkit glyphs; the existing taskbar scenario
   still checks the popup's frame, slider and master mute geometry.
 
-Per-user persistence, additional outputs/routes, recording and automatic jack
-switching are separate follow-up work. Their absence is not represented by
+Per-user persistence, multiple controllers, recording and automatic jack
+switching remain in the six-stage [roadmap](../roadmaps/open/AZALIA_ROADMAP.md). Their absence is not represented by
 nonfunctional controls in this panel.
