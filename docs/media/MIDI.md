@@ -43,9 +43,12 @@ own parameters: one of four waveforms, a frequency multiplier (0 means ×0.5),
 a fixed level in 0.75 dB steps, key scaling (KSL), per-operator ADSR rates with
 key-rate scaling (KSR), tremolo and vibrato flags, and a sustaining flag that
 decides whether the voice holds its sustain level or keeps falling through it.
-Feedback feeds the modulator's last two outputs (already levelled, so it dies
+Each operator advances its own envelope and enables tremolo and vibrato independently.
+A non-sustaining operator decays to its sustain level, then follows its release
+rate. Feedback feeds the modulator's last two outputs (already levelled, so it dies
 with the envelope) back into its phase; the connection bit chooses FM or
-additive summing instead.
+additive summing of unmodulated operators instead. Channel volume updates
+currently sounding voices; in additive mode it also limits the modulator level.
 
 An instrument holds two such voices plus its header: fixed-pitch flag and note,
 double-voice flag, fine tuning for the second voice only (1/32 semitone steps),
@@ -145,6 +148,9 @@ reference recording: the kick has to sound at least 1.5x sharper in its 45 ms
 attack than in its tail, the pad's LFO has to move the crossing count by ~20
 between peak and valley windows while a timbre without vibrato counts the same
 in both, and a bell has to stop anti-correlating at half a period.
+
+`tests/host/sxmidi_fm_test.c` additionally checks additive summing, independent
+operator stages, per-operator modulation, additive tails and live channel volume.
 
 The FM path has its own checks on a synthetic bank, each with a falsification —
 a bug it would catch: a valid bank reports `uses_genmidi == 1`, renders

@@ -790,6 +790,13 @@ target_include_directories(savanxp-sxmidi-test PRIVATE
 target_compile_options(savanxp-sxmidi-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sxmidi-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# Operator-level regressions complement the public MIDI rendering tests.
+add_executable(savanxp-sxmidi-fm-test tests/host/sxmidi_fm_test.c)
+target_include_directories(savanxp-sxmidi-fm-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sxmidi-fm-test PRIVATE -O1 -Wall -Wextra)
+add_test(NAME sxmidi-fm-test COMMAND savanxp-sxmidi-fm-test)
+
 # El decodificador PNG se compila con el compilador de host y se ejerce de
 # verdad: PNG armados a mano (stored) y salidos de zlib real (fijo y dinamico),
 # los cinco filtros, RGB y RGBA, mas el rechazo de lo que esta fuera del
@@ -908,7 +915,7 @@ add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

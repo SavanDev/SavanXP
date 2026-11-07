@@ -297,8 +297,10 @@ struct sx_midi_voice {
     uint8_t fm_sub;        /* sub-voz del instrumento: 0 o 1 */
     uint8_t fm_additive;   /* conexion del chip: 1 = suma, 0 = FM */
     uint8_t fm_feedback;   /* 0..7 sobre el modulador */
-    uint8_t fm_am;         /* algun operador pide tremolo */
-    uint8_t fm_vib;        /* algun operador pide vibrato */
+    uint8_t fm_am[2];      /* Per-operator tremolo enable. */
+    uint8_t fm_vib[2];     /* Per-operator vibrato enable. */
+    uint8_t fm_stage[2];   /* Independent operator envelope stages. */
+    uint8_t fm_velocity;   /* Retained for live channel volume changes. */
     uint8_t fm_level[2];   /* atenuacion fija: nivel del operador + key scaling */
     uint8_t fm_sustain[2]; /* tipo de EG de cada operador */
     int32_t fm_att[2];     /* atenuacion de la envolvente, en Q16 (ver ATT_Q) */
@@ -1292,10 +1294,26 @@ static struct sx_midi_voice* sx_midi_voice_alloc(struct sx_midi_song* song) {
     return voice;
 }
 
-/* Arranca una voz FM: un modulador, una portadora y una envolvente por
- * operador. Se llama una vez por voz OPL del instrumento (`sub` 0 o 1); los
- * que piden dos voces traen parametros distintos en cada una y la segunda va
- * ademas desafinada por `fine_index`. */
+/* DMX replaces the carrier level and limits the audible additive operator
+ * by the same note/channel volume, preserving its instrument attenuation. */
+static void sx_midi_fm_voice_volume(struct sx_midi_song* song,
+                                    struct sx_midi_voice* voice) {
+    int sub = voice->fm_sub;
+    const struct sx_midi_fm_op* mod = &voice->patch->mod[sub];
+    const struct sx_midi_fm_op* car = &voice->patch->car[sub];
+    int full = (sx_midi_volume_level(voice->fm_velocity) *
+                (2 * (sx_midi_volume_level(song->channel[voice->channel].volume) + 1))) >> 9;
+    int level = 63 - (full > 63 ? 63 : full);
+    int mod_level = mod->level;
+
+    if (voice->fm_additive && mod_level < level) {
+        mod_level = level;
+    }
+    voice->fm_level[0] = (uint8_t)(mod_level + sx_midi_fm_ksl(mod->ksl, voice->play_note));
+    voice->fm_level[1] = (uint8_t)(level + sx_midi_fm_ksl(car->ksl, voice->play_note));
+}
+
+/* Start one OPL voice; double instruments start two independently tuned voices. */
 static void sx_midi_fm_voice_start(
     struct sx_midi_song* song,
     int channel,
@@ -1309,7 +1327,6 @@ static void sx_midi_fm_voice_start(
     const struct sx_midi_fm_op* mod;
     const struct sx_midi_fm_op* car;
     int voice_index = sub != 0 ? 1 : 0;
-    int full;
     int play;
     int index;
 
@@ -1335,14 +1352,6 @@ static void sx_midi_fm_voice_start(
         }
     }
 
-    /* La portadora del chip arranca al maximo de atenuacion y el volumen la
-     * abre; el modulador conserva su nivel, que es la profundidad de la FM. */
-    full = (sx_midi_volume_level(velocity) *
-            (2 * (sx_midi_volume_level(song->channel[channel].volume) + 1))) >> 9;
-    if (full > 63) {
-        full = 63;
-    }
-
     memset(voice, 0, sizeof(*voice));
     voice->active = 1;
     voice->stage = SX_MIDI_STAGE_ATTACK;
@@ -1355,8 +1364,8 @@ static void sx_midi_fm_voice_start(
     voice->fm_feedback = patch->feedback[voice_index];
     voice->fm_mul[0] = g_fm_multiplier[mod->multiplier & 15u];
     voice->fm_mul[1] = g_fm_multiplier[car->multiplier & 15u];
-    voice->fm_level[0] = (uint8_t)(mod->level + sx_midi_fm_ksl(mod->ksl, play));
-    voice->fm_level[1] = (uint8_t)((63 - full) + sx_midi_fm_ksl(car->ksl, play));
+    voice->fm_velocity = (uint8_t)velocity;
+    sx_midi_fm_voice_volume(song, voice);
     for (index = 0; index < 2; ++index) {
         const struct sx_midi_fm_op* op = index == 0 ? mod : car;
 
@@ -1371,12 +1380,9 @@ static void sx_midi_fm_voice_start(
             sx_midi_fm_att_step(song->rate, op->decay, play, op->ksr, 0);
         voice->fm_release_step[index] =
             sx_midi_fm_att_step(song->rate, op->release, play, op->ksr, 0);
-        if (op->am) {
-            voice->fm_am = 1;
-        }
-        if (op->vibrato) {
-            voice->fm_vib = 1;
-        }
+        voice->fm_stage[index] = SX_MIDI_STAGE_ATTACK;
+        voice->fm_am[index] = op->am;
+        voice->fm_vib[index] = op->vibrato;
     }
     /* Tremolo y vibrato del chip, compartidos por los dos operadores: 3.7 y
      * 6.1 Hz. */
@@ -1528,7 +1534,14 @@ static void sx_midi_apply_event(struct sx_midi_song* song, const struct sx_midi_
             break;
         case SX_MIDI_EVENT_CONTROL:
             if (event->a == 7u) {
+                size_t index;
                 song->channel[channel].volume = (uint8_t)(event->b & 127u);
+                for (index = 0; index < SX_MIDI_MAX_VOICES; ++index) {
+                    struct sx_midi_voice* voice = &song->voices[index];
+                    if (voice->active && voice->patch && voice->channel == channel) {
+                        sx_midi_fm_voice_volume(song, voice);
+                    }
+                }
             } else if (event->a == 10u) {
                 song->channel[channel].pan = (uint8_t)(event->b & 127u);
             } else if (event->a == 120u || event->a == 123u) {
@@ -1623,73 +1636,50 @@ static uint16_t sx_midi_fm_gain(const struct sx_midi_voice* voice, int index, in
     return g_fm_att_gain[level];
 }
 
-/* Una etapa de las dos envolventes, en Q16. La voz cambia de etapa cuando llega
- * la portadora, que es la que se oye: el modulador puede seguir su curso sin
- * cerrar la nota. Un operador percusivo no se detiene en su nivel de sostenido,
- * sigue cayendo: ese es el sonido que se apaga solo, y el que deja que un
- * instrumento de dos voces no necesite nota de apagado. */
+/* Each operator advances independently. A non-sustaining operator decays
+ * to SL, then continues with its release rate even while the key is held. */
 static void sx_midi_fm_envelope(struct sx_midi_voice* voice) {
     int index;
-
-    switch (voice->stage) {
-        case SX_MIDI_STAGE_ATTACK:
-            for (index = 0; index < 2; ++index) {
+    for (index = 0; index < 2; ++index) {
+        if (voice->stage == SX_MIDI_STAGE_RELEASE) {
+            voice->fm_stage[index] = SX_MIDI_STAGE_RELEASE;
+        }
+        switch (voice->fm_stage[index]) {
+            case SX_MIDI_STAGE_ATTACK:
                 voice->fm_att[index] -= voice->fm_attack_step[index];
-                if (voice->fm_att[index] < 0) {
+                if (voice->fm_att[index] <= 0) {
                     voice->fm_att[index] = 0;
+                    voice->fm_stage[index] = SX_MIDI_STAGE_DECAY;
                 }
-            }
-            if (voice->fm_att[1] == 0) {
-                voice->stage = SX_MIDI_STAGE_DECAY;
-            }
-            break;
-        case SX_MIDI_STAGE_RELEASE:
-            for (index = 0; index < 2; ++index) {
+                break;
+            case SX_MIDI_STAGE_DECAY:
+                voice->fm_att[index] += voice->fm_decay_step[index];
+                if (voice->fm_att[index] >= voice->fm_sl[index]) {
+                    voice->fm_att[index] = voice->fm_sl[index];
+                    voice->fm_stage[index] = voice->fm_sustain[index]
+                        ? SX_MIDI_STAGE_SUSTAIN : SX_MIDI_STAGE_RELEASE;
+                }
+                break;
+            case SX_MIDI_STAGE_RELEASE:
                 voice->fm_att[index] += voice->fm_release_step[index];
                 if (voice->fm_att[index] > SX_MIDI_FM_ATT_FULL) {
                     voice->fm_att[index] = SX_MIDI_FM_ATT_FULL;
                 }
-            }
-            if (voice->fm_att[1] >= SX_MIDI_FM_ATT_FULL) {
-                voice->active = 0;
-            }
-            break;
-        case SX_MIDI_STAGE_DECAY:
-        case SX_MIDI_STAGE_SUSTAIN:
-        default: {
-            int32_t target[2];
-            int finished = 1;
-
-            for (index = 0; index < 2; ++index) {
-                target[index] = voice->fm_sustain[index] != 0u
-                    ? voice->fm_sl[index]
-                    : SX_MIDI_FM_ATT_FULL;
-                if (voice->fm_att[index] < target[index]) {
-                    voice->fm_att[index] += voice->fm_decay_step[index];
-                    if (voice->fm_att[index] > target[index]) {
-                        voice->fm_att[index] = target[index];
-                    }
-                }
-                if (voice->fm_att[index] < target[index]) {
-                    finished = 0;
-                }
-            }
-            if (finished) {
-                if (voice->fm_sustain[1] == 0u) {
-                    voice->active = 0;
-                } else {
-                    voice->stage = SX_MIDI_STAGE_SUSTAIN;
-                }
-            }
-            break;
+                break;
+            default:
+                break;
         }
+    }
+    /* In additive mode either operator can outlive the other. */
+    if (voice->fm_att[1] >= SX_MIDI_FM_ATT_FULL &&
+        voice->fm_stage[1] == SX_MIDI_STAGE_RELEASE &&
+        (!voice->fm_additive || (voice->fm_att[0] >= SX_MIDI_FM_ATT_FULL &&
+                                voice->fm_stage[0] == SX_MIDI_STAGE_RELEASE))) {
+        voice->active = 0;
     }
 }
 
-/* Devuelve el sample de una voz FM: el modulador mueve la fase de la portadora
- * --o se suma, si el instrumento pide la conexion aditiva-- y cada operador
- * lleva su propia atenuacion. La sub-voz que suena es `fm_sub`: los
- * instrumentos dobles traen dos juegos de operadores distintos. */
+/* Render two independent additive operators or a modulator/carrier pair. */
 static int32_t sx_midi_fm_voice_render(struct sx_midi_voice* voice) {
     int sub = voice->fm_sub != 0u ? 1 : 0;
     uint8_t mod_wave = voice->patch->mod[sub].waveform;
@@ -1702,18 +1692,21 @@ static int32_t sx_midi_fm_voice_render(struct sx_midi_voice* voice) {
 
     sx_midi_fm_envelope(voice);
 
-    /* Vibrato del chip: +-7 centesimos de semitono a 6.1 Hz, sobre los dos
-     * operadores. */
-    if (voice->fm_vib != 0u) {
+    /* Apply the shared LFO only to operators that enable vibrato. */
+    if (voice->fm_vib[0] || voice->fm_vib[1]) {
         int32_t lfo = g_sine[(voice->fm_vib_phase >> 22) & (SX_MIDI_SINE_SIZE - 1u)];
         uint32_t factor = (uint32_t)(65536 + ((lfo * 265) >> 15));
 
-        mod_step = (uint32_t)(((uint64_t)mod_step * factor) >> 16);
-        car_step = (uint32_t)(((uint64_t)car_step * factor) >> 16);
+        if (voice->fm_vib[0]) {
+            mod_step = (uint32_t)(((uint64_t)mod_step * factor) >> 16);
+        }
+        if (voice->fm_vib[1]) {
+            car_step = (uint32_t)(((uint64_t)car_step * factor) >> 16);
+        }
         voice->fm_vib_phase += voice->fm_vib_step;
     }
-    /* Tremolo del chip: la envolvente baja hasta 4.5 dB a 3.7 Hz. */
-    if (voice->fm_am != 0u) {
+    /* Tremolo adds up to 4.5 dB attenuation at 3.7 Hz. */
+    if (voice->fm_am[0] || voice->fm_am[1]) {
         int32_t lfo = g_sine[(voice->fm_am_phase >> 22) & (SX_MIDI_SINE_SIZE - 1u)];
 
         am = (int32_t)(((int64_t)(lfo + 32768) * 6) >> 16);
@@ -1733,22 +1726,28 @@ static int32_t sx_midi_fm_voice_render(struct sx_midi_voice* voice) {
         }
         mod_out = sx_midi_fm_operator(phase, mod_wave);
         mod_out = (int32_t)(((int64_t)mod_out *
-                             (int32_t)sx_midi_fm_gain(voice, 0, am)) >> 15);
+                             (int32_t)sx_midi_fm_gain(voice, 0, voice->fm_am[0] ? am : 0)) >> 15);
         voice->fm_fb2 = voice->fm_fb1;
         voice->fm_fb1 = mod_out;
         voice->fm_mod_phase += mod_step;
     }
 
-    car_out = sx_midi_fm_operator(voice->fm_car_phase + ((uint32_t)mod_out << 18),
+    car_out = sx_midi_fm_operator(voice->fm_car_phase +
+                                  (voice->fm_additive ? 0u : ((uint32_t)mod_out << 18)),
                                   car_wave);
     voice->fm_car_phase += car_step;
-    car_out = (int32_t)(((int64_t)car_out * (int32_t)sx_midi_fm_gain(voice, 1, am)) >> 15);
+    car_out = (int32_t)(((int64_t)car_out * (int32_t)sx_midi_fm_gain(voice, 1, voice->fm_am[1] ? am : 0)) >> 15);
     if (voice->fm_additive != 0u) {
         car_out += mod_out;
     }
-    /* La ganancia de la portadora es lo que deja la voz: sirve para elegir a
-     * quien robar cuando suenan mas notas que voces hay. */
-    voice->env = (int32_t)sx_midi_fm_gain(voice, 1, am);
+    /* Voice stealing must account for either audible additive operator. */
+    voice->env = (int32_t)sx_midi_fm_gain(voice, 1, voice->fm_am[1] ? am : 0);
+    if (voice->fm_additive) {
+        int32_t mod_gain = (int32_t)sx_midi_fm_gain(voice, 0, voice->fm_am[0] ? am : 0);
+        if (mod_gain > voice->env) {
+            voice->env = mod_gain;
+        }
+    }
     return car_out;
 }
 

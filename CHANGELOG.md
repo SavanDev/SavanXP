@@ -39,6 +39,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Doom FM music preserves additive instrument timbres and independent operator envelopes.**
+  Tremolo and vibrato follow each operator, and channel volume changes affect sounding notes.
+
 - **`tools/iso_boot_test.py` no longer fails a good boot** by reading the handoff line before it was
   whole, which left out the `root mounted` it checks.
 
