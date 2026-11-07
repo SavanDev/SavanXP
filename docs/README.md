@@ -46,10 +46,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
-- [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — what stops SavanXP from booting real
-  2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
-  the routes for reaching a Compaq Evo N1020v. The Compaq-specific work (the
-  i386 port) belongs to the `legacy` branch.
+- [`AZALIA.md`](kernel/AZALIA.md) — pinned OpenBSD HDA port, source map,
+  playback/codec adaptation, DMA lifetime and verification boundaries.
+- [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — current ASRock B450/Ryzen x86_64
+  hardware inventory and analog HDA target, plus the Compaq Evo N1020v analysis
+  reserved for `legacy` and future x86 work.
 - [`TIME.md`](kernel/TIME.md) — kernel clocks, virtualization, and diagnosis; plus the
   calendar date: the CMOS RTC, manual setting (`date`, `SET_REALTIME`), network
   sync (`ntpsync`, SNTP), and the taskbar clock with its calendar popup.
@@ -191,6 +192,9 @@ all its phases have landed; the links to it move with it.
 - [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.
+
+- [`AZALIA_ROADMAP.md`](roadmaps/open/AZALIA_ROADMAP.md) — OpenBSD HDA port for
+  the Ryzen/ALC892 host, explicit acceptance gates and remaining physical test.
 
 ## Third-party code — `third-party/`
 

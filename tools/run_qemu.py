@@ -257,15 +257,17 @@ def build_qemu_args(
         audio1 = f"wav,id=audio1,path={wav_path}"
     else:
         audio1 = "none,id=audio1" if headless else "sdl,id=audio1"
-    sound_device = "virtio-sound-pci,audiodev=audio1,streams=2" if (
-        audio_device == "virtio" or (audio_device == "auto" and virtio)
-    ) else "AC97,audiodev=audio1"
-    args_list += [
-        "-audiodev",
-        audio1,
-        "-device",
-        sound_device,
-    ]
+    if audio_device == "hda":
+        if wav_path is not None:
+            audio1 += ",out.frequency=48000"
+        devices = ("ich9-intel-hda,id=hda", "hda-duplex,bus=hda.0,audiodev=audio1")
+    elif audio_device == "virtio" or (audio_device == "auto" and virtio):
+        devices = ("virtio-sound-pci,audiodev=audio1,streams=2",)
+    else:
+        devices = ("AC97,audiodev=audio1",)
+    args_list += ["-audiodev", audio1]
+    for device in devices:
+        args_list += ["-device", device]
     if debug:
         args_list += ["-s", "-S"]
     return args_list
@@ -314,6 +316,8 @@ def main() -> int:
     parser.add_argument("--qmp-path", type=Path, help="QMP Unix socket path")
     parser.add_argument("--monitor-path", type=Path, help="QEMU HMP Unix socket path")
     parser.add_argument("--serial-log", type=Path, help="write guest serial output here")
+    parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda"),
+                        default="auto", help="sound device (hda selects Intel HDA with an analog codec)")
     parser.add_argument("--vars-copy", type=Path, help="writable OVMF variable copy")
     parser.add_argument("--extra-disk", type=Path,
                         help="a second disk image (serial SXBLANK0) for Disk Management to write")
@@ -355,6 +359,7 @@ def main() -> int:
         qmp_path=args.qmp_path,
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,
+        audio_device=args.audio_device,
         extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
         usb=args.usb,
         usb_stick=args.usb_stick.resolve() if args.usb_stick else None,

@@ -65,6 +65,23 @@ which is why both go into the registry.
   report descriptors of USB pointers
   ([USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md))
 
+### OpenBSD Azalia HDA driver
+
+- Origin: OpenBSD `sys/dev/pci/azalia.c`, `azalia_codec.c` and `azalia.h`,
+  https://github.com/openbsd/src
+- Pinned version: commit `3f02b625e68a509b55a83343a6be40565e836cea`;
+  `vendor/openbsd/azalia/OPENBSD_COMMIT` and `SHA256SUMS`
+- Versioned: pristine originals in `vendor/openbsd/azalia/`; selective port in
+  `kernel/azalia/`, PCI/audio adapter in `kernel/azalia.cpp`
+- License reviewed: BSD-2-Clause, Copyright (c) 2005 The NetBSD Foundation,
+  Inc.; `vendor/openbsd/azalia/LICENSE`. Notices remain in derived sources.
+- Decision: `Selective port`. Controller/command/stream routines, codec
+  property handling and wire definitions are retained or adapted. The full
+  audio(9) mixer, autoconf and interrupt infrastructure are not compiled.
+- Distributed in: the kernel binary as the analog HDA audio backend.
+  [AZALIA.md](../kernel/AZALIA.md) maps the upstream routines to local code
+  and records every adaptation boundary.
+
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit

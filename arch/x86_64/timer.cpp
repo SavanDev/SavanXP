@@ -3,6 +3,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/boot_screen.hpp"
+#include "kernel/azalia.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/input.hpp"
@@ -297,6 +298,7 @@ namespace timer
         boot_screen::animate();
         device::service_background();
         input::poll();
+        azalia::poll();
         if (g_backend == Backend::local_apic)
         {
             arch::acknowledge_local_apic_interrupt();

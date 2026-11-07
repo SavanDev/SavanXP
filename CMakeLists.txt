@@ -239,6 +239,9 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/virtio_input.cpp
     kernel/virtio_sound.cpp
     kernel/ac97.cpp
+    kernel/azalia.cpp
+    kernel/azalia/openbsd.cpp
+    kernel/azalia/codec.cpp
     kernel/audio.cpp
     kernel/audio_device.cpp
     kernel/ps2.cpp
@@ -895,8 +898,17 @@ target_include_directories(savanxp-sxdisk-test PRIVATE
 target_compile_options(savanxp-sxdisk-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sxdisk-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-azalia-test
+    kernel/azalia/openbsd.cpp kernel/azalia/codec.cpp tests/host/azalia_test.cpp)
+target_include_directories(savanxp-azalia-test PRIVATE "${CMAKE_SOURCE_DIR}/kernel")
+target_compile_options(savanxp-azalia-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-azalia-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_test(NAME azalia-test COMMAND savanxp-azalia-test)
+add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

@@ -73,6 +73,10 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
 - `arc4random` (ChaCha20, `lib/libcrypto/arc4random`): there is no RNG in the
   repository; the ephemeral ports and the TCP ISNs in kernel/net.cpp need one,
   and today they are predictable
+- `sys/dev/pci/azalia.c`, `azalia_codec.c`, `azalia.h`: the HDA controller,
+  codec and stream playback slice for the Ryzen/ALC892 x86_64 target. Pristine
+  inputs are pinned in `vendor/openbsd/azalia/`; port scope and source map in
+  [AZALIA.md](../kernel/AZALIA.md)
 - `sys/dev/pci/ac97.c`: only the warm reset sequence with codec-ready timeouts
   and the mixer table, which is where VMs differ
 - `pcidevs` plus `devlist2h.awk`: a PCI ID table generated from text, to name

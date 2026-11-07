@@ -19,6 +19,7 @@ class Scenario:
     qmp_driver: str = ""
     audio_device: str = "auto"
     wav_name: str = ""
+    wav_check: str = ""
     completion: str = "serial"
     ready_wait: float = 0.0
     host_server: str = ""
@@ -50,6 +51,7 @@ def _qemu_scenario(
     qmp_driver: str = "",
     audio_device: str = "auto",
     wav_name: str = "",
+    wav_check: str = "",
     completion: str = "serial",
     ready_wait: float = 0.0,
     host_server: str = "",
@@ -78,6 +80,7 @@ def _qemu_scenario(
         qmp_driver=qmp_driver,
         audio_device=audio_device,
         wav_name=wav_name,
+        wav_check=wav_check,
         completion=completion,
         ready_wait=ready_wait,
         host_server=host_server,
@@ -297,6 +300,16 @@ SCENARIOS: dict[str, Scenario] = {
         120.0,
         audio_device="ac97",
         wav_name="ac97-stream-quiet.wav",
+    ),
+    "hda-stream": _qemu_scenario(
+        "audiostream", "AUDIO STREAM PASS", "AUDIO STREAM FAIL",
+        "OpenBSD azalia playback, asserted on recorded PCM", 120.0,
+        audio_device="hda", wav_name="hda-stream.wav", wav_check="tone",
+    ),
+    "hda-stream-quiet": _qemu_scenario(
+        "audiostream-quiet", "AUDIO STREAM QUIET PASS", "AUDIO STREAM FAIL",
+        "OpenBSD azalia playback at volume 50, asserted on recorded PCM", 120.0,
+        audio_device="hda", wav_name="hda-stream-quiet.wav", wav_check="tone-quiet",
     ),
     "audiod-smoke": _qemu_scenario(
         "audiodselftest",
@@ -721,6 +734,7 @@ def main() -> int:
             "qmp_driver",
             "audio_device",
             "wav_name",
+            "wav_check",
             "completion",
             "ready_wait",
             "host_server",

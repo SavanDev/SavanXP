@@ -7,11 +7,10 @@
 
 namespace audio {
 
-// Vtable de operaciones dependientes del hardware de sonido. Cada backend
-// (virtio-sound, AC97) llena una instancia estatica con punteros a sus propias
-// funciones y audio:: solo despacha, igual que display::Backend para la GPU.
-// La logica comun (registro de /dev/audio0, owner-pid, validacion de usuario y
-// troceado en periodos) vive en audio_device.cpp, no aca.
+// Hardware-dependent audio operations. Each backend (virtio-sound, azalia,
+// AC'97) supplies a static table; audio:: dispatches like display::Backend.
+// Shared device registration, ownership, user-buffer validation and period
+// splitting live in audio_device.cpp.
 struct Backend {
     bool (*ready)();
     bool (*get_info)(savanxp_audio_info& info);

@@ -9,6 +9,7 @@
 #include "kernel/ahci.hpp"
 #include "kernel/ata.hpp"
 #include "kernel/audio.hpp"
+#include "kernel/azalia.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/boot_screen.hpp"
@@ -250,12 +251,11 @@ namespace
     power::initialize();
     clipboard::initialize();
     serial_dev::initialize();
-    // Backend de audio: mismo registro por prioridad que display. virtio-sound
-    // gana si el probe PCI lo encontro; si no, AC97 (el caso VirtualBox).
-    // audio_device registra /dev/audio0 sobre el backend elegido, o no lo
-    // registra si ningun driver reclamo hardware de sonido.
+    // Audio backends probe by priority: virtio-sound, analog HD Audio, AC'97.
+    // audio_device registers /dev/audio0 only when a driver claims hardware.
     audio::register_driver(virtio_sound::driver());
     audio::register_driver(ac97::driver());
+    audio::register_driver(azalia::driver());
     if (const audio::Driver* bound = audio::bind_best())
     {
         console::printf("audio: backend '%s'\n", bound->name);

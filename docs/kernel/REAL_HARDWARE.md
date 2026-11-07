@@ -1,28 +1,59 @@
-# Real hardware: the Compaq Evo N1020v case
+# Real hardware targets
 
-> **Status: analysis only on master.** This document is the
-> measurement: what stops SavanXP from booting a real 2003 laptop, which parts
-> of that answer are architecture and which are driver bugs that QEMU and
-> VirtualBox have been hiding, and in what order the work should be done.
->
-> **The Compaq-specific work belongs to the `legacy` branch and is found
-> there, not on master.** That covers
-> [Route A](#route-a-port-the-system-to-i386) (the i386 port) and its
-> [32-bit harness](#a-permanent-harness-for-a-32-bit-target). Master stays
-> x86_64-only; what applies to it is [Route B](#route-b-target-64-bit-hardware)
-> and the [hardware work that is not about the CPU](#hardware-work-that-is-not-about-the-cpu).
->
-> The reference machine is a **Compaq Evo N1020v** (2002), chosen because it is
-> the least forgiving machine a hobby OS is likely to meet: a 32-bit Pentium 4
-> with no long mode, a legacy BIOS, PATA storage, AC'97 audio, a PS/2 trackpad
-> and an LCD panel that may only exist in 24-bit video modes.
->
-> Nothing here is implemented or scheduled on master. The two sections
-> that matter for any other machine are
-> [Hardware work that is not about the CPU](#hardware-work-that-is-not-about-the-cpu)
-> (driver defects worth fixing regardless of architecture) and
-> [Settling the open questions](#settling-the-open-questions-before-writing-code)
-> (five minutes of work that decides the whole plan).
+SavanXP has two hardware targets. The current x86_64 development target is the
+host described below; the Compaq Evo N1020v is the i386 target of the `legacy`
+branch, or future x86 work. Its analysis is retained after the host inventory
+as historical context, not as the current x86_64 driver backlog.
+
+## Current x86_64 target: ASRock B450M Pro4-F R2.0
+
+Inventory read on 2026-11-07 with `lscpu`, `lspci -nn`, DMI board identifiers,
+`/proc/meminfo` and `/proc/asound/card*/codec*`. These are Linux observations
+of the development host; they do not establish that SavanXP supports a device.
+
+| Component | Observed hardware | SavanXP target / verification |
+| --- | --- | --- |
+| Board | ASRock B450M Pro4-F R2.0 | x86_64 boot; UEFI/ACPI discovery |
+| CPU | AMD Ryzen 5 1600, 6 cores / 12 threads; long mode, NX, SMEP, SMAP | Native x86_64 kernel; SMP and monotonic clock |
+| Memory | 32 GiB installed (about 31 GiB usable in Linux) | Physical memory discovery and DMA addressing |
+| GPU | Radeon RX Vega 56/64, `1002:687f` | Firmware framebuffer; no native Vega acceleration is claimed |
+| Analog audio | AMD Family 17h HDA `1022:1457`, PCI `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | OpenBSD `azalia` port; stereo PCM to the rear green line-out first |
+| Display audio | Vega HDA `1002:aaf8`, PCI `09:00.1`; ATI R6xx HDMI codec `1002:aa01` | Separate digital output; must not displace the analog codec |
+| NVMe | Kingston NV1, `2646:500e` | Device inventory only; boot storage must use a supported path |
+| SATA | AMD `1022:43c8` and `1022:7901` AHCI controllers | Existing AHCI path, to be tested on this host |
+| USB | AMD xHCI `1022:43d5` and `1022:145f` | Existing xHCI/HID/storage stack, to be tested per controller |
+| Ethernet | Realtek RTL8111/8168 family, `10ec:8168` | Requires driver coverage beyond `rtl8139` |
+| Wi-Fi | Realtek RTL8188CE, `10ec:8176` | Future work; no wireless support is claimed |
+
+### Audio priorities on this host
+
+The requested OpenBSD driver is `sys/dev/pci/azalia.c` with its codec support
+and HDA definitions, not `ac97.c`. AC'97 remains useful for existing virtual
+machines and the Compaq target, but it cannot operate either HDA controller.
+The GPU controller precedes the analog controller in PCI enumeration, so
+binding the first HDA device is not a valid selection policy.
+
+The ALC892 dump identifies the rear green line-out as pin `0x14`, fed by mixer
+`0x0c` and DAC `0x02`; the front headphone pin is `0x1b`. The rear pin has EAPD
+and a mute-only output amplifier; mixer `0x0c` has mute-only input amplifiers.
+They must be configured even though master volume is applied in software.
+Unused pins marked disconnected by firmware must be excluded. These node
+numbers describe this codec, not constants to hardcode into a generic driver.
+
+The port and acceptance gates are in
+[AZALIA_ROADMAP.md](../roadmaps/open/AZALIA_ROADMAP.md). QEMU verifies the HDA
+transport and recorded PCM; an actual SavanXP boot and audible rear line-out
+are separate, manual gates. Linux codec enumeration is not that gate. HDMI
+playback and automatic jack switching are later work.
+
+## Legacy x86 target: Compaq Evo N1020v
+
+The 2002 Compaq uses a 32-bit Pentium 4 without long mode or NX, legacy BIOS,
+PATA, AC'97 and PS/2 input. Its architecture port and 32-bit QEMU harness belong
+to `legacy`; `codex` and `master` remain x86_64. The following analysis predates
+the current USB and real-hardware work. Statements about missing drivers are
+historical findings to recheck against the relevant branch, not a claim about
+the current tree.
 
 ## The short version
 

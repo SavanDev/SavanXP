@@ -173,6 +173,7 @@ SMOKE_READY=""
 SMOKE_QMP_DRIVER=""
 SMOKE_AUDIO_DEVICE="auto"
 SMOKE_WAV_NAME=""
+SMOKE_WAV_CHECK=""
 SMOKE_COMPLETION="serial"
 SMOKE_READY_WAIT=0
 SMOKE_HOST_SERVER=""
@@ -203,6 +204,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_QMP_DRIVER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field qmp_driver)
         SMOKE_AUDIO_DEVICE=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field audio_device)
         SMOKE_WAV_NAME=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field wav_name)
+        SMOKE_WAV_CHECK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field wav_check)
         SMOKE_COMPLETION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field completion)
         SMOKE_READY_WAIT=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field ready_wait)
         SMOKE_HOST_SERVER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_server)
@@ -493,6 +495,7 @@ case "$COMMAND" in
             SMOKE_ARGS+=(--usb-stick-mib "$SMOKE_USB_STICK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")
         fi
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
+        [[ -z "$SMOKE_WAV_CHECK" ]] || SMOKE_ARGS+=(--wav-check "$SMOKE_WAV_CHECK")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then
                 SMOKE_ARGS+=(--qmp-callback "$SMOKE_QMP_CALLBACK")

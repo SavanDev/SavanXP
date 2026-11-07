@@ -20,6 +20,7 @@ from sxfs_sync import copy_preserving_holes
 from smoke_profile import reset_display_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
+from audio_wav import verify_tone
 from run_qemu import USB_POINTERS, build_qemu_args, find_qemu, prepare_image
 
 
@@ -168,8 +169,9 @@ def main() -> int:
     parser.add_argument("--visual-scenario", default="",
                         help="escenario de shoot_session.py a correr con --host-action visual")
     parser.add_argument("--ready-wait", type=float, default=0.0)
-    parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio"), default="auto")
+    parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda"), default="auto")
     parser.add_argument("--wav-path", type=Path)
+    parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet"), default="")
     parser.add_argument(
         "--qmp-callback",
         type=Path,
@@ -222,6 +224,9 @@ def main() -> int:
                         help="The fat-image host tool (build/tools/fat-image).")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
+    if args.wav_check and args.wav_path is None:
+        parser.error("--wav-check requires --wav-path")
+
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
     if args.qmp_driver not in ("", "kbd", "taskbar", "pointer"):
@@ -512,6 +517,13 @@ def main() -> int:
         if not wav_path.is_file() or wav_path.stat().st_size == 0:
             status = 1
             reason = f"WAV output missing or empty: {wav_path}"
+    if status == 0 and args.wav_check:
+        try:
+            metrics = verify_tone(wav_path, quiet=args.wav_check == "tone-quiet")
+            print(f"audio PCM: {metrics}", flush=True)
+        except (OSError, ValueError) as exc:
+            status = 1
+            reason = f"recorded PCM assertion failed: {exc}"
     print(f"smoke: {args.scenario}: {reason}", flush=True)
     excerpt = tail(log_path)
     if excerpt:

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Analog HD Audio playback through an OpenBSD `azalia` port.** `--audio-device hda`,
+  `smoke hda-stream` and `hda-stream-quiet` exercise playback and recorded PCM at full/half volume.
+  The Ryzen/ALC892 target and port limits are documented in [AZALIA.md](docs/kernel/AZALIA.md).
+
 - **virtio-gpu negotiates virgl**: on a device that offers it the kernel reads the capset, logs
   `virtio-gpu: virgl capset=...` and sets `SAVANXP_GPU_INFO_FLAG_3D`. `--gl` (`SAVANXP_GL=ON`) boots
   QEMU with `virtio-vga-gl`; plan in `docs/roadmaps/open/VIRGL_ROADMAP.md`.
