@@ -105,6 +105,8 @@ not from whichever output the driver produces. A failing bound requires a
 root-cause investigation; changing it requires independent justification.
 
 QEMU exercises the generic analog codec and DMA transport, not the physical
-ALC892 amplifiers. The hardware gate remains an actual SavanXP boot, a log
-naming controller/codec/pin/DAC, and audible output from the rear green jack.
-Linux inventory and simulated codec tests do not satisfy that gate.
+ALC892 amplifiers. On 2026-11-07 the user confirmed working playback on the
+physical ASRock B450/Ryzen host after the port in `2ac6c50`. This is a manual
+hardware result, separate from the QEMU and simulated-codec tests. No serial
+log, application, jack selection or firmware settings accompanied the report.
+It does not establish capture, HDMI playback or automatic jack switching.

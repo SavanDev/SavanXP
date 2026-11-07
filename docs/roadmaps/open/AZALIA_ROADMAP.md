@@ -1,8 +1,9 @@
 # Azalia: OpenBSD HDA port for the x86_64 host
 
 Status: selective playback port implemented; host tests, QEMU recorded-PCM
-acceptance and persistence regression pass. **Physical ALC892 playback is
-unverified.** The legacy AC'97 target remains separate.
+acceptance and persistence regression pass. **Physical playback on the
+Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
+target remains separate.
 
 The target is the ASRock B450/Ryzen host in
 [REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md): AMD HDA `1022:1457` with
@@ -50,4 +51,8 @@ are later phases, not prerequisites silently assumed to work.
 - QEMU `hda-stream-quiet`: 2.409 s, RMS 6000, 440.0 Hz, maximum internal gap 0 ms.
 - Host suite: 23/23 pass; `ac97-stream` and `sxgui-smoke` pass; isolated Doom
   persistence regression passes. The Start menu visual scenario also passes.
-- Physical host boot/audio gate: **pending**.
+- Physical playback on the ASRock B450/Ryzen host: **user-confirmed working on
+  2026-11-07** after the port in `2ac6c50`. No serial log, tested application,
+  jack selection or firmware settings were supplied with the confirmation;
+  those details remain unrecorded. Capture, HDMI and automatic jack switching
+  are not covered by this result.

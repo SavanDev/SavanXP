@@ -10,6 +10,9 @@ as historical context, not as the current x86_64 driver backlog.
 Inventory read on 2026-11-07 with `lscpu`, `lspci -nn`, DMI board identifiers,
 `/proc/meminfo` and `/proc/asound/card*/codec*`. These are Linux observations
 of the development host; they do not establish that SavanXP supports a device.
+Separately, the user confirmed working physical audio playback on this host
+on 2026-11-07 after the Azalia port in `2ac6c50`. Other devices retain the
+verification status shown below.
 
 | Component | Observed hardware | SavanXP target / verification |
 | --- | --- | --- |
@@ -17,7 +20,7 @@ of the development host; they do not establish that SavanXP supports a device.
 | CPU | AMD Ryzen 5 1600, 6 cores / 12 threads; long mode, NX, SMEP, SMAP | Native x86_64 kernel; SMP and monotonic clock |
 | Memory | 32 GiB installed (about 31 GiB usable in Linux) | Physical memory discovery and DMA addressing |
 | GPU | Radeon RX Vega 56/64, `1002:687f` | Firmware framebuffer; no native Vega acceleration is claimed |
-| Analog audio | AMD Family 17h HDA `1022:1457`, PCI `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | OpenBSD `azalia` port; stereo PCM to the rear green line-out first |
+| Analog audio | AMD Family 17h HDA `1022:1457`, PCI `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | OpenBSD `azalia` port; physical playback user-confirmed on 2026-11-07 |
 | Display audio | Vega HDA `1002:aaf8`, PCI `09:00.1`; ATI R6xx HDMI codec `1002:aa01` | Separate digital output; must not displace the analog codec |
 | NVMe | Kingston NV1, `2646:500e` | Device inventory only; boot storage must use a supported path |
 | SATA | AMD `1022:43c8` and `1022:7901` AHCI controllers | Existing AHCI path, to be tested on this host |
@@ -42,9 +45,9 @@ numbers describe this codec, not constants to hardcode into a generic driver.
 
 The port and acceptance gates are in
 [AZALIA_ROADMAP.md](../roadmaps/open/AZALIA_ROADMAP.md). QEMU verifies the HDA
-transport and recorded PCM; an actual SavanXP boot and audible rear line-out
-are separate, manual gates. Linux codec enumeration is not that gate. HDMI
-playback and automatic jack switching are later work.
+transport and recorded PCM; physical playback was confirmed separately by
+the user. The tested application, jack and firmware settings were not recorded.
+HDMI playback and automatic jack switching are later work.
 
 ## Legacy x86 target: Compaq Evo N1020v
 

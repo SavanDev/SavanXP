@@ -194,7 +194,7 @@ all its phases have landed; the links to it move with it.
   encoder, readback into the window surface, and the `--gl` QEMU machine.
 
 - [`AZALIA_ROADMAP.md`](roadmaps/open/AZALIA_ROADMAP.md) — OpenBSD HDA port for
-  the Ryzen/ALC892 host, explicit acceptance gates and remaining physical test.
+  the Ryzen/ALC892 host, acceptance gates and user-confirmed physical playback.
 
 ## Third-party code — `third-party/`
 
