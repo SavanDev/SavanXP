@@ -6,8 +6,8 @@
 /*
  * The volume popup: a popup of the desktop, anchored in the tray corner above
  * the speaker button. No widgets: it uses sxgui's palette, not the toolkit.
- * It has no terminal action (the sliders apply live), so it only closes when
- * the speaker button is clicked again or on a press outside it.
+ * Sliders apply live. Sound settings opens the SUN Sound control panel;
+ * the speaker button or a press outside also closes the popup.
  *
  * At the top, as always, against /dev/audio0: master slider, mute and
  * persistence in /audio.cfg. Below, one row per application playing, with
@@ -30,7 +30,7 @@
 #define VOLUMEPOPUP_THUMB_HEIGHT 16
 #define VOLUMEPOPUP_WHEEL_STEP 5
 
-#define VOLUMEPOPUP_APP_ROWS 4
+#define VOLUMEPOPUP_APP_ROWS 3
 #define VOLUMEPOPUP_APP_ROW_Y(index) (46 + (index) * 24)
 #define VOLUMEPOPUP_APP_ROW_HEIGHT 20
 #define VOLUMEPOPUP_APP_NAME_X 6
@@ -243,6 +243,13 @@ static void popup_paint(
     sx_painter_fill_rect(&painter, frame, SXGUI_COLOR_FACE);
     desktop_bevel(&painter, frame, 0);
 
+    /* Keep the panel shortcut visible even when no application is playing. */
+    {
+        struct sx_rect settings = sx_rect_make(4,116,VOLUMEPOPUP_WIDTH-8,20);
+        sx_painter_fill_rect(&painter,settings,SXGUI_COLOR_FACE);
+        desktop_bevel(&painter,settings,0);
+        sx_painter_draw_text(&painter,settings.x+6,settings.y+3,"Sound settings...",SXGUI_COLOR_TEXT);
+    }
     /* Fila de mute: casilla mas etiqueta, y el nivel a la derecha. */
     sx_painter_fill_rect(
         &painter, mute_rect, mute_hot ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE);
@@ -598,6 +605,12 @@ static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct sav
     struct sx_rect row_thumb = sx_rect_make(0, 0, 0, 0);
     uint32_t actions = DESKTOP_ACTION_NONE;
 
+    if ((down & SAVANXP_MOUSE_BUTTON_LEFT) &&
+        popup_in_rect(sx_rect_make(4,116,VOLUMEPOPUP_WIDTH-8,20),pointer->x,pointer->y))
+    {
+        if (desktop_launch("/bin/sound.sxe",SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) >= 0)
+            return DESKTOP_ACTION_CLOSE;
+    }
     (void)gfx;
     for (row = 0; row < g_apps_total && row < VOLUMEPOPUP_APP_ROWS; ++row)
     {

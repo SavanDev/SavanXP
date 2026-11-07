@@ -2580,7 +2580,96 @@ def scenario_doom(s):
         )
 
 
+def scenario_sound(s):
+    """Open Sound from the volume popup and exercise live SUN mixer controls.
+
+    Two sustained SUN sources keep the list and meters observable. Sample-level
+    independence is asserted separately by audiod's selftest and nativetest.
+    """
+    s.open_console()
+    s.qmp.type_line("volume 100; volume unmute; start nativetest.sxe audio-source ToneA; start nativetest.sxe audio-source ToneB; exit")
+    s.qmp.tap("ret")
+    time.sleep(5.0)
+    s.qmp.move_to(1208,787)
+    s.qmp.click()
+    time.sleep(2.0)
+    popup = s.shot("sound-popup")
+    expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,
+                "volume popup offers Sound settings")
+    s.qmp.move_to(1200,758)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    header = None
+    for _ in range(15):
+        time.sleep(1.0)
+        image = s.shot("sound-open")
+        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
+        if header is not None:
+            break
+    if header is None:
+        raise Failure("Sound did not open from the volume popup")
+    # The label starts at content (12,110): y106 plus its centred 13px face.
+    x,y = header[0]-12,header[1]-110
+    box = (x,y,x+600,y+460)
+    def settle(name):
+        time.sleep(1.0)
+        return s.shot(name)
+    def app_row(image,name):
+        for foreground,background in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
+            origin = find_text(image,(x+12,y+132,x+588,y+324),name,foreground,background)[0]
+            # White glyph pixels alone can also match an empty white field.
+            # A selected row must have the blue selection background as well.
+            if origin is not None and (foreground != SELECT_TEXT or
+                    image.getpixel((origin[0]-2,origin[1]+3)) == SELECT):
+                return origin
+        raise Failure("Sound does not list %s" % name)
+    image = settle("sound-clients")
+    app_row(image,"ToneA")
+    row_b = app_row(image,"ToneB")
+    expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")
+    expect_pixel(image,x+16,y+85,SELECT,"master meter shows mixed PCM")
+    # Select B, mute it, and check its meter clears while master still has A.
+    s.qmp.move_to(row_b[0]+8,row_b[1]+4)
+    s.qmp.click()
+    image = settle("sound-selected")
+    expect_text(image,(x,y+336,x+580,y+358),"ToneB",TEXT,FACE,"selected stream follows list selection")
+    s.qmp.move_to(x+468,y+376)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    image = settle("sound-muted-app")
+    expect_pixel(image,x+16,y+405,FIELD,"muted application meter is silent")
+    expect_pixel(image,x+16,y+85,SELECT,"another application keeps playing")
+    # Unmute preserves gain; keyboard Home/End exercises the native slider.
+    s.qmp.move_to(x+468,y+376)
+    s.qmp.click()
+    s.qmp.move_to(x+225,y+374)
+    s.qmp.click()
+    s.qmp.tap("home")
+    s.qmp.move_to(1000,120)
+    image = settle("sound-zero-gain")
+    expect_text(image,(x+530,y+360,x+588,y+391),"0%",TEXT,FACE,"application slider applies zero gain")
+    expect_pixel(image,x+16,y+405,FIELD,"zero gain clears selected meter")
+    s.qmp.tap("end")
+    image = settle("sound-restored-gain")
+    expect_text(image,(x+530,y+360,x+588,y+391),"100%",TEXT,FACE,"application slider restores gain")
+    expect_pixel(image,x+16,y+405,SELECT,"selected meter resumes")
+    s.qmp.move_to(x+468,y+55)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    image = settle("sound-master-muted")
+    expect_pixel(image,x+16,y+85,FIELD,"master mute clears output meter")
+    s.qmp.move_to(x+468,y+55)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    image = settle("sound-master-restored")
+    expect_pixel(image,x+16,y+85,SELECT,"master unmute restores output meter")
+    s.qmp.move_to(x+540,y+440)
+    s.qmp.click()
+    settle("sound-closed")
+
+
 SCENARIOS = {
+    "sound": scenario_sound,
     "doom": scenario_doom,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,

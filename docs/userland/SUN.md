@@ -47,7 +47,7 @@ the name of the layer, not a rename of its symbols.
 |---|---|---|---|
 | Base | `include/sxn/sxn.h` | processes, handles, events, waits, sections and views, pipes, devices, ports, the clock | `kernel32` |
 | Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer | `user32` (window + message loop) |
-| Sound | `include/sxn/sxnaudio.h` | a PCM stream to `audiod` through its native port, or to `/dev/audio0` directly when no daemon runs, paced by the clock | `waveOut`, XAudio2's source voice |
+| Sound | `include/sxn/sxnaudio.h` | PCM streams, master gain/mute, and native `audiod` control snapshots with per-stream gain, mute and levels | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows | `comctl32` + the message loop |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
@@ -65,6 +65,12 @@ POSIX program gets the POSIX host without asking. A SUN program gets the SUN
 host and an application frame over `sxnwm` from `sxn/sxngui.h`
 (`sxngui_app_*`), which Task Manager brought as the first SUN program drawn
 with the toolkit.
+
+The [Sound panel](../media/SOUND.md) consumes the SUN audio-control slice:
+`sxnaudio_control_open/close`, `sxnaudio_control_query/read`, and
+`sxnaudio_control_change`, plus typed master gain/mute helpers. Control traffic
+uses its own native connection and never claims a PCM writer. `nativetest`
+asserts the helpers with the real daemon, including census and meter values.
 
 ### Resources compiled in
 

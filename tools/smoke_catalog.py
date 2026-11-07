@@ -462,6 +462,13 @@ SCENARIOS: dict[str, Scenario] = {
         "The rescue system, booted with no disk",
         no_disk=True,
     ),
+    "sound-smoke": _qemu_scenario(
+        "", "SOUND SMOKE PASS", "SOUND SMOKE FAIL",
+        "SUN Sound panel from the volume popup, live mixer controls and meters",
+        300.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="sound",
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "sxgui-smoke": _qemu_scenario(
         "",
         "SXGUI SMOKE PASS",

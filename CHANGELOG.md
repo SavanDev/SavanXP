@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The SUN Sound panel controls master and application volume, mute and live levels.**
+  Open `sound.sxe` from **Sound settings...** in the speaker popup or the System group.
+  See [SOUND.md](docs/media/SOUND.md); `smoke sound-smoke` checks the panel and its controls.
+
 - **Analog HD Audio playback through an OpenBSD `azalia` port.** Confirmed on the Ryzen/ALC892 host.
   `--audio-device hda`, `smoke hda-stream` and `hda-stream-quiet` cover QEMU playback at full/half volume.
   Scope and limits: [AZALIA.md](docs/kernel/AZALIA.md).

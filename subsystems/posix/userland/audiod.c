@@ -28,7 +28,7 @@
  * clientes, un datagrama roto, mezcla exacta y escritura real al device.
  */
 
-#define AUDIOD_MAX_STREAMS 8u
+#define AUDIOD_MAX_STREAMS SAVANXP_AUDIOD_MAX_STREAMS
 #define AUDIOD_FIFO_FRAMES 4800u /* 100 ms a 48 kHz */
 /* Dos tiempos distintos que antes eran uno solo. La expiracion es de la ENTRADA
  * del stream: callado un rato largo, se libera el slot. El PLC es otra cosa:
@@ -46,7 +46,11 @@ struct audiod_stream {
     int used;
     uint16_t port;
     uint32_t rate_hz;
-    uint8_t volume; /* 0..100, 100 de fabrica */
+    uint8_t volume; /* 0..100, initially 100 */
+    uint8_t muted;
+    uint32_t id;
+    uint16_t peak_left, peak_right;
+    uint64_t peak_ms;
     char name[SAVANXP_AUDIOD_NAME_BYTES];
     uint32_t last_sequence;
     int has_sequence;
@@ -57,9 +61,9 @@ struct audiod_stream {
     int16_t fifo[AUDIOD_FIFO_FRAMES * 2u];
     size_t fifo_head;
     size_t fifo_frames;
-    /* Ultimo frame ya escalado por volume, para PLC: si el stream calla un
-     * instante por jitter, el render lo repite en vez de inyectar ceros.
-     * has_last queda en 0 hasta que suena el primer frame. */
+    /* Last raw frame for PLC. Apply current gain/mute when concealing too,
+     * so a control change takes effect without waiting for another packet.
+     * has_last stays clear until the first frame is played. */
     int16_t last_left;
     int16_t last_right;
     int has_last;
@@ -82,6 +86,9 @@ struct audiod_native_client {
 
 static struct audiod_native_client g_native[SAVANXP_AUDIOD_NATIVE_SLOTS];
 static long g_native_port = -1;
+static uint32_t g_next_stream_id = 1;
+static uint16_t g_peak_left, g_peak_right;
+static uint64_t g_peak_ms;
 static uint32_t g_device_rate_hz;
 static uint64_t g_dropped_packets;
 static uint64_t g_mismatch_packets;
@@ -152,6 +159,8 @@ static struct audiod_stream* audiod_register_stream(uint16_t port, uint32_t rate
             stream->port = port;
             stream->rate_hz = rate_hz;
             stream->volume = 100;
+            stream->id = g_next_stream_id++;
+            if (!g_next_stream_id) g_next_stream_id = 1;
             stream->last_ms = now_ms;
             stream->last_audio_ms = now_ms;
             eprintf("audiod: cliente en puerto %u (%u Hz)\n", (unsigned int)port, rate_hz);
@@ -542,6 +551,57 @@ static void audiod_accept_native(uint64_t now_ms)
     }
 }
 
+/* One immutable census per native query; control-only connections do not
+ * allocate entries in g_streams. Peaks hold for 100 ms independently of reads. */
+static void audiod_handle_snapshot(struct audiod_native_client* client,
+    const unsigned char* data, size_t length)
+{
+    struct savanxp_audiod_snapshot_query query;
+    struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_record record;
+    size_t i;
+    if (length != sizeof(query)) return;
+    memcpy(&query, data, sizeof(query));
+    if (query.version != SAVANXP_AUDIOD_CONTROL_VERSION) return;
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    snapshot.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    snapshot.kind = SAVANXP_AUDIOD_SNAPSHOT_REPLY;
+    snapshot.request_id = query.request_id;
+    snapshot.peak_left = g_peak_left; snapshot.peak_right = g_peak_right;
+    for (i = 0; i < AUDIOD_MAX_STREAMS; ++i) {
+        const struct audiod_stream* stream = &g_streams[i];
+        struct savanxp_audiod_stream_state* state;
+        if (!stream->used) continue;
+        state = &snapshot.streams[snapshot.count++];
+        state->id = stream->id; state->port = stream->port;
+        state->volume = stream->volume; state->muted = stream->muted;
+        state->peak_left = stream->peak_left; state->peak_right = stream->peak_right;
+        audiod_copy_name(state->name, stream->name);
+    }
+    memset(&record, 0, sizeof(record));
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC;
+    record.length = sizeof(snapshot);
+    memcpy(record.payload, &snapshot, sizeof(snapshot));
+    (void)sxn_write(client->write_handle, &record, sizeof(record));
+}
+
+static void audiod_handle_stream_control(const unsigned char* data, size_t length)
+{
+    struct savanxp_audiod_stream_control control;
+    struct audiod_stream* stream;
+    if (length != sizeof(control)) return;
+    memcpy(&control, data, sizeof(control));
+    if (control.version != SAVANXP_AUDIOD_CONTROL_VERSION ||
+        (control.kind != SAVANXP_AUDIOD_STREAM_VOLUME && control.kind != SAVANXP_AUDIOD_STREAM_MUTED) ||
+        control.value > (control.kind == SAVANXP_AUDIOD_STREAM_VOLUME ? 100 : 1)) return;
+    stream = audiod_find_stream(control.port);
+    if (!stream || stream->id != control.id) return;
+    if (control.kind == SAVANXP_AUDIOD_STREAM_VOLUME) stream->volume = control.value;
+    else stream->muted = control.value;
+    stream->peak_left = stream->peak_right = 0;
+}
+
 static void audiod_handle_native_datagram(
     struct audiod_native_client* client,
     const unsigned char* data,
@@ -576,6 +636,14 @@ static void audiod_handle_native_datagram(
     else if (kind == SAVANXP_AUDIOD_LIST)
     {
         audiod_handle_list(audiod_send_native_reply, client);
+    }
+    else if (kind == SAVANXP_AUDIOD_SNAPSHOT)
+    {
+        audiod_handle_snapshot(client, data, length);
+    }
+    else if (kind == SAVANXP_AUDIOD_STREAM_VOLUME || kind == SAVANXP_AUDIOD_STREAM_MUTED)
+    {
+        audiod_handle_stream_control(data, length);
     }
     else
     {
@@ -644,55 +712,52 @@ static int32_t audiod_soft_knee(int32_t mixed)
     return mixed;
 }
 
+static void audiod_peak(uint16_t* peak, int32_t sample)
+{
+    uint32_t magnitude = (uint32_t)(sample < 0 ? -sample : sample);
+    if (magnitude > *peak) *peak = (uint16_t)magnitude;
+}
+
 static size_t audiod_render(int16_t* out, size_t frame_count, uint64_t now_ms)
 {
-    size_t frame;
-
-    for (frame = 0; frame < frame_count; ++frame)
-    {
-        int32_t left = 0;
-        int32_t right = 0;
-        size_t index;
-
-        for (index = 0; index < AUDIOD_MAX_STREAMS; ++index)
-        {
+    size_t frame, index;
+    if (now_ms - g_peak_ms >= 100) {
+        g_peak_left = g_peak_right = 0; g_peak_ms = now_ms;
+    }
+    for (index = 0; index < AUDIOD_MAX_STREAMS; ++index) {
+        struct audiod_stream* stream = &g_streams[index];
+        if (now_ms - stream->peak_ms >= 100) {
+            stream->peak_left = stream->peak_right = 0; stream->peak_ms = now_ms;
+        }
+    }
+    for (frame = 0; frame < frame_count; ++frame) {
+        int32_t left = 0, right = 0;
+        for (index = 0; index < AUDIOD_MAX_STREAMS; ++index) {
             struct audiod_stream* stream = &g_streams[index];
-            if (!stream->used)
-            {
-                continue;
-            }
-            if (stream->fifo_frames == 0)
-            {
-                /* PLC solo mientras el ultimo datagrama es reciente: cubre el
-                 * jitter de un cliente que sigue vivo. Pasado el margen (y
-                 * hasta que expire la entrada) va silencio: un stream callado
-                 * ya no tiene audio que repetir. Antes del primer frame,
-                 * silencio tambien. */
+            int32_t sample_left = 0, sample_right = 0;
+            if (!stream->used) continue;
+            if (stream->fifo_frames == 0) {
+                /* Conceal briefly from the raw last frame, under current gain. */
                 ++stream->underruns;
-                if (stream->has_last &&
-                    now_ms - stream->last_audio_ms <= (uint64_t)AUDIOD_PLC_MS)
-                {
-                    left += stream->last_left;
-                    right += stream->last_right;
+                if (stream->has_last && now_ms - stream->last_audio_ms <= AUDIOD_PLC_MS) {
+                    sample_left = stream->last_left; sample_right = stream->last_right;
                 }
-                continue;
-            }
-            {
-                int32_t scaled_left =
-                    (int32_t)stream->fifo[stream->fifo_head * 2u] * (int32_t)stream->volume / 100;
-                int32_t scaled_right =
-                    (int32_t)stream->fifo[stream->fifo_head * 2u + 1u] * (int32_t)stream->volume / 100;
-                left += scaled_left;
-                right += scaled_right;
-                stream->last_left = (int16_t)scaled_left;
-                stream->last_right = (int16_t)scaled_right;
+            } else {
+                sample_left = stream->fifo[stream->fifo_head * 2u];
+                sample_right = stream->fifo[stream->fifo_head * 2u + 1u];
+                stream->last_left = (int16_t)sample_left; stream->last_right = (int16_t)sample_right;
                 stream->has_last = 1;
+                stream->fifo_head = (stream->fifo_head + 1u) % AUDIOD_FIFO_FRAMES;
+                --stream->fifo_frames;
             }
-            stream->fifo_head = (stream->fifo_head + 1u) % AUDIOD_FIFO_FRAMES;
-            stream->fifo_frames -= 1u;
+            sample_left = stream->muted ? 0 : sample_left * stream->volume / 100;
+            sample_right = stream->muted ? 0 : sample_right * stream->volume / 100;
+            audiod_peak(&stream->peak_left, sample_left); audiod_peak(&stream->peak_right, sample_right);
+            left += sample_left; right += sample_right;
         }
         out[frame * 2u] = (int16_t)audiod_soft_knee(left);
         out[frame * 2u + 1u] = (int16_t)audiod_soft_knee(right);
+        audiod_peak(&g_peak_left, out[frame * 2u]); audiod_peak(&g_peak_right, out[frame * 2u + 1u]);
     }
     return frame_count;
 }
@@ -1280,6 +1345,59 @@ static int audiod_selftest(void)
             goto fail;
         }
         sleep_ms(100);
+    }
+    /* Assert actual rendered samples, not only control metadata: muting A
+     * leaves B intact; mute also covers PLC and restoring gain preserves it.
+     * Reusing a port must reject the previous stream's delayed command. */
+    {
+        struct audiod_stream* a;
+        struct audiod_stream* b;
+        struct savanxp_audiod_stream_control control;
+        int16_t rendered[2];
+        int16_t frame_a[2] = {12000, -12000};
+        int16_t frame_b[2] = {4000, -4000};
+        uint32_t old_id;
+        memset(g_streams,0,sizeof(g_streams));
+        a = audiod_register_stream(50000,g_device_rate_hz,1000);
+        b = audiod_register_stream(50001,g_device_rate_hz,1000);
+        if (!a || !b) goto fail;
+        memset(&control,0,sizeof(control));
+        control.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        control.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        control.kind = SAVANXP_AUDIOD_STREAM_VOLUME;
+        control.id = a->id; control.port = a->port; control.value = 50;
+        audiod_handle_stream_control((const unsigned char*)&control,sizeof(control));
+        (void)audiod_push_frames(a,frame_a,1); (void)audiod_push_frames(b,frame_b,1);
+        (void)audiod_render(rendered,1,1000);
+        if (rendered[0] != 10000 || rendered[1] != -10000 || a->peak_left != 6000 || b->peak_left != 4000) {
+            eprintf("AUDIOD SELFTEST FAIL stream gain/peak samples\n"); goto fail;
+        }
+        control.kind = SAVANXP_AUDIOD_STREAM_MUTED; control.value = 1;
+        audiod_handle_stream_control((const unsigned char*)&control,sizeof(control));
+        (void)audiod_push_frames(a,frame_a,1); (void)audiod_push_frames(b,frame_b,1);
+        (void)audiod_render(rendered,1,1000);
+        if (rendered[0] != 4000 || rendered[1] != -4000 || a->peak_left != 0) {
+            eprintf("AUDIOD SELFTEST FAIL per-stream mute affects another client\n"); goto fail;
+        }
+        a->last_audio_ms = b->last_audio_ms = 1000;
+        (void)audiod_render(rendered,1,1010);
+        if (rendered[0] != 4000 || rendered[1] != -4000) {
+            eprintf("AUDIOD SELFTEST FAIL mute ignored by PLC\n"); goto fail;
+        }
+        control.value = 0;
+        audiod_handle_stream_control((const unsigned char*)&control,sizeof(control));
+        (void)audiod_render(rendered,1,1020);
+        if (rendered[0] != 10000 || a->volume != 50 || a->muted) {
+            eprintf("AUDIOD SELFTEST FAIL unmute did not preserve gain\n"); goto fail;
+        }
+        old_id = a->id;
+        memset(a,0,sizeof(*a));
+        a = audiod_register_stream(50000,g_device_rate_hz,1100);
+        control.id = old_id; control.value = 1;
+        audiod_handle_stream_control((const unsigned char*)&control,sizeof(control));
+        if (!a || a->muted || a->id == old_id) {
+            eprintf("AUDIOD SELFTEST FAIL stale stream control accepted\n"); goto fail;
+        }
     }
     eprintf("AUDIOD SELFTEST PASS\n");
     savanxp_close((int)sock_a);

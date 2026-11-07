@@ -129,6 +129,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 - [`MEDIA_PLAYER.md`](media/MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
+- [`SOUND.md`](media/SOUND.md) — SUN Sound panel, popup shortcut, master and
+  application controls, native snapshots, live PCM meters and verification.
 - [`AUDIO_DAEMON.md`](media/AUDIO_DAEMON.md) — `audiod`, the mixing daemon: UDP
   loopback transport, the slice protocol, and who holds `/dev/audio0`.
 - [`MIDI.md`](media/MIDI.md) — `libsxmidi`, the General MIDI synthesizer: the SMF

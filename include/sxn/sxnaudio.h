@@ -1,6 +1,6 @@
 #pragma once
 
-/* sxnaudio: SUN sound (docs/userland/SUN.md), a stream of PCM to the speaker.
+/* sxnaudio: SUN sound (docs/userland/SUN.md), PCM playback and mixer control.
  *
  * A SUN program has no sockets, so it cannot reach audiod over UDP the way a
  * POSIX program does. It connects to the daemon's native port instead
@@ -237,4 +237,104 @@ static inline void sxnaudio_close(struct sxnaudio_stream* stream) {
     stream->from_daemon = -1;
     stream->device = -1;
     stream->mode = SXNAUDIO_MODE_CLOSED;
+}
+
+/* Control-only connection: never declares or feeds a playback stream. The
+ * caller owns retry timing; all record traffic is non-blocking. */
+struct sxnaudio_control {
+    long request;
+    long reply;
+};
+
+static inline void sxnaudio_control_close(struct sxnaudio_control* control) {
+    if (control->request >= 0) (void)sxn_close(control->request);
+    if (control->reply >= 0) (void)sxn_close(control->reply);
+    control->request = control->reply = -1;
+}
+
+static inline long sxnaudio_control_open(struct sxnaudio_control* control) {
+    int32_t handles[2] = {-1, -1};
+    long result;
+    control->request = control->reply = -1;
+    result = sxn_port_connect(SAVANXP_AUDIOD_PORT_NAME, handles);
+    if (result < 0) return result;
+    control->request = handles[0]; control->reply = handles[1];
+    result = sxn_set_nonblocking(control->request, 1);
+    if (result >= 0) result = sxn_set_nonblocking(control->reply, 1);
+    if (result < 0) sxnaudio_control_close(control);
+    return result < 0 ? result : 0;
+}
+
+static inline long sxnaudio_control_send(struct sxnaudio_control* control, const void* data, uint32_t length) {
+    struct sxnaudio_stream transport;
+    transport.to_daemon = control->request;
+    return sxnaudio_send_record(&transport, data, length);
+}
+
+static inline long sxnaudio_control_query(struct sxnaudio_control* control, uint32_t request_id) {
+    struct savanxp_audiod_snapshot_query query;
+    query.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    query.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    query.kind = SAVANXP_AUDIOD_SNAPSHOT;
+    query.request_id = request_id;
+    return sxnaudio_control_send(control, &query, sizeof(query));
+}
+
+/* 1 with a valid snapshot, 0 with nothing waiting, negative errno otherwise.
+ * An obsolete daemon's reply is an error, never an empty list of applications. */
+static inline long sxnaudio_control_read(struct sxnaudio_control* control,
+                                       struct savanxp_audiod_snapshot* snapshot) {
+    struct savanxp_audiod_record record;
+    const unsigned char* source = record.payload;
+    unsigned char* out = (unsigned char*)snapshot;
+    uint32_t i;
+    long got = sxn_read(control->reply, &record, sizeof(record));
+    if (got == -SAVANXP_EAGAIN) return 0;
+    if (got < 0) return got;
+    if (got != sizeof(record) || record.magic != SAVANXP_AUDIOD_RECORD_MAGIC ||
+        record.length != sizeof(*snapshot)) return -SAVANXP_EIO;
+    for (i = 0; i < sizeof(*snapshot); ++i) out[i] = source[i];
+    if (snapshot->magic != SAVANXP_AUDIOD_CONTROL_MAGIC ||
+        snapshot->version != SAVANXP_AUDIOD_CONTROL_VERSION ||
+        snapshot->kind != SAVANXP_AUDIOD_SNAPSHOT_REPLY ||
+        snapshot->count > SAVANXP_AUDIOD_MAX_STREAMS) return -SAVANXP_EIO;
+    for (i = 0; i < snapshot->count; ++i) {
+        if (!snapshot->streams[i].id || snapshot->streams[i].volume > 100 ||
+            snapshot->streams[i].muted > 1) return -SAVANXP_EIO;
+        snapshot->streams[i].name[SAVANXP_AUDIOD_NAME_BYTES - 1] = '\0';
+    }
+    return 1;
+}
+
+static inline long sxnaudio_control_change(struct sxnaudio_control* control,
+    const struct savanxp_audiod_stream_state* stream, uint16_t kind, uint8_t value) {
+    struct savanxp_audiod_stream_control change;
+    if ((kind != SAVANXP_AUDIOD_STREAM_VOLUME && kind != SAVANXP_AUDIOD_STREAM_MUTED) ||
+        value > (kind == SAVANXP_AUDIOD_STREAM_VOLUME ? 100 : 1)) return -SAVANXP_EINVAL;
+    change.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    change.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    change.kind = kind;
+    change.id = stream->id;
+    change.port = stream->port;
+    change.value = value;
+    change.reserved = 0;
+    return sxnaudio_control_send(control, &change, sizeof(change));
+}
+
+/* Reading/controlling master gain never claims the PCM writer. */
+static inline long sxnaudio_master_get(long device, uint32_t* volume, uint32_t* muted) {
+    long v = sxn_device_control(device, AUDIO_IOC_GET_VOLUME, 0);
+    long m = sxn_device_control(device, AUDIO_IOC_GET_MUTED, 0);
+    if (v < 0 || m < 0) return v < 0 ? v : m;
+    if (v > 100 || m > 1) return -SAVANXP_EIO;
+    *volume = (uint32_t)v; *muted = (uint32_t)m;
+    return 0;
+}
+static inline long sxnaudio_master_volume(long device, uint32_t volume) {
+    if (volume > 100) return -SAVANXP_EINVAL;
+    return sxn_device_control(device, AUDIO_IOC_SET_VOLUME, volume);
+}
+static inline long sxnaudio_master_muted(long device, uint32_t muted) {
+    if (muted > 1) return -SAVANXP_EINVAL;
+    return sxn_device_control(device, AUDIO_IOC_SET_MUTED, muted);
 }

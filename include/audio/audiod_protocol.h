@@ -89,10 +89,11 @@ struct savanxp_audiod_list_reply {
  * the daemon is behind; the client drops the record and counts it, as a UDP
  * client loses a datagram.
  *
- * The daemon gives each connection a stream number in
+ * The daemon reserves each connection a source number in
  * [SAVANXP_AUDIOD_NATIVE_FIRST_PORT, + SAVANXP_AUDIOD_NATIVE_SLOTS), below
- * every port UDP hands out, so SET_VOLUME and the census name a native stream
- * the same way they name a UDP one. Closing the pipe ends the stream. */
+ * every port UDP hands out. DECLARE or audio registers that source as a
+ * playback stream; control-only connections never enter the census.
+ * Closing the pipe ends the connection. */
 #define SAVANXP_AUDIOD_PORT_NAME "audiod"
 #define SAVANXP_AUDIOD_RECORD_MAGIC 0x53415550u /* "SAUP" */
 #define SAVANXP_AUDIOD_RECORD_BYTES 1024u
@@ -107,3 +108,54 @@ struct savanxp_audiod_record {
     uint32_t length; /* bytes of `payload` in use */
     unsigned char payload[SAVANXP_AUDIOD_RECORD_PAYLOAD]; /* one datagram */
 };
+
+/* Native control extension. Existing audio, LIST and SET_VOLUME messages keep
+ * their layouts. A complete snapshot fits one record, so a slow panel cannot
+ * assemble a census from different moments or fill eight response records.
+ * Levels are absolute S16 peaks (0..32768), after per-stream gain/mute and
+ * before kernel master gain. Stream ids distinguish reused source ports.
+ */
+#define SAVANXP_AUDIOD_MAX_STREAMS 8u
+#define SAVANXP_AUDIOD_SNAPSHOT 5u
+#define SAVANXP_AUDIOD_SNAPSHOT_REPLY 6u
+#define SAVANXP_AUDIOD_STREAM_VOLUME 7u
+#define SAVANXP_AUDIOD_STREAM_MUTED 8u
+
+struct savanxp_audiod_snapshot_query {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+};
+struct savanxp_audiod_stream_state {
+    uint32_t id;
+    uint16_t port;
+    uint8_t volume;
+    uint8_t muted;
+    uint16_t peak_left;
+    uint16_t peak_right;
+    char name[SAVANXP_AUDIOD_NAME_BYTES];
+};
+struct savanxp_audiod_snapshot {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    uint32_t count;
+    uint16_t peak_left;
+    uint16_t peak_right;
+    struct savanxp_audiod_stream_state streams[SAVANXP_AUDIOD_MAX_STREAMS];
+};
+struct savanxp_audiod_stream_control {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t id;
+    uint16_t port;
+    uint8_t value;
+    uint8_t reserved;
+};
+
+/* Wire snapshots must remain atomic within the native record payload. */
+typedef char savanxp_audiod_snapshot_fits_record[
+    sizeof(struct savanxp_audiod_snapshot) <= SAVANXP_AUDIOD_RECORD_PAYLOAD ? 1 : -1];

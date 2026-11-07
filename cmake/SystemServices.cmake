@@ -89,3 +89,6 @@ savanxp_system_service(NAME sxgltest TEST SOURCES sxgltest.c)
 savanxp_system_service(NAME diskmgmt SOURCES diskmgmt.c
     SHARED_SOURCES libsxdisk/sxdisk.c libsxfs/sxfs_core.c)
 target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")
+
+# Sound control panel: SUN consumer of audiod's native control port.
+savanxp_system_service(NAME sound SOURCES sound.c)

@@ -1100,6 +1100,64 @@ static void test_audio(void) {
             }
         }
         check(found);
+        /* SUN control is a separate, non-playing connection. It returns one
+         * atomic census and changes a generation-identified stream only. */
+        {
+            struct sxnaudio_control control = {-1, -1};
+            struct savanxp_audiod_snapshot snapshot;
+            struct savanxp_audiod_stream_state target;
+            uint32_t old_volume = 0, old_muted = 0;
+            int have_target = 0;
+            check(sxnaudio_master_get(stream.device, &old_volume, &old_muted) == 0);
+            check(sxnaudio_master_volume(stream.device, 50) == 0);
+            check(sxnaudio_master_muted(stream.device, 1) == 0);
+            {
+                uint32_t volume = 0, muted = 0;
+                check(sxnaudio_master_get(stream.device, &volume, &muted) == 0 && volume == 50 && muted == 1);
+            }
+            check(sxnaudio_master_volume(stream.device, old_volume) == 0);
+            check(sxnaudio_master_muted(stream.device, old_muted) == 0);
+            check(sxnaudio_control_open(&control) == 0);
+            for (attempt = 0; attempt < 30 && !have_target; ++attempt) {
+                uint32_t row;
+                (void)sxnaudio_write(&stream, frames, 480);
+                check(sxnaudio_control_query(&control, (uint32_t)attempt + 1) == 0);
+                (void)sxn_wait_one(pause, 20);
+                while (sxnaudio_control_read(&control, &snapshot) == 1) {
+                    for (row = 0; row < snapshot.count; ++row) {
+                        if (streq(snapshot.streams[row].name, "nativetest") &&
+                            snapshot.streams[row].peak_left > 0) {
+                            target = snapshot.streams[row]; have_target = 1;
+                        }
+                    }
+                    check(snapshot.count == 1); /* the monitor is not a playback client */
+                }
+            }
+            check(have_target);
+            if (have_target) {
+                int changed = 0;
+                check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_VOLUME, 25) == 0);
+                check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_MUTED, 1) == 0);
+                for (attempt = 0; attempt < 20 && !changed; ++attempt) {
+                    uint32_t row;
+                    (void)sxnaudio_write(&stream, frames, 480);
+                    check(sxnaudio_control_query(&control, 100 + attempt) == 0);
+                    (void)sxn_wait_one(pause, 20);
+                    while (sxnaudio_control_read(&control, &snapshot) == 1) {
+                        for (row = 0; row < snapshot.count; ++row) {
+                            const struct savanxp_audiod_stream_state* state = &snapshot.streams[row];
+                            if (state->id == target.id && state->volume == 25 && state->muted == 1 &&
+                                state->peak_left == 0 && state->peak_right == 0) changed = 1;
+                        }
+                    }
+                }
+                check(changed);
+                check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_VOLUME, 100) == 0);
+                check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_MUTED, 0) == 0);
+            }
+            sxnaudio_control_close(&control);
+            check(sxn_log("nativetest: audio control snapshot, gain, mute and meters") == 0);
+        }
         /* A full pipe ends a write early instead of blocking or dropping. */
         for (index = 0; index < 16u; index += 1) {
             result = sxnaudio_write(&stream, frames, 480u);
@@ -1113,6 +1171,33 @@ static void test_audio(void) {
     check(sxn_log("nativetest: audio: direct and through audiod's port") == 0);
 }
 
+/* Sustained SUN source for the Sound panel's visual regression. Runs only
+ * when explicitly requested; normal nativetest never enters this mode. */
+static void audio_source(const char* name) {
+    struct sxnaudio_stream stream;
+    int16_t frames[480 * 2];
+    uint32_t phase = 0;
+    uint64_t started;
+    long pause = sxn_event_create(0);
+    int amplitude = streq(name,"ToneB") ? 4000 : 12000;
+    if (sxnaudio_open(&stream,name) < 0) sxn_exit(1);
+    started = sxn_clock_ns();
+    while (sxn_clock_ns() - started < 180000000000ull) {
+        uint32_t due = sxnaudio_frames_due(&stream,30), i;
+        long written;
+        if (due > 480) due = 480;
+        for (i = 0; i < due; ++i) {
+            int16_t value = (phase + i) % 120 < 60 ? amplitude : -amplitude;
+            frames[i*2] = frames[i*2+1] = value;
+        }
+        written = sxnaudio_write(&stream,frames,due);
+        if (written < 0) break;
+        phase += (uint32_t)written;
+        (void)sxn_wait_one(pause,5);
+    }
+    sxnaudio_close(&stream); (void)sxn_close(pause); sxn_exit(0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -1123,6 +1208,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
     }
+    if (argc > 2 && streq(argv[1], "audio-source")) audio_source(argv[2]);
     if (argc > 1 && streq(argv[1], "portchild")) {
         run_port_child();
     }

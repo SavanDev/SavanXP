@@ -660,6 +660,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/nightwood"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/taskmgr"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/diskmgmt"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/sound"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

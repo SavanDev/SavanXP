@@ -1,0 +1,9 @@
+# Sound control panel, a SUN program.
+name=Sound
+description=Master and application volume, mute and level meters
+version=system
+vendor=SavanXP
+subsystem=native
+accent=2f6f3f
+icon=desktop
+category=System

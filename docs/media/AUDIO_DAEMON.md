@@ -89,6 +89,22 @@ rule as below. `nativetest` asserts both paths: direct with no daemon, then
 through the port of a real `/bin/audiod` it starts, finding its declared name
 in the census.
 
+## Sound panel control
+
+The SUN [Sound panel](SOUND.md) uses a control-only native connection. It asks
+for one atomic snapshot of every mixer stream and the output's PCM peaks,
+and changes a stream's gain or mute using both its source port and a unique
+registration id. Reused ports cannot receive an old panel's delayed command.
+These additional messages leave the original UDP census/volume layouts intact.
+Control-only connections do not register as playback streams.
+
+The daemon holds per-channel absolute peaks for 100 ms, independently of reads.
+Stream peaks include stream gain and mute; output peaks include the limiter
+but precede kernel master gain. PLC retains raw samples and applies the current
+gain/mute at render time, so muting an application also silences its concealed
+frames. Native-control assertions live in `nativetest`, and `audiod --selftest`
+compares the actual mixed samples for independent mute/gain and stale ids.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod
