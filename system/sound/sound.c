@@ -7,7 +7,7 @@
 #include "sxn/sxnaudio.h"
 #include "sound.sunres.h"
 
-enum { OUTPUT, MASTER, MASTER_MUTE, MASTER_LEVEL, MASTER_TEXT, APPLICATIONS,
+enum { OUTPUT, MASTER, MASTER_MUTE, MASTER_LEVEL, MASTER_TEXT, JACK_POLICY, APPLICATIONS,
        LIST, SELECTED, APP_VOLUME, APP_MUTE, APP_LEVEL, APP_TEXT, STATUS, CLOSE, WIDGETS };
 static struct sxngui_app g_app;
 static struct sxgui_widget g_widgets[WIDGETS];
@@ -17,6 +17,10 @@ static long g_device = -1;
 static uint32_t g_volume = 100, g_muted, g_selected;
 static uint32_t g_sequence, g_pending, g_route_pending;
 static uint64_t g_route_ms, g_route_error_until;
+static struct savanxp_audiod_jack_policy_reply g_policy;
+static uint32_t g_policy_pending;
+static int g_policy_changing;
+static uint64_t g_policy_ms, g_next_policy_ms;
 static struct savanxp_audio_endpoint g_outputs[SAVANXP_AUDIO_MAX_ENDPOINTS];
 static uint32_t g_output_count;
 static char g_output_rows[SAVANXP_AUDIO_MAX_ENDPOINTS][100];
@@ -50,13 +54,21 @@ static void refresh_outputs(void) {
             if (sxnaudio_endpoint_get(g_device,index,&endpoint) < 0) break;
             if (!(endpoint.flags & SAVANXP_AUDIO_PLAYBACK)) continue;
             g_outputs[g_output_count] = endpoint;
-            (void)snprintf(g_output_rows[g_output_count],sizeof(g_output_rows[0]),"%s - %s",
-                           endpoint.device_name,endpoint.name);
+            const char* presence = !(endpoint.flags & SAVANXP_AUDIO_JACK) ? "" :
+                !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_CAPABLE) ? " (no detection)" :
+                !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_VALID) ? " (unknown)" :
+                (endpoint.flags & SAVANXP_AUDIO_CONNECTED) ? " (connected)" : " (unplugged)";
+            (void)snprintf(g_output_rows[g_output_count],sizeof(g_output_rows[0]),"%s - %s%s",
+                           endpoint.device_name,endpoint.name,presence);
             g_output_ptrs[g_output_count] = g_output_rows[g_output_count];
             if (endpoint.flags & SAVANXP_AUDIO_SELECTED) active = (int)g_output_count;
             ++g_output_count;
         }
     }
+    g_widgets[JACK_POLICY].value = (int)g_policy.enabled;
+    if (g_online && g_policy.supported && !g_policy_changing && !g_route_pending)
+        g_widgets[JACK_POLICY].flags &= ~SXGUI_FLAG_DISABLED;
+    else g_widgets[JACK_POLICY].flags |= SXGUI_FLAG_DISABLED;
     g_widgets[OUTPUT].item_count = (int)g_output_count;
     g_widgets[OUTPUT].value = active;
     if (g_output_count && g_online && !g_route_pending) g_widgets[OUTPUT].flags &= ~SXGUI_FLAG_DISABLED;
@@ -107,6 +119,8 @@ static void disconnect(void) {
     sxnaudio_control_close(&g_control);
     memset(&g_snapshot,0,sizeof(g_snapshot));
     g_online = 0; g_pending = 0; g_selected = 0; g_route_pending = 0;
+    g_policy_pending = 0; g_next_policy_ms = 0; g_policy_changing = 0;
+    memset(&g_policy,0,sizeof(g_policy));
     (void)snprintf(g_status,sizeof(g_status), "Audio service unavailable. Master controls remain available.");
     g_retry_ms = sxn_clock_ns() / 1000000 + 1000;
 }
@@ -114,6 +128,7 @@ static void on_tick(struct sxngui_app* app) {
     uint64_t now = sxn_clock_ns() / 1000000;
     struct savanxp_audiod_snapshot snapshot;
     struct savanxp_audiod_endpoint_reply endpoint_reply;
+    struct savanxp_audiod_jack_policy_reply policy_reply;
     long result;
     if (g_device >= 0 && sxnaudio_master_get(g_device,&g_volume,&g_muted) < 0) {
         (void)sxn_close(g_device); g_device = -1;
@@ -135,15 +150,29 @@ static void on_tick(struct sxngui_app* app) {
         if (sxnaudio_control_open(&g_control) < 0) disconnect();
     }
     if (g_control.request >= 0) {
-        while ((result = sxnaudio_control_receive(&g_control,&snapshot,&endpoint_reply)) > 0) {
+        while ((result = sxnaudio_control_receive_ex(&g_control,&snapshot,&endpoint_reply,&policy_reply)) > 0) {
+            if (result == 3) {
+                if (g_policy_pending && policy_reply.request_id == g_policy_pending) {
+                    g_policy = policy_reply; g_policy_pending = 0; g_policy_changing = 0;
+                    if (policy_reply.result < 0) {
+                        (void)snprintf(g_route_error,sizeof(g_route_error),"Automatic switching could not be changed (%d).",policy_reply.result);
+                        g_route_error_until = now + 10000;
+                    }
+                }
+                continue;
+            }
             if (result == 2) {
                 if (g_route_pending && endpoint_reply.request_id == g_route_pending) {
                     g_route_pending = 0;
+                    g_next_policy_ms = 0;
                     if (endpoint_reply.result < 0) {
                         (void)snprintf(g_route_error,sizeof(g_route_error),"Output change failed (%d). %s",
                             endpoint_reply.result, endpoint_reply.endpoint_id ? "Previous output retained." : "Select an output to retry.");
                         g_route_error_until = now + 10000;
-                    } else g_route_error_until = 0;
+                    } else {
+                        g_route_error_until = 0;
+                        g_policy.enabled = 0; g_policy.last_error = 0;
+                    }
                 }
                 continue;
             }
@@ -154,7 +183,8 @@ static void on_tick(struct sxngui_app* app) {
             }
         }
         if (result < 0 || (g_pending && now - g_query_ms > 1000) ||
-            (g_route_pending && now - g_route_ms > 1000)) disconnect();
+            (g_route_pending && now - g_route_ms > 1000) ||
+            (g_policy_pending && now - g_policy_ms > 1000)) disconnect();
         else if (!g_pending) {
             ++g_sequence; if (!g_sequence) ++g_sequence;
             result = sxnaudio_control_query(&g_control,g_sequence);
@@ -162,7 +192,16 @@ static void on_tick(struct sxngui_app* app) {
             else if (result != -SAVANXP_EAGAIN) disconnect();
         }
     }
+    if (g_control.request >= 0 && !g_policy_pending && now >= g_next_policy_ms) {
+        ++g_sequence; if (!g_sequence) ++g_sequence;
+        result = sxnaudio_jack_policy_query(&g_control,g_sequence);
+        if (result == 0) { g_policy_pending = g_sequence; g_policy_ms = now; g_next_policy_ms = now + 1000; }
+        else if (result != -SAVANXP_EAGAIN) disconnect();
+    }
+    if (g_policy.last_error < 0)
+        (void)snprintf(g_status,sizeof(g_status),"Automatic output change failed (%d). Select an output to retry.",g_policy.last_error);
     if (g_route_pending) (void)snprintf(g_status,sizeof(g_status),"Changing output...");
+    else if (g_policy_changing) (void)snprintf(g_status,sizeof(g_status),"Changing automatic switching...");
     else if (now < g_route_error_until) (void)snprintf(g_status,sizeof(g_status),"%s",g_route_error);
     refresh_outputs();
     refresh_controls();
@@ -176,9 +215,18 @@ static void on_control(struct sxgui_widget* widget, void* user) {
         if (g_online && !g_route_pending && widget->value >= 0 && (uint32_t)widget->value < g_output_count) {
             ++g_sequence; if (!g_sequence) ++g_sequence;
             result = sxnaudio_endpoint_select(&g_control,g_sequence,g_outputs[widget->value].id,SAVANXP_AUDIO_PLAYBACK);
-            if (result == 0) { g_route_pending = g_sequence; g_route_ms = sxn_clock_ns()/1000000; }
+            if (result == 0) {
+                g_route_pending = g_sequence; g_route_ms = sxn_clock_ns()/1000000;
+                /* Discard a policy reply that could predate this manual choice. */
+                g_policy_pending = 0; g_policy_changing = 0;
+            }
             refresh_outputs();
         }
+    } else if (widget == &g_widgets[JACK_POLICY]) {
+        ++g_sequence; if (!g_sequence) ++g_sequence;
+        result = sxnaudio_jack_policy_set(&g_control,g_sequence,(uint32_t)widget->value);
+        if (result == 0) { g_policy_pending = g_sequence; g_policy_ms = sxn_clock_ns()/1000000; g_policy_changing = 1; }
+        refresh_outputs();
     } else if (widget == &g_widgets[MASTER]) {
         result = sxnaudio_master_volume(g_device,(uint32_t)widget->value);
         if (result >= 0) g_volume = (uint32_t)widget->value;
@@ -214,8 +262,9 @@ static void layout(struct sxngui_app* app) {
     g_widgets[MASTER_MUTE].rect = sx_rect_make(width-140,43,76,24);
     g_widgets[MASTER_TEXT].rect = sx_rect_make(width-60,43,48,24);
     g_widgets[MASTER_LEVEL].rect = sx_rect_make(12,80,width-24,14);
-    g_widgets[APPLICATIONS].rect = sx_rect_make(12,106,width-24,22);
-    g_widgets[LIST].rect = sx_rect_make(12,132,width-24,bottom-144);
+    g_widgets[JACK_POLICY].rect = sx_rect_make(12,100,width-24,22);
+    g_widgets[APPLICATIONS].rect = sx_rect_make(12,132,width-24,22);
+    g_widgets[LIST].rect = sx_rect_make(12,158,width-24,bottom-170);
     g_widgets[SELECTED].rect = sx_rect_make(12,bottom,width-24,20);
     g_widgets[APP_VOLUME].rect = sx_rect_make(12,bottom+24,width-172,30);
     g_widgets[APP_MUTE].rect = sx_rect_make(width-140,bottom+27,76,24);
@@ -234,6 +283,8 @@ int main(int argc, char** argv) {
     g_widgets[MASTER_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
     g_widgets[MASTER_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
     g_widgets[MASTER_TEXT] = sxgui_label(sx_rect_make(0,0,0,0),g_master_text);
+    g_widgets[JACK_POLICY] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Automatically switch to headphones",0);
+    g_widgets[JACK_POLICY].on_action = on_control;
     g_widgets[APPLICATIONS] = sxgui_label(sx_rect_make(0,0,0,0),"Applications");
     g_widgets[LIST] = sxgui_listbox(sx_rect_make(0,0,0,0),g_row_ptrs,0);
     g_widgets[LIST].columns = g_columns; g_widgets[LIST].column_count = 4;

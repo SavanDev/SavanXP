@@ -5,8 +5,9 @@ Realtek ALC892 codec on the [development host](REAL_HARDWARE.md). The backend
 is a selective port, not the full OpenBSD audio subsystem. It supports one
 active analog output at a time, selected from valid codec paths, 48 kHz stereo
 S16 PCM, and software master gain. AC'97 and virtio-sound remain separate
-backends. HDMI, capture, automatic jack switching, power
-management and most codec-specific quirks are not implemented.
+backends. The audio service optionally switches analog jacks using the
+presence inventory below. HDMI, capture, power management and most
+codec-specific quirks are not implemented.
 
 ## Source and license
 
@@ -77,6 +78,25 @@ current VMM has no MMIO unmap. Command DMA is stopped before another candidate
 reuses its ring storage. A controller that refuses to stop ends the probe;
 its buffers stay allocated. DMA above 4 GiB is refused when GCAP lacks 64-bit
 address support. Probe failure leaves lower-priority AC'97 available.
+
+## Jack presence
+
+Control inventory reads refresh analog pin sense at most every 250 ms. The
+port uses the OpenBSD capability/firmware-override rules from `sense_pins` and
+its `MI_TARGET_PINSENSE` read. Pins without presence capability or marked
+`NO_PRESENCE` never receive sensing commands. Trigger-capable pins receive
+`EXECUTE_PIN_SENSE` before `GET_PIN_SENSE`; this protocol detail was cross-checked
+against Linux v6.12's [read_pin_sense](https://github.com/torvalds/linux/blob/v6.12/sound/pci/hda/hda_jack.c#L41-L58)
+without importing Linux source. Register values still come from the pinned BSD
+header. Trigger/read failures produce Unknown, not Absent. Unsupported,
+Absent, Present and Unknown are distinct in the port and exposed as capability,
+validity and connected flags in the endpoint ABI.
+
+Sensing runs during inventory requests under the kernel lock, never as a
+potentially timing-out verb in the BSP timer. The service polls inventory for
+its optional policy; Sound polls it for connector status. Unsolicited events
+remain disabled. Automatic preference and failure latching live in the service,
+not in the hardware driver. They only target connectors on the chosen device.
 
 ## DMA and timing
 

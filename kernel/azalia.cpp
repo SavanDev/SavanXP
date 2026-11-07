@@ -54,7 +54,7 @@ bool g_ready = false, g_prepared = false;
 uint64_t g_played = 0, g_written = 0, g_last_poll_ns = 0;
 uint32_t g_last_position = 0, g_dropped = 0, g_underruns = 0;
 uint8_t g_scratch[kPeriod];
-uint64_t g_device_id = 0;
+uint64_t g_device_id = 0, g_next_presence_ns = 0;
 
 uint32_t mmio_read(void*, uint16_t offset, unsigned width) {
     if (width == 1) return *reinterpret_cast<volatile uint8_t*>(g_mmio + offset);
@@ -247,6 +247,14 @@ void stop() {
 }
 bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
     if (!g_ready) return false;
+    const uint64_t now = timer::monotonic_ns();
+    if (now >= g_next_presence_ns) {
+        g_next_presence_ns = now + 250000000;
+        for (int nid = g_codec.wstart; nid < g_codec.wend; ++nid) {
+            Path route;
+            if (output_path(&g_codec,nid,route)) g_codec.w[nid].d.pin.presence = pin_presence(&g_codec,nid);
+        }
+    }
     for (int nid = g_codec.wstart; nid < g_codec.wend; ++nid) {
         Path path;
         if (!output_path(&g_codec, nid, path)) continue;
@@ -259,6 +267,11 @@ bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
         info.flags = SAVANXP_AUDIO_PLAYBACK | SAVANXP_AUDIO_AVAILABLE;
         if (g_path.count && g_path.nodes[0] == nid) info.flags |= SAVANXP_AUDIO_SELECTED;
         if (CORB_CD_PORT(pin.d.pin.config) == CORB_CD_JACK) info.flags |= SAVANXP_AUDIO_JACK;
+        if (pin.d.pin.device == CORB_CD_HEADPHONE) info.flags |= SAVANXP_AUDIO_HEADPHONES;
+        if (pin_detectable(pin)) info.flags |= SAVANXP_AUDIO_PRESENCE_CAPABLE;
+        if (pin.d.pin.presence == PinPresence::Present || pin.d.pin.presence == PinPresence::Absent)
+            info.flags |= SAVANXP_AUDIO_PRESENCE_VALID;
+        if (pin.d.pin.presence == PinPresence::Present) info.flags |= SAVANXP_AUDIO_CONNECTED;
         const unsigned location = CORB_CD_LOC_GEO(pin.d.pin.config);
         const char* position = location == CORB_CD_FRONT ? "Front " : location == CORB_CD_REAR ? "Rear " : "";
         const char* name = pin.d.pin.device == CORB_CD_HEADPHONE ? "headphones" :

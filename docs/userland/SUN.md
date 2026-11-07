@@ -75,6 +75,9 @@ The same slice now includes `sxnaudio_endpoint_get`, acknowledged
 `sxnaudio_endpoint_select` and `sxnaudio_control_receive`: stable hardware
 inventory and coordinated output selection, with access/ownership assertions.
 `audio-offline` runs the native assertions on HDA without a NIC.
+`sxnaudio_jack_policy_query/set` and `sxnaudio_control_receive_ex` expose optional
+automatic headphone switching and its effective support/error state; endpoint
+flags distinguish unsupported, unknown, unplugged and connected jacks.
 
 ### Resources compiled in
 

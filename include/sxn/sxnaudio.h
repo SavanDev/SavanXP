@@ -281,9 +281,11 @@ static inline long sxnaudio_control_query(struct sxnaudio_control* control, uint
 }
 
 /* Receive one native control reply: 1 snapshot, 2 endpoint acknowledgement,
+ * 3 jack policy (receive_ex only),
  * 0 when nothing is waiting, negative errno for EOF/malformed data. */
-static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
-    struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint) {
+static inline long sxnaudio_control_receive_ex(struct sxnaudio_control* control,
+    struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint,
+    struct savanxp_audiod_jack_policy_reply* policy) {
     struct savanxp_audiod_record record;
     const struct savanxp_audiod_list_query* header = (const struct savanxp_audiod_list_query*)record.payload;
     unsigned char* out;
@@ -301,6 +303,12 @@ static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
             endpoint->direction != SAVANXP_AUDIO_CAPTURE)) return -SAVANXP_EIO;
         return 2;
     }
+    if (header->kind == SAVANXP_AUDIOD_JACK_POLICY_REPLY && record.length == sizeof(*policy) && policy) {
+        out = (unsigned char*)policy;
+        for (i = 0; i < sizeof(*policy); ++i) out[i] = record.payload[i];
+        if (policy->enabled > 1 || policy->supported > 1 || policy->reserved) return -SAVANXP_EIO;
+        return 3;
+    }
     if (header->kind != SAVANXP_AUDIOD_SNAPSHOT_REPLY || record.length != sizeof(*snapshot) || !snapshot)
         return -SAVANXP_EIO;
     out = (unsigned char*)snapshot;
@@ -313,6 +321,26 @@ static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
     }
     return 1;
 }
+static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
+    struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint) {
+    return sxnaudio_control_receive_ex(control,snapshot,endpoint,0);
+}
+static inline long sxnaudio_jack_policy_send(struct sxnaudio_control* control,
+    uint32_t request_id, uint16_t kind, uint32_t enabled) {
+    struct savanxp_audiod_jack_policy_request request;
+    if (enabled > 1) return -SAVANXP_EINVAL;
+    request.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    request.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    request.kind = kind; request.request_id = request_id; request.enabled = enabled;
+    return sxnaudio_control_send(control,&request,sizeof(request));
+}
+static inline long sxnaudio_jack_policy_query(struct sxnaudio_control* control, uint32_t request_id) {
+    return sxnaudio_jack_policy_send(control,request_id,SAVANXP_AUDIOD_JACK_POLICY_QUERY,0);
+}
+static inline long sxnaudio_jack_policy_set(struct sxnaudio_control* control, uint32_t request_id, uint32_t enabled) {
+    return sxnaudio_jack_policy_send(control,request_id,SAVANXP_AUDIOD_JACK_POLICY_SET,enabled);
+}
+
 static inline long sxnaudio_control_read(struct sxnaudio_control* control,
                                         struct savanxp_audiod_snapshot* snapshot) {
     return sxnaudio_control_receive(control,snapshot,0);

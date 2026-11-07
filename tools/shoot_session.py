@@ -2608,15 +2608,15 @@ def scenario_sound(s):
             break
     if header is None:
         raise Failure("Sound did not open from the volume popup")
-    # The label starts at content (12,110): y106 plus its centred 13px face.
-    x,y = header[0]-12,header[1]-110
+    # The label starts at content (12,136): y132 plus its centred 13px face.
+    x,y = header[0]-12,header[1]-136
     box = (x,y,x+600,y+460)
     def settle(name):
         time.sleep(1.0)
         return s.shot(name)
     def app_row(image,name):
         for foreground,background in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
-            origin = find_text(image,(x+12,y+132,x+588,y+324),name,foreground,background)[0]
+            origin = find_text(image,(x+12,y+158,x+588,y+324),name,foreground,background)[0]
             # White glyph pixels alone can also match an empty white field.
             # A selected row must have the blue selection background as well.
             if origin is not None and (foreground != SELECT_TEXT or
@@ -2628,6 +2628,8 @@ def scenario_sound(s):
     row_b = app_row(image,"ToneB")
     expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")
     expect_pixel(image,x+16,y+85,SELECT,"master meter shows mixed PCM")
+    expect_text(image,(x+12,y+100,x+588,y+124),"Automatically switch to headphones",(128,128,128),FACE,
+                "unsupported jack detection leaves automatic switching disabled")
     expect_text(image,(x+12,y+12,x+588,y+34),"AC'97 - Default output",TEXT,FIELD,
                 "output selector names the effective device and connector")
     s.qmp.move_to(x+575,y+22)

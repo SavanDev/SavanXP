@@ -924,6 +924,8 @@ enum savanxp_audio_backend {
 #define SAVANXP_AUDIO_JACK 0x0020u
 #define SAVANXP_AUDIO_PRESENCE_VALID 0x0040u
 #define SAVANXP_AUDIO_CONNECTED 0x0080u
+#define SAVANXP_AUDIO_HEADPHONES 0x0100u
+#define SAVANXP_AUDIO_PRESENCE_CAPABLE 0x0200u
 #define SAVANXP_AUDIO_MAX_ENDPOINTS 32u
 
 /* Stable hardware identity, independent of enumeration order. A connector is

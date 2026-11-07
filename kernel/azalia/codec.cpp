@@ -298,6 +298,22 @@ int configure_path(codec_t* c, const Path& path) {
     return 0;
 }
 
+bool pin_detectable(const widget_t& pin) {
+    // Same capability and firmware override rules as OpenBSD sense_pins.
+    return pin.enable && pin.type == COP_AWTYPE_PIN_COMPLEX &&
+        CORB_CD_PORT(pin.d.pin.config) == CORB_CD_JACK &&
+        (pin.d.pin.cap & COP_PINCAP_PRESENCE) &&
+        !(CORB_CD_MISC(pin.d.pin.config) & CORB_CD_PRESENCEOV);
+}
+PinPresence pin_presence(codec_t* c, int nid) {
+    if (!azalia_widget_enabled(c,nid) || !pin_detectable(c->w[nid])) return PinPresence::Unsupported;
+    uint32_t sense = 0;
+    if ((c->w[nid].d.pin.cap & COP_PINCAP_TRIGGER) &&
+        azalia_comresp(c,nid,CORB_EXECUTE_PIN_SENSE,0,nullptr)) return PinPresence::Unknown;
+    if (azalia_comresp(c,nid,CORB_GET_PIN_SENSE,0,&sense)) return PinPresence::Unknown;
+    return (sense & CORB_PS_PRESENCE) ? PinPresence::Present : PinPresence::Absent;
+}
+
 int switch_output(codec_t* c, Path& current, const Path& next) {
     // Rebuild from the pin rather than trusting a caller-supplied path.
     Path candidate;

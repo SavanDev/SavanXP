@@ -21,8 +21,10 @@ interrupt routing and audio(9) are adapted or replaced explicitly.
 
 Initial scope is analog stereo S16 at 48 kHz. Software master volume reuses
 `audio::`; hardware amplifier setup and connection selection remain part of
-the codec port. The six follow-up stages below cover route selection, capture and the host's
-HDMI controller. Broad codec compatibility remains outside this target.
+the codec port. The six follow-up stages below cover analog routing, capture and multiple
+devices. HDMI was explicitly deferred by the user on 2026-11-07; the pinned
+OpenBSD source skips HDMI codecs. Broad codec compatibility remains outside
+this target.
 
 ## Acceptance gates
 
@@ -72,14 +74,18 @@ early stage does not close the whole roadmap.
 | 2. Manual selection | Output selector; coordinated transitions and useful failure state | Rear line-out / front headphones, selectors, DACs, amps, EAPD; rollback on failure | Actual verb assertions and failed-transition rollback; SUN and visual checks |
 | 3. Jack detection | Visible plug state and explicit automatic-switch policy | Detect presence and report changes before enabling policy | Fake hardware plug/unplug and unsupported/error cases; policy assertions |
 | 4. Capture | SUN recording, input selector, gain, mute, meter and recording test | ADC routing, capture DMA, concurrent playback/capture | Known input PCM, independent gain/mute, duplex and ownership assertions |
-| 5. Multiple devices / HDMI | Default playback and capture choices, availability and failures | Independent controllers/codecs; host Vega HDMI with compatible receiver | Multiple-device isolation; HDMI verbs/receiver state; playback regression |
+| 5. Multiple devices | Default playback and capture choices, availability and failures | Independent supported controllers/codecs; keep digital codecs separate | Multiple-device isolation, unavailable devices and playback/capture regression |
 | 6. Preferences / recovery | Stable application identities; saved devices, routes, policy and levels; restore after service restart | Recover driver failures and document target-specific quirks | Restart/restore, malformed preferences, failed recovery and persistence checks |
 
 ### Boundaries and evidence
 
-The target is the ASRock B450/Ryzen/ALC892 analog device and Vega HDMI documented
-in REAL_HARDWARE.md. USB audio, arbitrary codecs, suspend/resume and routing each
-application to a different device are future work. Manual routing and the global
+The physical analog target is the ASRock B450/Ryzen/ALC892 device documented in
+REAL_HARDWARE.md. The user explicitly deferred Vega HDMI to another objective on
+2026-11-07 after reviewing the pinned source's HDMI exclusion (`azalia.c`,
+`azalia_init_codecs`). HDMI needs separate source/protocol and GPU dependency
+analysis; an HDA PCM path alone will not be represented as working HDMI output.
+USB audio, arbitrary codecs, suspend/resume and routing each application to a
+different device are also future work. Manual routing and the global
 default are in scope. Application settings must use a stable identity rather
 than transient stream ids or source ports.
 
@@ -93,7 +99,8 @@ build; extracted image binaries must match the new build. The required
 
 Physical verification pending for the user after the six stages: rear/front
 analog routing and jack changes; microphone/line-in and simultaneous playback;
-Vega HDMI with a connected compatible receiver; restart/recovery on the target.
+restart/recovery on the target. Vega HDMI validation belongs to its separate
+future objective.
 The earlier user-confirmed analog playback result remains valid only for that
 previous implementation and does not certify these new features.
 
@@ -116,5 +123,14 @@ previous implementation and does not certify these new features.
   Extracted Sound/audiod binaries match the new image payload; Doom executable
   and WAD remain present. `sxgui-smoke` passes its eight glyph/scroll/taskbar
   screenshots. These results do not cover physical jack changes.
-- Stages 3–6 remain implementation work. The output catalog currently covers
-  the bound backend; independent controllers/codecs and HDMI belong to stage 5.
+- Stage 3: the actual codec transport tests distinguish Present/Absent/Unknown/
+  Unsupported, check trigger/read ordering and suppress unsupported/overridden
+  pin sensing. `jack-policy-test` covers plug/unplug, unknown readings,
+  controller isolation, digital/absent fallbacks, failed-transition latching
+  and explicit manual mode. The native policy query/set assertions pass on
+  HDA without NIC and on AC'97; the host suite is 25/25. HDA recorded PCM and
+  the isolated Doom persistence regression still pass. Physical jack sensing
+  and automatic analog routing remain unvalidated until the user's checks.
+- Stages 4–6 remain implementation work. The output catalog currently covers
+  the bound backend; independent controllers/codecs belong to stage 5.
+  HDMI was subsequently deferred explicitly by the user (see Boundaries above).

@@ -114,6 +114,18 @@ clients` and leaves the native mixer running. No NIC or network driver is
 needed for SUN playback and Sound controls. `smoke audio-offline` runs the real
 native audio assertions on HDA with QEMU's NIC and network backend removed.
 
+## Optional jack policy
+
+Native policy query/set messages are acknowledged independently of the mixer
+snapshot. Manual mode is the default. Enabling requires detectable analog
+headphones and another output on the selected device; policy is evaluated at
+most every 250 ms. Only valid presence readings choose a headphone/fallback
+route. Unknown readings do not cause a switch; failed transitions are latched
+until presence changes, avoiding retries on every render tick. Manual output
+selection disables the policy after successful acknowledgement. Support,
+effective policy and the last automatic error are queryable by Sound.
+The kernel still owns connector detection and transactional route setup.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod

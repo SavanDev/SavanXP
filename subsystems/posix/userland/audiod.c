@@ -1,6 +1,7 @@
 #include "libc.h"
 #include "savanxp/audio_server.h"
 #include "sxn/sxn.h"
+#include "audio/jack_policy.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -74,6 +75,9 @@ struct audiod_native_client {
 static struct audiod_native_client g_native[SAVANXP_AUDIOD_NATIVE_SLOTS];
 static long g_native_port = -1;
 static int g_audio_fd = -1;
+static struct savanxp_jack_policy g_jack_policy;
+static int32_t g_jack_error;
+static uint64_t g_next_jack_ms;
 static uint32_t g_next_stream_id = 1;
 static uint16_t g_peak_left, g_peak_right;
 static uint64_t g_peak_ms;
@@ -616,9 +620,66 @@ static void audiod_handle_endpoint(struct audiod_native_client* client,
             reply.endpoint_id = query.endpoint.id; break;
         }
     }
+    if (!reply.result && request.direction == SAVANXP_AUDIO_PLAYBACK) {
+        g_jack_policy.enabled = 0; g_jack_error = 0;
+    }
     record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(reply);
     memcpy(record.payload,&reply,sizeof(reply));
     (void)sxn_write(client->write_handle,&record,sizeof(record));
+}
+
+static uint32_t audiod_inventory(struct savanxp_audio_endpoint* endpoints)
+{
+    struct savanxp_audio_endpoint_query query = {0};
+    for (; query.index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++query.index) {
+        if (savanxp_ioctl(g_audio_fd,AUDIO_IOC_GET_ENDPOINT,(unsigned long)(uintptr_t)&query) < 0) break;
+        endpoints[query.index] = query.endpoint;
+    }
+    return query.index;
+}
+static void audiod_handle_jack_policy(struct audiod_native_client* client,
+                                     const unsigned char* data, size_t length)
+{
+    struct savanxp_audiod_jack_policy_request request;
+    struct savanxp_audiod_jack_policy_reply reply = {0};
+    struct savanxp_audiod_record record = {0};
+    struct savanxp_audio_endpoint endpoints[SAVANXP_AUDIO_MAX_ENDPOINTS];
+    struct savanxp_jack_policy candidate = {0};
+    uint32_t count;
+    if (length != sizeof(request)) return;
+    memcpy(&request,data,sizeof(request));
+    if (request.version != SAVANXP_AUDIOD_CONTROL_VERSION) return;
+    count = audiod_inventory(endpoints);
+    reply.supported = savanxp_jack_policy_enable(&candidate,endpoints,count) == 0;
+    if (request.kind == SAVANXP_AUDIOD_JACK_POLICY_SET) {
+        if (request.enabled > 1) reply.result = -SAVANXP_EINVAL;
+        else if (request.enabled && !reply.supported) reply.result = -SAVANXP_ENODEV;
+        else {
+            if (request.enabled) g_jack_policy = candidate;
+            else memset(&g_jack_policy,0,sizeof(g_jack_policy));
+            g_jack_error = 0;
+        }
+    }
+    reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC; reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    reply.kind = SAVANXP_AUDIOD_JACK_POLICY_REPLY; reply.request_id = request.request_id;
+    reply.enabled = g_jack_policy.enabled; reply.last_error = g_jack_error;
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(reply);
+    memcpy(record.payload,&reply,sizeof(reply));
+    (void)sxn_write(client->write_handle,&record,sizeof(record));
+}
+static void audiod_poll_jacks(uint64_t now_ms)
+{
+    struct savanxp_audio_endpoint endpoints[SAVANXP_AUDIO_MAX_ENDPOINTS];
+    struct savanxp_audio_endpoint_selection selection = {0};
+    uint32_t count;
+    if (!g_jack_policy.enabled || now_ms < g_next_jack_ms) return;
+    g_next_jack_ms = now_ms + 250;
+    count = audiod_inventory(endpoints);
+    selection.id = savanxp_jack_policy_target(&g_jack_policy,endpoints,count);
+    if (!selection.id) return;
+    selection.direction = SAVANXP_AUDIO_PLAYBACK;
+    g_jack_error = (int32_t)savanxp_ioctl(g_audio_fd,AUDIO_IOC_SELECT_ENDPOINT,
+                                       (unsigned long)(uintptr_t)&selection);
 }
 
 static void audiod_handle_native_datagram(
@@ -663,6 +724,10 @@ static void audiod_handle_native_datagram(
     else if (kind == SAVANXP_AUDIOD_SELECT_ENDPOINT)
     {
         audiod_handle_endpoint(client, data, length);
+    }
+    else if (kind == SAVANXP_AUDIOD_JACK_POLICY_QUERY || kind == SAVANXP_AUDIOD_JACK_POLICY_SET)
+    {
+        audiod_handle_jack_policy(client, data, length);
     }
     else if (kind == SAVANXP_AUDIOD_STREAM_VOLUME || kind == SAVANXP_AUDIOD_STREAM_MUTED)
     {
@@ -894,6 +959,7 @@ static int audiod_serve(int sock_fd, int audio_fd)
         }
         audiod_accept_native(now_ms);
         audiod_drain_native(now_ms);
+        audiod_poll_jacks(now_ms);
         audiod_expire_streams(now_ms);
 
         due_ms = now_ms > last_render_ms ? now_ms - last_render_ms : 0;

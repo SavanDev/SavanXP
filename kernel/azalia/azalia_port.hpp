@@ -20,6 +20,7 @@ struct azalia_t;
 using nid_t = int;
 constexpr unsigned kNodes = 256;
 constexpr unsigned kConnections = 32;
+enum class PinPresence : uint8_t { Unknown, Absent, Present, Unsupported };
 struct widget_t {
     int nid = 0, type = 0, enable = 0, selected = -1, nconnections = 0;
     uint32_t widgetcap = 0, inamp_cap = 0, outamp_cap = 0;
@@ -29,6 +30,7 @@ struct widget_t {
         struct { uint32_t encodings = 0, bits_rates = 0; } audio;
         struct {
             uint32_t config = 0, cap = 0;
+            PinPresence presence = PinPresence::Unknown;
             unsigned sequence = 0, association = 0, color = 0, device = 0;
         } pin;
     } d;
@@ -77,5 +79,7 @@ bool find_output(codec_t*, Path&);
 int switch_output(codec_t*, Path& current, const Path& next);
 int configure_path(codec_t*, const Path&);
 int read_connections(widget_t*, const codec_t*);
+bool pin_detectable(const widget_t&);
+PinPresence pin_presence(codec_t*, int pin);
 
 } // namespace azalia_port

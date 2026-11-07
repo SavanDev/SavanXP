@@ -20,6 +20,21 @@ virtio-sound expose their default connector. Selection goes through `audiod`,
 the PCM writer, and waits for its acknowledgement. A failed route change
 reports the error and queries the effective connector after rollback. If
 rollback also fails, no connector is shown as selected; selecting one retries.
+For detectable jacks, the dropdown also shows connected, unplugged or unknown.
+An unavailable detection facility is labelled `no detection`, which is distinct
+from an unplugged connector. **Automatically switch to headphones** is optional
+and starts off. It is available only when the current analog device has a
+headphone jack that can report presence and another usable output.
+
+Enabling the policy remembers the current non-headphone output as its fallback
+(or chooses one on that same device if headphones were already selected). A
+valid plug reading selects headphones; a valid unplug returns to that fallback.
+Unknown readings preserve the effective route. Another device's jacks and digital
+receivers do not participate. A successful manual selection disables the policy.
+Failed automatic changes are reported and attempted once per presence change;
+toggle the policy or select an output to retry deliberately. State is still
+session-only until the preferences stage of the roadmap.
+
 Capture controls and HDMI configuration are not implemented yet.
 Without `audiod`, the panel explains that application controls are unavailable
 while leaving master controls usable. Without an audio device those controls
@@ -31,6 +46,12 @@ are disabled too. A disconnected service is retried once a second.
 An endpoint identifies a hardware connector and groups it under a device id;
 it reports direction, backend, availability and effective selection. HDA ids
 encode PCI function, codec address and pin node, independently of row order.
+Flags distinguish detection capability, a valid current reading and connected
+state; clearing validity never represents an unplug event. The SUN helpers
+`sxnaudio_jack_policy_query/set` receive request-correlated replies through
+`sxnaudio_control_receive_ex`, including support, effective policy and its most
+recent automatic transition error.
+
 `AUDIO_IOC_SELECT_ENDPOINT` requires write access and ownership of the affected
 PCM direction, or an idle direction. A panel therefore uses
 `sxnaudio_endpoint_select` on the native service connection, receiving a
@@ -77,7 +98,8 @@ not prove that a physical amplifier is enabled or speakers are connected.
 - `./build.sh smoke native-test`: SUN master controls, control-only snapshot,
   application gain/mute and live peaks through the native daemon port, stable
   endpoint inventory, read-only access, PCM ownership, acknowledged selection
-  and rejection of an unknown id with the effective output retained.
+  rejection of an unknown id with the effective output retained, policy
+  query/enable/disable and rejection of unsupported automation.
 - `./build.sh smoke audio-offline` runs those same native assertions with HDA
   and no NIC/network backend.
 - `./build.sh smoke audiod-smoke`: exact rendered samples from two clients,
@@ -94,6 +116,12 @@ not prove that a physical amplifier is enabled or speakers are connected.
 - `sxgui-smoke` still asserts real toolkit glyphs; the existing taskbar scenario
   still checks the popup's frame, slider and master mute geometry.
 
-Per-user persistence, multiple controllers, recording and automatic jack
-switching remain in the six-stage [roadmap](../roadmaps/open/AZALIA_ROADMAP.md). Their absence is not represented by
+Per-user persistence, multiple controllers and recording remain in the six-stage [roadmap](../roadmaps/open/AZALIA_ROADMAP.md). Their absence is not represented by
 nonfunctional controls in this panel.
+
+The policy itself is tested by `jack-policy-test`: default manual mode, plug,
+unplug, unknown readings, another controller's jack, failed-transition latching,
+manual override, unsupported detection and lack of a fallback. The Azalia host
+tests check real sense verbs, firmware overrides and timeout/error states.
+Physical presence detection and automatic routing remain for the user's final
+hardware validation; QEMU's analog codec does not model those host jacks.

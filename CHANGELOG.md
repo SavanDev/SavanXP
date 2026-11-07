@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Sound reports jack connection state and offers optional automatic headphone switching.**
+  Unknown readings preserve the output; failed changes are reported without continuous retries.
+  Manual output selection disables automatic switching. See [SOUND.md](docs/media/SOUND.md).
+
 - **Sound lists the effective audio device and connector and can select analog HD Audio outputs.**
   SUN exposes stable endpoint ids; failed changes restore the previous route when possible.
   See [SOUND.md](docs/media/SOUND.md) and [AZALIA.md](docs/kernel/AZALIA.md).

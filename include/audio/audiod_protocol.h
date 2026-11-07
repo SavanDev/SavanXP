@@ -122,6 +122,9 @@ struct savanxp_audiod_record {
 #define SAVANXP_AUDIOD_STREAM_MUTED 8u
 #define SAVANXP_AUDIOD_SELECT_ENDPOINT 9u
 #define SAVANXP_AUDIOD_ENDPOINT_REPLY 10u
+#define SAVANXP_AUDIOD_JACK_POLICY_QUERY 11u
+#define SAVANXP_AUDIOD_JACK_POLICY_SET 12u
+#define SAVANXP_AUDIOD_JACK_POLICY_REPLY 13u
 
 struct savanxp_audiod_snapshot_query {
     uint32_t magic;
@@ -177,6 +180,25 @@ struct savanxp_audiod_endpoint_reply {
     uint32_t direction;
     uint32_t reserved;
     uint64_t endpoint_id;
+};
+
+struct savanxp_audiod_jack_policy_request {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    uint32_t enabled;
+};
+struct savanxp_audiod_jack_policy_reply {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    uint32_t enabled;
+    uint32_t supported;
+    int32_t result;
+    int32_t last_error;
+    uint32_t reserved;
 };
 
 /* Wire snapshots must remain atomic within the native record payload. */

@@ -1056,6 +1056,15 @@ static void test_audio(void) {
         check((first.flags & (SAVANXP_AUDIO_PLAYBACK|SAVANXP_AUDIO_AVAILABLE|SAVANXP_AUDIO_SELECTED)) ==
               (SAVANXP_AUDIO_PLAYBACK|SAVANXP_AUDIO_AVAILABLE|SAVANXP_AUDIO_SELECTED));
         check(sxnaudio_endpoint_get(stream.device,SAVANXP_AUDIO_MAX_ENDPOINTS,&again) == -SAVANXP_ENOENT);
+        for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index) {
+            if (sxnaudio_endpoint_get(stream.device,index,&again) < 0) break;
+            check(!(again.flags & SAVANXP_AUDIO_CONNECTED) ||
+                  ((again.flags & (SAVANXP_AUDIO_PRESENCE_VALID|SAVANXP_AUDIO_PRESENCE_CAPABLE)) ==
+                   (SAVANXP_AUDIO_PRESENCE_VALID|SAVANXP_AUDIO_PRESENCE_CAPABLE)));
+            check(!(again.flags & SAVANXP_AUDIO_PRESENCE_VALID) ||
+                  (again.flags & SAVANXP_AUDIO_PRESENCE_CAPABLE));
+            check(!(again.flags & SAVANXP_AUDIO_PRESENCE_CAPABLE) || (again.flags & SAVANXP_AUDIO_JACK));
+        }
         selection.id = first.id; selection.direction = SAVANXP_AUDIO_PLAYBACK; selection.reserved = 0;
         check(readonly >= 0 && sxn_device_control(readonly,AUDIO_IOC_SELECT_ENDPOINT,
               (unsigned long)(uintptr_t)&selection) == -SAVANXP_EACCES);
@@ -1174,6 +1183,34 @@ static void test_audio(void) {
                     check(acknowledged);
                 }
                 check(sxn_log("nativetest: stable endpoints, ownership and acknowledged selection") == 0);
+            }
+            {
+                struct savanxp_audiod_jack_policy_reply policy;
+                struct savanxp_audiod_endpoint_reply route_reply;
+                uint32_t operation;
+                int supported = 0;
+                check(sxnaudio_jack_policy_set(&control,599,2) == -SAVANXP_EINVAL);
+                for (operation = 0; operation < 4; ++operation) {
+                    int acknowledged = 0;
+                    long sent = operation == 0 || operation == 3 ?
+                        sxnaudio_jack_policy_query(&control,600+operation) :
+                        sxnaudio_jack_policy_set(&control,600+operation,operation == 1);
+                    check(sent == 0);
+                    for (attempt = 0; attempt < 50 && !acknowledged; ++attempt) {
+                        long received;
+                        (void)sxn_wait_one(pause,20);
+                        received = sxnaudio_control_receive_ex(&control,&snapshot,&route_reply,&policy);
+                        if (received == 3 && policy.request_id == 600+operation) {
+                            if (!operation) supported = (int)policy.supported;
+                            check(policy.supported == (uint32_t)supported);
+                            check(policy.result == (operation == 1 && !supported ? -SAVANXP_ENODEV : 0));
+                            check(policy.enabled == (uint32_t)(operation == 1 && supported));
+                            acknowledged = 1;
+                        }
+                    }
+                    check(acknowledged);
+                }
+                check(sxn_log("nativetest: jack policy query, enable support and explicit manual mode") == 0);
             }
 
             for (attempt = 0; attempt < 30 && !have_target; ++attempt) {

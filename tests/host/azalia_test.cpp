@@ -161,6 +161,27 @@ int main() {
               "a failed headphone command restores the effective rear route");
         check(routes.sent(0x1b,0x707,0) && routes.sent(0x14,0x707,0x40) &&
               routes.sent(0x0c,0x300,0x7000), "rollback silences candidate and restores old pin/mixer");
+        routes.commands.clear();
+        routes.replies[{0x1b,0xf09,0}] = 0x80000000;
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Present &&
+              routes.commands == std::vector<std::tuple<unsigned,unsigned,unsigned>>{{0x1b,0x709,0},{0x1b,0xf09,0}},
+              "presence sensing triggers measurement before reading the high presence bit");
+        routes.replies[{0x1b,0xf09,0}] = 0;
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Absent, "unplugged jack is a valid absent state");
+        routes.fail_once = {0x1b,0xf09,0};
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Unknown, "sense timeout is unknown, never unplugged");
+        routes.fail_once = {0x1b,0x709,0};
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Unknown, "trigger failure is unknown");
+        routes.commands.clear();
+        codec->w[0x1b].d.pin.config |= 0x100;
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Unsupported && routes.commands.empty(),
+              "firmware no-presence override suppresses sensing verbs");
+        codec->w[0x1b].d.pin.config &= ~0x100u;
+        codec->w[0x1b].d.pin.cap &= ~4u;
+        check(pin_presence(codec.get(),0x1b) == PinPresence::Unsupported && routes.commands.empty(),
+              "missing presence capability is distinct from unplugged");
+        check(pin_presence(codec.get(),0x15) == PinPresence::Unsupported && routes.commands.empty(),
+              "disconnected firmware pins are never sensed");
         routes.answer = false;
         check(switch_output(codec.get(),current,front) != 0 && !current.count,
               "failed rollback reports no usable effective route");
