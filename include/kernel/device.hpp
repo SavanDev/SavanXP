@@ -12,6 +12,7 @@ struct Device {
     int (*ioctl)(uint64_t request, uint64_t argument, uint32_t granted_access);
     void (*close)();
     bool (*can_read)();
+    void (*close_access)(uint32_t access) = nullptr;
 };
 
 void initialize();
@@ -25,7 +26,7 @@ bool register_node(const char* path, Device* device, bool writable, uint16_t per
 int read(Device* device, uint64_t user_buffer, size_t count);
 int write(Device* device, uint64_t user_buffer, size_t count);
 int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access);
-void close(Device* device);
+void close(Device* device, uint32_t access);
 bool can_read(Device* device);
 void service_background();
 

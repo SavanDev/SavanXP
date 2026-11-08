@@ -7,6 +7,7 @@
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
+#include "kernel/timer.hpp"
 #include "abi/savanxp_abi.h"
 
 namespace {
@@ -20,23 +21,57 @@ device::Device g_audio_device = {
     .can_read = nullptr,
 };
 
-// Un unico escritor a la vez. El primero que escribe adquiere el stream y lo
-// mantiene hasta cerrar el fd; cualquier otro proceso recibe EBUSY. Espeja la
-// semantica de sesion de /dev/gpu0, pero implicita: no hay ioctl de acquire,
-// la primera escritura es la que toma posesion.
+// The first writer owns playback until it closes a writable device handle.
+// Another process gets EBUSY; acquisition is implicit on the first write.
 uint32_t g_owner_pid = 0;
-// Dueno de la sesion de CAPTURA, independiente del de arriba: son dos streams
-// virtio-sound distintos (playback/input) y un proceso grabando no le impide
-// a otro reproducir, ni viceversa.
+// Capture has an independent owner and DMA stream on HDA and virtio-sound.
+// Closing one direction must leave the other direction running.
 uint32_t g_capture_owner_pid = 0;
 
 int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
+int16_t g_capture_scratch[2048];
+uint16_t g_capture_peak_left = 0, g_capture_peak_right = 0;
+uint64_t g_capture_peak_ns = 0;
+
+int capture_period(uint64_t user_buffer, uint32_t bytes) {
+    if (bytes%4 || bytes > sizeof(g_capture_scratch)) return negative_error(SX_EINVAL);
+    const int result = audio::capture_read_period(g_capture_scratch,bytes);
+    if (result) return result < 0 ? result : negative_error(SX_EIO);
+    audio::apply_capture_gain(g_capture_scratch,bytes);
+    const uint64_t now = timer::monotonic_ns();
+    if (now - g_capture_peak_ns >= 100000000) {
+        g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = now;
+    }
+    for (uint32_t i = 0; i < bytes/2; i += 2) {
+        const int32_t left = g_capture_scratch[i], right = g_capture_scratch[i+1];
+        const uint16_t l = left < 0 ? -left : left, r = right < 0 ? -right : right;
+        if (l > g_capture_peak_left) g_capture_peak_left = l;
+        if (r > g_capture_peak_right) g_capture_peak_right = r;
+    }
+    return process::copy_to_user(user_buffer,g_capture_scratch,bytes) ? 0 : negative_error(SX_EINVAL);
+}
+int capture_start() {
+    if (!audio::capture_ready()) return negative_error(SX_ENODEV);
+    const uint32_t pid = process::current_pid();
+    if (!pid) return negative_error(SX_EBADF);
+    if (g_capture_owner_pid && g_capture_owner_pid != pid) return negative_error(SX_EBUSY);
+    if (!audio::capture_configure()) return negative_error(SX_EIO);
+    g_capture_owner_pid = pid;
+    return 0;
+}
+int capture_stop() {
+    if (g_capture_owner_pid && g_capture_owner_pid != process::current_pid()) return negative_error(SX_EBUSY);
+    audio::capture_stop(); g_capture_owner_pid = 0;
+    g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = 0;
+    return 0;
+}
+
 int audio_read(uint64_t user_buffer, size_t count) {
     savanxp_audio_info info = {};
-    if (!audio::capture_ready() || !audio::get_info(info)) {
+    if (!audio::get_capture_info(info)) {
         return negative_error(SX_ENODEV);
     }
     if (count == 0) {
@@ -75,7 +110,7 @@ int audio_read(uint64_t user_buffer, size_t count) {
     while (transferred < count) {
         const size_t remaining = count - transferred;
         const uint32_t chunk = static_cast<uint32_t>(remaining > period ? period : remaining);
-        const int result = audio::capture_read_period(user_buffer + transferred, chunk);
+        const int result = capture_period(user_buffer + transferred, chunk);
         if (result != 0) {
             return result < 0 ? result : negative_error(SX_EIO);
         }
@@ -150,6 +185,54 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 ? 0
                 : negative_error(SX_EINVAL);
         }
+        case AUDIO_IOC_CAPTURE_GET_INFO: {
+            savanxp_audio_info info = {};
+            if (!audio::get_capture_info(info)) return negative_error(SX_ENODEV);
+            if (!process::validate_user_range(argument,sizeof(info),true)) return negative_error(SX_EINVAL);
+            return process::copy_to_user(argument,&info,sizeof(info)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case AUDIO_IOC_CAPTURE_START:
+        case AUDIO_IOC_CAPTURE_STOP:
+        case AUDIO_IOC_CAPTURE_READ: {
+            if (!(granted_access & object::access_read)) return negative_error(SX_EACCES);
+            if (request == AUDIO_IOC_CAPTURE_START) return capture_start();
+            if (request == AUDIO_IOC_CAPTURE_STOP) return capture_stop();
+            if (!g_capture_owner_pid) return negative_error(SX_EBADF);
+            if (g_capture_owner_pid != process::current_pid()) return negative_error(SX_EBUSY);
+            savanxp_audio_capture_read read = {};
+            savanxp_audio_info info = {};
+            if (!audio::get_capture_info(info)) return negative_error(SX_ENODEV);
+            if (!process::validate_user_range(argument,sizeof(read),false) ||
+                !process::copy_from_user(&read,argument,sizeof(read)) || read.reserved ||
+                !read.byte_count || read.byte_count != info.period_bytes || read.byte_count > sizeof(g_capture_scratch) ||
+                !process::validate_user_range(read.buffer,read.byte_count,true)) return negative_error(SX_EINVAL);
+            const int available = audio::capture_available();
+            if (available < 0) return available;
+            if (static_cast<uint32_t>(available) < read.byte_count) return negative_error(SX_EAGAIN);
+            return capture_period(read.buffer,read.byte_count);
+        }
+        case AUDIO_IOC_CAPTURE_GET_STATE: {
+            if (!audio::capture_ready()) return negative_error(SX_ENODEV);
+            savanxp_audio_capture_state state = {audio::capture_volume(),audio::capture_muted() ? 1u : 0u,
+                g_capture_peak_left,g_capture_peak_right,g_capture_owner_pid ? 1u : 0u};
+            if (timer::monotonic_ns() - g_capture_peak_ns >= 100000000)
+                state.peak_left = state.peak_right = 0;
+            if (!process::validate_user_range(argument,sizeof(state),true)) return negative_error(SX_EINVAL);
+            return process::copy_to_user(argument,&state,sizeof(state)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case AUDIO_IOC_CAPTURE_SET_VOLUME:
+        case AUDIO_IOC_CAPTURE_SET_MUTED: {
+            if (!(granted_access & object::access_write)) return negative_error(SX_EACCES);
+            if (!audio::capture_ready()) return negative_error(SX_ENODEV);
+            if (request == AUDIO_IOC_CAPTURE_SET_VOLUME) {
+                if (argument > 100 || !audio::set_capture_volume(argument)) return negative_error(SX_EINVAL);
+            } else {
+                if (argument > 1) return negative_error(SX_EINVAL);
+                audio::set_capture_muted(argument != 0);
+            }
+            g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = 0;
+            return 0;
+        }
         case AUDIO_IOC_GET_ENDPOINT: {
             savanxp_audio_endpoint_query query = {};
             if (!process::validate_user_range(argument, sizeof(query), true) ||
@@ -197,13 +280,13 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     }
 }
 
-void audio_close() {
+void audio_close(uint32_t access) {
     const uint32_t pid = process::current_pid();
-    if (g_owner_pid != 0 && g_owner_pid == pid) {
+    if ((access & object::access_write) && g_owner_pid != 0 && g_owner_pid == pid) {
         audio::stop();
         g_owner_pid = 0;
     }
-    if (g_capture_owner_pid != 0 && g_capture_owner_pid == pid) {
+    if ((access & object::access_read) && g_capture_owner_pid != 0 && g_capture_owner_pid == pid) {
         audio::capture_stop();
         g_capture_owner_pid = 0;
     }
@@ -235,7 +318,7 @@ bool initialize() {
     g_audio_device.read = audio_read;
     g_audio_device.write = audio_write;
     g_audio_device.ioctl = audio_ioctl;
-    g_audio_device.close = audio_close;
+    g_audio_device.close_access = audio_close;
     return device::register_node("/dev/audio0", &g_audio_device, true);
 }
 

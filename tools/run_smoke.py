@@ -20,7 +20,7 @@ from sxfs_sync import copy_preserving_holes
 from smoke_profile import reset_display_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
-from audio_wav import verify_tone
+from audio_wav import verify_tone, verify_duplex, verify_recording
 from run_qemu import USB_POINTERS, build_qemu_args, find_qemu, prepare_image
 
 
@@ -171,7 +171,7 @@ def main() -> int:
     parser.add_argument("--ready-wait", type=float, default=0.0)
     parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda"), default="auto")
     parser.add_argument("--wav-path", type=Path)
-    parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet"), default="")
+    parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet", "duplex", "recording"), default="")
     parser.add_argument(
         "--qmp-callback",
         type=Path,
@@ -199,6 +199,7 @@ def main() -> int:
     parser.add_argument("--requires-virtio", action="store_true",
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
+    parser.add_argument("--capture-fixture", action="store_true", help="deterministic ALSA file microphone, never host audio")
     parser.add_argument("--no-network", action="store_true", help="boot without a NIC")
     parser.add_argument("--no-disk", action="store_true",
                         help="Boot with no disk attached: the rescue system's scenario.")
@@ -349,6 +350,7 @@ def main() -> int:
         qmp_path=qmp_path if (args.qmp_driver or args.qmp_callback) else None,
         network=not args.no_network,
         audio_device=args.audio_device,
+        capture_fixture=args.capture_fixture,
         wav_path=wav_path,
         extra_disks=extra_disks,
         usb=args.usb,
@@ -358,6 +360,15 @@ def main() -> int:
         usb_hub=args.usb_hub,
     )
     qemu_args[0] = qemu
+
+    qemu_environment = os.environ.copy()
+    if args.capture_fixture:
+        from audio_capture_fixture import prepare_capture_fixture
+        drivers = subprocess.run([qemu,"-audiodev","help"],capture_output=True,text=True,check=True)
+        if "alsa" not in drivers.stdout.splitlines():
+            raise SystemExit("capture-fixture requires QEMU with its ALSA audio backend and libasound")
+        config = prepare_capture_fixture(log_dir,run_tag,wav_path or log_dir/f"{run_tag}.audio.wav")
+        qemu_environment["ALSA_CONFIG_PATH"] = str(config)
 
     command_path = log_dir / f"{run_tag}.qemu.log"
     command_path.write_text(
@@ -386,6 +397,7 @@ def main() -> int:
             stderr=stderr_target,
             start_new_session=True,
             preexec_fn=_die_with_parent,
+            env=qemu_environment,
         )
         output = bytearray()
         offset = 0
@@ -521,7 +533,9 @@ def main() -> int:
             reason = f"WAV output missing or empty: {wav_path}"
     if status == 0 and args.wav_check:
         try:
-            metrics = verify_tone(wav_path, quiet=args.wav_check == "tone-quiet")
+            metrics = (verify_duplex(wav_path) if args.wav_check == "duplex" else
+                                verify_recording(wav_path) if args.wav_check == "recording" else
+                                verify_tone(wav_path, quiet=args.wav_check == "tone-quiet"))
             print(f"audio PCM: {metrics}", flush=True)
         except (OSError, ValueError) as exc:
             status = 1

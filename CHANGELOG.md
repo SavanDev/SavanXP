@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Sound records and replays a three-second input test, with an input selector, gain, mute and live levels.**
+  SUN recording supports shared native capture and direct HDA/virtio-sound duplex operation.
+  See [SOUND.md](docs/media/SOUND.md) and [AZALIA.md](docs/kernel/AZALIA.md).
+
 - **Sound reports jack connection state and offers optional automatic headphone switching.**
   Unknown readings preserve the output; failed changes are reported without continuous retries.
   Manual output selection disables automatic switching. See [SOUND.md](docs/media/SOUND.md).
@@ -50,6 +54,9 @@ Cut-off notes:
   raised frame and an etched separator above `Shut Down...`/`Restart...`.
 
 ### Fixed
+
+- **Small SUN playback writes no longer exhaust virtio-sound descriptors prematurely.**
+  Direct playback collects samples into device periods and flushes the final partial period on close.
 
 - **Native audio mixing and Sound controls work without a network card.**
   `audiod` keeps serving SUN clients when UDP is unavailable; `smoke audio-offline` covers this boot.

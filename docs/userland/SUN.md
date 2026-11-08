@@ -79,6 +79,17 @@ inventory and coordinated output selection, with access/ownership assertions.
 automatic headphone switching and its effective support/error state; endpoint
 flags distinguish unsupported, unknown, unplugged and connected jacks.
 
+`sxn/sxncapture.h` supplies nonblocking stereo recording through
+`sxnaudio_capture_open/read/close`, input gain/mute and held peak state.
+Sound consumes this slice for its input meter and three-second RAM test.
+Capture uses a read-only device handle, independently of playback's writable
+handle; closing either direction leaves the other running. A native daemon
+subscription shares input with other SUN clients, with explicit lost-frame
+counts and terminal errors. Without the daemon, the same API reads device
+periods directly. `hda-capture` and `virtio-capture` run `nativetest`'s dedicated
+capture mode against a deterministic stereo input, including protocol errors,
+exact samples, gain/mute, independent ownership, duplex and two subscribers.
+
 ### Resources compiled in
 
 A POSIX program's window reads its name and icon from its own `.sxe` at start

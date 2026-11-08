@@ -1586,7 +1586,9 @@ void destroy_io_object(object::Header* header) {
         }
         free_pipe_if_unused(file->pipe);
     } else if (file->kind == process::HandleKind::device && file->device != nullptr) {
-        device::close(file->device);
+        const uint32_t access = ((file->open_flags & process::open_read) ? object::access_read : 0u) |
+            ((file->open_flags & process::open_write) ? object::access_write : 0u);
+        device::close(file->device,access);
     } else if (file->kind == process::HandleKind::socket && file->socket != nullptr) {
         net::close_socket(file->socket);
     }

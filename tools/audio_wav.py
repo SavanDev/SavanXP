@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 
-def verify_tone(path: Path, *, quiet: bool = False) -> dict:
+def _read_stereo(path: Path):
     blob = path.read_bytes()
     if blob[:4] != b"RIFF" or blob[8:12] != b"WAVE":
         raise ValueError("missing RIFF/WAVE header")
@@ -43,6 +43,12 @@ def verify_tone(path: Path, *, quiet: bool = False) -> dict:
     if sys.byteorder != "little":
         samples.byteswap()
     left, right = samples[0::2], samples[1::2]
+    return left, right
+
+
+def verify_tone(path: Path, *, quiet: bool = False) -> dict:
+    left, right = _read_stereo(path)
+    rate = 48000
     # Startup and shutdown silence are allowed; internal silent holes are not.
     active = [i for i, x in enumerate(left) if abs(x) > 500]
     if not active:
@@ -72,3 +78,57 @@ def verify_tone(path: Path, *, quiet: bool = False) -> dict:
         raise ValueError("stereo channels disagree")
     return {"seconds": round(duration, 3), "rms": round(rms),
             "hz": round(frequency, 1), "max_gap_ms": round(gap_ms, 2)}
+
+
+def verify_duplex(path: Path) -> dict:
+    """A continuous 440 Hz/3000 source while native capture assertions run.
+
+    The guest deliberately closes/reopens playback for ownership tests. Require
+    a real continuous duplex interval, independently of the guest's PASS token.
+    Descriptor-starved tiny direct writes cannot form this interval.
+    """
+    left, right = _read_stereo(path)
+    start = None
+    best = (0, 0)
+    for i in range(len(left)+1):
+        active = i < len(left) and abs(left[i]) > 100 and abs(right[i]) > 100
+        if active and start is None:
+            start = i
+        elif not active and start is not None:
+            if i-start > best[1]-best[0]: best = (start, i)
+            start = None
+    first, last = best
+    duration = (last-first)/48000
+    if duration < 0.9: raise ValueError(f"no continuous duplex tone: longest interval {duration:.3f} s")
+    signal = left[first:last]
+    rms = math.sqrt(sum(x*x for x in signal)/len(signal))
+    frequency = sum(a <= 0 < b for a,b in zip(signal,signal[1:]))/duration
+    if not 2850 <= rms <= 3150: raise ValueError(f"wrong duplex RMS: {rms:.1f}")
+    if not 420 <= frequency <= 460: raise ValueError(f"wrong duplex frequency: {frequency:.1f}")
+    if any(abs(left[i]-right[i]) > 2 for i in range(first,last)):
+        raise ValueError("duplex output channels differ")
+    return {"continuous_seconds":round(duration,3),"rms":round(rms),"hz":round(frequency,1)}
+
+
+def verify_recording(path: Path) -> dict:
+    """Sound's three-second recording test, replaying the known virtual mic."""
+    left, right = _read_stereo(path)
+    active = [i for i in range(len(left)) if abs(left[i]) > 100 or abs(right[i]) > 100]
+    if not active: raise ValueError("recording replay is silent")
+    first, last = active[0], active[-1]+1
+    duration = (last-first)/48000
+    if not 2.7 <= duration <= 3.3: raise ValueError(f"wrong recording duration: {duration:.3f}")
+    result = {"seconds":round(duration,3)}
+    for name,channel,amplitude,hz in (("left",left,12000,400),("right",right,6000,600)):
+        signal = channel[first:last]
+        rms = math.sqrt(sum(x*x for x in signal)/len(signal))
+        frequency = sum(a <= 0 < b for a,b in zip(signal,signal[1:]))/duration
+        if not amplitude*.95 <= rms <= amplitude*1.05: raise ValueError(f"wrong recording {name} RMS: {rms:.1f}")
+        if abs(frequency-hz) > 10: raise ValueError(f"wrong recording {name} frequency: {frequency:.1f}")
+        gap = longest = 0
+        for sample in signal:
+            gap = gap+1 if abs(sample) < 100 else 0
+            longest = max(longest,gap)
+        if longest > 960: raise ValueError(f"recording {name} contains a silent hole")
+        result[name+"_rms"] = round(rms); result[name+"_hz"] = round(frequency,1)
+    return result

@@ -9,6 +9,8 @@ const Backend* g_backend = nullptr;
 
 uint32_t g_master_volume = 100u;
 bool g_master_muted = false;
+uint32_t g_capture_volume = 100;
+bool g_capture_muted = false;
 
 const Driver* g_drivers[kMaxDrivers] = {};
 size_t g_driver_count = 0;
@@ -110,26 +112,43 @@ bool master_muted() { return g_master_muted; }
 
 void set_master_muted(bool muted) { g_master_muted = muted; }
 
-void apply_playback_gain(void* frames, uint32_t byte_count) {
+static void apply_gain(void* frames, uint32_t byte_count, uint32_t volume, bool muted) {
     int16_t* samples = static_cast<int16_t*>(frames);
     uint32_t count = byte_count / 2u;
     uint32_t index = 0;
     if (frames == nullptr) {
         return;
     }
-    if (g_master_muted) {
+    if (muted) {
         for (index = 0; index < count; ++index) {
             samples[index] = 0;
         }
         return;
     }
-    if (g_master_volume >= 100u) {
+    if (volume >= 100u) {
         return;
     }
     for (index = 0; index < count; ++index) {
         samples[index] = static_cast<int16_t>(
-            static_cast<int32_t>(samples[index]) * static_cast<int32_t>(g_master_volume) / 100);
+            static_cast<int32_t>(samples[index]) * static_cast<int32_t>(volume) / 100);
     }
+}
+
+void apply_playback_gain(void* frames, uint32_t bytes) { apply_gain(frames,bytes,g_master_volume,g_master_muted); }
+void apply_capture_gain(void* frames, uint32_t bytes) { apply_gain(frames,bytes,g_capture_volume,g_capture_muted); }
+uint32_t capture_volume() { return g_capture_volume; }
+bool set_capture_volume(uint32_t volume) {
+    if (volume > 100) return false;
+    g_capture_volume = volume; return true;
+}
+bool capture_muted() { return g_capture_muted; }
+void set_capture_muted(bool muted) { g_capture_muted = muted; }
+bool get_capture_info(savanxp_audio_info& info) {
+    if (!capture_ready()) return false;
+    return g_backend->capture_info ? g_backend->capture_info(info) : g_backend->get_info(info);
+}
+int capture_available() {
+    return g_backend && g_backend->capture_available ? g_backend->capture_available() : -SX_ENOSYS;
 }
 
 bool capture_ready() {
@@ -140,11 +159,11 @@ bool capture_configure() {
     return g_backend != nullptr && g_backend->capture_configure != nullptr && g_backend->capture_configure();
 }
 
-int capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
+int capture_read_period(void* buffer, uint32_t byte_count) {
     if (g_backend == nullptr || g_backend->capture_read_period == nullptr) {
         return -static_cast<int>(SX_ENODEV);
     }
-    return g_backend->capture_read_period(user_buffer, byte_count);
+    return g_backend->capture_read_period(buffer, byte_count);
 }
 
 void capture_stop() {

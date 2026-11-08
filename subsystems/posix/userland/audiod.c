@@ -17,6 +17,7 @@
  */
 
 #define AUDIOD_MAX_STREAMS SAVANXP_AUDIOD_MAX_STREAMS
+#define AUDIOD_CAPTURE_FIFO_FRAMES 4096u
 #define AUDIOD_FIFO_FRAMES 4800u /* 100 ms a 48 kHz */
 /* Dos tiempos distintos que antes eran uno solo. La expiracion es de la ENTRADA
  * del stream: callado un rato largo, se libera el slot. El PLC es otra cosa:
@@ -69,12 +70,19 @@ static struct audiod_stream g_streams[AUDIOD_MAX_STREAMS];
 struct audiod_native_client {
     int used;
     long read_handle; /* client -> daemon */
-    long write_handle; /* daemon -> client: census replies */
+    long write_handle; /* daemon -> client: control replies or capture PCM */
+    int capturing;
+    uint64_t capture_frame, capture_first;
+    uint32_t capture_head, capture_frames;
+    int capture_error;
+    int16_t capture_fifo[AUDIOD_CAPTURE_FIFO_FRAMES*2];
 };
 
 static struct audiod_native_client g_native[SAVANXP_AUDIOD_NATIVE_SLOTS];
 static long g_native_port = -1;
 static int g_audio_fd = -1;
+static uint32_t g_capture_users;
+static struct savanxp_audio_info g_capture_info;
 static struct savanxp_jack_policy g_jack_policy;
 static int32_t g_jack_error;
 static uint64_t g_next_jack_ms;
@@ -491,13 +499,17 @@ static void audiod_send_native_reply(const struct savanxp_audiod_list_reply* rep
 
 static void audiod_close_native(struct audiod_native_client* client)
 {
+    if (client->capturing && g_capture_users) {
+        --g_capture_users;
+        if (!g_capture_users) (void)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_STOP,0);
+    }
     (void)sxn_close(client->read_handle);
     (void)sxn_close(client->write_handle);
     memset(client, 0, sizeof(*client));
 }
 
-/* Takes every pending connection. A ninth client is refused by closing its
- * pipes, which it reads as the daemon going away. */
+/* Accept pending connections; clients beyond the native capacity see EOF.
+ * Control and recording connections leave room beyond the eight mixer streams. */
 static void audiod_accept_native(uint64_t now_ms)
 {
     if (g_native_port < 0)
@@ -594,6 +606,8 @@ static void audiod_handle_stream_control(const unsigned char* data, size_t lengt
     stream->peak_left = stream->peak_right = 0;
 }
 
+static void audiod_capture_source_changed(void);
+
 static void audiod_handle_endpoint(struct audiod_native_client* client,
                                    const unsigned char* data, size_t length)
 {
@@ -602,9 +616,17 @@ static void audiod_handle_endpoint(struct audiod_native_client* client,
     struct savanxp_audio_endpoint_selection selection = {0};
     struct savanxp_audio_endpoint_query query = {0};
     struct savanxp_audiod_record record = {0};
+    uint64_t previous_input = 0;
     if (length != sizeof(request)) return;
     memcpy(&request,data,sizeof(request));
     if (request.version != SAVANXP_AUDIOD_CONTROL_VERSION) return;
+    if (request.direction == SAVANXP_AUDIO_CAPTURE) {
+        for (query.index = 0; query.index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++query.index) {
+            if (savanxp_ioctl(g_audio_fd,AUDIO_IOC_GET_ENDPOINT,(unsigned long)(uintptr_t)&query) < 0) break;
+            if ((query.endpoint.flags & (SAVANXP_AUDIO_CAPTURE|SAVANXP_AUDIO_SELECTED)) ==
+                (SAVANXP_AUDIO_CAPTURE|SAVANXP_AUDIO_SELECTED)) { previous_input = query.endpoint.id; break; }
+        }
+    }
     selection.id = request.endpoint_id; selection.direction = request.direction;
     reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
     reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
@@ -620,6 +642,8 @@ static void audiod_handle_endpoint(struct audiod_native_client* client,
             reply.endpoint_id = query.endpoint.id; break;
         }
     }
+    if (!reply.result && request.direction == SAVANXP_AUDIO_CAPTURE && previous_input != request.endpoint_id)
+        audiod_capture_source_changed();
     if (!reply.result && request.direction == SAVANXP_AUDIO_PLAYBACK) {
         g_jack_policy.enabled = 0; g_jack_error = 0;
     }
@@ -682,6 +706,131 @@ static void audiod_poll_jacks(uint64_t now_ms)
                                        (unsigned long)(uintptr_t)&selection);
 }
 
+static long audiod_capture_reply(struct audiod_native_client* client, uint32_t id, int result)
+{
+    struct savanxp_audiod_record record = {0};
+    struct savanxp_audiod_capture_reply reply = {0};
+    reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC; reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    reply.kind = SAVANXP_AUDIOD_CAPTURE_REPLY; reply.request_id = id; reply.result = result;
+    reply.rate_hz = g_capture_info.sample_rate_hz; reply.channels = g_capture_info.channels;
+    reply.bits = g_capture_info.bits_per_sample; reply.period_bytes = g_capture_info.period_bytes;
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(reply);
+    memcpy(record.payload,&reply,sizeof(reply));
+    return sxn_write(client->write_handle,&record,sizeof(record));
+}
+static void audiod_capture_source_changed(void)
+{
+    size_t slot;
+    for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS; ++slot) {
+        if (!g_native[slot].capturing) continue;
+        g_native[slot].capturing = 0; g_native[slot].capture_frames = 0;
+        g_native[slot].capture_error = -SAVANXP_EAGAIN;
+    }
+    g_capture_users = 0;
+    (void)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_STOP,0);
+}
+
+static void audiod_handle_capture(struct audiod_native_client* client, const unsigned char* data, size_t length)
+{
+    struct savanxp_audiod_capture_request request;
+    int result = 0;
+    if (length != sizeof(request)) return;
+    memcpy(&request,data,sizeof(request));
+    if (request.version != SAVANXP_AUDIOD_CONTROL_VERSION || request.reserved) return;
+    if (request.kind == SAVANXP_AUDIOD_CAPTURE_START && !client->capturing) {
+        result = (int)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_GET_INFO,(unsigned long)(uintptr_t)&g_capture_info);
+        if (!result && (!g_capture_info.period_bytes || g_capture_info.period_bytes > 4096 ||
+            g_capture_info.channels != 2 || g_capture_info.bits_per_sample != 16 || g_capture_info.frame_bytes != 4))
+            result = -SAVANXP_EIO;
+        if (!result && !g_capture_users) result = (int)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_START,0);
+        if (!result) {
+            client->capturing = 1; client->capture_frame = client->capture_first = 0;
+            client->capture_head = client->capture_frames = 0; client->capture_error = 0;
+            ++g_capture_users;
+        }
+    } else if (request.kind == SAVANXP_AUDIOD_CAPTURE_STOP && client->capturing) {
+        client->capturing = 0; client->capture_frames = 0;
+        if (g_capture_users) --g_capture_users;
+        if (!g_capture_users) result = (int)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_STOP,0);
+    }
+    audiod_capture_reply(client,request.request_id,result);
+}
+static void audiod_poll_capture(void)
+{
+    static int16_t samples[2048];
+    unsigned int period;
+    for (period = 0; g_capture_users && period < 4; ++period) {
+        struct savanxp_audio_capture_read read = {(uint64_t)(uintptr_t)samples,g_capture_info.period_bytes,0};
+        long result = savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_READ,(unsigned long)(uintptr_t)&read);
+        size_t slot;
+        if (result == -SAVANXP_EAGAIN) return;
+        if (result < 0) {
+            for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS; ++slot) {
+                if (!g_native[slot].capturing) continue;
+                g_native[slot].capture_error = (int)result;
+                g_native[slot].capturing = 0; g_native[slot].capture_frames = 0;
+            }
+            g_capture_users = 0;
+            (void)savanxp_ioctl(g_audio_fd,AUDIO_IOC_CAPTURE_STOP,0);
+            return;
+        }
+        for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS; ++slot) {
+            struct audiod_native_client* client = &g_native[slot];
+            uint32_t frames = read.byte_count/4, i, tail;
+            uint32_t drop = client->capture_frames+frames > AUDIOD_CAPTURE_FIFO_FRAMES ?
+                client->capture_frames+frames-AUDIOD_CAPTURE_FIFO_FRAMES : 0;
+            if (!client->used || !client->capturing) continue;
+            // Drop the oldest unsent samples only on a real queue overflow.
+            // Absolute frame indices expose that gap after already-sent data.
+            client->capture_head = (client->capture_head+drop)%AUDIOD_CAPTURE_FIFO_FRAMES;
+            client->capture_frames -= drop; client->capture_first += drop;
+            tail = (client->capture_head+client->capture_frames)%AUDIOD_CAPTURE_FIFO_FRAMES;
+            for (i = 0; i < frames; ++i) {
+                uint32_t at = (tail+i)%AUDIOD_CAPTURE_FIFO_FRAMES;
+                client->capture_fifo[at*2] = samples[i*2]; client->capture_fifo[at*2+1] = samples[i*2+1];
+            }
+            client->capture_frames += frames; client->capture_frame += frames;
+        }
+    }
+}
+
+static void audiod_flush_capture(void)
+{
+    size_t slot;
+    for (slot = 0; slot < SAVANXP_AUDIOD_NATIVE_SLOTS; ++slot) {
+        struct audiod_native_client* client = &g_native[slot];
+        unsigned int records;
+        if (!client->used) continue;
+        if (client->capture_error) {
+            long sent = audiod_capture_reply(client,0,client->capture_error);
+            if (sent == SAVANXP_AUDIOD_RECORD_BYTES) client->capture_error = 0;
+            else if (sent != -SAVANXP_EAGAIN) audiod_close_native(client);
+            continue;
+        }
+        for (records = 0; client->capturing && client->capture_frames && records < 8; ++records) {
+            struct savanxp_audiod_record record = {0};
+            struct savanxp_audiod_capture_pcm header = {0};
+            int16_t* pcm = (int16_t*)(record.payload+sizeof(header));
+            uint32_t frames = client->capture_frames, i;
+            long sent;
+            if (frames > SAVANXP_AUDIOD_CAPTURE_MAX_FRAMES) frames = SAVANXP_AUDIOD_CAPTURE_MAX_FRAMES;
+            header.magic = SAVANXP_AUDIOD_CONTROL_MAGIC; header.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+            header.kind = SAVANXP_AUDIOD_CAPTURE_PCM; header.frame_index = client->capture_first; header.frames = frames;
+            record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(header)+frames*4;
+            memcpy(record.payload,&header,sizeof(header));
+            for (i = 0; i < frames; ++i) {
+                uint32_t at = (client->capture_head+i)%AUDIOD_CAPTURE_FIFO_FRAMES;
+                pcm[i*2] = client->capture_fifo[at*2]; pcm[i*2+1] = client->capture_fifo[at*2+1];
+            }
+            sent = sxn_write(client->write_handle,&record,sizeof(record));
+            if (sent == -SAVANXP_EAGAIN) break;
+            if (sent != sizeof(record)) { audiod_close_native(client); break; }
+            client->capture_head = (client->capture_head+frames)%AUDIOD_CAPTURE_FIFO_FRAMES;
+            client->capture_frames -= frames; client->capture_first += frames;
+        }
+    }
+}
+
 static void audiod_handle_native_datagram(
     struct audiod_native_client* client,
     const unsigned char* data,
@@ -724,6 +873,10 @@ static void audiod_handle_native_datagram(
     else if (kind == SAVANXP_AUDIOD_SELECT_ENDPOINT)
     {
         audiod_handle_endpoint(client, data, length);
+    }
+    else if (kind == SAVANXP_AUDIOD_CAPTURE_START || kind == SAVANXP_AUDIOD_CAPTURE_STOP)
+    {
+        audiod_handle_capture(client, data, length);
     }
     else if (kind == SAVANXP_AUDIOD_JACK_POLICY_QUERY || kind == SAVANXP_AUDIOD_JACK_POLICY_SET)
     {
@@ -960,6 +1113,8 @@ static int audiod_serve(int sock_fd, int audio_fd)
         audiod_accept_native(now_ms);
         audiod_drain_native(now_ms);
         audiod_poll_jacks(now_ms);
+        audiod_poll_capture();
+        audiod_flush_capture();
         audiod_expire_streams(now_ms);
 
         due_ms = now_ms > last_render_ms ? now_ms - last_render_ms : 0;

@@ -27,6 +27,7 @@ bool check(bool ok, const char* what) {
 bool mock_ready() { return true; }
 bool mock_info(savanxp_audio_info& info) { info = {48000,2,16,4,4096,16384,SAVANXP_AUDIO_BACKEND_AC97,0}; return true; }
 int mock_submit(uint64_t, uint32_t) { return 0; }
+int mock_capture(void*, uint32_t) { return 0; }
 void mock_stop() {}
 uint64_t chosen = 0x123;
 bool mock_endpoint(uint32_t index, savanxp_audio_endpoint& endpoint) {
@@ -90,8 +91,23 @@ int main() {
     audio::apply_playback_gain(nullptr, 8u);
     check(true, "nullptr no cuelga");
 
+    check(audio::set_master_volume(25) && audio::set_capture_volume(50), "independent playback and recording gains");
+    memcpy(buffer,full_scale,sizeof(buffer));
+    audio::apply_capture_gain(buffer,sizeof(buffer));
+    check(buffer[0] == 16383 && buffer[1] == -16384 && audio::master_volume() == 25,
+          "input half gain changes samples without changing playback level");
+    check(!audio::set_capture_volume(101) && audio::capture_volume() == 50, "invalid input gain preserves level");
+    audio::set_capture_muted(true);
+    memcpy(buffer,full_scale,sizeof(buffer)); audio::apply_capture_gain(buffer,sizeof(buffer));
+    check(!buffer[0] && !buffer[1] && audio::capture_volume() == 50 && !audio::master_muted(),
+          "input mute preserves input gain and leaves playback unmuted");
+    audio::set_capture_muted(false);
+    memcpy(buffer,full_scale,sizeof(buffer)); audio::apply_capture_gain(buffer,sizeof(buffer));
+    check(buffer[0] == 16383 && buffer[1] == -16384, "unmuting input restores its independent gain");
+    check(audio::set_capture_volume(100) && audio::set_master_volume(100), "restore independent default gains");
+
     const audio::Backend fallback = {mock_ready,mock_info,mock_ready,mock_submit,mock_stop,
-        mock_ready,mock_ready,mock_submit,mock_stop};
+        mock_ready,mock_ready,mock_capture,mock_stop};
     audio::set_backend(fallback);
     savanxp_audio_endpoint output = {}, input = {}, again = {};
     check(audio::endpoint(0,output) && audio::endpoint(1,input) && !audio::endpoint(2,again),

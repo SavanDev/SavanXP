@@ -38,7 +38,10 @@ struct sxnaudio_stream {
     uint32_t rate_hz;
     uint32_t sequence;
     uint64_t started_ns;
-    uint64_t frames_sent; /* delivered, or skipped when the program fell behind */
+    uint64_t frames_sent; /* accepted for playback, or skipped when the program fell behind */
+    uint32_t period_bytes, direct_buffered;
+    int direct_owned;
+    int16_t direct_pcm[2048];
 };
 
 static inline void sxnaudio_copy_name(char* out, const char* name) {
@@ -54,7 +57,7 @@ static inline void sxnaudio_copy_name(char* out, const char* name) {
 
 /* Sends one datagram wrapped in a record. Never blocks: 0, or -EAGAIN when
  * the daemon has not drained eight records yet. */
-static inline long sxnaudio_send_record(struct sxnaudio_stream* stream, const void* datagram, uint32_t length) {
+static inline long sxnaudio_send_record_to(long handle, const void* datagram, uint32_t length) {
     struct savanxp_audiod_record record;
     const unsigned char* in = (const unsigned char*)datagram;
     uint32_t index = 0;
@@ -71,11 +74,15 @@ static inline long sxnaudio_send_record(struct sxnaudio_stream* stream, const vo
     for (; index < SAVANXP_AUDIOD_RECORD_PAYLOAD; index += 1) {
         record.payload[index] = 0;
     }
-    written = sxn_write(stream->to_daemon, &record, sizeof(record));
+    written = sxn_write(handle, &record, sizeof(record));
     if (written == (long)sizeof(record)) {
         return 0;
     }
     return written < 0 ? written : -SAVANXP_EIO;
+}
+
+static inline long sxnaudio_send_record(struct sxnaudio_stream* stream, const void* datagram, uint32_t length) {
+    return sxnaudio_send_record_to(stream->to_daemon,datagram,length);
 }
 
 /* Names the stream in the daemon's census (the volume popup, `volume list`).
@@ -110,21 +117,23 @@ static inline long sxnaudio_open(struct sxnaudio_stream* stream, const char* nam
     stream->from_daemon = -1;
     stream->sequence = 0;
     stream->frames_sent = 0;
+    stream->period_bytes = stream->direct_buffered = 0; stream->direct_owned = 0;
 
     /* Opening the device never contends; only writing claims it. */
-    stream->device = sxn_open_device("audio0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    stream->device = sxn_open_device("audio0", SXN_DEVICE_WRITE);
     if (stream->device < 0) {
         result = stream->device;
         stream->device = -1;
         return result;
     }
     result = sxn_device_control(stream->device, AUDIO_IOC_GET_INFO, (unsigned long)(uintptr_t)&info);
-    if (result < 0 || info.sample_rate_hz == 0 || info.channels != 2 || info.bits_per_sample != 16) {
+    if (result < 0 || info.sample_rate_hz == 0 || info.channels != 2 || info.bits_per_sample != 16 ||
+        !info.period_bytes || info.period_bytes > sizeof(stream->direct_pcm) || info.period_bytes%4) {
         (void)sxn_close(stream->device);
         stream->device = -1;
         return result < 0 ? result : -SAVANXP_EINVAL;
     }
-    stream->rate_hz = info.sample_rate_hz;
+    stream->rate_hz = info.sample_rate_hz; stream->period_bytes = info.period_bytes;
 
     if (sxn_port_connect(SAVANXP_AUDIOD_PORT_NAME, handles) == 0) {
         stream->to_daemon = handles[0];
@@ -177,12 +186,35 @@ static inline long sxnaudio_write(struct sxnaudio_stream* stream, const int16_t*
         return -SAVANXP_EINVAL;
     }
     if (stream->mode == SXNAUDIO_MODE_DIRECT) {
-        long written = sxn_write(stream->device, frames, (unsigned long)count * 4ul);
-        if (written < 0) {
-            return written;
+        const uint32_t period = stream->period_bytes/4;
+        uint32_t i;
+        long written;
+        if (!count) return 0;
+        // Claim the writer with one silent frame before accepting samples.
+        // Coalesce tiny producer writes into device periods so they cannot
+        // exhaust a descriptor ring while carrying very little PCM.
+        if (!stream->direct_owned) {
+            stream->direct_pcm[0] = stream->direct_pcm[1] = 0;
+            written = sxn_write(stream->device,stream->direct_pcm,4);
+            if (written != 4) return written < 0 ? written : -SAVANXP_EIO;
+            stream->direct_owned = 1;
         }
-        stream->frames_sent += (uint64_t)written / 4u;
-        return written / 4;
+        while (done < count) {
+            uint32_t take = period-stream->direct_buffered;
+            if (take > count-done) take = count-done;
+            for (i = 0; i < take*2; ++i) stream->direct_pcm[stream->direct_buffered*2+i] = frames[done*2+i];
+            stream->direct_buffered += take; done += take;
+            if (stream->direct_buffered == period) {
+                written = sxn_write(stream->device,stream->direct_pcm,stream->period_bytes);
+                if (written != (long)stream->period_bytes) {
+                    stream->frames_sent += done;
+                    return done ? (long)done : written < 0 ? written : -SAVANXP_EIO;
+                }
+                stream->direct_buffered = 0;
+            }
+        }
+        stream->frames_sent += done;
+        return done;
     }
     if (stream->mode != SXNAUDIO_MODE_DAEMON) {
         return -SAVANXP_EINVAL;
@@ -231,6 +263,11 @@ static inline void sxnaudio_close(struct sxnaudio_stream* stream) {
         (void)sxn_close(stream->from_daemon);
     }
     if (stream->device >= 0) {
+        if (stream->mode == SXNAUDIO_MODE_DIRECT && stream->direct_owned && stream->direct_buffered) {
+            uint32_t i;
+            for (i = stream->direct_buffered*2; i < stream->period_bytes/2; ++i) stream->direct_pcm[i] = 0;
+            (void)sxn_write(stream->device,stream->direct_pcm,stream->period_bytes);
+        }
         (void)sxn_close(stream->device);
     }
     stream->to_daemon = -1;
@@ -266,9 +303,7 @@ static inline long sxnaudio_control_open(struct sxnaudio_control* control) {
 }
 
 static inline long sxnaudio_control_send(struct sxnaudio_control* control, const void* data, uint32_t length) {
-    struct sxnaudio_stream transport;
-    transport.to_daemon = control->request;
-    return sxnaudio_send_record(&transport, data, length);
+    return sxnaudio_send_record_to(control->request,data,length);
 }
 
 static inline long sxnaudio_control_query(struct sxnaudio_control* control, uint32_t request_id) {

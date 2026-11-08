@@ -101,7 +101,7 @@ struct savanxp_audiod_list_reply {
 #define SAVANXP_AUDIOD_RECORD_MAX_FRAMES \
     ((SAVANXP_AUDIOD_RECORD_PAYLOAD - SAVANXP_AUDIOD_HEADER_BYTES) / 4u)
 #define SAVANXP_AUDIOD_NATIVE_FIRST_PORT 1u
-#define SAVANXP_AUDIOD_NATIVE_SLOTS 8u
+#define SAVANXP_AUDIOD_NATIVE_SLOTS 16u
 
 struct savanxp_audiod_record {
     uint32_t magic; /* SAVANXP_AUDIOD_RECORD_MAGIC */
@@ -125,6 +125,10 @@ struct savanxp_audiod_record {
 #define SAVANXP_AUDIOD_JACK_POLICY_QUERY 11u
 #define SAVANXP_AUDIOD_JACK_POLICY_SET 12u
 #define SAVANXP_AUDIOD_JACK_POLICY_REPLY 13u
+#define SAVANXP_AUDIOD_CAPTURE_START 14u
+#define SAVANXP_AUDIOD_CAPTURE_STOP 15u
+#define SAVANXP_AUDIOD_CAPTURE_REPLY 16u
+#define SAVANXP_AUDIOD_CAPTURE_PCM 17u
 
 struct savanxp_audiod_snapshot_query {
     uint32_t magic;
@@ -200,6 +204,37 @@ struct savanxp_audiod_jack_policy_reply {
     int32_t last_error;
     uint32_t reserved;
 };
+
+struct savanxp_audiod_capture_request {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id;
+    uint32_t reserved;
+};
+struct savanxp_audiod_capture_reply {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint32_t request_id; /* zero reports an asynchronous capture error */
+    int32_t result;
+    uint32_t rate_hz;
+    uint16_t channels;
+    uint16_t bits;
+    uint32_t period_bytes;
+    uint32_t reserved;
+};
+struct savanxp_audiod_capture_pcm {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t kind;
+    uint64_t frame_index; /* relative to this capture subscription */
+    uint32_t frames;
+    uint32_t reserved;
+    /* Stereo S16 frames follow. A discontinuity is counted, never concealed. */
+};
+#define SAVANXP_AUDIOD_CAPTURE_MAX_FRAMES \
+    ((SAVANXP_AUDIOD_RECORD_PAYLOAD-sizeof(struct savanxp_audiod_capture_pcm))/4u)
 
 /* Wire snapshots must remain atomic within the native record payload. */
 typedef char savanxp_audiod_snapshot_fits_record[

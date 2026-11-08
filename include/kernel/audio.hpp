@@ -22,11 +22,13 @@ struct Backend {
     // Optional independent capture direction.
     bool (*capture_ready)();
     bool (*capture_configure)();
-    // Copy captured PCM to user memory; zero or negative errno.
-    int (*capture_read_period)(uint64_t user_buffer, uint32_t byte_count);
+    // Fill kernel-owned PCM; zero or negative errno.
+    int (*capture_read_period)(void* buffer, uint32_t byte_count);
     void (*capture_stop)();
     bool (*endpoint)(uint32_t index, savanxp_audio_endpoint&) = nullptr;
     int (*select_endpoint)(uint64_t id, uint32_t direction) = nullptr;
+    int (*capture_available)() = nullptr; // bytes ready without waiting, or negative errno
+    bool (*capture_info)(savanxp_audio_info&) = nullptr;
 };
 
 // Registered hardware driver, probed by descending priority.
@@ -67,9 +69,16 @@ void set_master_muted(bool muted);
 // An odd trailing byte is left untouched.
 void apply_playback_gain(void* frames, uint32_t byte_count);
 
+uint32_t capture_volume();
+bool set_capture_volume(uint32_t volume);
+bool capture_muted();
+void set_capture_muted(bool muted);
+void apply_capture_gain(void* frames, uint32_t byte_count);
+bool get_capture_info(savanxp_audio_info& info);
+int capture_available();
 bool capture_ready();
 bool capture_configure();
-int capture_read_period(uint64_t user_buffer, uint32_t byte_count);
+int capture_read_period(void* buffer, uint32_t byte_count);
 void capture_stop();
 
 } // namespace audio

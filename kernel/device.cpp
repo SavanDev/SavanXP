@@ -70,7 +70,10 @@ int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_
     return device->ioctl(request, argument, granted_access);
 }
 
-void close(Device* device) {
+void close(Device* device, uint32_t access) {
+    if (device != nullptr && device->close_access != nullptr) {
+        device->close_access(access); return;
+    }
     if (device != nullptr && device->close != nullptr) {
         device->close();
     }

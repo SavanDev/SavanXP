@@ -1,7 +1,7 @@
 # Azalia: OpenBSD HDA port for the x86_64 host
 
-Status: selective playback port plus SUN device inventory and manual analog
-output selection implemented. Host tests, QEMU recorded-PCM acceptance and
+Status: selective analog playback/capture port plus SUN inventory, connector
+selection, jack policy and Sound recording controls implemented. Host tests, QEMU recorded-PCM acceptance and
 persistence regression pass. **Physical playback on the
 Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
 target remains separate.
@@ -131,6 +131,21 @@ previous implementation and does not certify these new features.
   HDA without NIC and on AC'97; the host suite is 25/25. HDA recorded PCM and
   the isolated Doom persistence regression still pass. Physical jack sensing
   and automatic analog routing remain unvalidated until the user's checks.
-- Stages 4–6 remain implementation work. The output catalog currently covers
+- Stage 4: `azalia-capture-test` checks the ALC892 ADC/mixer/microphone/line-in
+  graph, numeric unity/bias verbs, transactional input rollback, real DMA
+  copies over wraps and explicit deadline/overrun errors. `hda-capture` and
+  `virtio-capture` check deterministic independent stereo input, full/half/muted
+  samples, direct and shared native capture, duplex and independent owners.
+  `sound-capture-smoke` passes its 17 screenshots and independently verifies
+  2.977 s of replay at left RMS 12000 / 401.4 Hz and right RMS 6000 / 600.6 Hz.
+  These checks use a generated ALSA file/null microphone, never the host mic.
+  The host suite passes 26/26, full/half-volume HDA PCM retains RMS 12000/6000
+  with no internal gap, AC'97/virtio playback and legacy capture pass, and the
+  isolated Doom persistence regression passes. Extracted Sound/audiod/native
+  test binaries match the new payload; Doom's executable and WAD remain present.
+  The existing Sound controls pass 14 visual captures and `sxgui-smoke` passes
+  its eight glyph/scroll/taskbar captures after the successful rebuild.
+  Physical microphone sensitivity and duplex remain for final hardware tests.
+- Stages 5–6 remain implementation work. The output catalog currently covers
   the bound backend; independent controllers/codecs belong to stage 5.
   HDMI was subsequently deferred explicitly by the user (see Boundaries above).

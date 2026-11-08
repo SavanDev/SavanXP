@@ -35,9 +35,30 @@ Failed automatic changes are reported and attempted once per presence change;
 toggle the policy or select an output to retry deliberately. State is still
 session-only until the preferences stage of the roadmap.
 
-Capture controls and HDMI configuration are not implemented yet.
+## Recording
+
+The Recording section selects the default input connector and controls its
+software gain and mute independently of master playback. The live meter shows
+the kernel's input peaks after gain/mute. Analog HDA exposes valid microphone,
+line-in and auxiliary paths; virtio-sound exposes its capture stream. AC'97 has
+no recording support in this backend and shows **No recording device available**.
+
+**Record test** stores three seconds of stereo PCM in memory.
+**Play recording** replays that buffer through the normal SUN mixer while
+the input monitor continues. No recording is written to disk. A changed input
+discards the previous test; gain/mute changes affect subsequent input and leave
+an existing recording intact. Lost capture frames or a device error invalidate
+the test rather than filling it with fabricated silence. Closing Sound releases
+its recording subscription without stopping other subscribers or playback.
+
+Input selection waits for the service acknowledgement. An actual route change
+ends existing capture subscriptions with an explicit retry error; Sound reopens
+its monitor on the new input. Selecting the already effective input preserves
+capture. Input gain and mute are global to the chosen capture stream.
+HDMI is deferred to a separate objective.
+
 Without `audiod`, the panel explains that application controls are unavailable
-while leaving master controls usable. Without an audio device those controls
+while leaving master controls and direct recording usable. Without an audio device those controls
 are disabled too. A disconnected service is retried once a second.
 
 ## Native control API
@@ -60,8 +81,9 @@ reads are available without the daemon; selection is disabled until it responds.
 
 The helpers in `sxn/sxnaudio.h` provide a control-only connection, separate from
 `sxnaudio_stream`: `sxnaudio_control_open/close`, `sxnaudio_control_query/read`,
-`sxnaudio_control_change`, and typed master gain/mute helpers. The panel never
-writes PCM or acquires the audio device's writer slot. `nativetest` exercises
+`sxnaudio_control_change`, and typed master gain/mute helpers. The control
+connection never acquires the PCM writer; recording replay opens its own
+playback stream. `nativetest` exercises
 the new surface against the real daemon, including a control connection that
 does not appear in the playback census.
 
@@ -73,7 +95,8 @@ assigns a new stream id at registration; changes name both that id and its
 source port. Delayed controls cannot affect a new stream reusing a port.
 A control connection consumes a native connection slot, but no mixer stream.
 
-The panel polls every 200 ms without blocking its event loop. Selection follows
+The panel drains capture every 10 ms and refreshes controls every 200 ms,
+without blocking its event loop. Playback selection follows
 the stream id across updates. A control change discards an older in-flight
 snapshot so it cannot briefly revert the slider. Losing the service clears the snapshot and
 selection before reconnecting. Expired/replaced streams disable their controls;
@@ -115,9 +138,17 @@ not prove that a physical amplifier is enabled or speakers are connected.
   `tools/build-user.sh --source sdk/nativetest --name nativetest --native`.
 - `sxgui-smoke` still asserts real toolkit glyphs; the existing taskbar scenario
   still checks the popup's frame, slider and master mute geometry.
+- `hda-capture` and `virtio-capture` assert actual deterministic stereo input,
+  gain/mute, direct and daemon capture, concurrent playback, independent device
+  ownership, shared subscribers and explicit packet loss. A host WAV oracle
+  also requires a continuous duplex playback interval with the expected tone.
+- `sound-capture-smoke` boots HDA without networking and checks input selection,
+  live levels, gain/mute, a three-second recording and playback while input is
+  muted. The recorded output must retain the fixture's independent 400/600 Hz
+  stereo channels, amplitudes and duration; screenshots alone do not pass it.
 
-Per-user persistence, multiple controllers and recording remain in the six-stage [roadmap](../roadmaps/open/AZALIA_ROADMAP.md). Their absence is not represented by
-nonfunctional controls in this panel.
+Per-user persistence and independent controllers remain in the six-stage
+[roadmap](../roadmaps/open/AZALIA_ROADMAP.md).
 
 The policy itself is tested by `jack-policy-test`: default manual mode, plug,
 unplug, unknown readings, another controller's jack, failed-transition latching,

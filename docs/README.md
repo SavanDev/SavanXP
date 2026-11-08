@@ -46,8 +46,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
-- [`AZALIA.md`](kernel/AZALIA.md) — pinned OpenBSD HDA port, source map,
-  playback/codec adaptation, DMA lifetime and verification boundaries.
+- [`AZALIA.md`](kernel/AZALIA.md) — pinned OpenBSD analog HDA playback/capture port, source map,
+  codec routing, DMA lifetime and verification boundaries.
 - [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — current ASRock B450/Ryzen x86_64
   hardware inventory and analog HDA target, plus the Compaq Evo N1020v analysis
   reserved for `legacy` and future x86 work.
@@ -130,9 +130,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`MEDIA_PLAYER.md`](media/MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
 - [`SOUND.md`](media/SOUND.md) — SUN Sound panel, popup shortcut, master and
-  application controls, native snapshots, live PCM meters and verification.
+  application controls, input selection, recording test and live PCM meters.
 - [`AUDIO_DAEMON.md`](media/AUDIO_DAEMON.md) — `audiod`, the mixing daemon: UDP
-  loopback transport, the slice protocol, and who holds `/dev/audio0`.
+  and native transports, shared recording and who holds `/dev/audio0`.
 - [`MIDI.md`](media/MIDI.md) — `libsxmidi`, the General MIDI synthesizer: the SMF
   parser, the built-in instrument bank, and how the Doom port plays music
   through it.

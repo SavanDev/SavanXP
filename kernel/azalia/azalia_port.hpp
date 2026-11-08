@@ -78,6 +78,11 @@ bool find_output(codec_t*, Path&);
 // rollback clears current, so callers cannot report a route that is unusable.
 int switch_output(codec_t*, Path& current, const Path& next);
 int configure_path(codec_t*, const Path&);
+bool input_path(codec_t*, int pin, Path&);
+bool find_input(codec_t*, Path&);
+int configure_input_path(codec_t*, const Path&);
+int switch_input(codec_t*, Path& current, const Path& next);
+int azalia_set_amp(codec_t*, int nid, bool output, unsigned input, uint32_t cap, bool mute);
 int read_connections(widget_t*, const codec_t*);
 bool pin_detectable(const widget_t&);
 PinPresence pin_presence(codec_t*, int pin);

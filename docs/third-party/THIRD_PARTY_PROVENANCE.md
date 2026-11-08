@@ -78,6 +78,8 @@ which is why both go into the registry.
 - Decision: `Selective port`. Controller/command/stream routines, codec
   property handling and wire definitions are retained or adapted. The full
   audio(9) mixer, autoconf and interrupt infrastructure are not compiled.
+  Analog ADC routing adapts discovery, amp and pin initialization in
+  `kernel/azalia/input.cpp`; `capture.cpp` implements the local polled DMA cursor.
 - Distributed in: the kernel binary as the analog HDA audio backend.
   [AZALIA.md](../kernel/AZALIA.md) maps the upstream routines to local code
   and records every adaptation boundary.

@@ -88,6 +88,7 @@ def build_qemu_args(
     serial_path: Path | None = None,
     qmp_path: Path | None = None,
     audio_device: str = "auto",
+    capture_fixture: bool = False,
     wav_path: Path | None = None,
     disk_bus: str | None = None,
     extra_disks: tuple[tuple[Path, str], ...] = (),
@@ -255,8 +256,14 @@ def build_qemu_args(
         audio1 = f"wav,id=audio1,path={wav_path}"
     else:
         audio1 = "none,id=audio1" if headless else "sdl,id=audio1"
+    if capture_fixture:
+        audio1 = ("alsa,id=audio1,in.dev=savanxp_fixture_input,out.dev=savanxp_fixture_output,"
+                  "in.frequency=48000,out.frequency=48000,in.channels=2,out.channels=2,"
+                  "in.format=s16,out.format=s16,in.try-poll=off,out.try-poll=off,"
+                  "in.buffer-length=10000,out.buffer-length=10000,"
+                  "in.period-length=10000,out.period-length=10000,timer-period=10000")
     if audio_device == "hda":
-        if wav_path is not None:
+        if wav_path is not None and not capture_fixture:
             audio1 += ",out.frequency=48000"
         devices = ("ich9-intel-hda,id=hda", "hda-duplex,bus=hda.0,audiodev=audio1")
     elif audio_device == "virtio" or (audio_device == "auto" and virtio):

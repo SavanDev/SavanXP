@@ -242,6 +242,8 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/azalia.cpp
     kernel/azalia/openbsd.cpp
     kernel/azalia/codec.cpp
+    kernel/azalia/input.cpp
+    kernel/azalia/capture.cpp
     kernel/audio.cpp
     kernel/audio_device.cpp
     kernel/ps2.cpp
@@ -919,11 +921,19 @@ target_compile_options(savanxp-jack-policy-test PRIVATE -O1 -Wall -Wextra -Werro
 set_target_properties(savanxp-jack-policy-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 add_test(NAME jack-policy-test COMMAND savanxp-jack-policy-test)
 
+add_executable(savanxp-azalia-capture-test
+    kernel/azalia/openbsd.cpp kernel/azalia/codec.cpp kernel/azalia/input.cpp
+    kernel/azalia/capture.cpp tests/host/azalia_capture_test.cpp)
+target_include_directories(savanxp-azalia-capture-test PRIVATE "${CMAKE_SOURCE_DIR}/kernel")
+target_compile_options(savanxp-azalia-capture-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-azalia-capture-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_test(NAME azalia-capture-test COMMAND savanxp-azalia-capture-test)
+
 add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

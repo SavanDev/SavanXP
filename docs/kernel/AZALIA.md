@@ -1,12 +1,13 @@
-# OpenBSD Azalia playback port
+# OpenBSD Azalia analog audio port
 
 The x86_64 hardware target is the AMD `1022:1457` HDA controller and its
 Realtek ALC892 codec on the [development host](REAL_HARDWARE.md). The backend
 is a selective port, not the full OpenBSD audio subsystem. It supports one
-active analog output at a time, selected from valid codec paths, 48 kHz stereo
-S16 PCM, and software master gain. AC'97 and virtio-sound remain separate
+active analog output and input at a time, selected from valid codec paths,
+48 kHz stereo S16 PCM, independent software playback/capture gain and duplex
+DMA. AC'97 and virtio-sound remain separate
 backends. The audio service optionally switches analog jacks using the
-presence inventory below. HDMI, capture, power management and most
+presence inventory below. HDMI, power management and most
 codec-specific quirks are not implemented.
 
 ## Source and license
@@ -31,6 +32,8 @@ where the derived code is compiled.
 | `azalia_get_ctrlr_caps`, `azalia_init_corb`, `azalia_init_rirb` | `kernel/azalia/codec.cpp`; bounded ring setup without autoconf, allocation or timeout(9) |
 | `azalia_codec_init`, `azalia_widget_init_connection` | `codec.cpp`; function/widget enumeration and amplifier/PCM inheritance; bounded connection storage and independent encoded/expanded indices for ranges |
 | `azalia_mixer_set` amplifier encoding | `codec.cpp`; both channels, input index, direction and mute bits retained; unity gain from amplifier offset, including mute-only amps |
+| ADC discovery, `azalia_mixer_set` and `azalia_widget_init_pin` | `kernel/azalia/input.cpp`; bounded ADC-to-input graph, shared amp encoding and pin initialization; explicit transactional input selection |
+| Input stream transport | `kernel/azalia/capture.cpp`; SavanXP-specific polling cursor and overrun checks around the ported stream/BDL routines |
 | `azalia_configure_pci` AMD Family 17h snooping | `kernel/azalia.cpp`; PCI byte `0x42`, mask `0xf8`, enable `0x02` for `1022:1457` |
 
 The routines in `openbsd.cpp` retain their upstream names and control flow.
@@ -117,6 +120,38 @@ infrastructure, not a claim that OpenBSD uses this scheduling model.
 All reset and verb delays use calibrated `monotonic_ns()`, including while
 interrupts are disabled. No CPU-iteration count is treated as milliseconds.
 
+## Analog recording
+
+The input graph walks from a stereo PCM ADC through mixers/selectors to a
+firmware-connected microphone, line-in or auxiliary pin. Digital pins, cycles,
+unsupported formats and oversized graphs are rejected. Each selected mixer
+input is unmuted and the others muted. ADC gain is set to its advertised unity
+offset; a microphone pin's boost is a separate input amp at unity, never an
+output connection index. Mic pins receive supported VREF80/VREF50 bias through
+the ported pin initializer; line-in receives no microphone bias. Input gain and
+mute then operate on PCM in kernel memory before any samples reach userland.
+
+On the ALC892 target the intended path is ADC 0x08 through mixer 0x23 to rear
+mic 0x18, front mic 0x19 or line-in 0x1a. ADC 0x08's unity index is 0x10;
+the mic boost's unity index is zero. Host-shaped tests assert these numeric
+payloads, but physical sensitivity, board wiring and capture remain unverified.
+No hardware boost control is exposed yet.
+
+Capture uses input descriptor zero and stream tag 2, separately from playback's
+output descriptor and tag 1. Its independent 32-period cyclic ring is fully
+populated before RUN. A consumer waits one whole completed period behind DMA
+and copies only complete stereo frames. An unobserved full lap, a consumer
+overrun within one period of overwrite, invalid LPIB or DMA error fails capture
+explicitly. DMA must stop before capture buffers can be reset or reused.
+Selecting another input stops only capture, changes the path transactionally
+and restores the old route on failure. Playback continues independently.
+
+The native nonblocking START/READ/STOP ioctls use independent capture ownership;
+READ returns EAGAIN when a complete period is unavailable. Gain/mute and held
+peak state do not acquire PCM. The existing blocking read remains available
+for the legacy recording test. The [audio service](../media/AUDIO_DAEMON.md)
+shares a single kernel capture session among native subscribers.
+
 ## Verification and limits
 
 - `azalia-test`: the actual ported routines against simulated MMIO, 2/16/256
@@ -128,6 +163,15 @@ interrupts are disabled. No CPU-iteration count is treated as milliseconds.
 - `audio-wav-test`: independently generated valid/invalid captures. Silence,
   internal holes, wrong gain, wrong frequency, wrong rate and unequal channels
   must fail the audio oracle.
+- `azalia-capture-test`: ADC/mic/line-in graph, unity and bias verbs, input
+  rollback, independent stream tag/BDL, actual DMA sample copies over repeated
+  wraps, partial-frame alignment and rejected overruns/deadlines/DMA errors.
+- `hda-capture` and `virtio-capture`: known 400/600 Hz input at amplitudes
+  12000/6000, exact full/half/muted samples, independent owners, direct and
+  daemon duplex, two subscribers and counted slow-reader loss. The playback
+  oracle requires at least 0.9 s of continuous 440 Hz audio at RMS 3000.
+- `sound-capture-smoke`: three-second record/replay through the actual SUN
+  panel, with a separate WAV oracle for stereo content, duration and continuity.
 - `./build.sh smoke hda-stream` and `hda-stream-quiet`: recorded stereo PCM
   must contain 2.0–3.5 seconds of approximately 440 Hz audio, RMS near 12000 or
   6000 respectively, and no internal silent gap longer than 20 ms. Startup and

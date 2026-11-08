@@ -30,6 +30,7 @@
 // SavanXP bus/DMA/audio adapter for the selective OpenBSD port.
 #include "kernel/azalia.hpp"
 #include "azalia/azalia_port.hpp"
+#include "azalia/capture.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
@@ -47,8 +48,13 @@ constexpr uint64_t kBytesPerSecond = 48000 * 4;
 volatile uint8_t* g_mmio = nullptr;
 azalia_t g_controller;
 codec_t g_codec;
-Path g_path;
-stream_t g_stream = {};
+Path g_path, g_input_path;
+stream_t g_stream = {}, g_record_stream = {};
+CaptureCursor g_record_cursor;
+memory::PageAllocation g_record_pcm = {};
+bool g_capture_supported = false, g_capture_prepared = false, g_capture_fault = false;
+bool g_capture_dma_stopped = true;
+uint16_t g_capability = 0;
 memory::PageAllocation g_rings = {}, g_pcm = {};
 bool g_ready = false, g_prepared = false;
 uint64_t g_played = 0, g_written = 0, g_last_poll_ns = 0;
@@ -181,6 +187,15 @@ bool probe() {
         g_device_id = (uint64_t{SAVANXP_AUDIO_BACKEND_HDA} << 56) |
             (static_cast<uint64_t>((bus << 8) | (slot << 3) | function) << 16) |
             (static_cast<uint64_t>(g_codec.address) << 8);
+        g_capability = cap;
+        g_input_path = {};
+        g_capture_supported = HDA_GCAP_ISS(cap) && find_input(&g_codec,g_input_path);
+        if (g_capture_supported) {
+            g_record_stream = {&g_controller,&g_codec,HDA_SD_BASE,2,g_input_path.nodes[0],
+                {},{},kBytes,kPeriod,kFormat};
+            console::printf("azalia: capture pin=0x%x adc=0x%x descriptor=0 tag=2\n",
+                g_input_path.nodes[g_input_path.count-1],g_record_stream.converter);
+        }
         g_ready = true;
         console::printf("azalia: ready %x:%x.%u codec=0x%x pin=0x%x dac=0x%x rings=%u/%u\n",
             bus, slot, function, g_codec.vid, g_path.nodes[0], g_stream.converter,
@@ -245,6 +260,86 @@ void stop() {
         g_dropped, g_underruns);
     (void)azalia_comresp(&g_codec, g_stream.converter, CORB_SET_CONVERTER_STREAM_CHANNEL, 0, nullptr);
 }
+bool stop_record_dma(bool fault) {
+    if (!g_mmio || !g_capture_supported) return true;
+    const int reg = g_record_stream.regbase;
+    mmio_write(nullptr,reg+HDA_SD_CTL,mmio_read(nullptr,reg+HDA_SD_CTL,2)&~HDA_SD_CTL_RUN,2);
+    g_capture_dma_stopped = !azalia_stream_reset(&g_record_stream) &&
+        !(mmio_read(nullptr,reg+HDA_SD_CTL,2)&HDA_SD_CTL_RUN);
+    g_capture_prepared = false;
+    g_capture_fault = fault || !g_capture_dma_stopped;
+    return g_capture_dma_stopped;
+}
+bool capture_ready() { return g_ready && g_capture_supported && g_input_path.count; }
+void capture_stop() {
+    if (!g_ready || !g_capture_supported) return;
+    (void)stop_record_dma(false);
+    (void)azalia_comresp(&g_codec,g_record_stream.converter,CORB_SET_CONVERTER_STREAM_CHANNEL,0,nullptr);
+    if (g_input_path.count)
+        (void)azalia_comresp(&g_codec,g_input_path.nodes[g_input_path.count-1],CORB_SET_PIN_WIDGET_CONTROL,0,nullptr);
+}
+bool capture_configure() {
+    if (!capture_ready()) return false;
+    if (g_capture_prepared) return true;
+    if (!g_capture_dma_stopped && !stop_record_dma(false)) return false;
+    if (!g_record_pcm.virtual_address && !memory::allocate_contiguous_pages(1+kSlots,g_record_pcm)) return false;
+    if (!(g_capability & HDA_GCAP_64OK) &&
+        g_record_pcm.physical_address+(1+kSlots)*memory::kPageSize > 0x100000000ull) return false;
+    g_record_stream.bdlist = {g_record_pcm.virtual_address,g_record_pcm.physical_address};
+    g_record_stream.buffer = {static_cast<uint8_t*>(g_record_pcm.virtual_address)+memory::kPageSize,
+        g_record_pcm.physical_address+memory::kPageSize};
+    g_record_stream.converter = g_input_path.nodes[0];
+    memset(g_record_pcm.virtual_address,0,(1+kSlots)*memory::kPageSize);
+    if (configure_input_path(&g_codec,g_input_path) || azalia_stream_start(&g_record_stream)) {
+        capture_stop(); return false;
+    }
+    g_record_cursor = {};
+    g_record_cursor.last_poll_ns = timer::monotonic_ns();
+    g_capture_prepared = true; g_capture_dma_stopped = false; g_capture_fault = false;
+    return true;
+}
+int capture_available() {
+    if (g_capture_fault) return -SX_EIO;
+    if (!g_capture_prepared) return 0;
+    const int error = capture_poll(&g_record_stream,g_record_cursor,timer::monotonic_ns());
+    if (error) { (void)stop_record_dma(true); return -SX_EIO; }
+    return static_cast<int>(azalia_port::capture_available(&g_record_stream,g_record_cursor));
+}
+int capture_read(void* buffer, uint32_t bytes) {
+    if (!buffer || !bytes || bytes > kPeriod || bytes%4) return -SX_EINVAL;
+    const uint64_t deadline = timer::monotonic_ns()+250000000;
+    // Preserve legacy blocking device reads. The native nonblocking ioctl
+    // checks capture_available first, so the mixer never enters this wait.
+    for (;;) {
+        const int available = capture_available();
+        if (available < 0) return available;
+        if (static_cast<uint32_t>(available) >= bytes) break;
+        if (!g_capture_prepared || timer::monotonic_ns() >= deadline) return -SX_EIO;
+        azalia::poll(); delay_us(nullptr,100);
+    }
+    const int error = capture_copy(&g_record_stream,g_record_cursor,timer::monotonic_ns(),buffer,bytes);
+    return error ? -error : 0;
+}
+int select_input(uint64_t id) {
+    if (!g_capture_supported) return -SX_ENODEV;
+    Path candidate;
+    if (!input_path(&g_codec,id&0xff,candidate)) return -SX_ENOENT;
+    const Path previous = g_input_path;
+    const bool running = g_capture_prepared;
+    capture_stop();
+    if (!g_capture_dma_stopped) return -SX_EIO;
+    const int changed = switch_input(&g_codec,g_input_path,candidate);
+    if (g_input_path.count) g_record_stream.converter = g_input_path.nodes[0];
+    if (!changed && (!running || capture_configure())) return 0;
+    capture_stop();
+    if (!changed && previous.count) {
+        (void)switch_input(&g_codec,g_input_path,previous);
+        if (g_input_path.count) g_record_stream.converter = g_input_path.nodes[0];
+    }
+    if (running && g_input_path.count && !capture_configure()) g_input_path = {};
+    return -SX_EIO;
+}
+
 bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
     if (!g_ready) return false;
     const uint64_t now = timer::monotonic_ns();
@@ -252,20 +347,24 @@ bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
         g_next_presence_ns = now + 250000000;
         for (int nid = g_codec.wstart; nid < g_codec.wend; ++nid) {
             Path route;
-            if (output_path(&g_codec,nid,route)) g_codec.w[nid].d.pin.presence = pin_presence(&g_codec,nid);
+            if (output_path(&g_codec,nid,route) || (g_capture_supported && input_path(&g_codec,nid,route)))
+                g_codec.w[nid].d.pin.presence = pin_presence(&g_codec,nid);
         }
     }
     for (int nid = g_codec.wstart; nid < g_codec.wend; ++nid) {
         Path path;
-        if (!output_path(&g_codec, nid, path)) continue;
+        const bool output = output_path(&g_codec,nid,path);
+        if (!output && (!g_capture_supported || !input_path(&g_codec,nid,path))) continue;
         if (index--) continue;
         const auto& pin = g_codec.w[nid];
         info = {};
         info.id = g_device_id | static_cast<unsigned>(nid);
         info.device_id = g_device_id;
         info.backend = SAVANXP_AUDIO_BACKEND_HDA;
-        info.flags = SAVANXP_AUDIO_PLAYBACK | SAVANXP_AUDIO_AVAILABLE;
-        if (g_path.count && g_path.nodes[0] == nid) info.flags |= SAVANXP_AUDIO_SELECTED;
+        info.flags = (output ? SAVANXP_AUDIO_PLAYBACK : SAVANXP_AUDIO_CAPTURE) | SAVANXP_AUDIO_AVAILABLE;
+        if ((output && g_path.count && g_path.nodes[0] == nid) ||
+            (!output && g_input_path.count && g_input_path.nodes[g_input_path.count-1] == nid))
+            info.flags |= SAVANXP_AUDIO_SELECTED;
         if (CORB_CD_PORT(pin.d.pin.config) == CORB_CD_JACK) info.flags |= SAVANXP_AUDIO_JACK;
         if (pin.d.pin.device == CORB_CD_HEADPHONE) info.flags |= SAVANXP_AUDIO_HEADPHONES;
         if (pin_detectable(pin)) info.flags |= SAVANXP_AUDIO_PRESENCE_CAPABLE;
@@ -275,7 +374,8 @@ bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
         const unsigned location = CORB_CD_LOC_GEO(pin.d.pin.config);
         const char* position = location == CORB_CD_FRONT ? "Front " : location == CORB_CD_REAR ? "Rear " : "";
         const char* name = pin.d.pin.device == CORB_CD_HEADPHONE ? "headphones" :
-            pin.d.pin.device == CORB_CD_SPEAKER ? "speakers" : "line-out";
+            pin.d.pin.device == CORB_CD_SPEAKER ? "speakers" : pin.d.pin.device == CORB_CD_MICIN ? "microphone" :
+            pin.d.pin.device == CORB_CD_LINEIN ? "line-in" : output ? "line-out" : "auxiliary input";
         strcpy(info.name, position);
         strcpy(info.name + strlen(info.name), name);
         strcpy(info.device_name, g_codec.vid == 0x10ec0892 ? "Realtek ALC892 (HD Audio)" : "HD Audio analog codec");
@@ -284,8 +384,9 @@ bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
     return false;
 }
 int select_endpoint(uint64_t id, uint32_t direction) {
-    if (!g_ready || direction != SAVANXP_AUDIO_PLAYBACK || (id & ~uint64_t{0xff}) != g_device_id)
-        return -SX_ENOENT;
+    if (!g_ready || (id & ~uint64_t{0xff}) != g_device_id) return -SX_ENOENT;
+    if (direction == SAVANXP_AUDIO_CAPTURE) return select_input(id);
+    if (direction != SAVANXP_AUDIO_PLAYBACK) return -SX_EINVAL;
     Path candidate;
     if (!output_path(&g_codec, id & 0xff, candidate)) return -SX_ENOENT;
     const Path previous = g_path;
@@ -305,7 +406,7 @@ int select_endpoint(uint64_t id, uint32_t direction) {
     return -SX_EIO;
 }
 const audio::Backend g_backend = {ready, get_info, configure, submit, stop,
-    nullptr, nullptr, nullptr, nullptr, endpoint, select_endpoint};
+    capture_ready, capture_configure, capture_read, capture_stop, endpoint, select_endpoint, capture_available, nullptr};
 const audio::Backend& backend() { return g_backend; }
 const audio::Driver g_driver = {"azalia", 60, probe, backend};
 } // namespace
@@ -313,6 +414,7 @@ const audio::Driver g_driver = {"azalia", 60, probe, backend};
 namespace azalia {
 const audio::Driver& driver() { return g_driver; }
 void poll() {
+    if (g_capture_prepared) (void)capture_available();
     if (!g_prepared) return;
     const uint64_t now = timer::monotonic_ns();
     if (now - g_last_poll_ns >= static_cast<uint64_t>(kBytes) * 1000000000 / kBytesPerSecond) {

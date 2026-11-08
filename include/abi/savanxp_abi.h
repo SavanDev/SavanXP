@@ -488,6 +488,13 @@ enum savanxp_audio_ioctl {
      * plus ownership of the affected PCM direction, or an idle direction. */
     AUDIO_IOC_GET_ENDPOINT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 6),
     AUDIO_IOC_SELECT_ENDPOINT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 7),
+    AUDIO_IOC_CAPTURE_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 8),
+    AUDIO_IOC_CAPTURE_START = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 9),
+    AUDIO_IOC_CAPTURE_READ = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 10),
+    AUDIO_IOC_CAPTURE_STOP = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 11),
+    AUDIO_IOC_CAPTURE_GET_STATE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 12),
+    AUDIO_IOC_CAPTURE_SET_VOLUME = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 13),
+    AUDIO_IOC_CAPTURE_SET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 14),
 };
 
 enum savanxp_power_ioctl {
@@ -959,6 +966,22 @@ struct savanxp_audio_info {
     uint32_t buffer_bytes;
     uint32_t backend;
     uint32_t flags;
+};
+
+/* CAPTURE_READ is nonblocking and transfers exactly one capture period.
+ * START/READ/STOP need read access and the independent capture owner slot;
+ * control-only opens and playback continue without contending for that slot. */
+struct savanxp_audio_capture_read {
+    uint64_t buffer;
+    uint32_t byte_count;
+    uint32_t reserved;
+};
+struct savanxp_audio_capture_state {
+    uint32_t volume;
+    uint32_t muted;
+    uint16_t peak_left;
+    uint16_t peak_right;
+    uint32_t active;
 };
 
 enum savanxp_input_event_type {

@@ -17,6 +17,12 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
+The `hda-capture`, `virtio-capture` and `sound-capture-smoke` scenarios also
+require QEMU's ALSA audio backend and ALSA library plugins (`alsa-lib` on Arch).
+They generate a deterministic virtual microphone through the ALSA file/null
+plugins, without accessing the host microphone or speakers. The normal build
+and other smoke scenarios do not require ALSA.
+
 Python is the `python3` command on `PATH`, the same one you run, and it
 must have Pillow. A versioned interpreter earlier in `PATH` (a uv or pyenv
 `python3.X` without Pillow) is not picked over it. To use another

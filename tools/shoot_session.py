@@ -2610,7 +2610,7 @@ def scenario_sound(s):
         raise Failure("Sound did not open from the volume popup")
     # The label starts at content (12,136): y132 plus its centred 13px face.
     x,y = header[0]-12,header[1]-136
-    box = (x,y,x+600,y+460)
+    box = (x,y,x+600,y+640)
     def settle(name):
         time.sleep(1.0)
         return s.shot(name)
@@ -2627,6 +2627,8 @@ def scenario_sound(s):
     app_row(image,"ToneA")
     row_b = app_row(image,"ToneB")
     expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")
+    expect_text(image,(x+12,y+576,x+588,y+604),"No recording device available",TEXT,FACE,
+                "a playback-only backend disables recording without affecting the mixer")
     expect_pixel(image,x+16,y+85,SELECT,"master meter shows mixed PCM")
     expect_text(image,(x+12,y+100,x+588,y+124),"Automatically switch to headphones",(128,128,128),FACE,
                 "unsupported jack detection leaves automatic switching disabled")
@@ -2678,13 +2680,100 @@ def scenario_sound(s):
     s.qmp.move_to(1000,120)
     image = settle("sound-master-restored")
     expect_pixel(image,x+16,y+85,SELECT,"master unmute restores output meter")
-    s.qmp.move_to(x+540,y+440)
+    s.qmp.move_to(x+540,y+620)
     s.qmp.click()
     settle("sound-closed")
 
 
+def scenario_sound_capture(s):
+    """Record and replay the deterministic stereo microphone through Sound."""
+    s.open_console()
+    s.qmp.type_line("volume 100; volume unmute; exit")
+    s.qmp.tap("ret")
+    time.sleep(3.0)
+    s.qmp.move_to(1208,787); s.qmp.click(); time.sleep(1.0)
+    popup = s.shot("capture-popup")
+    expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,"popup opens native recording settings")
+    s.qmp.move_to(1200,758); s.qmp.click(); s.qmp.move_to(1000,120)
+    header = None
+    for _ in range(15):
+        time.sleep(1.0)
+        image = s.shot("capture-open")
+        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
+        if header is not None: break
+    if header is None: raise Failure("Sound recording panel did not open")
+    x,y = header[0]-12,header[1]-136
+    box = (x,y,x+600,y+640)
+    def settle(name):
+        time.sleep(1.0)
+        return s.shot(name)
+    image = settle("capture-live")
+    expect_text(image,(x+12,y+424,x+588,y+445),"Recording",TEXT,FACE,"panel has a recording section")
+    expect_text(image,(x+12,y+448,x+588,y+473),"HD Audio analog codec",TEXT,FIELD,"input selector names the effective capture device")
+    expect_pixel(image,x+16,y+525,SELECT,"known microphone drives the live input meter")
+    expect_pixel(image,x+16,y+85,FIELD,"monitoring the input does not play sound")
+    s.qmp.move_to(x+575,y+460); s.qmp.click()
+    image = settle("capture-input-list")
+    expect_text(image,(x+12,y+472,x+588,y+497),"HD Audio analog codec",SELECT_TEXT,SELECT,
+                "input dropdown offers the current capture connector")
+    s.qmp.tap("ret"); s.qmp.move_to(1000,120)
+    image = settle("capture-input-selected")
+    expect_text(image,(x+12,y+608,x+476,y+637),"0 applications",TEXT,FACE,"idempotent input selection is acknowledged without a route error")
+    expect_pixel(image,x+16,y+525,SELECT,"selecting the current input preserves capture")
+    # Input gain and mute must affect the input meter without a playback owner.
+    s.qmp.move_to(x+225,y+494); s.qmp.click(); s.qmp.tap("home"); s.qmp.move_to(1000,120)
+    image = settle("capture-zero")
+    expect_text(image,(x+530,y+480,x+588,y+513),"0%",TEXT,FACE,"input gain reaches zero")
+    expect_pixel(image,x+16,y+525,FIELD,"zero input gain clears the meter")
+    s.qmp.tap("end")
+    image = settle("capture-gain-restored")
+    expect_text(image,(x+530,y+480,x+588,y+513),"100%",TEXT,FACE,"input gain is restored")
+    expect_pixel(image,x+16,y+525,SELECT,"input meter resumes with gain")
+    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    image = settle("capture-muted")
+    expect_pixel(image,x+16,y+525,FIELD,"input mute is effective")
+    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    image = settle("capture-unmuted")
+    expect_pixel(image,x+16,y+525,SELECT,"input unmute preserves gain")
+    expect_text(image,(x+12,y+544,x+140,y+574),"Record test",TEXT,FACE,"recording test is available")
+    s.qmp.move_to(x+72,y+558); s.qmp.click(); s.qmp.move_to(1000,120)
+    time.sleep(4.0)
+    image = s.shot("capture-recorded")
+    expect_text(image,(x+12,y+576,x+588,y+604),"Recorded 3.0 s.",TEXT,FACE,"test captured three seconds")
+    expect_text(image,(x+144,y+544,x+284,y+574),"Play recording",TEXT,FACE,"captured test can be played")
+    s.qmp.move_to(x+214,y+558); s.qmp.click()
+    time.sleep(0.2)
+    playing = s.shot("capture-playing")
+    # Capture live states before glyph analysis. Keep the known pointer
+    # position: PS/2 move_to calibrates against a corner and takes seconds.
+    if s.qmp.abs_pointer:
+        s.qmp.move_to(x+468,y+495)
+    else:
+        for dx,dy in ((64,-63),(64,0),(64,0),(62,0)):
+            s.qmp._rel_step(dx,dy)
+    s.qmp.click()
+    time.sleep(0.1)
+    muted = s.shot("capture-duplex-muted")
+    time.sleep(3.0)
+    played = s.shot("capture-played")
+    expect_text(playing,(x+12,y+576,x+588,y+604),"Playing the recorded test...",TEXT,FACE,"test playback starts")
+    origin = find_text(playing,(x+12,y+158,x+588,y+324),"Sound recording test",SELECT_TEXT,SELECT)[0]
+    if origin is None or playing.getpixel((origin[0]-2,origin[1]+3)) != SELECT:
+        raise Failure("recorded playback does not appear as a selected application")
+    expect_text(playing,box,"1 application",TEXT,FACE,"capture monitoring does not register a playback stream")
+    expect_pixel(playing,x+16,y+85,SELECT,"recorded PCM reaches the playback meter")
+    expect_pixel(muted,x+16,y+525,FIELD,"muting the live input clears only its meter")
+    expect_pixel(muted,x+16,y+85,SELECT,"recorded playback continues while input is muted")
+    expect_text(played,(x+12,y+576,x+588,y+604),"Recorded 3.0 s.",TEXT,FACE,"recording remains replayable")
+    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    image = settle("capture-monitor-restored")
+    expect_pixel(image,x+16,y+525,SELECT,"live monitoring resumes after the test")
+    s.qmp.move_to(x+540,y+620); s.qmp.click(); settle("capture-closed")
+
+
 SCENARIOS = {
     "sound": scenario_sound,
+    "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,

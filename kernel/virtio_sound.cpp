@@ -662,12 +662,11 @@ bool vs_capture_configure() {
     return true;
 }
 
-// A diferencia de vs_submit_period (fire-and-forget: descarta si el ring esta
-// lleno), un read() tiene que devolver audio de verdad o un error -- no hay
-// "silencio aceptable" del lado captura. wait_for_used_element bloquea
-// (polling acotado) hasta que el device complete un periodo.
-int vs_capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
-    if (byte_count == 0 || byte_count > kAudioPeriodBytes) {
+// Capture returns actual device samples or an error. Unlike playback's
+// fire-and-forget submission, it cannot substitute silence for missing input.
+// wait_for_used_element polls with a bound until a device period completes.
+int vs_capture_read_period(void* buffer, uint32_t byte_count) {
+    if (buffer == nullptr || byte_count == 0 || byte_count > kAudioPeriodBytes) {
         return -static_cast<int>(SX_EINVAL);
     }
 
@@ -681,18 +680,14 @@ int vs_capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
         return -static_cast<int>(SX_EIO);
     }
 
-    // element.len es cuanto lleno realmente el device (<= kAudioPeriodBytes).
-    // Si el caller pidio menos que un periodo entero (ultimo chunk parcial de
-    // un read() que no es multiplo de period_bytes), el resto capturado en
-    // ese periodo se descarta: no hay donde bufferearlo hasta el proximo
-    // read() sin sumar una cola aparte, y en la practica audiotest siempre
-    // pide multiplos de period_bytes.
+    // A full-period caller must receive a full period. A shorter legacy read
+    // still consumes one RX slot and discards that slot's remaining samples;
+    // native capture always requests the full period to preserve continuity.
     const uint32_t captured = element.len < kAudioPeriodBytes ? element.len : kAudioPeriodBytes;
     const uint32_t usable = captured < byte_count ? captured : byte_count;
+    if (usable != byte_count) { (void)post_rx_slot(slot); return -SX_EIO; }
     const void* payload = virtio_pci::queue_extra(g_rx_queue, rx_slot_data_offset(slot));
-    if (usable != 0 && !process::copy_to_user(user_buffer, payload, usable)) {
-        return -static_cast<int>(SX_EINVAL);
-    }
+    if (usable) memcpy(buffer,payload,usable);
 
     return post_rx_slot(slot) ? 0 : -static_cast<int>(SX_EIO);
 }
@@ -702,6 +697,14 @@ void vs_capture_stop() {
     stop_and_release_stream(g_capture);
     drain_stale_rx();
     g_rx_primed = false;
+}
+
+int vs_capture_available() {
+    if (!vs_capture_ready()) return -SX_ENODEV;
+    if (!g_rx_primed) return 0;
+    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_rx_queue);
+    virtio_pci::memory_barrier();
+    return used->idx != g_rx_queue.last_used_index ? static_cast<int>(kAudioPeriodBytes) : 0;
 }
 
 const audio::Backend g_backend = {
@@ -714,6 +717,7 @@ const audio::Backend g_backend = {
     .capture_configure = vs_capture_configure,
     .capture_read_period = vs_capture_read_period,
     .capture_stop = vs_capture_stop,
+    .capture_available = vs_capture_available,
 };
 
 void fail_device(const char* reason) {

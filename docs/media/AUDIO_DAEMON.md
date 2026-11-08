@@ -19,7 +19,8 @@ involvement -- any process, parented or not, can reach the daemon. The price
 is honest: on a full queue the kernel drops instead of blocking, so slices
 carry sequence numbers and the daemon counts gaps instead of pretending
 they cannot happen.
-Capture keeps its own independent owner and never goes through the daemon.
+Capture keeps an independent kernel owner; native clients share that owner
+through the daemon's recording subscriptions described below.
 
 ## The protocol (savanxp/audio_server.h)
 
@@ -76,12 +77,16 @@ The record size is the whole design:
   about 40 ms of sound; `sxnaudio_write` returns how many frames it took, and
   the rest is simply due again on the next `sxnaudio_frames_due`, which paces
   the program by the clock at a lead it chooses.
-- **Each connection is a stream** numbered by its slot, 1 to 8
+- **Playback connections use their slot number**, 1 to 16
   (`SAVANXP_AUDIOD_NATIVE_FIRST_PORT`), below every port UDP hands out, so the
   census, `SET_VOLUME` and the volume popup treat it like any other stream.
   `DECLARE` names it; `LIST` is answered with REPLY records on the event pipe.
   Closing the pipe ends the connection, and the stream expires with its
   silence like a UDP one.
+
+There are sixteen native connection slots and eight mixer streams. Capture-only
+and control-only connections consume a connection slot but never register as
+playback streams.
 
 Without a daemon (a session that never started one) there is no port, and `sxnaudio_open`
 falls back to writing `/dev/audio0` directly -- the same "first writer wins"
@@ -140,12 +145,40 @@ exit (no device or another daemon already listening) is left alone
 rather than respawned. If a direct holder outlives a daemon restart, the
 daemon waits its turn.
 
-This is also why there is no per-client state worth persisting: pause and
-close just stop sending, and the stream expires on its own.
+Pause and close stop sending; the live mixer stream expires on its own.
+Persistent application preferences are a separate roadmap stage.
+
+## Native recording
+
+`sxn/sxncapture.h` connects with acknowledged CAPTURE_START/STOP records.
+The first subscriber starts kernel capture and the last one stops it,
+independently of playback. Metadata identifies the actual rate, sample format
+and period size. The daemon polls nonblocking complete device periods and
+fans the same post-gain/mute input out to subscribers; capture never enters
+the playback census or packet-loss concealment.
+
+Each subscriber has a bounded 4096-frame FIFO plus eight event-pipe records,
+about 127 ms at 48 kHz. A slow reader drops only its own oldest unsent frames.
+PCM records carry an absolute frame index, so each client can count loss and
+decide whether to discard its recording. EAGAIN on the event pipe preserves
+queued samples. Device errors are retained until the pipe can deliver the
+error or closes; they are never replaced by successful silence.
+
+Selecting a different input stops capture, discards queued old-source samples
+and sends subscribers a retry error. Selecting the effective input is
+idempotent. Clients reopen explicitly; Sound does so automatically for its
+meter, while invalidating an interrupted test. The SUN helper retains terminal
+errors even if a read first returns already copied frames. A new subscription
+resets the error and frame index.
+
+Without the daemon, SUN reads periods directly with the same API. Readable
+and writable audio device handles release their respective directions on close;
+ownership is per process, so closing another readable handle in that process
+also ends its direct capture session. Use one dedicated handle per direction.
 
 ## Deliberately out
 
-Capture routing, resampling in the daemon, and real-time promises: slices are
+HDMI, per-application device routing, resampling in the daemon and real-time promises: slices are
 wall-clock sized and loss is counted, not hidden. See
 `docs/media/SXMEDIA.md` for the withdrawn layer this replaces the need for, and
 `docs/media/MEDIA_PLAYER.md` for the clock both sides still share.

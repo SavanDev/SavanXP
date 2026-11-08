@@ -28,6 +28,7 @@ tools/*
 !tools/run_qemu.py
 !tools/run_smoke.py
 !tools/audio_wav.py
+!tools/audio_capture_fixture.py
 !tools/qmp_client.py
 !tools/taskbar_smoke.py
 !tools/build-user.sh

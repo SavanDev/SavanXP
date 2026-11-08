@@ -17,6 +17,7 @@ class Scenario:
     prepare: tuple[str, ...] = ()
     ready: str = ""
     qmp_driver: str = ""
+    capture_fixture: bool = False
     audio_device: str = "auto"
     wav_name: str = ""
     wav_check: str = ""
@@ -50,6 +51,7 @@ def _qemu_scenario(
     timeout: float = 180.0,
     ready: str = "",
     qmp_driver: str = "",
+    capture_fixture: bool = False,
     audio_device: str = "auto",
     wav_name: str = "",
     wav_check: str = "",
@@ -81,6 +83,7 @@ def _qemu_scenario(
         ready=ready,
         qmp_driver=qmp_driver,
         audio_device=audio_device,
+        capture_fixture=capture_fixture,
         wav_name=wav_name,
         wav_check=wav_check,
         completion=completion,
@@ -314,6 +317,28 @@ SCENARIOS: dict[str, Scenario] = {
         "OpenBSD azalia playback at volume 50, asserted on recorded PCM", 120.0,
         audio_device="hda", wav_name="hda-stream-quiet.wav", wav_check="tone-quiet",
     ),
+    "hda-capture": _qemu_scenario(
+        "nativecapture", "NATIVE CAPTURE PASS", "NATIVE CAPTURE FAIL",
+        "Known stereo microphone PCM through native HDA capture, gain/mute and duplex",
+        audio_device="hda", capture_fixture=True, no_network=True, wav_name="hda-capture.wav", wav_check="duplex",
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
+    "virtio-capture": _qemu_scenario(
+        "nativecapture", "NATIVE CAPTURE PASS", "NATIVE CAPTURE FAIL",
+        "Known stereo microphone PCM through native virtio capture",
+        audio_device="virtio", capture_fixture=True, no_network=True, wav_name="virtio-capture.wav", wav_check="duplex",
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
+    "hda-record": _qemu_scenario(
+        "audiorecord", "AUDIO RECORD PASS", "AUDIO RECORD FAIL",
+        "Legacy HDA capture read completion (not signal acceptance)",
+        audio_device="hda",
+    ),
+    "virtio-record": _qemu_scenario(
+        "audiorecord", "AUDIO RECORD PASS", "AUDIO RECORD FAIL",
+        "Legacy virtio-sound capture read completion (not signal acceptance)",
+        audio_device="virtio",
+    ),
     "audiod-smoke": _qemu_scenario(
         "audiodselftest",
         "AUDIOD SELFTEST PASS",
@@ -464,6 +489,14 @@ SCENARIOS: dict[str, Scenario] = {
         "RESCUE SMOKE FAIL",
         "The rescue system, booted with no disk",
         no_disk=True,
+    ),
+    "sound-capture-smoke": _qemu_scenario(
+        "", "SOUND CAPTURE SMOKE PASS", "SOUND CAPTURE SMOKE FAIL",
+        "SUN Sound input gain/mute, stereo recording test and replayed PCM",
+        300.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="sound_capture",
+        audio_device="hda", capture_fixture=True, no_network=True,
+        wav_name="sound-capture.wav", wav_check="recording",
     ),
     "sound-smoke": _qemu_scenario(
         "", "SOUND SMOKE PASS", "SOUND SMOKE FAIL",
@@ -749,6 +782,7 @@ def main() -> int:
             "ready",
             "qmp_driver",
             "audio_device",
+            "capture_fixture",
             "wav_name",
             "wav_check",
             "completion",

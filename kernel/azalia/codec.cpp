@@ -178,7 +178,8 @@ int probe_codec(codec_t* c) {
             if ((w.widgetcap & COP_AWCAP_INAMP) && parameter(c, i, COP_INPUT_AMPCAP, w.inamp_cap)) return kIoError;
             if ((w.widgetcap & COP_AWCAP_OUTAMP) && parameter(c, i, COP_OUTPUT_AMPCAP, w.outamp_cap)) return kIoError;
         } else { w.inamp_cap = afg.inamp_cap; w.outamp_cap = afg.outamp_cap; }
-        if (w.type == COP_AWTYPE_AUDIO_OUTPUT && azalia_widget_init_audio(&w, c)) return kIoError;
+        if ((w.type == COP_AWTYPE_AUDIO_OUTPUT || w.type == COP_AWTYPE_AUDIO_INPUT) &&
+            azalia_widget_init_audio(&w, c)) return kIoError;
         // Read pin properties here, but configure only the selected analog pin.
         // Upstream init_pin (including EAPD) is called after route selection.
         if (w.type == COP_AWTYPE_PIN_COMPLEX) {
@@ -235,6 +236,10 @@ int amp(codec_t* c, int nid, bool output, unsigned input, uint32_t cap, bool mut
         gain | ((mute && (cap & COP_AMPCAP_MUTE)) ? CORB_AGM_MUTE : 0);
     return azalia_comresp(c, nid, CORB_SET_AMPLIFIER_GAIN_MUTE, payload, nullptr);
 }
+}
+
+int azalia_set_amp(codec_t* c, int nid, bool output, unsigned input, uint32_t cap, bool mute) {
+    return amp(c,nid,output,input,cap,mute);
 }
 
 bool output_path(codec_t* c, int pin, Path& path) {
