@@ -20,6 +20,8 @@ settings were not supplied. Doom/Celeste were silent and absent from the list;
 inspection of the shipped image found both still embedded the old UDP-only
 audio runtime, unlike the rebuilt system programs. The host's unsupported NIC
 explains why those same binaries could work in network-enabled QEMU.
+After testing the corrected ISO from `22ae69e`, the user confirmed that the
+games' audio also works correctly on the physical host.
 
 | Component | Observed hardware | SavanXP target / verification |
 | --- | --- | --- |

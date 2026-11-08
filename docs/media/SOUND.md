@@ -6,6 +6,11 @@ System program group. The popup keeps its compact size and shows up to three
 application rows (including its overflow row); the panel lists every stream
 that `audiod` currently mixes.
 
+The panel uses the desktop's classic NT-style controls and blue accent. A light
+heading with a speaker illustration identifies the audio settings; etched
+groups separate playback, applications and recording, with a sunken status
+field. All three sections remain visible together in a 600-by-704 client area.
+
 The upper slider and Mute control operate on the kernel master gain. Below
 Applications, select a row to adjust that stream's volume or mute it without
 changing its volume setting. Muting a stream also silences its packet-loss

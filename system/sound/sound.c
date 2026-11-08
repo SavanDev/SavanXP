@@ -59,6 +59,7 @@ static const char* g_row_ptrs[SAVANXP_AUDIOD_MAX_STREAMS];
 static const struct sxgui_column g_columns[] = {
     {"Application", 250, 0}, {"Volume", 70, 0}, {"Muted", 60, 0}, {"Level", 70, 0}
 };
+enum { SOUND_HEADER_HEIGHT = 64 };
 
 static struct savanxp_audiod_stream_state* selected(void) {
     uint32_t i;
@@ -518,8 +519,42 @@ static void flush_preferences_on_exit(void) {
     (void)sxn_log("sound: timed out saving preferences; background saving remains active");
     (void)sxn_close(pause);
 }
+static void paint_panel(struct sxngui_app* app) {
+    struct sx_painter* painter = &app->ui.painter;
+    const int width = (int)app->info.width;
+    int bottom = (int)app->info.height-SOUND_HEADER_HEIGHT-304;
+    const uint32_t blue = SXGUI_RGB(0,0,128);
+    const struct sx_point cone[] = {{27,25},{39,17},{39,47},{27,39}};
+    int font;
+    if (bottom < 245) bottom = 245;
+
+    // A clear control-panel heading above the standard NT-style widgets.
+    sx_painter_fill_rect(painter,sx_rect_make(0,0,width,SOUND_HEADER_HEIGHT),SXGUI_COLOR_FIELD);
+    sx_painter_fill_rect(painter,sx_rect_make(14,25,14,14),SXGUI_COLOR_FACE);
+    sxchrome_draw_raised(painter,sx_rect_make(14,25,14,14));
+    sx_painter_fill_polygon(painter,cone,4,SXGUI_COLOR_BEVEL);
+    sx_painter_draw_polyline(painter,cone,4,1,SXGUI_COLOR_DARK);
+    sx_painter_draw_line(painter,29,26,37,21,SXGUI_COLOR_LIGHT);
+    if (sx_painter_push_clip(painter,sx_rect_make(43,12,16,40))) {
+        sx_painter_draw_ellipse(painter,sx_rect_make(32,22,18,20),blue);
+        sx_painter_draw_ellipse(painter,sx_rect_make(26,14,32,36),blue);
+        sx_painter_pop_clip(painter);
+    }
+    font = sx_painter_set_font(painter,SX_FONT_UI_TITLE);
+    sx_painter_draw_text(painter,72,12,"Sound and Audio Devices",blue);
+    (void)sx_painter_set_font(painter,font);
+    sx_painter_draw_text(painter,73,38,"Playback, application volume and recording",SXGUI_COLOR_DARK);
+    sx_painter_hline(painter,0,SOUND_HEADER_HEIGHT-2,width,SXGUI_COLOR_SHADOW);
+    sx_painter_hline(painter,0,SOUND_HEADER_HEIGHT-1,width,SXGUI_COLOR_LIGHT);
+
+    // Etched groups use the desktop palette and leave every native control
+    // intact. Their edges sit outside the controls and their hit rectangles.
+    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+6,width-12,118));
+    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+126,width-12,bottom-46));
+    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+bottom+86,width-12,182));
+}
 static void layout(struct sxngui_app* app) {
-    int width = (int)app->info.width, height = (int)app->info.height;
+    int width = (int)app->info.width, height = (int)app->info.height-SOUND_HEADER_HEIGHT;
     int bottom = height - 304;
     if (bottom < 245) bottom = 245;
     g_widgets[OUTPUT].rect = sx_rect_make(12,12,width-24,22);
@@ -546,6 +581,8 @@ static void layout(struct sxngui_app* app) {
     g_widgets[RECORD_STATUS].rect = sx_rect_make(12,bottom+244,width-24,22);
     g_widgets[STATUS].rect = sx_rect_make(12,height-32,width-124,24);
     g_widgets[CLOSE].rect = sx_rect_make(width-96,height-34,84,26);
+    for (int index = 0; index < WIDGETS; ++index)
+        g_widgets[index].rect.y += SOUND_HEADER_HEIGHT;
     sxngui_app_request_repaint(app);
 }
 int main(int argc, char** argv) {
@@ -578,14 +615,16 @@ int main(int argc, char** argv) {
     g_widgets[RECORD_STATUS] = sxgui_label(sx_rect_make(0,0,0,0),g_record_text);
     g_widgets[INPUT_SELECT].on_action = g_widgets[INPUT_VOLUME].on_action = g_widgets[INPUT_MUTE].on_action = on_control;
     g_widgets[STATUS] = sxgui_label(sx_rect_make(0,0,0,0),g_status);
+    g_widgets[STATUS].flags |= SXGUI_FLAG_SUNKEN;
     g_widgets[CLOSE] = sxgui_button(sx_rect_make(0,0,0,0),"Close",on_close,0);
     g_widgets[MASTER].on_action = g_widgets[MASTER_MUTE].on_action = on_control;
     g_widgets[LIST].on_action = g_widgets[APP_VOLUME].on_action = g_widgets[APP_MUTE].on_action = on_control;
     (void)snprintf(g_status,sizeof(g_status), "Connecting to audio service...");
     result = sxngui_app_init(&g_app,&sun_resources,g_widgets,WIDGETS);
     if (result < 0) { (void)sxn_log("sound: window unavailable"); sxn_exit(1); }
-    g_app.on_resize = layout; g_app.on_tick = on_tick; g_app.tick_interval_ms = 200;
-    (void)sxngui_app_set_content_size(&g_app,600,640);
+    g_app.on_resize = layout; g_app.on_paint = paint_panel;
+    g_app.on_tick = on_tick; g_app.tick_interval_ms = 200;
+    (void)sxngui_app_set_content_size(&g_app,600,640+SOUND_HEADER_HEIGHT);
     layout(&g_app); on_tick(&g_app);
     result = sxngui_app_run(&g_app);
     stop_record_output(); sxnaudio_capture_close(&g_capture);

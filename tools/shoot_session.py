@@ -2671,6 +2671,10 @@ def scenario_sound(s):
                 return origin
         raise Failure("Sound does not list %s" % name)
     image = settle("sound-clients")
+    expect_text(image,(x+64,y-64,x+588,y),"Sound and Audio Devices",SELECT,FIELD,
+                "Sound has its own control-panel heading",which="title")
+    expect_pixel(image,x+580,y-40,FIELD,"heading has a light background")
+    expect_pixel(image,x+7,y+7,LIGHT,"playback group keeps the classic etched edge")
     app_row(image,"ToneA")
     row_b = app_row(image,"ToneB")
     expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")

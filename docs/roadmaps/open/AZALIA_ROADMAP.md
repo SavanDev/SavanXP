@@ -210,3 +210,6 @@ separate playback intervals record normalized RMS 0.1281 (Doom) and 0.1174
 (Celeste), with the NIC absent. All 34 original game-data files remain unchanged
 after executable installation and the normal build. This result does not certify every analog
 connector, automatic jack policy or physical controller-fault recovery.
+The user subsequently confirmed correct operation with the updated games in
+the ISO from `22ae69e`; basic physical application playback and microphone
+record/replay are therefore user-verified.

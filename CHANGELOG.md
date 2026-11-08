@@ -57,6 +57,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Sound has a clear heading, an audio icon and grouped playback, application and recording controls.**
+  The panel retains the desktop's NT-style widgets, palette and volume meters.
+
 - **The Start menu looks like Windows NT 4.0's**: black-to-blue banner with `SavanXP` in the
   caption face and the system edition rotated along it, 16x16 icons on 28px rows, a two-pixel
   raised frame and an etched separator above `Shut Down...`/`Restart...`.
