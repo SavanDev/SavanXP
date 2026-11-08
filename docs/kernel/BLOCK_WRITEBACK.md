@@ -63,6 +63,21 @@ write. If it did not, the image is consistent but may have a pending journal,
 which the host tools refuse (`sxfs_sync` leaves the image untouched); one boot of
 the guest replays it.
 
+POSIX `SYS_SYNC` queues filesystem ordering points and captures a monotonic
+writeback ticket, then parks only the calling thread. The existing POSIX parked
+request hook completes it when that frontier is durable or reports `EIO` if the
+queue fails. Later writers do not extend an earlier caller's frontier. A failure
+after a completed ticket does not retroactively invalidate that ticket. Shutdown
+and explicitly synchronous kernel callers retain the blocking drain operation.
+The sync request stays in POSIX per-thread state, outside common process layout.
+
+SxFS's deferred sync queues clean superblocks/journal headers in their existing
+order; FAT queues its device ordering point. Filesystem formats and the normal
+persistent-image build policy are unchanged. Kernel `memcmp` compares complete
+unaligned words before its bounded byte tail, returning the first unsigned-byte
+difference; it never reads beyond the requested region. This limits metadata
+diff-scan time in unoptimized builds while retaining normal byte semantics.
+
 ## Draining
 
 - **Idle.** The idle task is a user-mode loop of `SYS_YIELD`. When nothing else

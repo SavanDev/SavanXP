@@ -630,6 +630,10 @@ bool sync(fs::VolumeId id) {
     }
     return !volume->writable || block::sync(volume->device_index);
 }
+bool sync_deferred(fs::VolumeId id) {
+    Volume* volume = volume_for_id(id);
+    return volume && (!volume->writable || block::flush(volume->device_index));
+}
 
 void adopt_owner(fs::VolumeId id, const fs::Owner& owner) {
     Volume* volume = volume_for_id(id);
@@ -660,6 +664,7 @@ const fs::Driver kDriver = {
     .stats = &stats,
     .sync = &sync,
     .adopt_owner = &adopt_owner,
+    .sync_deferred = &sync_deferred,
 };
 
 const fs::Driver& driver_ref() {

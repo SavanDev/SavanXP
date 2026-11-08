@@ -1,14 +1,12 @@
 #include "kernel/string.hpp"
+#include "kernel/memory_compare.hpp"
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include "arch/cpu.hpp"
 
-// Acceso de 64 bits que no promete alineacion ni exclusividad de aliasing: x86
-// permite loads/stores desalineados y may_alias evita que el optimizador asuma
-// que este uint64_t no pisa los bytes de al lado.
-using UnalignedWord = uint64_t __attribute__((may_alias, aligned(1)));
+using UnalignedWord = kernel_memory::UnalignedWord;
 
 extern "C" void* memmove(void* destination, const void* source, size_t count) {
     auto* dst = static_cast<uint8_t*>(destination);
@@ -41,16 +39,7 @@ extern "C" void* memmove(void* destination, const void* source, size_t count) {
 }
 
 extern "C" int memcmp(const void* left, const void* right, size_t count) {
-    const auto* lhs = static_cast<const uint8_t*>(left);
-    const auto* rhs = static_cast<const uint8_t*>(right);
-
-    for (size_t index = 0; index < count; ++index) {
-        if (lhs[index] != rhs[index]) {
-            return lhs[index] < rhs[index] ? -1 : 1;
-        }
-    }
-
-    return 0;
+    return kernel_memory::compare(left,right,count);
 }
 
 size_t strlen(const char* text) {

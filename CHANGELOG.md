@@ -59,6 +59,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Waiting for `sync` no longer holds the kernel for an entire deferred storage queue.**
+  Durability failures still reach the caller; kernel byte comparisons process long equal buffers efficiently.
+
 - **Sound's input meter stays visible while microphone samples continue arriving.**
 
 - **Small SUN playback writes no longer exhaust virtio-sound descriptors prematurely.**

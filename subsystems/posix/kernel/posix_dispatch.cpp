@@ -440,13 +440,23 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         }
-        case SAVANXP_SYS_SYNC:
-            // fs::sync_all marks every volume clean; block::sync_all then
-            // waits for the writeback queue, so everything written is on the
-            // medium.
-            context->rax = static_cast<uint64_t>(
-                fs::sync_all() && block::sync_all() ? 0 : sx::negative_error(SAVANXP_EIO));
+        case SAVANXP_SYS_SYNC: {
+            posix::ThreadState* owned = posix::thread_state(self);
+            if (!owned) { context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM)); return context; }
+            uint64_t ticket;
+            if (!fs::sync_all_deferred() || !block::writeback_checkpoint(ticket)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EIO)); return context;
+            }
+            const auto completion = block::writeback_completion(ticket);
+            if (completion == block::WritebackCompletion::pending) {
+                owned->sync_ticket = ticket; owned->sync_active = 1;
+                self.wake_deadline_ms = 0; self.wait_reason = WaitReason::none; self.state = State::blocked_wait;
+                return choose_next_context(context);
+            }
+            context->rax = completion == block::WritebackCompletion::complete ? 0 :
+                static_cast<uint64_t>(sx::negative_error(SX_EIO));
             return context;
+        }
         case SAVANXP_SYS_FSCHECK: {
             if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));

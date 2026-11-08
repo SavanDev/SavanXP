@@ -107,6 +107,9 @@ struct Driver {
     // published as `owner`'s. Called by mount() between probe and attach.
     // nullptr: the format records owners itself, and the owner is ignored.
     void (*adopt_owner)(VolumeId volume, const Owner& owner);
+    // Queue the same clean metadata/flush ordering without draining writeback.
+    // A durability checkpoint must follow before reporting successful sync.
+    bool (*sync_deferred)(VolumeId volume) = nullptr;
 };
 
 struct MountInfo {
@@ -170,5 +173,6 @@ bool stats(size_t mount_index, VolumeStats& out);
 bool sync(size_t mount_index);
 // Every mounted volume; false if any failed.
 bool sync_all();
+bool sync_all_deferred();
 
 } // namespace fs

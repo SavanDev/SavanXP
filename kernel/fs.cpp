@@ -261,5 +261,16 @@ bool sync_all() {
     }
     return ok;
 }
+bool sync_all_deferred() {
+    bool ok = true;
+    for (size_t index = 0; index < g_mount_count; ++index) {
+        const Mount& slot = g_mounts[index];
+        if (!slot.in_use) continue;
+        if (slot.driver->sync_deferred) {
+            if (!slot.driver->sync_deferred(slot.volume)) ok = false;
+        } else if (slot.driver->sync && !slot.driver->sync(slot.volume)) ok = false;
+    }
+    return ok;
+}
 
 } // namespace fs

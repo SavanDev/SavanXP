@@ -30,16 +30,15 @@ struct ProcessState {
     char cwd[process::kProcessPathLength];
 };
 
-// POSIX per-thread state (subsystem::register_thread_state_size): the poll()
-// request in progress (isolation slice C). It was per process while a POSIX
-// process had one thread; two threads polling at once need one each.
-//
-// The kernel only knows the thread is parked with a deadline; POSIX decides
-// whether that was a poll. The request is a copy IN THE KERNEL, not a pointer
-// to user memory, because the per-tick re-evaluation cannot switch CR3 a
-// thousand times a second. User memory is touched once, on completion, to
-// return the revents.
+// POSIX per-thread blocking requests. The common kernel knows only that the
+// thread is parked; POSIX rechecks poll descriptors or a sync durability ticket.
+// Poll keeps its copied descriptor array in kernel memory, never a user pointer
+// that would require switching address spaces on each timer tick. Sync waits
+// until every write/flush before its ticket has completed, without holding the
+// global kernel lock while the whole storage queue drains.
 struct ThreadState {
+    uint64_t sync_ticket;
+    uint32_t sync_active;
     uint64_t poll_user_fds;
     uint32_t poll_count;
     uint32_t poll_active;

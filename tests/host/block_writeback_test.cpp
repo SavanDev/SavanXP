@@ -367,6 +367,33 @@ int main() {
     case_failure_stops_the_queue();
     case_memory_and_partitions_write_through();
     case_aging_drains_without_idle();
+    {
+        reset();
+        uint8_t data[256*kSectorSize]; fill(data,0x39,256);
+        uint64_t first = 0, second = 0;
+        check(block::write_cached(0,10,256,data),"queue a multi-step durability frontier");
+        check(block::writeback_checkpoint(first) && g_disk.event_count == 0,
+              "requesting durability queues flushes without draining the device");
+        check(block::writeback_completion(first) == block::WritebackCompletion::pending,"a queued frontier is not durable");
+        check(block::write_cached(0,400,1,data) && block::writeback_checkpoint(second) && second > first,
+              "a concurrent later writer gets a distinct frontier");
+        check(block::writeback_step() && block::writeback_completion(first) == block::WritebackCompletion::pending,
+              "part of a split write is insufficient for completion");
+        check(block::writeback_step() && block::writeback_completion(first) == block::WritebackCompletion::pending,
+              "written data remains pending until the device flush");
+        check(block::writeback_step() && block::writeback_completion(first) == block::WritebackCompletion::complete &&
+              block::writeback_completion(second) == block::WritebackCompletion::pending,
+              "the first sync completes without waiting for later writes");
+        check(g_disk.event_count == 3 && g_disk.events[2].kind == 'F',"completion follows an actual device flush");
+        check(block::writeback_completion(second+1) == block::WritebackCompletion::invalid,"reject a future durability ticket");
+        g_disk.fail_writes = true;
+        check(!block::writeback_step() && block::writeback_completion(second) == block::WritebackCompletion::failed &&
+              block::writeback_completion(first) == block::WritebackCompletion::complete,
+              "a later disk failure preserves an already durable frontier and fails its own waiters");
+        g_disk.fail_writes = false;
+        (void)block::probe_all();
+        check(block::sync_all(),"retain and drain failed-frontier writes after device recovery");
+    }
 
     printf("%s (%d checks, %d failures)\n",
            g_failures == 0 ? "BLOCK WRITEBACK TEST PASS" : "BLOCK WRITEBACK TEST FAIL",

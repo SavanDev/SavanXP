@@ -71,6 +71,7 @@ struct Pending {
     uint32_t sector_count; // 0: an ordering point
     uint32_t written;      // sectors already on the device, for a record split across steps
     uint64_t queued_ms;
+    uint64_t ticket;
     uint8_t* data;         // right after the record, in the same allocation
 };
 
@@ -90,6 +91,7 @@ Pending* g_queue_tail = nullptr;
 uint64_t g_clock_ms = 0;
 uint64_t g_last_forced_ms = 0;
 block::WritebackStats g_stats = {};
+uint64_t g_last_ticket = 0, g_completed_ticket = 0;
 uint8_t g_stage[static_cast<size_t>(kStepSectors) * block::kSectorSize];
 
 bool defers(const Device& device) {
@@ -99,6 +101,7 @@ bool defers(const Device& device) {
 void enqueue(Pending* record) {
     record->next = nullptr;
     record->queued_ms = g_clock_ms;
+    record->ticket = ++g_last_ticket;
     if (g_queue_tail != nullptr) {
         g_queue_tail->next = record;
     } else {
@@ -114,6 +117,7 @@ void pop_head() {
         g_queue_tail = nullptr;
     }
     g_stats.queued_bytes -= static_cast<uint64_t>(record->sector_count - record->written) * block::kSectorSize;
+    g_completed_ticket = record->ticket;
     heap::free(record);
 }
 
@@ -523,6 +527,20 @@ void report_health(bool failed) {
 
 bool sync_all() {
     return drain_all();
+}
+bool writeback_checkpoint(uint64_t& ticket) {
+    for (size_t i = 0; i < g_device_count; ++i) {
+        const Device& device = g_devices[i];
+        if (device.present && device.writable && defers(device) && !flush(i)) return false;
+    }
+    ticket = g_last_ticket;
+    return true;
+}
+WritebackCompletion writeback_completion(uint64_t ticket) {
+    if (ticket > g_last_ticket) return WritebackCompletion::invalid;
+    if (ticket <= g_completed_ticket) return WritebackCompletion::complete;
+    if (g_queue_head && g_devices[g_queue_head->device].failed) return WritebackCompletion::failed;
+    return WritebackCompletion::pending;
 }
 
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {

@@ -127,6 +127,11 @@ bool flush(size_t index);
 // writeback queue, whatever device `index` is.
 bool sync(size_t index);
 bool sync_all();
+// A nonblocking durability frontier. Later writes do not delay this ticket;
+// the caller may park while background steps reach its device flushes.
+enum class WritebackCompletion { pending, complete, failed, invalid };
+bool writeback_checkpoint(uint64_t& ticket);
+WritebackCompletion writeback_completion(uint64_t ticket);
 void report_health(bool failed);
 
 // Background writeback. writeback_step() moves one bounded piece of the queue

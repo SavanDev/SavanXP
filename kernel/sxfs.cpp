@@ -1727,6 +1727,14 @@ bool sync(VolumeId id) {
     return write_superblocks(*volume, volume->superblock.sequence, kFlagClean, Durability::durable) &&
         clear_journal(*volume, Durability::durable);
 }
+bool sync_deferred(VolumeId id) {
+    Volume* volume = volume_for_id(id);
+    if (!volume || !volume->metadata_ready) return false;
+    if (volume->status != MountStatus::mounted) return true;
+    MutationGuard guard(*volume);
+    return write_superblocks(*volume,volume->superblock.sequence,kFlagClean,Durability::cached) &&
+        clear_journal(*volume,Durability::cached) && block::flush(volume->device_index);
+}
 
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
     Volume* volume = volume_for_id(file.volume);
@@ -2275,6 +2283,7 @@ const fs::Driver kDriver = {
     .sync = &sync,
     // SxFS records owners per inode.
     .adopt_owner = nullptr,
+    .sync_deferred = &sync_deferred,
 };
 
 } // namespace

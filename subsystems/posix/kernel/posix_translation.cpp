@@ -1337,9 +1337,18 @@ int evaluate_poll_entries(ThreadState& state, process::Process& proc) {
 void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_deadline) {
     process::Process& proc = *thread.process;
     ThreadState* const owned = posix::existing_thread_state(thread);
-    if (owned == nullptr || owned->poll_active == 0) {
+    if (owned == nullptr) {
         return;
     }
+    if (owned->sync_active) {
+        const auto completion = block::writeback_completion(owned->sync_ticket);
+        if (completion == block::WritebackCompletion::pending) return;
+        owned->sync_active = 0;
+        process::detail::complete_blocked_wait(thread,completion == block::WritebackCompletion::complete ?
+            0 : sx::negative_error(SAVANXP_EIO));
+        return;
+    }
+    if (!owned->poll_active) return;
 
     const int ready = posix::evaluate_poll_entries(*owned, proc);
     const bool expired = honour_deadline && thread.wake_deadline_ms != 0 && thread.wake_deadline_ms <= now_ms;
