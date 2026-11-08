@@ -2580,6 +2580,53 @@ def scenario_doom(s):
         )
 
 
+def scenario_audio_ports_offline(s):
+    """Exercise the installed external binaries, with no network fallback.
+
+    Each game must appear in Sound and produce actual output while it is the
+    only playback client. This catches old embedded UDP-only SDK runtimes.
+    """
+    wav = Path(s.out).resolve().parent.parent / "audio-ports-offline.wav"
+
+    def check_port(name):
+        s.run("sound.sxe")
+        image = s.shot(name+"-sound-list")
+        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
+        if header is None:
+            raise Failure("Sound did not open while testing "+name)
+        x,y = header[0]-12,header[1]-136
+        row = (x+12,y+158,x+588,y+324)
+        present = False
+        for fg,bg in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
+            origin = find_text(image,row,name,fg,bg)[0]
+            if origin is not None and (fg != SELECT_TEXT or
+                    image.getpixel((origin[0]-2,origin[1]+3)) == SELECT):
+                present = True
+        if not present:
+            raise Failure("installed %s is absent from the mixer without a NIC" % name)
+        expect_text(image,(x,y,x+600,y+640),"1 application",TEXT,FACE,
+                    "only the real external port is a playback client")
+        time.sleep(9.0)
+        level = _wav_signal(wav)
+        if level is None or level < 0.001:
+            raise Failure("installed %s has no audible PCM without a NIC: RMS %s" % (name,level))
+        print("  offline %s: mixer row present, captured RMS %.4f" % (name,level))
+        s.qmp.chord("alt","f4")  # Sound
+        time.sleep(2.0)
+        s.qmp.chord("alt","f4")  # Game
+        time.sleep(3.0)
+
+    s.open_doom()
+    for _ in range(4):
+        s.qmp.tap("ret",pause=1.5)
+    time.sleep(10.0)
+    check_port("doomgeneric")
+    s.open_ccleste()
+    s.qmp.tap("z",pause=3.0)
+    check_port("ccleste")
+    s.shot("offline-ports-closed")
+
+
 def scenario_sound(s):
     """Open Sound from the volume popup and exercise live SUN mixer controls.
 
@@ -2775,6 +2822,7 @@ SCENARIOS = {
     "sound": scenario_sound,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
+    "audio_ports_offline": scenario_audio_ports_offline,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,
     "alttab": scenario_alttab,

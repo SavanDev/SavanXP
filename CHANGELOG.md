@@ -63,6 +63,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Doom and Celeste audio acceptance now checks the installed ports without a network card.**
+  `smoke audio-ports-offline` requires both games in Sound and audible recorded PCM;
+  old ports with an embedded UDP-only SDK must be rebuilt, preserving their data.
+
 - **Sound's recording replay remains paced independently of window repainting and control refresh.**
 
 - **Azalia can recover a failed controller without reusing DMA buffers that may still be active.**

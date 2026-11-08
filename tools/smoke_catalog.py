@@ -555,6 +555,14 @@ SCENARIOS: dict[str, Scenario] = {
         host_action="visual",
         visual_scenario="doom",
     ),
+    "audio-ports-offline": _qemu_scenario(
+        "", "AUDIO PORTS OFFLINE PASS", "AUDIO PORTS OFFLINE FAIL",
+        "Installed Doom and Celeste reach the native mixer and play PCM without a NIC",
+        360.0, "handoff: starting /bin/init", "taskbar",
+        audio_device="hda", no_network=True, clean_audio_preferences=True,
+        wav_name="audio-ports-offline.wav", completion="host", ready_wait=45.0,
+        host_action="visual", visual_scenario="audio_ports_offline",
+    ),
     "tcp-smoke": _qemu_scenario(
         "tcptest {port}",
         "TCP SMOKE PASS",

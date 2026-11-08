@@ -24,6 +24,16 @@ a configured network stack; native playback works on the physical host without
 a supported NIC. Anonymous UDP transport cannot authenticate an executable and
 therefore does not acquire persistent application preferences.
 
+External ports embed their SDK runtime. A normal system build preserves those
+installed binaries; it does not relink them. After the native audio transport
+update, old Doom/Celeste ELFs can therefore play in QEMU with a supported NIC
+while remaining silent and absent from Sound on the no-NIC physical host.
+Rebuild the ports with the current SDK and reinstall their executables while
+retaining `/games` data. Preserving a port is not the same as upgrading it.
+`smoke audio-ports-offline` boots HDA without a NIC and checks the installed
+Doom and Celeste independently: each must appear in Sound and produce actual
+recorded PCM. This supplements the SDK-level offline test with real consumers.
+
 The kernel already delivers UDP to its own address without ARP or a NIC on
 the path (`sendto` short-circuits to the local socket table), with a 1024
 byte cap and 16 datagrams queued per socket. That fits control and 48 kHz

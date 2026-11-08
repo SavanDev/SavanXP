@@ -199,3 +199,14 @@ The software implementation is complete; physical follow-up checks in
 [REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md#follow-up-audio-checks-after-the-software-objective)
 are still pending. This roadmap remains open for those results. HDMI remains a
 separate future objective.
+
+Physical follow-up, 2026-11-08: the user confirms microphone recognition,
+recording and audible replay in Sound. The input pin, gain and firmware settings
+remain unrecorded. Doom and Celeste did not appear or play on that host; the
+shipped external ELFs still contained the pre-native, UDP-only SDK, explaining
+why network-enabled QEMU masked that packaging gap. Rebuilt external consumers
+pass `audio-ports-offline`: 11 screenshots verify each game's mixer row, and
+separate playback intervals record normalized RMS 0.1281 (Doom) and 0.1174
+(Celeste), with the NIC absent. All 34 original game-data files remain unchanged
+after executable installation and the normal build. This result does not certify every analog
+connector, automatic jack policy or physical controller-fault recovery.

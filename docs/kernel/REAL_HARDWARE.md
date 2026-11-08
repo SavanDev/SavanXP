@@ -14,13 +14,20 @@ Separately, the user confirmed working physical audio playback on this host
 on 2026-11-07 after the Azalia port in `2ac6c50`. Other devices retain the
 verification status shown below.
 
+On 2026-11-08 the user also confirmed that Sound recognizes the microphone,
+records it and audibly replays it. The tested input pin, gain and firmware
+settings were not supplied. Doom/Celeste were silent and absent from the list;
+inspection of the shipped image found both still embedded the old UDP-only
+audio runtime, unlike the rebuilt system programs. The host's unsupported NIC
+explains why those same binaries could work in network-enabled QEMU.
+
 | Component | Observed hardware | SavanXP target / verification |
 | --- | --- | --- |
 | Board | ASRock B450M Pro4-F R2.0 | x86_64 boot; UEFI/ACPI discovery |
 | CPU | AMD Ryzen 5 1600, 6 cores / 12 threads; long mode, NX, SMEP, SMAP | Native x86_64 kernel; SMP and monotonic clock |
 | Memory | 32 GiB installed (about 31 GiB usable in Linux) | Physical memory discovery and DMA addressing |
 | GPU | Radeon RX Vega 56/64, `1002:687f` | Firmware framebuffer; no native Vega acceleration is claimed |
-| Analog audio | AMD Family 17h HDA `1022:1457`, PCI `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | OpenBSD `azalia` port; physical playback user-confirmed on 2026-11-07 |
+| Analog audio | AMD Family 17h HDA `1022:1457`, PCI `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | Playback user-confirmed on 2026-11-07; microphone recording/replay on 2026-11-08 |
 | Display audio | Vega HDA `1002:aaf8`, PCI `09:00.1`; ATI R6xx HDMI codec `1002:aa01` | Separate digital output; must not displace the analog codec |
 | NVMe | Kingston NV1, `2646:500e` | Device inventory only; boot storage must use a supported path |
 | SATA | AMD `1022:43c8` and `1022:7901` AHCI controllers | Existing AHCI path, to be tested on this host |
