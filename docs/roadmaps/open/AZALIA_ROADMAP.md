@@ -146,6 +146,18 @@ previous implementation and does not certify these new features.
   The existing Sound controls pass 14 visual captures and `sxgui-smoke` passes
   its eight glyph/scroll/taskbar captures after the successful rebuild.
   Physical microphone sensitivity and duplex remain for final hardware tests.
-- Stages 5–6 remain implementation work. The output catalog currently covers
-  the bound backend; independent controllers/codecs belong to stage 5.
-  HDMI was subsequently deferred explicitly by the user (see Boundaries above).
+- Stage 5: `audio-devices-test` checks all-driver discovery, multiple instances,
+  independent defaults and failed/unavailable target preparation. `audio-devices`
+  boots two HDA controllers and three codecs (addresses 0 and 2 share one),
+  AC'97 and virtio-sound. Exact capture samples distinguish 400/600 Hz at
+  12000/6000, 500/1000 Hz at 8000/4000 and 300/750 Hz at 10000/2000. Independent
+  playback WAVs contain 2.164 s, 1.888 s and 8.414 s at RMS 3000 / about 440 Hz.
+  Direct and daemon routing preserve the opposite direction; native capture
+  receives an explicit old-source error and reopens on the selected input.
+  The host suite passes 28/28, including input-meter freshness across measurement
+  windows. The unchanged visual recording scenario exposed and then verified
+  that meter fix: 17 captures and a replay WAV of 2.940 s at RMS 12000/6000,
+  399.6/599.9 Hz. Sound's prior 14 control captures and SxGUI's eight glyph/scroll
+  captures pass; isolated Doom persistence and installed binary comparisons pass.
+  General driver recovery remains stage 6.
+- Stage 6 remains implementation work. HDMI remains a separate future objective.

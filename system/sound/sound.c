@@ -71,7 +71,8 @@ static void refresh_outputs(void) {
     if (g_device >= 0) {
         for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index) {
             if (sxnaudio_endpoint_get(g_device,index,&endpoint) < 0) break;
-            const char* presence = !(endpoint.flags & SAVANXP_AUDIO_JACK) ? "" :
+            const char* presence = !(endpoint.flags & SAVANXP_AUDIO_AVAILABLE) ? " (unavailable)" :
+                !(endpoint.flags & SAVANXP_AUDIO_JACK) ? "" :
                 !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_CAPABLE) ? " (no detection)" :
                 !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_VALID) ? " (unknown)" :
                 (endpoint.flags & SAVANXP_AUDIO_CONNECTED) ? " (connected)" : " (unplugged)";

@@ -323,6 +323,13 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="hda", capture_fixture=True, no_network=True, wav_name="hda-capture.wav", wav_check="duplex",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "audio-devices": _qemu_scenario(
+        "nativedevices", "NATIVE DEVICES PASS", "NATIVE DEVICES FAIL",
+        "Independent playback/capture across HDA codecs/controllers, AC97 and virtio",
+        audio_device="multi", capture_fixture=True, no_network=True,
+        wav_name="audio-devices.wav", wav_check="duplex",
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "virtio-capture": _qemu_scenario(
         "nativecapture", "NATIVE CAPTURE PASS", "NATIVE CAPTURE FAIL",
         "Known stereo microphone PCM through native virtio capture",

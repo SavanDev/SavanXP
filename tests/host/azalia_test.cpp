@@ -137,5 +137,19 @@ int main() {
     check(h.sent(2,0x200,0x11) && h.sent(2,0x706,0x10), "attach converter to 48kHz stereo stream tag 1");
     h.answer = false;
     check(azalia_comresp(c.get(),0,0xf00,0,nullptr) != 0, "unresponsive codec fails instead of binding");
+    {
+        Hardware transport;
+        check(azalia_init_rings(&transport.az) == 0,"shared controller command transport");
+        codec_t one, two; one.az = two.az = &transport.az; one.address = 0; two.address = 2;
+        check(azalia_comresp(&one,0,0xf00,0,nullptr) == 0 && azalia_comresp(&two,0,0xf00,0,nullptr) == 0,
+              "serialized commands accept each codec's own response address");
+        transport.answer = false;
+        check(azalia_set_command(&transport.az,2,0,0xf00,0) == 0,"issue command to second codec");
+        transport.wp = (transport.wp+1)%transport.az.rirb_entries;
+        transport.rirb[transport.wp] = {0xdeadbeef,0}; transport.regs[0x58] = transport.wp;
+        uint32_t result = 0x1234;
+        check(azalia_get_response(&transport.az,&result) != 0 && result == 0x1234,
+              "another codec's response never satisfies the outstanding command");
+    }
     std::puts("azalia-test: PASS (transport, ALC892 routing, amplifiers, cyclic DMA, negative cases)");
 }

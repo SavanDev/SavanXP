@@ -17,7 +17,7 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
-The `hda-capture`, `virtio-capture` and `sound-capture-smoke` scenarios also
+The `hda-capture`, `virtio-capture`, `audio-devices` and `sound-capture-smoke` scenarios also
 require QEMU's ALSA audio backend and ALSA library plugins (`alsa-lib` on Arch).
 They generate a deterministic virtual microphone through the ALSA file/null
 plugins, without accessing the host microphone or speakers. The normal build

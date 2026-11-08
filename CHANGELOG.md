@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Sound can choose playback and recording defaults independently across supported audio devices.**
+  Analog HDA keeps separate controller/codec streams; idle devices remain visible for selection.
+  See [AZALIA.md](docs/kernel/AZALIA.md).
+
 - **Sound records and replays a three-second input test, with an input selector, gain, mute and live levels.**
   SUN recording supports shared native capture and direct HDA/virtio-sound duplex operation.
   See [SOUND.md](docs/media/SOUND.md) and [AZALIA.md](docs/kernel/AZALIA.md).
@@ -54,6 +58,8 @@ Cut-off notes:
   raised frame and an etched separator above `Shut Down...`/`Restart...`.
 
 ### Fixed
+
+- **Sound's input meter stays visible while microphone samples continue arriving.**
 
 - **Small SUN playback writes no longer exhaust virtio-sound descriptors prematurely.**
   Direct playback collects samples into device periods and flushes the final partial period on close.

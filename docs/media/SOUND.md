@@ -16,7 +16,11 @@ The existing popup and `volume` command still save master settings as before.
 The output dropdown above the master controls names the effective audio device
 and connector. HD Audio lists each valid analog path (rear line-out and front
 headphones on ALC892); firmware-disconnected pins are excluded. AC'97 and
-virtio-sound expose their default connector. Selection goes through `audiod`,
+virtio-sound expose their default connector. The catalog includes every bound
+backend; output and input choose their default devices independently. HDA
+names include PCI location and codec address for identical devices. An
+unavailable endpoint is labelled explicitly and cannot be selected.
+Selection goes through `audiod`,
 the PCM writer, and waits for its acknowledgement. A failed route change
 reports the error and queries the effective connector after rollback. If
 rollback also fails, no connector is shown as selected; selecting one retries.
@@ -115,6 +119,8 @@ scale; the bars show the master output and the selected application.
 
 These are PCM level meters, not measurements of an analog connector. They do
 not prove that a physical amplifier is enabled or speakers are connected.
+The input meter uses the last captured packet to decide whether data is fresh;
+reading between two measurement windows must not blank a continuous signal.
 
 ## Verification
 
@@ -147,7 +153,7 @@ not prove that a physical amplifier is enabled or speakers are connected.
   muted. The recorded output must retain the fixture's independent 400/600 Hz
   stereo channels, amplitudes and duration; screenshots alone do not pass it.
 
-Per-user persistence and independent controllers remain in the six-stage
+Per-user persistence and failure recovery remain in the six-stage
 [roadmap](../roadmaps/open/AZALIA_ROADMAP.md).
 
 The policy itself is tested by `jack-policy-test`: default manual mode, plug,

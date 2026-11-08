@@ -56,7 +56,7 @@ amplifier. Software gain does not replace those operations.
 
 ## Output selection
 
-Every PCI class `04:03` controller is considered. A codec must expose a
+PCI class `04:03` controllers are considered within the bounds below. A codec must expose a
 connected, non-digital pin and a path to a stereo converter supporting PCM,
 48 kHz and 16-bit samples. Disconnected firmware pins and HDMI pins are
 excluded. Speakers precede line-out, which precedes headphones; firmware
@@ -77,10 +77,38 @@ successful selection. Kernel ownership prevents a control-only process from
 rerouting another PCM writer; Sound sends the request to that writer (`audiod`).
 
 The register space stays mapped for an abandoned controller because the
-current VMM has no MMIO unmap. Command DMA is stopped before another candidate
-reuses its ring storage. A controller that refuses to stop ends the probe;
-its buffers stay allocated. DMA above 4 GiB is refused when GCAP lacks 64-bit
-address support. Probe failure leaves lower-priority AC'97 available.
+current VMM has no MMIO unmap. Each controller owns separate command rings;
+failed hardware never lends its buffers to another controller. Allocations
+stay reserved for the boot, including failed-stop cases. DMA above 4 GiB is
+refused when GCAP lacks 64-bit address support. Probe failure leaves other
+supported devices available.
+
+## Multiple devices
+
+The audio registry probes every driver in descending priority. Priority chooses
+the initial playback and capture defaults independently; it does not hide other
+backends. A capture-only default can expose the audio device without a playback
+default. AC'97 and virtio-sound retain their existing singleton adapters. HDA
+supports up to four controllers, four analog codecs per controller and eight
+analog codecs total, bounded by available stream descriptors. HDMI codecs are
+not published as supported endpoints. The native catalog holds up to 32
+connectors across these backends; it is deliberately bounded.
+
+Each HDA controller has its own MMIO context and command rings. Each published
+codec owns its graph, output/input paths, PCM/BDL allocations, counters and
+backend context. Codecs on one controller receive distinct input/output
+descriptors and stream tags. Commands remain serialized under the kernel lock;
+the response codec address must match the outstanding command. The BSP polls
+all active streams rather than only the default controller.
+
+Catalog ids retain PCI function, codec address and pin node. Display names add
+PCI location and codec address so identical codecs are distinguishable. Only
+the selected backend for a direction can report that direction's effective
+selection. A valid idle route on another device is not the global default.
+Changing one direction leaves the other backend and its DMA intact. When
+switching active independent devices, prepare the target before stopping the
+old direction; failed preparation retains the previous default. An active
+format mismatch is refused because the service does not resample.
 
 ## Jack presence
 
@@ -137,8 +165,8 @@ the mic boost's unity index is zero. Host-shaped tests assert these numeric
 payloads, but physical sensitivity, board wiring and capture remain unverified.
 No hardware boost control is exposed yet.
 
-Capture uses input descriptor zero and stream tag 2, separately from playback's
-output descriptor and tag 1. Its independent 32-period cyclic ring is fully
+The first duplex codec uses input descriptor zero / tag 2 and output tag 1;
+additional codecs receive independent descriptors and tags. Each 32-period cyclic ring is fully
 populated before RUN. A consumer waits one whole completed period behind DMA
 and copies only complete stereo frames. An unobserved full lap, a consumer
 overrun within one period of overwrite, invalid LPIB or DMA error fails capture
@@ -172,6 +200,14 @@ shares a single kernel capture session among native subscribers.
   oracle requires at least 0.9 s of continuous 440 Hz audio at RMS 3000.
 - `sound-capture-smoke`: three-second record/replay through the actual SUN
   panel, with a separate WAV oracle for stereo content, duration and continuity.
+- `audio-devices-test`: every driver and backend instance is inventoried;
+  defaults, PCM dispatch, failed target preparation and unavailable/format
+  mismatches are independent between playback and capture.
+- `audio-devices`: two HDA controllers, including codec addresses 0 and 2 on
+  one controller, alongside AC'97 and virtio-sound. Distinct stereo microphones
+  identify the selected ADC; all three analog playback WAVs must contain the
+  expected tone. Native daemon changes acknowledge the effective default and
+  notify old-source readers while preserving the opposite direction.
 - `./build.sh smoke hda-stream` and `hda-stream-quiet`: recorded stereo PCM
   must contain 2.0–3.5 seconds of approximately 440 Hz audio, RMS near 12000 or
   6000 respectively, and no internal silent gap longer than 20 ms. Startup and

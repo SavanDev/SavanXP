@@ -708,16 +708,16 @@ int vs_capture_available() {
 }
 
 const audio::Backend g_backend = {
-    .ready = vs_ready,
-    .get_info = vs_get_info,
-    .configure = vs_configure,
-    .submit_period = vs_submit_period,
-    .stop = vs_stop,
-    .capture_ready = vs_capture_ready,
-    .capture_configure = vs_capture_configure,
-    .capture_read_period = vs_capture_read_period,
-    .capture_stop = vs_capture_stop,
-    .capture_available = vs_capture_available,
+    .ready = [](void*) { return vs_ready(); },
+    .get_info = [](void*, savanxp_audio_info& info) { return vs_get_info(info); },
+    .configure = [](void*) { return vs_configure(); },
+    .submit_period = [](void*, uint64_t u, uint32_t n) { return vs_submit_period(u,n); },
+    .stop = [](void*) { vs_stop(); },
+    .capture_ready = [](void*) { return vs_capture_ready(); },
+    .capture_configure = [](void*) { return vs_capture_configure(); },
+    .capture_read_period = [](void*, void* b, uint32_t n) { return vs_capture_read_period(b,n); },
+    .capture_stop = [](void*) { vs_capture_stop(); },
+    .capture_available = [](void*) { return vs_capture_available(); },
 };
 
 void fail_device(const char* reason) {

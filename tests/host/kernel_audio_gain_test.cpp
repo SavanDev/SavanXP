@@ -24,13 +24,13 @@ bool check(bool ok, const char* what) {
     return ok;
 }
 
-bool mock_ready() { return true; }
-bool mock_info(savanxp_audio_info& info) { info = {48000,2,16,4,4096,16384,SAVANXP_AUDIO_BACKEND_AC97,0}; return true; }
-int mock_submit(uint64_t, uint32_t) { return 0; }
-int mock_capture(void*, uint32_t) { return 0; }
-void mock_stop() {}
+bool mock_ready(void*) { return true; }
+bool mock_info(void*, savanxp_audio_info& info) { info = {48000,2,16,4,4096,16384,SAVANXP_AUDIO_BACKEND_AC97,0}; return true; }
+int mock_submit(void*, uint64_t, uint32_t) { return 0; }
+int mock_capture(void*, void*, uint32_t) { return 0; }
+void mock_stop(void*) {}
 uint64_t chosen = 0x123;
-bool mock_endpoint(uint32_t index, savanxp_audio_endpoint& endpoint) {
+bool mock_endpoint(void*, uint32_t index, savanxp_audio_endpoint& endpoint) {
     if (index > 1) return false;
     endpoint = {};
     endpoint.id = 0x123 + index; endpoint.device_id = 0x120;
@@ -38,7 +38,7 @@ bool mock_endpoint(uint32_t index, savanxp_audio_endpoint& endpoint) {
         (chosen == endpoint.id ? SAVANXP_AUDIO_SELECTED : 0);
     return true;
 }
-int mock_select(uint64_t id, uint32_t) {
+int mock_select(void*, uint64_t id, uint32_t) {
     if (id == 0x124) return -SX_EIO;
     chosen = id; return 0;
 }

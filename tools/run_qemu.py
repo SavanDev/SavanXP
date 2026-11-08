@@ -262,7 +262,19 @@ def build_qemu_args(
                   "in.format=s16,out.format=s16,in.try-poll=off,out.try-poll=off,"
                   "in.buffer-length=10000,out.buffer-length=10000,"
                   "in.period-length=10000,out.period-length=10000,timer-period=10000")
-    if audio_device == "hda":
+    if audio_device == "multi":
+        if not capture_fixture:
+            raise ValueError("multi audio requires the deterministic capture fixture")
+        for suffix in ("2","3"):
+            args_list += ["-audiodev",audio1.replace("id=audio1",f"id=audio{suffix}")
+                          .replace("savanxp_fixture_input",f"savanxp_fixture_input{suffix}")
+                          .replace("savanxp_fixture_output",f"savanxp_fixture_output{suffix}")]
+        args_list += ["-audiodev","none,id=audio4","-audiodev","none,id=audio5"]
+        devices = ("ich9-intel-hda,id=hda", "hda-duplex,bus=hda.0,cad=0,audiodev=audio1",
+                   "hda-duplex,bus=hda.0,cad=2,audiodev=audio2", "ich9-intel-hda,id=hda2",
+                   "hda-duplex,bus=hda2.0,cad=0,audiodev=audio3", "AC97,audiodev=audio4",
+                   "virtio-sound-pci,audiodev=audio5,streams=2")
+    elif audio_device == "hda":
         if wav_path is not None and not capture_fixture:
             audio1 += ",out.frequency=48000"
         devices = ("ich9-intel-hda,id=hda", "hda-duplex,bus=hda.0,audiodev=audio1")

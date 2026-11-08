@@ -251,8 +251,8 @@ namespace
     power::initialize();
     clipboard::initialize();
     serial_dev::initialize();
-    // Audio backends probe by priority: virtio-sound, analog HD Audio, AC'97.
-    // audio_device registers /dev/audio0 only when a driver claims hardware.
+    // Probe all audio backends; priority sets the initial defaults only.
+    // audio_device registers /dev/audio0 when either PCM direction is available.
     audio::register_driver(virtio_sound::driver());
     audio::register_driver(ac97::driver());
     audio::register_driver(azalia::driver());

@@ -406,14 +406,13 @@ void ac97_stop() {
     g_prepared = false;
 }
 
-// AC97 no soporta captura: los cuatro punteros quedan en nullptr y
-// audio::capture_*() los trata como "no soportado" (ENODEV), no como crash.
+// AC97 has no capture backend; absent callbacks report ENODEV.
 const audio::Backend g_backend = {
-    .ready = ac97_ready,
-    .get_info = ac97_get_info,
-    .configure = ac97_configure,
-    .submit_period = ac97_submit_period,
-    .stop = ac97_stop,
+    .ready = [](void*) { return ac97_ready(); },
+    .get_info = [](void*, savanxp_audio_info& info) { return ac97_get_info(info); },
+    .configure = [](void*) { return ac97_configure(); },
+    .submit_period = [](void*, uint64_t u, uint32_t n) { return ac97_submit_period(u,n); },
+    .stop = [](void*) { ac97_stop(); },
     .capture_ready = nullptr,
     .capture_configure = nullptr,
     .capture_read_period = nullptr,

@@ -29,12 +29,13 @@
 
 // Selective OpenBSD port. Upstream routines below keep their names and flow.
 // Local changes: bus callbacks, self in place of C's this, polled RIRB status,
-// no unsolicited queue, and playback-only converter attachment. See AZALIA.md.
+// no unsolicited queue, response codec validation and one converter per stream.
+// See AZALIA.md.
 #include "azalia_port.hpp"
 
 namespace azalia_port {
 namespace {
-constexpr int ETIMEDOUT = 110, EINVAL = 22;
+constexpr int ETIMEDOUT = 110, EINVAL = 22, EIO = 5;
 #define DPRINTF(x) do {} while (0)
 #define DPRINTFN(n,x) do {} while (0)
 using bus_addr_t = uint64_t;
@@ -111,6 +112,8 @@ azalia_set_command(azalia_t *az, int caddr, nid_t nid, uint32_t control,
 		return(-1);
 	}
 	verb = (caddr << 28) | (nid << 20) | (control << 8) | param;
+    // Commands are serialized under the kernel lock, including across codecs.
+    az->response_address = caddr;
 	corbwp = AZ_READ_2(az, CORBWP);
 	wp = corbwp & HDA_CORBWP_CORBWP;
 	corb = (corb_entry_t*)az->corb_dma.addr;
@@ -155,8 +158,11 @@ azalia_get_response(azalia_t *az, uint32_t *result)
         // OpenBSD clears this in its interrupt handler. The polled adapter
         // must acknowledge each response to unblock QEMU's response counter.
         AZ_WRITE_1(az, RIRBSTS, HDA_RIRBSTS_RINTFL | HDA_RIRBSTS_RIRBOIS);
-        if (!(rirb[az->rirb_rp].resp_ex & RIRB_RESP_UNSOL))
+        if (!(rirb[az->rirb_rp].resp_ex & RIRB_RESP_UNSOL)) {
+            if (RIRB_RESP_CODEC(rirb[az->rirb_rp].resp_ex) != az->response_address)
+                return EIO;
             break;
+        }
     }
 	if (result != NULL)
 		*result = rirb[az->rirb_rp].resp;

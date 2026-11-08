@@ -9,6 +9,7 @@
 #include "kernel/process.hpp"
 #include "kernel/timer.hpp"
 #include "abi/savanxp_abi.h"
+#include "audio/peak_meter.h"
 
 namespace {
 
@@ -33,24 +34,14 @@ int negative_error(sx_status code) {
 }
 
 int16_t g_capture_scratch[2048];
-uint16_t g_capture_peak_left = 0, g_capture_peak_right = 0;
-uint64_t g_capture_peak_ns = 0;
+savanxp_audio_peak_meter g_capture_peaks = {};
 
 int capture_period(uint64_t user_buffer, uint32_t bytes) {
     if (bytes%4 || bytes > sizeof(g_capture_scratch)) return negative_error(SX_EINVAL);
     const int result = audio::capture_read_period(g_capture_scratch,bytes);
     if (result) return result < 0 ? result : negative_error(SX_EIO);
     audio::apply_capture_gain(g_capture_scratch,bytes);
-    const uint64_t now = timer::monotonic_ns();
-    if (now - g_capture_peak_ns >= 100000000) {
-        g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = now;
-    }
-    for (uint32_t i = 0; i < bytes/2; i += 2) {
-        const int32_t left = g_capture_scratch[i], right = g_capture_scratch[i+1];
-        const uint16_t l = left < 0 ? -left : left, r = right < 0 ? -right : right;
-        if (l > g_capture_peak_left) g_capture_peak_left = l;
-        if (r > g_capture_peak_right) g_capture_peak_right = r;
-    }
+    savanxp_audio_peak_observe(&g_capture_peaks,g_capture_scratch,bytes/4,timer::monotonic_ns());
     return process::copy_to_user(user_buffer,g_capture_scratch,bytes) ? 0 : negative_error(SX_EINVAL);
 }
 int capture_start() {
@@ -65,7 +56,7 @@ int capture_start() {
 int capture_stop() {
     if (g_capture_owner_pid && g_capture_owner_pid != process::current_pid()) return negative_error(SX_EBUSY);
     audio::capture_stop(); g_capture_owner_pid = 0;
-    g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = 0;
+    savanxp_audio_peak_reset(&g_capture_peaks);
     return 0;
 }
 
@@ -214,9 +205,8 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
         case AUDIO_IOC_CAPTURE_GET_STATE: {
             if (!audio::capture_ready()) return negative_error(SX_ENODEV);
             savanxp_audio_capture_state state = {audio::capture_volume(),audio::capture_muted() ? 1u : 0u,
-                g_capture_peak_left,g_capture_peak_right,g_capture_owner_pid ? 1u : 0u};
-            if (timer::monotonic_ns() - g_capture_peak_ns >= 100000000)
-                state.peak_left = state.peak_right = 0;
+                0,0,g_capture_owner_pid ? 1u : 0u};
+            savanxp_audio_peak_read(&g_capture_peaks,timer::monotonic_ns(),&state.peak_left,&state.peak_right);
             if (!process::validate_user_range(argument,sizeof(state),true)) return negative_error(SX_EINVAL);
             return process::copy_to_user(argument,&state,sizeof(state)) ? 0 : negative_error(SX_EINVAL);
         }
@@ -230,7 +220,7 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 if (argument > 1) return negative_error(SX_EINVAL);
                 audio::set_capture_muted(argument != 0);
             }
-            g_capture_peak_left = g_capture_peak_right = 0; g_capture_peak_ns = 0;
+            savanxp_audio_peak_reset(&g_capture_peaks);
             return 0;
         }
         case AUDIO_IOC_GET_ENDPOINT: {
@@ -311,7 +301,7 @@ void release_session_for(uint32_t pid) {
 }
 
 bool initialize() {
-    if (!audio::ready()) {
+    if (!audio::ready() && !audio::capture_ready()) {
         return false;
     }
 

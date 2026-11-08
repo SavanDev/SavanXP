@@ -131,6 +131,12 @@ selection disables the policy after successful acknowledgement. Support,
 effective policy and the last automatic error are queryable by Sound.
 The kernel still owns connector detection and transactional route setup.
 
+The endpoint catalog includes all bound backends and independent playback/input
+defaults. Policy remains limited to the currently selected analog device's
+connectors. A manual selection can move playback without disturbing capture on
+another controller or codec. Input changes explicitly retire old-source native
+capture subscriptions, as described below.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod

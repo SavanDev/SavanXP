@@ -1526,6 +1526,167 @@ static void test_capture(void) {
     check(sxn_log("nativetest: exact capture PCM, independent input gain/mute, duplex and close ownership") == 0);
 }
 
+static uint64_t audio_selected(long control, uint32_t direction) {
+    struct savanxp_audio_endpoint e;
+    uint64_t id = 0;
+    uint32_t i;
+    for (i = 0; sxnaudio_endpoint_get(control,i,&e) == 0; ++i) {
+        if ((e.flags&(direction|SAVANXP_AUDIO_SELECTED)) != (direction|SAVANXP_AUDIO_SELECTED)) continue;
+        check(!id); id = e.id;
+    }
+    return id;
+}
+static long audio_select_direct(long control, uint64_t id, uint32_t direction) {
+    struct savanxp_audio_endpoint_selection selection = {id,direction,0};
+    return sxn_device_control(control,AUDIO_IOC_SELECT_ENDPOINT,(unsigned long)(uintptr_t)&selection);
+}
+static int audio_select_remote(struct sxnaudio_control* control, uint64_t id, uint32_t direction, uint32_t request) {
+    struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_endpoint_reply reply;
+    struct savanxp_audiod_jack_policy_reply policy;
+    long pause = sxn_event_create(0);
+    uint64_t deadline = sxn_clock_ns()+1000000000ull;
+    int done = 0;
+    check(sxnaudio_endpoint_select(control,request,id,direction) == 0);
+    while (!done && sxn_clock_ns() < deadline) {
+        long result;
+        capture_test_pump();
+        result = sxnaudio_control_receive_ex(control,&snapshot,&reply,&policy);
+        if (result == 2 && reply.request_id == request) {
+            check(reply.result == 0 && reply.endpoint_id == id && reply.direction == direction); done = 1;
+        } else if (result < 0) { check(0); break; }
+        (void)sxn_wait_one(pause,2);
+    }
+    (void)sxn_close(pause); check(done); return done;
+}
+static void audio_device_samples(struct sxnaudio_capture* input, int left, int right, unsigned left_hz, unsigned right_hz) {
+    int16_t samples[274];
+    uint32_t total = 0, crossings[2] = {0,0};
+    int previous[2] = {0,0}, valid = 1;
+    uint64_t deadline = sxn_clock_ns()+4000000000ull;
+    long pause = sxn_event_create(0);
+    while (total < 96000 && sxn_clock_ns() < deadline) {
+        uint32_t want = 96000-total, i;
+        long got;
+        capture_test_pump();
+        if (want > 137) want = 137;
+        got = sxnaudio_capture_read(input,samples,want);
+        if (got < 0) { check(0); break; }
+        if (!got) { (void)sxn_wait_one(pause,2); continue; }
+        for (i = 0; i < (uint32_t)got; ++i) {
+            unsigned channel;
+            for (channel = 0; channel < 2; ++channel) {
+                int sample = samples[i*2+channel], magnitude = sample < 0 ? -sample : sample;
+                int expected = channel ? right : left;
+                if (magnitude < expected-2 || magnitude > expected+2) valid = 0;
+                if (total+i && previous[channel] <= 0 && sample > 0) ++crossings[channel];
+                previous[channel] = sample;
+            }
+        }
+        total += (uint32_t)got;
+    }
+    (void)sxn_close(pause);
+    {
+        char diagnostic[160];
+        (void)snprintf(diagnostic,sizeof(diagnostic),"nativetest: device input expected=%d/%d %u/%uHz observed=%u/%u frames=%u valid=%d",
+            left,right,left_hz,right_hz,crossings[0],crossings[1],total,valid);
+        (void)sxn_log(diagnostic);
+    }
+    check(total == 96000 && valid);
+    check(crossings[0]+1 >= left_hz*2 && crossings[0] <= left_hz*2+1 &&
+          crossings[1]+1 >= right_hz*2 && crossings[1] <= right_hz*2+1);
+}
+static void test_audio_devices(void) {
+    struct savanxp_audio_endpoint e;
+    uint64_t outputs[3] = {0}, inputs[3] = {0}, devices[3] = {0};
+    unsigned count = 0, i, j, have_ac97 = 0, have_virtio = 0;
+    long control = sxn_open_device("audio0",SXN_DEVICE_READ|SXN_DEVICE_WRITE);
+    struct sxnaudio_stream output;
+    struct sxnaudio_capture input;
+    check(control >= 0);
+    if (control < 0) return;
+    for (i = 0; sxnaudio_endpoint_get(control,i,&e) == 0; ++i) {
+        if (e.backend == SAVANXP_AUDIO_BACKEND_AC97) ++have_ac97;
+        if (e.backend == SAVANXP_AUDIO_BACKEND_VIRTIO) ++have_virtio;
+        if (e.backend != SAVANXP_AUDIO_BACKEND_HDA) continue;
+        for (j = 0; j < count && devices[j] != e.device_id; ++j) {}
+        if (j == count) { check(count < 3); if (count == 3) break; devices[count++] = e.device_id; }
+        if (e.flags&SAVANXP_AUDIO_PLAYBACK) outputs[j] = e.id;
+        if (e.flags&SAVANXP_AUDIO_CAPTURE) inputs[j] = e.id;
+    }
+    check(count == 3 && have_ac97 == 1 && have_virtio == 2);
+    if (count != 3) { (void)sxn_close(control); return; }
+    check((devices[0]>>16) == (devices[1]>>16) && ((devices[1]>>8)&255) == 2 && (devices[0]>>16) != (devices[2]>>16));
+    for (i = 0; i < count; ++i) check(outputs[i] && inputs[i]);
+    check(audio_select_direct(control,outputs[0],SAVANXP_AUDIO_PLAYBACK) == 0);
+    check(audio_select_direct(control,inputs[1],SAVANXP_AUDIO_CAPTURE) == 0);
+    check(sxnaudio_master_volume(control,100) == 0 && sxnaudio_master_muted(control,0) == 0);
+    check(sxnaudio_capture_volume(control,100) == 0 && sxnaudio_capture_muted(control,0) == 0);
+    check(sxnaudio_open(&output,"Device isolation test") == 0 && output.mode == SXNAUDIO_MODE_DIRECT);
+    check(sxnaudio_capture_open(&input) == 0 && input.mode == SXNAUDIO_MODE_DIRECT);
+    g_capture_test_output = &output; g_capture_test_phase = 0;
+    check(capture_test_samples(&input,0,0,0));
+    audio_device_samples(&input,8000,4000,500,1000);
+    check(audio_selected(control,SAVANXP_AUDIO_PLAYBACK) == outputs[0] && audio_selected(control,SAVANXP_AUDIO_CAPTURE) == inputs[1]);
+    check(audio_select_direct(control,outputs[1],SAVANXP_AUDIO_PLAYBACK) == 0);
+    audio_device_samples(&input,8000,4000,500,1000);
+    check(audio_select_direct(control,outputs[2],SAVANXP_AUDIO_PLAYBACK) == 0);
+    audio_device_samples(&input,8000,4000,500,1000);
+    check(audio_select_direct(control,inputs[2],SAVANXP_AUDIO_CAPTURE) == 0);
+    sxnaudio_capture_close(&input);
+    check(sxnaudio_capture_open(&input) == 0);
+    check(capture_test_samples(&input,0,0,0));
+    audio_device_samples(&input,10000,2000,300,750);
+    check(audio_select_direct(control,0xdeadbeef,SAVANXP_AUDIO_CAPTURE) == -SAVANXP_ENOENT);
+    check(audio_selected(control,SAVANXP_AUDIO_CAPTURE) == inputs[2] && audio_selected(control,SAVANXP_AUDIO_PLAYBACK) == outputs[2]);
+    audio_device_samples(&input,10000,2000,300,750);
+    check(audio_select_direct(control,inputs[0],SAVANXP_AUDIO_CAPTURE) == 0);
+    sxnaudio_capture_close(&input);
+    check(sxnaudio_capture_open(&input) == 0);
+    check(capture_test_samples(&input,0,0,0));
+    audio_device_samples(&input,12000,6000,400,600);
+    sxnaudio_capture_close(&input);
+    g_capture_test_output = 0; sxnaudio_close(&output);
+    {
+        char* const argv[] = {(char*)"/bin/audiod",0};
+        long daemon = sxn_spawn(argv[0],argv,1), pause = sxn_event_create(0);
+        struct sxnaudio_control remote = {-1,-1};
+        int attempt, status = -1;
+        long result = 0;
+        check(daemon > 0);
+        for (attempt = 0; attempt < 100 && sxnaudio_control_open(&remote) < 0; ++attempt)
+            (void)sxn_wait_one(pause,10);
+        check(attempt < 100);
+        check(sxnaudio_open(&output,"Device isolation test") == 0 && output.mode == SXNAUDIO_MODE_DAEMON);
+        check(sxnaudio_capture_open(&input) == 0 && input.mode == SXNAUDIO_MODE_DAEMON);
+        g_capture_test_output = &output; g_capture_test_phase = 0;
+        check(capture_test_samples(&input,0,0,0));
+        audio_device_samples(&input,12000,6000,400,600);
+        (void)audio_select_remote(&remote,inputs[1],SAVANXP_AUDIO_CAPTURE,2000);
+        for (attempt = 0; attempt < 500 && result >= 0; ++attempt) {
+            int16_t samples[274];
+            capture_test_pump(); result = sxnaudio_capture_read(&input,samples,137);
+            if (!result) (void)sxn_wait_one(pause,2);
+        }
+        check(result == -SAVANXP_EAGAIN);
+        sxnaudio_capture_close(&input);
+        check(sxnaudio_capture_open(&input) == 0);
+        check(capture_test_samples(&input,0,0,0));
+        audio_device_samples(&input,8000,4000,500,1000);
+        check(audio_selected(control,SAVANXP_AUDIO_PLAYBACK) == outputs[2]);
+        (void)audio_select_remote(&remote,outputs[0],SAVANXP_AUDIO_PLAYBACK,2001);
+        audio_device_samples(&input,8000,4000,500,1000);
+        check(!input.dropped_frames && audio_selected(control,SAVANXP_AUDIO_CAPTURE) == inputs[1]);
+        sxnaudio_capture_close(&input);
+        g_capture_test_output = 0; sxnaudio_close(&output); sxnaudio_control_close(&remote);
+        check(sxn_terminate(daemon,0) == 0 && sxn_waitpid(daemon,&status) == daemon && status == 0);
+        (void)sxn_close(pause);
+        check(sxn_log("nativetest: acknowledged default changes, explicit old-source error, reopened native capture and uninterrupted opposite direction") == 0);
+    }
+    (void)sxn_close(control);
+    check(sxn_log("nativetest: three analog codecs on two controllers, AC97/virtio inventory and independent live defaults") == 0);
+}
+
 /* Sustained SUN source for the Sound panel's visual regression. Runs only
  * when explicitly requested; normal nativetest never enters this mode. */
 static void audio_source(const char* name) {
@@ -1565,6 +1726,11 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
+    if (argc > 1 && streq(argv[1],"audio-devices")) {
+        test_audio_devices();
+        (void)sxn_log(g_failures ? "NATIVE DEVICES FAIL" : "NATIVE DEVICES PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
     if (argc > 1 && streq(argv[1],"audio-capture")) {
         test_capture();
         (void)sxn_log(g_failures ? "NATIVE CAPTURE FAIL" : "NATIVE CAPTURE PASS");

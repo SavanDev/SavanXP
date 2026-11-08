@@ -169,7 +169,7 @@ def main() -> int:
     parser.add_argument("--visual-scenario", default="",
                         help="escenario de shoot_session.py a correr con --host-action visual")
     parser.add_argument("--ready-wait", type=float, default=0.0)
-    parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda"), default="auto")
+    parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda", "multi"), default="auto")
     parser.add_argument("--wav-path", type=Path)
     parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet", "duplex", "recording"), default="")
     parser.add_argument(
@@ -367,7 +367,8 @@ def main() -> int:
         drivers = subprocess.run([qemu,"-audiodev","help"],capture_output=True,text=True,check=True)
         if "alsa" not in drivers.stdout.splitlines():
             raise SystemExit("capture-fixture requires QEMU with its ALSA audio backend and libasound")
-        config = prepare_capture_fixture(log_dir,run_tag,wav_path or log_dir/f"{run_tag}.audio.wav")
+        config = prepare_capture_fixture(log_dir,run_tag,wav_path or log_dir/f"{run_tag}.audio.wav",
+                                         devices=3 if args.audio_device == "multi" else 1)
         qemu_environment["ALSA_CONFIG_PATH"] = str(config)
 
     command_path = log_dir / f"{run_tag}.qemu.log"
@@ -537,6 +538,10 @@ def main() -> int:
                                 verify_recording(wav_path) if args.wav_check == "recording" else
                                 verify_tone(wav_path, quiet=args.wav_check == "tone-quiet"))
             print(f"audio PCM: {metrics}", flush=True)
+            if args.audio_device == "multi":
+                for suffix in ("2","3"):
+                    path = wav_path.with_name(wav_path.stem+suffix+wav_path.suffix)
+                    print(f"audio PCM device {suffix}: {verify_duplex(path)}",flush=True)
         except (OSError, ValueError) as exc:
             status = 1
             reason = f"recorded PCM assertion failed: {exc}"
