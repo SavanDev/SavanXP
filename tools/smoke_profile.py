@@ -31,6 +31,14 @@ DISPLAY_PREFERENCE_PATHS = (
     "display.cfg",
 )
 
+def reset_audio_preferences(sxfs_cli: Path, image: Path) -> None:
+    """Isolate an audio acceptance test from settings on the developer's disk."""
+    paths = [prefix+name+suffix for prefix in ("users/user/Settings/","users/user/","")
+             for name in ("audio.cfg","audio-mixer.cfg") for suffix in ("",".previous")]
+    result = subprocess.run([str(sxfs_cli),"rm","-f",str(image),*paths],capture_output=True,text=True)
+    if result.returncode:
+        raise RuntimeError(f"could not reset audio preferences of {image}: {(result.stderr or result.stdout).strip()}")
+
 
 def reset_display_preferences(sxfs_cli: Path, image: Path) -> None:
     """Remove the display preferences from `image`. Missing files are fine."""

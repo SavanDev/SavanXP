@@ -2,14 +2,15 @@
 #include "savanxp/audio_server.h"
 #include "sxn/sxn.h"
 #include "audio/jack_policy.h"
+#include "audio/preferences.h"
 
 #include <stdio.h>
 #include <string.h>
 
 /*
  * audiod is the single PCM writer and mixes each application's stereo stream.
- * SUN clients use the native audiod port; existing POSIX clients use UDP
- * loopback when networking is available. The native port reserves the service
+ * SUN and rebuilt POSIX clients use the native audiod port; legacy POSIX
+ * clients retain UDP when available. The native port reserves the service
  * name before acquiring the device and makes duplicate startup harmless even
  * on a machine without a network driver. Master gain remains in the kernel.
  * init starts the service before windowd and restarts it after a serving crash.
@@ -41,6 +42,8 @@ struct audiod_stream {
     uint16_t peak_left, peak_right;
     uint64_t peak_ms;
     char name[SAVANXP_AUDIOD_NAME_BYTES];
+    struct savanxp_audio_application_key key;
+    int key_valid;
     uint32_t last_sequence;
     int has_sequence;
     uint64_t last_ms; /* ultima vez que se supo del stream (audio o DECLARE) */
@@ -75,6 +78,10 @@ struct audiod_native_client {
     uint64_t capture_frame, capture_first;
     uint32_t capture_head, capture_frames;
     int capture_error;
+    uint32_t uid, flush_id;
+    uint64_t flush_generation;
+    int identity_valid;
+    char image[32], role[32];
     int16_t capture_fifo[AUDIOD_CAPTURE_FIFO_FRAMES*2];
 };
 
@@ -86,6 +93,7 @@ static struct savanxp_audio_info g_capture_info;
 static struct savanxp_jack_policy g_jack_policy;
 static int32_t g_jack_error;
 static uint64_t g_next_jack_ms;
+#include "audiod_preferences_service.h"
 static uint32_t g_next_stream_id = 1;
 static uint16_t g_peak_left, g_peak_right;
 static uint64_t g_peak_ms;
@@ -163,7 +171,10 @@ static struct audiod_stream* audiod_register_stream(uint16_t port, uint32_t rate
             if (!g_next_stream_id) g_next_stream_id = 1;
             stream->last_ms = now_ms;
             stream->last_audio_ms = now_ms;
-            eprintf("audiod: cliente en puerto %u (%u Hz)\n", (unsigned int)port, rate_hz);
+            if (port >= SAVANXP_AUDIOD_NATIVE_FIRST_PORT && port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT+SAVANXP_AUDIOD_NATIVE_SLOTS)
+                audiod_copy_name(stream->name,g_native[port-SAVANXP_AUDIOD_NATIVE_FIRST_PORT].role);
+            audiod_preferences_attach(stream);
+            eprintf("audiod: client on port %u (%u Hz)\n", (unsigned int)port, rate_hz);
             return stream;
         }
     }
@@ -403,6 +414,9 @@ static void audiod_handle_declare(
         }
     }
     audiod_copy_name(stream->name, declare.name);
+    if (source_port >= SAVANXP_AUDIOD_NATIVE_FIRST_PORT && source_port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT+SAVANXP_AUDIOD_NATIVE_SLOTS)
+        audiod_copy_name(g_native[source_port-SAVANXP_AUDIOD_NATIVE_FIRST_PORT].role,declare.name);
+    audiod_preferences_attach(stream);
     stream->last_ms = now_ms;
 }
 
@@ -433,7 +447,9 @@ static void audiod_handle_set_volume(
         if (g_streams[index].used && g_streams[index].port == request.target_port)
         {
             stream = &g_streams[index];
+            if (!audiod_preferences_can_change(stream,request.volume,stream->muted)) return;
             stream->volume = request.volume;
+            audiod_preferences_stream(stream);
             return;
         }
     }
@@ -518,12 +534,12 @@ static void audiod_accept_native(uint64_t now_ms)
     }
     while (sxn_wait_one(g_native_port, 0) == 0)
     {
-        struct sxn_port_connection connection;
+        struct sxn_port_connection_ex connection;
         size_t slot;
         uint16_t port;
         struct audiod_stream* stale;
 
-        if (sxn_port_accept(g_native_port, &connection) < 0)
+        if (sxn_port_accept_ex(g_native_port, &connection) < 0)
         {
             return;
         }
@@ -542,6 +558,15 @@ static void audiod_accept_native(uint64_t now_ms)
         g_native[slot].used = 1;
         g_native[slot].read_handle = connection.read_handle;
         g_native[slot].write_handle = connection.write_handle;
+        {
+            struct savanxp_process_info process;
+            g_native[slot].uid = connection.client.uid;
+            if (audiod_process(connection.client_pid,&process) &&
+                process.pid == connection.client_pid && process.name[0]) {
+                audiod_copy_name(g_native[slot].image,process.name);
+                g_native[slot].identity_valid = 1;
+            }
+        }
         port = (uint16_t)(SAVANXP_AUDIOD_NATIVE_FIRST_PORT + slot);
         /* A new client in an old slot starts a new stream, not the tail of
          * the last one's. */
@@ -601,9 +626,12 @@ static void audiod_handle_stream_control(const unsigned char* data, size_t lengt
         control.value > (control.kind == SAVANXP_AUDIOD_STREAM_VOLUME ? 100 : 1)) return;
     stream = audiod_find_stream(control.port);
     if (!stream || stream->id != control.id) return;
+    if (!audiod_preferences_can_change(stream,control.kind == SAVANXP_AUDIOD_STREAM_VOLUME ? control.value : stream->volume,
+                                      control.kind == SAVANXP_AUDIOD_STREAM_MUTED ? control.value : stream->muted)) return;
     if (control.kind == SAVANXP_AUDIOD_STREAM_VOLUME) stream->volume = control.value;
     else stream->muted = control.value;
     stream->peak_left = stream->peak_right = 0;
+    audiod_preferences_stream(stream);
 }
 
 static void audiod_capture_source_changed(void);
@@ -647,6 +675,7 @@ static void audiod_handle_endpoint(struct audiod_native_client* client,
     if (!reply.result && request.direction == SAVANXP_AUDIO_PLAYBACK) {
         g_jack_policy.enabled = 0; g_jack_error = 0;
     }
+    if (!reply.result) audiod_preferences_route(reply.endpoint_id,request.direction);
     record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = sizeof(reply);
     memcpy(record.payload,&reply,sizeof(reply));
     (void)sxn_write(client->write_handle,&record,sizeof(record));
@@ -682,6 +711,7 @@ static void audiod_handle_jack_policy(struct audiod_native_client* client,
             if (request.enabled) g_jack_policy = candidate;
             else memset(&g_jack_policy,0,sizeof(g_jack_policy));
             g_jack_error = 0;
+            audiod_preferences_policy();
         }
     }
     reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC; reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
@@ -878,6 +908,10 @@ static void audiod_handle_native_datagram(
     {
         audiod_handle_capture(client, data, length);
     }
+    else if (kind == SAVANXP_AUDIOD_PREFERENCE_QUERY || kind == SAVANXP_AUDIOD_PREFERENCE_FLUSH)
+    {
+        audiod_handle_preferences(client,data,length);
+    }
     else if (kind == SAVANXP_AUDIOD_JACK_POLICY_QUERY || kind == SAVANXP_AUDIOD_JACK_POLICY_SET)
     {
         audiod_handle_jack_policy(client, data, length);
@@ -903,8 +937,11 @@ static void audiod_drain_native(uint64_t now_ms)
     {
         struct audiod_native_client* client = &g_native[slot];
         uint16_t port = (uint16_t)(SAVANXP_AUDIOD_NATIVE_FIRST_PORT + slot);
+        unsigned int records = 0;
 
-        while (client->used)
+        // One pipe capacity per turn: a producer that refills concurrently
+        // must not postpone rendering or the other clients indefinitely.
+        while (client->used && records++ < 8)
         {
             struct savanxp_audiod_record record;
             long got = sxn_read(client->read_handle, &record, sizeof(record));
@@ -1115,8 +1152,12 @@ static int audiod_serve(int sock_fd, int audio_fd)
         audiod_poll_jacks(now_ms);
         audiod_poll_capture();
         audiod_flush_capture();
+        audiod_preferences_tick(now_ms);
         audiod_expire_streams(now_ms);
 
+        // Control operations and scheduling may consume part of a period.
+        // Account for that time before rendering rather than one turn later.
+        now_ms = uptime_ms();
         due_ms = now_ms > last_render_ms ? now_ms - last_render_ms : 0;
         frames = (size_t)((due_ms * (uint64_t)g_device_rate_hz) / 1000u);
         if (frames > AUDIOD_MAX_RENDER_FRAMES)
@@ -1672,13 +1713,15 @@ int main(int argc, char** argv)
     long audio_fd;
     long sock_fd;
 
+    if (argc == 2 && strcmp(argv[1],"--save-preferences") == 0) return audiod_preference_save_child();
     if (argc >= 2 && strcmp(argv[1], "--selftest") == 0)
     {
         return audiod_selftest();
     }
-    if (argc >= 2)
+    g_preferences_enabled = !(argc == 2 && strcmp(argv[1],"--no-preferences") == 0);
+    if (argc > 2 || (argc == 2 && g_preferences_enabled))
     {
-        eprintf("usage: audiod [--selftest]\n");
+        eprintf("usage: audiod [--selftest | --no-preferences]\n");
         return 1;
     }
 
@@ -1723,6 +1766,8 @@ int main(int argc, char** argv)
         return 1;
     }
     g_audio_fd = (int)audio_fd;
+    audiod_preferences_load();
+    if (g_preferences_enabled) g_preferences_error = audiod_preferences_start_worker();
     eprintf("audiod: mixing at %u Hz\n", g_device_rate_hz);
     return audiod_serve((int)sock_fd, (int)audio_fd);
 }

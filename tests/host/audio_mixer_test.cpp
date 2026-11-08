@@ -23,6 +23,9 @@ size_t g_last_write_bytes = 0;
 size_t g_last_write_frames = 0;
 const int16_t* g_last_write_samples = nullptr;
 int g_close_count = 0;
+long g_native_connect_result = -SAVANXP_ENOSYS, g_native_error;
+int g_native_closes, g_native_records;
+savanxp_audiod_record g_records[16];
 
 bool check(bool ok, const char* what) {
     ++g_checks;
@@ -39,6 +42,14 @@ bool check(bool ok, const char* what) {
 } // namespace
 
 extern "C" {
+
+long sx_audio_native_connect(void) { return g_native_connect_result; }
+long sx_audio_native_write(int handle, const void* data, size_t bytes) {
+    if (handle != 43 || bytes != 1024 || g_native_records == 16) return -SAVANXP_EIO;
+    if (g_native_error) return g_native_error;
+    memcpy(&g_records[g_native_records++],data,bytes); return long(bytes);
+}
+void sx_audio_native_close(int handle) { if (handle == 43) ++g_native_closes; }
 
 long audio_open(void) {
     return 41;
@@ -160,6 +171,51 @@ int main() {
      * unsigned-8 a S16 y el paneo se afirman con muestras que no la tocan. */
     const unsigned char samples[] = {128, 200, 64};
     long result;
+
+    {
+        sx_audio_server_link link;
+        int16_t pcm[513*2];
+        for (int i = 0; i < 513; ++i) { pcm[i*2] = i+1; pcm[i*2+1] = -i-1; }
+        sx_audio_server_link_init(&link); sx_audio_server_set_client_name(&link,"Stable role");
+        g_native_connect_result = 43; g_write_busy = 1;
+        const long udp_before = g_sendto_calls;
+        check(sx_audio_server_output(&link,41,pcm,sizeof(pcm),48000) == 1 && link.mode == 3 &&
+              g_sendto_calls == udp_before,"native daemon works without UDP and preserves link ABI");
+        savanxp_audiod_declare declared;
+        memcpy(&declared,g_records[0].payload,sizeof(declared));
+        check(g_native_records == 4 && g_records[0].magic == 0x53415550 && g_records[0].length == 40 &&
+              declared.magic == 0x53415543 && declared.version == 1 && declared.kind == 1 &&
+              !strcmp(declared.name,"Stable role"),"declare stable role before first native samples");
+        size_t consumed = 0;
+        bool valid = true;
+        for (unsigned i = 1; i < 4; ++i) {
+            const auto& record = g_records[i];
+            savanxp_audiod_header header;
+            memcpy(&header,record.payload,sizeof(header));
+            const size_t frames = i < 3 ? 250 : 13;
+            valid &= record.magic == 0x53415550 && record.length == 16+frames*4 && header.magic == 0x53415544 &&
+                     header.version == 1 && header.channels == 2 && header.sample_rate_hz == 48000 && header.sequence == i-1;
+            valid &= !memcmp(record.payload+16,pcm+consumed*2,frames*4);
+            for (size_t tail = record.length; tail < sizeof(record.payload); ++tail) valid &= !record.payload[tail];
+            consumed += frames;
+        }
+        check(valid && consumed == 513,"native framing preserves exact stereo samples, sequence and zero padding");
+        g_native_error = -SAVANXP_EAGAIN;
+        check(sx_audio_server_output(&link,41,pcm,4,48000) == 0 && link.mode == 3 && !g_native_closes &&
+              link.sequence == 3,"full native pipe keeps connection and accepted sequence without blocking");
+        sx_audio_server_set_client_name(&link,""); g_native_error = 0;
+        check(sx_audio_server_output(&link,41,pcm,4,48000) == 1 && g_native_records == 6 &&
+              g_records[4].length == 40 && !g_records[4].payload[8],"clearing role sends an empty declaration before PCM");
+        g_native_error = -SAVANXP_EPIPE; g_write_busy = 0;
+        check(sx_audio_server_output(&link,41,pcm,4,48000) == 1 && link.mode == 1 && g_native_closes == 1,
+              "daemon EOF closes native handle and retries direct output");
+        g_native_error = 0; g_write_busy = 1;
+        check(sx_audio_server_output(&link,41,pcm,4,48000) == 1 && link.mode == 3 && g_records[7].length == 20,
+              "replacement daemon receives a fresh declaration and sequence");
+        sx_audio_server_link_close(&link);
+        check(g_native_closes == 2 && link.udp_fd == -1,"native link closes through object floor");
+        g_native_connect_result = -SAVANXP_ENOSYS; g_write_busy = 0;
+    }
 
     check(sx_audio_mixer_init(&mixer, 2, 25) == 0, "el mixer abre el device PCM");
     check(sx_audio_mixer_active(&mixer) && mixer.voice_count == 2,

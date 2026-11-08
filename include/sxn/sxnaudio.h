@@ -2,8 +2,7 @@
 
 /* sxnaudio: SUN sound (docs/userland/SUN.md), PCM playback and mixer control.
  *
- * A SUN program has no sockets, so it cannot reach audiod over UDP the way a
- * POSIX program does. It connects to the daemon's native port instead
+ * A SUN program connects to audiod's native port
  * (audio/audiod_protocol.h) and sends the same datagrams wrapped in
  * fixed-size records. When a session has no daemon, the stream writes to
  * /dev/audio0 directly, which
@@ -316,11 +315,11 @@ static inline long sxnaudio_control_query(struct sxnaudio_control* control, uint
 }
 
 /* Receive one native control reply: 1 snapshot, 2 endpoint acknowledgement,
- * 3 jack policy (receive_ex only),
+ * 3 jack policy (receive_ex/full), 4 preferences (receive_full),
  * 0 when nothing is waiting, negative errno for EOF/malformed data. */
-static inline long sxnaudio_control_receive_ex(struct sxnaudio_control* control,
+static inline long sxnaudio_control_receive_full(struct sxnaudio_control* control,
     struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint,
-    struct savanxp_audiod_jack_policy_reply* policy) {
+    struct savanxp_audiod_jack_policy_reply* policy, struct savanxp_audiod_preference_reply* preferences) {
     struct savanxp_audiod_record record;
     const struct savanxp_audiod_list_query* header = (const struct savanxp_audiod_list_query*)record.payload;
     unsigned char* out;
@@ -344,6 +343,13 @@ static inline long sxnaudio_control_receive_ex(struct sxnaudio_control* control,
         if (policy->enabled > 1 || policy->supported > 1 || policy->reserved) return -SAVANXP_EIO;
         return 3;
     }
+    if (header->kind == SAVANXP_AUDIOD_PREFERENCE_REPLY && record.length == sizeof(*preferences) && preferences) {
+        out = (unsigned char*)preferences;
+        for (i = 0; i < sizeof(*preferences); ++i) out[i] = record.payload[i];
+        if ((preferences->flags & ~15u) || preferences->result > 0 || preferences->last_error > 0 ||
+            preferences->saved_generation > preferences->generation) return -SAVANXP_EIO;
+        return 4;
+    }
     if (header->kind != SAVANXP_AUDIOD_SNAPSHOT_REPLY || record.length != sizeof(*snapshot) || !snapshot)
         return -SAVANXP_EIO;
     out = (unsigned char*)snapshot;
@@ -355,6 +361,23 @@ static inline long sxnaudio_control_receive_ex(struct sxnaudio_control* control,
         snapshot->streams[i].name[SAVANXP_AUDIOD_NAME_BYTES - 1] = '\0';
     }
     return 1;
+}
+static inline long sxnaudio_control_receive_ex(struct sxnaudio_control* control,
+    struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint,
+    struct savanxp_audiod_jack_policy_reply* policy) {
+    return sxnaudio_control_receive_full(control,snapshot,endpoint,policy,0);
+}
+static inline long sxnaudio_preferences_request(struct sxnaudio_control* control, uint32_t id, uint16_t kind) {
+    struct savanxp_audiod_preference_request request = {SAVANXP_AUDIOD_CONTROL_MAGIC,
+        SAVANXP_AUDIOD_CONTROL_VERSION,kind,id,0};
+    if (kind != SAVANXP_AUDIOD_PREFERENCE_QUERY && kind != SAVANXP_AUDIOD_PREFERENCE_FLUSH) return -SAVANXP_EINVAL;
+    return sxnaudio_control_send(control,&request,sizeof(request));
+}
+static inline long sxnaudio_preferences_query(struct sxnaudio_control* control, uint32_t id) {
+    return sxnaudio_preferences_request(control,id,SAVANXP_AUDIOD_PREFERENCE_QUERY);
+}
+static inline long sxnaudio_preferences_flush(struct sxnaudio_control* control, uint32_t id) {
+    return sxnaudio_preferences_request(control,id,SAVANXP_AUDIOD_PREFERENCE_FLUSH);
 }
 static inline long sxnaudio_control_receive(struct sxnaudio_control* control,
     struct savanxp_audiod_snapshot* snapshot, struct savanxp_audiod_endpoint_reply* endpoint) {

@@ -1,5 +1,5 @@
-/* Sound: the SUN/SxGUI control panel for audiod. Live controls are separate
- * from playback streams; a panel never claims the device's PCM writer. */
+/* Sound: the SUN/SxGUI control panel for audiod. Live controls do not claim
+ * PCM ownership; recording replay uses a separate playback stream. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +24,9 @@ static struct savanxp_audiod_jack_policy_reply g_policy;
 static uint32_t g_policy_pending;
 static int g_policy_changing;
 static uint64_t g_policy_ms, g_next_policy_ms;
+static struct savanxp_audiod_preference_reply g_preferences;
+static uint32_t g_preferences_pending;
+static uint64_t g_preferences_ms, g_next_preferences_ms;
 static struct savanxp_audio_endpoint g_outputs[SAVANXP_AUDIO_MAX_ENDPOINTS];
 static uint32_t g_output_count;
 static char g_output_rows[SAVANXP_AUDIO_MAX_ENDPOINTS][100];
@@ -41,8 +44,11 @@ static struct sxnaudio_stream g_record_output = {.device=-1,.to_daemon=-1,.from_
 enum { RECORD_IDLE, RECORDING, RECORD_READY, RECORD_PLAYING };
 static int g_record_state;
 static int16_t g_record_pcm[144000*2];
-static uint32_t g_record_frames, g_play_frame;
-static uint64_t g_capture_retry_ms, g_capture_last_ms, g_record_started_ms, g_play_end_ms, g_capture_drops, g_next_ui_ms;
+static uint32_t g_record_frames;
+static uint64_t g_capture_retry_ms, g_capture_last_ms, g_record_started_ms, g_capture_drops, g_next_ui_ms;
+static long g_replay_thread = -1, g_replay_stop = -1;
+static int g_replay_result;
+static unsigned char g_replay_stack[32768] __attribute__((aligned(16)));
 static char g_input_text[32], g_record_text[100];
 
 static uint64_t g_query_ms, g_retry_ms, g_device_retry_ms;
@@ -166,9 +172,48 @@ static void refresh_controls(void) {
     (void)snprintf(g_master_text,sizeof(g_master_text), "%u%%", g_volume);
 }
 static void stop_record_output(void) {
+    if (g_replay_thread >= 0) {
+        (void)sxn_event_set(g_replay_stop);
+        // Join before closing the stream, modifying PCM or reusing the stack.
+        (void)sxn_wait_one(g_replay_thread,-1);
+        (void)sxn_close(g_replay_thread); g_replay_thread = -1;
+    }
+    if (g_replay_stop >= 0) { (void)sxn_close(g_replay_stop); g_replay_stop = -1; }
     if (g_record_output.mode != SXNAUDIO_MODE_CLOSED) sxnaudio_close(&g_record_output);
     if (g_record_state == RECORD_PLAYING) g_record_state = g_record_frames ? RECORD_READY : RECORD_IDLE;
-    g_play_end_ms = 0;
+}
+static void replay_worker(void* unused) {
+    int16_t silence[2048] = {0};
+    uint32_t frame = 0;
+    uint64_t end = 0;
+    int status = 1;
+    (void)unused;
+    for (;;) {
+        uint32_t due;
+        long result;
+        if (sxn_wait_one(g_replay_stop,0) == 0) break;
+        if (end && sxn_clock_ns() >= end) break;
+        due = sxnaudio_frames_due(&g_record_output,50);
+        if (due > 1024) due = 1024;
+        if (frame < g_record_frames) {
+            if (due > g_record_frames-frame) due = g_record_frames-frame;
+            result = sxnaudio_write(&g_record_output,g_record_pcm+frame*2,due);
+            if (result > 0) frame += (uint32_t)result;
+        } else {
+            // Drain with silence rather than extending the last input sample
+            // through packet-loss concealment. The GUI never owns this stream.
+            result = sxnaudio_write(&g_record_output,silence,due);
+            if (!end) end = sxn_clock_ns()+200000000ull;
+        }
+        if (result < 0) { status = (int)result; break; }
+        if (!due || !result) {
+            result = sxn_wait_one(g_replay_stop,2);
+            if (!result) break;
+            if (result != -SAVANXP_ETIMEDOUT) { status = (int)result; break; }
+        }
+    }
+    __atomic_store_n(&g_replay_result,status,__ATOMIC_RELEASE);
+    sxn_thread_exit(status < 0 ? 1 : 0);
 }
 static void capture_error(long result) {
     const char* message = result == -SAVANXP_EBUSY ? "Input is in use by another application. Retrying..." :
@@ -224,32 +269,11 @@ static void recording_tick(uint64_t now) {
         (void)snprintf(g_record_text,sizeof(g_record_text),"Recording timed out. Try again.");
     }
     if (g_record_state == RECORD_PLAYING) {
-        unsigned int burst;
-        for (burst = 0; burst < 8; ++burst) {
-            uint32_t due = sxnaudio_frames_due(&g_record_output,50);
-            if (!due) break;
-            if (due > 480) due = 480;
-            if (g_play_frame < g_record_frames) {
-                if (due > g_record_frames-g_play_frame) due = g_record_frames-g_play_frame;
-                result = sxnaudio_write(&g_record_output,g_record_pcm+g_play_frame*2,due);
-                if (result >= 0) g_play_frame += (uint32_t)result;
-            } else {
-                // Silence drains the output without extending the final
-                // captured sample through the daemon's concealment window.
-                memset(samples,0,sizeof(samples));
-                result = sxnaudio_write(&g_record_output,samples,due);
-                if (!g_play_end_ms) g_play_end_ms = now+200;
-            }
-            if (result < 0) {
-                stop_record_output();
-                (void)snprintf(g_record_text,sizeof(g_record_text),"Playback stopped. Try again.");
-                break;
-            }
-            if (!result) break;
-        }
-        if (g_play_end_ms && now >= g_play_end_ms) {
+        const int status = __atomic_load_n(&g_replay_result,__ATOMIC_ACQUIRE);
+        if (status) {
             stop_record_output();
-            (void)snprintf(g_record_text,sizeof(g_record_text),"Recorded 3.0 s. Play the test to listen.");
+            (void)snprintf(g_record_text,sizeof(g_record_text),status < 0 ? "Playback stopped. Try again." :
+                "Recorded 3.0 s. Play the test to listen.");
         }
     }
     g_app.tick_interval_ms = g_capture.mode != SXNAUDIO_MODE_CLOSED || g_record_state == RECORD_PLAYING ? 10 : 200;
@@ -266,9 +290,17 @@ static void on_record(struct sxgui_widget* widget, void* user) {
             if (result >= 0) sxnaudio_close(&g_record_output);
             (void)snprintf(g_record_text,sizeof(g_record_text),"Output unavailable or recording format changed.");
         } else {
-            g_play_frame = 0; g_play_end_ms = 0; g_record_state = RECORD_PLAYING;
-            g_app.tick_interval_ms = 10;
-            (void)snprintf(g_record_text,sizeof(g_record_text),"Playing the recorded test...");
+            __atomic_store_n(&g_replay_result,0,__ATOMIC_RELAXED);
+            g_replay_stop = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+            if (g_replay_stop >= 0)
+                g_replay_thread = sxn_thread_create(replay_worker,0,g_replay_stack+sizeof(g_replay_stack),0);
+            if (g_replay_stop < 0 || g_replay_thread < 0) {
+                stop_record_output();
+                (void)snprintf(g_record_text,sizeof(g_record_text),"Playback thread unavailable. Try again.");
+            } else {
+                g_record_state = RECORD_PLAYING; g_app.tick_interval_ms = 10;
+                (void)snprintf(g_record_text,sizeof(g_record_text),"Playing the recorded test...");
+            }
         }
     }
     refresh_outputs(); sxngui_app_request_repaint(&g_app);
@@ -279,6 +311,8 @@ static void disconnect(void) {
     memset(&g_snapshot,0,sizeof(g_snapshot));
     g_online = 0; g_pending = 0; g_selected = 0; g_route_pending = 0;
     g_policy_pending = 0; g_next_policy_ms = 0; g_policy_changing = 0;
+    g_preferences_pending = 0; g_next_preferences_ms = 0;
+    memset(&g_preferences,0,sizeof(g_preferences));
     memset(&g_policy,0,sizeof(g_policy));
     (void)snprintf(g_status,sizeof(g_status), "Audio service unavailable. Master controls remain available.");
     g_retry_ms = sxn_clock_ns() / 1000000 + 1000;
@@ -288,6 +322,7 @@ static void on_tick(struct sxngui_app* app) {
     struct savanxp_audiod_snapshot snapshot;
     struct savanxp_audiod_endpoint_reply endpoint_reply;
     struct savanxp_audiod_jack_policy_reply policy_reply;
+    struct savanxp_audiod_preference_reply preferences_reply;
     long result;
     recording_tick(now);
     if (now < g_next_ui_ms) return;
@@ -312,7 +347,13 @@ static void on_tick(struct sxngui_app* app) {
         if (sxnaudio_control_open(&g_control) < 0) disconnect();
     }
     if (g_control.request >= 0) {
-        while ((result = sxnaudio_control_receive_ex(&g_control,&snapshot,&endpoint_reply,&policy_reply)) > 0) {
+        while ((result = sxnaudio_control_receive_full(&g_control,&snapshot,&endpoint_reply,&policy_reply,&preferences_reply)) > 0) {
+            if (result == 4) {
+                if (g_preferences_pending == preferences_reply.request_id) {
+                    g_preferences = preferences_reply; g_preferences_pending = 0;
+                }
+                continue;
+            }
             if (result == 3) {
                 if (g_policy_pending && policy_reply.request_id == g_policy_pending) {
                     g_policy = policy_reply; g_policy_pending = 0; g_policy_changing = 0;
@@ -367,6 +408,16 @@ static void on_tick(struct sxngui_app* app) {
         if (result == 0) { g_policy_pending = g_sequence; g_policy_ms = now; g_next_policy_ms = now + 1000; }
         else if (result != -SAVANXP_EAGAIN) disconnect();
     }
+    if (g_preferences_pending && now-g_preferences_ms > 2000) g_preferences_pending = 0;
+    if (g_control.request >= 0 && !g_preferences_pending && now >= g_next_preferences_ms) {
+        ++g_sequence; if (!g_sequence) ++g_sequence;
+        result = sxnaudio_preferences_query(&g_control,g_sequence);
+        if (!result) { g_preferences_pending = g_sequence; g_preferences_ms = now; g_next_preferences_ms = now+1000; }
+        else if (result != -SAVANXP_EAGAIN) disconnect();
+    }
+    if (g_preferences.last_error < 0)
+        (void)snprintf(g_status,sizeof(g_status),g_preferences.flags&SAVANXP_AUDIOD_PREFERENCE_LOAD_FAILED ?
+            "Saved sound settings were invalid; using available defaults." : "Sound settings could not be saved.");
     if (g_policy.last_error < 0)
         (void)snprintf(g_status,sizeof(g_status),"Automatic output change failed (%d). Select an output to retry.",g_policy.last_error);
     if (g_route_pending) (void)snprintf(g_status,sizeof(g_status),"Changing %s...",
@@ -435,6 +486,37 @@ static void on_control(struct sxgui_widget* widget, void* user) {
 }
 static void on_close(struct sxgui_widget* widget, void* user) {
     (void)widget; (void)user; sxngui_app_quit(&g_app,0);
+}
+static void flush_preferences_on_exit(void) {
+    struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_endpoint_reply endpoint;
+    struct savanxp_audiod_jack_policy_reply policy;
+    struct savanxp_audiod_preference_reply preferences;
+    const uint64_t deadline = sxn_clock_ns()+2000000000ull;
+    long pause;
+    uint32_t id;
+    int sent = 0;
+    if (g_control.request < 0) return;
+    id = ++g_sequence; if (!id) id = ++g_sequence;
+    pause = sxn_event_create(0);
+    while (sxn_clock_ns() < deadline) {
+        long result;
+        if (!sent) {
+            result = sxnaudio_preferences_flush(&g_control,id);
+            if (!result) sent = 1;
+            else if (result != -SAVANXP_EAGAIN) break;
+        }
+        while ((result = sxnaudio_control_receive_full(&g_control,&snapshot,&endpoint,&policy,&preferences)) > 0) {
+            if (result != 4 || preferences.request_id != id) continue;
+            if (preferences.result < 0 && preferences.result != -SAVANXP_ENOSYS)
+                (void)sxn_log("sound: preferences could not be saved before exit");
+            (void)sxn_close(pause); return;
+        }
+        if (result < 0) break;
+        (void)sxn_wait_one(pause,10);
+    }
+    (void)sxn_log("sound: timed out saving preferences; background saving remains active");
+    (void)sxn_close(pause);
 }
 static void layout(struct sxngui_app* app) {
     int width = (int)app->info.width, height = (int)app->info.height;
@@ -507,6 +589,7 @@ int main(int argc, char** argv) {
     layout(&g_app); on_tick(&g_app);
     result = sxngui_app_run(&g_app);
     stop_record_output(); sxnaudio_capture_close(&g_capture);
+    flush_preferences_on_exit();
     sxnaudio_control_close(&g_control);
     if (g_device >= 0) (void)sxn_close(g_device);
     sxn_exit(result);

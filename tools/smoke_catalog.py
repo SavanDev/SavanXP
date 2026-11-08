@@ -18,6 +18,7 @@ class Scenario:
     ready: str = ""
     qmp_driver: str = ""
     capture_fixture: bool = False
+    clean_audio_preferences: bool = False
     audio_device: str = "auto"
     wav_name: str = ""
     wav_check: str = ""
@@ -52,6 +53,7 @@ def _qemu_scenario(
     ready: str = "",
     qmp_driver: str = "",
     capture_fixture: bool = False,
+    clean_audio_preferences: bool = False,
     audio_device: str = "auto",
     wav_name: str = "",
     wav_check: str = "",
@@ -84,6 +86,7 @@ def _qemu_scenario(
         qmp_driver=qmp_driver,
         audio_device=audio_device,
         capture_fixture=capture_fixture,
+        clean_audio_preferences=clean_audio_preferences,
         wav_name=wav_name,
         wav_check=wav_check,
         completion=completion,
@@ -323,6 +326,13 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="hda", capture_fixture=True, no_network=True, wav_name="hda-capture.wav", wav_check="duplex",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "audio-preferences": _qemu_scenario(
+        "nativepreferences", "NATIVE PREFERENCES PASS", "NATIVE PREFERENCES FAIL",
+        "Durable audio defaults and application identity across daemon restart",
+        audio_device="multi", capture_fixture=True, clean_audio_preferences=True, no_network=True,
+        wav_name="audio-preferences.wav", wav_check="preferences",
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "audio-devices": _qemu_scenario(
         "nativedevices", "NATIVE DEVICES PASS", "NATIVE DEVICES FAIL",
         "Independent playback/capture across HDA codecs/controllers, AC97 and virtio",
@@ -501,7 +511,7 @@ SCENARIOS: dict[str, Scenario] = {
         "", "SOUND CAPTURE SMOKE PASS", "SOUND CAPTURE SMOKE FAIL",
         "SUN Sound input gain/mute, stereo recording test and replayed PCM",
         300.0, "handoff: starting /bin/init", "taskbar", completion="host",
-        ready_wait=45.0, host_action="visual", visual_scenario="sound_capture",
+        ready_wait=45.0, host_action="visual", visual_scenario="sound_capture", clean_audio_preferences=True,
         audio_device="hda", capture_fixture=True, no_network=True,
         wav_name="sound-capture.wav", wav_check="recording",
     ),
@@ -509,7 +519,7 @@ SCENARIOS: dict[str, Scenario] = {
         "", "SOUND SMOKE PASS", "SOUND SMOKE FAIL",
         "SUN Sound panel from the volume popup, live mixer controls and meters",
         300.0, "handoff: starting /bin/init", "taskbar", completion="host",
-        ready_wait=45.0, host_action="visual", visual_scenario="sound",
+        ready_wait=45.0, host_action="visual", visual_scenario="sound", clean_audio_preferences=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
     "sxgui-smoke": _qemu_scenario(
@@ -790,6 +800,7 @@ def main() -> int:
             "qmp_driver",
             "audio_device",
             "capture_fixture",
+            "clean_audio_preferences",
             "wav_name",
             "wav_check",
             "completion",

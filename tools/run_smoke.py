@@ -17,10 +17,10 @@ from pathlib import Path
 
 from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions, send_pointer_smoke_actions
 from sxfs_sync import copy_preserving_holes
-from smoke_profile import reset_display_preferences
+from smoke_profile import reset_display_preferences, reset_audio_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
-from audio_wav import verify_tone, verify_duplex, verify_recording
+from audio_wav import verify_tone, verify_duplex, verify_recording, verify_preferences
 from run_qemu import USB_POINTERS, build_qemu_args, find_qemu, prepare_image
 
 
@@ -171,7 +171,7 @@ def main() -> int:
     parser.add_argument("--ready-wait", type=float, default=0.0)
     parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda", "multi"), default="auto")
     parser.add_argument("--wav-path", type=Path)
-    parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet", "duplex", "recording"), default="")
+    parser.add_argument("--wav-check", choices=("", "tone", "tone-quiet", "duplex", "recording", "preferences"), default="")
     parser.add_argument(
         "--qmp-callback",
         type=Path,
@@ -200,6 +200,7 @@ def main() -> int:
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
     parser.add_argument("--capture-fixture", action="store_true", help="deterministic ALSA file microphone, never host audio")
+    parser.add_argument("--clean-audio-preferences", action="store_true", help="reset audio settings only on the disposable smoke image")
     parser.add_argument("--no-network", action="store_true", help="boot without a NIC")
     parser.add_argument("--no-disk", action="store_true",
                         help="Boot with no disk attached: the rescue system's scenario.")
@@ -266,6 +267,8 @@ def main() -> int:
             # the scenario: every driver assumes the default mode.
             try:
                 reset_display_preferences(args.sxfs_cli.resolve(), run_disk)
+                if args.clean_audio_preferences:
+                    reset_audio_preferences(args.sxfs_cli.resolve(),run_disk)
             except RuntimeError as error:
                 raise SystemExit(f"smoke: {error}")
             for remove_path in args.remove_path:
@@ -528,17 +531,20 @@ def main() -> int:
     if usb_stick is not None:
         usb_stick.unlink(missing_ok=True)
     lock_path.unlink(missing_ok=True)
-    if status == 0 and wav_path is not None:
-        if not wav_path.is_file() or wav_path.stat().st_size == 0:
+    checked_wav = (wav_path.with_name(wav_path.stem+"2"+wav_path.suffix)
+                   if wav_path is not None and args.wav_check == "preferences" else wav_path)
+    if status == 0 and checked_wav is not None:
+        if not checked_wav.is_file() or checked_wav.stat().st_size == 0:
             status = 1
-            reason = f"WAV output missing or empty: {wav_path}"
+            reason = f"WAV output missing or empty: {checked_wav}"
     if status == 0 and args.wav_check:
         try:
-            metrics = (verify_duplex(wav_path) if args.wav_check == "duplex" else
+            metrics = (verify_preferences(checked_wav) if args.wav_check == "preferences" else
+                                verify_duplex(wav_path) if args.wav_check == "duplex" else
                                 verify_recording(wav_path) if args.wav_check == "recording" else
                                 verify_tone(wav_path, quiet=args.wav_check == "tone-quiet"))
             print(f"audio PCM: {metrics}", flush=True)
-            if args.audio_device == "multi":
+            if args.audio_device == "multi" and args.wav_check == "duplex":
                 for suffix in ("2","3"):
                     path = wav_path.with_name(wav_path.stem+suffix+wav_path.suffix)
                     print(f"audio PCM device {suffix}: {verify_duplex(path)}",flush=True)

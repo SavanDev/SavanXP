@@ -2,6 +2,7 @@
 
 #include "savanxp/audio_server.h"
 #include "savanxp/libc.h"
+#include "sxn/sxn.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -57,14 +58,7 @@ void sx_audio_mixer_disable(struct sx_audio_mixer* mixer)
     }
     mixer->fd = -1;
     mixer->initialized = 0;
-    if (mixer->server_link.udp_fd >= 0)
-    {
-        (void)savanxp_close(mixer->server_link.udp_fd);
-        mixer->server_link.udp_fd = -1;
-    }
-    mixer->server_link.mode = 0;
-    mixer->server_link.sequence = 0;
-    mixer->server_link.last_declare_ms = 0;
+    sx_audio_server_link_close(&mixer->server_link);
     memset(&mixer->info, 0, sizeof(mixer->info));
     mixer->frame_remainder = 0;
     mixer->last_update_ms = 0;
@@ -408,6 +402,24 @@ static void sx_audio_mixer_render(
     }
 }
 
+// The object floor is shared with SUN; POSIX lifecycle/filesystem calls stay
+// in their own subsystem. Weak boundaries let host tests supply pipe endpoints.
+__attribute__((weak)) long sx_audio_native_connect(void)
+{
+    int32_t handles[2] = {-1,-1};
+    long result = sxn_port_connect(SAVANXP_AUDIOD_PORT_NAME,handles);
+    if (result < 0) return result;
+    (void)sxn_close(handles[1]); // Playback does not receive unsolicited replies.
+    result = sxn_set_nonblocking(handles[0],1);
+    if (result < 0) { (void)sxn_close(handles[0]); return result; }
+    return handles[0];
+}
+__attribute__((weak)) long sx_audio_native_write(int handle, const void* data, size_t bytes)
+{
+    return sxn_write(handle,data,bytes);
+}
+__attribute__((weak)) void sx_audio_native_close(int handle) { (void)sxn_close(handle); }
+
 void sx_audio_server_link_init(struct sx_audio_server_link* link)
 {
     if (link == 0)
@@ -429,10 +441,10 @@ void sx_audio_server_link_close(struct sx_audio_server_link* link)
     }
     if (link->udp_fd >= 0)
     {
-        savanxp_close(link->udp_fd);
+        if (link->mode == 3) sx_audio_native_close(link->udp_fd);
+        else (void)savanxp_close(link->udp_fd);
     }
-    /* El nombre configurado sobrevive: es del programa, no del socket, y
-     * el proximo stream tiene que anunciarse igual. */
+    // The configured role belongs to the program and survives reconnection.
     link->mode = 0;
     link->udp_fd = -1;
     link->sequence = 0;
@@ -450,6 +462,7 @@ void sx_audio_server_set_client_name(
         return;
     }
     memset(link->client_name, 0, sizeof(link->client_name));
+    link->last_declare_ms = 0;
     if (name == 0)
     {
         return;
@@ -678,6 +691,45 @@ static void sx_audio_server_heartbeat(struct sx_audio_server_link* link)
     }
 }
 
+static long sx_audio_server_native_record(struct sx_audio_server_link* link, const void* data, size_t length)
+{
+    struct savanxp_audiod_record record = {0};
+    long written;
+    record.magic = SAVANXP_AUDIOD_RECORD_MAGIC; record.length = (uint32_t)length;
+    memcpy(record.payload,data,length);
+    written = sx_audio_native_write(link->udp_fd,&record,sizeof(record));
+    return written == sizeof(record) ? 0 : written < 0 ? written : -SAVANXP_EIO;
+}
+static long sx_audio_server_native_output(struct sx_audio_server_link* link,
+    const int16_t* frames, size_t bytes, uint32_t rate_hz)
+{
+    size_t offset = 0;
+    if (!link->last_declare_ms)
+    {
+        struct savanxp_audiod_declare declare = {SAVANXP_AUDIOD_CONTROL_MAGIC,
+            SAVANXP_AUDIOD_CONTROL_VERSION,SAVANXP_AUDIOD_DECLARE,{0}};
+        long result;
+        memcpy(declare.name,link->client_name,sizeof(declare.name));
+        result = sx_audio_server_native_record(link,&declare,sizeof(declare));
+        if (result < 0) return result == -SAVANXP_EAGAIN ? 0 : result;
+        link->last_declare_ms = uptime_ms()+1;
+    }
+    while (offset < bytes)
+    {
+        unsigned char data[SAVANXP_AUDIOD_RECORD_PAYLOAD];
+        struct savanxp_audiod_header header = {SAVANXP_AUDIOD_MAGIC,SAVANXP_AUDIOD_VERSION,2,
+            rate_hz,link->sequence};
+        size_t chunk = bytes-offset;
+        long result;
+        if (chunk > SAVANXP_AUDIOD_RECORD_MAX_FRAMES*4u) chunk = SAVANXP_AUDIOD_RECORD_MAX_FRAMES*4u;
+        memcpy(data,&header,sizeof(header)); memcpy(data+sizeof(header),(const unsigned char*)frames+offset,chunk);
+        result = sx_audio_server_native_record(link,data,sizeof(header)+chunk);
+        if (result < 0) return result == -SAVANXP_EAGAIN ? 0 : result;
+        ++link->sequence; offset += chunk;
+    }
+    return 1;
+}
+
 long sx_audio_server_output(
     struct sx_audio_server_link* link,
     int audio_fd,
@@ -691,6 +743,12 @@ long sx_audio_server_output(
     {
         return -SAVANXP_EINVAL;
     }
+    if (link->mode == 3)
+    {
+        written = sx_audio_server_native_output(link,frames,bytes,rate_hz);
+        if (written >= 0) return written;
+        sx_audio_server_link_close(link);
+    }
     if (link->mode == 2)
     {
         if (sx_audio_server_send(
@@ -699,14 +757,10 @@ long sx_audio_server_output(
             sx_audio_server_heartbeat(link);
             return 1;
         }
-        /* Demonio caido: el socket sirve igual para el proximo (mismo
-         * puerto bien conocido), asi que no se cierra; abajo se prueba
-         * directo y el episodio remoto que venga re-declara. */
+        // The UDP socket can reach a replacement daemon at the same address.
         link->mode = 0;
     }
-    /* Directo o indeciso: el write decide. Exito = directo de ahora en mas;
-     * EBUSY = otro tiene el device, se intenta remoto abajo; cualquier otro
-     * error es fatal. */
+    // A successful device write selects direct output; EBUSY tries the service.
     written = savanxp_write(audio_fd, frames, bytes);
     if (written == (long)bytes)
     {
@@ -716,6 +770,16 @@ long sx_audio_server_output(
     if (written != -(long)SAVANXP_EBUSY)
     {
         return written < 0 ? written : -SAVANXP_EIO;
+    }
+    written = sx_audio_native_connect();
+    if (written >= 0)
+    {
+        if (link->udp_fd >= 0) (void)savanxp_close(link->udp_fd);
+        link->udp_fd = (int)written; link->mode = 3; link->sequence = 0; link->last_declare_ms = 0;
+        written = sx_audio_server_native_output(link,frames,bytes,rate_hz);
+        if (written >= 0) return written;
+        sx_audio_server_link_close(link);
+        return 0;
     }
     if (link->udp_fd < 0)
     {

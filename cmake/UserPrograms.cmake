@@ -349,10 +349,12 @@ savanxp_program(NAME tcpget SOURCES subsystems/posix/userland/tcpget.c)
 savanxp_program(NAME tcptest TEST SOURCES subsystems/posix/userland/tcptest.c)
 savanxp_program(NAME beep SOURCES subsystems/posix/userland/beep.c)
 savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
-# El demonio de audio: sin ventana ni toolkit, estatico como init. Sin .sxres
-# para no salir en el launcher; init lo lanza antes de windowd y los clientes
-# lo encuentran por su puerto UDP bien conocido.
+# The static audio service has no window, toolkit or launcher resource.
+# init starts it before windowd; clients discover its native object port,
+# with UDP retained for legacy binaries.
 savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
+# The mixer has a fixed PCM deadline, including in a Debug kernel build.
+target_compile_options(audiod PRIVATE -O2)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 # compositord, sessiond and windowd: cmake/SystemServices.cmake.
 # The desktop: background, taskbar, Start menu and the taskbar's popups, as

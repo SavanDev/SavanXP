@@ -942,6 +942,18 @@ target_compile_options(savanxp-audio-peak-meter-test PRIVATE -O1 -Wall -Wextra -
 set_target_properties(savanxp-audio-peak-meter-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 add_test(NAME audio-peak-meter-test COMMAND savanxp-audio-peak-meter-test)
 
+add_executable(savanxp-audio-preferences-test tests/host/audio_preferences_test.cpp)
+target_include_directories(savanxp-audio-preferences-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-audio-preferences-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-audio-preferences-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_test(NAME audio-preferences-test COMMAND savanxp-audio-preferences-test)
+
+add_executable(savanxp-audio-preference-io-test tests/host/audio_preference_io_test.cpp)
+target_include_directories(savanxp-audio-preference-io-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-audio-preference-io-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-audio-preference-io-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_test(NAME audio-preference-io-test COMMAND savanxp-audio-preference-io-test)
+
 add_executable(savanxp-kernel-memory-compare-test tests/host/kernel_memory_compare_test.cpp)
 target_include_directories(savanxp-kernel-memory-compare-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
 target_compile_options(savanxp-kernel-memory-compare-test PRIVATE -O1 -Wall -Wextra -Werror)
@@ -952,7 +964,7 @@ add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-kernel-memory-compare-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

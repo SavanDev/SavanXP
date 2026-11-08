@@ -114,7 +114,7 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "elevtest")) {
         return "ELEVATION SMOKE";
     }
-    if (spec != 0 && (text_contains(spec, "nativetest") || text_contains(spec, "nativecapture") || text_contains(spec, "nativedevices"))) {
+    if (spec != 0 && (text_contains(spec, "nativetest") || text_contains(spec, "nativecapture") || text_contains(spec, "nativedevices") || text_contains(spec, "nativepreferences"))) {
         return "NATIVE TEST";
     }
     return "SMOKE";
@@ -159,6 +159,7 @@ static int run_automation_spec(const char* spec) {
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
     const char* nativedevices_argv[] = {"/bin/nativetest.sxe", "audio-devices", 0};
+    const char* nativepreferences_argv[] = {"/bin/nativetest.sxe", "audio-preferences", 0};
     const char* nightwood_argv[] = {"/bin/nightwood.sxe", "--selftest", 0};
     const char* sxgltest_argv[] = {"/bin/sxgltest.sxe", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
@@ -298,6 +299,10 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/pthreadtest";
             argv = pthreadtest_argv;
             argc = 1;
+        } else if (strcmp(spec, "nativepreferences") == 0) {
+            path = "/bin/nativetest.sxe";
+            argv = nativepreferences_argv;
+            argc = 2;
         } else if (strcmp(spec, "nativedevices") == 0) {
             path = "/bin/nativetest.sxe";
             argv = nativedevices_argv;

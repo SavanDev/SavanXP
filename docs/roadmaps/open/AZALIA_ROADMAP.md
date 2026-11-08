@@ -1,8 +1,9 @@
 # Azalia: OpenBSD HDA port for the x86_64 host
 
-Status: selective analog playback/capture port plus SUN inventory, connector
-selection, jack policy and Sound recording controls implemented. Host tests, QEMU recorded-PCM acceptance and
-persistence regression pass. **Physical playback on the
+Status: all six follow-up software stages implemented: analog playback/capture,
+SUN inventory, selection, jack policy, independent devices, persistent controls
+and controller recovery. Software evidence is recorded below; follow-up physical
+checks remain for the user. **Initial physical playback on the
 Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
 target remains separate.
 
@@ -159,5 +160,42 @@ previous implementation and does not certify these new features.
   that meter fix: 17 captures and a replay WAV of 2.940 s at RMS 12000/6000,
   399.6/599.9 Hz. Sound's prior 14 control captures and SxGUI's eight glyph/scroll
   captures pass; isolated Doom persistence and installed binary comparisons pass.
-  General driver recovery remains stage 6.
-- Stage 6 remains implementation work. HDMI remains a separate future objective.
+  General driver recovery is recorded below under stage 6.
+- Stage 6: `audio-preferences` restarts the real daemon and reconnects independent
+  SUN and POSIX producers with different process/stream ids and native ports,
+  without a NIC. It restores output/input ids, master 62/muted, capture 50/muted
+  and application levels 43/muted and 37/muted. Flush acknowledgements require
+  equal requested/durable generations. Exact capture distinguishes the third
+  controller at 300/750 Hz and amplitudes 5000/1000, with no lost frames.
+  The independent restored-output oracle records 2.193 s, RMS 1290, 439.1 Hz
+  and no internal silence. Its 20 ms continuity and frequency bounds remain
+  unchanged; malformed/gain/gap fixtures must still fail.
+- Recovery host cases exercise actual port code: stuck RUN/CRST cannot modify
+  DMA buffers, late same-codec replies and RIRB overflow cannot satisfy a new
+  command, missing codecs remain unavailable and a verified reset restores the
+  expected codec and desired pins. Timeout fixtures now require a cleared
+  effective route and no more commands until reset, rather than claiming rollback
+  over an unattributable response channel. No PCM assertion was relaxed.
+- The final host suite passes 31/31, including strict preference parsing,
+  failed write/sync/rename rollback, writer durability acknowledgements,
+  writeback frontiers and memory-comparison guard pages. Isolated Doom
+  installation/build persistence passes; extracted Sound/audiod/audiotest/native
+  test binaries match their payloads and Doom's executable/WAD remain present.
+  Pristine OpenBSD source hashes still match the pin.
+- Final HDA full/half captures contain 2.359/2.363 s at RMS 12000/6000,
+  439.9/440.2 Hz and no internal gap. HDA/virtio capture and independent
+  multi-device, native/offline and daemon sample regressions pass. The final
+  multi-device WAVs contain continuous intervals of 2.131, 1.843 and 8.371 s,
+  all at RMS 3000 and about 440 Hz.
+- Sound's existing control scenario passes 14 captures. Its recording scenario
+  exposed GUI-paced replay starvation (375.3 Hz); the production fix uses a
+  dedicated SUN playback thread and joins before reusing its PCM/stream/stack.
+  The unchanged 17-capture scenario then passes with replay of 2.922 s at
+  RMS 12000/6000 and 400.4/600.6 Hz. The final required SxGUI check passes all
+  eight glyph/scroll/taskbar captures after the replay-thread change. All 14
+  distinct QEMU scenarios pass, using the focused rerun for the repaired replay.
+
+The software implementation is complete; physical follow-up checks in
+[REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md#follow-up-audio-checks-after-the-software-objective)
+are still pending. This roadmap remains open for those results. HDMI remains a
+separate future objective.

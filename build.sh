@@ -185,6 +185,7 @@ SMOKE_USB_STICK_MIB=0
 SMOKE_NO_PS2=False
 SMOKE_NO_NETWORK=False
 SMOKE_CAPTURE_FIXTURE=False
+SMOKE_CLEAN_AUDIO_PREFERENCES=False
 SMOKE_USB_POINTER=mouse
 SMOKE_USB_HUB=False
 if [[ "$COMMAND" == smoke ]]; then
@@ -216,6 +217,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
         SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
         SMOKE_CAPTURE_FIXTURE=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field capture_fixture)
+        SMOKE_CLEAN_AUDIO_PREFERENCES=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field clean_audio_preferences)
         SMOKE_NO_NETWORK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_network)
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
@@ -486,6 +488,7 @@ case "$COMMAND" in
         # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
         [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
         [[ "$SMOKE_CAPTURE_FIXTURE" == True ]] && SMOKE_ARGS+=(--capture-fixture)
+        [[ "$SMOKE_CLEAN_AUDIO_PREFERENCES" == True ]] && SMOKE_ARGS+=(--clean-audio-preferences)
         [[ "$SMOKE_NO_NETWORK" == True ]] && SMOKE_ARGS+=(--no-network)
         [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ "$SMOKE_EXTRA_DISK_MIB" == 0 ]] || SMOKE_ARGS+=(--extra-disk-mib "$SMOKE_EXTRA_DISK_MIB")

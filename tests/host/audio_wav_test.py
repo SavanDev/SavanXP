@@ -7,7 +7,7 @@ import struct
 import sys
 import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from audio_wav import verify_tone, verify_duplex, verify_recording
+from audio_wav import verify_tone, verify_duplex, verify_recording, verify_preferences
 
 
 def capture(path, amplitude=12000, *, gap=False, frequency=440, rate=48000, channel=True):
@@ -72,5 +72,9 @@ with tempfile.TemporaryDirectory() as temp:
     stereo_recording(path,bad_right=True); rejects(verify_recording,path)
     stereo_recording(path,gap=True); rejects(verify_recording,path)
     capture(path); rejects(verify_recording,path)
+    capture(path,amplitude=1290); verify_preferences(path)
+    capture(path,amplitude=1500); rejects(verify_preferences,path)
+    capture(path,amplitude=1000); rejects(verify_preferences,path)
+    capture(path,amplitude=1290,gap=True); rejects(verify_preferences,path)
 
 print("audio-wav-test: PASS (valid tones accepted; defective captures rejected)")

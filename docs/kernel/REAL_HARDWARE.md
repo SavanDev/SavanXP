@@ -47,7 +47,30 @@ The port and acceptance gates are in
 [AZALIA_ROADMAP.md](../roadmaps/open/AZALIA_ROADMAP.md). QEMU verifies the HDA
 transport and recorded PCM; physical playback was confirmed separately by
 the user. The tested application, jack and firmware settings were not recorded.
-HDMI playback and automatic jack switching are later work.
+HDMI belongs to a separate future objective. The follow-up analog software
+includes routing, optional jack switching, capture, independent devices,
+preferences and controller recovery; these need the physical checks below.
+
+### Follow-up audio checks after the software objective
+
+Boot the final `codex` ISO and record the image/commit, firmware audio settings,
+connector and application used. The earlier playback confirmation covers only
+the initial port, not these follow-up capabilities.
+
+1. Open **Sound settings...** from the speaker popup. Check rear green line-out
+   and front headphones separately, then optional plug/unplug switching. Unknown
+   readings must preserve the route; a failed route must not be shown as selected.
+2. Test rear/front microphone and line-in with the three-second record/replay
+   controls. Verify independent input gain/mute and simultaneous playback.
+3. Change application levels, output/input defaults and policy; restart the audio
+   service and reopen clients to check restoration. Check that service/device
+   errors are reported and capture reopens explicitly after controller recovery.
+4. Confirm external applications and their data remain installed. Power-cycle
+   preference persistence requires a writable persistent root; an ISO boot's RAM
+   disk can test service restarts but does not retain guest writes after reboot.
+
+Keep Vega HDMI outside this run. Report hardware results separately from the
+QEMU PCM, visual and simulated-fault evidence in the roadmap.
 
 ## Legacy x86 target: Compaq Evo N1020v
 

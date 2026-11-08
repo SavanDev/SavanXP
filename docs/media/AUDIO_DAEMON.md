@@ -7,7 +7,22 @@ send; every client keeps mixing its own voices and sends finished stereo.
 Master volume and mute stay in the kernel, so the taskbar never learned a
 new protocol.
 
-## Why UDP loopback and not a new primitive
+## Native playback and legacy UDP
+
+Rebuilt POSIX clients use the same native object port as SUN clients whenever
+the device is busy with the daemon. Object ports, pipe I/O and nonblocking flags
+are part of the shared kernel floor; POSIX process/file operations remain POSIX.
+The existing `sx_audio_server_link` binary layout is unchanged: mode 3 stores
+the native request-pipe handle in its old descriptor field. Closing uses the
+appropriate handle API. Native EOF/error retries direct output and reconnects
+to a replacement daemon; pipe pressure preserves the connection without blocking.
+DECLARE precedes the first samples and is repeated after a role change. A
+native connection retains its role across mixer entry expiry/re-registration.
+
+Older binaries and explicit UDP census/controls remain supported. UDP requires
+a configured network stack; native playback works on the physical host without
+a supported NIC. Anonymous UDP transport cannot authenticate an executable and
+therefore does not acquire persistent application preferences.
 
 The kernel already delivers UDP to its own address without ARP or a NIC on
 the path (`sendto` short-circuits to the local socket table), with a 1024
@@ -152,7 +167,51 @@ rather than respawned. If a direct holder outlives a daemon restart, the
 daemon waits its turn.
 
 Pause and close stop sending; the live mixer stream expires on its own.
-Persistent application preferences are a separate roadmap stage.
+Its persisted identity is independent of that transient entry.
+
+## Preferences and durability
+
+The service owns the single-user profile's saved audio policy. The companion
+`Settings/audio-mixer.cfg` begins with `SAVANXP_AUDIO_PREFS 1`, followed by one
+`D` record (output, input, fallback, headphone policy, input volume/mute) and up
+to 32 `A` records (uid, volume/mute, executable and role). Endpoint ids use full
+16-digit hexadecimal fields; names use canonical zero-padded 32-byte hex fields.
+The parser rejects unknown versions, extra tokens, malformed padding, duplicate
+keys, overflow, truncation and files beyond 6 KiB. `audio.cfg` preserves the
+legacy two-number master format. Existing loose-profile/root settings remain
+read fallbacks. A missing canonical file first tries its `.previous` copy;
+a malformed canonical is reported rather than silently reverting to older state.
+
+Trusted identities come from native port credentials and the kernel process
+inventory, never a client-supplied executable string or UDP source port.
+Explicit controls update persistent intent; automatic headphone transitions do
+not replace the saved manual output. A saved missing device remains remembered.
+The bounded application table stores nondefault controls only. `--no-preferences`
+disables loading/saving for diagnostics and isolated protocol tests.
+
+Changes are observed every 100 ms and debounced for 250 ms. One persistent
+`audiod --save-preferences` worker receives bounded snapshots on a private pipe,
+performs POSIX file I/O and replies only after final `sync` completion. The mixer
+never loads a new helper image for every change. A crashed writer is restarted
+only while playback entries and capture subscribers are idle; dirty state and
+an explicit error remain until a durable retry succeeds. Ordinary save failures
+retry after five seconds. The service does not acknowledge an unsaved flush.
+
+Each complete temporary file is private (0600) and owned by the profile user.
+The worker syncs it, rotates the previous canonical to `.previous`, installs the
+complete new file and finally syncs both files. SxFS cannot replace an existing
+rename destination, so installation failure restores the old canonical. The
+previous complete copy survives a missing canonical after interruption. The two
+files are **not a cross-file atomic transaction**: interruption may retain one
+new file and one previous file; no successful flush is sent until both complete.
+Power-loss behavior still depends on the storage device honoring flushes.
+
+Native flush requests identify a generation; replies include durable generation
+and load/save errors. A query is not a durability guarantee. The mixer bounds
+native draining to one pipe capacity per client per turn and measures render
+time after control handling, preserving PCM deadlines during control traffic.
+The mixer is compiled with optimization even with a Debug kernel: rendering
+eight PCM streams remains a deadline-driven workload in that configuration.
 
 ## Native recording
 

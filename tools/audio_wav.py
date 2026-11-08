@@ -46,7 +46,7 @@ def _read_stereo(path: Path):
     return left, right
 
 
-def verify_tone(path: Path, *, quiet: bool = False) -> dict:
+def _verify_tone(path: Path, expected: int, minimum_rms: float, channel_tolerance: int) -> dict:
     left, right = _read_stereo(path)
     rate = 48000
     # Startup and shutdown silence are allowed; internal silent holes are not.
@@ -59,8 +59,7 @@ def verify_tone(path: Path, *, quiet: bool = False) -> dict:
         raise ValueError(f"expected about 2.5 seconds of tone, got {duration:.3f}")
     signal = left[first:last + 1]
     rms = math.sqrt(sum(x * x for x in signal) / len(signal))
-    expected = 6000 if quiet else 12000
-    if not expected * 0.80 <= rms <= expected * 1.05:
+    if not expected * minimum_rms <= rms <= expected * 1.05:
         raise ValueError(f"RMS {rms:.1f} outside expected {expected} +/- tolerance")
     longest = run = 0
     for x in signal:
@@ -73,11 +72,20 @@ def verify_tone(path: Path, *, quiet: bool = False) -> dict:
     frequency = crossings / duration
     if not 420 <= frequency <= 460:
         raise ValueError(f"expected 440 Hz, got {frequency:.1f} Hz")
-    mismatch = sum(abs(left[i] - right[i]) > 100 for i in range(first, last + 1))
+    mismatch = sum(abs(left[i] - right[i]) > channel_tolerance for i in range(first, last + 1))
     if mismatch > len(signal) // 100:
         raise ValueError("stereo channels disagree")
     return {"seconds": round(duration, 3), "rms": round(rms),
             "hz": round(frequency, 1), "max_gap_ms": round(gap_ms, 2)}
+
+
+def verify_tone(path: Path, *, quiet: bool = False) -> dict:
+    return _verify_tone(path,6000 if quiet else 12000,0.80,100)
+
+
+def verify_preferences(path: Path) -> dict:
+    """A 3000-amplitude source restored at application volume 43 percent."""
+    return _verify_tone(path,1290,0.95,2)
 
 
 def verify_duplex(path: Path) -> dict:

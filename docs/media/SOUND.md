@@ -9,9 +9,9 @@ that `audiod` currently mixes.
 The upper slider and Mute control operate on the kernel master gain. Below
 Applications, select a row to adjust that stream's volume or mute it without
 changing its volume setting. Muting a stream also silences its packet-loss
-concealment. Stream volume and mute last for that stream's lifetime. This
-first panel applies live controls; it does not write persistent preferences.
-The existing popup and `volume` command still save master settings as before.
+concealment. The service saves master, recording and named application controls
+as described under Preferences below. Anonymous legacy UDP streams keep
+session controls. The popup and `volume` command share the same master setting.
 
 The output dropdown above the master controls names the effective audio device
 and connector. HD Audio lists each valid analog path (rear line-out and front
@@ -36,8 +36,8 @@ valid plug reading selects headphones; a valid unplug returns to that fallback.
 Unknown readings preserve the effective route. Another device's jacks and digital
 receivers do not participate. A successful manual selection disables the policy.
 Failed automatic changes are reported and attempted once per presence change;
-toggle the policy or select an output to retry deliberately. State is still
-session-only until the preferences stage of the roadmap.
+toggle the policy or select an output to retry deliberately. The service saves
+the explicit policy and its fallback, independently of automatic transitions.
 
 ## Recording
 
@@ -49,7 +49,9 @@ no recording support in this backend and shows **No recording device available**
 
 **Record test** stores three seconds of stereo PCM in memory.
 **Play recording** replays that buffer through the normal SUN mixer while
-the input monitor continues. No recording is written to disk. A changed input
+the input monitor continues. A dedicated SUN thread paces replay independently
+of GUI work; stopping joins it before PCM or its stream can be reused.
+No recording is written to disk. A changed input
 discards the previous test; gain/mute changes affect subsequent input and leave
 an existing recording intact. Lost capture frames or a device error invalidate
 the test rather than filling it with fabricated silence. Closing Sound releases
@@ -108,6 +110,34 @@ the daemon also rejects an obsolete id even if a GUI event was already queued.
 The census respects `audiod`'s existing eight-stream limit, rather than imposing
 the popup's three-row presentation limit.
 
+## Preferences
+
+`audiod` automatically saves explicit output/input connectors, headphone policy
+and fallback, master volume/mute, input gain/mute and named application levels.
+Application keys combine the kernel-authenticated real uid and executable name
+with the declared playback role. New stream ids, ports and process ids therefore
+retain saved controls; changing the role creates a separate preference. The
+table holds 32 nondefault application settings; returning to 100/unmuted removes
+an entry. A full table reports an error rather than silently losing another key.
+The daemon applies saved levels before the stream's first samples.
+
+Settings belong to the current single-user profile's `Settings` directory:
+`audio.cfg` remains the shared master file and `audio-mixer.cfg` carries the
+versioned route/policy/recording/application settings. Missing saved devices do
+not overwrite the saved choice with a boot fallback. Malformed files leave
+available defaults in use and report a load error. The panel reports save/load
+errors; closing it requests a durable flush, waiting up to two seconds after
+closing the window. Saving continues in the service if that wait expires.
+Without the service, direct master/recording controls remain usable but the
+panel cannot persist their changes itself (SUN currently has no file API).
+
+`sxnaudio_preferences_query/flush` receive request-correlated generation,
+saved-generation, enabled/dirty/saving/load-failure flags and the last error via
+`sxnaudio_control_receive_full` (return value 4). A successful flush means its
+requested generation reached the storage durability frontier. Merely queueing
+a write or restarting the writer is insufficient. See the
+[service storage contract](AUDIO_DAEMON.md#preferences-and-durability).
+
 ## Level meters
 
 The daemon measures absolute stereo S16 peaks while it renders, with a 100 ms
@@ -124,6 +154,14 @@ reading between two measurement windows must not blank a continuous signal.
 
 ## Verification
 
+- `./build.sh smoke audio-preferences`: independent continuous source, saved
+  output/input, master, capture and SUN/POSIX application levels after daemon
+  restart with different pids/stream ids/ports. Exact captured input and a
+  separate restored-volume WAV oracle are required, without NIC. Startup is
+  primed while muted; autosaves run during the measured playback/capture interval.
+- `audio-preferences-test` rejects malformed/versioned/overflowing settings;
+  `audio-preference-io-test` injects write, sync and rename failures into the
+  actual worker, including rollback and refusal to acknowledge failed durability.
 - `./build.sh smoke native-test`: SUN master controls, control-only snapshot,
   application gain/mute and live peaks through the native daemon port, stable
   endpoint inventory, read-only access, PCM ownership, acknowledged selection

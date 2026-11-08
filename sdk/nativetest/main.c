@@ -1024,7 +1024,7 @@ static void test_threads(const struct sxn_native_info* info) {
 static void test_audio(void) {
     static int16_t frames[480 * 2]; /* more than one record's worth */
     struct sxnaudio_stream stream;
-    char* const audiod_argv[] = {(char*)"/bin/audiod", 0};
+    char* const audiod_argv[] = {(char*)"/bin/audiod", (char*)"--no-preferences", 0};
     long result = 0;
     long pid = 0;
     long pause = sxn_event_create(0);
@@ -1084,7 +1084,7 @@ static void test_audio(void) {
     sxnaudio_close(&stream);
     check(stream.mode == SXNAUDIO_MODE_CLOSED);
 
-    pid = sxn_spawn("/bin/audiod", audiod_argv, 1);
+    pid = sxn_spawn("/bin/audiod", audiod_argv, 2);
     check(pid > 0);
     if (pid <= 0) {
         (void)sxn_close(pause);
@@ -1103,7 +1103,7 @@ static void test_audio(void) {
     check(attempt < 100);
     /* The native name enforces singleton startup even without UDP/NIC. */
     {
-        long duplicate = sxn_spawn("/bin/audiod", audiod_argv, 1);
+        long duplicate = sxn_spawn("/bin/audiod", audiod_argv, 2);
         int duplicate_status = -1;
         check(duplicate > 0);
         if (duplicate > 0)
@@ -1470,8 +1470,8 @@ static void test_capture(void) {
     check(sxnaudio_capture_state(control,&state) == 0 && !state.active);
     {
         struct sxnaudio_capture second;
-        char* const argv[] = {(char*)"/bin/audiod",0};
-        long daemon = sxn_spawn(argv[0],argv,1);
+        char* const argv[] = {(char*)"/bin/audiod",(char*)"--no-preferences",0};
+        long daemon = sxn_spawn(argv[0],argv,2);
         long pause = sxn_event_create(0);
         int attempt, status = -1;
         check(daemon > 0);
@@ -1648,8 +1648,8 @@ static void test_audio_devices(void) {
     sxnaudio_capture_close(&input);
     g_capture_test_output = 0; sxnaudio_close(&output);
     {
-        char* const argv[] = {(char*)"/bin/audiod",0};
-        long daemon = sxn_spawn(argv[0],argv,1), pause = sxn_event_create(0);
+        char* const argv[] = {(char*)"/bin/audiod",(char*)"--no-preferences",0};
+        long daemon = sxn_spawn(argv[0],argv,2), pause = sxn_event_create(0);
         struct sxnaudio_control remote = {-1,-1};
         int attempt, status = -1;
         long result = 0;
@@ -1687,23 +1687,190 @@ static void test_audio_devices(void) {
     check(sxn_log("nativetest: three analog codecs on two controllers, AC97/virtio inventory and independent live defaults") == 0);
 }
 
+static long preferences_start_daemon(struct sxnaudio_control* control) {
+    char* const argv[] = {(char*)"/bin/audiod",0};
+    long pid = sxn_spawn(argv[0],argv,1), pause = sxn_event_create(0);
+    unsigned attempt;
+    check(pid > 0);
+    for (attempt = 0; attempt < 200 && sxnaudio_control_open(control) < 0; ++attempt)
+        (void)sxn_wait_one(pause,10);
+    check(attempt < 200); (void)sxn_close(pause); return pid;
+}
+static struct savanxp_audiod_stream_state preferences_stream(struct sxnaudio_control* control, uint32_t id, const char* name) {
+    struct savanxp_audiod_stream_state state = {0};
+    struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_endpoint_reply endpoint;
+    struct savanxp_audiod_jack_policy_reply policy;
+    struct savanxp_audiod_preference_reply preferences;
+    long pause = sxn_event_create(0);
+    uint64_t deadline = sxn_clock_ns()+1000000000ull;
+    check(sxnaudio_control_query(control,id) == 0);
+    while (!state.id && sxn_clock_ns() < deadline) {
+        long result;
+        uint32_t i;
+        capture_test_pump();
+        result = sxnaudio_control_receive_full(control,&snapshot,&endpoint,&policy,&preferences);
+        if (result == 1 && snapshot.request_id == id) {
+            for (i = 0; i < snapshot.count; ++i) if (streq(snapshot.streams[i].name,name)) state = snapshot.streams[i];
+            if (state.id) break;
+            // DECLARE arrives on another connection. Wait for registration
+            // rather than imposing ordering between the two client pipes.
+            check(sxnaudio_control_query(control,id) == 0);
+        }
+        if (result < 0) { check(0); break; }
+        (void)sxn_wait_one(pause,2);
+    }
+    check(state.id != 0); (void)sxn_close(pause); return state;
+}
+static void preferences_flush(struct sxnaudio_control* control, uint32_t id) {
+    struct savanxp_audiod_snapshot snapshot;
+    struct savanxp_audiod_endpoint_reply endpoint;
+    struct savanxp_audiod_jack_policy_reply policy;
+    struct savanxp_audiod_preference_reply preferences;
+    long pause = sxn_event_create(0);
+    uint64_t deadline = sxn_clock_ns()+5000000000ull;
+    int done = 0;
+    check(sxnaudio_preferences_flush(control,id) == 0);
+    while (!done && sxn_clock_ns() < deadline) {
+        long result;
+        capture_test_pump();
+        result = sxnaudio_control_receive_full(control,&snapshot,&endpoint,&policy,&preferences);
+        if (result == 4 && preferences.request_id == id) {
+            char log[128];
+            (void)snprintf(log,sizeof(log),"nativetest: preference flush result=%d flags=%u generation=%llu saved=%llu error=%d",
+                preferences.result,preferences.flags,(unsigned long long)preferences.generation,
+                (unsigned long long)preferences.saved_generation,preferences.last_error);
+            (void)sxn_log(log);
+            check(!preferences.result && !preferences.last_error &&
+                  preferences.flags == SAVANXP_AUDIOD_PREFERENCE_ENABLED && preferences.generation == preferences.saved_generation);
+            done = 1;
+        } else if (result < 0) { check(0); break; }
+        (void)sxn_wait_one(pause,2);
+    }
+    check(done); (void)sxn_close(pause);
+}
+static void test_audio_preferences(void) {
+    const char* role = "Preference restore test";
+    char* const source_argv[] = {(char*)"/bin/nativetest.sxe",(char*)"audio-source",(char*)"Preference restore test",0};
+    char* const posix_argv[] = {(char*)"/bin/audiotest",(char*)"--stream",0};
+    struct sxnaudio_control remote = {-1,-1};
+    struct sxnaudio_stream dummy[2];
+    struct sxnaudio_capture capture;
+    struct savanxp_audiod_stream_state before, after;
+    struct savanxp_audiod_stream_state posix_before, posix_after;
+    struct savanxp_audio_capture_state input;
+    struct savanxp_audio_endpoint endpoint;
+    uint64_t outputs[3] = {0}, inputs[3] = {0}, initial_output = 0, initial_input = 0;
+    uint32_t i, out = 0, in = 0;
+    int status = -1;
+    long control = sxn_open_device("audio0",SXN_DEVICE_READ|SXN_DEVICE_WRITE), daemon, source, posix_source;
+    check(control >= 0); if (control < 0) return;
+    for (i = 0; sxnaudio_endpoint_get(control,i,&endpoint) == 0; ++i) {
+        if (endpoint.flags&SAVANXP_AUDIO_SELECTED) {
+            if (endpoint.flags&SAVANXP_AUDIO_PLAYBACK) initial_output = endpoint.id;
+            if (endpoint.flags&SAVANXP_AUDIO_CAPTURE) initial_input = endpoint.id;
+        }
+        if (endpoint.backend != SAVANXP_AUDIO_BACKEND_HDA) continue;
+        if ((endpoint.flags&SAVANXP_AUDIO_PLAYBACK) && out < 3) outputs[out++] = endpoint.id;
+        if ((endpoint.flags&SAVANXP_AUDIO_CAPTURE) && in < 3) inputs[in++] = endpoint.id;
+    }
+    check(out == 3 && in == 3 && initial_output && initial_input);
+    if (out != 3 || in != 3) { (void)sxn_close(control); return; }
+    daemon = preferences_start_daemon(&remote);
+    source = sxn_spawn(source_argv[0],source_argv,3); check(source > 0);
+    before = preferences_stream(&remote,3000,role);
+    posix_source = sxn_spawn(posix_argv[0],posix_argv,2); check(posix_source > 0);
+    posix_before = preferences_stream(&remote,3010,"audiotest");
+    check(posix_before.port >= SAVANXP_AUDIOD_NATIVE_FIRST_PORT &&
+          posix_before.port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT+SAVANXP_AUDIOD_NATIVE_SLOTS);
+    check(sxnaudio_control_change(&remote,&posix_before,SAVANXP_AUDIOD_STREAM_VOLUME,37) == 0);
+    check(sxnaudio_control_change(&remote,&posix_before,SAVANXP_AUDIOD_STREAM_MUTED,1) == 0);
+    check(before.volume == 100 && !before.muted);
+    check(sxnaudio_control_change(&remote,&before,SAVANXP_AUDIOD_STREAM_VOLUME,43) == 0);
+    check(sxnaudio_control_change(&remote,&before,SAVANXP_AUDIOD_STREAM_MUTED,1) == 0);
+    (void)audio_select_remote(&remote,outputs[1],SAVANXP_AUDIO_PLAYBACK,3001);
+    (void)audio_select_remote(&remote,inputs[2],SAVANXP_AUDIO_CAPTURE,3002);
+    check(sxnaudio_master_volume(control,62) == 0 && sxnaudio_master_muted(control,1) == 0);
+    check(sxnaudio_capture_volume(control,50) == 0 && sxnaudio_capture_muted(control,1) == 0);
+    preferences_flush(&remote,3003);
+    check(sxn_terminate(posix_source,0) == 0 && sxn_waitpid(posix_source,&status) == posix_source && !status);
+    check(sxn_terminate(source,0) == 0 && sxn_waitpid(source,&status) == source && !status);
+    sxnaudio_control_close(&remote);
+    check(sxn_terminate(daemon,0) == 0 && sxn_waitpid(daemon,&status) == daemon && !status);
+    check(sxnaudio_master_volume(control,100) == 0 && sxnaudio_master_muted(control,0) == 0);
+    check(sxnaudio_capture_volume(control,100) == 0 && sxnaudio_capture_muted(control,0) == 0);
+    check(audio_select_direct(control,initial_output,SAVANXP_AUDIO_PLAYBACK) == 0);
+    check(audio_select_direct(control,initial_input,SAVANXP_AUDIO_CAPTURE) == 0);
+    daemon = preferences_start_daemon(&remote);
+    // Occupy different ports/registration ids before reconnecting the same role.
+    sxnaudio_control_close(&remote);
+    for (i = 0; i < 2; ++i) {
+        int16_t silence[2] = {0,0};
+        check(sxnaudio_open(&dummy[i],i ? "Preference warmup B" : "Preference warmup A") == 0);
+        check(sxnaudio_write(&dummy[i],silence,1) == 1);
+    }
+    check(sxnaudio_control_open(&remote) == 0);
+    // A dedicated source keeps producing while this process changes controls
+    // and waits for recording/flush acknowledgements.
+    source = sxn_spawn(source_argv[0],source_argv,3); check(source > 0);
+    after = preferences_stream(&remote,3004,role);
+    check(after.id != before.id && after.port != before.port && after.volume == 43 && after.muted == 1);
+    posix_source = sxn_spawn(posix_argv[0],posix_argv,2); check(posix_source > 0);
+    posix_after = preferences_stream(&remote,3011,"audiotest");
+    check(posix_after.id != posix_before.id && posix_after.port != posix_before.port &&
+          posix_after.volume == 37 && posix_after.muted == 1 &&
+          posix_after.port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT+SAVANXP_AUDIOD_NATIVE_SLOTS);
+    check(sxn_terminate(posix_source,0) == 0 && sxn_waitpid(posix_source,&status) == posix_source && !status);
+    {
+        uint32_t volume, muted;
+        check(sxnaudio_master_get(control,&volume,&muted) == 0 && volume == 62 && muted == 1);
+    }
+    check(sxnaudio_capture_state(control,&input) == 0 && input.volume == 50 && input.muted == 1);
+    check(audio_selected(control,SAVANXP_AUDIO_PLAYBACK) == outputs[1] && audio_selected(control,SAVANXP_AUDIO_CAPTURE) == inputs[2]);
+    for (i = 0; i < 2; ++i) sxnaudio_close(&dummy[i]);
+    check(sxnaudio_capture_open(&capture) == 0 && capture.mode == SXNAUDIO_MODE_DAEMON);
+    // Complete the capture/DMA startup while output is still muted. The
+    // measured continuous interval then covers live capture and autosaves,
+    // without including queued silence from process loading/stream setup.
+    check(capture_test_samples(&capture,0,0,0));
+    check(sxnaudio_control_change(&remote,&after,SAVANXP_AUDIOD_STREAM_MUTED,0) == 0);
+    check(sxnaudio_master_volume(control,100) == 0 && sxnaudio_master_muted(control,0) == 0);
+    check(capture_test_samples(&capture,0,0,1));
+    check(sxnaudio_capture_muted(control,0) == 0);
+    check(capture_test_samples(&capture,0,0,0));
+    audio_device_samples(&capture,5000,1000,300,750);
+    check(!capture.dropped_frames);
+    sxnaudio_capture_close(&capture);
+    check(sxn_terminate(source,0) == 0 && sxn_waitpid(source,&status) == source && !status);
+    preferences_flush(&remote,3005); // A second save must replace existing files.
+    sxnaudio_control_close(&remote);
+    check(sxn_terminate(daemon,0) == 0 && sxn_waitpid(daemon,&status) == daemon && !status);
+    (void)sxn_close(control);
+    check(sxn_log("nativetest: durable defaults/master/input/application controls restored with different stream ids and ports") == 0);
+}
+
 /* Sustained SUN source for the Sound panel's visual regression. Runs only
  * when explicitly requested; normal nativetest never enters this mode. */
 static void audio_source(const char* name) {
     struct sxnaudio_stream stream;
-    int16_t frames[480 * 2];
+    int16_t frames[2048 * 2];
     uint32_t phase = 0;
     uint64_t started;
     long pause = sxn_event_create(0);
     int amplitude = streq(name,"ToneB") ? 4000 : 12000;
+    const uint32_t period = streq(name,"Preference restore test") ? 109 : 120;
+    if (period == 109) amplitude = 3000;
     if (sxnaudio_open(&stream,name) < 0) sxn_exit(1);
     started = sxn_clock_ns();
     while (sxn_clock_ns() - started < 180000000000ull) {
         uint32_t due = sxnaudio_frames_due(&stream,30), i;
         long written;
-        if (due > 480) due = 480;
+        // Catch up the requested 30 ms lead in one turn after scheduling
+        // delays; limiting each turn to 10 ms can starve a correctly paced
+        // mixer while this source keeps sleeping between partial catch-ups.
+        if (due > 2048) due = 2048;
         for (i = 0; i < due; ++i) {
-            int16_t value = (phase + i) % 120 < 60 ? amplitude : -amplitude;
+            int16_t value = (phase + i) % period < period/2 ? amplitude : -amplitude;
             frames[i*2] = frames[i*2+1] = value;
         }
         written = sxnaudio_write(&stream,frames,due);
@@ -1726,6 +1893,11 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
+    if (argc > 1 && streq(argv[1],"audio-preferences")) {
+        test_audio_preferences();
+        (void)sxn_log(g_failures ? "NATIVE PREFERENCES FAIL" : "NATIVE PREFERENCES PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
     if (argc > 1 && streq(argv[1],"audio-devices")) {
         test_audio_devices();
         (void)sxn_log(g_failures ? "NATIVE DEVICES FAIL" : "NATIVE DEVICES PASS");

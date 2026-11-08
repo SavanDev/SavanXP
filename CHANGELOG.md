@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Sound remembers device, connector, headphone policy, recording and application settings across restarts.**
+  Saved application levels follow trusted user/image/role identities; errors remain visible until saved.
+  See [SOUND.md](docs/media/SOUND.md) and [AUDIO_DAEMON.md](docs/media/AUDIO_DAEMON.md).
+
 - **Sound can choose playback and recording defaults independently across supported audio devices.**
   Analog HDA keeps separate controller/codec streams; idle devices remain visible for selection.
   See [AZALIA.md](docs/kernel/AZALIA.md).
@@ -59,9 +63,14 @@ Cut-off notes:
 
 ### Fixed
 
+- **Sound's recording replay remains paced independently of window repainting and control refresh.**
+
 - **Azalia can recover a failed controller without reusing DMA buffers that may still be active.**
   Late codec replies require a reset; unavailable codecs stay visible and recording must reopen.
   Safe queued playback is preserved during scheduling delays. See [AZALIA.md](docs/kernel/AZALIA.md).
+
+- **Rebuilt POSIX audio clients can use the mixer without a network card and retain application levels.**
+  They reconnect through the native object port; existing UDP binaries remain supported.
 
 - **Waiting for `sync` no longer holds the kernel for an entire deferred storage queue.**
   Durability failures still reach the caller; kernel byte comparisons process long equal buffers efficiently.

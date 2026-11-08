@@ -3,10 +3,9 @@
 /* audiod's wire protocol (docs/media/AUDIO_DAEMON.md): what a client sends to
  * the mixing daemon, whichever subsystem it belongs to.
  *
- * It belongs to neither subsystem, like wm/wm_protocol.h. POSIX clients reach
- * the daemon with UDP datagrams on the loopback (savanxp/audio_server.h keeps
- * that side); SUN clients, which have no sockets, reach it through the native
- * port SAVANXP_AUDIOD_PORT_NAME (sxn/sxnaudio.h). Both carry the same
+ * It belongs to neither subsystem, like wm/wm_protocol.h. SUN and rebuilt
+ * POSIX clients use the native port SAVANXP_AUDIOD_PORT_NAME; legacy POSIX
+ * clients retain UDP loopback (savanxp/audio_server.h). Both carry the same
  * datagrams; the port only wraps each one in a fixed-size record.
  */
 
@@ -129,6 +128,13 @@ struct savanxp_audiod_record {
 #define SAVANXP_AUDIOD_CAPTURE_STOP 15u
 #define SAVANXP_AUDIOD_CAPTURE_REPLY 16u
 #define SAVANXP_AUDIOD_CAPTURE_PCM 17u
+#define SAVANXP_AUDIOD_PREFERENCE_QUERY 18u
+#define SAVANXP_AUDIOD_PREFERENCE_FLUSH 19u
+#define SAVANXP_AUDIOD_PREFERENCE_REPLY 20u
+#define SAVANXP_AUDIOD_PREFERENCE_ENABLED 1u
+#define SAVANXP_AUDIOD_PREFERENCE_DIRTY 2u
+#define SAVANXP_AUDIOD_PREFERENCE_SAVING 4u
+#define SAVANXP_AUDIOD_PREFERENCE_LOAD_FAILED 8u
 
 struct savanxp_audiod_snapshot_query {
     uint32_t magic;
@@ -211,6 +217,20 @@ struct savanxp_audiod_capture_request {
     uint16_t kind;
     uint32_t request_id;
     uint32_t reserved;
+};
+struct savanxp_audiod_preference_request {
+    uint32_t magic;
+    uint16_t version, kind;
+    uint32_t request_id, reserved;
+};
+struct savanxp_audiod_preference_reply {
+    uint32_t magic;
+    uint16_t version, kind;
+    uint32_t request_id;
+    int32_t result;
+    uint64_t generation, saved_generation;
+    uint32_t flags;
+    int32_t last_error;
 };
 struct savanxp_audiod_capture_reply {
     uint32_t magic;

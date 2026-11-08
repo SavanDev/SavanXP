@@ -47,7 +47,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
 - [`AZALIA.md`](kernel/AZALIA.md) — pinned OpenBSD analog HDA playback/capture port, source map,
-  codec routing, DMA lifetime and verification boundaries.
+  codec routing, DMA lifetime, controller recovery and verification boundaries.
 - [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — current ASRock B450/Ryzen x86_64
   hardware inventory and analog HDA target, plus the Compaq Evo N1020v analysis
   reserved for `legacy` and future x86 work.
@@ -130,9 +130,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`MEDIA_PLAYER.md`](media/MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
 - [`SOUND.md`](media/SOUND.md) — SUN Sound panel, popup shortcut, master and
-  application controls, input selection, recording test and live PCM meters.
-- [`AUDIO_DAEMON.md`](media/AUDIO_DAEMON.md) — `audiod`, the mixing daemon: UDP
-  and native transports, shared recording and who holds `/dev/audio0`.
+  application controls, input selection, recording test, live meters and preferences.
+- [`AUDIO_DAEMON.md`](media/AUDIO_DAEMON.md) — `audiod`: native and legacy UDP
+  transports, shared recording, trusted application identities and durable settings.
 - [`MIDI.md`](media/MIDI.md) — `libsxmidi`, the General MIDI synthesizer: the SMF
   parser, the built-in instrument bank, and how the Doom port plays music
   through it.
@@ -196,7 +196,8 @@ all its phases have landed; the links to it move with it.
   encoder, readback into the window surface, and the `--gl` QEMU machine.
 
 - [`AZALIA_ROADMAP.md`](roadmaps/open/AZALIA_ROADMAP.md) — OpenBSD HDA port for
-  the Ryzen/ALC892 host, acceptance gates and user-confirmed physical playback.
+  the Ryzen/ALC892 host, six-stage completion contract, software evidence and
+  remaining physical checks; HDMI is a separate future objective.
 
 ## Third-party code — `third-party/`
 
