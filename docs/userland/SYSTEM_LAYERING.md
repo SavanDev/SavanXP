@@ -89,11 +89,27 @@ own, one per foreign ABI:
 
 - **Win32 subsystem**: runs unmodified Windows programs (PE images). The first
   approach is Wine-style, reimplementing the Windows user-mode libraries on
-  top of SavanXP. The approach may change.
+  top of SavanXP. The approach may change. The
+  [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) targets
+  **Windows XP Solitaire (`sol.exe`)** as its first application, with PE/DLL
+  and console probes as intermediate gates. The initial XP x86 profile requires
+  PE32 execution on the x86-64 kernel; W0 verifies the exact application files.
 - **Linux subsystem**: runs unmodified Linux binaries (ELF with the Linux
   system call numbers and process start-up). This is binary compatibility.
   The POSIX subsystem is a different thing: it is SavanXP's own SDK, with its
-  own system call numbers, and programs are compiled for it.
+  own system call numbers, and programs are compiled for it. The
+  [Linux roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) starts with
+  x86-64 static executables, then musl and a bounded command-line tool set,
+  followed by the dynamic runtime and X11 integration needed for **Xeyes**,
+  its first application goal on the SavanXP desktop.
+  Its [primary implementation reference](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md#implementation-reference-freebsd-linuxulator)
+  is FreeBSD's Linuxulator, with translation implemented over Sx. Linux itself
+  remains the behavioral reference.
+
+The recommended sequence is shared Sx groundwork, the bounded static Linux
+milestone, then the first Win32 PE/DLL milestone. Linux is not a prerequisite
+of Win32; neither a distribution nor Wine running through Linux compatibility
+blocks Win32 work. Both roadmaps remain **unstarted as of 2026-11-08**.
 
 What holds for both, by the same rules that hold for POSIX:
 
@@ -103,14 +119,46 @@ What holds for both, by the same rules that hold for POSIX:
   may reuse SavanXP pieces internally; that is its own design decision.
 - **The kernel stays indifferent.** Their per-process state goes through the
   subsystem state the kernel reserves without reading
-  ([KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md), isolation B). How a
-  binary is routed to its subsystem, by `EI_OSABI` today, has to learn to
-  recognise PE images and Linux ELF.
+  ([KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md), isolation B). Image
+  recognition and launch selection must support PE and Linux ELF while
+  preserving existing native/POSIX behavior. `EI_OSABI` alone does not reliably
+  distinguish Linux ELF from SavanXP POSIX ELF; start with explicit Linux ABI
+  selection rather than stamping or patching foreign executables.
 - **Kernel prerequisites come first and are not subsystem work.** The ones
   already named in [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): threads
   and per-thread `%fs`/`%gs` (done), exceptions delivered to user mode, and
   reserve/commit virtual memory. Each lands with a SavanXP consumer of its
-  own.
+  own. The shared inventory and acceptance gates are in the
+  [Linux roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md#shared-sx-groundwork);
+  a parser or libc-free probe need not wait for every kernel slice. The XP x86
+  target also needs neutral 32-bit user execution with its own native consumer
+  and assertions; that does not make Linux i386 part of the Linux roadmap.
+
+### Planned subsystem runtime layout
+
+The subsystem runtimes coexist under `/system` with SUN and POSIX. The chosen
+installation roots for the foreign subsystems are:
+
+| Subsystem | Runtime root | First application goal |
+| --- | --- | --- |
+| Linux | `/system/linux` | Xeyes, as an unchanged Linux x86-64 ELF with its X11/runtime dependencies |
+| Win32 | `/system/win` | Original Windows XP Solitaire (`sol.exe`) with its required companion files |
+
+These are paths in the running OS. Source code remains in the respective
+`subsystems/` trees; the Linux and Win32 source trees are still proposed.
+The roadmaps specify Linux guest-path lookup beneath `/system/linux` and a
+Windows `C:` backed initially by `/system/win/drive_c`. Keep each runtime's
+libraries, executable search and configuration separate from SUN/POSIX.
+Image validation and explicit ABI selection still apply; a directory name
+does not determine executable architecture or grant access to native files.
+
+The roots and their install/lookup support are planned, not implemented by
+this documentation change. Normal builds and subsystem updates must preserve
+external applications, runtime files and persistent data under both roots,
+as well as the existing `/bin` and `/games` payloads. Installation never
+requires resetting a valid persistent disk image.
+
+### Licensing and prior art
 
 **Each subsystem may carry its own licence.** The project stays MIT, but a
 compatibility subsystem is a component of its own. It may be GPL or LGPL when
@@ -129,9 +177,13 @@ Prior art: [Wine](https://gitlab.winehq.org/wine/wine) (LGPL-2.1) and
 [sogen](https://github.com/momo5502/sogen) (GPL-2.0). A subsystem under a
 compatible licence can adopt their code. An MIT one can only take them as
 `Reference`. Sogen emulates Windows and Linux programs at the system call level,
-so it shows the minimum kernel surface a real `ntdll` or a real Linux binary
-needs. Its traces can also serve as an oracle: run the same binary in sogen and
-on SavanXP, and the first system call that diverges points to the bug.
+illustrating the kernel surface needed by the cases it supports. Run the same
+binary in sogen and on SavanXP to investigate differences, checking the reference
+Windows or Linux environment before treating an emulator result as authoritative.
+With different DLL implementations, compare observable results rather than
+requiring identical syscall traces. Wine's conformance tests provide executable
+assertions; their harness dependencies and skipped cases must be tracked
+explicitly, as described in the Win32 roadmap.
 
 ## What goes in C (all of it, today)
 

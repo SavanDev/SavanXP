@@ -59,7 +59,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 - [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the layering: the platform,
   apps on the POSIX SDK, when an app may be a SUN program instead, and the
-  planned Win32 and Linux binary-compatibility subsystems.
+  planned Win32 and Linux binary-compatibility subsystems and their roadmaps.
 - [`SUN.md`](userland/SUN.md) — SUN, the Savan Userland Native API: what it is
   next to Sx and POSIX, its pieces, the system's own API rather than a Win32
   replica, the rules that grow it, its Win32 counterparts as a reading aid, and
@@ -176,6 +176,14 @@ all its phases have landed; the links to it move with it.
 
 ### Open — `roadmaps/open/`
 
+- [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — Linux
+  binary compatibility on Sx under `/system/linux`: FreeBSD Linuxulator as the
+  main implementation reference, static ABI probes/tools first, then dynamic
+  ELF and X11 integration for the first application goal, Xeyes.
+- [`WIN32_SUBSYSTEM_ROADMAP.md`](roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) — Windows
+  binary compatibility on Sx under `/system/win`: PE32 execution, DLL startup
+  and USER32/GDI for the first application goal, Windows XP Solitaire; Wine
+  conformance tests, sogen investigations and acceptance gates.
 - [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer on NetSurf's
   MIT libraries (libhubbub, libdom, libcss): what is adopted, the clean-room rule
   against the GPL core, and the phases up to its own CSS 2.1 layout engine.
