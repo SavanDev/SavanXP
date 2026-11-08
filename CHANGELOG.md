@@ -59,6 +59,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Azalia can recover a failed controller without reusing DMA buffers that may still be active.**
+  Late codec replies require a reset; unavailable codecs stay visible and recording must reopen.
+  Safe queued playback is preserved during scheduling delays. See [AZALIA.md](docs/kernel/AZALIA.md).
+
 - **Waiting for `sync` no longer holds the kernel for an entire deferred storage queue.**
   Durability failures still reach the caller; kernel byte comparisons process long equal buffers efficiently.
 

@@ -65,6 +65,7 @@ azalia_reset(azalia_t *az)
 	uint32_t gctl;
 	int i;
 
+	az->transport_failed = true;
 	/* 4.2.2 Starting the High Definition Audio Controller */
 	DPRINTF(("%s: resetting\n", __func__));
 	gctl = AZ_READ_4(az, GCTL);
@@ -94,6 +95,7 @@ azalia_reset(azalia_t *az)
 	}
 	az->io.delay(az->io.context, 1000);
 
+	az->transport_failed = false;
 	return(0);
 }
 
@@ -106,9 +108,11 @@ azalia_set_command(azalia_t *az, int caddr, nid_t nid, uint32_t control,
 	unsigned wp;
 	uint32_t verb;
 	uint16_t corbwp;
+	if (az->transport_failed) return EIO;
 
 	if ((AZ_READ_1(az, CORBCTL) & HDA_CORBCTL_CORBRUN) == 0) {
 		printf("%s: CORB is not running.\n", XNAME(az));
+		az->transport_failed = true;
 		return(-1);
 	}
 	verb = (caddr << 28) | (nid << 20) | (control << 8) | param;
@@ -133,9 +137,11 @@ azalia_get_response(azalia_t *az, uint32_t *result)
 	const volatile rirb_entry_t *rirb;
 	int i;
 	uint16_t wp;
+	if (az->transport_failed) return EIO;
 
 	if ((AZ_READ_1(az, RIRBCTL) & HDA_RIRBCTL_RIRBDMAEN) == 0) {
 		printf("%s: RIRB is not running.\n", XNAME(az));
+		az->transport_failed = true;
 		return(-1);
 	}
 
@@ -151,7 +157,13 @@ azalia_get_response(azalia_t *az, uint32_t *result)
 		}
 		if (i == 0) {
 			DPRINTF(("%s: RIRB time out\n", XNAME(az)));
+			az->transport_failed = true;
 			return(ETIMEDOUT);
+		}
+		// An overrun or malformed pointer loses response attribution. Never
+		// let a late reply satisfy a later command on this controller.
+		if (wp >= az->rirb_entries || (AZ_READ_1(az,RIRBSTS)&HDA_RIRBSTS_RIRBOIS)) {
+			az->transport_failed = true; return EIO;
 		}
 		if (++az->rirb_rp >= az->rirb_entries)
 			az->rirb_rp = 0;
@@ -159,10 +171,13 @@ azalia_get_response(azalia_t *az, uint32_t *result)
         // must acknowledge each response to unblock QEMU's response counter.
         AZ_WRITE_1(az, RIRBSTS, HDA_RIRBSTS_RINTFL | HDA_RIRBSTS_RIRBOIS);
         if (!(rirb[az->rirb_rp].resp_ex & RIRB_RESP_UNSOL)) {
-            if (RIRB_RESP_CODEC(rirb[az->rirb_rp].resp_ex) != az->response_address)
+            if (RIRB_RESP_CODEC(rirb[az->rirb_rp].resp_ex) != az->response_address) {
+                az->transport_failed = true;
                 return EIO;
+            }
             break;
         }
+        --i; // Unsolicited traffic must not make this wait unbounded.
     }
 	if (result != NULL)
 		*result = rirb[az->rirb_rp].resp;
@@ -298,7 +313,11 @@ azalia_stream_reset(stream_t *self)
 	ctl = STR_READ_2(self, CTL);
 	ctl &= ~HDA_SD_CTL_RUN;
 	STR_WRITE_2(self, CTL, ctl);
-	self->az->io.delay(self->az->io.context, 40);
+	for (i = 5000; i > 0; --i) {
+		if (!(STR_READ_2(self,CTL)&HDA_SD_CTL_RUN)) break;
+		self->az->io.delay(self->az->io.context,10);
+	}
+	if (!i) return ETIMEDOUT;
 
 	/* Start reset and wait for chip to enter. */
 	ctl = STR_READ_2(self, CTL);

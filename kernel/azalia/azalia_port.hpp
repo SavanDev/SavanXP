@@ -47,6 +47,7 @@ struct azalia_t {
     unsigned corb_entries = 0, rirb_entries = 0, rirb_rp = 0;
     uint8_t corbsize = 0, rirbsize = 0;
     uint8_t response_address = 0;
+    bool transport_failed = false;
     // SavanXP polls and disables unsolicited responses; no timeout queue.
 };
 struct stream_t {

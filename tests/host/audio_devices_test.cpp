@@ -85,6 +85,16 @@ int main() {
     first.available = true; first.rate = 44100;
     check(audio::select_endpoint(first.id+1,SAVANXP_AUDIO_PLAYBACK) == -SX_ENOSYS && selected(SAVANXP_AUDIO_PLAYBACK) == second.id+1,
           "an active format mismatch is refused rather than playing at the wrong rate");
+    first.rate = 48000;
+    second.backend.stop_checked = [](void*) { return false; };
+    check(audio::select_endpoint(first.id+1,SAVANXP_AUDIO_PLAYBACK) == -SX_EIO &&
+          selected(SAVANXP_AUDIO_PLAYBACK) == second.id+1 && first.stops == 2 && !third.input_stops,
+          "failed old-device DMA stop rolls back prepared target and retains the effective default");
+    check(!audio::stop(),"checked playback stop reports failure instead of claiming DMA released");
+    second.backend.stop_checked = nullptr;
+    third.backend.capture_stop_checked = [](void*) { return false; };
+    check(!audio::capture_stop(),"checked capture stop retains active direction on failure");
+    third.backend.capture_stop_checked = nullptr;
     audio::stop();
     check(second.stops == 1 && !third.input_stops,"closing playback stops only its selected backend");
     audio::capture_stop();

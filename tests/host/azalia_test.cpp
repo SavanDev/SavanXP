@@ -91,10 +91,12 @@ int main() {
                   "headphone playback never programs the bidirectional pin's microphone boost amp");
         check(switch_output(codec.get(),current,rear) == 0, "manual switch back to line-out");
         routes.commands.clear(); routes.fail_once = {0x1b,0x707,0xc0};
-        check(switch_output(codec.get(),current,front) != 0 && current.nodes[0] == 0x14,
-              "a failed headphone command restores the effective rear route");
-        check(routes.sent(0x1b,0x707,0) && routes.sent(0x14,0x707,0x40) &&
-              routes.sent(0x0c,0x300,0x7000), "rollback silences candidate and restores old pin/mixer");
+        check(switch_output(codec.get(),current,front) != 0 && !current.count && routes.az.transport_failed,
+              "a timed-out command invalidates the route until controller recovery");
+        check(!routes.sent(0x14,0x707,0x40) && !routes.sent(0x0c,0x300,0x7000),
+              "poisoned transport cannot falsely report successful rollback");
+        check(!azalia_reset(&routes.az) && !azalia_init_rings(&routes.az) &&
+              !switch_output(codec.get(),current,rear),"verified reset permits restoring the previous route");
         routes.commands.clear();
         routes.replies[{0x1b,0xf09,0}] = 0x80000000;
         check(pin_presence(codec.get(),0x1b) == PinPresence::Present &&
@@ -104,6 +106,7 @@ int main() {
         check(pin_presence(codec.get(),0x1b) == PinPresence::Absent, "unplugged jack is a valid absent state");
         routes.fail_once = {0x1b,0xf09,0};
         check(pin_presence(codec.get(),0x1b) == PinPresence::Unknown, "sense timeout is unknown, never unplugged");
+        check(!azalia_reset(&routes.az) && !azalia_init_rings(&routes.az),"reset poisoned sense transport before another command");
         routes.fail_once = {0x1b,0x709,0};
         check(pin_presence(codec.get(),0x1b) == PinPresence::Unknown, "trigger failure is unknown");
         routes.commands.clear();
@@ -137,6 +140,27 @@ int main() {
     check(h.sent(2,0x200,0x11) && h.sent(2,0x706,0x10), "attach converter to 48kHz stereo stream tag 1");
     h.answer = false;
     check(azalia_comresp(c.get(),0,0xf00,0,nullptr) != 0, "unresponsive codec fails instead of binding");
+    {
+        Hardware late;
+        codec_t codec; codec.az = &late.az;
+        check(!azalia_init_rings(&late.az),"late response transport setup");
+        late.answer = false;
+        check(azalia_comresp(&codec,0,0xf00,0,nullptr) == 110 && late.az.transport_failed,
+              "timeout latches a transport failure");
+        late.wp = (late.wp+1)%late.az.rirb_entries;
+        late.rirb[late.wp] = {0xdeadbeef,0}; late.regs[HDA_RIRBWP] = late.wp;
+        const auto old_wp = late.regs[HDA_CORBWP];
+        uint32_t result = 0x1234;
+        check(azalia_comresp(&codec,0,0xf00,0,&result) == 5 && result == 0x1234 && late.regs[HDA_CORBWP] == old_wp,
+              "late same-codec reply cannot satisfy a new command or enqueue another verb");
+        late.answer = true; late.param(0,0,0x12345678);
+        check(!azalia_reset(&late.az) && !azalia_init_rings(&late.az) &&
+              !azalia_comresp(&codec,0,0xf00,0,&result) && result == 0x12345678,
+              "full reset and ring initialization discard stale responses");
+        late.regs[HDA_RIRBSTS] = HDA_RIRBSTS_RIRBOIS;
+        check(azalia_comresp(&codec,0,0xf00,0,nullptr) == 5 && late.az.transport_failed,
+              "RIRB overflow loses response attribution and requires recovery");
+    }
     {
         Hardware transport;
         check(azalia_init_rings(&transport.az) == 0,"shared controller command transport");

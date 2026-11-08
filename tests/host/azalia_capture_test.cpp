@@ -4,6 +4,8 @@
 #include <memory>
 #include "azalia_hardware.hpp"
 #include "azalia/capture.hpp"
+#include "azalia/playback.hpp"
+#include "azalia/recovery.hpp"
 using namespace azalia_port;
 using azalia_test::Hardware;
 static void check(bool ok, const char* reason) {
@@ -24,6 +26,14 @@ static void capture_codec(Hardware& h) {
     }
 }
 int main() {
+    check(playback_write_position(40960,45960,256,4096) == 45960,
+          "safe queued playback survives scheduling jitter instead of inserting silence");
+    check(playback_write_position(40960,45056,256,4096) == 49152,
+          "a cursor inside the FIFO plus software guard resumes at a safe boundary");
+    check(playback_write_position(40960,40960,8192,4096) == 53248,
+          "larger hardware FIFOs increase the protected playback area");
+    check(playback_write_position(40960ull*1000000,40960ull*1000000+5000,256,4096) == 40960ull*1000000+5000,
+          "playback safety survives repeated DMA laps without narrowing the absolute cursor");
     Hardware h;
     check(azalia_init_rings(&h.az) == 0,"capture command rings");
     capture_codec(h);
@@ -45,9 +55,27 @@ int main() {
     check(configure_input_path(c.get(),line) == 0 && h.sent(0x1a,0x707,0x20),"line-in has no microphone bias");
     Path current = rear;
     h.fail_once = {0x19,0x707,0x24};
-    check(switch_input(c.get(),current,front) != 0 && current.nodes[2] == 0x18 && h.sent(0x18,0x707,0x24),
-          "failed input change restores the previous microphone and bias");
+    check(switch_input(c.get(),current,front) != 0 && !current.count && h.az.transport_failed,
+          "timed-out input change cannot claim a restored microphone over poisoned transport");
+    Path restored_output;
+    RecoveryTarget target = {c.get(),&restored_output,&current,0x14,0x18,true,true};
+    h.regs[HDA_STATESTS] = 1;
+    check(recover_controller(&h.az,&target,1) && target.available && restored_output.nodes[0] == 0x14 &&
+          current.nodes[current.count-1] == 0x18,"controller recovery reprobes codec and restores both desired analog routes");
+    h.stuck_reset = true; h.regs[HDA_GCTL] = HDA_GCTL_CRST;
+    h.bdl[0].low = 0xfeedface; h.pcm[0] = 0xa5;
+    check(!recover_controller(&h.az,&target,1) && !target.available && h.bdl[0].low == 0xfeedface && h.pcm[0] == 0xa5,
+          "failed controller reset quarantines DMA buffers without modifying BDL or PCM");
+    h.stuck_reset = false; h.regs[HDA_STATESTS] = 0;
+    check(recover_controller(&h.az,&target,1) && !target.available,
+          "a lost codec remains unavailable after a successful controller reset");
+    h.regs[HDA_STATESTS] = 1;
+    check(recover_controller(&h.az,&target,1) && target.available,"returning expected codec can restore its routes");
     stream_t stream = {&h.az,c.get(),0x80,2,8,{h.bdl,0x18000},{h.pcm,0x20000},sizeof(h.pcm),4096,0x11};
+    h.stuck_run = true; h.regs[0x80] = HDA_SD_CTL_RUN;
+    check(azalia_stream_start(&stream) == 110 && h.bdl[0].low == 0xfeedface && h.pcm[0] == 0xa5,
+          "RUN that will not clear prevents BDL reuse even if SRST could be written");
+    h.stuck_run = false;
     check(azalia_stream_start(&stream) == 0 && h.sent(8,0x200,0x11) && h.sent(8,0x706,0x20),
           "input descriptor uses independent stream tag 2 and 48kHz stereo converter format");
     CaptureCursor partial;

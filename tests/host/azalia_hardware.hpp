@@ -17,6 +17,7 @@ struct Hardware {
     unsigned wp = 0;
     std::tuple<unsigned,unsigned,unsigned> fail_once = {~0u,0,0};
     bool answer = true, saw_full_bdl = false;
+    bool stuck_run = false, stuck_reset = false;
     bdlist_entry_t bdl[32] = {};
     unsigned char pcm[32 * 4096] = {};
     Hardware(uint8_t sizes = 0x40) {
@@ -29,10 +30,17 @@ struct Hardware {
     static void delay(void*, unsigned) {}
     static void write(void* p, uint16_t r, uint32_t v, unsigned) {
         auto& h = *static_cast<Hardware*>(p);
+        if (r == HDA_GCTL && h.stuck_reset) return;
+        if (r == HDA_GCTL && !(v&HDA_GCTL_CRST)) {
+            h.regs[HDA_CORBCTL] = h.regs[HDA_RIRBCTL] = 0;
+            h.regs[HDA_RIRBWP] = h.wp = 0;
+            h.regs[0x80] = h.regs[0x100] = 0;
+        }
+        if ((r == 0x80 || r == 0x100) && h.stuck_run) v |= HDA_SD_CTL_RUN;
         if (r == 0x4e || r == 0x5e) { h.regs[r] = (h.regs[r] & 0xf0) | (v & 3); return; }
         if (r == 0x4a) { h.regs[r] = v & 0x8000; return; }
         if (r == 0x58 && (v & 0x8000)) { h.regs[r] = 0; h.wp = 0; return; }
-        if (r == 0x83 || r == 0x103) { h.regs[r] &= ~v; return; }
+        if (r == 0x83 || r == 0x103 || r == HDA_RIRBSTS) { h.regs[r] &= ~v; return; }
         h.regs[r] = v;
         if (r == 0x48 && h.answer) {
             const uint32_t word = h.corb[v & 0xff];

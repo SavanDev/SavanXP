@@ -41,7 +41,10 @@ C's `this` becomes `self`; endian conversions are identity on x86_64;
 `bus_addr_t` becomes `uint64_t`. DMA reads are volatile. Pin-control verb
 errors are propagated instead of ignored. OpenBSD acknowledges
 RIRB status in its interrupt handler; this polled port acknowledges each
-response and discards unsolicited entries without scheduling a timeout.
+response and bounds unsolicited processing without scheduling a timeout.
+Timeouts, overflow, malformed pointers or a wrong codec address poison that
+controller's command transport until a verified controller/ring reset. A late
+response from the same codec must never satisfy a subsequent command.
 
 `azalia_port.hpp` replaces the BSD types with bounded structures and injectable
 MMIO/delay operations. `kernel/azalia.cpp` owns PCI discovery, mapping,
@@ -72,8 +75,9 @@ DMA, disables the old pin, detaches its converter, configures the new path and
 restarts with a silence-filled buffer when playback was active. Initial setup
 also disables other valid output pins. A failed setup restores every old
 selector, amp and pin; a failed restart attempts the same rollback. If rollback
-fails, the catalog has no effective selection and PCM is refused until a
-successful selection. Kernel ownership prevents a control-only process from
+fails, the catalog has no effective selection and PCM is refused until recovery
+or a successful selection. A timed-out verb poisons command attribution, so
+rollback cannot be claimed until controller recovery. Kernel ownership prevents a control-only process from
 rerouting another PCM writer; Sound sends the request to that writer (`audiod`).
 
 The register space stays mapped for an abandoned controller because the
@@ -133,10 +137,17 @@ not in the hardware driver. They only target connectors on the chosen device.
 
 All 32 descriptors have fixed 4096-byte buffers. CBL is their sum and LVI is
 31 before RUN. Neither descriptors nor LVI change while running. User writes
-populate the PCM bytes, with four periods of initial lead and at most eight
+populate the PCM bytes, with six periods (128 ms) of initial lead and at most twelve
 periods queued. Short writes append bytes rather than changing descriptor
-lengths. A late writer resumes at least two periods ahead of the hardware;
-a full queue drops input without blocking in an interrupt-disabled syscall.
+lengths. A late writer retains every still-safe queued byte. It resumes at a
+period boundary only when its cursor enters the advertised FIFO prefetch area
+plus one software period; falling below the initial lead alone is insufficient.
+The FIFO size is read after format programming, per Intel's
+[HDA specification, SDnFIFOS](https://www.intel.com/content/dam/www/public/us/en/documents/product-specifications/high-definition-audio-specification.pdf).
+Controllers whose FIFO exceeds this adapter's six-period lead are refused.
+The lead accommodates scheduling and individual deferred-storage commands;
+catch-up stays bounded to 256 ms rather than expanding the hardware ring.
+A full queue drops input without blocking in an interrupt-disabled syscall.
 
 The BSP timer polls LPIB under the kernel lock and clears completed periods
 to silence. This prevents an idle producer from replaying old PCM on the next
@@ -180,6 +191,33 @@ peak state do not acquire PCM. The existing blocking read remains available
 for the legacy recording test. The [audio service](../media/AUDIO_DAEMON.md)
 shares a single kernel capture session among native subscribers.
 
+## Failure recovery
+
+Stream reset waits for RUN to clear before asserting SRST or modifying BDLs.
+A failed stop quarantines the existing PCM/descriptor allocations. Explicit
+capture STOP reports failure and retains ownership until retry; closing/exiting
+releases the process identity but leaves hardware buffers quarantined. Checked
+backend stops also prevent a device transition from abandoning active old DMA
+while reporting the new default as effective.
+
+Command-transport failure or an unconfirmed DMA stop requests controller recovery
+on the next control/configure call, outside the BSP polling path, at most once
+per second. Recovery verifies CRST, initializes the command rings, reprobes the
+same codec identities and restores the desired output/input pins. The graph
+scratch is bounded and shared under the kernel lock. Buffers are not reused if
+reset fails. Missing/replaced codecs remain in the cached catalog as unavailable,
+with no selected flag; recovery does not bind a different identity silently.
+A codec missing after a successful reset needs a subsequent controller reprobe;
+this is not a hotplug implementation.
+
+Recovery stops every stream on that controller. Other controllers continue
+independently. Playback restarts through its next configured write; existing
+capture gets an explicit error and must reopen, preventing stale samples or an
+unannounced recording restart. Capture gain/mute remain software state. Desired
+pins survive a failed route rollback, separately from the effective path.
+Controller/codec recovery has software fault-injection coverage; physical fault
+and restart behavior remains for the user's final hardware checks.
+
 ## Verification and limits
 
 - `azalia-test`: the actual ported routines against simulated MMIO, 2/16/256
@@ -194,6 +232,9 @@ shares a single kernel capture session among native subscribers.
 - `azalia-capture-test`: ADC/mic/line-in graph, unity and bias verbs, input
   rollback, independent stream tag/BDL, actual DMA sample copies over repeated
   wraps, partial-frame alignment and rejected overruns/deadlines/DMA errors.
+  Recovery cases reject stuck RUN/CRST without touching PCM or BDL, retain a
+  missing codec as unavailable and restore the expected codec and desired pins.
+  Transport cases reject late same-codec replies and RIRB overflow until reset.
 - `hda-capture` and `virtio-capture`: known 400/600 Hz input at amplitudes
   12000/6000, exact full/half/muted samples, independent owners, direct and
   daemon duplex, two subscribers and counted slow-reader loss. The playback

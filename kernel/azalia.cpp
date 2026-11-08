@@ -31,6 +31,8 @@
 #include "kernel/azalia.hpp"
 #include "azalia/azalia_port.hpp"
 #include "azalia/capture.hpp"
+#include "azalia/playback.hpp"
+#include "azalia/recovery.hpp"
 #include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
@@ -42,7 +44,9 @@
 namespace {
 using namespace azalia_port;
 constexpr uint32_t kPeriod = 4096, kSlots = 32, kBytes = kPeriod * kSlots;
-constexpr uint32_t kLead = 4 * kPeriod, kMaxQueued = 8 * kPeriod;
+// Deferred storage still has individual nonpreemptible device commands.
+// Keep 128 ms ahead of the link and bound catch-up bursts to 256 ms.
+constexpr uint32_t kLead = 6 * kPeriod, kMaxQueued = 12 * kPeriod;
 constexpr uint16_t kFormat = HDA_SD_FMT_BITS_16_16 | 1;
 constexpr uint64_t kBytesPerSecond = 48000 * 4;
 constexpr size_t kMaxControllers = 4, kMaxCodecs = 8, kCodecsPerController = 4;
@@ -52,7 +56,10 @@ struct Controller {
     memory::PageAllocation rings = {};
     uint16_t capability = 0, bdf = 0;
     unsigned outputs = 0, inputs = 0, tags = 1, codecs = 0;
+    bool needs_recovery = false, recovering = false;
+    uint64_t retry_ns = 0;
 };
+bool ensure_controller(Controller&);
 uint32_t mmio_read(void* p, uint16_t offset, unsigned width) {
     const auto* c = static_cast<Controller*>(p);
     if (width == 1) return *reinterpret_cast<volatile uint8_t*>(c->mmio+offset);
@@ -88,6 +95,8 @@ struct Device {
     CaptureCursor record_cursor;
     memory::PageAllocation pcm = {}, record_pcm = {};
     bool online = false, prepared = false, playback_supported = false;
+    bool playback_dma_stopped = true;
+    int desired_output = 0, desired_input = 0;
     bool capture_supported = false, capture_prepared = false, capture_fault = false, capture_dma_stopped = true;
     uint64_t played = 0, written = 0, last_poll_ns = 0;
     uint32_t last_position = 0, dropped = 0, underruns = 0;
@@ -96,27 +105,36 @@ struct Device {
     char device_name[48] = {};
     audio::Backend adapter = {};
 
-    void stop_dma() {
-        if (!ctrl->mmio) return;
+    bool stop_dma() {
+        if (!ctrl->mmio) return false;
         mmio_write(ctrl, stream.regbase + HDA_SD_CTL,
                    mmio_read(ctrl, stream.regbase + HDA_SD_CTL, 2) & ~HDA_SD_CTL_RUN, 2);
-        (void)azalia_stream_reset(&stream);
+        playback_dma_stopped = !azalia_stream_reset(&stream);
         prepared = false;
+        if (!playback_dma_stopped) ctrl->needs_recovery = true;
+        return playback_dma_stopped;
     }
-    bool ready() { return online && playback_supported && playback_path.count; }
+    bool ready() { return ensure_controller(*ctrl) && online && playback_supported && playback_path.count; }
     bool get_info(savanxp_audio_info& info) {
-        if (!online) return false;
+        if (!ensure_controller(*ctrl) || !online) return false;
         info = {48000, 2, 16, 4, kPeriod, kLead, SAVANXP_AUDIO_BACKEND_HDA, 0};
         return true;
     }
     bool configure() {
         if (!ready()) return false;
         if (prepared) return true;
+        if (!playback_dma_stopped && !stop_dma()) return false;
         memset(pcm.virtual_address, 0, (1 + kSlots) * memory::kPageSize);
         played = 0; written = kLead; last_position = 0;
         dropped = 0; underruns = 0;
+        playback_dma_stopped = false;
         if (azalia_stream_start(&stream)) {
             stop_dma(); return false;
+        }
+        if (mmio_read(ctrl,stream.regbase+HDA_SD_FIFOS,2)+1+kPeriod > kLead) {
+            stop_dma();
+            console::write_line("azalia: output FIFO exceeds supported playback lead");
+            return false;
         }
         last_poll_ns = timer::monotonic_ns();
         prepared = true;
@@ -129,10 +147,16 @@ struct Device {
         audio::apply_playback_gain(scratch, byte_count);
         poll();
         if (!prepared) return -SX_EIO;
-        // Leave at least two periods ahead of DMA (including its FIFO prefetch).
+        // Preserve queued PCM while it is beyond the hardware FIFO and one
+        // period of software guard. Recover only a genuinely unsafe cursor.
         // Never wait in a syscall: the ABI's existing audio backends discard when full.
-        if (written < played + 2 * kPeriod) {
-            written = ((played + 3 * kPeriod - 1) / kPeriod) * kPeriod;
+        const uint32_t fifo_bytes = mmio_read(ctrl,stream.regbase+HDA_SD_FIFOS,2)+1;
+        const uint64_t safe = playback_write_position(played,written,fifo_bytes,kPeriod);
+        if (safe != written) {
+            if (!underruns)
+                console::printf("azalia: late writer at=%llu queued=%lld fifo=%u bytes\n",
+                    static_cast<unsigned long long>(played),static_cast<long long>(written)-static_cast<long long>(played),fifo_bytes);
+            written = safe;
             ++underruns;
         }
         if (written + byte_count > played + kMaxQueued) { ++dropped; return 0; }
@@ -145,13 +169,18 @@ struct Device {
         written += byte_count;
         return 0;
     }
-    void stop() {
-        if (!online || !prepared) return;
-        stop_dma();
+    bool stop() {
+        if (!prepared && playback_dma_stopped) return true;
+        const bool stopped = stop_dma();
         console::printf("azalia: stop played=%llu written=%llu drops=%u underruns=%u\n",
             static_cast<unsigned long long>(played), static_cast<unsigned long long>(written),
             dropped, underruns);
-        (void)azalia_comresp(&codec, stream.converter, CORB_SET_CONVERTER_STREAM_CHANNEL, 0, nullptr);
+        if (!stopped) return false;
+        // A stopped DMA direction can release ownership even if a broken
+        // command transport needs recovery before the next configure.
+        if (!ctrl->az.transport_failed)
+            (void)azalia_comresp(&codec, stream.converter, CORB_SET_CONVERTER_STREAM_CHANNEL, 0, nullptr);
+        return true;
     }
     bool stop_record_dma(bool fault) {
         if (!ctrl->mmio || !capture_supported) return true;
@@ -161,15 +190,19 @@ struct Device {
             !(mmio_read(ctrl,reg+HDA_SD_CTL,2)&HDA_SD_CTL_RUN);
         capture_prepared = false;
         capture_fault = fault || !capture_dma_stopped;
+        if (!capture_dma_stopped) ctrl->needs_recovery = true;
         return capture_dma_stopped;
     }
-    bool capture_ready() { return online && capture_supported && input_route.count; }
-    void capture_stop() {
-        if (!online || !capture_supported) return;
-        (void)stop_record_dma(false);
-        (void)azalia_comresp(&codec,record_stream.converter,CORB_SET_CONVERTER_STREAM_CHANNEL,0,nullptr);
-        if (input_route.count)
-            (void)azalia_comresp(&codec,input_route.nodes[input_route.count-1],CORB_SET_PIN_WIDGET_CONTROL,0,nullptr);
+    bool capture_ready() { return ensure_controller(*ctrl) && online && capture_supported && input_route.count; }
+    bool capture_stop() {
+        if (!capture_supported) return true;
+        if (!stop_record_dma(false)) return false;
+        if (!ctrl->az.transport_failed) {
+            (void)azalia_comresp(&codec,record_stream.converter,CORB_SET_CONVERTER_STREAM_CHANNEL,0,nullptr);
+            if (input_route.count)
+                (void)azalia_comresp(&codec,input_route.nodes[input_route.count-1],CORB_SET_PIN_WIDGET_CONTROL,0,nullptr);
+        }
+        return true;
     }
     bool capture_configure() {
         if (!capture_ready()) return false;
@@ -183,6 +216,7 @@ struct Device {
             record_pcm.physical_address+memory::kPageSize};
         record_stream.converter = input_route.nodes[0];
         memset(record_pcm.virtual_address,0,(1+kSlots)*memory::kPageSize);
+        capture_dma_stopped = false;
         if (configure_input_path(&codec,input_route) || azalia_stream_start(&record_stream)) {
             capture_stop(); return false;
         }
@@ -223,7 +257,7 @@ struct Device {
         if (!capture_dma_stopped) return -SX_EIO;
         const int changed = switch_input(&codec,input_route,candidate);
         if (input_route.count) record_stream.converter = input_route.nodes[0];
-        if (!changed && (!running || capture_configure())) return 0;
+        if (!changed && (!running || capture_configure())) { desired_input = id&0xff; return 0; }
         capture_stop();
         if (!changed && previous.count) {
             (void)switch_input(&codec,input_route,previous);
@@ -234,9 +268,10 @@ struct Device {
     }
 
     bool endpoint(uint32_t index, savanxp_audio_endpoint& info) {
-        if (!online) return false;
+        (void)ensure_controller(*ctrl);
+        const bool available = online && !ctrl->needs_recovery && !ctrl->az.transport_failed;
         const uint64_t now = timer::monotonic_ns();
-        if (now >= next_presence_ns) {
+        if (available && now >= next_presence_ns) {
             next_presence_ns = now + 250000000;
             for (int nid = codec.wstart; nid < codec.wend; ++nid) {
                 Path route;
@@ -255,9 +290,10 @@ struct Device {
             info.id = device_id | static_cast<unsigned>(nid);
             info.device_id = device_id;
             info.backend = SAVANXP_AUDIO_BACKEND_HDA;
-            info.flags = (output ? SAVANXP_AUDIO_PLAYBACK : SAVANXP_AUDIO_CAPTURE) | SAVANXP_AUDIO_AVAILABLE;
-            if ((output && playback_path.count && playback_path.nodes[0] == nid) ||
-                (!output && input_route.count && input_route.nodes[input_route.count-1] == nid))
+            info.flags = (output ? SAVANXP_AUDIO_PLAYBACK : SAVANXP_AUDIO_CAPTURE);
+            if (available) info.flags |= SAVANXP_AUDIO_AVAILABLE;
+            if (available && ((output && playback_path.count && playback_path.nodes[0] == nid) ||
+                (!output && input_route.count && input_route.nodes[input_route.count-1] == nid)))
                 info.flags |= SAVANXP_AUDIO_SELECTED;
             if (CORB_CD_PORT(pin.d.pin.config) == CORB_CD_JACK) info.flags |= SAVANXP_AUDIO_JACK;
             if (pin.d.pin.device == CORB_CD_HEADPHONE) info.flags |= SAVANXP_AUDIO_HEADPHONES;
@@ -278,7 +314,8 @@ struct Device {
         return false;
     }
     int select_endpoint(uint64_t id, uint32_t direction) {
-        if (!online || (id & ~uint64_t{0xff}) != device_id) return -SX_ENOENT;
+        if (!ensure_controller(*ctrl) || !online) return -SX_ENODEV;
+        if ((id & ~uint64_t{0xff}) != device_id) return -SX_ENOENT;
         if (direction == SAVANXP_AUDIO_CAPTURE) return select_input(id);
         if (direction != SAVANXP_AUDIO_PLAYBACK) return -SX_EINVAL;
         if (!playback_supported) return -SX_ENODEV;
@@ -286,10 +323,10 @@ struct Device {
         if (!output_path(&codec, id & 0xff, candidate)) return -SX_ENOENT;
         const Path previous = playback_path;
         const bool running = prepared;
-        stop();
+        if (!stop()) return -SX_EIO;
         const int changed = switch_output(&codec, playback_path, candidate);
         if (playback_path.count) stream.converter = playback_path.nodes[playback_path.count - 1];
-        if (!changed && (!running || configure())) return 0;
+        if (!changed && (!running || configure())) { desired_output = id&0xff; return 0; }
         // Route setup or restarting DMA failed. Restore the old route and resume
         // it if possible; never report the requested connector as effective.
         stop();
@@ -345,6 +382,8 @@ struct Device {
             .select_endpoint = [](void* p, uint64_t id, uint32_t dir) { return static_cast<Device*>(p)->select_endpoint(id,dir); },
             .capture_available = [](void* p) { return static_cast<Device*>(p)->capture_available(); },
             .context = this,
+            .stop_checked = [](void* p) { return static_cast<Device*>(p)->stop(); },
+            .capture_stop_checked = [](void* p) { return static_cast<Device*>(p)->capture_stop(); },
         };
     }
 };
@@ -352,6 +391,39 @@ Controller g_controllers[kMaxControllers];
 Device g_devices[kMaxCodecs];
 size_t g_controller_count = 0, g_device_count = 0;
 bool g_probed = false;
+
+bool ensure_controller(Controller& c) {
+    if (!c.needs_recovery && !c.az.transport_failed) return true;
+    const uint64_t now = timer::monotonic_ns();
+    if (c.recovering || now < c.retry_ns) return false;
+    c.recovering = true; c.retry_ns = now+1000000000ull;
+    RecoveryTarget targets[kCodecsPerController] = {};
+    Device* devices[kCodecsPerController] = {};
+    unsigned count = 0;
+    for (size_t i = 0; i < g_device_count; ++i) {
+        Device& d = g_devices[i]; if (d.ctrl != &c) continue;
+        d.online = d.prepared = d.capture_prepared = false;
+        d.capture_fault = true;
+        devices[count] = &d;
+        targets[count++] = {&d.codec,&d.playback_path,&d.input_route,d.desired_output,d.desired_input,
+            d.playback_supported,d.capture_supported};
+    }
+    const bool restored = recover_controller(&c.az,targets,count);
+    c.needs_recovery = !restored;
+    for (unsigned i = 0; i < count; ++i) {
+        Device& d = *devices[i];
+        if (restored) {
+            d.playback_dma_stopped = d.capture_dma_stopped = true;
+            d.online = targets[i].available;
+            if (d.playback_path.count) d.stream.converter = d.playback_path.nodes[d.playback_path.count-1];
+            if (d.input_route.count) d.record_stream.converter = d.input_route.nodes[0];
+        }
+        d.next_presence_ns = 0;
+    }
+    c.recovering = false;
+    console::printf("azalia: controller %x recovery %s; capture must reopen\n",c.bdf,restored ? "completed" : "failed");
+    return restored;
+}
 
 bool probe() {
     if (g_probed) return g_device_count != 0;
@@ -414,6 +486,8 @@ bool probe() {
                 ++c.outputs;
             }
             d.playback_supported = playback; d.capture_supported = capture;
+            d.desired_output = playback ? output.nodes[0] : 0;
+            d.desired_input = capture ? input.nodes[input.count-1] : 0;
             if (capture) {
                 d.input_route = input;
                 d.record_stream = {&c.az,&d.codec,HDA_SD_BASE+static_cast<int>(c.inputs)*HDA_SD_SIZE,

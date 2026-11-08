@@ -1,7 +1,7 @@
 #include "libc.h"
 #include "savanxp/audio_server.h"
 
-#define AUDIOTEST_BUFFER_BYTES 16384
+#define AUDIOTEST_BUFFER_BYTES 32768
 #define AUDIOTEST_MAX_SAMPLES (AUDIOTEST_BUFFER_BYTES / (int)sizeof(int16_t))
 
 static int16_t g_fallback_samples[AUDIOTEST_MAX_SAMPLES];

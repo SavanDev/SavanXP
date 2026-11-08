@@ -30,6 +30,10 @@ struct Backend {
     int (*capture_available)(void*) = nullptr; // bytes ready without waiting, or negative errno
     bool (*capture_info)(void*, savanxp_audio_info&) = nullptr;
     void* context = nullptr;
+    // Optional checked stops. Failure retains active ownership until retry;
+    // legacy backends keep their existing void callbacks.
+    bool (*stop_checked)(void*) = nullptr;
+    bool (*capture_stop_checked)(void*) = nullptr;
 };
 
 // Registered hardware driver, probed by descending priority.
@@ -61,7 +65,7 @@ bool ready();
 bool get_info(savanxp_audio_info& info);
 bool configure();
 int submit_period(uint64_t user_buffer, uint32_t byte_count);
-void stop();
+bool stop();
 
 // Shared software master gain (0..100), with independent mute. Backends
 // apply it after copying PCM so controls do not need the writer slot.
@@ -83,6 +87,6 @@ int capture_available();
 bool capture_ready();
 bool capture_configure();
 int capture_read_period(void* buffer, uint32_t byte_count);
-void capture_stop();
+bool capture_stop();
 
 } // namespace audio

@@ -50,6 +50,17 @@ bool format_for(const Backend* b, uint32_t direction, savanxp_audio_info& info) 
     if (direction == SAVANXP_AUDIO_CAPTURE && b->capture_info) return b->capture_info(b->context,info);
     return b->get_info(b->context,info);
 }
+bool stop_backend(const Backend* b, uint32_t direction) {
+    if (!b) return true;
+    if (direction == SAVANXP_AUDIO_PLAYBACK) {
+        if (b->stop_checked) return b->stop_checked(b->context);
+        b->stop(b->context);
+    } else {
+        if (b->capture_stop_checked) return b->capture_stop_checked(b->context);
+        if (b->capture_stop) b->capture_stop(b->context);
+    }
+    return true;
+}
 } // namespace
 
 void set_backend(const Backend& backend) {
@@ -135,9 +146,9 @@ int select_endpoint(uint64_t id, uint32_t direction) {
         const bool prepared = direction == SAVANXP_AUDIO_PLAYBACK ? target->configure(target->context) :
             target->capture_configure && target->capture_configure(target->context);
         if (!prepared) return -SX_EIO;
-        if (previous) {
-            if (direction == SAVANXP_AUDIO_PLAYBACK) previous->stop(previous->context);
-            else if (previous->capture_stop) previous->capture_stop(previous->context);
+        if (!stop_backend(previous,direction)) {
+            (void)stop_backend(target,direction);
+            return -SX_EIO;
         }
     }
     if (direction == SAVANXP_AUDIO_PLAYBACK) {
@@ -158,9 +169,10 @@ bool configure() {
 int submit_period(uint64_t user_buffer, uint32_t bytes) {
     return g_playback ? g_playback->submit_period(g_playback->context,user_buffer,bytes) : -SX_ENODEV;
 }
-void stop() {
-    if (g_playback) g_playback->stop(g_playback->context);
+bool stop() {
+    if (!stop_backend(g_playback,SAVANXP_AUDIO_PLAYBACK)) return false;
     g_playback_active = false;
+    return true;
 }
 
 uint32_t master_volume() { return g_master_volume; }
@@ -225,8 +237,9 @@ int capture_read_period(void* buffer, uint32_t bytes) {
     return g_capture && g_capture->capture_read_period ?
         g_capture->capture_read_period(g_capture->context,buffer,bytes) : -SX_ENODEV;
 }
-void capture_stop() {
-    if (g_capture && g_capture->capture_stop) g_capture->capture_stop(g_capture->context);
+bool capture_stop() {
+    if (!stop_backend(g_capture,SAVANXP_AUDIO_CAPTURE)) return false;
     g_capture_active = false;
+    return true;
 }
 } // namespace audio

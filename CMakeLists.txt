@@ -244,6 +244,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/azalia/codec.cpp
     kernel/azalia/input.cpp
     kernel/azalia/capture.cpp
+    kernel/azalia/recovery.cpp
     kernel/audio.cpp
     kernel/audio_device.cpp
     kernel/ps2.cpp
@@ -923,7 +924,7 @@ add_test(NAME jack-policy-test COMMAND savanxp-jack-policy-test)
 
 add_executable(savanxp-azalia-capture-test
     kernel/azalia/openbsd.cpp kernel/azalia/codec.cpp kernel/azalia/input.cpp
-    kernel/azalia/capture.cpp tests/host/azalia_capture_test.cpp)
+    kernel/azalia/capture.cpp kernel/azalia/recovery.cpp tests/host/azalia_capture_test.cpp)
 target_include_directories(savanxp-azalia-capture-test PRIVATE "${CMAKE_SOURCE_DIR}/kernel")
 target_compile_options(savanxp-azalia-capture-test PRIVATE -O1 -Wall -Wextra -Werror)
 set_target_properties(savanxp-azalia-capture-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)

@@ -55,7 +55,8 @@ int capture_start() {
 }
 int capture_stop() {
     if (g_capture_owner_pid && g_capture_owner_pid != process::current_pid()) return negative_error(SX_EBUSY);
-    audio::capture_stop(); g_capture_owner_pid = 0;
+    if (!audio::capture_stop()) return negative_error(SX_EIO);
+    g_capture_owner_pid = 0;
     savanxp_audio_peak_reset(&g_capture_peaks);
     return 0;
 }
