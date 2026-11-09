@@ -13,6 +13,11 @@ which registers them: `sxfs::driver()` and `fat::driver()`
 ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)). Adding a format (ISO9660 for a CD)
 means writing a driver and registering it. `vfs.cpp` does not change.
 
+This page describes the current implementation. The ordered work toward common
+file contracts, object lifetime, on-demand lookup, mount policy and mapping
+coherence is in [`VFS_ROADMAP.md`](../roadmaps/open/VFS_ROADMAP.md), including
+acceptance gates shared by SxFS, FAT and future drivers.
+
 ## The root is the system disk
 
 The system runs from its disk. `fs::kRootMountPoint` is `/`: the first volume a

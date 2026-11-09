@@ -176,6 +176,9 @@ all its phases have landed; the links to it move with it.
 
 ### Open — `roadmaps/open/`
 
+- [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
+  common device/resource/I/O lifetime, general Plug and Play and safe removal,
+  plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.
 - [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — Linux
   binary compatibility on Sx under `/system/linux`: FreeBSD Linuxulator as the
   main implementation reference, static ABI probes/tools first, then dynamic
@@ -190,9 +193,12 @@ all its phases have landed; the links to it move with it.
 - [`FAT_ROADMAP.md`](roadmaps/open/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
   under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
   ESP at `/boot`, and the phases.
-- [`SXFS_ROADMAP.md`](roadmaps/open/SXFS_ROADMAP.md) — the SxFS work left after format v2, the
-  measured baseline to compare against, and which of it can land without moving
-  the on-disk format.
+- [`VFS_ROADMAP.md`](roadmaps/open/VFS_ROADMAP.md) — the shared filesystem foundation:
+  native I/O, identity and lifetime, on-demand lookup, mutation/durability,
+  mounts and VM coherence, with conformance gates for current and future drivers.
+- [`SXFS_ROADMAP.md`](roadmaps/open/SXFS_ROADMAP.md) — v2 consistency, recovery and file
+  contracts; the planned stable v3 format, subsystem boundaries, migration and
+  production acceptance gates, with historical performance measurements.
 - [`XASH3D_ROADMAP.md`](roadmaps/open/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
   engine needs from the platform, and the order that makes it pay for `dlopen` and
   SxGL without pulling in threads or SDL.

@@ -14,6 +14,11 @@ target being built:
 
 ## The rule
 
+The shared device/resource lifecycle, Plug and Play and the planned SUN Device
+Manager are tracked in
+[`DRIVERS_ROADMAP.md`](../roadmaps/open/DRIVERS_ROADMAP.md). They build on this
+architecture boundary and the existing class registries.
+
 **No inline assembly outside `arch/` and `include/arch/`.** A driver or a
 kernel subsystem that needs something from the processor calls it by name:
 

@@ -7,6 +7,12 @@ storage calls (slice 28 in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md
 It shares its partition-table code, `libsxdisk`, with the planned installer
 ([SETUP_AND_UPDATES.md](SETUP_AND_UPDATES.md)).
 
+The planned SUN Device Manager in
+[`DRIVERS_ROADMAP.md`](../roadmaps/open/DRIVERS_ROADMAP.md) owns general hardware
+inventory and supported device lifecycle actions. Disk Management keeps disk,
+partition and volume operations; the two tools will share stable associations
+rather than duplicate formatting or mounting controls.
+
 ## Status
 
 | Piece | State |

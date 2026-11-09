@@ -1,22 +1,263 @@
-# SxFS — what is left, and why it all fits in version 2
+# SxFS — reliable v2 and the stable v3 format
 
-> **Status: format v2 is current. Everything on this page is planned to land
-> inside v2; none of it is scheduled for a v3.** This document is the leftover
-> work: what the filesystem still does badly, what each item would cost, and for
-> each one whether it is reachable without moving the on-disk format. Where an
-> item is *not* reachable in v2, that is stated, because that is the boundary.
->
-> The last line of defence for any of this is [`fscheck`](../../fs/SXFS_CHECK.md), which
-> reports the volume's consistency from inside the system and is what makes a
-> change to the format verifiable without a second machine.
+> **Status: format v2 is current. The v2 reliability and file-contract work
+> below is open; v3 is planned, not implemented or specified in full.** v2
+> preserves existing images while closing consistency, recovery and API gaps.
+> v3 changes the storage structures that limit capacity, scale and extensibility.
+> Finishing the old v2 performance backlog alone does not meet the production
+> acceptance gates on this page.
 
-The short version: **v2 removed the two ceilings that made the filesystem
-unusable, and left one bill unpaid.** The inode table was the binding constraint
-(256 inodes, 152 in use with one game installed) and the block bitmap capped the
-volume at 64 MiB; both moved. What grew in their place is metadata, and the
-journal used to copy all of it on every commit. Item 1 below paid that bill;
-what a write still costs, and where, is in
-[Where the remaining cost is](#where-the-remaining-cost-is).
+The goal is a filesystem suitable for the native OS and its current and planned
+subsystems, with explicit durability guarantees, recovery tools and measured
+limits. ext4 and NTFS are references for that level of reliability and utility;
+matching every feature of either is not the acceptance condition.
+
+Shared file mechanisms and their driver conformance gates are tracked in
+[`VFS_ROADMAP.md`](VFS_ROADMAP.md). Its phases are independent of disk-format
+versions: consume the relevant contracts during v2, and coordinate v3 design
+with them rather than duplicating VFS/VM work inside the SxFS driver.
+
+## Current baseline and the version boundary
+
+Implemented: v2 geometry, sparse metadata journaling, persistent uid/gid/mode,
+deferred block writeback, mount validation, read-only consistency reporting via
+[`fscheck`](../../fs/SXFS_CHECK.md), and host image updates/compaction using
+validated candidates that preserve installed content. The measurements later on
+this page are historical baselines, not a current inventory or a release gate.
+
+| Limit | Current implementation |
+| --- | --- |
+| Volume capacity | 1 GiB; geometry checked against compiled constants |
+| Inode table | 4096 entries, fixed at format time by those constants |
+| Extents | At most 8 per inode; fragmentation can prevent allocation despite free space |
+| Names / relative paths | 63 / 255 bytes |
+| Published tree | All entries loaded at attach; 2048 VFS nodes shared by every volume, devices and initramfs |
+| Mounted SxFS volumes | 3, each with several MiB of statically reserved state |
+| Recovery tools | Journal replay in the kernel; `fscheck` reports but does not repair; host tools refuse pending journals |
+
+The VFS node pool can run out before the SxFS inode table does. Raising format
+constants without changing tree publication and caches does not solve scale.
+See [`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#limits).
+
+**v2 keeps its geometry and existing image contents.** API, VFS, allocation
+policy, caching and recovery changes can land without moving its disk regions.
+Reserved-field extensions need defined feature semantics and coordinated kernel,
+host-tool and validator support. Unchanged structure sizes alone do not prove
+that an older reader or writer is safe. Do not silently introduce a new journal
+interpretation or inode type under a feature older tools ignore.
+
+**v3 is an explicit format transition.** Its stable baseline must describe
+geometry and extensible structures on disk, rather than require a larger set of
+compiled arrays. "Stable v3" means an evolution contract and tested mandatory
+core, not a promise that filesystem development ends there.
+
+## V2-A — directory consistency before further optimization
+
+**Open, first priority.** The current journal covers allocation bitmaps and the
+inode table. Directory entries are written through the data path before the
+metadata commit; they are not part of its redo payload, and restoring a metadata
+snapshot does not undo them. The existing create/write power-cut tests do not
+establish atomicity for every namespace operation.
+
+A local audit on 2026-11-08 compiled the real driver with the host stubs and
+temporarily extended the power-cut harness. The existing suite passed all 122
+checks. Starting with `/docs/hello.txt`, cutting at each sector written by an
+unlink left an orphan at 3 of 14 cut positions. Renaming it to `/moved.txt` left
+an orphan with neither name at 3 of 11 positions. These are deterministic cut
+positions, not failure probabilities. The additional cases are not yet committed
+regression tests; reproducing and adding them is the first implementation task.
+
+Design an atomic update of directory contents, inode references and allocation.
+Copying changed directories into newly allocated blocks, then publishing their
+extents through the existing metadata transaction, is a v2 candidate; it is not
+yet a selected or proven implementation. The journal's fixed metadata mirror
+slots cannot simply accept arbitrary directory blocks. Another flush alone does
+not make an in-place directory update transactional.
+
+**Done when:** committed tests cut every mutation and its recovery at every
+sector boundary, including create, mkdir, unlink, rmdir, same-directory and
+cross-directory rename, replacement and block reuse. Each cut must recover a
+consistent permitted before/after state without losing both rename names or
+damaging unrelated files. Cover repeated cuts during recovery, low space,
+fragmentation and I/O failures. An orphan report is not a substitute for
+preserving a name during rename. Arbitrary file-content overwrites do not gain
+whole-write atomicity merely because namespace metadata is recoverable.
+
+## V2-B — file lifetime, errors and durability
+
+**Open; depends on V2-A.** Complete the common file contract through Sx and the
+VFS, then translate it at SUN/POSIX and future subsystem boundaries:
+
+- Atomic rename with replacement, including type checks and failure rollback.
+  Prepare the VFS update so disk success cannot leave the in-memory tree behind.
+- Unlink removes a name; open handles and file-backed sections keep the object
+  alive until their last reference is released. Define the persistent state and
+  crash recovery of pending deletions, and distinguish it from unexplained
+  unreachable inodes. Drivers need lifetime callbacks; freeing blocks at unlink
+  or returning POSIX `EBUSY` is not the completed contract.
+- Driver status results that distinguish `EIO`, `ENOSPC`, `EROFS`, invalid
+  arguments and name collisions, rather than letting the VFS guess from a bool.
+- Per-file and directory durability operations, write-through/open contracts as
+  required by consumers, and delivery of deferred write errors to the caller.
+  Global `sync` and writeback tickets already exist; write/close success must
+  not be documented as durable storage by default.
+- Stable identity and content-generation rules shared with file-backed sections
+  and caches. Existing file-image sections are not a coherent writable page
+  cache. VM/VFS must own mapping, truncation and invalidation rules together.
+
+**Done when:** a temporary-file update followed by file synchronization, atomic
+replacement and directory synchronization has documented, crash-tested outcomes.
+Open handles retain the correct contents through rename/unlink, reclamation
+happens once, and failures return precise errors. Existing SUN/POSIX permission
+checks remain effective. Each exposed native API slice has its SUN consumer and
+`nativetest` assertion as required by [`SUN.md`](../../userland/SUN.md).
+
+## V2-C — recovery, inspection and migration safety
+
+**Open; repair builds on V2-A.** Extend existing host tooling and define an
+offline repair path. Keep `fscheck` read-only. Rescue readable orphan contents
+before freeing allocations; reconcile claims only when ownership is known,
+report ambiguous damage, and keep a backup before destructive repair. Host
+tools need validated, idempotent journal recovery rather than requiring a guest
+boot for every pending transaction.
+
+Separate read-only recognition from journal recovery and writable attach.
+Inspection must be able to leave the device untouched, while an explicit
+read-only mount must enforce its policy across the VFS and driver. If recovery
+needs writes, refuse or provide a defined in-memory view; never write silently.
+
+**Done when:** malformed and interrupted images have deterministic reports,
+repair preserves recoverable contents, and interrupted recovery/repair can be
+resumed safely. Inspection is checked against unchanged image bytes. Existing
+programs in `/bin`, game assets under `/games`, subsystem runtimes and user data
+survive normal builds, maintenance and rollback.
+
+## V2-D — performance and preparation for scale
+
+**Open; independent groundwork can proceed alongside V2-A.** The detailed
+backlog below remains applicable: coherent block-read caching, directory
+validation without quadratic comparisons, direct record lookup, parent mtime
+updates, optional nanoseconds/volume labels with reviewed feature semantics,
+and less commit amplification. Improve allocation policy within the eight-extent
+limit and measure low-space/fragmented workloads as well as empty images.
+
+Start lookup and vnode publication on demand, bounded caches and identity-based
+records in the VFS. Do not require the complete mounted tree or a full path per
+inode to stay resident. Coordinate with FAT, whose driver shares these limits.
+Non-polling I/O and kernel scheduling improvements belong to block drivers and
+the kernel as well as this roadmap; writeback alone does not eliminate pauses.
+
+**Done when:** correctness tests still pass, cache reads observe queued and
+completed writes, and large directories/mounted trees have bounded memory and
+measured lookup costs. Performance changes retain durability ordering. v2's
+1 GiB geometry, inode table, name lengths and eight extents remain its limits.
+
+## Closing v2 and consuming it from subsystems
+
+v2 closes after V2-A through V2-D meet their gates: recoverable mutations, a
+durable atomic-update protocol, conservative maintenance and preservation of
+external installations. This is a reliable small-volume baseline, not a claim
+of general Linux/Windows compatibility or production certification.
+
+| Consumer | Storage responsibility and acceptance |
+| --- | --- |
+| SUN and current POSIX | Common lifetime, permissions, error, replacement and durability contracts; regression coverage for current programs |
+| [Linux L3-L4](LINUX_SUBSYSTEM_ROADMAP.md#l3--static-musl-programs-and-essential-file-io) | Pinned static musl/tool profiles may consume v2; demonstrate measured file operations, errors and restart/build persistence |
+| Linux dynamic and broader profiles | File-backed mappings, links, directory-relative operations and locking as measured; VM/VFS work is not supplied by changing the disk format |
+| [Win32 W4](WIN32_SUBSYSTEM_ROADMAP.md#w4--solitaires-base-runtime-and-file-services) | Keep drive paths, case rules, sharing, creation dispositions and deletion policy in Win32; retain native access checks |
+| Broader Win32 profiles | Add security metadata, streams/reparse behavior or notifications with named consumers; do not change all native names to Windows semantics |
+
+Initial bounded profiles need not wait for all of v3. Neither installing a
+Linux runtime nor loading a PE image establishes the broader filesystem
+contract. Hard links can use existing fields in principle but require changes
+to records, tree validation and lifetime semantics; the complete link model is
+scheduled with v3. New inode types such as symbolic links require an explicit
+format/feature decision rather than an unannounced v2 reinterpretation.
+
+## V3-A — specify the stable storage contract
+
+**Planned; specify before implementing a writer.** Freeze mandatory structures,
+byte order, checksums, address/size bounds, recovery rules and feature discovery.
+Use explicit compatible, read-only-compatible and incompatible feature classes.
+Unknown incompatible features must fail safely; unsupported read-only-compatible
+ones must prohibit writes. Specify safe old-tool behavior and test it.
+
+| Structure | Required v3 capability |
+| --- | --- |
+| Superblock and geometry | On-disk geometry, volume identity and documented redundant recovery records; no exact match to compiled v2 layout constants |
+| Addresses and file sizes | 64-bit representation throughout format, VFS, APIs and tools, with checked arithmetic |
+| Block allocation | Groups/regions and free-space summaries; locality and fragmentation policy without scanning one whole-volume bitmap per allocation |
+| Inode storage | Configurable capacity and on-demand access; defined exhaustion/growth policy without a resident table per volume |
+| File extents | Extensible indirect/tree representation beyond eight inline extents; validated bounds and ownership |
+| Directories | Longer names, extensible records and scalable indexing; component-wise path resolution without a full path in each record |
+| Journal | All affected namespace and auxiliary metadata in recoverable transactions, checksummed payloads and explicit ordering/replay rules |
+| Integrity | Metadata checksums, block identity/generation validation and a documented corruption response; detection is not automatic repair |
+| Links and identity | Persistent identity independent of names, hard links, symbolic links and recovery of unlinked-but-open objects |
+| Sparse storage | Explicit holes, zero-read semantics and preallocation without writing every intervening byte |
+| Extensible metadata | Complete timestamp contract, subsecond fields, extended attributes and room for ACL/compatibility metadata |
+
+**Done when:** a written format specification and independent reader/validator
+fixtures agree, including invalid structures and unknown features. Define
+supported capacities and scale targets before making support claims; representable
+64-bit values do not certify that every such volume is supported.
+
+## V3-B — implement storage and complete shared contracts
+
+**Planned; depends on V3-A.** Build the formatter, driver, journal/recovery,
+allocation and directory structures, and teach the existing maintenance tools
+the format. Carry forward v2's reliability gates. Finish VFS/VM support for
+on-demand objects, mapping coherence, file identity and reclamation; filesystem
+capacity must not outgrow what the VFS can mount and manipulate.
+
+**Done when:** kernel and host tools agree on new volumes, and operations across
+allocation groups, indirect extents, directory splits, sparse files and metadata
+extensions survive failures and recovery. Exercise files beyond 4 GiB, volumes
+beyond 1 GiB and trees beyond both current inode/vnode ceilings. Pin larger
+workload sizes and resource budgets in the tests before declaring scale support.
+
+## V3-C — migrate without resetting persistent installations
+
+**Planned; required before adoption.** Use an explicit offline migration into a
+new candidate volume. Inventory and copy all reachable contents and metadata,
+validate the result, and retain the source for rollback. Do not silently migrate
+an image with unresolved consistency findings. v2's lack of some metadata must
+have documented defaults, not fabricated preservation claims.
+
+**Done when:** migration and interrupted installation tests preserve external
+executables, `/games` assets, `/system/linux`, `/system/win`, ownership, times
+and user data. `./build.sh build` preserves a valid existing image and never
+implicitly formats or destructively upgrades it. Run the existing
+`./tools/verify_doom_persistence.sh` regression as well as subsystem fixtures;
+rollback restores a usable original image. v1 conversion remains separate and
+optional, not an excuse to omit the v2 migration.
+
+## V3-D — qualify the production baseline
+
+**Planned; required before calling v3 stable.** Run sustained create/delete/
+rewrite workloads, concurrent readers/writers, low-space and fragmented images,
+device errors, corrupted metadata/journal payloads and repeated recovery cuts.
+Validate permissions, information exposure through reused blocks, and resource
+cleanup on failure. Compare measured Linux/Win32 operations with their reference
+profiles and keep native SUN/POSIX regressions passing. Report throughput,
+latency, memory budgets, workload sizes and remaining limits.
+
+**Done when:** reproducible automated gates cover these workloads and recovery
+tools ship with the format, migration and rollback. The stable declaration names
+the tested hardware/device contracts and supported scale; passing a few QEMU
+smokes is not sufficient evidence.
+
+The core need not initially implement compression, encryption, quotas, named
+streams or every NTFS/ext4 extension. Add optional features through the reviewed
+extension contract and concrete consumers. If snapshots are a future objective,
+decide their allocation/ownership implications during V3-A; do not assume a
+feature bit can retrofit them onto any design.
+
+## Detailed v2 backlog and historical measurements
+
+v2 removed the original 256-inode and 64 MiB ceilings. The larger metadata then
+made full-copy journal commits expensive; sparse journaling paid that cost.
+The sections below retain the measurements and specific implementation work,
+with V2-A through V2-D setting priority and acceptance.
 
 ## The baseline to compare against
 
@@ -52,8 +293,8 @@ mutation's snapshot, a sparse journal described in
 3 872 on the core smoke, and quitting Doom from its menu (22 commits then) went from a
 70.7 s system freeze to 0.53 s on the default IDE disk. The format stayed v2:
 the discriminator lives in what used to be a reserved header field, and old full
-journals still replay. The crash path is tested at every sector of a transaction
-(`sxfs_volume_test`).
+journals still replay. `sxfs_volume_test` cuts a create/write sequence at every
+sector; directory mutation coverage and the consistency gap are in V2-A above.
 
 ## Where the remaining cost is
 
@@ -131,18 +372,15 @@ on findings.
 **What does not.** Freeing a leaked block, dropping an orphan, rebuilding the
 claims bitmap.
 
-**Why it fits in v2.** No layout change at all. It needs a mount slot, and
-`kMaxVolumes` is 2, both already used by the installer (root and destination). A
-repair path needs 3, or needs to be a host tool.
+**Why it fits in v2.** Repair need not change the layout. `kMaxVolumes` is now 3,
+but an unused slot is not an offline repair guarantee: the target must be
+quiescent and unavailable to ordinary writers. Extend the host tooling or define
+a dedicated maintenance path, with the policy and acceptance in V2-C.
 
-**What has to be decided first, and this is the reason it is not trivial.**
-Clearing a bit in the allocation bitmap is the only operation in the whole
-filesystem that can destroy data instead of revealing it. If a sector is marked
-occupied because an inode exists that the tree walk could not reach, freeing it
-discards that inode's contents. So the design has to answer what an
-unreachable-but-present inode *means*, and that is a policy decision, not an
-implementation detail. ext2's answer was to keep everything and tell the
-administrator; a hobby OS with no `fsck -y` probably wants the same.
+**What has to be decided first.** Freeing an allocation can discard recoverable
+contents when its owner is unreachable. Rescue such contents before reclaiming
+them and report ambiguity rather than assuming unreachable means disposable.
+V2-B's pending deletions also need an explicit recovery policy.
 
 **Order.** It waited for item 1, which has landed: a repair path over a journal
 that cost 1.5 MiB per commit was a repair path nobody would run.
@@ -168,13 +406,14 @@ tell.
 entries, and there are 4096 inodes total, so a single directory could in
 principle hold every inode. That is the ceiling, not a typical shape.
 
-## 4. The `FileRecord` cache is what breaks first, and it is not the inode table
+## 4. The `FileRecord` cache scales poorly, and the VFS can fill first
 
 **The cost.** `struct FileRecord` is 344 bytes and there is one per inode:
 4095 × 344 = 1.4 MiB per volume, and `kMaxVolumes` is 3. With the block bitmaps
 that is 3.4 MiB of static metadata per volume, about 10 MiB for all three. The
 measured cost of that is small — the guest reports 938 MiB usable out of 1 GiB —
-so this is a note, not a problem.
+but it is not a design that can simply scale to millions of inodes. The shared
+2048-node VFS pool can already fill before one v2 volume exhausts its inodes.
 
 **Why it is on the list anyway.** It is the largest single term and it scales
 linearly with `SXFS_MAX_INODES`, while the inode table itself (512 KiB) and the
@@ -200,7 +439,7 @@ nearly empty or a collection of small things that are easy to reinstall. This
 is the one item on the page that is not clearly worth doing, and it is listed so
 that the absence is a decision rather than an oversight.
 
-## 6. Above 1 GiB is a version 3, and this page does not propose it
+## 6. Above 1 GiB belongs to v3
 
 The block bitmap is the address space: every bit is a sector, so the volume
 ceiling is the bitmap's size in bits. `SXFS_MAX_TOTAL_SECTORS` is
@@ -209,16 +448,10 @@ on-disk `block_bitmap_sectors` against that compile-time constant. Raising the
 constant to 1024 sectors would give 2 GiB and would invalidate every existing
 image, because the validator is what refuses mismatches.
 
-So the ceiling is not something that can be moved inside v2. It is the one thing
-on this page that genuinely requires a new version, and the instruction for this
-round is to stay in v2, which is fine: 1 GiB with 4096 inodes is not a limit
-anything in the tree is close to. The volume is at 103 of 4096 inodes and 29 MiB
-of 1 GiB used.
-
-If 2 GiB is ever wanted, the honest options are the linear bitmap (double the
-BSS for the three copies, double the journal payload, and the ATA chunking is
-already there) or a two-level bitmap, whose cost is real indirection in the
-allocator. The second is more work and buys a ceiling nothing needs yet.
+Do not raise the constant and silently call the result v2. V3-A replaces fixed
+geometry with an explicit format and grouped allocation; V3-B must demonstrate
+that the driver, VFS and tools can use its larger capacities. The small stock
+volume in the historical baseline is not evidence about future subsystem needs.
 
 ## 7. Nothing caches reads
 
@@ -305,9 +538,9 @@ anything but SxFS sat under the VFS. What it showed about the VFS itself is in
 
 ## What is deliberately not broken
 
-- **The kernel validates one direction at mount.** Every per-inode check runs as
-  "an occupied sector has an owner". Leaks and unreachable inodes survive it on
-  purpose: rejecting them at mount would mean refusing to mount a volume that is
+- **The kernel validates claims at mount.** Claimed sectors must be allocated,
+  within bounds and owned by at most one inode. Leaks and unreachable inodes
+  survive it on purpose: rejecting them at mount would mean refusing a volume that is
   mostly fine and still readable, and the repair path in item 2 is where that
   decision belongs.
 - **Ownership did not need a v3.** uid, gid and mode took bytes the inode had
