@@ -4,7 +4,7 @@
 #include "compositord_scene.h"
 #include "sxn/sxn.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */
-#include "cursor_asset.h"
+#include "cursor_catalog.h"
 
 /*
  * The scene and its composition (docs/desktop/DESKTOP_ARCHITECTURE.md#the-
@@ -95,14 +95,14 @@ static struct scene_surface *surface_at(uint32_t surface_id)
 
 static void cursor_bounds(const struct scene_cursor *cursor, struct sx_rect *out)
 {
-    const struct desktop_cursor_asset *asset;
+    const struct cursor_image *asset;
     int shape = cursor->shape;
 
     if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
     {
         shape = SAVANXP_CURSOR_ARROW;
     }
-    asset = &k_desktop_cursor_assets[shape];
+    asset = cursor_catalog_get(shape);
     *out = sx_rect_make(cursor->x - asset->hotspot_x, cursor->y - asset->hotspot_y, asset->width, asset->height);
 }
 
@@ -583,26 +583,24 @@ static void paint_layer(struct sx_painter *painter, const struct savanxp_composi
     }
 }
 
-static void paint_cursor(struct sx_painter *painter, const struct scene_cursor *cursor)
+void scene_paint_cursor_image(struct sx_painter *painter, const struct cursor_image *asset, int left, int top)
 {
-    const struct desktop_cursor_asset *asset;
-    struct savanxp_fb_info info;
-    struct sx_bitmap bitmap;
-    int shape = cursor->shape;
-
-    if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
-    {
-        shape = SAVANXP_CURSOR_ARROW;
+    int x, y;
+    for (y = 0; y < asset->height; ++y) for (x = 0; x < asset->width; ++x) {
+        int dx = left + x;
+        int dy = top + y;
+        uint32_t *destination;
+        if (dx < 0 || dy < 0 || dx >= (int)painter->target->info.width || dy >= (int)painter->target->info.height) continue;
+        destination = (uint32_t *)((unsigned char *)painter->target->pixels + dy * painter->target->info.pitch) + dx;
+        /* set_pixel performs the painter's region clipping. The compositor's
+         * display stores BGRX8888 pixels; treat the background as opaque. */
+        sx_painter_set_pixel(painter, dx, dy, cursor_image_pixel(asset, y * asset->width + x, *destination | 0xff000000u));
     }
-    asset = &k_desktop_cursor_assets[shape];
-    memset(&info, 0, sizeof(info));
-    info.width = (uint32_t)asset->width;
-    info.height = (uint32_t)asset->height;
-    info.pitch = (uint32_t)asset->width * (uint32_t)sizeof(uint32_t);
-    info.bpp = 32u;
-    info.buffer_size = info.pitch * info.height;
-    sx_bitmap_wrap(&bitmap, (uint32_t *)asset->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
-    sx_painter_blit_bitmap(painter, &bitmap, cursor->x - asset->hotspot_x, cursor->y - asset->hotspot_y);
+}
+
+void scene_paint_cursor(struct sx_painter *painter, const struct scene_cursor *cursor) {
+    const struct cursor_image *asset = cursor_catalog_get((unsigned)cursor->shape);
+    scene_paint_cursor_image(painter, asset, cursor->x - asset->hotspot_x, cursor->y - asset->hotspot_y);
 }
 
 /* Whether a layer takes part: a surface that exists, a source inside it. */
@@ -673,7 +671,7 @@ void scene_compose(struct sx_region *presented)
         }
     }
 
-    /* The software cursor, above everything; it blends, so it hides nothing. */
+    /* The software cursor, above everything, after restoring damaged layers. */
     if (draw_cursor)
     {
         sx_region_copy(&visible, &g_damage);
@@ -683,7 +681,7 @@ void scene_compose(struct sx_region *presented)
             sx_painter_clear_clip(&painter);
             if (sx_painter_push_clip_region(&painter, &visible))
             {
-                paint_cursor(&painter, &g_cursor);
+                scene_paint_cursor(&painter, &g_cursor);
                 sx_painter_pop_clip(&painter);
             }
         }

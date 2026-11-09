@@ -60,20 +60,14 @@ without rewriting the mapping.
 
 ## Cursors
 
-The source cursors live in `assets/desktop/cursors/`, one PNG per shape:
-`arrow`, `wait`, `text`, `move`, `resize_h`, `resize_v`, `unavailable` and
-`link`.
+The compositor loads the eight unmodified Wine `.cur` files from
+`assets/desktop/cursors/wine/`, installed in `/system/cursors/`. Their native
+hotspots and the largest supported image up to 64x64 are used directly, with
+no build-time image conversion. Restart the compositor to load replaced files.
 
-Guidelines:
-
-- `16x16` or `32x32`
-- transparent background
-- the hotspot is **not** taken from the file: it is declared per shape in
-  `tools/gen_cursor_asset.py` (for example `arrow` is `3,1` and `wait` is
-  `9,9`)
-
-During `./build.sh build` the files are automatically converted into
-`build/generated/cursor_asset.h` and embedded in the window manager binary.
+The source directory includes Wine's license and authors. Version, hashes and
+attribution are recorded in [third-party provenance](../docs/third-party/THIRD_PARTY_PROVENANCE.md).
+See [CURSORS.md](../docs/desktop/CURSORS.md) for format support and fallback rules.
 
 ## Desktop icons
 

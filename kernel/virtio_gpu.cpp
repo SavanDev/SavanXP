@@ -1580,8 +1580,12 @@ void poll_cursor_completions() {
 
         VirtioGpuCtrlHdr const* response = reinterpret_cast<VirtioGpuCtrlHdr const*>(cursor_response_buffer());
         g_cursor_command.completed = true;
-        g_cursor_command.response_type = response->type;
-        g_last_response_type = response->type;
+        /* QEMU consumes cursorq requests with a zero-length used entry and
+         * no response header. Other devices may return OK_NODATA. A used
+         * entry is still mandatory; a short nonempty response is invalid. */
+        g_cursor_command.response_type = element.len == 0 ? kVirtioGpuRespOkNoData :
+            (element.len >= sizeof(VirtioGpuCtrlHdr) ? response->type : 0u);
+        g_last_response_type = g_cursor_command.response_type;
         g_gpu_stats.command_completions += 1u;
     }
 }
@@ -2722,6 +2726,9 @@ bool configure_cursor_plane(const savanxp_gpu_cursor_image& image) {
     void* virtual_address = nullptr;
     const uint32_t row_bytes = image.width * sizeof(uint32_t);
     uint8_t* destination = nullptr;
+    const uint32_t previous_x = g_cursor_plane.x;
+    const uint32_t previous_y = g_cursor_plane.y;
+    const bool previous_visible = g_cursor_plane.visible;
 
     if (image.width == 0 || image.height == 0 || image.width > kCursorMaxDimension ||
         image.height > kCursorMaxDimension || image.pitch < row_bytes || image.pixels == 0) {
@@ -2761,18 +2768,25 @@ bool configure_cursor_plane(const savanxp_gpu_cursor_image& image) {
     };
     g_cursor_plane.hot_x = image.hotspot_x;
     g_cursor_plane.hot_y = image.hotspot_y;
-    g_cursor_plane.visible = true;
+    g_cursor_plane.x = previous_x;
+    g_cursor_plane.y = previous_y;
+    g_cursor_plane.visible = previous_visible;
 
     if (!create_resource_with_format(g_cursor_plane.resource_id, g_cursor_plane.info, kVirtioGpuFormatB8G8R8A8Unorm) ||
         !attach_resource_backing(g_cursor_plane.resource_id, g_cursor_plane.physical_pages, g_cursor_plane.page_count) ||
         !transfer_rect_resource(g_cursor_plane.resource_id, g_cursor_plane.info, 0, 0, g_cursor_plane.info.width, g_cursor_plane.info.height) ||
-        !flush_rect_resource(g_cursor_plane.resource_id, 0, 0, g_cursor_plane.info.width, g_cursor_plane.info.height) ||
-        !submit_cursor_plane_command(kVirtioGpuCmdUpdateCursor)) {
+        !flush_rect_resource(g_cursor_plane.resource_id, 0, 0, g_cursor_plane.info.width, g_cursor_plane.info.height)) {
         release_cursor_plane();
         return false;
     }
 
+    /* The command builder requires a loaded image. Publish it after the
+     * resource is ready and before submitting its first UPDATE_CURSOR. */
     g_cursor_plane.image_loaded = true;
+    if (!submit_cursor_plane_command(kVirtioGpuCmdUpdateCursor)) {
+        release_cursor_plane();
+        return false;
+    }
     g_gpu_stats.cursor_updates += 1u;
     return true;
 }
@@ -2782,10 +2796,15 @@ bool move_cursor_plane(const savanxp_gpu_cursor_position& position) {
         return false;
     }
 
+    const bool visibility_changed = g_cursor_plane.visible != (position.visible != 0);
     g_cursor_plane.x = position.x;
     g_cursor_plane.y = position.y;
     g_cursor_plane.visible = position.visible != 0;
-    if (!submit_cursor_plane_command(kVirtioGpuCmdMoveCursor)) {
+    /* MOVE_CURSOR ignores the resource id. Hiding requires UPDATE_CURSOR
+     * with resource id 0; repeat UPDATE on a hidden retry after a failure. */
+    const uint32_t command = visibility_changed || !g_cursor_plane.visible
+        ? kVirtioGpuCmdUpdateCursor : kVirtioGpuCmdMoveCursor;
+    if (!submit_cursor_plane_command(command)) {
         return false;
     }
     g_gpu_stats.cursor_moves += 1u;

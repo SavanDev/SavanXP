@@ -314,3 +314,29 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 - OpenBSD (ISC and BSD-2): candidates evaluated and categorized in the adoption
   document. No piece has been incorporated yet, so there is no distributed
   entry to record
+
+### Wine desktop cursors
+
+- Origin: Wine `dlls/user32/resources`, tag `wine-11.20`, commit
+  `7298a818b79446bae153b8d5aa27235ab3703bf9` (same revision as MS Sans Serif).
+  [Upstream resources](https://github.com/wine-mirror/wine/tree/7298a818b79446bae153b8d5aa27235ab3703bf9/dlls/user32/resources).
+- Versioned: eight unmodified `.cur` files in `assets/desktop/cursors/wine/`.
+- Attribution: the Wine project authors; the upstream `AUTHORS` and `LICENSE`
+  are included alongside the assets. LGPL-2.1-or-later, with the full license
+  in `LICENSE-LGPL-2.1.txt`. These are Wine's resources, not extracted Microsoft assets.
+- Decision: `Adopt`.
+- Distributed in: `/system/cursors/`, read and decoded by compositord at startup.
+  Original files remain replaceable; rebuilding the compositor is unnecessary.
+  The source and decoder are available in this repository.
+- SHA-256 of the original files:
+
+| File | SHA-256 |
+|---|---|
+| `ocr_hand.cur` | `a565291a1eb9107966a4350c71c4fadc7962fb63caafdae417d32f265bfab11a` |
+| `ocr_ibeam.cur` | `5d8ab37a8dee10361c77c38dd70190ea738070d43d9aedafefe5a688158d954c` |
+| `ocr_no.cur` | `21f78eef1c35701719d0ae4d4590bd94c5c8faef1cae6cc2823a804f99b8cf8c` |
+| `ocr_normal.cur` | `de7ab0f5e4e4b6541f66f4c968c82e106583c85ff24fa65bf890b4cd998cc6f5` |
+| `ocr_sizeall.cur` | `768179dc51601eb362df81c645966019055eda32dffd5579e8f54a510b724646` |
+| `ocr_sizens.cur` | `efb612deeca798636136022290c49472161e1f6e27154a3fcab856be7c1b13b8` |
+| `ocr_sizewe.cur` | `7bb70a841815c3021d08e4ef8df7571f1a42899ebd94723b352275ea89dbfc64` |
+| `ocr_wait.cur` | `1fc71be18e52af614784bbd5ccde9acb63cd8b22525280ea29446bf4db445406` |

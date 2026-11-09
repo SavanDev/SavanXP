@@ -4,7 +4,6 @@
 #include "libc.h"
 #include "windowd_presentation.h"
 #include "windowd_layout.h"
-#include "cursor_asset.h"
 
 int windowd_clamp_int(int value, int minimum, int maximum)
 {
@@ -523,23 +522,3 @@ struct sx_rect windowd_switcher_rect(const struct savanxp_fb_info *info)
         width,
         WINDOWD_SWITCHER_HEIGHT);
 }
-
-void windowd_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height)
-{
-    const struct desktop_cursor_asset *asset;
-
-    if (x == 0 || y == 0 || width == 0 || height == 0)
-    {
-        return;
-    }
-    if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
-    {
-        shape = SAVANXP_CURSOR_ARROW;
-    }
-    asset = &k_desktop_cursor_assets[shape];
-    *x = cursor_x - asset->hotspot_x;
-    *y = cursor_y - asset->hotspot_y;
-    *width = asset->width;
-    *height = asset->height;
-}
-

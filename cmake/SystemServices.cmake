@@ -39,7 +39,9 @@ endfunction()
 # composes the scene windowd commits and presents it.
 savanxp_system_service(NAME compositord SOURCES
     compositord.c
-    compositord_scene.c)
+    compositord_scene.c
+    cursor_cur.c
+    cursor_catalog.c)
 
 # The session manager: starts compositord, windowd, the desktop and Program
 # Manager, and restarts them. init starts it.

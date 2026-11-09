@@ -577,8 +577,8 @@ is what makes the staging safe, and it is what the selftests rely on to sample
 the composed result. It is not on the frame path of any application.
 
 **The cursor** is `compositord`'s entirely: the hardware plane when the GPU has
-one, a software layer above everything otherwise, and the cursor images
-(`cursor_asset.h`). `windowd` only says where and which shape.
+one, a software layer above everything otherwise, and the catalog decoded
+from `/system/cursors/*.cur`. `windowd` only says where and which shape.
 
 The **display section** is shared read-only with `windowd`, for the selftests
 that sample composed pixels. The mode is still `windowd`'s to ask for (F11);
@@ -797,3 +797,11 @@ client.
 - **Where the session manager ends and `init` begins:** decided --
   `sessiond` owns the graphical session, `init` keeps `audiod` and the text
   fallback (see [The session manager](#the-session-manager-sessiond)).
+
+### Cursor catalog
+
+Both cursor paths share the catalog loaded by compositord from native `.cur`
+files under `/system/cursors/`. SUN file reads supply the original Wine bytes;
+the compositor decodes and caches them once at startup. Software rendering
+preserves classic AND/XOR operations, while compatible images use the GPU's
+cursor plane. See [CURSORS.md](CURSORS.md) for selection and fallback rules.

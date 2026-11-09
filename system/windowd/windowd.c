@@ -3993,9 +3993,10 @@ static int windowd_cursor_repro(void)
     int col;
     int diff_after = 0;
     int diff_oncursor = 0;
-    /* Cursor footprint is small (24x24-ish); cap the capture generously. */
-    static uint32_t baseline_block[64 * 64];
-    static uint32_t oncursor_block[64 * 64];
+    /* CUR images are at most 64x64, with the hotspot anywhere inside.
+     * Capture their full possible footprint without knowing the theme. */
+    static uint32_t baseline_block[127 * 127];
+    static uint32_t oncursor_block[127 * 127];
 
     if (open_compositor_session(&session, 1) < 0)
     {
@@ -4020,16 +4021,10 @@ static int windowd_cursor_repro(void)
     qx = dlg.x + (dlg.width / 2);
     qy = dlg.y + (dlg.height / 2);
 
-    /* Footprint of the cursor when its hotspot is at Q. */
-    windowd_cursor_bounds(qx, qy, SAVANXP_CURSOR_ARROW, &fx, &fy, &fw, &fh);
-    if (fw > 64)
-    {
-        fw = 64;
-    }
-    if (fh > 64)
-    {
-        fh = 64;
-    }
+    /* Cover every valid hotspot of a 64x64 image. */
+    fx = qx - 63;
+    fy = qy - 63;
+    fw = fh = 127;
     rx = qx + fw + 12;
     ry = qy;
 

@@ -219,3 +219,5 @@ all its phases have landed; the links to it move with it.
   external code.
 - [`THIRD_PARTY_PROVENANCE.md`](third-party/THIRD_PARTY_PROVENANCE.md) — origin, pinned
   version, and verified license for distributed third-party components.
+
+- [Desktop cursors](desktop/CURSORS.md): native CUR loading, Wine assets and rendering fallbacks.

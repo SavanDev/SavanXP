@@ -58,3 +58,8 @@ struct scene_cursor scene_current_cursor(void);
 uint32_t scene_take_broken(void);
 /* Unmaps and closes everything. */
 void scene_reset(void);
+
+/* Shared cursor painter, also exercised by the compositor's visual self-test. */
+void scene_paint_cursor(struct sx_painter *painter, const struct scene_cursor *cursor);
+struct cursor_image;
+void scene_paint_cursor_image(struct sx_painter *painter, const struct cursor_image *image, int left, int top);

@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include "sxgfx/sxchrome.h"
 #include "shared/version.h"
-#include "cursor_asset.h"
 #include "desktop_icons.h"
 #include "windowd_presentation.h"
 #include "windowd_layout.h"
@@ -114,16 +113,7 @@ void windowd_dirty_rect_add_fullscreen(struct windowd_dirty_rect *dirty, const s
     }
 }
 
-void windowd_dirty_rect_add_cursor(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape)
-{
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
 
-    windowd_cursor_bounds(cursor_x, cursor_y, shape, &x, &y, &width, &height);
-    windowd_dirty_rect_add(dirty, info, x, y, width, height);
-}
 
 void windowd_dirty_rect_add_client(struct windowd_dirty_rect *dirty, const struct windowd_client *client)
 {

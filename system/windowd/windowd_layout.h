@@ -97,5 +97,3 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
 #define WINDOWD_SWITCHER_HEIGHT 56
 #define WINDOWD_SWITCHER_PADDING 14
 struct sx_rect windowd_switcher_rect(const struct savanxp_fb_info *info);
-
-void windowd_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height);

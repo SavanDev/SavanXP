@@ -76,8 +76,8 @@ seeded from the clock and the pid: they have to be unique, not secret.
 The installer's plan asked for system-only `/dev/disk<n>` nodes. Device nodes
 cannot carry it today: `device::Device` has `read` and `write` with no offset
 and no per-device context, so a sector-addressed node would need the device
-layer redesigned. And SUN has no file API, so a SUN program would reach the
-nodes through `SXN_SYS_OPEN_DEVICE` and ioctls anyway. The storage calls are
+layer redesigned. SUN file opens accept regular files only, so a SUN program
+would reach the nodes through `SXN_SYS_OPEN_DEVICE` and ioctls anyway. The storage calls are
 one call per operation, shaped like the process snapshot, and the permission
 check is the caller's token (`cred::acts_as_system`) instead of a node's mode.
 

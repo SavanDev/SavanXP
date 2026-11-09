@@ -38,9 +38,9 @@ struct sxnwm_client {
 };
 
 /* What a window says about itself: the title on its caption and its taskbar
- * button, the caption accent, its style and its 16x16 icon. A SUN program
- * cannot read its own .sxe (SUN has no files), so the build compiles its
- * .sxres into <program>.sunres.h, which defines `sun_resources` of this type:
+ * button, the caption accent, its style and its 16x16 icon. The build compiles
+ * .sxres into <program>.sunres.h, so startup need not reopen and parse its own
+ * .sxe. That header defines `sun_resources` of this type:
  * the program's resources linked into it, as .rsrc is into a Windows .exe. */
 struct sxnwm_presentation_source {
     const char* title;

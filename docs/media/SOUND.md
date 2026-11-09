@@ -134,7 +134,7 @@ available defaults in use and report a load error. The panel reports save/load
 errors; closing it requests a durable flush, waiting up to two seconds after
 closing the window. Saving continues in the service if that wait expires.
 Without the service, direct master/recording controls remain usable but the
-panel cannot persist their changes itself (SUN currently has no file API).
+panel cannot persist their changes itself (SUN currently has no writable file API).
 
 `sxnaudio_preferences_query/flush` receive request-correlated generation,
 saved-generation, enabled/dirty/saving/load-failure flags and the last error via

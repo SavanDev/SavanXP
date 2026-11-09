@@ -23,7 +23,6 @@ void windowd_set_wm_surface(uint32_t *pixels, uint32_t pitch);
 void windowd_dirty_rect_reset(struct windowd_dirty_rect *dirty);
 void windowd_dirty_rect_add(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int x, int y, int width, int height);
 void windowd_dirty_rect_add_fullscreen(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info);
-void windowd_dirty_rect_add_cursor(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape);
 void windowd_dirty_rect_add_client(struct windowd_dirty_rect *dirty, const struct windowd_client *client);
 int windowd_dirty_rect_valid(const struct windowd_dirty_rect *dirty);
 size_t windowd_dirty_rect_count(const struct windowd_dirty_rect *dirty);

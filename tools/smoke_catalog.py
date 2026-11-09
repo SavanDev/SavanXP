@@ -263,6 +263,17 @@ SCENARIOS: dict[str, Scenario] = {
         "NET SMOKE FAIL",
         "User-network ICMP and ARP self-test",
     ),
+    "cursor-fallback-smoke": _qemu_scenario(
+        "cursor-fallback-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",
+        "Missing cursor pack keeps the compositor usable with an emergency arrow",
+        remove_paths=tuple(f"/system/cursors/ocr_{name}.cur" for name in
+                           ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand")),
+    ),
+    "cursor-smoke": _qemu_scenario(
+        "cursor-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",
+        "Wine CUR file loading and cursor scanout pixels",
+        ready="CURSOR SMOKE PASS", qmp_callback="tools/cursor_smoke.py",
+    ),
     "cursor-repro": _qemu_scenario(
         "windowd-cursor-repro",
         "CURSOR REPRO PASS",

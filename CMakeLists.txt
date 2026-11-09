@@ -517,14 +517,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py")
 endif()
 set(SAVANXP_BOOT_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/boot_logo.h")
 set(SAVANXP_BRAND_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/brand_logo.h")
-set(SAVANXP_CURSOR_HEADER "${SAVANXP_GENERATED_ROOT}/cursor_asset.h")
 set(SAVANXP_DESKTOP_ICONS_HEADER "${SAVANXP_GENERATED_ROOT}/desktop_icon_assets.h")
 set(SAVANXP_START_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/start_logo.h")
 set(SAVANXP_DESKTOP_ICON_SOURCES
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/16x16/desktop.png"
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/32x32/desktop.png")
-file(GLOB SAVANXP_CURSOR_ASSETS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/desktop/cursors/*.png")
 add_custom_command(OUTPUT "${SAVANXP_BOOT_LOGO_HEADER}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_boot_logo.py"
@@ -544,16 +541,6 @@ add_custom_command(OUTPUT "${SAVANXP_BRAND_LOGO_HEADER}"
     DEPENDS
         "${CMAKE_SOURCE_DIR}/tools/gen_brand_logo.py"
         "${CMAKE_SOURCE_DIR}/assets/brand/logo.png"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    VERBATIM
-)
-add_custom_command(OUTPUT "${SAVANXP_CURSOR_HEADER}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_cursor_asset.py"
-            --project-root "${CMAKE_SOURCE_DIR}" --output "${SAVANXP_CURSOR_HEADER}"
-    DEPENDS
-        "${CMAKE_SOURCE_DIR}/tools/gen_cursor_asset.py"
-        ${SAVANXP_CURSOR_ASSETS}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     VERBATIM
 )
@@ -585,7 +572,6 @@ add_custom_command(OUTPUT "${SAVANXP_START_LOGO_HEADER}"
 set(SAVANXP_GENERATED_HEADER_FILES
     "${SAVANXP_BOOT_LOGO_HEADER}"
     "${SAVANXP_BRAND_LOGO_HEADER}"
-    "${SAVANXP_CURSOR_HEADER}"
     "${SAVANXP_DESKTOP_ICONS_HEADER}"
     "${SAVANXP_START_LOGO_HEADER}"
 )
@@ -963,8 +949,15 @@ add_test(NAME kernel-memory-compare-test COMMAND savanxp-kernel-memory-compare-t
 add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
 
+add_executable(savanxp-cursor-cur-test
+    system/compositord/cursor_cur.c tests/host/cursor_cur_test.c)
+target_include_directories(savanxp-cursor-cur-test PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord")
+# Assertions must remain active in release host builds.
+target_compile_options(savanxp-cursor-cur-test PRIVATE -UNDEBUG)
+add_test(NAME cursor-cur-test COMMAND savanxp-cursor-cur-test "${CMAKE_SOURCE_DIR}")
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -1183,6 +1176,9 @@ add_custom_target(savanxp_diskfs
     ${SAVANXP_LIB_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/cursors"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_SOURCE_DIR}/assets/desktop/cursors/wine" "${SAVANXP_DISKFS_ROOT}/system/cursors"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"

@@ -7,7 +7,7 @@
 #include "sxn/sxn.h"
 #include "compositord_scene.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */
-#include "cursor_asset.h"
+#include "cursor_catalog.h"
 
 /*
  * compositord is a native process (EI_OSABI 0x53) and a session service
@@ -722,7 +722,7 @@ static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
 {
     static uint32_t cursor_pixels[64 * 64];
     struct savanxp_gpu_cursor_image image;
-    const struct desktop_cursor_asset *asset;
+    const struct cursor_image *asset;
     int row;
     int column;
 
@@ -734,7 +734,7 @@ static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
     {
         shape = SAVANXP_CURSOR_ARROW;
     }
-    asset = &k_desktop_cursor_assets[shape];
+    asset = cursor_catalog_get(shape);
 
     memset(cursor_pixels, 0, sizeof(cursor_pixels));
     for (row = 0; row < asset->height && row < 64; ++row)
@@ -751,7 +751,15 @@ static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
     image.pitch = 64u * sizeof(uint32_t);
     image.hotspot_x = (uint32_t)asset->hotspot_x;
     image.hotspot_y = (uint32_t)asset->hotspot_y;
-    return gpu_set_cursor(state->gpu_fd, &image) < 0 ? -SAVANXP_EIO : 0;
+    {
+        long result = gpu_set_cursor(state->gpu_fd, &image);
+        if (result < 0) {
+            char log[96];
+            snprintf(log, sizeof(log), "compositord: cursor hardware upload shape=%u failed: %ld", shape, result);
+            (void)sxn_log(log);
+        }
+        return (int)result;
+    }
 }
 
 /* The cursor of the last commit on the hardware plane: the shape when it
@@ -768,7 +776,19 @@ static void apply_cursor(struct compositor_state *state)
     }
     if (cursor.shape != state->cursor_applied.shape)
     {
-        (void)upload_cursor_shape(state, (uint32_t)cursor.shape);
+        /* Hide before replacing the resource: a failed upload may discard
+         * it, leaving no image that a later MOVE_CURSOR could hide. */
+        memset(&position, 0, sizeof(position));
+        if (gpu_move_cursor(state->gpu_fd, &position) < 0) {
+            (void)sxn_log("compositord: cannot hide cursor plane before upload");
+            sxn_exit(1);
+        }
+        if (upload_cursor_shape(state, (uint32_t)cursor.shape) < 0) {
+            state->hw_cursor = 0;
+            scene_set_software_cursor(1);
+            (void)sxn_log("compositord: cursor upload failed; using software");
+            return;
+        }
     }
     if (cursor.x != state->cursor_applied.x || cursor.y != state->cursor_applied.y ||
         cursor.visible != state->cursor_applied.visible || cursor.shape != state->cursor_applied.shape)
@@ -778,7 +798,13 @@ static void apply_cursor(struct compositor_state *state)
         position.y = (uint32_t)(cursor.y < 0 ? 0 : cursor.y);
         position.visible = cursor.visible ? 1u : 0u;
         position.shape = (uint32_t)cursor.shape;
-        (void)gpu_move_cursor(state->gpu_fd, &position);
+        if (gpu_move_cursor(state->gpu_fd, &position) < 0) {
+            position.visible = 0;
+            if (gpu_move_cursor(state->gpu_fd, &position) < 0) sxn_exit(1);
+            state->hw_cursor = 0;
+            scene_set_software_cursor(1);
+            return;
+        }
     }
     state->cursor_applied = cursor;
 }
@@ -794,7 +820,8 @@ static void setup_cursor(struct compositor_state *state)
     state->cursor_applied.y = 0;
     state->cursor_applied.shape = SAVANXP_CURSOR_ARROW;
     state->cursor_applied.visible = 0;
-    if ((state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) != 0 &&
+    if (!cursor_catalog_needs_background() &&
+        (state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) != 0 &&
         upload_cursor_shape(state, SAVANXP_CURSOR_ARROW) == 0)
     {
         memset(&position, 0, sizeof(position));
@@ -803,6 +830,12 @@ static void setup_cursor(struct compositor_state *state)
         {
             state->hw_cursor = 1;
         }
+    }
+    {
+        char log[128];
+        snprintf(log, sizeof(log), "compositord: cursor renderer=%s gpu_flags=%x background=%d",
+            state->hw_cursor ? "hardware" : "software", state->gpu_info.flags, cursor_catalog_needs_background());
+        (void)sxn_log(log);
     }
     scene_set_software_cursor(!state->hw_cursor);
 }
@@ -995,6 +1028,67 @@ static int accept_wm(struct compositor_state *state, long port, int *request_fd,
     }
 }
 
+/* Standalone visual diagnostic: the real file catalog and software painter,
+ * shown on both backgrounds. The host callback verifies the scanout pixels. */
+static void cursor_selftest(struct compositor_state *state, int emergency) {
+    struct sx_bitmap bitmap;
+    struct sx_painter painter;
+    struct sx_region region;
+    struct savanxp_gpu_cursor_position position;
+    unsigned shape, row;
+    int failures = 0;
+    if ((state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) &&
+        !cursor_catalog_needs_background() && !state->hw_cursor) failures++;
+    memset(&position, 0, sizeof(position));
+    if (state->hw_cursor && gpu_move_cursor(state->gpu_fd, &position) < 0) failures++;
+    sx_bitmap_wrap(&bitmap, state->display_view, &state->display_info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_init(&painter, &bitmap);
+    sx_painter_fill_rect(&painter, sx_rect_make(0, 0, state->display_info.width, state->display_info.height), 0xff808080u);
+    for (row = 0; row < 2; ++row) for (shape = 0; shape < SAVANXP_CURSOR_SHAPE_COUNT; ++shape) {
+        const struct cursor_image *asset = cursor_catalog_get(shape);
+        if (emergency && (asset->width != 12 || asset->height != 18)) failures++;
+        struct scene_cursor cursor = {32 + (int)shape * 96 + asset->hotspot_x,
+            32 + (int)row * 96 + asset->hotspot_y, (int)shape, 1};
+        sx_painter_fill_rect(&painter, sx_rect_make(32 + shape * 96, 32 + row * 96, 64, 64),
+            row ? 0xff000000u : 0xffffffffu);
+        scene_paint_cursor(&painter, &cursor);
+        if (state->hw_cursor && upload_cursor_shape(state, shape) < 0) failures++;
+    }
+    {
+        static struct cursor_image classic;
+        classic.width = classic.height = 2;
+        classic.classic = classic.needs_background = 1;
+        classic.xor_rgb[1] = classic.xor_rgb[3] = 0x00ffffffu;
+        classic.and_mask[2] = classic.and_mask[3] = 0x00ffffffu;
+        sx_painter_fill_rect(&painter, sx_rect_make(32, 256, 64, 64), 0xff123456u);
+        scene_paint_cursor_image(&painter, &classic, 32, 256);
+        sx_painter_push_clip(&painter, sx_rect_make(64, 256, 1, 2));
+        scene_paint_cursor_image(&painter, &classic, 64, 256);
+        sx_painter_pop_clip(&painter);
+        sx_painter_fill_rect(&painter, sx_rect_make(0, 288, 2, 2), 0xff123456u);
+        scene_paint_cursor_image(&painter, &classic, -1, 288);
+    }
+    if (state->hw_cursor) {
+        position.x = 900;
+        position.y = 400;
+        position.visible = 1;
+        if (gpu_move_cursor(state->gpu_fd, &position) < 0) failures++;
+        /* Simulate a refused upload after successful uploads of all shapes.
+         * This exercises the normal fallback, including hiding the plane. */
+        state->gpu_info.flags &= ~SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE;
+        state->cursor_applied.shape = -1;
+        apply_cursor(state);
+        if (state->hw_cursor) failures++;
+        (void)sxn_log("compositord: cursor selftest hardware uploads and software fallback checked");
+    }
+    sx_region_clear(&region);
+    sx_region_set_rect(&region, sx_rect_make(0, 0, state->display_info.width, state->display_info.height));
+    if (present_region(state, &region) < 0 || finish_present(state, 1) < 0) failures++;
+    (void)sxn_log(failures ? "CURSOR SMOKE FAIL" : "CURSOR SMOKE PASS");
+    /* Keep the displayed frame stable for the QMP screenshot. */
+    for (;;) (void)sxn_wait_one(state->frame_event, -1);
+}
+
 int main(int argc, char **argv)
 {
     struct compositor_state state;
@@ -1003,6 +1097,7 @@ int main(int argc, char **argv)
     int reply_fd = -1;
     long port;
 
+    cursor_catalog_load();
     compositor_state_init(&state);
     if (argc >= 2 && argv != 0 && argv[1] != 0 && argv[1][0] != '\0')
     {
@@ -1014,6 +1109,8 @@ int main(int argc, char **argv)
         compositor_state_close(&state);
         sxn_exit(1);
     }
+    if (argc >= 2 && strcmp(argv[1], "--cursor-selftest") == 0) cursor_selftest(&state, 0);
+    if (argc >= 2 && strcmp(argv[1], "--cursor-fallback-selftest") == 0) cursor_selftest(&state, 1);
     /* Last: the port existing is what tells sessiond the display is ready. */
     port = sxn_port_create(port_name);
     if (port < 0)

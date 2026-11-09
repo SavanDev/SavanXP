@@ -125,6 +125,8 @@ static int run_automation_spec(const char* spec) {
     const char* soak_argv[] = {"/bin/gputest", "--soak", 0, 0};
     const char* windowd_argv[] = {"/bin/windowd.sxe", "--selftest", 0};
     const char* windowd_hw_native_argv[] = {"/bin/windowd.sxe", "--hw-native-test", 0};
+    const char* cursor_fallback_argv[] = {"/bin/compositord.sxe", "--cursor-fallback-selftest", 0};
+    const char* cursor_smoke_argv[] = {"/bin/compositord.sxe", "--cursor-selftest", 0};
     const char* cursor_repro_argv[] = {"/bin/windowd.sxe", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
@@ -326,6 +328,14 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
             path = "/bin/ccleste";
             argv = ccleste_argv;
+            argc = 2;
+        } else if (strcmp(spec, "cursor-fallback-selftest") == 0) {
+            path = "/bin/compositord.sxe";
+            argv = cursor_fallback_argv;
+            argc = 2;
+        } else if (strcmp(spec, "cursor-selftest") == 0) {
+            path = "/bin/compositord.sxe";
+            argv = cursor_smoke_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
             path = "/bin/windowd.sxe";

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **The compositor reads classic `.cur` files directly, including native hotspots and AND/XOR masks.**
+  `smoke cursor-smoke` checks the loaded cursor images on light and dark backgrounds.
+
 - **SUN programs can open and sequentially read existing regular files with `sxn_open_file`.**
   File handles enforce VFS permissions; query-only opens do not grant read access.
 
@@ -60,6 +63,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The desktop uses Wine's eight original cursor files instead of the previous PNG pack.**
+  Replace files in `/system/cursors/` and restart the compositor to change them without recompiling.
+
 - **Sound has a clear heading, an audio icon and grouped playback, application and recording controls.**
   The panel retains the desktop's NT-style widgets, palette and volume meters.
 
@@ -68,6 +74,9 @@ Cut-off notes:
   raised frame and an etched separator above `Shut Down...`/`Restart...`.
 
 ### Fixed
+
+- **Virtio GPU activates the hardware cursor on its first upload and hides it correctly.**
+  Failed cursor uploads fall back to software rendering.
 
 - **Doom and Celeste audio acceptance now checks the installed ports without a network card.**
   `smoke audio-ports-offline` requires both games in Sound and audible recorded PCM;
