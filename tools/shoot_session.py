@@ -1145,6 +1145,103 @@ def scenario_display(s):
     s.qmp.tap("esc", pause=2.0)
 
 
+def scenario_effects(s):
+    """Apply/Cancel, independent flags and a real restart of saved effects."""
+    labels = ("Show shadows under windows", "Show shadow under mouse pointer")
+
+    def click_text(text):
+        image = s.shot("find-" + text.split()[0].lower())
+        origin = find_text(image, (image.width // 4, image.height // 8, image.width * 3 // 4, image.height * 7 // 8), text, TEXT, FACE)[0]
+        if origin is None:
+            raise Failure("missing effects control: " + text)
+        s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+        s.qmp.click()
+        time.sleep(1)
+
+    def open_settings():
+        s.run("display")
+        s.qmp.chord("shift", "tab")
+        s.qmp.tap("right", pause=2)
+
+    def open_effects(expected):
+        click_text("Effects...")
+        image = s.shot("effects-options")
+        for label, checked in zip(labels, expected):
+            origin = find_text(image, (image.width // 4, image.height // 8, image.width * 3 // 4, image.height * 7 // 8), label, TEXT, FACE)[0]
+            if origin is None:
+                raise Failure("missing effects checkbox: " + label)
+            # 13px checkbox, then the toolkit's 6px gap. Only its interior
+            # counts, so the dark sunken border cannot masquerade as a tick.
+            x, y = origin
+            tick = any(image.getpixel((xx, yy)) == TEXT
+                       for yy in range(y + 3, y + 10) for xx in range(x - 16, x - 9))
+            if tick != checked:
+                raise Failure("unexpected checkbox state: %s = %s" % (label, tick))
+
+    open_settings()
+    open_effects((True, True))
+    click_text(labels[0])
+    s.qmp.tap("esc", pause=1)
+    open_effects((True, True))  # Inner Cancel discards edits.
+    click_text(labels[0])
+    s.qmp.tap("ret", pause=1)
+    s.qmp.tap("esc", pause=2)  # Outer Cancel discards staged edits.
+    open_settings()
+    open_effects((True, True))
+    current = (True, True)
+    applied = {}
+    for flags in ((False, True), (False, False), (True, False), (True, True), (False, False)):
+        # The preceding dialog is open; change only mismatching options.
+        for i, desired in enumerate(flags):
+            if desired != current[i]:
+                click_text(labels[i])
+        s.qmp.tap("ret", pause=1)
+        click_text("Apply")
+        applied[flags] = s.shot("effects-applied-%d%d" % flags)
+        open_effects(flags)
+        current = flags
+    s.qmp.tap("esc", pause=1)
+    s.qmp.tap("esc", pause=2)
+
+    # Compare the same sheet on the same wallpaper, with the pointer shadow
+    # disabled in both shots. Inspect only pixels outside its opaque frame.
+    off, on = applied[(False, False)], applied[(True, False)]
+    face = [(x, y) for y in range(100, off.height - 100)
+            for x in range(off.width // 4, off.width * 3 // 4) if off.getpixel((x, y)) == FACE]
+    if not face:
+        raise Failure("effects: no property sheet found")
+    left, right = min(x for x, y in face) - 2, max(x for x, y in face) + 2
+    top, bottom = min(y for x, y in face) - 3, max(y for x, y in face) + 2
+    darkened = 0
+    for y in range(max(0, top - 12), min(off.height, bottom + 16)):
+        for x in range(max(0, left - 12), min(off.width, right + 16)):
+            if left <= x <= right and top <= y <= bottom:
+                continue
+            before, after = off.getpixel((x, y)), on.getpixel((x, y))
+            darkened += all(a <= b for a, b in zip(after, before)) and after != before
+    if darkened < 100:
+        raise Failure("effects: enabling window shadows did not darken the outside of the frame")
+
+    marker = "handoff: starting /bin/init"
+    with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+        boots = log.read().count(marker)
+    s.qmp.cmd("set-action", reboot="reset")
+    s.qmp.cmd("system_reset")
+    deadline = time.time() + 240
+    while True:
+        with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+            if log.read().count(marker) > boots:
+                break
+        if time.time() > deadline:
+            raise Failure("effects persistence: machine did not restart")
+        time.sleep(0.5)
+    time.sleep(75)
+    open_settings()
+    open_effects((False, False))
+    s.qmp.tap("esc", pause=1)
+    s.qmp.tap("esc", pause=1)
+
+
 def scenario_resolution(s):
     """Changing the resolution (docs/desktop/DISPLAY_PROPERTIES.md).
 
@@ -1185,6 +1282,7 @@ def scenario_resolution(s):
     open_settings()
     s.qmp.tap("left", pause=2.0)
     s.qmp.tap("tab", pause=0.5)   # colour quality
+    s.qmp.tap("tab", pause=0.5)   # Effects
     s.qmp.tap("tab", pause=0.5)   # OK
     s.qmp.tap("tab", pause=0.5)   # Cancel
     s.qmp.tap("tab", pause=0.5)   # Apply
@@ -2939,6 +3037,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,
+    "effects": scenario_effects,
     "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,

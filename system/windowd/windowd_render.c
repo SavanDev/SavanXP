@@ -713,7 +713,13 @@ static uint32_t add_window_layers(
     }
     if (client->frame_visible)
     {
+        uint32_t before = count;
         count = add_wm_layer(layers, count, capacity, windowd_client_frame_rect(client));
+        if (count > before && !client->maximized &&
+            client->role != WINDOWD_ROLE_BACKGROUND && client->role != WINDOWD_ROLE_PANEL)
+        {
+            layers[before].flags |= SAVANXP_COMPOSITOR_LAYER_SHADOW;
+        }
     }
     return add_surface_layer(layers, count, capacity, client, windowd_client_surface_rect(client));
 }

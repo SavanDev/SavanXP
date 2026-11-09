@@ -20,3 +20,7 @@ long cursor_catalog_save_status(void);
 long cursor_catalog_save(void);
 const struct cursor_image *cursor_catalog_get(unsigned shape);
 int cursor_catalog_needs_background(void);
+
+struct cursor_shadow;
+const struct cursor_shadow *cursor_catalog_shadow(unsigned shape);
+int cursor_catalog_shadow_fits(void);

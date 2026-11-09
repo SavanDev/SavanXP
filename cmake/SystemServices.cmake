@@ -42,6 +42,7 @@ savanxp_system_service(NAME compositord SOURCES
     compositord_scene.c
     cursor_cur.c
     cursor_catalog.c
+    shadow.c
     SHARED_SOURCES subsystems/posix/sdk/v1/runtime/sximg.c)
 
 # The session manager: starts compositord, windowd, the desktop and Program
@@ -98,6 +99,6 @@ savanxp_system_service(NAME sound SOURCES sound.c)
 
 # Mouse Properties: native cursor scheme selection and previews.
 savanxp_system_service(NAME mouse SOURCES mouse.c
-    SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c
+    SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c system/compositord/shadow.c
         subsystems/posix/sdk/v1/runtime/sximg.c)
 target_include_directories(mouse PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord")

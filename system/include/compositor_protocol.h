@@ -35,8 +35,9 @@
  * is the display memory. v5: the scene -- compositord composes, the WM
  * commits layers instead of presenting a composed frame. v6: the frame event,
  * so clients' frames reach compositord without the WM. v7: the INIT reply
- * carries the largest mode the display memory holds. */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 7u
+ * carries the largest mode the display memory holds. v8: window shadow
+ * eligibility on frame layers. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 8u
 
 #define SAVANXP_COMPOSITOR_PORT_NAME "compositord"
 #define SAVANXP_COMPOSITOR_PORT_PREFIX "wd-compositor-"
@@ -103,6 +104,7 @@ struct savanxp_compositor_rect
 
 /* layer.flags */
 #define SAVANXP_COMPOSITOR_LAYER_OPAQUE 0x00000001u
+#define SAVANXP_COMPOSITOR_LAYER_SHADOW 0x00000002u /* shadow outside dst */
 
 /* `src` of surface `surface_id` shown at `dst` on the screen; scaled (nearest)
  * when the sizes differ. */

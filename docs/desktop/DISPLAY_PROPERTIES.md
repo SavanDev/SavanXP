@@ -4,7 +4,8 @@
 > its position and the colour behind it. Phase 2, the Settings tab: the
 > resolution changes while the session runs, with the period's "keep these
 > settings?" countdown ([Changing the resolution](#changing-the-resolution)).
-> Colour quality stays at 32 bits, the only depth the system draws.
+> Colour quality stays at 32 bits, the only depth the system draws. Settings
+> also offers [Effects](#effects) for persistent window and pointer shadows.
 
 Display Properties (`/bin/display`, `subsystems/posix/userland/display.c`) is
 the period's Display control panel with two of its tabs, Desktop and Settings.
@@ -170,3 +171,36 @@ apply a machine-wide one at boot without a reader of their own.
 left unanswered until it reverts, then a real restart (`set-action
 reboot=reset`, since the harness runs QEMU with `-no-reboot`) after which the
 desktop sets 1024x768 again.
+
+## Effects
+
+The **Effects...** button on Settings opens a modal dialog with **Show shadows
+under windows** and **Show shadow under mouse pointer**. Both default to on.
+The dialog's OK stages the choices in the property sheet; Cancel or Escape
+leaves its pending choices alone. The sheet's Apply or OK sends both choices
+to `compositord` without restarting the session. Cancel discards pending edits.
+Effects are independent of the resolution trial and do not revert with it.
+
+`effects-settings` is a bounded native object-port service, declared in
+`include/sxn/sxneffects.h`. QUERY returns the effective flags and save status;
+SET applies both flags and writes `effects.cfg` in the current desktop profile's
+Settings folder. As with cursor preferences, the session currently belongs to
+uid 1000 (`/users/user`); root and that user can access the service. Other
+identities cannot inspect or modify the preferences. Clients verify the server
+identity and time out after two seconds.
+
+The file contains `window_shadows=0|1` and `cursor_shadow=0|1`, one per line.
+Missing files, unknown keys and malformed values retain defaults for the
+corresponding options. A failed save leaves the effects active for this session;
+the sheet reports the failure and keeps Apply available to retry. A failed
+request keeps the pending choices. No wallpaper or resolution file is rewritten
+by an effects-only change.
+
+The initial effects cover framed ordinary windows and dialogs, excluding
+maximized and fullscreen windows, background and panels. Frameless popup/menu
+shadows, transitions and font smoothing are not included.
+
+`./build.sh smoke effects-smoke` exercises both checkboxes, both levels of
+Cancel, all four combinations and persistence across a real restart on a
+disposable image. The host `compositor-effects-test` checks exact composed
+pixels, damage bounds and the hardware cursor packing limits.

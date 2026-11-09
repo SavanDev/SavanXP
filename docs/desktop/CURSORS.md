@@ -137,3 +137,17 @@ The diagonal roles are appended to the public enum, preserving prior values.
 The virtio cursor queue accepts a full OK_NODATA reply or the zero-length
 completion emitted by [QEMU's cursor handler](https://github.com/qemu/qemu/blob/master/hw/display/virtio-gpu.c).
 Short nonempty completions and timeouts remain errors.
+
+## Optional pointer shadow
+
+Display Properties → Settings → Effects controls an additional system-generated
+shadow independently of the selected pack. The original pixels and classic
+AND/XOR operations are preserved; disabling the option removes only this extra
+shadow, not shadows already drawn into a pack.
+
+The catalog caches a black, alpha-80 triangular falloff of radius 3, offset
+(1, 2), for each shape. Software composition draws the mask before the original
+pointer and includes both in old/new damage bounds. Hardware composition packs
+the mask and cursor into one straight-alpha ARGB image and adjusts the hotspot
+by the three-pixel margin. Packs whose expanded images cannot fit the 64×64
+plane use software composition; disabling the shadow can recover the plane.

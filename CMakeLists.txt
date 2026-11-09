@@ -958,8 +958,19 @@ target_compile_options(savanxp-cursor-cur-test PRIVATE -idirafter "${CMAKE_SOURC
 target_compile_options(savanxp-cursor-cur-test PRIVATE -UNDEBUG)
 add_test(NAME cursor-cur-test COMMAND savanxp-cursor-cur-test "${CMAKE_SOURCE_DIR}")
 
+add_executable(savanxp-compositor-effects-test
+    tests/host/compositor_effects_test.c system/compositord/shadow.c
+    system/compositord/cursor_cur.c system/gfx/gfx2d.c)
+target_include_directories(savanxp-compositor-effects-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/system/include")
+target_compile_options(savanxp-compositor-effects-test PRIVATE
+    -idirafter "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    -UNDEBUG -ffunction-sections -fdata-sections)
+target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
+add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

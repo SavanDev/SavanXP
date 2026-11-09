@@ -4,7 +4,8 @@
  * The desktop's look, in the shape of the period's Display control panel: a
  * Desktop tab that picks the wallpaper, its position and the colour behind it,
  * and a Settings tab with the screen's resolution and colour quality. Both
- * tabs show the result on a small monitor before anything is applied.
+ * tabs show the result on a small monitor before anything is applied. The
+ * Settings tab also opens Effects to configure window and pointer shadows.
  *
  * This program never draws the real background. It writes the configuration
  * (desktop_wallpaper_write_config) and the desktop, which re-reads it, repaints
@@ -22,6 +23,7 @@
 
 #include "desktop_wallpaper.h"
 #include "display_settings.h"
+#include "sxn/sxneffects.h"
 
 static struct sxgui_app g_app;
 
@@ -32,7 +34,7 @@ static struct sxgui_app g_app;
  * outer size and the spacing inside it. */
 #define DISPLAY_MARGIN SXGUI_CONTENT_MARGIN
 #define DISPLAY_SHEET_WIDTH 380
-#define DISPLAY_PAGE_HEIGHT 326
+#define DISPLAY_PAGE_HEIGHT 356
 #define DISPLAY_PAGE_PAD 10
 
 /* The monitor drawn at the top of both pages. Its screen keeps the real
@@ -80,6 +82,7 @@ enum display_widget
     W_QUALITY_GROUP,
     W_QUALITY,
     W_RESOLUTION_NOTE,
+    W_EFFECTS,
     /* Under the sheet */
     W_OK,
     W_CANCEL,
@@ -92,12 +95,19 @@ static struct sxgui_widget g_widgets[W_COUNT];
 #define DISPLAY_FIRST_DESKTOP_WIDGET W_BACKGROUND_LABEL
 #define DISPLAY_LAST_DESKTOP_WIDGET W_COLOR
 #define DISPLAY_FIRST_SETTINGS_WIDGET W_DISPLAY_LABEL
-#define DISPLAY_LAST_SETTINGS_WIDGET W_RESOLUTION_NOTE
+#define DISPLAY_LAST_SETTINGS_WIDGET W_EFFECTS
 
 /* ---- state ---------------------------------------------------------------- */
 
 /* What the desktop shows now, and what the dialog would apply. Apply is
  * enabled while they differ. */
+static uint32_t g_effects_saved = SXN_EFFECTS_ALL;
+static uint32_t g_effects_pending = SXN_EFFECTS_ALL;
+static int g_effects_unsaved;
+static int g_effects_available;
+static struct sxgui_widget g_effect_widgets[5];
+static struct sxgui_dialog g_effect_dialog;
+
 static struct desktop_wallpaper_config g_saved;
 static struct desktop_wallpaper_config g_pending;
 /* The pending wallpaper, decoded for the previews. */
@@ -707,7 +717,8 @@ static void sync_controls(void)
     g_widgets[W_RESOLUTION].value = g_pending_mode;
     update_resolution_text();
     set_widget_enabled(&g_widgets[W_APPLY],
-        !desktop_wallpaper_config_equal(&g_pending, &g_saved) || g_pending_mode != g_current_mode);
+        !desktop_wallpaper_config_equal(&g_pending, &g_saved) || g_pending_mode != g_current_mode ||
+        g_effects_pending != g_effects_saved || g_effects_unsaved);
     sxgui_app_request_repaint(&g_app);
 }
 
@@ -1047,7 +1058,7 @@ static void on_tick(struct sxgui_app *app)
     sxgui_app_request_repaint(app);
 }
 
-/* Writes the wallpaper and, when the slider moved, tries the new mode. With
+/* Applies visual effects and wallpaper, then tries a new resolution. With
  * `quit` the dialog closes afterwards -- after the question, when there is
  * one, and not at all when the mode is turned down. */
 static void apply_pending(int quit)
@@ -1056,6 +1067,21 @@ static void apply_pending(int quit)
     const struct display_mode *mode = &g_modes[g_pending_mode];
     long result;
 
+    if (g_effects_pending != g_effects_saved || g_effects_unsaved) {
+        struct sxn_effects_reply reply;
+        result = sxneffects_request(SXN_EFFECTS_SET, g_effects_pending, &reply);
+        if (result < 0) {
+            show_message("Effects", "The visual effects could not be applied. Please try again.");
+            return;
+        }
+        g_effects_saved = reply.effects;
+        g_effects_unsaved = reply.save_status < 0;
+        sync_controls();
+        if (g_effects_unsaved) {
+            show_message("Effects", "Applied for this session. Saving failed; Apply retries.");
+            return;
+        }
+    }
     write_wallpaper();
     if (g_pending_mode == g_current_mode || !g_mode_mutable)
     {
@@ -1085,6 +1111,42 @@ static void apply_pending(int quit)
 }
 
 /* ---- interaction ---------------------------------------------------------- */
+
+static void on_effects_ok(struct sxgui_widget *widget, void *user) {
+    (void)widget; (void)user;
+    g_effects_pending = (g_effect_widgets[1].value ? SXN_EFFECTS_WINDOWS : 0) |
+        (g_effect_widgets[2].value ? SXN_EFFECTS_CURSOR : 0);
+    sxgui_dialog_end(&g_app.ui, 1);
+    sync_controls();
+}
+static void on_effects(struct sxgui_widget *widget, void *user) {
+    struct sxn_effects_reply reply;
+    (void)widget; (void)user;
+    /* Refresh the effective state; retain edits already pending in this sheet. */
+    if (sxneffects_request(SXN_EFFECTS_QUERY, 0, &reply) < 0) {
+        show_message("Effects", "Visual effects settings are unavailable. Please try again.");
+        return;
+    }
+    if (!g_effects_available || g_effects_pending == g_effects_saved) g_effects_pending = reply.effects;
+    g_effects_saved = reply.effects;
+    g_effects_unsaved = reply.save_status < 0;
+    g_effects_available = 1;
+    g_effect_widgets[0] = sxgui_label(sx_rect_make(12, 12, 320, 18), "Visual effects:");
+    g_effect_widgets[1] = sxgui_checkbox(sx_rect_make(12, 38, 320, 22),
+        "Show shadows under windows", !!(g_effects_pending & SXN_EFFECTS_WINDOWS));
+    g_effect_widgets[2] = sxgui_checkbox(sx_rect_make(12, 66, 320, 22),
+        "Show shadow under mouse pointer", !!(g_effects_pending & SXN_EFFECTS_CURSOR));
+    g_effect_widgets[3] = sxgui_button(sx_rect_make(174, 104, 75, 23), "OK", on_effects_ok, 0);
+    g_effect_widgets[4] = sxgui_button(sx_rect_make(257, 104, 75, 23), "Cancel", on_dialog_cancel, 0);
+    memset(&g_effect_dialog, 0, sizeof(g_effect_dialog));
+    g_effect_dialog.title = "Effects";
+    g_effect_dialog.widgets = g_effect_widgets;
+    g_effect_dialog.widget_count = 5;
+    g_effect_dialog.initial_focus = 1;
+    g_effect_dialog.default_button = 3;
+    sync_controls();
+    sxgui_dialog_begin(&g_app.ui, &g_effect_dialog, 344, 139);
+}
 
 static void show_tab(int tab)
 {
@@ -1309,6 +1371,11 @@ static void build_widgets(void)
         "This display adapter cannot change its resolution.");
     g_widgets[W_RESOLUTION_NOTE].flags |= SXGUI_FLAG_DISABLED;
 
+    g_widgets[W_EFFECTS] = sxgui_button(
+        sx_rect_make(x + page.width - DISPLAY_PAGE_PAD * 2 - 85,
+            page.y + page.height - DISPLAY_PAGE_PAD - SXGUI_BUTTON_HEIGHT, 85, SXGUI_BUTTON_HEIGHT),
+        "Effects...", on_effects, 0);
+
     /* OK, Cancel and Apply, right-aligned under the sheet. */
     buttons_y = g_widgets[W_TABS].rect.y + g_widgets[W_TABS].rect.height + SXGUI_GAP * 2;
     g_widgets[W_APPLY] = sxgui_button(
@@ -1327,6 +1394,12 @@ static void build_widgets(void)
 
 int main(void)
 {
+    struct sxn_effects_reply effects;
+    if (sxneffects_request(SXN_EFFECTS_QUERY, 0, &effects) == 0) {
+        g_effects_saved = g_effects_pending = effects.effects;
+        g_effects_unsaved = effects.save_status < 0;
+        g_effects_available = 1;
+    }
     read_screen_size();
     build_modes();
 

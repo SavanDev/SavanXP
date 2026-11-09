@@ -5,6 +5,8 @@
 #include "sxn/sxn.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */
 #include "cursor_catalog.h"
+#include "shadow.h"
+#include "sxn/sxneffects.h"
 
 /*
  * The scene and its composition (docs/desktop/DESKTOP_ARCHITECTURE.md#the-
@@ -56,6 +58,8 @@ static struct sx_region g_damage;
 static uint32_t g_broken = 0;
 
 static int g_software_cursor = 0;
+static uint32_t g_effects = SXN_EFFECTS_ALL;
+
 static struct scene_cursor g_cursor = {24, 24, SAVANXP_CURSOR_ARROW, 0};
 /* Where the software cursor was last composed (visible = 0: nowhere). */
 static struct scene_cursor g_cursor_drawn = {0, 0, SAVANXP_CURSOR_ARROW, 0};
@@ -84,6 +88,16 @@ static void damage_rect(struct sx_rect rect)
     }
 }
 
+void scene_set_effects(uint32_t effects) {
+    g_effects = effects;
+    damage_rect(display_rect());
+}
+
+static struct sx_rect layer_visual_bounds(const struct savanxp_compositor_layer *layer) {
+    struct sx_rect rect = rect_from(&layer->dst);
+    return (g_effects & SXN_EFFECTS_WINDOWS) && (layer->flags & SAVANXP_COMPOSITOR_LAYER_SHADOW) ? window_shadow_bounds(rect) : rect;
+}
+
 static struct scene_surface *surface_at(uint32_t surface_id)
 {
     if (surface_id == 0 || surface_id >= SAVANXP_COMPOSITOR_MAX_SURFACES || !g_surfaces[surface_id].in_use)
@@ -104,6 +118,9 @@ static void cursor_bounds(const struct scene_cursor *cursor, struct sx_rect *out
     }
     asset = cursor_catalog_get(shape);
     *out = sx_rect_make(cursor->x - asset->hotspot_x, cursor->y - asset->hotspot_y, asset->width, asset->height);
+    if (g_effects & SXN_EFFECTS_CURSOR) {
+        out->x -= 3; out->y -= 3; out->width += 8; out->height += 8;
+    }
 }
 
 static void damage_cursor(const struct scene_cursor *cursor)
@@ -154,7 +171,7 @@ static int damage_surface_rect(uint32_t surface_id, struct sx_rect local, int wh
         dst = rect_from(&layer->dst);
         if (whole || layer_scaled(layer))
         {
-            damage_rect(dst);
+            damage_rect(layer_visual_bounds(layer));
             continue;
         }
         damage_rect(sx_rect_intersect(
@@ -500,11 +517,11 @@ int scene_commit(void)
         }
         if (had)
         {
-            damage_rect(rect_from(&previous[index].dst));
+            damage_rect(layer_visual_bounds(&previous[index]));
         }
         if (has)
         {
-            damage_rect(rect_from(&g_scene.layers[index].dst));
+            damage_rect(layer_visual_bounds(&g_scene.layers[index]));
         }
     }
 
@@ -600,6 +617,15 @@ void scene_paint_cursor_image(struct sx_painter *painter, const struct cursor_im
 
 void scene_paint_cursor(struct sx_painter *painter, const struct scene_cursor *cursor) {
     const struct cursor_image *asset = cursor_catalog_get((unsigned)cursor->shape);
+    if (g_effects & SXN_EFFECTS_CURSOR) {
+        const struct cursor_shadow *shadow = cursor_catalog_shadow(cursor->shape);
+        struct savanxp_fb_info info = {0};
+        struct sx_bitmap bitmap;
+        info.width = shadow->width; info.height = shadow->height;
+        info.pitch = shadow->width * 4; info.bpp = 32; info.buffer_size = info.pitch * info.height;
+        sx_bitmap_wrap(&bitmap, (uint32_t *)shadow->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+        sx_painter_blit_bitmap(painter, &bitmap, cursor->x - asset->hotspot_x - 3, cursor->y - asset->hotspot_y - 3);
+    }
     scene_paint_cursor_image(painter, asset, cursor->x - asset->hotspot_x, cursor->y - asset->hotspot_y);
 }
 
@@ -649,7 +675,7 @@ void scene_compose(struct sx_region *presented)
             continue;
         }
         sx_region_copy(&visible, &g_damage);
-        sx_region_intersect_rect(&visible, rect_from(&layer->dst));
+        sx_region_intersect_rect(&visible, layer_visual_bounds(layer));
         for (front = index + 1u; front < g_layer_count && !sx_region_is_empty(&visible); ++front)
         {
             const struct savanxp_compositor_layer *above = &g_scene.layers[front];
@@ -666,7 +692,30 @@ void scene_compose(struct sx_region *presented)
         sx_painter_clear_clip(&painter);
         if (sx_painter_push_clip_region(&painter, &visible))
         {
+            if ((g_effects & SXN_EFFECTS_WINDOWS) && (layer->flags & SAVANXP_COMPOSITOR_LAYER_SHADOW)) {
+                static struct sx_region shadow_region;
+                struct sx_rect piece, frame = rect_from(&layer->dst);
+                size_t part;
+                sx_region_copy(&shadow_region, &visible);
+                sx_region_subtract_rect(&shadow_region, frame);
+                for (part = 0; sx_region_rect_at(&shadow_region, part, &piece); ++part) {
+                    int x, y;
+                    for (y = piece.y; y < piece.y + piece.height; ++y)
+                        for (x = piece.x; x < piece.x + piece.width; ++x) {
+                            unsigned a = window_shadow_alpha(frame, x, y), inv = 255 - a;
+                            uint32_t pixel = g_display[(size_t)y * (g_display_info.pitch / 4) + x];
+                            uint32_t rgb = (((((pixel >> 16) & 255) * inv + 127) / 255) << 16) |
+                                (((((pixel >> 8) & 255) * inv + 127) / 255) << 8) |
+                                (((pixel & 255) * inv + 127) / 255);
+                            /* shadow_region is already clipped to the display and damage. */
+                            g_display[(size_t)y * (g_display_info.pitch / 4) + x] = rgb;
+                        }
+                }
+            }
+            /* The visual bounds include the shadow; the surface does not. */
+            sx_painter_push_clip(&painter, rect_from(&layer->dst));
             paint_layer(&painter, layer);
+            sx_painter_pop_clip(&painter);
             sx_painter_pop_clip(&painter);
         }
     }

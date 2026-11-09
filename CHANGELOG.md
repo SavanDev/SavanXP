@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Windows and the mouse pointer have optional soft shadows, enabled by default.**
+  Display Properties → Settings → Effects controls them independently and saves the preferences.
+
 - **Right-clicking an empty area of the taskbar opens a menu with `Task Manager...`.**
 
 - **Mouse Properties selects cursor schemes with previews, licensing, Apply/Cancel and saved preferences.**

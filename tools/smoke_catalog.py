@@ -275,6 +275,12 @@ SCENARIOS: dict[str, Scenario] = {
         ready="CURSOR SMOKE PASS", qmp_callback="tools/cursor_smoke.py",
         remove_paths=("/users/user/Settings/cursors.cfg",),
     ),
+    "effects-smoke": _qemu_scenario(
+        "", "EFFECTS SMOKE PASS", "EFFECTS SMOKE FAIL",
+        "Display effects: independent shadows, Apply/Cancel and restart persistence",
+        900.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="effects",
+    ),
     "cursor-settings-smoke": _qemu_scenario(
         "", "CURSOR SETTINGS SMOKE PASS", "CURSOR SETTINGS SMOKE FAIL",
         "Mouse Properties schemes, licenses, live changes, cancel and restart persistence",

@@ -807,3 +807,21 @@ the native cursor settings port. SUN supplies regular file reads and durable
 small-file saves for the selected pack ID. Software rendering
 preserves classic AND/XOR operations, while compatible images use the GPU's
 cursor plane. See [CURSORS.md](CURSORS.md) for selection and fallback rules.
+
+## Window shadows
+
+Compositor protocol v8 adds `SAVANXP_COMPOSITOR_LAYER_SHADOW`: the existing frame
+layer requests a shadow around its destination rectangle. No extra surface or
+layer is allocated. `windowd` marks eligible frames; `compositord` owns the effect
+preference and rendering. The flag does not change hit testing or client bounds.
+
+A shadow is black, with maximum alpha 36, radius 12 and offset (1, 2). A cached
+corner falloff is used only in damaged visible spans outside the frame. Shadows
+are never opaque occluders. Opaque upper layers still hide both frames and their
+shadows. Geometry comparisons damage old and new visual bounds; repainting
+content under a shadow rebuilds the background before blending, preventing
+accumulated darkening. Toggling effects invalidates the screen once.
+
+The settings protocol and persistence are documented in
+[Display Properties](DISPLAY_PROPERTIES.md#effects). Window and pointer settings
+do not change client pixel formats or the GPU protocol.

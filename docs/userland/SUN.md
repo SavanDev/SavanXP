@@ -194,7 +194,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file` | Existing regular files, sequential reads and durable whole-file saves up to 4 KiB; enumeration is missing. |
-| Registry / profile settings | `sxncursor_query`, `sxncursor_select` | Cursor profile supplied by compositord; no general registry service. |
+| Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
@@ -273,3 +273,10 @@ The cursor profile is the first consumer and rejects invalid saves on startup.
 Properties SUN program uses them without claiming the GPU. Replies distinguish
 an unsuccessful apply from a successful apply whose save failed. See
 [CURSORS.md](../desktop/CURSORS.md) for the pack and session contract.
+
+`<sxn/sxneffects.h>` queries or sets the independent window/pointer shadow flags
+through a bounded native object-port request. It uses the existing SUN handle,
+identity, clock and stream calls, and reports apply and save status separately.
+Display Properties is its consumer; `smoke effects-smoke` checks the effective
+rendering and restart persistence. See
+[Display Properties](../desktop/DISPLAY_PROPERTIES.md#effects).

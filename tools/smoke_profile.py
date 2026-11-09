@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reset the user's display preferences on a disposable smoke image.
+"""Reset resolution and effects preferences on a disposable smoke image.
 
 Smokes and visual scenarios run on a copy of build/disk.img, which is the
 developer's persistent disk. Whatever the developer chose in Display
@@ -11,7 +11,8 @@ false positives (a find_text matching the black padding of a smaller screen).
 So a smoke never sees the developer's display preferences: this removes them
 from the copy, and the session falls back to its default mode. A scenario
 that wants a specific resolution will write its own display.cfg on top of a
-clean copy.
+clean copy. Effects also start from their defaults, so pixel checks do not
+inherit the developer's shadow choices.
 """
 
 from __future__ import annotations
@@ -24,11 +25,13 @@ from pathlib import Path
 # Where savanxp_settings_path (subsystems/posix/sdk/v1/runtime/posix.c) looks
 # for display.cfg: the user's Settings folder, then loose in the profile (from
 # before the folder), then the root of the volume, which is root's profile and
-# also where settings lived before profiles existed.
+# also where settings lived before profiles existed. Effects use the current
+# Settings path only, like cursor preferences.
 DISPLAY_PREFERENCE_PATHS = (
     "users/user/Settings/display.cfg",
     "users/user/display.cfg",
     "display.cfg",
+    "users/user/Settings/effects.cfg",
 )
 
 def reset_audio_preferences(sxfs_cli: Path, image: Path) -> None:
@@ -41,7 +44,7 @@ def reset_audio_preferences(sxfs_cli: Path, image: Path) -> None:
 
 
 def reset_display_preferences(sxfs_cli: Path, image: Path) -> None:
-    """Remove the display preferences from `image`. Missing files are fine."""
+    """Remove display/effects preferences from the disposable image."""
     removed = subprocess.run(
         [str(sxfs_cli), "rm", "-f", str(image), *DISPLAY_PREFERENCE_PATHS],
         text=True,

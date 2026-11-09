@@ -8,6 +8,8 @@
 #include "compositord_scene.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */
 #include "cursor_catalog.h"
+#include "shadow.h"
+#include "effects_settings.h"
 
 /*
  * compositord is a native process (EI_OSABI 0x53) and a session service
@@ -718,14 +720,26 @@ static int compositor_get_timeline(
     return result < 0 ? (int)result : 0;
 }
 
+static uint32_t g_effects = SXN_EFFECTS_ALL;
+static long g_effects_save_status;
+
+static void effects_load(void) {
+    char text[256];
+    long fd = sxn_open_file(SXN_EFFECTS_PATH, SXN_FILE_READ);
+    if (fd >= 0) {
+        long count = sxn_read(fd, text, sizeof(text) - 1);
+        (void)sxn_close(fd);
+        if (count >= 0) { text[count] = 0; g_effects = effects_settings_parse(text); }
+        else g_effects_save_status = count;
+    } else if (fd != -SAVANXP_ENOENT) g_effects_save_status = fd;
+    scene_set_effects(g_effects);
+}
+
 static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
 {
     static uint32_t cursor_pixels[64 * 64];
     struct savanxp_gpu_cursor_image image;
     const struct cursor_image *asset;
-    int row;
-    int column;
-
     if (state == 0 || (state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) == 0)
     {
         return -SAVANXP_ENOSYS;
@@ -736,21 +750,16 @@ static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
     }
     asset = cursor_catalog_get(shape);
 
-    memset(cursor_pixels, 0, sizeof(cursor_pixels));
-    for (row = 0; row < asset->height && row < 64; ++row)
-    {
-        for (column = 0; column < asset->width && column < 64; ++column)
-        {
-            cursor_pixels[(row * 64) + column] = asset->pixels[(row * asset->width) + column];
-        }
-    }
+    if (cursor_shadow_pack(asset,
+            (g_effects & SXN_EFFECTS_CURSOR) ? cursor_catalog_shadow(shape) : 0, cursor_pixels) < 0)
+        return -SAVANXP_E2BIG;
 
     image.pixels = (uint64_t)(unsigned long)cursor_pixels;
     image.width = 64;
     image.height = 64;
     image.pitch = 64u * sizeof(uint32_t);
-    image.hotspot_x = (uint32_t)asset->hotspot_x;
-    image.hotspot_y = (uint32_t)asset->hotspot_y;
+    image.hotspot_x = (uint32_t)asset->hotspot_x + ((g_effects & SXN_EFFECTS_CURSOR) ? 3 : 0);
+    image.hotspot_y = (uint32_t)asset->hotspot_y + ((g_effects & SXN_EFFECTS_CURSOR) ? 3 : 0);
     {
         long result = gpu_set_cursor(state->gpu_fd, &image);
         if (result < 0) {
@@ -821,6 +830,7 @@ static void setup_cursor(struct compositor_state *state)
     state->cursor_applied.shape = SAVANXP_CURSOR_ARROW;
     state->cursor_applied.visible = 0;
     if (!cursor_catalog_needs_background() &&
+        (!(g_effects & SXN_EFFECTS_CURSOR) || cursor_catalog_shadow_fits()) &&
         (state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) != 0 &&
         upload_cursor_shape(state, SAVANXP_CURSOR_ARROW) == 0)
     {
@@ -864,6 +874,80 @@ static int change_cursor_theme(struct compositor_state *state, const char *theme
     state->cursor_applied.shape = -1;
     apply_cursor(state);
     return produce_frame(state, 1);
+}
+
+struct effects_control_client {
+    long input, output;
+    uint64_t deadline;
+    uint32_t uid, euid;
+    size_t received;
+    struct sxn_effects_request request;
+};
+static struct effects_control_client effects_clients[2];
+
+static void effects_close(struct effects_control_client *client) {
+    if (client->input >= 0) (void)sxn_close(client->input);
+    if (client->output >= 0) (void)sxn_close(client->output);
+    client->input = client->output = -1;
+}
+static void effects_service(struct compositor_state *state, long port) {
+    unsigned i;
+    for (i = 0; i < 2; ++i) {
+        struct effects_control_client *client = &effects_clients[i];
+        struct sxn_effects_reply reply = {SXN_EFFECTS_MAGIC, SXN_EFFECTS_VERSION, 0, 0, 0};
+        long got;
+        if (client->input < 0) continue;
+        if (sxn_clock_ns() >= client->deadline) { effects_close(client); continue; }
+        got = sxn_read(client->input, (unsigned char *)&client->request + client->received,
+            sizeof(client->request) - client->received);
+        if (got == -SAVANXP_EAGAIN) continue;
+        if (got <= 0) { effects_close(client); continue; }
+        client->received += (size_t)got;
+        if (client->received < sizeof(client->request)) continue;
+        if (client->euid != 0 && (client->uid != 1000 || client->euid != 1000)) reply.status = -SAVANXP_EACCES;
+        else if (client->request.magic != SXN_EFFECTS_MAGIC || client->request.version != SXN_EFFECTS_VERSION ||
+            (client->request.effects & ~SXN_EFFECTS_ALL) ||
+            (client->request.operation != SXN_EFFECTS_QUERY && client->request.operation != SXN_EFFECTS_SET))
+            reply.status = -SAVANXP_EINVAL;
+        else if (client->request.operation == SXN_EFFECTS_SET) {
+            char text[64];
+            int size;
+            /* Drain the old frame before changing the plane or its bounds. */
+            (void)finish_present(state, 1);
+            struct savanxp_gpu_cursor_position hidden = {0};
+            if (state->hw_cursor && gpu_move_cursor(state->gpu_fd, &hidden) < 0) sxn_exit(1);
+            g_effects = client->request.effects;
+            /* Until both presentation and persistence succeed, a query must
+             * keep the preference retryable even after an interrupted apply. */
+            g_effects_save_status = -SAVANXP_EIO;
+            scene_set_effects(g_effects);
+            setup_cursor(state);
+            state->cursor_applied.shape = -1;
+            apply_cursor(state);
+            reply.status = produce_frame(state, 1);
+            if (!reply.status) {
+                size = snprintf(text, sizeof(text), "window_shadows=%u\ncursor_shadow=%u\n",
+                    !!(g_effects & SXN_EFFECTS_WINDOWS), !!(g_effects & SXN_EFFECTS_CURSOR));
+                g_effects_save_status = sxn_write_file(SXN_EFFECTS_PATH, text, size);
+            }
+        }
+        if (reply.status != -SAVANXP_EACCES) {
+            reply.effects = g_effects;
+            reply.save_status = (int32_t)g_effects_save_status;
+        }
+        (void)sxn_write(client->output, &reply, sizeof(reply));
+        effects_close(client);
+    }
+    if (port >= 0 && sxn_wait_one(port, 0) == 0) {
+        struct sxn_port_connection_ex connection;
+        if (sxn_port_accept_ex(port, &connection) < 0) return;
+        for (i = 0; i < 2 && effects_clients[i].input >= 0; ++i) {}
+        if (i == 2) { (void)sxn_close(connection.read_handle); (void)sxn_close(connection.write_handle); return; }
+        effects_clients[i] = (struct effects_control_client){.input=connection.read_handle, .output=connection.write_handle,
+            .deadline=sxn_clock_ns()+2000000000ull, .uid=connection.client.uid, .euid=connection.client.euid};
+        (void)sxn_set_nonblocking(connection.read_handle, 1);
+        (void)sxn_set_nonblocking(connection.write_handle, 1);
+    }
 }
 
 static void cursor_control_close(struct cursor_control_client *client) {
@@ -1111,6 +1195,9 @@ static void cursor_selftest(struct compositor_state *state, int emergency) {
     unsigned shape, row, theme;
     static const char *themes[] = {"classic", "retrosmart", "hackneyed"};
     int failures = 0;
+    g_effects = 0;
+    scene_set_effects(0);
+    setup_cursor(state);
     if ((state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) &&
         !cursor_catalog_needs_background() && !state->hw_cursor) failures++;
     memset(&position, 0, sizeof(position));
@@ -1145,6 +1232,26 @@ static void cursor_selftest(struct compositor_state *state, int emergency) {
         sx_painter_fill_rect(&painter, sx_rect_make(0, 632, 2, 2), 0xff123456u);
         scene_paint_cursor_image(&painter, &classic, -1, 632);
     }
+    if (!emergency) {
+        /* Separate samples retain the original grids above while exercising
+         * the optional shadow with real pack silhouettes and hardware uploads. */
+        g_effects = SXN_EFFECTS_CURSOR;
+        scene_set_effects(g_effects);
+        for (theme = 0; theme < 3; ++theme) {
+            const struct cursor_image *asset;
+            struct scene_cursor cursor;
+            if (cursor_catalog_select(themes[theme]) < 0) failures++;
+            asset = cursor_catalog_get(SAVANXP_CURSOR_ARROW);
+            cursor = (struct scene_cursor){35 + (int)theme * 128 + asset->hotspot_x,
+                683 + asset->hotspot_y, SAVANXP_CURSOR_ARROW, 1};
+            sx_painter_fill_rect(&painter, sx_rect_make(32 + theme * 128, 680, 96, 64), 0xffffffffu);
+            scene_paint_cursor(&painter, &cursor);
+            for (shape = 0; shape < SAVANXP_CURSOR_SHAPE_COUNT; ++shape)
+                if (state->hw_cursor && upload_cursor_shape(state, shape) < 0) failures++;
+        }
+        g_effects = 0;
+        scene_set_effects(0);
+    }
     if (state->hw_cursor) {
         position.x = 900;
         position.y = 680;
@@ -1174,9 +1281,11 @@ int main(int argc, char **argv)
     int reply_fd = -1;
     long port;
     long cursor_port = -1;
+    long effects_port = -1;
     unsigned control_index;
 
     cursor_catalog_load();
+    effects_load();
     compositor_state_init(&state);
     if (argc >= 2 && argv != 0 && argv[1] != 0 && argv[1][0] != '\0')
     {
@@ -1191,7 +1300,10 @@ int main(int argc, char **argv)
     if (argc >= 2 && strcmp(argv[1], "--cursor-selftest") == 0) cursor_selftest(&state, 0);
     if (argc >= 2 && strcmp(argv[1], "--cursor-fallback-selftest") == 0) cursor_selftest(&state, 1);
     for (control_index = 0; control_index < 4; ++control_index) cursor_clients[control_index].input = cursor_clients[control_index].output = -1;
+    for (control_index = 0; control_index < 2; ++control_index) effects_clients[control_index].input = effects_clients[control_index].output = -1;
     if (!strcmp(port_name, SAVANXP_COMPOSITOR_PORT_NAME)) {
+        effects_port = sxn_port_create(SXN_EFFECTS_PORT);
+        if (effects_port < 0) (void)sxn_log("compositord: effects settings port unavailable");
         cursor_port = sxn_port_create(SXN_CURSOR_PORT);
         if (cursor_port < 0) (void)sxn_log("compositord: cursor settings port unavailable");
     }
@@ -1209,7 +1321,7 @@ int main(int argc, char **argv)
     {
         for (;;)
         {
-            int32_t handles[10];
+            int32_t handles[13];
             unsigned long count = 0;
             long timeout = -1;
             long ready;
@@ -1217,6 +1329,11 @@ int main(int argc, char **argv)
             handles[count++] = request_fd;
             handles[count++] = (int32_t)port;
             handles[count++] = (int32_t)state.frame_event;
+            if (effects_port >= 0) handles[count++] = (int32_t)effects_port;
+            for (control_index = 0; control_index < 2; ++control_index) if (effects_clients[control_index].input >= 0) {
+                handles[count++] = (int32_t)effects_clients[control_index].input;
+                timeout = 50;
+            }
             if (cursor_port >= 0) handles[count++] = (int32_t)cursor_port;
             for (control_index = 0; control_index < 4; ++control_index) if (cursor_clients[control_index].input >= 0) {
                 handles[count++] = (int32_t)cursor_clients[control_index].input;
@@ -1242,6 +1359,7 @@ int main(int argc, char **argv)
                 break;
             }
             cursor_control_service(&state, cursor_port);
+            effects_service(&state, effects_port);
             /* A client published a frame: reset BEFORE looking, so one
              * published after this point wakes the next wait. */
             if (sxn_wait_one(state.frame_event, 0) == 0)
@@ -1281,6 +1399,8 @@ int main(int argc, char **argv)
     /* The WM hung up or shut the session down: there is no other to serve
      * (no reconnection), so the display goes back to the kernel. */
     compositor_state_close(&state);
+    if (effects_port >= 0) (void)sxn_close(effects_port);
+    for (control_index = 0; control_index < 2; ++control_index) effects_close(&effects_clients[control_index]);
     if (cursor_port >= 0) (void)sxn_close(cursor_port);
     for (control_index = 0; control_index < 4; ++control_index) cursor_control_close(&cursor_clients[control_index]);
     (void)sxn_close(port);

@@ -1,4 +1,5 @@
 #include "cursor_catalog.h"
+#include "shadow.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 static struct cursor_image images[SAVANXP_CURSOR_SHAPE_COUNT];
 static char selected[SXN_CURSOR_ID_SIZE] = "classic";
 static long save_status;
+static struct cursor_shadow shadows[SAVANXP_CURSOR_SHAPE_COUNT];
 static int background;
 static const char *roles[SAVANXP_CURSOR_SHAPE_COUNT] = {
     "arrow", "wait", "text", "move", "resize_h", "resize_v", "unavailable", "link",
@@ -97,7 +99,10 @@ long cursor_catalog_read(const char *theme, struct cursor_image *output, int str
 static void update_background(void) {
     unsigned shape;
     background = 0;
-    for (shape = 0; shape < SAVANXP_CURSOR_SHAPE_COUNT; ++shape) background |= images[shape].needs_background;
+    for (shape = 0; shape < SAVANXP_CURSOR_SHAPE_COUNT; ++shape) {
+        background |= images[shape].needs_background;
+        cursor_shadow_build(&images[shape], &shadows[shape]);
+    }
 }
 long cursor_catalog_select(const char *theme) {
     struct cursor_theme themes[CURSOR_MAX_THEMES];
@@ -149,3 +154,13 @@ const struct cursor_image *cursor_catalog_get(unsigned shape) {
     return &images[shape < SAVANXP_CURSOR_SHAPE_COUNT ? shape : SAVANXP_CURSOR_ARROW];
 }
 int cursor_catalog_needs_background(void) { return background; }
+
+const struct cursor_shadow *cursor_catalog_shadow(unsigned shape) {
+    return &shadows[shape < SAVANXP_CURSOR_SHAPE_COUNT ? shape : SAVANXP_CURSOR_ARROW];
+}
+int cursor_catalog_shadow_fits(void) {
+    unsigned i;
+    for (i = 0; i < SAVANXP_CURSOR_SHAPE_COUNT; ++i)
+        if (shadows[i].width > 64 || shadows[i].height > 64) return 0;
+    return 1;
+}

@@ -52,6 +52,24 @@ def main():
                         expected = tuple((c*a+background*(255-a)+127)//255 for c in (r,g,b))
                         actual = image.getpixel((32+column*96+x, 32+theme*176+row*80+y))
                         assert actual == expected, (name, role, row, x, y, actual, expected)
+    # Independently convolve each real alpha silhouette and compare the
+    # optional software shadow samples outside the original diagnostic grids.
+    for theme, name in enumerate(('classic', 'retrosmart', 'hackneyed')):
+        cursor = cur_image(root / f'assets/desktop/cursors/{name}/arrow.cur')
+        for y in range(cursor.height + 8):
+            for x in range(cursor.width + 8):
+                weight = 0
+                for dy in range(-3, 4):
+                    for dx in range(-3, 4):
+                        sx, sy = x - 4 + dx, y - 5 + dy
+                        if 0 <= sx < cursor.width and 0 <= sy < cursor.height:
+                            weight += cursor.getpixel((sx, sy))[3] * (4 - abs(dx)) * (4 - abs(dy))
+                shadow_alpha = (weight * 80 + 32640) // (255 * 256)
+                background = 255 - shadow_alpha
+                rgba = cursor.getpixel((x - 3, y - 3)) if 3 <= x < cursor.width + 3 and 3 <= y < cursor.height + 3 else (0, 0, 0, 0)
+                expected = tuple((c * rgba[3] + background * (255 - rgba[3]) + 127) // 255 for c in rgba[:3])
+                actual = image.getpixel((32 + theme * 128 + x, 680 + y))
+                assert actual == expected, ('pointer shadow', name, x, y, actual, expected)
     for point, expected in {
         (32,600):(0,0,0), (33,600):(255,255,255), (32,601):(18,52,86), (33,601):(237,203,169),
         (64,600):(0,0,0), (65,600):(18,52,86), (64,601):(18,52,86), (65,601):(18,52,86),
@@ -62,7 +80,7 @@ def main():
         for x in range(900,964):
             assert image.getpixel((x,y)) == (128,128,128), ('hardware cursor residue', x, y)
     image.save(args.out_dir / 'cursor-packs.png')
-    print('cursor-smoke: all 30 cursors match on light/dark backgrounds; original classic pixels, inversion and clipping checked')
+    print('cursor-smoke: all 30 cursors match on light/dark backgrounds; original classic pixels, inversion, clipping and optional shadows checked')
 
 
 if __name__ == '__main__':

@@ -63,3 +63,5 @@ void scene_reset(void);
 void scene_paint_cursor(struct sx_painter *painter, const struct scene_cursor *cursor);
 struct cursor_image;
 void scene_paint_cursor_image(struct sx_painter *painter, const struct cursor_image *image, int left, int top);
+
+void scene_set_effects(uint32_t effects);
