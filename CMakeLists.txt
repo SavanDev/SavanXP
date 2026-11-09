@@ -990,6 +990,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
         "${CMAKE_SOURCE_DIR}/libsxfs/sxfs_cli.c"
         "${CMAKE_SOURCE_DIR}/libsxfs/sxfs_core.h"
         "${CMAKE_SOURCE_DIR}/include/sxfs/sxfs_format.h"
+        "${CMAKE_SOURCE_DIR}/include/sxfs/sxfs_ownership.h"
     COMMENT "Building sxfs-cli"
     VERBATIM
 )
@@ -1023,6 +1024,11 @@ add_test(NAME sxfs-compaction-test
             "${CMAKE_SOURCE_DIR}/tests/host/sxfs_compaction_test.py"
             --cli "${SAVANXP_SXFS_CLI}"
             --sync "${CMAKE_SOURCE_DIR}/tools/sxfs_sync.py")
+add_test(NAME iso-volume-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/iso_volume_test.py"
+            --cli "${SAVANXP_SXFS_CLI}"
+            --stage "${CMAKE_SOURCE_DIR}/tools/iso_volume.py")
 add_test(NAME external-builder-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/external_builder_test.py"

@@ -85,8 +85,8 @@ def copy_preserving_holes(source: Path, destination: Path) -> None:
         os.fsync(writer.fileno())
 
 
-def build_manifest(root: Path) -> Path:
-    """A manifest of everything under `root`, directories before their contents."""
+def build_manifest(root: Path, ownership: Path) -> Path:
+    """Recreate contents first, then restore the recorded owners and modes."""
     entries = []
     for path in sorted(root.rglob("*"), key=lambda item: (len(item.parts), item.as_posix())):
         relative = path.relative_to(root).as_posix()
@@ -95,7 +95,7 @@ def build_manifest(root: Path) -> Path:
         else:
             entries.append(f"file\t{relative}\t{path}")
     manifest = root.parent / "iso-volume.manifest"
-    manifest.write_text("\n".join(entries) + "\n", encoding="utf-8")
+    manifest.write_text("\n".join(entries) + "\n" + ownership.read_text(encoding="utf-8"), encoding="utf-8")
     return manifest
 
 
@@ -116,11 +116,12 @@ def stage(cli: Path, image: Path, output: Path, sectors: int) -> None:
     with tempfile.TemporaryDirectory(prefix="savanxp-iso-volume.") as temporary:
         workspace = Path(temporary)
         extract = workspace / "extract"
+        ownership = workspace / "ownership.manifest"
         rebuilt = workspace / "rebuilt.img"
-        result = run([str(cli), "extract", str(image), str(extract)])
+        result = run([str(cli), "extract", str(image), str(extract), str(ownership)])
         if result.returncode != 0:
             fail(f"extract failed: {(result.stderr or result.stdout).strip()}")
-        manifest = build_manifest(extract)
+        manifest = build_manifest(extract, ownership)
         result = run([str(cli), "create", str(rebuilt), str(sectors)])
         if result.returncode != 0:
             fail(f"create at {sectors} sectors failed: {(result.stderr or result.stdout).strip()}")

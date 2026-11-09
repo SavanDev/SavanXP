@@ -46,13 +46,12 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
 def run_boot(
     qemu: str, label: str, args: list[str], serial: Path, timeout: float, require: tuple[str, ...] = ()
 ) -> None:
-    """Boot the ISO and wait for init, then assert `require` also showed up.
+    """Boot the ISO and wait for the graphical session and required root tokens.
 
     The extra tokens matter: the ISO carries the persistent volume as a Limine
     module and has no disk attached, so the livecd ramdisk is the only root
-    volume it can get. A boot that reaches init without it still "passes" a token-only
-    check while the system underneath has no storage at all, which is exactly
-    the regression a change to the boot tree would cause.
+    volume it can get. Reaching init alone cannot prove the root volume is
+    usable: services might still fail to execute because permissions were lost.
     """
     serial.unlink(missing_ok=True)
     process = subprocess.Popen(
@@ -66,14 +65,7 @@ def run_boot(
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
-            # The tokens checked below sit on the handoff line itself, so wait
-            # for that line to be whole: read half-written, "root mounted" is
-            # not there yet and a good boot fails.
-            handoff = text.find("handoff: starting /bin/init")
-            if handoff >= 0 and "\n" not in text[handoff:]:
-                time.sleep(0.2)
-                continue
-            if handoff >= 0 or "SMOKE PASS" in text:
+            if "sessiond: session started" in text:
                 missing = [token for token in require if token not in text]
                 if missing:
                     raise RuntimeError(f"{label}: booted but missing {missing!r} in the serial log")
@@ -82,7 +74,7 @@ def run_boot(
             if process.poll() is not None:
                 raise RuntimeError(f"{label}: QEMU exited with {process.returncode}")
             time.sleep(0.2)
-        raise RuntimeError(f"{label}: boot token not observed within {timeout:g}s")
+        raise RuntimeError(f"{label}: graphical session did not start within {timeout:g}s\n{text[-4000:]}")
     finally:
         terminate(process)
 

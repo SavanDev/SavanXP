@@ -233,17 +233,19 @@ The kernel does not depend on the module either way: `build_boot_info()` leaves
 `disk_image_address` null when no such module came, and `kernel_main.cpp` checks
 it before calling `ramdisk::attach_image`.
 
-`tools/iso_boot_test.py` requires `livecd(rw)` and `root mounted` in the serial
-log of both the BIOS and the UEFI ISO boots. Reaching `init` is not enough: an ISO
-whose volume module went missing still hands off to `init` and then has no
-storage at all.
+`tools/iso_boot_test.py` requires `livecd(rw)`, `root mounted` and
+`sessiond: session started` in the serial log of both BIOS and UEFI ISO boots.
+Reaching `init` is not enough: missing storage or lost execute permissions on
+SUN services can still prevent the graphical session from starting.
 
 The ISO carries its own tree in `build/iso-root`, and that tree gets its own
 **compacted** copy of the volume. A grown development image has a sparse tail
 that is reserved room and nothing else; copied into an ISO it becomes real zero
 bytes, which is how a 64 MiB volume turns a 98 MB ISO into a 541 MB one.
 `tools/iso_volume.py` stages the volume at exactly what the superblock declares
-and leaves the development image untouched.
+and leaves the development image untouched. Rebuilding the ISO volume preserves
+recorded owners and permissions, including execute permission on `/system/*.sxe`
+and any custom permissions on externally installed applications and data.
 
 ### The v1 image does not mount
 

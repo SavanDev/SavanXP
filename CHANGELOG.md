@@ -104,6 +104,9 @@ Cut-off notes:
 - **Display Properties keeps a bottom margin below the wallpaper list at square and portrait resolutions.**
   The monitor preview scales to fit the available space while preserving its proportions.
 
+- **The ISO starts SUN services from `/system` with their execute permissions intact.**
+  ISO volume rebuilding preserves recorded owners and permissions, and incremental builds refresh `sxfs-cli` when its ownership rules change.
+
 - **Visual desktop smokes accept `--virtio` and use the tablet's absolute pointer.**
   The relative-only taskbar driver keeps its existing restriction.
 
