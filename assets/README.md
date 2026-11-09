@@ -60,9 +60,9 @@ without rewriting the mapping.
 
 ## Cursors
 
-The compositor loads the eight unmodified Wine `.cur` files from
+The compositor loads the ten unmodified Wine `.cur` files from
 `assets/desktop/cursors/wine/`, installed in `/system/cursors/`. Their native
-hotspots and the largest supported image up to 64x64 are used directly, with
+hotspots and native 32x32 images are preferred directly, with
 no build-time image conversion. Restart the compositor to load replaced files.
 
 The source directory includes Wine's license and authors. Version, hashes and

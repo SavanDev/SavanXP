@@ -8,7 +8,8 @@ static struct cursor_image images[SAVANXP_CURSOR_SHAPE_COUNT];
 static int background;
 static const char *names[SAVANXP_CURSOR_SHAPE_COUNT] = {
     "ocr_normal.cur", "ocr_wait.cur", "ocr_ibeam.cur", "ocr_sizeall.cur",
-    "ocr_sizewe.cur", "ocr_sizens.cur", "ocr_no.cur", "ocr_hand.cur"
+    "ocr_sizewe.cur", "ocr_sizens.cur", "ocr_no.cur", "ocr_hand.cur",
+    "ocr_sizenwse.cur", "ocr_sizenesw.cur"
 };
 
 /* Only used when even the on-disk arrow cannot be read. */

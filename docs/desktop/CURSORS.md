@@ -12,8 +12,12 @@ The build copies unmodified Wine files from `assets/desktop/cursors/wine/` to
 to read replacements. The fixed order is arrow (`ocr_normal.cur`), wait
 (`ocr_wait.cur`), text (`ocr_ibeam.cur`), move (`ocr_sizeall.cur`), horizontal
 resize (`ocr_sizewe.cur`), vertical resize (`ocr_sizens.cur`), unavailable
-(`ocr_no.cur`) and link (`ocr_hand.cur`). Provenance, hashes and licensing are
-in [THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md).
+(`ocr_no.cur`), link (`ocr_hand.cur`), northwest/southeast resize
+(`ocr_sizenwse.cur`) and northeast/southwest resize (`ocr_sizenesw.cur`).
+The two diagonal shapes are appended to the public enum, preserving existing
+shape values, and windowd selects them at the corresponding frame corners.
+An active resize keeps the grabbed edge/corner shape even outside the frame.
+Provenance, hashes and licensing are in [THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md).
 
 The pure decoder accepts CUR directories with 1 to 256 images, in files no
 larger than 1 MiB. Supported images use a 40-byte BITMAPINFOHEADER, positive
@@ -22,8 +26,9 @@ mask. Width and height must agree with the directory; hotspots must lie inside
 the image. Palette indices, strides and byte ranges are checked before use.
 PNG payloads, compressed DIBs, other header variants and animated ANI files
 are unsupported. Invalid candidates are skipped. The largest supported image
-up to 64x64 wins, followed by bit depth and directory order. Images are neither
-scaled nor cropped. A file with no supported candidate fails as a whole.
+fitting 32x32 is preferred. If none fits, the smallest supported larger image
+up to 64x64 is used. Bit depth and directory order break size ties. Images are
+neither scaled nor cropped. A file with no supported candidate fails as a whole.
 
 For a 32-bit image with any nonzero alpha, straight alpha supplies opacity.
 Otherwise the decoder retains the classic `(background AND mask) XOR color`
@@ -50,15 +55,15 @@ arrow keeps the desktop usable. The previous PNG pack is not retained.
 
 ## Verification
 
-`./build.sh test` includes `cursor-cur-test`: all eight upstream files, smaller
+`./build.sh test` includes `cursor-cur-test`: all ten upstream files, smaller
 image selection, palette depths, native hotspots, alpha, all classic mask
 operations and malformed input. `./build.sh smoke native-test` checks file
 reads, EOF, duplicate offsets, query-only access and permission refusals.
 
 `./build.sh smoke cursor-smoke` starts compositord's `--cursor-selftest` mode.
-It renders all eight cursors through the scene's software painter on white and
+It renders all ten cursors through the scene's software painter on white and
 black tiles and checks hardware uploads when a plane is available. The host
-compares the scanout screenshot pixel by pixel with the original Wine DIBs,
+compares the scanout screenshot pixel by pixel with the original Wine 32px DIBs,
 and checks classic inversion, painter clipping and drawing at the screen edge.
 The hardware run also simulates a refused upload to verify software fallback.
 Run it also with `--virtio` to exercise the hardware upload path. Screenshots

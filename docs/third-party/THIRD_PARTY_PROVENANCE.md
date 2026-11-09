@@ -320,7 +320,7 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 - Origin: Wine `dlls/user32/resources`, tag `wine-11.20`, commit
   `7298a818b79446bae153b8d5aa27235ab3703bf9` (same revision as MS Sans Serif).
   [Upstream resources](https://github.com/wine-mirror/wine/tree/7298a818b79446bae153b8d5aa27235ab3703bf9/dlls/user32/resources).
-- Versioned: eight unmodified `.cur` files in `assets/desktop/cursors/wine/`.
+- Versioned: ten unmodified `.cur` files in `assets/desktop/cursors/wine/`.
 - Attribution: the Wine project authors; the upstream `AUTHORS` and `LICENSE`
   are included alongside the assets. LGPL-2.1-or-later, with the full license
   in `LICENSE-LGPL-2.1.txt`. These are Wine's resources, not extracted Microsoft assets.
@@ -340,3 +340,5 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 | `ocr_sizens.cur` | `efb612deeca798636136022290c49472161e1f6e27154a3fcab856be7c1b13b8` |
 | `ocr_sizewe.cur` | `7bb70a841815c3021d08e4ef8df7571f1a42899ebd94723b352275ea89dbfc64` |
 | `ocr_wait.cur` | `1fc71be18e52af614784bbd5ccde9acb63cd8b22525280ea29446bf4db445406` |
+| `ocr_sizenwse.cur` | `327ad9cdad82f1598978b68ab8cc4215623ba2f5d2ec37378b59d63e85756231` |
+| `ocr_sizenesw.cur` | `f989a4cdc722c31f16f63d736c5b005f4e3cc7b91c842471f6f30a0fccc74eeb` |

@@ -1001,7 +1001,18 @@ static int any_overlay_client_starting(const struct windowd_session *session)
     return 0;
 }
 
-/* Priority: dragging a window > an app starting up > a clickable desktop/menu
+static int resize_cursor_shape(uint32_t edges) {
+    int horizontal = (edges & (WINDOWD_RESIZE_EDGE_LEFT | WINDOWD_RESIZE_EDGE_RIGHT)) != 0;
+    int vertical = (edges & (WINDOWD_RESIZE_EDGE_TOP | WINDOWD_RESIZE_EDGE_BOTTOM)) != 0;
+    if (horizontal && vertical) {
+        return ((edges & WINDOWD_RESIZE_EDGE_LEFT) && (edges & WINDOWD_RESIZE_EDGE_TOP)) ||
+               ((edges & WINDOWD_RESIZE_EDGE_RIGHT) && (edges & WINDOWD_RESIZE_EDGE_BOTTOM))
+            ? SAVANXP_CURSOR_RESIZE_NWSE : SAVANXP_CURSOR_RESIZE_NESW;
+    }
+    return horizontal ? SAVANXP_CURSOR_RESIZE_H : vertical ? SAVANXP_CURSOR_RESIZE_V : SAVANXP_CURSOR_ARROW;
+}
+
+/* Priority: an active move/resize > an app starting up > a clickable desktop/menu
  * item > a hint reported by the hovered app's own widgets > the plain arrow. */
 static int resolve_cursor_shape(
     const struct windowd_session *session,
@@ -1010,25 +1021,22 @@ static int resolve_cursor_shape(
     int cursor_y,
     int drag_active)
 {
-    (void)cursor_x;
-    (void)cursor_y;
     if (drag_active)
     {
         return SAVANXP_CURSOR_MOVE;
     }
+    /* Keep the grabbed edge's cursor while resizing, even off the frame. */
+    if (session->resize_slot >= 0) return resize_cursor_shape(session->resize_edges);
     if (any_overlay_client_starting(session))
     {
         return SAVANXP_CURSOR_WAIT;
     }
-    /* Sobre un borde redimensionable, el cursor lo anticipa. No hay glifos
-     * diagonales, asi que las esquinas caen en el eje horizontal. */
+    /* Preview the edge or diagonal that dragging this frame point resizes. */
     {
         uint32_t edges = windowd_resize_edge_from_point(current_hover_client, cursor_x, cursor_y);
         if (edges != WINDOWD_RESIZE_EDGE_NONE)
         {
-            return ((edges & (WINDOWD_RESIZE_EDGE_LEFT | WINDOWD_RESIZE_EDGE_RIGHT)) != 0)
-                ? SAVANXP_CURSOR_RESIZE_H
-                : SAVANXP_CURSOR_RESIZE_V;
+            return resize_cursor_shape(edges);
         }
     }
     /* Un dueno deshabilitado no reacciona al puntero, asi que tampoco muestra
@@ -6284,6 +6292,38 @@ static int windowd_selftest(void)
                 failed = 1;
             }
         }
+    }
+
+    /* Exercise the actual frame hit tests and cursor resolution at all
+     * corners and side midpoints, plus a grabbed corner off the frame. */
+    if (!failed) {
+        struct windowd_client *client = &session.overlay_clients[kProgmanSlot];
+        struct sx_rect frame = windowd_client_frame_rect(client);
+        const int points[][3] = {
+            {frame.x, frame.y, SAVANXP_CURSOR_RESIZE_NWSE},
+            {sx_rect_right(frame)-1, frame.y, SAVANXP_CURSOR_RESIZE_NESW},
+            {frame.x, sx_rect_bottom(frame)-1, SAVANXP_CURSOR_RESIZE_NESW},
+            {sx_rect_right(frame)-1, sx_rect_bottom(frame)-1, SAVANXP_CURSOR_RESIZE_NWSE},
+            {frame.x, frame.y+frame.height/2, SAVANXP_CURSOR_RESIZE_H},
+            {sx_rect_right(frame)-1, frame.y+frame.height/2, SAVANXP_CURSOR_RESIZE_H},
+            {frame.x+frame.width/2, frame.y, SAVANXP_CURSOR_RESIZE_V},
+            {frame.x+frame.width/2, sx_rect_bottom(frame)-1, SAVANXP_CURSOR_RESIZE_V}
+        };
+        unsigned point;
+        for (point = 0; point < sizeof(points)/sizeof(points[0]); ++point) {
+            if (resolve_cursor_shape(&session, client, points[point][0], points[point][1], 0) != points[point][2]) {
+                puts_fd(2, "DESKTOP SMOKE FAIL resize cursor: incorrect frame direction\n");
+                failed = 1;
+            }
+        }
+        session.resize_slot = kProgmanSlot;
+        session.resize_edges = WINDOWD_RESIZE_EDGE_LEFT | WINDOWD_RESIZE_EDGE_TOP;
+        if (resolve_cursor_shape(&session, 0, 0, 0, 0) != SAVANXP_CURSOR_RESIZE_NWSE) {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize cursor: grabbed corner lost off frame\n");
+            failed = 1;
+        }
+        session.resize_slot = -1;
+        session.resize_edges = WINDOWD_RESIZE_EDGE_NONE;
     }
 
     /*

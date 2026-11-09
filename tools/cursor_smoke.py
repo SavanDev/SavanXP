@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 from qmp_client import QmpClient
 
-NAMES = ('normal', 'wait', 'ibeam', 'sizeall', 'sizewe', 'sizens', 'no', 'hand')
+NAMES = ('normal', 'wait', 'ibeam', 'sizeall', 'sizewe', 'sizens', 'no', 'hand', 'sizenwse', 'sizenesw')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -23,14 +23,17 @@ def main():
     root = Path(__file__).resolve().parent.parent
     for column, name in enumerate(NAMES):
         data = (root / f'assets/desktop/cursors/wine/ocr_{name}.cur').read_bytes()
-        # Wine's first entry is its 64px 32-bit DIB; derive expected colours
-        # directly from its bottom-up bitmap, independent of our C decoder.
-        offset = struct.unpack_from('<I', data, 18)[0]
-        assert struct.unpack_from('<IiiHH', data, offset) == (40, 64, 128, 1, 32)
+        # Independently locate Wine's native 32px 32-bit DIB.
+        entries = [struct.unpack_from('<BBBBHHII', data, 6+i*16)
+                   for i in range(struct.unpack_from('<H', data, 4)[0])]
+        offset = next(e[-1] for e in entries if e[0:2] == (32, 32)
+                      and struct.unpack_from('<H', data, e[-1]+14)[0] == 32)
+        assert struct.unpack_from('<IiiHH', data, offset) == (40, 32, 64, 1, 32)
         for row, background in enumerate((255, 0)):
             for y in range(64):
                 for x in range(64):
-                    b, g, r, a = struct.unpack_from('4B', data, offset + 40 + ((63-y)*64+x)*4)
+                    b, g, r, a = (struct.unpack_from('4B', data, offset + 40 + ((31-y)*32+x)*4)
+                                  if x < 32 and y < 32 else (0, 0, 0, 0))
                     expected = tuple((c*a + background*(255-a)+127)//255 for c in (r,g,b))
                     actual = image.getpixel((32+column*96+x, 32+row*96+y))
                     assert actual == expected, (name, row, x, y, actual, expected)
@@ -47,7 +50,7 @@ def main():
         for x in range(900, 964):
             assert image.getpixel((x, y)) == (128, 128, 128), ('hardware cursor residue', x, y)
     image.save(args.out_dir / 'wine-cursors.png')
-    print('cursor-smoke: all eight Wine cursors match on light and dark backgrounds; inversion and clipping checked')
+    print('cursor-smoke: all ten 32px Wine cursors match on light and dark backgrounds; inversion and clipping checked')
 
 if __name__ == '__main__':
     main()

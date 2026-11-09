@@ -76,20 +76,26 @@ static void formats(void) {
     assert(cursor_cur_decode(fixture, CUR_MAX_FILE_SIZE + 1, &image));
 }
 static void wine(const char *root) {
-    static const char *names[] = {"normal","wait","ibeam","sizeall","sizewe","sizens","no","hand"};
-    static const int spots[][2] = {{0,0},{30,30},{7,18},{19,19},{20,12},{12,18},{16,16},{15,0}};
-    for (unsigned i = 0; i < 8; ++i) {
+    static const char *names[] = {"normal","wait","ibeam","sizeall","sizewe","sizens","no","hand","sizenwse","sizenesw"};
+    static const int spots[][2] = {{0,0},{15,15},{3,9},{10,10},{10,6},{6,9},{8,8},{7,0},{7,7},{7,7}};
+    for (unsigned i = 0; i < 10; ++i) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/assets/desktop/cursors/wine/ocr_%s.cur", root, names[i]);
         FILE *f = fopen(path, "rb"); assert(f);
         unsigned char bytes[40000]; size_t n = fread(bytes, 1, sizeof(bytes), f); fclose(f);
         assert(!cursor_cur_decode(bytes, n, &image));
-        assert(image.width == 64 && image.height == 64);
+        assert(image.width == 32 && image.height == 32);
         assert(image.hotspot_x == spots[i][0] && image.hotspot_y == spots[i][1]);
         assert(!image.classic); /* 32-bit candidate wins over monochrome */
         unsigned visible = 0;
-        for (unsigned k = 0; k < 4096; ++k) visible += (image.pixels[k] >> 24) != 0;
+        for (unsigned k = 0; k < 1024; ++k) visible += (image.pixels[k] >> 24) != 0;
         assert(visible > 20);
+        /* If 32px is absent choose 48px, retaining support for larger CURs. */
+        unsigned char larger[40000]; memcpy(larger, bytes, n);
+        for (unsigned k = 0; k < larger[4]; ++k) if (larger[6+k*16] == 32) larger[9+k*16] = 1;
+        assert(!cursor_cur_decode(larger, n, &image) && image.width == 48);
+        for (unsigned k = 0; k < larger[4]; ++k) if (larger[6+k*16] == 48) larger[9+k*16] = 1;
+        assert(!cursor_cur_decode(larger, n, &image) && image.width == 64);
         /* Restrict directory to 32px entries: native smaller size, no scaling. */
         for (unsigned k = 0; k < bytes[4]; ++k) if (bytes[6 + k * 16] != 32) bytes[9 + k * 16] = 1;
         assert(!cursor_cur_decode(bytes, n, &image) && image.width == 32);

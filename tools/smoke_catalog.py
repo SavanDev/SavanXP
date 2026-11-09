@@ -267,7 +267,7 @@ SCENARIOS: dict[str, Scenario] = {
         "cursor-fallback-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",
         "Missing cursor pack keeps the compositor usable with an emergency arrow",
         remove_paths=tuple(f"/system/cursors/ocr_{name}.cur" for name in
-                           ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand")),
+                           ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand", "sizenwse", "sizenesw")),
     ),
     "cursor-smoke": _qemu_scenario(
         "cursor-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",

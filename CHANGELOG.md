@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Window corners show diagonal resize cursors in both directions.**
+  The selected direction remains visible throughout a resize drag.
+
 - **The compositor reads classic `.cur` files directly, including native hotspots and AND/XOR masks.**
   `smoke cursor-smoke` checks the loaded cursor images on light and dark backgrounds.
 
@@ -62,6 +65,9 @@ Cut-off notes:
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Changed
+
+- **Desktop cursors use Wine's native 32x32 images instead of the larger 64x64 variants.**
+  CUR files retain their original pixels and hotspots without resampling.
 
 - **The desktop uses Wine's eight original cursor files instead of the previous PNG pack.**
   Replace files in `/system/cursors/` and restart the compositor to change them without recompiling.

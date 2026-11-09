@@ -51,6 +51,17 @@ static int candidate_read(const unsigned char *bytes, size_t size, size_t direct
     return 1;
 }
 
+/* Prefer the desktop's native 32px size without resampling file contents. */
+static int candidate_preferred(const struct candidate *c, const struct candidate *best) {
+    unsigned area = c->width * c->height, best_area = best->width * best->height;
+    int fits = c->width <= CUR_PREFERRED_DIMENSION && c->height <= CUR_PREFERRED_DIMENSION;
+    int best_fits = best->width <= CUR_PREFERRED_DIMENSION && best->height <= CUR_PREFERRED_DIMENSION;
+    if (!best->data) return 1;
+    if (fits != best_fits) return fits;
+    if (area != best_area) return fits ? area > best_area : area < best_area;
+    return c->bits > best->bits;
+}
+
 const char *cursor_cur_decode(const void *bytes, size_t size, struct cursor_image *out) {
     const unsigned char *p = bytes;
     struct candidate best = {0}, c;
@@ -63,8 +74,7 @@ const char *cursor_cur_decode(const void *bytes, size_t size, struct cursor_imag
         6u + count * 16u > size) return "invalid CUR directory";
     for (i = 0; i < count; ++i) {
         if (!candidate_read(p, size, 6u + count * 16u, p + 6 + i * 16, &c)) continue;
-        if (!best.data || c.width * c.height > best.width * best.height ||
-            (c.width * c.height == best.width * best.height && c.bits > best.bits)) best = c;
+        if (candidate_preferred(&c, &best)) best = c;
     }
     if (!best.data) return "no supported CUR image";
     bitmap = best.data + 40 + best.colors * 4;
