@@ -1,6 +1,6 @@
 # Nightwood — the first game written against SUN
 
-`/bin/nightwood.sxe`, in the Games group. A night in a fenced forest with a
+`/system/nightwood.sxe`, in the Games group. A night in a fenced forest with a
 flashlight: eight photographs are pinned to landmarks among the trees, and
 something tall with antlers — the Warden — follows the player more closely
 with every photograph taken. Looking at it for long is what ends the night.

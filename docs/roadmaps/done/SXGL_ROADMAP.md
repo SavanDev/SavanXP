@@ -4,7 +4,7 @@
 > `system/gfx/sxgl.c`, a documented GL 1.1 fixed-function subset with its own
 > reference in [SXGL.md](../../desktop/SXGL.md). It has two consumers, one per subsystem:
 > `/bin/gears` (POSIX), which defined batches 1 and 2, and the forest game
-> `/bin/nightwood.sxe` (SUN), which defined batches 3 and 4. What follows is the
+> `/system/nightwood.sxe` (SUN), which defined batches 3 and 4. What follows is the
 > design the implementation was measured against, kept because the reasons
 > still hold; where the implementation answered a question this document left
 > open, the answer is written in.

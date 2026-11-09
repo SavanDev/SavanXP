@@ -118,7 +118,7 @@ static int join(char *out, size_t capacity, const char *name)
 /* The first session finds no folder: it gets one with three shortcuts. */
 static void create_default_shortcuts(void)
 {
-    static const char *const k_targets[] = {"/bin/console.sxe", "/bin/filesapp", "/bin/notepad"};
+    static const char *const k_targets[] = {"/system/console.sxe", "/bin/filesapp", "/bin/notepad"};
     size_t index;
 
     for (index = 0; index < sizeof(k_targets) / sizeof(k_targets[0]); ++index)
@@ -880,7 +880,7 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 #define VIEW_CMD_RENAME 12
 
 /* The Command Prompt, as Ctrl+Alt+T opens it (docs/desktop/CONSOLE.md). */
-static const char *k_console_path = "/bin/console.sxe";
+static const char *k_console_path = "/system/console.sxe";
 /* Display Properties (docs/desktop/DISPLAY_PROPERTIES.md). */
 static const char *k_display_path = "/bin/display";
 
@@ -1148,7 +1148,7 @@ static void run_command(int id)
         create_new(0);
         break;
     case VIEW_CMD_MOUSE:
-        (void)desktop_launch("/bin/mouse.sxe", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+        (void)desktop_launch("/system/mouse.sxe", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
         break;
     case VIEW_CMD_PROPERTIES:
         (void)desktop_launch(k_display_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);

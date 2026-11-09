@@ -12,8 +12,8 @@
  *     it is in /bin  AND  it is NOT named in /system/programs.txt
  *
  * Not a blocklist and not a guess from the name: it is exactly the set of what
- * was installed separately. The build stages every program it builds into
- * /bin and writes their names into /system/programs.txt, so the subtraction is
+ * was installed separately. The build stages POSIX programs into /bin and SUN
+ * programs into /system, recording both in /system/programs.txt. Subtraction is
  * what tells "came with the OS" from "someone installed it". The list comes
  * from the build, not from the programs: a binary cannot declare itself
  * removable.

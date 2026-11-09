@@ -34,6 +34,14 @@ the menu metadata is optional: what makes a program SUN is the stamp and the
 name, not a `category`. The rule and how it is enforced are in
 [SXE_FORMAT.md](SXE_FORMAT.md#sun-programs-are-named-sxe).
 
+Preinstalled SUN programs, including platform services, are installed directly
+under `/system` (for example `/system/console.sxe`). Preinstalled POSIX programs
+stay in `/bin`. The shell searches `/bin`, then `/system`, then the rescue
+commands; the desktop scans both program directories. The normal build retires
+only the old `/bin` names of the SUN programs it installs, preserving external
+applications and their assets. `tools/build-user.sh --native` still installs
+external SUN applications under `/bin` by default.
+
 The Windows column is an analogy of *role*: SUN sits where Win32 sits in
 Windows, as the API the system itself is written against. It says nothing about
 what SUN's calls look like.

@@ -163,7 +163,7 @@ static int shell_resolve_command_path(const char* command, char* path, size_t ca
     if (shell_try_command_path("/bin/", command, path, capacity)) {
         return 1;
     }
-    return shell_try_command_path("/bin/", command, path, capacity);
+    return shell_try_command_path("/system/", command, path, capacity);
 }
 
 static void shell_initialize_stage(struct shell_command_stage* stage) {

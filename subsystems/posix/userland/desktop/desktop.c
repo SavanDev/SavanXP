@@ -31,9 +31,9 @@ _Static_assert(
  */
 
 /* Task Manager, which Ctrl+Shift+Esc opens. */
-static const char *k_task_manager_path = "/bin/taskmgr.sxe";
+static const char *k_task_manager_path = "/system/taskmgr.sxe";
 /* The Command Prompt, which Ctrl+Alt+T opens (docs/desktop/CONSOLE.md). */
-static const char *k_console_path = "/bin/console.sxe";
+static const char *k_console_path = "/system/console.sxe";
 
 /* How often the persisted wallpaper choice is re-read. Display Properties
  * changes it by writing the config; it is a rare, manual change, not worth an

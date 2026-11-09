@@ -326,7 +326,7 @@ get scanned — not in the name.
 
 ### SUN programs are named `.sxe`
 
-> Status: **applied 2026-10-24.** `/bin/console.sxe`, `/bin/windowd.sxe`,
+> Status: **applied 2026-10-24.** `/system/console.sxe`, `/system/windowd.sxe`,
 > `/bin/nativetest.sxe`.
 
 A SUN program ([SUN.md](SUN.md)) runs only as an SXE image, and nothing else
@@ -489,12 +489,12 @@ still wants to look distinct. Three shapes of the value:
 | value | resolves to |
 |---|---|
 | `/bin/aboutapp` (starts with `/`) | that path as-is — the main form |
-| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/console.sxe`, ...) |
+| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/system/console.sxe`, ...) |
 | `desktop`, or any name without an alias | nothing — `icon_borrow_path` stays empty and the item keeps the generic `icon_id` |
 
 **The aliases are a bridge, not the new mechanism.** Before this change,
 `icon=shell` picked a baked pixel array because there was no other way for
-Shell to have an icon. Today the terminal, `/bin/console.sxe`, carries its own `.sxicon`
+Shell to have an icon. Today the terminal, `/system/console.sxe`, carries its own `.sxicon`
 (stamped from `icon=app-terminal` in `system/console/console.sxres`), so the alias resolves to
 the *same* path the item would get anyway with no `icon=` at all — it is purely
 backward compatibility for a `.ini` written before this redesign, not something
@@ -522,7 +522,7 @@ the binary already brings its own").
 >
 > The legacy aliases (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`)
 > were not touched and **did not depend on this table to begin with** — they
-> resolve to *paths* (`/bin/console.sxe`, ...), never to a `desktop_icons.h` id.
+> resolve to *paths* (`/system/console.sxe`, ...), never to a `desktop_icons.h` id.
 > That is why emptying the enum breaks nothing for them: an old `.ini` with
 > `icon=shell` still shows Shell's real icon, now read from its `.sxicon`
 > through the same path as if the `.ini` had said nothing.

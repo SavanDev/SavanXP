@@ -608,7 +608,7 @@ static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct sav
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) &&
         popup_in_rect(sx_rect_make(4,116,VOLUMEPOPUP_WIDTH-8,20),pointer->x,pointer->y))
     {
-        if (desktop_launch("/bin/sound.sxe",SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) >= 0)
+        if (desktop_launch("/system/sound.sxe",SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) >= 0)
             return DESKTOP_ACTION_CLOSE;
     }
     (void)gfx;

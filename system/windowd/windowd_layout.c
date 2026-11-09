@@ -284,13 +284,13 @@ struct sx_rect windowd_client_minimize_button_rect(const struct windowd_client *
     }
 
     titlebar_rect = windowd_client_titlebar_rect(client);
-    if (titlebar_rect.width < (WINDOWD_WINDOW_BUTTON_WIDTH * 3) + (WINDOWD_WINDOW_BUTTON_GAP * 2) + 8 ||
+    if (titlebar_rect.width < (WINDOWD_WINDOW_BUTTON_WIDTH * 3) + (WINDOWD_WINDOW_BUTTON_GAP + WINDOWD_WINDOW_CLOSE_BUTTON_GAP) + 8 ||
         titlebar_rect.height < WINDOWD_WINDOW_BUTTON_HEIGHT)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    button_x = titlebar_rect.x + titlebar_rect.width - (WINDOWD_WINDOW_BUTTON_WIDTH * 3) - (WINDOWD_WINDOW_BUTTON_GAP * 2) - 2;
+    button_x = titlebar_rect.x + titlebar_rect.width - (WINDOWD_WINDOW_BUTTON_WIDTH * 3) - (WINDOWD_WINDOW_BUTTON_GAP + WINDOWD_WINDOW_CLOSE_BUTTON_GAP) - 2;
     button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_HEIGHT) / 2);
     return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_WIDTH, WINDOWD_WINDOW_BUTTON_HEIGHT);
 }

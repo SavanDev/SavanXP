@@ -5,7 +5,7 @@ this", which are two different questions with two different windows behind them.
 
 The split is deliberate:
 
-- **Task Manager** (`/bin/taskmgr.sxe`, a SUN program) shows *state*: what is running, what it
+- **Task Manager** (`/system/taskmgr.sxe`, a SUN program) shows *state*: what is running, what it
   costs, how full the machine is. Everything it shows changes while you look at
   it.
 - **System Properties** (`/bin/aboutapp`) shows *identity*: which system this
@@ -272,7 +272,7 @@ treats them differently:
   the services) are not the user's to end
   ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#what-requires-elevation)).
   The Task Manager then asks the elevation broker (`sxn_elevate`) to run
-  `/bin/taskmgr.sxe --end <pid>`, and that elevated half ends it. The window
+  `/system/taskmgr.sxe --end <pid>`, and that elevated half ends it. The window
   itself never gains the rights, which is the same split Add or Remove
   Programs uses for `appwiz --uninstall`. A *No* at the prompt is the user's
   decision and shows nothing.

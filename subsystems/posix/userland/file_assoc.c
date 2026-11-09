@@ -388,6 +388,7 @@ int file_assoc_scan_programs(file_assoc_path_exists_fn exists)
         exists = default_path_exists;
     }
     added += scan_directory(FILE_ASSOC_SCAN_DIR, exists, meta_buffer, sizeof(meta_buffer));
+    added += scan_directory("/system", exists, meta_buffer, sizeof(meta_buffer));
     return added;
 }
 
@@ -482,7 +483,7 @@ static void selftest_policy(void)
         ".txt=/bin/notepad\n"
         "  .md  =  /bin/notepad  \n"
         "cfg=/bin/notepad\n"          /* sin punto: se acepta igual */
-        ".BAT=/bin/console.sxe\n"     /* upper case: normalised */
+        ".BAT=/system/console.sxe\n"     /* upper case: normalised */
         "sin_igual\n"                 /* linea invalida: se ignora */
         ".rel=relativo/programa\n"    /* path relativo: se descarta */
         ".vacio=\n";                  /* sin programa: se descarta */
@@ -495,7 +496,7 @@ static void selftest_policy(void)
         strcmp(file_assoc_program_for_file("/a.md"), "/bin/notepad") == 0, "politica: espacios recortados");
     expect(file_assoc_program_for_file("/a.cfg") != 0, "policy: extension without a dot");
     expect(file_assoc_program_for_file("/a.bat") != 0 &&
-        strcmp(file_assoc_program_for_file("/a.bat"), "/bin/console.sxe") == 0, "policy: upper case is normalised");
+        strcmp(file_assoc_program_for_file("/a.bat"), "/system/console.sxe") == 0, "policy: upper case is normalised");
     expect(file_assoc_program_for_file("/a.rel") == 0, "politica: descarta path relativo");
     expect(file_assoc_program_for_file("/a.vacio") == 0, "politica: descarta programa vacio");
     expect(file_assoc_program_for_file("/a.desconocida") == 0, "policy: undeclared extension");
@@ -510,7 +511,7 @@ static void selftest_policy(void)
 
 static void selftest_precedence(void)
 {
-    static const char kText[] = ".txt=/bin/console.sxe\n";
+    static const char kText[] = ".txt=/system/console.sxe\n";
     const struct file_assoc_entry *entry = 0;
 
     /*
@@ -520,7 +521,7 @@ static void selftest_precedence(void)
     expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 1, "precedencia: fixture");
     (void)file_assoc_scan_programs(0);
     expect(file_assoc_program_for_file("/a.txt") != 0 &&
-        strcmp(file_assoc_program_for_file("/a.txt"), "/bin/console.sxe") == 0,
+        strcmp(file_assoc_program_for_file("/a.txt"), "/system/console.sxe") == 0,
         "precedencia: la politica le gana al binario");
 
     entry = file_assoc_at(0);

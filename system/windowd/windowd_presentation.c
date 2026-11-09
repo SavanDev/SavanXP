@@ -192,8 +192,8 @@ int windowd_presentation_selftest(void)
     expect(presentation.window_flags == 0u, "presentation: default is an ordinary window");
     expect(windowd_presentation_icon(&presentation, &storage) == desktop_icon_small(DESKTOP_ICON_DESKTOP),
         "presentation: default icon is the generic one");
-    windowd_presentation_default(&presentation, "/bin/console.sxe");
-    expect(strcmp(windowd_presentation_label(&presentation, "/bin/console.sxe"), "console") == 0,
+    windowd_presentation_default(&presentation, "/system/console.sxe");
+    expect(strcmp(windowd_presentation_label(&presentation, "/system/console.sxe"), "console") == 0,
         "presentation: a SUN program's default title drops .sxe");
     windowd_presentation_default(&presentation, 0);
     expect(strcmp(windowd_presentation_label(&presentation, 0), "App") == 0, "presentation: no path gives App");

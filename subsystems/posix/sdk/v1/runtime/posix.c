@@ -292,7 +292,7 @@ static struct sx_FILE g_stderr_file = {
 static struct sx_DIR g_dir_pool[SX_DIR_POOL_CAPACITY] = {};
 static struct sx_socket_state g_socket_states[SX_SOCKET_STATE_CAPACITY] = {};
 static char g_path_env[] = "/bin:/rescue/bin";
-static char g_path_env_entry[] = "PATH=/bin:/rescue/bin";
+static char g_path_env_entry[] = "PATH=/bin:/system:/rescue/bin";
 static char g_term_env_entry[] = "TERM=savanxp";
 static char* g_environ_storage[] = { g_path_env_entry, g_term_env_entry, 0 };
 static mode_t g_umask_value = 022;
@@ -3966,6 +3966,12 @@ int sx_execvp(const char* file, char* const argv[]) {
         return sx_try_exec_path(file, argv);
     }
     if (sx_try_exec_search("/bin", file, argv) == 0) {
+        return 0;
+    }
+    if (errno != SAVANXP_ENOENT) {
+        return -1;
+    }
+    if (sx_try_exec_search("/system", file, argv) == 0) {
         return 0;
     }
     if (errno != SAVANXP_ENOENT) {

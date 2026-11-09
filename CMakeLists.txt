@@ -1160,10 +1160,15 @@ endforeach()
 # system from what someone installed (appwiz_catalog.h). One file name per line.
 set(SAVANXP_PROGRAM_COPY_COMMANDS)
 foreach(target IN LISTS SAVANXP_USER_TARGETS)
+    if(target IN_LIST SAVANXP_NATIVE_TARGETS)
+        set(program_directory system)
+    else()
+        set(program_directory bin)
+    endif()
     list(APPEND SAVANXP_PROGRAM_COPY_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE:${target}>"
-                "${SAVANXP_DISKFS_ROOT}/bin/$<TARGET_FILE_NAME:${target}>")
+                "${SAVANXP_DISKFS_ROOT}/${program_directory}/$<TARGET_FILE_NAME:${target}>")
     string(APPEND SAVANXP_SYSTEM_PROGRAMS_CONTENT "$<TARGET_FILE_NAME:${target}>\n")
 endforeach()
 set(SAVANXP_SYSTEM_PROGRAMS "${CMAKE_BINARY_DIR}/system-programs.txt")

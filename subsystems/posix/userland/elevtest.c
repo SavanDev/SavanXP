@@ -242,7 +242,7 @@ static void end_elevated(void)
     check(g_victim > 0, "the system's process to end is running");
     check(savanxp_kill((int)g_victim, SAVANXP_SIGKILL) == -SAVANXP_EPERM,
         "the user cannot end the system's process");
-    pid = elevate("/bin/taskmgr.sxe", taskmgr_argv, 3, &status);
+    pid = elevate("/system/taskmgr.sxe", taskmgr_argv, 3, &status);
     check(pid > 0, "the end request is accepted");
     check(pid > 0 && status == 0, "taskmgr --end reports the process ended");
     check(process_ended(g_victim), "the system's process has ended");
@@ -256,7 +256,7 @@ static void rescan_elevated(void)
     int status = -1;
     long pid;
 
-    pid = elevate("/bin/diskmgmt.sxe", diskmgmt_argv, 2, &status);
+    pid = elevate("/system/diskmgmt.sxe", diskmgmt_argv, 2, &status);
     check(pid > 0, "the rescan request is accepted");
     check(pid > 0 && status == 0, "diskmgmt --rescan reports success");
 }
@@ -318,8 +318,8 @@ static void check_input_owned(void)
 
 int main(int argc, char **argv)
 {
-    const char *elevationd_argv[] = {"/bin/elevationd.sxe", 0};
-    const char *sessiond_argv[] = {"/bin/sessiond.sxe", 0};
+    const char *elevationd_argv[] = {"/system/elevationd.sxe", 0};
+    const char *sessiond_argv[] = {"/system/sessiond.sxe", 0};
     const char *true_argv[] = {"true", 0};
     const char *sleep_argv[] = {"sleep", "120", 0};
     long elevationd = 0;
@@ -332,8 +332,8 @@ int main(int argc, char **argv)
         return run_elevated();
     }
 
-    elevationd = spawn("/bin/elevationd.sxe", elevationd_argv, 1);
-    sessiond = spawn("/bin/sessiond.sxe", sessiond_argv, 1);
+    elevationd = spawn("/system/elevationd.sxe", elevationd_argv, 1);
+    sessiond = spawn("/system/sessiond.sxe", sessiond_argv, 1);
     check(elevationd > 0 && sessiond > 0, "starting elevationd and sessiond");
     check(wait_port(SAVANXP_ELEVATION_PORT_NAME) == 0, "the broker opened its port");
     check(wait_port(SAVANXP_CONSENT_PORT_NAME) == 0, "windowd opened the consent port");

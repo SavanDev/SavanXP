@@ -1,6 +1,6 @@
 # Sound control panel
 
-`/bin/sound.sxe` is a SUN application drawn with SxGUI. Open **Sound settings...**
+`/system/sound.sxe` is a SUN application drawn with SxGUI. Open **Sound settings...**
 in the speaker popup, or start `sound.sxe` from the Command Prompt or the
 System program group. The popup keeps its compact size and shows up to three
 application rows (including its overflow row); the panel lists every stream

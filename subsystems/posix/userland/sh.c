@@ -96,6 +96,9 @@ static int sh_resolve_command_path(const char* command, char* path, size_t capac
     if (sh_try_command_path("/bin/", command, path, capacity)) {
         return 1;
     }
+    if (sh_try_command_path("/system/", command, path, capacity)) {
+        return 1;
+    }
     // Booted without the disk, the commands are the rescue system's.
     return sh_try_command_path("/rescue/bin/", command, path, capacity);
 }

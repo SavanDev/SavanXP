@@ -297,13 +297,11 @@ def assert_grown_image_stays_sparse_on_ordinary_sync(cli: Path, sync: Path, root
 
 
 def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> None:
-    """Installing a program retires its other name under bin/.
+    """Relocate shipped SUN programs and retain unrelated persistent files.
 
-    A SUN program is bin/<name>.sxe and a POSIX one is bin/<name>, and they are
-    the same program. An image from before the rename keeps bin/console next to
-    the new bin/console.sxe unless the sync removes it: the shell would run the
-    stale copy and the launcher would list it twice. The reverse direction (a
-    program that becomes POSIX again) and data outside bin/ are covered too.
+    Installing system/<name>.sxe retires both former bin/ names and grants
+    execute permission. POSIX programs still retire their former .sxe names;
+    external SUN applications, data and custom cursor packs survive the sync.
     """
     seed = root / "rename-seed"
     source = root / "rename-source"
@@ -319,9 +317,9 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
     for relative in retired_cursors + persistent_cursors:
         (seed / relative).write_bytes(b"persistent cursor test\n")
     (source / "system/cursors/themes.list").write_text("classic|SavanXP Classic|MIT\n")
-    for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe"):
+    for relative in ("bin/console", "bin/console.sxe", "bin/tool.sxe", "bin/keep", "bin/external.sxe", "data/notes.sxe"):
         (seed / relative).write_bytes(b"old " + relative.encode() + b"\n")
-    for relative in ("bin/console.sxe", "bin/tool", "data/notes"):
+    for relative in ("system/console.sxe", "bin/tool", "data/notes"):
         (source / relative).write_bytes(b"new " + relative.encode() + b"\n")
 
     image = root / "rename.img"
@@ -331,7 +329,7 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
         "mkdir\tusers\nmkdir\tusers/user\nmkdir\tusers/user/Settings\n"
         + "".join(
             f"file\t{relative}\t{seed / relative}\n"
-            for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe") + retired_cursors + persistent_cursors
+            for relative in ("bin/console", "bin/console.sxe", "bin/tool.sxe", "bin/keep", "bin/external.sxe", "data/notes.sxe") + retired_cursors + persistent_cursors
         ),
         encoding="utf-8",
     )
@@ -344,14 +342,17 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
     )
 
     extracted = root / "rename-extracted"
-    run([str(cli), "extract", str(image), str(extracted)], root)
-    for relative in ("bin/console", "bin/tool.sxe"):
+    ownership = root / "rename-ownership.manifest"
+    run([str(cli), "extract", str(image), str(extracted), str(ownership)], root)
+    if "owner\tsystem/console.sxe\t0\t0\t100755\n" not in ownership.read_text():
+        raise RuntimeError("the relocated SUN program is not executable")
+    for relative in ("bin/console", "bin/console.sxe", "bin/tool.sxe"):
         if (extracted / relative).exists():
             raise RuntimeError(f"the sync kept the replaced program {relative}")
-    for relative in ("bin/console.sxe", "bin/tool", "data/notes"):
+    for relative in ("system/console.sxe", "bin/tool", "data/notes"):
         if digest(source / relative) != digest(extracted / relative):
             raise RuntimeError(f"the installed file differs: {relative}")
-    for relative in ("bin/keep", "data/notes.sxe"):
+    for relative in ("bin/keep", "bin/external.sxe", "data/notes.sxe"):
         if digest(seed / relative) != digest(extracted / relative):
             raise RuntimeError(f"the sync touched an unrelated file: {relative}")
 

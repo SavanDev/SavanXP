@@ -72,7 +72,7 @@ argument and working directory. A shortcut to a shortcut is not followed, as
 on Windows.
 
 Programs get their name from their `.sxmeta` (`SXE_TAG_NAME`) when a
-shortcut is made for them: `/bin/console.sxe` becomes `Command Prompt.sxlnk`.
+shortcut is made for them: `/system/console.sxe` becomes `Command Prompt.sxlnk`.
 
 ## Phase 3: the icon grid
 

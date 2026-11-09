@@ -4,7 +4,7 @@
  * session-smoke: the session manager end to end
  * (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond).
  *
- * Starts /bin/sessiond.sxe and watches its children through the process table:
+ * Starts /system/sessiond.sxe and watches its children through the process table:
  * compositord, windowd and the desktop come up, and Program Manager does not
  * (it is an ordinary application, started from the Start menu); the desktop
  * runs as the user and windowd and compositord as the system; the desktop
@@ -116,8 +116,8 @@ static int stays_up(long pid)
 
 int main(void)
 {
-    const char *argv[] = {"/bin/sessiond.sxe", 0};
-    long sessiond = spawn("/bin/sessiond.sxe", argv, 1);
+    const char *argv[] = {"/system/sessiond.sxe", 0};
+    long sessiond = spawn("/system/sessiond.sxe", argv, 1);
     long compositord = 0;
     long windowd = 0;
     long desktop = 0;

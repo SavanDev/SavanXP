@@ -149,7 +149,7 @@ build the image:
 | --- | --- | --- |
 | `/users/<name>` and below | the user | `0700` dirs, `0600` files |
 | `/tmp` | system | `1777` |
-| `/system` and below | system | `0755` dirs, `0644` files |
+| `/system` and below | system | `0755` dirs and direct `*.sxe` programs, `0644` data files |
 | everything else on the disk (`bin`, `lib`, `games`, icons, wallpaper, the root itself) | system | `0755` dirs, `0644` files, `0755` for anything under `bin`/`lib` |
 
 `/system` is the machine's: `programs.txt` today, and later the registry of

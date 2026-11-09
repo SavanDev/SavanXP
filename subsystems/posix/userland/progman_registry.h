@@ -47,7 +47,7 @@
  * resources -- still first-class executables -- simply skip that step.
  *
  * AND THE FILE IS NO LONGER THE ONLY SOURCE OF ITEMS.
- * progman_registry_scan_programs() walks /bin and adds every executable that
+ * progman_registry_scan_programs() walks /bin and /system, adding each executable that
  * declares SXE_TAG_CATEGORY, which is how a program asks to appear in the
  * menu. The .ini stopped being required for something to show: it is the
  * ARRANGEMENT (which groups, in what order, what to rename) on top of a

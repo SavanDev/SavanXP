@@ -73,6 +73,11 @@ Cut-off notes:
 
 ### Changed
 
+- **Title bars leave a two-pixel gap between Maximize and Close, matching Windows 95–2000.**
+
+- **Preinstalled SUN programs live in `/system`; POSIX programs remain in `/bin`.**
+  The desktop and shell find both, and upgrades remove the old copies of shipped SUN programs.
+
 - **SavanXP Classic restores the original small cursors as the default, with both resize diagonals.**
   Original pixels and hotspots are preserved in CUR; alternative packs prefer native images up to 32x32.
 

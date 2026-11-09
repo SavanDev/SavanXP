@@ -123,17 +123,17 @@ static const char* automation_label_for_spec(const char* spec) {
 static int run_automation_spec(const char* spec) {
     const char* smoke_argv[] = {"/bin/smoke", 0};
     const char* soak_argv[] = {"/bin/gputest", "--soak", 0, 0};
-    const char* windowd_argv[] = {"/bin/windowd.sxe", "--selftest", 0};
-    const char* windowd_hw_native_argv[] = {"/bin/windowd.sxe", "--hw-native-test", 0};
-    const char* cursor_fallback_argv[] = {"/bin/compositord.sxe", "--cursor-fallback-selftest", 0};
-    const char* cursor_smoke_argv[] = {"/bin/compositord.sxe", "--cursor-selftest", 0};
-    const char* cursor_repro_argv[] = {"/bin/windowd.sxe", "--cursor-repro", 0};
+    const char* windowd_argv[] = {"/system/windowd.sxe", "--selftest", 0};
+    const char* windowd_hw_native_argv[] = {"/system/windowd.sxe", "--hw-native-test", 0};
+    const char* cursor_fallback_argv[] = {"/system/compositord.sxe", "--cursor-fallback-selftest", 0};
+    const char* cursor_smoke_argv[] = {"/system/compositord.sxe", "--cursor-selftest", 0};
+    const char* cursor_repro_argv[] = {"/system/windowd.sxe", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
     const char* sxetest_argv[] = {"/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
-    const char* taskmgr_selftest_argv[] = {"/bin/taskmgr.sxe", "--selftest", 0};
-    const char* diskmgmt_selftest_argv[] = {"/bin/diskmgmt.sxe", "--selftest", 0};
+    const char* taskmgr_selftest_argv[] = {"/system/taskmgr.sxe", "--selftest", 0};
+    const char* diskmgmt_selftest_argv[] = {"/system/diskmgmt.sxe", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
@@ -162,8 +162,8 @@ static int run_automation_spec(const char* spec) {
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
     const char* nativedevices_argv[] = {"/bin/nativetest.sxe", "audio-devices", 0};
     const char* nativepreferences_argv[] = {"/bin/nativetest.sxe", "audio-preferences", 0};
-    const char* nightwood_argv[] = {"/bin/nightwood.sxe", "--selftest", 0};
-    const char* sxgltest_argv[] = {"/bin/sxgltest.sxe", 0};
+    const char* nightwood_argv[] = {"/system/nightwood.sxe", "--selftest", 0};
+    const char* sxgltest_argv[] = {"/system/sxgltest.sxe", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
     const char* elevtest_argv[] = {"/bin/elevtest", 0};
@@ -185,11 +185,11 @@ static int run_automation_spec(const char* spec) {
 
     if (spec != 0 && strcmp(spec, "smoke") != 0 && spec[0] != '\0') {
         if (strcmp(spec, "windowd-selftest") == 0 || strcmp(spec, "windowd") == 0) {
-            path = "/bin/windowd.sxe";
+            path = "/system/windowd.sxe";
             argv = windowd_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-hw-native") == 0) {
-            path = "/bin/windowd.sxe";
+            path = "/system/windowd.sxe";
             argv = windowd_hw_native_argv;
             argc = 2;
         } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
@@ -209,11 +209,11 @@ static int run_automation_spec(const char* spec) {
             argv = filesapp_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "taskmgr-selftest") == 0 || strcmp(spec, "taskmgr") == 0) {
-            path = "/bin/taskmgr.sxe";
+            path = "/system/taskmgr.sxe";
             argv = taskmgr_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "diskmgmt-selftest") == 0 || strcmp(spec, "diskmgmt") == 0) {
-            path = "/bin/diskmgmt.sxe";
+            path = "/system/diskmgmt.sxe";
             argv = diskmgmt_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {
@@ -318,11 +318,11 @@ static int run_automation_spec(const char* spec) {
             argv = nativetest_argv;
             argc = 1;
         } else if (strcmp(spec, "nightwood-selftest") == 0) {
-            path = "/bin/nightwood.sxe";
+            path = "/system/nightwood.sxe";
             argv = nightwood_argv;
             argc = 2;
         } else if (strcmp(spec, "sxgltest") == 0) {
-            path = "/bin/sxgltest.sxe";
+            path = "/system/sxgltest.sxe";
             argv = sxgltest_argv;
             argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
@@ -330,15 +330,15 @@ static int run_automation_spec(const char* spec) {
             argv = ccleste_argv;
             argc = 2;
         } else if (strcmp(spec, "cursor-fallback-selftest") == 0) {
-            path = "/bin/compositord.sxe";
+            path = "/system/compositord.sxe";
             argv = cursor_fallback_argv;
             argc = 2;
         } else if (strcmp(spec, "cursor-selftest") == 0) {
-            path = "/bin/compositord.sxe";
+            path = "/system/compositord.sxe";
             argv = cursor_smoke_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
-            path = "/bin/windowd.sxe";
+            path = "/system/windowd.sxe";
             argv = cursor_repro_argv;
             argc = 2;
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
@@ -692,7 +692,7 @@ int main(int argc, char** argv) {
     /* The graphical session belongs to sessiond (docs/desktop/
      * DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond); init keeps audiod
      * and the fallback to the text shell. */
-    const char* sessiond_argv[] = {"/bin/sessiond.sxe", 0};
+    const char* sessiond_argv[] = {"/system/sessiond.sxe", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
     unsigned long last_sessiond_start_ms = 0;
     int rapid_failures = 0;
@@ -737,8 +737,8 @@ int main(int argc, char** argv) {
      * USERS_AND_PERMISSIONS.md#elevation): its port name is taken before any
      * program could take it. It is restarted if it dies, unless it dies at
      * once, which is a broken binary or a name already taken. */
-    const char* elevationd_argv[] = {"/bin/elevationd.sxe", 0};
-    long elevationd_pid = spawn("/bin/elevationd.sxe", elevationd_argv, 1);
+    const char* elevationd_argv[] = {"/system/elevationd.sxe", 0};
+    long elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
     unsigned long elevationd_started_ms = uptime_ms();
     if (elevationd_pid < 0) {
         printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));
@@ -751,7 +751,7 @@ int main(int argc, char** argv) {
         unsigned long runtime_ms = 0;
 
         if (sessiond_pid <= 0) {
-            sessiond_pid = spawn("/bin/sessiond.sxe", sessiond_argv, 1);
+            sessiond_pid = spawn("/system/sessiond.sxe", sessiond_argv, 1);
             if (sessiond_pid < 0) {
                 printf("init: failed to spawn sessiond (%s)\n", result_error_string(sessiond_pid));
                 sessiond_pid = 0;
@@ -797,7 +797,7 @@ int main(int argc, char** argv) {
                 printf("init: elevationd exited at once with %d; elevation is unavailable\n", status);
             } else {
                 printf("init: elevationd exited with %d, restarting\n", status);
-                elevationd_pid = spawn("/bin/elevationd.sxe", elevationd_argv, 1);
+                elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
                 elevationd_started_ms = uptime_ms();
                 if (elevationd_pid < 0) {
                     printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));

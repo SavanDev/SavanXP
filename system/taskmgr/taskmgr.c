@@ -50,7 +50,7 @@
  * which is what fits at one pixel per sample in a comfortable window. */
 #define TASKMGR_HISTORY 120
 
-#define TASKMGR_PATH "/bin/taskmgr.sxe"
+#define TASKMGR_PATH "/system/taskmgr.sxe"
 /* What POSIX's kill reports for SIGKILL, so a parent's waitpid reads the same
  * whichever subsystem ended its child. */
 #define TASKMGR_END_STATUS (128 + 9)

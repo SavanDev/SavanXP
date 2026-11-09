@@ -1813,7 +1813,7 @@ static void show_properties(void)
 
 /* ---- commands --------------------------------------------------------------------- */
 
-#define DM_PATH "/bin/diskmgmt.sxe"
+#define DM_PATH "/system/diskmgmt.sxe"
 
 static int acts_as_system(void)
 {

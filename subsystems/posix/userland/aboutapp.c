@@ -7,7 +7,7 @@
  * second tab with the hardware inventory.
  *
  * What this window does NOT show is live state: the memory in use now, the
- * processes, the CPU usage. That is Task Manager's (/bin/taskmgr.sxe), and
+ * processes, the CPU usage. That is Task Manager's (/system/taskmgr.sxe), and
  * having it in both places meant having two versions of the same number.
  * Here goes what does not change while the machine is on.
  */

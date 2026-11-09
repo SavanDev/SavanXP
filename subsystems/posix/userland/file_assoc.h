@@ -36,8 +36,8 @@
 #define FILE_ASSOC_POLICY_MAX_BYTES 4096
 
 /*
- * The directory scanned for programs that declare extensions. The first one to
- * declare an extension keeps it: without a declared tie-break rule, the stable
+ * The first directory scanned for programs that declare extensions; /system
+ * follows. The first declaration wins: without a declared tie-break rule, the stable
  * order of the scan is more predictable than any heuristic.
  */
 #define FILE_ASSOC_SCAN_DIR "/bin"

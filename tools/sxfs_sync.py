@@ -51,6 +51,9 @@ def manifest_for(source: Path) -> tuple[str, set[str]]:
         elif path.is_file():
             lines.append(f"file\t{relative}\t{path}")
             produced.add(relative)
+            if path.parent == source / "system" and path.name.endswith(".sxe"):
+                # Build-owned SUN images must also be executable on upgrades.
+                lines.append(f"owner\t{relative}\t0\t0\t100755")
         else:
             raise SystemExit(f"sxfs: unsupported filesystem entry: {path}")
     return "\n".join(lines) + "\n", produced
@@ -71,7 +74,9 @@ def retired_counterparts(produced: set[str]) -> list[str]:
     The shell would still run that copy, and the launcher would list it a second
     time.
 
-    Only files directly under bin/ are programs. Elsewhere a name is just data.
+    Preinstalled SUN programs live directly under system/. Installing one
+    retires its former bin/<name>.sxe and bin/<name> copies. Other files under
+    system/ remain data; externally installed programs under bin/ are retained.
     """
     retired: set[str] = set()
     # The selectable catalog replaces the former flat, build-owned Wine pack.
@@ -82,6 +87,10 @@ def retired_counterparts(produced: set[str]) -> list[str]:
         retired.update(f"system/cursors/{name}" for name in ("AUTHORS", "LICENSE", "LICENSE-LGPL-2.1.txt"))
     for relative in produced:
         directory, _, name = relative.rpartition("/")
+        if directory == "system" and name.endswith(SXE_SUFFIX):
+            # Retire only the old names of the SUN programs being installed.
+            retired.update((f"bin/{name}", f"bin/{name[:-len(SXE_SUFFIX)]}"))
+            continue
         if directory != "bin" or not name:
             continue
         if name.endswith(SXE_SUFFIX):

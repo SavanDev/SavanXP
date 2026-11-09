@@ -320,7 +320,7 @@ int main(void) {
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/smoke/sh.txt", "shell-redirect") ||
         !run_to_file("/bin/sh", which_argv, 3, "/smoke/which.txt") ||
-        !validate_file_contains("/smoke/which.txt", "/bin/console.sxe") ||
+        !validate_file_contains("/smoke/which.txt", "/system/console.sxe") ||
         !run_and_expect("/bin/echo", echo_argv, 2, 0) ||
         !run_and_expect("/bin/cat", cat_argv, 2, 0) ||
         !run_and_expect("/bin/ls", ls_argv, 2, 0) ||

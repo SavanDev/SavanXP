@@ -525,7 +525,7 @@ and picks the mode.
   goes away, and `sessiond` restarts the whole session, as it already does when
   `windowd` dies. `windowd`'s respawn-and-repaint path is deleted.
 - **Test modes start their own.** `windowd --selftest`, `--cursor-repro` and
-  `--hw-native-test` run without a session: they spawn `/bin/compositord.sxe` with a
+  `--hw-native-test` run without a session: they spawn `/system/compositord.sxe` with a
   private port name (`SAVANXP_COMPOSITOR_PORT_PREFIX` plus the pid) as
   `argv[1]`, which `compositord` creates instead of `compositord`. In
   production `windowd` never starts one: no port is a failure.

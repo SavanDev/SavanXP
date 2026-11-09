@@ -52,11 +52,29 @@ static inline int sxfs_ownership_path_under(const char* path, const char* top) {
     return *path == '\0' || *path == '/';
 }
 
+/* Only direct SUN executables in /system receive execute permissions. */
+static inline int sxfs_ownership_system_program(const char* path) {
+    if (!sxfs_ownership_path_under(path, "system") || path[6] != '/') {
+        return 0;
+    }
+    const char* name = path + 7;
+    unsigned length = 0;
+    while (name[length] != '\0') {
+        if (name[length] == '/') {
+            return 0;
+        }
+        ++length;
+    }
+    return length > 4 && name[length - 4] == '.' && name[length - 3] == 's' &&
+        name[length - 2] == 'x' && name[length - 1] == 'e';
+}
+
 /* The default uid, gid and mode for an inode of `type` at `path`:
  *
  *   users/<name> and below   the user, 0700 directories, 0600 files
  *   tmp                      system, 1777
  *   bin, lib and below       system, 0755
+ *   system/<name>.sxe        system, 0755
  *   everything else          system, 0755 directories, 0644 files
  *
  * The profile is the second component and below: "users" itself is the
@@ -74,7 +92,8 @@ static inline void sxfs_default_ownership(const char* path, uint16_t type,
         permissions = directory ? 0700u : 0600u;
     } else if (path[0] == 't' && path[1] == 'm' && path[2] == 'p' && path[3] == '\0' && directory) {
         permissions = SXFS_MODE_STICKY | 0777u;
-    } else if (sxfs_ownership_path_under(path, "bin") || sxfs_ownership_path_under(path, "lib")) {
+    } else if (sxfs_ownership_path_under(path, "bin") || sxfs_ownership_path_under(path, "lib") ||
+               sxfs_ownership_system_program(path)) {
         permissions = 0755u;
     }
     *mode = (uint16_t)(sxfs_mode_type_bits(type) | permissions);
