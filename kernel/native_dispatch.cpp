@@ -62,6 +62,27 @@ int native_read(Thread& self, uint64_t handle, uint64_t user_buffer, size_t coun
     if (file->kind == HandleKind::device) {
         return device::read(file->device, user_buffer, count);
     }
+    if (file->kind == HandleKind::vnode) {
+        if (file->node == nullptr || file->node->type != vfs::NodeType::file) {
+            return sx::negative_error(SX_EBADF);
+        }
+        uint8_t scratch[detail::kPipeChunkSize];
+        size_t total = 0;
+        /* Keep the result representable by this dispatcher's signed result. */
+        if (count > 0x7fffffffu) count = 0x7fffffffu;
+        while (total < count) {
+            const size_t step = count - total < sizeof(scratch) ? count - total : sizeof(scratch);
+            const size_t consumed = vfs::read(*file->node, file->offset, scratch, step);
+            if (consumed == 0) break;
+            if (!write_to_process_memory(proc, user_buffer + total, scratch, consumed)) {
+                return sx::negative_error(SX_EINVAL);
+            }
+            file->offset += consumed;
+            total += consumed;
+            if (consumed < step) break;
+        }
+        return static_cast<int>(total);
+    }
     if (file->kind != HandleKind::pipe) {
         return sx::negative_error(SX_EBADF);
     }
@@ -121,6 +142,31 @@ int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t cou
     self.blocked_write_progress = step == kBlockedResult ? 0 : static_cast<uint64_t>(step);
     self.state = State::blocked_write;
     return kBlockedResult;
+}
+
+/* Open existing regular files only; query access never grants read access. */
+int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
+    char path[vfs::kMaxPathLength] = {};
+    if ((access & ~SXN_FILE_READ) != 0 ||
+        !sx::copy_user_string(path, sizeof(path), user_path) || path[0] != '/') {
+        return sx::negative_error(SX_EINVAL);
+    }
+    vfs::Vnode* node = vfs::open(proc.credentials, path,
+        (access & SXN_FILE_READ) ? SAVANXP_OPEN_READ : 0u, 0);
+    if (node == nullptr) return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    if (node->type == vfs::NodeType::directory) return sx::negative_error(SX_EISDIR);
+    if (node->type != vfs::NodeType::file || node->backend == vfs::Backend::device)
+        return sx::negative_error(SX_EINVAL);
+    object::IoObject* file = detail::allocate_io_object();
+    if (file == nullptr) return sx::negative_error(SX_ENOMEM);
+    file->kind = HandleKind::vnode;
+    file->open_flags = (access & SXN_FILE_READ) ? open_read : 0u;
+    file->node = node;
+    file->header.destroy = detail::destroy_io_object;
+    const int handle = detail::allocate_fd(proc, &file->header,
+        detail::object_access_for_open_flags(file->open_flags), object::handle_none);
+    if (handle < 0) detail::discard_io_object(file);
+    return handle;
 }
 
 /* Devices live under /dev; a native process names them without the
@@ -1052,6 +1098,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(result);
             return context;
         }
+        case SXN_SYS_OPEN_FILE:
+            context->rax = static_cast<uint64_t>(native_open_file(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;

@@ -97,8 +97,8 @@ exact samples, gain/mute, independent ownership, duplex and two subscribers.
 ### Resources compiled in
 
 A POSIX program's window reads its name and icon from its own `.sxe` at start
-(the `.sxmeta` and `.sxicon` sections). A SUN program cannot: SUN has no files.
-So the build compiles them in. `tools/gen_sxe_resources.py --native-program`
+(the `.sxmeta` and `.sxicon` sections). SUN presentation resources remain compiled in so startup does not need to
+reopen and parse its own executable. `tools/gen_sxe_resources.py --native-program`
 writes `<program>.sunres.h` next to the `.sxe` resources for every program CMake
 registers as `NATIVE`, defining `sun_resources`, a `struct
 sxnwm_presentation_source`; the program includes it and publishes it with
@@ -185,8 +185,8 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
-| `CreateFile` and the file API | — | missing: SUN has no files; no desired access will be a query open, a query-only handle ([rule](../kernel/USERS_AND_PERMISSIONS.md#what-the-check-covers)) |
-| Registry / profile settings | — | missing (needs files) |
+| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close` | Existing regular files, sequential reads; access 0 is query only. Writing and enumeration are missing. |
+| Registry / profile settings | — | missing (needs writable files) |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
@@ -238,3 +238,15 @@ none of them a kernel slice: everything they need was already open to SUN.
 Files, a registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
 and a native `fork`. Each one waits for a consumer, by rule 1.
+
+## Reading existing files
+
+`sxn_open_file(absolute_path, SXN_FILE_READ)` opens a regular file through the
+VFS with the process credentials. Access 0 opens for query only and never
+permits reading. Directories return `-EISDIR`; devices, relative paths and
+unknown access flags return `-EINVAL`. Missing files return `-ENOENT` and
+permission failures `-EACCES`. `sxn_read` advances the offset, may return a
+partial read and returns 0 at EOF. Duplicates share the offset. Close with
+`sxn_close`; process teardown also releases the handle. There is no creation,
+writing, seek, size query or directory enumeration in this slice. The first
+consumer is compositord's on-disk cursor catalog; `nativetest` covers the contract.

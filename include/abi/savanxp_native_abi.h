@@ -80,7 +80,8 @@ enum sxn_syscall_number {
     /* rdi = handle. A second handle to the same object with the same granted
      * access. Returns the new handle or -errno. */
     SXN_SYS_DUPLICATE = 0x100d,
-    /* rdi = handle, rsi = buffer, rdx = byte count. Pipes and devices only.
+    /* rdi = handle, rsi = buffer, rdx = byte count. Regular files, pipes and devices.
+     * File reads advance the shared offset and return 0 at EOF.
      * A pipe read blocks until data arrives (unless the handle is
      * non-blocking) and returns 0 at end of stream. Returns bytes or -errno. */
     SXN_SYS_READ = 0x100e,
@@ -306,7 +307,15 @@ enum sxn_syscall_number {
      * system only. -EINVAL for "/" or nothing mounted there, -EBUSY while a
      * file of it is open or a program of it is mapped. DeleteVolumeMountPoint. */
     SXN_SYS_STORAGE_UNMOUNT = 0x1032,
+    /* rdi = absolute path, rsi = SXN_FILE_READ or 0 (query only).
+     * Opens an existing regular file; directories return -EISDIR, devices
+     * and invalid flags/paths -EINVAL. Checks VFS credentials. READ/CLOSE
+     * use the returned handle; DUPLICATE shares its current offset. */
+    SXN_SYS_OPEN_FILE = 0x1033,
 };
+
+/* Desired access for OPEN_FILE. Zero grants query access only. */
+#define SXN_FILE_READ 1u
 
 /* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */
 #define SXN_STORAGE_MAX_TRANSFER 128u

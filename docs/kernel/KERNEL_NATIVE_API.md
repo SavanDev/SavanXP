@@ -758,3 +758,14 @@ python3 tests/host/smoke_runner_layout_test.py --root .
 ./build.sh smoke native-hw-smoke
 ./build.sh smoke progman-smoke
 ```
+
+### Existing regular file handles
+
+`SXN_SYS_OPEN_FILE` (`0x1033`) takes an absolute path in `rdi` and desired
+access in `rsi`: `SXN_FILE_READ` or 0 for query only. It uses VFS credential
+checks and returns an I/O handle for an existing regular file. Directories
+return `-EISDIR`, devices and invalid flags/paths `-EINVAL`. `SXN_SYS_READ`
+advances its offset, returns partial reads and 0 at EOF; duplicate handles
+share that offset. Query handles reject reads. Closing and process teardown
+release the object, and open references prevent unmount through the existing
+VFS rules. This call is native-only; no POSIX syscall translation is involved.

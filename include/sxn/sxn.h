@@ -112,6 +112,11 @@ static inline long sxn_write(long handle, const void* buffer, unsigned long coun
     return sxn_trap(SXN_SYS_WRITE, (unsigned long)handle, (unsigned long)buffer, count);
 }
 
+/* Existing regular files only. No desired access means query, never read. */
+static inline long sxn_open_file(const char* path, unsigned access) {
+    return sxn_trap(SXN_SYS_OPEN_FILE, (unsigned long)path, access, 0);
+}
+
 static inline long sxn_open_device(const char* name, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
 }

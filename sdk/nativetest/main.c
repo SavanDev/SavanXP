@@ -1881,6 +1881,58 @@ static void audio_source(const char* name) {
     sxnaudio_close(&stream); (void)sxn_close(pause); sxn_exit(0);
 }
 
+static int file_bytes_equal(const char *a, const char *b, unsigned count) {
+    unsigned i;
+    for (i = 0; i < count; ++i) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+static void test_files(void) {
+    char bytes[64];
+    long handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
+    long duplicate;
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_read(handle, bytes, 4) == 4 && file_bytes_equal(bytes, "SUN ", 4));
+        duplicate = sxn_duplicate(handle);
+        check(duplicate >= 0);
+        if (duplicate >= 0) {
+            check(sxn_read(duplicate, bytes, 5) == 5 && file_bytes_equal(bytes, "file ", 5));
+            check(sxn_close(duplicate) == 0);
+        }
+        check(sxn_read(handle, (void*)1, 1) == -SAVANXP_EINVAL);
+        check(sxn_read(handle, bytes, sizeof(bytes)) == 13 && file_bytes_equal(bytes, "read fixture\n", 13));
+        check(sxn_read(handle, bytes, 1) == 0);
+        check(sxn_write(handle, bytes, 1) == -SAVANXP_EBADF);
+        check(sxn_close(handle) == 0);
+        check(sxn_read(handle, bytes, 1) == -SAVANXP_EBADF);
+    }
+    handle = sxn_open_file("/system/native-file-test.txt", 0);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_read(handle, bytes, 1) == -SAVANXP_EBADF);
+        check(sxn_close(handle) == 0);
+    }
+    check(sxn_open_file("/system", SXN_FILE_READ) == -SAVANXP_EISDIR);
+    check(sxn_open_file("/dev/serial", 0) == -SAVANXP_EINVAL);
+    check(sxn_open_file("/system/no-such-native-fixture", SXN_FILE_READ) == -SAVANXP_ENOENT);
+    check(sxn_open_file("relative", SXN_FILE_READ) == -SAVANXP_EINVAL);
+    check(sxn_open_file((const char*)1, SXN_FILE_READ) == -SAVANXP_EINVAL);
+    check(sxn_open_file("/system/native-file-test.txt", 2) == -SAVANXP_EINVAL);
+    {
+        struct sxn_identity user = {1001u, 1001u, 100u, 0u};
+        struct sxn_spawn_request request;
+        char *args[] = {"/bin/nativetest.sxe", "file-user"};
+        int status = -1;
+        long child;
+        sxn_spawn_request_init(&request, args[0], args, 2);
+        child = sxn_spawn_ex_as(&request, &user);
+        check(child > 0);
+        if (child > 0) check(sxn_waitpid(child, &status) == child && status == 0);
+    }
+    check(sxn_log("nativetest: files done") == 0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -1888,6 +1940,16 @@ int main(int argc, char** argv) {
     long section_handle;
     long base;
 
+    if (argc > 1 && streq(argv[1], "file-user")) {
+        char byte;
+        long handle;
+        if (sxn_open_file("/users/native-file-private.txt", SXN_FILE_READ) != -SAVANXP_EACCES) sxn_exit(1);
+        handle = sxn_open_file("/users/native-file-private.txt", 0);
+        if (handle < 0 || sxn_read(handle, &byte, 1) != -SAVANXP_EBADF) sxn_exit(2);
+        (void)sxn_close(handle);
+        if (sxn_open_file("/users/native-file-private/readable.txt", 0) != -SAVANXP_EACCES) sxn_exit(3);
+        sxn_exit(0);
+    }
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
     }
@@ -2567,6 +2629,7 @@ int main(int argc, char** argv) {
         check(sxn_log("nativetest: terminate descendant done") == 0);
     }
 
+    test_files();
     test_threads(&info);
     test_thread_bases();
     test_address_waits();

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs can open and sequentially read existing regular files with `sxn_open_file`.**
+  File handles enforce VFS permissions; query-only opens do not grant read access.
+
 - **Sound remembers device, connector, headphone policy, recording and application settings across restarts.**
   Saved application levels follow trusted user/image/role identities; errors remain visible until saved.
   See [SOUND.md](docs/media/SOUND.md) and [AUDIO_DAEMON.md](docs/media/AUDIO_DAEMON.md).
