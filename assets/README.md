@@ -86,6 +86,7 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 - `app-libgfx-demo.png`
 - `app-keyboard-settings.png`
 - `app-mouse.png`
+- `app-sound.png`
 - `app-notepad.png`
 - `app-mines.png`
 - `app-calc.png`

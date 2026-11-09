@@ -5,5 +5,5 @@ version=system
 vendor=SavanXP
 subsystem=native
 accent=000080
-icon_file=../../assets/desktop/icons/mime/16x16/audio-x-generic.png,../../assets/desktop/icons/mime/32x32/audio-x-generic.png
+icon_file=../../assets/desktop/icons/16x16/app-sound.png,../../assets/desktop/icons/32x32/app-sound.png
 category=System

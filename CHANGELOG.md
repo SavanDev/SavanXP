@@ -75,6 +75,8 @@ Cut-off notes:
 
 ### Changed
 
+- **Sound and Mouse Properties use dedicated classic desktop icons at 16x16 and 32x32.**
+
 - **Task Manager opens with a narrower, 560-pixel content area.**
 
 - **Title bars leave a two-pixel gap between Maximize and Close, matching Windows 95–2000.**
