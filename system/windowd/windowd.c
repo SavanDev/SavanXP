@@ -6828,11 +6828,12 @@ static void handle_pointer_event(
     }
 
     /* A right press activates what it lands on, as a left one does, so the
-     * context menu it opens has the keyboard: the background takes the focus,
-     * an application window comes to the front. */
+     * context menu it opens has the keyboard: the background or panel gives
+     * the desktop the focus, an application window comes to the front. */
     if (right_pressed != 0 && right_was_pressed == 0 && left_pressed == 0 && current_hover_client != 0)
     {
-        if (current_hover_client->role == WINDOWD_ROLE_BACKGROUND)
+        if (current_hover_client->role == WINDOWD_ROLE_BACKGROUND ||
+            current_hover_client->role == WINDOWD_ROLE_PANEL)
         {
             session->active_client_kind = WINDOWD_CLIENT_DESKTOP;
             refresh_active_state(session);

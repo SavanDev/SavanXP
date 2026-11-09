@@ -24,6 +24,13 @@ application.
 
 ## Phase 1: popup menus
 
+**The taskbar's context menu.** Right-click an empty area of the taskbar to
+open `Task Manager...`. The menu appears above the bar, uses the same popup
+renderer and accepts the mouse, arrows, Enter and Escape. A right press on
+the panel gives the desktop the keyboard so these keys work with an
+application open too. Start, window buttons and tray controls retain their
+own interactions.
+
 **The toolkit's popup menu.** `sxgui_popup_menu_size`, `_paint`, `_item_at`,
 `_item_selectable` and `_step` measure, paint and hit-test one
 `struct sxgui_menu` on its own. The menu bar draws its drop-downs with the

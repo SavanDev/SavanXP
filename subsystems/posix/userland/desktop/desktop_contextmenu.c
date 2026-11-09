@@ -1,11 +1,12 @@
 #include "desktop.h"
 
 /*
- * The desktop's context menus: the background's and an icon's
+ * The desktop's context menus: background, icons and the taskbar
  * (docs/desktop/DESKTOP_ICONS.md). A popup of the desktop at the pointer,
  * drawn with the toolkit's popup menu so it looks like any menu bar's
  * drop-down. The popup never has the keyboard; the desktop's main window
- * does once the background is clicked, and passes the menu its keys.
+ * does once the background or panel is right-clicked, and passes the menu
+ * its keys.
  *
  * Which menu it shows and what its items do is the caller's: this module only
  * shows it and reports the id chosen.

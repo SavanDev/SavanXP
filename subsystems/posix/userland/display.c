@@ -41,6 +41,7 @@ static struct sxgui_app g_app;
 #define DISPLAY_BEZEL 10
 #define DISPLAY_STAND_HEIGHT 22
 #define DISPLAY_MONITOR_TOP 12
+#define DISPLAY_CONTROLS_GAP 8
 
 #define DISPLAY_LIST_WIDTH 228
 #define DISPLAY_LIST_HEIGHT 132
@@ -104,8 +105,9 @@ static struct desktop_wallpaper_image g_preview;
 
 static int g_screen_width = 1280;
 static int g_screen_height = 800;
-/* The preview's height, fixed at start-up from the screen's proportions: the
+/* The preview's size, fixed at start-up from the screen's proportions: the
  * controls under it are placed once, so it does not follow a new mode. */
+static int g_preview_width = DISPLAY_PREVIEW_WIDTH;
 static int g_preview_height = 0;
 
 /* ---- the background list -------------------------------------------------
@@ -508,17 +510,24 @@ static struct sx_rect preview_screen_rect(void)
 
     if (height <= 0)
     {
+        /* Reserve the list, its label and the bottom margin before sizing
+         * the monitor. Square and portrait screens must fit the same page. */
+        int max_height = page.height - DISPLAY_MONITOR_TOP - DISPLAY_BEZEL * 2 -
+            DISPLAY_STAND_HEIGHT - DISPLAY_CONTROLS_GAP - DISPLAY_ROW -
+            DISPLAY_LIST_HEIGHT - DISPLAY_PAGE_PAD;
+
         height = (DISPLAY_PREVIEW_WIDTH * g_screen_height) / (g_screen_width > 0 ? g_screen_width : 1);
-        if (height > DISPLAY_PREVIEW_WIDTH)
+        if (height > max_height)
         {
-            height = DISPLAY_PREVIEW_WIDTH;
+            g_preview_width = (DISPLAY_PREVIEW_WIDTH * max_height) / height;
+            height = max_height;
         }
         g_preview_height = height;
     }
     return sx_rect_make(
-        page.x + (page.width - DISPLAY_PREVIEW_WIDTH) / 2,
+        page.x + (page.width - g_preview_width) / 2,
         page.y + DISPLAY_MONITOR_TOP + DISPLAY_BEZEL,
-        DISPLAY_PREVIEW_WIDTH,
+        g_preview_width,
         height);
 }
 
@@ -1228,7 +1237,7 @@ static void build_widgets(void)
     g_widgets[W_TABS].on_action = on_tab_changed;
 
     page = page_rect();
-    top = monitor_bottom() + 8;
+    top = monitor_bottom() + DISPLAY_CONTROLS_GAP;
     x = page.x + DISPLAY_PAGE_PAD;
 
     /* Desktop: the list on the left, its options in a column on the right. */

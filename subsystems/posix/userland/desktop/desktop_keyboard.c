@@ -12,7 +12,7 @@
 #define KBDLAYOUTPOPUP_ROW_COUNT 2
 #define KBDLAYOUTPOPUP_ROW_HEIGHT 20
 
-static const char *k_row_labels[KBDLAYOUTPOPUP_ROW_COUNT] = {"Espanol", "English"};
+static const char *k_row_labels[KBDLAYOUTPOPUP_ROW_COUNT] = {"Español", "English"};
 
 static struct sx_rect popup_row_rect(const struct savanxp_fb_info *info, int row)
 {

@@ -351,6 +351,12 @@ static void register_hotkey(uint32_t key, uint32_t modifiers)
     desktop_shell_request(&request);
 }
 
+void desktop_open_task_manager(void)
+{
+    desktop_close_popups();
+    (void)desktop_launch(k_task_manager_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+}
+
 /* The hotkeys this process registered. The main window also has the focus
  * once the background is clicked, so a key here is a hotkey only with the
  * exact modifiers it was registered with. Returns non-zero if it was one. */
@@ -379,8 +385,7 @@ static int handle_hotkey(const struct savanxp_input_event *event)
     }
     else if (task_manager)
     {
-        desktop_close_popups();
-        (void)desktop_launch(k_task_manager_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+        desktop_open_task_manager();
     }
     else
     {

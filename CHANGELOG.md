@@ -12,6 +12,8 @@ Cut-off notes:
 
 ### Added
 
+- **Right-clicking an empty area of the taskbar opens a menu with `Task Manager...`.**
+
 - **Mouse Properties selects cursor schemes with previews, licensing, Apply/Cancel and saved preferences.**
   Open it from the desktop menu or System group. Includes SavanXP Classic, Retrosmart and Hackneyed.
   See [CURSORS.md](docs/desktop/CURSORS.md).
@@ -73,6 +75,8 @@ Cut-off notes:
 
 ### Changed
 
+- **Task Manager opens with a narrower, 560-pixel content area.**
+
 - **Title bars leave a two-pixel gap between Maximize and Close, matching Windows 95–2000.**
 
 - **Preinstalled SUN programs live in `/system`; POSIX programs remain in `/bin`.**
@@ -94,6 +98,11 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **The keyboard layout selector spells `Español` with ñ.**
+
+- **Display Properties keeps a bottom margin below the wallpaper list at square and portrait resolutions.**
+  The monitor preview scales to fit the available space while preserving its proportions.
 
 - **Visual desktop smokes accept `--virtio` and use the tablet's absolute pointer.**
   The relative-only taskbar driver keeps its existing restriction.

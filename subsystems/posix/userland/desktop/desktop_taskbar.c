@@ -83,6 +83,7 @@ static struct savanxp_wm_window_list *g_list;
  * asi que se saca una foto consistente y se dibuja de ahi. */
 static struct savanxp_wm_window_list g_snapshot;
 static int g_pressed_index = -1;
+static int g_context_pressed = 0;
 static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
 static long g_input_fd = -1;
 
@@ -636,6 +637,24 @@ int desktop_taskbar_refresh_indicators(void)
     return changed;
 }
 
+static const struct sxgui_menu_item k_taskbar_menu_items[] = {
+    {"Task Manager...", 1, 0},
+};
+
+static const struct sxgui_menu k_taskbar_menu = {
+    0,
+    k_taskbar_menu_items,
+    (int)(sizeof(k_taskbar_menu_items) / sizeof(k_taskbar_menu_items[0])),
+};
+
+static void taskbar_menu_command(int id)
+{
+    if (id == 1)
+    {
+        desktop_open_task_manager();
+    }
+}
+
 uint32_t desktop_taskbar_pointer(const struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
@@ -644,6 +663,22 @@ uint32_t desktop_taskbar_pointer(const struct savanxp_gfx_context *gfx, const st
     uint32_t actions = DESKTOP_ACTION_NONE;
 
     g_last_buttons = pointer->buttons;
+    if ((down & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        g_context_pressed = index == -1;
+    }
+    if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        /* The blank taskbar's menu opens on release, above the reserved
+         * strip. Task buttons and tray items keep their own interactions. */
+        if (g_context_pressed && index == -1)
+        {
+            int top = (int)desktop_main_window()->info.height - (int)gfx->info.height;
+
+            desktop_context_menu(&k_taskbar_menu, taskbar_menu_command, pointer->x, top);
+        }
+        g_context_pressed = 0;
+    }
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
     {
         g_pressed_index = index;

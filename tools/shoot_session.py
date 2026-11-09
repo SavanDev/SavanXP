@@ -1655,6 +1655,29 @@ def scenario_taskbar(s):
     expect_taskbar_present(image, "despues de minimizar")
 
 
+    # With an application open, a right click on blank taskbar space must
+    # give the menu the keyboard. Escape dismisses it without launching.
+    s.qmp.move_to(1000, 786)
+    s.qmp.click("right")
+    image = s.shot("taskbar-context-menu")
+    expect_text(image, (950, 730, 1280, 772), "Task Manager...", TEXT, FACE,
+                "the taskbar context menu offers Task Manager")
+    s.qmp.tap("esc", pause=1.0)
+    image = s.shot("taskbar-context-dismissed")
+    if find_text(image, (950, 730, 1280, 772), "Task Manager...", TEXT, FACE)[0] is not None:
+        raise Failure("Escape did not dismiss the taskbar context menu")
+
+    # Open it again and choose the row with the mouse, through to a real
+    # Task Manager window with its Applications tab.
+    s.qmp.click("right")
+    s.qmp.move_to(1040, 758)
+    s.qmp.click()
+    time.sleep(12.0)
+    image = s.shot("taskbar-task-manager")
+    expect_text(image, (0, 0, image.size[0], 730), "Applications", TEXT, FACE,
+                "the taskbar menu launches Task Manager")
+
+
 def wait_menu_open(s, stem="menu-abierto"):
     """Polling hasta ver cara en el contenido del menu (ver scenario_startmenu).
 

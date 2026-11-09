@@ -76,7 +76,7 @@ static const char *const k_tab_labels[] = {"Applications", "Processes", "Perform
  * bit" is what left the last row cut off. */
 #define TASKMGR_GROUP_HEIGHT(rows) \
     ((rows) * TASKMGR_ROW + TASKMGR_ROW / 2 + (SXGUI_GAP * 2) + 4)
-#define TASKMGR_DEFAULT_WIDTH 640
+#define TASKMGR_DEFAULT_WIDTH 560
 #define TASKMGR_DEFAULT_HEIGHT 460
 #define TASKMGR_MIN_WIDTH 420
 #define TASKMGR_MIN_HEIGHT 320

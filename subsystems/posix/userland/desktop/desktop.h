@@ -124,6 +124,7 @@ void desktop_hung_dismissed(uint32_t window_id);
 /* What desktop.c offers the modules. */
 void desktop_toggle_popup(enum desktop_popup popup);
 void desktop_close_popups(void);
+void desktop_open_task_manager(void);
 int desktop_popup_is_open(enum desktop_popup popup);
 /* Closes every other popup and opens this one with its top-left corner at the
  * screen point (x, y), flipped left or up where it would not fit above the
