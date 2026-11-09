@@ -578,7 +578,7 @@ the composed result. It is not on the frame path of any application.
 
 **The cursor** is `compositord`'s entirely: the hardware plane when the GPU has
 one, a software layer above everything otherwise, and the catalog decoded
-from `/system/cursors/*.cur`. `windowd` only says where and which shape.
+from `/system/cursors/<pack>/*.cur`. `windowd` only says where and which shape.
 
 The **display section** is shared read-only with `windowd`, for the selftests
 that sample composed pixels. The mode is still `windowd`'s to ask for (F11);
@@ -801,7 +801,9 @@ client.
 ### Cursor catalog
 
 Both cursor paths share the catalog loaded by compositord from native `.cur`
-files under `/system/cursors/`. SUN file reads supply the original Wine bytes;
-the compositor decodes and caches them once at startup. Software rendering
+files under `/system/cursors/<pack>/`. SavanXP Classic is the default; Mouse
+Properties previews packs and asks the compositor to change them live through
+the native cursor settings port. SUN supplies regular file reads and durable
+small-file saves for the selected pack ID. Software rendering
 preserves classic AND/XOR operations, while compatible images use the GPU's
 cursor plane. See [CURSORS.md](CURSORS.md) for selection and fallback rules.

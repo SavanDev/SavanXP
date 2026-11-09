@@ -265,14 +265,22 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "cursor-fallback-smoke": _qemu_scenario(
         "cursor-fallback-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",
-        "Missing cursor pack keeps the compositor usable with an emergency arrow",
-        remove_paths=tuple(f"/system/cursors/ocr_{name}.cur" for name in
-                           ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand", "sizenwse", "sizenesw")),
+        "Missing classic pack keeps the compositor usable with an emergency arrow",
+        remove_paths=("/users/user/Settings/cursors.cfg",) + tuple(f"/system/cursors/classic/{name}.cur" for name in
+                           ("arrow", "wait", "text", "move", "resize_h", "resize_v", "unavailable", "link", "resize_nwse", "resize_nesw")),
     ),
     "cursor-smoke": _qemu_scenario(
         "cursor-selftest", "CURSOR SMOKE PASS", "CURSOR SMOKE FAIL",
-        "Wine CUR file loading and cursor scanout pixels",
+        "Classic, Retrosmart and Hackneyed CUR loading and scanout pixels",
         ready="CURSOR SMOKE PASS", qmp_callback="tools/cursor_smoke.py",
+        remove_paths=("/users/user/Settings/cursors.cfg",),
+    ),
+    "cursor-settings-smoke": _qemu_scenario(
+        "", "CURSOR SETTINGS SMOKE PASS", "CURSOR SETTINGS SMOKE FAIL",
+        "Mouse Properties schemes, licenses, live changes, cancel and restart persistence",
+        540.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="cursor_settings",
+        remove_paths=("/users/user/Settings/cursors.cfg",),
     ),
     "cursor-repro": _qemu_scenario(
         "windowd-cursor-repro",

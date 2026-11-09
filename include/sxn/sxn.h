@@ -117,6 +117,12 @@ static inline long sxn_open_file(const char* path, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_FILE, (unsigned long)path, access, 0);
 }
 
+/* Save a small complete file and sync its volume. Existing files retain
+ * ownership and permissions; new files are private to the caller. */
+static inline long sxn_write_file(const char* path, const void* bytes, unsigned long count) {
+    return sxn_trap(SXN_SYS_WRITE_FILE, (unsigned long)path, (unsigned long)bytes, count);
+}
+
 static inline long sxn_open_device(const char* name, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
 }

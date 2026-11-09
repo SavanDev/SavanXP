@@ -3,14 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Decodificador PNG (subconjunto 8-bit truecolor, ver img.h).
- *
- * Dos mitades independientes: inflate sigue RFC 1951 al pie (bits LSB,
- * Huffman canonico fijo y dinamico, stored, Adler del wrapper zlib) y la
- * capa PNG entiende firma, IHDR, IDAT concatenados y los cinco unfilters.
- * Solo usa malloc/free/memcpy/memset para poder vivir en libsximg.so.0.4,
- * que resuelve contra el ejecutable.
- */
+/* System PNG decoder: 8-bit RGB/RGBA with noninterlaced rows. Inflate
+ * implements RFC 1951 (stored, fixed and dynamic Huffman blocks); PNG handles
+ * concatenated IDAT chunks and all five filters. Only memory allocation and
+ * string functions are needed, so the same decoder also works in SUN. */
 
 /* --- inflate -------------------------------------------------------------- */
 
@@ -660,7 +656,7 @@ static int paeth_predictor(int a, int b, int c)
     return c;
 }
 
-int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *out)
+static int png_decode(const unsigned char *data, size_t size, struct sx_png_image *out, int keep_alpha)
 {
     static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
     size_t pos;
@@ -824,14 +820,14 @@ int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *o
             }
             current[i] = (unsigned char)((int)current[i] + prediction);
         }
-        /* RGB(A) a 0x00RRGGBB, el alfa integrado sobre blanco. */
+        /* Either retain straight alpha or composite onto Paint's white page. */
         for (i = 0; i < (size_t)width; ++i)
         {
             uint32_t red = current[i * (size_t)channels];
             uint32_t green = current[i * (size_t)channels + 1u];
             uint32_t blue = current[i * (size_t)channels + 2u];
 
-            if (channels == 4)
+            if (channels == 4 && !keep_alpha)
             {
                 uint32_t alpha = current[i * (size_t)channels + 3u];
 
@@ -839,7 +835,8 @@ int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *o
                 green = (green * alpha + 255u * (255u - alpha) + 127u) / 255u;
                 blue = (blue * alpha + 255u * (255u - alpha) + 127u) / 255u;
             }
-            pixels[(size_t)y * (size_t)width + i] = (red << 16) | (green << 8) | blue;
+            pixels[(size_t)y * (size_t)width + i] = (red << 16) | (green << 8) | blue |
+                (keep_alpha ? (channels == 4 ? (uint32_t)current[i * 4u + 3u] << 24 : 0xff000000u) : 0);
         }
     }
     out->pixels = pixels;
@@ -865,4 +862,14 @@ void sx_png_free(struct sx_png_image *image)
     image->pixels = 0;
     image->width = 0u;
     image->height = 0u;
+}
+
+int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *out)
+{
+    return png_decode(data, size, out, 0);
+}
+
+int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_image *out)
+{
+    return png_decode(data, size, out, 1);
 }

@@ -237,7 +237,7 @@ def main() -> int:
     args.virtio = args.virtio or args.gl
     if args.requires_virtio and not args.virtio:
         parser.error("this scenario needs the virtio machine: pass --virtio")
-    if args.qmp_driver == "taskbar" and args.virtio:
+    if args.qmp_driver == "taskbar" and args.virtio and args.host_action != "visual":
         # The taskbar driver walks a relative pointer (taskbar_smoke._move_to);
         # the virtio machine's pointer is an absolute tablet that ignores it.
         parser.error("the taskbar driver needs a relative pointer: run without --virtio")
@@ -273,7 +273,7 @@ def main() -> int:
                 raise SystemExit(f"smoke: {error}")
             for remove_path in args.remove_path:
                 removed = subprocess.run(
-                    [str(args.sxfs_cli.resolve()), "rm", str(run_disk), remove_path],
+                    [str(args.sxfs_cli.resolve()), "rm", "-f", str(run_disk), remove_path],
                     text=True,
                     capture_output=True,
                     check=False,
@@ -431,6 +431,7 @@ def main() -> int:
                         # y las aserciones de pixeles caian en la ventana
                         # equivocada -- tools/shoot.sh ya lo pasaba, el runner no.
                         abs_pointer=args.virtio,
+                        serial=log_path,
                     )
                     host_result.append((0, f"visual scenario {args.visual_scenario} passed "
                                            f"({len(paths)} screenshots)"))

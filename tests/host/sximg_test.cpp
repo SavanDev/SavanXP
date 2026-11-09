@@ -329,6 +329,19 @@ int main() {
             return 1;
         }
     }
+    // Cursor images retain straight alpha; document decode stays white-backed.
+    {
+        struct sx_png_image img = {0, 0, 0};
+        bool ok = check(sx_png_decode_argb(k_png_rgba_dynamic, sizeof(k_png_rgba_dynamic), &img) == 0,
+                        "cursor PNG retains alpha");
+        if (ok) {
+            ok = check((img.pixels[0] >> 24) == 0, "cursor PNG transparent pixel") && ok;
+            ok = check((img.pixels[7] >> 24) == 224, "cursor PNG partial alpha") && ok;
+            ok = check((img.pixels[4*8+3] >> 24) == 96, "cursor PNG second partial alpha") && ok;
+        }
+        sx_png_free(&img);
+        if (!ok) return 1;
+    }
     /* rechazos */
     {
         struct sx_png_image img = {0, 0, 0};

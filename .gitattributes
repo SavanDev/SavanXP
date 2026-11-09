@@ -1,5 +1,6 @@
 # Keep shell scripts portable across checkout environments.
 *.sh text eol=lf
 
-# Preserve vendored Wine bytes and upstream license whitespace verbatim.
-assets/desktop/cursors/wine/* -text -whitespace
+# Preserve upstream cursor licenses and artwork byte for byte.
+assets/desktop/cursors/retrosmart/* -text -whitespace
+assets/desktop/cursors/hackneyed/* -text -whitespace

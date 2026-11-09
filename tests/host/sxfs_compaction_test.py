@@ -311,6 +311,14 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
     (seed / "data").mkdir()
     (source / "bin").mkdir(parents=True)
     (source / "data").mkdir()
+    (seed / "system/cursors/custom").mkdir(parents=True)
+    (seed / "users/user/Settings").mkdir(parents=True)
+    (source / "system/cursors").mkdir(parents=True)
+    retired_cursors = ("system/cursors/ocr_normal.cur", "system/cursors/AUTHORS", "system/cursors/LICENSE-LGPL-2.1.txt")
+    persistent_cursors = ("system/cursors/custom/arrow.cur", "users/user/Settings/cursors.cfg")
+    for relative in retired_cursors + persistent_cursors:
+        (seed / relative).write_bytes(b"persistent cursor test\n")
+    (source / "system/cursors/themes.list").write_text("classic|SavanXP Classic|MIT\n")
     for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe"):
         (seed / relative).write_bytes(b"old " + relative.encode() + b"\n")
     for relative in ("bin/console.sxe", "bin/tool", "data/notes"):
@@ -319,10 +327,11 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
     image = root / "rename.img"
     manifest = root / "rename.manifest"
     manifest.write_text(
-        "mkdir\tbin\nmkdir\tdata\n"
+        "mkdir\tbin\nmkdir\tdata\nmkdir\tsystem\nmkdir\tsystem/cursors\nmkdir\tsystem/cursors/custom\n"
+        "mkdir\tusers\nmkdir\tusers/user\nmkdir\tusers/user/Settings\n"
         + "".join(
             f"file\t{relative}\t{seed / relative}\n"
-            for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe")
+            for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe") + retired_cursors + persistent_cursors
         ),
         encoding="utf-8",
     )
@@ -345,6 +354,13 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
     for relative in ("bin/keep", "data/notes.sxe"):
         if digest(seed / relative) != digest(extracted / relative):
             raise RuntimeError(f"the sync touched an unrelated file: {relative}")
+
+    for relative in retired_cursors:
+        if (extracted / relative).exists():
+            raise RuntimeError(f"retired Wine cursor asset survived: {relative}")
+    for relative in persistent_cursors:
+        if digest(seed / relative) != digest(extracted / relative):
+            raise RuntimeError(f"cursor migration lost persistent data: {relative}")
 
 
 def main() -> int:

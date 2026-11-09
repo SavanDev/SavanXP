@@ -1930,6 +1930,29 @@ static void test_files(void) {
         check(child > 0);
         if (child > 0) check(sxn_waitpid(child, &status) == child && status == 0);
     }
+    check(sxn_write_file("relative", "x", 1) == -SAVANXP_EINVAL);
+    check(sxn_write_file("/dev/serial", "x", 1) == -SAVANXP_EINVAL);
+    check(sxn_write_file("/system", "x", 1) == -SAVANXP_EISDIR);
+    check(sxn_write_file("/users/native-file-write-test", "long contents", 13) == 0);
+    check(sxn_write_file("/users/native-file-write-test", (const void*)1, 1) == -SAVANXP_EINVAL);
+    check(sxn_write_file("/users/native-file-write-test", "x", SXN_WRITE_FILE_MAX+1) == -SAVANXP_EINVAL);
+    handle = sxn_open_file("/users/native-file-write-test", SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_read(handle, bytes, sizeof(bytes)) == 13 && file_bytes_equal(bytes, "long contents", 13));
+        (void)sxn_close(handle);
+    }
+    check(sxn_write_file("/users/native-file-write-test", "new", 3) == 0);
+    handle = sxn_open_file("/users/native-file-write-test", SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_read(handle, bytes, sizeof(bytes)) == 3 && file_bytes_equal(bytes, "new", 3));
+        (void)sxn_close(handle);
+    }
+    check(sxn_write_file("/users/native-file-write-test", 0, 0) == 0);
+    handle = sxn_open_file("/users/native-file-write-test", SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) { check(sxn_read(handle, bytes, 1) == 0); (void)sxn_close(handle); }
     check(sxn_log("nativetest: files done") == 0);
 }
 
@@ -1948,6 +1971,8 @@ int main(int argc, char** argv) {
         if (handle < 0 || sxn_read(handle, &byte, 1) != -SAVANXP_EBADF) sxn_exit(2);
         (void)sxn_close(handle);
         if (sxn_open_file("/users/native-file-private/readable.txt", 0) != -SAVANXP_EACCES) sxn_exit(3);
+        if (sxn_write_file("/users/native-file-private.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(4);
+        if (sxn_write_file("/system/native-file-test.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(5);
         sxn_exit(0);
     }
     if (argc > 1 && streq(argv[1], "child")) {

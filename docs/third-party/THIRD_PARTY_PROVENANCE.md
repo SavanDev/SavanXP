@@ -315,30 +315,87 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
   document. No piece has been incorporated yet, so there is no distributed
   entry to record
 
-### Wine desktop cursors
+### Retrosmart cursor pack
 
-- Origin: Wine `dlls/user32/resources`, tag `wine-11.20`, commit
-  `7298a818b79446bae153b8d5aa27235ab3703bf9` (same revision as MS Sans Serif).
-  [Upstream resources](https://github.com/wine-mirror/wine/tree/7298a818b79446bae153b8d5aa27235ab3703bf9/dlls/user32/resources).
-- Versioned: ten unmodified `.cur` files in `assets/desktop/cursors/wine/`.
-- Attribution: the Wine project authors; the upstream `AUTHORS` and `LICENSE`
-  are included alongside the assets. LGPL-2.1-or-later, with the full license
-  in `LICENSE-LGPL-2.1.txt`. These are Wine's resources, not extracted Microsoft assets.
-- Decision: `Adopt`.
-- Distributed in: `/system/cursors/`, read and decoded by compositord at startup.
-  Original files remain replaceable; rebuilding the compositor is unnecessary.
-  The source and decoder are available in this repository.
-- SHA-256 of the original files:
+- Origin: [useless-anvil/retrosmart-cursor](https://github.com/useless-anvil/retrosmart-cursor),
+  tag `v2.0.3`, commit `1bb39e8681afae659fc46a47a9a938de147b85b9`.
+- Artwork: Copyright 2019 Manuel Domínguez López; fork by useless-anvil.
+  Upstream `AUTHORS`, `COPYING`, `LICENSE` (GPL-3.0) are included verbatim.
+- Source release: `retrosmart-cursor-classic-v2.0.3-windows.zip`, Win-ish Classic,
+  plain variant. [Release](https://github.com/useless-anvil/retrosmart-cursor/releases/tag/v2.0.3).
+  SHA-256: `2021e6821b26f69a964a93a04e62cdc766ef4472bebb7a962857300972bed447`.
+- Decision: `Adopt` as a separate selectable artwork pack, not linked code.
+- Distributed in: `/system/cursors/retrosmart/`. Static CURs are unchanged
+  release bytes, renamed by role. `wait.cur` is the first embedded CUR from
+  `wait.ani`; animation is omitted. PNG payloads are decoded directly.
+- Corresponding source: the complete pinned upstream archive is shipped as
+  `source.tar.gz`, with `import_cursor_packs.py` describing the local import.
+  Full credits, GPL terms and source locations appear in `NOTICE` and the
+  Mouse Properties license dialog. No upstream build tools are added as OS
+  build dependencies.
 
-| File | SHA-256 |
+### Hackneyed cursor pack
+
+- Origin: [Richard Ferreira / hackneyed-x11-cursors](https://gitlab.com/Enthymeme/hackneyed-x11-cursors),
+  tag `0.9.3`, commit `6cb96737d5566e36fadf4526fb374778cbb114c7`.
+- License: MIT/X11, Copyright (C) Richard Ferreira. Original `LICENSE` included.
+- Source release: `Hackneyed-Windows-0.9.3.zip`, Standard (light, right-handed).
+  [Release](https://gitlab.com/Enthymeme/hackneyed-x11-cursors/-/releases/0.9.3).
+  SHA-256: `43980eb1660e1d9da5d20d755d2cf0d3ff120c2615cd9c17f00d7e8e467a4b6d`.
+- Decision: `Adopt` as a separate selectable artwork pack.
+- Distributed in: `/system/cursors/hackneyed/`. Static CURs are original bytes
+  under role names; `wait.cur` is the first embedded CUR of `wait.ani`.
+  Attribution and terms are available in `NOTICE` and Mouse Properties.
+
+### Cursor imports and original artwork
+
+SavanXP Classic is local artwork under the repository's MIT license. The eight
+PNGs were recovered unchanged from the parent of commit `ab6a453` and encoded
+as uncompressed 32-bit CUR with their previous hotspots. Two diagonal arrows
+were added locally. The PNG sources and license are kept alongside the pack.
+Wine's cursor resources have been removed; the Wine font entry above remains.
+
+To reproduce the checked-in artwork from the original PNGs and the two release
+ZIPs (requires the existing host Python/Pillow dependency):
+
+```sh
+python3 tools/import_cursor_packs.py --retrosmart /path/to/retrosmart-cursor-classic-v2.0.3-windows.zip --hackneyed /path/to/Hackneyed-Windows-0.9.3.zip
+```
+
+The role mapping is recorded in that script. No conversion or network access
+runs during a normal build. Pack files have these SHA-256 hashes:
+
+| Pack / file | SHA-256 |
 |---|---|
-| `ocr_hand.cur` | `a565291a1eb9107966a4350c71c4fadc7962fb63caafdae417d32f265bfab11a` |
-| `ocr_ibeam.cur` | `5d8ab37a8dee10361c77c38dd70190ea738070d43d9aedafefe5a688158d954c` |
-| `ocr_no.cur` | `21f78eef1c35701719d0ae4d4590bd94c5c8faef1cae6cc2823a804f99b8cf8c` |
-| `ocr_normal.cur` | `de7ab0f5e4e4b6541f66f4c968c82e106583c85ff24fa65bf890b4cd998cc6f5` |
-| `ocr_sizeall.cur` | `768179dc51601eb362df81c645966019055eda32dffd5579e8f54a510b724646` |
-| `ocr_sizens.cur` | `efb612deeca798636136022290c49472161e1f6e27154a3fcab856be7c1b13b8` |
-| `ocr_sizewe.cur` | `7bb70a841815c3021d08e4ef8df7571f1a42899ebd94723b352275ea89dbfc64` |
-| `ocr_wait.cur` | `1fc71be18e52af614784bbd5ccde9acb63cd8b22525280ea29446bf4db445406` |
-| `ocr_sizenwse.cur` | `327ad9cdad82f1598978b68ab8cc4215623ba2f5d2ec37378b59d63e85756231` |
-| `ocr_sizenesw.cur` | `f989a4cdc722c31f16f63d736c5b005f4e3cc7b91c842471f6f30a0fccc74eeb` |
+| `classic/arrow.cur` | `310bb5ace5a6b54ffc324ce33cbcdfb2a21b79fe6b8b7907e0ee36f0f92b0d7c` |
+| `classic/link.cur` | `f8c41383496cea46042fbdf695bfd744da29eb27cfbadcdfbc423328cdb32bcb` |
+| `classic/move.cur` | `eb895f08f7f0403aa7575de2d78461088f827e22979b4847342faba76ddd49f8` |
+| `classic/resize_h.cur` | `724e66fae024f4dacc69ddec6c71fc188cb42541c96794132a25a27760e152cd` |
+| `classic/resize_nesw.cur` | `bb3d7b2cfd79718450989836dcfa820cf18cf6525cd68a749cf37d1c70ae479b` |
+| `classic/resize_nwse.cur` | `1ad3e82d1b7b1a0524d05098241dd09976f55ccbbbeee079a32d922712f00001` |
+| `classic/resize_v.cur` | `6bbff688956aa3ece2b3580bb2f748c5024ec7e0eac32146179346bebe8ca47b` |
+| `classic/text.cur` | `e0a292a68a1a6fa337c56112e3aeadafba6932e1177828a8c4c0b9846309e356` |
+| `classic/unavailable.cur` | `77414700fdebee2803cf1140281f04bd38f6c8daa46788b10ce41583dec22c52` |
+| `classic/wait.cur` | `bed87ad58c57d77033bd977cdb6be10c98699eba01670677a88bf873a30a72d5` |
+| `retrosmart/arrow.cur` | `778d3286326eb309ec56363904907eb753a86ad3c5bde0e2bf58dbdab573955b` |
+| `retrosmart/link.cur` | `8a805df1c24c41742f87b03f8867fdb472dc9214f4571ee7132e31a053bb233b` |
+| `retrosmart/move.cur` | `f3b0ccf949901df35c3038695fa4c3f5579a371d75be01f7a82f1bf419ec0384` |
+| `retrosmart/resize_h.cur` | `4902c69b07b0bf1e0e486b6449f002e2f265e0c2eb6b161372b9bcecb4860331` |
+| `retrosmart/resize_nesw.cur` | `f12916f6b8548b8d97492e95ecaa353bb85a725c07219c53230506aa7f7027ba` |
+| `retrosmart/resize_nwse.cur` | `ba85f01b9293a3ebbdb2622a4edd955eeeec164fd74c778558fbabe705274d38` |
+| `retrosmart/resize_v.cur` | `9c1a69d3d08ba2e982f42e835dcc7e43d1f03e772f6d4c195e9e52de82d7778e` |
+| `retrosmart/text.cur` | `069341263aed4f47947e1902a0629c1227ff3eb1c37ff563b8d4d22b5e1b3ae8` |
+| `retrosmart/unavailable.cur` | `f2b4acbd417fe06415d12c09b32c0857d187bdb71be07f2bc4c44f68767e2307` |
+| `retrosmart/wait.cur` | `602306bb1862ef8e580052296a4e09ac1b2eb015e39f2455b944299df519034a` |
+| `hackneyed/arrow.cur` | `8a72bf8a1a7a5890c2b243d227f0757d352694948b5f39c72c63e77fd351a4bf` |
+| `hackneyed/link.cur` | `5f947bd53ee66482e8c7f74c999f8abe8241d921df0bf10a75cb01af33a87f29` |
+| `hackneyed/move.cur` | `804adf18b02bd29345a4d8cb8a93e55ad187f245857c73aed1132d4abd0f91cc` |
+| `hackneyed/resize_h.cur` | `eca6813f4f8a671e84b571969ef39fafe77c628f53bb2b250505752860be1095` |
+| `hackneyed/resize_nesw.cur` | `78be535250acc60937aabe63a0252cc3d3f85ede524bc2c96b7a29d508ae8af3` |
+| `hackneyed/resize_nwse.cur` | `bd5d78a5224f2068caab3264af39da6fb9b6589cce60e90504ab246c057d51a5` |
+| `hackneyed/resize_v.cur` | `6fc15b259f36bc704d9609efb2ba1eb7a122513d2725f84365f93f47b2394905` |
+| `hackneyed/text.cur` | `0ba47afb445158ab221b5801fc6016db174a38b17f3669d49a3261e0865c1192` |
+| `hackneyed/unavailable.cur` | `fa685e87c60fad5a292b8c00c8eca335e50caf40fbed2615c5ef3b94519e8081` |
+| `hackneyed/wait.cur` | `48729b8e5b8e5ce504cd94381373f66ebfd9b243525ebafe697e7c8b78edd06e` |
+
+Retrosmart corresponding source archive SHA-256: `3b3ff5ea1d56a0ae461ccfe036495fe7c7f01c3ba90462033a61438e2b8cc0c8`.

@@ -609,8 +609,8 @@ set(SAVANXP_SXE_ARGUMENTS)
 foreach(program IN LISTS SAVANXP_USER_PROGRAM_NAMES)
     list(APPEND SAVANXP_SXE_ARGUMENTS --program "${program}")
 endforeach()
-# A SUN program gets its resources as C too (<name>.sunres.h): it has no
-# files to read its own .sxe with (docs/userland/SUN.md).
+# A SUN program gets its presentation compiled in (<name>.sunres.h), so it
+# can publish its resources without parsing its own executable.
 foreach(program IN LISTS SAVANXP_NATIVE_TARGETS)
     list(APPEND SAVANXP_SXE_ARGUMENTS --native-program "${program}")
     target_include_directories(${program} PRIVATE "${SAVANXP_SXE_ROOT}")
@@ -650,6 +650,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/taskmgr"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/diskmgmt"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sound"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/mouse"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS
@@ -950,8 +951,9 @@ add_test(NAME audio-wav-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/host/audio_wav_test.py")
 
 add_executable(savanxp-cursor-cur-test
-    system/compositord/cursor_cur.c tests/host/cursor_cur_test.c)
+    system/compositord/cursor_cur.c subsystems/posix/sdk/v1/runtime/sximg.c tests/host/cursor_cur_test.c)
 target_include_directories(savanxp-cursor-cur-test PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord")
+target_compile_options(savanxp-cursor-cur-test PRIVATE -idirafter "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 # Assertions must remain active in release host builds.
 target_compile_options(savanxp-cursor-cur-test PRIVATE -UNDEBUG)
 add_test(NAME cursor-cur-test COMMAND savanxp-cursor-cur-test "${CMAKE_SOURCE_DIR}")
@@ -1178,7 +1180,7 @@ add_custom_target(savanxp_diskfs
             "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/cursors"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${CMAKE_SOURCE_DIR}/assets/desktop/cursors/wine" "${SAVANXP_DISKFS_ROOT}/system/cursors"
+            "${CMAKE_SOURCE_DIR}/assets/desktop/cursors" "${SAVANXP_DISKFS_ROOT}/system/cursors"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"

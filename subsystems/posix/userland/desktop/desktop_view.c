@@ -874,6 +874,7 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 #define VIEW_CMD_NEW_TEXT 4
 #define VIEW_CMD_PROPERTIES 5
 #define VIEW_CMD_CONSOLE 6
+#define VIEW_CMD_MOUSE 7
 #define VIEW_CMD_OPEN 10
 #define VIEW_CMD_DELETE 11
 #define VIEW_CMD_RENAME 12
@@ -892,6 +893,7 @@ static const struct sxgui_menu_item k_background_items[] = {
     {0, 0, 0},
     {"Open Command Prompt", VIEW_CMD_CONSOLE, 0},
     {0, 0, 0},
+    {"Mouse Properties...", VIEW_CMD_MOUSE, 0},
     {"Properties", VIEW_CMD_PROPERTIES, 0},
 };
 
@@ -1144,6 +1146,9 @@ static void run_command(int id)
         break;
     case VIEW_CMD_NEW_TEXT:
         create_new(0);
+        break;
+    case VIEW_CMD_MOUSE:
+        (void)desktop_launch("/bin/mouse.sxe", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
         break;
     case VIEW_CMD_PROPERTIES:
         (void)desktop_launch(k_display_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);

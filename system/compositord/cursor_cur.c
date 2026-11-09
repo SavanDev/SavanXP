@@ -1,5 +1,6 @@
 #include "cursor_cur.h"
 #include <string.h>
+#include "savanxp/img.h"
 
 static unsigned u16(const unsigned char *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t u32(const unsigned char *p) {
@@ -10,6 +11,7 @@ struct candidate {
     const unsigned char *data;
     unsigned width, height, bits, colors, hotspot_x, hotspot_y;
     size_t stride, mask_stride;
+    size_t png_size;
 };
 
 static int candidate_read(const unsigned char *bytes, size_t size, size_t directory_end,
@@ -23,6 +25,17 @@ static int candidate_read(const unsigned char *bytes, size_t size, size_t direct
         u16(entry + 4) >= width || u16(entry + 6) >= height ||
         offset < directory_end || offset > size || length > size - offset || length < 40) return 0;
     p = bytes + offset;
+    memset(c, 0, sizeof(*c));
+    if (length >= 33 && !memcmp(p, "\x89PNG\r\n\x1a\n", 8)) {
+        /* Bound allocation before passing an embedded PNG to the shared decoder. */
+        if (memcmp(p + 8, "\0\0\0\15IHDR", 8) || p[16] || p[17] || p[18] || p[19] != width ||
+            p[20] || p[21] || p[22] || p[23] != height || p[24] != 8 ||
+            (p[25] != 2 && p[25] != 6) || p[26] || p[27] || p[28]) return 0;
+        c->data = p; c->width = width; c->height = height; c->bits = 32;
+        c->hotspot_x = u16(entry + 4); c->hotspot_y = u16(entry + 6);
+        c->png_size = length;
+        return 1;
+    }
     if (u32(p) != 40 || u32(p + 4) != width || u32(p + 8) != height * 2 ||
         u16(p + 12) != 1 || u32(p + 16) != 0) return 0;
     bits = u16(p + 14);
@@ -77,6 +90,16 @@ const char *cursor_cur_decode(const void *bytes, size_t size, struct cursor_imag
         if (candidate_preferred(&c, &best)) best = c;
     }
     if (!best.data) return "no supported CUR image";
+    if (best.png_size) {
+        struct sx_png_image png;
+        if (sx_png_decode_argb(best.data, best.png_size, &png) < 0) return "invalid CUR PNG";
+        memset(out, 0, sizeof(*out));
+        out->width = best.width; out->height = best.height;
+        out->hotspot_x = best.hotspot_x; out->hotspot_y = best.hotspot_y;
+        memcpy(out->pixels, png.pixels, best.width * best.height * sizeof(uint32_t));
+        sx_png_free(&png);
+        return 0;
+    }
     bitmap = best.data + 40 + best.colors * 4;
     mask = bitmap + best.stride * best.height;
     if (best.bits == 32) {

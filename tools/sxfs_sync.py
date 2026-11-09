@@ -60,7 +60,7 @@ SXE_SUFFIX = ".sxe"
 
 
 def retired_counterparts(produced: set[str]) -> list[str]:
-    """Return the program paths that the produced ones replace.
+    """Return obsolete program names and known retired system cursor assets.
 
     A SUN program is named <name>.sxe on disk and a POSIX one has no extension
     (docs/userland/SXE_FORMAT.md, "SUN programs are named .sxe"). Both are the
@@ -74,6 +74,12 @@ def retired_counterparts(produced: set[str]) -> list[str]:
     Only files directly under bin/ are programs. Elsewhere a name is just data.
     """
     retired: set[str] = set()
+    # The selectable catalog replaces the former flat, build-owned Wine pack.
+    # Name each retired file; user-installed packs and preferences are retained.
+    if "system/cursors/themes.list" in produced:
+        retired.update(f"system/cursors/ocr_{name}.cur" for name in
+                       ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand", "sizenwse", "sizenesw"))
+        retired.update(f"system/cursors/{name}" for name in ("AUTHORS", "LICENSE", "LICENSE-LGPL-2.1.txt"))
     for relative in produced:
         directory, _, name = relative.rpartition("/")
         if directory != "bin" or not name:

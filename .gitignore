@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 tools/*
 !tools/cursor_smoke.py
+!tools/import_cursor_packs.py
 !tools/gen_desktop_icon_assets.py
 !tools/gen_sxe_resources.py
 !tools/gen_mime_icons.py

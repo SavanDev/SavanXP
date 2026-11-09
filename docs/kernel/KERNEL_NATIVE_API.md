@@ -769,3 +769,17 @@ advances its offset, returns partial reads and 0 at EOF; duplicate handles
 share that offset. Query handles reject reads. Closing and process teardown
 release the object, and open references prevent unmount through the existing
 VFS rules. This call is native-only; no POSIX syscall translation is involved.
+
+### Saving small regular files
+
+`SXN_SYS_WRITE_FILE` (`0x1034`) takes an absolute path in `rdi`, a readable
+buffer in `rsi` and length (0–4096) in `rdx`. It validates/copies all input
+before opening for write, refuses directories (`-EISDIR`) and devices
+(`-EINVAL`), and enforces VFS credentials. It creates with mode 0600 when
+missing (parent must exist), or retains an existing file's ownership/mode.
+Contents are replaced from offset zero; zero length empties the file.
+The containing volume is synced before returning 0. Writes/sync can fail
+with `-EIO` and may leave incomplete contents; this call does not promise
+atomic replacement. The SUN wrapper is `sxn_write_file`; the cursor profile
+is its consumer and `nativetest` asserts creation, shrinking, empty files,
+validation before mutation and denied writes. This call is native-only.

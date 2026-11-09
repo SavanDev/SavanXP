@@ -169,6 +169,28 @@ int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
     return handle;
 }
 
+int native_write_file(Process& proc, uint64_t user_path, uint64_t user_bytes, size_t count) {
+    char path[vfs::kMaxPathLength] = {};
+    uint8_t bytes[SXN_WRITE_FILE_MAX];
+    if (count > sizeof(bytes) || !sx::copy_user_string(path, sizeof(path), user_path) || path[0] != '/' ||
+        (count && !sx::copy_from_user(bytes, user_bytes, count)))
+        return sx::negative_error(SX_EINVAL);
+    // Check type before a write open can mutate a device or directory.
+    vfs::Vnode* node = vfs::open(proc.credentials, path, 0, 0);
+    if (node && node->type == vfs::NodeType::directory) return sx::negative_error(SX_EISDIR);
+    if (node && (node->type != vfs::NodeType::file || node->backend == vfs::Backend::device))
+        return sx::negative_error(SX_EINVAL);
+    if (!node && vfs::last_error() != SX_ENOENT)
+        return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    node = vfs::open(proc.credentials, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0600);
+    if (!node) return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    if (count ? vfs::write(*node, 0, bytes, count, true) != count : !vfs::truncate(proc.credentials, path, 0))
+        return sx::negative_error(SX_EIO);
+    const size_t mount = fs::owner_of(path);
+    if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
+    return 0;
+}
+
 /* Devices live under /dev; a native process names them without the
  * directory, so it cannot reach anything else through this call. */
 int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
@@ -1100,6 +1122,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_OPEN_FILE:
             context->rax = static_cast<uint64_t>(native_open_file(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
+        case SXN_SYS_WRITE_FILE:
+            context->rax = static_cast<uint64_t>(native_write_file(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
             return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));

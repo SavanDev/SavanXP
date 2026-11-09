@@ -312,7 +312,14 @@ enum sxn_syscall_number {
      * and invalid flags/paths -EINVAL. Checks VFS credentials. READ/CLOSE
      * use the returned handle; DUPLICATE shares its current offset. */
     SXN_SYS_OPEN_FILE = 0x1033,
+    /* rdi = absolute path, rsi = bytes, rdx = length (0..4096).
+     * Creates (0600) or replaces a regular file and syncs its volume.
+     * Parent must exist; VFS credentials apply. Returns 0 or -errno.
+     * An I/O failure may leave incomplete contents. */
+    SXN_SYS_WRITE_FILE = 0x1034,
 };
+
+#define SXN_WRITE_FILE_MAX 4096u
 
 /* Desired access for OPEN_FILE. Zero grants query access only. */
 #define SXN_FILE_READ 1u

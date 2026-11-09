@@ -60,14 +60,20 @@ without rewriting the mapping.
 
 ## Cursors
 
-The compositor loads the ten unmodified Wine `.cur` files from
-`assets/desktop/cursors/wine/`, installed in `/system/cursors/`. Their native
-hotspots and native 32x32 images are preferred directly, with
-no build-time image conversion. Restart the compositor to load replaced files.
+The default **SavanXP Classic** pack restores the eight original PNG cursors
+as CUR files without changing their pixels or hotspots; matching diagonals are
+included. Original PNG artwork is retained in `cursors/classic/source/`.
+Retrosmart (Win-ish Classic) and Hackneyed Standard are selectable alternatives.
+Wine's cursor pack has been removed.
 
-The source directory includes Wine's license and authors. Version, hashes and
-attribution are recorded in [third-party provenance](../docs/third-party/THIRD_PARTY_PROVENANCE.md).
-See [CURSORS.md](../docs/desktop/CURSORS.md) for format support and fallback rules.
+Packs are copied from `assets/desktop/cursors/` to `/system/cursors/` as regular
+files. `themes.list` registers display names and licenses. Mouse Properties
+previews and applies complete packs live, and saves the selected ID. Each pack
+includes a `NOTICE` and full license; Retrosmart also includes the corresponding
+source archive and import script under GPLv3. See
+[CURSORS.md](../docs/desktop/CURSORS.md) for installation and format support, and
+[third-party provenance](../docs/third-party/THIRD_PARTY_PROVENANCE.md) for versions,
+release hashes and import reproduction.
 
 ## Desktop icons
 

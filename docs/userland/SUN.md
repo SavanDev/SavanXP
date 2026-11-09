@@ -185,8 +185,8 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
-| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close` | Existing regular files, sequential reads; access 0 is query only. Writing and enumeration are missing. |
-| Registry / profile settings | — | missing (needs writable files) |
+| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file` | Existing regular files, sequential reads and durable whole-file saves up to 4 KiB; enumeration is missing. |
+| Registry / profile settings | `sxncursor_query`, `sxncursor_select` | Cursor profile supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
@@ -239,7 +239,7 @@ Files, a registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
 and a native `fork`. Each one waits for a consumer, by rule 1.
 
-## Reading existing files
+## Files and small profile saves
 
 `sxn_open_file(absolute_path, SXN_FILE_READ)` opens a regular file through the
 VFS with the process credentials. Access 0 opens for query only and never
@@ -247,6 +247,21 @@ permits reading. Directories return `-EISDIR`; devices, relative paths and
 unknown access flags return `-EINVAL`. Missing files return `-ENOENT` and
 permission failures `-EACCES`. `sxn_read` advances the offset, may return a
 partial read and returns 0 at EOF. Duplicates share the offset. Close with
-`sxn_close`; process teardown also releases the handle. There is no creation,
-writing, seek, size query or directory enumeration in this slice. The first
-consumer is compositord's on-disk cursor catalog; `nativetest` covers the contract.
+`sxn_close`; process teardown also releases the handle. Seeking, size queries
+and directory enumeration are still missing. Compositord's cursor catalog is
+the first consumer; `nativetest` covers the contract.
+
+`sxn_write_file(absolute_path, bytes, count)` saves a complete small regular file
+(up to `SXN_WRITE_FILE_MAX`, 4096 bytes), creating it with mode 0600 or replacing
+existing contents while retaining ownership and permissions. The parent must
+exist. The complete input is validated and copied before mutation, VFS write
+permissions apply, and the containing volume is synced before success (0).
+Empty contents truncate to zero. Invalid pointers, sizes, devices and relative
+paths return `-EINVAL`, directories `-EISDIR`, and failed writes/sync `-EIO`.
+It is not an atomic replacement API: I/O failure may leave incomplete contents.
+The cursor profile is the first consumer and rejects invalid saves on startup.
+
+`<sxn/sxncursor.h>` provides the session's query/select calls; the Mouse
+Properties SUN program uses them without claiming the GPU. Replies distinguish
+an unsuccessful apply from a successful apply whose save failed. See
+[CURSORS.md](../desktop/CURSORS.md) for the pack and session contract.

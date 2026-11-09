@@ -12,10 +12,17 @@ Cut-off notes:
 
 ### Added
 
+- **Mouse Properties selects cursor schemes with previews, licensing, Apply/Cancel and saved preferences.**
+  Open it from the desktop menu or System group. Includes SavanXP Classic, Retrosmart and Hackneyed.
+  See [CURSORS.md](docs/desktop/CURSORS.md).
+
+- **SUN can save small complete regular files with `sxn_write_file`, including a volume sync.**
+  Saves enforce VFS permissions and retain existing file ownership and permissions.
+
 - **Window corners show diagonal resize cursors in both directions.**
   The selected direction remains visible throughout a resize drag.
 
-- **The compositor reads classic `.cur` files directly, including native hotspots and AND/XOR masks.**
+- **The compositor reads classic `.cur` files directly, including native hotspots, embedded PNG and AND/XOR masks.**
   `smoke cursor-smoke` checks the loaded cursor images on light and dark backgrounds.
 
 - **SUN programs can open and sequentially read existing regular files with `sxn_open_file`.**
@@ -66,11 +73,8 @@ Cut-off notes:
 
 ### Changed
 
-- **Desktop cursors use Wine's native 32x32 images instead of the larger 64x64 variants.**
-  CUR files retain their original pixels and hotspots without resampling.
-
-- **The desktop uses Wine's eight original cursor files instead of the previous PNG pack.**
-  Replace files in `/system/cursors/` and restart the compositor to change them without recompiling.
+- **SavanXP Classic restores the original small cursors as the default, with both resize diagonals.**
+  Original pixels and hotspots are preserved in CUR; alternative packs prefer native images up to 32x32.
 
 - **Sound has a clear heading, an audio icon and grouped playback, application and recording controls.**
   The panel retains the desktop's NT-style widgets, palette and volume meters.
@@ -79,7 +83,15 @@ Cut-off notes:
   caption face and the system edition rotated along it, 16x16 icons on 28px rows, a two-pixel
   raised frame and an etched separator above `Shut Down...`/`Restart...`.
 
+### Removed
+
+- **Wine's cursor pack is no longer included or offered.**
+  Normal image updates retire its former files while preserving custom packs and saved preferences.
+
 ### Fixed
+
+- **Visual desktop smokes accept `--virtio` and use the tablet's absolute pointer.**
+  The relative-only taskbar driver keeps its existing restriction.
 
 - **Virtio GPU activates the hardware cursor on its first upload and hides it correctly.**
   Failed cursor uploads fall back to software rendering.

@@ -2822,7 +2822,84 @@ def scenario_sound_capture(s):
     s.qmp.move_to(x+540,y+620); s.qmp.click(); settle("capture-closed")
 
 
+def scenario_cursor_settings(s):
+    """Exercise actual native controls, licensing, live changes and reboot."""
+    if s.serial is None:
+        raise Failure("cursor settings regression requires the guest serial log")
+    s.run("mouse.sxe --selftest", wait=1)
+    deadline = time.time()+30
+    while time.time() < deadline:
+        with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+            text = log.read()
+        if "CURSOR SETTINGS FAIL" in text:
+            raise Failure("native cursor settings protocol selftest failed")
+        if "CURSOR SETTINGS PASS" in text:
+            break
+        time.sleep(0.25)
+    else:
+        raise Failure("native cursor settings protocol selftest timed out")
+
+    def open_panel():
+        s.run("mouse.sxe", wait=5)
+        image = s.shot("mouse-properties")
+        expect_text(image,(0,0,1280,770),"Mouse Properties",SELECT_TEXT,(0,0,128),
+                    "the native window publishes its title",which="title",solid_only=True)
+        origin = find_text(image,(0,0,1280,770),"Pointers:",TEXT,FACE)[0]
+        if origin is None:
+            raise Failure("Mouse Properties did not paint its pointer list")
+        return origin[0]-22, origin[1]-143, image
+
+    def click(x,y):
+        s.qmp.move_to(x,y); s.qmp.click(); s.qmp.move_to(1000,120); time.sleep(0.5)
+
+    x,y,image = open_panel()
+    box = (x,y,x+540,y+510)
+    expect_text(image,box,"SavanXP Classic",TEXT,FIELD,"classic is the default scheme")
+    expect_text(image,box,"Diagonal Resize 2",TEXT,FIELD,"both diagonal roles are listed")
+    # Scheme changes preview without changing the applied pack.
+    click(x+385,y+88)
+    s.qmp.tap("home"); s.qmp.tap("down"); s.qmp.tap("ret")
+    image = s.shot("retrosmart-preview")
+    expect_text(image,box,"License: GPL-3.0",TEXT,FACE,"Retrosmart GPL notice is visible")
+    click(x+460,y+405)
+    image = s.shot("retrosmart-license")
+    expect_text(image,(0,0,1280,770),"GNU General Public License v3.",TEXT,FACE,"license dialog includes GPLv3")
+    s.qmp.tap("esc")
+    click(x+475,y+489)
+    image = s.shot("retrosmart-applied")
+    expect_text(image,box,"Pointer scheme applied and saved.",TEXT,FACE,"Apply saves the chosen pack")
+    # Pending Hackneyed preview is discarded by Cancel.
+    click(x+385,y+88)
+    s.qmp.tap("home"); s.qmp.tap("down"); s.qmp.tap("down"); s.qmp.tap("ret")
+    click(x+390,y+489)
+    x,y,image = open_panel()
+    expect_text(image,(x,y,x+540,y+510),"Retrosmart (Win-ish Classic)",TEXT,FIELD,"Cancel retained the applied pack")
+    click(x+390,y+489)
+
+    with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+        boots = log.read().count("handoff: starting /bin/init")
+    s.qmp.cmd("set-action", reboot="reset")
+    s.qmp.cmd("system_reset")
+    deadline = time.time()+180
+    while time.time() < deadline:
+        with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+            if log.read().count("handoff: starting /bin/init") > boots:
+                break
+        time.sleep(0.5)
+    else:
+        raise Failure("the cursor persistence test did not reboot")
+    time.sleep(35)
+    x,y,image = open_panel()
+    expect_text(image,(x,y,x+540,y+510),"Retrosmart (Win-ish Classic)",TEXT,FIELD,"the chosen pack survived reboot")
+    click(x+355,y+405)
+    click(x+475,y+489)
+    image = s.shot("classic-restored")
+    expect_text(image,(x,y,x+540,y+510),"SavanXP Classic",TEXT,FIELD,"Use Default restores the classic scheme")
+    click(x+300,y+489)
+
+
 SCENARIOS = {
+    "cursor_settings": scenario_cursor_settings,
     "sound": scenario_sound,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
@@ -2905,7 +2982,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False):
+def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False, serial=None):
     """Ejecuta un escenario visual contra una instancia YA encendida.
 
     Es el punto de entrada que usa `build.sh smoke` para los escenarios que
@@ -2923,6 +3000,6 @@ def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False):
     # El handoff es el arranque de init; despues la sesion tarda en estar pintada.
     if boot_wait:
         time.sleep(boot_wait)
-    session = Session(qmp, out_dir)
+    session = Session(qmp, out_dir, serial)
     SCENARIOS[name](session)
     return sorted(str(p) for p in Path(out_dir).glob("*.png"))
