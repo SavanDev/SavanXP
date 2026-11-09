@@ -50,6 +50,7 @@
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnwm.h"
 #include "sxn/sxnaudio.h"
 #include "sxn/sxncapture.h"
 #include "sxgfx/virgl_protocol.h"
@@ -2027,6 +2028,12 @@ int main(int argc, char** argv) {
         run_storage_user_child(argc, argv);
     }
 
+    /* Fullscreen launch policy rejects bad arguments before contacting windowd. */
+    {
+        struct sxnwm_client window = {0};
+        check(sxnwm_connect_with_launch_flags(0, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
+        check(sxnwm_connect_with_launch_flags(&window, ~SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
+    }
     check(sxn_info(&info) == 0);
     check(info.abi_version == SXN_ABI_VERSION);
     check(info.subsystem_id == 1u);

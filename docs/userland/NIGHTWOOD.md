@@ -32,6 +32,7 @@ It exists for two reasons, and both shape it:
 | Left / Right, Page Up / Page Down | turn and look up and down without a mouse |
 | Shift | run, while the stamina bar lasts |
 | E, a left click, Enter or Space | take the photograph in front of you |
+| F11 | toggle fullscreen |
 | F | switch the flashlight off and on |
 | Esc | pause; Esc again gives up the night |
 

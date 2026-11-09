@@ -8,3 +8,4 @@ subsystem=native
 accent=2c3e2a
 icon=app-nightwood
 category=Games
+launch_flags=fullscreen

@@ -77,6 +77,12 @@ identical across the rebuild. A Doom run by the user keeps its own in
 the system (no profile), it keeps them in `/games/doom` as before. The current regression assets are
 `doom1.wad`, `default.cfg`, `doomgenericdoom.cfg`, and `savegames/`.
 
+## Display controls
+
+Press **F11** to toggle fullscreen. Press **F** to hide or show the FPS and
+presentation latency overlay (shown by default). Showing it starts a fresh
+measurement interval.
+
 ## Music
 
 The port plays the WAD's MUS tracks through the WAD's own OPL2 bank. Each MUS lump

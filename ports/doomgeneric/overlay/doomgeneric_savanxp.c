@@ -183,6 +183,7 @@ static void sx_fps_init(void) {
     g_fps_info.pitch = DOOMGENERIC_RESX * (uint32_t)sizeof(uint32_t);
     g_fps_info.bpp = 32;
     g_fps_info.buffer_size = (size_t)DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(uint32_t);
+    strcpy(g_fps_text, "FPS --");
     g_fps_window_start = uptime_ms();
     g_fps_frames = 0;
     g_fps_block_accum_ms = 0;
@@ -320,6 +321,18 @@ int DG_GetKey(int *pressed, unsigned char *doom_key) {
             if (gfx_apply_resize_event(&g_gfx, &event) < 0 ||
                 sx_scaled_presenter_retarget(&g_presenter, gfx_rgb(0, 0, 0)) < 0) {
                 sx_fail("doomgeneric: scaled presenter resize failed");
+            }
+            continue;
+        }
+        /* F is reserved for the port overlay; consume both edges so it never
+         * reaches the engine, and ignore typematic repeats. */
+        if (event.key == 'f' || event.key == 'F') {
+            if (event.type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
+                (event.modifiers & SAVANXP_KEY_MOD_REPEAT) == 0u) {
+                g_fps_enabled = !g_fps_enabled;
+                if (g_fps_enabled) {
+                    sx_fps_init();
+                }
             }
             continue;
         }

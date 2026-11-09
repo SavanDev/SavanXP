@@ -110,7 +110,7 @@ static inline long sxnwm_attach_input(struct sxnwm_client* ctx, long ring_fd) {
  * the wake and submit events and the ring, which are mapped here. The read
  * of the welcome blocks: there is no native poll yet, and a WM that accepted
  * the connection answers within a pass of its loop. 0 or negative -errno. */
-static inline long sxnwm_connect(struct sxnwm_client* ctx) {
+static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uint32_t launch_flags) {
     int32_t handles[2] = {-1, -1};
     long received[4] = {-1, -1, -1, -1};
     struct savanxp_wm_hello hello = {0};
@@ -118,7 +118,7 @@ static inline long sxnwm_connect(struct sxnwm_client* ctx) {
     uint32_t index = 0;
     long result = 0;
 
-    if (ctx == 0) {
+    if (ctx == 0 || (launch_flags & ~SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0u) {
         return -SAVANXP_EINVAL;
     }
     ctx->header = 0;
@@ -131,6 +131,7 @@ static inline long sxnwm_connect(struct sxnwm_client* ctx) {
     }
     hello.magic = SAVANXP_WM_HELLO_MAGIC;
     hello.version = SAVANXP_WM_PROTOCOL_VERSION;
+    hello.launch_flags = launch_flags;
     hello.flags = SAVANXP_WM_HELLO_INPUT_RING | SAVANXP_WM_HELLO_REQUEST_EVENT;
     if (sxn_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
         result = -SAVANXP_EPIPE;
@@ -203,6 +204,13 @@ fail:
     ctx->header = 0;
     ctx->ring = 0;
     return result;
+}
+
+/* Ordinary windows keep the default launch policy. Fullscreen games use
+ * sxnwm_connect_with_launch_flags with SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN
+ * so windowd can toggle composited fullscreen with F11. */
+static inline long sxnwm_connect(struct sxnwm_client* ctx) {
+    return sxnwm_connect_with_launch_flags(ctx, 0u);
 }
 
 /* Publish one full-surface batch. Returns the new submit sequence (>0), or

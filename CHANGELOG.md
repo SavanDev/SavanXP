@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Nightwood supports F11 fullscreen, and Doom toggles its FPS overlay with F.**
+  SUN games can opt into fullscreen with `sxnwm_connect_with_launch_flags`.
+
 - **Windows and the mouse pointer have optional soft shadows, enabled by default.**
   Display Properties → Settings → Effects controls them independently and saves the preferences.
 

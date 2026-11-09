@@ -113,6 +113,11 @@ sxnwm_presentation_source`; the program includes it and publishes it with
 `sxnwm_set_presentation`. The `.sxe` sections are still stamped too, for the
 launcher and anything else that scans binaries.
 
+SUN games can call `sxnwm_connect_with_launch_flags` with
+`SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN` to enable windowd's F11 fullscreen
+toggle. `sxnwm_connect` keeps ordinary window behavior. Nightwood consumes this
+option; fullscreen scales its game surface through the compositor.
+
 ## The direction: the system's own API
 
 SUN is what Win32 is to Windows in one sense only: the native API of the

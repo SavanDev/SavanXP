@@ -706,6 +706,7 @@ static void nw_draw_hud(void)
         nw_text_centred(&painter, height / 3 + line + 30, "Something else is out here. Do not look at it for long.", dim);
         nw_text_centred(&painter, height - 120, "W S A D walk   the mouse or the arrows look   Shift runs", dim);
         nw_text_centred(&painter, height - 100, "E or a click takes a photograph   F the flashlight   Esc pauses", dim);
+        nw_text_centred(&painter, height - 80, "F11 toggles fullscreen", dim);
         if (((int)(g_game.time * 2.0f) & 1) == 0) {
             nw_text_centred(&painter, height - 64, "Press Enter", pale);
         }
@@ -992,7 +993,7 @@ int main(int argc, char** argv)
         sxn_exit(nw_selftest());
     }
 
-    if (sxnwm_connect(&g_game.wm) != 0) {
+    if (sxnwm_connect_with_launch_flags(&g_game.wm, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0) {
         (void)sxn_log("nightwood: no window");
         sxn_exit(1);
     }
