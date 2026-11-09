@@ -285,3 +285,51 @@ identity, clock and stream calls, and reports apply and save status separately.
 Display Properties is its consumer; `smoke effects-smoke` checks the effective
 rendering and restart persistence. See
 [Display Properties](../desktop/DISPLAY_PROPERTIES.md#effects).
+
+## IPv4 socket foundation
+
+SUN exposes TCP/UDP socket handles through `sxn_socket_create`,
+`sxn_socket_bind`, `sxn_socket_connect`, `sxn_socket_status`,
+`sxn_socket_sendto` and `sxn_socket_recvfrom`. They use the network core
+without allocating POSIX subsystem state. `sxn_ipv4_endpoint` stores IPv4 as
+`0xAABBCCDD` and the port in host byte order. UDP datagrams currently have a
+1024-byte maximum; a short receive discards the remainder of that datagram.
+
+TCP uses `sxn_read`/`sxn_write`, with partial counts, `-EAGAIN` for an operation
+that needs retrying, zero for orderly EOF, `-ECONNREFUSED` for a rejected handshake,
+`-ECONNRESET` for an established connection reset and
+`-ETIMEDOUT` for exhausted retransmissions. `sxn_socket_connect` starts the SYN
+exchange and returns `-EAGAIN` while pending. `sxn_socket_status` returns zero
+only after establishment, `-EAGAIN` while pending and a retained negative error
+on failure; an unconnected socket returns `-EINVAL`. Callers must query status
+after connection readiness rather than treating readiness as success. A failed
+connection wakes write/error interests, and its error remains available through
+repeated status queries and I/O until a deliberate new connect attempt or close.
+An expired `sxn_wait_io` only expires that wait: it does not cancel the connection
+or replace its `-EAGAIN` status. The current SYN retry budget eventually aborts
+an unanswered connection with `-ETIMEDOUT`; a caller's shorter navigation budget
+still needs its own cancellation protocol.
+
+`sxn_wait_io` waits on an array of `sxn_io_interest` and returns the first ready
+index, or `-ETIMEDOUT`. Streams accept `SXN_IO_READ`, `SXN_IO_WRITE` and
+`SXN_IO_ERROR`; EOF and socket failure also wake the waiter. Waitable objects
+use zero interests and retain their usual acquisition semantics. Put a manual
+reset event first to prioritize cancellation, and use monotonic remaining
+budgets for repeated waits. Waiting retains the objects until completion;
+cancel through the event rather than closing a socket in another thread.
+`sxn_wait_many` keeps its existing readable-stream semantics.
+
+Handles support `sxn_duplicate` and `sxn_close`; the last reference releases the
+socket. Data I/O does not wait for TCP data or acknowledgement, but the current
+network core may still wait during NIC initialization or ARP resolution.
+Retransmission progress still depends on network servicing (including parked
+waiters). This is a foundation slice, not the completed asynchronous transport:
+independent bounded servicing, FIN retransmission/TIME_WAIT, DNS, the Web Viewer
+SUN migration and TLS remain outstanding. `./build.sh smoke native-network`
+exercises native UDP loopback, source addresses, handle lifetime, cancellation,
+TCP establishment, partial reads and EOF against the local TCP fixture. It also
+holds a host port bound without listening to provoke a deterministic refusal,
+and drops every outgoing SYN through `NET_IOC_SET_TCP_FAULT` to exercise the
+normal retransmission timeout. The injector is reset before the test exits.
+These tests service networking through parked waits; they do not prove progress
+without consumer polling or waiting.

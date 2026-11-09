@@ -40,6 +40,21 @@ def main() -> int:
                 port = int(port_file.read_text(encoding="ascii").strip())
                 with socket.create_connection(("127.0.0.1", port), timeout=5.0) as client:
                     client.settimeout(5.0)
+                    client.sendall(b"REFUSE\n")
+                    response = bytearray()
+                    while not response.endswith(b"\n"):
+                        chunk = client.recv(1)
+                        if not chunk or len(response) >= 6:
+                            raise AssertionError("Invalid REFUSE port response")
+                        response.extend(chunk)
+                    refused_port = int(response)
+                    try:
+                        refused = socket.create_connection(("127.0.0.1", refused_port), timeout=1.0)
+                    except ConnectionRefusedError:
+                        pass
+                    else:
+                        refused.close()
+                        raise AssertionError("Reserved non-listening port accepted a connection")
                     client.sendall(b"BULK 5000\n")
                     received = b""
                     while len(received) < 5000:

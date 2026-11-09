@@ -1957,6 +1957,202 @@ static void test_files(void) {
     check(sxn_log("nativetest: files done") == 0);
 }
 
+struct socket_cancel_test { long socket, cancel, delay; };
+static unsigned char g_socket_cancel_stack[32768] __attribute__((aligned(16)));
+static void socket_cancel_worker(void* argument) {
+    struct socket_cancel_test* test = (struct socket_cancel_test*)argument;
+    (void)sxn_wait_one(test->delay, 20);
+    if (sxn_close(test->socket) != 0 || sxn_event_set(test->cancel) != 0) sxn_thread_exit(1);
+    sxn_thread_exit(0);
+}
+
+/* Socket checks use SUN traps exclusively, including cancellation waits. */
+static void test_sockets(void) {
+    long rx = sxn_socket_create(SXN_SOCKET_UDP);
+    long tx = sxn_socket_create(SXN_SOCKET_UDP);
+    long tcp = sxn_socket_create(SXN_SOCKET_TCP);
+    long cancel = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    struct sxn_ipv4_endpoint local = {0x0a00020fu, 49123, 0}, source = {0};
+    struct sxn_io_interest waits[2] = {{(int32_t)rx, SXN_IO_READ}, {(int32_t)cancel, 0}};
+    char bytes[8] = {0};
+    long duplicate;
+    check(rx >= 0 && tx >= 0 && tcp >= 0 && cancel >= 0);
+    check(sxn_socket_create(99) == -SAVANXP_EINVAL);
+    check(sxn_socket_status(cancel) == -SAVANXP_EBADF);
+    check(sxn_socket_connect(tcp, 0) == -SAVANXP_EINVAL);
+    check(sxn_socket_status(tcp) == -SAVANXP_EINVAL);
+    check(sxn_socket_bind(rx, &local) == 0);
+    check(sxn_wait_io(waits, 2, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_socket_recvfrom(rx, bytes, sizeof(bytes), &source) == -SAVANXP_EAGAIN);
+    check(sxn_socket_sendto(tx, "SUN", 3, &local) == 3);
+    check(sxn_wait_io(waits, 2, 1000) == 0);
+    check(sxn_socket_recvfrom(rx, bytes, sizeof(bytes), &source) == 3);
+    check(bytes[0] == 'S' && bytes[1] == 'U' && bytes[2] == 'N');
+    check(source.ipv4 == local.ipv4 && source.port != 0);
+    check(sxn_event_set(cancel) == 0);
+    check(sxn_wait_io(waits, 2, 1000) == 1);
+    check(sxn_event_reset(cancel) == 0);
+    check(sxn_wait_io(waits, 2, 10) == -SAVANXP_ETIMEDOUT);
+    waits[0].interests = SXN_IO_WRITE;
+    check(sxn_wait_io(waits, 2, 0) == 0);
+    waits[0].interests = 8;
+    check(sxn_wait_io(waits, 2, 0) == -SAVANXP_EINVAL);
+    duplicate = sxn_duplicate(rx);
+    check(duplicate >= 0 && sxn_close(rx) == 0);
+    check(sxn_socket_sendto(tx, "x", 1, &local) == 1);
+    check(sxn_socket_recvfrom(duplicate, bytes, sizeof(bytes), 0) == 1);
+    check(sxn_close(duplicate) == 0);
+    {
+        struct socket_cancel_test test = {sxn_socket_create(SXN_SOCKET_UDP), cancel,
+                                         sxn_event_create(0)};
+        long worker;
+        int32_t status = -1;
+        check(sxn_event_reset(cancel) == 0);
+        waits[0].handle = (int32_t)test.socket;
+        waits[0].interests = SXN_IO_READ;
+        worker = sxn_thread_create(socket_cancel_worker, &test,
+                                   g_socket_cancel_stack + sizeof(g_socket_cancel_stack), 0);
+        check(worker >= 0);
+        if (worker >= 0) {
+            check(sxn_wait_io(waits, 2, 1000) == 1);
+            check(sxn_wait_one(worker, 1000) == 0);
+            check(sxn_thread_exit_code(worker, &status) == 0 && status == 0);
+            check(sxn_socket_status(test.socket) == -SAVANXP_EBADF);
+            check(sxn_close(worker) == 0);
+        } else (void)sxn_close(test.socket);
+        check(sxn_close(test.delay) == 0);
+    }
+    check(sxn_close(tx) == 0 && sxn_close(tcp) == 0 && sxn_close(cancel) == 0);
+    check(sxn_log("nativetest: native IPv4 sockets and cancellable readiness") == 0);
+}
+
+/* Readiness reports completion, not success. Status is retained across waits. */
+static void check_connect_failure(long socket, long expected) {
+    struct sxn_io_interest interest = {(int32_t)socket, SXN_IO_WRITE};
+    char byte;
+    check(sxn_wait_io(&interest, 1, 25000) == 0);
+    check(sxn_socket_status(socket) == expected);
+    check(sxn_socket_status(socket) == expected);
+    interest.interests = SXN_IO_ERROR;
+    check(sxn_wait_io(&interest, 1, 0) == 0);
+    check(sxn_socket_status(socket) == expected);
+    check(sxn_read(socket, &byte, 1) == expected);
+    check(sxn_write(socket, "x", 1) == expected);
+}
+
+static void test_native_connect_failures(unsigned port) {
+    long control = sxn_socket_create(SXN_SOCKET_TCP);
+    long refused = sxn_socket_create(SXN_SOCKET_TCP);
+    long stalled = sxn_socket_create(SXN_SOCKET_TCP);
+    long device = sxn_open_device("net0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
+    struct sxn_io_interest interest = {(int32_t)control, SXN_IO_WRITE};
+    struct savanxp_net_tcp_fault fault = {0};
+    struct savanxp_net_tcp_stats before = {0}, after = {0};
+    unsigned refused_port = 0, digits = 0;
+    char byte = 0;
+    long result;
+    uint64_t started;
+    check(control >= 0 && refused >= 0 && stalled >= 0 && device >= 0);
+    if (control < 0 || refused < 0 || stalled < 0 || device < 0) goto cleanup;
+    result = sxn_socket_connect(control, &peer);
+    check(result == 0 || result == -SAVANXP_EAGAIN);
+    check(sxn_wait_io(&interest, 1, 5000) == 0);
+    check(sxn_socket_status(control) == 0);
+    check(sxn_write(control, "REFUSE\n", 7) == 7);
+    interest.interests = SXN_IO_READ;
+    while (digits < 6) {
+        if (sxn_wait_io(&interest, 1, 5000) != 0 || sxn_read(control, &byte, 1) != 1) break;
+        if (byte == '\n') break;
+        if (byte < '0' || byte > '9') break;
+        refused_port = refused_port * 10u + (unsigned)(byte - '0');
+        ++digits;
+    }
+    check(byte == '\n' && digits > 0 && refused_port > 0 && refused_port <= 65535);
+    if (byte != '\n' || !refused_port || refused_port > 65535) goto cleanup;
+    peer.port = (uint16_t)refused_port;
+    result = sxn_socket_connect(refused, &peer);
+    check(result == -SAVANXP_EAGAIN || result == -SAVANXP_ECONNREFUSED);
+    check_connect_failure(refused, -SAVANXP_ECONNREFUSED);
+    sxn_log("nativetest: pending connect: refusal retained after readiness");
+
+    // Drop every outgoing SYN using the existing fault injector. No remote
+    // blackhole or host firewall is needed, and the normal retry budget runs.
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&before) == 0);
+    fault.drop_tx_every = 1;
+    if (sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) != 0) {
+        check(0);
+        goto cleanup;
+    }
+    peer.port = (uint16_t)port;
+    started = sxn_clock_ns();
+    check(sxn_socket_connect(stalled, &peer) == -SAVANXP_EAGAIN);
+    check(sxn_socket_status(stalled) == -SAVANXP_EAGAIN);
+    check(sxn_socket_connect(stalled, &peer) == -SAVANXP_EBUSY);
+    interest.handle = (int32_t)stalled;
+    interest.interests = SXN_IO_WRITE | SXN_IO_ERROR;
+    check(sxn_wait_io(&interest, 1, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_wait_io(&interest, 1, 20) == -SAVANXP_ETIMEDOUT);
+    check(sxn_socket_status(stalled) == -SAVANXP_EAGAIN);
+    check_connect_failure(stalled, -SAVANXP_ETIMEDOUT);
+    check(sxn_clock_ns() - started < 25000000000ull);
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&after) == 0);
+    check(after.retransmits > before.retransmits && after.aborts > before.aborts);
+    sxn_log("nativetest: pending connect: wait expiry preserves pending; retries expire as timeout");
+    fault.drop_tx_every = 0;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+
+    // A deliberate new connection replaces the retained failure.
+    peer.port = (uint16_t)refused_port;
+    result = sxn_socket_connect(stalled, &peer);
+    check(result == -SAVANXP_EAGAIN || result == -SAVANXP_ECONNREFUSED);
+    check_connect_failure(stalled, -SAVANXP_ECONNREFUSED);
+cleanup:
+    fault.drop_tx_every = 0;
+    if (device >= 0) {
+        check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+        check(sxn_close(device) == 0);
+    }
+    if (stalled >= 0) check(sxn_close(stalled) == 0);
+    if (refused >= 0) check(sxn_close(refused) == 0);
+    if (control >= 0) check(sxn_close(control) == 0);
+}
+
+static void test_native_tcp(unsigned port) {
+    long socket = sxn_socket_create(SXN_SOCKET_TCP);
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
+    struct sxn_io_interest interest = {(int32_t)socket, SXN_IO_WRITE | SXN_IO_ERROR};
+    const char request[] = "BULK 2048\nQUIT\n";
+    unsigned char bytes[257];
+    unsigned total = 0;
+    long result;
+    check(socket >= 0);
+    result = sxn_socket_connect(socket, &peer);
+    check(result == 0 || result == -SAVANXP_EAGAIN);
+    check(sxn_wait_io(&interest, 1, 5000) == 0);
+    check(sxn_socket_status(socket) == 0);
+    check(sxn_socket_status(socket) == 0);
+    check(sxn_socket_connect(socket, &peer) == -SAVANXP_EBUSY);
+    interest.interests = SXN_IO_ERROR;
+    check(sxn_wait_io(&interest, 1, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_write(socket, request, sizeof(request) - 1) == sizeof(request) - 1);
+    interest.interests = SXN_IO_READ | SXN_IO_ERROR;
+    while (total < 2048) {
+        unsigned i;
+        if (sxn_wait_io(&interest, 1, 5000) != 0) { check(0); break; }
+        result = sxn_read(socket, bytes, sizeof(bytes));
+        if (result == -SAVANXP_EAGAIN) continue;
+        if (result <= 0) { check(0); break; }
+        for (i = 0; i < (unsigned)result; ++i)
+            check(bytes[i] == (unsigned char)(((total + i) * 31u + 7u) & 255u));
+        total += (unsigned)result;
+    }
+    check(total == 2048);
+    check(sxn_wait_io(&interest, 1, 5000) == 0);
+    check(sxn_read(socket, bytes, sizeof(bytes)) == 0);
+    check(sxn_close(socket) == 0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -1964,6 +2160,21 @@ int main(int argc, char** argv) {
     long section_handle;
     long base;
 
+    if (argc > 1 && streq(argv[1], "network")) {
+        test_sockets();
+        if (argc > 2) {
+            unsigned port = 0;
+            const char* digit = argv[2];
+            while (*digit >= '0' && *digit <= '9') port = port * 10u + (unsigned)(*digit++ - '0');
+            check(port > 0 && port <= 65535 && *digit == 0);
+            if (port && port <= 65535 && *digit == 0) {
+                test_native_tcp(port);
+                test_native_connect_failures(port);
+            }
+        }
+        sxn_log(g_failures ? "NATIVE NETWORK FAIL" : "NATIVE NETWORK PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
     if (argc > 1 && streq(argv[1], "file-user")) {
         char byte;
         long handle;

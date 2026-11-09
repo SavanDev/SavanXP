@@ -187,6 +187,7 @@ struct Thread {
     uint64_t wait_address;
     uint64_t wait_ticket;
     object::Header* waited_objects[kMaxWaitHandles];
+    uint32_t wait_io_interests[kMaxWaitHandles];
     uint64_t blocked_io_fd;
     uint64_t blocked_read_buffer;
     uint64_t blocked_read_capacity;

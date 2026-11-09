@@ -55,7 +55,7 @@ int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, 
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
 
 
-int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms, const uint32_t* interests = nullptr);
 // The POSIX translation uses these too (slice C): to complete a poll and to
 // evaluate a descriptor.
 int complete_blocked_wait(Thread& thread, int result);

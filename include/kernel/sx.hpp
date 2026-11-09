@@ -94,7 +94,7 @@ bool is_waitable(const object::Header* handle_object);
 bool is_wait_target(const object::Header* handle_object);
 bool can_complete_object_wait(const process::Thread& thread);
 int consume_object_wait(process::Thread& thread);
-int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all);
+int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all, const uint32_t* interests = nullptr);
 
 // Sections and views: neutral constructors plus the W^X and mask policy.
 // Flag translation (SAVANXP_SECTION_*/VIEW_*), file checks and handle

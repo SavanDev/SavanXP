@@ -1,8 +1,11 @@
 # Web Viewer: the rendering contract
 
-> This contract changes phase by phase as Web Viewer moves onto NetSurf's MIT
-> libraries and grows its own layout engine. See
-> [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> This documents the current POSIX prototype, whose remote loads still block
+> the UI. The first SUN socket foundation exists, but Web Viewer does not use
+> it yet. Complete SUN migration and asynchronous HTTP/validated HTTPS before
+> replacing the renderer with the pinned Ladybird engine. The plan and the
+> implementation checkpoint are in
+> [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#implementation-checkpoint--2026-11-09).
 
 `/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
 of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and

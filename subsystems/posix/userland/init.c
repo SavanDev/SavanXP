@@ -159,6 +159,7 @@ static int run_automation_spec(const char* spec) {
     const char* ntptest_argv[] = {"/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/bin/floatsmoke", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
+    const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
     const char* nativedevices_argv[] = {"/bin/nativetest.sxe", "audio-devices", 0};
     const char* nativepreferences_argv[] = {"/bin/nativetest.sxe", "audio-preferences", 0};
@@ -301,6 +302,11 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/pthreadtest";
             argv = pthreadtest_argv;
             argc = 1;
+        } else if (text_starts_with(spec, "nativenetwork ")) {
+            path = "/bin/nativetest.sxe";
+            nativenetwork_argv[2] = skip_spaces(spec + strlen("nativenetwork"));
+            argv = nativenetwork_argv;
+            argc = 3;
         } else if (strcmp(spec, "nativepreferences") == 0) {
             path = "/bin/nativetest.sxe";
             argv = nativepreferences_argv;

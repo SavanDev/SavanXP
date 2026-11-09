@@ -938,6 +938,7 @@ char* sx_strerror(int error_number) {
         case ENOTEMPTY: return "directory not empty";
         case E2BIG: return "argument list too long";
         case ECONNRESET: return "connection reset by peer";
+        case ECONNREFUSED: return "connection refused";
         case ETIMEDOUT: return "timed out";
         default: return "error";
     }

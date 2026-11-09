@@ -62,7 +62,7 @@ struct Socket {
     // error y no un fin de archivo -- si no, un cuerpo HTTP cortado a la mitad
     // pasa por completo y el error aparece mucho despues, en el parser.
     bool aborted;
-    uint32_t abort_status; // savanxp_net_status con el que murio la conexion
+    sx_status abort_error; // Retained failure; querying it does not clear it.
     uint32_t send_unacked;
     uint32_t send_next;
     uint32_t recv_next;
@@ -985,27 +985,22 @@ void tcp_complete_send(net::Socket& socket, uint32_t acknowledgement) {
 }
 
 void tcp_abort(net::Socket& socket, uint32_t status) {
-    socket.abort_status = status;
+    socket.abort_error = status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SX_ETIMEDOUT :
+        (socket.tcp_state == net::TcpState::syn_sent ? SX_ECONNREFUSED : SX_ECONNRESET);
     socket.connected = false;
     socket.tcp_state = net::TcpState::closed;
     socket.aborted = true;
-    // Tambien se marca el FIN para que los que estan esperando en poll() o en
-    // un read() bloqueante se despierten; el error lo distingue aborted.
+    // Wake poll/read waiters as well; aborted distinguishes failure from EOF.
     socket.fin_received = true;
     socket.tx_pending = false;
     ++g_tcp_stats.aborts;
     set_status(status);
 }
 
-// Vencio el RTO del segmento en vuelo: se repite con backoff exponencial hasta
-// el tope de reintentos, y ahi la conexion se da por muerta.
-// Traduce la muerte de la conexion al errno que ve la app: se perdio el peer
-// (ETIMEDOUT) o el peer corto (ECONNRESET). Los dos son errores; devolver fin
-// de archivo, como se hacia antes, hace pasar por completo un cuerpo truncado.
+// A failed handshake is a refusal, an established peer's RST is a reset,
+// and exhausted retries are a timeout. Never report these failures as EOF.
 int tcp_abort_error(const net::Socket& socket) {
-    return negative_error(
-        socket.abort_status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SX_ETIMEDOUT : SX_ECONNRESET
-    );
+    return negative_error(socket.abort_error);
 }
 
 void tcp_service_socket(net::Socket& socket) {
@@ -1183,26 +1178,14 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
         return;
     }
 
-    // Un ACK solo vale si reconoce algo nuevo y nada que no hayamos mandado:
-    // sin el segundo control, un segmento viejo o forjado adelanta send_unacked
-    // y da por entregado lo que sigue en vuelo.
-    if ((flags & kTcpFlagAck) != 0 &&
-        seq_gt(acknowledgement_number, socket->send_unacked) &&
-        seq_leq(acknowledgement_number, socket->send_next)) {
-        socket->send_unacked = acknowledgement_number;
-    }
-    if ((flags & kTcpFlagAck) != 0) {
-        tcp_complete_send(*socket, acknowledgement_number);
-    }
-
-    if ((flags & kTcpFlagRst) != 0) {
-        tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
-        return;
-    }
-
+    // Only an acknowledgement of our SYN can complete or reject a pending
+    // connection. Other ACKs must not disarm the SYN retransmission timer.
     if (socket->tcp_state == net::TcpState::syn_sent) {
-        if ((flags & (kTcpFlagSyn | kTcpFlagAck)) == (kTcpFlagSyn | kTcpFlagAck) &&
-            acknowledgement_number == socket->send_next) {
+        if ((flags & kTcpFlagAck) == 0 || acknowledgement_number != socket->send_next) return;
+        if (flags & kTcpFlagRst) {
+            tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
+        } else if (flags & kTcpFlagSyn) {
+            tcp_complete_send(*socket, acknowledgement_number);
             socket->remote_ip = source_ip;
             socket->recv_next = sequence_number + 1;
             socket->send_unacked = acknowledgement_number;
@@ -1211,6 +1194,18 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
             set_status(SAVANXP_NET_STATUS_TCP_ESTABLISHED);
             (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
         }
+        return;
+    }
+
+    // Accept only ACKs for bytes already sent, and advance monotonically.
+    if ((flags & kTcpFlagAck) != 0 &&
+        seq_gt(acknowledgement_number, socket->send_unacked) &&
+        seq_leq(acknowledgement_number, socket->send_next)) {
+        socket->send_unacked = acknowledgement_number;
+    }
+    if ((flags & kTcpFlagAck) != 0) tcp_complete_send(*socket, acknowledgement_number);
+    if ((flags & kTcpFlagRst) != 0) {
+        tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
         return;
     }
 
@@ -1650,7 +1645,7 @@ int bind_socket(Socket* socket, uint64_t user_address) {
     return bind_socket_port(socket, address.port);
 }
 
-int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
+int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || socket->protocol != SAVANXP_IPPROTO_TCP) {
         return negative_error(SX_EBADF);
     }
@@ -1686,7 +1681,7 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     socket->connected = false;
     socket->fin_received = false;
     socket->aborted = false;
-    socket->abort_status = 0;
+    socket->abort_error = static_cast<sx_status>(0);
     socket->tx_pending = false;
     socket->advertised_window = 0;
     memset(socket->out_of_order, 0, sizeof(socket->out_of_order));
@@ -1695,15 +1690,16 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     socket->tcp_state = net::TcpState::syn_sent;
     set_status(SAVANXP_NET_STATUS_TCP_SYN_SENT);
 
-    // El SYN sale por la ranura de retransmision como cualquier otro segmento:
-    // antes se mandaba una sola vez y un SYN perdido era un connect fallido.
+    // Retransmit SYN through the same pending-segment slot as data.
     if (!tcp_arm_segment(*socket, kTcpFlagSyn, nullptr, 0, socket->initial_sequence, 1)) {
         socket->tcp_state = net::TcpState::closed;
         return negative_error(SX_EIO);
     }
 
+    if (nonblocking) return socket_status(socket);
+
     const uint32_t effective_timeout = timeout_ms != 0 ? timeout_ms : 3000u;
-    const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+    const uint64_t start_ms = monotonic_ms();
     while (!socket->connected) {
         net_pump();
         if (socket->connected) {
@@ -1712,10 +1708,9 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
         if (socket->aborted) {
             return tcp_abort_error(*socket);
         }
-        const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+        const uint64_t now_ms = monotonic_ms();
         if (now_ms - start_ms >= effective_timeout) {
-            socket->tcp_state = net::TcpState::closed;
-            set_status(SAVANXP_NET_STATUS_TCP_TIMEOUT);
+            tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_TIMEOUT);
             return negative_error(SX_ETIMEDOUT);
         }
         if (wait_for_tick()) {
@@ -1723,6 +1718,14 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
         }
     }
     return 0;
+}
+
+int socket_status(const Socket* socket) {
+    if (socket == nullptr || !socket->in_use) return negative_error(SX_EBADF);
+    if (socket->aborted) return tcp_abort_error(*socket);
+    if (socket->connected) return 0;
+    if (socket->tcp_state == TcpState::syn_sent) return negative_error(SX_EAGAIN);
+    return negative_error(SX_EINVAL);
 }
 
 int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, bool nonblocking) {
@@ -2073,6 +2076,10 @@ bool socket_can_write(const Socket* socket) {
         return socket->connected && !socket->fin_received && !socket->tx_pending;
     }
     return false;
+}
+
+bool socket_has_error(const Socket* socket) {
+    return socket && socket->in_use && socket->aborted;
 }
 
 bool socket_has_hangup(const Socket* socket) {

@@ -319,3 +319,30 @@ static inline void sxn_spawn_request_init(
     request->handle_count = 0;
     request->flags = 0;
 }
+
+/* Native sockets share close/duplicate/read/write with other SUN streams. */
+static inline long sxn_socket_create(unsigned type) {
+    return sxn_trap(SXN_SYS_SOCKET_CREATE, type, 0, 0);
+}
+static inline long sxn_socket_bind(long handle, const struct sxn_ipv4_endpoint* endpoint) {
+    return sxn_trap(SXN_SYS_SOCKET_BIND, handle, (unsigned long)endpoint, 0);
+}
+static inline long sxn_socket_connect(long handle, const struct sxn_ipv4_endpoint* endpoint) {
+    return sxn_trap(SXN_SYS_SOCKET_CONNECT, handle, (unsigned long)endpoint, 0);
+}
+static inline long sxn_socket_status(long handle) {
+    return sxn_trap(SXN_SYS_SOCKET_STATUS, handle, 0, 0);
+}
+static inline long sxn_socket_sendto(long handle, const void* bytes, unsigned long size,
+                                   const struct sxn_ipv4_endpoint* endpoint) {
+    struct sxn_datagram request = {(uint64_t)(unsigned long)bytes, size, (uint64_t)(unsigned long)endpoint};
+    return sxn_trap(SXN_SYS_SOCKET_SENDTO, handle, (unsigned long)&request, 0);
+}
+static inline long sxn_socket_recvfrom(long handle, void* bytes, unsigned long size,
+                                     struct sxn_ipv4_endpoint* endpoint) {
+    struct sxn_datagram request = {(uint64_t)(unsigned long)bytes, size, (uint64_t)(unsigned long)endpoint};
+    return sxn_trap(SXN_SYS_SOCKET_RECVFROM, handle, (unsigned long)&request, 0);
+}
+static inline long sxn_wait_io(const struct sxn_io_interest* interests, unsigned long count, long timeout_ms) {
+    return sxn_trap(SXN_SYS_WAIT_IO, (unsigned long)interests, count, (unsigned long)timeout_ms);
+}

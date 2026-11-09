@@ -31,7 +31,7 @@ def read_line(sock: socket.socket, buffer: bytearray) -> str | None:
         buffer.extend(chunk)
 
 
-def handle_client(sock: socket.socket) -> None:
+def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
     sock.settimeout(60.0)
     buffer = bytearray()
     while True:
@@ -45,7 +45,9 @@ def handle_client(sock: socket.socket) -> None:
             continue
         command = parts[0].upper()
         try:
-            if command == "BULK" and len(parts) == 2:
+            if command == "REFUSE" and len(parts) == 1:
+                sock.sendall(f"{refused_port}\n".encode("ascii"))
+            elif command == "BULK" and len(parts) == 2:
                 count = int(parts[1])
                 sent = 0
                 while sent < count:
@@ -79,6 +81,14 @@ def handle_client(sock: socket.socket) -> None:
                 sock.sendall(b"ERR\n")
         except (ValueError, OSError, ConnectionError):
             return
+
+
+def handle_client(sock: socket.socket) -> None:
+    # Reserve a TCP port without listening: connects receive a deterministic
+    # refusal while this control connection keeps the reservation alive.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as refused:
+        refused.bind(("127.0.0.1", 0))
+        handle_client_commands(sock, refused.getsockname()[1])
 
 
 def main() -> int:

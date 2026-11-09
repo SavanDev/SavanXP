@@ -121,24 +121,23 @@ Every piece that becomes a `Selective port` goes into the provenance registry
 with its original ISC header intact: those notices are a few lines long, and
 losing them is the easy mistake to make.
 
+## Ladybird
+
+`Adopt` is the planned direction for Web Viewer's engine, subject to the
+feasibility and dependency audit in
+[`WEBVIEWER_ROADMAP.md`](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+The selected C++ baseline is `37ec6a08a8aaff5808e5b570430001594692fde3`; do not track
+upstream `master` or its Rust transition. Ladybird's top-level license is
+BSD-2-Clause; preserve its notices and audit
+all transitive code and resources before import. No code is adopted yet.
+Pinned pristine sources belong under `vendor/ladybird/`, with platform
+adaptation tracked separately and every shipped component in the registry.
+
 ## NetSurf
 
-NetSurf is split by license, and the decision follows the split. The plan is
-in [`WEBVIEWER_ROADMAP.md`](../roadmaps/open/WEBVIEWER_ROADMAP.md) and
-[`NETSURF_ROADMAP.md`](../roadmaps/open/NETSURF_ROADMAP.md).
-
-`Adopt` (MIT, under `vendor/netsurf/`, for Web Viewer):
-
-- libparserutils, libwapcaplet, libhubbub, libdom and libcss; later libnsgif
-  and libnsbmp
-
-`Do not adopt` (GPL-2.0-only):
-
-- the core: the browser, its box construction, layout, redraw, the libcss
-  select handler and the default stylesheet. It is not `Reference` either:
-  Web Viewer's versions are written from the CSS and HTML specifications, and
-  NetSurf's behaviour is observed by running it, never by reading its source.
-  The core exists in the repository only as the `ports/netsurf` port.
+`Do not adopt`: the browser, its libraries and the reference-port proposal are
+all discarded from the Web Viewer roadmap. There is no planned NetSurf
+integration or comparison dependency.
 
 ## Traceability: the registry is the source of truth
 

@@ -187,9 +187,9 @@ all its phases have landed; the links to it move with it.
   binary compatibility on Sx under `/system/win`: PE32 execution, DLL startup
   and USER32/GDI for the first application goal, Windows XP Solitaire; Wine
   conformance tests, sogen investigations and acceptance gates.
-- [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer on NetSurf's
-  MIT libraries (libhubbub, libdom, libcss): what is adopted, the clean-room rule
-  against the GPL core, and the phases up to its own CSS 2.1 layout engine.
+- [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer's network-first
+  SUN migration and HTTP/HTTPS plan, implementation checkpoint and verification;
+  later integration of the pinned Ladybird engine and its acceptance gates.
 - [`FAT_ROADMAP.md`](roadmaps/open/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
   under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
   ESP at `/boot`, and the phases.
@@ -202,9 +202,6 @@ all its phases have landed; the links to it move with it.
 - [`XASH3D_ROADMAP.md`](roadmaps/open/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
   engine needs from the platform, and the order that makes it pay for `dlopen` and
   SxGL without pulling in threads or SDL.
-- [`NETSURF_ROADMAP.md`](roadmaps/open/NETSURF_ROADMAP.md) — porting NetSurf as the
-  reference browser Web Viewer is compared against: the license (GPL-2.0-only
-  core, MIT libraries), one shared copy of the libraries, and the steps.
 - [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.

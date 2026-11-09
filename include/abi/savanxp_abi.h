@@ -71,6 +71,7 @@ enum sx_status {
     SX_E2BIG = 7,
     SX_ECONNRESET = 104,
     SX_ETIMEDOUT = 110,
+    SX_ECONNREFUSED = 111,
     // A call cut short because its thread is ending (a kill, or an exec of
     // a sibling). The thread never returns to user mode to see it.
     SX_EINTR = 4,
@@ -103,6 +104,7 @@ typedef enum sx_status savanxp_error_code;
 #define SAVANXP_E2BIG SX_E2BIG
 #define SAVANXP_ECONNRESET SX_ECONNRESET
 #define SAVANXP_ETIMEDOUT SX_ETIMEDOUT
+#define SAVANXP_ECONNREFUSED SX_ECONNREFUSED
 #define SAVANXP_EINTR SX_EINTR
 
 

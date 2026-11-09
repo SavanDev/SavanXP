@@ -5,6 +5,8 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/object.hpp"
+#include "kernel/net.hpp"
+#include "abi/savanxp_native_abi.h"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/process_detail.hpp"
@@ -181,11 +183,24 @@ bool stream_ready(const object::Header* handle_object) {
     return (revents & (SAVANXP_POLLIN | SAVANXP_POLLHUP)) != 0;
 }
 
-bool target_ready(const object::Header* handle_object) {
+bool io_ready(const object::Header* handle_object, uint32_t interests) {
+    const object::IoObject* file = object::as_io(handle_object);
+    if (!file) return false;
+    short events = 0;
+    if (interests & SXN_IO_READ) events |= SAVANXP_POLLIN;
+    if (interests & SXN_IO_WRITE) events |= SAVANXP_POLLOUT;
+    const short ready = process::detail::poll_open_file(file, events);
+    if (ready & (events | SAVANXP_POLLHUP)) return true;
+    return file->kind == process::HandleKind::socket && net::socket_has_error(file->socket);
+}
+
+bool target_ready(const object::Header* handle_object, uint32_t interests) {
+    if (interests) return io_ready(handle_object, interests);
     return is_waitable(handle_object) ? object::can_satisfy_wait(handle_object) : stream_ready(handle_object);
 }
 
-bool acquire_target(object::Header* handle_object) {
+bool acquire_target(object::Header* handle_object, uint32_t interests) {
+    if (interests) return io_ready(handle_object, interests);
     return is_waitable(handle_object) ? object::try_acquire_wait(handle_object) : stream_ready(handle_object);
 }
 
@@ -206,7 +221,7 @@ bool can_complete_object_wait(const process::Thread& thread) {
 
     if (thread.wait_all != 0) {
         for (size_t index = 0; index < thread.wait_handle_count; ++index) {
-            if (!target_ready(thread.waited_objects[index])) {
+            if (!target_ready(thread.waited_objects[index], thread.wait_io_interests[index])) {
                 return false;
             }
         }
@@ -214,7 +229,7 @@ bool can_complete_object_wait(const process::Thread& thread) {
     }
 
     for (size_t index = 0; index < thread.wait_handle_count; ++index) {
-        if (target_ready(thread.waited_objects[index])) {
+        if (target_ready(thread.waited_objects[index], thread.wait_io_interests[index])) {
             return true;
         }
     }
@@ -228,7 +243,7 @@ int consume_object_wait(process::Thread& thread) {
 
     if (thread.wait_all != 0) {
         for (size_t index = 0; index < thread.wait_handle_count; ++index) {
-            if (!acquire_target(thread.waited_objects[index])) {
+            if (!acquire_target(thread.waited_objects[index], thread.wait_io_interests[index])) {
                 return negative_error(SX_EINVAL);
             }
         }
@@ -236,14 +251,14 @@ int consume_object_wait(process::Thread& thread) {
     }
 
     for (size_t index = 0; index < thread.wait_handle_count; ++index) {
-        if (acquire_target(thread.waited_objects[index])) {
+        if (acquire_target(thread.waited_objects[index], thread.wait_io_interests[index])) {
             return static_cast<int>(index);
         }
     }
     return negative_error(SX_EINVAL);
 }
 
-int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all) {
+int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all, const uint32_t* interests) {
     if (count == 0 || count > process::kMaxWaitHandles) {
         return negative_error(SX_EINVAL);
     }
@@ -254,8 +269,11 @@ int try_consume_objects(process::Thread& thread, object::Header* const* handles,
     thread.wait_all = wait_all ? 1u : 0u;
     for (size_t index = 0; index < count; ++index) {
         thread.waited_objects[index] = handles[index];
+        thread.wait_io_interests[index] = interests ? interests[index] : 0;
+        if (interests) object::retain(handles[index]);
     }
 
+    thread.wait_reserved = interests ? 1 : 0;
     if (can_complete_object_wait(thread)) {
         return consume_object_wait(thread);
     }

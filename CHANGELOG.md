@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **SUN exposes IPv4 TCP/UDP sockets and cancellable I/O readiness waits.**
+  `sxn_wait_io` combines stream interests with events; `smoke native-network` checks the native contract.
+
 - **Nightwood supports F11 fullscreen, and Doom toggles its FPS overlay with F.**
   SUN games can opt into fullscreen with `sxnwm_connect_with_launch_flags`.
 
@@ -81,6 +84,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Web Viewer's roadmap now targets Ladybird with a native SUN frontend.**
+  It pins the pre-Rust C++ baseline `37ec6a08a8aaff5808e5b570430001594692fde3` and discards NetSurf.
+  See [the roadmap](docs/roadmaps/open/WEBVIEWER_ROADMAP.md) for feasibility, runtime, rendering and security gates.
+
 - **Sound and Mouse Properties use dedicated classic desktop icons at 16x16 and 32x32.**
 
 - **Task Manager opens with a narrower, 560-pixel content area.**
@@ -106,6 +113,9 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **TCP reports refused connections as `ECONNREFUSED` and retains connection failures after readiness.**
+  Expired `connect` calls stop retransmitting; `smoke native-network` covers success, refusal and timeout.
 
 - **The keyboard layout selector spells `Español` with ñ.**
 

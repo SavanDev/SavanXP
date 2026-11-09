@@ -9,6 +9,7 @@
 #include "kernel/display.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/object.hpp"
+#include "kernel/net.hpp"
 #include "kernel/process_detail.hpp"
 #include "kernel/string.hpp"
 #include "kernel/storage.hpp"
@@ -19,6 +20,14 @@
 namespace process {
 
 namespace {
+
+class NativeIoReference {
+public:
+    explicit NativeIoReference(object::IoObject* file) : object_(&file->header) { object::retain(object_); }
+    ~NativeIoReference() { object::release(object_); }
+private:
+    object::Header* object_;
+};
 
 /* --- Handles and I/O for native processes ---------------------------------
  *
@@ -58,6 +67,10 @@ int native_read(Thread& self, uint64_t handle, uint64_t user_buffer, size_t coun
     }
     if (!sx::validate_user_range(user_buffer, count, true)) {
         return sx::negative_error(SX_EINVAL);
+    }
+    if (file->kind == HandleKind::socket) {
+        NativeIoReference held(file);
+        return net::read_socket(file->socket, user_buffer, count, true);
     }
     if (file->kind == HandleKind::device) {
         return device::read(file->device, user_buffer, count);
@@ -112,6 +125,10 @@ int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t cou
     if (!sx::validate_user_range(user_buffer, count, false)) {
         return sx::negative_error(SX_EINVAL);
     }
+    if (file->kind == HandleKind::socket) {
+        NativeIoReference held(file);
+        return net::write_socket(file->socket, user_buffer, count, true);
+    }
     if (file->kind == HandleKind::device) {
         return device::write(file->device, user_buffer, count);
     }
@@ -142,6 +159,75 @@ int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t cou
     self.blocked_write_progress = step == kBlockedResult ? 0 : static_cast<uint64_t>(step);
     self.state = State::blocked_write;
     return kBlockedResult;
+}
+
+/* Native sockets use the network core directly, with no POSIX state. */
+int native_socket_create(Process& proc, uint64_t type) {
+    if (type != SXN_SOCKET_TCP && type != SXN_SOCKET_UDP) return -SX_EINVAL;
+    net::Socket* socket = nullptr;
+    int result = net::create_socket(SAVANXP_AF_INET,
+        type == SXN_SOCKET_TCP ? SAVANXP_SOCK_STREAM : SAVANXP_SOCK_DGRAM, 0, socket);
+    if (result < 0) return result;
+    object::IoObject* file = detail::allocate_io_object();
+    if (!file) { net::close_socket(socket); return -SX_ENOMEM; }
+    file->kind = HandleKind::socket;
+    file->open_flags = open_read | open_write | open_nonblock;
+    file->socket = socket;
+    file->header.destroy = detail::destroy_io_object;
+    result = detail::allocate_fd(proc, &file->header,
+        detail::object_access_for_open_flags(file->open_flags), object::handle_none);
+    if (result < 0) { net::close_socket(socket); detail::discard_io_object(file); }
+    return result;
+}
+
+int native_socket_call(Process& proc, uint64_t call, uint64_t handle, uint64_t arg) {
+    const uint32_t access = call == SXN_SYS_SOCKET_RECVFROM ? object::access_read :
+        (call == SXN_SYS_SOCKET_STATUS ? object::access_query : object::access_write);
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, access);
+    if (!file || file->kind != HandleKind::socket) return -SX_EBADF;
+    // ARP resolution may sleep inside the network core; a sibling close must
+    // not free the socket during that operation.
+    NativeIoReference held(file);
+    int result = -SX_EINVAL;
+    static_assert(sizeof(sxn_ipv4_endpoint) == sizeof(savanxp_sockaddr_in));
+    static_assert(offsetof(sxn_ipv4_endpoint, port) == offsetof(savanxp_sockaddr_in, port));
+    if (call == SXN_SYS_SOCKET_BIND) result = net::bind_socket(file->socket, arg);
+    else if (call == SXN_SYS_SOCKET_CONNECT) result = net::connect_socket(file->socket, arg, 0, true);
+    else if (call == SXN_SYS_SOCKET_STATUS) { net::poll(); result = net::socket_status(file->socket); }
+    else {
+        sxn_datagram request = {};
+        if (sx::copy_from_user(&request, arg, sizeof(request))) {
+            if (call == SXN_SYS_SOCKET_SENDTO)
+                result = net::sendto_socket(file->socket, request.buffer, request.size, request.endpoint, true);
+            else result = net::recvfrom_socket(file->socket, request.buffer, request.size, request.endpoint, 0, true);
+        }
+    }
+    return result;
+}
+
+int native_wait_io(Thread& self, uint64_t user_entries, uint64_t count, int64_t timeout_ms) {
+    if (!count || count > kMaxWaitHandles) return -SX_EINVAL;
+    sxn_io_interest entries[kMaxWaitHandles] = {};
+    object::Header* objects[kMaxWaitHandles] = {};
+    uint32_t interests[kMaxWaitHandles] = {};
+    if (!sx::copy_from_user(entries, user_entries, count * sizeof(entries[0]))) return -SX_EINVAL;
+    for (size_t i = 0; i < count; ++i) {
+        if (entries[i].handle < 0) return -SX_EBADF;
+        interests[i] = entries[i].interests;
+        if (interests[i] & ~(SXN_IO_READ | SXN_IO_WRITE | SXN_IO_ERROR)) return -SX_EINVAL;
+        uint32_t access = object::access_synchronize;
+        if (interests[i] & SXN_IO_READ) access |= object::access_read;
+        if (interests[i] & SXN_IO_WRITE) access |= object::access_write;
+        objects[i] = detail::lookup_handle(*self.process, entries[i].handle, access);
+        if (!objects[i]) return -SX_EBADF;
+        if (!interests[i]) { if (!sx::is_waitable(objects[i])) return -SX_EINVAL; }
+        else {
+            object::IoObject* file = object::as_io(objects[i]);
+            if (!file || ((interests[i] & SXN_IO_READ) && !(file->open_flags & open_read)) ||
+                ((interests[i] & SXN_IO_WRITE) && !(file->open_flags & open_write))) return -SX_EINVAL;
+        }
+    }
+    return detail::begin_object_wait(self, objects, count, false, timeout_ms, interests);
 }
 
 /* Open existing regular files only; query access never grants read access. */
@@ -985,6 +1071,22 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 return choose_next_context(context);
             }
             context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_SOCKET_CREATE:
+            context->rax = native_socket_create(*caller, context->rdi);
+            return context;
+        case SXN_SYS_SOCKET_BIND:
+        case SXN_SYS_SOCKET_CONNECT:
+        case SXN_SYS_SOCKET_STATUS:
+        case SXN_SYS_SOCKET_SENDTO:
+        case SXN_SYS_SOCKET_RECVFROM:
+            context->rax = native_socket_call(*caller, context->rax, context->rdi, context->rsi);
+            return context;
+        case SXN_SYS_WAIT_IO: {
+            const int result = native_wait_io(*self, context->rdi, context->rsi, static_cast<int64_t>(context->rdx));
+            if (result == kBlockedResult) return choose_next_context(context);
+            context->rax = result;
             return context;
         }
         case SXN_SYS_WAIT_MANY: {

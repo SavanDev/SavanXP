@@ -1064,7 +1064,7 @@ object::Header* lookup_handle(Process& proc, uint64_t fd, uint32_t desired_acces
 Pipe* allocate_pipe();
 int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, size_t count);
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
-int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms, const uint32_t* interests);
 // The POSIX translation uses these too: the end of a poll and the evaluation
 // of a descriptor (slice C).
 int complete_blocked_wait(Thread& thread, int result);
@@ -1522,9 +1522,10 @@ void terminate_process(process::Process& proc, int exit_code) {
     reparent_orphaned_children(exiting_pid);
 }
 
-int begin_object_wait(process::Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms) {
-    const int consumed = sx::try_consume_objects(self, handles, count, wait_all);
+int begin_object_wait(process::Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms, const uint32_t* interests) {
+    const int consumed = sx::try_consume_objects(self, handles, count, wait_all, interests);
     if (consumed != sx::negative_error(SX_EAGAIN)) {
+        if (interests) clear_wait_state(self);
         return consumed;
     }
     if (timeout_ms == 0) {
@@ -1688,6 +1689,12 @@ void copy_subsystem_state(Process& child, const process::Process& parent) {
 }
 
 void clear_wait_state(process::Thread& thread) {
+    // Detach first: releasing a pipe can wake and recheck other waiters.
+    object::Header* retained[process::kMaxWaitHandles] = {};
+    if (thread.wait_reserved == 1) {
+        for (size_t index = 0; index < thread.wait_handle_count; ++index)
+            retained[index] = thread.waited_objects[index];
+    }
     thread.wait_reason = process::WaitReason::none;
     thread.wait_handle_count = 0;
     thread.wait_all = 0;
@@ -1698,8 +1705,10 @@ void clear_wait_state(process::Thread& thread) {
     thread.wait_ticket = 0;
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
         thread.waited_objects[index] = nullptr;
+        thread.wait_io_interests[index] = 0;
     }
     thread.wake_deadline_ms = 0;
+    for (auto& object : retained) object::release(object);
 }
 
 void switch_to_thread(process::Thread* target) {

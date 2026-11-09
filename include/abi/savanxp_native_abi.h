@@ -80,12 +80,13 @@ enum sxn_syscall_number {
     /* rdi = handle. A second handle to the same object with the same granted
      * access. Returns the new handle or -errno. */
     SXN_SYS_DUPLICATE = 0x100d,
-    /* rdi = handle, rsi = buffer, rdx = byte count. Regular files, pipes and devices.
+    /* rdi = handle, rsi = buffer, rdx = byte count. Regular files, pipes, devices and TCP sockets.
+     * Socket I/O is nonblocking and may return a partial count or -EAGAIN.
      * File reads advance the shared offset and return 0 at EOF.
      * A pipe read blocks until data arrives (unless the handle is
      * non-blocking) and returns 0 at end of stream. Returns bytes or -errno. */
     SXN_SYS_READ = 0x100e,
-    /* rdi = handle, rsi = buffer, rdx = byte count. Pipes and devices only.
+    /* rdi = handle, rsi = buffer, rdx = byte count. Pipes, devices and TCP sockets.
      * A pipe write blocks until it fits; up to the pipe's capacity it is
      * written whole, never split. Returns bytes or -errno (-EPIPE with no
      * reader). */
@@ -317,6 +318,20 @@ enum sxn_syscall_number {
      * Parent must exist; VFS credentials apply. Returns 0 or -errno.
      * An I/O failure may leave incomplete contents. */
     SXN_SYS_WRITE_FILE = 0x1034,
+    /* Native IPv4 sockets. TCP data/ACK waits return -EAGAIN; retry after
+     * readiness. NIC initialization and ARP may still wait in the core.
+     * No POSIX process state is allocated. */
+    SXN_SYS_SOCKET_CREATE = 0x1035, /* rdi = SXN_SOCKET_TCP or UDP */
+    SXN_SYS_SOCKET_BIND = 0x1036, /* rdi = handle, rsi = sxn_ipv4_endpoint* */
+    SXN_SYS_SOCKET_CONNECT = 0x1037, /* same; -EAGAIN while SYN is pending */
+    SXN_SYS_SOCKET_STATUS = 0x1038, /* rdi = handle; 0 connected, -EAGAIN pending */
+    /* rdi = handle, rsi = sxn_datagram*. Returns bytes or -errno. */
+    SXN_SYS_SOCKET_SENDTO = 0x1039,
+    SXN_SYS_SOCKET_RECVFROM = 0x103a,
+    /* rdi = sxn_io_interest[], rsi = count, rdx = timeout ms (negative
+     * infinite). Returns the first ready index or -ETIMEDOUT. Events use
+     * interests=0 and are consumed just as by WAIT_MANY. */
+    SXN_SYS_WAIT_IO = 0x103b,
 };
 
 #define SXN_WRITE_FILE_MAX 4096u
@@ -512,4 +527,26 @@ struct sxn_gfx_present {
     uint32_t width;
     uint32_t height;
     uint32_t reserved0;
+};
+
+/* IPv4 is represented as 0xAABBCCDD and port in host byte order. */
+struct sxn_ipv4_endpoint {
+    uint32_t ipv4;
+    uint16_t port;
+    uint16_t reserved;
+};
+enum sxn_socket_type { SXN_SOCKET_TCP = 1, SXN_SOCKET_UDP = 2 };
+struct sxn_datagram {
+    uint64_t buffer;
+    uint64_t size;
+    uint64_t endpoint; /* sxn_ipv4_endpoint*: destination/source; 0 on receive discards it */
+};
+enum sxn_io_flags {
+    SXN_IO_READ = 1u,
+    SXN_IO_WRITE = 2u,
+    SXN_IO_ERROR = 4u,
+};
+struct sxn_io_interest {
+    int32_t handle;
+    uint32_t interests;
 };

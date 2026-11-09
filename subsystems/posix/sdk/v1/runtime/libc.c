@@ -789,6 +789,8 @@ const char* error_string(int error_code) {
             return "no child process";
         case SAVANXP_ECONNRESET:
             return "connection reset by peer";
+        case SAVANXP_ECONNREFUSED:
+            return "connection refused";
         case SAVANXP_ETIMEDOUT:
             return "timed out";
         default:

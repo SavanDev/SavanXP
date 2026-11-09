@@ -333,6 +333,35 @@ static int check_socket_contract(int fd) {
     return 1;
 }
 
+/* A blocking connect deadline must disarm its SYN retry slot as well as
+ * return ETIMEDOUT. Service the stack after the initial RTO to catch retries
+ * accidentally left alive after the caller's shorter deadline. */
+static int check_connect_timeout(const struct savanxp_sockaddr_in* peer) {
+    long net_fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    long fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP);
+    struct savanxp_net_tcp_stats before = {0}, after = {0};
+    unsigned char byte;
+    int ok = 0;
+    if (net_fd < 0 || fd < 0) goto cleanup;
+    if (!set_fault((int)net_fd, 1, 0, 0)) goto cleanup;
+    if (savanxp_connect((int)fd, peer, 20) != -SAVANXP_ETIMEDOUT) goto cleanup;
+    if (savanxp_ioctl((int)net_fd, NET_IOC_GET_TCP_STATS, (unsigned long)&before) < 0) goto cleanup;
+    sleep_ms(500);
+    if (savanxp_poll(0, 0, 0) != 0) goto cleanup;
+    if (savanxp_ioctl((int)net_fd, NET_IOC_GET_TCP_STATS, (unsigned long)&after) < 0) goto cleanup;
+    if (after.retransmits != before.retransmits || after.segments_sent != before.segments_sent) goto cleanup;
+    if (savanxp_read((int)fd, &byte, 1) != -SAVANXP_ETIMEDOUT) goto cleanup;
+    ok = 1;
+cleanup:
+    if (net_fd >= 0) {
+        if (!set_fault((int)net_fd, 0, 0, 0)) ok = 0;
+        savanxp_close((int)net_fd);
+    }
+    if (fd >= 0) savanxp_close((int)fd);
+    if (ok) puts_out("tcptest: connect timeout stops SYN retransmission\n");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     long net_fd;
     long fd;
@@ -482,6 +511,8 @@ int main(int argc, char** argv) {
     if (stats.aborts != 0) {
         return fail("a connection was aborted");
     }
+
+    if (!check_connect_timeout(&address)) return fail("connect timeout cleanup");
 
     puts_out("TCP SMOKE PASS\n");
     return 0;
