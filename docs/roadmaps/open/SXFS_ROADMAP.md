@@ -162,7 +162,7 @@ of general Linux/Windows compatibility or production certification.
 | Consumer | Storage responsibility and acceptance |
 | --- | --- |
 | SUN and current POSIX | Common lifetime, permissions, error, replacement and durability contracts; regression coverage for current programs |
-| [Linux L3-L4](LINUX_SUBSYSTEM_ROADMAP.md#l3--static-musl-programs-and-essential-file-io) | Pinned static musl/tool profiles may consume v2; demonstrate measured file operations, errors and restart/build persistence |
+| [Linux L2-L3](LINUX_SUBSYSTEM_ROADMAP.md#l2--static-c-programs) | Pinned static musl/tool profiles may consume v2; demonstrate measured file operations, errors and restart/build persistence |
 | Linux dynamic and broader profiles | File-backed mappings, links, directory-relative operations and locking as measured; VM/VFS work is not supplied by changing the disk format |
 | [Win32 W2](WIN32_SUBSYSTEM_ROADMAP.md#w2--base-runtime-for-the-measured-closure) | Keep drive paths, case rules, sharing, creation dispositions and deletion policy in Win32; retain native access checks |
 | Broader Win32 profiles | Add security metadata, streams/reparse behavior or notifications with named consumers; do not change all native names to Windows semantics |

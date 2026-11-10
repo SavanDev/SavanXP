@@ -98,17 +98,20 @@ own, one per foreign ABI:
   system call numbers and process start-up). This is binary compatibility.
   The POSIX subsystem is a different thing: it is SavanXP's own SDK, with its
   own system call numbers, and programs are compiled for it. The
-  [Linux roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) starts with
-  x86-64 static executables, then musl and a bounded command-line tool set,
-  followed by the dynamic runtime and X11 integration needed for **Xeyes**,
-  its first application goal on the SavanXP desktop.
+  [Linux roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) puts a
+  translation layer in the kernel under a subsystem id of its own, entered by
+  trapping the `syscall` instruction. It starts with x86-64 static
+  executables, then musl programs and a bounded command-line tool set,
+  followed by dynamic loading and a small X11 server written here, which are
+  what **Xeyes**, its first application goal on the SavanXP desktop, needs.
   Its [primary implementation reference](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md#implementation-reference-freebsd-linuxulator)
   is FreeBSD's Linuxulator, with translation implemented over Sx. Linux itself
   remains the behavioral reference.
 
 The two roadmaps do not depend on each other. Linux consumes the shared Sx
-groundwork from its first phases. Win32's path to Solitaire needs two smaller
-kernel slices of its own and meets that groundwork only in later profiles.
+groundwork from its first phases, most of all page-granular memory regions.
+Win32's path to Solitaire needs two smaller kernel slices of its own and
+meets that groundwork only in later profiles.
 Neither a distribution nor Wine running through Linux compatibility blocks
 Win32 work. Both remain **unstarted as of 2026-11-10**.
 
@@ -137,8 +140,10 @@ What holds for both, by the same rules that hold for POSIX:
 - **Kernel prerequisites come first and are not subsystem work.** The ones
   already named in [THREADS_ROADMAP.md](../roadmaps/done/THREADS_ROADMAP.md): threads
   and per-thread `%fs`/`%gs` (done), exceptions delivered to user mode, and
-  reserve/commit virtual memory. Each lands with a SavanXP consumer of its
-  own. The shared inventory and acceptance gates are in the
+  reserve/commit virtual memory. Each lands with its consumer: a native
+  program when the capability is a native call, the subsystem's own kernel
+  half when it is a kernel mechanism. The shared inventory and acceptance
+  gates are in the
   [Linux roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md#shared-sx-groundwork);
   a parser or libc-free probe need not wait for every kernel slice. The XP x86
   target needs 32-bit user segments and a native view at a chosen address,

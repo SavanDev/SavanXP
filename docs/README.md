@@ -197,9 +197,10 @@ all its phases have landed; the links to it move with it.
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.
 - [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — Linux
-  binary compatibility on Sx under `/system/linux`: FreeBSD Linuxulator as the
-  main implementation reference, static ABI probes/tools first, then dynamic
-  ELF and X11 integration for the first application goal, Xeyes.
+  binary compatibility on Sx under `/system/linux`, for the first application
+  goal, Xeyes: a translation layer in the kernel entered by trapping
+  `syscall`, memory regions, a musl profile, a small X11 server (`x11d`), the
+  paths rejected, the kernel slices, and phases L0-L7 with their gates.
 - [`WIN32_SUBSYSTEM_ROADMAP.md`](roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) — Windows
   binary compatibility under `/system/win`, for the first application goal,
   Windows XP Solitaire: the chosen architecture (own PE32 DLLs over a 64-bit
