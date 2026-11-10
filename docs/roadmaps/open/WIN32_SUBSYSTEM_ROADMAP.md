@@ -5,8 +5,10 @@
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
 > kernel work to two small neutral slices, and orders the phases by what
-> Solitaire needs. Nothing under `subsystems/win32/` exists yet, and no
-> Windows file is part of this repository.
+> Solitaire needs. The static inventory of the user's two files is recorded in
+> [WIN32_SOLITAIRE_PROFILE.md](../../userland/WIN32_SOLITAIRE_PROFILE.md).
+> Nothing under `subsystems/win32/` exists yet, and no Windows file is part of
+> this repository.
 
 ## Objective
 
@@ -32,7 +34,7 @@ One process, started as a native SUN program:
   sol.exe, cards.dll            unmodified, supplied by the user      32-bit
   ntdll, kernel32, msvcrt,      written here, built as real PE32      32-bit
   user32, gdi32, advapi32,      DLLs; all Windows semantics live
-  shell32                       in them
+  shell32, comctl32             in them
   ---------------------------- the gate: a far transfer, no kernel ----------
   winhost                       SUN program: PE loader, guest memory,  64-bit
                                 threads, files, clock, window surfaces
@@ -129,8 +131,25 @@ Two experiments on the build host, 2026-11-10 (clang 23.1.4):
   same loader and gate code can therefore run on the build host, which is
   what makes the [host harness](#evidence-and-tests) possible.
 
-Not measured, because the files are not in the repository: everything about
-`sol.exe` and `cards.dll` themselves. That is [W0](#w0--profile-and-inventory).
+The user's `sol.exe` and `cards.dll`, read without running them
+([profile](../../userland/WIN32_SOLITAIRE_PROFILE.md)):
+
+- **The surface is 124 functions in seven DLLs**: `USER32` 62, `GDI32` 27,
+  `msvcrt` 18, `KERNEL32` 9, `ADVAPI32` 6, `SHELL32` 1 and `COMCTL32` 1. The
+  first plan's guess was about two hundred.
+- **`sol.exe` has no relocations** and must load at `0x01000000`.
+  `cards.dll` prefers `0x70140000` and can move.
+- **`cards.dll` imports only drawing calls and `LoadBitmapA`**: nothing from
+  `KERNEL32` or the C runtime.
+- **There is no file I/O, thread, `VirtualAlloc` or TLS directory**, and the
+  code never reloads FS or enters the kernel on its own.
+- **`COMCTL32` is one call**, `InitCommonControlsEx`. The status bar is the
+  program's own window class.
+- **The card bitmaps use two header formats**, the 12-byte and the 40-byte
+  one, at 1, 4 and 24 bits per pixel.
+- **The Deck dialog is twelve owner-drawn buttons.**
+
+Not measured yet: what the program calls at run time, and in which order.
 
 ## Paths considered
 
@@ -215,7 +234,8 @@ at once, and an image that asks for such a section is rejected with a
 diagnostic. This uses the view rules that exist; it does not need `mprotect`.
 
 `winhost` itself links at `0x400000`. It must end below the lowest preferred
-base in the profile, which is asserted at load.
+base in the profile, which is asserted at load. For Solitaire that base is
+`0x01000000` and cannot move, which leaves `winhost` 12 MiB.
 
 ### The DLL set and its build
 
@@ -343,32 +363,33 @@ K2 ─┘
 
 Size S. Nothing here is committed except hashes and lists.
 
-- The user supplies `sol.exe` and `cards.dll` from a Windows XP x86
-  installation (SP3 is assumed below; use whichever the copy is from). Record
-  the edition, service pack, language, sizes and SHA-256 of both.
-- Static inventory with `llvm-readobj`: machine, subsystem, image base,
-  whether relocations are stripped, section protections, imports by name and
-  by ordinal for both files, delay imports, TLS directory, manifest, and the
-  resources (dialogs, menus, accelerators, strings, bitmaps, icons, cursors).
-- A scan of both code sections for what the design assumes is absent:
-  reloads of FS, `int 0x2e`, `sysenter`, and writable executable sections.
-- Dynamic inventory: a relay trace of the same files under Wine on the build
-  host, from start-up through a game, the Options and Deck dialogs, Help and
-  exit. It lists functions reached through `GetProcAddress` and the raster
-  operations, messages and registry keys actually used.
+**Done (2026-11-10):** the static inventory, in
+[WIN32_SOLITAIRE_PROFILE.md](../../userland/WIN32_SOLITAIRE_PROFILE.md). The
+user's files are the Spanish Windows XP ones, version 5.1.2600.0. The record
+holds their hashes, headers and section protections, every import by DLL,
+the exports of `cards.dll`, the resources with each dialog's controls and
+each bitmap format, and the scan for what the design assumes is absent:
+loads of FS, `int 0x2e`, `sysenter`, a TLS directory, delay imports.
+
+**Remaining:**
+
+- A relay trace of the same files under Wine on a build host, from start-up
+  through a game, the Deck and Options dialogs, About and exit. It marks each
+  function as needed at start-up, needed in play, or reachable only from a
+  feature declared out of scope, and lists the raster operations, window
+  messages, system metrics, stock objects and registry values actually used.
 - Reference captures from Windows XP in a virtual machine: the main window,
   each menu and dialog, all card faces and backs, and the victory animation.
+- Three decisions the trace settles: whether mouse play reaches
+  `SetCursorPos` (the desktop has no request to move the pointer), whether
+  the edit control of the hidden game-number dialog is in scope, and how the
+  currency format for Vegas scoring is read.
 
-Expected, to be confirmed by the inventory: imports from `USER32`, `GDI32`,
-`KERNEL32`, `ADVAPI32`, `SHELL32`, `msvcrt` and `CARDS`; `cards.dll` exports
-`cdtInit`, `cdtDraw`, `cdtDrawExt`, `cdtAnimate` and `cdtTerm`; a surface in
-the order of two hundred functions. Whether `COMCTL32` is imported (a status
-bar) is not known and decides part of W5.
+Help is out of scope. `LoadLibraryA` of `hhctrl.ocx` fails and `WinHelpW`
+reports failure, which the program handles with its own message.
 
-**Done when:** the profile is recorded in `docs/userland/` with hashes, the
-import and resource matrices, the DLL set with required ordinals, and each
-function marked as required at start-up, required in play, or reachable only
-from a feature declared out of scope (Help is the expected one).
+**Done when:** the profile also carries that classification, the run-time
+lists and the reference captures.
 
 ### W1 — the loader, the gate and the first executable
 
@@ -399,12 +420,14 @@ unaffected.
 
 ### W2 — base runtime for the measured closure
 
-Size M. Only the non-GUI functions of the W0 matrix.
+Size S. Only the non-GUI functions of the W0 matrix: 18 in `msvcrt`, 9 in
+`KERNEL32`, 6 in `ADVAPI32`.
 
-The C runtime start-up `sol.exe` links against, the process heap and the
-`Local*` and `Global*` allocators, string and character functions, module
-queries, command line and start-up information, clocks, last-error state,
-`rand`, and the registry calls over the per-user store.
+The C runtime start-up and exit `sol.exe` links against, with `rand`,
+`srand` and `time`; `LocalAlloc` and `LocalFree` over the process heap;
+`GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `lstrlenW` and
+`MulDiv`; `LoadLibraryA` and `GetProcAddress` over the loader; last-error
+state; and the six registry calls over the per-user store.
 
 The clock is a service, and `winhost` accepts a fixed start time in test
 runs, so a deal that depends on it can be repeated.
@@ -436,8 +459,8 @@ as before. `win32-window` is a smoke scenario.
 Size L.
 
 The resource loader (find, load and size; bitmaps, strings, icons, cursors,
-accelerators), device-independent to device bitmaps at the depths the files
-contain, memory device contexts, `BitBlt`, `StretchBlt` and `PatBlt` with the
+accelerators), device-independent to device bitmaps in both header formats
+and at the three depths `cards.dll` contains, memory device contexts, `BitBlt`, `StretchBlt` and `PatBlt` with the
 raster operations the trace lists, brushes and pens, clipping, saved device
 context state, and pixel access.
 
@@ -455,10 +478,13 @@ Size L.
 The menu bar and popup menus from menu resources, with keyboard navigation,
 accelerators, checked and disabled items. Dialogs from dialog templates as
 owned windows, the modal loop, dialog units from the font, and the controls
-the templates contain: buttons, check boxes, radio buttons, group boxes and
-static text are expected; owner-drawn buttons and edit controls only if the
-inventory shows them. `MessageBox`, and `ShellAbout` in `shell32`. A status
-bar, in a minimal `comctl32`, only if W0 found that import.
+the templates contain. The inventory lists them: push and default buttons,
+automatic check boxes, radio buttons that the program checks itself, group
+boxes, left- and right-aligned static text, and **owner-drawn buttons**, which
+the Deck dialog uses for its twelve card backs. The edit control only if the
+trace puts the game-number dialog in scope. `MessageBoxW`, `ShellAboutW` in
+`shell32`, and `InitCommonControlsEx` in a `comctl32` that registers no
+class. There is no status bar control: Solitaire draws its own.
 
 **Done when:** a fixture with a menu and two dialogs built from the same
 resource types as `sol.exe` matches the reference in layout and in behaviour
@@ -513,7 +539,9 @@ commit.
 **Order of work.** Each line is one or more commits that leave the tree
 green; none needs the one after it.
 
-1. W0, the inventory. No code in the tree; it needs the user's files.
+1. W0, the rest of the inventory: the run-time trace and the reference
+   captures. No code in the tree; it needs the user's files and Wine on a
+   build host.
 2. W1, host half: `subsystems/win32/pe/` with its host tests, the fixture
    build (`lld-link` in CMake discovery), and the host harness that runs
    `hello.exe` on the build host. No kernel change.
@@ -590,7 +618,7 @@ loaded (loading a selector resets the base).
 
 | Source | Role | Limit |
 | --- | --- | --- |
-| Windows XP SP3 in a virtual machine | The behavioural reference | One version and language; the deal cannot be fixed there |
+| Windows XP in a virtual machine, the edition the files come from | The behavioural reference | One version and language; the deal cannot be fixed there |
 | Host tests | Pure logic: the PE parser against a corpus, raster operations, regions, the message queue, template parsers | No Windows semantics beyond what the test encodes |
 | The host harness | The real PE32 fixtures and DLLs, run on the build host through the same loader and gate, with an offscreen surface and scripted input | Linux x86-64 only; it is skipped elsewhere. It does not test K1, K2 or the desktop |
 | Smoke scenarios in QEMU | The acceptance gate of every phase, with serial logs and screenshots through QMP | Slower; run after the harness passes |
@@ -637,9 +665,10 @@ them.
 
 | Risk | Effect | Answer |
 | --- | --- | --- |
-| The inventory is larger than expected, or shows `comctl32` or `hhctrl` use | W5 grows | W0 comes first for this reason. Help is declared out of scope; a status bar is one bounded control |
-| `sol.exe` has no relocations and its base collides with `winhost` | The load fails | `winhost` is checked against the lowest preferred base; if it does not fit, it is linked elsewhere |
-| A guest reloads FS | Its TEB access faults | W0 scans for it. The fix is a per-thread descriptor, a known extension of K1 |
+| The run-time trace shows behaviour the import list hides: a message, a raster operation or a metric that is costly | A phase grows | The static surface is fixed at 124 functions; the trace is taken before W3 starts |
+| `winhost` grows past `0x01000000`, where `sol.exe` must load | The load fails | Asserted at load and in the build. If it ever does not fit, `winhost` is linked above the guest range instead |
+| A later program reloads FS | Its TEB access faults | Solitaire does not. The fix is a per-thread descriptor, a known extension of K1 |
+| Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | Decided from the trace: a neutral `windowd` request with its own consumer, or a stated limit of the first profile |
 | 64 views are not enough | The load fails cleanly | Count at W1; coalesce protection runs; raise the limit with its test |
 | Pixel comparison is too strict across font or metric differences | False failures | Compare card art and geometry exactly, text regions by layout; record each tolerance |
 | The work turns into an API catalogue | The goal recedes | The matrix is the scope. A function without a consumer in it is not written |

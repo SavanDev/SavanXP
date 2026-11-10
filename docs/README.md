@@ -81,6 +81,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   next to Sx and POSIX, its pieces, the system's own API rather than a Win32
   replica, the rules that grow it, its Win32 counterparts as a reading aid, and
   the slices the Command Prompt drives.
+- [`WIN32_SOLITAIRE_PROFILE.md`](userland/WIN32_SOLITAIRE_PROFILE.md) — the
+  measured scope of the first Win32 profile: the user's Windows XP `sol.exe`
+  and `cards.dll` by hash, their headers, the 124 imported functions by DLL,
+  and their resources. The run-time trace is pending.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
 - [`NIGHTWOOD.md`](userland/NIGHTWOOD.md) — Nightwood, the forest game: the first game
