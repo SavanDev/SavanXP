@@ -14,13 +14,13 @@ relinking them against the SavanXP SDK, stamping their ELF headers or rewriting
 their syscall instructions. Building a test executable with a normal Linux
 toolchain is allowed; the resulting file must also run on Linux unchanged.
 
-The recommended order is **shared Sx groundwork, a bounded static Linux
-milestone, then the first Win32 PE milestone**. Linux is a useful first foreign
-ABI because ELF loading, files, pipes and process mechanisms already exist.
-It is not a prerequisite for [Win32](WIN32_SUBSYSTEM_ROADMAP.md), and its
-completion must not mean supporting an entire distribution before Win32 starts.
-PE parser work and host-side compatibility investigations can start earlier.
-Neither subsystem depends on finishing audio or Azalia.
+The order within this roadmap is **shared Sx groundwork, then a bounded static
+Linux milestone**. Linux is a useful foreign ABI to start with because ELF
+loading, files, pipes and process mechanisms already exist. It and
+[Win32](WIN32_SUBSYSTEM_ROADMAP.md) do not depend on each other: Win32's path
+to its first application runs in a user-mode host and consumes none of the
+slices below until its later profiles. Neither subsystem depends on finishing
+audio or Azalia.
 
 The first application target is **Xeyes (`xeyes`)**, running as an unmodified
 Linux x86-64 executable, with eyes that follow the pointer on the SavanXP
@@ -28,8 +28,8 @@ desktop. Its actual Linux libc, X11 client libraries and display connection
 are part of the target's dependency inventory. Drawing a native imitation or
 recompiling it against SUN/POSIX does not satisfy this goal.
 
-L4 remains an intermediate checkpoint with a documented set of static tools
-and a handoff to Win32 work. The small executables and tools before Xeyes are
+L4 remains an intermediate checkpoint with a documented set of static tools.
+The small executables and tools before Xeyes are
 engineering fixtures; they do not close the application goal. Dynamic loading
 and X11 integration lead to Xeyes in L7. A general shell, distribution or
 complete X11 desktop is not a prerequisite; take only the process/signal
@@ -140,7 +140,9 @@ Linux reference runs and ABI tests.
 
 ## Shared Sx groundwork
 
-This section is the shared prerequisite inventory for both roadmaps. These
+This section is the shared inventory of kernel work both roadmaps name. Linux
+needs it from L2 on; Win32 defers all three slices past its first application
+([Win32 roadmap](WIN32_SUBSYSTEM_ROADMAP.md#deferred-s1-s2-and-s3)). These
 are kernel/platform slices, not Linux features. Introduce each missing
 capability with an actual SavanXP consumer and `nativetest` assertions. The
 native heap using sparse arenas and a SUN fault-reporting utility are possible
@@ -262,9 +264,9 @@ fixtures and match Linux results after documented normalization of unstable
 fields. Bad paths and access denial are covered. The executables and their
 data remain installed after `./build.sh build`.
 
-**This closes the static checkpoint and is the planned handoff to Win32 W1-W3.**
-The Xeyes application goal remains open through L7. Reassess priorities here;
-Win32's first PE milestones need not wait for X11 integration.
+**This closes the static checkpoint.** The Xeyes application goal remains open
+through L7. Reassess priorities here against the independent
+[Win32 phases](WIN32_SUBSYSTEM_ROADMAP.md#phases).
 
 ### L5 — signals, process creation and a small shell
 

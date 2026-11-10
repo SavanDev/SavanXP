@@ -201,9 +201,10 @@ all its phases have landed; the links to it move with it.
   main implementation reference, static ABI probes/tools first, then dynamic
   ELF and X11 integration for the first application goal, Xeyes.
 - [`WIN32_SUBSYSTEM_ROADMAP.md`](roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) — Windows
-  binary compatibility on Sx under `/system/win`: PE32 execution, DLL startup
-  and USER32/GDI for the first application goal, Windows XP Solitaire; Wine
-  conformance tests, sogen investigations and acceptance gates.
+  binary compatibility under `/system/win`, for the first application goal,
+  Windows XP Solitaire: the chosen architecture (own PE32 DLLs over a 64-bit
+  SUN host, no Windows code in the kernel), the paths rejected, the two
+  kernel slices, and phases W0-W7 with their acceptance gates.
 - [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer's network-first
   SUN migration and HTTP/HTTPS plan, implementation checkpoint and verification;
   later integration of the pinned Ladybird engine and its acceptance gates.

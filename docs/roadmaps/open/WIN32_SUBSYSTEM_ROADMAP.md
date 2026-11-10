@@ -1,376 +1,660 @@
 # Win32 subsystem — Windows applications on Sx
 
-> **Status: planned, not started (2026-11-08).** The first application goal is
-> **Windows XP Solitaire (`sol.exe`)**. Plan initially for the XP x86/PE32
-> profile and verify the exact executable at W0; 32-bit execution is required
-> work on the x86-64 kernel. The installed runtime lives under **`/system/win`**.
-> No PE loader, Windows DLL implementation or Wine test target exists yet.
+> **Status: design settled, implementation not started (2026-11-10).** The
+> first application goal is unchanged: the original **Windows XP Solitaire
+> (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
+> replaces the plan of 2026-11-08. It chooses the architecture, reduces the
+> kernel work to two small neutral slices, and orders the phases by what
+> Solitaire needs. Nothing under `subsystems/win32/` exists yet, and no
+> Windows file is part of this repository.
 
-## Objective and relationship to Linux
+## Objective
 
 Run **the original Windows XP Solitaire binary** unchanged on the SavanXP
-desktop, with real card drawing, input, menus and gameplay. Pin the exact XP
-edition, service pack, language, executable and companion files at W0. A
-native lookalike, Wine's own Solitaire application or a source port does not
-satisfy this goal.
+desktop, with real card drawing, input, menus, dialogs and gameplay. The
+profile is Windows XP x86: `sol.exe` and its companion `cards.dll` as PE32
+images, supplied by the user from their own Windows XP installation. A native
+lookalike, Wine's or ReactOS's own Solitaire, a source port or a 64-bit build
+of the game does not satisfy this goal.
 
-Small PE/console/DLL and drawing fixtures are intermediate engineering gates
-on the way to Solitaire. Build those with an ordinary Windows-targeting
-toolchain; they must also run on Windows without SavanXP headers, relinking
-or binary patching. An unrelated external console application is optional,
-not a prerequisite for the selected Solitaire application.
+Small PE32 fixtures are the engineering gates on the way. They are built with
+the project's toolchain, and the same files must also run on Windows XP
+without relinking or patching.
 
-The preferred sequence is the bounded static milestone L4 in
-[LINUX_SUBSYSTEM_ROADMAP.md](LINUX_SUBSYSTEM_ROADMAP.md), then Win32's first
-integrated PE/DLL milestones. Linux exercises shared VM, ABI and process
-mechanisms with fewer new userland components. It is not a dependency of
-Win32: neither a Linux distribution nor running Wine on Linux compatibility
-is required. W0 and the PE parser in W1 can begin independently. Audio and
-Azalia completion are not prerequisites.
+Running this one application is not "Windows XP compatibility". Every later
+application is its own named profile ([W7](#w7--later-profiles)).
 
-The planning profile is XP x86 **PE32**, including 32-bit execution, calling
-conventions, TLS and exception handling as required by the pinned files.
-An x86-64 PE32+ probe may help investigate the loader, but does not close
-those gates. If W0 selects an XP x64 binary instead, record that explicit
-profile decision and adjust every fixture/dependency accordingly; do not
-silently substitute another Solitaire release to avoid architecture work.
-
-## Baseline and architecture
-
-SavanXP already has handles, events, timers, semaphores, waits, sections, IPC,
-processes, SMP threads and per-thread FS/GS bases. It has a VFS, `windowd`,
-composition and shared graphics libraries. These are reusable mechanisms,
-not implementations of Windows object, file or window semantics.
-
-The current loader handles ELF and chooses native or POSIX from `EI_OSABI`.
-There is no PE recognition/loader, Windows process startup, PEB/TEB or Windows
-DLL set. General VM reservation/protection and user exception delivery remain
-shared groundwork; 32-bit user execution is not established by the existing
-64-bit ELF path. SUN has no general file API. Recheck this inventory when
-work begins rather than treating the roadmap as an implementation record.
-
-The intended boundary is:
+## The decision
 
 ```text
-Unmodified Windows PE application and its supported DLLs
-    -> Windows API DLLs (kernel32, user32/gdi32 and measured dependencies)
-    -> subsystem runtime / ntdll-compatible layer
-    -> Sx objects, VM, processes, VFS and IPC
-    -> existing platform services and graphics
+One process, started as a native SUN program:
+
+  sol.exe, cards.dll            unmodified, supplied by the user      32-bit
+  ntdll, kernel32, msvcrt,      written here, built as real PE32      32-bit
+  user32, gdi32, advapi32,      DLLs; all Windows semantics live
+  shell32                       in them
+  ---------------------------- the gate: a far transfer, no kernel ----------
+  winhost                       SUN program: PE loader, guest memory,  64-bit
+                                threads, files, clock, window surfaces
+                                and input
+  ---------------------------- int 0x80, the existing native ABI ------------
+  Sx                            objects, sections, threads, VFS
+  windowd, compositord          the existing desktop
 ```
 
-- Follow [SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md): Win32 is
-  beside SUN and POSIX on Sx. SUN must not grow a replica of the Windows API.
-- Put foreign ABI definitions, status translation and subsystem-private state
-  in a proposed `subsystems/win32/` tree. Keep kernel glue minimal and neutral;
-  reuse process/thread state registration instead of adding Windows fields
-  to the kernel's process structures.
-- General file/process operations missing from Sx become neutral mechanisms,
-  not calls through the POSIX dispatcher. Map `NTSTATUS`, Win32 errors and
-  access masks explicitly; do not return Sx's `-errno` directly to a PE caller.
-- New SavanXP launchers/brokers are SUN programs. Missing SUN capabilities
-  need their actual consumer and `nativetest` assertion. Windows test binaries
-  are foreign compatibility fixtures, not SUN programs renamed to `.exe`.
-- Reuse graphics algorithms where useful. A Windows `HWND`, message queue,
-  device context or control is still a Windows contract to implement; mapping
-  a Windows control to an SXGUI widget does not automatically preserve it.
+1. **The Windows API is implemented here, as PE32 DLLs.** They are compiled
+   from C with the clang and lld the build already requires, and they export
+   the documented Win32 functions by name and ordinal. Wine and ReactOS are
+   references to read, not code to import.
+2. **The process is a 64-bit SUN program, `winhost`, that carries 32-bit
+   code.** It loads the images below 4 GiB, builds the TEB and the stack, and
+   transfers to the guest through a far return into a 32-bit code segment. The
+   guest reaches the host the same way in the other direction. This is the
+   shape of Windows' own WoW64 and of Wine's current 32-bit mode.
+3. **The kernel learns nothing about Windows.** No PE parser, no Windows
+   process state, no 32-bit system call ABI, no new subsystem id. It gains two
+   neutral capabilities with native consumers: 32-bit user segments
+   ([K1](#k1--32-bit-user-segments)) and a view at a chosen address
+   ([K2](#k2--a-native-view-at-a-chosen-address)).
+4. **Windows semantics stay on the 32-bit side.** Window procedures, message
+   queues, device contexts, dialogs and menus are guest code. The host offers
+   a small, private, pointer-free service table. It never calls back into the
+   guest, so no Windows structure is translated between 32 and 64 bits.
+5. **The scope is measured, not guessed.** The API surface is the import
+   closure of `sol.exe` and `cards.dll`, recorded at W0. A function is
+   implemented when a named consumer calls it. An unimplemented import fails
+   the load with its name; it is never resolved to a stub that returns
+   success.
 
-## Runtime layout
+### It is a subsystem, and it does not live inside SUN
 
-The installed subsystem lives in **`/system/win`**, alongside the other
-subsystem runtimes under `/system`, as specified in
-[SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md#planned-subsystem-runtime-layout).
-This is a runtime path inside the OS; the proposed source tree remains
-`subsystems/win32/`.
+Win32 keeps the place [SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md#planned-binary-compatibility-subsystems)
+gives it: a foreign contract translated onto Sx, with its own source tree
+(`subsystems/win32/`), its own runtime root (`/system/win`) and its own
+licence boundary, beside POSIX and SUN.
 
-Use `/system/win/drive_c` as the initial backing tree for the guest `C:`
-drive. The profile's Windows directory and system DLLs live beneath
-`drive_c/windows/`, with the first PE32 DLL set in `windows/system32/`.
-Install Solitaire and its application-local dependencies beneath
-`drive_c/Program Files/Solitaire/`. W0 pins actual filenames, DLL search order,
-case handling and any separate per-user settings store. Windows path rules
-are implemented by Win32; do not change native SxFS path semantics globally.
+- **The Windows API is not part of SUN.** A SUN program cannot call it, no
+  SUN header describes it, and no SUN call is added to resemble a Windows
+  one. K1 and K2 are neutral mechanisms that any native program may use.
+- **`winhost` uses SUN as its binding to Sx.** It is a native process that
+  includes `sxn.h` and `sxnwm.h` the way any native service does. That is the
+  "may reuse SavanXP pieces internally" clause of the layering document, not
+  a dependency of the Windows API on SUN's design.
+- **It has no kernel half, so it has no `subsystem::Id`.** In the kernel an id
+  selects a system call dispatcher and sizes private per-process state
+  (`include/kernel/subsystem.hpp`). POSIX needs both. Win32 needs neither: its
+  programs never enter the kernel with an ABI of their own, and its process
+  state lives in `winhost`. The kernel therefore sees a Windows program as a
+  native process named `winhost`, and Task Manager reports it that way.
 
-Native launchers/brokers and compatibility-runtime metadata also belong to
-the subsystem's installation manifest under `/system/win`. Keep SUN/POSIX
-libraries separate and retain SavanXP credentials/handle checks when exposing
-native files. A guest drive mapping is not an authorization boundary. Normal
-builds and updates preserve externally supplied executables, companion files
-and persistent data; do not reset this tree or a valid disk image to install it.
+This is the arrangement of Windows NT's own environment subsystems, which are
+user-mode code over the native API. It is closer to the declared model than
+POSIX is today, since POSIX still has a translation layer compiled into the
+kernel image. The Linux subsystem is the opposite case and does get an id:
+its contract is a system call ABI, which only the kernel can receive
+([Linux roadmap](LINUX_SUBSYSTEM_ROADMAP.md)).
 
-## Shared prerequisites and implementation choice
+## What was measured
 
-Use the shared S1-S3 inventory in
-[the Linux roadmap](LINUX_SUBSYSTEM_ROADMAP.md#shared-sx-groundwork): neutral
-launch selection/rollback, general VM regions and user exception delivery.
-Each kernel slice lands with a native consumer and assertions, independent of
-whether Linux or Win32 first needs it. W1's parser and a restricted PE probe
-can precede complete VM and exception coverage; ordinary runtimes will need
-more than that probe.
+Read from the tree on 2026-11-10. Recheck before relying on a row.
 
-The XP x86 goal additionally needs a neutral 32-bit user-execution slice in
-the architecture/process layer, with a real SUN launcher consumer and
-`nativetest` assertions for launch, transitions, scheduling and cleanup.
-Keep PE/TEB/Windows layouts in Win32. Linux x86-64 does not depend on this
-slice, and it does not require implementing a general Windows WoW64 stack.
+| Fact | Where | Consequence |
+| --- | --- | --- |
+| The GDT has five fixed entries: null, kernel code and data, user data `0x1b`, user code `0x23`. There is no 32-bit code descriptor, and the user data descriptor has D/B clear | `arch/x86_64/cpu_init.cpp` | 32-bit user code cannot run today; the data descriptor cannot be a 32-bit stack segment. K1 |
+| Every kernel entry returns with `iretq` from a saved frame, and "from user mode" is tested as `cs & 3`. There is no `syscall`/`sysret` path | `arch/x86_64/context.S`, `kernel/process.cpp` | A thread interrupted in 32-bit code resumes correctly once the segments exist. No entry path has to change |
+| A thread switch saves and restores the FPU state (`fxsave64`) and the FS and GS bases through their MSRs. The data segment selectors are not per-thread state | `kernel/process.cpp`, `arch/x86_64/cpu_init.cpp` | DS, ES, FS and GS selectors must become per-thread. K1 |
+| A native program's segment bases are its own: the shared runtime installs no thread block at `%fs` for it (`sx_tls_init` returns early), `errno` is a global, and the stack guard is the global `__stack_chk_guard` | `subsystems/posix/sdk/v1/runtime/pthread.c`; the disassembly of `nativetest` | `%fs` is free in `winhost` and can hold the 32-bit TEB |
+| Program images load at `0x400000`; kernel-chosen views start at `0x1000000000`; the stack top is `0x7000000000` | `include/kernel/vmm.hpp` | The range a PE32 image wants is free in a native process |
+| `vm::map_section_view` honours a caller-chosen base, and POSIX exposes it as `map_view_at`. The native call `SXN_SYS_MAP_VIEW` takes a handle and flags only | `kernel/vmm.cpp`, `include/abi/savanxp_native_abi.h` | A native loader cannot place an image. K2 |
+| W^X is enforced per view; a section may grant read, write and execute. There is no `mprotect`. A process has 64 views | [SECTIONS.md](../../kernel/SECTIONS.md) | Images are filled through a writable view and remapped executable. The view budget must be counted |
+| The native file API opens existing regular files for sequential reading and saves whole files of up to 4096 bytes. No seek, no size query, no directory enumeration | [SUN.md](../../userland/SUN.md#files-and-small-profile-saves) | Enough to load images and keep Solitaire's settings. Not enough for case-insensitive lookup |
+| A process has one connection to `windowd`, a main window framed by the window manager and up to four owned windows: framed dialogs, or frameless popups placed in the owner's client area. Pointer capture, cursor shape and resize exist | [OWNED_WINDOWS.md](../../desktop/OWNED_WINDOWS.md), `include/sxn/sxnwm.h` | A top-level window, a modal dialog and a popup menu each map to something that exists |
+| The desktop's body face is MS Sans Serif 8pt at 96 DPI as a 13 px bitmap strike | [UI_FONTS.md](../../desktop/UI_FONTS.md) | The font Windows XP dialogs and menus are laid out for is already in the system |
+| The build requires clang, `ld.lld`, `llvm-objcopy` and `llvm-readelf`. `subsystems/` holds only `posix` | `build.sh`, `CMakeLists.txt` | The PE toolchain is the LLVM that is already there |
 
-The default direction is **Wine-style user-mode API compatibility**, with
-selective reuse evaluated before large APIs are reimplemented. W0 must record
-whether the first DLL subset is written locally, adapted from Wine, or mixed,
-and what the boundary to Sx is. Porting Wine wholesale is not a small build
-task: its host integration, server and graphics backend need explicit work.
+Two experiments on the build host, 2026-11-10 (clang 23.1.4):
 
-A separate experiment may evaluate **real Windows DLLs over NT syscall
-translation**, as [sogen](https://github.com/momo5502/sogen) does in an emulator.
-That path requires a pinned Windows/DLL profile, the actual NT entry mechanism
-used by those DLLs, Windows register/argument conventions and the corresponding
-NT services. For an x64 experiment this includes the CPU's `syscall` entry;
-XP x86 uses its own 32-bit path. Linux syscall numbers/conventions cannot be
-used for Windows.
-Emulator support does not prove that native execution on SavanXP will work.
-DLL acquisition and distribution rights must be resolved separately; sogen's
-license does not license Microsoft's DLLs. Do not make this experiment a
-dependency of the default route without evidence and an updated decision.
+- **The DLLs can be built with the project's compiler.**
+  `clang --target=i686-pc-windows-msvc -ffreestanding` and
+  `lld-link /nodefaultlib` with a `.def` file produced a `kernel32.dll` that
+  exports `GetStdHandle`, `WriteFile` and `ExitProcess` undecorated, with a
+  base relocation table, and a `hello.exe` that imports them by name. Both are
+  `IMAGE_FILE_MACHINE_I386` PE32 files. No Windows SDK, no MinGW and no C
+  runtime were involved.
+- **The gate needs nothing from a kernel beyond the segments.** A 64-bit
+  Linux process mapped such a DLL at its preferred base below 4 GiB, entered
+  an exported `stdcall` function through a far return to a 32-bit code
+  segment, and came back through a far jump. The function read and wrote its
+  own data and returned the expected values on two consecutive calls. The
+  same loader and gate code can therefore run on the build host, which is
+  what makes the [host harness](#evidence-and-tests) possible.
 
-## Phases and acceptance
+Not measured, because the files are not in the repository: everything about
+`sol.exe` and `cards.dll` themselves. That is [W0](#w0--profile-and-inventory).
 
-All phases below are pending. Complete one observable execution chain before
-expanding API coverage; a successful stub or a window-shaped screenshot is
-not a compatibility milestone.
+## Paths considered
 
-### W0 — freeze the first Windows profile
+| Path | What it needs | Verdict |
+| --- | --- | --- |
+| **A. Port Wine to the POSIX subsystem** | Wine is its PE DLLs plus a Unix side: `wineserver`, the Unix half of `ntdll` and `win32u`, and a display driver. That side needs delivered signals with machine contexts, general `mmap`/`mprotect`, Unix sockets with descriptor passing, `poll`, threads and `dlopen`. SavanXP's POSIX layer stores signal handlers without delivering them and has a restricted `mmap` | Not for the first goal. It turns the project into a Wine host, after a POSIX layer close to Linux's exists. Revisit with a named application that a local implementation cannot reach |
+| **B. Unmodified Linux Wine on the Linux subsystem** | The [Linux roadmap](LINUX_SUBSYSTEM_ROADMAP.md) at L6 and beyond: dynamic glibc, futexes, signals, sockets and a display protocol | The furthest path. It also makes Linux a prerequisite, which both roadmaps reject |
+| **C. Microsoft's own DLLs over an emulated NT system call layer** | Windows XP's `ntdll`, `kernel32`, `user32` and `gdi32`, a few hundred NT services and several hundred `win32k` services with XP's numbers and undocumented behaviour, and the CSRSS connection `kernel32` opens at start | Rejected. The interface is larger than the API above it and undocumented, and the user would have to supply all of `system32` |
+| **D. Own DLLs, PE loader and 32-bit system calls in the kernel** | A PE parser in the kernel, Windows process start-up there, a 32-bit entry with pointer widening, a new subsystem id | Rejected. It is what the first plan implied. It grows the kernel's attack surface, and every loader defect becomes a kernel defect |
+| **E. Own PE32 DLLs over an in-process 64-bit host** | K1, K2 and user-mode code | **Chosen.** The smallest kernel change, and the only path whose core can be tested on the build host |
+| **F. API implemented in 64-bit code, one thunk per function** | Every function, structure and callback converted between 32 and 64 bits, including window procedures called from 64-bit code | Rejected. It is the expensive half of WoW64, paid for every `USER32` call. E avoids it by keeping the API DLLs 32-bit |
+| **G. A 64-bit Solitaire** (from Windows XP x64 Edition, if its `sol.exe` is PE32+) | No 32-bit execution at all | Not taken. It is a different, rarer binary whose format is unverified, and K1 turned out to be small |
 
-Freeze the Windows XP Solitaire profile, initially XP x86/PE32. Inspect the
-actual `sol.exe` Machine field and optional-header format; record the XP
-edition/service pack/language and hashes. Inventory imports by name/ordinal,
-dynamically loaded DLLs, resources, registry/settings access and expected
-interactive behavior. Include `cards.dll` if required by the selected binary,
-and measure its imports too; a static import list alone is not the full
-dependency closure. No proprietary files are acquired or bundled by this plan.
+Emulating the 32-bit processor was never a candidate: every CPU `master`
+supports runs 32-bit code natively in compatibility mode.
 
-Pin an x86 Windows-targeting toolchain and small PE32 fixtures without a CRT
-for the first chain, then include the application's actual runtime needs.
-Define rejected image variants, the initial DLL set, DLL search policy,
-license boundary and install mappings beneath `/system/win`. Keep any x64
-investigation explicitly separate from the PE32 acceptance profile.
+## What changed from the first plan
 
-**Done when:** the implementation choice above is recorded, fixtures run on
-the reference Windows installation with retained hashes/results, and an
-API/dependency matrix distinguishes required Solitaire work from deferred
-features, including a recorded gameplay/reference input sequence. No claim
-of general "XP compatibility" follows from running this one application.
+- **The architecture is decided.** The first plan left "written locally,
+  adapted from Wine, or mixed" and "the boundary to Sx" to W0. They are above.
+- **The PE loader moved out of the kernel.** The old W1 routed a validated PE
+  through the kernel's launch path and the shared slice S1. The loader is now
+  user-mode code, shared between `winhost` and the host tests.
+- **The 32-bit work is specific and small.** "CPU compatibility-mode
+  execution" and "a checked 32-bit bridge to Sx" become K1: two descriptors
+  and four selectors per thread. There is no 32-bit entry into the kernel.
+- **The shared slices S1 to S3 are not prerequisites.** Launch selection is a
+  file association. General reserve/commit memory and user exception delivery
+  are not on Solitaire's path. They return in W7, each with its consumer.
+- **No ordering with the Linux subsystem.** The first plan preferred Linux L4
+  before Win32. Nothing in W0 to W6 consumes Linux work, in either direction.
+- **The phases follow the application.** The console executable and the file
+  services of the old W3 and W4 shrank to what `sol.exe` imports. The old W5,
+  which held most of the work in one step, is split into windows, bitmaps and
+  resources, and menus and dialogs. Running the original `cards.dll` from a
+  fixture is a new gate before the game itself.
+- **The tools changed.** A relay trace from Wine on the build host is the
+  practical way to list what `sol.exe` calls at run time. sogen emulates
+  current Windows with its own DLL sets and adds little for an XP x86 binary.
 
-### W1 — PE recognition, validation and mapping
+## Architecture
 
-Use S1 to route a validated PE image to Win32 without changing ELF/SXE launch
-behavior. Build an isolated parser first, then map PE headers/sections with
-checked sizes, RVAs, alignment, zero-filled tails, relocations and final page
-permissions. Reject unsupported architectures, malformed directories,
-overlaps, truncated data and address arithmetic overflow. Preserve platform
-memory policy; do not silently allow RWX just because a guest asks for it.
+### The gate
 
-For the initial XP x86 profile, implement PE32 mappings/relocations and CPU
-compatibility-mode execution on the x86-64 kernel: user segments, saved
-register state, address/stack limits, faults, interrupts and kernel entry/
-return. Preserve that execution mode across scheduling on several vCPUs.
-Define a checked 32-bit bridge to Sx, including pointer/length widening,
-overflow checks and handle translation; a 64-bit C call cannot execute an
-arbitrary 32-bit application function.
+Entering the guest (process start and thread start only): `winhost` loads the
+32-bit data selector into SS, DS, ES and FS, sets the FS base to the thread's
+TEB with `sxn_set_thread_base`, switches to the guest stack and far-returns to
+the guest entry point in the 32-bit code segment.
 
-Implement x86 Windows `stdcall` API/callback and `cdecl` CRT conventions as
-needed, with correct stack cleanup, nonvolatile registers and 32-bit layouts.
-An optional PE32+ profile needs a separate x64 ABI bridge, including shadow
-space and its register convention. Do not confuse those two execution paths.
+Calling a service: the guest's `ntdll` loads a service number and the address
+of a flat argument block, then calls through a pointer kept in the TEB. It
+leads to a host-provided thunk that far-jumps to the 64-bit code segment. The
+host switches to the thread's own host stack, validates the block, performs
+the service and returns the same way.
 
-**Done when:** host parser/corpus checks reject malformed images, and a tiny
-PE32 fixture executes in user mode and returns an observed result through a
-controlled bootstrap bridge. Its hash matches the Windows reference. Loading
-failure releases all mappings and process resources; ELF/SXE still works.
-Tests cover 32-bit pointer boundaries, faults, scheduling and mode restoration;
-64-bit SUN/POSIX/Linux execution remains correct. This restricted bootstrap is
-not yet a normal Windows application environment.
+The service table is **private and versioned**. `winhost` and the DLLs are
+built and installed together and refuse a mismatched version. It is not a
+public ABI and it is not the NT system call table. Its rules:
 
-### W2 — process startup and DLL loading
+- arguments are fixed-width integers and guest addresses below 4 GiB, checked
+  by the host before use;
+- no service calls guest code; window procedures, timer procedures,
+  `DllMain` and TLS callbacks are called by `user32` and `ntdll`;
+- a service that blocks (waiting for input, a timer or a handle) blocks in the
+  host on the existing native waits.
 
-Build the required 32-bit PEB/TEB subset, FS-based TEB access, command line and
-environment, module bookkeeping and per-thread last-error state. Implement
-imports by name/ordinal, exports/forwarders as required, static TLS and its
-callbacks, DLL dependencies and initialization order. Define loader-lock,
-failure rollback and thread attach/detach behavior as real consumers arrive.
-Unsupported API sets, delay imports or loader features must be reported, not
-silently resolved to success stubs.
+The expected groups, about forty calls for the first profile: process and
+thread, guest memory, files, clock and sleep, synchronization, debug output,
+window surfaces, input, cursor and fonts.
 
-All in-process DLLs must match the PE32 application's architecture. Preserve
-32-bit FS/TLS state across callbacks and scheduling; a future x64 profile uses
-its own 64-bit layouts and GS-based TEB path. Do not treat the existing native
-FS/GS base mechanism alone as proof of working compatibility-mode TLS.
+### Guest address space
 
-**Done when:** fixtures call an imported function from a separate DLL, run
-initialization and TLS callbacks in the expected order, and verify relocation
-at a different base, per-thread TLS isolation and observable DLL state. Missing
-DLLs/symbols and failed initialization produce useful diagnostics with no leaks.
+`winhost` owns an allocator for the range below 2 GiB and places every guest
+mapping itself with K2: images at their preferred base when it is free,
+relocated otherwise, then the stack, the TEB and PEB, and the heap arenas.
+Kernel-chosen views land above 4 GiB and never collide with the guest.
 
-### W3 — the first Windows console executable
+An image is loaded as one section per run of pages with the same protection.
+Each is mapped writable, filled, relocated and bound, then unmapped and
+mapped again with its final access. A view is never writable and executable
+at once, and an image that asks for such a section is rejected with a
+diagnostic. This uses the view rules that exist; it does not need `mprotect`.
 
-Supply the minimal `ntdll`/base DLL path for `GetStdHandle`, `WriteFile` and
-`ExitProcess`. Connect Windows standard handles to real Sx streams, including
-invalid-handle and partial-write behavior. Add the required startup helpers
-without pulling in a full CRT or GUI dependency for this fixture.
+`winhost` itself links at `0x400000`. It must end below the lowest preferred
+base in the profile, which is asserted at load.
 
-**Done when:** the same unmodified `hello.exe` writes exact bytes through a
-real imported Windows API and exits with the expected status on Windows and
-SavanXP. A SUN parent captures its output and observes termination. No injected
-replacement application entry point or patched import table on disk counts.
-This is the first integrated milestone, not a claim of general console support.
+### The DLL set and its build
 
-### W4 — Solitaire's base runtime and file services
+Each DLL is a directory under `subsystems/win32/dlls/` with C sources and a
+`.def` file, compiled for `i686-pc-windows-msvc` as freestanding code and
+linked by `lld-link` without default libraries. Windows types and constants
+come from a local header set that covers what is used; neither the Windows
+SDK nor MinGW headers are a dependency. `lld-link`, and `llvm-rc` when the
+first fixture with resources needs it, join CMake's tool discovery and
+[BUILD_CMAKE.md](../../build/BUILD_CMAKE.md).
 
-Use the W0 Solitaire/dependency inventory to drive heap, virtual memory,
-ANSI/UTF-16 conversion, file/directory operations, paths/drives, clocks and
-synchronization. Include registry/settings and additional base DLLs only
-where this target actually requires them. Exercise these operations with
-small PE32 fixtures before bringing up the GUI. Use S2 for memory and S3 for
-exceptions as needed, with executable tests for the selected x86 SEH/VEH and
-runtime behavior. A future x64 profile needs its own unwind implementation;
-`.pdata`/`.xdata` support does not establish x86 exception handling.
+The same sources also compile for the build host where they hold pure logic
+(regions, raster operations, the message queue, the dialog template parser),
+so those parts have ordinary host tests.
 
-Preserve Windows-specific file-sharing, creation disposition, handle rights,
-inheritance, case behavior and namespace rules in the subsystem. Do not change
-SxFS globally to imitate Windows. A guest's apparent drive root is not an
-authorization boundary; SavanXP credentials and handle grants still apply.
+### Windows, input and drawing
 
-**Done when:** the measured non-GUI dependency subset has executable tests
-matching Windows, including invalid handles/paths, permissions, failures and
-the thread/exception features actually required. Installed executables, DLLs
-and settings/data survive a normal build and guest restart. A small external
-console tool may provide extra coverage, but is not a separate required target.
+- A top-level `HWND` is a `windowd` window. The frame and caption are the
+  window manager's; `user32` reports system metrics that agree with them. The
+  menu bar is drawn by `user32` at the top of the surface and the client
+  origin is offset below it.
+- A modal dialog is an owned window; a popup menu is an owned popup. Child
+  windows and controls exist only inside `user32` and share their top-level
+  window's surface.
+- The host maps each surface a second time below 4 GiB. `gdi32` rasterizes
+  into it and the host presents the damaged rectangles. Device contexts,
+  bitmaps, brushes, pens and clip regions are guest objects in guest memory.
+- Text uses the platform's UI strikes, which the host exposes read-only. The
+  font mapper is bounded: `MS Shell Dlg`, `MS Sans Serif` and `System`
+  resolve to the 13 px face. There is no TrueType in the first profile.
+- Input arrives through the host as raw pointer and key records. Translating
+  them into Windows messages, capture, focus and virtual keys is `user32`'s
+  work.
 
-### W5 — USER32/GDI over the existing desktop
+### Files, paths and settings
 
-Implement a Win32 window client over `windowd`/composition: classes, window
-procedures, per-thread queues, posted versus synchronous messages, input,
-focus, close/destruction and the paint/invalidation lifecycle. Add device
-contexts, clipping, bitmap/text drawing and resources using platform rendering
-where suitable. Controls, menus and dialogs come from named consumers;
-`comctl32` is a later DLL contract, not a rename of SXGUI.
+The guest's `C:` is `/system/win/drive_c`. Our DLLs install to
+`drive_c/windows/system32/`; the user's files install to
+`drive_c/Program Files/Solitaire/`. The build syncs the files it owns and
+never touches the rest, by the same rule that protects `/bin` and `/games`.
 
-**Done when:** an unchanged PE creates a window, paints known content, receives
-real keyboard/pointer input, updates it and closes cleanly. Assert message and
-callback behavior as well as rendered glyphs/pixels; native/POSIX windows and
-the taskbar remain correct. Implement the resource, menu, dialog, timer, mouse
-capture and drawing operations identified for Solitaire rather than selecting
-an unrelated GUI application to close this gate.
+Names are lower-cased on lookup and installed lower-case, because the native
+API cannot enumerate a directory. Real case-insensitive lookup waits for a
+native enumeration call with its own consumer.
+
+`HKEY_CURRENT_USER` is one small text file per user, written whole with
+`sxn_write_file`. Its path is pinned in W2. Windows path rules, sharing modes
+and error codes are translated in the subsystem; SavanXP credentials and
+handle checks still apply underneath, and a drive mapping is not an
+authorization boundary.
+
+### Launch
+
+`winhost <path to the .exe>` is the only entry. Files and the desktop reach it
+through the existing `file_assoc` mapping for `.exe`, and the Start menu
+through a shortcut. The kernel's `spawn` of a PE file fails as it does today.
+A neutral "run this image with that program" mechanism is not planned until
+something other than the shell needs it.
+
+## Kernel slices
+
+Both are neutral, both follow the consumer rule of
+[SUN.md](../../userland/SUN.md), and neither mentions Windows.
+
+### K1 — 32-bit user segments
+
+Size S. The whole of "32-bit execution on the x86-64 kernel".
+
+- Add a ring-3 32-bit code descriptor, and a ring-3 data descriptor usable as
+  a 32-bit stack and data segment (4 GiB limit, D/B set). The TSS descriptors
+  move; `kTssSelectorBase` and its assertion follow.
+- Make the DS, ES, FS and GS selectors per-thread state, restored before the
+  FS and GS bases on a thread switch. Without this, a thread that migrates to
+  a core whose data selectors are null faults on its first memory access.
+- A thread that enters the kernel with `int 0x80` from a 32-bit code segment
+  gets `SX_ENOSYS`. The native ABI is defined for 64-bit callers only, and the
+  kernel must not interpret registers whose upper halves are undefined.
+- Still absent on purpose: an LDT, 16-bit segments, call gates,
+  `syscall`/`sysenter`.
+
+**Done when:** `nativetest` enters 32-bit code from a 64-bit SUN thread,
+computes, reads FS-relative data and returns, repeatedly, under preemption on
+1, 2 and 4 vCPUs with 64-bit threads running beside it. A fault in 32-bit
+code ends that process alone. The refused `int 0x80` is asserted.
+[ARCH.md](../../kernel/ARCH.md) and
+[KERNEL_SECURITY.md](../../kernel/KERNEL_SECURITY.md) record the new contract.
+
+### K2 — a native view at a chosen address
+
+Size S. `SXN_SYS_MAP_VIEW_AT`: what `vm::map_section_view` already does and
+POSIX already reaches. The base is page-aligned, the range must be free, and
+a view is still never writable and executable.
+
+Count the views of the Solitaire process at W1: protection runs per image,
+stack, TEB, heap arenas, and two views per surface. If the count nears
+`kMaxSectionViews`, raising it is its own change with its `sectiontest`
+update, as [SECTIONS.md](../../kernel/SECTIONS.md#the-budget) describes.
+
+**Done when:** `nativetest` maps a section at a chosen low address, is
+refused on a misaligned base and on an occupied range, and remaps the same
+section with a different access after unmapping it.
+
+### Deferred: S1, S2 and S3
+
+The [shared groundwork](LINUX_SUBSYSTEM_ROADMAP.md#shared-sx-groundwork) of
+the Linux roadmap stays where it is. For Win32:
+
+| Slice | Needed by | Until then |
+| --- | --- | --- |
+| S1, launch contract | A program that must start a PE through `spawn` | The shell's file association |
+| S2, reserve/commit/protect/query | `VirtualAlloc` and `VirtualProtect` with their real semantics; guard pages; large heaps | The heap sits on section-backed arenas. A fixture that needs `VirtualProtect` is out of the first profile |
+| S3, user exception delivery | Structured exception handling: `__try`/`__except`, `RaiseException`, C++ exceptions | `sol.exe` only registers a handler frame, which is a write to the TEB. A fault ends the process with the kernel's `user: exception` line |
+
+## Phases
+
+W0 and the build-host half of W1 need no kernel change and can start now.
+
+```text
+W0 ─┬─────────────► W1 ─► W2 ─► W3 ─► W4 ─► W5 ─► W6
+K1 ─┤ (guest half of W1 onward)
+K2 ─┘
+```
+
+### W0 — profile and inventory
+
+Size S. Nothing here is committed except hashes and lists.
+
+- The user supplies `sol.exe` and `cards.dll` from a Windows XP x86
+  installation (SP3 is assumed below; use whichever the copy is from). Record
+  the edition, service pack, language, sizes and SHA-256 of both.
+- Static inventory with `llvm-readobj`: machine, subsystem, image base,
+  whether relocations are stripped, section protections, imports by name and
+  by ordinal for both files, delay imports, TLS directory, manifest, and the
+  resources (dialogs, menus, accelerators, strings, bitmaps, icons, cursors).
+- A scan of both code sections for what the design assumes is absent:
+  reloads of FS, `int 0x2e`, `sysenter`, and writable executable sections.
+- Dynamic inventory: a relay trace of the same files under Wine on the build
+  host, from start-up through a game, the Options and Deck dialogs, Help and
+  exit. It lists functions reached through `GetProcAddress` and the raster
+  operations, messages and registry keys actually used.
+- Reference captures from Windows XP in a virtual machine: the main window,
+  each menu and dialog, all card faces and backs, and the victory animation.
+
+Expected, to be confirmed by the inventory: imports from `USER32`, `GDI32`,
+`KERNEL32`, `ADVAPI32`, `SHELL32`, `msvcrt` and `CARDS`; `cards.dll` exports
+`cdtInit`, `cdtDraw`, `cdtDrawExt`, `cdtAnimate` and `cdtTerm`; a surface in
+the order of two hundred functions. Whether `COMCTL32` is imported (a status
+bar) is not known and decides part of W5.
+
+**Done when:** the profile is recorded in `docs/userland/` with hashes, the
+import and resource matrices, the DLL set with required ordinals, and each
+function marked as required at start-up, required in play, or reachable only
+from a feature declared out of scope (Help is the expected one).
+
+### W1 — the loader, the gate and the first executable
+
+Size L. Replaces the old W1, W2 and W3.
+
+- `subsystems/win32/pe/`: a PE32 parser and mapper as a portable C library.
+  Checked sizes, RVAs, alignment and arithmetic; zero-filled tails; base
+  relocations; imports by name and ordinal; exports and forwarders; the TLS
+  directory and callbacks; initialization order. Rejections are explicit:
+  other machines, PE32+, malformed directories, overlaps, truncation.
+- `subsystems/win32/host/`: `winhost` with the gate, the guest allocator, a
+  minimal TEB and PEB (exception list head, self pointer, PEB pointer, last
+  error, TLS slots) and the first services: write to a standard handle, exit,
+  debug output.
+- `ntdll.dll` and `kernel32.dll` with what `hello.exe` imports.
+- A build-host backend for the same loader and gate, so fixtures run under
+  CTest on a Linux x86-64 host without booting the guest.
+
+**Done when:** host tests reject a corpus of malformed images. The same
+`hello.exe`, identified by hash, writes the same bytes through an imported
+`WriteFile` and exits with the same status on Windows XP, in the host harness
+and on SavanXP, where a SUN parent captures its output. A second fixture
+imports from a separate DLL, is relocated to a different base and runs its
+initialization and TLS callbacks in order. A missing DLL or symbol is named
+in the diagnostic, and a failed load leaves no view or handle behind.
+`win32-hello` is a registered smoke scenario; ELF and SXE launches are
+unaffected.
+
+### W2 — base runtime for the measured closure
+
+Size M. Only the non-GUI functions of the W0 matrix.
+
+The C runtime start-up `sol.exe` links against, the process heap and the
+`Local*` and `Global*` allocators, string and character functions, module
+queries, command line and start-up information, clocks, last-error state,
+`rand`, and the registry calls over the per-user store.
+
+The clock is a service, and `winhost` accepts a fixed start time in test
+runs, so a deal that depends on it can be repeated.
+
+**Done when:** a fixture that starts the way `sol.exe` does (the same runtime
+imports, a `WinMain`) runs on all three environments with identical output,
+and a registry value written by a fixture is read back after a guest restart.
+Each failure path the matrix marks as reachable has an assertion.
+
+### W3 — windows and messages
+
+Size L. `user32` core and the part of `gdi32` a window needs to paint.
+
+Window classes and procedures, creation and destruction, the window tree,
+the message queue with posted and sent messages, paint synthesis from the
+invalid region, timers, quit, focus and activation, pointer and keyboard
+translation, capture, cursors, `DefWindowProc`, moving and resizing, and
+closing from the caption. In `gdi32`: window and paint device contexts, solid
+fills, lines and rectangles, text with the platform strike, stock objects.
+
+**Done when:** an unchanged PE32 fixture creates a window, paints known
+content, responds to pointer and key input, updates and closes. Its message
+log matches the Windows XP reference for a recorded input sequence, and its
+pixels match a golden image. Native and POSIX windows and the taskbar behave
+as before. `win32-window` is a smoke scenario.
+
+### W4 — bitmaps, resources and `cards.dll`
+
+Size L.
+
+The resource loader (find, load and size; bitmaps, strings, icons, cursors,
+accelerators), device-independent to device bitmaps at the depths the files
+contain, memory device contexts, `BitBlt`, `StretchBlt` and `PatBlt` with the
+raster operations the trace lists, brushes and pens, clipping, saved device
+context state, and pixel access.
+
+**Done when:** a fixture written here loads the user's **original
+`cards.dll`** and draws every face, every back and the special cards through
+`cdtInit`, `cdtDrawExt` and `cdtTerm`, and the result matches the Windows XP
+captures. The raster operations have host tests against computed truth
+tables. `win32-cards` is a smoke scenario that is skipped, not failed, when
+the user's files are absent.
+
+### W5 — menus, dialogs and controls
+
+Size L.
+
+The menu bar and popup menus from menu resources, with keyboard navigation,
+accelerators, checked and disabled items. Dialogs from dialog templates as
+owned windows, the modal loop, dialog units from the font, and the controls
+the templates contain: buttons, check boxes, radio buttons, group boxes and
+static text are expected; owner-drawn buttons and edit controls only if the
+inventory shows them. `MessageBox`, and `ShellAbout` in `shell32`. A status
+bar, in a minimal `comctl32`, only if W0 found that import.
+
+**Done when:** a fixture with a menu and two dialogs built from the same
+resource types as `sol.exe` matches the reference in layout and in behaviour
+for a recorded sequence, including keyboard-only operation and cancelling.
 
 ### W6 — Windows XP Solitaire
 
-Launch the pinned, unchanged `sol.exe` from
-`/system/win/drive_c/Program Files/Solitaire/`, with its recorded companion
-files and DLL set. Connect its USER32/GDI calls to the real SavanXP desktop.
-Implement any remaining dependency revealed by startup and gameplay; a
-successful stub or replacement card renderer inside the application does not
-count as implementing the required Windows API behavior.
+Size M, if the earlier gates were honest.
 
-**Done when:** Solitaire displays a correctly drawn playable board, deals a
-new game, draws from the stock and supports legal card moves with mouse
-clicks/dragging. Verify menus/options/dialogs, focus, repaint after occlusion,
-moving the window and closing/relaunching, plus a completed game and the
-reference victory behavior. Record a repeatable input sequence
-and compare visible/state transitions with the pinned XP reference, controlling
-deal/timer variability where possible. Verify persistent options if the
-reference stores them. Retain hashes, logs and visual/input assertions; merely
-opening a window or rendering a static board does not close the application
-goal. Native/POSIX windows and the taskbar remain correct, and the installed
-game, companion files and settings survive a normal build and guest restart.
+Launch the pinned, unchanged `sol.exe` with the user's `cards.dll` from
+`/system/win/drive_c/Program Files/Solitaire/`, from Files and from the Start
+menu, with its own icon.
 
-### W7 — later compatibility profiles
+**Done when:** Solitaire shows a correctly drawn, playable board. It deals a
+new game, draws from the stock, and supports legal moves by click, by drag
+and by double click. Menus, Options, Deck and About work. The window
+repaints after occlusion, after being moved, resized, minimized and restored,
+and it closes and relaunches. A game is played to the end with a fixed clock
+and a recorded input sequence, and the victory animation runs. Options
+persist across a guest restart. Hashes, logs and visual assertions are kept;
+a window that opens or a board that renders once does not close the goal.
+Native and POSIX windows and the taskbar stay correct, and the game, its
+files and its settings survive a normal build. `win32-solitaire` is a smoke
+scenario, skipped when the files are absent.
 
-Expand only with application-driven gates: registry and `advapi32`, additional
-CRT/Unicode/locale support, networking, `waveOut`/other audio APIs through the
-platform service, graphics libraries and installation behavior. Each extension
-records its tested profile and dependencies. The bounded XP x86 support needed
-by Solitaire belongs to W1-W6. Broader x86 coverage, x86-64 PE32+, a general
-WoW64 environment, 16-bit/DOS, Windows kernel drivers, .NET, COM coverage,
-DirectX, arbitrary installers and general Windows desktop compatibility need
-separate decisions and acceptance criteria before becoming promised scope.
+### W7 — later profiles
 
-**Done when:** every selected extension has a named application, conformance
-cases and retained results. Freeze a finite extension profile before starting
-this phase; there is no universal "all Windows applications" completion gate.
-The roadmap stays open while any selected phase is pending. Excluded future
-coverage stays documented separately and must not be reported as completed.
+Not planned in detail. Each extension names an application and records its
+own inventory before any code:
 
-## Wine tests and sogen as development tools
+- S2 and S3 with their Windows consumers: `VirtualAlloc` semantics and
+  structured exception handling.
+- Threads beyond the first, with the loader lock and attach and detach calls.
+- Further DLLs by consumer: more of `comctl32`, common dialogs, `winmm`
+  through the audio service, networking.
+- Other applications of the same era. Those that also use `cards.dll` are
+  the cheapest next step.
+- PE32+ on the same host, where the gate becomes an ordinary call.
 
-Use three distinct sources of evidence:
+Not promised without a separate decision: general Windows compatibility,
+16-bit and DOS programs, kernel drivers, .NET, DirectX, COM at large,
+installers.
+
+## Starting the implementation
+
+For whoever picks this up, human or agent. Read this document, then
+[SUN.md](../../userland/SUN.md), [NATIVE_APPS.md](../../userland/NATIVE_APPS.md),
+[SECTIONS.md](../../kernel/SECTIONS.md) and
+[OWNED_WINDOWS.md](../../desktop/OWNED_WINDOWS.md). `AGENTS.md` governs every
+commit.
+
+**Order of work.** Each line is one or more commits that leave the tree
+green; none needs the one after it.
+
+1. W0, the inventory. No code in the tree; it needs the user's files.
+2. W1, host half: `subsystems/win32/pe/` with its host tests, the fixture
+   build (`lld-link` in CMake discovery), and the host harness that runs
+   `hello.exe` on the build host. No kernel change.
+3. K2, then K1, each with its `nativetest` assertions.
+4. W1, guest half: `winhost` on SavanXP and the `win32-hello` smoke scenario.
+5. W2 onward, in order.
+
+**What is already proven on the build host** (2026-11-10, clang 23 and lld;
+nothing of it is in the tree yet). The fixture build needs only these two
+tools:
+
+```sh
+clang --target=i686-pc-windows-msvc -ffreestanding -fno-stack-protector \
+      -fno-builtin -O1 -c k32.c -o k32.obj
+lld-link /dll /nodefaultlib /machine:x86 /entry:DllMain /def:kernel32.def \
+         /out:kernel32.dll /implib:kernel32.lib k32.obj
+lld-link /nodefaultlib /machine:x86 /subsystem:console /entry:start \
+         /out:hello.exe hello.obj kernel32.lib
+```
+
+The `.def` file is `LIBRARY kernel32.dll`, then `EXPORTS` and one name per
+line; exported functions are `__stdcall`. The gate below called a `stdcall`
+function of such a DLL from a 64-bit Linux process and returned its result.
+On Linux the selectors are `0x23` (32-bit code), `0x2b` (data) and `0x33`
+(64-bit code); on SavanXP they are the ones K1 adds.
+
+```asm
+call32:                       # (entry, guest stack top, a, b), SysV ABI
+    push %rbx; push %rbp; push %r12; push %r13; push %r14; push %r15
+    mov  %rsp, %r12           # host stack, in a register stdcall preserves
+    mov  %ds, %r13w
+    mov  %es, %r14w
+    mov  %esi, %esp           # guest stack, below 4 GiB
+    sub  $20, %rsp
+    mov  %edx, 12(%rsp)       # stdcall arguments
+    mov  %ecx, 16(%rsp)
+    lea  back32(%rip), %eax
+    mov  %eax, 8(%rsp)        # the guest's return address
+    mov  %edi, 0(%rsp)        # far pointer: entry point ...
+    movl $0x23, 4(%rsp)       # ... in the 32-bit code segment
+    mov  $0x2b, %eax
+    mov  %ax, %ds
+    mov  %ax, %es
+    lret                      # 64 -> 32
+    .code32
+back32:
+    ljmp $0x33, $back64       # 32 -> 64
+    .code64
+back64:
+    mov  %r13w, %ds
+    mov  %r14w, %es
+    mov  %r12, %rsp
+    pop  %r15; pop %r14; pop %r13; pop %r12; pop %rbp; pop %rbx
+    ret
+```
+
+Two things the experiment did not cover and the real gate must: `back32` and
+every host thunk the guest jumps to must sit below 4 GiB, and SS and FS need
+the 32-bit data selector as well, with the FS base set after the selector is
+loaded (loading a selector resets the base).
+
+**Rules that are easy to break.**
+
+- A function exists because the W0 matrix names it. An import that is not
+  implemented fails the load by name; it never becomes a stub.
+- No Windows concept enters the kernel, and no call is added to SUN because
+  Windows has one.
+- Microsoft's files stay out of the repository and out of the build. Tests
+  that need them read `SAVANXP_WIN32_FIXTURES` and are skipped without it.
+- A phase closes on its "Done when", with hashes and logs, not on a window
+  that opened once.
+
+## Evidence and tests
 
 | Source | Role | Limit |
 | --- | --- | --- |
-| Pinned Windows environment | Behavioral reference for the chosen profile | Version, architecture and installed DLLs affect results |
-| Wine conformance tests | Executable assertions, edge cases and regressions | Their harness/imports can require much more API surface than the tested operation |
-| sogen on the development host | Inspect startup, syscalls, memory, TLS and exception handling with hooks/snapshots | Partial emulator behavior is not authoritative Windows behavior or proof of native execution |
+| Windows XP SP3 in a virtual machine | The behavioural reference | One version and language; the deal cannot be fixed there |
+| Host tests | Pure logic: the PE parser against a corpus, raster operations, regions, the message queue, template parsers | No Windows semantics beyond what the test encodes |
+| The host harness | The real PE32 fixtures and DLLs, run on the build host through the same loader and gate, with an offscreen surface and scripted input | Linux x86-64 only; it is skipped elsewhere. It does not test K1, K2 or the desktop |
+| Smoke scenarios in QEMU | The acceptance gate of every phase, with serial logs and screenshots through QMP | Slower; run after the harness passes |
+| Wine on the build host | Relay traces: what the unchanged binary calls, with arguments. It also shows this binary runs over a DLL set that is not Microsoft's | Wine's behaviour is not Windows' behaviour. Check the reference before changing an expectation |
+| Wine's conformance tests | Assertions and edge cases to reduce into fixtures | The test executables import far more than the operation under test. A reduced case is reported as reduced |
+| ReactOS and Wine sources | Reading | Reference only, under the licence rule below |
 
-Pin upstream commits and start with small PE tests. Then select Wine cases
-from `dlls/ntdll/tests/{virtual,sync,thread,exception,unwind,file}.c` and
-`dlls/kernel32/tests/{loader,module,virtual,heap,file,process,thread,sync}.c`.
-USER32/GDI cases follow W5. Compile for the selected Windows x86/PE32 profile,
-not the SavanXP POSIX SDK, and select architecture/version-appropriate cases.
-An x64 test pass does not establish x86 coverage. Keep imported test code/
-notices and local adaptations identifiable. A reduced test is reported as
-reduced, not as a pass of the upstream suite.
+Compare the same executable across environments by its outputs and effects.
+Normalize addresses, handles and timings without hiding a difference in
+meaning. Report pass, fail, skip, crash and timeout separately; a test that
+could not run is not coverage.
 
-The upstream `ntdll` and `kernel32` test executables also import `user32` and
-`advapi32`. Inventory dependencies and start with standalone/reduced fixtures
-rather than inventing successful DLL stubs to launch the whole suite. Preserve
-Wine's expected-failure/version logic, but report SavanXP pass, fail, skip,
-expected failure, unexpected pass, crash and timeout separately. Missing setup
-or a skipped assertion is not coverage; the full `winetest` runner is not an
-early dependency and test results are kept locally by default.
+Tests that need the user's files take their location from the
+`SAVANXP_WIN32_FIXTURES` environment variable or the CMake cache variable of
+the same name, verify the hashes recorded at W0, and are skipped without
+them.
 
-Compare the same executable across environments. With different DLL
-implementations, compare statuses, outputs and effects; identical syscall
-traces are not required. Normalize unstable addresses, handles and timings
-without hiding semantic differences. If sogen differs, reduce the case and
-check Windows before changing the implementation or expected result.
+## Build, source and licence rules
 
-## Build, regression and source policy
+- New code under `subsystems/win32/` is the project's own, under its licence.
+  Wine (LGPL-2.1-or-later) and ReactOS (GPL and LGPL) are `Reference` in the
+  terms of [THIRD_PARTY_ADOPTION.md](../../third-party/THIRD_PARTY_ADOPTION.md).
+  Adopting a file from either is a decision per DLL, recorded in
+  [THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md);
+  each DLL is a separate library, so it would not change the licence of the
+  others. None is planned.
+- Microsoft's files are never committed, bundled into an image by the build,
+  or downloaded by a script. The user installs their own copies with a
+  documented command that goes through the image update path the ports use.
+- `winhost` is a SUN program. Each native capability it lacks arrives as a
+  slice with its `nativetest` assertion. SUN does not grow toward the Windows
+  API ([SYSTEM_LAYERING.md](../../userland/SYSTEM_LAYERING.md)).
+- Host tools are found by CMake and listed in
+  [BUILD_CMAKE.md](../../build/BUILD_CMAKE.md); no machine-specific paths.
+- Loader, kernel and drawing changes run the host tests, `native-test`, the
+  POSIX and thread regressions and `./build.sh smoke sxgui-smoke`, then the
+  persistence check of [AGENTS.md](../../../AGENTS.md), extended to the files
+  under `/system/win`. A valid image is never reset to install the subsystem.
+- Each phase that changes behaviour gets its `[Unreleased]` entry in the
+  commit that lands it, and what was built is described in a document under
+  `docs/userland/`. This roadmap stays a plan.
 
-- Keep fixture hashes, upstream/toolchain pins, DLL/import inventories,
-  reference Windows build, serial logs and visual artifacts with each result.
-  Proposed PE/Wine smoke scenarios become real commands only when registered;
-  none exists today. Verify the rebuilt binary is the image payload being run.
-- Discover Windows-targeting tools through CMake and document them in
-  [BUILD_CMAKE.md](../../build/BUILD_CMAKE.md), without machine-specific paths.
-  Keep the foreign fixture toolchain optional until it is an explicit dependency.
-- Run appropriate host/parser tests, native and POSIX/thread regressions,
-  and `./build.sh smoke sxgui-smoke` whenever the loader or drawing is touched.
-  Follow [AGENTS.md](../../../AGENTS.md) for Doom executable/WAD persistence
-  after a normal build, and verify the Win32 payload and persistent state under
-  `/system/win` survive too. Never reset a valid image to install the subsystem.
-- Apply [THIRD_PARTY_ADOPTION.md](../../third-party/THIRD_PARTY_ADOPTION.md).
-  Wine's inspected test files/framework use LGPL-2.1-or-later; sogen declares
-  GPL-2.0. Verify each selected file and pin before reuse, preserve notices and
-  register distributed components in
-  [THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md).
-  Copyleft adapters stay on the user side of the syscall boundary under the
-  layering policy; this plan does not authorize copyleft code in the kernel.
-- External tracing and separate test executables do not require adopting an
-  emulator into SavanXP. Microsoft DLLs/assets are not covered by the licenses
-  of Wine or sogen. This roadmap vendors nothing. Every later behavior change
-  gets its own `[Unreleased]` entry in the implementation commit.
+## Risks
 
-Primary references, to pin or record at W0:
+| Risk | Effect | Answer |
+| --- | --- | --- |
+| The inventory is larger than expected, or shows `comctl32` or `hhctrl` use | W5 grows | W0 comes first for this reason. Help is declared out of scope; a status bar is one bounded control |
+| `sol.exe` has no relocations and its base collides with `winhost` | The load fails | `winhost` is checked against the lowest preferred base; if it does not fit, it is linked elsewhere |
+| A guest reloads FS | Its TEB access faults | W0 scans for it. The fix is a per-thread descriptor, a known extension of K1 |
+| 64 views are not enough | The load fails cleanly | Count at W1; coalesce protection runs; raise the limit with its test |
+| Pixel comparison is too strict across font or metric differences | False failures | Compare card art and geometry exactly, text regions by layout; record each tolerance |
+| The work turns into an API catalogue | The goal recedes | The matrix is the scope. A function without a consumer in it is not written |
+
+## References
 
 - [Microsoft PE/COFF format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
-- [Microsoft x86 stdcall convention](https://learn.microsoft.com/en-us/cpp/cpp/stdcall)
-  and [Windows data types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)
-- [Microsoft x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)
-  and [x64 type layout](https://learn.microsoft.com/en-us/cpp/build/x64-software-conventions)
-- [VirtualAlloc](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc)
-- [Wine source](https://github.com/wine-mirror/wine),
-  [test framework](https://github.com/wine-mirror/wine/blob/master/include/wine/test.h),
-  [ntdll tests](https://github.com/wine-mirror/wine/tree/master/dlls/ntdll/tests)
-  and [kernel32 tests](https://github.com/wine-mirror/wine/tree/master/dlls/kernel32/tests)
-- [sogen source and capabilities](https://github.com/momo5502/sogen)
+- [x86 `stdcall`](https://learn.microsoft.com/en-us/cpp/cpp/stdcall) and
+  [Windows data types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)
+- [Wine source](https://gitlab.winehq.org/wine/wine): its `cards` DLL
+  documents the `cdt*` contract, and `dlls/user32/tests` and
+  `dlls/gdi32/tests` are the conformance tests to reduce
+- [ReactOS source](https://github.com/reactos/reactos), for reading
 - [Thread groundwork](../done/THREADS_ROADMAP.md),
-  [Sx API](../../kernel/KERNEL_NATIVE_API.md) and
+  [the Sx API](../../kernel/KERNEL_NATIVE_API.md),
+  [sections and views](../../kernel/SECTIONS.md),
+  [owned windows](../../desktop/OWNED_WINDOWS.md) and
   [platform graphics](../../desktop/PLATFORM_GRAPHICS.md)
