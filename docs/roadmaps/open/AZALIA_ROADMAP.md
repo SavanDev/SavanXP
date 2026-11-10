@@ -8,7 +8,7 @@ Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
 target remains separate.
 
 The target is the ASRock B450/Ryzen host in
-[REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md): AMD HDA `1022:1457` with
+[RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md): AMD HDA `1022:1457` with
 ALC892 `10ec0892`, initially through the rear green line-out. The Vega HDMI
 controller `1002:aaf8` must not claim that analog path.
 
@@ -81,7 +81,7 @@ early stage does not close the whole roadmap.
 ### Boundaries and evidence
 
 The physical analog target is the ASRock B450/Ryzen/ALC892 device documented in
-REAL_HARDWARE.md. The user explicitly deferred Vega HDMI to another objective on
+RYZEN5_1600_VEGA56.md. The user explicitly deferred Vega HDMI to another objective on
 2026-11-07 after reviewing the pinned source's HDMI exclusion (`azalia.c`,
 `azalia_init_codecs`). HDMI needs separate source/protocol and GPU dependency
 analysis; an HDA PCM path alone will not be represented as working HDMI output.
@@ -196,7 +196,7 @@ previous implementation and does not certify these new features.
   distinct QEMU scenarios pass, using the focused rerun for the repaired replay.
 
 The software implementation is complete; physical follow-up checks in
-[REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md#follow-up-audio-checks-after-the-software-objective)
+[RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md#follow-up-audio-checks-after-the-software-objective)
 are still pending. This roadmap remains open for those results. HDMI remains a
 separate future objective.
 

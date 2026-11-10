@@ -37,7 +37,7 @@ Without USB, SavanXP on a modern machine has:
   Firmware emulates PS/2 for a USB keyboard only under legacy BIOS, and that
   emulation stops at `ExitBootServices` on a UEFI boot;
 - **no external mouse**, and no touchpad on machines that wire it over USB
-  ([REAL_HARDWARE.md](../../kernel/REAL_HARDWARE.md), item 5);
+  ([REAL_HARDWARE.md](../../hardware/REAL_HARDWARE.md), HW-8);
 - **no removable media**: the FAT driver and Disk Management are ready for a
   stick, but nothing can reach one ([FAT_ROADMAP.md](../open/FAT_ROADMAP.md));
 - **no install source or target** beyond SATA, IDE and virtio
@@ -65,7 +65,7 @@ to change shape:
 xHCI covers low, full, high and super speed on one controller, so one driver
 reaches every device on a modern machine. Older machines route USB 1.1 and
 2.0 ports to UHCI/OHCI plus EHCI companions, which is three drivers and a
-routing problem. The [Compaq](../../kernel/REAL_HARDWARE.md) is one of those machines, but
+routing problem. The [Compaq](../../hardware/PENTIUM4_EVO_N1020V.md) is one of those machines, but
 it cannot run master at all, so it does not drive this decision.
 
 ### Polled, no interrupts

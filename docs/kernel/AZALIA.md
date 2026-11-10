@@ -1,7 +1,7 @@
 # OpenBSD Azalia analog audio port
 
 The x86_64 hardware target is the AMD `1022:1457` HDA controller and its
-Realtek ALC892 codec on the [development host](REAL_HARDWARE.md). The backend
+Realtek ALC892 codec on the [development host](../hardware/RYZEN5_1600_VEGA56.md). The backend
 is a selective port, not the full OpenBSD audio subsystem. It supports one
 active analog output and input at a time, selected from valid codec paths,
 48 kHz stereo S16 PCM, independent software playback/capture gain and duplex

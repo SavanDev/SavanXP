@@ -67,7 +67,7 @@ the local APIC) do not include it.
 
 ## What a second architecture changes
 
-The `legacy` branch's i386 port ([REAL_HARDWARE.md](REAL_HARDWARE.md#route-a-port-the-system-to-i386))
+The `legacy` branch's i386 port ([PENTIUM4_EVO_N1020V.md](../hardware/PENTIUM4_EVO_N1020V.md#the-i386-port-on-legacy))
 is the case this boundary is drawn for:
 
 - An `include/arch/x86/cpu.hpp` and an `arch/x86/` that implement
@@ -77,4 +77,4 @@ is the case this boundary is drawn for:
 - `arch/x86/io.hpp` as it is.
 - `memory.cpp` rewritten with `rep movsd`.
 - What does **not** follow from this boundary: `vmm.cpp` still builds 4-level
-  page tables itself. That is the VMM rewrite in REAL_HARDWARE.md.
+  page tables itself. That is the VMM package in PENTIUM4_EVO_N1020V.md.

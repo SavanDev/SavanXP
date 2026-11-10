@@ -150,9 +150,9 @@ The live system runs from memory and keeps nothing across reboots. It does
 see the machine's SATA disks and USB disks (not NVMe ones). At boot it only
 reads them, with one exception: a disk holding an SxFS volume is mounted as
 `/` instead of the live system, and mounting replays its journal. After that,
-only Disk Management writes to a disk, and only when asked to. What is
-known about older machines is in
-[docs/kernel/REAL_HARDWARE.md](docs/kernel/REAL_HARDWARE.md).
+only Disk Management writes to a disk, and only when asked to. What a
+machine needs, and what is known about each hardware target, is in
+[docs/hardware/REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md).
 
 ## Running
 

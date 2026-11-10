@@ -48,12 +48,29 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   it gives up.
 - [`AZALIA.md`](kernel/AZALIA.md) — pinned OpenBSD analog HDA playback/capture port, source map,
   codec routing, DMA lifetime, controller recovery and verification boundaries.
-- [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — current ASRock B450/Ryzen x86_64
-  hardware inventory and analog HDA target, plus the Compaq Evo N1020v analysis
-  reserved for `legacy` and future x86 work.
 - [`TIME.md`](kernel/TIME.md) — kernel clocks, virtualization, and diagnosis; plus the
   calendar date: the CMOS RTC, manual setting (`date`, `SET_REALTIME`), network
   sync (`ntpsync`, SNTP), and the taskbar clock with its calendar popup.
+
+## Hardware targets — `hardware/`
+
+- [`REAL_HARDWARE.md`](hardware/REAL_HARDWARE.md) — the targets and their status,
+  what `master` requires of any machine, the instruction-set baseline rule, how the
+  ISO boots on metal, the shared driver work packages (HW-1 to HW-15) and their
+  order, and how to inventory a machine and record a run.
+- [`RYZEN5_1600_VEGA56.md`](hardware/RYZEN5_1600_VEGA56.md) — the development host:
+  inventory, what was verified on it, the Vega 56 on the firmware framebuffer and
+  why no native driver is planned, the ALC892 notes and the pending audio checks.
+- [`PENTIUM4_EVO_N1020V.md`](hardware/PENTIUM4_EVO_N1020V.md) — the Compaq laptop:
+  why it cannot boot `master`, whether `master` could support it, the state of the
+  i386 port on `legacy`, and the 64-bit Pentium 4s that are `master` targets.
+- [`ATHLON_II.md`](hardware/ATHLON_II.md) — AM3 desktops with AMD 7/8-series
+  chipset graphics: the C1E timer check, SB7x0 devices and the work in order.
+- [`CORE2_DUO.md`](hardware/CORE2_DUO.md) — Core 2 machines with Intel GMA
+  graphics: telling Core 2 from the 32-bit Core Duo, the XD bit, ICH devices, and
+  why native mode setting is most plausible here.
+- [`ATHLON_64.md`](hardware/ATHLON_64.md) — K8 desktops, the oldest CPU `master`
+  can boot: the untrustworthy TSC, the four chipset families and their devices.
 
 ## Userland — `userland/`
 
