@@ -227,7 +227,7 @@ at fixed addresses, and the kernel is not relocated.
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |
 | VFS | POSIX `open` with no access mode skipped the permission check and granted read (E1) | High | Fixed |
 | Ports | A port sent over its own pending connection leaked with its name (E2) | Medium | Fixed |
-| Ports | Global 16-slot namespace with no ACL on service names (E3) | Medium | Open |
+| Ports | Global 16-slot namespace with no ACL on service names (E3) | Medium | Fixed |
 | VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Open |
 | Sections | File-section cache is never invalidated by writes (E5) | Low | Open |
 | Sections | An anonymous section may grant write and execute to separate views (E6) | Low | Accepted |
@@ -336,15 +336,23 @@ refuse ports with `EINVAL`, which also makes that comment true again. Nothing
 in the tree sent ports; only sections and events travel. Allowing them again
 needs cycle collection or a port that cannot outlive its creator.
 
-**E3 — Medium. Port names are first come, first served.** `PORT_CREATE` takes
-any free name from any process, and the table holds 16 ports for the whole
-system. A user process can fill the remaining slots, or claim
-`SAVANXP_WM_PORT_NAME` while `windowd` is not running; an elevated program that
-then opens a window would read input from a user-owned server. Only
-`elevationd` checks who created the port it connects to (`CONNECT_EX` on the
-consent port). Fix: reserve the service names (or a prefix) for creators that
-act as the system, have clients of system services check the creator, and add
-a per-process port limit.
+**E3 — Medium, fixed. Port names were first come, first served.**
+`PORT_CREATE` took any free name from any process, and the table holds 16
+ports for the whole system. A user process could fill the remaining slots, or
+claim `SAVANXP_WM_PORT_NAME` while `windowd` was not running; an elevated
+program that then opened a window would have read input from a user-owned
+server. Only `elevationd` checked who created the port it connects to
+(`CONNECT_EX` on the consent port). Fixed in the kernel rather than in every
+client: `object::port_name_is_reserved` names the services (`windowd`,
+`windowd.consent`, `compositord`, `elevation`, `audiod`, `effects-settings`,
+`cursor-settings`) and the prefix `sys.`, and `PORT_CREATE` answers `EPERM` to
+a creator that does not act as the system, before it looks the name up. Ports
+created by anyone else share `kMaxUserPortObjects` (8) of the 16 slots, so the
+other half is always the system's. **A new system service takes a name under
+`sys.`**; the bare names stay only because programs already installed on a
+volume connect to them. The limit is per identity and not per process, which
+is what the fix first proposed: a per-process limit is defeated by spawning.
+`elevtest` checks the refusals and the limit as the user.
 
 **E4 — Medium. The VFS node table only grows.** `add_node` appends to a
 768-slot table; `unlink` and `rmdir` mark a slot invalid and nothing reuses it.
@@ -384,8 +392,8 @@ quota.
 
 ## Required follow-up work
 
-First, the open third-pass findings, in this order: E3 (reserved service
-names and a port limit), E4 together with E5, then E7.
+First, the open third-pass findings: E4 together with E5, then E7. E3 is
+fixed.
 
 The next security phase should not add more ad-hoc device checks. The process
 security context it called for now exists in part: every process carries a

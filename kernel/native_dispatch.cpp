@@ -350,8 +350,17 @@ int native_port_create(Process& proc, uint64_t user_name) {
     if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0') {
         return sx::negative_error(SX_EINVAL);
     }
+    // Checked before the name is looked up, so the answer does not tell a
+    // user process whether the service is running.
+    const bool system = cred::acts_as_system(proc.credentials);
+    if (!system && object::port_name_is_reserved(name)) {
+        return sx::negative_error(SX_EPERM);
+    }
     if (object::find_port(name) != nullptr) {
         return sx::negative_error(SX_EEXIST);
+    }
+    if (!system && object::user_port_count() >= object::kMaxUserPortObjects) {
+        return sx::negative_error(SX_ENOMEM);
     }
     object::PortObject* port = object::create_port(name);
     if (port == nullptr) {

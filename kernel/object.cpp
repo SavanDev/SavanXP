@@ -464,6 +464,48 @@ PortObject* find_port(const char* name) {
     return nullptr;
 }
 
+// The services a client finds by name and then trusts: windowd reads the
+// keyboard for whoever connects, elevationd and windowd.consent decide an
+// elevation, audiod and compositord own their devices. A new service takes a
+// name under "sys." instead of growing this table; the names here predate the
+// prefix and stay, because programs already installed on a volume connect to
+// them.
+const char* const kReservedPortNames[] = {
+    "windowd",
+    "windowd.consent",
+    "compositord",
+    "elevation",
+    "audiod",
+    "effects-settings",
+    "cursor-settings",
+};
+constexpr char kReservedPortPrefix[] = "sys.";
+
+bool port_name_is_reserved(const char* name) {
+    if (name == nullptr) {
+        return false;
+    }
+    if (strncmp(name, kReservedPortPrefix, sizeof(kReservedPortPrefix) - 1u) == 0) {
+        return true;
+    }
+    for (const char* reserved : kReservedPortNames) {
+        if (names_equal(reserved, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+size_t user_port_count() {
+    size_t count = 0;
+    for (const PortObject& port : g_port_objects) {
+        if (port.in_use && !cred::acts_as_system(port.creator)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 PortObject* create_port(const char* name) {
     size_t length = 0;
 

@@ -45,6 +45,10 @@ constexpr size_t kMaxSemaphoreObjects = 64;
 /* Ports: named rendezvous points (docs/desktop/DESKTOP_ARCHITECTURE.md, phase
  * 3). A handful of system services, not one per program. */
 constexpr size_t kMaxPortObjects = 16;
+// Ports whose creator does not act as the system share this many slots, so
+// the user's processes cannot take the table from the services
+// (docs/kernel/KERNEL_SECURITY.md, E3).
+constexpr size_t kMaxUserPortObjects = 8;
 /* One per thread slot (process::kMaxThreads): every thread has its object
  * from the moment it exists, and a handle can keep it after the thread ends. */
 constexpr size_t kMaxThreadObjects = 256;
@@ -249,6 +253,11 @@ void end_thread_object(ThreadObject* thread_object, int32_t exit_code);
  * the object, as with create_section: the handle that installs it takes one. */
 PortObject* create_port(const char* name);
 PortObject* find_port(const char* name);
+// Whether only a creator that acts as the system may take `name`: the names
+// of the system's services, and everything under "sys.".
+bool port_name_is_reserved(const char* name);
+// How many live ports were created by someone who does not act as the system.
+size_t user_port_count();
 /* Takes over the references in `connection`. false if the queue is full. */
 bool port_enqueue(PortObject* port, const PortConnection& connection);
 /* Hands over the oldest pending connection's references. false if none. */

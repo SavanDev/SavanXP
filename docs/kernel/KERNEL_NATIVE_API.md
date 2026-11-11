@@ -352,8 +352,9 @@ port calls are open to every subsystem.
 
 - `SXN_SYS_PORT_CONNECT_EX` (`0x1029`): `PORT_CONNECT`, plus rdx =
   `struct sxn_identity*` (written): who created the port, as they were when
-  they created it. Port names are first come, first served, so a client that
-  trusts what a service answers checks that the system created it.
+  they created it. The names of the system's services are reserved (slice
+  15), so this matters for a name that is not: there, a client that trusts
+  what a service answers checks that the system created it.
 - `SXN_SYS_PORT_ACCEPT_EX` (`0x102a`): `PORT_ACCEPT` into a
   `struct sxn_port_connection_ex`, which adds who the client was when it
   connected (`SO_PEERCRED`). It is taken at connect time, so lowering itself
@@ -578,9 +579,11 @@ are refused.
   subsystem defines those in its own terms. This is what lets an ordinary
   application find windowd by port. The isolation is unchanged: the kernel
   still knows nothing of POSIX.
-- Port names are first come, first served; nothing stops a process from taking
-  a service's name before the service starts. The session manager (`sessiond`) starting
-  services first is what keeps that from happening.
+- Port names are first come, first served, except the reserved ones: the
+  system's service names and everything under `sys.` answer `EPERM` to a
+  creator that does not act as the system, and such creators share 8 of the 16
+  slots (`ENOMEM` past that). A new system service takes a name under `sys.`
+  ([KERNEL_SECURITY.md](KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E3).
 
 `nativetest` covers ports between two native processes (connect by name, a
 message each way, an event handed over the reply pipe); `handletest` does the

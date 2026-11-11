@@ -289,8 +289,9 @@ calls `elevate()` in the libc.
   exit status to the requester. A requester that already acts as the system
   is not asked: it could start the program itself.
 - **The prompt is windowd's**, on a second port, `windowd.consent`. The
-  broker checks that the system created it (`SXN_SYS_PORT_CONNECT_EX`), so a
-  program that took the name first cannot answer; windowd hears a consent
+  broker checks that the system created it (`SXN_SYS_PORT_CONNECT_EX`), and
+  the kernel keeps the name for the system, so a user program cannot take it
+  first and answer; windowd hears a consent
   request only from a connection that acts as the system, and `elevtest`
   checks that it refuses the user. The prompt is the top layer of the scene,
   above the Alt+Tab switcher and a fullscreen window, drawn on windowd's own

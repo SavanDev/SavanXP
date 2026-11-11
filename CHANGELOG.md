@@ -137,6 +137,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A user process can no longer take the port name of a system service or fill the port table.**
+  `SXN_SYS_PORT_CREATE` answers `EPERM` for the services' names and anything under `sys.`, and user ports share 8 of
+  the 16 slots. See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E3.
+
 - **A power cut during a create, delete or rename on SxFS no longer leaves a file without a name.**
   Directories are copied on change inside the metadata commit (`SXFS_FEATURE_LINK_COUNT`); `fscheck` adds
   `pending_deletions`. See [SXFS_NAMESPACE.md](docs/fs/SXFS_NAMESPACE.md).

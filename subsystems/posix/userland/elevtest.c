@@ -17,7 +17,8 @@
  *   - as the system: /dev/input0 is windowd's (a read and a claim are
  *     -EBUSY), and asking for elevation starts the program without a prompt;
  *   - lowered to the user (uid 1000): it cannot read the keyboard, windowd
- *     refuses to show it a prompt of its own, and it asks six times
+ *     refuses to show it a prompt of its own, the names of the system's
+ *     services are not its to take, and it asks six times
  *     (tools/qmp_elevation.py answers):
  *       1. with a forged "yes" written down its pipe behind the request; the
  *          host presses N, and the answer must be no;
@@ -153,6 +154,40 @@ static void ask_windowd_directly(void)
     (void)savanxp_close(handles[1]);
 }
 
+/* A service's name is the system's to take, running or not, and so is
+ * everything under "sys."; the user's ports are its own to name, up to the
+ * share of the table left to them (KERNEL_SECURITY.md, E3). */
+static void take_service_names(void)
+{
+    long ports[16];
+    int count = 0;
+    long last = 0;
+
+    check(sxn_port_create(SAVANXP_CONSENT_PORT_NAME) == -SAVANXP_EPERM,
+        "the user cannot take the name of a running service");
+    check(sxn_port_create("audiod") == -SAVANXP_EPERM, "the user cannot take a service's name while it is free");
+    check(sxn_port_create("sys.elevtest") == -SAVANXP_EPERM, "the user cannot take a name under sys.");
+
+    for (count = 0; count < 16; ++count)
+    {
+        char name[] = "elevtest-user-a";
+
+        name[sizeof(name) - 2] = (char)('a' + count);
+        last = sxn_port_create(name);
+        if (last < 0)
+        {
+            break;
+        }
+        ports[count] = last;
+    }
+    check(count >= 1, "the user creates a port under a name of its own");
+    check(count <= 8 && last == -SAVANXP_ENOMEM, "the user's ports stop at their share of the table");
+    while (count > 0)
+    {
+        (void)savanxp_close((int)ports[--count]);
+    }
+}
+
 /* Asks, and right behind the request writes what a forged answer would look
  * like -- windowd's and the broker's. The host presses N: the answer has to
  * be no, whatever the pipe carried. */
@@ -278,6 +313,7 @@ static int run_user(void)
     check(savanxp_open_mode("/bin/true", 0) == -SAVANXP_EINVAL,
         "an open without an access mode is refused even where reading is allowed");
     ask_windowd_directly();
+    take_service_names();
     ask_and_forge();
     ask_while_y_is_held();
 
@@ -344,6 +380,15 @@ int main(int argc, char **argv)
     }
 
     check_input_owned();
+    {
+        long port = sxn_port_create("sys.elevtest");
+
+        check(port >= 0, "the system takes a name under sys.");
+        if (port >= 0)
+        {
+            (void)savanxp_close((int)port);
+        }
+    }
 
     /* What the user will ask Add or Remove Programs to remove. */
     {
