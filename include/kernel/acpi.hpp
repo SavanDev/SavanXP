@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "boot/boot_info.hpp"
+#include "kernel/acpi_tables.hpp"
 
 namespace acpi {
 
@@ -10,8 +11,14 @@ namespace acpi {
 // usando el RSDP que entrega Limine y el HHDM para traducir phys->virt.
 void initialize(const boot::BootInfo& boot_info);
 
-// true si se encontraron RSDP y FADT validos.
+// True when a valid RSDP and FADT were found.
 bool ready();
+
+// The first table with `signature`, readable for its whole length, or nullptr.
+// Works once initialize found a valid RSDP, with or without a FADT. The walk
+// is bounded (acpi_tables.hpp); the caller still checks the table is long
+// enough for the fields it reads.
+const acpi_tables::SdtHeader* find_table(const char (&signature)[5]);
 
 // PM timer del chipset (ACPI): contador libre a 3.579545 MHz declarado por la
 // FADT. Puerto 0 = la maquina no lo expone. Es de 24 bits salvo que la FADT

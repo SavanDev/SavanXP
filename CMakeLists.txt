@@ -252,6 +252,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/power.cpp
     kernel/clipboard.cpp
     kernel/acpi.cpp
+    kernel/acpi_tables.cpp
     kernel/ioapic.cpp
     kernel/uacpi_glue.cpp
     kernel/rtc.cpp
@@ -830,6 +831,14 @@ target_include_directories(savanxp-partition-test PRIVATE
 target_compile_options(savanxp-partition-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-partition-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-acpi-tables-test
+    kernel/acpi_tables.cpp
+    tests/host/kernel_string_stubs.cpp
+    tests/host/acpi_tables_test.cpp)
+target_include_directories(savanxp-acpi-tables-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-acpi-tables-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-acpi-tables-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-block-writeback-test
     kernel/block.cpp
     tests/host/kernel_string_stubs.cpp
@@ -1024,7 +1033,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -1035,6 +1044,7 @@ add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
 add_test(NAME sximg-test COMMAND savanxp-sximg-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
+add_test(NAME acpi-tables-test COMMAND savanxp-acpi-tables-test)
 add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)

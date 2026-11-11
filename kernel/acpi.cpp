@@ -5,6 +5,7 @@
 
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
+#include "kernel/acpi_tables.hpp"
 #include "kernel/console.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/string.hpp"
@@ -21,30 +22,7 @@ void short_delay() {
 
 // --- Estructuras ACPI (offsets fijos del spec) ---
 
-struct [[gnu::packed]] RsdpDescriptor {
-    char signature[8];
-    uint8_t checksum;
-    char oem_id[6];
-    uint8_t revision;
-    uint32_t rsdt_address;
-    // Campos v2 (solo validos si revision >= 2):
-    uint32_t length;
-    uint64_t xsdt_address;
-    uint8_t extended_checksum;
-    uint8_t reserved[3];
-};
-
-struct [[gnu::packed]] SdtHeader {
-    char signature[4];
-    uint32_t length;
-    uint8_t revision;
-    uint8_t checksum;
-    char oem_id[6];
-    char oem_table_id[8];
-    uint32_t oem_revision;
-    uint32_t creator_id;
-    uint32_t creator_revision;
-};
+using acpi_tables::SdtHeader;
 
 struct [[gnu::packed]] GenericAddress {
     uint8_t address_space_id; // 0 = memoria del sistema, 1 = I/O
@@ -144,97 +122,49 @@ bool g_sci_active = false;
 constexpr uint16_t kPm1PwrBtnBit = 1u << 8; // PWRBTN_STS / PWRBTN_EN
 constexpr uint16_t kPm1CntSciEn = 1u << 0;  // SCI_EN en PM1a_CNT
 
-// Limine entrega el RSDP como puntero HHDM ya virtual, mientras que las tablas
-// ACPI guardan direcciones fisicas. Normalizamos: si la direccion ya cae en el
-// half alto la usamos tal cual, si no le sumamos el offset HHDM.
-template <typename T>
-T* acpi_map(uint64_t address) {
-    if (address >= g_hhdm_offset) {
-        return reinterpret_cast<T*>(address);
+// The RSDP Limine found, once it has passed rsdp_valid. Everything else is
+// reached from it.
+const acpi_tables::Rsdp* g_rsdp = nullptr;
+// One past the highest physical address a table may claim: the top of the
+// boot memory map, and never below 4 GiB, where legacy firmware keeps tables
+// in ranges the map does not always list. It is a bound on what firmware can
+// make the kernel dereference, not a proof that the page is mapped.
+uint64_t g_physical_ceiling = 0;
+
+constexpr uint64_t kFourGiB = 1ull << 32;
+
+// Limine hands over the RSDP as an HHDM pointer, already virtual, while the
+// tables hold physical addresses. Both are accepted: an address in the high
+// half is taken back to physical first, so one bound covers both.
+const void* map_physical(uint64_t address, size_t length, void*) {
+    const uint64_t physical = address >= g_hhdm_offset ? address - g_hhdm_offset : address;
+    if (physical == 0 || length == 0 || physical >= g_physical_ceiling ||
+        length > g_physical_ceiling - physical) {
+        return nullptr;
     }
-    return reinterpret_cast<T*>(address + g_hhdm_offset);
+    return reinterpret_cast<const void*>(physical + g_hhdm_offset);
 }
 
-bool checksum_ok(const void* data, size_t length) {
-    const uint8_t* bytes = static_cast<const uint8_t*>(data);
-    uint8_t sum = 0;
-    for (size_t i = 0; i < length; ++i) {
-        sum = static_cast<uint8_t>(sum + bytes[i]);
+constexpr acpi_tables::Reader kReader = {&map_physical, nullptr};
+
+uint64_t physical_ceiling(const boot::BootInfo& boot_info) {
+    uint64_t ceiling = kFourGiB;
+    for (size_t i = 0; i < boot_info.memory_map_entries; ++i) {
+        const boot::MemoryRegion& region = boot_info.memory_map[i];
+        const uint64_t end = region.base + region.length;
+        if (end >= region.base && end > ceiling) {
+            ceiling = end;
+        }
     }
-    return sum == 0;
+    return ceiling;
 }
 
-const SdtHeader* find_table(const RsdpDescriptor* rsdp, const char (&signature)[5]) {
-    const bool use_xsdt = rsdp->revision >= 2 && rsdp->xsdt_address != 0;
-    const SdtHeader* root = use_xsdt
-        ? acpi_map<SdtHeader>(rsdp->xsdt_address)
-        : acpi_map<SdtHeader>(rsdp->rsdt_address);
-
-    const size_t entry_size = use_xsdt ? sizeof(uint64_t) : sizeof(uint32_t);
-    const size_t entry_count = (root->length - sizeof(SdtHeader)) / entry_size;
-    const uint8_t* entries = reinterpret_cast<const uint8_t*>(root) + sizeof(SdtHeader);
-
-    for (size_t i = 0; i < entry_count; ++i) {
-        uint64_t table_phys = 0;
-        if (use_xsdt) {
-            uint64_t value = 0;
-            memcpy(&value, entries + i * entry_size, sizeof(uint64_t));
-            table_phys = value;
-        } else {
-            uint32_t value = 0;
-            memcpy(&value, entries + i * entry_size, sizeof(uint32_t));
-            table_phys = value;
-        }
-
-        const SdtHeader* table = acpi_map<SdtHeader>(table_phys);
-        if (memcmp(table->signature, signature, 4) == 0) {
-            return table;
-        }
-    }
-    return nullptr;
-}
-
-// Escanea la DSDT buscando el objeto AML "_S5_" y extrae SLP_TYPa/SLP_TYPb.
-// Tecnica minima estandar de hobby OS: no interpreta AML, solo decodifica el
-// paquete que sigue al NameString.
-void parse_s5(const SdtHeader* dsdt) {
-    const uint8_t* body = reinterpret_cast<const uint8_t*>(dsdt) + sizeof(SdtHeader);
-    if (dsdt->length <= sizeof(SdtHeader)) {
-        return;
-    }
-    const size_t body_length = dsdt->length - sizeof(SdtHeader);
-
-    for (size_t i = 0; i + 4 < body_length; ++i) {
-        if (memcmp(body + i, "_S5_", 4) != 0) {
-            continue;
-        }
-
-        // Validar que sea un NameOp (0x08), opcionalmente precedido de scope '\'.
-        const bool preceded_by_name_op =
-            (i >= 1 && body[i - 1] == 0x08) ||
-            (i >= 2 && body[i - 2] == 0x08 && body[i - 1] == '\\');
-        const uint8_t* p = body + i + 4;
-        if (!preceded_by_name_op || *p != 0x12 /* PackageOp */) {
-            continue;
-        }
-
-        p += 1;                              // saltar PackageOp
-        p += ((*p & 0xC0) >> 6) + 1;         // saltar PkgLength (lead byte + extra)
-        p += 1;                              // saltar NumElements
-
-        if (*p == 0x0A) {                    // BytePrefix opcional
-            p += 1;
-        }
-        g_slp_typ_a = static_cast<uint8_t>(*p & 0x07);
-        p += 1;
-
-        if (*p == 0x0A) {
-            p += 1;
-        }
-        g_slp_typ_b = static_cast<uint8_t>(*p & 0x07);
-
-        g_s5_available = true;
-        return;
+// A wrong checksum is reported and the table is used all the same; see
+// acpi_tables::map_table for why.
+void report_checksum(const SdtHeader& table) {
+    if (!acpi_tables::table_checksum_ok(table)) {
+        console::printf("acpi: %c%c%c%c has a wrong checksum, using it anyway\n",
+            table.signature[0], table.signature[1], table.signature[2], table.signature[3]);
     }
 }
 
@@ -294,23 +224,33 @@ namespace acpi {
 
 void initialize(const boot::BootInfo& boot_info) {
     g_hhdm_offset = boot_info.hhdm_offset;
+    g_physical_ceiling = physical_ceiling(boot_info);
 
     if (boot_info.acpi_rsdp_address == 0 || g_hhdm_offset == 0) {
-        console::printf("acpi: RSDP no disponible desde el bootloader\n");
+        console::printf("acpi: no RSDP from the bootloader\n");
         return;
     }
 
-    const RsdpDescriptor* rsdp = acpi_map<RsdpDescriptor>(boot_info.acpi_rsdp_address);
-    if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
-        console::printf("acpi: RSDP invalido (firma/checksum)\n");
+    const auto* rsdp = static_cast<const acpi_tables::Rsdp*>(
+        map_physical(boot_info.acpi_rsdp_address, sizeof(acpi_tables::Rsdp), nullptr));
+    if (rsdp == nullptr || !acpi_tables::rsdp_valid(*rsdp)) {
+        console::printf("acpi: invalid RSDP (address, signature or checksum)\n");
         return;
     }
+    g_rsdp = rsdp;
 
-    const SdtHeader* fadt_header = find_table(rsdp, "FACP");
+    const SdtHeader* fadt_header = acpi_tables::find_table(kReader, *rsdp, "FACP");
     if (fadt_header == nullptr) {
-        console::printf("acpi: FADT (FACP) no encontrada\n");
+        console::printf("acpi: FADT (FACP) not found\n");
         return;
     }
+    // Everything read below without a length check of its own lies inside
+    // the ACPI 1.0 FADT, which ends after `flags`.
+    if (fadt_header->length < offsetof(Fadt, flags) + sizeof(uint32_t)) {
+        console::printf("acpi: FADT too short (%u bytes)\n", static_cast<unsigned>(fadt_header->length));
+        return;
+    }
+    report_checksum(*fadt_header);
 
     const Fadt* fadt = reinterpret_cast<const Fadt*>(fadt_header);
 
@@ -365,9 +305,10 @@ void initialize(const boot::BootInfo& boot_info) {
         dsdt_phys = fadt->x_dsdt;
     }
     if (dsdt_phys != 0) {
-        const SdtHeader* dsdt = acpi_map<SdtHeader>(dsdt_phys);
-        if (memcmp(dsdt->signature, "DSDT", 4) == 0) {
-            parse_s5(dsdt);
+        const SdtHeader* dsdt = acpi_tables::map_table(kReader, dsdt_phys);
+        if (dsdt != nullptr && memcmp(dsdt->signature, "DSDT", 4) == 0) {
+            report_checksum(*dsdt);
+            g_s5_available = acpi_tables::find_s5(*dsdt, g_slp_typ_a, g_slp_typ_b);
         }
     }
 
@@ -382,6 +323,17 @@ void initialize(const boot::BootInfo& boot_info) {
 
 bool ready() {
     return g_ready;
+}
+
+const acpi_tables::SdtHeader* find_table(const char (&signature)[5]) {
+    if (g_rsdp == nullptr) {
+        return nullptr;
+    }
+    const SdtHeader* table = acpi_tables::find_table(kReader, *g_rsdp, signature);
+    if (table != nullptr) {
+        report_checksum(*table);
+    }
+    return table;
 }
 
 uint16_t pm_timer_port() {
@@ -491,8 +443,13 @@ bool start_sci() {
     if (g_reset_supported) {
         if (g_reset_reg.address_space_id == 1) { // I/O
             out8(static_cast<uint16_t>(g_reset_reg.address), g_reset_value);
-        } else if (g_reset_reg.address_space_id == 0) { // memoria
-            *acpi_map<volatile uint8_t>(g_reset_reg.address) = g_reset_value;
+        } else if (g_reset_reg.address_space_id == 0) { // system memory
+            // The address is the FADT's: written only when it passes the same
+            // bound as a table.
+            const void* target = map_physical(g_reset_reg.address, 1, nullptr);
+            if (target != nullptr) {
+                *static_cast<volatile uint8_t*>(const_cast<void*>(target)) = g_reset_value;
+            }
         }
         short_delay();
     }

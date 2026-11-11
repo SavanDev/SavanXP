@@ -225,7 +225,7 @@ at fixed addresses, and the kernel is not relocated.
 | Processes | `kill(1, ...)` and orphan zombies | High | Fixed |
 | Resource use | No process quotas or PMM ownership bitmap; only ports have a user share | High | Open |
 | Authorization | UID/GID, VFS modes and elevation exist; capabilities beyond the elevation rule do not | High | Partially fixed |
-| ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Open |
+| ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Fixed: bounds enforced, checksums reported |
 | PCI | No central resource manager for BAR/I/O ranges | High | Open |
 | Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Fixed |
 | Kernel stacks | Canary and 32 KiB size, but no non-present guard page | Medium | Partial |
@@ -398,9 +398,6 @@ biased start against `p_vaddr` and the end against the biased start. No test
 tells the two apart from user space: the wrapped image was already refused
 one step later, by the copy.
 
-**Still open from the earlier passes.** `find_table` trusts the RSDT/XSDT
-length and checksum.
-
 **Closed from the earlier passes (2026-11-11).** `/dev/gpu0` stays `0666`, for
 queries and per-process 3D contexts, but `GPU_IOC_ACQUIRE` requires the
 system: the display session went to whoever asked first, so a user process
@@ -445,15 +442,52 @@ third pass was not walked again.
 - Kernel, userland and the external SDK build with `-fstack-protector-strong`.
 - `/dev/input0` and `/dev/mouse0` are `0600`; ports do not travel over pipes
   on either dispatcher; a spawn with an identity requires the system.
-- `find_table` in `acpi.cpp` trusts the root table's length and maps every
-  entry without a bound or a checksum.
 - Process, thread, section and node tables have no per-process or per-user
   share. Ports are the first table that does.
 
 ### Closed in this pass
 
 E3, E7, the received-checksum and TCP-tuple findings, the open fault
-injector and the display session. Each is marked where it was recorded above.
+injector, the display session and the ACPI table walk. Each is marked where it was recorded above.
+
+### ACPI table walk
+
+The hand-written parser (`acpi.cpp` for the FADT and `\_S5_`, `ioapic.cpp`
+for the MADT) followed whatever firmware wrote: the root table's length was
+subtracted from without a check, every entry was dereferenced as a table, the
+MADT walk trusted each entry's length, and the `_S5_` decoder advanced a
+pointer past the end of the DSDT. The two files also carried a copy each of
+the walk. uACPI, which runs later, was never part of this.
+
+All of it now goes through `acpi_tables` (`include/kernel/acpi_tables.hpp`),
+which has no access to the machine and so runs in the host tests:
+
+- **Every address goes through a `Reader`** that returns nullptr for a range
+  it will not read. The kernel's refuses zero and anything at or above the top
+  of the boot memory map (never below 4 GiB, where legacy firmware keeps
+  tables in ranges the map does not always list). That bounds what firmware
+  can make the kernel dereference; it does not prove the page is mapped. The
+  FADT's memory reset register passes the same bound before `reboot` writes
+  to it.
+- **A table is mapped twice**: its header, then its whole declared length,
+  which must be at least a header and at most 16 MiB (64 KiB for the RSDT or
+  XSDT, whose signature is also checked). Bad entries are skipped.
+- **The XSDT is used only when the RSDP is long enough to have one**, and a
+  wrong extended checksum falls back to the RSDT.
+- **MADT entries** are returned only when their whole length is inside the
+  table; `ioapic.cpp` also requires the length its entry type needs.
+- **The FADT must reach the end of the ACPI 1.0 structure**, which covers
+  every field read without a length check of its own.
+- **Checksums are reported, not enforced**, except the RSDP's. Firmware that
+  ships a table with a wrong checksum exists, refusing its FADT would cost
+  that machine its power button and shutdown, and a checksum is not a defense:
+  whoever can write the table can write the sum. The boot log says
+  `acpi: XXXX has a wrong checksum, using it anyway`.
+
+`acpi-tables-test` builds its tables in memory that ends at a page with no
+access, so a read past a bad length is a crash, not a pass. Checked only in
+QEMU with OVMF (the XSDT path); the RSDT path and wrong checksums are covered
+by the host test alone, and no real machine has booted this yet.
 
 ### Never audited
 
@@ -475,8 +509,8 @@ attacker would read it, and no finding above speaks for them:
 ## Required follow-up work
 
 The third-pass findings are all closed or accepted. What comes first now is
-the list in [Fourth-pass review](#fourth-pass-review-2026-11-11): the ACPI
-table walk, and a first audit of the drivers that parse
+the list in [Fourth-pass review](#fourth-pass-review-2026-11-11): a first
+audit of the drivers that parse
 hostile input and have never had one.
 
 The next security phase should not add more ad-hoc device checks. The process

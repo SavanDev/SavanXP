@@ -137,6 +137,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **The kernel's own ACPI parser bounds every table length and address it reads from firmware.**
+  A table with a wrong checksum is still used and logged as `acpi: XXXX has a wrong checksum, using it anyway`.
+  See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#acpi-table-walk); `acpi-tables-test` covers it on the host.
+
 - **Only the system can take the display session: `GPU_IOC_ACQUIRE` answers `EPERM` to a user process.**
   `/dev/gpu0` stays open to everyone for queries and 3D contexts.
 

@@ -13,39 +13,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/acpi.hpp"
+#include "kernel/acpi_tables.hpp"
 #include "kernel/console.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
 
 namespace {
 
-// ---- Igual que acpi.cpp: normaliza phys/virt con el HHDM ----
-uint64_t g_hhdm = 0;
-template <typename T> T* map(uint64_t addr) {
-    return reinterpret_cast<T*>(addr >= g_hhdm ? addr : addr + g_hhdm);
-}
-bool checksum_ok(const void* d, size_t n) {
-    const uint8_t* b = static_cast<const uint8_t*>(d); uint8_t s = 0;
-    for (size_t i = 0; i < n; ++i) s = uint8_t(s + b[i]);
-    return s == 0;
-}
-
-struct [[gnu::packed]] SdtHeader {
-    char signature[4]; uint32_t length; uint8_t revision, checksum;
-    char oem_id[6], oem_table_id[8]; uint32_t oem_revision, creator_id, creator_revision;
-};
-struct [[gnu::packed]] Rsdp {
-    char signature[8]; uint8_t checksum; char oem_id[6];
-    uint8_t revision; uint32_t rsdt_address;
-    uint32_t length; uint64_t xsdt_address; uint8_t extended_checksum, reserved[3];
-};
-
-// ---- MADT (tabla "APIC") ----
-struct [[gnu::packed]] Madt {
-    SdtHeader header; uint32_t local_apic_address; uint32_t flags;
-    // ...seguido de entradas variables (type,len,...)
-};
-struct [[gnu::packed]] MadtEntryHeader { uint8_t type, length; };
+// ---- MADT (the "APIC" table) ----
+// The table is found and its entries are walked by acpi_tables, which bounds
+// both; only the two entry types this file understands are declared here.
+using acpi_tables::MadtEntryHeader;
+using acpi_tables::SdtHeader;
 struct [[gnu::packed]] MadtIoApic {
     MadtEntryHeader h; uint8_t io_apic_id, reserved;
     uint32_t io_apic_address; uint32_t gsi_base;   // type 1
@@ -124,30 +104,13 @@ uint8_t alloc_vector() {
     return g_next_vector++;
 }
 
-// ---- Camino de tablas: RSDP -> XSDT/RSDT -> "APIC" ----
-const SdtHeader* find_madt(const Rsdp* rsdp) {
-    const bool use_xsdt = rsdp->revision >= 2 && rsdp->xsdt_address != 0;
-    const SdtHeader* root = use_xsdt ? map<SdtHeader>(rsdp->xsdt_address)
-                                     : map<SdtHeader>(rsdp->rsdt_address);
-    const size_t esz = use_xsdt ? 8 : 4;
-    const size_t n = (root->length - sizeof(SdtHeader)) / esz;
-    const uint8_t* e = reinterpret_cast<const uint8_t*>(root) + sizeof(SdtHeader);
-    for (size_t i = 0; i < n; ++i) {
-        uint64_t phys = 0; memcpy(&phys, e + i * esz, esz);
-        const SdtHeader* t = map<SdtHeader>(phys);
-        if (memcmp(t->signature, "APIC", 4) == 0) return t;
-    }
-    return nullptr;
-}
-
-void parse_madt(const Madt* madt) {
-    const uint8_t* p   = reinterpret_cast<const uint8_t*>(madt) + sizeof(Madt);
-    const uint8_t* end = reinterpret_cast<const uint8_t*>(madt) + madt->header.length;
-    while (p + sizeof(MadtEntryHeader) <= end) {
-        const auto* h = reinterpret_cast<const MadtEntryHeader*>(p);
-        if (h->length == 0) break; // proteccion anti-loop
-        if (h->type == kMadtIoApic && g_ioapic_count < kMaxIoApics) {
-            const auto* e = reinterpret_cast<const MadtIoApic*>(p);
+void parse_madt(const SdtHeader& madt) {
+    for (const MadtEntryHeader* h = acpi_tables::madt_next_entry(madt, nullptr); h != nullptr;
+         h = acpi_tables::madt_next_entry(madt, h)) {
+        // madt_next_entry guarantees h->length bytes; an entry shorter than
+        // its type is firmware's mistake and is skipped, not read.
+        if (h->type == kMadtIoApic && h->length >= sizeof(MadtIoApic) && g_ioapic_count < kMaxIoApics) {
+            const auto* e = reinterpret_cast<const MadtIoApic*>(h);
             void* virt = nullptr;
             if (vm::map_kernel_mmio(e->io_apic_address, 0x20,
                     vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable, &virt)) {
@@ -157,11 +120,10 @@ void parse_madt(const Madt* madt) {
                 // VER (reg 0x01) bits [23:16] = max redirection entry (count-1).
                 io.gsi_count = ((ioapic_read(io, 0x01) >> 16) & 0xff) + 1;
             }
-        } else if (h->type == kMadtIso && g_iso_count < kMaxIsos) {
-            const auto* e = reinterpret_cast<const MadtIso*>(p);
+        } else if (h->type == kMadtIso && h->length >= sizeof(MadtIso) && g_iso_count < kMaxIsos) {
+            const auto* e = reinterpret_cast<const MadtIso*>(h);
             g_isos[g_iso_count++] = Iso{e->source, e->gsi, e->flags};
         }
-        p += h->length;
     }
 }
 
@@ -185,7 +147,6 @@ void resolve_isa(uint8_t irq, uint32_t& gsi, ioapic::Polarity& pol, ioapic::Trig
 namespace ioapic {
 
 bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
-    g_hhdm = hhdm_offset;
     if (!rsdp_addr || !hhdm_offset) return false;
 
     // El IOAPIC entrega a traves del Local APIC y cada handler ruteado por aca
@@ -198,14 +159,12 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
         return false;
     }
 
-    const Rsdp* rsdp = map<Rsdp>(rsdp_addr);
-    if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
-        console::printf("ioapic: RSDP invalido\n"); return false;
-    }
-    const SdtHeader* madt_hdr = find_madt(rsdp);
-    if (!madt_hdr) { console::printf("ioapic: MADT ausente\n"); return false; }
+    // acpi::initialize ran first and validated the RSDP; the walk to the
+    // MADT is its bounded one.
+    const SdtHeader* madt = acpi::find_table("APIC");
+    if (madt == nullptr) { console::printf("ioapic: no MADT\n"); return false; }
 
-    parse_madt(reinterpret_cast<const Madt*>(madt_hdr));
+    parse_madt(*madt);
     if (g_ioapic_count == 0) { console::printf("ioapic: sin IOAPIC en MADT\n"); return false; }
 
     g_ready = true;
