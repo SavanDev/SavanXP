@@ -151,6 +151,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Task Manager's One Graph Per CPU shows up to 32 cores instead of the first 8.**
+  The per-core graphs wrap into rows and columns when one row would make them too narrow.
+
 - **The tray volume popup lists playing applications on hosts without a supported network card.**
   It read the legacy UDP census, which needs a configured IPv4 address; it now uses audiod's native port.
 

@@ -90,9 +90,10 @@ static const char *const k_tab_labels[] = {"Applications", "Processes", "Perform
 #define TASKMGR_GRAPH_LINE_ALT SXGUI_RGB(255, 216, 0)
 #define TASKMGR_GRAPH_KERNEL SXGUI_RGB(255, 0, 0)
 
-/* Cores with a graph of their own. Past this, One Graph Per CPU shows the
- * first ones; the combined graph always counts all of them. */
-#define TASKMGR_MAX_CPUS 8
+/* Cores with a graph of their own: the kernel's own limit (arch kMaxCpus).
+ * Past this, One Graph Per CPU shows the first ones; the combined graph
+ * always counts all of them. */
+#define TASKMGR_MAX_CPUS 32
 
 /* ---- menu commands ------------------------------------------------------------ */
 
@@ -1269,6 +1270,37 @@ static void draw_field(struct sx_painter *painter, struct sx_rect area, int row,
                          SXGUI_COLOR_TEXT);
 }
 
+/* How many columns and rows the per-core graphs take. Every candidate row
+ * count is tried and the one whose cells have the largest short side wins,
+ * so a few cores stay in one row and many wrap into several instead of
+ * becoming slivers. Ties keep the fewer rows. */
+static void per_core_grid(struct sx_rect area, int count, int gap, int *out_columns, int *out_rows)
+{
+    int best_side = -1;
+    int rows;
+
+    *out_columns = count > 0 ? count : 1;
+    *out_rows = 1;
+    for (rows = 1; rows <= count; ++rows)
+    {
+        int columns = (count + rows - 1) / rows;
+        int width = (area.width - gap * (columns - 1)) / columns;
+        int height = (area.height - gap * (rows - 1)) / rows;
+        int side = width < height ? width : height;
+
+        if ((rows - 1) * columns >= count)
+        {
+            continue; /* a whole row would be empty */
+        }
+        if (side > best_side)
+        {
+            best_side = side;
+            *out_columns = columns;
+            *out_rows = rows;
+        }
+    }
+}
+
 static void paint_performance(struct sx_painter *painter, struct sx_rect page)
 {
     int pad = TASKMGR_PAGE_PAD;
@@ -1307,16 +1339,24 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
                       "CPU Usage History");
     if (g_cpu_per_core && g_core_count > 1)
     {
-        /* One graph per core, side by side. Kernel time is not split by
+        /* One graph per core, in a grid. Kernel time is not split by
          * core -- the counter is per process -- so these show none. */
         int core;
         int gap = 4;
-        int each = (area.width - gap * (g_core_count - 1)) / g_core_count;
+        int columns = 1;
+        int rows = 1;
+        int each_width;
+        int each_height;
 
+        per_core_grid(area, g_core_count, gap, &columns, &rows);
+        each_width = (area.width - gap * (columns - 1)) / columns;
+        each_height = (area.height - gap * (rows - 1)) / rows;
         for (core = 0; core < g_core_count; ++core)
         {
             draw_history(painter,
-                         sx_rect_make(area.x + core * (each + gap), area.y, each, area.height),
+                         sx_rect_make(area.x + (core % columns) * (each_width + gap),
+                                      area.y + (core / columns) * (each_height + gap),
+                                      each_width, each_height),
                          g_core_history[core], TASKMGR_GRAPH_LINE, 0);
         }
     }
