@@ -145,6 +145,25 @@ enum sxchrome_arrow
  */
 void sxchrome_draw_arrow(struct sx_painter *painter, struct sx_rect rect, enum sxchrome_arrow direction, uint32_t colour);
 
+/*
+ * Dotted focus rectangle. The solid frame it replaced competed with the
+ * control's border; a dotted one reads as focus, not as another bevel.
+ */
+void sxchrome_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect);
+
+/*
+ * A radio button's circle, SXCHROME_RADIO_SIZE square at `box`: three
+ * concentric rings, each split along the diagonal. The top-left sinks (SHADOW
+ * outside, DARK inside) and the bottom-right rises (LIGHT outside, BEVEL
+ * inside): the same two-pixel bevel as the rest of the chrome, bent into a
+ * circle. At this size a circle is not computed, it is drawn: the glyph is a
+ * table. `checked` adds the dot; `enabled` 0 greys the field and the dot.
+ * The toolkit's radio widget and the hand-painted dialogs of the shell both
+ * draw it, so they match.
+ */
+#define SXCHROME_RADIO_SIZE 12
+void sxchrome_draw_radio(struct sx_painter *painter, struct sx_rect box, int checked, int enabled);
+
 #ifdef __cplusplus
 }
 #endif

@@ -11,13 +11,13 @@
  * when progman_registry_disk_signature() says the disk under it changed:
  * building it reads every binary in /bin, and doing that on each click is what
  * made the menu take a second to appear. A flat list by group (header plus items
- * with icon and name), and Shut Down/Restart with a confirmation at the bottom;
- * no cascades and no keyboard -- mouse only. It closes when it launches a
+ * with icon and name), and Shut Down.../Restart... at the bottom, which open
+ * the Shut Down dialog (desktop_shutdown.c); no cascades and no keyboard --
+ * mouse only. It closes when it launches a
  * program, when the Start button is clicked again, or on a press outside it
  * (windowd asks, the desktop closes it). What does not fit scrolls with the
  * wheel, or, as in Windows 98, by resting the pointer on the arrow strips the
- * list grows at its top and bottom when it overflows. The real Yes powers the
- * VM off and is not exercised in automation.
+ * list grows at its top and bottom when it overflows.
  *
  * The look is Windows NT 4.0's Start menu: a raised 2px frame, the vertical
  * banner black at the top and blue at the bottom with the system name and its
@@ -529,7 +529,7 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
             : SX_SCALE_NEAREST);
 }
 
-/* A bitmap from start_logo.h (the Shut Down icon). */
+/* A bitmap from start_logo.h (the Shut Down and Restart icons). */
 static void startmenu_draw_asset(
     struct sx_painter *painter,
     const struct savanxp_embedded_bitmap_asset *asset,
@@ -553,12 +553,14 @@ static void startmenu_draw_asset(
 }
 
 static const char *k_footer_labels[STARTMENU_FOOTER_ROWS] = {"Shut Down...", "Restart..."};
-static const char *k_footer_armed_labels[STARTMENU_FOOTER_ROWS] = {"Yes, shut down", "Yes, restart"};
-static const char *k_footer_armed_cancel = "No";
+static const struct savanxp_embedded_bitmap_asset *const k_footer_icons[STARTMENU_FOOTER_ROWS] = {
+    &k_shutdown_icon,
+    &k_restart_icon,
+};
 
-/* Rect de la fila de pie `action` (0 = Shut Down, 1 = Restart). El pie va
- * pegado abajo, sobre la vista, y no scrollea con el contenido: primero el
- * margen de separacion, despues la linea, despues las filas. */
+/* The rect of footer row `action` (0 = Shut Down, 1 = Restart). The footer
+ * sits at the bottom, below the view, and does not scroll with the content:
+ * first the etched line, then the gap, then the rows. */
 static struct sx_rect startmenu_footer_rect(int view_x, int view_bottom, int view_width, int action)
 {
     return sx_rect_make(
@@ -568,7 +570,7 @@ static struct sx_rect startmenu_footer_rect(int view_x, int view_bottom, int vie
         STARTMENU_ROW_HEIGHT);
 }
 
-static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int hot_footer, int armed, int scroll)
+static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int hot_footer, int scroll)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -698,9 +700,8 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         sx_painter_pop_clip(&painter);
     }
 
-    /* Fixed footer: the NT 4 etched separator and two actions above the taskbar.
-     * Normally Shut Down... / Restart...; when armed, row 0 confirms and row 1
-     * cancels. */
+    /* Fixed footer: the NT 4 etched separator and Shut Down... / Restart...
+     * above the taskbar. */
     sx_painter_hline(&painter, view.x, view.y + view.height, view.width, SXGUI_COLOR_SHADOW);
     sx_painter_hline(&painter, view.x, view.y + view.height + 1, view.width, SXGUI_COLOR_LIGHT);
     for (action = 0; action < STARTMENU_FOOTER_ROWS; ++action)
@@ -709,30 +710,17 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         int selected = (action == hot_footer);
         uint32_t background = selected ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE;
         uint32_t text_color = selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT;
+        const struct savanxp_embedded_bitmap_asset *icon = k_footer_icons[action];
         const char *label = k_footer_labels[action];
         int text_x = rect.x + STARTMENU_ICON_GAP + STARTMENU_ICON_SIZE + STARTMENU_ICON_GAP;
         int text_y = rect.y + (rect.height - gfx_text_height()) / 2;
 
         sx_painter_fill_rect(&painter, rect, background);
-        if (armed < 0)
-        {
-            if (action == STARTMENU_ACTION_SHUTDOWN)
-            {
-                startmenu_draw_asset(
-                    &painter,
-                    &k_shutdown_icon,
-                    rect.x + STARTMENU_ICON_GAP,
-                    rect.y + (rect.height - (int)k_shutdown_icon.height) / 2);
-            }
-        }
-        else if (action == 0)
-        {
-            label = k_footer_armed_labels[armed];
-        }
-        else
-        {
-            label = k_footer_armed_cancel;
-        }
+        startmenu_draw_asset(
+            &painter,
+            icon,
+            rect.x + STARTMENU_ICON_GAP,
+            rect.y + (rect.height - (int)icon->height) / 2);
         sx_painter_draw_text(&painter, text_x, text_y, label, text_color);
     }
 }
@@ -747,7 +735,8 @@ static int g_scroll = 0;
 /* The arrow strip the pointer rests on, and when it scrolls next. */
 static int g_hot_arrow = STARTMENU_ARROW_NONE;
 static unsigned long g_next_scroll_ms = 0;
-static int g_armed = -1;
+/* The footer action chosen: its dialog opens once the menu has closed. */
+static int g_pending_action = -1;
 static int g_hot_row = -1;
 static int g_hot_footer = -1;
 static int g_pressed_row = -1;
@@ -767,7 +756,7 @@ static int startmenu_open(void)
     g_scroll = 0;
     g_hot_arrow = STARTMENU_ARROW_NONE;
     g_next_scroll_ms = 0;
-    g_armed = -1;
+    g_pending_action = -1;
     g_hot_row = -1;
     g_hot_footer = -1;
     g_pressed_row = -1;
@@ -778,6 +767,18 @@ static int startmenu_open(void)
 
 static void startmenu_close(void)
 {
+    int action = g_pending_action;
+
+    g_pending_action = -1;
+    /* The menu's window is free by now, and the dialog takes it. */
+    if (action == STARTMENU_ACTION_SHUTDOWN)
+    {
+        desktop_shutdown_dialog(DESKTOP_SHUTDOWN_POWER_OFF);
+    }
+    else if (action == STARTMENU_ACTION_REBOOT)
+    {
+        desktop_shutdown_dialog(DESKTOP_SHUTDOWN_RESTART);
+    }
 }
 
 static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
@@ -837,29 +838,10 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
     {
         if (footer >= 0 && footer == g_pressed_footer)
         {
-            /* Two-step confirmation: the first click arms, the second on row
-             * 0 runs it and on row 1 cancels. The real Yes is not exercised
-             * in automation (it powers the VM off). */
-            if (g_armed < 0)
-            {
-                g_armed = footer;
-            }
-            else if (footer == 0)
-            {
-                if (g_armed == STARTMENU_ACTION_REBOOT)
-                {
-                    (void)power_reboot();
-                }
-                else
-                {
-                    (void)power_shutdown();
-                }
-            }
-            else
-            {
-                g_armed = -1;
-            }
-            actions |= DESKTOP_ACTION_REPAINT;
+            /* The question is the Shut Down dialog's, with this action
+             * already chosen. */
+            g_pending_action = footer;
+            actions |= DESKTOP_ACTION_CLOSE;
         }
         else if (row >= 0 && row == g_pressed_row)
         {
@@ -921,7 +903,7 @@ static uint32_t startmenu_pointer_left(void)
 
 static void startmenu_paint_window(struct savanxp_gfx_context *gfx)
 {
-    startmenu_paint(gfx, g_hot_row, g_hot_footer, g_armed, g_scroll);
+    startmenu_paint(gfx, g_hot_row, g_hot_footer, g_scroll);
 }
 
 const struct desktop_popup_ops desktop_startmenu_ops = {

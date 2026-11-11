@@ -370,6 +370,7 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/desktop/desktop_hung.c
     subsystems/posix/userland/desktop/desktop_contextmenu.c
     subsystems/posix/userland/desktop/desktop_confirm.c
+    subsystems/posix/userland/desktop/desktop_shutdown.c
     subsystems/posix/userland/desktop/desktop_view.c
     subsystems/posix/userland/desktop_wallpaper.c
     subsystems/posix/userland/display_settings.c

@@ -787,6 +787,23 @@ int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capa
     return 0;
 }
 
+uint32_t desktop_taskbar_active_window(void)
+{
+    uint32_t index;
+
+    for (index = 0; index < g_snapshot.count && index < SAVANXP_WM_MAX_WINDOWS; ++index)
+    {
+        const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
+
+        if ((entry->flags & SAVANXP_WM_WINDOW_FLAG_ACTIVE) != 0u &&
+            (entry->flags & SAVANXP_WM_WINDOW_FLAG_MINIMIZED) == 0u)
+        {
+            return entry->window_id;
+        }
+    }
+    return 0;
+}
+
 const struct desktop_embedded_bitmap *desktop_taskbar_process_icon(
     uint32_t pid, struct desktop_embedded_bitmap *storage)
 {

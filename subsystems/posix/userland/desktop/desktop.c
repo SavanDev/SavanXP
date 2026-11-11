@@ -61,6 +61,7 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_hung_ops,
     &desktop_contextmenu_ops,
     &desktop_confirm_ops,
+    &desktop_shutdown_ops,
 };
 
 static struct savanxp_gfx_context g_background;
@@ -123,7 +124,8 @@ static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
     /* A process has four owned windows (SAVANXP_WM_MAX_OWNED_WINDOWS) and
      * the desktop uses them all, so the context menu takes the Start menu's
      * slot: as on Windows, opening either closes the other. */
-    if (popup == DESKTOP_POPUP_START_MENU || popup == DESKTOP_POPUP_CONTEXT_MENU || popup == DESKTOP_POPUP_CONFIRM)
+    if (popup == DESKTOP_POPUP_START_MENU || popup == DESKTOP_POPUP_CONTEXT_MENU || popup == DESKTOP_POPUP_CONFIRM ||
+        popup == DESKTOP_POPUP_SHUTDOWN)
     {
         return &g_start_menu;
     }
@@ -252,7 +254,8 @@ void desktop_toggle_popup(enum desktop_popup popup)
 /* The menus. A question stays until it is answered. */
 void desktop_close_popups(void)
 {
-    if (!(g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONFIRM))
+    if (!(g_start_menu.open &&
+          (g_start_menu.kind == DESKTOP_POPUP_CONFIRM || g_start_menu.kind == DESKTOP_POPUP_SHUTDOWN)))
     {
         close_slot(&g_start_menu);
     }
@@ -406,6 +409,11 @@ static void handle_desktop_key(const struct savanxp_input_event *event)
     if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONFIRM)
     {
         apply_actions(desktop_confirm_key(event), &g_start_menu);
+        return;
+    }
+    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_SHUTDOWN)
+    {
+        apply_actions(desktop_shutdown_key(event), &g_start_menu);
         return;
     }
     if ((desktop_view_key(event) & DESKTOP_ACTION_REPAINT) != 0)

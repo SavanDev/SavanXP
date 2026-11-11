@@ -2354,6 +2354,16 @@ static void service_shell_requests(struct windowd_session *session, struct windo
             register_hotkey(session, request.key, request.modifiers);
             continue;
         }
+        if (request.action == SAVANXP_WM_SHELL_TAKE_FOCUS)
+        {
+            if (session->desktop_windows[0].pid > 0)
+            {
+                session->active_client_kind = WINDOWD_CLIENT_DESKTOP;
+                refresh_active_state(session);
+                repaint_activation_change(session, dirty, previous_active_slot);
+            }
+            continue;
+        }
         slot = resolve_window_id(session, request.window_id);
         if (!overlay_slot_valid(slot))
         {

@@ -82,6 +82,7 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 
 - `desktop.png`
 - `shutdown.png`
+- `restart.png` (16x16 only)
 - `app-terminal.png`
 - `app-libgfx-demo.png`
 - `app-keyboard-settings.png`
@@ -105,8 +106,9 @@ They are used for two different things, and it is worth not confusing them:
 - **As a baked asset.** `desktop.png` goes through
   `tools/gen_desktop_icon_assets.py` into `build/generated/desktop_icon_assets.h`
   and ends up compiled into the window manager. It is the universal fallback,
-  shown when a binary cannot be read at all. The 16x16 `shutdown.png` is baked
-  into the Start menu by `tools/gen_start_logo.py`.
+  shown when a binary cannot be read at all. The 16x16 `shutdown.png` and
+  `restart.png`, and the 32x32 `shutdown.png` of the Shut Down dialog, are
+  baked into the desktop by `tools/gen_start_logo.py`.
 
 Normal builds only convert and package these checked-in PNGs; they never
 redraw or overwrite the artwork. The PNGs are the source: the generator they

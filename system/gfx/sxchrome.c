@@ -142,3 +142,57 @@ void sxchrome_draw_arrow(struct sx_painter *painter, struct sx_rect rect, enum s
         }
     }
 }
+
+void sxchrome_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect)
+{
+    /* The parity is of the ABSOLUTE position, not the rect: that way the dots
+     * of two neighbouring controls fall on the same grid instead of shifting
+     * with where each one starts. That is exactly the brush pattern's device
+     * anchoring, which also lets the background show between the dots. */
+    struct sx_brush brush = sx_brush_pattern_transparent(sx_pattern_checker_50, SXCHROME_COLOR_TEXT);
+    sx_painter_draw_frame_brush(painter, rect, &brush);
+}
+
+void sxchrome_draw_radio(struct sx_painter *painter, struct sx_rect box, int checked, int enabled)
+{
+    static const int outer[SXCHROME_RADIO_SIZE] = {2, 4, 5, 5, 6, 6, 6, 6, 5, 5, 4, 2};
+    static const int inner[SXCHROME_RADIO_SIZE] = {0, 2, 4, 4, 5, 5, 5, 5, 4, 4, 2, 0};
+    static const int field[SXCHROME_RADIO_SIZE] = {0, 0, 3, 3, 4, 4, 4, 4, 3, 3, 0, 0};
+    int centre = SXCHROME_RADIO_SIZE / 2;
+    int row;
+    int column;
+
+    for (row = 0; row < SXCHROME_RADIO_SIZE; ++row)
+    {
+        for (column = 0; column < SXCHROME_RADIO_SIZE; ++column)
+        {
+            /* Light comes from the top left: the anti-diagonal splits the ring
+             * into its dark half and its light half. */
+            int lit = (column + row) >= (SXCHROME_RADIO_SIZE - 1);
+            uint32_t colour;
+
+            if (column >= centre - field[row] && column < centre + field[row])
+            {
+                colour = enabled ? SXCHROME_COLOR_FIELD : SXCHROME_COLOR_FACE;
+            }
+            else if (column >= centre - inner[row] && column < centre + inner[row])
+            {
+                colour = lit ? SXCHROME_COLOR_BEVEL : SXCHROME_COLOR_DARK;
+            }
+            else if (column >= centre - outer[row] && column < centre + outer[row])
+            {
+                colour = lit ? SXCHROME_COLOR_LIGHT : SXCHROME_COLOR_SHADOW;
+            }
+            else
+            {
+                continue;
+            }
+            sx_painter_fill_rect(painter, sx_rect_make(box.x + column, box.y + row, 1, 1), colour);
+        }
+    }
+    if (checked)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(box.x + 4, box.y + 4, 4, 4),
+                             enabled ? SXCHROME_COLOR_TEXT : SXCHROME_COLOR_DISABLED_TEXT);
+    }
+}

@@ -153,7 +153,7 @@ Which windows the desktop has, and what each is:
 |---|---|---|
 | 0 | Background (wallpaper) | `background`, granted at launch |
 | 1 | Taskbar | `panel`, bottom edge, 28 px |
-| 2 | Start menu, or the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)) | `popup`, dismissable; never both open, so one id |
+| 2 | Start menu, the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)), or a dialog of the shell (the icon confirmation, Shut Down) | `popup`; the menus dismissable, the dialogs centred and not; never two open, so one id |
 | 3 | Volume, clock or keyboard-layout popup | `popup`, dismissable; the three share the tray corner, so one id |
 
 The modules are `subsystems/posix/userland/desktop/desktop_*.c`, one per
@@ -398,6 +398,24 @@ it to that client even when another window has focus.
   and AltGr plus a letter is a character being typed.
 - Combinations `windowd` keeps for itself cannot be registered: Alt+Tab,
   Alt+F4, F11.
+
+## Shell dialogs and the keyboard
+
+A popup never takes the focus from its owner, so the keys of a desktop dialog
+reach the desktop's main window, which routes them to the open dialog. That
+only works while the desktop has the focus. A dialog opened from the context
+menu has it already (the right press on the background gave it), but one
+opened from the Start menu does not: the application window stays active.
+
+- `SAVANXP_WM_SHELL_TAKE_FOCUS` on the shell request pipe gives the keyboard
+  to the desktop's main window, exactly as a click on the background does: no
+  application window is active afterwards. `window_id` is unused.
+- The Shut Down dialog sends it when it opens and remembers the window that
+  was active (`desktop_taskbar_active_window()`). Closing it with No or Esc
+  sends `SAVANXP_WM_SHELL_ACTIVATE` for that window, so the keyboard goes back
+  where it was, as it does in Windows.
+- It is a new request, not a new layout: the window list is unchanged and the
+  protocol version stays. An older `windowd` drops an action it does not know.
 - Delivering a hotkey leaves composited fullscreen first: the shell's windows
   are not drawn over a fullscreen app (and are laid out for the native mode),
   so Ctrl+Esc would otherwise open a menu nobody can see.

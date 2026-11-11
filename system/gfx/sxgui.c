@@ -88,16 +88,9 @@ static void sxgui_draw_etched(struct sx_painter *painter, struct sx_rect rect)
     sxchrome_draw_etched(painter, rect);
 }
 
-/* Dotted focus rectangle. The solid frame it replaced competed with the
- * control's border; a dotted one reads as focus, not as another bevel. */
 static void sxgui_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect)
 {
-    /* The parity is of the ABSOLUTE position, not the rect: that way the dots
-     * of two neighbouring controls fall on the same grid instead of shifting
-     * with where each one starts. That is exactly the brush pattern's device
-     * anchoring, which also lets the background show between the dots. */
-    struct sx_brush brush = sx_brush_pattern_transparent(sx_pattern_checker_50, SXGUI_COLOR_TEXT);
-    sx_painter_draw_frame_brush(painter, rect, &brush);
+    sxchrome_draw_focus_rect(painter, rect);
 }
 
 /* Two-colour 50% pattern. It is the background of the scroll bars' trough:
@@ -1453,60 +1446,7 @@ static int sxgui_listbox_scrollbar_press(
     return 1;
 }
 
-/* A 12x12 circle in three concentric rings, each split along the diagonal:
- * the top-left sinks (SHADOW outside, DARK inside) and the bottom-right rises
- * (LIGHT outside, BEVEL inside). It is the same two-pixel bevel as the rest of
- * the chrome, bent into a circle.
- *
- * At this size a circle is not computed, it is drawn: the three tables ARE the
- * glyph. Before, only each row's ends were marked, in a single tone, and since
- * at the bottom that tone was white like the fill, the control looked like a
- * white blot with no border. */
-#define SXGUI_RADIO_BOX_SIZE 12
-
-static void sxgui_paint_radio_glyph(struct sx_painter *painter, struct sx_rect box, int checked, int enabled)
-{
-    static const int outer[SXGUI_RADIO_BOX_SIZE] = {2, 4, 5, 5, 6, 6, 6, 6, 5, 5, 4, 2};
-    static const int inner[SXGUI_RADIO_BOX_SIZE] = {0, 2, 4, 4, 5, 5, 5, 5, 4, 4, 2, 0};
-    static const int field[SXGUI_RADIO_BOX_SIZE] = {0, 0, 3, 3, 4, 4, 4, 4, 3, 3, 0, 0};
-    int centre = SXGUI_RADIO_BOX_SIZE / 2;
-    int row;
-    int column;
-
-    for (row = 0; row < SXGUI_RADIO_BOX_SIZE; ++row)
-    {
-        for (column = 0; column < SXGUI_RADIO_BOX_SIZE; ++column)
-        {
-            /* Light comes from the top left: the anti-diagonal splits the ring
-             * into its dark half and its light half. */
-            int lit = (column + row) >= (SXGUI_RADIO_BOX_SIZE - 1);
-            uint32_t colour;
-
-            if (column >= centre - field[row] && column < centre + field[row])
-            {
-                colour = enabled ? SXGUI_COLOR_FIELD : SXGUI_COLOR_FACE;
-            }
-            else if (column >= centre - inner[row] && column < centre + inner[row])
-            {
-                colour = lit ? SXGUI_COLOR_BEVEL : SXGUI_COLOR_DARK;
-            }
-            else if (column >= centre - outer[row] && column < centre + outer[row])
-            {
-                colour = lit ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
-            }
-            else
-            {
-                continue;
-            }
-            sx_painter_fill_rect(painter, sx_rect_make(box.x + column, box.y + row, 1, 1), colour);
-        }
-    }
-    if (checked)
-    {
-        sx_painter_fill_rect(painter, sx_rect_make(box.x + 4, box.y + 4, 4, 4),
-                             enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT);
-    }
-}
+#define SXGUI_RADIO_BOX_SIZE SXCHROME_RADIO_SIZE
 
 static void sxgui_paint_radio(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
@@ -1519,7 +1459,7 @@ static void sxgui_paint_radio(struct sx_painter *painter, const struct sxgui_wid
     int enabled = sxgui_widget_enabled(widget);
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
 
-    sxgui_paint_radio_glyph(painter, box, widget->value, enabled);
+    sxchrome_draw_radio(painter, box, widget->value, enabled);
     if (widget->text != 0)
     {
         sxgui_draw_control_text(painter, box.x + box_size + SXGUI_GAP, text_y, widget->text, enabled);

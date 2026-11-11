@@ -1867,6 +1867,33 @@ def check_startmenu_arrows(s, opened):
     expect_pixel(image, up[0], up[1], TEXT, "rested on the down arrow: the up arrow is live")
 
 
+# The Shut Down dialog (desktop_shutdown.c): centred over the work area.
+SHUTDOWN_WIDTH = 346
+SHUTDOWN_HEIGHT = 160
+
+
+def shutdown_dialog_origin(image):
+    width, height = image.size
+    return (width - SHUTDOWN_WIDTH) // 2, (height - TASKBAR_HEIGHT - SHUTDOWN_HEIGHT) // 2
+
+
+def expect_shutdown_option(image, dx, dy, chosen, label):
+    # Each radio sits 64px in, its 12px circle centred on an 18px row every
+    # 22px from y 58; the chosen one has the black dot, the other a white field.
+    for option in (0, 1):
+        point = (dx + 64 + 5, dy + 58 + option * 22 + 3 + 5)
+        expect_pixel(image, point[0], point[1], TEXT if option == chosen else FIELD,
+                     "%s (option %d)" % (label, option))
+
+
+def expect_shutdown_dialog_closed(image, before, dx, dy, label):
+    # What lies under the dialog is not a fixed colour: compare with the shot
+    # taken before it opened.
+    point = (dx + SHUTDOWN_WIDTH // 2, dy + 10)
+    expect_pixel(image, point[0], point[1], before.getpixel(point), label)
+
+
+
 def scenario_startmenu(s):
     """Menu Inicio recortado: boton Start, lista plana y toggle.
 
@@ -1911,31 +1938,44 @@ def scenario_startmenu(s):
     rx, ry, rw, rh = startmenu_rect(reopened)
     expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
     check_startmenu_arrows(s, reopened)
-    # Two-step confirmation: Shut Down arms the action ("Yes, shut down"),
-    # No cancels it. The real Yes powers off the VM and is not clicked.
+    # Shut Down... and Restart... close the menu and open the Shut Down dialog,
+    # centred, with that option chosen. S/R switch it, Esc and No dismiss it.
+    # The real Yes powers off the VM and is not clicked.
     footer_y = ry + STARTMENU_MARGIN + STARTMENU_VIEW_HEIGHT + 2 + STARTMENU_FOOTER_GAP
-    # Leave room for ascenders and descenders (the 'y' in "Yes, shut down").
-    # find_text requires every pattern pixel to fit inside the region.
-    shutdown_box = (rx + 40, footer_y + 2, rx + 230, footer_y + STARTMENU_ROW_HEIGHT)
+    before_dialog = reopened
+    dx, dy = shutdown_dialog_origin(reopened)
     s.qmp.move_to(rx + 129, footer_y + STARTMENU_ROW_HEIGHT // 2)
     s.qmp.click()
-    time.sleep(1.0)
-    # Keep the pointer at the row's right edge: selection stays active without
-    # covering glyphs whose pixels the assertion needs.
-    s.qmp.move_to(rx + 210, footer_y + STARTMENU_ROW_HEIGHT // 2)
-    time.sleep(0.5)
-    armed = s.shot("menu-armado")
-    # The pointer selects the row (white on blue). solid_only checks the glyph
-    # core; an antialiased edge cannot be predicted with one colour.
-    expect_text(armed, shutdown_box, "Yes, shut down", SELECT_TEXT, SELECT, "el pie pide confirmacion",
-                solid_only=True)
-    s.qmp.move_to(rx + 129, footer_y + STARTMENU_ROW_HEIGHT + STARTMENU_ROW_HEIGHT // 2)
+    time.sleep(1.5)
+    dialog = s.shot("shutdown-dialog")
+    expect_text(dialog, (dx + 56, dy + 28, dx + 300, dy + 54), "Are you sure you want to:", TEXT, FACE,
+                "Shut Down opened the dialog", solid_only=True)
+    expect_shutdown_option(dialog, dx, dy, 0, "Shut Down... chooses shutting down")
+    s.qmp.tap("r")
+    time.sleep(0.8)
+    expect_shutdown_option(s.shot("shutdown-dialog-r"), dx, dy, 1, "R chooses restarting")
+    s.qmp.tap("esc")
+    time.sleep(1.5)
+    expect_shutdown_dialog_closed(s.shot("shutdown-dialog-esc"), before_dialog, dx, dy, "Esc dismissed the dialog")
+    # Restart... opens it with restarting chosen; No dismisses it.
+    s.qmp.move_to(*start_button_center(reopened))
     s.qmp.click()
-    time.sleep(1.0)
-    s.qmp.move_to(rx + 210, footer_y + STARTMENU_ROW_HEIGHT + STARTMENU_ROW_HEIGHT // 2)
-    time.sleep(0.5)
-    disarmed = s.shot("menu-desarmado")
-    expect_text(disarmed, shutdown_box, "Shut Down", TEXT, FACE, "el No desarma el pie", solid_only=True)
+    menu_again = wait_menu_open(s, "menu-restart")
+    ax, ay, aw, ah = startmenu_rect(menu_again)
+    restart_y = ay + STARTMENU_MARGIN + STARTMENU_VIEW_HEIGHT + 2 + STARTMENU_FOOTER_GAP + STARTMENU_ROW_HEIGHT
+    s.qmp.move_to(ax + 129, restart_y + STARTMENU_ROW_HEIGHT // 2)
+    s.qmp.click()
+    time.sleep(1.5)
+    restart = s.shot("restart-dialog")
+    expect_shutdown_option(restart, dx, dy, 1, "Restart... chooses restarting")
+    s.qmp.move_to(dx + SHUTDOWN_WIDTH - 12 - 37, dy + SHUTDOWN_HEIGHT - 12 - 11)
+    s.qmp.click()
+    time.sleep(1.5)
+    disarmed = s.shot("restart-dialog-no")
+    expect_shutdown_dialog_closed(disarmed, before_dialog, dx, dy, "No dismissed the dialog")
+    s.qmp.move_to(*start_button_center(disarmed))
+    s.qmp.click()
+    wait_menu_open(s, "menu-before-toggle")
     # Y el toggle lo vuelve a cerrar.
     s.qmp.move_to(*start_button_center(disarmed))
     s.qmp.click()

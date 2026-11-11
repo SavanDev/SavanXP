@@ -4,8 +4,9 @@
 Pillow turns the versioned PNGs into a C header with the same format as
 tools/gen_desktop_icon_assets.py (struct savanxp_embedded_bitmap_asset, ARGB
 pixels): the Start button logo from assets/brand/start_logo.png, the Shut Down
-icon from assets/desktop/icons/16x16/shutdown.png and the taskbar speaker at
-its four levels from the media player's icons. The normal build only packages those PNGs: it
+and Restart icons from assets/desktop/icons/16x16, the 32x32 computer the Shut
+Down dialog shows, and the taskbar speaker at its four levels from the media
+player's icons. The normal build only packages those PNGs: it
 never creates or replaces the source art.
 
 Usage: python tools/gen_start_logo.py --project-root DIR --output start_logo.h
@@ -19,6 +20,8 @@ from PIL import Image
 ASSETS = [
     ("k_start_logo", ("assets", "brand", "start_logo.png")),
     ("k_shutdown_icon", ("assets", "desktop", "icons", "16x16", "shutdown.png")),
+    ("k_restart_icon", ("assets", "desktop", "icons", "16x16", "restart.png")),
+    ("k_shutdown_icon_large", ("assets", "desktop", "icons", "32x32", "shutdown.png")),
     # Altavoz de la taskbar en sus cuatro niveles, del set del reproductor
     # (nombres de la Icon Naming Specification de freedesktop): el dibujo es
     # el mismo en los cuatro lados y asi no hay dos artes que diverjan.

@@ -41,7 +41,9 @@ enum desktop_popup
     DESKTOP_POPUP_CONTEXT_MENU = 5,
     /* A question about an icon (delete it?), in the Start menu's window too. */
     DESKTOP_POPUP_CONFIRM = 6,
-    DESKTOP_POPUP_COUNT = 7,
+    /* Shut Down or Restart, in the Start menu's window as well. */
+    DESKTOP_POPUP_SHUTDOWN = 7,
+    DESKTOP_POPUP_COUNT = 8,
 };
 
 /* Bits a module's pointer or tick handler returns. */
@@ -93,6 +95,7 @@ extern const struct desktop_popup_ops desktop_keyboard_ops;
 extern const struct desktop_popup_ops desktop_hung_ops;
 extern const struct desktop_popup_ops desktop_contextmenu_ops;
 extern const struct desktop_popup_ops desktop_confirm_ops;
+extern const struct desktop_popup_ops desktop_shutdown_ops;
 
 /* desktop_contextmenu.c: shows `menu` at the screen point (x, y); the id of
  * the item chosen goes to `command` once the menu is closed. */
@@ -104,6 +107,14 @@ uint32_t desktop_context_menu_key(const struct savanxp_input_event *event);
  * answer goes to `answer` (which may be 0), once the dialog is closed. */
 void desktop_confirm(const char *title, const char *text, int yes_no, void (*answer)(int yes));
 uint32_t desktop_confirm_key(const struct savanxp_input_event *event);
+
+/* desktop_shutdown.c: the Shut Down dialog, opened with `option` chosen. Yes
+ * powers off or restarts; the keys go to desktop_shutdown_key while it is
+ * open. */
+#define DESKTOP_SHUTDOWN_POWER_OFF 0
+#define DESKTOP_SHUTDOWN_RESTART 1
+void desktop_shutdown_dialog(int option);
+uint32_t desktop_shutdown_key(const struct savanxp_input_event *event);
 
 /* desktop_view.c: the icons on the background (docs/desktop/DESKTOP_ICONS.md). */
 void desktop_view_init(const struct savanxp_fb_info *info);
@@ -155,6 +166,9 @@ void desktop_taskbar_paint(struct savanxp_gfx_context *gfx);
 /* The first window windowd marks as not responding: 1 with its id and title,
  * 0 if none. From the last snapshot of the window list. */
 int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capacity);
+/* The id of the active application window, from the last snapshot of the
+ * window list; 0 when the desktop has the focus or nothing is open. */
+uint32_t desktop_taskbar_active_window(void);
 /* The small icon of the window that process `pid` shows, from the last
  * snapshot of the window list: the window's own icon, or the generic one when
  * it brought none. 0 when the process has no window. `storage` describes the

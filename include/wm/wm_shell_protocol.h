@@ -121,6 +121,11 @@ enum savanxp_wm_shell_action {
      * cannot be registered; the request is dropped with a log line.
      * `window_id` is unused. */
     SAVANXP_WM_SHELL_REGISTER_HOTKEY = 3,
+    /* The keyboard goes to the shell's main window, as a click on the
+     * background would give it: the shell opened a dialog that answers to keys
+     * (Shut Down). No application window stays active. `window_id` is unused;
+     * the shell gives the focus back with ACTIVATE. */
+    SAVANXP_WM_SHELL_TAKE_FOCUS = 4,
 };
 
 struct savanxp_wm_shell_request {

@@ -99,6 +99,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Shut Down... and Restart... in the Start menu open a Windows 95-style Shut Down dialog instead of arming the footer.**
+  Radio buttons choose shutting down or restarting (S/R, arrows), Yes/No answer; Restart... has its own icon.
+  The dialog takes the keyboard with the new shell request `SAVANXP_WM_SHELL_TAKE_FOCUS` and No gives it back.
+
 - **`smp-stats:` names who holds the kernel lock.** A third line, `top held`, lists the four syscalls
   with the most time held; `report=` shows what the report cost and keeps it out of the longest hold.
   How to read it, and the plan it serves: `docs/roadmaps/open/SMP_ROADMAP.md`, phase 5.
