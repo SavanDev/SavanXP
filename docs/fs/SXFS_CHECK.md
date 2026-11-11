@@ -1,11 +1,16 @@
-# SxFS consistency reporting
+# SxFS checking, recovery and repair
 
-This document is about the one question the filesystem driver could not answer
-from inside SavanXP: what does the volume think it is holding.
+Three separate things, kept separate on purpose:
 
-It also records why the answer is a report and not a repair, and what would have
-to be true before a repair is possible. For the wider picture — what is left to
-do in SxFS and what each item costs — see
+- **Checking** answers "what does the volume think it is holding". It never
+  writes: `fscheck` in the guest, `sxfs-cli check` on the host.
+- **Recovery** finishes what an interrupted mount left: a pending journal
+  transaction, the clean mark. Its outcome is fully determined by the image.
+  A writable mount does it, and so does `sxfs-cli recover`.
+- **Repair** changes a damaged image so it validates again. It is offline, on
+  the host, on a copy: `sxfs-cli repair`.
+
+For what is left to do in SxFS, see
 [`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md).
 
 ## The gap that motivated it
@@ -159,31 +164,100 @@ and adds no BSS. The two volumes of `g_volumes` are the reason that matters:
 each is already around 185 KiB of static metadata, and growing the block bitmap
 for a larger volume would make that the dominant cost.
 
-## Why there is no repair yet
+## Looking without touching
 
-A repair needs to write to a filesystem that may be inconsistent, which means it
-cannot run against a mounted volume, and it needs a mount slot. There are none
-free:
+Nothing that only looks writes, on either side:
 
-```c
-// kernel/sxfs.cpp
-constexpr size_t kMaxVolumes = 2;   // el instalador usa ambos: raiz y destino
+- `sxfs::probe` (what `fs::mount` calls to recognise a device) reads the
+  superblocks, the metadata and the journal, replays a pending transaction
+  **in memory**, validates the result and stops. The device is byte for byte
+  what it was.
+- A read-only mount (`fs::attach(mount, /*read_only=*/true)`,
+  `SXN_STORAGE_MOUNT_READ_ONLY`, the "Read-only" box of Disk Management's
+  Mount) publishes that recovered view and never writes: not the recovery,
+  not the link counts, not the ownership defaults, not a sync. Every change
+  through the VFS is `EROFS`
+  ([`FILESYSTEMS.md`](../kernel/FILESYSTEMS.md#read-only-mounts)).
+- `sxfs_open` in `libsxfs` does the same replay in memory, so `sxfs-cli
+  check`, `info` and `extract` read an interrupted image as recovered and
+  leave the file alone. `check` says what is pending.
+
+A writable `attach` is the one place a mount writes: it persists the recovery
+(replayed metadata home, clean superblocks, header cleared, in that order),
+then adopts link counts, finishes doomed inodes and stamps ownership. If the
+device refuses the recovery the volume stays read-only on the recovered view.
+
+## Recovery on the host
+
+`sxfs-cli recover <image>` persists what `sxfs_open` recovered, with
+`sxfs_recover`, in the same order as the kernel. The journal stays pending
+until everything it describes is home, so it is idempotent: stopped after any
+of its writes and run again, it produces the same image, byte for byte. It
+writes only a state that validates; an image whose replay does not validate
+is repair's business.
+
+`apply` and `rm` call it first and say so on stderr. They have to: a journal
+left pending would be replayed over whatever they wrote, which is also why
+`sxfs_flush` refuses while `ctx->recovery` is set.
+
+`check` reports, without failing: a pending transaction, a superblock not
+marked clean (or two copies that differ), a journal header that is not one
+(ignored, as the kernel ignores it), and sectors marked used that nothing
+claims.
+
+## Offline repair
+
+```text
+sxfs-cli repair [--dry-run] <image>
 ```
 
-A repair mount would need that raised, and it would inherit the per-volume BSS
-cost. That is a deliberate decision to defer, not an oversight.
+It works on a copy (`<image>.repair`) and replaces the image, with one
+`rename`, only when the copy is complete. The original stays as
+`<image>.before-repair`, a hard link taken before the rename. An interrupted
+repair therefore leaves the image as it was, and running it again starts over
+from the original; an existing backup that is not the image itself is never
+overwritten. `--dry-run` reports and discards the copy. The exit status is 0
+only when the result passes the ordinary check and nothing was left
+unresolved.
 
-There is a second reason to be careful. Reclaiming a leak means clearing a bit in
-the allocation bitmap, and the bitmap is exactly what a torn write leaves
-inconsistent. Clearing bits is the one operation here that can destroy data
-rather than reveal it: if a sector is marked used because an inode exists that
-the tree walk could not reach, freeing it discards that inode's data. A repair
-has to decide what an unreachable-but-present inode means, and that decision
-belongs in a document rather than in a first implementation.
+What `sxfs_repair` does, in this order:
 
-The order that makes sense is: get the report in place, use it to find out
-whether leaks and orphans actually occur in practice, and only then decide what a
-repair should do about them.
+1. **Inodes.** An inode marked allocated with no record is released; a record
+   left in a free inode is cleared. An allocated inode whose record
+   contradicts itself (wrong id, bad extent, size beyond its capacity) is
+   *damaged*: counted and not touched.
+2. **The tree, from the root.** An entry is removed when it is malformed,
+   names a free inode, is a second name for an inode already reached (an alias
+   or a cycle), or repeats a name in its directory. That loses a name, never
+   contents. An entry whose type disagrees with its inode is corrected.
+3. **Blocks.** The bitmap is rebuilt from what the inodes claim: a claimed
+   sector that is free is marked; a marked sector nothing claims is freed.
+4. **Committed deletions** (doomed inodes) are finished.
+5. **Orphans.** Every allocated inode nothing reaches gets a name under
+   `/lost+found`: `inode-<id>` for a file, `dir-<id>` for a directory. A lost
+   subtree is attached once, at its top, so the names inside it survive. Only
+   the new entry is written; the contents are never copied or moved.
+
+Step 3 comes before step 5 so that `lost+found` is never allocated over a
+file whose sectors the bitmap had lost, and orphans are rescued rather than
+freed: an unreachable inode with valid extents is somebody's data until a
+person says otherwise.
+
+What it leaves, and reports as `NOT REPAIRED`, is damage the image does not
+attribute:
+
+| Left as found | Why |
+| --- | --- |
+| a damaged inode | its record cannot say what it owns |
+| unclaimed sectors, while any inode is damaged | they may be that inode's |
+| a sector two inodes claim | either could be the owner; no doomed inode is freed either, since its sectors could be the other's |
+| orphans, when `lost+found` cannot be made | no room, or the name is a file |
+
+The same damage always produces the same image and the same report, and
+repairing a repaired image changes nothing.
+
+`fscheck` stays a report. Repair needs a volume nobody is using and room for
+a copy, which the host has and a running system does not.
 
 ## Test coverage
 
@@ -198,3 +272,19 @@ backends, which is what makes the negative cases possible:
 
 The last two are the cases that matter. A checker that only ever runs against
 healthy volumes has not been tested.
+
+`tests/host/sxfs_recovery_test.cpp` (`sxfs-recovery-test`) links the kernel
+driver, the real VFS and `libsxfs` over the same images:
+
+- a power cut after every sector of a series of mutations: the host opens
+  each crashed image without writing a byte, sees the tree the kernel mounts
+  it to, and `sxfs_recover` stopped after each of its writes and repeated
+  gives the same image;
+- a pending journal under `probe` and a read-only mount: nothing written, the
+  image compared byte for byte, eight kinds of change refused with `EROFS`,
+  and the writable mount that follows persists the recovery;
+- repair of an image with a lost file, a lost directory with a file in it, a
+  dangling entry, leaked sectors, claimed sectors marked free and a stale
+  record: contents read back from `lost+found`, the kernel mounts it with a
+  clean `fscheck`, the result is deterministic and idempotent;
+- cross-linked sectors and a damaged inode: reported, and left.

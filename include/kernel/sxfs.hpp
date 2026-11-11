@@ -53,10 +53,15 @@ void initialize();
 // Driver para el registro fs::. probe/attach salen de aca.
 const fs::Driver& driver();
 
-// Reconoce el SxFS del device y carga su metadata, sin publicar vnodes.
+// Recognises the SxFS on the device and loads its metadata. Publishes no
+// vnode and writes nothing: an interrupted volume is recovered in memory.
 VolumeId probe(size_t device_index, const char* mount_point);
-// Publica el arbol del volumen bajo su mount point.
-bool attach(VolumeId volume);
+// Publishes the volume's tree under its mount point. Writable unless
+// `read_only`: this is where the recovery probe did in memory is persisted
+// and a power cut's leftovers are finished. A read-only attach, or a device
+// that refuses the recovery, leaves the volume on the recovered view with
+// nothing written (MountStatus::read_only).
+bool attach(VolumeId volume, bool read_only = false);
 // El volumen montado en kRootMountPoint, o kInvalidVolume.
 VolumeId root();
 

@@ -36,7 +36,7 @@ this page are historical baselines, not a current inventory or a release gate.
 | Names / relative paths | 63 / 255 bytes |
 | Published tree | All entries loaded at attach; 2048 VFS nodes shared by every volume, devices and initramfs |
 | Mounted SxFS volumes | 3, each with several MiB of statically reserved state |
-| Recovery tools | Journal replay in the kernel; `fscheck` reports but does not repair; host tools refuse pending journals |
+| Recovery tools | Journal replay in the kernel and in `libsxfs`; `fscheck` reports; `sxfs-cli recover` and `repair` work offline on the host |
 
 The VFS node pool can run out before the SxFS inode table does. Raising format
 constants without changing tree publication and caches does not solve scale.
@@ -111,23 +111,23 @@ and shared writable mappings.
 
 ## V2-C — recovery, inspection and migration safety
 
-**Open; repair builds on V2-A.** Extend existing host tooling and define an
-offline repair path. Keep `fscheck` read-only. Rescue readable orphan contents
-before freeing allocations; reconcile claims only when ownership is known,
-report ambiguous damage, and keep a backup before destructive repair. Host
-tools need validated, idempotent journal recovery rather than requiring a guest
-boot for every pending transaction.
+**Done.** Described in [`SXFS_CHECK.md`](../../fs/SXFS_CHECK.md).
 
-Separate read-only recognition from journal recovery and writable attach.
-Inspection must be able to leave the device untouched, while an explicit
-read-only mount must enforce its policy across the VFS and driver. If recovery
-needs writes, refuse or provide a defined in-memory view; never write silently.
+- `probe` writes nothing and recovers in memory; a writable `attach` persists
+  the recovery; an explicit read-only mount is enforced by the VFS (`EROFS`)
+  and by the driver, and is reachable from Disk Management.
+- `libsxfs` replays a pending journal as the kernel does. `sxfs-cli check`
+  inspects without writing, `recover` persists idempotently, and `apply`/`rm`
+  recover first instead of refusing the image.
+- `sxfs-cli repair` works on a copy and keeps the original: it rescues
+  unreachable files and directories under `/lost+found` before reclaiming
+  anything, rebuilds the block bitmap from the inodes' claims, and reports
+  damage with no identifiable owner without touching it. `fscheck` stays
+  read-only.
 
-**Done when:** malformed and interrupted images have deterministic reports,
-repair preserves recoverable contents, and interrupted recovery/repair can be
-resumed safely. Inspection is checked against unchanged image bytes. Existing
-programs in `/bin`, game assets under `/games`, subsystem runtimes and user data
-survive normal builds, maintenance and rollback.
+`sxfs-recovery-test` checks all of it against unchanged image bytes, with a
+power cut at every sector and recovery interrupted at every write.
+`verify_doom_persistence.sh` still covers `/bin` and `/games` across builds.
 
 ## V2-D — performance and preparation for scale
 

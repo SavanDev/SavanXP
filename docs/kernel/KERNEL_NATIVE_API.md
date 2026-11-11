@@ -277,7 +277,9 @@ facade, `storage::` (`kernel/storage.cpp`).
   removes the disk's partitions from `block::` and registers what its table
   says now; their old ids are gone. The system only; `-EBUSY` if the disk or
   any partition of it is mounted, `-EINVAL` for a partition.
-- `SXN_SYS_STORAGE_MOUNT` (`0x1031`): rdi = id, rsi = path, rdx = flags (0).
+- `SXN_SYS_STORAGE_MOUNT` (`0x1031`): rdi = id, rsi = path, rdx = flags (0, or
+  `SXN_STORAGE_MOUNT_READ_ONLY`: nothing is written to the device and every
+  change is `-EROFS`; any other bit is `-EINVAL`).
   Mounts at `/mnt/<name>` (`[A-Za-z0-9._-]`, 1 to 24 characters, not existing
   yet; `/mnt` is made on the root if missing). `-EBUSY` when the device or an
   overlapping one is mounted, `-EINVAL` for a partitioned disk, `-EEXIST`,

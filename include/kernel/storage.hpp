@@ -36,7 +36,7 @@ int write(uint32_t id, uint64_t lba, uint32_t count, const void* buffer);
 // its disk, is already mounted), -EIO (no driver recognised the device, no
 // mount or volume slot was left, or it failed to attach). A format with no
 // owners of its own (FAT) is published as `owner`'s: the person who asked.
-int mount(uint32_t id, const char* path, const fs::Owner& owner);
+int mount(uint32_t id, const char* path, const fs::Owner& owner, bool read_only = false);
 // Unmounts the volume at `path`. -EINVAL for "/", fs::kBootMountPoint or
 // nothing mounted there, -EBUSY while a file of it is open or a program of it
 // is mapped.

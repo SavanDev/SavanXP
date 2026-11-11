@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **`sxfs-cli recover` and `sxfs-cli repair [--dry-run]` fix an interrupted or damaged SxFS image on the host.**
+  Repair works on a copy, keeps the original as `<image>.before-repair` and rescues lost files to `/lost+found`.
+  See [SXFS_CHECK.md](docs/fs/SXFS_CHECK.md).
+
+- **Volumes can be mounted read-only: the "Read-only" box in Disk Management's Mount, `sxn_storage_mount_flags`.**
+  Nothing is written to the device and every change fails with `EROFS`; the volume is listed with `SXN_STORAGE_READ_ONLY`.
+
 - **`fsync` and `fdatasync` (`SAVANXP_SYS_FSYNC`) wait until a file or directory is on the medium.**
   Write a temporary, `fsync`, `rename` over the old file, `fsync` the directory: a power cut leaves the old file or the new one.
   See [FILESYSTEMS.md](docs/kernel/FILESYSTEMS.md#the-file-contract).
@@ -87,6 +94,9 @@ Cut-off notes:
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Changed
+
+- **Recognising an SxFS volume no longer writes to it, and host tools accept an image with a pending journal.**
+  `sxfs-cli check` validates it as recovered without modifying it; `apply` and `rm` replay the journal first.
 
 - **`rename` onto an existing file or empty directory replaces it atomically on SxFS, and `unlink` works on open files.**
   Open handles keep an unlinked or replaced file's contents until the last one closes; FAT answers `EEXIST`/`EBUSY`.

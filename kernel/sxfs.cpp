@@ -112,6 +112,11 @@ struct Volume {
     // memory), the next commit writes every metadata sector instead.
     bool snapshot_valid;
     bool full_commit_pending;
+    // What probe() recovered in memory and a writable attach() still has to
+    // put on the device: a replayed journal (with the sequence its header
+    // carried), or only the clean mark.
+    bool recovery_replayed;
+    bool recovery_unclean;
     // Metadata cost counters, so the cost of a commit can be MEASURED (fscheck)
     // rather than inferred from wall clock.
     uint32_t metadata_commits;
@@ -156,12 +161,6 @@ Volume* volume_for_path(const char* path) {
     }
     return best;
 }
-
-enum class RecoveryState : uint8_t {
-    failed = 0,
-    writable = 1,
-    read_only = 2,
-};
 
 // Validacion y checksum de metadata: la logica vive en el formato compartido
 // (sxfs_format.h) para no divergir del builder de host. Aca solo wrappers con
@@ -439,23 +438,21 @@ uint32_t build_dirty_map(Volume& volume, uint8_t* map) {
     return dirty;
 }
 
-RecoveryState recover_journal(Volume& volume) {
+// Recovers an interrupted volume IN MEMORY and writes nothing: probe() must be
+// able to look at a device without changing it. A pending journal is replayed
+// over the home metadata already loaded; what the device still needs is left
+// in recovery_replayed / recovery_unclean for persist_recovery(). False when
+// the result is not a volume this driver can use.
+bool recover_journal(Volume& volume) {
     JournalHeader header = {};
     if (!block::read(volume.device_index, volume.superblock.journal_lba, 1, &header)) {
-        return RecoveryState::failed;
+        return false;
     }
+    volume.recovery_replayed = false;
+    volume.recovery_unclean = (volume.superblock.flags & kFlagClean) == 0;
     if (!valid_journal(header) || header.pending == 0) {
-        // Nothing to replay, so home must already be whole before anything is
-        // written to the volume.
-        if (!home_metadata_is_valid(volume)) {
-            return RecoveryState::failed;
-        }
-        if ((volume.superblock.flags & kFlagClean) != 0) {
-            return RecoveryState::writable;
-        }
-        return write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable)
-            ? RecoveryState::writable
-            : RecoveryState::read_only;
+        // Nothing to replay, so home must already be whole.
+        return home_metadata_is_valid(volume);
     }
 
     // A full journal carries every metadata sector. A sparse one carries only
@@ -468,19 +465,34 @@ RecoveryState recover_journal(Volume& volume) {
     } else {
         memset(map, 0xff, sizeof(map));
     }
-    if (!transfer_metadata_sectors(volume, map, volume.superblock.journal_lba + 1u, /*write=*/false)) {
-        return RecoveryState::failed;
+    if (!transfer_metadata_sectors(volume, map, volume.superblock.journal_lba + 1u, /*write=*/false) ||
+        !home_metadata_is_valid(volume)) {
+        return false;
     }
+    volume.superblock.sequence = header.sequence;
+    volume.recovery_replayed = true;
+    return true;
+}
 
-    if (!home_metadata_is_valid(volume)) {
-        return RecoveryState::failed;
+// Puts on the device what recover_journal() did in memory: the replayed
+// metadata home, the clean superblocks, the header cleared, in that order, so
+// the journal stays pending until all of it is home and a cut anywhere
+// recovers to the same state. False if the device refused: the volume then
+// stays read-only, on the recovered view.
+bool persist_recovery(Volume& volume) {
+    if (volume.recovery_replayed &&
+        (!write_home_metadata(volume) ||
+         !write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable) ||
+         !clear_journal(volume, Durability::durable))) {
+        return false;
     }
-    if (!write_home_metadata(volume) ||
-        !write_superblocks(volume, header.sequence, kFlagClean, Durability::durable) ||
-        !clear_journal(volume, Durability::durable)) {
-        return RecoveryState::read_only;
+    if (!volume.recovery_replayed && volume.recovery_unclean &&
+        !write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable)) {
+        return false;
     }
-    return RecoveryState::writable;
+    volume.recovery_replayed = false;
+    volume.recovery_unclean = false;
+    return true;
 }
 
 // Commits the in-memory metadata with a sparse journal: only the sectors that
@@ -1696,19 +1708,17 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
         !read_home_metadata(volume)) {
         return false;
     }
-    const RecoveryState recovery = recover_journal(volume);
-    if (recovery == RecoveryState::failed || !home_metadata_is_valid(volume)) {
+    if (!recover_journal(volume)) {
         return false;
     }
-    volume.status = recovery == RecoveryState::read_only ? sxfs::MountStatus::read_only : sxfs::MountStatus::mounted;
-    adopt_link_counts(volume);
-    finish_doomed(volume);
+    // Read-only until attach() says otherwise: nothing has been written, and
+    // nothing is until the caller asks for a writable volume.
+    volume.status = sxfs::MountStatus::read_only;
     if (!rebuild_record_cache(volume)) {
         volume.status = sxfs::MountStatus::unavailable;
         return false;
     }
     volume.metadata_ready = true;
-    stamp_ownership(volume);
     return true;
 }
 
@@ -1752,24 +1762,24 @@ VolumeId probe(size_t device_index, const char* mount_point) {
     return kInvalidVolume;
 }
 
-bool attach(VolumeId id) {
+bool attach(VolumeId id, bool read_only) {
     Volume* volume = volume_for_id(id);
     if (volume == nullptr || !volume->metadata_ready) {
         return false;
     }
-    if (!initialize_record_mounts(*volume)) {
-        return false;
-    }
-    // probe() ya fijo el status segun como salio la recuperacion del journal, y
-    // attach() solo publica vnodes: no puede volver escribible a un volumen que
-    // quedo en read_only porque la recuperacion no se pudo persistir. Promoverlo
-    // partia el driver en dos mitades que no coincidian, porque mount_record()
-    // corre antes y ya habia publicado los vnodes con writable=false mientras
-    // sxfs::writable(volume) devolvia true.
-    if (volume->status != MountStatus::read_only) {
+    // probe() only read. Everything a mount writes happens here, and only for
+    // a writable one: the recovery it did in memory, then the link counts,
+    // the deletions a power cut left half done, and the ownership defaults.
+    // A device that refuses the recovery leaves the volume read-only, on the
+    // recovered view; it is never promoted afterwards.
+    volume->status = MountStatus::read_only;
+    if (!read_only && persist_recovery(*volume)) {
         volume->status = MountStatus::mounted;
+        adopt_link_counts(*volume);
+        finish_doomed(*volume);
     }
-    return true;
+    stamp_ownership(*volume);
+    return initialize_record_mounts(*volume);
 }
 
 VolumeId root() {

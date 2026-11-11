@@ -2717,7 +2717,10 @@ int main(int argc, char** argv) {
             check(sxn_storage_mount(root_id, "/mnt/") == -SAVANXP_EINVAL);
             check(sxn_storage_mount(root_id, "/mnt/a/b") == -SAVANXP_EINVAL);
             check(sxn_storage_mount(root_id, "/mnt/..") == -SAVANXP_EINVAL);
-            check(sxn_trap(SXN_SYS_STORAGE_MOUNT, root_id, (unsigned long)"/mnt/x", 1) == -SAVANXP_EINVAL);
+            /* READ_ONLY is a flag the call knows (it gets as far as "busy");
+             * any other bit is refused. */
+            check(sxn_storage_mount_flags(root_id, "/mnt/x", SXN_STORAGE_MOUNT_READ_ONLY) == -SAVANXP_EBUSY);
+            check(sxn_storage_mount_flags(root_id, "/mnt/x", 2u) == -SAVANXP_EINVAL);
             check(sxn_storage_mount(0xfffffff0u, "/mnt/x") == -SAVANXP_ENODEV);
             check(sxn_storage_unmount("/") == -SAVANXP_EINVAL);
             check(sxn_storage_unmount("/mnt/nothing") == -SAVANXP_EINVAL);

@@ -165,7 +165,7 @@ void mounted_volume_reads_back(const char* label, uint32_t sectors, BYTE format,
     hoststub::reset_vfs();
     const fs::VolumeId id = driver.probe(0, "/boot");
     check(id != fs::kInvalidVolume, "probe claims the volume");
-    check(driver.attach(id), "attach publishes the tree");
+    check(driver.attach(id, false), "attach publishes the tree");
 
     vfs::Vnode* conf = hoststub::find_node("/boot/boot/limine.conf");
     check(conf != nullptr && conf->type == vfs::NodeType::file, "boot/limine.conf is published");
@@ -292,7 +292,7 @@ void writes_round_trip() {
     const fs::Driver& driver = fat::driver();
     hoststub::reset_vfs();
     fs::VolumeId id = driver.probe(0, "/mnt/w");
-    check(id != fs::kInvalidVolume && driver.attach(id), "mount a writable volume");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount a writable volume");
 
     vfs::Vnode* file = make_file(driver, id, "/mnt/w/new.txt");
     check(file != nullptr && file->writable && file->size == 0 && file->mode == (vfs::kModeFile | 0644),
@@ -345,7 +345,7 @@ void writes_round_trip() {
     // A new mount reads what the first one wrote.
     hoststub::reset_vfs();
     id = driver.probe(0, "/mnt/w");
-    check(id != fs::kInvalidVolume && driver.attach(id), "mount it again");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount it again");
     vfs::Vnode* again = hoststub::find_node("/mnt/w/new.txt");
     check(again != nullptr && again->size == 3000 && node_is_zero(again, 1, 3000), "new.txt is still there");
     check(hoststub::find_node("/mnt/w/moved") != nullptr && hoststub::find_node("/mnt/w/dir") == nullptr,
@@ -366,7 +366,7 @@ void full_volume_writes_what_fits() {
     const fs::Driver& driver = fat::driver();
     hoststub::reset_vfs();
     const fs::VolumeId id = driver.probe(0, "/mnt/full");
-    check(id != fs::kInvalidVolume && driver.attach(id), "mount a small volume");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount a small volume");
     vfs::Vnode* file = make_file(driver, id, "/mnt/full/fill");
     static uint8_t data[1u << 20];
     size_t written = 0;
@@ -388,7 +388,7 @@ void read_only_device() {
     const fs::Driver& driver = fat::driver();
     hoststub::reset_vfs();
     const fs::VolumeId id = driver.probe(0, "/boot");
-    check(id != fs::kInvalidVolume && driver.attach(id), "mount it");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount it");
     vfs::Vnode* conf = hoststub::find_node("/boot/boot/limine.conf");
     check(conf != nullptr && !conf->writable && conf->mode == (vfs::kModeFile | 0444), "files are 0444, read-only");
     vfs::Vnode* directory = hoststub::find_node("/boot/a");
@@ -419,7 +419,7 @@ void owner_is_adopted() {
     check(id != fs::kInvalidVolume, "probe");
     check(driver.adopt_owner != nullptr, "FAT adopts an owner");
     driver.adopt_owner(id, {1000, 100});
-    check(driver.attach(id), "attach");
+    check(driver.attach(id, false), "attach");
     vfs::Vnode* root = hoststub::find_node("/mnt/stick");
     vfs::Vnode* conf = hoststub::find_node("/mnt/stick/boot/limine.conf");
     check(root != nullptr && root->uid == 1000 && root->gid == 100, "the mount point is the owner's");
@@ -436,7 +436,7 @@ void owner_is_adopted() {
     // The next volume in that slot starts as the system's again.
     hoststub::reset_vfs();
     const fs::VolumeId again = driver.probe(0, "/mnt/stick");
-    check(again != fs::kInvalidVolume && driver.attach(again), "mount it again without an owner");
+    check(again != fs::kInvalidVolume && driver.attach(again, false), "mount it again without an owner");
     vfs::Vnode* plain = hoststub::find_node("/mnt/stick/boot/limine.conf");
     check(plain != nullptr && plain->uid == 0 && plain->gid == 0, "without an owner, the system's");
     driver.unmount(again);
@@ -489,7 +489,7 @@ void tree_larger_than_the_vfs() {
     hoststub::reset_vfs();
     const fs::VolumeId id = driver.probe(0, "/mnt/big");
     check(id != fs::kInvalidVolume, "probe claims it");
-    check(!driver.attach(id), "attach fails when the VFS is full");
+    check(!driver.attach(id, false), "attach fails when the VFS is full");
     driver.unmount(id);
 
     hoststub::reset_vfs();

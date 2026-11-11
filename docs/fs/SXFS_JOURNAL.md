@@ -98,8 +98,15 @@ leaves home torn (a bitmap updated, the inode table not), and validating before
 replaying would refuse a volume the journal can repair. With no pending journal,
 home is validated before anything is written to the volume.
 
-The host tool (`sxfs-cli`, `libsxfs`) does not replay journals: it refuses an
-image with a pending one, of either kind, so it never loses one.
+The replay is done **in memory** by `probe`, which writes nothing. A writable
+attach persists it: the replayed metadata home, the clean superblocks, then
+the cleared header, so the journal stays pending until all of it is home and a
+cut during recovery recovers to the same state. A read-only mount keeps the
+replayed view and leaves the device as it was.
+
+The host library (`libsxfs`) replays the same way, in `sxfs_open`, and
+`sxfs_recover` persists it in the same order
+([`SXFS_CHECK.md`](SXFS_CHECK.md#recovery-on-the-host)).
 
 ## Knowing what changed
 

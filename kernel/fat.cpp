@@ -336,10 +336,14 @@ fs::VolumeId probe(size_t device_index, const char* mount_point) {
     return fs::kInvalidVolume;
 }
 
-bool attach(fs::VolumeId id) {
+bool attach(fs::VolumeId id, bool read_only) {
     Volume* volume = volume_for_id(id);
     if (volume == nullptr) {
         return false;
+    }
+    if (read_only) {
+        // Every vnode is published from this, and every write path checks it.
+        volume->writable = false;
     }
     vfs::Vnode* root = vfs::ensure_directory(volume->mount_point);
     if (root == nullptr) {

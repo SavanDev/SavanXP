@@ -394,6 +394,14 @@ enum sxn_storage_flags {
     SXN_STORAGE_ESP = 1u << 4,           /* an EFI System Partition */
     SXN_STORAGE_TRUNCATED = 1u << 5,     /* device_sectors > sector_count */
     SXN_STORAGE_GPT_BACKUP = 1u << 6,    /* disk: primary GPT damaged, backup used */
+    SXN_STORAGE_READ_ONLY = 1u << 7,     /* mounted, and takes no changes */
+};
+
+/* SXN_SYS_STORAGE_MOUNT flags. */
+enum sxn_storage_mount_flags {
+    /* Nothing is written to the device, at mount or later; every change is
+     * -EROFS. A volume that needed recovery is shown as recovered. */
+    SXN_STORAGE_MOUNT_READ_ONLY = 1u << 0,
 };
 
 /* How a disk is partitioned; for a partition, the table it came from. */

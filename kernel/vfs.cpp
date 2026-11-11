@@ -332,6 +332,14 @@ bool volume_for_path(const char* path, VolumeRef& out) {
     return true;
 }
 
+// The read-only mount policy, enforced here so that no driver is asked: a
+// volume mounted read-only, or one its driver could only bring up that way,
+// takes no change (EROFS).
+bool path_is_read_only(const char* path) {
+    VolumeRef volume = {};
+    return volume_for_path(path, volume) && fs::read_only(volume.mount);
+}
+
 // A mount point is the root of a volume: it cannot be removed or renamed
 // from inside.
 bool is_mount_point(const char* path) {
@@ -835,7 +843,7 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
             }
         } else if ((wants_write || wants_truncate) && node.backend == Backend::volume) {
             if (!node.writable) {
-                g_last_error = SX_EBADF;
+                g_last_error = path_is_read_only(normalized) ? SX_EROFS : SX_EBADF;
                 return nullptr;
             }
             if (wants_truncate) {
@@ -886,7 +894,7 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
                              static_cast<uint16_t>(kModeFile | (create_permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        if (volume.driver->create_file == nullptr) {
+        if (volume.driver->create_file == nullptr || fs::read_only(volume.mount)) {
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
@@ -1042,7 +1050,7 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
                              static_cast<uint16_t>(kModeDirectory | (permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        if (volume.driver->create_directory == nullptr) {
+        if (volume.driver->create_directory == nullptr || fs::read_only(volume.mount)) {
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
@@ -1160,7 +1168,7 @@ bool unlink(const cred::Credentials& who, const char* path) {
             break;
         case Backend::volume: {
             const fs::Driver& driver = *node.volume_driver;
-            if (driver.unlink == nullptr) {
+            if (driver.unlink == nullptr || path_is_read_only(normalized)) {
                 g_last_error = kNoWriteOperation;
                 return false;
             }
@@ -1242,7 +1250,7 @@ bool rmdir(const cred::Credentials& who, const char* path) {
 
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        if (volume.driver->remove_directory == nullptr) {
+        if (volume.driver->remove_directory == nullptr || fs::read_only(volume.mount)) {
             g_last_error = kNoWriteOperation;
             return false;
         }
@@ -1285,7 +1293,7 @@ bool truncate(const cred::Credentials& who, const char* path, size_t size) {
         return false;
     }
     if (!node.writable) {
-        g_last_error = SX_EBADF;
+        g_last_error = path_is_read_only(normalized) ? SX_EROFS : SX_EBADF;
         return false;
     }
 
@@ -1389,6 +1397,10 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
     }
     VolumeRef volume = {};
     const bool on_volume = volume_for_path(normalized_old, volume);
+    if (on_volume && fs::read_only(volume.mount)) {
+        g_last_error = kNoWriteOperation;
+        return false;
+    }
 
     // What is at the new name is replaced, if the two agree in type and the
     // caller could have removed it.
@@ -1590,6 +1602,10 @@ bool store_ownership(Vnode& node, const Ownership& owner) {
     }
     VolumeRef volume = {};
     bool on_volume = volume_for_path(path, volume);
+    if (on_volume && fs::read_only(volume.mount)) {
+        g_last_error = kNoWriteOperation;
+        return false;
+    }
     if (node.backend == Backend::volume && node.volume_driver != nullptr) {
         // A file carries its driver, which also holds for one whose name is
         // gone (fchmod on an unlinked file).

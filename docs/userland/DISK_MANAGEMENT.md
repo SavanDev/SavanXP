@@ -53,7 +53,7 @@ rather than duplicate formatting or mounting controls.
 | New Partition | free space, or a GPT disk's box (its first free range) | adds a GPT entry, 1 MiB aligned; *Format as SxFS* (default) formats it and gives it the SxFS type, otherwise its type is Basic data |
 | Format | a partition | `sxfs_mkfs`, the root owned by the person who asked (uid, group `users`), the SxFS type, and the label as the GPT name |
 | Delete Partition | a partition | empties its GPT entry |
-| Mount | an SxFS or FAT volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case |
+| Mount | an SxFS or FAT volume not mounted (not the ESP) | mounts it at `/mnt/<name>`, by default its label in lower case; with "Read-only" checked nothing is written to it and Properties shows `Access: Read-only` |
 | Unmount | a mounted volume but `/` and `/boot` | syncs and releases it; refused while a file of it is open |
 | Rescan Disks | every disk with nothing mounted | reads its table again |
 

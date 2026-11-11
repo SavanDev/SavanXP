@@ -29,8 +29,23 @@
  *       something out of an image is to rebuild it from scratch. Same path
  *       convention, tolerating a leading '/'.
  *
+ *   sxfs-cli check   <image>
+ *       Validates the image and says what it still needs. Never writes: an
+ *       interrupted image is recovered in memory and checked as recovered.
+ *   sxfs-cli recover <image>
+ *       Persists a pending journal transaction (and the clean mark), the way
+ *       a mount would. Idempotent; a no-op on an image that needs nothing.
+ *   sxfs-cli repair [--dry-run] <image>
+ *       Offline repair, on a copy that replaces the image only when it is
+ *       done: unreachable files and directories are named under /lost+found,
+ *       the block bitmap is rebuilt from what the inodes claim, committed
+ *       deletions are finished. The original stays as <image>.before-repair.
+ *       Damage with no identifiable owner is reported and left. Exit code 0
+ *       only if the result validates. See docs/fs/SXFS_CHECK.md.
+ *
  * apply and rm stamp an image written before ownership existed
- * (sxfs_stamp_ownership) before changing it.
+ * (sxfs_stamp_ownership) before changing it, and persist a pending journal
+ * first, saying so.
  *
  * Exit codes: 0 ok, 1 error, 2 bad usage, 3 the allocator ran out of a
  * contiguous run (see SXFS_CLI_EXIT_NO_SPACE).
@@ -345,6 +360,36 @@ static int check_metadata(const struct sxfs_ctx* ctx);
 static int validate_image(const struct sxfs_ctx* ctx);
 static int validate_image_file(const char* image_path, const struct sxfs_ctx* ctx);
 
+/* A command about to change the image persists what an interrupted mount
+ * left pending first: the journal would otherwise be replayed over the
+ * change. Called after the recovered state has been validated. */
+static int persist_recovery(const char* image_path, struct sxfs_ctx* ctx) {
+    const uint32_t pending = ctx->recovery;
+    if (pending == 0) {
+        return SXFS_OK;
+    }
+    const int rc = sxfs_recover(ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: could not recover '%s': %s.\n", image_path, sxfs_strerror(rc));
+        return rc;
+    }
+    fprintf(stderr, "sxfs-cli: '%s': %s.\n", image_path,
+        (pending & SXFS_RECOVERY_REPLAYED) != 0 ? "pending journal transaction replayed"
+        : (pending & SXFS_RECOVERY_JOURNAL_INVALID) != 0 ? "invalid journal header cleared"
+        : "marked clean");
+    return SXFS_OK;
+}
+
+static const char* recovery_description(uint32_t recovery) {
+    if ((recovery & SXFS_RECOVERY_REPLAYED) != 0) {
+        return "a journal transaction is pending";
+    }
+    if ((recovery & SXFS_RECOVERY_JOURNAL_INVALID) != 0) {
+        return "the journal header is invalid and ignored";
+    }
+    return (recovery & SXFS_RECOVERY_UNCLEAN) != 0 ? "not marked clean" : "nothing pending";
+}
+
 static int cmd_info(const char* image_path) {
     FILE* image = fopen(image_path, "rb");
     if (image == NULL) {
@@ -484,6 +529,29 @@ static int check_metadata(const struct sxfs_ctx* ctx) {
     return 0;
 }
 
+/* Sectors marked used that no inode claims. They cost space and nothing else,
+ * so `check` reports them without failing; `repair` frees them. Only
+ * meaningful on metadata check_metadata accepted. */
+static uint32_t count_unclaimed_sectors(const struct sxfs_ctx* ctx) {
+    static uint8_t claims[sizeof(ctx->block_bitmap)];
+    memset(claims, 0, sizeof(claims));
+    for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        const struct sxfs_inode* inode = &ctx->inodes[inode_id - 1];
+        for (uint32_t index = 0; inode->type != SXFS_INODE_UNUSED && index < inode->extent_count; ++index) {
+            for (uint32_t sector = 0; sector < inode->extents[index].sector_count; ++sector) {
+                sxfs_bitmap_set(claims, inode->extents[index].start_lba + sector, 1);
+            }
+        }
+    }
+    uint32_t unclaimed = 0;
+    for (uint32_t sector = SXFS_DATA_LBA; sector < ctx->total_sectors; ++sector) {
+        if (sxfs_bitmap_test(ctx->block_bitmap, sector) && !sxfs_bitmap_test(claims, sector)) {
+            unclaimed += 1;
+        }
+    }
+    return unclaimed;
+}
+
 static int validate_noop(void* cookie, const char* relpath, uint32_t inode_id,
                         uint16_t type) {
     (void)cookie;
@@ -595,7 +663,209 @@ static int cmd_check(const char* image_path) {
     printf("sxfs-cli: '%s' is a valid SxFS image (%u sectors, ownership %s).\n",
         image_path, ctx.total_sectors,
         (ctx.superblock.features & SXFS_FEATURE_OWNERSHIP) != 0 ? "recorded" : "not recorded");
+    const uint32_t unclaimed = count_unclaimed_sectors(&ctx);
+    if (unclaimed != 0) {
+        printf("sxfs-cli: '%s': %u sector(s) marked used that nothing claims ('sxfs-cli repair' frees them).\n",
+            image_path, unclaimed);
+    }
+    if (ctx.recovery != 0) {
+        printf("sxfs-cli: '%s': %s; checked as recovered, image not modified "
+               "('sxfs-cli recover' persists it).\n",
+            image_path, recovery_description(ctx.recovery));
+    }
     return 0;
+}
+
+static int cmd_recover(const char* image_path) {
+    FILE* image = fopen(image_path, "rb+");
+    if (image == NULL) {
+        fprintf(stderr, "sxfs-cli: cannot open '%s' for writing.\n", image_path);
+        return 1;
+    }
+    struct sxfs_ctx ctx;
+    sxfs_ctx_init(&ctx, image, file_read, file_write);
+    int rc = sxfs_open(&ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: '%s' is not a valid SxFS image: %s.\n", image_path, sxfs_strerror(rc));
+        fclose(image);
+        return 1;
+    }
+    /* Only a state that validates is written home: a journal that replays to
+     * a broken tree is repair's business, on a copy. */
+    if (validate_image_file(image_path, &ctx) != 0) {
+        fprintf(stderr, "sxfs-cli: '%s' does not validate once recovered; nothing written "
+                        "(try 'sxfs-cli repair').\n", image_path);
+        fclose(image);
+        return 1;
+    }
+    if (ctx.recovery == 0) {
+        printf("sxfs-cli: '%s': nothing pending.\n", image_path);
+        fclose(image);
+        return 0;
+    }
+    rc = persist_recovery(image_path, &ctx);
+    if (fclose(image) != 0 && rc == SXFS_OK) {
+        rc = SXFS_ERR_IO;
+    }
+    return rc == SXFS_OK ? 0 : 1;
+}
+
+static int copy_file(const char* source_path, const char* destination_path) {
+    FILE* source = fopen(source_path, "rb");
+    if (source == NULL) {
+        return -1;
+    }
+    FILE* destination = fopen(destination_path, "wb");
+    if (destination == NULL) {
+        fclose(source);
+        return -1;
+    }
+    static uint8_t buffer[1u << 20];
+    int status = 0;
+    for (;;) {
+        const size_t got = fread(buffer, 1, sizeof(buffer), source);
+        if (got == 0) {
+            status = ferror(source) ? -1 : 0;
+            break;
+        }
+        if (fwrite(buffer, 1, got, destination) != got) {
+            status = -1;
+            break;
+        }
+    }
+    fclose(source);
+    if (fclose(destination) != 0) {
+        status = -1;
+    }
+    return status;
+}
+
+static void print_repair_count(const char* what, uint32_t count) {
+    if (count != 0) {
+        printf("  %-52s %u\n", what, count);
+    }
+}
+
+static int cmd_repair(const char* image_path, int dry_run) {
+    char candidate_path[4096];
+    char backup_path[4096];
+    if (snprintf(candidate_path, sizeof(candidate_path), "%s.repair", image_path) >= (int)sizeof(candidate_path) ||
+        snprintf(backup_path, sizeof(backup_path), "%s.before-repair", image_path) >= (int)sizeof(backup_path)) {
+        fprintf(stderr, "sxfs-cli: path too long.\n");
+        return 1;
+    }
+    struct stat image_info;
+    struct stat backup_info;
+    if (stat(image_path, &image_info) != 0) {
+        fprintf(stderr, "sxfs-cli: cannot read '%s'.\n", image_path);
+        return 1;
+    }
+    /* A backup that is this very file is a repair interrupted between its two
+     * last steps, and is resumed. Any other is someone's only copy of an
+     * earlier state. */
+    const int backup_exists = stat(backup_path, &backup_info) == 0;
+    const int backup_is_image = backup_exists && backup_info.st_dev == image_info.st_dev &&
+        backup_info.st_ino == image_info.st_ino;
+
+    /* Every change goes to a copy. The image is replaced, atomically, only
+     * once the copy is complete, so an interrupted repair leaves it as it
+     * was and is resumed by running it again. */
+    if (copy_file(image_path, candidate_path) != 0) {
+        fprintf(stderr, "sxfs-cli: could not copy '%s' to '%s'.\n", image_path, candidate_path);
+        remove(candidate_path);
+        return 1;
+    }
+    FILE* image = fopen(candidate_path, "rb+");
+    if (image == NULL) {
+        remove(candidate_path);
+        return 1;
+    }
+    struct sxfs_ctx ctx;
+    struct sxfs_repair_report report;
+    memset(&report, 0, sizeof(report));
+    sxfs_ctx_init(&ctx, image, file_read, file_write);
+    int rc = sxfs_open(&ctx);
+    if (rc == SXFS_OK && (uint64_t)image_info.st_size < (uint64_t)ctx.total_sectors * SXFS_SECTOR_SIZE) {
+        fprintf(stderr, "sxfs-cli: '%s' is truncated; nothing to repair it from.\n", image_path);
+        rc = SXFS_ERR_INVALID;
+    }
+    const uint32_t recovery = rc == SXFS_OK ? ctx.recovery : 0;
+    if (rc == SXFS_OK) {
+        rc = sxfs_recover(&ctx);
+    }
+    if (rc == SXFS_OK) {
+        rc = sxfs_repair(&ctx, &report);
+    }
+    const uint32_t changes = sxfs_repair_changes(&report) + (recovery != 0 ? 1u : 0u);
+    if (rc == SXFS_OK && changes != 0) {
+        rc = sxfs_flush(&ctx);
+    }
+    if (fclose(image) != 0 && rc == SXFS_OK) {
+        rc = SXFS_ERR_IO;
+    }
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: '%s' cannot be repaired: %s.\n", image_path, sxfs_strerror(rc));
+        remove(candidate_path);
+        return 1;
+    }
+
+    printf("sxfs-cli: repair of '%s'%s:\n", image_path, dry_run ? " (dry run)" : "");
+    if (recovery != 0) {
+        printf("  journal: %s, recovered\n", recovery_description(recovery));
+    }
+    print_repair_count("files rescued to /lost+found", report.files_rescued);
+    print_repair_count("directories rescued to /lost+found", report.directories_rescued);
+    print_repair_count("directory entries removed", report.entries_removed);
+    print_repair_count("directory entries with their type corrected", report.entries_fixed);
+    print_repair_count("claimed sectors marked used", report.sectors_marked);
+    print_repair_count("unclaimed sectors freed", report.sectors_freed);
+    print_repair_count("committed deletions finished", report.deletions_finished);
+    print_repair_count("allocated inodes with no record released", report.inodes_released);
+    print_repair_count("records of free inodes cleared", report.stale_records_cleared);
+    print_repair_count("NOT REPAIRED: damaged inodes", report.damaged_inodes);
+    print_repair_count("NOT REPAIRED: sectors claimed by two inodes", report.cross_linked_sectors);
+    print_repair_count("NOT REPAIRED: unclaimed sectors kept", report.leaked_sectors_kept);
+    print_repair_count("NOT REPAIRED: unreachable inodes left", report.orphans_left);
+
+    /* The verdict is the ordinary check, on the result. */
+    int valid = 0;
+    image = fopen(candidate_path, "rb");
+    if (image != NULL) {
+        sxfs_ctx_init(&ctx, image, file_read, file_write);
+        valid = sxfs_open(&ctx) == SXFS_OK && ctx.recovery == 0 && validate_image(&ctx) == SXFS_OK;
+        fclose(image);
+    }
+    const int status = valid && sxfs_repair_unresolved(&report) == 0 ? 0 : 1;
+
+    if (dry_run || changes == 0) {
+        remove(candidate_path);
+        printf("sxfs-cli: %s; image not modified.\n",
+            changes == 0 ? "nothing to repair" : "dry run");
+        if (!valid) {
+            printf("sxfs-cli: the image does not validate%s.\n", changes == 0 ? "" : " even after repair");
+        }
+        return status;
+    }
+    if (backup_exists && !backup_is_image) {
+        fprintf(stderr, "sxfs-cli: '%s' already exists; move it away before repairing again. "
+                        "Image not modified.\n", backup_path);
+        remove(candidate_path);
+        return 1;
+    }
+    if (!backup_is_image && link(image_path, backup_path) != 0) {
+        fprintf(stderr, "sxfs-cli: could not keep the original as '%s': %s. Image not modified.\n",
+            backup_path, strerror(errno));
+        remove(candidate_path);
+        return 1;
+    }
+    if (rename(candidate_path, image_path) != 0) {
+        fprintf(stderr, "sxfs-cli: could not replace '%s': %s.\n", image_path, strerror(errno));
+        remove(candidate_path);
+        return 1;
+    }
+    printf("sxfs-cli: repaired; the original is '%s'.%s\n", backup_path,
+        valid ? "" : " The result still does not validate.");
+    return status;
 }
 
 static int cmd_apply(const char* image_path, const char* manifest_path) {
@@ -613,7 +883,7 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
         fclose(image);
         return 1;
     }
-    if (validate_image_file(image_path, &ctx) != 0) {
+    if (validate_image_file(image_path, &ctx) != 0 || persist_recovery(image_path, &ctx) != SXFS_OK) {
         fclose(image);
         return 1;
     }
@@ -788,6 +1058,9 @@ static int cmd_rm(const char* image_path, char** paths, int path_count, int forc
         return 1;
     }
     rc = validate_image_file(image_path, &ctx);
+    if (rc == SXFS_OK) {
+        rc = persist_recovery(image_path, &ctx);
+    }
     if (rc != SXFS_OK) {
         fclose(image);
         return 1;
@@ -837,6 +1110,8 @@ static void usage(void) {
     fprintf(stderr,
         "Usage:\n"
         "  sxfs-cli check   <image>\n"
+        "  sxfs-cli recover <image>\n"
+        "  sxfs-cli repair [--dry-run] <image>\n"
         "  sxfs-cli info    <image>\n"
         "  sxfs-cli extract <image> <destination_directory> [<ownership_manifest>]\n"
         "  sxfs-cli create  <image> <total_sectors>\n"
@@ -855,6 +1130,21 @@ int main(int argc, char** argv) {
             return 2;
         }
         return cmd_check(argv[2]);
+    }
+    if (strcmp(argv[1], "recover") == 0) {
+        if (argc != 3) {
+            usage();
+            return 2;
+        }
+        return cmd_recover(argv[2]);
+    }
+    if (strcmp(argv[1], "repair") == 0) {
+        const int dry_run = argc > 2 && strcmp(argv[2], "--dry-run") == 0;
+        if (argc != (dry_run ? 4 : 3)) {
+            usage();
+            return 2;
+        }
+        return cmd_repair(argv[dry_run ? 3 : 2], dry_run);
     }
     if (strcmp(argv[1], "info") == 0) {
         if (argc != 3) {

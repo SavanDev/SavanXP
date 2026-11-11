@@ -512,9 +512,9 @@ void case_orphan_inode_is_reported(uint8_t* image) {
     hoststub::detach_device();
 }
 
-// Un volumen con el journal pendiente sobre un device de solo lectura: la
-// recuperacion no se puede persistir, asi que el volumen queda read_only y
-// tiene que seguir read_only DESPUES de attach().
+// A volume with a pending journal on a read-only device. probe() recovers it
+// in memory and writes nothing; attach() tries to persist the recovery, the
+// device refuses, and the volume stays read_only on the recovered view.
 void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristine) {
     printf("caso: journal pendiente sobre device de solo lectura\n");
 
@@ -532,11 +532,12 @@ void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristin
     if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
         return;
     }
-    check(sxfs::status(volume) == sxfs::MountStatus::read_only,
-          "probe deja el volumen en read_only (la recuperacion no se pudo persistir)");
-    check(hoststub::rejected_writes() > 0, "el device rechazo las escrituras de la recuperacion");
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only, "probe leaves the volume read_only");
+    check(hoststub::rejected_writes() == 0 && memcmp(image, pristine, kImageBytes) == 0,
+          "probe attempted no write");
 
-    check(sxfs::attach(volume), "attach publica el arbol");
+    check(sxfs::attach(volume), "attach publishes the tree");
+    check(hoststub::rejected_writes() > 0, "the device refused the recovery attach tried to persist");
     check(sxfs::status(volume) == sxfs::MountStatus::read_only,
           "attach NO promueve el volumen a mounted");
     check(!sxfs::writable(volume), "sxfs::writable() es false");
@@ -603,10 +604,11 @@ void case_recovered_journal_is_writable(uint8_t* image) {
     if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
         return;
     }
-    check(sxfs::status(volume) == sxfs::MountStatus::mounted,
-          "la recuperacion se persistio: el volumen queda mounted");
-    check(sxfs::attach(volume), "attach publica el arbol");
-    check(sxfs::writable(volume), "sxfs::writable() es true");
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only && hoststub::sectors_written() == 0,
+          "probe recovered in memory and wrote nothing");
+    check(sxfs::attach(volume), "attach publishes the tree");
+    check(sxfs::status(volume) == sxfs::MountStatus::mounted, "attach persisted the recovery: mounted");
+    check(sxfs::writable(volume), "sxfs::writable() is true");
 
     vfs::Vnode* node = hoststub::find_node(kFilePath);
     if (!check(node != nullptr, "el archivo quedo publicado en el vfs")) {

@@ -92,8 +92,11 @@ struct Driver {
     // Publishes the volume's tree under its mount point: directories with
     // vfs::ensure_directory, files with vfs::install_volume_file. Separate
     // from probe because at boot the metadata is read before the VFS is ready
-    // to receive vnodes.
-    bool (*attach)(VolumeId volume);
+    // to receive vnodes. probe has written nothing; with `read_only` attach
+    // writes nothing either, and the driver refuses every change afterwards
+    // (the VFS refuses first: fs::read_only). Without it, attach is where a
+    // driver persists whatever recovery the volume needed.
+    bool (*attach)(VolumeId volume, bool read_only);
     // May be nullptr: the volume then stays mounted until reset.
     void (*unmount)(VolumeId volume);
 
@@ -159,6 +162,8 @@ struct MountInfo {
     size_t device_index;
     const char* mount_point;
     bool attached;
+    // Mounted read-only on request (attach's flag).
+    bool read_only;
 };
 
 // Empties the mount table; registered drivers stay. It does NOT unmount: it is
@@ -178,7 +183,13 @@ size_t mount(size_t device_index, const char* mount_point, const char* driver_na
 // wins. It is the boot path.
 size_t mount_any(const char* mount_point);
 
-bool attach(size_t mount_index);
+// `read_only`: nothing is written to the device, at attach or later, and
+// every change through the VFS is EROFS.
+bool attach(size_t mount_index, bool read_only = false);
+// Whether the volume takes no changes: mounted read-only, or one its driver
+// could only bring up that way (a device that refuses writes, a recovery
+// that could not be persisted).
+bool read_only(size_t mount_index);
 // Detaches the volume from the VFS and releases it: synced, its tree gone
 // from the VFS (vfs::detach_subtree), the driver's state freed, the slot
 // free. 0; -EBUSY when `referenced` says a node of it is still held (an open

@@ -254,9 +254,9 @@ static char g_format_label[DM_LABEL_CAPACITY];
 static char g_format_note[96];
 
 /* Mount: the name under /mnt. */
-#define DM_MOUNT_HEIGHT 130
+#define DM_MOUNT_HEIGHT 156
 static struct sxgui_dialog g_mount_dialog;
-static struct sxgui_widget g_mount_widgets[5];
+static struct sxgui_widget g_mount_widgets[6];
 static char g_mount_name[25];
 
 /* What the open dialog is about, copied when it opened: a refresh while it
@@ -1170,7 +1170,7 @@ static int op_delete(uint32_t id, const char *name, uint64_t start)
     return rescan_disk(disk_id);
 }
 
-static int op_mount(uint32_t id, const char *name, const char *path)
+static int op_mount_flags(uint32_t id, const char *name, const char *path, uint32_t flags)
 {
     const struct sxn_storage_device *device = recheck(id, name);
     long result;
@@ -1183,8 +1183,13 @@ static int op_mount(uint32_t id, const char *name, const char *path)
     {
         return SAVANXP_EBUSY;
     }
-    result = sxn_storage_mount(id, path);
+    result = sxn_storage_mount_flags(id, path, flags);
     return result < 0 ? (int)-result : 0;
+}
+
+static int op_mount(uint32_t id, const char *name, const char *path)
+{
+    return op_mount_flags(id, name, path, 0u);
 }
 
 static int op_unmount(uint32_t id, const char *name)
@@ -1291,7 +1296,8 @@ static int run_operation(int argc, char **argv)
     {
         return strcmp(argv[1], "--init") == 0 || strcmp(argv[1], "--create") == 0 ||
                        strcmp(argv[1], "--format") == 0 || strcmp(argv[1], "--delete") == 0 ||
-                       strcmp(argv[1], "--mount") == 0 || strcmp(argv[1], "--unmount") == 0
+                       strcmp(argv[1], "--mount") == 0 || strcmp(argv[1], "--mount-ro") == 0 ||
+                       strcmp(argv[1], "--unmount") == 0
                    ? SAVANXP_EINVAL
                    : -1;
     }
@@ -1302,6 +1308,11 @@ static int run_operation(int argc, char **argv)
     if (strcmp(argv[1], "--mount") == 0)
     {
         return argc < 5 ? SAVANXP_EINVAL : op_mount((uint32_t)id, argv[3], argv[4]);
+    }
+    if (strcmp(argv[1], "--mount-ro") == 0)
+    {
+        return argc < 5 ? SAVANXP_EINVAL
+                        : op_mount_flags((uint32_t)id, argv[3], argv[4], SXN_STORAGE_MOUNT_READ_ONLY);
     }
     if (strcmp(argv[1], "--init") == 0)
     {
@@ -1778,6 +1789,10 @@ static void show_properties(void)
     if ((device->flags & SXN_STORAGE_MOUNTED) != 0u)
     {
         property("Mounted at:", device->mount_point);
+        if ((device->flags & SXN_STORAGE_READ_ONLY) != 0u)
+        {
+            property("Access:", "Read-only");
+        }
         format_bytes(device->used_bytes, text, sizeof(text));
         property("Used space:", text);
         format_bytes(device->free_bytes, text, sizeof(text));
@@ -2293,10 +2308,11 @@ static void begin_mount(void)
     snprintf(g_pending_name, sizeof(g_pending_name), "%s", device->name);
     default_mount_name(device, g_mount_name, sizeof(g_mount_name));
     g_mount_widgets[2].caret = (int)strlen(g_mount_name);
+    g_mount_widgets[5].value = 0;
     memset(&g_mount_dialog, 0, sizeof(g_mount_dialog));
     g_mount_dialog.title = "Mount";
     g_mount_dialog.widgets = g_mount_widgets;
-    g_mount_dialog.widget_count = 5;
+    g_mount_dialog.widget_count = 6;
     g_mount_dialog.initial_focus = 2;
     g_mount_dialog.default_button = 3;
     sxgui_dialog_begin(&g_app.ui, &g_mount_dialog, DM_FORM_WIDTH, DM_MOUNT_HEIGHT);
@@ -2318,7 +2334,7 @@ static void on_mount_ok(struct sxgui_widget *widget, void *user)
     snprintf(id_text, sizeof(id_text), "%u", (unsigned)g_pending_id);
     snprintf(path, sizeof(path), "/mnt/%s", g_mount_name);
     argv[0] = "diskmgmt";
-    argv[1] = "--mount";
+    argv[1] = g_mount_widgets[5].value != 0 ? "--mount-ro" : "--mount";
     argv[2] = id_text;
     argv[3] = g_pending_name;
     argv[4] = path;
@@ -3045,10 +3061,44 @@ static void selftest_fat(const char *serial, const char *path)
     {
         selftest_fail("the FAT volume's file count is not one more");
     }
+    /* Read-only: listed as such, readable, and refusing even the user who
+     * could write it a moment ago. */
+    if (op_unmount(id, name) != 0 || op_mount_flags(id, name, path, SXN_STORAGE_MOUNT_READ_ONLY) != 0)
+    {
+        selftest_fail("the FAT volume could not be mounted read-only");
+        return;
+    }
+    device = selftest_device(id);
+    if (device == 0 || (device->flags & SXN_STORAGE_READ_ONLY) == 0u || device->file_count != files + 1u)
+    {
+        selftest_fail("the read-only FAT volume is not listed as read-only with its files");
+    }
+    snprintf(command, sizeof(command), "cat %s/copy.txt", path);
+    child = selftest_shell_as(command, &user);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status != 0)
+    {
+        selftest_fail("the read-only FAT volume does not read");
+    }
+    snprintf(command, sizeof(command), "echo no > %s/readonly.txt", path);
+    child = selftest_shell_as(command, &user);
+    if (child <= 0 || sxn_waitpid(child, &status) != child || status == 0)
+    {
+        selftest_fail("a read-only mount took a write");
+    }
+    device = selftest_device(id);
+    if (device == 0 || device->file_count != files + 1u)
+    {
+        selftest_fail("the read-only FAT volume's file count changed");
+    }
     if (op_unmount(id, name) != 0 || op_mount(id, name, path) != 0)
     {
         selftest_fail("the FAT volume could not be unmounted and mounted again");
         return;
+    }
+    device = selftest_device(id);
+    if (device == 0 || (device->flags & SXN_STORAGE_READ_ONLY) != 0u)
+    {
+        selftest_fail("a writable remount is still listed as read-only");
     }
     device = selftest_device(id);
     if (device == 0 || device->file_count != files + 1u)
@@ -3266,6 +3316,10 @@ static void build_dialogs(void)
     g_mount_widgets[1] = sxgui_label(sx_rect_make(DM_DIALOG_MARGIN, y + 3, 76, DM_TEXT_ROW), "/mnt/");
     g_mount_widgets[2] = sxgui_textfield(sx_rect_make(field_x, y, width - 80, SXGUI_FIELD_HEIGHT), g_mount_name,
                                          (int)sizeof(g_mount_name));
+    /* After the buttons in the array so their indices stay what the dialog's
+     * default button names. */
+    g_mount_widgets[5] = sxgui_checkbox(
+        sx_rect_make(field_x, y + SXGUI_FIELD_HEIGHT + SXGUI_GAP, width - 80, DM_TEXT_ROW), "Read-only", 0);
     g_mount_widgets[3] = sxgui_button(
         sx_rect_make(centred_button_x(DM_FORM_WIDTH, 2, 0), DM_MOUNT_HEIGHT - DM_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
                      SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),

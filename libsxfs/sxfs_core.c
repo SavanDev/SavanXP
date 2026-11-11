@@ -414,6 +414,7 @@ int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
         return SXFS_ERR_INVALID;
     }
     ctx->total_sectors = total_sectors;
+    ctx->recovery = 0;
     memset(ctx->block_bitmap, 0, sizeof(ctx->block_bitmap));
     memset(ctx->inode_bitmap, 0, sizeof(ctx->inode_bitmap));
     memset(ctx->inodes, 0, sizeof(ctx->inodes));
@@ -456,15 +457,31 @@ static int journal_header_is_empty(const struct sxfs_journal_header* header) {
     return 1;
 }
 
+/* Metadata sector `index` (journal numbering: block bitmap, inode bitmap,
+ * inode table) in the ctx's memory. */
+static uint8_t* metadata_sector(struct sxfs_ctx* ctx, uint32_t index) {
+    if (index < SXFS_BLOCK_BITMAP_SECTORS) {
+        return ctx->block_bitmap + (size_t)index * SXFS_SECTOR_SIZE;
+    }
+    index -= SXFS_BLOCK_BITMAP_SECTORS;
+    if (index < SXFS_INODE_BITMAP_SECTORS) {
+        return ctx->inode_bitmap + (size_t)index * SXFS_SECTOR_SIZE;
+    }
+    index -= SXFS_INODE_BITMAP_SECTORS;
+    return (uint8_t*)ctx->inodes + (size_t)index * SXFS_SECTOR_SIZE;
+}
+
 int sxfs_open(struct sxfs_ctx* ctx) {
     struct sxfs_superblock primary;
     struct sxfs_superblock secondary;
-    /* sxfs_superblock_valid (formato compartido) valida layout + checksum. */
+    /* sxfs_superblock_valid (shared format) checks layout and checksum. */
     int have_primary = (ctx->read(ctx->cookie, SXFS_PRIMARY_SB_LBA, 1, &primary) == 0) &&
         sxfs_superblock_valid(&primary);
     int have_secondary = (ctx->read(ctx->cookie, SXFS_SECONDARY_SB_LBA, 1, &secondary) == 0) &&
         sxfs_superblock_valid(&secondary);
 
+    /* The same choice as the kernel: the higher sequence, the primary on a
+     * tie. */
     const struct sxfs_superblock* chosen = NULL;
     if (have_primary && have_secondary) {
         chosen = (secondary.sequence > primary.sequence) ? &secondary : &primary;
@@ -476,51 +493,117 @@ int sxfs_open(struct sxfs_ctx* ctx) {
         return SXFS_ERR_INVALID;
     }
 
-    if ((chosen->flags & SXFS_FLAG_CLEAN) == 0) {
-        return SXFS_ERR_INVALID;
-    }
     struct sxfs_journal_header journal;
     if (ctx->read(ctx->cookie, SXFS_JOURNAL_LBA, 1, &journal) != 0) {
         return SXFS_ERR_IO;
     }
-    if (!journal_header_is_empty(&journal) &&
-        (!sxfs_journal_valid(&journal) || journal.pending != 0)) {
-        /* El host no recovery-escribe un journal sobre la imagen persistente.
-         * Un pending o header corrupto se rechaza para no perder su estado. */
-        return SXFS_ERR_INVALID;
-    }
 
     ctx->superblock = *chosen;
     ctx->total_sectors = chosen->total_sectors;
+    ctx->recovery = 0;
     if (ctx->read(ctx->cookie, SXFS_BLOCK_BITMAP_LBA, SXFS_BLOCK_BITMAP_SECTORS, ctx->block_bitmap) != 0 ||
         ctx->read(ctx->cookie, SXFS_INODE_BITMAP_LBA, SXFS_INODE_BITMAP_SECTORS, ctx->inode_bitmap) != 0 ||
         ctx->read(ctx->cookie, SXFS_INODE_TABLE_LBA, SXFS_INODE_TABLE_SECTORS, ctx->inodes) != 0) {
         return SXFS_ERR_IO;
     }
+
+    /* Recovery happens in memory only: nothing here writes. What the kernel
+     * does at mount (recover_journal) is repeated step for step, so both read
+     * an interrupted volume the same way. */
+    /* The two copies are written one after the other: one that is missing,
+     * older or not clean is as much "not marked clean" as both. */
+    if ((chosen->flags & SXFS_FLAG_CLEAN) == 0 || !have_primary || !have_secondary ||
+        memcmp(&primary, &secondary, sizeof(primary)) != 0) {
+        ctx->recovery |= SXFS_RECOVERY_UNCLEAN;
+    }
+    if (journal_header_is_empty(&journal)) {
+        return SXFS_OK;
+    }
+    if (!sxfs_journal_valid(&journal)) {
+        /* Not a transaction: the kernel ignores it too, and home stands. */
+        ctx->recovery |= SXFS_RECOVERY_JOURNAL_INVALID;
+        return SXFS_OK;
+    }
+    if (journal.pending == 0) {
+        return SXFS_OK;
+    }
+    /* A sparse journal is applied on top of home: every sector it does not
+     * name was the same before and after the transaction. */
+    for (uint32_t index = 0; index < SXFS_JOURNAL_METADATA_SECTORS; ++index) {
+        if (journal.kind == SXFS_JOURNAL_KIND_SPARSE && !sxfs_bitmap_test(journal.sector_map, index)) {
+            continue;
+        }
+        if (ctx->read(ctx->cookie, SXFS_JOURNAL_LBA + 1u + index, 1, metadata_sector(ctx, index)) != 0) {
+            return SXFS_ERR_IO;
+        }
+    }
+    ctx->superblock.sequence = journal.sequence;
+    ctx->recovery |= SXFS_RECOVERY_REPLAYED;
     return SXFS_OK;
 }
 
-int sxfs_flush(struct sxfs_ctx* ctx) {
+static int write_superblocks(struct sxfs_ctx* ctx) {
     struct sxfs_superblock* sb = &ctx->superblock;
-    sb->sequence = 1;
     sb->flags = SXFS_FLAG_CLEAN;
     sb->checksum = 0;
     sb->checksum = sxfs_checksum(sb, sizeof(*sb));
-
     if (ctx->write(ctx->cookie, SXFS_PRIMARY_SB_LBA, 1, sb) != 0 ||
         ctx->write(ctx->cookie, SXFS_SECONDARY_SB_LBA, 1, sb) != 0) {
         return SXFS_ERR_IO;
     }
-    if (ctx->write(ctx->cookie, SXFS_BLOCK_BITMAP_LBA, SXFS_BLOCK_BITMAP_SECTORS, ctx->block_bitmap) != 0) {
-        return SXFS_ERR_IO;
-    }
-    if (ctx->write(ctx->cookie, SXFS_INODE_BITMAP_LBA, SXFS_INODE_BITMAP_SECTORS, ctx->inode_bitmap) != 0) {
-        return SXFS_ERR_IO;
-    }
-    if (ctx->write(ctx->cookie, SXFS_INODE_TABLE_LBA, SXFS_INODE_TABLE_SECTORS, ctx->inodes) != 0) {
+    return SXFS_OK;
+}
+
+static int write_home_metadata(struct sxfs_ctx* ctx) {
+    if (ctx->write(ctx->cookie, SXFS_BLOCK_BITMAP_LBA, SXFS_BLOCK_BITMAP_SECTORS, ctx->block_bitmap) != 0 ||
+        ctx->write(ctx->cookie, SXFS_INODE_BITMAP_LBA, SXFS_INODE_BITMAP_SECTORS, ctx->inode_bitmap) != 0 ||
+        ctx->write(ctx->cookie, SXFS_INODE_TABLE_LBA, SXFS_INODE_TABLE_SECTORS, ctx->inodes) != 0) {
         return SXFS_ERR_IO;
     }
     return SXFS_OK;
+}
+
+int sxfs_recover(struct sxfs_ctx* ctx) {
+    if (ctx->recovery == 0) {
+        return SXFS_OK;
+    }
+    /* Home, then the clean superblocks, then the header: the journal stays
+     * pending until everything it describes is home, so stopping anywhere and
+     * opening again replays the same sectors to the same result. */
+    if ((ctx->recovery & SXFS_RECOVERY_REPLAYED) != 0) {
+        const int rc = write_home_metadata(ctx);
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+    }
+    int rc = write_superblocks(ctx);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    if ((ctx->recovery & (SXFS_RECOVERY_REPLAYED | SXFS_RECOVERY_JOURNAL_INVALID)) != 0) {
+        struct sxfs_journal_header empty;
+        memset(&empty, 0, sizeof(empty));
+        if (ctx->write(ctx->cookie, SXFS_JOURNAL_LBA, 1, &empty) != 0) {
+            return SXFS_ERR_IO;
+        }
+    }
+    ctx->recovery = 0;
+    return SXFS_OK;
+}
+
+int sxfs_flush(struct sxfs_ctx* ctx) {
+    /* A pending journal would be replayed over what this writes. */
+    if (ctx->recovery != 0) {
+        return SXFS_ERR_INVALID;
+    }
+    /* Home first: a superblock is what makes a volume recognisable, so a
+     * format interrupted here leaves no half volume that mounts. */
+    int rc = write_home_metadata(ctx);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    ctx->superblock.sequence += 1u;
+    return write_superblocks(ctx);
 }
 
 int sxfs_mkfs(struct sxfs_ctx* ctx, uint32_t total_sectors,
@@ -538,16 +621,14 @@ int sxfs_mkfs(struct sxfs_ctx* ctx, uint32_t total_sectors,
         root->gid = root_gid;
         root->mode = root_mode;
     }
-    rc = sxfs_flush(ctx);
-    if (rc != SXFS_OK) {
-        return rc;
-    }
+    /* The old journal goes before the new superblocks exist: a leftover
+     * pending header must never be found next to a volume it is not about. */
     uint8_t empty[SXFS_SECTOR_SIZE];
     memset(empty, 0, sizeof(empty));
     if (ctx->write(ctx->cookie, SXFS_JOURNAL_LBA, 1, empty) != 0) {
         return SXFS_ERR_IO;
     }
-    return SXFS_OK;
+    return sxfs_flush(ctx);
 }
 
 int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
@@ -1051,6 +1132,377 @@ int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
             /* Un inode asignado pero no alcanzable no se puede conservar
              * razonablemente en una reconstruccion: fallamos antes de perderlo. */
             return SXFS_ERR_INVALID;
+        }
+    }
+    return SXFS_OK;
+}
+
+/* --- Offline repair (docs/fs/SXFS_CHECK.md) -------------------------------- */
+
+enum {
+    REPAIR_FREE = 0,
+    REPAIR_UNVISITED = 1, /* allocated and sound, not reached yet */
+    REPAIR_VISITED = 2,
+    REPAIR_DAMAGED = 3,   /* allocated, and its record cannot be trusted */
+    REPAIR_DOOMED = 4,
+};
+
+struct repair_state {
+    struct sxfs_ctx* ctx;
+    struct sxfs_repair_report* report;
+    uint8_t state[SXFS_MAX_INODES];
+    uint8_t has_parent[SXFS_MAX_INODES];
+    uint16_t stack[SXFS_MAX_INODES];
+    uint32_t depth;
+};
+
+static int inode_is_sound(const struct sxfs_ctx* ctx, const struct sxfs_inode* inode, uint32_t inode_id) {
+    if (inode->inode_id != inode_id || inode->extent_count > SXFS_MAX_EXTENTS ||
+        (inode->type != SXFS_INODE_FILE && inode->type != SXFS_INODE_DIRECTORY)) {
+        return 0;
+    }
+    uint64_t capacity = 0;
+    for (uint32_t index = 0; index < inode->extent_count; ++index) {
+        const struct sxfs_extent* extent = &inode->extents[index];
+        if (extent->sector_count == 0 || extent->start_lba < SXFS_DATA_LBA ||
+            extent->start_lba >= ctx->total_sectors ||
+            extent->sector_count > ctx->total_sectors - extent->start_lba) {
+            return 0;
+        }
+        capacity += extent->sector_count;
+    }
+    if (inode->size > capacity * SXFS_SECTOR_SIZE) {
+        return 0;
+    }
+    return inode->type != SXFS_INODE_DIRECTORY ||
+        (inode->size % SXFS_DIR_ENTRY_SIZE == 0 && inode->size / SXFS_DIR_ENTRY_SIZE <= SXFS_MAX_RECORDS);
+}
+
+static int entry_is_well_formed(const struct sxfs_dir_entry* entry) {
+    return entry->inode_id != 0 && entry->inode_id <= SXFS_MAX_INODES &&
+        entry->name_length != 0 && entry->name_length <= SXFS_INODE_NAME_CAPACITY - 1 &&
+        entry->name[entry->name_length] == '\0' &&
+        (entry->type == SXFS_INODE_FILE || entry->type == SXFS_INODE_DIRECTORY) &&
+        memchr(entry->name, '/', entry->name_length) == NULL &&
+        memchr(entry->name, '\\', entry->name_length) == NULL &&
+        memchr(entry->name, ':', entry->name_length) == NULL &&
+        memchr(entry->name, '\0', entry->name_length) == NULL &&
+        !(entry->name_length == 1 && entry->name[0] == '.') &&
+        !(entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.');
+}
+
+/* Reads one directory, keeps the entries that belong to the tree and rewrites
+ * it if any did not. What it keeps is marked visited; kept subdirectories go
+ * on the stack. An entry is dropped when it is malformed, names a free inode
+ * or one whose deletion is committed, is a second name for an inode already
+ * reached (an alias or a cycle), or repeats a name. Dropping it loses a name,
+ * never contents: what it named is rescued as an orphan if nothing else
+ * reaches it. An entry naming a damaged inode is left alone. */
+static int repair_scan_directory(struct repair_state* repair, uint32_t dir_id) {
+    struct sxfs_ctx* ctx = repair->ctx;
+    struct sxfs_dir_entry* entries = ctx->dir_scratch;
+    uint32_t count = 0;
+    int rc = read_dir_entries(ctx, dir_id, entries, &count);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    uint32_t kept = 0;
+    int changed = 0;
+    for (uint32_t index = 0; index < count; ++index) {
+        struct sxfs_dir_entry entry = entries[index];
+        if (entry.inode_id == 0) {
+            changed = 1; /* a free slot: the rewritten directory is packed */
+            continue;
+        }
+        if (!entry_is_well_formed(&entry)) {
+            repair->report->entries_removed += 1;
+            changed = 1;
+            continue;
+        }
+        const uint8_t target = repair->state[entry.inode_id - 1];
+        if (target == REPAIR_DOOMED) {
+            changed = 1; /* part of finishing the deletion, not damage */
+            continue;
+        }
+        if (target == REPAIR_DAMAGED) {
+            entries[kept++] = entry;
+            continue;
+        }
+        int duplicate = 0;
+        for (uint32_t previous = 0; previous < kept && !duplicate; ++previous) {
+            duplicate = entries[previous].name_length == entry.name_length &&
+                memcmp(entries[previous].name, entry.name, entry.name_length) == 0;
+        }
+        if (target != REPAIR_UNVISITED || duplicate) {
+            repair->report->entries_removed += 1;
+            changed = 1;
+            continue;
+        }
+        const uint16_t type = ctx->inodes[entry.inode_id - 1].type;
+        if (entry.type != type) {
+            entry.type = type; /* the inode knows what it is */
+            repair->report->entries_fixed += 1;
+            changed = 1;
+        }
+        repair->state[entry.inode_id - 1] = REPAIR_VISITED;
+        if (type == SXFS_INODE_DIRECTORY) {
+            repair->stack[repair->depth++] = (uint16_t)entry.inode_id;
+        }
+        entries[kept++] = entry;
+    }
+    if (!changed) {
+        return SXFS_OK;
+    }
+    return write_inode_bytes(ctx, dir_id, (const uint8_t*)entries, kept * SXFS_DIR_ENTRY_SIZE);
+}
+
+static int repair_walk_from(struct repair_state* repair, uint32_t dir_id) {
+    repair->depth = 0;
+    repair->stack[repair->depth++] = (uint16_t)dir_id;
+    while (repair->depth != 0) {
+        const int rc = repair_scan_directory(repair, repair->stack[--repair->depth]);
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+    }
+    return SXFS_OK;
+}
+
+/* Marks what each unreached directory names, so that a lost subtree is
+ * attached once, at its top, with its inner names intact. */
+static int repair_mark_orphan_children(struct repair_state* repair, uint32_t dir_id) {
+    struct sxfs_ctx* ctx = repair->ctx;
+    struct sxfs_dir_entry* entries = ctx->dir_scratch;
+    uint32_t count = 0;
+    const int rc = read_dir_entries(ctx, dir_id, entries, &count);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        const struct sxfs_dir_entry* entry = &entries[index];
+        if (entry_is_well_formed(entry) && entry->inode_id != dir_id &&
+            repair->state[entry->inode_id - 1] == REPAIR_UNVISITED) {
+            repair->has_parent[entry->inode_id - 1] = 1;
+        }
+    }
+    return SXFS_OK;
+}
+
+static size_t repair_orphan_name(char* out, uint16_t type, uint32_t inode_id, uint32_t attempt) {
+    const char* prefix = type == SXFS_INODE_DIRECTORY ? "dir-" : "inode-";
+    size_t length = 0;
+    while (*prefix != '\0') {
+        out[length++] = *prefix++;
+    }
+    char digits[10];
+    size_t digit_count = 0;
+    do {
+        digits[digit_count++] = (char)('0' + inode_id % 10u);
+        inode_id /= 10u;
+    } while (inode_id != 0);
+    while (digit_count != 0) {
+        out[length++] = digits[--digit_count];
+    }
+    if (attempt != 0) {
+        out[length++] = '-';
+        out[length++] = (char)('0' + attempt);
+    }
+    out[length] = '\0';
+    return length;
+}
+
+/* Gives an unreached inode a name under lost+found. Its contents are not
+ * touched: only the new entry is written. */
+static int repair_attach_orphan(struct repair_state* repair, uint32_t lost_id, uint32_t inode_id) {
+    struct sxfs_ctx* ctx = repair->ctx;
+    const uint16_t type = ctx->inodes[inode_id - 1].type;
+    char name[SXFS_INODE_NAME_CAPACITY];
+    for (uint32_t attempt = 0; attempt < 10u; ++attempt) {
+        const size_t length = repair_orphan_name(name, type, inode_id, attempt);
+        struct sxfs_dir_entry* entries = ctx->dir_scratch;
+        uint32_t count = 0;
+        int rc = read_dir_entries(ctx, lost_id, entries, &count);
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+        int taken = 0;
+        for (uint32_t index = 0; index < count && !taken; ++index) {
+            taken = name_matches(ctx, &entries[index], name, length);
+        }
+        if (taken) {
+            continue;
+        }
+        rc = add_dir_entry(ctx, lost_id, inode_id, type, name, length);
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+        repair->state[inode_id - 1] = REPAIR_VISITED;
+        if (type == SXFS_INODE_DIRECTORY) {
+            repair->report->directories_rescued += 1;
+            return repair_walk_from(repair, inode_id);
+        }
+        repair->report->files_rescued += 1;
+        return SXFS_OK;
+    }
+    return SXFS_ERR_EXISTS;
+}
+
+/* The block bitmap is derived from what the inodes claim. A claimed sector
+ * that is not marked is marked. A marked sector nothing claims is freed, but
+ * only when every inode could be read: with a damaged inode around, an
+ * unclaimed sector may be its. Returns nonzero if a sector has two owners. */
+static uint32_t repair_reconcile_blocks(struct repair_state* repair) {
+    struct sxfs_ctx* ctx = repair->ctx;
+    uint8_t claims[sizeof(ctx->block_bitmap)];
+    memset(claims, 0, sizeof(claims));
+    for (uint32_t sector = 0; sector < SXFS_DATA_LBA; ++sector) {
+        sxfs_bitmap_set(claims, sector, 1);
+    }
+    uint32_t cross_linked = 0;
+    for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        const uint8_t state = repair->state[inode_id - 1];
+        if (state == REPAIR_FREE) {
+            continue;
+        }
+        const struct sxfs_inode* inode = &ctx->inodes[inode_id - 1];
+        for (uint32_t index = 0; index < inode->extent_count && index < SXFS_MAX_EXTENTS; ++index) {
+            const struct sxfs_extent* extent = &inode->extents[index];
+            for (uint32_t offset = 0; offset < extent->sector_count; ++offset) {
+                const uint64_t sector = (uint64_t)extent->start_lba + offset;
+                if (sector < SXFS_DATA_LBA || sector >= ctx->total_sectors) {
+                    break; /* a damaged inode's extent; whatever is in range is kept */
+                }
+                if (sxfs_bitmap_test(claims, (uint32_t)sector) && state != REPAIR_DAMAGED) {
+                    cross_linked += 1;
+                }
+                sxfs_bitmap_set(claims, (uint32_t)sector, 1);
+            }
+        }
+    }
+    for (uint32_t sector = 0; sector < ctx->total_sectors; ++sector) {
+        const int claimed = sxfs_bitmap_test(claims, sector);
+        const int marked = sxfs_bitmap_test(ctx->block_bitmap, sector);
+        if (claimed && !marked) {
+            sxfs_bitmap_set(ctx->block_bitmap, sector, 1);
+            repair->report->sectors_marked += 1;
+        } else if (!claimed && marked) {
+            if (repair->report->damaged_inodes == 0) {
+                sxfs_bitmap_set(ctx->block_bitmap, sector, 0);
+                repair->report->sectors_freed += 1;
+            } else {
+                repair->report->leaked_sectors_kept += 1;
+            }
+        }
+    }
+    repair->report->cross_linked_sectors = cross_linked;
+    return cross_linked;
+}
+
+int sxfs_repair(struct sxfs_ctx* ctx, struct sxfs_repair_report* report) {
+    if (ctx == NULL || report == NULL || ctx->recovery != 0) {
+        return SXFS_ERR_INVALID;
+    }
+    memset(report, 0, sizeof(*report));
+    struct repair_state repair;
+    memset(&repair, 0, sizeof(repair));
+    repair.ctx = ctx;
+    repair.report = report;
+
+    /* 1. Every inode is free, sound, doomed or damaged. */
+    for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        struct sxfs_inode* inode = &ctx->inodes[inode_id - 1];
+        const int allocated = sxfs_bitmap_test(ctx->inode_bitmap, inode_id - 1);
+        if (!allocated) {
+            if (inode->type != SXFS_INODE_UNUSED) {
+                memset(inode, 0, sizeof(*inode)); /* the record of a freed inode */
+                report->stale_records_cleared += 1;
+            }
+            continue;
+        }
+        if (inode->type == SXFS_INODE_UNUSED) {
+            sxfs_bitmap_set(ctx->inode_bitmap, inode_id - 1, 0); /* allocated, and nothing there */
+            report->inodes_released += 1;
+        } else if (!inode_is_sound(ctx, inode, inode_id)) {
+            repair.state[inode_id - 1] = REPAIR_DAMAGED;
+            report->damaged_inodes += 1;
+        } else if (sxfs_inode_doomed(ctx->superblock.features, inode)) {
+            repair.state[inode_id - 1] = REPAIR_DOOMED;
+        } else {
+            repair.state[inode_id - 1] = REPAIR_UNVISITED;
+        }
+    }
+    if (repair.state[SXFS_ROOT_INODE - 1] != REPAIR_UNVISITED ||
+        ctx->inodes[SXFS_ROOT_INODE - 1].type != SXFS_INODE_DIRECTORY) {
+        return SXFS_ERR_INVALID; /* no root to hang anything from */
+    }
+
+    /* 2. The tree, from the root. */
+    repair.state[SXFS_ROOT_INODE - 1] = REPAIR_VISITED;
+    int rc = repair_walk_from(&repair, SXFS_ROOT_INODE);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+
+    /* 3. Which unreached inodes are the top of what was lost. */
+    for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        if (repair.state[inode_id - 1] == REPAIR_UNVISITED &&
+            ctx->inodes[inode_id - 1].type == SXFS_INODE_DIRECTORY) {
+            rc = repair_mark_orphan_children(&repair, inode_id);
+            if (rc != SXFS_OK) {
+                return rc;
+            }
+        }
+    }
+
+    /* 4. Blocks, before anything is allocated for lost+found. */
+    const uint32_t cross_linked = repair_reconcile_blocks(&repair);
+
+    /* 5. Deletions that were committed and not finished. Not with a sector
+     * that has two owners: freeing it could take it from the other one. */
+    if (cross_linked == 0) {
+        for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+            if (repair.state[inode_id - 1] != REPAIR_DOOMED) {
+                continue;
+            }
+            struct sxfs_inode* inode = &ctx->inodes[inode_id - 1];
+            set_inode_extent_bits(ctx, inode, 0);
+            memset(inode, 0, sizeof(*inode));
+            sxfs_bitmap_set(ctx->inode_bitmap, inode_id - 1, 0);
+            repair.state[inode_id - 1] = REPAIR_FREE;
+            report->deletions_finished += 1;
+        }
+    }
+
+    /* 6. What nothing names gets a name under lost+found: tops first, then
+     * whatever is left, which can only be a cycle. */
+    uint32_t lost_id = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+            if (repair.state[inode_id - 1] != REPAIR_UNVISITED ||
+                (pass == 0 && repair.has_parent[inode_id - 1])) {
+                continue;
+            }
+            if (lost_id == 0) {
+                uint16_t type = 0;
+                rc = sxfs_mkdir_p(ctx, "lost+found");
+                if (rc == SXFS_OK) {
+                    rc = resolve_path(ctx, "lost+found", &lost_id, &type);
+                }
+                if (rc != SXFS_OK) {
+                    lost_id = 0;
+                    break; /* no room, or the name is a file: orphans stay */
+                }
+                repair.state[lost_id - 1] = REPAIR_VISITED;
+            }
+            rc = repair_attach_orphan(&repair, lost_id, inode_id);
+            if (rc == SXFS_ERR_IO) {
+                return rc;
+            }
+        }
+    }
+    for (uint32_t inode_id = 1; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        if (repair.state[inode_id - 1] == REPAIR_UNVISITED) {
+            report->orphans_left += 1;
         }
     }
     return SXFS_OK;

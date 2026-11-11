@@ -14,6 +14,7 @@ struct Mount {
     size_t device_index;
     char mount_point[fs::kMountPointCapacity];
     bool attached;
+    bool read_only;
 };
 
 const fs::Driver* g_drivers[fs::kMaxDrivers] = {};
@@ -158,7 +159,7 @@ size_t mount_any(const char* mount_point) {
     return kInvalidMount;
 }
 
-bool attach(size_t mount_index) {
+bool attach(size_t mount_index, bool read_only) {
     if (mount_index >= g_mount_count || !g_mounts[mount_index].in_use) {
         return false;
     }
@@ -166,8 +167,19 @@ bool attach(size_t mount_index) {
     if (slot.attached) {
         return true;
     }
-    slot.attached = slot.driver->attach(slot.volume);
+    slot.read_only = read_only;
+    slot.attached = slot.driver->attach(slot.volume, read_only);
     return slot.attached;
+}
+
+bool read_only(size_t mount_index) {
+    if (mount_index >= g_mount_count || !g_mounts[mount_index].in_use) {
+        return false;
+    }
+    const Mount& slot = g_mounts[mount_index];
+    VolumeStats stats = {};
+    return slot.read_only ||
+        (slot.driver->stats != nullptr && slot.driver->stats(slot.volume, stats) && !stats.writable);
 }
 
 int release(size_t mount_index, bool (*referenced)(const vfs::Vnode& node)) {
@@ -217,6 +229,7 @@ bool mount_info(size_t mount_index, MountInfo& out) {
     out.device_index = slot.device_index;
     out.mount_point = slot.mount_point;
     out.attached = slot.attached;
+    out.read_only = slot.read_only;
     return true;
 }
 

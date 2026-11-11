@@ -91,7 +91,7 @@ fs::VolumeId probe_fat_format(size_t device, const char* mount_point) {
     return device < kDevices && g_fat_format_on[device] ? device : fs::kInvalidVolume;
 }
 
-bool attach(fs::VolumeId) { return true; }
+bool attach(fs::VolumeId, bool) { return true; }
 fs::Status read(vfs::Vnode&, size_t, void*, size_t) { return fs::Status::ok; }
 void refresh(vfs::Vnode&) {}
 void unmount(fs::VolumeId) {}

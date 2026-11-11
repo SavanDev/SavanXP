@@ -204,7 +204,7 @@ uint32_t generation() {
     return block::generation() + fs::generation() + g_content_generation;
 }
 
-int mount(uint32_t id, const char* path, const fs::Owner& owner) {
+int mount(uint32_t id, const char* path, const fs::Owner& owner, bool read_only) {
     const size_t index = index_of(id);
     if (index == block::kInvalidDevice) {
         return sx::negative_error(SX_ENODEV);
@@ -236,7 +236,7 @@ int mount(uint32_t id, const char* path, const fs::Owner& owner) {
     if (mounted == fs::kInvalidMount) {
         return sx::negative_error(SX_EIO);
     }
-    if (!fs::attach(mounted)) {
+    if (!fs::attach(mounted, read_only)) {
         (void)fs::release(mounted, nullptr);
         return sx::negative_error(SX_EIO);
     }
@@ -452,6 +452,9 @@ bool snapshot(size_t wanted, sxn_storage_device& out) {
         fs::MountInfo mounted = {};
         fs::VolumeStats stats = {};
         out.flags |= SXN_STORAGE_MOUNTED;
+        if (fs::read_only(mount)) {
+            out.flags |= SXN_STORAGE_READ_ONLY;
+        }
         if (is_root_mount(mount)) {
             out.flags |= SXN_STORAGE_SYSTEM;
         }

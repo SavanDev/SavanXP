@@ -233,6 +233,12 @@ static inline long sxn_storage_mount(uint32_t id, const char* path) {
     return sxn_trap(SXN_SYS_STORAGE_MOUNT, id, (unsigned long)path, 0);
 }
 
+/* The same with SXN_STORAGE_MOUNT_* flags: READ_ONLY looks at a volume
+ * without writing a byte to it. */
+static inline long sxn_storage_mount_flags(uint32_t id, const char* path, uint32_t flags) {
+    return sxn_trap(SXN_SYS_STORAGE_MOUNT, id, (unsigned long)path, flags);
+}
+
 static inline long sxn_storage_unmount(const char* path) {
     return sxn_trap(SXN_SYS_STORAGE_UNMOUNT, (unsigned long)path, 0, 0);
 }

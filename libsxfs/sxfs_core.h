@@ -41,6 +41,13 @@ enum {
     SXFS_ERR_TOO_LONG = -7,  /* nombre/ruta excede el limite del formato */
 };
 
+/* sxfs_ctx.recovery. */
+enum {
+    SXFS_RECOVERY_UNCLEAN = 1u,         /* the superblock is not marked clean */
+    SXFS_RECOVERY_REPLAYED = 2u,        /* a pending journal was replayed in memory */
+    SXFS_RECOVERY_JOURNAL_INVALID = 4u, /* the journal header is not one; ignored */
+};
+
 /* Lee/escribe `count` sectores desde/hacia `lba` en el backend. Devuelve 0 en
  * exito, distinto de 0 en error. `buffer` mide count * SXFS_SECTOR_SIZE. */
 typedef int (*sxfs_read_fn)(void* cookie, uint32_t lba, uint32_t count, void* buffer);
@@ -51,6 +58,9 @@ struct sxfs_ctx {
     sxfs_read_fn read;
     sxfs_write_fn write;
     uint32_t total_sectors;
+    /* SXFS_RECOVERY_* bits set by sxfs_open: what the image on the backend
+     * still needs before it matches the metadata in memory. */
+    uint32_t recovery;
 
     /* Metadata en memoria (fuente de verdad durante la construccion; se vuelca
      * al backend con sxfs_flush). Espeja los globals del kernel. */
@@ -79,16 +89,27 @@ void sxfs_ctx_init(struct sxfs_ctx* ctx, void* cookie, sxfs_read_fn read, sxfs_w
  * escribe nada al backend todavia; llamar sxfs_flush para persistir. */
 int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors);
 
-/* Monta una imagen existente: lee el superblock (elige el de mayor secuencia
- * entre primario y secundario), lo valida contra el layout del formato y carga
- * bitmaps y tabla de inodos en el ctx. Preserva el contenido (persistencia).
- * Devuelve SXFS_ERR_INVALID si no hay un superblock SxFS valido. */
+/* Opens an existing image: reads the superblock (the higher sequence of
+ * primary and secondary), validates it against the format's layout and loads
+ * the bitmaps and the inode table. SXFS_ERR_INVALID without a valid SxFS
+ * superblock.
+ *
+ * It never writes. An interrupted volume is recovered IN MEMORY the way the
+ * kernel recovers it at mount: a pending journal is replayed over the loaded
+ * metadata. `ctx->recovery` (SXFS_RECOVERY_*) says what the image still needs,
+ * and every read through the ctx sees the recovered state. The caller
+ * validates that state (the tree walk) before trusting or persisting it. */
 int sxfs_open(struct sxfs_ctx* ctx);
-
-/* Persiste superblocks (primario+secundario), bitmaps y tabla de inodos al
- * backend. Los datos de archivos/directorios ya se escribieron in situ. */
+/* Persists what sxfs_open recovered: replayed metadata home, clean
+ * superblocks, journal header cleared, in that order. Idempotent, and safe to
+ * interrupt: opening the image again recovers to the same state. A no-op on an
+ * image that needs nothing. */
+int sxfs_recover(struct sxfs_ctx* ctx);
+/* Writes bitmaps, inode table and both superblocks (clean, next sequence).
+ * File and directory data were already written in place. SXFS_ERR_INVALID
+ * while the image needs sxfs_recover: a journal left pending would be replayed
+ * over the new metadata. */
 int sxfs_flush(struct sxfs_ctx* ctx);
-
 /* Formats a volume on the backend in one go: sxfs_format, the root directory
  * owned by `root_uid`/`root_gid` with `root_mode` (0 leaves it to the path
  * defaults, which make the root the system's), sxfs_flush, and a zeroed
@@ -132,6 +153,47 @@ int sxfs_read_inode(const struct sxfs_ctx* ctx, uint32_t inode_id,
 typedef int (*sxfs_walk_fn)(void* cookie, const char* relpath,
                             uint32_t inode_id, uint16_t type);
 int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie);
+
+/* What sxfs_repair did, and what it left because the image does not say
+ * whose it is (docs/fs/SXFS_CHECK.md). */
+struct sxfs_repair_report {
+    /* Repaired. */
+    uint32_t inodes_released;       /* marked allocated, with no record */
+    uint32_t stale_records_cleared; /* a record left in a free inode */
+    uint32_t entries_removed;       /* malformed, dangling, duplicate or alias entries */
+    uint32_t entries_fixed;         /* an entry whose type disagreed with its inode */
+    uint32_t sectors_marked;        /* claimed by an inode, free in the bitmap */
+    uint32_t sectors_freed;         /* marked in the bitmap, claimed by nothing */
+    uint32_t deletions_finished;    /* doomed inodes freed */
+    uint32_t files_rescued;         /* unreachable files named under lost+found */
+    uint32_t directories_rescued;   /* unreachable directories, with their contents */
+    /* Left as found. */
+    uint32_t damaged_inodes;        /* a record that contradicts itself */
+    uint32_t cross_linked_sectors;  /* a sector two inodes claim */
+    uint32_t leaked_sectors_kept;   /* unclaimed, kept because an inode is damaged */
+    uint32_t orphans_left;          /* unreachable, and lost+found could not take them */
+};
+
+static inline uint32_t sxfs_repair_changes(const struct sxfs_repair_report* report) {
+    return report->inodes_released + report->stale_records_cleared + report->entries_removed +
+        report->entries_fixed + report->sectors_marked + report->sectors_freed +
+        report->deletions_finished + report->files_rescued + report->directories_rescued;
+}
+
+static inline uint32_t sxfs_repair_unresolved(const struct sxfs_repair_report* report) {
+    return report->damaged_inodes + report->cross_linked_sectors + report->leaked_sectors_kept +
+        report->orphans_left;
+}
+
+/* Repairs the metadata in memory and the directories on the backend; the
+ * caller persists with sxfs_flush. It never frees or overwrites contents it
+ * can still reach: an unreachable file or directory is named under
+ * /lost+found (inode-<id>, dir-<id>) before any block is reclaimed, and
+ * damage whose owner the image does not identify is counted and left. Run it
+ * on a copy: directories are rewritten in place, so an interrupted repair is
+ * resumed by starting again from the original. SXFS_ERR_INVALID while the
+ * image needs sxfs_recover, or without a usable root directory. */
+int sxfs_repair(struct sxfs_ctx* ctx, struct sxfs_repair_report* report);
 
 /* Ownership (SXFS_FEATURE_OWNERSHIP, docs/kernel/USERS_AND_PERMISSIONS.md).
  * New inodes get the default of their path on their own; these are for what

@@ -125,8 +125,9 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
 
 `fs::Driver` in `include/kernel/fs.hpp`:
 
-- **Mounting:** `probe` (recognise the device, load metadata, publish nothing),
-  `attach` (publish the tree), `unmount` (optional). `can_be_root` says the
+- **Mounting:** `probe` (recognise the device, load metadata, publish nothing
+  and **write nothing**), `attach` (publish the tree; with `read_only`, still
+  write nothing), `unmount` (optional). `can_be_root` says the
   format may hold the system's root: `fs::mount` tries only such drivers for
   `/`, so a FAT boot drive registered ahead of the system disk, as on AHCI
   port 0, never becomes the root. `adopt_owner` is for a format with no owners
@@ -243,6 +244,23 @@ two system calls, so when nothing is found nothing points at the subtree, and
 its node slots go to a free list `add_node` takes from first. The root
 (`/`) and the boot volume (`/boot`) cannot be released.
 
+## Read-only mounts
+
+`fs::attach(mount, /*read_only=*/true)` mounts a volume that is never written:
+the driver is told (`Driver::attach`'s flag) and publishes its vnodes without
+`writable`, and the VFS refuses every change on the volume with `EROFS` before
+any driver is called: create, open for writing, mkdir, unlink, rmdir, rename,
+truncate, chmod and chown. `fs::read_only(mount)` is the question; it is also
+true for a volume its driver could only bring up read-only (a device that
+refuses writes, a recovery that could not be persisted). `sync` on such a
+volume succeeds and writes nothing.
+
+From userland it is `sxn_storage_mount_flags(id, path,
+SXN_STORAGE_MOUNT_READ_ONLY)`; the device is then listed with
+`SXN_STORAGE_READ_ONLY`. On SxFS it is the way to look at a volume that needs
+recovery without changing it ([SXFS_CHECK.md](../fs/SXFS_CHECK.md#looking-without-touching)).
+The root is always mounted writable.
+
 ## The boot volume at `/boot`
 
 Right after the root, `storage::mount_boot_volume` mounts the first FAT volume
@@ -288,12 +306,10 @@ is known, what the fix is. The SxFS side is in
   check and is then refused by the format, reported as `ENOSPC`. Read in the
   code, not yet exercised. A per-volume flag asking for case-insensitive
   lookup would be the smallest fix.
-- **There is no read-only mount.** Acting as the system passes the write bits
-  ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#what-the-check-covers)),
-  so what protects a read-only volume is each vnode published without
-  `writable` and the driver answering `read_only`. Opening such a file for
-  writing is `EBADF`, not `EROFS`. A mount flag the VFS checks before any
-  driver call would cover both.
+- **A handle opened before a volume went read-only keeps its vnode.** The
+  policy is checked at the operations that start from a path; a write through
+  an already open handle reaches the driver, which refuses it. Nothing remounts
+  a volume read-only today, so it cannot happen yet.
 - **A driver never sees an open or a close.** It is told when the last holder
   of an unlinked file goes (`release`) and nothing else, so it cannot keep
   state per open file: FAT opens the file again on every `read`, walking its
