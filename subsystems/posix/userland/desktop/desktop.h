@@ -19,7 +19,9 @@
  * 0 is the main window, which windowd gives the background role. The Start
  * menu and the tray popups have an id each because they can be open at the
  * same time; the three tray popups share a corner and an id, so at most one of
- * them is open. The context menu shares the Start menu's id the same way. */
+ * them is open. The context menu shares the Start menu's id the same way, and
+ * the Start menu's cascade takes the tray popups' id: it is only open with
+ * the Start menu, and a tray popup opened then replaces it. */
 enum desktop_window_id
 {
     DESKTOP_WINDOW_BACKGROUND = 0,
@@ -43,7 +45,9 @@ enum desktop_popup
     DESKTOP_POPUP_CONFIRM = 6,
     /* Shut Down or Restart, in the Start menu's window as well. */
     DESKTOP_POPUP_SHUTDOWN = 7,
-    DESKTOP_POPUP_COUNT = 8,
+    /* The Start menu's cascade (Programs, Settings), in the tray's window. */
+    DESKTOP_POPUP_SUBMENU = 8,
+    DESKTOP_POPUP_COUNT = 9,
 };
 
 /* Bits a module's pointer or tick handler returns. */
@@ -96,6 +100,7 @@ extern const struct desktop_popup_ops desktop_hung_ops;
 extern const struct desktop_popup_ops desktop_contextmenu_ops;
 extern const struct desktop_popup_ops desktop_confirm_ops;
 extern const struct desktop_popup_ops desktop_shutdown_ops;
+extern const struct desktop_popup_ops desktop_submenu_ops;
 
 /* desktop_contextmenu.c: shows `menu` at the screen point (x, y); the id of
  * the item chosen goes to `command` once the menu is closed. */
@@ -115,6 +120,26 @@ uint32_t desktop_confirm_key(const struct savanxp_input_event *event);
 #define DESKTOP_SHUTDOWN_RESTART 1
 void desktop_shutdown_dialog(int option);
 uint32_t desktop_shutdown_key(const struct savanxp_input_event *event);
+
+/* desktop_submenu.c: the Start menu's cascade and progman's catalog behind
+ * it. A source is what one cascade lists. */
+#define DESKTOP_SUBMENU_PROGRAMS 0
+#define DESKTOP_SUBMENU_SETTINGS 1
+/* Rebuilds the catalog if the disk under it changed since the last time. */
+void desktop_submenu_refresh_catalog(void);
+/* Non-zero when `source` would list nothing. */
+int desktop_submenu_is_empty(int source);
+/* What the next cascade opened lists. */
+void desktop_submenu_select(int source);
+
+/* desktop_startmenu.c: whether the banner shows the edition after the system
+ * name (on by default). Even on, it shows only when the menu is tall enough
+ * for both; a visual setting can turn it off. */
+void desktop_startmenu_set_show_edition(int show);
+/* What the cascade tells its menu. The pointer moved
+ * onto the cascade: keep it open and its entry lit. The cascade closed. */
+void desktop_startmenu_submenu_entered(void);
+void desktop_startmenu_submenu_closed(void);
 
 /* desktop_view.c: the icons on the background (docs/desktop/DESKTOP_ICONS.md). */
 void desktop_view_init(const struct savanxp_fb_info *info);
@@ -141,6 +166,14 @@ int desktop_popup_is_open(enum desktop_popup popup);
  * screen point (x, y), flipped left or up where it would not fit above the
  * taskbar, as Windows places a context menu. */
 void desktop_open_popup_at(enum desktop_popup popup, int x, int y);
+/* Opens the Start menu's cascade with its top-left corner at the screen point
+ * (x, y), moved up or left only as far as it takes to fit above the taskbar.
+ * The Start menu stays open. */
+void desktop_open_submenu(int x, int y);
+void desktop_close_submenu(void);
+/* The open popup of this kind must be painted again; for a module that
+ * changes another one's state (the cascade lighting its Start menu entry). */
+void desktop_repaint_popup(enum desktop_popup popup);
 /* The background must be painted again (an icon changed). */
 void desktop_repaint_background(void);
 /* The wallpaper changed: it is drawn again, not only the icons over it. */

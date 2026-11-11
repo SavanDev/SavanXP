@@ -127,6 +127,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
   rule that every UI font is 1-bit, and how to change a face.
+- [`START_MENU.md`](desktop/START_MENU.md) — the Start menu: Programs and Settings
+  cascades from progman's catalog, the cascade's timing and placement, why it is one
+  level deep, the banner and its edition switch.
 - [`DESKTOP_ICONS.md`](desktop/DESKTOP_ICONS.md) — desktop icons, shortcuts and
   context menus: the Desktop folder, the `.sxlnk` format and what "open"
   means, the icon grid and its keyboard, the desktop's focus in `windowd`,
@@ -203,6 +206,9 @@ all its phases have landed; the links to it move with it.
 
 ### Open — `roadmaps/open/`
 
+- [`SYSTEM_LIMITS_ROADMAP.md`](roadmaps/open/SYSTEM_LIMITS_ROADMAP.md) — how many windows,
+  descriptors and kernel objects fit today, the chain of limits from the owned windows
+  per process down to the kernel tables, what each raise costs, and the order to do them.
 - [`SMP_ROADMAP.md`](roadmaps/open/SMP_ROADMAP.md) — more than one core: startup, the big
   kernel lock, TLB shootdown and the lock's counters, all done; and phase 5,
   taking the lock apart, planned with the measurement that says when.

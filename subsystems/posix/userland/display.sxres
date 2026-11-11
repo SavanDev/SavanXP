@@ -5,7 +5,7 @@ version=system
 vendor=SavanXP
 accent=3a68be
 icon=app-display
-category=System
+category=Settings
 
 # Fixed size, as a property sheet is: a larger window adds only empty face.
 # The WM turns off Maximize and the resizing borders.

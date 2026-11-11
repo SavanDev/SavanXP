@@ -62,6 +62,7 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_contextmenu_ops,
     &desktop_confirm_ops,
     &desktop_shutdown_ops,
+    &desktop_submenu_ops,
 };
 
 static struct savanxp_gfx_context g_background;
@@ -150,8 +151,13 @@ static void close_slot(struct desktop_popup_slot *slot)
     ops->close();
 }
 
-/* `at_point`: open with the top-left corner at (x, y) instead of where the
- * popup kind is anchored. */
+/* Where open_slot_at puts a popup: where its kind is anchored, at a point the
+ * way a context menu opens (flipped left or up where it does not fit), or at
+ * a point moved only as far as it takes to fit (a cascade beside its menu). */
+#define DESKTOP_PLACE_ANCHORED 0
+#define DESKTOP_PLACE_AT_POINT 1
+#define DESKTOP_PLACE_FIT 2
+
 static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup popup, int at_point, int x, int y)
 {
     const struct desktop_popup_ops *ops = k_popup_ops[popup];
@@ -164,7 +170,14 @@ static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup pop
     {
         ops->measure(&width, &height);
     }
-    if (at_point)
+    if (at_point == DESKTOP_PLACE_FIT)
+    {
+        x = x + width > display_width ? display_width - width : x;
+        y = y + height > work_height ? work_height - height : y;
+        x = x < 0 ? 0 : x;
+        y = y < 0 ? 0 : y;
+    }
+    else if (at_point == DESKTOP_PLACE_AT_POINT)
     {
         /* Where it does not fit right of or below the point, it opens to the
          * left of or above it, and never over the taskbar. */
@@ -233,7 +246,7 @@ static void close_context_menu(void)
 
 static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
 {
-    open_slot_at(slot, popup, 0, 0, 0);
+    open_slot_at(slot, popup, DESKTOP_PLACE_ANCHORED, 0, 0);
 }
 
 /* The taskbar's buttons are toggles: the same button closes what it opened.
@@ -269,7 +282,31 @@ void desktop_open_popup_at(enum desktop_popup popup, int x, int y)
     /* The context menu's slot is the Start menu's, which this closes too. */
     desktop_close_popups();
     close_slot(slot);
-    open_slot_at(slot, popup, 1, x, y);
+    open_slot_at(slot, popup, DESKTOP_PLACE_AT_POINT, x, y);
+}
+
+void desktop_open_submenu(int x, int y)
+{
+    close_slot(&g_tray);
+    open_slot_at(&g_tray, DESKTOP_POPUP_SUBMENU, DESKTOP_PLACE_FIT, x, y);
+}
+
+void desktop_close_submenu(void)
+{
+    if (g_tray.open && g_tray.kind == DESKTOP_POPUP_SUBMENU)
+    {
+        close_slot(&g_tray);
+    }
+}
+
+void desktop_repaint_popup(enum desktop_popup popup)
+{
+    struct desktop_popup_slot *slot = slot_for(popup);
+
+    if (slot->open && slot->kind == popup)
+    {
+        slot->needs_repaint = 1;
+    }
 }
 
 void desktop_repaint_background(void)

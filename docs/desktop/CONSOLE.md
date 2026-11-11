@@ -146,7 +146,7 @@ end of input did not exist.
 
 ## Opening it
 
-- Start menu: Accessories → Command Prompt (Program Manager lists it too).
+- Start menu: Programs → Accessories → Command Prompt (Program Manager lists it too).
 - **Ctrl+Alt+T** anywhere: Windows lets any Start menu shortcut carry a
   Ctrl+Alt key, and this is the one the Command Prompt ships with. AltGr does
   not trigger it, so no layout loses the character on AltGr+T.

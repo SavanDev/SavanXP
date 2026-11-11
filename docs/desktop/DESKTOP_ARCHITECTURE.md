@@ -131,7 +131,7 @@ the background is always there. Because the background and the taskbar are
 this same process, a pointer event on either is the leave signal, passed on
 through `desktop_popup_ops.pointer_left`. Moving straight onto an application
 window is still not reported, so anything a popup keeps doing on hover (the
-Start menu's arrow strips scrolling) must stop on its own at a natural end.
+Start menu cascade's arrow strips scrolling) must stop on its own at a natural end.
 
 It replaces six processes (`shellui`, `taskbar`, `startmenu`, `volumepopup`,
 `clockpopup`, `kbdlayoutpopup`). The popups open without spawning a process.
@@ -154,7 +154,7 @@ Which windows the desktop has, and what each is:
 | 0 | Background (wallpaper) | `background`, granted at launch |
 | 1 | Taskbar | `panel`, bottom edge, 28 px |
 | 2 | Start menu, the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)), or a dialog of the shell (the icon confirmation, Shut Down) | `popup`; the menus dismissable, the dialogs centred and not; never two open, so one id |
-| 3 | Volume, clock or keyboard-layout popup | `popup`, dismissable; the three share the tray corner, so one id |
+| 3 | Volume, clock or keyboard-layout popup, or the Start menu's cascade ([START_MENU.md](./START_MENU.md)) | `popup`, dismissable; the three share the tray corner, so one id, and the cascade borrows it while the Start menu is open |
 
 The modules are `subsystems/posix/userland/desktop/desktop_*.c`, one per
 window kind, behind a single loop in `desktop.c`.

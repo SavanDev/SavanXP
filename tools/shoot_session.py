@@ -252,10 +252,8 @@ class Session(object):
 
         Only what tests the Start menu or Program Manager themselves goes this
         way; every other program is opened by name through the console (run).
-        The menu is mouse only and its list may be longer than the menu, so the
-        row is found by its text: first as the menu opens, then after resting
-        the pointer on the down arrow strip, which scrolls the list to its end
-        (System, where Program Manager lives, is the last group).
+        The menu is mouse only: Programs is clicked open, and the row is found
+        by its text in the cascade.
         """
         if self.progman_open:
             return
@@ -263,20 +261,19 @@ class Session(object):
         self.qmp.move_to(*start_button_center(probe))
         self.qmp.click()
         image = wait_menu_open(self, "menu-for-progman")
-        mx, my, mw, mh = startmenu_rect(image)
-        box = (mx + 2 + STARTMENU_STRIP_WIDTH, my + 2, mx + mw - 2, my + 2 + STARTMENU_VIEW_HEIGHT)
-        origin = find_text(image, box, "Program Manager", TEXT, FACE, solid_only=True)[0]
+        self.qmp.move_to(*startmenu_entry_point(image, STARTMENU_PROGRAMS))
+        self.qmp.click()
+        time.sleep(STARTMENU_CASCADE_WAIT)
+        image = self.shot("menu-for-progman-programs")
+        origin = find_in_submenu(image, "Program Manager")
         if origin is None:
-            up, down = startmenu_arrow_points(image)
-            # The strip's left end, so the cursor neither covers the arrow nor
-            # hovers a row (a hovered row is repainted white on blue).
-            self.qmp.move_to(down[0] - 90, down[1] + 2)
-            for _ in range(10):
-                time.sleep(1.0)
-                image = self.shot("menu-progman-scrolled")
-                if image.getpixel(down) == SHADOW:
-                    break
-            origin = find_text(image, box, "Program Manager", TEXT, FACE, solid_only=True)[0]
+            # A cascade taller than the screen scrolls: the wheel takes it to
+            # its end (System, where Program Manager lives, is the last group).
+            self.qmp.move_to(SUBMENU_X + 60, (image.size[1] - TASKBAR_HEIGHT) // 2)
+            self.qmp.wheel(-30)
+            time.sleep(1.5)
+            image = self.shot("menu-progman-scrolled")
+            origin = find_in_submenu(image, "Program Manager")
         if origin is None:
             raise Failure("the Start menu does not list Program Manager")
         self.qmp.move_to(origin[0] + 20, origin[1] + 6)
@@ -431,20 +428,29 @@ TASKBAR_MARGIN_BOTTOM = 1
 TASKBAR_START_WIDTH = 64
 TASKBAR_BUTTON_WIDTH = 160
 TASKBAR_BUTTON_GAP = 2
-STARTMENU_WIDTH = 232
-STARTMENU_HEIGHT = 512
+STARTMENU_WIDTH = 176
 STARTMENU_STRIP_WIDTH = 24
 STARTMENU_MARGIN = 2
-# The NT 4 proportions of desktop_startmenu.c: 28px rows, and a footer of two
-# etched separator lines, the gap under them and two rows.
+# The NT 4 proportions of desktop_startmenu.c: 28px rows -- the Programs and
+# Settings entries -- and a footer of two etched separator lines, the gap
+# under them and two rows. The image always has a Settings group.
 STARTMENU_ROW_HEIGHT = 28
+STARTMENU_ENTRIES = 2
 STARTMENU_FOOTER_GAP = 5
 STARTMENU_FOOTER_HEIGHT = 2 + STARTMENU_FOOTER_GAP + 2 * STARTMENU_ROW_HEIGHT
-# The view is the menu minus its 2px margins and that footer; when the catalog
-# overflows it, a 12px arrow strip sits at its top and bottom, each arrow 7px
-# wide centred in the strip.
-STARTMENU_VIEW_HEIGHT = STARTMENU_HEIGHT - 2 * STARTMENU_MARGIN - STARTMENU_FOOTER_HEIGHT
-STARTMENU_SCROLL_STRIP_HEIGHT = 12
+STARTMENU_HEIGHT = 2 * STARTMENU_MARGIN + STARTMENU_ENTRIES * STARTMENU_ROW_HEIGHT + STARTMENU_FOOTER_HEIGHT
+STARTMENU_PROGRAMS = 0
+STARTMENU_SETTINGS = 1
+# The cascade (desktop_submenu.c) opens at the menu's right edge, overlapping
+# it by 3px, sized to its content and moved up only as far as it needs to fit.
+# When it is taller than the work area it fills it and a 12px arrow strip sits
+# at its top and bottom, each arrow 7px wide centred in the strip.
+SUBMENU_X = TASKBAR_MARGIN + STARTMENU_WIDTH - 3
+SUBMENU_MAX_WIDTH = 320
+SUBMENU_SCROLL_STRIP_HEIGHT = 12
+# How long resting on an entry takes to open its cascade, plus a margin for a
+# frame to come out under TCG.
+STARTMENU_CASCADE_WAIT = 2.0
 
 
 class Failure(Exception):
@@ -478,6 +484,31 @@ def startmenu_rect(image):
         STARTMENU_WIDTH,
         STARTMENU_HEIGHT,
     )
+
+
+def startmenu_entry_point(image, entry):
+    """The middle of a cascading entry's row, left of its arrow."""
+    mx, my, mw, mh = startmenu_rect(image)
+    return mx + 100, my + STARTMENU_MARGIN + entry * STARTMENU_ROW_HEIGHT + STARTMENU_ROW_HEIGHT // 2
+
+
+def startmenu_footer_point(image, action):
+    """The middle of Shut Down... (0) or Restart... (1)."""
+    mx, my, mw, mh = startmenu_rect(image)
+    footer_y = (my + STARTMENU_MARGIN + STARTMENU_ENTRIES * STARTMENU_ROW_HEIGHT + 2 + STARTMENU_FOOTER_GAP
+                + action * STARTMENU_ROW_HEIGHT)
+    return mx + 100, footer_y + STARTMENU_ROW_HEIGHT // 2
+
+
+def submenu_box(image):
+    """Where the cascade can be: right of the menu, anywhere above the taskbar."""
+    width, height = image.size
+    return (SUBMENU_X, 0, min(width, SUBMENU_X + SUBMENU_MAX_WIDTH), height - TASKBAR_HEIGHT)
+
+
+def find_in_submenu(image, text):
+    """The origin of `text` drawn in the cascade, black on the menu's face, or None."""
+    return find_text(image, submenu_box(image), text, TEXT, FACE, solid_only=True)[0]
 
 
 def expect_pixel(image, x, y, colour, label):
@@ -1826,45 +1857,38 @@ def wait_menu_open(s, stem="menu-abierto"):
     return image
 
 
-def startmenu_arrow_points(image):
-    """Centre of the 7px base row of the up and down arrows.
+def check_submenu_arrows(s, opened):
+    """The arrow strips of a cascade taller than the work area.
 
-    The arrow is 4 rows tall, centred in its 12px strip: the up arrow's base is
-    its last row (strip top + 7), the down arrow's its first (strip top + 4).
+    Such a cascade fills the work area from y 0, and its strips are its first
+    and last 12px inside the 2px frame. Freshly opened, the list is at the
+    top: the up arrow is etched grey and the down arrow black. Resting the
+    pointer on the down strip scrolls on its own (no further pointer events
+    arrive) until the end, where the two swap. A cascade that fits has no
+    strips, and then there is nothing to check.
     """
-    mx, my, mw, mh = startmenu_rect(image)
-    view_x = mx + 2 + STARTMENU_STRIP_WIDTH
-    view_width = STARTMENU_WIDTH - 4 - STARTMENU_STRIP_WIDTH
-    centre_x = view_x + (view_width - 7) // 2 + 3
-    up_strip_y = my + 2
-    down_strip_y = my + 2 + STARTMENU_VIEW_HEIGHT - STARTMENU_SCROLL_STRIP_HEIGHT
-    return (centre_x, up_strip_y + 7), (centre_x, down_strip_y + 4)
-
-
-def check_startmenu_arrows(s, opened):
-    """The arrow strips of a Start menu whose catalog does not fit.
-
-    Freshly opened, the list is at the top: the up arrow is etched grey and the
-    down arrow black. Resting the pointer on the down strip scrolls on its own
-    (no further pointer events arrive) until the end, where the two swap. A
-    catalog that fits has no strips, and then there is nothing to check.
-    """
-    up, down = startmenu_arrow_points(opened)
-    if opened.getpixel(up) == FACE and opened.getpixel(down) == FACE:
-        print("startmenu: the catalog fits, no arrow strips to check")
+    width, height = opened.size
+    work = height - TASKBAR_HEIGHT
+    up_y = 2 + 7
+    down_y = work - 2 - SUBMENU_SCROLL_STRIP_HEIGHT + 4
+    row = [opened.getpixel((x, down_y)) for x in range(SUBMENU_X + 4, min(width, SUBMENU_X + SUBMENU_MAX_WIDTH))]
+    live = [index for index, pixel in enumerate(row) if pixel == TEXT]
+    if opened.getpixel((SUBMENU_X + 1, 1)) == opened.getpixel((SUBMENU_X - 20, 1)) or not live:
+        print("startmenu: the Programs cascade fits, no arrow strips to check")
         return
-    expect_pixel(opened, up[0], up[1], SHADOW, "menu just opened: the up arrow is greyed")
-    expect_pixel(opened, down[0], down[1], TEXT, "menu just opened: the down arrow is live")
+    # The arrow's 7px base row; its middle is the arrow's centre.
+    centre_x = SUBMENU_X + 4 + live[0] + 3
+    expect_pixel(opened, centre_x, up_y, SHADOW, "cascade just opened: the up arrow is greyed")
     # On the strip's left end, so the cursor does not cover the arrow.
-    s.qmp.move_to(down[0] - 90, down[1] + 2)
+    s.qmp.move_to(SUBMENU_X + 8, down_y + 2)
     image = None
     for _ in range(10):
         time.sleep(1.0)
-        image = s.shot("menu-flecha-abajo")
-        if image.getpixel(down) == SHADOW:
+        image = s.shot("submenu-down-arrow")
+        if image.getpixel((centre_x, down_y)) == SHADOW:
             break
-    expect_pixel(image, down[0], down[1], SHADOW, "rested on the down arrow: the list reached its end")
-    expect_pixel(image, up[0], up[1], TEXT, "rested on the down arrow: the up arrow is live")
+    expect_pixel(image, centre_x, down_y, SHADOW, "rested on the down arrow: the list reached its end")
+    expect_pixel(image, centre_x, up_y, TEXT, "rested on the down arrow: the up arrow is live")
 
 
 # The Shut Down dialog (desktop_shutdown.c): centred over the work area.
@@ -1916,10 +1940,20 @@ def scenario_startmenu(s):
     image = wait_menu_open(s)
     mx, my, mw, mh = startmenu_rect(image)
     expect_pixel(image, mx + 2 + STARTMENU_STRIP_WIDTH + 2, my + 4, FACE, "menu abierto: contenido en cara")
-    # First program row (Calculator, the first Accessories item), below the
-    # 20px header from the 2px margin. A list that overflows puts a 12px arrow
-    # strip above it, so the row is [22,50) or [34,62): y 40 is in both.
-    s.qmp.move_to(mx + 100, my + 40)
+    # A click on Programs opens its cascade at once; Calculator is found there
+    # by its text and launched.
+    s.qmp.move_to(*startmenu_entry_point(image, STARTMENU_PROGRAMS))
+    s.qmp.click()
+    time.sleep(STARTMENU_CASCADE_WAIT)
+    programs = s.shot("menu-programs")
+    calc = find_in_submenu(programs, "Calculator")
+    if calc is None:
+        raise Failure("the Programs cascade does not list Calculator")
+    check_submenu_arrows(s, programs)
+    s.qmp.move_to(SUBMENU_X + 8, calc[1] + 6)
+    time.sleep(0.5)
+    calc = find_in_submenu(s.shot("menu-programs-hover"), "Calculator") or calc
+    s.qmp.move_to(calc[0] + 20, calc[1] + 6)
     s.qmp.click()
     time.sleep(3.0)
     launched = s.shot("menu-lanzo")
@@ -1937,14 +1971,26 @@ def scenario_startmenu(s):
     reopened = wait_menu_open(s, "menu-reabierto")
     rx, ry, rw, rh = startmenu_rect(reopened)
     expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
-    check_startmenu_arrows(s, reopened)
+    # Resting on Settings opens its cascade after the delay, with no click;
+    # resting on Programs then swaps it.
+    s.qmp.move_to(*startmenu_entry_point(reopened, STARTMENU_SETTINGS))
+    time.sleep(STARTMENU_CASCADE_WAIT)
+    settings = s.shot("menu-settings")
+    if find_in_submenu(settings, "Display Properties") is None:
+        raise Failure("resting on Settings did not open its cascade with Display Properties")
+    if find_in_submenu(settings, "Calculator") is not None:
+        raise Failure("the Settings cascade lists programs")
+    s.qmp.move_to(*startmenu_entry_point(reopened, STARTMENU_PROGRAMS))
+    time.sleep(STARTMENU_CASCADE_WAIT)
+    swapped = s.shot("menu-settings-to-programs")
+    if find_in_submenu(swapped, "Calculator") is None or find_in_submenu(swapped, "Display Properties") is not None:
+        raise Failure("resting on Programs did not replace the Settings cascade")
     # Shut Down... and Restart... close the menu and open the Shut Down dialog,
     # centred, with that option chosen. S/R switch it, Esc and No dismiss it.
     # The real Yes powers off the VM and is not clicked.
-    footer_y = ry + STARTMENU_MARGIN + STARTMENU_VIEW_HEIGHT + 2 + STARTMENU_FOOTER_GAP
     before_dialog = reopened
     dx, dy = shutdown_dialog_origin(reopened)
-    s.qmp.move_to(rx + 129, footer_y + STARTMENU_ROW_HEIGHT // 2)
+    s.qmp.move_to(*startmenu_footer_point(reopened, 0))
     s.qmp.click()
     time.sleep(1.5)
     dialog = s.shot("shutdown-dialog")
@@ -1961,9 +2007,7 @@ def scenario_startmenu(s):
     s.qmp.move_to(*start_button_center(reopened))
     s.qmp.click()
     menu_again = wait_menu_open(s, "menu-restart")
-    ax, ay, aw, ah = startmenu_rect(menu_again)
-    restart_y = ay + STARTMENU_MARGIN + STARTMENU_VIEW_HEIGHT + 2 + STARTMENU_FOOTER_GAP + STARTMENU_ROW_HEIGHT
-    s.qmp.move_to(ax + 129, restart_y + STARTMENU_ROW_HEIGHT // 2)
+    s.qmp.move_to(*startmenu_footer_point(menu_again, 1))
     s.qmp.click()
     time.sleep(1.5)
     restart = s.shot("restart-dialog")

@@ -99,6 +99,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
+  Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
+  The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).
+
 - **Shut Down... and Restart... in the Start menu open a Windows 95-style Shut Down dialog instead of arming the footer.**
   Radio buttons choose shutting down or restarting (S/R, arrows), Yes/No answer; Restart... has its own icon.
   The dialog takes the keyboard with the new shell request `SAVANXP_WM_SHELL_TAKE_FOCUS` and No gives it back.
