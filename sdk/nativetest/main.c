@@ -1233,6 +1233,12 @@ static void test_audio(void) {
             }
             check(have_target);
             if (have_target) {
+                /* The stream names its process, which is this program. */
+                struct sxn_process_query owner;
+                check(target.pid != 0);
+                check(sxn_process_query((long)target.pid, &owner) == 0 && streq(owner.name, "nativetest.sxe"));
+            }
+            if (have_target) {
                 int changed = 0;
                 check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_VOLUME, 25) == 0);
                 check(sxnaudio_control_change(&control, &target, SAVANXP_AUDIOD_STREAM_MUTED, 1) == 0);

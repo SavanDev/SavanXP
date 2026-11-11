@@ -155,3 +155,10 @@ void desktop_taskbar_paint(struct savanxp_gfx_context *gfx);
 /* The first window windowd marks as not responding: 1 with its id and title,
  * 0 if none. From the last snapshot of the window list. */
 int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capacity);
+/* The small icon of the window that process `pid` shows, from the last
+ * snapshot of the window list: the window's own icon, or the generic one when
+ * it brought none. 0 when the process has no window. `storage` describes the
+ * pixels in place, so the result is valid until the next snapshot. */
+struct desktop_embedded_bitmap;
+const struct desktop_embedded_bitmap *desktop_taskbar_process_icon(
+    uint32_t pid, struct desktop_embedded_bitmap *storage);

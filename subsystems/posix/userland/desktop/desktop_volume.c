@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include "desktop_icons.h"
 #include "sxn/sxnaudio.h"
 
 #include <stdio.h>
@@ -17,7 +18,7 @@
  *   [====================O-------]  75%
  *   ---------------------------------------------------
  *   Applications
- *   [app] Doom
+ *   [icon] Doom
  *   [=========O------------------]  55%
  *   ...
  *   ---------------------------------------------------
@@ -28,7 +29,8 @@
  * audiod's native control port, the same snapshot the Sound sheet reads: it
  * needs no network stack, unlike the legacy UDP census, which only answers
  * where an IPv4 address is configured -- not on a host without a supported
- * NIC. Application levels are saved by audiod itself.
+ * NIC. Application levels are saved by audiod itself. Each row shows the icon
+ * of the window that the stream's process owns.
  */
 
 #define VP_WIDTH 232
@@ -197,13 +199,32 @@ static void vp_speaker(struct sx_painter *painter, int x, int y, int muted)
     }
 }
 
-/* 16x14 application window: what a stream is, without a per-role icon set. */
-static void vp_app_glyph(struct sx_painter *painter, int x, int y)
+/* The application's own 16x16 icon: the one its window shows in the
+ * taskbar, found by the pid audiod reports for the stream. A stream without
+ * a window (a console program, anonymous UDP) gets the generic icon. */
+static void vp_app_icon(struct sx_painter *painter, int x, int y, uint32_t pid)
 {
-    struct sx_rect window = sx_rect_make(x + 1, y + 1, 14, 12);
-    sx_painter_fill_rect(painter, window, SXGUI_COLOR_FIELD);
-    sx_painter_draw_frame(painter, window, SXGUI_COLOR_DARK);
-    sx_painter_fill_rect(painter, sx_rect_make(x + 2, y + 2, 12, 3), SXGUI_COLOR_SELECT);
+    struct desktop_embedded_bitmap storage;
+    const struct desktop_embedded_bitmap *icon = desktop_taskbar_process_icon(pid, &storage);
+    struct savanxp_fb_info info;
+    struct sx_bitmap bitmap;
+
+    if (icon == 0)
+    {
+        icon = desktop_icon_small(DESKTOP_ICON_DESKTOP);
+    }
+    if (icon == 0 || icon->pixels == 0)
+    {
+        return;
+    }
+    memset(&info, 0, sizeof(info));
+    info.width = icon->width;
+    info.height = icon->height;
+    info.pitch = icon->width * 4u;
+    info.bpp = 32;
+    info.buffer_size = info.pitch * icon->height;
+    sx_bitmap_wrap(&bitmap, (uint32_t *)icon->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_blit_bitmap(painter, &bitmap, x, y);
 }
 
 static void vp_slider(struct sx_painter *painter, int y, int volume, int pressed, int enabled)
@@ -304,7 +325,7 @@ static void volume_paint(struct savanxp_gfx_context *gfx)
         const struct savanxp_audiod_stream_state *stream = &g_snapshot.streams[row];
         const char *name = stream->name[0] != '\0' ? stream->name : "Unnamed application";
 
-        vp_app_glyph(&painter, VP_PAD, VP_APP_Y(row) - 1);
+        vp_app_icon(&painter, VP_PAD, VP_APP_Y(row) - 2, stream->pid);
         vp_fit(text, sizeof(text), name, VP_SLIDER_WIDTH - (VP_TEXT_X - VP_PAD));
         sx_painter_draw_text(&painter, VP_TEXT_X, VP_APP_Y(row), text, SXGUI_COLOR_TEXT);
         if (stream->muted)

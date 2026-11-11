@@ -78,7 +78,7 @@ struct audiod_native_client {
     uint64_t capture_frame, capture_first;
     uint32_t capture_head, capture_frames;
     int capture_error;
-    uint32_t uid, flush_id;
+    uint32_t uid, pid, flush_id;
     uint64_t flush_generation;
     int identity_valid;
     char image[32], role[32];
@@ -561,6 +561,7 @@ static void audiod_accept_native(uint64_t now_ms)
         {
             struct savanxp_process_info process;
             g_native[slot].uid = connection.client.uid;
+            g_native[slot].pid = connection.client_pid;
             if (audiod_process(connection.client_pid,&process) &&
                 process.pid == connection.client_pid && process.name[0]) {
                 audiod_copy_name(g_native[slot].image,process.name);
@@ -607,6 +608,10 @@ static void audiod_handle_snapshot(struct audiod_native_client* client,
         state->volume = stream->volume; state->muted = stream->muted;
         state->peak_left = stream->peak_left; state->peak_right = stream->peak_right;
         audiod_copy_name(state->name, stream->name);
+        if (stream->port >= SAVANXP_AUDIOD_NATIVE_FIRST_PORT &&
+            stream->port < SAVANXP_AUDIOD_NATIVE_FIRST_PORT + SAVANXP_AUDIOD_NATIVE_SLOTS &&
+            g_native[stream->port - SAVANXP_AUDIOD_NATIVE_FIRST_PORT].used)
+            state->pid = g_native[stream->port - SAVANXP_AUDIOD_NATIVE_FIRST_PORT].pid;
     }
     memset(&record, 0, sizeof(record));
     record.magic = SAVANXP_AUDIOD_RECORD_MAGIC;

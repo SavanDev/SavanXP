@@ -15,8 +15,11 @@ classic palette:
   (`Default output (AC'97)`) and the master slider with its percentage. The
   speaker beside the device toggles master mute and is crossed out while muted.
   Master volume and mute are kernel ioctls, saved to `audio.cfg` like `volume`.
-- **Applications**: one row per stream with its name, slider and percentage
-  (`Muted` when muted in Sound). More than three streams turn the last row into
+- **Applications**: one row per stream with its icon, name, slider and
+  percentage (`Muted` when muted in Sound). The icon is the one the taskbar
+  shows for the window of the stream's process, matched by the `pid` audiod
+  reports; a stream without a window (a console program, an anonymous UDP
+  sender) gets the generic application icon. More than three streams turn the last row into
   `+N more in Sound settings`. The wheel adjusts the row under the pointer, or
   the master elsewhere.
 - **Sound settings...** opens this panel and closes the popup.
@@ -132,6 +135,11 @@ connection never acquires the PCM writer; recording replay opens its own
 playback stream. `nativetest` exercises
 the new surface against the real daemon, including a control connection that
 does not appear in the playback census.
+
+Each `savanxp_audiod_stream_state` carries the `pid` of its native client, as
+the kernel reported it when audiod accepted the connection (0 for UDP). The
+snapshot is read only by programs built from this tree; external ports use
+playback records, whose layout is unchanged.
 
 The extension in `audio/audiod_protocol.h` leaves the existing audio, DECLARE,
 LIST and SET_VOLUME layouts intact. Native requests ask for one complete

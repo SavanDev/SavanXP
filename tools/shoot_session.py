@@ -2863,11 +2863,17 @@ def scenario_volume_popup(s):
     Run without a NIC by the volume-popup-offline smoke: the legacy UDP census
     needed a configured IPv4 address, so on a host without a supported NIC the
     popup listed nothing while Sound, on the native port, listed everything.
+    Each row shows its process's window icon; the installed Doom provides a
+    windowed stream, the two console tones fall back to the generic icon.
     """
     s.open_console()
     s.qmp.type_line("volume 80; volume unmute; start nativetest.sxe audio-source ToneA; start nativetest.sxe audio-source ToneB; exit")
     s.qmp.tap("ret")
     time.sleep(5.0)
+    s.open_doom()
+    for _ in range(4):
+        s.qmp.tap("ret",pause=1.5)
+    time.sleep(8.0)
     s.qmp.move_to(1208,787)
     s.qmp.click()
     s.qmp.move_to(1000,120)
@@ -2885,6 +2891,17 @@ def scenario_volume_popup(s):
     expect_text(image,(x,y+130,x+232,y+170),"ToneA",TEXT,FACE,"first application row")
     expect_text(image,(x,y+170,x+232,y+210),"ToneB",TEXT,FACE,"second application row")
     expect_text(image,(x,y+250,x+232,y+284),"Sound settings...",(0,0,255),FACE,"popup links to Sound")
+    expect_text(image,(x,y+210,x+232,y+250),"doomgeneric",TEXT,FACE,"windowed application row")
+    # Row icons are drawn at popup (10, row_y-2): Doom's is its window icon.
+    from PIL import Image
+    doom_icon = Image.open(Path(__file__).resolve().parent.parent/"ports/doomgeneric/overlay/icon.png").convert("RGBA")
+    for iy in range(16):
+        for ix in range(16):
+            red,green,blue,alpha = doom_icon.getpixel((ix,iy))
+            if alpha == 255:
+                expect_pixel(image,x+10+ix,y+208+iy,(red,green,blue),"Doom row shows Doom's window icon")
+    if all(image.getpixel((x+10+ix,y+128+iy)) == FACE for ix in range(16) for iy in range(16)):
+        raise Failure("a stream without a window has no icon")
     # The wheel over ToneB's row lowers that stream only.
     s.qmp.move_to(x+100,y+176)
     s.qmp.wheel(-2)

@@ -150,6 +150,10 @@ struct savanxp_audiod_stream_state {
     uint16_t peak_left;
     uint16_t peak_right;
     char name[SAVANXP_AUDIOD_NAME_BYTES];
+    /* The native client's process, as the kernel reported it when the
+     * connection was accepted; 0 for an anonymous UDP stream. The shell maps
+     * it to that process's window, and so to its icon. */
+    uint32_t pid;
 };
 struct savanxp_audiod_snapshot {
     uint32_t magic;

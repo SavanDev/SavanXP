@@ -100,7 +100,8 @@ Cut-off notes:
 ### Changed
 
 - **The tray volume popup is redesigned: output device and master slider, one slider per application, and a Sound settings link.**
-  The speaker beside the device toggles mute. See [SOUND.md](docs/media/SOUND.md#volume-popup).
+  Each application shows its window's icon; the speaker beside the device toggles mute. Audiod's snapshot gains each stream's `pid`.
+  See [SOUND.md](docs/media/SOUND.md#volume-popup).
 
 - **Sound is now a classic Sounds and Audio Devices property sheet: Volume, Applications, Audio, Voice and Hardware tabs.**
   OK/Cancel/Apply replace Close; Cancel restores the device levels. See [SOUND.md](docs/media/SOUND.md).

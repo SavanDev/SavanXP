@@ -786,3 +786,23 @@ int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capa
     }
     return 0;
 }
+
+const struct desktop_embedded_bitmap *desktop_taskbar_process_icon(
+    uint32_t pid, struct desktop_embedded_bitmap *storage)
+{
+    uint32_t index;
+
+    if (pid == 0u)
+    {
+        return 0;
+    }
+    /* Window ids are pids (windowd lists one entry per process window). */
+    for (index = 0; index < g_snapshot.count && index < SAVANXP_WM_MAX_WINDOWS; ++index)
+    {
+        if (g_snapshot.windows[index].window_id == pid)
+        {
+            return taskbar_entry_icon(&g_snapshot.windows[index], storage);
+        }
+    }
+    return 0;
+}
