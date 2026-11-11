@@ -147,7 +147,8 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
   queued behind the writeback thread).
 
 Every operation that can fail returns an `fs::Status`: `ok`, `io_error`,
-`no_space`, `read_only`, `exists`, `not_found`, `invalid`, `unsupported`.
+`no_space`, `read_only`, `invalid`, `exists`, `not_found`, `not_empty`,
+`not_directory`, `is_directory`, `unsupported`.
 `fs::error_of` is the one place a status becomes an errno, so a full volume,
 a dead device and a refused name reach the program as different errors.
 

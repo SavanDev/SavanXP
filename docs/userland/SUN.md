@@ -248,9 +248,12 @@ none of them a kernel slice: everything they need was already open to SUN.
 
 ## Not there (deliberately)
 
-Files, a registry, signals (the kernel
+A registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
-and a native `fork`. Each one waits for a consumer, by rule 1.
+a native `fork`, and the rest of the file surface below: seek, size queries,
+streaming writes and directory enumeration
+([VFS-A](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
+Each one waits for a consumer, by rule 1.
 
 ## Files and small profile saves
 

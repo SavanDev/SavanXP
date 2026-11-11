@@ -1,10 +1,13 @@
 # VFS — the shared filesystem foundation
 
 > **Status: open.** The current VFS, mount registry, handles and drivers are
-> implemented; VFS-A through VFS-E below are planned work, not completed APIs.
+> implemented. No phase below is complete; SxFS v2 (closed) and the first SUN
+> file calls landed the parts listed under "Where each phase stands".
 > This roadmap is independent of on-disk format versions. Most groundwork can
 > land on SxFS v2 and FAT; larger SxFS v3 volumes must not outgrow the common
 > layer's ability to name, open, cache and release their objects.
+>
+> Last checked against the tree on 2026-11-11, after SxFS V2-D.
 
 The goal is one filesystem foundation for SUN, current POSIX, planned Linux and
 Win32, and future filesystem drivers. Keep the existing separation: `vfs::`
@@ -39,13 +42,18 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until `vfs::node_released` |
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `release` for the last holder of an unlinked file, but no open/close |
-| Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; results still travel through the global `vfs::last_error()` |
+| Holders | A vnode has no reference count: the VFS asks a probe that scans the I/O object table (`vfs::set_holder_probe`), and unmount also asks the section cache. A current directory is a path string in POSIX state and holds nothing |
+| Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; results still travel through the global `vfs::last_error()`, and a `read` or `write` that returns 0 needs it to tell an error from EOF |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
+| Name comparison | Byte for byte on every volume; FAT's case-insensitive rules are not applied, so a differently cased name misses, or passes the VFS and is refused by the format |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
 | Mounts | Four slots and 32-byte mount-point buffers; a read-only mount is a flag of `fs::attach` the VFS enforces, with no remount and no per-mount policy beyond it |
-| File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write |
-| Large I/O | Some translation results, including the seek position, pass through int even when internal offsets are size_t |
-| Native surface | SUN has no regular-file API yet; common file operations remain partly inside POSIX translation |
+| File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write; no exclusive-create flag and no positioned I/O |
+| Mutation order | A path mutation reaches the driver first and the resident tree second; a tree update that failed after the driver succeeded would leave the two disagreeing |
+| Durability | `fsync` and `sync` are one whole-system barrier; a deferred write error is the `EIO` of whoever synchronizes next, not of the handle that wrote |
+| Mappings | File-backed sections are private copies of one content generation; no shared writable mapping and no page cache coherent with writes |
+| Large I/O | Internal offsets are `size_t`, but the seek position and transfer counts return through `int`, and the stat ABI carries a 32-bit size |
+| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`) and saves a whole file of up to 4096 bytes (`sxn_write_file`); no seek, size query, streaming write or enumeration. Native dispatch and POSIX translation each build the `IoObject` over `vfs::` themselves: there is no neutral file layer in `sx::` |
 
 The contract these rows describe is
 [`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract), landed with
@@ -55,6 +63,16 @@ keep what it did not do.
 These are code/documentation observations, not claims that all missing cases
 have committed regression tests. Establish the failing cases as each phase
 starts. A driver test that stubs the VFS does not qualify the real VFS path.
+
+## Where each phase stands
+
+| Phase | Landed | Still open |
+| --- | --- | --- |
+| VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions | A neutral file layer shared by the subsystems; results carrying status and length; 64-bit positions and sizes; the rest of the native surface |
+| VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test` | Entries apart from file identity; counted references; driver open/close; directory references |
+| VFS-C | Nothing | All of it. It is the one open item of SxFS v2's scale work |
+| VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
+| VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
 
 ## The object and driver contracts to establish
 
@@ -86,10 +104,13 @@ for FAT rather than claiming that it stores native ownership.
 ## VFS-A — common I/O results and the native file surface
 
 **Open, first contract work.** Driver status results and read errors distinct
-from EOF are in place. Move neutral file operations behind Sx, with
-SUN/POSIX translating their userland conventions. Linux and Win32 must not call
-POSIX translation internals to reach a file. Preserve handle rights and
-credential checks, including query-only opens that must never grant read access.
+from EOF are in place, and SUN has its first two file calls. Move neutral file
+operations behind Sx, with SUN/POSIX translating their userland conventions.
+Today `native_open_file` and the POSIX open each allocate and fill the
+`IoObject` over `vfs::`, so a third subsystem would copy that a third time.
+Linux and Win32 must not call POSIX translation internals to reach a file.
+Preserve handle rights and credential checks, including query-only opens that
+must never grant read access.
 
 Define results that carry status and transferred length, including partial I/O,
 EOF, cancellation/interruption as supported, and late device failures. Replace
@@ -98,11 +119,25 @@ offsets, sizes and returned positions 64-bit through every boundary, with
 overflow/range checks and explicit limitations of each backing driver.
 
 Grow the native API with a real SUN consumer and `nativetest` assertions, as
-required by [`SUN.md`](../../userland/SUN.md). The planned first consumers are
-the existing `cat` for open/read/close and `cp` for create/write: migrate each
-separately, preserving its command name and behavior, rather than adding a new
-POSIX utility to exercise a missing native slice. Do not claim that these two
-consumers alone qualify all file operations.
+required by [`SUN.md`](../../userland/SUN.md#files-and-small-profile-saves).
+Open/read landed with compositord's cursor catalog as its consumer and the
+whole-file save with the cursor profile; the Win32 plan stores its per-user
+settings through the same save. What is missing, each slice with a consumer of
+its own: size and metadata queries, seek, streaming create/write, and directory
+enumeration (Win32's case-insensitive lookup waits for that call). The existing
+`cat` is still a planned consumer of sequential reads and `cp` of streaming
+writes: migrate each separately, preserving its command name and
+behavior, rather than adding a new POSIX utility to exercise a missing native
+slice. Do not claim that these consumers alone qualify all file operations.
+
+Suggested order, each slice shippable alone:
+
+1. One neutral open/read/write/seek/close path in `sx::` that returns status
+   and length, with POSIX translation and native dispatch as its two callers.
+   No new API; existing tests are the regression.
+2. 64-bit positions and sizes through seek and stat, then the native size and
+   seek calls.
+3. Native streaming create/write, then enumeration.
 
 **Done when:** real VFS tests inject read/write errors, partial transfers and
 EOF without confusing them; seek beyond the signed 32-bit range round-trips
@@ -114,11 +149,13 @@ unsupported operations return documented failure rather than success stubs.
 
 **Open; builds on VFS-A's interface work.** Unlink while open, final-release
 notification and generation-checked slot reuse are in place for one name per
-file. Separate entries from file identity
-and extend the existing open descriptions. Count references from openings,
+file. Separate entries from file identity and extend the existing open
+descriptions. Replace the holder probe, a scan of every I/O object per
+question, with references counted on the object: from openings,
 current-directory objects, directory cursors, caches and mapped sections as
-appropriate. Give drivers open/close and final-release notification, so FAT can
-retain per-open state and all drivers can defer reclamation correctly.
+appropriate. Give drivers open/close next to the existing `release`, so FAT can
+retain per-open state instead of reopening the file and walking its cluster
+chain on every read, and all drivers can defer reclamation correctly.
 
 Unlink removes an entry. Where the advertised contract supports unlink while
 open, existing handles keep the file accessible until its final reference goes.
@@ -126,12 +163,16 @@ Win32 may impose additional sharing/deletion rules through common mechanisms;
 do not globally impose its policy on SUN/POSIX. Coordinate the persistent state
 and recovery of pending deletions with each filesystem driver.
 
-Reclaim node slots only after references are gone, invalidating cache entries
-and checking reuse generations. Simply putting invalidated nodes on a free list
-would break the section cache's current pointer-identity assumption.
+Node slots are already reclaimed only once a node is gone and released, and
+the section cache keys on the vnode plus a `content_generation` that survives
+reuse ([`SECTIONS.md`](../../kernel/SECTIONS.md)). Keep that property when
+identity stops being a slot address: introduce the identity generation
+separately, so that reuse and an in-place write stay distinguishable.
 
 **Done when:** sustained create/unlink/close cycles exceed the old pool's total
-allocation count without exhaustion or monotonic growth. Duplicated/inherited
+allocation count without exhaustion or monotonic growth (met today for SxFS
+with one name per file; repeat it with open handles, FAT and the new identity).
+Duplicated/inherited
 handles, rename, open-file unlink and mapped sections retain the correct object;
 the last reference reclaims once. Reuse never exposes a different file through
 an old handle/cache entry, and failures leave reference counts balanced.
@@ -173,12 +214,15 @@ has loop bounds and no-follow coverage; unsupported links fail explicitly.
 ## VFS-D — mutation semantics and durability
 
 **Open; requires VFS-A/B, coordinated with VFS-C.** Atomic replacement, the
-cross-volume error and `fsync` as the global barrier are in place, with crash
-outcomes documented and tested on SxFS. Define
-exclusive creation, unlink/rmdir and rename outcomes. Reserve/validate resources
-before a driver mutation so a successful disk update cannot be followed by an
-in-memory tree update failure. Cross-volume rename must return its distinct
-error; a copy-and-delete utility is a separate operation, not atomic rename.
+cross-volume error (`EXDEV`) and `fsync` as the global barrier are in place,
+with crash outcomes documented and tested on SxFS
+([the file contract](../../kernel/FILESYSTEMS.md#the-file-contract)). Add
+exclusive creation, which has no open flag today, and state the unlink/rmdir
+and rename outcomes for formats that cannot replace or keep an open file.
+Reserve/validate resources before a driver mutation so a successful disk update
+cannot be followed by an in-memory tree update failure: rename still calls the
+driver first. A copy-and-delete utility across volumes is a separate operation,
+not atomic rename.
 
 Enforce append at the write operation, not just at open. Define its atomicity
 unit with concurrent writers and user-buffer chunking. Add positioned I/O that
@@ -186,26 +230,32 @@ does not change a shared opening's offset, and handle-based metadata/truncation
 operations where consumers need them. Define how open-file offsets and directory
 cursors behave across dup, inheritance, seek, replacement and truncation.
 
-Expose per-file/directory synchronization and propagate deferred errors through
-the shared contract. Specify which data, metadata and namespace changes a
+Expose per-file/directory synchronization cheaper than the global barrier, and
+deliver a deferred write error to the opening that wrote the bytes as well as
+to the next synchronizer. Specify which data, metadata and namespace changes a
 successful checkpoint makes durable. Global sync/writeback tickets already
 exist; closing an opening is not by itself a durability promise. A filesystem
 that cannot provide a requested guarantee must report that limitation.
 
 **Done when:** concurrent append, exclusive-create races, replacement with open
 destinations and partial/error I/O have executable tests. A temporary-file write,
-file sync, atomic replacement and directory sync has documented crash outcomes.
-Exercise the real driver as well as the VFS: SxFS V2-A must fix directory
-transaction consistency; VFS success cannot manufacture that disk guarantee.
+file sync, atomic replacement and directory sync has documented crash outcomes
+(met on SxFS by `sxfs-vfs-test`; FAT documents that it cannot replace). Exercise
+the real driver as well as the VFS: the disk guarantee comes from the driver, as
+SxFS V2-A's namespace transactions did, and VFS success cannot manufacture it.
 
 ## VFS-E — mounts, coherent mappings and scalable I/O
 
-**Open; builds on references and explicit I/O results.** Give each mount
-enforceable policy and capability state, including read-only protection before
-every mutating operation. Separate format recognition from recovery and writable
-attach. Drivers may restrict root eligibility or lack write support without
-needing dummy write callbacks. Manage mount resources with explicit budgets
-rather than increasing fixed arrays without measuring their cost.
+**Open; builds on references and explicit I/O results.** The groundwork is in:
+a read-only mount is chosen at attach and refused with `EROFS` before any
+driver is called, `probe` recognises and recovers in memory without writing,
+only a writable attach persists a recovery, `can_be_root` restricts root
+eligibility and a driver without write support leaves those callbacks null.
+Give each mount enforceable policy and capability state beyond that flag:
+the read-only check runs where an operation starts from a path, so a write
+through a handle opened earlier reaches the driver, which is what a remount
+must close first. Manage mount resources with explicit budgets rather than
+increasing fixed arrays without measuring their cost.
 
 Unmount must block new operations, handle existing references consistently,
 synchronize, and release caches/driver state in a documented order. Failed attach
@@ -226,7 +276,8 @@ the wait; cancellation, failure and completion must retain references. Regular
 files' readiness, notifications and advisory/range locks need explicit contracts
 when a consumer requires them, not assumed support from a nonblocking flag.
 
-**Done when:** read-only mounts refuse mutations even for the system caller;
+**Done when:** read-only mounts refuse mutations even for the system caller,
+on open handles and after a remount as well as at attach;
 unmount with live references is safe and predictable; failed attach/removal
 leaks no objects. Supported mappings observe the specified write/truncate/flush
 results. Concurrent lookup, rename, I/O and unmount on multiple CPUs pass lock
@@ -241,9 +292,10 @@ no single change is expected to complete VFS-E.
 | SxFS v2 reliability | Done: it landed the driver status results, unlink while open, replacing rename and `fsync` it needed, in this layer |
 | SxFS v2 scale | VFS-C for on-demand publication and bounded caches: the one part of SxFS v2's scale work left, owned here; format ceilings remain unchanged |
 | SxFS v3 | Agree VFS/driver contracts during format design; qualify VFS-C/E before claiming large-tree or coherent-mapping support |
-| FAT and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior |
-| [Linux](LINUX_SUBSYSTEM_ROADMAP.md) | Consume measured neutral operations for L3/L4; add directory-relative I/O, links, mappings and locking with the profiles that require them |
-| [Win32](WIN32_SUBSYSTEM_ROADMAP.md) | Consume common identity, rights, sharing/deletion mechanisms and mappings; translate paths, dispositions, flags and errors in Win32 |
+| [FAT](FAT_ROADMAP.md) and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior. FAT waits on VFS-B for per-open state, and on VFS-C for name comparison, names past 63 bytes and trees larger than the node pool |
+| [Linux](LINUX_SUBSYSTEM_ROADMAP.md) | Consume measured neutral operations for L3/L4; private file mappings arrive with its S2b slice at L4; add directory-relative I/O, links and locking with the profiles that require them |
+| [Win32](WIN32_SUBSYSTEM_ROADMAP.md) | Its first profile stores settings with `sxn_write_file` and installs names lower-cased until a native enumeration call exists. Later: common identity, rights, sharing/deletion mechanisms and mappings; paths, dispositions, flags and errors are translated in Win32 |
+| [Drivers D5](DRIVERS_ROADMAP.md#d5--general-plug-and-play-and-safe-removal) | VFS-B references and VFS-E teardown define what a removed disk leaves behind; USB storage is the first consumer |
 
 The sequence is VFS-A, then VFS-B, with VFS-C/D developed against those shared
 contracts; mount policy groundwork can start early, while VFS-E's VM/concurrency
