@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`fsync` and `fdatasync` (`SAVANXP_SYS_FSYNC`) wait until a file or directory is on the medium.**
+  Write a temporary, `fsync`, `rename` over the old file, `fsync` the directory: a power cut leaves the old file or the new one.
+  See [FILESYSTEMS.md](docs/kernel/FILESYSTEMS.md#the-file-contract).
+
 - **SUN exposes IPv4 TCP/UDP sockets and cancellable I/O readiness waits.**
   `sxn_wait_io` combines stream interests with events; `smoke native-network` checks the native contract.
 
@@ -83,6 +87,11 @@ Cut-off notes:
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Changed
+
+- **`rename` onto an existing file or empty directory replaces it atomically on SxFS, and `unlink` works on open files.**
+  Open handles keep an unlinked or replaced file's contents until the last one closes; FAT answers `EEXIST`/`EBUSY`.
+  File errors are now precise: `EXDEV` across volumes, `EROFS`, `EIO`, `ENOTEMPTY`, `EISDIR`, and a failed read
+  is an error instead of an end of file. Deleting files no longer uses up the VFS node pool.
 
 - **Web Viewer's roadmap now targets Ladybird with a native SUN frontend.**
   It pins the pre-Rust C++ baseline `37ec6a08a8aaff5808e5b570430001594692fde3` and discards NetSurf.

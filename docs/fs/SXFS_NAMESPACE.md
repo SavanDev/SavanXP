@@ -121,6 +121,22 @@ A reader that predates the bit sees a doomed inode as an empty file (while its
 entry exists) or as an unreachable inode, which the kernel tolerated and the
 host tools refuse whole. Neither loses anything.
 
+## A file unlinked while open
+
+When something still holds the file (a handle, a section), `unlink` and a
+rename over it remove the name in the usual commit and, in that same commit,
+doom the inode instead of freeing it: `link_count` 0, blocks kept. The holders
+read and write it as before. When the last one goes, `release_unlinked` frees
+the blocks and the inode in one commit.
+
+A power cut in between leaves a doomed inode nothing names, with its blocks:
+the case `finish_doomed` already handles, so the next writable mount frees
+it. The name never comes back. Until then `fscheck` counts it in
+`pending_deletions`, and the space it holds is used, not free.
+
+A volume without `SXFS_FEATURE_LINK_COUNT` cannot record this, which only
+happens on a read-only mount, where nothing is unlinked.
+
 ## What is guaranteed
 
 For create, mkdir, unlink, rmdir, and rename within a directory, across

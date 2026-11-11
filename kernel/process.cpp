@@ -1594,7 +1594,13 @@ void destroy_io_object(object::Header* header) {
         net::close_socket(file->socket);
     }
 
+    vfs::Vnode* released = file->kind == process::HandleKind::vnode ? file->node : nullptr;
     memset(file, 0, sizeof(*file));
+    // After the handle is gone, so the VFS sees the node without it: the last
+    // close of an unlinked file is what frees it.
+    if (released != nullptr) {
+        vfs::node_released(*released);
+    }
 }
 bool vnode_has_open_references(const vfs::Vnode& node) {
     for (const object::IoObject& file : g_io_objects) {

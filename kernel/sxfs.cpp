@@ -644,7 +644,7 @@ sxfs::FileRecord* find_record_by_relative_path(Volume& volume, const char* relat
         return nullptr;
     }
     for (sxfs::FileRecord& record : volume.records) {
-        if (record.in_use && strcmp(record.path, relative) == 0) {
+        if (record.in_use && !record.unlinked && strcmp(record.path, relative) == 0) {
             return &record;
         }
     }
@@ -696,7 +696,7 @@ void update_descendant_paths(Volume& volume, uint32_t directory_inode, const cha
     const size_t old_length = strlen(old_path);
     const size_t new_length = strlen(new_path);
     for (sxfs::FileRecord& record : volume.records) {
-        if (!record.in_use || record.inode_id == directory_inode) {
+        if (!record.in_use || record.unlinked || record.inode_id == directory_inode) {
             continue;
         }
 
@@ -1802,7 +1802,7 @@ size_t file_count(VolumeId id) {
     }
     size_t count = 0;
     for (const FileRecord& record : volume->records) {
-        if (record.in_use && !record.directory) {
+        if (record.in_use && !record.directory && !record.unlinked) {
             ++count;
         }
     }
@@ -2137,7 +2137,10 @@ void refresh_directory_vnode(Volume& volume, uint32_t inode_id) {
 //   3. One commit frees the inode.
 // A failure after step 1 is not reported: the deletion is committed, and the
 // next writable mount does what was left.
-Status doom_in_place(Volume& volume, uint32_t victim_id, uint32_t parent_id) {
+//
+// With `keep_open` the inode keeps its blocks and steps 1 and 2 are all:
+// step 3 is release_unlinked's, when the last holder goes.
+Status doom_in_place(Volume& volume, uint32_t victim_id, uint32_t parent_id, bool keep_open) {
     Inode* victim = inode_for_id(volume, victim_id);
     Inode* parent = inode_for_id(volume, parent_id);
     if (victim == nullptr || parent == nullptr) {
@@ -2145,13 +2148,15 @@ Status doom_in_place(Volume& volume, uint32_t victim_id, uint32_t parent_id) {
     }
     snapshot_metadata(volume);
     victim->link_count = 0;
-    free_inode_blocks(volume, *victim);
-    victim->size = 0;
+    if (!keep_open) {
+        free_inode_blocks(volume, *victim);
+        victim->size = 0;
+    }
     if (!commit_metadata(volume)) {
         restore_metadata(volume);
         return Status::io_error;
     }
-    if (clear_slot_in_place(volume, *parent, victim_id)) {
+    if (clear_slot_in_place(volume, *parent, victim_id) && !keep_open) {
         snapshot_metadata(volume);
         release_inode_id(volume, victim_id);
         if (!commit_metadata(volume)) {
@@ -2321,8 +2326,6 @@ bool truncate_file(FileRecord& file, size_t size) {
     return truncate_file_status(file, size) == Status::ok;
 }
 
-Status remove_status(FileRecord& file);
-
 Status create_status(const char* path, bool directory, const vfs::Ownership* owner, FileRecord*& created) {
     created = nullptr;
     Volume* volume = volume_for_path(path);
@@ -2431,12 +2434,35 @@ FileRecord* create_directory(const char* path, const vfs::Ownership* owner) {
     return record;
 }
 
+namespace {
+
+// A record whose name is gone while its vnode is held: it leaves every path
+// lookup and keeps the inode.
+void detach_record(FileRecord& record) {
+    record.unlinked = true;
+    record.parent_inode_id = 0;
+    record.name[0] = '\0';
+    record.path[0] = '\0';
+}
+
+bool can_keep_open(const Volume& volume) {
+    return (volume.superblock.features & SXFS_FEATURE_LINK_COUNT) != 0;
+}
+
+} // namespace
+
 // Removes a file or an empty directory: its entry leaves the parent, and its
-// inode and blocks are freed, in one commit.
-Status remove_status(FileRecord& file) {
+// inode and blocks are freed, in one commit. With `keep_open` the inode is
+// doomed instead of freed, in that same commit: the name is gone for good,
+// and a power cut before release_unlinked() leaves a doomed inode the next
+// mount frees.
+Status remove_status(FileRecord& file, bool keep_open) {
     Volume* volume = volume_for_id(file.volume);
-    if (volume == nullptr || !file.in_use) {
+    if (volume == nullptr || !file.in_use || file.unlinked || (keep_open && file.directory)) {
         return Status::invalid;
+    }
+    if (keep_open && !can_keep_open(*volume)) {
+        return Status::unsupported;
     }
     if (volume->status != MountStatus::mounted) {
         return Status::read_only;
@@ -2475,8 +2501,12 @@ Status remove_status(FileRecord& file) {
         }
     }
     if (status == Status::ok) {
-        free_inode_blocks(*volume, *inode);
-        release_inode_id(*volume, inode_id);
+        if (keep_open) {
+            inode->link_count = 0;
+        } else {
+            free_inode_blocks(*volume, *inode);
+            release_inode_id(*volume, inode_id);
+        }
         if (!commit_metadata(*volume)) {
             status = Status::io_error;
         }
@@ -2484,19 +2514,47 @@ Status remove_status(FileRecord& file) {
     if (status != Status::ok) {
         restore_metadata(*volume);
         volume->snapshot_valid = false;
-        if (status != Status::no_space ||
-            (volume->superblock.features & SXFS_FEATURE_LINK_COUNT) == 0) {
+        if (status != Status::no_space || !can_keep_open(*volume)) {
             return status;
         }
         // No room for the parent's copy. Deleting must not need free space.
-        status = doom_in_place(*volume, inode_id, parent_id);
+        status = doom_in_place(*volume, inode_id, parent_id, keep_open);
         if (status != Status::ok) {
             return status;
         }
     }
-    remove_record(*volume, inode_id);
+    if (keep_open) {
+        detach_record(file);
+    } else {
+        remove_record(*volume, inode_id);
+    }
     refresh_directory_vnode(*volume, parent_id);
     return Status::ok;
+}
+
+void release_unlinked(FileRecord& file) {
+    Volume* volume = volume_for_id(file.volume);
+    if (volume == nullptr || !file.in_use || !file.unlinked) {
+        return;
+    }
+    const uint32_t inode_id = file.inode_id;
+    memset(&file, 0, sizeof(file));
+    if (volume->status != MountStatus::mounted) {
+        return;
+    }
+    MutationGuard guard(*volume);
+    Inode* inode = inode_for_id(*volume, inode_id);
+    if (inode == nullptr || !inode_is_doomed(*volume, *inode)) {
+        return;
+    }
+    // A failure leaves the inode doomed, which the next mount frees.
+    snapshot_metadata(*volume);
+    free_inode_blocks(*volume, *inode);
+    release_inode_id(*volume, inode_id);
+    if (!commit_metadata(*volume)) {
+        restore_metadata(*volume);
+        volume->snapshot_valid = false;
+    }
 }
 
 bool remove_directory(FileRecord& file) {
@@ -2509,13 +2567,10 @@ bool unlink_file(FileRecord& file) {
 
 // Renames `old_path` to `new_path` in one commit. A name already at
 // `new_path` is replaced, and what it named is freed in the same commit: a
-// file replaces a file, a directory replaces an empty directory. `replaced`
-// receives the vnode that published the replaced name, for the caller to take
-// out of its tree.
-Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** replaced) {
-    if (replaced != nullptr) {
-        *replaced = nullptr;
-    }
+// file replaces a file, a directory replaces an empty directory. With
+// `keep_replaced_open` a replaced file is doomed instead of freed, as
+// remove_status does for a file that is still held.
+Status rename_status(const char* old_path, const char* new_path, bool keep_replaced_open) {
     Volume* volume = volume_for_path(old_path);
     if (volume == nullptr) {
         return Status::not_found;
@@ -2581,6 +2636,10 @@ Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** re
     }
     const uint32_t victim_id = victim != nullptr ? victim->inode_id : 0;
     const uint16_t type = target->directory ? kInodeTypeDirectory : kInodeTypeFile;
+    const bool keep_victim = keep_replaced_open && victim != nullptr && !victim->directory;
+    if (keep_victim && !can_keep_open(*volume)) {
+        return Status::unsupported;
+    }
 
     snapshot_metadata(*volume);
     uint32_t count = 0;
@@ -2633,8 +2692,12 @@ Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** re
         }
     }
     if (status == Status::ok && victim_id != 0) {
-        free_inode_blocks(*volume, *victim_inode);
-        release_inode_id(*volume, victim_id);
+        if (keep_victim) {
+            victim_inode->link_count = 0;
+        } else {
+            free_inode_blocks(*volume, *victim_inode);
+            release_inode_id(*volume, victim_id);
+        }
     }
     if (status == Status::ok && !commit_metadata(*volume)) {
         status = Status::io_error;
@@ -2646,10 +2709,11 @@ Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** re
     }
 
     if (victim != nullptr) {
-        if (replaced != nullptr) {
-            *replaced = victim->vnode;
+        if (keep_victim) {
+            detach_record(*victim);
+        } else {
+            memset(victim, 0, sizeof(*victim));
         }
-        memset(victim, 0, sizeof(*victim));
     }
     char old_relative[256] = {};
     strcpy(old_relative, target->path);
@@ -2665,7 +2729,7 @@ Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** re
 }
 
 bool rename_path(const char* old_path, const char* new_path) {
-    return rename_status(old_path, new_path, nullptr) == Status::ok;
+    return rename_status(old_path, new_path) == Status::ok;
 }
 
 FileRecord* file_from_vnode(vfs::Vnode& node) {
@@ -2711,82 +2775,98 @@ namespace {
 /* The fs::Driver operations: the VFS hands in vnodes and paths, these find
  * the FileRecord behind them and keep the vnode's size current. */
 
-bool driver_read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
-    FileRecord* file = file_from_vnode(node);
-    if (file == nullptr || !read_file(*file, offset, buffer, count)) {
-        return false;
-    }
-    node.size = file->size;
-    return true;
-}
-
-bool driver_write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+Status driver_read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
     FileRecord* file = file_from_vnode(node);
     if (file == nullptr) {
-        return false;
+        return Status::invalid;
+    }
+    if (!read_file(*file, offset, buffer, count)) {
+        // The VFS checked the range against the vnode's size, which the
+        // driver keeps current: what is left is the device.
+        return Status::io_error;
+    }
+    node.size = file->size;
+    return Status::ok;
+}
+
+Status driver_write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+    written = 0;
+    FileRecord* file = file_from_vnode(node);
+    if (file == nullptr) {
+        return Status::invalid;
     }
     // The block drivers report their health periodically, not only on
     // failure: the margin left matters most when everything works.
     block::report_health(false);
-    if (!write_file(*file, offset, buffer, count, truncate, written)) {
-        // sxfs only fails a write when something really failed, most likely
-        // the disk underneath: let the block drivers say which.
+    const Status status = write_file_status(*file, offset, buffer, count, truncate, written);
+    if (status == Status::io_error) {
+        // Let the block drivers say which device it was.
         block::report_health(true);
-        return false;
     }
     node.size = file->size;
-    return true;
+    return status;
 }
 
-bool driver_truncate(vfs::Vnode& node, size_t size) {
+Status driver_truncate(vfs::Vnode& node, size_t size) {
     FileRecord* file = file_from_vnode(node);
-    if (file == nullptr || !truncate_file(*file, size)) {
-        return false;
+    if (file == nullptr) {
+        return Status::invalid;
     }
+    const Status status = truncate_file_status(*file, size);
     node.size = file->size;
-    return true;
+    return status;
 }
 
-bool driver_unlink(vfs::Vnode& node) {
+Status driver_unlink(vfs::Vnode& node, bool keep_open) {
     FileRecord* file = file_from_vnode(node);
-    return file != nullptr && unlink_file(*file);
+    if (file == nullptr || file->directory) {
+        return Status::invalid;
+    }
+    return remove_status(*file, keep_open);
 }
 
-bool driver_remove_directory(vfs::Vnode& node) {
+Status driver_remove_directory(vfs::Vnode& node) {
     FileRecord* file = file_from_vnode(node);
-    return file != nullptr && remove_directory(*file);
+    if (file == nullptr || !file->directory) {
+        return Status::invalid;
+    }
+    return remove_status(*file);
+}
+
+void driver_release(vfs::Vnode& node) {
+    if (FileRecord* file = file_from_vnode(node)) {
+        release_unlinked(*file);
+    }
 }
 
 // Paths carry their volume (volume_for_path), so the id fs:: hands in is not
-// needed here.
-vfs::Vnode* driver_create_file(VolumeId, const char* path, const vfs::Ownership& owner) {
-    FileRecord* file = create_file(path, &owner);
-    if (file == nullptr) {
-        return nullptr;
+// needed here. create_status has already published the vnode, or taken the
+// file back off the disk when the tree had no room for it.
+Status driver_create(const char* path, bool directory, const vfs::Ownership& owner, vfs::Vnode*& created) {
+    created = nullptr;
+    FileRecord* record = nullptr;
+    const Status status = create_status(path, directory, &owner, record);
+    if (status != Status::ok) {
+        return status;
     }
-    if (file->vnode == nullptr) {
-        file->vnode = vfs::install_volume_file(path, driver(), file, file->size, true);
+    created = record->vnode;
+    if (created == nullptr) {
+        return Status::no_space;
     }
-    if (file->vnode != nullptr) {
-        vfs::set_ownership(*file->vnode, owner.uid, owner.gid, owner.mode);
-    }
-    return file->vnode;
+    vfs::set_ownership(*created, owner.uid, owner.gid, owner.mode);
+    return Status::ok;
 }
 
-vfs::Vnode* driver_create_directory(VolumeId, const char* path, const vfs::Ownership& owner) {
-    FileRecord* directory = create_directory(path, &owner);
-    if (directory == nullptr) {
-        return nullptr;
-    }
-    vfs::Vnode* node = directory->vnode != nullptr ? directory->vnode : vfs::ensure_directory(path);
-    if (node != nullptr) {
-        vfs::set_ownership(*node, owner.uid, owner.gid, owner.mode);
-    }
-    return node;
+Status driver_create_file(VolumeId, const char* path, const vfs::Ownership& owner, vfs::Vnode*& created) {
+    return driver_create(path, /*directory=*/false, owner, created);
+}
+
+Status driver_create_directory(VolumeId, const char* path, const vfs::Ownership& owner, vfs::Vnode*& created) {
+    return driver_create(path, /*directory=*/true, owner, created);
 }
 
 // chmod and chown: the new ownership in the inode, in one journalled commit.
-bool driver_set_ownership(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
+Status driver_set_ownership(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
     Volume* volume = nullptr;
     uint32_t inode_id = 0;
     if (FileRecord* record = file_from_vnode(node)) {
@@ -2800,13 +2880,16 @@ bool driver_set_ownership(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t
             }
         }
     }
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return false;
+    if (volume == nullptr) {
+        return Status::invalid;
+    }
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
     }
     MutationGuard guard(*volume);
     Inode* inode = inode_for_id(*volume, inode_id);
     if (inode == nullptr || !sxfs_mode_matches_type(mode, inode->type)) {
-        return false;
+        return Status::invalid;
     }
     snapshot_metadata(*volume);
     inode->uid = uid;
@@ -2814,13 +2897,13 @@ bool driver_set_ownership(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t
     inode->mode = mode;
     if (!commit_metadata(*volume)) {
         restore_metadata(*volume);
-        return false;
+        return Status::io_error;
     }
-    return true;
+    return Status::ok;
 }
 
-bool driver_rename(VolumeId, const char* old_path, const char* new_path) {
-    return rename_path(old_path, new_path);
+Status driver_rename(VolumeId, const char* old_path, const char* new_path, bool keep_replaced_open) {
+    return rename_status(old_path, new_path, keep_replaced_open);
 }
 
 bool driver_stats(VolumeId volume, fs::VolumeStats& out) {
@@ -2860,9 +2943,11 @@ const fs::Driver kDriver = {
     .unlink = &driver_unlink,
     .remove_directory = &driver_remove_directory,
     .refresh = &refresh_vnode,
+    .release = &driver_release,
     .create_file = &driver_create_file,
     .create_directory = &driver_create_directory,
     .rename = &driver_rename,
+    .replaces_on_rename = true,
     .set_ownership = &driver_set_ownership,
     .stats = &driver_stats,
     .sync = &sync,

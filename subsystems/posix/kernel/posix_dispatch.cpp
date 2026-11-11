@@ -440,7 +440,16 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         }
+        case SAVANXP_SYS_FSYNC:
         case SAVANXP_SYS_SYNC: {
+            // fsync is the same barrier as sync, asked through a descriptor:
+            // one volume's metadata and the writeback queue are shared by
+            // every file on it, so "this file" and "everything so far" are
+            // the same set of writes (docs/kernel/FILESYSTEMS.md).
+            if (context->rax == SAVANXP_SYS_FSYNC) {
+                const int target = fsync_target(caller, context->rdi);
+                if (target != 0) { context->rax = static_cast<uint64_t>(target); return context; }
+            }
             posix::ThreadState* owned = posix::thread_state(self);
             if (!owned) { context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM)); return context; }
             uint64_t ticket;

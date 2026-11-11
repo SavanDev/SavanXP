@@ -30,6 +30,11 @@ enum class MountStatus : uint8_t {
 struct FileRecord {
     bool in_use;
     bool directory;
+    // The name is gone and something still holds the vnode: the inode is
+    // doomed on disk (docs/fs/SXFS_NAMESPACE.md) and its contents stay
+    // reachable through this record until release_unlinked(). It has no path
+    // and no parent.
+    bool unlinked;
     // Volumen del que salio. Los FileRecord viajan solos por la API publica
     // (read_file, unlink_file, ...), asi que sin esto no habria como volver al
     // volumen al que pertenecen.
@@ -168,14 +173,18 @@ bool truncate_file(FileRecord& file, size_t size);
 fs::Status create_status(const char* path, bool directory, const vfs::Ownership* owner, FileRecord*& created);
 FileRecord* create_file(const char* path, const vfs::Ownership* owner = nullptr);
 FileRecord* create_directory(const char* path, const vfs::Ownership* owner = nullptr);
-// A file, or a directory with no entries.
-fs::Status remove_status(FileRecord& file);
+// A file, or a directory with no entries. With `keep_open` (files only) the
+// name goes and the contents stay until release_unlinked(): the record turns
+// `unlinked`.
+fs::Status remove_status(FileRecord& file, bool keep_open = false);
+// Frees a file removed or replaced with keep_open, once nothing holds it.
+void release_unlinked(FileRecord& file);
 bool remove_directory(FileRecord& file);
 bool unlink_file(FileRecord& file);
 // An existing `new_path` is replaced atomically (a file by a file, an empty
-// directory by a directory); `replaced`, when given, receives the vnode that
-// published it.
-fs::Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** replaced);
+// directory by a directory). With `keep_replaced_open` a replaced file is
+// kept as remove_status keeps one.
+fs::Status rename_status(const char* old_path, const char* new_path, bool keep_replaced_open = false);
 bool rename_path(const char* old_path, const char* new_path);
 FileRecord* file_from_vnode(vfs::Vnode& node);
 void refresh_vnode(vfs::Vnode& node);

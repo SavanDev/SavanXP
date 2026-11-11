@@ -33,6 +33,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/power.hpp"
 #include "kernel/process.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/ramdisk.hpp"
 #include "kernel/rtl8139.hpp"
@@ -226,6 +227,8 @@ namespace
     }
     boot_screen::show("Loading userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
+    // Open handles are what keeps an unlinked file alive (vfs::unlink).
+    vfs::set_holder_probe(&process::detail::vnode_has_open_references);
     device::initialize();
     boot_screen::show("Preparing display");
     // Elegir el backend de display: cada driver se registra y bind_best corre

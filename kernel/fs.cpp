@@ -60,6 +60,23 @@ void initialize() {
     g_mount_count = 0;
 }
 
+int error_of(Status status) {
+    switch (status) {
+        case Status::ok: return 0;
+        case Status::io_error: return SX_EIO;
+        case Status::no_space: return SX_ENOSPC;
+        case Status::read_only: return SX_EROFS;
+        case Status::invalid: return SX_EINVAL;
+        case Status::exists: return SX_EEXIST;
+        case Status::not_found: return SX_ENOENT;
+        case Status::not_empty: return SX_ENOTEMPTY;
+        case Status::not_directory: return SX_ENOTDIR;
+        case Status::is_directory: return SX_EISDIR;
+        case Status::unsupported: return SX_ENOSYS;
+    }
+    return SX_EIO;
+}
+
 bool register_driver(const Driver& driver) {
     if (g_driver_count >= kMaxDrivers || driver.probe == nullptr || driver.attach == nullptr ||
         driver.read == nullptr || driver.refresh == nullptr) {

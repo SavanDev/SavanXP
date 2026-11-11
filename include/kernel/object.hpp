@@ -140,6 +140,11 @@ struct SectionObject {
      * than the one asked for. */
     uint64_t source_offset;
     uint64_t source_length;
+    // The file's content generation (vfs::Vnode::content_generation) the pages
+    // were read at, the last part of the cache key: a file written since is
+    // read again instead of served from a stale copy. Views already mapped
+    // keep the bytes they were mapped with.
+    uint32_t source_generation;
     uint64_t size_bytes;
     uint64_t page_count;
     memory::PageAllocation allocation;

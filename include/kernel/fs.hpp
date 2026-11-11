@@ -62,6 +62,12 @@ enum class Status : uint8_t {
     unsupported,   // the driver has no such operation
 };
 
+constexpr bool ok(Status status) {
+    return status == Status::ok;
+}
+// The sx_status (errno) a failed operation reports. Never called with ok.
+int error_of(Status status);
+
 struct VolumeStats {
     bool writable;
     size_t file_count;
@@ -93,28 +99,46 @@ struct Driver {
 
     // File operations on a vnode the driver published. The VFS has already
     // checked type, writability and range; size is kept in the vnode by the
-    // driver.
-    bool (*read)(vfs::Vnode& node, size_t offset, void* buffer, size_t count);
-    bool (*write)(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written);
-    bool (*truncate)(vfs::Vnode& node, size_t size);
-    bool (*unlink)(vfs::Vnode& node);
+    // driver. Every operation says why it failed (Status). Only read and
+    // refresh are required: the VFS answers a missing one with EROFS for a
+    // change and ENOSYS otherwise, so a driver that cannot write provides no
+    // write operations at all.
+    Status (*read)(vfs::Vnode& node, size_t offset, void* buffer, size_t count);
+    Status (*write)(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written);
+    Status (*truncate)(vfs::Vnode& node, size_t size);
+    // Removes the file's name. With `keep_open` something still holds the
+    // vnode: the driver keeps the file's contents readable and writable
+    // through it until release() is called. Only passed to a driver that has
+    // release; without one the VFS refuses to unlink a held file (EBUSY).
+    Status (*unlink)(vfs::Vnode& node, bool keep_open);
     // The directory is empty (the VFS checked).
-    bool (*remove_directory)(vfs::Vnode& node);
+    Status (*remove_directory)(vfs::Vnode& node);
     // Re-reads size and writability into a vnode about to be used.
     void (*refresh)(vfs::Vnode& node);
+    // The last holder of a vnode unlinked with keep_open (or replaced by a
+    // rename with keep_replaced_open) is gone: the driver frees the file.
+    // nullptr: the format cannot keep an unlinked file alive.
+    void (*release)(vfs::Vnode& node);
 
     // Path operations, on absolute normalized paths under the volume's mount
-    // point. Create returns the published vnode, or nullptr when the volume
-    // is full or read-only. `owner` is who creates it and the mode it gets;
-    // the VFS has already checked the caller may.
-    vfs::Vnode* (*create_file)(VolumeId volume, const char* path, const vfs::Ownership& owner);
-    vfs::Vnode* (*create_directory)(VolumeId volume, const char* path, const vfs::Ownership& owner);
+    // point. Create hands back the published vnode. `owner` is who creates it
+    // and the mode it gets; the VFS has already checked the caller may.
+    Status (*create_file)(VolumeId volume, const char* path, const vfs::Ownership& owner, vfs::Vnode*& created);
+    Status (*create_directory)(VolumeId volume, const char* path, const vfs::Ownership& owner, vfs::Vnode*& created);
     // Both paths are on this volume (the VFS refuses a cross-volume rename).
-    bool (*rename)(VolumeId volume, const char* old_path, const char* new_path);
+    // A driver with replaces_on_rename is also called when `new_path` exists,
+    // after the VFS checked the types agree and a replaced directory is empty:
+    // the old name's object takes the new name and what was there is freed, as
+    // one atomic step. `keep_replaced_open` is keep_open for what is replaced.
+    Status (*rename)(VolumeId volume, const char* old_path, const char* new_path, bool keep_replaced_open);
+    // The format replaces an existing destination atomically. Without it the
+    // VFS answers a rename onto an existing name with EEXIST rather than
+    // imitate it with a delete and a rename.
+    bool replaces_on_rename;
     // Records new ownership for a vnode the driver published (chmod, chown);
     // the VFS has checked the caller may. nullptr: the format has none, and the
     // change is refused.
-    bool (*set_ownership)(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode);
+    Status (*set_ownership)(vfs::Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode);
 
     bool (*stats)(VolumeId volume, VolumeStats& out);
     // Makes the volume's metadata durable and marks it clean. May be nullptr.

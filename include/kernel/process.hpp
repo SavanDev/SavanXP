@@ -354,6 +354,9 @@ int set_identity(Process& proc, uint32_t field, uint32_t value);
 int chmod_path(Process& proc, const char* path, uint16_t permissions);
 int chown_path(Process& proc, const char* path, uint32_t uid, uint32_t gid);
 int fchmod_fd(Process& proc, uint64_t fd, uint16_t permissions);
+// Whether `fd` is something fsync applies to (a file or a directory of the
+// tree): 0 or -EBADF.
+int fsync_target(Process& proc, uint64_t fd);
 // `extended`: a struct savanxp_stat_ex (STAT_EX) instead of the 8-byte
 // savanxp_stat (STAT).
 int stat_path(Process& proc, const char* path, uint64_t user_stat_address, bool extended);

@@ -36,16 +36,21 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Area | Current limit |
 | --- | --- |
 | Resident tree | 2048 nodes shared by volumes, devices and initramfs; drivers publish the whole tree at attach |
-| Reclamation | Unlink invalidates a node but does not reuse its slot during the mount; create/delete churn can exhaust the pool independently of live file count |
-| Object identity | `Vnode` includes one name and parent, coupling the file with its location; file-section cache identity relies on vnode pointers not being reused after unlink |
-| Open lifetime | `IoObject` has references, offset and flags, but drivers do not receive a full open/close/vnode-release lifecycle |
-| Errors | Many driver operations return bool; VFS guesses write errors and converts a failed driver read to zero bytes, which the POSIX read path treats as EOF |
+| Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until `vfs::node_released` |
+| Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
+| Open lifetime | `IoObject` has references, offset and flags; drivers get `release` for the last holder of an unlinked file, but no open/close |
+| Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; results still travel through the global `vfs::last_error()` |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
 | Mounts | Four slots, 32-byte mount-point buffers and no general read-only mount flag |
-| File semantics | Rename rejects existing destinations; POSIX refuses unlink of open files; append initially positions at EOF rather than enforcing append on each write |
+| File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write |
 | Large I/O | Some translation results, including the seek position, pass through int even when internal offsets are size_t |
 | Native surface | SUN has no regular-file API yet; common file operations remain partly inside POSIX translation |
+
+The contract these rows describe is
+[`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract), landed with
+SxFS V2-B and tested through the real VFS by `sxfs-vfs-test`. The phases below
+keep what it did not do.
 
 These are code/documentation observations, not claims that all missing cases
 have committed regression tests. Establish the failing cases as each phase
@@ -80,7 +85,8 @@ for FAT rather than claiming that it stores native ownership.
 
 ## VFS-A — common I/O results and the native file surface
 
-**Open, first contract work.** Move neutral file operations behind Sx, with
+**Open, first contract work.** Driver status results and read errors distinct
+from EOF are in place. Move neutral file operations behind Sx, with
 SUN/POSIX translating their userland conventions. Linux and Win32 must not call
 POSIX translation internals to reach a file. Preserve handle rights and
 credential checks, including query-only opens that must never grant read access.
@@ -106,7 +112,9 @@ unsupported operations return documented failure rather than success stubs.
 
 ## VFS-B — identity, references and safe reclamation
 
-**Open; builds on VFS-A's interface work.** Separate entries from file identity
+**Open; builds on VFS-A's interface work.** Unlink while open, final-release
+notification and generation-checked slot reuse are in place for one name per
+file. Separate entries from file identity
 and extend the existing open descriptions. Count references from openings,
 current-directory objects, directory cursors, caches and mapped sections as
 appropriate. Give drivers open/close and final-release notification, so FAT can
@@ -164,7 +172,9 @@ has loop bounds and no-follow coverage; unsupported links fail explicitly.
 
 ## VFS-D — mutation semantics and durability
 
-**Open; requires VFS-A/B, coordinated with VFS-C.** Define atomic replacement,
+**Open; requires VFS-A/B, coordinated with VFS-C.** Atomic replacement, the
+cross-volume error and `fsync` as the global barrier are in place, with crash
+outcomes documented and tested on SxFS. Define
 exclusive creation, unlink/rmdir and rename outcomes. Reserve/validate resources
 before a driver mutation so a successful disk update cannot be followed by an
 in-memory tree update failure. Cross-volume rename must return its distinct

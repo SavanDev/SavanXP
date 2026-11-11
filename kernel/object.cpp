@@ -335,7 +335,8 @@ static SectionObject* find_file_section(const vfs::Vnode* source, uint64_t offse
          * with the complete image instead of its own. */
         if (section_object.source_node != source ||
             section_object.source_offset != offset ||
-            section_object.source_length != length) {
+            section_object.source_length != length ||
+            section_object.source_generation != source->content_generation) {
             continue;
         }
         return &section_object;
@@ -389,13 +390,13 @@ SectionObject* acquire_file_range_section(
     section_object->source_node = source;
     section_object->source_offset = offset;
     section_object->source_length = size_bytes;
+    section_object->source_generation = node.content_generation;
 
-    /* Se lee el archivo entero adentro de las paginas que se acaba de reservar.
-     * Si a mitad de camino el archivo resulta mas corto que lo que prometia
-     * vnode.size, la seccion queda con ceros en la cola y se devuelve igual: un
-     * binario truncado a medio leer no es un motivo para tumbar al proceso que
-     * lo pide, y el cargador va a fallar al validar el ELF. Lo que NO se tolera
-     * es un error de lectura real, que si se reporta. */
+    /* The whole file is read into the pages just reserved. If the file turns
+     * out shorter than vnode.size promised, the section keeps zeros in its
+     * tail and is returned anyway: a binary truncated mid-read is no reason
+     * to bring down the process that asked, and the loader will fail when it
+     * validates the ELF. A real read error is not tolerated: it is reported. */
     uint64_t filled = 0;
     while (filled < size_bytes) {
         const uint64_t chunk = (size_bytes - filled) > memory::kPageSize
@@ -404,7 +405,13 @@ SectionObject* acquire_file_range_section(
         void* buffer = vm::physical_to_virtual(section_object->physical_pages[filled / memory::kPageSize]);
         const size_t got = vfs::read(node, static_cast<size_t>(offset + filled), buffer, static_cast<size_t>(chunk));
         if (got == 0) {
-            /* Fin de archivo antes de lo prometido: el resto queda en cero. */
+            if (vfs::last_error() != 0) {
+                /* A read error, not a short file: no section is handed out
+                 * with pages the device never filled. */
+                destroy_section(&section_object->header);
+                return nullptr;
+            }
+            /* The file ended before its promised size: the rest stays zero. */
             break;
         }
         filled += got;

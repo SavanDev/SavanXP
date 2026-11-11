@@ -532,9 +532,8 @@ int unlink_path(process::Process& proc, const char* path) {
     if (node->type == vfs::NodeType::directory) {
         return sx::negative_error(SAVANXP_EISDIR);
     }
-    if (detail::vnode_has_open_references(*node)) {
-        return sx::negative_error(SAVANXP_EBUSY);
-    }
+    // A file that is open loses its name and stays readable through its
+    // handles until the last one closes (vfs::unlink).
     if (!vfs::unlink(proc.credentials, path)) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
@@ -723,6 +722,15 @@ int fchmod_fd(process::Process& proc, uint64_t fd, uint16_t permissions) {
     return 0;
 }
 
+int fsync_target(process::Process& proc, uint64_t fd) {
+    object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_query);
+    if (file == nullptr || file->node == nullptr ||
+        (file->node->type != vfs::NodeType::file && file->node->type != vfs::NodeType::directory)) {
+        return sx::negative_error(SAVANXP_EBADF);
+    }
+    return 0;
+}
+
 int access_path(process::Process& proc, const char* path, uint32_t want) {
     if ((want & ~(vfs::kAccessRead | vfs::kAccessWrite | vfs::kAccessExecute)) != 0) {
         return sx::negative_error(SAVANXP_EINVAL);
@@ -828,6 +836,10 @@ int read_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t
                 const size_t step = (count - total) < sizeof(scratch) ? (count - total) : sizeof(scratch);
                 const size_t consumed = vfs::read(*file->node, file->offset, scratch, step);
                 if (consumed == 0) {
+                    // A device error is not the end of the file.
+                    if (total == 0 && vfs::last_error() != 0) {
+                        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+                    }
                     break;
                 }
                 if (!write_to_process_memory(proc, user_buffer + total, scratch, consumed)) {

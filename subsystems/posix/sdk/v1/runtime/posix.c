@@ -937,6 +937,8 @@ char* sx_strerror(int error_number) {
         case ENOSYS: return "function not implemented";
         case ENOTEMPTY: return "directory not empty";
         case E2BIG: return "argument list too long";
+        case EXDEV: return "cross-device link";
+        case EROFS: return "read-only file system";
         case ECONNRESET: return "connection reset by peer";
         case ECONNREFUSED: return "connection refused";
         case ETIMEDOUT: return "timed out";
@@ -2351,6 +2353,15 @@ pid_t sx_setsid(void) {
 
 int sx_sync(void) {
     long result = savanxp_sync();
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
+}
+
+int sx_fsync(int fd) {
+    long result = savanxp_fsync(fd);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -5358,6 +5369,8 @@ __attribute__((weak, alias("sx_getpgrp"))) pid_t getpgrp(void);
 __attribute__((weak, alias("sx_setpgid"))) int setpgid(pid_t pid, pid_t pgrp);
 __attribute__((weak, alias("sx_setsid"))) pid_t setsid(void);
 __attribute__((weak, alias("sx_sync"))) int sync(void);
+__attribute__((weak, alias("sx_fsync"))) int fsync(int fd);
+__attribute__((weak, alias("sx_fsync"))) int fdatasync(int fd);
 __attribute__((weak, alias("sx_dup"))) int dup(int fd);
 __attribute__((weak, alias("sx_dup2"))) int dup2(int oldfd, int newfd);
 __attribute__((weak, alias("sx_pipe"))) int pipe(int fds[2]);

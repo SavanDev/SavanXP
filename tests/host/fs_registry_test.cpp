@@ -92,7 +92,7 @@ fs::VolumeId probe_fat_format(size_t device, const char* mount_point) {
 }
 
 bool attach(fs::VolumeId) { return true; }
-bool read(vfs::Vnode&, size_t, void*, size_t) { return true; }
+fs::Status read(vfs::Vnode&, size_t, void*, size_t) { return fs::Status::ok; }
 void refresh(vfs::Vnode&) {}
 void unmount(fs::VolumeId) {}
 
@@ -109,9 +109,11 @@ const fs::Driver kRootDriver = {
     .unlink = nullptr,
     .remove_directory = nullptr,
     .refresh = &refresh,
+    .release = nullptr,
     .create_file = nullptr,
     .create_directory = nullptr,
     .rename = nullptr,
+    .replaces_on_rename = false,
     .set_ownership = nullptr,
     .stats = nullptr,
     .sync = nullptr,
@@ -133,9 +135,11 @@ const fs::Driver kFatDriver = {
     .unlink = nullptr,
     .remove_directory = nullptr,
     .refresh = &refresh,
+    .release = nullptr,
     .create_file = nullptr,
     .create_directory = nullptr,
     .rename = nullptr,
+    .replaces_on_rename = false,
     .set_ownership = nullptr,
     .stats = nullptr,
     .sync = nullptr,

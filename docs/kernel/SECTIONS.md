@@ -38,28 +38,22 @@ process has mapped is ever written, which is what keeps copy-on-write out of the
 first milestone; a loader fills writable segments from the file into private
 anonymous sections instead.
 
-Two things are deliberately missing:
+One thing is deliberately missing, and one rule holds the cache together:
 
-- **No in-place update detection.** The cache key is the file's vnode plus the
-  range backed — the range matters because "the whole file" and "one slice of it"
-  are different sections, and keying on the file alone mapped a segment with the
-  whole image behind it. The vnode, unlike an inode number, is unique across
-  mounted volumes and not reused after an unlink. (Unmount does reuse node
-  slots, but only after checking that no live section names any node of the
-  volume: see [FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time).)
-  But a write keeps the same
-  vnode, so overwriting a library's bytes in place would leave the
-  cache serving the old image. This is unreachable today and must stay
-  that way until it is handled: **there is no install syscall**, Add/Remove
-  Programs can only uninstall, and the build rewrites `disk.img` from the host
-  with no kernel running to be stale. The moment an install syscall lands — or
-  anything else that writes a file's bytes in place — the key needs a content
-  generation bumped by `write_file`, `truncate_file`, `unlink_file`,
-  `rename_path` and create, **plus the test that proves it**: open a section,
-  overwrite the file with same-size different content, open again, expect
-  different bytes. Adding the counter before the mutation path exists would be
-  five hooks guarding a case that cannot occur, and one forgotten hook would be
-  a silent staleness bug.
+- **The cache key is the file's vnode, the range backed and the file's content
+  generation** (`source_generation`). The range matters because "the whole
+  file" and "one slice of it" are different sections. The vnode, unlike an
+  inode number, is unique across mounted volumes. Its slot is reused after the
+  file is gone and released, and a file's bytes change under the same vnode,
+  so the key also carries `Vnode::content_generation`, which the VFS moves on
+  every write, truncate and slot reuse and never repeats
+  ([FILESYSTEMS.md](FILESYSTEMS.md#the-file-contract)). A section opened after
+  a write is read again; views mapped before it keep the image they had, which
+  is the same thing an unlinked file's holders get. A read error while filling
+  a section destroys it and fails the open, never caching a short image.
+  `sxfs-vfs-test` checks the generation rules; unmount still refuses while a
+  live section names a node of the volume
+  ([FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time)).
 - **No end-to-end execution from the mapping.** `sectiontest` proves the bytes
   arrive intact and that the view maps executable, but code that actually *runs*
   out of a file-backed view needs a loader to apply relocations first. The

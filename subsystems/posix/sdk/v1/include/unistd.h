@@ -26,6 +26,8 @@ pid_t getpgrp(void);
 int setpgid(pid_t pid, pid_t pgrp);
 pid_t setsid(void);
 int sync(void);
+int fsync(int fd);
+int fdatasync(int fd);
 int dup(int fd);
 int dup2(int oldfd, int newfd);
 int pipe(int fds[2]);

@@ -120,6 +120,7 @@ long system_info(struct savanxp_system_info* info);
 long realtime(struct savanxp_realtime* value);
 long set_realtime(const struct savanxp_realtime* value);
 long savanxp_sync(void);
+long savanxp_fsync(int fd);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */
 long fscheck(struct savanxp_fscheck_report* report);

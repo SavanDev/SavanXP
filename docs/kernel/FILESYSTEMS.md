@@ -109,7 +109,9 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
   `rename / ...` are `EINVAL`). This used to be a literal `"/disk"` check.
   It now holds for any mount point.
 - A rename stays on one volume, or within the in-memory tree. Crossing is
-  `EINVAL`.
+  `EXDEV`.
+- A write operation the driver does not provide is `EROFS`; the VFS checks
+  before calling, so a read-only driver leaves those pointers null.
 - Type, writability and range are checked before a driver is called, and
   `rmdir` checks the directory is empty first.
 - Permissions are checked before a driver is called, on the vnode, with the
@@ -134,22 +136,83 @@ Rules the VFS enforces for every driver, so drivers do not repeat them:
   `vfs::install_volume_file`, which stamps the vnode with the driver. `data`
   is the driver's own record (an SxFS `FileRecord`). The VFS never reads it.
 - **File operations:** `read`, `write`, `truncate`, `unlink`,
-  `remove_directory`, `refresh`. The driver keeps `vnode.size` current.
+  `remove_directory`, `refresh`, `release`. The driver keeps `vnode.size`
+  current.
 - **Path operations:** `create_file`, `create_directory`, `rename`. They
-  return the published vnode, or fail when the volume is full or read-only.
-- **Volume operations:** `stats` (writable, file count, total/used/free bytes)
-  and `sync` (make metadata durable, mark clean).
+  publish the vnode. `replaces_on_rename` says a rename onto an existing name
+  replaces it atomically; without it the VFS answers `EEXIST` itself.
+- **Volume operations:** `stats` (writable, file count, total/used/free bytes),
+  `sync` (make metadata durable, mark clean) and `sync_deferred` (the same,
+  queued behind the writeback thread).
+
+Every operation that can fail returns an `fs::Status`: `ok`, `io_error`,
+`no_space`, `read_only`, `exists`, `not_found`, `invalid`, `unsupported`.
+`fs::error_of` is the one place a status becomes an errno, so a full volume,
+a dead device and a refused name reach the program as different errors.
 
 `read` and `refresh` are required. A driver without them is refused at
 registration.
+
+## The file contract
+
+What a program can rely on, whatever the volume. The host test
+`tests/host/sxfs_vfs_test.cpp` (`sxfs-vfs-test`) runs the real VFS over the
+real SxFS driver against it, and `smoke` repeats the core of it in QEMU.
+
+**Errors are the operation's own.** `ENOENT`, `EEXIST`, `EISDIR`, `ENOTDIR`,
+`ENOTEMPTY`, `EXDEV` (a rename across volumes), `EROFS`, `ENOSPC`, `EIO`,
+`EBUSY`. A read that fails returns the error, never a short count that looks
+like end of file: `vfs::last_error()` is 0 after a read that simply ended.
+
+**A rename onto an existing name replaces it**, in one step: every lookup
+finds the old object or the new one. A file replaces a file, a directory an
+empty directory; the mixes are `EISDIR` and `ENOTDIR`, a directory with
+entries `ENOTEMPTY`. On a driver without `replaces_on_rename` (FAT) the
+existing name is `EEXIST` and nothing changes.
+
+**An unlinked file lives while something holds it.** `unlink`, or a rename
+over it, removes the name at once: it is in no lookup and no listing, and the
+name can be created again. Handles and sections that had the file keep
+reading and writing its contents (`Vnode::unlinked`), and the driver's
+`release` frees it when the last one goes (`vfs::node_released`, called when
+an I/O object is destroyed; `vfs::set_holder_probe` is how the VFS asks
+whether anything holds a node). A driver without `release` (FAT) refuses to
+unlink or replace a held file with `EBUSY`. A directory that is some
+process's open handle is refused the same way.
+
+**Identity.** A vnode's address is stable while anything holds it. A slot is
+reused once the node is gone and released, and `content_generation` never
+repeats across reuse: it moves on every write, truncate and reuse, so a cache
+of a file's bytes keyed on (vnode, generation) cannot serve another file or an
+older version ([SECTIONS.md](SECTIONS.md)).
+
+**Durability.** A successful `write`, `close` or `rename` is in the cache, not
+on the medium. `fsync(fd)` on a file or a directory, and `sync()`, return once
+everything written before the call is on the medium, or fail with `EIO`. Both
+are the same barrier: a volume's metadata and the writeback queue are shared
+by all its files, so there is no cheaper per-file one to offer. To replace a
+file without ever losing it:
+
+1. write the new contents to a temporary name in the same directory;
+2. `fsync` it;
+3. `rename` it over the old name;
+4. `fsync` the directory.
+
+On SxFS a power cut at any sector of this leaves the name holding the whole
+old file or the whole new one; before step 3 is asked for it is always the
+old one, and after step 4 returns it is always the new one. The temporary may
+survive a cut before step 3 and is the program's to remove. The test cuts at
+every sector. On FAT step 3 fails with `EEXIST`: there the old file has to be
+removed first, and a cut between the two leaves only the temporary.
 
 ## Who asks fs:: for what
 
 - `sysinfo`: the `sxfs_*` fields of `savanxp_system_info` describe the system
   disk (`fs::kRootMountPoint`) through `fs::stats`, whatever its format. The
   names are ABI and stay.
-- `SAVANXP_SYS_SYNC`: `fs::sync_all()` (every mounted volume), then
-  `block::sync_all()` to drain the writeback queue.
+- `SAVANXP_SYS_SYNC` and `SAVANXP_SYS_FSYNC`: `fs::sync_all_deferred()` (every
+  mounted volume), then a `block::writeback_checkpoint` ticket the caller
+  sleeps on until the queue has drained past it.
 - `SAVANXP_SYS_FSCHECK` stays SxFS-specific (`sxfs::check`): its report is
   the SxFS consistency model ([SXFS_CHECK.md](../fs/SXFS_CHECK.md)), not a
   generic one.
@@ -225,25 +288,24 @@ is known, what the fix is. The SxFS side is in
   check and is then refused by the format, reported as `ENOSPC`. Read in the
   code, not yet exercised. A per-volume flag asking for case-insensitive
   lookup would be the smallest fix.
-- **A driver's failure is a `bool`, and the VFS picks the errno per
-  operation**: a failed create or write is `ENOSPC`, a failed truncate
-  `ENOSPC` when growing and `EINVAL` when shrinking, and a failed mkdir,
-  rename, unlink or rmdir `EINVAL`. A full volume, a read-only file, an I/O
-  error and a name the format refuses all look alike to the program. The fix
-  is driver operations that return a status.
 - **There is no read-only mount.** Acting as the system passes the write bits
   ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#what-the-check-covers)),
   so what protects a read-only volume is each vnode published without
-  `writable` and the driver refusing. And the VFS calls the write operations
-  without checking them for `nullptr`: a driver that cannot write still has to
-  provide each one, returning failure. A mount flag the VFS checks before any
+  `writable` and the driver answering `read_only`. Opening such a file for
+  writing is `EBADF`, not `EROFS`. A mount flag the VFS checks before any
   driver call would cover both.
-- **A driver never sees an open, a close or a vnode released.** It cannot keep
-  state per open file, so FAT opens the file again on every `read`, walking
-  its cluster chain from the start each time. And it is never told when the
-  last handle on an unlinked file goes: both drivers free an unlinked file at
-  once, so a handle still open on it reads nothing, where POSIX keeps it alive
-  until the last close.
+- **A driver never sees an open or a close.** It is told when the last holder
+  of an unlinked file goes (`release`) and nothing else, so it cannot keep
+  state per open file: FAT opens the file again on every `read`, walking its
+  cluster chain from the start each time.
+- **`fsync` is the whole-system barrier.** Correct, and as slow as `sync` on a
+  machine with several busy volumes.
+- **A deferred write error reaches whoever synchronizes next**, as `EIO` from
+  `sync`/`fsync`, not the handle that wrote the bytes.
+- **File-backed sections are private copies.** A section is the file as it was
+  at one generation; a later write makes the next `section_open` read again
+  but does not change views already mapped. There is no shared writable
+  mapping.
 - **A rename reaches the driver first, then the tree.** If the VFS failed to
   rename its own node after the driver succeeded, the disk and the tree would
   disagree. Not seen; it is the order in `vfs::rename`. The VFS does refuse a

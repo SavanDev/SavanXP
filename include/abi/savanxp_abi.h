@@ -69,6 +69,9 @@ enum sx_status {
     SX_ENOTEMPTY = 39,
     SX_ECHILD = 10,
     SX_E2BIG = 7,
+    // A rename across two volumes, and a change on a volume that takes none.
+    SX_EXDEV = 18,
+    SX_EROFS = 30,
     SX_ECONNRESET = 104,
     SX_ETIMEDOUT = 110,
     SX_ECONNREFUSED = 111,
@@ -102,6 +105,8 @@ typedef enum sx_status savanxp_error_code;
 #define SAVANXP_ENOTEMPTY SX_ENOTEMPTY
 #define SAVANXP_ECHILD SX_ECHILD
 #define SAVANXP_E2BIG SX_E2BIG
+#define SAVANXP_EXDEV SX_EXDEV
+#define SAVANXP_EROFS SX_EROFS
 #define SAVANXP_ECONNRESET SX_ECONNRESET
 #define SAVANXP_ETIMEDOUT SX_ETIMEDOUT
 #define SAVANXP_ECONNREFUSED SX_ECONNREFUSED

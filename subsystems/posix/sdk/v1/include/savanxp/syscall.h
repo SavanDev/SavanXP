@@ -115,6 +115,10 @@ enum savanxp_syscall_number {
     /* STAT and FSTAT with ownership and mtime: struct savanxp_stat_ex. */
     SAVANXP_SYS_STAT_EX = 71,
     SAVANXP_SYS_FSTAT_EX = 72,
+    /* fsync(fd): returns once everything written so far is on the medium,
+     * which covers the file, its length and every name. -EBADF for a
+     * descriptor that is not a file or a directory, -EIO if a write failed. */
+    SAVANXP_SYS_FSYNC = 73,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,

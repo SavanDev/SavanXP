@@ -29,12 +29,25 @@ struct DynamicFile {
 NodeSlot g_nodes[kMaxNodes] = {};
 DynamicFile g_dynamic_files[kMaxDynamicFiles] = {};
 size_t g_node_count = 0;
-// Slots given back by detach_subtree, linked through vnode.next_sibling. Only
-// those are reused: a node invalidated by unlink never is, which is what lets
-// the section cache key on vnode pointers (docs/kernel/SECTIONS.md).
+// Slots given back by retire_node and detach_subtree, linked through
+// vnode.next_sibling. A slot is given back only when nothing holds its node,
+// and its content_generation survives reuse and moves on, so a cache keyed on
+// (vnode, generation) never takes the next file in the slot for the last one
+// (docs/kernel/SECTIONS.md).
 int g_free_nodes = -1;
 bool g_ready = false;
 int g_last_error = SX_ENOENT;
+bool (*g_holder_probe)(const vfs::Vnode& node) = nullptr;
+
+bool node_is_held(const vfs::Vnode& node) {
+    return g_holder_probe != nullptr && g_holder_probe(node);
+}
+
+// A node that has a name in the tree: not invalidated, and not unlinked while
+// held.
+bool node_is_named(const vfs::Vnode& node) {
+    return node.type != vfs::NodeType::invalid && !node.unlinked;
+}
 
 bool parse_hex_u32(const char* text, size_t count, uint32_t& value_out) {
     uint32_t value = 0;
@@ -68,7 +81,9 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     }
 
     NodeSlot& slot = g_nodes[node_index];
+    const uint32_t generation = slot.vnode.content_generation;
     memset(&slot, 0, sizeof(slot));
+    slot.vnode.content_generation = generation;
     strcpy(slot.name, name);
     slot.vnode.type = type;
     slot.vnode.backend = vfs::Backend::memory;
@@ -96,7 +111,7 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
 int find_child(int parent, const char* name) {
     int index = g_nodes[parent].vnode.first_child;
     while (index >= 0) {
-        if (g_nodes[index].vnode.type != vfs::NodeType::invalid &&
+        if (node_is_named(g_nodes[index].vnode) &&
             strcmp(g_nodes[index].vnode.name, name) == 0) {
             return index;
         }
@@ -393,7 +408,7 @@ bool node_is_ancestor(int ancestor, int node) {
 bool node_has_valid_children(const vfs::Vnode& node) {
     int child = node.first_child;
     while (child >= 0) {
-        if (g_nodes[child].vnode.type != vfs::NodeType::invalid) {
+        if (node_is_named(g_nodes[child].vnode)) {
             return true;
         }
         child = g_nodes[child].vnode.next_sibling;
@@ -401,12 +416,51 @@ bool node_has_valid_children(const vfs::Vnode& node) {
     return false;
 }
 
-void invalidate_node(vfs::Vnode& node) {
-    node.type = vfs::NodeType::invalid;
-    node.data = nullptr;
-    node.size = 0;
-    node.writable = false;
+// A slot cleared for reuse. Its content generation is kept and moved on.
+void clear_slot(int index) {
+    const uint32_t generation = g_nodes[index].vnode.content_generation + 1u;
+    memset(&g_nodes[index], 0, sizeof(g_nodes[index]));
+    g_nodes[index].vnode.type = vfs::NodeType::invalid;
+    g_nodes[index].vnode.parent = -1;
+    g_nodes[index].vnode.first_child = -1;
+    g_nodes[index].vnode.content_generation = generation;
+    g_nodes[index].vnode.next_sibling = g_free_nodes;
+    g_free_nodes = index;
 }
+
+// Takes a node nothing holds out of the tree for good and gives its slot
+// back. The callers have checked: no handle has it (node_is_held), its driver
+// has dropped its record, and a directory has nothing left in its chain.
+void retire_node(vfs::Vnode& node) {
+    const int index = static_cast<int>(reinterpret_cast<NodeSlot*>(&node) - g_nodes);
+    if (index <= 0 || static_cast<size_t>(index) >= g_node_count) {
+        return;
+    }
+    if (node.backend == vfs::Backend::memory && node.data != nullptr) {
+        for (DynamicFile& file : g_dynamic_files) {
+            if (file.in_use && node.data == file.storage) {
+                file.in_use = false;
+            }
+        }
+    }
+    detach_node(index);
+    clear_slot(index);
+}
+
+// A directory whose chain still carries a file unlinked while held: the
+// directory's slot cannot go while that file hangs from it.
+bool node_has_unlinked_children(const vfs::Vnode& node) {
+    for (int child = node.first_child; child >= 0; child = g_nodes[child].vnode.next_sibling) {
+        if (g_nodes[child].vnode.unlinked) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A driver operation the driver does not have: a change on a volume that
+// takes none is EROFS.
+constexpr int kNoWriteOperation = SX_EROFS;
 
 // The whole subtree under `root`, root first, into g_subtree. Iterative: a
 // volume can be deeper than the kernel stack is kind to.
@@ -786,10 +840,16 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
             }
             if (wants_truncate) {
                 size_t written = 0;
-                if (!node.volume_driver->write(node, 0, nullptr, 0, true, written)) {
-                    g_last_error = SX_EINVAL;
+                if (node.volume_driver->write == nullptr) {
+                    g_last_error = kNoWriteOperation;
                     return nullptr;
                 }
+                const fs::Status truncated = node.volume_driver->write(node, 0, nullptr, 0, true, written);
+                if (!fs::ok(truncated)) {
+                    g_last_error = fs::error_of(truncated);
+                    return nullptr;
+                }
+                ++node.content_generation;
             }
         }
         return &node;
@@ -826,9 +886,15 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
                              static_cast<uint16_t>(kModeFile | (create_permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        Vnode* node = volume.driver->create_file(volume.volume, normalized, owner);
-        if (node == nullptr) {
-            g_last_error = SX_ENOSPC;
+        if (volume.driver->create_file == nullptr) {
+            g_last_error = kNoWriteOperation;
+            return nullptr;
+        }
+        Vnode* node = nullptr;
+        const fs::Status created = volume.driver->create_file(volume.volume, normalized, owner, node);
+        if (!fs::ok(created) || node == nullptr) {
+            g_last_error = fs::ok(created) ? SX_ENOSPC : fs::error_of(created);
+            return nullptr;
         }
         return node;
     }
@@ -928,13 +994,7 @@ bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node)) {
     }
     detach_node(root);
     for (size_t index = 0; index < count; ++index) {
-        const int node = g_subtree[index];
-        memset(&g_nodes[node], 0, sizeof(g_nodes[node]));
-        g_nodes[node].vnode.type = NodeType::invalid;
-        g_nodes[node].vnode.parent = -1;
-        g_nodes[node].vnode.first_child = -1;
-        g_nodes[node].vnode.next_sibling = g_free_nodes;
-        g_free_nodes = node;
+        clear_slot(g_subtree[index]);
     }
     return true;
 }
@@ -982,9 +1042,15 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
                              static_cast<uint16_t>(kModeDirectory | (permissions & kModePermissions))};
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        Vnode* directory = volume.driver->create_directory(volume.volume, normalized, owner);
-        if (directory == nullptr) {
-            g_last_error = SX_EINVAL;
+        if (volume.driver->create_directory == nullptr) {
+            g_last_error = kNoWriteOperation;
+            return nullptr;
+        }
+        Vnode* directory = nullptr;
+        const fs::Status created = volume.driver->create_directory(volume.volume, normalized, owner, directory);
+        if (!fs::ok(created) || directory == nullptr) {
+            g_last_error = fs::ok(created) ? SX_ENOSPC : fs::error_of(created);
+            return nullptr;
         }
         return directory;
     }
@@ -1086,21 +1152,54 @@ bool unlink(const cred::Credentials& who, const char* path) {
         return false;
     }
 
+    // A file something holds loses its name and keeps its contents for
+    // those holders; node_released() frees it when the last one goes.
+    const bool held = node_is_held(node);
     switch (node.backend) {
         case Backend::memory:
-            invalidate_node(node);
-            return true;
-        case Backend::volume:
-            if (!node.volume_driver->unlink(node)) {
-                g_last_error = SX_EINVAL;
+            break;
+        case Backend::volume: {
+            const fs::Driver& driver = *node.volume_driver;
+            if (driver.unlink == nullptr) {
+                g_last_error = kNoWriteOperation;
                 return false;
             }
-            invalidate_node(node);
-            return true;
+            if (held && driver.release == nullptr) {
+                g_last_error = SX_EBUSY;
+                return false;
+            }
+            const fs::Status removed = driver.unlink(node, held);
+            if (!fs::ok(removed)) {
+                g_last_error = removed == fs::Status::unsupported ? SX_EBUSY : fs::error_of(removed);
+                return false;
+            }
+            break;
+        }
         default:
             g_last_error = SX_EINVAL;
             return false;
     }
+    if (held) {
+        node.unlinked = true;
+    } else {
+        retire_node(node);
+    }
+    return true;
+}
+
+void set_holder_probe(bool (*held)(const Vnode& node)) {
+    g_holder_probe = held;
+}
+
+void node_released(Vnode& node) {
+    if (!node.unlinked || node.type == NodeType::invalid || node_is_held(node)) {
+        return;
+    }
+    if (node.backend == Backend::volume && node.volume_driver != nullptr &&
+        node.volume_driver->release != nullptr) {
+        node.volume_driver->release(node);
+    }
+    retire_node(node);
 }
 
 bool rmdir(const cred::Credentials& who, const char* path) {
@@ -1134,18 +1233,27 @@ bool rmdir(const cred::Credentials& who, const char* path) {
         g_last_error = SX_EACCES;
         return false;
     }
+    // A directory someone has open, or one a held unlinked file still hangs
+    // from, stays until they let go.
+    if (node_is_held(node) || node_has_unlinked_children(node)) {
+        g_last_error = SX_EBUSY;
+        return false;
+    }
 
     VolumeRef volume = {};
     if (volume_for_path(normalized, volume)) {
-        if (!volume.driver->remove_directory(node)) {
-            if (g_last_error == SX_ENOENT) {
-                g_last_error = SX_EINVAL;
-            }
+        if (volume.driver->remove_directory == nullptr) {
+            g_last_error = kNoWriteOperation;
+            return false;
+        }
+        const fs::Status removed = volume.driver->remove_directory(node);
+        if (!fs::ok(removed)) {
+            g_last_error = fs::error_of(removed);
             return false;
         }
     }
 
-    invalidate_node(node);
+    retire_node(node);
     return true;
 }
 
@@ -1195,14 +1303,22 @@ bool truncate(const cred::Credentials& who, const char* path, size_t size) {
                 memset(static_cast<uint8_t*>(node.data) + node.size, 0, size - node.size);
             }
             node.size = size;
+            ++node.content_generation;
             return true;
         }
-        case Backend::volume:
-            if (!node.volume_driver->truncate(node, size)) {
-                g_last_error = size > node.size ? SX_ENOSPC : SX_EINVAL;
+        case Backend::volume: {
+            if (node.volume_driver->truncate == nullptr) {
+                g_last_error = kNoWriteOperation;
                 return false;
             }
+            const fs::Status truncated = node.volume_driver->truncate(node, size);
+            if (!fs::ok(truncated)) {
+                g_last_error = fs::error_of(truncated);
+                return false;
+            }
+            ++node.content_generation;
             return true;
+        }
         default:
             g_last_error = SX_EINVAL;
             return false;
@@ -1232,9 +1348,10 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
     if (node_index < 0) {
         return false;
     }
-    if (resolve_index(normalized_new) >= 0) {
-        g_last_error = SX_EEXIST;
-        return false;
+    const int replaced_index = resolve_index(normalized_new);
+    if (replaced_index == node_index) {
+        // Two spellings of one name (the /disk alias): nothing to do.
+        return true;
     }
 
     char parent_path[kMaxPathLength] = {};
@@ -1253,10 +1370,6 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         g_last_error = SX_ENOTDIR;
         return false;
     }
-    if (find_child(new_parent, leaf_name) >= 0) {
-        g_last_error = SX_EEXIST;
-        return false;
-    }
 
     Vnode& node = g_nodes[node_index].vnode;
     if (node.type == NodeType::directory && node_is_ancestor(node_index, new_parent)) {
@@ -1271,26 +1384,82 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
 
     // Both ends on the same volume, or both in the in-memory tree.
     if (fs::owner_of(normalized_old) != fs::owner_of(normalized_new)) {
-        g_last_error = SX_EINVAL;
+        g_last_error = SX_EXDEV;
         return false;
     }
     VolumeRef volume = {};
-    if (volume_for_path(normalized_old, volume) &&
-        !volume.driver->rename(volume.volume, normalized_old, normalized_new)) {
-        g_last_error = SX_EINVAL;
-        return false;
+    const bool on_volume = volume_for_path(normalized_old, volume);
+
+    // What is at the new name is replaced, if the two agree in type and the
+    // caller could have removed it.
+    Vnode* replaced = replaced_index >= 0 ? &g_nodes[replaced_index].vnode : nullptr;
+    bool keep_replaced = false;
+    if (replaced != nullptr) {
+        if (node.type == NodeType::directory && replaced->type != NodeType::directory) {
+            g_last_error = SX_ENOTDIR;
+            return false;
+        }
+        if (node.type != NodeType::directory && replaced->type == NodeType::directory) {
+            g_last_error = SX_EISDIR;
+            return false;
+        }
+        if (replaced->type == NodeType::directory && node_has_valid_children(*replaced)) {
+            g_last_error = SX_ENOTEMPTY;
+            return false;
+        }
+        if (!sticky_allows(who, new_parent, *replaced)) {
+            g_last_error = SX_EACCES;
+            return false;
+        }
+        if (replaced->backend == Backend::device) {
+            g_last_error = SX_EINVAL;
+            return false;
+        }
+        const bool held = node_is_held(*replaced);
+        if (replaced->type == NodeType::directory && (held || node_has_unlinked_children(*replaced))) {
+            g_last_error = SX_EBUSY;
+            return false;
+        }
+        if (on_volume && !volume.driver->replaces_on_rename) {
+            g_last_error = SX_EEXIST;
+            return false;
+        }
+        if (held && on_volume && volume.driver->release == nullptr) {
+            g_last_error = SX_EBUSY;
+            return false;
+        }
+        keep_replaced = held;
     }
 
-    detach_node(node_index);
-    if (!set_node_name(node_index, leaf_name)) {
-        g_last_error = SX_EINVAL;
-        return false;
+    // Everything the tree needs is checked: once the driver succeeds, moving
+    // the node cannot fail, so the disk never gets ahead of the tree.
+    if (on_volume) {
+        if (volume.driver->rename == nullptr) {
+            g_last_error = kNoWriteOperation;
+            return false;
+        }
+        const fs::Status renamed = volume.driver->rename(volume.volume, normalized_old, normalized_new, keep_replaced);
+        if (!fs::ok(renamed)) {
+            g_last_error = renamed == fs::Status::unsupported ? SX_EBUSY : fs::error_of(renamed);
+            return false;
+        }
     }
+
+    if (replaced != nullptr) {
+        if (keep_replaced) {
+            replaced->unlinked = true;
+        } else {
+            retire_node(*replaced);
+        }
+    }
+    detach_node(node_index);
+    (void)set_node_name(node_index, leaf_name);
     attach_node(node_index, new_parent);
     return true;
 }
 
 size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
+    g_last_error = 0;
     if (node.type != NodeType::file || buffer == nullptr || count == 0) {
         return 0;
     }
@@ -1308,8 +1477,15 @@ size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
             }
             memcpy(buffer, static_cast<const uint8_t*>(node.data) + offset, to_copy);
             return to_copy;
-        case Backend::volume:
-            return node.volume_driver->read(node, offset, buffer, to_copy) ? to_copy : 0;
+        case Backend::volume: {
+            const fs::Status status = node.volume_driver->read(node, offset, buffer, to_copy);
+            if (!fs::ok(status)) {
+                // Not the end of the file: the caller must not take it for one.
+                g_last_error = fs::error_of(status);
+                return 0;
+            }
+            return to_copy;
+        }
         default:
             return 0;
     }
@@ -1346,12 +1522,20 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             if (new_size > node.size) {
                 node.size = new_size;
             }
+            ++node.content_generation;
             return to_copy;
         }
         case Backend::volume: {
             size_t written = 0;
-            if (!node.volume_driver->write(node, offset, buffer, count, truncate, written)) {
-                g_last_error = SX_ENOSPC;
+            if (node.volume_driver->write == nullptr) {
+                g_last_error = kNoWriteOperation;
+                return 0;
+            }
+            const fs::Status status = node.volume_driver->write(node, offset, buffer, count, truncate, written);
+            // A truncating write may have emptied the file before it failed.
+            ++node.content_generation;
+            if (!fs::ok(status) && written == 0) {
+                g_last_error = fs::error_of(status);
                 return 0;
             }
             return written;
@@ -1405,10 +1589,21 @@ bool store_ownership(Vnode& node, const Ownership& owner) {
         return false;
     }
     VolumeRef volume = {};
-    if (volume_for_path(path, volume)) {
-        if (volume.driver->set_ownership == nullptr ||
-            !volume.driver->set_ownership(node, owner.uid, owner.gid, owner.mode)) {
+    bool on_volume = volume_for_path(path, volume);
+    if (node.backend == Backend::volume && node.volume_driver != nullptr) {
+        // A file carries its driver, which also holds for one whose name is
+        // gone (fchmod on an unlinked file).
+        volume.driver = node.volume_driver;
+        on_volume = true;
+    }
+    if (on_volume) {
+        if (volume.driver->set_ownership == nullptr) {
             g_last_error = SX_EINVAL;
+            return false;
+        }
+        const fs::Status stored = volume.driver->set_ownership(node, owner.uid, owner.gid, owner.mode);
+        if (!fs::ok(stored)) {
+            g_last_error = fs::error_of(stored);
             return false;
         }
     }
@@ -1475,7 +1670,7 @@ const Vnode* child_at(const Vnode& directory, size_t index) {
     int child = directory.first_child;
     size_t current = 0;
     while (child >= 0) {
-        if (g_nodes[child].vnode.type != NodeType::invalid) {
+        if (node_is_named(g_nodes[child].vnode)) {
             if (current == index) {
                 return &g_nodes[child].vnode;
             }
@@ -1490,7 +1685,7 @@ size_t child_count(const Vnode& directory) {
     size_t count = 0;
     int child = directory.first_child;
     while (child >= 0) {
-        if (g_nodes[child].vnode.type != NodeType::invalid) {
+        if (node_is_named(g_nodes[child].vnode)) {
             ++count;
         }
         child = g_nodes[child].vnode.next_sibling;

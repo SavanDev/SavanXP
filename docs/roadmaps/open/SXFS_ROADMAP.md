@@ -81,32 +81,33 @@ contents.
 
 ## V2-B — file lifetime, errors and durability
 
-**Open; depends on V2-A.** Complete the common file contract through Sx and the
-VFS, then translate it at SUN/POSIX and future subsystem boundaries:
+**Done.** The contract is
+[`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract); the SxFS
+side of an unlinked file is in
+[`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md#a-file-unlinked-while-open).
 
-- Atomic rename with replacement, including type checks and failure rollback.
-  Prepare the VFS update so disk success cannot leave the in-memory tree behind.
-- Unlink removes a name; open handles and file-backed sections keep the object
-  alive until their last reference is released. Define the persistent state and
-  crash recovery of pending deletions, and distinguish it from unexplained
-  unreachable inodes. Drivers need lifetime callbacks; freeing blocks at unlink
-  or returning POSIX `EBUSY` is not the completed contract.
-- Driver status results that distinguish `EIO`, `ENOSPC`, `EROFS`, invalid
-  arguments and name collisions, rather than letting the VFS guess from a bool.
-- Per-file and directory durability operations, write-through/open contracts as
-  required by consumers, and delivery of deferred write errors to the caller.
-  Global `sync` and writeback tickets already exist; write/close success must
-  not be documented as durable storage by default.
-- Stable identity and content-generation rules shared with file-backed sections
-  and caches. Existing file-image sections are not a coherent writable page
-  cache. VM/VFS must own mapping, truncation and invalidation rules together.
+- Rename replaces an existing file or empty directory atomically, with type
+  checks, and the VFS validates everything it can before the driver commits.
+- Unlink removes the name; handles and sections keep the object until the last
+  one is released. On disk the object is a doomed inode that keeps its blocks,
+  which a mount after a power cut frees, and which `fscheck` reports as a
+  pending deletion and not as a finding.
+- Driver operations return `fs::Status`; `EIO`, `ENOSPC`, `EROFS`, `EEXIST`,
+  `EXDEV` and invalid arguments reach the caller as themselves, and a failed
+  read is an error and not an end of file.
+- `fsync` on a file or a directory, as the same barrier as `sync`. A deferred
+  write error is the `EIO` of the next synchronization.
+- `Vnode::content_generation` is the identity file-backed sections and caches
+  share; VFS node slots are reused without it ever repeating.
 
-**Done when:** a temporary-file update followed by file synchronization, atomic
-replacement and directory synchronization has documented, crash-tested outcomes.
-Open handles retain the correct contents through rename/unlink, reclamation
-happens once, and failures return precise errors. Existing SUN/POSIX permission
-checks remain effective. Each exposed native API slice has its SUN consumer and
-`nativetest` assertion as required by [`SUN.md`](../../userland/SUN.md).
+`sxfs-vfs-test` runs the real VFS over the real driver, including the
+temporary-file, `fsync`, rename, `fsync` update with a power cut at every
+sector; `smoke` repeats the protocol and the unlink of an open file in QEMU.
+No native API was added, so there is no new `nativetest` assertion.
+
+Left to the VFS roadmap, not to SxFS: a per-volume barrier cheaper than the
+global one, errors delivered to the handle that wrote, open/close callbacks,
+and shared writable mappings.
 
 ## V2-C — recovery, inspection and migration safety
 

@@ -86,7 +86,13 @@ int native_read(Thread& self, uint64_t handle, uint64_t user_buffer, size_t coun
         while (total < count) {
             const size_t step = count - total < sizeof(scratch) ? count - total : sizeof(scratch);
             const size_t consumed = vfs::read(*file->node, file->offset, scratch, step);
-            if (consumed == 0) break;
+            if (consumed == 0) {
+                // A device error is not the end of the file.
+                if (total == 0 && vfs::last_error() != 0) {
+                    return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+                }
+                break;
+            }
             if (!write_to_process_memory(proc, user_buffer + total, scratch, consumed)) {
                 return sx::negative_error(SX_EINVAL);
             }
@@ -270,8 +276,10 @@ int native_write_file(Process& proc, uint64_t user_path, uint64_t user_bytes, si
         return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
     node = vfs::open(proc.credentials, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0600);
     if (!node) return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
-    if (count ? vfs::write(*node, 0, bytes, count, true) != count : !vfs::truncate(proc.credentials, path, 0))
-        return sx::negative_error(SX_EIO);
+    if (count ? vfs::write(*node, 0, bytes, count, true) != count : !vfs::truncate(proc.credentials, path, 0)) {
+        const int error = vfs::last_error();
+        return sx::negative_error(static_cast<sx_status>(error != 0 ? error : SX_EIO));
+    }
     const size_t mount = fs::owner_of(path);
     if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
     return 0;

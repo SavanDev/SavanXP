@@ -63,6 +63,14 @@ struct Vnode {
     uint16_t mode;
     // Last modification, seconds since 1970 UTC; 0 when nothing recorded one.
     uint64_t mtime;
+    // Bumps whenever the file's bytes or length change through the VFS. A
+    // cache of the contents (a file-backed section) is valid only for the
+    // generation it was read at.
+    uint32_t content_generation;
+    // The name is gone (unlink, or a rename over it) while something still
+    // holds the node: it is out of every lookup and listing, and its contents
+    // stay usable through the handles that have it until node_released().
+    bool unlinked;
 };
 
 /* --- permissions ------------------------------------------------------------
@@ -125,9 +133,26 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
 bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node));
 
 Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable);
+
+// Whether something outside the VFS holds a node: an open handle. Set once at
+// boot by whoever owns the handles. Unlink and rename ask it to decide between
+// freeing a file and keeping it for its holders; without a probe nothing is
+// ever held.
+void set_holder_probe(bool (*held)(const Vnode& node));
+// A holder of `node` is gone. When it was the last one of an unlinked node,
+// the file is freed (fs::Driver::release) and the node invalidated.
+void node_released(Vnode& node);
+
+// Removes a file's name. A file something still holds keeps its contents for
+// those holders (Vnode::unlinked); on a volume whose driver cannot do that,
+// EBUSY.
 bool unlink(const cred::Credentials& who, const char* path);
 bool rmdir(const cred::Credentials& who, const char* path);
 bool truncate(const cred::Credentials& who, const char* path, size_t size);
+// An existing `new_path` is replaced in the same step: a file by a file, an
+// empty directory by a directory (EISDIR, ENOTDIR, ENOTEMPTY otherwise). On a
+// volume whose format cannot replace atomically, EEXIST. Across two volumes,
+// EXDEV.
 bool rename(const cred::Credentials& who, const char* old_path, const char* new_path);
 // chmod: the owner or the system may set the permission bits (07777).
 bool chmod(const cred::Credentials& who, const char* path, uint16_t permissions);
@@ -136,6 +161,8 @@ constexpr uint32_t kKeepId = 0xffffffffu;
 bool chown(const cred::Credentials& who, const char* path, uint32_t uid, uint32_t gid);
 // Both, on an open vnode rather than a path (fchmod).
 bool chmod_node(const cred::Credentials& who, Vnode& node, uint16_t permissions);
+// Bytes read; 0 at the end of the file AND on an error, which last_error()
+// tells apart: it is 0 after a read that hit no error.
 size_t read(Vnode& node, size_t offset, void* buffer, size_t count);
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate);
 const Vnode* child_at(const Vnode& directory, size_t index);

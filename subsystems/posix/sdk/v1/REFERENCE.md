@@ -65,6 +65,8 @@ Part of the contract:
 - `SAVANXP_ENOTEMPTY`
 - `SAVANXP_ECHILD`
 - `SAVANXP_ETIMEDOUT`
+- `SAVANXP_EXDEV`
+- `SAVANXP_EROFS`
 
 ## Dispositivos v1
 

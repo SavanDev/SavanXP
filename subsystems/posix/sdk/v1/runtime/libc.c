@@ -425,6 +425,10 @@ long savanxp_sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
 }
 
+long savanxp_fsync(int fd) {
+    return syscall1(SAVANXP_SYS_FSYNC, (unsigned long)fd);
+}
+
 long fscheck(struct savanxp_fscheck_report* report) {
     return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
 }
@@ -785,6 +789,10 @@ const char* error_string(int error_code) {
             return "directory not empty";
         case SAVANXP_E2BIG:
             return "argument list too long";
+        case SAVANXP_EXDEV:
+            return "not on the same volume";
+        case SAVANXP_EROFS:
+            return "read-only volume";
         case SAVANXP_ECHILD:
             return "no child process";
         case SAVANXP_ECONNRESET:

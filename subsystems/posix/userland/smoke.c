@@ -171,7 +171,75 @@ static int prepare_smoke_directory(void) {
     return 1;
 }
 
+/* The file contract on the system volume (docs/kernel/FILESYSTEMS.md): the
+ * durable-update protocol (write a temporary, fsync it, rename it over the
+ * old file, fsync the directory), and a file unlinked while open, which keeps
+ * its contents for the handle that has it and leaves no name behind. */
+static int validate_file_contract(void) {
+    static const char old_text[] = "contract-old";
+    static const char new_text[] = "contract-new-version";
+    char back[sizeof(new_text)] = {};
+    long fd;
+    long dir;
+    long held;
+
+    (void)savanxp_unlink("/smoke/contract.txt");
+    (void)savanxp_unlink("/smoke/contract.tmp");
+    fd = savanxp_open_mode("/smoke/contract.txt", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    if (fd < 0 || savanxp_write((int)fd, old_text, sizeof(old_text) - 1) != (long)(sizeof(old_text) - 1) ||
+        savanxp_fsync((int)fd) < 0) {
+        puts_out("SMOKE FAIL write and fsync /smoke/contract.txt\n");
+        return 0;
+    }
+    savanxp_close((int)fd);
+
+    /* The reader that had the old file open keeps the old bytes. */
+    held = savanxp_open("/smoke/contract.txt");
+    fd = savanxp_open_mode("/smoke/contract.tmp", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    if (held < 0 || fd < 0 ||
+        savanxp_write((int)fd, new_text, sizeof(new_text) - 1) != (long)(sizeof(new_text) - 1) ||
+        savanxp_fsync((int)fd) < 0) {
+        puts_out("SMOKE FAIL write and fsync /smoke/contract.tmp\n");
+        return 0;
+    }
+    savanxp_close((int)fd);
+    dir = savanxp_open("/smoke");
+    if (savanxp_rename("/smoke/contract.tmp", "/smoke/contract.txt") < 0 ||
+        dir < 0 || savanxp_fsync((int)dir) < 0 || file_exists("/smoke/contract.tmp")) {
+        puts_out("SMOKE FAIL rename over /smoke/contract.txt\n");
+        return 0;
+    }
+    savanxp_close((int)dir);
+    if (!validate_file_contains("/smoke/contract.txt", new_text)) {
+        return 0;
+    }
+    if (savanxp_read((int)held, back, sizeof(back) - 1) != (long)(sizeof(old_text) - 1) ||
+        strncmp(back, old_text, sizeof(old_text) - 1) != 0) {
+        puts_out("SMOKE FAIL the replaced file changed under its open handle\n");
+        return 0;
+    }
+    savanxp_close((int)held);
+
+    held = savanxp_open("/smoke/contract.txt");
+    memset(back, 0, sizeof(back));
+    if (held < 0 || savanxp_unlink("/smoke/contract.txt") < 0 || file_exists("/smoke/contract.txt") ||
+        savanxp_read((int)held, back, sizeof(back) - 1) != (long)(sizeof(new_text) - 1) ||
+        strncmp(back, new_text, sizeof(new_text) - 1) != 0) {
+        puts_out("SMOKE FAIL unlink of an open file\n");
+        return 0;
+    }
+    savanxp_close((int)held);
+    if (savanxp_fsync(1000) >= 0) {
+        puts_out("SMOKE FAIL fsync accepted a bad descriptor\n");
+        return 0;
+    }
+    printf("smoke: validated the file contract (fsync, rename over, unlink while open)\n");
+    return 1;
+}
+
 static void cleanup_smoke_directory(void) {
+    (void)savanxp_unlink("/smoke/contract.txt");
+    (void)savanxp_unlink("/smoke/contract.tmp");
     (void)savanxp_unlink("/smoke/sh.txt");
     (void)savanxp_unlink("/smoke/which.txt");
     (void)savanxp_unlink("/smoke/readme.copy");
@@ -317,6 +385,7 @@ int main(void) {
         !run_and_expect("/bin/heaptest", heaptest_argv, 1, 0) ||
         !validate_boot_volume() ||
         !prepare_smoke_directory() ||
+        !validate_file_contract() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/smoke/sh.txt", "shell-redirect") ||
         !run_to_file("/bin/sh", which_argv, 3, "/smoke/which.txt") ||

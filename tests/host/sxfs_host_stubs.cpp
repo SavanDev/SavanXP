@@ -53,6 +53,9 @@ void drop_pending_writes() {
     g_pending_arena_used = 0;
 }
 
+bool g_fail_reads = false;
+
+#ifndef SXFS_HOST_REAL_VFS
 constexpr size_t kMaxNodes = 256;
 constexpr size_t kPathCapacity = 264;
 
@@ -100,6 +103,7 @@ Entry* intern(const char* path) {
     entry.node.name = leaf_of(entry.path);
     return &entry;
 }
+#endif // SXFS_HOST_REAL_VFS
 
 } // namespace
 
@@ -114,6 +118,7 @@ void attach_device(uint8_t* image, uint32_t sector_count, bool writable) {
     g_pending_write_failures = 0;
     g_fail_write_countdown = 0;
     g_writes_issued = 0;
+    g_fail_reads = false;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
@@ -127,6 +132,7 @@ void detach_device() {
     g_pending_write_failures = 0;
     g_fail_write_countdown = 0;
     g_writes_issued = 0;
+    g_fail_reads = false;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
@@ -168,6 +174,11 @@ size_t flushes() {
     return g_flushes;
 }
 
+void fail_reads(bool fail) {
+    g_fail_reads = fail;
+}
+
+#ifndef SXFS_HOST_REAL_VFS
 void reset_vfs() {
     memset(g_nodes, 0, sizeof(g_nodes));
     g_node_count = 0;
@@ -181,6 +192,7 @@ vfs::Vnode* find_node(const char* path) {
 size_t node_count() {
     return g_node_count;
 }
+#endif // SXFS_HOST_REAL_VFS
 
 } // namespace hoststub
 
@@ -221,7 +233,7 @@ bool device_info(size_t index, DeviceInfo& info) {
 }
 
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
-    if (buffer == nullptr || !range_ok(index, lba, sector_count)) {
+    if (buffer == nullptr || g_fail_reads || !range_ok(index, lba, sector_count)) {
         return false;
     }
     auto* out = static_cast<uint8_t*>(buffer);
@@ -340,6 +352,10 @@ uint64_t epoch_seconds() {
 } // namespace rtc
 
 // --- vfs:: ------------------------------------------------------------------
+// The driver tests publish into this table. A test that links the real
+// kernel/vfs.cpp defines SXFS_HOST_REAL_VFS and leaves it out.
+
+#ifndef SXFS_HOST_REAL_VFS
 
 namespace vfs {
 
@@ -382,3 +398,19 @@ void set_ownership(Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {
 }
 
 } // namespace vfs
+
+#endif // SXFS_HOST_REAL_VFS
+
+// --- block::, the part only the mount registry asks for ------------------------
+
+namespace block {
+
+bool ready() {
+    return true;
+}
+
+size_t device_count() {
+    return 1;
+}
+
+} // namespace block

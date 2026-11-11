@@ -87,6 +87,8 @@ Errores visibles:
 - `SAVANXP_ENOTEMPTY`
 - `SAVANXP_ECHILD`
 - `SAVANXP_ETIMEDOUT`
+- `SAVANXP_EXDEV`
+- `SAVANXP_EROFS`
 
 Reglas del ABI:
 
