@@ -188,6 +188,25 @@ static void take_service_names(void)
     }
 }
 
+/* The network device is everyone's to open; breaking every connection in the
+ * system through its fault injector is not. Skipped on a machine with no
+ * network card, where there is no /dev/net0 to ask. */
+static void inject_network_faults(void)
+{
+    struct savanxp_net_tcp_fault fault;
+    long fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+
+    if (fd < 0)
+    {
+        return;
+    }
+    memset(&fault, 0, sizeof(fault));
+    fault.drop_rx_every = 1;
+    check(savanxp_ioctl((int)fd, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == -SAVANXP_EPERM,
+        "the user cannot inject TCP faults");
+    (void)savanxp_close((int)fd);
+}
+
 /* Asks, and right behind the request writes what a forged answer would look
  * like -- windowd's and the broker's. The host presses N: the answer has to
  * be no, whatever the pipe carried. */
@@ -314,6 +333,7 @@ static int run_user(void)
         "an open without an access mode is refused even where reading is allowed");
     ask_windowd_directly();
     take_service_names();
+    inject_network_faults();
     ask_and_forge();
     ask_while_y_is_held();
 

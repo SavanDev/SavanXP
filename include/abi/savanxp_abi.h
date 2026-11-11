@@ -1524,20 +1524,22 @@ struct savanxp_net_tcp_stats {
     uint32_t aborts;
 };
 
-/* Inyeccion de fallas del camino TCP, para los tests. Cada campo es un
- * periodo: 0 desactiva, N > 0 afecta a uno de cada N segmentos. Sin esto no hay
- * forma de ejercitar la retransmision, porque ni slirp ni una LAN de
- * laboratorio pierden paquetes cuando uno los necesita.
+/* Fault injection on the TCP path, for the tests; setting it requires the
+ * system. Every field is a period: 0 turns it off, N > 0 affects one segment
+ * in N. Without this nothing exercises retransmission, because neither slirp
+ * nor a lab LAN loses packets when one needs them to.
  *
- * drop_tx_every cuenta solo los segmentos que consumen espacio de secuencia
- * (datos, SYN, FIN) y reorder_rx_every solo los que traen datos: son los que
- * ejercitan la retransmision propia y el reensamblado. Contar tambien los ACK
- * puros, que son la mayoria del trafico, deja el periodo gastado en ellos. */
+ * drop_tx_every counts only the segments that consume sequence space (data,
+ * SYN, FIN); reorder_rx_every and corrupt_rx_every only the ones that carry
+ * data. Those exercise our retransmission, the reassembly and the checksum.
+ * Counting bare ACKs too, which are most of the traffic, spends the period on
+ * them. A corrupted segment has one payload byte flipped before its checksum
+ * is verified. */
 struct savanxp_net_tcp_fault {
     uint32_t drop_tx_every;
     uint32_t drop_rx_every;
     uint32_t reorder_rx_every;
-    uint32_t reserved0;
+    uint32_t corrupt_rx_every;
 };
 
 struct savanxp_pcspk_beep {

@@ -171,11 +171,24 @@ struct savanxp_net_tcp_fault {   /* NET_IOC_SET_TCP_FAULT on /dev/net0 */
     uint32_t drop_tx_every;      /* 1 of every N segments we send is dropped */
     uint32_t drop_rx_every;      /* 1 of every N segments we receive is dropped */
     uint32_t reorder_rx_every;   /* 1 of every N is held back and delivered late */
+    uint32_t corrupt_rx_every;   /* 1 of every N arrives with a flipped byte */
 };
 ```
 
+Setting it requires the system (`EPERM` otherwise): the injector acts on every
+connection, not only the caller's.
+
+Everything received is checked before it is believed: the IPv4 header
+checksum, the ICMP checksum, the TCP checksum, and the UDP checksum when the
+sender included one. A datagram that fails is dropped without an answer, and
+so is an IPv4 fragment, because there is no reassembly. A TCP segment is
+matched to a socket by the whole tuple, also during the handshake.
+`corrupt_rx_every` is what proves the TCP check: `tcptest` compares every
+byte it reads, and with the check removed it fails on the first damaged
+segment.
+
 `drop_tx_every` counts only segments that consume sequence space, and
-`reorder_rx_every` only segments carrying data. Pure ACKs are the majority of
+`reorder_rx_every` and `corrupt_rx_every` only segments carrying data. Pure ACKs are the majority of
 the traffic, and including them spends the period on packets whose loss
 exercises the *peer's* retransmission rather than ours.
 
@@ -236,8 +249,8 @@ Not defects — scope. In rough order of when each would start to hurt:
 - **No SACK, no timestamps, no window scaling.** Recovery is one hole at a time,
   the RTO is fixed rather than measured from the round trip, and the window is
   capped at 64 KiB — well above the 8 KiB receive buffer, so it does not bind.
-- **A single fault-injection stash** shared across sockets, and the injector is
-  reachable by any process that can open `/dev/net0`. It is a test hook, sized
-  for tests.
+- **A single fault-injection stash** shared across sockets. It is a test hook,
+  sized for tests, and only the system may set it.
+- **No IPv4 reassembly.** Fragments are dropped.
 - **No IPv6.** The address configuration is static IPv4
   (`10.0.2.15/24`, gateway `10.0.2.2`) matching QEMU's user-mode network.

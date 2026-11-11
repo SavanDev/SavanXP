@@ -196,13 +196,19 @@ static int sample_cpu(unsigned long* mine, unsigned long* total) {
     return 0;
 }
 
-static int set_fault(int net_fd, unsigned int drop_tx, unsigned int drop_rx, unsigned int reorder_rx) {
+static int set_fault_profile(int net_fd, unsigned int drop_tx, unsigned int drop_rx, unsigned int reorder_rx,
+    unsigned int corrupt_rx) {
     struct savanxp_net_tcp_fault fault;
     memset(&fault, 0, sizeof(fault));
     fault.drop_tx_every = drop_tx;
     fault.drop_rx_every = drop_rx;
     fault.reorder_rx_every = reorder_rx;
+    fault.corrupt_rx_every = corrupt_rx;
     return savanxp_ioctl(net_fd, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) >= 0;
+}
+
+static int set_fault(int net_fd, unsigned int drop_tx, unsigned int drop_rx, unsigned int reorder_rx) {
+    return set_fault_profile(net_fd, drop_tx, drop_rx, reorder_rx, 0);
 }
 
 /* Tres cosas que rompen a cualquier programa de red portado, y una cuarta que
@@ -412,9 +418,11 @@ int main(int argc, char** argv) {
     }
     puts_out("tcptest: connected through 50% tx loss\n");
 
-    /* Perfil de regimen: perdida en las dos direcciones mas inversiones de
-     * pares, que es lo que obliga al reensamblado a trabajar. */
-    if (!set_fault((int)net_fd, 3, 11, 4)) {
+    /* Steady-state profile: loss in both directions plus swapped pairs, which
+     * is what makes the reassembly work, and one data segment in seven with a
+     * flipped byte. The checksum has to drop those: read_and_verify compares
+     * every byte, so one that got through fails the test. */
+    if (!set_fault_profile((int)net_fd, 3, 11, 4, 7)) {
         savanxp_close((int)fd);
         savanxp_close((int)net_fd);
         return fail("NET_IOC_SET_TCP_FAULT");

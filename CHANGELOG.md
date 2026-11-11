@@ -137,6 +137,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Received IPv4, ICMP, TCP and UDP checksums are verified, and damaged packets and IPv4 fragments are dropped.**
+  A TCP handshake only completes from the address it was sent to. `NET_IOC_SET_TCP_FAULT` now requires the system
+  and gains `corrupt_rx_every`. See [NETWORKING.md](docs/net/NETWORKING.md#testing-what-only-a-bad-network-exercises).
+
 - **The loader rejects a PIE (`ET_DYN`) segment whose end wraps the address space** at validation, not at the copy.
   See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E7.
 

@@ -215,10 +215,10 @@ at fixed addresses, and the kernel is not relocated.
 | Devices | Mutating ioctls required only query access | High | Fixed |
 | Processes | `kill(1, ...)` and orphan zombies | High | Fixed |
 | Resource use | No process quotas or PMM ownership bitmap | High | Open |
-| Authorization | UID/GID, VFS modes and elevation exist; network fault injection and the display session are open to every user | High | Partially fixed |
+| Authorization | UID/GID, VFS modes and elevation exist; the display session is open to every user | High | Partially fixed |
 | ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Open |
 | PCI | No central resource manager for BAR/I/O ranges | High | Open |
-| Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Open |
+| Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Fixed |
 | Kernel stacks | Canary and 32 KiB size, but no non-present guard page | Medium | Partial |
 | Fault handling | No exception-table-based `copy_*_user` recovery | Medium | Open |
 | CPU isolation | SMEP is enabled when available; SMAP/KPTI are not enabled | Medium | Partial |
@@ -385,12 +385,18 @@ biased start against `p_vaddr` and the end against the biased start. No test
 tells the two apart from user space: the wrapped image was already refused
 one step later, by the copy.
 
-**Still open from the earlier passes.** `/dev/net0` is `0666`, so any user can
-set TCP fault injection (`NET_IOC_SET_TCP_FAULT`). `/dev/gpu0` is `0666` and
+**Still open from the earlier passes.** `/dev/gpu0` is `0666` and
 the display session goes to whoever acquires it first, so a user process can
-take the screen whenever `compositord` has released it. Incoming IPv4 and TCP
-checksums are still not verified. `find_table` trusts the RSDT/XSDT length and
-checksum. Thread, port, section and node tables are global with no per-process
+take the screen whenever `compositord` has released it. `find_table` trusts
+the RSDT/XSDT length and checksum.
+
+**Closed from the earlier passes (2026-11-11).** `/dev/net0` stays `0666`, but
+`NET_IOC_SET_TCP_FAULT` now requires the system. Incoming IPv4, ICMP, TCP and
+UDP checksums are verified, fragments are dropped, and a segment reaches a
+connecting socket only when the whole tuple matches; the fallback that matched
+on ports alone and then adopted the sender's address is gone. See
+[`NETWORKING.md`](../net/NETWORKING.md#testing-what-only-a-bad-network-exercises).
+ Thread, port, section and node tables are global with no per-process
 quota.
 
 ## Required follow-up work
@@ -404,8 +410,9 @@ uid, euid and gid ([`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)).
 What remains:
 
 1. Capability bitmaps, or at least the elevation rule, beyond file modes.
-2. A system check for network fault injection, the display session and
-   protected storage mutation. Shutdown stays unelevated by design.
+2. A system check for the display session. Network fault injection and
+   storage mutation (`SXN_SYS_STORAGE_*`) have theirs. Shutdown stays
+   unelevated by design.
 3. PID 1 as a real subreaper with a non-blocking reap loop.
 4. Per-process memory, object, handle and I/O quotas.
 5. `FD_CLOEXEC` and references for blocked-wait objects.

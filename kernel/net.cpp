@@ -1,3 +1,4 @@
+#include "kernel/credentials.hpp"
 #include "kernel/net.hpp"
 
 #include <stdarg.h>
@@ -239,6 +240,11 @@ net::Socket g_sockets[kMaxSockets] = {};
 uint16_t g_next_ephemeral_port = kEphemeralPortStart;
 savanxp_net_tcp_stats g_tcp_stats = {};
 savanxp_net_tcp_fault g_tcp_fault = {};
+// The copy the injector damages; the frame itself belongs to the driver.
+uint8_t g_tcp_corrupt_segment[1600];
+uint32_t g_tcp_corrupt_counter = 0;
+// More-fragments and the fragment offset: nonzero in every fragment.
+constexpr uint16_t kIpv4FragmentMask = 0x3fffu;
 uint32_t g_tcp_tx_counter = 0;
 uint32_t g_tcp_rx_counter = 0;
 uint32_t g_tcp_reorder_counter = 0;
@@ -391,6 +397,19 @@ uint16_t compute_transport_checksum(uint32_t source_ip, uint32_t destination_ip,
         const uint16_t checksum = static_cast<uint16_t>(~sum);
         return checksum != 0 ? checksum : 0xffffu;
     }
+}
+
+// A received header or datagram carries its own checksum, so the sum over it
+// comes out as all ones and its complement as zero.
+bool checksum_valid(const void* data, size_t length) {
+    return compute_checksum(data, length) == 0;
+}
+
+// The same for TCP and UDP, whose sum also covers the pseudo header.
+// compute_transport_checksum never returns zero: it reports a zero complement
+// as 0xffff, which is how a valid segment comes back.
+bool transport_checksum_valid(uint32_t source_ip, uint32_t destination_ip, uint8_t protocol, const void* data, size_t length) {
+    return compute_transport_checksum(source_ip, destination_ip, protocol, data, length) == 0xffffu;
 }
 
 // Sleeps until the next interrupt. True when the calling thread must give
@@ -851,21 +870,6 @@ net::Socket* find_tcp_socket(uint16_t local_port, uint16_t remote_port, uint32_t
     return nullptr;
 }
 
-net::Socket* find_pending_tcp_socket(uint16_t local_port, uint16_t remote_port) {
-    for (auto& socket : g_sockets) {
-        if (!socket.in_use || socket.type != SAVANXP_SOCK_STREAM || socket.protocol != SAVANXP_IPPROTO_TCP) {
-            continue;
-        }
-        if (!socket.bound || socket.local_port != local_port) {
-            continue;
-        }
-        if (socket.tcp_state == net::TcpState::syn_sent && socket.remote_port == remote_port) {
-            return &socket;
-        }
-    }
-    return nullptr;
-}
-
 bool send_tcp_segment(
     net::Socket& socket,
     uint8_t flags,
@@ -1109,6 +1113,10 @@ void handle_icmp(const EthernetHeader& ethernet, const Ipv4Header& ipv4, const u
         return;
     }
 
+    if (!checksum_valid(payload, length)) {
+        return;
+    }
+
     const auto* icmp = reinterpret_cast<const IcmpEchoHeader*>(payload);
     const uint16_t identifier = be16_to_host(icmp->identifier);
     const uint16_t sequence = be16_to_host(icmp->sequence);
@@ -1152,6 +1160,12 @@ void handle_udp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
     const size_t udp_payload_length = udp_length - sizeof(UdpHeader);
     const uint32_t source_ip = be32_to_host(ipv4.source_ip);
 
+    // Over IPv4 a sender may leave the UDP checksum out, and says so with zero.
+    if (udp->checksum != 0 &&
+        !transport_checksum_valid(source_ip, kConfiguredIpv4, kIpProtocolUdp, payload, udp_length)) {
+        return;
+    }
+
     (void)deliver_udp_payload(source_ip, source_port, kConfiguredIpv4, destination_port, udp_payload, udp_payload_length);
 }
 
@@ -1170,10 +1184,9 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
     const uint8_t* tcp_payload = payload + header_length;
     const size_t tcp_payload_length = length - header_length;
 
+    // The whole tuple, also for a connection still in its handshake: an
+    // answer from an address the SYN did not go to is not an answer.
     net::Socket* socket = find_tcp_socket(destination_port, source_port, source_ip);
-    if (socket == nullptr) {
-        socket = find_pending_tcp_socket(destination_port, source_port);
-    }
     if (socket == nullptr) {
         return;
     }
@@ -1186,7 +1199,6 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
             tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
         } else if (flags & kTcpFlagSyn) {
             tcp_complete_send(*socket, acknowledgement_number);
-            socket->remote_ip = source_ip;
             socket->recv_next = sequence_number + 1;
             socket->send_unacked = acknowledgement_number;
             socket->connected = true;
@@ -1241,9 +1253,11 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
     }
 }
 
-// Punto de entrada del TCP desde IPv4. Aca vive el inyector de fallas y nada
-// mas: la logica del protocolo esta toda en deliver_tcp, que no sabe que el
-// inyector existe.
+// TCP's entry point from IPv4. The fault injector lives here and nowhere
+// else: the protocol logic is all in deliver_tcp, which does not know the
+// injector exists. The checksum is verified here too, after the injector has
+// had its chance to damage the segment, so a corrupted one is dropped like
+// any other the wire damaged and the peer's retransmission repairs it.
 void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
     if (length < sizeof(TcpHeader)) {
         return;
@@ -1251,6 +1265,23 @@ void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
 
     const uint32_t source_ip = be32_to_host(ipv4.source_ip);
     ++g_tcp_stats.segments_received;
+
+    if (g_tcp_fault.corrupt_rx_every != 0 && length <= sizeof(g_tcp_corrupt_segment)) {
+        // Only segments with data, as for reordering: a damaged bare ACK
+        // exercises nothing an application could notice.
+        const auto* header = reinterpret_cast<const TcpHeader*>(payload);
+        const size_t header_length = static_cast<size_t>((header->data_offset_reserved >> 4) * 4u);
+        if (header_length >= sizeof(TcpHeader) && header_length < length &&
+            (++g_tcp_corrupt_counter % g_tcp_fault.corrupt_rx_every) == 0) {
+            memcpy(g_tcp_corrupt_segment, payload, length);
+            g_tcp_corrupt_segment[length - 1] ^= 0x5au;
+            payload = g_tcp_corrupt_segment;
+        }
+    }
+
+    if (!transport_checksum_valid(source_ip, kConfiguredIpv4, kIpProtocolTcp, payload, length)) {
+        return;
+    }
 
     if (g_tcp_fault.drop_rx_every != 0 && (++g_tcp_rx_counter % g_tcp_fault.drop_rx_every) == 0) {
         return;
@@ -1302,6 +1333,14 @@ void handle_ipv4(const EthernetHeader& ethernet, const uint8_t* payload, size_t 
     const uint16_t total_length = be16_to_host(ipv4->total_length);
     const uint32_t destination_ip = be32_to_host(ipv4->destination_ip);
     if ((ipv4->version_ihl >> 4) != 4 || header_length < sizeof(Ipv4Header) || total_length < header_length || total_length > length) {
+        return;
+    }
+    if (!checksum_valid(ipv4, header_length)) {
+        return;
+    }
+    // There is no reassembly: a fragment handed up as if it were the whole
+    // datagram would be read as a header it does not have.
+    if ((be16_to_host(ipv4->flags_fragment) & kIpv4FragmentMask) != 0) {
         return;
     }
     if (destination_ip != kConfiguredIpv4) {
@@ -1494,6 +1533,12 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             return process::copy_to_user(argument, &g_tcp_stats, sizeof(g_tcp_stats)) ? 0 : negative_error(SX_EINVAL);
         }
         case NET_IOC_SET_TCP_FAULT: {
+            // /dev/net0 is everyone's to bring up and query; damaging every
+            // connection in the system is not.
+            const process::Process* caller = process::current();
+            if (caller == nullptr || !cred::acts_as_system(caller->credentials)) {
+                return negative_error(SX_EPERM);
+            }
             if (!process::validate_user_range(argument, sizeof(savanxp_net_tcp_fault), false)) {
                 return negative_error(SX_EINVAL);
             }
@@ -1505,6 +1550,7 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             g_tcp_tx_counter = 0;
             g_tcp_rx_counter = 0;
             g_tcp_reorder_counter = 0;
+            g_tcp_corrupt_counter = 0;
             // Apagar el inyector con un segmento retenido lo perderia, y el
             // test que apaga las fallas al terminar veria un agujero que ya no
             // se puede explicar.
