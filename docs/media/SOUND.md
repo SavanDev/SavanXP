@@ -6,19 +6,32 @@ System program group. The popup keeps its compact size and shows up to three
 application rows (including its overflow row); the panel lists every stream
 that `audiod` currently mixes.
 
-The panel uses the desktop's classic NT-style controls and blue accent. A light
-heading with a speaker illustration identifies the audio settings; etched
-groups separate playback, applications and recording, with a sunken status
-field. All three sections remain visible together in a 600-by-704 client area.
+The panel is a fixed-size property sheet modelled on the classic Sounds and
+Audio Devices sheet, with five tabs:
 
-The upper slider and Mute control operate on the kernel master gain. Below
+| Tab | Contents |
+|---|---|
+| Volume | The playback device's name, **Device volume** (master slider, level meter, Mute) and **Speaker settings** (headphone switching). |
+| Applications | Every stream `audiod` mixes, and the selected stream's volume, meter and Mute. The classic sheet had no per-application mixer; it sits where its Sounds tab was. |
+| Audio | **Sound playback** and **Sound recording**, each with its default device; recording adds input gain, meter and Mute. |
+| Voice | The recording **Hardware test**: a copy of the input meter, Record test and Play recording. |
+| Hardware | Every connector of `audio0` with its type, and the selected one's device, connector and status. |
+
+The status line under the pages is shared by all of them. Controls take effect
+as they change, so **Apply** stays disabled and **OK** only closes. **Cancel**
+restores the master and input levels and mutes the sheet found when it opened;
+output/input choices, headphone switching and application levels stay applied.
+The classic sheet's Sounds tab (event sounds) and MIDI group have no
+counterpart, because SavanXP has neither yet.
+
+The Volume tab's slider and Mute control operate on the kernel master gain. On
 Applications, select a row to adjust that stream's volume or mute it without
 changing its volume setting. Muting a stream also silences its packet-loss
 concealment. The service saves master, recording and named application controls
 as described under Preferences below. Anonymous legacy UDP streams keep
 session controls. The popup and `volume` command share the same master setting.
 
-The output dropdown above the master controls names the effective audio device
+The output dropdown (Audio tab, Sound playback) names the effective audio device
 and connector. HD Audio lists each valid analog path (rear line-out and front
 headphones on ALC892); firmware-disconnected pins are excluded. AC'97 and
 virtio-sound expose their default connector. The catalog includes every bound
@@ -46,13 +59,13 @@ the explicit policy and its fallback, independently of automatic transitions.
 
 ## Recording
 
-The Recording section selects the default input connector and controls its
+The Audio tab's Sound recording group selects the default input connector and controls its
 software gain and mute independently of master playback. The live meter shows
 the kernel's input peaks after gain/mute. Analog HDA exposes valid microphone,
 line-in and auxiliary paths; virtio-sound exposes its capture stream. AC'97 has
 no recording support in this backend and shows **No recording device available**.
 
-**Record test** stores three seconds of stereo PCM in memory.
+On the Voice tab, **Record test** stores three seconds of stereo PCM in memory.
 **Play recording** replays that buffer through the normal SUN mixer while
 the input monitor continues. A dedicated SUN thread paces replay independently
 of GUI work; stopping joins it before PCM or its stream can be reused.

@@ -2735,6 +2735,89 @@ def scenario_doom(s):
         )
 
 
+def find_caption(image, text):
+    """Origin of `text` drawn in TEXT on FACE, matching the background too.
+
+    The body font is one-bit, so find_text alone also matches any solid black
+    area -- a game's HUD behind a dialog. This compares every pixel of the
+    text's box, the face colour between the strokes included.
+    """
+    pattern = glyphs.render(fonts()["body"],0,0,text,TEXT,FACE,(0,0,1 << 20,1 << 20))
+    right = max(dx for dx,_ in pattern)+1
+    bottom = max(dy for _,dy in pattern)+1
+    cells = [((dx,dy),pattern.get((dx,dy),FACE)) for dy in range(bottom) for dx in range(right)]
+    # Check the background cells first: in a black area they fail at once.
+    cells.sort(key=lambda cell: cell[1] != FACE)
+    first = min(pattern, key=lambda k: (k[1],k[0]))
+    width,height = image.size
+    pixels = image.load()
+    for y in range(height-bottom):
+        for x in range(width-right):
+            if pixels[x,y] != TEXT:
+                continue
+            ox,oy = x-first[0],y-first[1]
+            if ox < 0 or oy < 0:
+                continue
+            if all(pixels[ox+dx,oy+dy] == colour for (dx,dy),colour in cells):
+                return ox,oy
+    return None
+
+
+def open_sound_sheet(s, name, launch=None):
+    """Open the Sound property sheet and return its content origin.
+
+    The "Device volume" caption on the Volume page is drawn at content
+    (24,87); every other coordinate in the Sound scenarios is relative to it.
+    `launch` opens the sheet some other way than the console.
+    """
+    if launch is None:
+        s.run("sound.sxe")
+    else:
+        launch()
+    s.qmp.move_to(1000,120)
+    for _ in range(15):
+        time.sleep(1.0)
+        image = s.shot(name)
+        anchor = find_caption(image,"Device volume")
+        if anchor is not None:
+            return anchor[0]-24,anchor[1]-87
+    raise Failure("Sound did not open (%s)" % name)
+
+
+def sound_tab(s, x, y, label, rel_from=None):
+    """Click a tab of the Sound sheet. The labels sit in content row y8..31.
+
+    With `rel_from` the pointer walks there in small relative steps from that
+    known position, which is fast enough to use while a 3 s test is playing.
+    """
+    image = s.shot("sound-tabs-"+label.lower())
+    origin = find_text(image,(x+8,y+8,x+432,y+32),label,TEXT,FACE)[0]
+    if origin is None:
+        raise Failure("Sound has no %s tab" % label)
+    target = (origin[0]+8,origin[1]+5)
+    if rel_from is None or s.qmp.abs_pointer:
+        s.qmp.move_to(*target)
+    else:
+        dx,dy = target[0]-rel_from[0],target[1]-rel_from[1]
+        while dx or dy:
+            sx = max(-60,min(60,dx)); sy = max(-60,min(60,dy))
+            s.qmp._rel_step(sx,sy); dx -= sx; dy -= sy
+    s.qmp.click()
+    return target
+
+
+def sound_app_row(image, x, y, name):
+    """Origin of an application row in the Applications page list, or None."""
+    for foreground,background in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
+        origin = find_text(image,(x+20,y+63,x+420,y+213),name,foreground,background)[0]
+        # White glyph pixels alone can also match an empty white field.
+        # A selected row must have the blue selection background as well.
+        if origin is not None and (foreground != SELECT_TEXT or
+                image.getpixel((origin[0]-2,origin[1]+3)) == SELECT):
+            return origin
+    return None
+
+
 def scenario_audio_ports_offline(s):
     """Exercise the installed external binaries, with no network fallback.
 
@@ -2744,22 +2827,14 @@ def scenario_audio_ports_offline(s):
     wav = Path(s.out).resolve().parent.parent / "audio-ports-offline.wav"
 
     def check_port(name):
-        s.run("sound.sxe")
+        x,y = open_sound_sheet(s,name+"-sound-open")
+        sound_tab(s,x,y,"Applications")
+        s.qmp.move_to(1000,120)
+        time.sleep(1.0)
         image = s.shot(name+"-sound-list")
-        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
-        if header is None:
-            raise Failure("Sound did not open while testing "+name)
-        x,y = header[0]-12,header[1]-136
-        row = (x+12,y+158,x+588,y+324)
-        present = False
-        for fg,bg in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
-            origin = find_text(image,row,name,fg,bg)[0]
-            if origin is not None and (fg != SELECT_TEXT or
-                    image.getpixel((origin[0]-2,origin[1]+3)) == SELECT):
-                present = True
-        if not present:
+        if sound_app_row(image,x,y,name) is None:
             raise Failure("installed %s is absent from the mixer without a NIC" % name)
-        expect_text(image,(x,y,x+600,y+640),"1 application",TEXT,FACE,
+        expect_text(image,(x+20,y+366,x+420,y+396),"1 application",TEXT,FACE,
                     "only the real external port is a playback client")
         time.sleep(9.0)
         level = _wav_signal(wav)
@@ -2798,95 +2873,90 @@ def scenario_sound(s):
     popup = s.shot("sound-popup")
     expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,
                 "volume popup offers Sound settings")
-    s.qmp.move_to(1200,758)
-    s.qmp.click()
-    s.qmp.move_to(1000,120)
-    header = None
-    for _ in range(15):
-        time.sleep(1.0)
-        image = s.shot("sound-open")
-        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
-        if header is not None:
-            break
-    if header is None:
-        raise Failure("Sound did not open from the volume popup")
-    # The label starts at content (12,136): y132 plus its centred 13px face.
-    x,y = header[0]-12,header[1]-136
-    box = (x,y,x+600,y+640)
+    def from_popup():
+        s.qmp.move_to(1200,758)
+        s.qmp.click()
+    x,y = open_sound_sheet(s,"sound-open",launch=from_popup)
     def settle(name):
+        s.qmp.move_to(1000,120)
         time.sleep(1.0)
         return s.shot(name)
-    def app_row(image,name):
-        for foreground,background in ((TEXT,FIELD),(SELECT_TEXT,SELECT)):
-            origin = find_text(image,(x+12,y+158,x+588,y+324),name,foreground,background)[0]
-            # White glyph pixels alone can also match an empty white field.
-            # A selected row must have the blue selection background as well.
-            if origin is not None and (foreground != SELECT_TEXT or
-                    image.getpixel((origin[0]-2,origin[1]+3)) == SELECT):
-                return origin
-        raise Failure("Sound does not list %s" % name)
-    image = settle("sound-clients")
-    expect_text(image,(x+64,y-64,x+588,y),"Sound and Audio Devices",SELECT,FIELD,
-                "Sound has its own control-panel heading",which="title")
-    expect_pixel(image,x+580,y-40,FIELD,"heading has a light background")
-    expect_pixel(image,x+7,y+7,LIGHT,"playback group keeps the classic etched edge")
-    app_row(image,"ToneA")
-    row_b = app_row(image,"ToneB")
-    expect_text(image,box,"2 applications",TEXT,FACE,"control connection does not add a playing application")
-    expect_text(image,(x+12,y+576,x+588,y+604),"No recording device available",TEXT,FACE,
-                "a playback-only backend disables recording without affecting the mixer")
-    expect_pixel(image,x+16,y+85,SELECT,"master meter shows mixed PCM")
-    expect_text(image,(x+12,y+100,x+588,y+124),"Automatically switch to headphones",(128,128,128),FACE,
+    # Volume page: the device, its volume and the speaker settings.
+    image = settle("sound-volume")
+    expect_text(image,(x+64,y+44,x+420,y+68),"AC'97",TEXT,FACE,"Volume page names the playback device")
+    expect_text(image,(x+20,y+228,x+420,y+252),"Speaker settings",TEXT,FACE,"Volume page has the speaker settings group")
+    expect_text(image,(x+88,y+299,x+420,y+324),"Automatically switch to headphones",(128,128,128),FACE,
                 "unsupported jack detection leaves automatic switching disabled")
-    expect_text(image,(x+12,y+12,x+588,y+34),"AC'97 - Default output",TEXT,FIELD,
+    expect_text(image,(x+20,y+366,x+420,y+396),"2 applications",TEXT,FACE,
+                "control connection does not add a playing application")
+    expect_pixel(image,x+84,y+163,SELECT,"device meter shows mixed PCM")
+    expect_text(image,(x+160,y+414,x+416,y+444),"Apply",(128,128,128),FACE,
+                "changes apply live, so Apply stays disabled")
+    # Audio page: the output selector names the effective device and connector.
+    sound_tab(s,x,y,"Audio")
+    image = settle("sound-audio")
+    expect_text(image,(x+20,y+38,x+420,y+60),"Sound playback",TEXT,FACE,"Audio page has a playback group")
+    expect_text(image,(x+76,y+83,x+408,y+107),"AC'97 - Default output",TEXT,FIELD,
                 "output selector names the effective device and connector")
-    s.qmp.move_to(x+575,y+22)
+    s.qmp.move_to(x+398,y+95)
     s.qmp.click()
-    image = settle("sound-output-list")
-    expect_text(image,(x+12,y+32,x+588,y+65),"AC'97 - Default output",SELECT_TEXT,SELECT,
+    time.sleep(1.0)
+    image = s.shot("sound-output-list")
+    expect_text(image,(x+76,y+105,x+408,y+138),"AC'97 - Default output",SELECT_TEXT,SELECT,
                 "output dropdown lists the selected connector")
     s.qmp.tap("ret")
-    s.qmp.move_to(1000,120)
     image = settle("sound-output-selected")
-    expect_text(image,(x+12,y+12,x+588,y+34),"AC'97 - Default output",TEXT,FIELD,
+    expect_text(image,(x+76,y+83,x+408,y+107),"AC'97 - Default output",TEXT,FIELD,
                 "acknowledged selection preserves the effective connector")
-    expect_pixel(image,x+16,y+85,SELECT,"output selection keeps mixed PCM active")
-    # Select B, mute it, and check its meter clears while master still has A.
+    # Applications page: select B, mute it, and check its meter clears while
+    # the device meter still has A.
+    sound_tab(s,x,y,"Applications")
+    image = settle("sound-clients")
+    if sound_app_row(image,x,y,"ToneA") is None:
+        raise Failure("Sound does not list ToneA")
+    row_b = sound_app_row(image,x,y,"ToneB")
+    if row_b is None:
+        raise Failure("Sound does not list ToneB")
     s.qmp.move_to(row_b[0]+8,row_b[1]+4)
     s.qmp.click()
     image = settle("sound-selected")
-    expect_text(image,(x,y+336,x+580,y+358),"ToneB",TEXT,FACE,"selected stream follows list selection")
-    s.qmp.move_to(x+468,y+376)
+    expect_text(image,(x+32,y+243,x+408,y+266),"ToneB",TEXT,FACE,"selected stream follows list selection")
+    s.qmp.move_to(x+39,y+330)
     s.qmp.click()
-    s.qmp.move_to(1000,120)
     image = settle("sound-muted-app")
-    expect_pixel(image,x+16,y+405,FIELD,"muted application meter is silent")
-    expect_pixel(image,x+16,y+85,SELECT,"another application keeps playing")
+    expect_pixel(image,x+40,y+303,FIELD,"muted application meter is silent")
     # Unmute preserves gain; keyboard Home/End exercises the native slider.
-    s.qmp.move_to(x+468,y+376)
+    s.qmp.move_to(x+39,y+330)
     s.qmp.click()
-    s.qmp.move_to(x+225,y+374)
+    s.qmp.move_to(x+190,y+281)
     s.qmp.click()
     s.qmp.tap("home")
-    s.qmp.move_to(1000,120)
     image = settle("sound-zero-gain")
-    expect_text(image,(x+530,y+360,x+588,y+391),"0%",TEXT,FACE,"application slider applies zero gain")
-    expect_pixel(image,x+16,y+405,FIELD,"zero gain clears selected meter")
+    expect_text(image,(x+360,y+266,x+420,y+294),"0%",TEXT,FACE,"application slider applies zero gain")
+    expect_pixel(image,x+40,y+303,FIELD,"zero gain clears selected meter")
     s.qmp.tap("end")
     image = settle("sound-restored-gain")
-    expect_text(image,(x+530,y+360,x+588,y+391),"100%",TEXT,FACE,"application slider restores gain")
-    expect_pixel(image,x+16,y+405,SELECT,"selected meter resumes")
-    s.qmp.move_to(x+468,y+55)
+    expect_text(image,(x+360,y+266,x+420,y+294),"100%",TEXT,FACE,"application slider restores gain")
+    expect_pixel(image,x+40,y+303,SELECT,"selected meter resumes")
+    # Volume page: device mute clears and restores the device meter.
+    sound_tab(s,x,y,"Volume")
+    image = settle("sound-volume-again")
+    expect_pixel(image,x+84,y+163,SELECT,"another application keeps playing")
+    s.qmp.move_to(x+83,y+196)
     s.qmp.click()
-    s.qmp.move_to(1000,120)
     image = settle("sound-master-muted")
-    expect_pixel(image,x+16,y+85,FIELD,"master mute clears output meter")
-    s.qmp.move_to(x+468,y+55)
+    expect_pixel(image,x+84,y+163,FIELD,"device mute clears the device meter")
+    s.qmp.move_to(x+83,y+196)
     s.qmp.click()
-    s.qmp.move_to(1000,120)
     image = settle("sound-master-restored")
-    expect_pixel(image,x+16,y+85,SELECT,"master unmute restores output meter")
-    s.qmp.move_to(x+540,y+620)
+    expect_pixel(image,x+84,y+163,SELECT,"device unmute restores the device meter")
+    # Hardware page lists the connector.
+    sound_tab(s,x,y,"Hardware")
+    image = settle("sound-hardware")
+    expect_text(image,(x+20,y+63,x+420,y+213),"Playback",SELECT_TEXT,SELECT,"Hardware page lists the playback connector")
+    expect_text(image,(x+32,y+269,x+408,y+292),"Connector: Default output (default)",TEXT,FACE,
+                "Hardware page describes the selected connector")
+    s.qmp.move_to(x+200,y+429)
     s.qmp.click()
     settle("sound-closed")
 
@@ -2900,81 +2970,80 @@ def scenario_sound_capture(s):
     s.qmp.move_to(1208,787); s.qmp.click(); time.sleep(1.0)
     popup = s.shot("capture-popup")
     expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,"popup opens native recording settings")
-    s.qmp.move_to(1200,758); s.qmp.click(); s.qmp.move_to(1000,120)
-    header = None
-    for _ in range(15):
-        time.sleep(1.0)
-        image = s.shot("capture-open")
-        header = find_text(image,(0,0,1280,770),"Applications",TEXT,FACE)[0]
-        if header is not None: break
-    if header is None: raise Failure("Sound recording panel did not open")
-    x,y = header[0]-12,header[1]-136
-    box = (x,y,x+600,y+640)
+    def from_popup():
+        s.qmp.move_to(1200,758); s.qmp.click()
+    x,y = open_sound_sheet(s,"capture-open",launch=from_popup)
     def settle(name):
+        s.qmp.move_to(1000,120)
         time.sleep(1.0)
         return s.shot(name)
+    INPUT_METER = (x+84,y+249)
+    sound_tab(s,x,y,"Audio")
     image = settle("capture-live")
-    expect_text(image,(x+12,y+424,x+588,y+445),"Recording",TEXT,FACE,"panel has a recording section")
-    expect_text(image,(x+12,y+448,x+588,y+473),"HD Audio analog codec",TEXT,FIELD,"input selector names the effective capture device")
-    expect_pixel(image,x+16,y+525,SELECT,"known microphone drives the live input meter")
-    expect_pixel(image,x+16,y+85,FIELD,"monitoring the input does not play sound")
-    s.qmp.move_to(x+575,y+460); s.qmp.click()
-    image = settle("capture-input-list")
-    expect_text(image,(x+12,y+472,x+588,y+497),"HD Audio analog codec",SELECT_TEXT,SELECT,
+    expect_text(image,(x+20,y+134,x+420,y+156),"Sound recording",TEXT,FACE,"Audio page has a recording group")
+    expect_text(image,(x+76,y+179,x+408,y+203),"HD Audio analog codec",TEXT,FIELD,"input selector names the effective capture device")
+    expect_pixel(image,*INPUT_METER,SELECT,"known microphone drives the live input meter")
+    s.qmp.move_to(x+398,y+191); s.qmp.click(); time.sleep(1.0)
+    image = s.shot("capture-input-list")
+    expect_text(image,(x+76,y+201,x+408,y+234),"HD Audio analog codec",SELECT_TEXT,SELECT,
                 "input dropdown offers the current capture connector")
-    s.qmp.tap("ret"); s.qmp.move_to(1000,120)
+    s.qmp.tap("ret")
     image = settle("capture-input-selected")
-    expect_text(image,(x+12,y+608,x+476,y+637),"0 applications",TEXT,FACE,"idempotent input selection is acknowledged without a route error")
-    expect_pixel(image,x+16,y+525,SELECT,"selecting the current input preserves capture")
+    expect_text(image,(x+20,y+366,x+420,y+396),"0 applications",TEXT,FACE,"idempotent input selection is acknowledged without a route error")
+    expect_pixel(image,*INPUT_METER,SELECT,"selecting the current input preserves capture")
     # Input gain and mute must affect the input meter without a playback owner.
-    s.qmp.move_to(x+225,y+494); s.qmp.click(); s.qmp.tap("home"); s.qmp.move_to(1000,120)
+    s.qmp.move_to(x+216,y+225); s.qmp.click(); s.qmp.tap("home")
     image = settle("capture-zero")
-    expect_text(image,(x+530,y+480,x+588,y+513),"0%",TEXT,FACE,"input gain reaches zero")
-    expect_pixel(image,x+16,y+525,FIELD,"zero input gain clears the meter")
+    expect_text(image,(x+360,y+210,x+420,y+238),"0%",TEXT,FACE,"input gain reaches zero")
+    expect_pixel(image,*INPUT_METER,FIELD,"zero input gain clears the meter")
     s.qmp.tap("end")
     image = settle("capture-gain-restored")
-    expect_text(image,(x+530,y+480,x+588,y+513),"100%",TEXT,FACE,"input gain is restored")
-    expect_pixel(image,x+16,y+525,SELECT,"input meter resumes with gain")
-    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    expect_text(image,(x+360,y+210,x+420,y+238),"100%",TEXT,FACE,"input gain is restored")
+    expect_pixel(image,*INPUT_METER,SELECT,"input meter resumes with gain")
+    s.qmp.move_to(x+83,y+278); s.qmp.click()
     image = settle("capture-muted")
-    expect_pixel(image,x+16,y+525,FIELD,"input mute is effective")
-    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    expect_pixel(image,*INPUT_METER,FIELD,"input mute is effective")
+    s.qmp.move_to(x+83,y+278); s.qmp.click()
     image = settle("capture-unmuted")
-    expect_pixel(image,x+16,y+525,SELECT,"input unmute preserves gain")
-    expect_text(image,(x+12,y+544,x+140,y+574),"Record test",TEXT,FACE,"recording test is available")
-    s.qmp.move_to(x+72,y+558); s.qmp.click(); s.qmp.move_to(1000,120)
+    expect_pixel(image,*INPUT_METER,SELECT,"input unmute preserves gain")
+    # Voice page: the hardware test records three seconds.
+    sound_tab(s,x,y,"Voice")
+    image = settle("capture-voice")
+    expect_pixel(image,x+80,y+149,SELECT,"Voice page mirrors the live input meter")
+    expect_text(image,(x+76,y+171,x+196,y+197),"Record test",TEXT,FACE,"recording test is available")
+    s.qmp.move_to(x+136,y+184); s.qmp.click(); s.qmp.move_to(1000,120)
     time.sleep(4.0)
     image = s.shot("capture-recorded")
-    expect_text(image,(x+12,y+576,x+588,y+604),"Recorded 3.0 s.",TEXT,FACE,"test captured three seconds")
-    expect_text(image,(x+144,y+544,x+284,y+574),"Play recording",TEXT,FACE,"captured test can be played")
-    s.qmp.move_to(x+214,y+558); s.qmp.click()
+    expect_text(image,(x+76,y+207,x+408,y+233),"Recorded 3.0 s.",TEXT,FACE,"test captured three seconds")
+    expect_text(image,(x+204,y+171,x+334,y+197),"Play recording",TEXT,FACE,"captured test can be played")
+    # Mute the live input first: replay must not depend on it.
+    sound_tab(s,x,y,"Audio")
+    s.qmp.move_to(x+83,y+278); s.qmp.click()
+    sound_tab(s,x,y,"Voice")
+    s.qmp.move_to(x+269,y+184); s.qmp.click()
     time.sleep(0.2)
     playing = s.shot("capture-playing")
-    # Capture live states before glyph analysis. Keep the known pointer
-    # position: PS/2 move_to calibrates against a corner and takes seconds.
-    if s.qmp.abs_pointer:
-        s.qmp.move_to(x+468,y+495)
-    else:
-        for dx,dy in ((64,-63),(64,0),(64,0),(62,0)):
-            s.qmp._rel_step(dx,dy)
-    s.qmp.click()
-    time.sleep(0.1)
-    muted = s.shot("capture-duplex-muted")
+    # Capture live states before glyph analysis, walking to the next tab in
+    # relative steps: a calibrated PS/2 move_to takes seconds.
+    sound_tab(s,x,y,"Applications",rel_from=(x+269,y+184))
+    time.sleep(0.4)
+    listed = s.shot("capture-playing-list")
     time.sleep(3.0)
-    played = s.shot("capture-played")
-    expect_text(playing,(x+12,y+576,x+588,y+604),"Playing the recorded test...",TEXT,FACE,"test playback starts")
-    origin = find_text(playing,(x+12,y+158,x+588,y+324),"Sound recording test",SELECT_TEXT,SELECT)[0]
-    if origin is None or playing.getpixel((origin[0]-2,origin[1]+3)) != SELECT:
+    expect_text(playing,(x+76,y+207,x+408,y+233),"Playing the recorded test...",TEXT,FACE,"test playback starts")
+    expect_pixel(playing,x+80,y+149,FIELD,"the muted live input stays silent during replay")
+    origin = find_text(listed,(x+20,y+63,x+420,y+213),"Sound recording test",SELECT_TEXT,SELECT)[0]
+    if origin is None or listed.getpixel((origin[0]-2,origin[1]+3)) != SELECT:
         raise Failure("recorded playback does not appear as a selected application")
-    expect_text(playing,box,"1 application",TEXT,FACE,"capture monitoring does not register a playback stream")
-    expect_pixel(playing,x+16,y+85,SELECT,"recorded PCM reaches the playback meter")
-    expect_pixel(muted,x+16,y+525,FIELD,"muting the live input clears only its meter")
-    expect_pixel(muted,x+16,y+85,SELECT,"recorded playback continues while input is muted")
-    expect_text(played,(x+12,y+576,x+588,y+604),"Recorded 3.0 s.",TEXT,FACE,"recording remains replayable")
-    s.qmp.move_to(x+468,y+495); s.qmp.click(); s.qmp.move_to(1000,120)
+    expect_text(listed,(x+20,y+366,x+420,y+396),"1 application",TEXT,FACE,"capture monitoring does not register a playback stream")
+    expect_pixel(listed,x+40,y+303,SELECT,"recorded PCM reaches the playback meter while input is muted")
+    sound_tab(s,x,y,"Voice")
+    image = settle("capture-played")
+    expect_text(image,(x+76,y+207,x+408,y+233),"Recorded 3.0 s.",TEXT,FACE,"recording remains replayable")
+    sound_tab(s,x,y,"Audio")
+    s.qmp.move_to(x+83,y+278); s.qmp.click()
     image = settle("capture-monitor-restored")
-    expect_pixel(image,x+16,y+525,SELECT,"live monitoring resumes after the test")
-    s.qmp.move_to(x+540,y+620); s.qmp.click(); settle("capture-closed")
+    expect_pixel(image,*INPUT_METER,SELECT,"live monitoring resumes after the test")
+    s.qmp.move_to(x+200,y+429); s.qmp.click(); settle("capture-closed")
 
 
 def scenario_cursor_settings(s):

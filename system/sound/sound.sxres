@@ -4,6 +4,7 @@ description=Playback and recording devices, volume, mute and test recording
 version=system
 vendor=SavanXP
 subsystem=native
+window_flags=fixed_size
 accent=000080
 icon_file=../../assets/desktop/icons/16x16/app-sound.png,../../assets/desktop/icons/32x32/app-sound.png
 category=System

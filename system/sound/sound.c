@@ -1,5 +1,6 @@
-/* Sound: the SUN/SxGUI control panel for audiod. Live controls do not claim
- * PCM ownership; recording replay uses a separate playback stream. */
+/* Sound: the SUN/SxGUI control panel for audiod, laid out as the classic
+ * Sounds and Audio Devices property sheet. Live controls do not claim PCM
+ * ownership; recording replay uses a separate playback stream. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,10 +9,25 @@
 #include "sxn/sxncapture.h"
 #include "sound.sunres.h"
 
-enum { OUTPUT, MASTER, MASTER_MUTE, MASTER_LEVEL, MASTER_TEXT, JACK_POLICY, APPLICATIONS,
-       LIST, SELECTED, APP_VOLUME, APP_MUTE, APP_LEVEL, APP_TEXT,
-       INPUT_TITLE, INPUT_SELECT, INPUT_VOLUME, INPUT_MUTE, INPUT_LEVEL, INPUT_TEXT,
-       RECORD, PLAY_RECORDING, RECORD_STATUS, STATUS, CLOSE, WIDGETS };
+/* Index order is paint and Tab order: each group box comes before the
+ * controls drawn inside it. */
+enum { TABS,
+       /* Volume */
+       DEVICE_NAME, VOLUME_GROUP, MASTER, MASTER_TEXT, MASTER_LEVEL, MASTER_MUTE,
+       SPEAKER_GROUP, JACK_POLICY,
+       /* Applications */
+       LIST, APP_GROUP, SELECTED, APP_VOLUME, APP_TEXT, APP_LEVEL, APP_MUTE,
+       /* Audio */
+       PLAYBACK_GROUP, OUTPUT, RECORDING_GROUP, INPUT_SELECT, INPUT_VOLUME, INPUT_TEXT,
+       INPUT_LEVEL, INPUT_MUTE,
+       /* Voice */
+       TEST_GROUP, VOICE_LEVEL, RECORD, PLAY_RECORDING, RECORD_STATUS,
+       /* Hardware */
+       HW_LIST, HW_GROUP, HW_DEVICE, HW_CONNECTOR, HW_STATUS,
+       STATUS, OK, CANCEL, APPLY, WIDGETS };
+enum { PAGE_VOLUME, PAGE_APPLICATIONS, PAGE_AUDIO, PAGE_VOICE, PAGE_HARDWARE, PAGE_ALL = -1 };
+static const char* g_tab_labels[] = {"Volume", "Applications", "Audio", "Voice", "Hardware"};
+enum { TAB_COUNT = sizeof(g_tab_labels)/sizeof(g_tab_labels[0]) };
 static struct sxngui_app g_app;
 static struct sxgui_widget g_widgets[WIDGETS];
 static struct sxnaudio_control g_control = {-1,-1};
@@ -57,9 +73,19 @@ static char g_master_text[32], g_selected_text[64], g_app_text[32], g_status[100
 static char g_rows[SAVANXP_AUDIOD_MAX_STREAMS][100];
 static const char* g_row_ptrs[SAVANXP_AUDIOD_MAX_STREAMS];
 static const struct sxgui_column g_columns[] = {
-    {"Application", 250, 0}, {"Volume", 70, 0}, {"Muted", 60, 0}, {"Level", 70, 0}
+    {"Application", 186, 0}, {"Volume", 62, 0}, {"Muted", 54, 0}, {"Level", 56, 0}
 };
-enum { SOUND_HEADER_HEIGHT = 64 };
+/* Hardware tab: every connector audio0 reports, playback and capture. */
+static struct savanxp_audio_endpoint g_hw[SAVANXP_AUDIO_MAX_ENDPOINTS];
+static char g_hw_rows[SAVANXP_AUDIO_MAX_ENDPOINTS][120];
+static const char* g_hw_ptrs[SAVANXP_AUDIO_MAX_ENDPOINTS];
+static uint32_t g_hw_count;
+static uint64_t g_hw_selected_id;
+static const struct sxgui_column g_hw_columns[] = {{"Name", 270, 0}, {"Type", 96, 0}};
+static char g_device_text[100], g_hw_device[120], g_hw_connector[120], g_hw_status[120];
+/* Device levels as they were when the sheet opened, which Cancel restores. */
+static uint32_t g_initial_volume, g_initial_muted, g_initial_input_volume, g_initial_input_muted;
+static int g_initial_master_known, g_initial_input_known;
 
 static struct savanxp_audiod_stream_state* selected(void) {
     uint32_t i;
@@ -74,7 +100,8 @@ static void refresh_outputs(void) {
     uint32_t index;
     int active = -1, input_active = -1;
     struct savanxp_audio_endpoint endpoint;
-    g_output_count = g_input_count = 0;
+    int hw_active = -1;
+    g_output_count = g_input_count = g_hw_count = 0;
     if (g_device >= 0) {
         for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index) {
             if (sxnaudio_endpoint_get(g_device,index,&endpoint) < 0) break;
@@ -83,6 +110,13 @@ static void refresh_outputs(void) {
                 !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_CAPABLE) ? " (no detection)" :
                 !(endpoint.flags & SAVANXP_AUDIO_PRESENCE_VALID) ? " (unknown)" :
                 (endpoint.flags & SAVANXP_AUDIO_CONNECTED) ? " (connected)" : " (unplugged)";
+            g_hw[g_hw_count] = endpoint;
+            (void)snprintf(g_hw_rows[g_hw_count],sizeof(g_hw_rows[0]),"%s - %s\t%s",endpoint.device_name,endpoint.name,
+                (endpoint.flags & SAVANXP_AUDIO_CAPTURE) ? "Recording" :
+                (endpoint.flags & SAVANXP_AUDIO_PLAYBACK) ? "Playback" : "Other");
+            g_hw_ptrs[g_hw_count] = g_hw_rows[g_hw_count];
+            if (endpoint.id == g_hw_selected_id) hw_active = (int)g_hw_count;
+            ++g_hw_count;
             if (endpoint.flags & SAVANXP_AUDIO_CAPTURE) {
                 g_inputs[g_input_count] = endpoint;
                 (void)snprintf(g_input_rows[g_input_count],sizeof(g_input_rows[0]),"%s - %s%s",
@@ -101,6 +135,30 @@ static void refresh_outputs(void) {
             ++g_output_count;
         }
     }
+    /* The Volume tab names the device behind the effective output. */
+    if (g_device < 0) (void)snprintf(g_device_text,sizeof(g_device_text),"No audio device");
+    else if (active >= 0) (void)snprintf(g_device_text,sizeof(g_device_text),"%s",g_outputs[active].device_name);
+    else if (g_hw_count) (void)snprintf(g_device_text,sizeof(g_device_text),"%s",g_hw[0].device_name);
+    else (void)snprintf(g_device_text,sizeof(g_device_text),"No playback device");
+    if (hw_active < 0 && g_hw_count) { hw_active = 0; g_hw_selected_id = g_hw[0].id; }
+    g_widgets[HW_LIST].item_count = (int)g_hw_count;
+    g_widgets[HW_LIST].value = hw_active;
+    if (hw_active >= 0) {
+        const struct savanxp_audio_endpoint* item = &g_hw[hw_active];
+        const uint32_t flags = item->flags;
+        (void)snprintf(g_hw_device,sizeof(g_hw_device),"Device: %s",item->device_name);
+        (void)snprintf(g_hw_connector,sizeof(g_hw_connector),"Connector: %s%s",item->name,
+            (flags & SAVANXP_AUDIO_SELECTED) ? " (default)" : "");
+        (void)snprintf(g_hw_status,sizeof(g_hw_status),"Status: %s",
+            !(flags & SAVANXP_AUDIO_AVAILABLE) ? "Unavailable" :
+            !(flags & SAVANXP_AUDIO_JACK) ? "Working properly" :
+            !(flags & SAVANXP_AUDIO_PRESENCE_CAPABLE) ? "Jack without plug detection" :
+            !(flags & SAVANXP_AUDIO_PRESENCE_VALID) ? "Jack state unknown" :
+            (flags & SAVANXP_AUDIO_CONNECTED) ? "Plugged in" : "Unplugged");
+    } else {
+        (void)snprintf(g_hw_device,sizeof(g_hw_device),"Device: %s",g_device < 0 ? "None" : "No connectors reported");
+        g_hw_connector[0] = g_hw_status[0] = 0;
+    }
     g_widgets[INPUT_SELECT].item_count = (int)g_input_count;
     g_widgets[INPUT_SELECT].value = input_active;
     if (g_input_count && g_online && !g_route_pending) g_widgets[INPUT_SELECT].flags &= ~SXGUI_FLAG_DISABLED;
@@ -112,11 +170,16 @@ static void refresh_outputs(void) {
         if (!g_widgets[INPUT_MUTE].pressed) g_widgets[INPUT_MUTE].value = (int)g_input_state.muted;
         g_widgets[INPUT_LEVEL].value = peak(g_input_state.peak_left,g_input_state.peak_right);
         (void)snprintf(g_input_text,sizeof(g_input_text),"%u%%",g_input_state.volume);
+        if (!g_initial_input_known) {
+            g_initial_input_volume = g_input_state.volume; g_initial_input_muted = g_input_state.muted;
+            g_initial_input_known = 1;
+        }
     } else {
         g_widgets[INPUT_VOLUME].flags |= SXGUI_FLAG_DISABLED; g_widgets[INPUT_MUTE].flags |= SXGUI_FLAG_DISABLED;
         g_widgets[INPUT_LEVEL].value = 0; g_input_text[0] = 0;
         if (!g_input_count) (void)snprintf(g_record_text,sizeof(g_record_text),"No recording device available");
     }
+    g_widgets[VOICE_LEVEL].value = g_widgets[INPUT_LEVEL].value;
     if (g_capture_online && g_record_state != RECORDING) g_widgets[RECORD].flags &= ~SXGUI_FLAG_DISABLED;
     else g_widgets[RECORD].flags |= SXGUI_FLAG_DISABLED;
     if (g_record_frames && g_record_state == RECORD_READY && active >= 0)
@@ -330,6 +393,8 @@ static void on_tick(struct sxngui_app* app) {
     g_next_ui_ms = now+200;
     if (g_device >= 0 && sxnaudio_master_get(g_device,&g_volume,&g_muted) < 0) {
         (void)sxn_close(g_device); g_device = -1;
+    } else if (g_device >= 0 && !g_initial_master_known) {
+        g_initial_volume = g_volume; g_initial_muted = g_muted; g_initial_master_known = 1;
     }
     if (g_device < 0 && now >= g_device_retry_ms) {
         g_device = sxn_open_device("audio0",SXN_DEVICE_READ | SXN_DEVICE_WRITE);
@@ -471,6 +536,9 @@ static void on_control(struct sxgui_widget* widget, void* user) {
     } else if (widget == &g_widgets[LIST]) {
         if (widget->value >= 0 && (uint32_t)widget->value < g_snapshot.count)
             g_selected = g_snapshot.streams[widget->value].id;
+    } else if (widget == &g_widgets[HW_LIST]) {
+        if (widget->value >= 0 && (uint32_t)widget->value < g_hw_count) g_hw_selected_id = g_hw[widget->value].id;
+        refresh_outputs();
     } else if (stream) {
         uint16_t kind = widget == &g_widgets[APP_MUTE] ? SAVANXP_AUDIOD_STREAM_MUTED : SAVANXP_AUDIOD_STREAM_VOLUME;
         result = sxnaudio_control_change(&g_control,stream,kind,(uint8_t)widget->value);
@@ -485,8 +553,22 @@ static void on_control(struct sxgui_widget* widget, void* user) {
     if (result < 0) (void)snprintf(g_status,sizeof(g_status), "The audio change could not be applied. Try again.");
     refresh_controls(); sxngui_app_request_repaint(&g_app);
 }
+/* Changes apply as they are made, as the volume slider always did, so OK only
+ * closes. Cancel puts the device levels back as they were when the sheet
+ * opened; connector choices and application levels stay applied. */
 static void on_close(struct sxgui_widget* widget, void* user) {
-    (void)widget; (void)user; sxngui_app_quit(&g_app,0);
+    (void)user;
+    if (widget == &g_widgets[CANCEL] && g_device >= 0) {
+        if (g_initial_master_known) {
+            (void)sxnaudio_master_volume(g_device,g_initial_volume);
+            (void)sxnaudio_master_muted(g_device,g_initial_muted);
+        }
+        if (g_initial_input_known) {
+            (void)sxnaudio_capture_volume(g_device,g_initial_input_volume);
+            (void)sxnaudio_capture_muted(g_device,g_initial_input_muted);
+        }
+    }
+    sxngui_app_quit(&g_app,0);
 }
 static void flush_preferences_on_exit(void) {
     struct savanxp_audiod_snapshot snapshot;
@@ -519,112 +601,255 @@ static void flush_preferences_on_exit(void) {
     (void)sxn_log("sound: timed out saving preferences; background saving remains active");
     (void)sxn_close(pause);
 }
-static void paint_panel(struct sxngui_app* app) {
-    struct sx_painter* painter = &app->ui.painter;
-    const int width = (int)app->info.width;
-    int bottom = (int)app->info.height-SOUND_HEADER_HEIGHT-304;
-    const uint32_t blue = SXGUI_RGB(0,0,128);
-    const struct sx_point cone[] = {{27,25},{39,17},{39,47},{27,39}};
-    int font;
-    if (bottom < 245) bottom = 245;
+/* ---- the property sheet ---------------------------------------------------- */
 
-    // A clear control-panel heading above the standard NT-style widgets.
-    sx_painter_fill_rect(painter,sx_rect_make(0,0,width,SOUND_HEADER_HEIGHT),SXGUI_COLOR_FIELD);
-    sx_painter_fill_rect(painter,sx_rect_make(14,25,14,14),SXGUI_COLOR_FACE);
-    sxchrome_draw_raised(painter,sx_rect_make(14,25,14,14));
+static const signed char g_page_of[WIDGETS] = {
+    [TABS] = PAGE_ALL,
+    [DEVICE_NAME] = PAGE_VOLUME, [VOLUME_GROUP] = PAGE_VOLUME, [MASTER] = PAGE_VOLUME,
+    [MASTER_TEXT] = PAGE_VOLUME, [MASTER_LEVEL] = PAGE_VOLUME, [MASTER_MUTE] = PAGE_VOLUME,
+    [SPEAKER_GROUP] = PAGE_VOLUME, [JACK_POLICY] = PAGE_VOLUME,
+    [LIST] = PAGE_APPLICATIONS, [APP_GROUP] = PAGE_APPLICATIONS, [SELECTED] = PAGE_APPLICATIONS,
+    [APP_VOLUME] = PAGE_APPLICATIONS, [APP_TEXT] = PAGE_APPLICATIONS, [APP_LEVEL] = PAGE_APPLICATIONS,
+    [APP_MUTE] = PAGE_APPLICATIONS,
+    [PLAYBACK_GROUP] = PAGE_AUDIO, [OUTPUT] = PAGE_AUDIO, [RECORDING_GROUP] = PAGE_AUDIO,
+    [INPUT_SELECT] = PAGE_AUDIO, [INPUT_VOLUME] = PAGE_AUDIO, [INPUT_TEXT] = PAGE_AUDIO,
+    [INPUT_LEVEL] = PAGE_AUDIO, [INPUT_MUTE] = PAGE_AUDIO,
+    [TEST_GROUP] = PAGE_VOICE, [VOICE_LEVEL] = PAGE_VOICE, [RECORD] = PAGE_VOICE,
+    [PLAY_RECORDING] = PAGE_VOICE, [RECORD_STATUS] = PAGE_VOICE,
+    [HW_LIST] = PAGE_HARDWARE, [HW_GROUP] = PAGE_HARDWARE, [HW_DEVICE] = PAGE_HARDWARE,
+    [HW_CONNECTOR] = PAGE_HARDWARE, [HW_STATUS] = PAGE_HARDWARE,
+    [STATUS] = PAGE_ALL, [OK] = PAGE_ALL, [CANCEL] = PAGE_ALL, [APPLY] = PAGE_ALL,
+};
+/* sxgui has no widget hierarchy: a page's controls exist only while their
+ * tab is active, or they would paint and take clicks on the other pages. */
+static void show_page(void) {
+    int index;
+    for (index = 0; index < WIDGETS; ++index) {
+        if (g_page_of[index] == PAGE_ALL || g_page_of[index] == g_widgets[TABS].value)
+            g_widgets[index].flags |= SXGUI_FLAG_VISIBLE;
+        else g_widgets[index].flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+    }
+}
+static void on_tab(struct sxgui_widget* widget, void* user) {
+    (void)widget; (void)user;
+    show_page(); sxngui_app_request_repaint(&g_app);
+}
+
+/* Hand-drawn 32x32 glyphs in the spirit of the classic sheet's artwork. */
+static void paint_speaker(struct sx_painter* painter, int x, int y) {
+    const struct sx_point cone[] = {{x+9,y+11},{x+18,y+4},{x+18,y+28},{x+9,y+21}};
+    sx_painter_fill_rect(painter,sx_rect_make(x+1,y+11,9,10),SXGUI_COLOR_FACE);
+    sxchrome_draw_raised(painter,sx_rect_make(x+1,y+11,9,10));
     sx_painter_fill_polygon(painter,cone,4,SXGUI_COLOR_BEVEL);
     sx_painter_draw_polyline(painter,cone,4,1,SXGUI_COLOR_DARK);
-    sx_painter_draw_line(painter,29,26,37,21,SXGUI_COLOR_LIGHT);
-    if (sx_painter_push_clip(painter,sx_rect_make(43,12,16,40))) {
-        sx_painter_draw_ellipse(painter,sx_rect_make(32,22,18,20),blue);
-        sx_painter_draw_ellipse(painter,sx_rect_make(26,14,32,36),blue);
+    sx_painter_draw_line(painter,x+10,y+12,x+17,y+7,SXGUI_COLOR_LIGHT);
+    if (sx_painter_push_clip(painter,sx_rect_make(x+21,y+1,12,30))) {
+        sx_painter_draw_ellipse(painter,sx_rect_make(x+11,y+8,14,16),SXGUI_RGB(0,0,128));
+        sx_painter_draw_ellipse(painter,sx_rect_make(x+7,y+2,24,28),SXGUI_RGB(0,0,128));
         sx_painter_pop_clip(painter);
     }
-    font = sx_painter_set_font(painter,SX_FONT_UI_TITLE);
-    sx_painter_draw_text(painter,72,12,"Sound and Audio Devices",blue);
-    (void)sx_painter_set_font(painter,font);
-    sx_painter_draw_text(painter,73,38,"Playback, application volume and recording",SXGUI_COLOR_DARK);
-    sx_painter_hline(painter,0,SOUND_HEADER_HEIGHT-2,width,SXGUI_COLOR_SHADOW);
-    sx_painter_hline(painter,0,SOUND_HEADER_HEIGHT-1,width,SXGUI_COLOR_LIGHT);
-
-    // Etched groups use the desktop palette and leave every native control
-    // intact. Their edges sit outside the controls and their hit rectangles.
-    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+6,width-12,118));
-    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+126,width-12,bottom-46));
-    sxchrome_draw_etched(painter,sx_rect_make(6,SOUND_HEADER_HEIGHT+bottom+86,width-12,182));
+}
+static void paint_microphone(struct sx_painter* painter, int x, int y) {
+    int step;
+    for (step = 0; step < 3; ++step)
+        sx_painter_draw_line(painter,x+5+step,y+30,x+16+step,y+13,SXGUI_COLOR_DARK);
+    sx_painter_draw_line(painter,x+4,y+31,x+10,y+31,SXGUI_COLOR_DARK);
+    sx_painter_fill_ellipse(painter,sx_rect_make(x+14,y+2,15,15),SXGUI_RGB(0,160,160));
+    sx_painter_draw_ellipse(painter,sx_rect_make(x+14,y+2,15,15),SXGUI_RGB(0,64,64));
+    sx_painter_draw_line(painter,x+17,y+12,x+25,y+5,SXGUI_RGB(0,96,96));
+    sx_painter_draw_line(painter,x+19,y+14,x+27,y+7,SXGUI_RGB(0,96,96));
+    sx_painter_fill_rect(painter,sx_rect_make(x+18,y+5,3,3),SXGUI_RGB(192,255,255));
+}
+static void paint_speaker_pair(struct sx_painter* painter, int x, int y) {
+    const uint32_t dark = SXGUI_RGB(80,80,104), light = SXGUI_RGB(224,224,232);
+    sx_painter_fill_round_rect(painter,sx_rect_make(x,y,22,58),3,dark);
+    sx_painter_draw_round_rect(painter,sx_rect_make(x,y,22,58),3,SXGUI_COLOR_DARK);
+    sx_painter_vline(painter,x+2,y+3,52,SXGUI_RGB(144,144,176));
+    sx_painter_fill_round_rect(painter,sx_rect_make(x+26,y+4,18,54),3,light);
+    sx_painter_draw_round_rect(painter,sx_rect_make(x+26,y+4,18,54),3,SXGUI_COLOR_SHADOW);
+    sx_painter_fill_ellipse(painter,sx_rect_make(x+31,y+40,8,8),SXGUI_COLOR_SHADOW);
+    sx_painter_fill_ellipse(painter,sx_rect_make(x+32,y+12,6,6),SXGUI_COLOR_SHADOW);
+    sx_painter_fill_rect(painter,sx_rect_make(x+5,y+50,4,3),SXGUI_RGB(0,200,0));
+}
+/* A caption that greys out with the control it describes. */
+static void paint_caption(struct sx_painter* painter, int x, int y, const char* text, int widget) {
+    if (g_widgets[widget].flags & SXGUI_FLAG_DISABLED) sxchrome_draw_text_disabled(painter,x,y,text);
+    else sx_painter_draw_text(painter,x,y,text,SXGUI_COLOR_TEXT);
+}
+static void paint_lines(struct sx_painter* painter, int x, int y, const char* const* lines, int count) {
+    const int step = sx_painter_text_height(painter)+3;
+    int index;
+    for (index = 0; index < count; ++index)
+        sx_painter_draw_text(painter,x,y+index*step,lines[index],SXGUI_COLOR_TEXT);
+}
+static void paint_panel(struct sxngui_app* app) {
+    struct sx_painter* painter = &app->ui.painter;
+    const struct sx_rect page = sxgui_tabs_page(&g_widgets[TABS]);
+    const int left = page.x+10;
+    switch (g_widgets[TABS].value) {
+    case PAGE_VOLUME: {
+        static const char* const speaker_text[] = {
+            "Use these settings to let the speakers hand", "over to headphones when they are plugged in."};
+        const struct sx_rect slider = g_widgets[MASTER].rect;
+        paint_speaker(painter,left+4,page.y+10);
+        paint_speaker(painter,g_widgets[VOLUME_GROUP].rect.x+12,slider.y-2);
+        paint_caption(painter,slider.x+4,slider.y+slider.height+1,"Low",MASTER);
+        paint_caption(painter,slider.x+slider.width-4-sx_painter_text_width(painter,"High"),
+                      slider.y+slider.height+1,"High",MASTER);
+        paint_speaker_pair(painter,g_widgets[SPEAKER_GROUP].rect.x+12,g_widgets[SPEAKER_GROUP].rect.y+22);
+        paint_lines(painter,g_widgets[JACK_POLICY].rect.x,g_widgets[SPEAKER_GROUP].rect.y+24,speaker_text,2);
+        break;
+    }
+    case PAGE_APPLICATIONS:
+        sx_painter_draw_text(painter,left,page.y+12,"Applications playing sound:",SXGUI_COLOR_TEXT);
+        break;
+    case PAGE_AUDIO:
+        paint_speaker(painter,g_widgets[PLAYBACK_GROUP].rect.x+12,g_widgets[PLAYBACK_GROUP].rect.y+24);
+        paint_caption(painter,g_widgets[OUTPUT].rect.x,g_widgets[OUTPUT].rect.y-18,"Default device:",OUTPUT);
+        paint_microphone(painter,g_widgets[RECORDING_GROUP].rect.x+12,g_widgets[RECORDING_GROUP].rect.y+24);
+        paint_caption(painter,g_widgets[INPUT_SELECT].rect.x,g_widgets[INPUT_SELECT].rect.y-18,"Default device:",INPUT_SELECT);
+        break;
+    case PAGE_VOICE: {
+        static const char* const voice_text[] = {
+            "These settings test the default recording device:",
+            "record a short sample, then play it back through",
+            "the default playback device."};
+        paint_lines(painter,left,page.y+12,voice_text,3);
+        paint_microphone(painter,g_widgets[TEST_GROUP].rect.x+12,g_widgets[TEST_GROUP].rect.y+24);
+        paint_caption(painter,g_widgets[VOICE_LEVEL].rect.x,g_widgets[VOICE_LEVEL].rect.y-18,"Input level:",RECORD);
+        break;
+    }
+    case PAGE_HARDWARE:
+        sx_painter_draw_text(painter,left,page.y+12,"Devices:",SXGUI_COLOR_TEXT);
+        break;
+    default:
+        break;
+    }
 }
 static void layout(struct sxngui_app* app) {
-    int width = (int)app->info.width, height = (int)app->info.height-SOUND_HEADER_HEIGHT;
-    int bottom = height - 304;
-    if (bottom < 245) bottom = 245;
-    g_widgets[OUTPUT].rect = sx_rect_make(12,12,width-24,22);
-    g_widgets[MASTER].rect = sx_rect_make(12,40,width-172,30);
-    g_widgets[MASTER_MUTE].rect = sx_rect_make(width-140,43,76,24);
-    g_widgets[MASTER_TEXT].rect = sx_rect_make(width-60,43,48,24);
-    g_widgets[MASTER_LEVEL].rect = sx_rect_make(12,80,width-24,14);
-    g_widgets[JACK_POLICY].rect = sx_rect_make(12,100,width-24,22);
-    g_widgets[APPLICATIONS].rect = sx_rect_make(12,132,width-24,22);
-    g_widgets[LIST].rect = sx_rect_make(12,158,width-24,bottom-170);
-    g_widgets[SELECTED].rect = sx_rect_make(12,bottom,width-24,20);
-    g_widgets[APP_VOLUME].rect = sx_rect_make(12,bottom+24,width-172,30);
-    g_widgets[APP_MUTE].rect = sx_rect_make(width-140,bottom+27,76,24);
-    g_widgets[APP_TEXT].rect = sx_rect_make(width-60,bottom+27,48,24);
-    g_widgets[APP_LEVEL].rect = sx_rect_make(12,bottom+64,width-24,14);
-    g_widgets[INPUT_TITLE].rect = sx_rect_make(12,bottom+88,width-24,20);
-    g_widgets[INPUT_SELECT].rect = sx_rect_make(12,bottom+112,width-24,24);
-    g_widgets[INPUT_VOLUME].rect = sx_rect_make(12,bottom+144,width-172,30);
-    g_widgets[INPUT_MUTE].rect = sx_rect_make(width-140,bottom+147,76,24);
-    g_widgets[INPUT_TEXT].rect = sx_rect_make(width-60,bottom+147,48,24);
-    g_widgets[INPUT_LEVEL].rect = sx_rect_make(12,bottom+184,width-24,14);
-    g_widgets[RECORD].rect = sx_rect_make(12,bottom+208,120,28);
-    g_widgets[PLAY_RECORDING].rect = sx_rect_make(144,bottom+208,140,28);
-    g_widgets[RECORD_STATUS].rect = sx_rect_make(12,bottom+244,width-24,22);
-    g_widgets[STATUS].rect = sx_rect_make(12,height-32,width-124,24);
-    g_widgets[CLOSE].rect = sx_rect_make(width-96,height-34,84,26);
-    for (int index = 0; index < WIDGETS; ++index)
-        g_widgets[index].rect.y += SOUND_HEADER_HEIGHT;
+    const int width = (int)app->info.width, height = (int)app->info.height;
+    struct sx_rect page;
+    int x, y, w, gx, gw;
+    g_widgets[TABS].rect = sx_rect_make(8,8,width-16,height-52);
+    page = sxgui_tabs_page(&g_widgets[TABS]);
+    x = page.x+10; y = page.y; w = page.width-20;
+    gx = x+56; gw = w-68;
+
+    /* Volume */
+    g_widgets[DEVICE_NAME].rect = sx_rect_make(x+48,y+16,w-48,20);
+    g_widgets[VOLUME_GROUP].rect = sx_rect_make(x,y+56,w,134);
+    g_widgets[MASTER].rect = sx_rect_make(gx,y+80,gw-52,SXGUI_TRACKBAR_HEIGHT);
+    g_widgets[MASTER_TEXT].rect = sx_rect_make(x+w-56,y+82,44,22);
+    g_widgets[MASTER_LEVEL].rect = sx_rect_make(gx+4,y+128,gw-60,8);
+    g_widgets[MASTER_MUTE].rect = sx_rect_make(gx,y+154,160,22);
+    g_widgets[SPEAKER_GROUP].rect = sx_rect_make(x,y+204,w,112);
+    g_widgets[JACK_POLICY].rect = sx_rect_make(gx+12,y+270,gw-12,22);
+
+    /* Applications */
+    g_widgets[LIST].rect = sx_rect_make(x,y+32,w,150);
+    g_widgets[APP_GROUP].rect = sx_rect_make(x,y+194,w,124);
+    g_widgets[SELECTED].rect = sx_rect_make(x+12,y+214,w-24,20);
+    g_widgets[APP_VOLUME].rect = sx_rect_make(x+12,y+236,w-80,SXGUI_TRACKBAR_HEIGHT);
+    g_widgets[APP_TEXT].rect = sx_rect_make(x+w-56,y+238,44,22);
+    g_widgets[APP_LEVEL].rect = sx_rect_make(x+16,y+268,w-88,8);
+    g_widgets[APP_MUTE].rect = sx_rect_make(x+12,y+288,120,22);
+
+    /* Audio */
+    g_widgets[PLAYBACK_GROUP].rect = sx_rect_make(x,y+10,w,86);
+    g_widgets[OUTPUT].rect = sx_rect_make(gx,y+52,gw,24);
+    g_widgets[RECORDING_GROUP].rect = sx_rect_make(x,y+106,w,164);
+    g_widgets[INPUT_SELECT].rect = sx_rect_make(gx,y+148,gw,24);
+    g_widgets[INPUT_VOLUME].rect = sx_rect_make(gx,y+180,gw-52,SXGUI_TRACKBAR_HEIGHT);
+    g_widgets[INPUT_TEXT].rect = sx_rect_make(x+w-56,y+182,44,22);
+    g_widgets[INPUT_LEVEL].rect = sx_rect_make(gx+4,y+214,gw-60,8);
+    g_widgets[INPUT_MUTE].rect = sx_rect_make(gx,y+236,120,22);
+
+    /* Voice */
+    g_widgets[TEST_GROUP].rect = sx_rect_make(x,y+72,w,150);
+    g_widgets[VOICE_LEVEL].rect = sx_rect_make(gx,y+114,gw,8);
+    g_widgets[RECORD].rect = sx_rect_make(gx,y+140,120,26);
+    g_widgets[PLAY_RECORDING].rect = sx_rect_make(gx+128,y+140,130,26);
+    g_widgets[RECORD_STATUS].rect = sx_rect_make(gx,y+178,gw,22);
+
+    /* Hardware */
+    g_widgets[HW_LIST].rect = sx_rect_make(x,y+32,w,150);
+    g_widgets[HW_GROUP].rect = sx_rect_make(x,y+194,w,100);
+    g_widgets[HW_DEVICE].rect = sx_rect_make(x+12,y+216,w-24,20);
+    g_widgets[HW_CONNECTOR].rect = sx_rect_make(x+12,y+240,w-24,20);
+    g_widgets[HW_STATUS].rect = sx_rect_make(x+12,y+264,w-24,20);
+
+    g_widgets[STATUS].rect = sx_rect_make(x,page.y+page.height-32,w,22);
+    g_widgets[OK].rect = sx_rect_make(width-280,height-34,80,26);
+    g_widgets[CANCEL].rect = sx_rect_make(width-192,height-34,80,26);
+    g_widgets[APPLY].rect = sx_rect_make(width-104,height-34,80,26);
     sxngui_app_request_repaint(app);
 }
 int main(int argc, char** argv) {
-    int result;
+    int result, width;
     (void)argc; (void)argv;
-    g_widgets[OUTPUT] = sxgui_combobox(sx_rect_make(0,0,0,0),g_output_ptrs,0,-1);
-    g_widgets[OUTPUT].on_action = on_control;
+    g_widgets[TABS] = sxgui_tabs(sx_rect_make(0,0,0,0),g_tab_labels,TAB_COUNT,PAGE_VOLUME);
+    g_widgets[TABS].on_action = on_tab;
+
+    g_widgets[DEVICE_NAME] = sxgui_label(sx_rect_make(0,0,0,0),g_device_text);
+    g_widgets[VOLUME_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Device volume");
     g_widgets[MASTER] = sxgui_trackbar(sx_rect_make(0,0,0,0),0,100,100);
-    g_widgets[MASTER_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
-    g_widgets[MASTER_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
     g_widgets[MASTER_TEXT] = sxgui_label(sx_rect_make(0,0,0,0),g_master_text);
+    g_widgets[MASTER_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
+    g_widgets[MASTER_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
+    g_widgets[SPEAKER_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Speaker settings");
     g_widgets[JACK_POLICY] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Automatically switch to headphones",0);
-    g_widgets[JACK_POLICY].on_action = on_control;
-    g_widgets[APPLICATIONS] = sxgui_label(sx_rect_make(0,0,0,0),"Applications");
+
     g_widgets[LIST] = sxgui_listbox(sx_rect_make(0,0,0,0),g_row_ptrs,0);
     g_widgets[LIST].columns = g_columns; g_widgets[LIST].column_count = 4;
+    g_widgets[APP_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Application volume");
     g_widgets[SELECTED] = sxgui_label(sx_rect_make(0,0,0,0),g_selected_text);
     g_widgets[APP_VOLUME] = sxgui_trackbar(sx_rect_make(0,0,0,0),0,100,100);
-    g_widgets[APP_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
-    g_widgets[APP_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
     g_widgets[APP_TEXT] = sxgui_label(sx_rect_make(0,0,0,0),g_app_text);
-    g_widgets[INPUT_TITLE] = sxgui_label(sx_rect_make(0,0,0,0),"Recording");
+    g_widgets[APP_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
+    g_widgets[APP_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
+
+    g_widgets[PLAYBACK_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Sound playback");
+    g_widgets[OUTPUT] = sxgui_combobox(sx_rect_make(0,0,0,0),g_output_ptrs,0,-1);
+    g_widgets[RECORDING_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Sound recording");
     g_widgets[INPUT_SELECT] = sxgui_combobox(sx_rect_make(0,0,0,0),g_input_ptrs,0,-1);
     g_widgets[INPUT_VOLUME] = sxgui_trackbar(sx_rect_make(0,0,0,0),0,100,100);
-    g_widgets[INPUT_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
-    g_widgets[INPUT_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
     g_widgets[INPUT_TEXT] = sxgui_label(sx_rect_make(0,0,0,0),g_input_text);
+    g_widgets[INPUT_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
+    g_widgets[INPUT_MUTE] = sxgui_checkbox(sx_rect_make(0,0,0,0),"Mute",0);
+
+    g_widgets[TEST_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Hardware test");
+    g_widgets[VOICE_LEVEL] = sxgui_progress(sx_rect_make(0,0,0,0),0,100,0);
     g_widgets[RECORD] = sxgui_button(sx_rect_make(0,0,0,0),"Record test",on_record,0);
     g_widgets[PLAY_RECORDING] = sxgui_button(sx_rect_make(0,0,0,0),"Play recording",on_record,0);
     g_widgets[RECORD_STATUS] = sxgui_label(sx_rect_make(0,0,0,0),g_record_text);
-    g_widgets[INPUT_SELECT].on_action = g_widgets[INPUT_VOLUME].on_action = g_widgets[INPUT_MUTE].on_action = on_control;
+
+    g_widgets[HW_LIST] = sxgui_listbox(sx_rect_make(0,0,0,0),g_hw_ptrs,0);
+    g_widgets[HW_LIST].columns = g_hw_columns; g_widgets[HW_LIST].column_count = 2;
+    g_widgets[HW_GROUP] = sxgui_groupbox(sx_rect_make(0,0,0,0),"Device properties");
+    g_widgets[HW_DEVICE] = sxgui_label(sx_rect_make(0,0,0,0),g_hw_device);
+    g_widgets[HW_CONNECTOR] = sxgui_label(sx_rect_make(0,0,0,0),g_hw_connector);
+    g_widgets[HW_STATUS] = sxgui_label(sx_rect_make(0,0,0,0),g_hw_status);
+
     g_widgets[STATUS] = sxgui_label(sx_rect_make(0,0,0,0),g_status);
-    g_widgets[STATUS].flags |= SXGUI_FLAG_SUNKEN;
-    g_widgets[CLOSE] = sxgui_button(sx_rect_make(0,0,0,0),"Close",on_close,0);
+    g_widgets[OK] = sxgui_button(sx_rect_make(0,0,0,0),"OK",on_close,0);
+    g_widgets[CANCEL] = sxgui_button(sx_rect_make(0,0,0,0),"Cancel",on_close,0);
+    /* Nothing waits to be applied: every control takes effect at once. */
+    g_widgets[APPLY] = sxgui_button(sx_rect_make(0,0,0,0),"Apply",on_close,0);
+    g_widgets[APPLY].flags |= SXGUI_FLAG_DISABLED;
+
+    g_widgets[OUTPUT].on_action = g_widgets[JACK_POLICY].on_action = on_control;
     g_widgets[MASTER].on_action = g_widgets[MASTER_MUTE].on_action = on_control;
     g_widgets[LIST].on_action = g_widgets[APP_VOLUME].on_action = g_widgets[APP_MUTE].on_action = on_control;
+    g_widgets[INPUT_SELECT].on_action = g_widgets[INPUT_VOLUME].on_action = g_widgets[INPUT_MUTE].on_action = on_control;
+    g_widgets[HW_LIST].on_action = on_control;
     (void)snprintf(g_status,sizeof(g_status), "Connecting to audio service...");
+    show_page();
     result = sxngui_app_init(&g_app,&sun_resources,g_widgets,WIDGETS);
     if (result < 0) { (void)sxn_log("sound: window unavailable"); sxn_exit(1); }
     g_app.on_resize = layout; g_app.on_paint = paint_panel;
     g_app.on_tick = on_tick; g_app.tick_interval_ms = 200;
-    (void)sxngui_app_set_content_size(&g_app,600,640+SOUND_HEADER_HEIGHT);
+    width = sxgui_tabs_preferred_width(g_tab_labels,TAB_COUNT)+40;
+    (void)sxngui_app_set_content_size(&g_app,width > 440 ? width : 440,450);
     layout(&g_app); on_tick(&g_app);
     result = sxngui_app_run(&g_app);
     stop_record_output(); sxnaudio_capture_close(&g_capture);

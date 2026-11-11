@@ -99,6 +99,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Sound is now a classic Sounds and Audio Devices property sheet: Volume, Applications, Audio, Voice and Hardware tabs.**
+  OK/Cancel/Apply replace Close; Cancel restores the device levels. See [SOUND.md](docs/media/SOUND.md).
+
 - **Small disk reads are cached, and a file no longer hits "no space" at 4 MiB when another grows beside it.**
   The block layer keeps 1 MiB of recently read sectors; SxFS moves a file that ran out of extents to one contiguous run.
   `fscheck` and `sxfs-cli check` find a repeated name in one pass.
