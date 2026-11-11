@@ -194,9 +194,13 @@ rebuilds a same-size staging image, validates it, and retries with a recovery
 copy available. A failed apply or replacement leaves the original image
 available; a failed apply must be treated as suspect before reuse.
 
-The `sxfs-cli check` and `extract` paths reject pending journals, dirty
-superblocks, invalid directory entries, aliases, cycles, and unreachable
-allocated inodes rather than dropping data.
+The `sxfs-cli check` and `extract` paths reject invalid directory entries,
+aliases, cycles, and unreachable allocated inodes rather than dropping data.
+An image left with a pending journal or a superblock not marked clean (QEMU
+killed mid-write) is read as recovered, without modifying it; `apply` and `rm`
+persist that recovery on the candidate before changing it, and `sxfs-cli
+repair` handles what does not validate
+([SXFS_CHECK.md](../fs/SXFS_CHECK.md)).
 
 The regression case is external data, not only the freshly generated rootfs:
 

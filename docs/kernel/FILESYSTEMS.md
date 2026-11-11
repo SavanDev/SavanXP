@@ -331,4 +331,5 @@ is known, what the fix is. The SxFS side is in
   They find their driver by path, not by a stamp, which is enough while every
   directory operation starts from a path; but a driver holding a record per
   directory finds it by searching for the vnode, linearly (FAT's
-  `directory_from_vnode`, SxFS's `file_from_vnode`).
+  `directory_from_vnode`, SxFS's `file_from_vnode`). A file's vnode carries
+  its record in `data`, which both drivers read back without searching.

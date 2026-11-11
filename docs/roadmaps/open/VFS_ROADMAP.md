@@ -42,7 +42,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; results still travel through the global `vfs::last_error()` |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
-| Mounts | Four slots, 32-byte mount-point buffers and no general read-only mount flag |
+| Mounts | Four slots and 32-byte mount-point buffers; a read-only mount is a flag of `fs::attach` the VFS enforces, with no remount and no per-mount policy beyond it |
 | File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write |
 | Large I/O | Some translation results, including the seek position, pass through int even when internal offsets are size_t |
 | Native surface | SUN has no regular-file API yet; common file operations remain partly inside POSIX translation |
@@ -238,8 +238,8 @@ no single change is expected to complete VFS-E.
 
 | Consumer / roadmap | Dependency |
 | --- | --- |
-| SxFS v2 reliability | VFS-A/B/D for errors, lifetime and durable replacement; its journal fix is independent driver work and must not wait for all VFS phases |
-| SxFS v2 scale preparation | VFS-C for on-demand publication and bounded caches; format ceilings remain unchanged |
+| SxFS v2 reliability | Done: it landed the driver status results, unlink while open, replacing rename and `fsync` it needed, in this layer |
+| SxFS v2 scale | VFS-C for on-demand publication and bounded caches: the one part of SxFS v2's scale work left, owned here; format ceilings remain unchanged |
 | SxFS v3 | Agree VFS/driver contracts during format design; qualify VFS-C/E before claiming large-tree or coherent-mapping support |
 | FAT and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior |
 | [Linux](LINUX_SUBSYSTEM_ROADMAP.md) | Consume measured neutral operations for L3/L4; add directory-relative I/O, links, mappings and locking with the profiles that require them |

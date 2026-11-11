@@ -222,9 +222,10 @@ all its phases have landed; the links to it move with it.
 - [`VFS_ROADMAP.md`](roadmaps/open/VFS_ROADMAP.md) — the shared filesystem foundation:
   native I/O, identity and lifetime, on-demand lookup, mutation/durability,
   mounts and VM coherence, with conformance gates for current and future drivers.
-- [`SXFS_ROADMAP.md`](roadmaps/open/SXFS_ROADMAP.md) — v2 consistency, recovery and file
-  contracts; the planned stable v3 format, subsystem boundaries, migration and
-  production acceptance gates, with historical performance measurements.
+- [`SXFS_ROADMAP.md`](roadmaps/open/SXFS_ROADMAP.md) — what closed v2 (consistency, file
+  contract, recovery and repair, driver-side costs) and who owns what it left;
+  the planned stable v3 format, subsystem boundaries, migration and production
+  acceptance gates, with historical performance measurements.
 - [`XASH3D_ROADMAP.md`](roadmaps/open/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
   engine needs from the platform, and the order that makes it pay for `dlopen` and
   SxGL without pulling in threads or SDL.

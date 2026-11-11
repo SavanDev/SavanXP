@@ -1,12 +1,11 @@
 # SxFS — reliable v2 and the stable v3 format
 
-> **Status: format v2 is current. V2-A is done; the rest of the v2 reliability
-> and file-contract work below is open; v3 is planned, not implemented or
-> specified in full.** v2
-> preserves existing images while closing consistency, recovery and API gaps.
-> v3 changes the storage structures that limit capacity, scale and extensibility.
-> Finishing the old v2 performance backlog alone does not meet the production
-> acceptance gates on this page.
+> **Status: format v2 is current and its reliability work (V2-A to V2-D) is
+> done. v3 is planned, not implemented or specified in full.** v2 kept every
+> existing image while closing its consistency, recovery and file-contract
+> gaps. What v2 cannot do is listed under "Closing v2" with who owns it: the
+> VFS roadmap for tree publication and caches, v3 for the storage structures
+> that limit capacity, scale and extensibility.
 
 The goal is a filesystem suitable for the native OS and its current and planned
 subsystems, with explicit durability guarantees, recovery tools and measured
@@ -32,10 +31,11 @@ this page are historical baselines, not a current inventory or a release gate.
 | --- | --- |
 | Volume capacity | 1 GiB; geometry checked against compiled constants |
 | Inode table | 4096 entries, fixed at format time by those constants |
-| Extents | At most 8 per inode; fragmentation can prevent allocation despite free space |
+| Extents | At most 8 per inode. A file out of extents is moved to one contiguous run; only a volume with no run large enough refuses with room left |
 | Names / relative paths | 63 / 255 bytes |
+| File size | 32 bits on disk: under 4 GiB, and under the 1 GiB volume in practice |
 | Published tree | All entries loaded at attach; 2048 VFS nodes shared by every volume, devices and initramfs |
-| Mounted SxFS volumes | 3, each with several MiB of statically reserved state |
+| Mounted SxFS volumes | 3, each with about 3.7 MiB of statically reserved state |
 | Recovery tools | Journal replay in the kernel and in `libsxfs`; `fscheck` reports; `sxfs-cli recover` and `repair` work offline on the host |
 
 The VFS node pool can run out before the SxFS inode table does. Raising format
@@ -131,30 +131,56 @@ power cut at every sector and recovery interrupted at every write.
 
 ## V2-D — performance and preparation for scale
 
-**Open; independent groundwork can proceed alongside V2-A.** The detailed
-backlog below remains applicable: coherent block-read caching, directory
-validation without quadratic comparisons, direct record lookup, parent mtime
-updates, optional nanoseconds/volume labels with reviewed feature semantics,
-and less commit amplification. Improve allocation policy within the eight-extent
-limit and measure low-space/fragmented workloads as well as empty images.
+**Done, for what is the driver's and the block layer's.**
 
-Start lookup and vnode publication on demand, bounded caches and identity-based
-records in the VFS. Do not require the complete mounted tree or a full path per
-inode to stay resident. Coordinate with FAT, whose driver shares these limits.
-Non-polling I/O and kernel scheduling improvements belong to block drivers and
-the kernel as well as this roadmap; writeback alone does not eliminate pauses.
+- **Reads are cached below SxFS**, coherently with the writeback queue
+  ([`BLOCK_WRITEBACK.md`](../../kernel/BLOCK_WRITEBACK.md#the-read-cache)): a
+  cached read sees every write issued, queued or landed, and write ordering is
+  untouched.
+- **A repeated name is found in one pass** by `fscheck`, the host walk and
+  repair (`sxfs_name_set`), instead of 8.4 million comparisons at 4095 entries.
+- **A file's record is read from its vnode**, not searched for.
+- **Allocation within eight extents**: growth extends the last extent when it
+  can, and a file that runs out of extents with room on the volume is
+  consolidated into one run
+  ([`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md#growing-a-file)). Measured
+  on two files growing in turns: 4 MiB each before, then "no space"; no limit
+  but free space after.
+- **Commit amplification**: a truncating rewrite is one commit (V2-A), a
+  directory's mtime moves in the commit that changes it.
 
-**Done when:** correctness tests still pass, cache reads observe queued and
-completed writes, and large directories/mounted trees have bounded memory and
-measured lookup costs. Performance changes retain durability ordering. v2's
-1 GiB geometry, inode table, name lengths and eight extents remain its limits.
+Tested by `block-writeback-test`, `sxfs-vfs-test` and `sxfs-recovery-test`;
+the namespace matrix already runs on full and fragmented volumes.
+
+**Not done here, and why.** Lookup and vnode publication on demand, bounded
+caches and records without a full path are a change to how every driver
+attaches to the VFS, not to SxFS: they are
+[VFS-C](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches),
+and SxFS is its first consumer. Until then a mounted tree is resident and the
+2048-node pool is the practical ceiling (item 4 below). Nanosecond mtimes and a
+volume label were optional and have no consumer; they go to v3's metadata
+contract instead of taking a feature bit each (items 8 and "What a second
+driver showed"). The read cache's effect is measured in the host test, not yet
+on hardware.
 
 ## Closing v2 and consuming it from subsystems
 
-v2 closes after V2-A through V2-D meet their gates: recoverable mutations, a
-durable atomic-update protocol, conservative maintenance and preservation of
-external installations. This is a reliable small-volume baseline, not a claim
+**v2 is closed** as a reliable small-volume baseline: recoverable mutations
+(V2-A), a durable atomic-update protocol with open-file lifetime and precise
+errors (V2-B), inspection that does not write, recovery and conservative
+repair on the host (V2-C), and the driver-side costs (V2-D). It is not a claim
 of general Linux/Windows compatibility or production certification.
+
+What remains is owned elsewhere:
+
+| Open | Owner |
+| --- | --- |
+| The whole tree resident at attach; 2048 VFS nodes; a 344-byte record per inode | [VFS-C](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches) |
+| A durability barrier cheaper than the global one; write errors delivered to the writing handle; open/close callbacks | [VFS-A/B/D](VFS_ROADMAP.md) |
+| Shared writable mappings; a page cache coherent with file writes | [VFS-E](VFS_ROADMAP.md#vfs-e--mounts-coherent-mappings-and-scalable-io) |
+| Overwrites inside a file's size are not atomic (metadata journal only) | v3 journal |
+| 1 GiB, 4096 inodes, 8 extents, 63-byte names, no links, whole-second mtimes, no label | v3 format (V3-A) |
+| Repair of cross-linked sectors and damaged inodes; repair from inside the guest | consumer-driven; `sxfs-cli repair` reports them |
 
 | Consumer | Storage responsibility and acceptance |
 | --- | --- |
@@ -360,49 +386,31 @@ flush, 24–35 ms. Removing that last stop needs device I/O that does not poll
 inside the kernel, which is the non-preemptible kernel's limit, not the
 filesystem's.
 
-## 2. `fscheck` reports, and nothing repairs
+## 2. Done: `fscheck` reports, `sxfs-cli repair` repairs
 
-**What exists.** [`fscheck`](../../fs/SXFS_CHECK.md) reconciles the block bitmap against
-the inodes in both directions and walks the tree for unreachable inodes, aliased
-entries and duplicate names. It is read-only by construction and exits non-zero
-on findings.
+[`fscheck`](../../fs/SXFS_CHECK.md) reconciles the block bitmap against the
+inodes in both directions and walks the tree for unreachable inodes, aliased
+entries and duplicate names. It is read-only by construction and stays so.
 
-**What does not.** Freeing a leaked block, dropping an orphan, rebuilding the
-claims bitmap.
+Repair is offline, on the host, on a copy
+([`SXFS_CHECK.md`](../../fs/SXFS_CHECK.md#offline-repair)). The decision this
+item waited for is made there: an unreachable inode is rescued under
+`/lost+found`, never freed; a marked sector nothing claims is freed only when
+every inode could be read; damage with no identifiable owner is reported and
+left. Committed deletions (V2-B's unlinked files) are finished, by a mount or
+by repair.
 
-**Why it fits in v2.** Repair need not change the layout. `kMaxVolumes` is now 3,
-but an unused slot is not an offline repair guarantee: the target must be
-quiescent and unavailable to ordinary writers. Extend the host tooling or define
-a dedicated maintenance path, with the policy and acceptance in V2-C.
+## 3. Done: a repeated name is found in one pass
 
-**What has to be decided first.** Freeing an allocation can discard recoverable
-contents when its owner is unreachable. Rescue such contents before reclaiming
-them and report ambiguity rather than assuming unreachable means disposable.
-V2-B's pending deletions also need an explicit recovery policy.
+`validate_directory` in `libsxfs/sxfs_core.c` and `walk_reachable` in
+`kernel/sxfs.cpp` compared each entry against every earlier one: 8.4 million
+comparisons for a directory at the format's maximum of 4095 entries, and the
+kernel's copy re-read the earlier entries from the device to do it. All three
+readers (the third is repair) now use `sxfs_name_set`, a 16 KiB hash set over
+the directory held in a buffer. The on-disk layout did not change.
 
-**Order.** It waited for item 1, which has landed: a repair path over a journal
-that cost 1.5 MiB per commit was a repair path nobody would run.
-
-## 3. A directory with many entries is scanned in O(n²)
-
-**The cost.** `validate_directory` in `libsxfs/sxfs_core.c` and `walk_reachable`
-in `kernel/sxfs.cpp` both detect a duplicate name by comparing each entry
-against every earlier one. A directory with 4095 entries — the format's
-maximum — is 8.4M comparisons, and the host's copy also re-reads the earlier
-entries from the image rather than buffering them.
-
-**Why it fits in v2.** Pure code. The on-disk layout is one array of fixed-size
-entries and does not have to change.
-
-**What it would take.** Either a sorted comparison or a small per-directory name
-cache, and for the host path a buffer that is not the whole directory. Worth it
-only if directories actually get big: `/bin` is the realistic case and it
-holds about 100 entries today, where O(n²) is 10K comparisons and nobody can
-tell.
-
-**Note on the bound.** A directory cannot exceed `SXFS_MAX_RECORDS` (4095)
-entries, and there are 4096 inodes total, so a single directory could in
-principle hold every inode. That is the ceiling, not a typical shape.
+Looking a name up while creating or renaming is still a linear scan of that
+one directory. An index is a format matter (V3-A, "Directories").
 
 ## 4. The `FileRecord` cache scales poorly, and the VFS can fill first
 
@@ -422,7 +430,7 @@ the bulk of it.
 
 ## 5. A v1 → v2 converter, for whoever wants one
 
-**What exists.** Nothing. A v1 image is refused with `argumento/ruta invalida`,
+**What exists.** Nothing. A v1 image is refused as "not a valid SxFS image",
 deliberately: the superblock validator compares the on-disk geometry against the
 compiled constants, so a v1 image would have its metadata read at offsets that
 now mean something else. The documented path is to extract with a v1 `sxfs-cli`
@@ -451,29 +459,26 @@ geometry with an explicit format and grouped allocation; V3-B must demonstrate
 that the driver, VFS and tools can use its larger capacities. The small stock
 volume in the historical baseline is not evidence about future subsystem needs.
 
-## 7. Nothing caches reads
+## 7. Done: small reads are cached
 
-`block.cpp` caches writes (`block::write_cached`) and nothing caches reads:
-every `read_file` becomes a device request, however small. A 64-byte read of an
-ELF section header costs the same round trip as a full sector, and reading the
-same sector twice pays twice. Under QEMU each request is a VM exit.
+`block.cpp` cached writes and nothing cached reads: every `read_file` became a
+device request, however small. A 64-byte read of an ELF section header cost
+the same round trip as a full sector, and reading the same sector twice paid
+twice. Under QEMU each request is a VM exit.
 
-This is what made the Start menu take a second to open: building
-progman's catalog read every binary in `/bin` through `sxe_read_section`, which
-walked the section headers one 64-byte read at a time — about 7,700 requests,
-541 ms in `progman-smoke`. It was fixed above the filesystem (`struct sxe_file`
-reads the header table and `.shstrtab` once; the Start menu keeps its catalog
-until `progman_registry_disk_signature()` changes), but every other reader of
-small records — `file_assoc`, `appwiz`, the loader walking a library's headers —
-still pays the full price.
+This is what made the Start menu take a second to open: building progman's
+catalog read every binary in `/bin` through `sxe_read_section`, which walked
+the section headers one 64-byte read at a time, about 7,700 requests and
+541 ms in `progman-smoke`. That was fixed above the filesystem (`struct
+sxe_file` reads the header table and `.shstrtab` once), but every other reader
+of small records still paid the full price.
 
-**Reachable in v2:** a sector cache in the block layer, below SxFS, needs no
-format change. The design questions are the size (a fixed pool in BSS, like the
-rest of the kernel), eviction (LRU over a small hash), and coherence with the
-write path: `write_cached` and the journal's ordered writes must update or
-invalidate the cached sectors, or a read after a write returns the old bytes.
-Metadata already lives in memory (the inode table, the bitmaps, the `FileRecord`
-cache), so this is only for file data and directory blocks.
+The block layer now keeps a 1 MiB sector cache for small reads of physical
+disks ([`BLOCK_WRITEBACK.md`](../../kernel/BLOCK_WRITEBACK.md#the-read-cache)).
+The design questions this item listed were answered as: a fixed pool,
+direct-mapped rather than LRU (a collision costs one device read), and
+coherence by having every write refresh the slots it covers. Metadata already
+lives in memory, so it serves file data and directory blocks.
 
 ## 8. An mtime is whole seconds
 
@@ -490,11 +495,11 @@ Start menu's cache accepts that edge.
 changes them ([`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md#rule-1-a-directory-is-never-changed-in-place)).
 `progman_registry_disk_signature()` still lists and stats, which stays correct.
 
-**Reachable in v2:** sub-second resolution fits in `reserved1`, the 4 spare
-bytes right before `mtime`, as nanoseconds. It needs a feature bit in the
-superblock so a reader knows the field is meaningful, the same way
-`SXFS_FEATURE_OWNERSHIP` made uid/gid/mode trustworthy without a v3. `struct
-savanxp_stat_ex` would gain an `st_mtime_nsec` at its end.
+**Left to v3:** sub-second resolution would fit in `reserved1`, the 4 spare
+bytes right before `mtime`, behind a feature bit. Nothing asks for it: the one
+consumer of mtimes compares listings, and the kernel has no sub-second wall
+clock to fill it from. It is part of V3-A's "complete timestamp contract"
+rather than a v2 feature bit of its own.
 
 ## What a second driver showed
 
@@ -502,28 +507,25 @@ Writing the FAT driver ([FAT_ROADMAP.md](FAT_ROADMAP.md)) was the first time
 anything but SxFS sat under the VFS. What it showed about the VFS itself is in
 [FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#limits); these are SxFS's.
 
-- **Mounting is not read-only.** `probe` replays the journal
-  (`recover_journal`) before it validates the home metadata, and the replay
-  writes the disk. So SxFS cannot be mounted just to look at a volume and let
-  go: the search for the boot volume asks for the FAT driver by name
-  (`fs::mount` with a driver name) precisely so that no SxFS volume on another
-  disk is opened along the way. A probe that only reads, with the replay
-  deferred to a writable attach, would remove the reason.
+- **Fixed: mounting was not read-only.** `probe` replayed the journal onto the
+  disk before validating, so SxFS could not be mounted just to look at a
+  volume. `probe` now only reads and a writable attach persists the recovery
+  (V2-C). The search for the boot volume still asks for the FAT driver by
+  name; it no longer has to for safety, only to skip a pointless probe.
 - **Few volumes, each expensive.** `kMaxVolumes` is 3 and each one costs about
   3.4 MiB of static metadata (item 4), reserved whether or not it is used. The
   root takes one, so two SxFS volumes can be mounted at `/mnt`, which is also
   all `fs::kMaxMounts` leaves once the root and `/boot` are in. Raising either
   means raising both, and item 4 is what makes the SxFS side cost.
-- **Every operation on a vnode searches every record.** `file_from_vnode`
-  walks the `FileRecord`s of every volume, up to 4095 × 3, comparing vnode
-  pointers. For a directory there is no other way, since the VFS gives a
-  directory vnode no data of the driver's. For a file there is: `mount_record`
-  already hands the record to the VFS as `vnode.data`, and nothing reads it
-  back. FAT reads it; SxFS could too, leaving the search to directories.
+- **Fixed: every operation on a file's vnode searched every record.**
+  `file_from_vnode` now reads the record `mount_record` put in `vnode.data`,
+  checked against the table. The search remains for directories, which the
+  VFS gives nothing of the driver's.
 - **No volume label.** SxFS has none; Disk Management shows and sets the GPT
   partition name instead ([DISK_MANAGEMENT.md](../../userland/DISK_MANAGEMENT.md)),
   so a whole-disk SxFS volume has no name at all. A label in the superblock's
-  reserved tail would not need a new version, as ownership did not.
+  reserved tail would fit, but it also needs a way to set it and a field in
+  the storage snapshot; it goes with v3's "volume identity".
 - **`write(..., truncate)` ignores the offset.** With `truncate` the file is
   emptied and written from 0, whatever offset was passed; the VFS uses it for
   `O_TRUNC` with an empty write. FAT copies the behaviour so both drivers
@@ -535,8 +537,8 @@ anything but SxFS sat under the VFS. What it showed about the VFS itself is in
 - **The kernel validates claims at mount.** Claimed sectors must be allocated,
   within bounds and owned by at most one inode. Leaks and unreachable inodes
   survive it on purpose: rejecting them at mount would mean refusing a volume that is
-  mostly fine and still readable, and the repair path in item 2 is where that
-  decision belongs.
+  mostly fine and still readable. `sxfs-cli repair` (item 2) is where they are
+  dealt with.
 - **Ownership did not need a v3.** uid, gid and mode took bytes the inode had
   reserved, and a feature bit in the superblock's reserved tail says they are
   recorded; a volume without it is stamped on its first writable mount. See

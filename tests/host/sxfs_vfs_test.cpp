@@ -134,9 +134,9 @@ const char kEmptyArchive[] =
 size_t g_mount = fs::kInvalidMount;
 
 // Boots the whole stack on `image`: VFS, registry, driver, root mounted at "/".
-bool mount_image(uint8_t* image, bool writable = true) {
+bool mount_image(uint8_t* image, bool writable = true, uint32_t sectors = kTotalSectors) {
     memset(g_held, 0, sizeof(g_held));
-    hoststub::attach_device(image, kTotalSectors, writable);
+    hoststub::attach_device(image, sectors, writable);
     vfs::initialize(kEmptyArchive, sizeof(kEmptyArchive) - 1u);
     vfs::set_holder_probe(&is_held);
     fs::initialize();
@@ -470,6 +470,180 @@ void case_durable_update_survives_any_cut(uint8_t* image) {
     free(pristine);
 }
 
+// --- Allocation: two files growing side by side ---------------------------------
+
+constexpr uint32_t kBigSectors = 49152; // 24 MiB
+constexpr size_t kBigBytes = static_cast<size_t>(kBigSectors) * SXFS_SECTOR_SIZE;
+constexpr size_t kAppend = 32 * 1024;
+constexpr size_t kGrowTo = 6 * 1024 * 1024;
+
+uint8_t pattern_byte(int file, size_t offset) {
+    return static_cast<uint8_t>(offset * 7u + (offset >> 9) + static_cast<size_t>(file) * 13u);
+}
+
+bool append_pattern(vfs::Vnode* node, int file) {
+    static uint8_t chunk[kAppend];
+    const size_t offset = node->size;
+    for (size_t index = 0; index < kAppend; ++index) {
+        chunk[index] = pattern_byte(file, offset + index);
+    }
+    return vfs::write(*node, offset, chunk, kAppend, false) == kAppend;
+}
+
+bool holds_pattern(const char* path, int file, size_t size) {
+    static uint8_t chunk[kAppend];
+    vfs::Vnode* node = open_read(path);
+    if (node == nullptr || node->size != size) {
+        return false;
+    }
+    for (size_t offset = 0; offset < size; offset += kAppend) {
+        const size_t count = size - offset < kAppend ? size - offset : kAppend;
+        if (vfs::read(*node, offset, chunk, count) != count) {
+            return false;
+        }
+        for (size_t index = 0; index < count; ++index) {
+            if (chunk[index] != pattern_byte(file, offset + index)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool build_big_image(uint8_t* image) {
+    memset(image, 0, kBigBytes);
+    ImageCookie cookie = {image, kBigSectors};
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
+    if (ctx == nullptr) {
+        return false;
+    }
+    sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+    const bool ok = sxfs_format(ctx, kBigSectors) == SXFS_OK && sxfs_flush(ctx) == SXFS_OK;
+    free(ctx);
+    return ok;
+}
+
+uint32_t extents_of(uint8_t* image, const char* path) {
+    ImageCookie cookie = {image, kBigSectors};
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
+    uint32_t extents = 0;
+    if (ctx != nullptr) {
+        sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+        if (sxfs_open(ctx) == SXFS_OK) {
+            // The two files are the first two inodes after the root.
+            extents = ctx->inodes[strcmp(path, "/a.bin") == 0 ? 1 : 2].extent_count;
+        }
+        free(ctx);
+    }
+    return extents;
+}
+
+// Grows /a.bin and /b.bin in turns, `rounds` appends each. Returns the round
+// in which an append of /a.bin wrote the most sectors (the one that moved the
+// file), and how many it wrote.
+bool grow_in_turns(size_t rounds, size_t& heaviest_round, size_t& heaviest_sectors) {
+    vfs::Vnode* a = vfs::open(kSystem, "/a.bin", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644);
+    vfs::Vnode* b = vfs::open(kSystem, "/b.bin", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644);
+    heaviest_round = 0;
+    heaviest_sectors = 0;
+    for (size_t round = 0; round < rounds; ++round) {
+        const size_t before = hoststub::sectors_written();
+        if (a == nullptr || b == nullptr || !append_pattern(a, 0)) {
+            return false;
+        }
+        const size_t wrote = hoststub::sectors_written() - before;
+        if (wrote > heaviest_sectors) {
+            heaviest_sectors = wrote;
+            heaviest_round = round;
+        }
+        if (!append_pattern(b, 1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Each file's growth lands after the other's, so each growth is a new extent
+// and a file has eight. Before files could be consolidated this stopped at
+// 4 MiB with "no space" on a volume that was mostly empty.
+void case_files_growing_side_by_side(uint8_t* small_image) {
+    (void)small_image;
+    printf("case: two files growing in turns outlive their eight extents\n");
+    uint8_t* image = static_cast<uint8_t*>(malloc(kBigBytes));
+    uint8_t* pristine = static_cast<uint8_t*>(malloc(kBigBytes));
+    if (!check(image != nullptr && pristine != nullptr && build_big_image(image) &&
+                   mount_image(image, true, kBigSectors),
+               "a 24 MiB volume mounted")) {
+        free(image);
+        free(pristine);
+        return;
+    }
+    const size_t rounds = kGrowTo / kAppend;
+    size_t heaviest_round = 0;
+    size_t heaviest_sectors = 0;
+    check(grow_in_turns(rounds, heaviest_round, heaviest_sectors), "both files reach 6 MiB");
+    check(holds_pattern("/a.bin", 0, kGrowTo) && holds_pattern("/b.bin", 1, kGrowTo), "with every byte they were given");
+    check(volume_is_clean(), "fscheck finds nothing");
+    check(heaviest_sectors > 4096, "one append moved its file to a contiguous run");
+    (void)fs::sync_all();
+    hoststub::detach_device();
+    const uint32_t a_extents = extents_of(image, "/a.bin");
+    const uint32_t b_extents = extents_of(image, "/b.bin");
+    printf("  extents after 6 MiB each: a %u, b %u; the move was round %zu, %zu sectors\n", a_extents, b_extents,
+           heaviest_round, heaviest_sectors);
+    check(a_extents != 0 && a_extents <= SXFS_MAX_EXTENTS && b_extents != 0 && b_extents <= SXFS_MAX_EXTENTS,
+          "both within the format's eight extents");
+
+    // The append that moves the file, cut at points across its whole length.
+    size_t ignored_round = 0;
+    size_t ignored_sectors = 0;
+    if (!check(build_big_image(image) && mount_image(image, true, kBigSectors) &&
+                   grow_in_turns(heaviest_round, ignored_round, ignored_sectors) && fs::sync_all(),
+               "the volume just before that append")) {
+        free(image);
+        free(pristine);
+        return;
+    }
+    hoststub::detach_device();
+    memcpy(pristine, image, kBigBytes);
+    const size_t old_size = heaviest_round * kAppend;
+    size_t wrong = 0;
+    size_t moved = 0;
+    constexpr size_t kPoints = 48;
+    for (size_t point = 0; point <= kPoints; ++point) {
+        // Dense at both ends, where the journal is; spread through the copy.
+        size_t cut = point * heaviest_sectors / kPoints;
+        if (point < 8) {
+            cut = point;
+        } else if (point > kPoints - 8) {
+            cut = heaviest_sectors - (kPoints - point);
+        }
+        memcpy(image, pristine, kBigBytes);
+        if (!mount_image(image, true, kBigSectors)) {
+            ++wrong;
+            continue;
+        }
+        vfs::Vnode* a = vfs::open(kSystem, "/a.bin", SAVANXP_OPEN_WRITE, 0);
+        hoststub::power_cut_after(cut);
+        if (a != nullptr) {
+            (void)append_pattern(a, 0);
+        }
+        hoststub::clear_power_cut();
+        const bool mounted = mount_image(image, true, kBigSectors) && volume_is_clean();
+        const bool is_old = mounted && holds_pattern("/a.bin", 0, old_size);
+        const bool is_new = mounted && holds_pattern("/a.bin", 0, old_size + kAppend);
+        if (!(is_old || is_new) || !holds_pattern("/b.bin", 1, old_size)) {
+            ++wrong;
+        }
+        moved += is_new ? 1u : 0u;
+        hoststub::detach_device();
+    }
+    check(wrong == 0, "a power cut during the move leaves the file whole, before or after, and the other intact");
+    check(moved != 0 && moved != kPoints + 1u, "both outcomes were reached");
+    free(image);
+    free(pristine);
+}
+
 } // namespace
 
 int main() {
@@ -487,6 +661,7 @@ int main() {
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);
     case_durable_update_survives_any_cut(image);
+    case_files_growing_side_by_side(image);
 
     free(image);
     printf("%s (%d checks, %d failures)\n", g_failures == 0 ? "SxFS VFS TEST PASS" : "SxFS VFS TEST FAIL",

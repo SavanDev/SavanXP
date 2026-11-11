@@ -16,6 +16,7 @@
  *     identifiable owner as it found it.
  */
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -596,6 +597,47 @@ void case_repair_leaves_what_it_cannot_attribute(uint8_t* image, uint8_t* before
           "the rest of the tree still reads");
 }
 
+// A directory far larger than any the system ships: the three readers that
+// look for a repeated name (the host walk, fscheck, repair) do it in one pass.
+void case_large_directory_names(uint8_t* image) {
+    printf("case: a repeated name among 1500 entries\n");
+    constexpr uint32_t kFiles = 1500;
+    memset(image, 0, kImageBytes);
+    g_cookie = {image, kUnlimited, 0};
+    sxfs_ctx_init(g_ctx, &g_cookie, &image_read, &image_write);
+    bool built = sxfs_format(g_ctx, kTotalSectors) == SXFS_OK;
+    char path[32];
+    for (uint32_t index = 0; built && index < kFiles; ++index) {
+        snprintf(path, sizeof(path), "big/file-%04u", index);
+        built = sxfs_write_file(g_ctx, path, "x", 1) == SXFS_OK;
+    }
+    if (!check(built && sxfs_flush(g_ctx) == SXFS_OK, "1500 files in one directory")) {
+        return;
+    }
+    sxfs_ctx* ctx = host_open(image);
+    check(ctx != nullptr && digest_of(ctx) != 0, "the host walk accepts it");
+
+    // The last entry takes the name of the fourth.
+    const uint32_t big = inode_of(ctx, "big");
+    const sxfs_inode& directory = ctx->inodes[big - 1u];
+    const uint32_t last = (kFiles - 1u) * SXFS_DIR_ENTRY_SIZE + offsetof(sxfs_dir_entry, name);
+    const uint32_t fourth = 3u * SXFS_DIR_ENTRY_SIZE + offsetof(sxfs_dir_entry, name);
+    for (uint32_t byte = 0; byte < SXFS_INODE_NAME_CAPACITY; ++byte) {
+        *inode_byte(image, directory, last + byte) = *inode_byte(image, directory, fourth + byte);
+    }
+    check(host_digest(image) == 0, "the host walk refuses the repeated name");
+    if (mount_image(image)) {
+        sxfs::CheckReport report = {};
+        check(sxfs::check(sxfs::root(), report) && report.duplicate_names == 1, "fscheck counts exactly one");
+        hoststub::detach_device();
+    }
+    sxfs_repair_report report = {};
+    check(repair_image(image, report) && report.entries_removed == 1 && report.files_rescued == 1 &&
+              sxfs_repair_unresolved(&report) == 0,
+          "repair drops the second name and rescues its file");
+    check(host_digest(image) != 0, "and the image validates again");
+}
+
 } // namespace
 
 int main() {
@@ -616,6 +658,7 @@ int main() {
     case_repair_preserves_what_it_can_reach(buffers[0], buffers[1], buffers[2]);
     case_repair_finishes_committed_deletions(buffers[0]);
     case_repair_leaves_what_it_cannot_attribute(buffers[0], buffers[1]);
+    case_large_directory_names(buffers[0]);
 
     printf("%s (%d checks, %d failures)\n", g_failures == 0 ? "SxFS RECOVERY TEST PASS" : "SxFS RECOVERY TEST FAIL",
            g_checks, g_failures);

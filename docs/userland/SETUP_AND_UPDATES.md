@@ -198,8 +198,9 @@ checks it, and asks for a restart. `init` applies it before it starts
 `sessiond`, running as the system, when nothing from `/bin` or `/lib` beyond
 `init` itself is loaded. Progress is written down as it goes, so an
 interrupted apply resumes on the next boot instead of leaving a mixed system.
-The SxFS journal keeps metadata consistent, but `fscheck` does not repair
-anything ([SXFS_CHECK.md](../fs/SXFS_CHECK.md)), so the updater has to avoid
+The SxFS journal keeps metadata consistent, but nothing inside the running
+system repairs a volume: `fscheck` reports, and repair is `sxfs-cli repair` on
+the host ([SXFS_CHECK.md](../fs/SXFS_CHECK.md)). So the updater has to avoid
 the damage rather than count on fixing it.
 
 **An update package** is a manifest (from version, to version, every file with

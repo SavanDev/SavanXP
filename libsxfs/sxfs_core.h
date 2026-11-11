@@ -79,6 +79,8 @@ struct sxfs_ctx {
      * comparten todas ellas. No es reentrante a proposito: el ctx ya es de un
      * solo hilo. */
     struct sxfs_dir_entry dir_scratch[SXFS_MAX_RECORDS];
+    /* The names of the directory in dir_scratch, for duplicate detection. */
+    struct sxfs_name_set name_set;
 };
 
 /* Ata el ctx a un backend. No toca el disco. */

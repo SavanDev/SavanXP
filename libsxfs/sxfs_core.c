@@ -914,6 +914,8 @@ static int validate_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
         return SXFS_ERR_INVALID;
     }
 
+    struct sxfs_name_set* names = (struct sxfs_name_set*)&ctx->name_set;
+    sxfs_name_set_clear(names);
     for (uint32_t index = 0; index < count; ++index) {
         const struct sxfs_dir_entry* entry = &entries[index];
         if (entry->inode_id == 0) {
@@ -937,11 +939,8 @@ static int validate_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
         if (!entry_is_live(ctx, entry)) {
             continue; /* well formed, and not part of the tree */
         }
-        for (uint32_t previous = 0; previous < index; ++previous) {
-            if (entry_is_live(ctx, &entries[previous]) && entries[previous].name_length == entry->name_length &&
-                memcmp(entries[previous].name, entry->name, entry->name_length) == 0) {
-                return SXFS_ERR_INVALID;
-            }
+        if (sxfs_name_set_add(names, entries, index)) {
+            return SXFS_ERR_INVALID; /* the name is already in this directory */
         }
         if (visited[entry->inode_id - 1]) {
             /* No seguimos aliases ni ciclos: una compactacion no puede elegir
@@ -1208,6 +1207,7 @@ static int repair_scan_directory(struct repair_state* repair, uint32_t dir_id) {
     }
     uint32_t kept = 0;
     int changed = 0;
+    sxfs_name_set_clear(&ctx->name_set);
     for (uint32_t index = 0; index < count; ++index) {
         struct sxfs_dir_entry entry = entries[index];
         if (entry.inode_id == 0) {
@@ -1228,12 +1228,10 @@ static int repair_scan_directory(struct repair_state* repair, uint32_t dir_id) {
             entries[kept++] = entry;
             continue;
         }
-        int duplicate = 0;
-        for (uint32_t previous = 0; previous < kept && !duplicate; ++previous) {
-            duplicate = entries[previous].name_length == entry.name_length &&
-                memcmp(entries[previous].name, entry.name, entry.name_length) == 0;
-        }
-        if (target != REPAIR_UNVISITED || duplicate) {
+        /* Tried in the slot it would keep: a name that is already there is
+         * not recorded, and the slot is reused by the next entry. */
+        entries[kept] = entry;
+        if (target != REPAIR_UNVISITED || sxfs_name_set_add(&ctx->name_set, entries, kept)) {
             repair->report->entries_removed += 1;
             changed = 1;
             continue;

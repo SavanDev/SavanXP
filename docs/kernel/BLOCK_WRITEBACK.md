@@ -31,7 +31,7 @@ pieces small enough that the scheduler gets the CPU back between them.
 | `block::flush` | an ordering point is queued: nothing issued after it reaches the disk before everything issued before it |
 | `block::sync`, `block::sync_all` | the whole queue is on the medium and every disk flushed |
 | `block::write` | `write_cached` + `flush` + `sync`: durable |
-| `block::read` | the device data with every queued write laid over it, oldest first |
+| `block::read` | the device data with every queued write laid over it, oldest first; a small read may be answered by the read cache, which holds the same bytes |
 
 Only devices whose `DeviceOps::deferred_writes` is set queue: the physical disks
 (`ahci`, `ata`, `virtio-blk`). A partition forwards to its disk, which queues; a
@@ -77,6 +77,34 @@ persistent-image build policy are unchanged. Kernel `memcmp` compares complete
 unaligned words before its bounded byte tail, returning the first unsigned-byte
 difference; it never reads beyond the requested region. This limits metadata
 diff-scan time in unoptimized builds while retaining normal byte semantics.
+
+## The read cache
+
+Nothing used to cache reads: a 64-byte read of an ELF section header was a
+device request, and the same sector read twice paid twice (a VM exit each
+time under QEMU). `block::read` now keeps 2048 sectors (1 MiB, static) in a
+direct-mapped cache, for the devices that queue their writes.
+
+- **Small requests only.** A read of up to 8 sectors is answered from the
+  cache when it holds all of them, and fills it otherwise. Longer reads are
+  bulk file data: they go to the device and leave the cache alone, so a large
+  file does not evict the directory blocks and headers the cache is for.
+- **One sector, one copy.** A partition forwards to its disk, so its reads and
+  writes use the disk's slots under the disk's LBAs. A sector reached through
+  the partition and through the whole disk is the same slot.
+- **Coherence is one rule: a slot holds the newest bytes issued for its
+  sector**, queued or landed. Every write to such a device goes through
+  `write_cached`, which refreshes the slots it covers before returning (and
+  takes new slots only for a small write); a miss fills its slots from the
+  device with the queue laid over the result. A hit therefore never needs the
+  queue, and can never be older than what an uncached read would return. The
+  order in which writes reach the medium is untouched: the cache is not on the
+  write path.
+- **A slot dies with its device.** Registering or removing a device index
+  drops its slots. A write-through that fails (no heap for the queue copy)
+  drops them too, since the device may then hold either copy.
+
+`block::read_cache_stats()` counts hits and misses.
 
 ## Draining
 
@@ -128,6 +156,9 @@ per step, but no longer for the whole operation.
 `tests/host/block_writeback_test.cpp` runs `kernel/block.cpp` against fake disks
 that log every command: deferral and read-through, order and flushes at ordering
 points, merging and splitting, durability of `write`, the budget, a failed write
-stopping the queue, write-through for memory and partitions, and the age-based
-drain. The SxFS power-cut cases in `sxfs_volume_test` cover the ordering points
+stopping the queue, write-through for memory and partitions, the age-based
+drain, and the read cache: repeated reads that do not reach the disk, a queued
+write seen through the cache before and after it lands, large reads and writes
+bypassing it, the slots a partition shares with its disk, and a new device at
+a reused index starting cold. The SxFS power-cut cases in `sxfs_volume_test` cover the ordering points
 the filesystem places.

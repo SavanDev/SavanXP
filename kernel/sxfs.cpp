@@ -102,6 +102,9 @@ struct Volume {
     // The directory a mutation is rewriting (load_directory_slots,
     // store_directory). One at a time, under the mutation lock.
     DirEntry dir_scratch[kDirScratchEntries];
+    // The names of the directory in dir_scratch, while fscheck looks for a
+    // repeated one. Under the mutation lock, like dir_scratch.
+    sxfs_name_set name_set;
     // Por volumen y no global: escribir en el destino del instalador no tiene
     // por que serializar contra la raiz.
     volatile uint32_t mutation_lock;
@@ -922,6 +925,23 @@ void shrink_inode_to_sectors(Volume& volume, Inode& inode, uint32_t target_secto
 bool allocate_blocks(Volume& volume, Inode& inode, uint32_t additional_sectors) {
     const uint32_t capacity_before = sxfs_inode_capacity_sectors(&inode);
     uint32_t remaining = additional_sectors;
+    // The sectors right after the file come first: they extend its last
+    // extent instead of spending one of the eight it has.
+    if (inode.extent_count != 0 && inode.extent_count <= kMaxExtents) {
+        const Extent& last = inode.extents[inode.extent_count - 1];
+        const uint32_t tail = last.start_lba + last.sector_count;
+        uint32_t adjacent = 0;
+        while (adjacent < remaining && tail + adjacent < volume.superblock.total_sectors &&
+               sector_available(volume, tail + adjacent)) {
+            ++adjacent;
+        }
+        if (adjacent != 0 && append_extent(inode, tail, adjacent)) {
+            for (uint32_t sector = 0; sector < adjacent; ++sector) {
+                bitmap_set(volume.block_bitmap, tail + sector, true);
+            }
+            remaining -= adjacent;
+        }
+    }
     while (remaining != 0) {
         const FreeRun run = find_free_run(volume, remaining);
         const uint32_t take = run.length < remaining ? run.length : remaining;
@@ -986,6 +1006,56 @@ void shrink_inode_to_sectors(Volume& volume, Inode& inode, uint32_t target_secto
 // kDirectoryReserveSectors alone, and grows by more than it was asked (so a
 // file written in pieces does not end up as eight small extents) only while
 // the volume has that much to give.
+// Moves a file into one contiguous run of `wanted_sectors`, when it cannot
+// grow because its eight extents are spent and not because the volume is
+// full. The contents are copied to the new run and the old extents freed in
+// the caller's transaction, so across a power cut the file is in the old
+// extents or in the new run, never between: the allocator does not hand out
+// what a transaction frees (SXFS_NAMESPACE.md, rule 2).
+bool consolidate_inode(Volume& volume, Inode& inode, uint32_t wanted_sectors) {
+    const FreeRun run = find_free_run(volume, wanted_sectors);
+    if (run.length < wanted_sectors) {
+        return false;
+    }
+    // The directory scratch is free here: this is a file's write, under the
+    // mutation lock, and no directory is being rewritten.
+    uint8_t* bounce = reinterpret_cast<uint8_t*>(volume.dir_scratch);
+    uint32_t bounce_sectors = static_cast<uint32_t>(sizeof(volume.dir_scratch) / block::kSectorSize);
+    constexpr uint32_t kCopyRunSectors = 128; // one device request, 64 KiB
+    if (bounce_sectors > kCopyRunSectors) {
+        bounce_sectors = kCopyRunSectors;
+    }
+    const uint32_t data_sectors = static_cast<uint32_t>((static_cast<uint64_t>(inode.size) + block::kSectorSize - 1u) /
+                                                        block::kSectorSize);
+    uint32_t copied = 0;
+    for (uint32_t index = 0; index < inode.extent_count && copied < data_sectors; ++index) {
+        const Extent& extent = inode.extents[index];
+        for (uint32_t offset = 0; offset < extent.sector_count && copied < data_sectors;) {
+            uint32_t count = extent.sector_count - offset;
+            if (count > data_sectors - copied) {
+                count = data_sectors - copied;
+            }
+            if (count > bounce_sectors) {
+                count = bounce_sectors;
+            }
+            if (!block::read(volume.device_index, extent.start_lba + offset, count, bounce) ||
+                !block::write_cached(volume.device_index, run.start + copied, count, bounce)) {
+                return false; // the caller restores the metadata; nothing points at the run
+            }
+            offset += count;
+            copied += count;
+        }
+    }
+    free_inode_blocks(volume, inode);
+    inode.extents[0].start_lba = run.start;
+    inode.extents[0].sector_count = wanted_sectors;
+    inode.extent_count = 1;
+    for (uint32_t sector = 0; sector < wanted_sectors; ++sector) {
+        bitmap_set(volume.block_bitmap, run.start + sector, true);
+    }
+    return true;
+}
+
 Status ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size) {
     const uint32_t current_sectors = inode_capacity_sectors(inode);
     if (required_size > static_cast<size_t>(SXFS_MAX_TOTAL_SECTORS) * block::kSectorSize) {
@@ -1017,7 +1087,21 @@ Status ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size)
         allocate_blocks(volume, inode, target_sectors - current_sectors)) {
         return Status::ok;
     }
-    return allocate_blocks(volume, inode, required_sectors - current_sectors) ? Status::ok : Status::no_space;
+    if (allocate_blocks(volume, inode, required_sectors - current_sectors)) {
+        return Status::ok;
+    }
+    // There is room and it could not be given: the file is out of extents,
+    // or the free space is in more pieces than it has extents left. One
+    // contiguous run for the whole file needs neither.
+    if (inode.type == kInodeTypeFile && current_sectors != 0) {
+        if (target_sectors <= usable && consolidate_inode(volume, inode, target_sectors)) {
+            return Status::ok;
+        }
+        if (required_sectors <= usable && consolidate_inode(volume, inode, required_sectors)) {
+            return Status::ok;
+        }
+    }
+    return Status::no_space;
 }
 
 bool locate_inode_offset(const Inode& inode, size_t offset, uint32_t& lba, size_t& sector_offset) {
@@ -1882,15 +1966,25 @@ void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckRep
             ++report.unreadable_dirs;
             continue;
         }
-        // Un directorio se cuenta cuando se lo visita, no cuando se lo empuja:
-        // la raiz y los subdirectorios entran por la misma pila, y el conteo va
-        // en el mismo lugar para los dos.
+        // A directory is counted when it is visited, not when it is pushed:
+        // the root and the subdirectories come through the same stack.
         ++report.directories;
 
-        for (size_t offset = 0; offset + sizeof(DirEntry) <= directory->size;
-             offset += sizeof(DirEntry)) {
-            DirEntry entry = {};
-            if (!read_dir_entry(volume, *directory, offset, entry)) {
+        // The whole directory is read once into the volume's scratch (the
+        // caller holds the mutation lock), and repeated names are found with
+        // a hash set over it: one pass, where comparing every entry with
+        // every earlier one was 8.4 million comparisons at 4095 entries.
+        const uint32_t count = directory->size / static_cast<uint32_t>(sizeof(DirEntry));
+        if (count > kMaxRecords ||
+            (count != 0 && !read_inode_bytes(volume, *directory, 0, volume.dir_scratch,
+                                             static_cast<size_t>(count) * sizeof(DirEntry)))) {
+            ++report.unreadable_dirs;
+            continue;
+        }
+        sxfs_name_set_clear(&volume.name_set);
+        for (uint32_t index = 0; index < count; ++index) {
+            const DirEntry entry = volume.dir_scratch[index];
+            if (!dir_entry_is_valid(volume, entry)) {
                 ++report.bad_dir_entries;
                 continue;
             }
@@ -1900,29 +1994,16 @@ void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckRep
             if (!dir_entry_is_live(volume, entry)) {
                 continue; // names a doomed inode: counted as a pending deletion
             }
-
-            // Nombre repetido dentro de ESTE directorio. Se releen las entradas
-            // anteriores en vez de bufferizar: el directorio no entra en el stack.
-            for (size_t previous = 0; previous < offset; previous += sizeof(DirEntry)) {
-                DirEntry other = {};
-                if (!read_dir_entry(volume, *directory, previous, other) ||
-                    !dir_entry_is_live(volume, other)) {
-                    continue;
-                }
-                if (other.name_length == entry.name_length &&
-                    memcmp(other.name, entry.name, entry.name_length) == 0) {
-                    ++report.duplicate_names;
-                    break;
-                }
+            if (sxfs_name_set_add(&volume.name_set, volume.dir_scratch, index)) {
+                ++report.duplicate_names;
             }
 
-            // Dos caminos al mismo inodo. SxFS no tiene hard links: create_file
-            // escribe link_count = 1 y nadie lo sube, asi que un segundo camino
-            // es un defecto, no una caracteristica. El host sxfs-walk falla la
-            // imagen por esto mismo.
+            // Two paths to one inode. SxFS has no hard links (create_file
+            // writes link_count = 1 and nothing raises it), so a second path
+            // is a defect; the host's sxfs_walk fails the image for it.
             if (bitmap_test(visited, entry.inode_id - 1u)) {
                 ++report.alias_inodes;
-                continue; // no se sigue dos veces
+                continue; // not followed twice
             }
             bitmap_set(visited, entry.inode_id - 1u, true);
 
@@ -1930,7 +2011,7 @@ void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckRep
                 if (depth < kMaxDirectoryDepth) {
                     pending[depth++] = entry.inode_id;
                 } else {
-                    ++report.unreadable_dirs; // mas profundo que el limite del formato
+                    ++report.unreadable_dirs; // deeper than the format allows
                 }
             } else if (entry.type == kInodeTypeFile) {
                 ++report.files;
@@ -2743,6 +2824,19 @@ bool rename_path(const char* old_path, const char* new_path) {
 }
 
 FileRecord* file_from_vnode(vfs::Vnode& node) {
+    // A file's vnode carries its record (mount_record hands it to the VFS as
+    // `data`). It is checked against the table before it is trusted: the
+    // pointer comes back from outside the driver.
+    if (node.backend == vfs::Backend::volume && node.volume_driver == &sxfs::driver() && node.data != nullptr) {
+        FileRecord* record = static_cast<FileRecord*>(node.data);
+        for (Volume& volume : g_volumes) {
+            if (volume.in_use && record >= volume.records && record < volume.records + kMaxRecords &&
+                record->in_use && record->vnode == &node) {
+                return record;
+            }
+        }
+    }
+    // A directory is an in-memory vnode with nothing of the driver's in it.
     for (Volume& volume : g_volumes) {
         if (!volume.in_use) {
             continue;

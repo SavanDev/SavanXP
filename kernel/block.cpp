@@ -98,6 +98,70 @@ bool defers(const Device& device) {
     return device.ops->deferred_writes;
 }
 
+// --- Read cache ---------------------------------------------------------
+//
+// Small reads of a physical disk (a directory block, an ELF header, 64 bytes
+// of a section table) are answered from memory the second time. Direct
+// mapped, one sector per slot, for devices with deferred_writes only: a
+// partition forwards to its disk and is served by the disk's slots, so one
+// sector has one copy whatever name it is read under.
+//
+// Coherence is one rule: a slot always holds the newest bytes ISSUED for its
+// sector, queued or landed. Every write to such a device passes through
+// write_cached(), which refreshes the slots it covers before it returns, and
+// a miss fills its slots from the device with the queue laid over it. So a
+// hit needs no look at the queue. See docs/kernel/BLOCK_WRITEBACK.md.
+constexpr size_t kCacheSlots = 2048; // 1 MiB of sectors
+// Longer requests are bulk file data: they bypass the cache instead of
+// evicting the small records it is for.
+constexpr uint32_t kCacheMaxRequest = 8;
+
+struct CacheSlot {
+    bool valid;
+    uint16_t device;
+    uint32_t lba;
+};
+
+CacheSlot g_cache_slots[kCacheSlots] = {};
+uint8_t g_cache_data[kCacheSlots][block::kSectorSize];
+block::ReadCacheStats g_cache_stats = {};
+
+size_t cache_slot_for(size_t device, uint32_t lba) {
+    return (static_cast<size_t>(lba) * 2654435761u + device * 40503u) % kCacheSlots;
+}
+
+const uint8_t* cache_find(size_t device, uint32_t lba) {
+    const size_t slot = cache_slot_for(device, lba);
+    const CacheSlot& entry = g_cache_slots[slot];
+    return entry.valid && entry.device == device && entry.lba == lba ? g_cache_data[slot] : nullptr;
+}
+
+void cache_store(size_t device, uint32_t lba, const uint8_t* sector) {
+    const size_t slot = cache_slot_for(device, lba);
+    g_cache_slots[slot] = {true, static_cast<uint16_t>(device), lba};
+    memcpy(g_cache_data[slot], sector, block::kSectorSize);
+}
+
+// A write: the slots that hold one of its sectors get the new bytes. A small
+// write also takes the slots it does not hold, since what was just written is
+// what is read next (a directory block, then its lookup).
+void cache_note_write(size_t device, uint32_t lba, uint32_t sector_count, const uint8_t* data) {
+    for (uint32_t offset = 0; offset < sector_count; ++offset) {
+        const uint8_t* sector = data + static_cast<size_t>(offset) * block::kSectorSize;
+        if (sector_count <= kCacheMaxRequest || cache_find(device, lba + offset) != nullptr) {
+            cache_store(device, lba + offset, sector);
+        }
+    }
+}
+
+void cache_forget_device(size_t device) {
+    for (CacheSlot& entry : g_cache_slots) {
+        if (entry.valid && entry.device == device) {
+            entry.valid = false;
+        }
+    }
+}
+
 void enqueue(Pending* record) {
     record->next = nullptr;
     record->queued_ms = g_clock_ms;
@@ -300,6 +364,7 @@ size_t register_device(
 
     Device& device = g_devices[slot];
     device = {};
+    cache_forget_device(slot); // the index may have been another disk's
     device.present = true;
     device.id = g_next_id++;
     device.ops = &ops;
@@ -323,6 +388,7 @@ bool unregister_device(size_t index) {
         return false;
     }
     *device = {};
+    cache_forget_device(index);
     while (g_device_count > 0 && !g_devices[g_device_count - 1].present) {
         --g_device_count;
     }
@@ -421,11 +487,33 @@ bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
         !request_in_range(*device, lba, sector_count, buffer)) {
         return false;
     }
+    uint8_t* out = static_cast<uint8_t*>(buffer);
+    const bool cached = defers(*device) && sector_count <= kCacheMaxRequest;
+    if (cached) {
+        uint32_t held = 0;
+        while (held < sector_count && cache_find(index, lba + held) != nullptr) {
+            ++held;
+        }
+        if (held == sector_count) {
+            for (uint32_t offset = 0; offset < sector_count; ++offset) {
+                memcpy(out + static_cast<size_t>(offset) * kSectorSize, cache_find(index, lba + offset), kSectorSize);
+            }
+            ++g_cache_stats.hits;
+            return true;
+        }
+        ++g_cache_stats.misses;
+    }
     if (!device->ops->read(device->context, lba, sector_count, buffer)) {
         return false;
     }
     if (defers(*device)) {
-        overlay_queued(index, lba, sector_count, static_cast<uint8_t*>(buffer));
+        overlay_queued(index, lba, sector_count, out);
+    }
+    if (cached) {
+        // What the caller gets is the newest view, which is what a slot holds.
+        for (uint32_t offset = 0; offset < sector_count; ++offset) {
+            cache_store(index, lba + offset, out + static_cast<size_t>(offset) * kSectorSize);
+        }
     }
     return true;
 }
@@ -447,14 +535,17 @@ bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void*
     if (!make_room(bytes)) {
         return false;
     }
+    // From here the write is issued, whichever way it travels: reads must see
+    // it. If the write-through below fails, its sectors are dropped instead.
+    cache_note_write(index, lba, sector_count, static_cast<const uint8_t*>(buffer));
     void* memory = heap::allocate(sizeof(Pending) + static_cast<size_t>(bytes));
     if (memory == nullptr) {
         // No heap for the copy: empty the queue and write through, which keeps
         // the order because nothing is left in front of this write.
-        if (!drain_all()) {
-            return false;
-        }
-        if (!device->ops->write(device->context, lba, sector_count, buffer)) {
+        const bool drain_ok = drain_all();
+        if (!drain_ok || !device->ops->write(device->context, lba, sector_count, buffer)) {
+            // Not issued after all: the device may hold either copy.
+            cache_forget_device(index);
             return false;
         }
         device->unflushed = true;
@@ -567,6 +658,10 @@ bool writeback_pending() {
 
 WritebackStats writeback_stats() {
     return g_stats;
+}
+
+ReadCacheStats read_cache_stats() {
+    return g_cache_stats;
 }
 
 } // namespace block

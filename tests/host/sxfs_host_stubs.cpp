@@ -37,8 +37,8 @@ struct PendingWrite {
     uint32_t sector_count;
     size_t arena_offset;
 };
-constexpr size_t kMaxPendingWrites = 8192;
-constexpr size_t kPendingArenaBytes = 4u << 20;
+constexpr size_t kMaxPendingWrites = 16384;
+constexpr size_t kPendingArenaBytes = 16u << 20;
 PendingWrite g_pending[kMaxPendingWrites] = {};
 size_t g_pending_count = 0;
 uint8_t g_pending_arena[kPendingArenaBytes];

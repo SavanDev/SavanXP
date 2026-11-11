@@ -110,7 +110,10 @@ uint32_t generation();
 // holes device_info() reports as absent.
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);
-// Sees every write issued so far, including those still queued.
+// Sees every write issued so far, including those still queued. A read of up
+// to 8 sectors of a physical disk is answered from the read cache when it
+// holds them all; the cache is refreshed by every write, so it never returns
+// older bytes than the device and the queue together would.
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer);
 // Durable write: on the medium when it returns (write_cached + flush + sync).
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer);
@@ -153,5 +156,11 @@ struct WritebackStats {
     uint32_t failures;
 };
 WritebackStats writeback_stats();
+
+struct ReadCacheStats {
+    uint64_t hits;   // small reads answered without the device
+    uint64_t misses; // small reads that went to the device and filled the cache
+};
+ReadCacheStats read_cache_stats();
 
 } // namespace block

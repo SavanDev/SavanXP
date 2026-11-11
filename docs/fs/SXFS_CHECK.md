@@ -35,9 +35,8 @@ Two things were outside it, and both are invisible in normal operation:
 - **A leaked block.** A sector marked occupied in the bitmap that no inode
   claims. Mounting does not care, because every check runs in the direction
   "an occupied sector has an owner". The consequence shows up only as space that
-  `df` cannot account for: `free_bytes` is `total - used` over the bitmap
-  (`kernel/sxfs.cpp:1209`), so a leak is a permanent, silent subtraction from
-  free space with no way to find it from the guest.
+  `df` cannot account for: `free_bytes` is `total - used` over the bitmap, so a leak is a permanent, silent subtraction from
+  free space that only `fscheck` shows.
 - **An orphan inode.** Allocated, structurally valid, holding its own sectors,
   and named by no directory. It passes every per-inode check. Only reachability
   from the root exposes it.
@@ -63,8 +62,8 @@ worst outcome of running it on a damaged volume is a report. The core smoke
 scenario runs it against a volume it has just written to and deleted from, which
 means a false positive here fails the build.
 
-Exit status is `0` when there are no findings and `1` when there are. It does not
-distinguish "repaired" from "could not repair", because there is no repair.
+Exit status is `0` when there are no findings and `1` when there are. It never
+repairs: that is [`sxfs-cli repair`](#offline-repair), on the host.
 
 ### Reading the output
 
@@ -146,23 +145,20 @@ deliberately excluded from the clean/dirty verdict.
 
 ## Implementation notes
 
-Two decisions in `kernel/sxfs.cpp` are worth keeping in mind before changing
-this code.
-
-**The tree walk is iterative and the stack budget is 32 KiB.** A process gets 8
-kernel stack pages (`kKernelStackPages` in `kernel/process.cpp`). The host
-validator copies a directory's entries into a 255-entry array, which is 20 KiB
-and would not fit alongside recursion. The in-kernel walk instead keeps a
-`kMaxDirectoryDepth` stack of directory ids and detects duplicate names by
-re-reading earlier entries. That is O(n²) reads over a directory the format caps
-at 255 entries, in exchange for 0 bytes of buffer. Reachability uses a 32-byte
-stack bitmap for the same reason.
+**The tree walk is iterative and reads each directory once.** A process has 8
+kernel stack pages, so nothing the size of a directory can live on the stack.
+The walk keeps a `kMaxDirectoryDepth` stack of directory ids and reads the
+directory being visited into the volume's `dir_scratch`, which the mutation
+lock it holds makes its own. A repeated name is found with `sxfs_name_set`
+(`sxfs_format.h`), a 16 KiB hash set over the entries in that buffer: one pass,
+where comparing each entry with every earlier one was 8.4 million comparisons
+at the format's 4095 entries. The host's `validate_directory` and the repair
+scan use the same set.
 
 **`extent_claims` is reused as scratch.** It is zeroed and refilled on every
 `home_metadata_is_valid` call and read nowhere else, so the report rebuilds it
-and adds no BSS. The two volumes of `g_volumes` are the reason that matters:
-each is already around 185 KiB of static metadata, and growing the block bitmap
-for a larger volume would make that the dominant cost.
+and adds no static memory. That matters because a volume is already about
+3.7 MiB of it and there are three (`kMaxVolumes`).
 
 ## Looking without touching
 

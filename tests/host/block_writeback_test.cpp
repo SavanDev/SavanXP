@@ -75,6 +75,7 @@ struct FakeDisk {
     Event events[kMaxEvents];
     size_t event_count;
     bool fail_writes;
+    size_t reads; // read requests that reached the device
 };
 
 FakeDisk g_disk = {};   // device 0: a physical disk, deferred
@@ -88,6 +89,7 @@ void log_event(FakeDisk& disk, char kind, uint32_t lba, uint32_t count) {
 
 bool fake_read(void* context, uint32_t lba, uint32_t count, void* buffer) {
     FakeDisk& disk = *static_cast<FakeDisk*>(context);
+    ++disk.reads;
     memcpy(buffer, disk.image + lba * kSectorSize, count * kSectorSize);
     return true;
 }
@@ -140,6 +142,8 @@ void reset() {
     g_disk.event_count = 0;
     g_memory.event_count = 0;
     g_disk.fail_writes = false;
+    g_disk.reads = 0;
+    g_memory.reads = 0;
     (void)block::probe_all();
 }
 
@@ -332,6 +336,67 @@ void case_memory_and_partitions_write_through() {
     check(sector_is(g_disk.image, kPartitionStart + 5, 0x55), "it reached the disk at the offset");
 }
 
+// The read cache: small reads of a physical disk are answered from memory,
+// and never with bytes older than the device and the queue would give.
+void case_read_cache_is_coherent() {
+    printf("case: the read cache answers repeated reads and sees every write\n");
+    reset();
+    uint8_t data[16 * kSectorSize];
+    uint8_t back[16 * kSectorSize];
+    memset(g_disk.image + 20 * kSectorSize, 0x11, 4 * kSectorSize);
+
+    check(block::read(0, 20, 2, back) && sector_is(back, 0, 0x11) && g_disk.reads == 1, "a first read goes to the disk");
+    check(block::read(0, 20, 2, back) && block::read(0, 21, 1, back) && sector_is(back, 0, 0x11) && g_disk.reads == 1,
+          "the same sectors again do not");
+    check(block::read(0, 21, 2, back) && g_disk.reads == 2, "a read reaching past what is held does");
+
+    // A queued write is what a cached read returns, before and after it lands.
+    fill(data, 0x22);
+    check(block::write_cached(0, 20, 1, data) && g_disk.event_count == 0, "a write is queued");
+    check(block::read(0, 20, 1, back) && sector_is(back, 0, 0x22) && g_disk.reads == 2,
+          "the cached read returns the queued bytes, without the disk");
+    check(block::sync(0) && block::read(0, 20, 1, back) && sector_is(back, 0, 0x22) && g_disk.reads == 2,
+          "and the same once it has landed");
+
+    // A large write refreshes the slots it covers and takes no new ones.
+    fill(data, 0x33, 16);
+    check(block::write_cached(0, 16, 16, data), "a 16-sector write over cached sectors");
+    check(block::read(0, 21, 1, back) && sector_is(back, 0, 0x33) && g_disk.reads == 2,
+          "a sector that was cached now reads the new bytes");
+    check(block::read(0, 30, 1, back) && sector_is(back, 0, 0x33) && g_disk.reads == 3,
+          "one that was not is read through, with the queue over it");
+    check(block::sync(0), "sync");
+
+    // Bulk reads bypass the cache both ways.
+    const size_t before = g_disk.reads;
+    check(block::read(0, 16, 16, back) && block::read(0, 16, 16, back) && g_disk.reads == before + 2 &&
+              sector_is(back, 15, 0x33),
+          "a 16-sector read always goes to the disk");
+
+    // One sector, one copy: the partition and its disk share the slots.
+    fill(data, 0x44);
+    check(block::read(2, 7, 1, back) && block::write_cached(0, kPartitionStart + 7, 1, data) &&
+              block::read(2, 7, 1, back) && sector_is(back, 0, 0x44),
+          "a write to the disk is seen by a read through its partition");
+    fill(data, 0x55);
+    check(block::write_cached(2, 7, 1, data) && block::read(0, kPartitionStart + 7, 1, back) && sector_is(back, 0, 0x55),
+          "and a write through the partition by a read of the disk");
+    check(block::sync(0), "sync");
+
+    // Memory devices are not cached: their reads are already memory.
+    const size_t memory_reads = g_memory.reads;
+    check(block::read(1, 3, 1, back) && block::read(1, 3, 1, back) && g_memory.reads == memory_reads + 2,
+          "a memory device is read every time");
+
+    // A device that leaves takes its sectors with it.
+    check(block::read(0, 40, 1, back), "a sector of the disk is cached");
+    reset();
+    memset(g_disk.image + 40 * kSectorSize, 0x77, kSectorSize);
+    check(block::read(0, 40, 1, back) && sector_is(back, 0, 0x77), "a new device at the same index starts cold");
+    const block::ReadCacheStats stats = block::read_cache_stats();
+    check(stats.hits != 0 && stats.misses != 0, "hits and misses are counted");
+}
+
 void case_aging_drains_without_idle() {
     printf("case: the timer drains a queue no idle core empties\n");
     reset();
@@ -367,6 +432,7 @@ int main() {
     case_failure_stops_the_queue();
     case_memory_and_partitions_write_through();
     case_aging_drains_without_idle();
+    case_read_cache_is_coherent();
     {
         reset();
         uint8_t data[256*kSectorSize]; fill(data,0x39,256);

@@ -73,6 +73,35 @@ File data never takes the last 128 sectors of free space
 still room for the copy of a directory of up to 819 entries, so a full volume
 can create an empty file, rename and delete.
 
+## Growing a file
+
+A file has at most eight extents, and the allocator spends them carefully:
+
+1. the sectors right after the file's last extent are taken first, which
+   extends that extent instead of adding one;
+2. then the first free run that holds everything still missing, else the
+   longest run there is, repeatedly;
+3. when that fails although the volume has room (the file is out of extents,
+   or the free space is in more pieces than it has extents left), the file is
+   **consolidated**: its contents are copied to one contiguous run and the old
+   extents are freed, in the same transaction as the write that needed the
+   room (`consolidate_inode`).
+
+Step 3 is what two files growing side by side need. Each growth lands after
+the other file's, so each is a new extent, and with growth doubling from 64
+sectors the eighth extent is reached at 4 MiB: before consolidation the next
+write failed with "no space" on a volume that was mostly empty. The copy costs
+one read and one write of the file, once per doubling of its size.
+
+Consolidation follows rule 2: the new run is never among the sectors being
+freed, so a power cut during it leaves the file whole in its old extents or
+whole in the new run. `sxfs-vfs-test` grows two files in turns to 6 MiB each
+and cuts the append that moves one at 49 points across its 8282 sectors.
+
+What still fails with room left is a file larger than every free run on a
+volume fragmented into more than eight pieces. That is the eight-extent limit
+itself, and it is v3's to lift.
+
 ## Deleting on a full volume
 
 Rule 3 is a policy of this driver, not of the format: a volume written by the

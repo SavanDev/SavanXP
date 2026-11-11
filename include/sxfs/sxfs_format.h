@@ -389,4 +389,49 @@ static inline uint32_t sxfs_find_free_run(const uint8_t* block_bitmap, uint32_t 
     return 0;
 }
 
+/* --- Names seen in one directory ------------------------------------------ */
+/* Finding a repeated name by comparing every entry with every earlier one is
+ * 8.4 million comparisons at the format's ceiling of 4095 entries. This is a
+ * hash set over the entries of ONE directory held in an array: a slot holds
+ * an entry's index plus one, so the set costs 16 KiB whatever the names are.
+ * Twice as many slots as entries can exist keeps the probes short. */
+#define SXFS_NAME_SET_SLOTS 8192u
+SXFS_STATIC_ASSERT(SXFS_NAME_SET_SLOTS >= 2u * SXFS_MAX_RECORDS &&
+                   (SXFS_NAME_SET_SLOTS & (SXFS_NAME_SET_SLOTS - 1u)) == 0,
+                   "the name set must be a power of two with room to spare");
+
+struct sxfs_name_set {
+    uint16_t slots[SXFS_NAME_SET_SLOTS];
+};
+
+static inline void sxfs_name_set_clear(struct sxfs_name_set* set) {
+    for (uint32_t index = 0; index < SXFS_NAME_SET_SLOTS; ++index) {
+        set->slots[index] = 0;
+    }
+}
+
+/* Records the name of entries[index]. Returns 1, recording nothing, if an
+ * entry already in the set carries the same name. `index` < SXFS_MAX_RECORDS
+ * and name_length <= SXFS_MAX_NAME_LENGTH are the caller's to guarantee. */
+static inline int sxfs_name_set_add(struct sxfs_name_set* set, const struct sxfs_dir_entry* entries,
+                                    uint32_t index) {
+    const struct sxfs_dir_entry* entry = &entries[index];
+    uint32_t slot = sxfs_checksum(entry->name, entry->name_length) & (SXFS_NAME_SET_SLOTS - 1u);
+    while (set->slots[slot] != 0) {
+        const struct sxfs_dir_entry* other = &entries[set->slots[slot] - 1u];
+        if (other->name_length == entry->name_length) {
+            uint32_t byte = 0;
+            while (byte < entry->name_length && other->name[byte] == entry->name[byte]) {
+                ++byte;
+            }
+            if (byte == entry->name_length) {
+                return 1;
+            }
+        }
+        slot = (slot + 1u) & (SXFS_NAME_SET_SLOTS - 1u);
+    }
+    set->slots[slot] = (uint16_t)(index + 1u);
+    return 0;
+}
+
 #endif /* SXFS_SXFS_FORMAT_H */

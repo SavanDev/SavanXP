@@ -95,6 +95,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Small disk reads are cached, and a file no longer hits "no space" at 4 MiB when another grows beside it.**
+  The block layer keeps 1 MiB of recently read sectors; SxFS moves a file that ran out of extents to one contiguous run.
+  `fscheck` and `sxfs-cli check` find a repeated name in one pass.
+
 - **Recognising an SxFS volume no longer writes to it, and host tools accept an image with a pending journal.**
   `sxfs-cli check` validates it as recovered without modifying it; `apply` and `rm` replay the journal first.
 
