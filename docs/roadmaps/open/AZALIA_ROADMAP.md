@@ -2,10 +2,13 @@
 
 Status: all six follow-up software stages implemented: analog playback/capture,
 SUN inventory, selection, jack policy, independent devices, persistent controls
-and controller recovery. Software evidence is recorded below; follow-up physical
-checks remain for the user. **Initial physical playback on the
-Ryzen/ALC892 host was confirmed by the user on 2026-11-07.** The legacy AC'97
-target remains separate.
+and controller recovery. Software evidence is recorded below. **Physical
+playback on the Ryzen/ALC892 host was confirmed by the user on 2026-11-07, and
+microphone record/replay plus application playback on 2026-11-08.** The roadmap
+stays open for two things, both listed in
+[Audit, 2026-11-11](#audit-2026-11-11): the physical checks nobody has run yet
+(connector routing, jack switching, line-in, duplex, restart and recovery) and
+the software backlog the audit found. The legacy AC'97 target remains separate.
 
 The target is the ASRock B450/Ryzen host in
 [RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md): AMD HDA `1022:1457` with
@@ -25,7 +28,8 @@ Initial scope is analog stereo S16 at 48 kHz. Software master volume reuses
 the codec port. The six follow-up stages below cover analog routing, capture and multiple
 devices. HDMI was explicitly deferred by the user on 2026-11-07; the pinned
 OpenBSD source skips HDMI codecs. Broad codec compatibility remains outside
-this target.
+this target; the other controllers and codecs are package HW-6 in
+[REAL_HARDWARE.md](../../hardware/REAL_HARDWARE.md#hw-6--hd-audio-beyond-the-development-host).
 
 ## Acceptance gates
 
@@ -98,12 +102,12 @@ Sound tests verify effective state and meaningful pixels after a successful
 build; extracted image binaries must match the new build. The required
 `sxgui-smoke` and Doom image-persistence checks remain gates.
 
-Physical verification pending for the user after the six stages: rear/front
-analog routing and jack changes; microphone/line-in and simultaneous playback;
-restart/recovery on the target. Vega HDMI validation belongs to its separate
-future objective.
-The earlier user-confirmed analog playback result remains valid only for that
-previous implementation and does not certify these new features.
+Physical verification was deferred until after the six stages. What has been
+confirmed since, and what is still owed, is tracked in
+[Audit, 2026-11-11](#audit-2026-11-11). Vega HDMI validation belongs to its
+separate future objective.
+The user-confirmed playback result of 2026-11-07 is valid only for the initial
+port and does not certify the follow-up features.
 
 ### Follow-up software evidence
 
@@ -213,3 +217,77 @@ connector, automatic jack policy or physical controller-fault recovery.
 The user subsequently confirmed correct operation with the updated games in
 the ISO from `22ae69e`; basic physical application playback and microphone
 record/replay are therefore user-verified.
+
+## Audit, 2026-11-11
+
+The driver (`kernel/azalia.cpp`, `kernel/azalia/`), its tests and this roadmap
+were read against the pinned OpenBSD source at `8120901`.
+
+**Verdict.** The six stages are implemented as described and nothing found
+blocks the Ryzen/ALC892 target. No stage claims more than the code does. The
+findings below are robustness, portability and debt items, plus the physical
+checks that were never run. The "Results" and "Follow-up software evidence"
+sections above are a dated log; their host-suite counts (23 to 31) are the
+counts of that day.
+
+Re-run for the audit:
+
+- Vendored `azalia.c`, `azalia_codec.c` and `azalia.h` still match `SHA256SUMS`.
+- `./build.sh test`: 37/37, including `azalia-test`, `azalia-capture-test`,
+  `jack-policy-test`, `audio-devices-test` and the preference tests.
+- `./build.sh smoke hda-stream` and `hda-capture` pass (`drops=0 underruns=0`
+  on playback; exact capture PCM, gain/mute, duplex and ownership).
+- Not re-run: `hda-stream-quiet`, `audio-devices`, `audio-preferences`,
+  `audio-offline`, `audio-ports-offline`, the Sound visual scenarios and the
+  Doom persistence check. No code changed, so their recorded results stand.
+
+Confirmed while reading, because the documents depend on it: the BSP timer
+ticks at 1000 Hz and takes the kernel lock on interrupt entry, so `azalia::poll`
+and the syscall paths never run concurrently; every verb failure path poisons
+the transport instead of guessing attribution; no DMA buffer is rewritten
+before its stream is proved stopped.
+
+### Physical checks still owed
+
+Confirmed so far: playback (2026-11-07), microphone recognition, record and
+replay, and Doom/Celeste playback (2026-11-08). None of those reports recorded
+the serial log, connector, pin, gain or firmware settings. The procedure is in
+[RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md#follow-up-audio-checks-after-the-software-objective).
+
+| # | Check | Covers |
+| --- | --- | --- |
+| P-1 | Rear line-out and front headphones selected by hand, one at a time | Stage 2 on real amplifiers and EAPD |
+| P-2 | Plug and unplug with the automatic policy on, then off | Stage 3: real pin sense, Unknown preserving the route |
+| P-3 | Line-in and the second microphone jack; input gain and mute; recording while playing | Stage 4 beyond the one microphone heard |
+| P-4 | Restart the audio service and reopen clients; preferences restored | Stage 6 on the target |
+| P-5 | Whether a controller fault ever occurs, and what the log says if it does | Stage 6 recovery, which only has simulated coverage |
+| P-6 | The boot log's `azalia:` lines, the connector and pin used, firmware audio settings | The details missing from both confirmations |
+
+### Software backlog
+
+None of these is scheduled. Each is small unless noted, and each needs its own
+test before it is called done.
+
+| # | Finding | Where | Consequence |
+| --- | --- | --- | --- |
+| AZ-1 | `azalia_configure_pci` is ported as one row (`1022:1457` snooping). Upstream also clears the traffic-class select (`HDTCSEL`) on **every** controller, including this one, and has the ATI SBx00, NVIDIA MCP and Intel rows | `probe()` in `kernel/azalia.cpp` | Harmless on the target as heard. The other rows are HW-6; a controller without its row may attach and play silence or noise |
+| AZ-2 | A converter with a format override and no PCM makes `probe_codec` fail the whole codec. Upstream `azalia_widget_init` ignores that result and keeps the codec | `kernel/azalia/codec.cpp`, the `azalia_widget_init_audio` call | A codec with one non-PCM converter gets no analog audio at all. The widget should be disabled, not the codec. Transport errors must still fail the probe |
+| AZ-3 | Busy waits under the kernel lock: the legacy blocking `capture_read` spins for up to 250 ms, and a stream stop on a `poll()` error path can spin for up to 150 ms inside the BSP timer | `Device::capture_read`, `Device::poll` → `stop_dma` | The whole system stalls for that time. The native nonblocking capture path is not affected. Belongs with the waiting rule in [DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md) |
+| AZ-4 | Selecting the connector that is already selected stops and restarts DMA before noticing nothing changed | `Device::select_endpoint`, `Device::select_input` | An audible gap in playback; a running capture restarts with a fresh cursor and no error to its reader |
+| AZ-5 | Probe accounting: a controller that fails reset or has no analog path keeps one of the four slots; PCM pages leak when a codec is rejected after allocation; a codec whose output setup fails is dropped even when its capture path is valid | `probe()` in `kernel/azalia.cpp` | Bounded and only on unusual machines. A host with several display-audio functions can run out of slots before the analog controller |
+| AZ-6 | No hardware gain: output amplifiers sit at their 0 dB offset, the microphone boost at unity, and neither is exposed | `amp()` in `codec.cpp`, `configure_input_path` in `input.cpp` | A quiet microphone can only be raised in software, with its noise. Needs P-3's measurement first |
+| AZ-7 | The adapter has no host test. `azalia-test` and `azalia-capture-test` link the port files, not `kernel/azalia.cpp` | `CMakeLists.txt` | Queue arithmetic in `submit`/`poll`, the rollback glue in `select_endpoint` and `ensure_controller` are covered only through QEMU |
+| AZ-8 | Polling only: no stream or RIRB interrupts, unsolicited responses off, jack sense refreshed only when someone asks for the inventory | `kernel/azalia.cpp`, `openbsd.cpp` | Works at a 1 ms tick. Interrupts wait for the IRQ work in [DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md) |
+| AZ-9 | Power: codecs without an analog path (the Vega's HDMI codec) are left in D0 after the probe, where upstream sets unused codecs to D3. No suspend or resume | `probe_codec`, `probe()` | Wasted power, no functional effect. Suspend/resume is already out of scope above |
+| AZ-10 | A controller without 64-bit DMA is refused when the allocator returns memory above 4 GiB; there is no way to ask for low memory | `probe()`, `capture_configure` | Correct refusal, but on such a controller audio depends on allocation luck. Needs the DMA contract in [DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md) |
+
+Unchanged and still outside this roadmap: HDMI and DisplayPort audio, the
+codec quirk table and GPIO quirks, formats other than 48 kHz stereo S16, USB
+audio and per-application device routing.
+
+### Closing this roadmap
+
+It moves to `done/` when P-1 to P-4 have a recorded result (pass or a filed
+defect) and AZ-2, AZ-3 and AZ-4 are fixed with tests. AZ-1 and the codec work
+close under HW-6; AZ-8 and AZ-10 close under the drivers roadmap; AZ-5, AZ-6,
+AZ-7 and AZ-9 may be carried to whichever document owns audio next.

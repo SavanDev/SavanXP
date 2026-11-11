@@ -173,8 +173,10 @@ mute then operate on PCM in kernel memory before any samples reach userland.
 On the ALC892 target the intended path is ADC 0x08 through mixer 0x23 to rear
 mic 0x18, front mic 0x19 or line-in 0x1a. ADC 0x08's unity index is 0x10;
 the mic boost's unity index is zero. Host-shaped tests assert these numeric
-payloads, but physical sensitivity, board wiring and capture remain unverified.
-No hardware boost control is exposed yet.
+payloads. The user confirmed microphone record and replay on the physical host
+on 2026-11-08 without recording the pin or gain; sensitivity, line-in and the
+second microphone jack remain unverified. No hardware boost control is exposed
+yet.
 
 The first duplex codec uses input descriptor zero / tag 2 and output tag 1;
 additional codecs receive independent descriptors and tags. Each 32-period cyclic ring is fully
@@ -265,4 +267,7 @@ ALC892 amplifiers. On 2026-11-07 the user confirmed working playback on the
 physical ASRock B450/Ryzen host after the port in `2ac6c50`. This is a manual
 hardware result, separate from the QEMU and simulated-codec tests. No serial
 log, application, jack selection or firmware settings accompanied the report.
-It does not establish capture, HDMI playback or automatic jack switching.
+Microphone record/replay and application playback followed on 2026-11-08. HDMI
+playback, connector routing and automatic jack switching are not established;
+the open physical checks and the known software gaps are listed in
+[AZALIA_ROADMAP.md](../roadmaps/open/AZALIA_ROADMAP.md#audit-2026-11-11).
