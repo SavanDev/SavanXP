@@ -169,6 +169,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SXFS_JOURNAL.md`](fs/SXFS_JOURNAL.md) — the sparse metadata journal: format,
   the write order that makes a commit crash-safe, and the snapshot invariant that
   tells the driver which sectors changed.
+- [`SXFS_NAMESPACE.md`](fs/SXFS_NAMESPACE.md) — how create, delete and rename are
+  atomic across a power cut: directories copied on change, blocks a transaction
+  frees left alone until it commits, doomed inodes, and deleting on a full volume.
 
 ## Networking — `net/`
 

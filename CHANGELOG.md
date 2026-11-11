@@ -114,6 +114,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A power cut during a create, delete or rename on SxFS no longer leaves a file without a name.**
+  Directories are copied on change inside the metadata commit (`SXFS_FEATURE_LINK_COUNT`); `fscheck` adds
+  `pending_deletions`. See [SXFS_NAMESPACE.md](docs/fs/SXFS_NAMESPACE.md).
+
 - **TCP reports refused connections as `ECONNREFUSED` and retains connection failures after readiness.**
   Expired `connect` calls stop retransmitting; `smoke native-network` covers success, refusal and timeout.
 

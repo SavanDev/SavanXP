@@ -854,6 +854,22 @@ target_include_directories(savanxp-sxfs-volume-test PRIVATE
 target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# Power cuts and I/O errors at every write of every namespace mutation
+# (docs/fs/SXFS_NAMESPACE.md), against the same real driver.
+add_executable(savanxp-sxfs-namespace-test
+    kernel/sxfs.cpp
+    kernel/fs_path.cpp
+    tests/host/kernel_string_stubs.cpp
+    tests/host/sxfs_host_stubs.cpp
+    tests/host/sxfs_namespace_test.cpp
+    libsxfs/sxfs_core.c)
+target_include_directories(savanxp-sxfs-namespace-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/libsxfs"
+    "${CMAKE_SOURCE_DIR}/tests/host")
+target_compile_options(savanxp-sxfs-namespace-test PRIVATE -O2 -Wall -Wextra -Wno-deprecated -Wno-missing-field-initializers)
+set_target_properties(savanxp-sxfs-namespace-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 # The FAT driver over FatFs, against images FatFs itself formats in memory.
 # kernel/fatfs comes first so ff.c's <string.h> is the kernel's stand-in, as
 # in the kernel build.
@@ -970,7 +986,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -984,6 +1000,7 @@ add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
+add_test(NAME sxfs-namespace-test COMMAND savanxp-sxfs-namespace-test)
 add_test(NAME fs-registry-test COMMAND savanxp-fs-registry-test)
 add_test(NAME fat-volume-test COMMAND savanxp-fat-volume-test)
 

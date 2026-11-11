@@ -22,6 +22,9 @@ struct Device {
 Device g_device = {};
 size_t g_rejected_writes = 0;
 size_t g_pending_write_failures = 0;
+// 0 = disarmed; otherwise the write that brings it to 1 fails.
+size_t g_fail_write_countdown = 0;
+size_t g_writes_issued = 0;
 bool g_power_cut_armed = false;
 size_t g_power_cut_remaining = 0;
 size_t g_sectors_written = 0;
@@ -40,6 +43,10 @@ PendingWrite g_pending[kMaxPendingWrites] = {};
 size_t g_pending_count = 0;
 uint8_t g_pending_arena[kPendingArenaBytes];
 size_t g_pending_arena_used = 0;
+
+// Sectors the flush in progress has already landed.
+constexpr uint32_t kMaxLandedSectors = 1u << 21;
+uint8_t g_landed[kMaxLandedSectors / 8u];
 
 void drop_pending_writes() {
     g_pending_count = 0;
@@ -105,6 +112,8 @@ void attach_device(uint8_t* image, uint32_t sector_count, bool writable) {
     g_device.writable = writable;
     g_rejected_writes = 0;
     g_pending_write_failures = 0;
+    g_fail_write_countdown = 0;
+    g_writes_issued = 0;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
@@ -116,6 +125,8 @@ void detach_device() {
     g_device = {};
     g_rejected_writes = 0;
     g_pending_write_failures = 0;
+    g_fail_write_countdown = 0;
+    g_writes_issued = 0;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
@@ -125,6 +136,14 @@ void detach_device() {
 
 void fail_next_writes(size_t count) {
     g_pending_write_failures = count;
+}
+
+void fail_write_number(size_t ordinal) {
+    g_fail_write_countdown = ordinal;
+}
+
+size_t writes_issued() {
+    return g_writes_issued;
 }
 
 size_t rejected_writes() {
@@ -229,6 +248,10 @@ bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void*
     if (buffer == nullptr || !range_ok(index, lba, sector_count)) {
         return false;
     }
+    ++g_writes_issued;
+    if (g_fail_write_countdown > 0 && --g_fail_write_countdown == 0) {
+        ++g_pending_write_failures;
+    }
     if (!g_device.writable || g_pending_write_failures > 0) {
         if (g_pending_write_failures > 0) {
             --g_pending_write_failures;
@@ -258,23 +281,30 @@ bool flush(size_t index) {
     }
     ++g_flushes;
     bool complete = true;
-    for (size_t step = g_pending_count; step > 0; --step) {
+    // Reordering is between different sectors only: two cached writes of one
+    // sector are one cache line, and the later one is what the medium gets.
+    // Walking backwards, a sector a later write already landed is skipped.
+    memset(g_landed, 0, sizeof(g_landed));
+    for (size_t step = g_pending_count; step > 0 && complete; --step) {
         const PendingWrite& pending = g_pending[step - 1u];
-        uint32_t landed = pending.sector_count;
-        if (g_power_cut_armed && g_power_cut_remaining < landed) {
-            landed = static_cast<uint32_t>(g_power_cut_remaining);
-        }
-        if (landed != 0) {
-            memcpy(g_device.image + byte_offset(pending.lba),
-                   g_pending_arena + pending.arena_offset, byte_length(landed));
-        }
-        g_sectors_written += landed;
-        if (g_power_cut_armed) {
-            g_power_cut_remaining -= landed;
-        }
-        if (landed != pending.sector_count) {
-            complete = false;
-            break;
+        for (uint32_t sector = 0; sector < pending.sector_count; ++sector) {
+            const uint32_t lba = pending.lba + sector;
+            if (lba < kMaxLandedSectors && (g_landed[lba / 8u] & (1u << (lba % 8u))) != 0) {
+                continue;
+            }
+            if (g_power_cut_armed && g_power_cut_remaining == 0) {
+                complete = false;
+                break;
+            }
+            memcpy(g_device.image + byte_offset(lba),
+                   g_pending_arena + pending.arena_offset + byte_offset(sector), byte_length(1));
+            if (lba < kMaxLandedSectors) {
+                g_landed[lba / 8u] |= static_cast<uint8_t>(1u << (lba % 8u));
+            }
+            ++g_sectors_written;
+            if (g_power_cut_armed) {
+                --g_power_cut_remaining;
+            }
         }
     }
     drop_pending_writes();

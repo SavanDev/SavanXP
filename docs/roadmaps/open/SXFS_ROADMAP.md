@@ -1,7 +1,8 @@
 # SxFS — reliable v2 and the stable v3 format
 
-> **Status: format v2 is current. The v2 reliability and file-contract work
-> below is open; v3 is planned, not implemented or specified in full.** v2
+> **Status: format v2 is current. V2-A is done; the rest of the v2 reliability
+> and file-contract work below is open; v3 is planned, not implemented or
+> specified in full.** v2
 > preserves existing images while closing consistency, recovery and API gaps.
 > v3 changes the storage structures that limit capacity, scale and extensibility.
 > Finishing the old v2 performance backlog alone does not meet the production
@@ -19,8 +20,10 @@ with them rather than duplicating VFS/VM work inside the SxFS driver.
 
 ## Current baseline and the version boundary
 
-Implemented: v2 geometry, sparse metadata journaling, persistent uid/gid/mode,
-deferred block writeback, mount validation, read-only consistency reporting via
+Implemented: v2 geometry, sparse metadata journaling, atomic namespace
+mutations ([`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md)), persistent
+uid/gid/mode, deferred block writeback, mount validation, read-only consistency
+reporting via
 [`fscheck`](../../fs/SXFS_CHECK.md), and host image updates/compaction using
 validated candidates that preserve installed content. The measurements later on
 this page are historical baselines, not a current inventory or a release gate.
@@ -53,35 +56,28 @@ core, not a promise that filesystem development ends there.
 
 ## V2-A — directory consistency before further optimization
 
-**Open, first priority.** The current journal covers allocation bitmaps and the
-inode table. Directory entries are written through the data path before the
-metadata commit; they are not part of its redo payload, and restoring a metadata
-snapshot does not undo them. The existing create/write power-cut tests do not
-establish atomicity for every namespace operation.
+**Done.** The journal covers the allocation bitmaps and the inode table;
+directory entries are file data and were written in place before the commit,
+so a cut could leave an inode nothing named or a rename with neither name. An
+audit on 2026-11-08 found it at 3 of 14 cut positions of an unlink and 3 of 11
+of a rename.
 
-A local audit on 2026-11-08 compiled the real driver with the host stubs and
-temporarily extended the power-cut harness. The existing suite passed all 122
-checks. Starting with `/docs/hello.txt`, cutting at each sector written by an
-unlink left an orphan at 3 of 14 cut positions. Renaming it to `/moved.txt` left
-an orphan with neither name at 3 of 11 positions. These are deterministic cut
-positions, not failure probabilities. The additional cases are not yet committed
-regression tests; reproducing and adding them is the first implementation task.
+Directories are now copied on every change and published through the existing
+metadata transaction, and a transaction never writes into blocks it frees. The
+rules, the fallback that lets a volume with no free sector still delete, and
+the `SXFS_FEATURE_LINK_COUNT` bit it relies on are in
+[`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md). The journal format and the
+geometry did not change.
 
-Design an atomic update of directory contents, inode references and allocation.
-Copying changed directories into newly allocated blocks, then publishing their
-extents through the existing metadata transaction, is a v2 candidate; it is not
-yet a selected or proven implementation. The journal's fixed metadata mirror
-slots cannot simply accept arbitrary directory blocks. Another flush alone does
-not make an in-place directory update transactional.
-
-**Done when:** committed tests cut every mutation and its recovery at every
-sector boundary, including create, mkdir, unlink, rmdir, same-directory and
-cross-directory rename, replacement and block reuse. Each cut must recover a
-consistent permitted before/after state without losing both rename names or
-damaging unrelated files. Cover repeated cuts during recovery, low space,
-fragmentation and I/O failures. An orphan report is not a substitute for
-preserving a name during rename. Arbitrary file-content overwrites do not gain
-whole-write atomicity merely because namespace metadata is recoverable.
+**Gate, met by `sxfs-namespace-test`:** create, mkdir, unlink, rmdir,
+same-directory and cross-directory rename, rename of a directory, replacement
+and block reuse are each cut at every sector they write, and the recovery is
+cut again. Every cut remounts writable with a clean `fscheck` and the tree
+exactly before or exactly after, on a mostly empty volume, a full one, one with
+no free sector and a fragmented one; I/O errors at every write are covered the
+same way. Arbitrary overwrites inside a file's current size keep no such
+guarantee; a truncating rewrite does, while there is room beside the old
+contents.
 
 ## V2-B — file lifetime, errors and durability
 
@@ -294,7 +290,8 @@ mutation's snapshot, a sparse journal described in
 70.7 s system freeze to 0.53 s on the default IDE disk. The format stayed v2:
 the discriminator lives in what used to be a reserved header field, and old full
 journals still replay. `sxfs_volume_test` cuts a create/write sequence at every
-sector; directory mutation coverage and the consistency gap are in V2-A above.
+sector; every namespace mutation is cut the same way by `sxfs-namespace-test`
+(V2-A above).
 
 ## Where the remaining cost is
 
@@ -477,30 +474,26 @@ invalidate the cached sectors, or a read after a write returns the old bytes.
 Metadata already lives in memory (the inode table, the bitmaps, the `FileRecord`
 cache), so this is only for file data and directory blocks.
 
-## 8. A directory's mtime does not move, and an mtime is whole seconds
+## 8. An mtime is whole seconds
 
 `inode.mtime` is set when an inode is created and when its own contents are
-written or truncated. **Creating, deleting or renaming an entry does not touch
-the parent directory's mtime**, unlike POSIX. So "did anything in `/bin`
-change?" cannot be answered by one `stat` of `/bin`: a caller has to list the
-directory and stat every entry, which is what
-`progman_registry_disk_signature()` does. It is cheap — no device reads, ~14 ms
-for `/bin` — but it is a workaround for a missing guarantee.
+written or truncated. Creating, deleting or renaming an entry used not to touch
+the parent directory's mtime, so "did anything in `/bin` change?" could not be
+answered by one `stat` of `/bin`.
 
-And the field is whole seconds, so a file rewritten in place within the same
+The field is whole seconds, so a file rewritten in place within the same
 second at the same size is indistinguishable from the old one by metadata. The
 Start menu's cache accepts that edge.
 
-**Reachable in v2:** both.
+**Done:** the parent's `mtime` moves with its entries, in the commit that
+changes them ([`SXFS_NAMESPACE.md`](../../fs/SXFS_NAMESPACE.md#rule-1-a-directory-is-never-changed-in-place)).
+`progman_registry_disk_signature()` still lists and stats, which stays correct.
 
-- Bumping the parent's `mtime` belongs in `add_directory_entry` and
-  `remove_directory_entry` (a rename does both), inside the same metadata
-  commit, so it costs no extra journal transaction.
-- Sub-second resolution fits in `reserved1`, the 4 spare bytes right before
-  `mtime`, as nanoseconds. It needs a feature bit in the superblock so a reader
-  knows the field is meaningful, the same way `SXFS_FEATURE_OWNERSHIP` made
-  uid/gid/mode trustworthy without a v3. `struct savanxp_stat_ex` would gain an
-  `st_mtime_nsec` at its end.
+**Reachable in v2:** sub-second resolution fits in `reserved1`, the 4 spare
+bytes right before `mtime`, as nanoseconds. It needs a feature bit in the
+superblock so a reader knows the field is meaningful, the same way
+`SXFS_FEATURE_OWNERSHIP` made uid/gid/mode trustworthy without a v3. `struct
+savanxp_stat_ex` would gain an `st_mtime_nsec` at its end.
 
 ## What a second driver showed
 

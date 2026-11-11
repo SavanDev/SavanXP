@@ -96,6 +96,9 @@ int main(void) {
     print_u64_line("  files", report.files);
     print_u64_line("  directories", report.directories);
     print_yes_no_line("  ownership_recorded", report.ownership_recorded);
+    /* Files unlinked while still open: gone from the tree, freed at the last
+     * close or the next mount. Not a finding. */
+    print_u64_line("  pending_deletions", report.pending_deletions);
 
     puts_out("block accounting:\n");
     print_u64_line("  data_used", report.data_used_sectors);

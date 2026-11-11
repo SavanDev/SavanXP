@@ -23,6 +23,11 @@ void detach_device();
 // Modela un error de I/O transitorio: el device es escribible, pero la
 // recuperacion del journal se topa con un fallo y no se puede persistir.
 void fail_next_writes(size_t count);
+// Fails exactly the `ordinal`-th write issued from now on (1 = the next one),
+// and no other. 0 disarms it. An I/O error at a chosen point of a mutation.
+void fail_write_number(size_t ordinal);
+// block::write_cached calls since attach_device(), failed ones included.
+size_t writes_issued();
 
 // Cuantas escrituras rechazo el device por ser de solo lectura.
 size_t rejected_writes();

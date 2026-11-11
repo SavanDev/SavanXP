@@ -46,6 +46,22 @@ struct Owner {
     uint32_t gid;
 };
 
+// Why a driver operation failed. The VFS turns it into the caller's errno; a
+// driver says what happened instead of leaving the VFS to guess from a bool.
+enum class Status : uint8_t {
+    ok = 0,
+    io_error,      // the device failed, or the on-disk structures are damaged
+    no_space,      // no blocks, inodes or directory slots left
+    read_only,     // the volume does not accept changes
+    invalid,       // an argument the format cannot represent
+    exists,        // the name is taken
+    not_found,
+    not_empty,     // a directory that still has entries
+    not_directory,
+    is_directory,
+    unsupported,   // the driver has no such operation
+};
+
 struct VolumeStats {
     bool writable;
     size_t file_count;

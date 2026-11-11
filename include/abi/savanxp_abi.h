@@ -252,7 +252,9 @@ struct savanxp_fscheck_report {
     uint8_t clean_shutdown;
     uint8_t journal_valid;
     uint8_t ownership_recorded;
-    uint8_t reserved0;
+    /* Deletions committed and not finished (docs/fs/SXFS_NAMESPACE.md): files
+     * unlinked while open. Not a finding. Saturates at 255. */
+    uint8_t pending_deletions;
     uint32_t inodes_allocated;
     uint32_t files;
     uint32_t directories;

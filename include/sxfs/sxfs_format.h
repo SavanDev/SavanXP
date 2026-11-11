@@ -49,6 +49,15 @@
  * (docs/kernel/USERS_AND_PERMISSIONS.md). Without it, they are zero and the
  * reader applies sxfs_default_ownership() (sxfs/sxfs_ownership.h). */
 #define SXFS_FEATURE_OWNERSHIP 1u
+/* LINK_COUNT: every inode's link_count is meaningful. An allocated inode with
+ * link_count 0 is doomed: its deletion is committed, it is not part of the
+ * tree even if a directory entry still carries its name, and a writable mount
+ * finishes removing it (docs/fs/SXFS_NAMESPACE.md). Without the bit the field
+ * is not trusted and every allocated inode is live; a writable mount writes 1
+ * into every inode that holds 0 and then sets the bit. A reader that predates
+ * the bit sees a doomed inode as an empty file or an unreachable inode, both
+ * of which it already tolerates or refuses whole. */
+#define SXFS_FEATURE_LINK_COUNT 2u
 
 /* Tipos de inodo (campo sxfs_inode.type). */
 #define SXFS_INODE_UNUSED 0u
@@ -207,6 +216,8 @@ SXFS_STATIC_ASSERT(sizeof(struct sxfs_inode) == SXFS_INODE_SIZE, "sxfs_inode deb
 SXFS_STATIC_ASSERT(sizeof(struct sxfs_superblock) == SXFS_SECTOR_SIZE, "sxfs_superblock debe medir 1 sector");
 SXFS_STATIC_ASSERT(sizeof(struct sxfs_journal_header) == SXFS_SECTOR_SIZE, "sxfs_journal_header debe medir 1 sector");
 SXFS_STATIC_ASSERT(sizeof(struct sxfs_dir_entry) == SXFS_DIR_ENTRY_SIZE, "sxfs_dir_entry debe medir 80 bytes");
+SXFS_STATIC_ASSERT(SXFS_DIR_ENTRY_SIZE % 16u == 0 && SXFS_SECTOR_SIZE % 16u == 0,
+                   "a directory entry's first 16 bytes must stay inside one sector");
 
 /* --- Primitivas de formato ----------------------------------------------- */
 /* Bit-math y checksum compartidos. Son la unica implementacion valida; no     */
@@ -334,7 +345,20 @@ static inline int sxfs_journal_valid(const struct sxfs_journal_header* header) {
         (header->kind == SXFS_JOURNAL_KIND_FULL || header->kind == SXFS_JOURNAL_KIND_SPARSE);
 }
 
-/* Suma de sectores cubiertos por los extents de un inodo (su capacidad). */
+/* Whether `inode` is doomed on a volume with `features`: allocated, with its
+ * deletion committed (SXFS_FEATURE_LINK_COUNT). */
+static inline int sxfs_inode_doomed(uint32_t features, const struct sxfs_inode* inode) {
+    return (features & SXFS_FEATURE_LINK_COUNT) != 0 && inode->type != SXFS_INODE_UNUSED &&
+        inode->link_count == 0;
+}
+
+/* Bytes of a directory entry that say whether the slot is free: inode_id,
+ * type, name_length and the first name bytes. Entries are 80 bytes and start
+ * at multiples of 16, so these 16 bytes never cross a sector: clearing them
+ * frees a slot with one single-sector write. */
+#define SXFS_DIR_ENTRY_HEAD_BYTES 16u
+
+/* Sectors covered by an inode's extents (its capacity). */
 static inline uint32_t sxfs_inode_capacity_sectors(const struct sxfs_inode* inode) {
     uint32_t sectors = 0;
     for (uint32_t i = 0; i < inode->extent_count && i < SXFS_MAX_EXTENTS; ++i) {

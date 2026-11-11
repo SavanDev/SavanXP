@@ -33,7 +33,16 @@ constexpr uint32_t kMaxRecords = SXFS_MAX_RECORDS;
 constexpr uint32_t kRootInodeId = SXFS_ROOT_INODE;
 constexpr uint32_t kMaxExtents = SXFS_MAX_EXTENTS;
 constexpr uint32_t kMaxDirectoryDepth = 32;
-constexpr uint32_t kMinimumGrowthSectors = 64; // politica de crecimiento, no on-disk
+constexpr uint32_t kMinimumGrowthSectors = 64; // growth policy, not on-disk
+// Sectors file data never takes: what is left when a file write reports the
+// volume full is still enough to rewrite a directory, so a full volume can
+// rename and delete (docs/fs/SXFS_NAMESPACE.md). 128 sectors hold the copy of
+// a directory of 819 entries.
+constexpr uint32_t kDirectoryReserveSectors = 128;
+// A directory's entries in memory, rounded up to whole sectors so the copy
+// goes to disk straight from the buffer: 4096 entries are exactly 640 sectors.
+constexpr uint32_t kDirScratchEntries = 4096;
+constexpr uint32_t kNoSlot = 0xffffffffu;
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
 constexpr size_t kMaxRelativePath = SXFS_MAX_RELATIVE_PATH;
@@ -49,6 +58,10 @@ using Inode = sxfs_inode;
 using Superblock = sxfs_superblock;
 using JournalHeader = sxfs_journal_header;
 using DirEntry = sxfs_dir_entry;
+using fs::Status;
+
+static_assert(kDirScratchEntries >= kMaxRecords);
+static_assert((static_cast<size_t>(kDirScratchEntries) * sizeof(DirEntry)) % block::kSectorSize == 0);
 
 // Magias del formato compartido, con los nombres internos historicos.
 constexpr const char* kJournalMagic = sxfs_journal_magic;
@@ -86,6 +99,9 @@ struct Volume {
     Inode inodes[kMaxInodes];
     sxfs::FileRecord records[kMaxRecords];
     MetadataSnapshot snapshot;
+    // The directory a mutation is rewriting (load_directory_slots,
+    // store_directory). One at a time, under the mutation lock.
+    DirEntry dir_scratch[kDirScratchEntries];
     // Por volumen y no global: escribir en el destino del instalador no tiene
     // por que serializar contra la raiz.
     volatile uint32_t mutation_lock;
@@ -103,8 +119,8 @@ struct Volume {
 };
 
 // The root, the installer's target, and one more volume Disk Management mounts
-// under /mnt. Each volume is about 3 MiB of BSS (bitmaps, inode table, record
-// cache and snapshot), so raising it is not free.
+// under /mnt. Each volume is about 3.7 MiB of BSS (bitmaps, inode table, record
+// cache, snapshot and directory scratch), so raising it is not free.
 constexpr size_t kMaxVolumes = 3;
 Volume g_volumes[kMaxVolumes] = {};
 
@@ -732,9 +748,85 @@ void release_inode_id(Volume& volume, uint32_t inode_id) {
     }
 }
 
-uint32_t find_free_run(Volume& volume, uint32_t minimum_sectors) {
-    return sxfs_find_free_run(volume.block_bitmap, volume.superblock.data_lba,
-                              volume.superblock.total_sectors, minimum_sectors);
+// A run of sectors a mutation may take.
+struct FreeRun {
+    uint32_t start;
+    uint32_t length;
+};
+
+// The allocation words of 64 sectors starting at `sector` (a multiple of 64),
+// as the mutation in flight has to see them: a sector is busy when it is
+// allocated now OR was allocated when the mutation started. The second half is
+// what makes a transaction atomic for the blocks it frees: until the commit is
+// down, the state before the transaction still owns them, so nothing the
+// transaction writes may land there (docs/fs/SXFS_NAMESPACE.md).
+uint64_t busy_word(const Volume& volume, uint32_t sector) {
+    uint64_t live = 0;
+    uint64_t before = 0;
+    memcpy(&live, volume.block_bitmap + sector / 8u, sizeof(live));
+    if (volume.snapshot_valid) {
+        memcpy(&before, volume.snapshot.block_bitmap + sector / 8u, sizeof(before));
+    }
+    return live | before;
+}
+
+bool sector_available(const Volume& volume, uint32_t sector) {
+    return !bitmap_test(volume.block_bitmap, sector) &&
+        !(volume.snapshot_valid && bitmap_test(volume.snapshot.block_bitmap, sector));
+}
+
+// The first run of at least `wanted` available sectors, or, when there is
+// none, the longest run there is (length 0 on a full volume). The run returned
+// may be longer than asked. One pass over the bitmap, a word at a time where
+// the words are uniform.
+FreeRun find_free_run(const Volume& volume, uint32_t wanted) {
+    FreeRun best = {0, 0};
+    uint32_t run_start = 0;
+    uint32_t run_length = 0;
+    uint32_t sector = volume.superblock.data_lba;
+    const uint32_t end = volume.superblock.total_sectors;
+    while (sector < end) {
+        if ((sector % 64u) == 0 && end - sector >= 64u) {
+            const uint64_t word = busy_word(volume, sector);
+            if (word == ~0ull) {
+                if (run_length > best.length) {
+                    best = {run_start, run_length};
+                }
+                run_length = 0;
+                sector += 64u;
+                continue;
+            }
+            if (word == 0) {
+                if (run_length == 0) {
+                    run_start = sector;
+                }
+                run_length += 64u;
+                if (run_length >= wanted) {
+                    return {run_start, run_length};
+                }
+                sector += 64u;
+                continue;
+            }
+        }
+        if (sector_available(volume, sector)) {
+            if (run_length == 0) {
+                run_start = sector;
+            }
+            if (++run_length >= wanted) {
+                return {run_start, run_length};
+            }
+        } else {
+            if (run_length > best.length) {
+                best = {run_start, run_length};
+            }
+            run_length = 0;
+        }
+        ++sector;
+    }
+    if (run_length > best.length) {
+        best = {run_start, run_length};
+    }
+    return best;
 }
 
 bool append_extent(Inode& inode, uint32_t start_lba, uint32_t sector_count) {
@@ -789,28 +881,46 @@ uint32_t allocated_data_sector_count(Volume& volume) {
     return count;
 }
 
+// Sectors of the data region a mutation in flight may take (see busy_word).
+uint32_t available_sector_count(const Volume& volume) {
+    uint32_t count = 0;
+    uint32_t sector = volume.superblock.data_lba;
+    const uint32_t end = volume.superblock.total_sectors;
+    while (sector < end && (sector % 64u) != 0) {
+        count += sector_available(volume, sector) ? 1u : 0u;
+        ++sector;
+    }
+    while (end - sector >= 64u) {
+        count += 64u - popcount64(busy_word(volume, sector));
+        sector += 64u;
+    }
+    while (sector < end) {
+        count += sector_available(volume, sector) ? 1u : 0u;
+        ++sector;
+    }
+    return count;
+}
+
+void shrink_inode_to_sectors(Volume& volume, Inode& inode, uint32_t target_sectors);
+
+// Gives `inode` `additional_sectors` more, in as few runs as the free space
+// allows: the first run that holds all that is still missing, else the longest
+// one. All or nothing: when the volume, or the inode's eight extents, cannot
+// hold them, the inode and the bitmap are left as they were.
 bool allocate_blocks(Volume& volume, Inode& inode, uint32_t additional_sectors) {
-    while (additional_sectors != 0) {
-        uint32_t run_start = 0;
-        uint32_t best = additional_sectors;
-
-        while (best != 0 && run_start == 0) {
-            run_start = find_free_run(volume, best);
-            if (run_start == 0) {
-                --best;
-            }
-        }
-        if (run_start == 0 || best == 0) {
+    const uint32_t capacity_before = sxfs_inode_capacity_sectors(&inode);
+    uint32_t remaining = additional_sectors;
+    while (remaining != 0) {
+        const FreeRun run = find_free_run(volume, remaining);
+        const uint32_t take = run.length < remaining ? run.length : remaining;
+        if (take == 0 || !append_extent(inode, run.start, take)) {
+            shrink_inode_to_sectors(volume, inode, capacity_before);
             return false;
         }
-
-        for (uint32_t sector = 0; sector < best; ++sector) {
-            bitmap_set(volume.block_bitmap, run_start + sector, true);
+        for (uint32_t sector = 0; sector < take; ++sector) {
+            bitmap_set(volume.block_bitmap, run.start + sector, true);
         }
-        if (!append_extent(inode, run_start, best)) {
-            return false;
-        }
-        additional_sectors -= best;
+        remaining -= take;
     }
     return true;
 }
@@ -860,13 +970,20 @@ void shrink_inode_to_sectors(Volume& volume, Inode& inode, uint32_t target_secto
     inode.extent_count = new_extent_count;
 }
 
-bool ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size) {
+// Makes room in a FILE for `required_size` bytes. File data leaves
+// kDirectoryReserveSectors alone, and grows by more than it was asked (so a
+// file written in pieces does not end up as eight small extents) only while
+// the volume has that much to give.
+Status ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size) {
     const uint32_t current_sectors = inode_capacity_sectors(inode);
+    if (required_size > static_cast<size_t>(SXFS_MAX_TOTAL_SECTORS) * block::kSectorSize) {
+        return Status::no_space;
+    }
     const uint32_t required_sectors = required_size == 0
         ? 0
         : static_cast<uint32_t>((required_size + block::kSectorSize - 1) / block::kSectorSize);
     if (required_sectors <= current_sectors) {
-        return true;
+        return Status::ok;
     }
 
     uint32_t target_sectors = required_sectors;
@@ -879,7 +996,16 @@ bool ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size) {
         target_sectors = required_sectors;
     }
 
-    return allocate_blocks(volume, inode, target_sectors - current_sectors);
+    const uint32_t available = available_sector_count(volume);
+    const uint32_t usable = available > kDirectoryReserveSectors ? available - kDirectoryReserveSectors : 0;
+    if (required_sectors - current_sectors > usable) {
+        return Status::no_space;
+    }
+    if (target_sectors - current_sectors <= usable &&
+        allocate_blocks(volume, inode, target_sectors - current_sectors)) {
+        return Status::ok;
+    }
+    return allocate_blocks(volume, inode, required_sectors - current_sectors) ? Status::ok : Status::no_space;
 }
 
 bool locate_inode_offset(const Inode& inode, size_t offset, uint32_t& lba, size_t& sector_offset) {
@@ -914,6 +1040,9 @@ uint32_t contiguous_sectors_at(const Inode& inode, size_t offset) {
     return 0;
 }
 
+// One device command's worth; the drivers split nothing themselves.
+constexpr uint32_t kMaxReadRunSectors = 128;
+
 bool read_inode_bytes(Volume& volume, const Inode& inode, size_t offset, void* buffer, size_t count) {
     if (buffer == nullptr || count == 0) {
         return true;
@@ -930,8 +1059,31 @@ bool read_inode_bytes(Volume& volume, const Inode& inode, size_t offset, void* b
     while (remaining != 0) {
         uint32_t lba = 0;
         size_t sector_offset = 0;
-        if (!locate_inode_offset(inode, file_offset, lba, sector_offset) ||
-            !block::read(volume.device_index, lba, 1, sector)) {
+        if (!locate_inode_offset(inode, file_offset, lba, sector_offset)) {
+            return false;
+        }
+
+        // Whole sectors that are contiguous on disk come in as one read,
+        // straight into the caller's buffer.
+        if (sector_offset == 0 && remaining >= block::kSectorSize) {
+            uint32_t run = contiguous_sectors_at(inode, file_offset);
+            const size_t whole = remaining / block::kSectorSize;
+            if (run > whole) {
+                run = static_cast<uint32_t>(whole);
+            }
+            if (run > kMaxReadRunSectors) {
+                run = kMaxReadRunSectors;
+            }
+            if (!block::read(volume.device_index, lba, run, bytes + (count - remaining))) {
+                return false;
+            }
+            const size_t run_bytes = static_cast<size_t>(run) * block::kSectorSize;
+            file_offset += run_bytes;
+            remaining -= run_bytes;
+            continue;
+        }
+
+        if (!block::read(volume.device_index, lba, 1, sector)) {
             return false;
         }
 
@@ -1024,11 +1176,13 @@ bool zero_inode_range(Volume& volume, const Inode& inode, size_t offset, size_t 
     return true;
 }
 
-bool read_dir_entry(Volume& volume, const Inode& directory, size_t offset, DirEntry& entry) {
-    if (offset > directory.size || sizeof(entry) > directory.size - offset ||
-        !read_inode_bytes(volume, directory, offset, &entry, sizeof(entry))) {
-        return false;
-    }
+bool inode_is_doomed(const Volume& volume, const Inode& inode) {
+    return sxfs_inode_doomed(volume.superblock.features, &inode) != 0;
+}
+
+// A slot is either free (its head all zero) or names an allocated inode of
+// the entry's type with a well-formed name.
+bool dir_entry_is_valid(Volume& volume, const DirEntry& entry) {
     if (entry.inode_id == 0) {
         return entry.name_length == 0 && entry.type == 0;
     }
@@ -1047,89 +1201,184 @@ bool read_dir_entry(Volume& volume, const Inode& directory, size_t offset, DirEn
          (child->type == kInodeTypeFile && entry.type == kInodeTypeFile));
 }
 
-bool write_dir_entry(Volume& volume, const Inode& directory, size_t offset, const DirEntry& entry) {
-    return write_inode_bytes(volume, directory, offset, &entry, sizeof(entry));
-}
-
-bool find_directory_entry(Volume& volume, const Inode& directory, const char* name, DirEntry& entry, size_t& offset_out) {
-    if (directory.type != kInodeTypeDirectory) {
+bool read_dir_entry(Volume& volume, const Inode& directory, size_t offset, DirEntry& entry) {
+    if (offset > directory.size || sizeof(entry) > directory.size - offset ||
+        !read_inode_bytes(volume, directory, offset, &entry, sizeof(entry))) {
         return false;
     }
-    for (size_t offset = 0; offset + sizeof(DirEntry) <= directory.size; offset += sizeof(DirEntry)) {
-        DirEntry current = {};
-        if (!read_dir_entry(volume, directory, offset, current)) {
-            return false;
+    return dir_entry_is_valid(volume, entry);
+}
+
+// An entry that is part of the tree: a used slot whose inode is not doomed.
+bool dir_entry_is_live(Volume& volume, const DirEntry& entry) {
+    if (entry.inode_id == 0) {
+        return false;
+    }
+    const Inode* child = inode_for_id(volume, entry.inode_id);
+    return child != nullptr && !inode_is_doomed(volume, *child);
+}
+
+/* Directories are never changed in place (docs/fs/SXFS_NAMESPACE.md). A
+ * mutation reads the directory into volume.dir_scratch, changes it there, and
+ * store_directory() writes the result to blocks nothing owned when the
+ * mutation started; the directory's inode then points at the copy and the old
+ * blocks are freed, all inside the mutation's metadata commit. A power cut
+ * leaves either the old inode with the old blocks, untouched, or the new inode
+ * with the new ones. */
+
+// Reads every slot of `directory`, free ones included, into dir_scratch, in
+// their on-disk positions.
+Status load_directory_slots(Volume& volume, const Inode& directory, uint32_t& slots) {
+    slots = 0;
+    if (directory.type != kInodeTypeDirectory) {
+        return Status::not_directory;
+    }
+    const uint32_t count = directory.size / static_cast<uint32_t>(sizeof(DirEntry));
+    if (count > kMaxRecords) {
+        return Status::io_error;
+    }
+    if (count != 0 &&
+        !read_inode_bytes(volume, directory, 0, volume.dir_scratch, static_cast<size_t>(count) * sizeof(DirEntry))) {
+        return Status::io_error;
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        if (!dir_entry_is_valid(volume, volume.dir_scratch[index])) {
+            return Status::io_error;
         }
-        if (current.inode_id == 0 || current.name_length == 0) {
+    }
+    slots = count;
+    return Status::ok;
+}
+
+// Moves the live entries of dir_scratch to its front, in order, and returns
+// how many there are. Free slots and entries of doomed inodes drop out.
+uint32_t pack_directory_slots(Volume& volume, uint32_t slots) {
+    uint32_t count = 0;
+    for (uint32_t index = 0; index < slots; ++index) {
+        if (!dir_entry_is_live(volume, volume.dir_scratch[index])) {
             continue;
         }
-        if (current.name_length <= kMaxDirNameLength &&
-            strncmp(current.name, name, current.name_length) == 0 &&
-            name[current.name_length] == '\0') {
-            entry = current;
-            offset_out = offset;
-            return true;
+        if (count != index) {
+            volume.dir_scratch[count] = volume.dir_scratch[index];
         }
+        ++count;
     }
-    return false;
+    return count;
 }
 
-bool directory_has_children(Volume& volume, const Inode& directory) {
-    for (size_t offset = 0; offset + sizeof(DirEntry) <= directory.size; offset += sizeof(DirEntry)) {
-        DirEntry entry = {};
-        if (!read_dir_entry(volume, directory, offset, entry)) {
-            return false;
-        }
-        if (entry.inode_id != 0 && entry.name_length != 0) {
-            return true;
-        }
-    }
-    return false;
+// The live entries of `directory`, packed, in dir_scratch.
+Status load_directory(Volume& volume, const Inode& directory, uint32_t& count) {
+    uint32_t slots = 0;
+    const Status loaded = load_directory_slots(volume, directory, slots);
+    count = loaded == Status::ok ? pack_directory_slots(volume, slots) : 0;
+    return loaded;
 }
 
-bool add_directory_entry(Volume& volume, Inode& directory, uint32_t inode_id, uint16_t type, const char* name) {
-    DirEntry entry = {};
+uint32_t find_slot_by_name(const Volume& volume, uint32_t count, const char* name) {
+    const size_t length = strlen(name);
+    for (uint32_t index = 0; index < count; ++index) {
+        const DirEntry& entry = volume.dir_scratch[index];
+        if (entry.inode_id != 0 && entry.name_length == length && memcmp(entry.name, name, length) == 0) {
+            return index;
+        }
+    }
+    return kNoSlot;
+}
+
+uint32_t find_slot_by_inode(const Volume& volume, uint32_t count, uint32_t inode_id) {
+    for (uint32_t index = 0; index < count; ++index) {
+        if (volume.dir_scratch[index].inode_id == inode_id) {
+            return index;
+        }
+    }
+    return kNoSlot;
+}
+
+void remove_slot(Volume& volume, uint32_t& count, uint32_t slot) {
+    for (uint32_t index = slot + 1u; index < count; ++index) {
+        volume.dir_scratch[index - 1u] = volume.dir_scratch[index];
+    }
+    --count;
+}
+
+bool fill_slot(DirEntry& entry, uint32_t inode_id, uint16_t type, const char* name) {
     const size_t name_length = strlen(name);
     if (name_length == 0 || name_length > kMaxDirNameLength) {
         return false;
     }
-
-    size_t target_offset = directory.size;
-    for (size_t offset = 0; offset + sizeof(DirEntry) <= directory.size; offset += sizeof(DirEntry)) {
-        DirEntry current = {};
-        if (!read_dir_entry(volume, directory, offset, current)) {
-            return false;
-        }
-        if (current.inode_id == 0 || current.name_length == 0) {
-            target_offset = offset;
-            break;
-        }
-    }
-
-    const size_t required_size = target_offset + sizeof(DirEntry);
-    if (!ensure_inode_capacity(volume, directory, required_size)) {
-        return false;
-    }
-    if (required_size > directory.size) {
-        directory.size = static_cast<uint32_t>(required_size);
-    }
-
+    memset(&entry, 0, sizeof(entry));
     entry.inode_id = inode_id;
     entry.type = type;
     entry.name_length = static_cast<uint16_t>(name_length);
     memcpy(entry.name, name, name_length);
-    entry.name[name_length] = '\0';
-    return write_dir_entry(volume, directory, target_offset, entry);
+    return true;
 }
 
-bool remove_directory_entry(Volume& volume, Inode& directory, const char* name) {
-    DirEntry entry = {};
-    size_t offset = 0;
-    if (!find_directory_entry(volume, directory, name, entry, offset)) {
+// Writes the first `count` entries of dir_scratch as the new contents of
+// `directory`, in blocks that were free when the mutation started, and frees
+// the blocks it had. Must run between snapshot_metadata() and the commit: the
+// commit's first ordering point is what puts the copy on the medium before the
+// inode that names it. Also moves the directory's mtime, so a change of its
+// entries is visible in one stat of it.
+Status store_directory(Volume& volume, Inode& directory, uint32_t count) {
+    const size_t size = static_cast<size_t>(count) * sizeof(DirEntry);
+    const uint32_t sectors = static_cast<uint32_t>((size + block::kSectorSize - 1u) / block::kSectorSize);
+    auto* bytes = reinterpret_cast<uint8_t*>(volume.dir_scratch);
+    memset(bytes + size, 0, static_cast<size_t>(sectors) * block::kSectorSize - size);
+
+    Inode fresh = directory;
+    memset(fresh.extents, 0, sizeof(fresh.extents));
+    fresh.extent_count = 0;
+    if (sectors != 0 && !allocate_blocks(volume, fresh, sectors)) {
+        return Status::no_space;
+    }
+    for (uint32_t index = 0; index < fresh.extent_count; ++index) {
+        const Extent& extent = fresh.extents[index];
+        if (!block::write_cached(volume.device_index, extent.start_lba, extent.sector_count, bytes)) {
+            return Status::io_error;
+        }
+        bytes += static_cast<size_t>(extent.sector_count) * block::kSectorSize;
+    }
+
+    free_inode_blocks(volume, directory);
+    memcpy(directory.extents, fresh.extents, sizeof(directory.extents));
+    directory.extent_count = fresh.extent_count;
+    directory.size = static_cast<uint32_t>(size);
+    directory.mtime = rtc::epoch_seconds();
+    return Status::ok;
+}
+
+// Whether `directory` has an entry that is part of the tree.
+Status directory_is_empty(Volume& volume, const Inode& directory, bool& empty) {
+    uint32_t count = 0;
+    const Status loaded = load_directory(volume, directory, count);
+    empty = count == 0;
+    return loaded;
+}
+
+// Frees the slot of `inode_id` in `directory` where it is, with one
+// single-sector write (SXFS_DIR_ENTRY_HEAD_BYTES). Only for an inode that is
+// already doomed on disk: its entry no longer means anything, so there is no
+// state to protect and no copy to make.
+bool clear_slot_in_place(Volume& volume, const Inode& directory, uint32_t inode_id) {
+    uint32_t slots = 0;
+    if (load_directory_slots(volume, directory, slots) != Status::ok) {
         return false;
     }
-    DirEntry empty = {};
-    return write_dir_entry(volume, directory, offset, empty);
+    const uint32_t slot = find_slot_by_inode(volume, slots, inode_id);
+    if (slot == kNoSlot) {
+        return true;
+    }
+    uint32_t lba = 0;
+    size_t sector_offset = 0;
+    uint8_t sector[block::kSectorSize] = {};
+    if (!locate_inode_offset(directory, static_cast<size_t>(slot) * sizeof(DirEntry), lba, sector_offset) ||
+        sector_offset + SXFS_DIR_ENTRY_HEAD_BYTES > block::kSectorSize ||
+        !block::read(volume.device_index, lba, 1, sector)) {
+        return false;
+    }
+    memset(sector + sector_offset, 0, SXFS_DIR_ENTRY_HEAD_BYTES);
+    return block::write_cached(volume.device_index, lba, 1, sector) && block::flush(volume.device_index);
 }
 
 bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t parent_inode,
@@ -1153,6 +1402,9 @@ bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t p
         const Inode* child = inode_for_id(volume, entry.inode_id);
         if (child == nullptr || child->type == kInodeTypeUnused) {
             return false;
+        }
+        if (inode_is_doomed(volume, *child)) {
+            continue; // its deletion is committed; a writable mount removes the entry
         }
 
         sxfs::FileRecord* record = allocate_record(volume);
@@ -1339,6 +1591,93 @@ void stamp_ownership(Volume& volume) {
     }
 }
 
+// SXFS_FEATURE_LINK_COUNT on a writable mount: a volume without it gets 1 in
+// every allocated inode that holds 0, and only once that is down, the bit.
+// Two steps on purpose: the bit is in the superblock, which is not journalled,
+// and a bit that reached the disk before the counts would doom every inode
+// that still had a 0.
+void adopt_link_counts(Volume& volume) {
+    if (volume.status != sxfs::MountStatus::mounted ||
+        (volume.superblock.features & SXFS_FEATURE_LINK_COUNT) != 0) {
+        return;
+    }
+    MutationGuard guard(volume);
+    snapshot_metadata(volume);
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes; ++inode_id) {
+        Inode& inode = volume.inodes[inode_id - 1];
+        if (inode.type != kInodeTypeUnused && inode.link_count == 0) {
+            inode.link_count = 1;
+        }
+    }
+    if (!commit_metadata(volume)) {
+        restore_metadata(volume);
+        volume.snapshot_valid = false;
+        return;
+    }
+    volume.superblock.features |= SXFS_FEATURE_LINK_COUNT;
+    if (!write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable)) {
+        volume.superblock.features &= ~static_cast<uint32_t>(SXFS_FEATURE_LINK_COUNT);
+    }
+}
+
+// Finishes the deletions a power cut left committed but not complete: clears
+// the slots that still name a doomed inode, then frees every doomed inode in
+// one commit. In that order, so a cut in the middle leaves doomed inodes
+// nothing names, never an entry naming a free inode.
+void finish_doomed(Volume& volume) {
+    if (volume.status != sxfs::MountStatus::mounted ||
+        (volume.superblock.features & SXFS_FEATURE_LINK_COUNT) == 0) {
+        return;
+    }
+    bool any = false;
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes && !any; ++inode_id) {
+        any = inode_is_doomed(volume, volume.inodes[inode_id - 1]);
+    }
+    if (!any) {
+        return;
+    }
+
+    MutationGuard guard(volume);
+    for (uint32_t directory_id = 1; directory_id <= kMaxInodes; ++directory_id) {
+        const Inode& directory = volume.inodes[directory_id - 1];
+        if (directory.type != kInodeTypeDirectory || inode_is_doomed(volume, directory)) {
+            continue;
+        }
+        for (;;) {
+            uint32_t slots = 0;
+            if (load_directory_slots(volume, directory, slots) != Status::ok) {
+                return; // a damaged directory: nothing is freed under it
+            }
+            uint32_t doomed_id = 0;
+            for (uint32_t index = 0; index < slots && doomed_id == 0; ++index) {
+                const DirEntry& entry = volume.dir_scratch[index];
+                if (entry.inode_id != 0 && !dir_entry_is_live(volume, entry)) {
+                    doomed_id = entry.inode_id;
+                }
+            }
+            if (doomed_id == 0) {
+                break;
+            }
+            if (!clear_slot_in_place(volume, directory, doomed_id)) {
+                return;
+            }
+        }
+    }
+
+    snapshot_metadata(volume);
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes; ++inode_id) {
+        Inode& inode = volume.inodes[inode_id - 1];
+        if (inode_is_doomed(volume, inode)) {
+            free_inode_blocks(volume, inode);
+            release_inode_id(volume, inode_id);
+        }
+    }
+    if (!commit_metadata(volume)) {
+        restore_metadata(volume);
+        volume.snapshot_valid = false;
+    }
+}
+
 bool load_filesystem_from_device(Volume& volume, size_t device_index) {
     Superblock primary = {};
     Superblock secondary = {};
@@ -1358,11 +1697,16 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
         return false;
     }
     const RecoveryState recovery = recover_journal(volume);
-    if (recovery == RecoveryState::failed || !home_metadata_is_valid(volume) ||
-        !rebuild_record_cache(volume)) {
+    if (recovery == RecoveryState::failed || !home_metadata_is_valid(volume)) {
         return false;
     }
     volume.status = recovery == RecoveryState::read_only ? sxfs::MountStatus::read_only : sxfs::MountStatus::mounted;
+    adopt_link_counts(volume);
+    finish_doomed(volume);
+    if (!rebuild_record_cache(volume)) {
+        volume.status = sxfs::MountStatus::unavailable;
+        return false;
+    }
     volume.metadata_ready = true;
     stamp_ownership(volume);
     return true;
@@ -1541,14 +1885,18 @@ void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckRep
                 continue;
             }
             if (entry.inode_id == 0) {
-                continue; // hueco de una entrada que se borro
+                continue; // a free slot
+            }
+            if (!dir_entry_is_live(volume, entry)) {
+                continue; // names a doomed inode: counted as a pending deletion
             }
 
             // Nombre repetido dentro de ESTE directorio. Se releen las entradas
             // anteriores en vez de bufferizar: el directorio no entra en el stack.
             for (size_t previous = 0; previous < offset; previous += sizeof(DirEntry)) {
                 DirEntry other = {};
-                if (!read_dir_entry(volume, *directory, previous, other) || other.inode_id == 0) {
+                if (!read_dir_entry(volume, *directory, previous, other) ||
+                    !dir_entry_is_live(volume, other)) {
                     continue;
                 }
                 if (other.name_length == entry.name_length &&
@@ -1601,6 +1949,7 @@ bool check(VolumeId id, CheckReport& report) {
     report.sequence = superblock.sequence;
     report.clean_shutdown = (superblock.flags & kFlagClean) != 0 ? 1u : 0u;
     report.ownership_recorded = (superblock.features & SXFS_FEATURE_OWNERSHIP) != 0 ? 1u : 0u;
+    report.link_counts_recorded = (superblock.features & SXFS_FEATURE_LINK_COUNT) != 0 ? 1u : 0u;
     report.metadata_commits = volume->metadata_commits;
     report.metadata_bytes_written = volume->metadata_bytes_written;
 
@@ -1694,8 +2043,15 @@ bool check(VolumeId id, CheckReport& report) {
     // Un inodo huerfano es la diferencia entre ambos, y por eso se cuenta
     // DESPUES de recorrer y no durante.
     for (uint32_t inode_id = kRootInodeId + 1u; inode_id <= kMaxInodes; ++inode_id) {
-        if (bitmap_test(volume->inode_bitmap, inode_id - 1u) &&
-            !bitmap_test(visited, inode_id - 1u)) {
+        if (!bitmap_test(volume->inode_bitmap, inode_id - 1u)) {
+            continue;
+        }
+        if (inode_is_doomed(*volume, volume->inodes[inode_id - 1u])) {
+            // A deletion that is committed and not finished: a file still open
+            // when it was unlinked, or one a power cut interrupted. Not a
+            // finding: the last close or the next writable mount frees it.
+            ++report.pending_deletions;
+        } else if (!bitmap_test(visited, inode_id - 1u)) {
             ++report.orphan_inodes;
         }
     }
@@ -1754,56 +2110,132 @@ bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
     return read_inode_bytes(*volume, *inode, offset, buffer, count);
 }
 
-bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+namespace {
+
+// A directory's mtime moves with its entries (store_directory); this carries
+// it to the vnode that publishes the directory.
+void refresh_directory_vnode(Volume& volume, uint32_t inode_id) {
+    vfs::Vnode* node = nullptr;
+    if (inode_id == kRootInodeId) {
+        node = volume.root_vnode;
+    } else if (FileRecord* record = find_record_by_inode(volume, inode_id)) {
+        node = record->vnode;
+    }
+    const Inode* inode = inode_for_id(volume, inode_id);
+    if (node != nullptr && inode != nullptr) {
+        node->mtime = inode->mtime;
+    }
+}
+
+// The deletion of `victim_id` when its parent cannot be rewritten for lack of
+// room: instead of a copy of the directory, three steps that each leave a
+// state a mount completes (docs/fs/SXFS_NAMESPACE.md, "Deleting on a full
+// volume").
+//   1. One commit dooms the inode (link_count 0) and frees its blocks. This is
+//      the point of no return: from here every mount shows the name gone.
+//   2. Its slot in the parent is cleared in place, one single-sector write.
+//   3. One commit frees the inode.
+// A failure after step 1 is not reported: the deletion is committed, and the
+// next writable mount does what was left.
+Status doom_in_place(Volume& volume, uint32_t victim_id, uint32_t parent_id) {
+    Inode* victim = inode_for_id(volume, victim_id);
+    Inode* parent = inode_for_id(volume, parent_id);
+    if (victim == nullptr || parent == nullptr) {
+        return Status::io_error;
+    }
+    snapshot_metadata(volume);
+    victim->link_count = 0;
+    free_inode_blocks(volume, *victim);
+    victim->size = 0;
+    if (!commit_metadata(volume)) {
+        restore_metadata(volume);
+        return Status::io_error;
+    }
+    if (clear_slot_in_place(volume, *parent, victim_id)) {
+        snapshot_metadata(volume);
+        release_inode_id(volume, victim_id);
+        if (!commit_metadata(volume)) {
+            restore_metadata(volume);
+        }
+    }
+    return Status::ok;
+}
+
+} // namespace
+
+Status write_file_status(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate,
+                         size_t& written) {
     written = 0;
     Volume* volume = volume_for_id(file.volume);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return false;
+    if (volume == nullptr || !file.in_use || file.directory) {
+        return Status::invalid;
     }
-    if (!file.in_use || file.directory) {
-        return false;
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
     }
 
     MutationGuard guard(*volume);
     Inode* inode = inode_for_id(*volume, file.inode_id);
     if (inode == nullptr || inode->type != kInodeTypeFile) {
-        return false;
+        return Status::invalid;
+    }
+    if (truncate) {
+        offset = 0;
+    }
+    // A file's size is 32 bits on disk.
+    if (offset > UINT32_MAX || count > UINT32_MAX - offset) {
+        return Status::no_space;
     }
 
     const size_t required_size = count == 0 ? (truncate ? 0 : inode->size) : (offset + count);
     const bool needs_metadata = truncate || required_size > inode->size ||
         required_size > inode_capacity_bytes(*inode);
+    if (count != 0 && buffer == nullptr) {
+        return Status::invalid;
+    }
 
+    const uint64_t now = rtc::epoch_seconds();
     if (needs_metadata) {
         snapshot_metadata(*volume);
         if (truncate) {
             shrink_inode_to_sectors(*volume, *inode, 0);
             inode->size = 0;
-            offset = 0;
         }
-        if (!ensure_inode_capacity(*volume, *inode, required_size)) {
+        // The blocks a truncating write frees still belong to the state before
+        // it, so the new contents go elsewhere and the old ones are whole
+        // until the commit. Only when there is no elsewhere is the truncation
+        // committed on its own, and the write then reuses what it freed.
+        Status grown = ensure_inode_capacity(*volume, *inode, required_size);
+        if (grown == Status::no_space && truncate && required_size != 0) {
+            inode->mtime = now;
+            if (!commit_metadata(*volume)) {
+                restore_metadata(*volume);
+                return Status::io_error;
+            }
+            refresh_record_size(*volume, file.inode_id);
+            snapshot_metadata(*volume);
+            grown = ensure_inode_capacity(*volume, *inode, required_size);
+        }
+        if (grown != Status::ok) {
             restore_metadata(*volume);
-            return false;
+            return grown;
         }
         if (offset > inode->size && !zero_inode_range(*volume, *inode, inode->size, offset - inode->size)) {
             restore_metadata(*volume);
-            return false;
+            return Status::io_error;
         }
-    } else if (buffer == nullptr && count != 0) {
-        return false;
     }
 
     if (count != 0) {
-        if (buffer == nullptr || !write_inode_bytes(*volume, *inode, offset, buffer, count)) {
+        if (!write_inode_bytes(*volume, *inode, offset, buffer, count)) {
             if (needs_metadata) {
                 restore_metadata(*volume);
             }
-            return false;
+            return Status::io_error;
         }
         written = count;
     }
 
-    const uint64_t now = rtc::epoch_seconds();
     if (needs_metadata) {
         const size_t new_size = count == 0
             ? inode->size
@@ -1812,13 +2244,14 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
         inode->mtime = now;
         if (!commit_metadata(*volume)) {
             restore_metadata(*volume);
-            return false;
+            written = 0;
+            return Status::io_error;
         }
     } else if (count != 0 && !block::flush(volume->device_index)) {
         // An overwrite in place commits nothing, so it places its own
         // ordering point after its data.
         written = 0;
-        return false;
+        return Status::io_error;
     } else if (count != 0 && inode->mtime != now) {
         // The modification time of an overwrite in place. Only when the second
         // changed: a burst of small writes commits once a second, not once a
@@ -1831,30 +2264,41 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
     }
 
     refresh_record_size(*volume, file.inode_id);
-    return true;
+    return Status::ok;
 }
 
-bool truncate_file(FileRecord& file, size_t size) {
+bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
+    return write_file_status(file, offset, buffer, count, truncate, written) == Status::ok;
+}
+
+Status truncate_file_status(FileRecord& file, size_t size) {
     Volume* volume = volume_for_id(file.volume);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return false;
+    if (volume == nullptr || !file.in_use || file.directory) {
+        return Status::invalid;
     }
-    if (!file.in_use || file.directory) {
-        return false;
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
+    }
+    if (size > UINT32_MAX) {
+        return Status::no_space;
     }
 
     MutationGuard guard(*volume);
     Inode* inode = inode_for_id(*volume, file.inode_id);
     if (inode == nullptr || inode->type != kInodeTypeFile) {
-        return false;
+        return Status::invalid;
     }
 
     snapshot_metadata(*volume);
     if (size > inode->size) {
-        if (!ensure_inode_capacity(*volume, *inode, size) ||
-            !zero_inode_range(*volume, *inode, inode->size, size - inode->size)) {
+        const Status grown = ensure_inode_capacity(*volume, *inode, size);
+        if (grown != Status::ok) {
             restore_metadata(*volume);
-            return false;
+            return grown;
+        }
+        if (!zero_inode_range(*volume, *inode, inode->size, size - inode->size)) {
+            restore_metadata(*volume);
+            return Status::io_error;
         }
     } else {
         const uint32_t keep_sectors = size == 0
@@ -1867,180 +2311,346 @@ bool truncate_file(FileRecord& file, size_t size) {
     inode->mtime = rtc::epoch_seconds();
     if (!commit_metadata(*volume)) {
         restore_metadata(*volume);
-        return false;
+        return Status::io_error;
     }
     refresh_record_size(*volume, file.inode_id);
-    return true;
+    return Status::ok;
 }
 
-FileRecord* create_file(const char* path, const vfs::Ownership* owner) {
+bool truncate_file(FileRecord& file, size_t size) {
+    return truncate_file_status(file, size) == Status::ok;
+}
+
+Status remove_status(FileRecord& file);
+
+Status create_status(const char* path, bool directory, const vfs::Ownership* owner, FileRecord*& created) {
+    created = nullptr;
     Volume* volume = volume_for_path(path);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return nullptr;
+    if (volume == nullptr) {
+        return Status::not_found;
+    }
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
     }
     char relative[256] = {};
     char parent_relative[256] = {};
     char leaf[64] = {};
     if (!parse_relative_path(*volume, path, relative, sizeof(relative)) ||
-        !split_relative_parent(relative, parent_relative, sizeof(parent_relative), leaf, sizeof(leaf)) ||
-        find_record_by_relative_path(*volume, relative) != nullptr) {
-        return nullptr;
+        !split_relative_parent(relative, parent_relative, sizeof(parent_relative), leaf, sizeof(leaf))) {
+        return Status::invalid;
+    }
+    if (find_record_by_relative_path(*volume, relative) != nullptr) {
+        return Status::exists;
     }
 
     const uint32_t parent_inode = parent_inode_for_relative_path(*volume, parent_relative);
     Inode* parent = inode_for_id(*volume, parent_inode);
-    if (parent == nullptr || parent->type != kInodeTypeDirectory) {
-        return nullptr;
+    if (parent == nullptr) {
+        return Status::not_found;
+    }
+    if (parent->type != kInodeTypeDirectory) {
+        return Status::not_directory;
     }
 
-    MutationGuard guard(*volume);
-    snapshot_metadata(*volume);
+    const uint16_t type = directory ? kInodeTypeDirectory : kInodeTypeFile;
+    FileRecord* record = nullptr;
+    {
+        MutationGuard guard(*volume);
+        // The record is taken before anything is committed: a file on disk the
+        // driver has no record for would exist until the next mount only.
+        record = allocate_record(*volume);
+        if (record == nullptr) {
+            return Status::no_space;
+        }
+        snapshot_metadata(*volume);
 
-    const uint32_t inode_id = allocate_inode_id(*volume);
-    Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeFile, relative, owner) ||
-        !add_directory_entry(*volume, *parent, inode_id, kInodeTypeFile, leaf) ||
-        !commit_metadata(*volume)) {
-        restore_metadata(*volume);
-        return nullptr;
+        Status status = Status::ok;
+        uint32_t count = 0;
+        const uint32_t inode_id = allocate_inode_id(*volume);
+        Inode* inode = inode_for_id(*volume, inode_id);
+        if (inode_id == 0 || inode == nullptr) {
+            status = Status::no_space;
+        } else {
+            (void)prepare_new_inode(*inode, inode_id, type, relative, owner);
+            status = load_directory(*volume, *parent, count);
+        }
+        if (status == Status::ok && find_slot_by_name(*volume, count, leaf) != kNoSlot) {
+            status = Status::exists;
+        }
+        if (status == Status::ok && count >= kMaxRecords) {
+            status = Status::no_space;
+        }
+        if (status == Status::ok && !fill_slot(volume->dir_scratch[count], inode_id, type, leaf)) {
+            status = Status::invalid;
+        }
+        if (status == Status::ok) {
+            status = store_directory(*volume, *parent, count + 1u);
+        }
+        if (status == Status::ok && !commit_metadata(*volume)) {
+            status = Status::io_error;
+        }
+        if (status != Status::ok) {
+            restore_metadata(*volume);
+            volume->snapshot_valid = false;
+            memset(record, 0, sizeof(*record));
+            return status;
+        }
+
+        record->directory = directory;
+        record->inode_id = inode_id;
+        record->parent_inode_id = parent_inode;
+        record->size = 0;
+        strcpy(record->name, leaf);
+        strcpy(record->path, relative);
+        if (mounted(volume_index(*volume))) {
+            mount_record(*volume, *record);
+        }
+        refresh_directory_vnode(*volume, parent_inode);
     }
 
-    FileRecord* record = allocate_record(*volume);
-    if (record == nullptr) {
-        return nullptr;
+    // An attached volume whose tree has no room for the vnode: the file is
+    // taken back off the disk, so the disk never holds what the tree cannot
+    // show.
+    if (volume->root_vnode != nullptr && record->vnode == nullptr) {
+        (void)remove_status(*record);
+        return Status::no_space;
     }
-    record->directory = false;
-    record->inode_id = inode_id;
-    record->parent_inode_id = parent_inode;
-    record->size = 0;
-    strcpy(record->name, leaf);
-    strcpy(record->path, relative);
-    if (mounted(volume_index(*volume))) {
-        mount_record(*volume, *record);
-    }
+    created = record;
+    return Status::ok;
+}
+
+FileRecord* create_file(const char* path, const vfs::Ownership* owner) {
+    FileRecord* record = nullptr;
+    (void)create_status(path, /*directory=*/false, owner, record);
     return record;
 }
 
 FileRecord* create_directory(const char* path, const vfs::Ownership* owner) {
-    Volume* volume = volume_for_path(path);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return nullptr;
-    }
-    char relative[256] = {};
-    char parent_relative[256] = {};
-    char leaf[64] = {};
-    if (!parse_relative_path(*volume, path, relative, sizeof(relative)) ||
-        !split_relative_parent(relative, parent_relative, sizeof(parent_relative), leaf, sizeof(leaf)) ||
-        find_record_by_relative_path(*volume, relative) != nullptr) {
-        return nullptr;
-    }
-
-    const uint32_t parent_inode = parent_inode_for_relative_path(*volume, parent_relative);
-    Inode* parent = inode_for_id(*volume, parent_inode);
-    if (parent == nullptr || parent->type != kInodeTypeDirectory) {
-        return nullptr;
-    }
-
-    MutationGuard guard(*volume);
-    snapshot_metadata(*volume);
-
-    const uint32_t inode_id = allocate_inode_id(*volume);
-    Inode* inode = inode_for_id(*volume, inode_id);
-    if (inode_id == 0 || inode == nullptr || !prepare_new_inode(*inode, inode_id, kInodeTypeDirectory, relative, owner) ||
-        !add_directory_entry(*volume, *parent, inode_id, kInodeTypeDirectory, leaf) ||
-        !commit_metadata(*volume)) {
-        restore_metadata(*volume);
-        return nullptr;
-    }
-
-    FileRecord* record = allocate_record(*volume);
-    if (record == nullptr) {
-        return nullptr;
-    }
-    record->directory = true;
-    record->inode_id = inode_id;
-    record->parent_inode_id = parent_inode;
-    record->size = 0;
-    strcpy(record->name, leaf);
-    strcpy(record->path, relative);
-    if (mounted(volume_index(*volume))) {
-        mount_record(*volume, *record);
-    }
+    FileRecord* record = nullptr;
+    (void)create_status(path, /*directory=*/true, owner, record);
     return record;
 }
 
-bool remove_directory(FileRecord& file) {
+// Removes a file or an empty directory: its entry leaves the parent, and its
+// inode and blocks are freed, in one commit.
+Status remove_status(FileRecord& file) {
     Volume* volume = volume_for_id(file.volume);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return false;
+    if (volume == nullptr || !file.in_use) {
+        return Status::invalid;
     }
-    if (!file.in_use || !file.directory) {
-        return false;
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
     }
 
     MutationGuard guard(*volume);
-    Inode* inode = inode_for_id(*volume, file.inode_id);
-    Inode* parent = inode_for_id(*volume, file.parent_inode_id);
-    if (inode == nullptr || parent == nullptr || inode->type != kInodeTypeDirectory ||
-        directory_has_children(*volume, *inode)) {
-        return false;
+    const uint32_t inode_id = file.inode_id;
+    const uint32_t parent_id = file.parent_inode_id;
+    Inode* inode = inode_for_id(*volume, inode_id);
+    Inode* parent = inode_for_id(*volume, parent_id);
+    if (inode == nullptr || parent == nullptr ||
+        inode->type != (file.directory ? kInodeTypeDirectory : kInodeTypeFile)) {
+        return Status::invalid;
+    }
+    if (file.directory) {
+        bool empty = false;
+        const Status scanned = directory_is_empty(*volume, *inode, empty);
+        if (scanned != Status::ok) {
+            return scanned;
+        }
+        if (!empty) {
+            return Status::not_empty;
+        }
     }
 
     snapshot_metadata(*volume);
-    if (!remove_directory_entry(*volume, *parent, file.name)) {
-        restore_metadata(*volume);
-        return false;
+    uint32_t count = 0;
+    Status status = load_directory(*volume, *parent, count);
+    if (status == Status::ok) {
+        const uint32_t slot = find_slot_by_inode(*volume, count, inode_id);
+        if (slot == kNoSlot) {
+            status = Status::io_error; // a record no entry backs
+        } else {
+            remove_slot(*volume, count, slot);
+            status = store_directory(*volume, *parent, count);
+        }
     }
-    free_inode_blocks(*volume, *inode);
-    release_inode_id(*volume, file.inode_id);
-    if (!commit_metadata(*volume)) {
-        restore_metadata(*volume);
-        return false;
+    if (status == Status::ok) {
+        free_inode_blocks(*volume, *inode);
+        release_inode_id(*volume, inode_id);
+        if (!commit_metadata(*volume)) {
+            status = Status::io_error;
+        }
     }
-    remove_record(*volume, file.inode_id);
-    return true;
+    if (status != Status::ok) {
+        restore_metadata(*volume);
+        volume->snapshot_valid = false;
+        if (status != Status::no_space ||
+            (volume->superblock.features & SXFS_FEATURE_LINK_COUNT) == 0) {
+            return status;
+        }
+        // No room for the parent's copy. Deleting must not need free space.
+        status = doom_in_place(*volume, inode_id, parent_id);
+        if (status != Status::ok) {
+            return status;
+        }
+    }
+    remove_record(*volume, inode_id);
+    refresh_directory_vnode(*volume, parent_id);
+    return Status::ok;
 }
 
-bool rename_path(const char* old_path, const char* new_path) {
+bool remove_directory(FileRecord& file) {
+    return file.in_use && file.directory && remove_status(file) == Status::ok;
+}
+
+bool unlink_file(FileRecord& file) {
+    return file.in_use && !file.directory && remove_status(file) == Status::ok;
+}
+
+// Renames `old_path` to `new_path` in one commit. A name already at
+// `new_path` is replaced, and what it named is freed in the same commit: a
+// file replaces a file, a directory replaces an empty directory. `replaced`
+// receives the vnode that published the replaced name, for the caller to take
+// out of its tree.
+Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** replaced) {
+    if (replaced != nullptr) {
+        *replaced = nullptr;
+    }
     Volume* volume = volume_for_path(old_path);
-    // Mover entre volumenes seria copiar y borrar, no un rename: se rechaza.
-    if (volume == nullptr || volume != volume_for_path(new_path) ||
-        volume->status != MountStatus::mounted) {
-        return false;
+    if (volume == nullptr) {
+        return Status::not_found;
+    }
+    // Moving between volumes would be a copy and a delete, not a rename.
+    if (volume != volume_for_path(new_path)) {
+        return Status::invalid;
+    }
+    if (volume->status != MountStatus::mounted) {
+        return Status::read_only;
     }
     FileRecord* target = find_record_by_path(*volume, old_path);
+    if (target == nullptr) {
+        return Status::not_found;
+    }
     char new_relative[256] = {};
     char new_parent_relative[256] = {};
     char new_leaf[64] = {};
-    if (target == nullptr ||
-        !parse_relative_path(*volume, new_path, new_relative, sizeof(new_relative)) ||
+    if (!parse_relative_path(*volume, new_path, new_relative, sizeof(new_relative)) ||
         !split_relative_parent(new_relative, new_parent_relative, sizeof(new_parent_relative), new_leaf, sizeof(new_leaf)) ||
-        strcmp(target->path, new_relative) == 0 ||
-        find_record_by_relative_path(*volume, new_relative) != nullptr) {
-        return false;
+        strcmp(target->path, new_relative) == 0) {
+        return Status::invalid;
     }
 
+    const uint32_t old_parent_inode = target->parent_inode_id;
     const uint32_t new_parent_inode = parent_inode_for_relative_path(*volume, new_parent_relative);
-    Inode* old_parent = inode_for_id(*volume, target->parent_inode_id);
+    Inode* old_parent = inode_for_id(*volume, old_parent_inode);
     Inode* new_parent = inode_for_id(*volume, new_parent_inode);
-    if (old_parent == nullptr || new_parent == nullptr || new_parent->type != kInodeTypeDirectory) {
-        return false;
+    if (old_parent == nullptr || new_parent == nullptr) {
+        return Status::not_found;
+    }
+    if (new_parent->type != kInodeTypeDirectory) {
+        return Status::not_directory;
     }
     if (target->directory &&
         (target->inode_id == new_parent_inode || record_is_ancestor(*volume, target->inode_id, new_parent_inode))) {
-        return false;
+        return Status::invalid;
     }
 
     MutationGuard guard(*volume);
+    FileRecord* victim = find_record_by_relative_path(*volume, new_relative);
+    Inode* victim_inode = victim != nullptr ? inode_for_id(*volume, victim->inode_id) : nullptr;
+    if (victim != nullptr) {
+        if (victim_inode == nullptr) {
+            return Status::io_error;
+        }
+        if (target->directory && !victim->directory) {
+            return Status::not_directory;
+        }
+        if (!target->directory && victim->directory) {
+            return Status::is_directory;
+        }
+        if (victim->directory) {
+            bool empty = false;
+            const Status scanned = directory_is_empty(*volume, *victim_inode, empty);
+            if (scanned != Status::ok) {
+                return scanned;
+            }
+            if (!empty) {
+                return Status::not_empty;
+            }
+        }
+    }
+    const uint32_t victim_id = victim != nullptr ? victim->inode_id : 0;
+    const uint16_t type = target->directory ? kInodeTypeDirectory : kInodeTypeFile;
+
     snapshot_metadata(*volume);
-    if (!remove_directory_entry(*volume, *old_parent, target->name) ||
-        !add_directory_entry(*volume, *new_parent, target->inode_id,
-                             target->directory ? kInodeTypeDirectory : kInodeTypeFile, new_leaf) ||
-        !commit_metadata(*volume)) {
+    uint32_t count = 0;
+    Status status = load_directory(*volume, *old_parent, count);
+    uint32_t slot = status == Status::ok ? find_slot_by_inode(*volume, count, target->inode_id) : kNoSlot;
+    if (status == Status::ok && slot == kNoSlot) {
+        status = Status::io_error;
+    }
+    if (status == Status::ok && old_parent_inode == new_parent_inode) {
+        // One directory: the entry changes its name where it is.
+        if (!fill_slot(volume->dir_scratch[slot], target->inode_id, type, new_leaf)) {
+            status = Status::invalid;
+        } else if (victim_id != 0) {
+            const uint32_t victim_slot = find_slot_by_inode(*volume, count, victim_id);
+            if (victim_slot == kNoSlot) {
+                status = Status::io_error;
+            } else {
+                remove_slot(*volume, count, victim_slot);
+            }
+        }
+        if (status == Status::ok) {
+            status = store_directory(*volume, *old_parent, count);
+        }
+    } else if (status == Status::ok) {
+        // Two directories, two copies, one commit.
+        remove_slot(*volume, count, slot);
+        status = store_directory(*volume, *old_parent, count);
+        if (status == Status::ok) {
+            status = load_directory(*volume, *new_parent, count);
+        }
+        if (status == Status::ok && victim_id != 0) {
+            const uint32_t victim_slot = find_slot_by_inode(*volume, count, victim_id);
+            if (victim_slot == kNoSlot) {
+                status = Status::io_error;
+            } else {
+                remove_slot(*volume, count, victim_slot);
+            }
+        }
+        if (status == Status::ok && victim_id == 0 && find_slot_by_name(*volume, count, new_leaf) != kNoSlot) {
+            status = Status::exists;
+        }
+        if (status == Status::ok && count >= kMaxRecords) {
+            status = Status::no_space;
+        }
+        if (status == Status::ok && !fill_slot(volume->dir_scratch[count], target->inode_id, type, new_leaf)) {
+            status = Status::invalid;
+        }
+        if (status == Status::ok) {
+            status = store_directory(*volume, *new_parent, count + 1u);
+        }
+    }
+    if (status == Status::ok && victim_id != 0) {
+        free_inode_blocks(*volume, *victim_inode);
+        release_inode_id(*volume, victim_id);
+    }
+    if (status == Status::ok && !commit_metadata(*volume)) {
+        status = Status::io_error;
+    }
+    if (status != Status::ok) {
         restore_metadata(*volume);
-        return false;
+        volume->snapshot_valid = false;
+        return status;
     }
 
+    if (victim != nullptr) {
+        if (replaced != nullptr) {
+            *replaced = victim->vnode;
+        }
+        memset(victim, 0, sizeof(*victim));
+    }
     char old_relative[256] = {};
     strcpy(old_relative, target->path);
     target->parent_inode_id = new_parent_inode;
@@ -2049,38 +2659,13 @@ bool rename_path(const char* old_path, const char* new_path) {
     if (target->directory) {
         update_descendant_paths(*volume, target->inode_id, old_relative, target->path);
     }
-    return true;
+    refresh_directory_vnode(*volume, old_parent_inode);
+    refresh_directory_vnode(*volume, new_parent_inode);
+    return Status::ok;
 }
 
-bool unlink_file(FileRecord& file) {
-    Volume* volume = volume_for_id(file.volume);
-    if (volume == nullptr || volume->status != MountStatus::mounted) {
-        return false;
-    }
-    if (!file.in_use || file.directory) {
-        return false;
-    }
-
-    MutationGuard guard(*volume);
-    Inode* inode = inode_for_id(*volume, file.inode_id);
-    Inode* parent = inode_for_id(*volume, file.parent_inode_id);
-    if (inode == nullptr || parent == nullptr || inode->type != kInodeTypeFile) {
-        return false;
-    }
-
-    snapshot_metadata(*volume);
-    if (!remove_directory_entry(*volume, *parent, file.name)) {
-        restore_metadata(*volume);
-        return false;
-    }
-    free_inode_blocks(*volume, *inode);
-    release_inode_id(*volume, file.inode_id);
-    if (!commit_metadata(*volume)) {
-        restore_metadata(*volume);
-        return false;
-    }
-    remove_record(*volume, file.inode_id);
-    return true;
+bool rename_path(const char* old_path, const char* new_path) {
+    return rename_status(old_path, new_path, nullptr) == Status::ok;
 }
 
 FileRecord* file_from_vnode(vfs::Vnode& node) {

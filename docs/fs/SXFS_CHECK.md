@@ -115,6 +115,11 @@ the findings below say on which side:
 | `bad_dir_entries` | entry that fails validation |
 | `unreadable_dirs` | directory unreadable, or deeper than the format allows |
 
+`pending_deletions`, in the population block, is not a finding. It counts
+inodes whose deletion is committed and not finished: a file unlinked while
+still open, or a deletion a power cut interrupted. The last close or the next
+writable mount frees them ([`SXFS_NAMESPACE.md`](SXFS_NAMESPACE.md#doomed-inodes)).
+
 `data_used > data_claimed` means leaks. The reverse means lost blocks, which is
 the more dangerous of the two: a sector an inode claims while the bitmap offers
 it is a sector two files can be given.

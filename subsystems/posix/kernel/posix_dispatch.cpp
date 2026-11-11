@@ -480,6 +480,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             out.journal_valid = report.journal_valid;
             out.ownership_recorded = report.ownership_recorded;
             out.unowned_inodes = report.unowned_inodes;
+            out.pending_deletions = static_cast<uint8_t>(report.pending_deletions > 255u ? 255u : report.pending_deletions);
             out.inodes_allocated = report.inodes_allocated;
             out.files = report.files;
             out.directories = report.directories;

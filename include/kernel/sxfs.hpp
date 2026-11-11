@@ -93,7 +93,7 @@ struct CheckReport {
     uint8_t clean_shutdown;   // el superblock tiene SXFS_FLAG_CLEAN
     uint8_t journal_valid;    // el header del journal se pudo leer y validar
     uint8_t ownership_recorded; // the volume has SXFS_FEATURE_OWNERSHIP
-    uint8_t reserved0;
+    uint8_t link_counts_recorded; // the volume has SXFS_FEATURE_LINK_COUNT
     uint32_t journal_pending; // una transaccion quedo a medias
 
     // Poblacion del volumen.
@@ -120,6 +120,10 @@ struct CheckReport {
     // type bits disagree with the inode's type. Always 0 without the feature,
     // since nothing is recorded there to be wrong.
     uint32_t unowned_inodes;
+    // Not a finding: allocated inodes whose deletion is committed (link_count
+    // 0 with SXFS_FEATURE_LINK_COUNT) and not finished. See
+    // docs/fs/SXFS_NAMESPACE.md.
+    uint32_t pending_deletions;
 
     // Costo de metadata desde el arranque, para poder medir en vez de deducir.
     // El journal copia toda la metadata en cada commit y la reescribe, asi que
@@ -149,18 +153,30 @@ struct CheckReport {
 // metadata cargada.
 bool check(VolumeId volume, CheckReport& report);
 
-// Operaciones sobre archivos: el volumen sale del propio record o de la ruta.
+// File operations: the volume comes from the record itself or from the path.
+// Each mutation has a form that says why it failed (fs::Status) and a bool
+// form over it.
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count);
+fs::Status write_file_status(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate,
+                             size_t& written);
 bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written);
+fs::Status truncate_file_status(FileRecord& file, size_t size);
 bool truncate_file(FileRecord& file, size_t size);
 // `owner` is who creates it and its mode. Without one (the host tests, and
 // anything with no caller to name) it gets the default of its path
 // (sxfs/sxfs_ownership.h).
+fs::Status create_status(const char* path, bool directory, const vfs::Ownership* owner, FileRecord*& created);
 FileRecord* create_file(const char* path, const vfs::Ownership* owner = nullptr);
 FileRecord* create_directory(const char* path, const vfs::Ownership* owner = nullptr);
+// A file, or a directory with no entries.
+fs::Status remove_status(FileRecord& file);
 bool remove_directory(FileRecord& file);
-bool rename_path(const char* old_path, const char* new_path);
 bool unlink_file(FileRecord& file);
+// An existing `new_path` is replaced atomically (a file by a file, an empty
+// directory by a directory); `replaced`, when given, receives the vnode that
+// published it.
+fs::Status rename_status(const char* old_path, const char* new_path, vfs::Vnode** replaced);
+bool rename_path(const char* old_path, const char* new_path);
 FileRecord* file_from_vnode(vfs::Vnode& node);
 void refresh_vnode(vfs::Vnode& node);
 

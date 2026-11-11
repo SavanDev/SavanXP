@@ -76,6 +76,10 @@ after it:
 Within a step the order does not matter: the superblocks of step 2 only clear
 `CLEAN`, and in step 4 either half alone still remounts correctly.
 
+The first ordering point is also what makes directory changes atomic: a
+mutation writes the directory's new contents to fresh blocks before it commits
+the inode that names them ([`SXFS_NAMESPACE.md`](SXFS_NAMESPACE.md)).
+
 A mutation that commits nothing (an overwrite inside a file's current size)
 places one ordering point after its data. Before `block::flush` existed every `block::write`
 flushed, which made a commit about ten flushes, and on IDE none of them
@@ -181,3 +185,9 @@ cached is lost:
 Each of these fails if the write order, the sparse replay or the full commit
 after a failure is broken, and removing any one of the first three ordering
 points fails the power-cut case, not just the flush count.
+
+Two cached writes of the same sector are the one exception to the reverse
+order: a cache holds one copy of a sector, so the later write is what lands.
+
+`tests/host/sxfs_namespace_test.cpp` uses the same device to cut every
+namespace mutation at every sector ([`SXFS_NAMESPACE.md`](SXFS_NAMESPACE.md#tests)).

@@ -245,8 +245,20 @@ static int read_dir_entries(const struct sxfs_ctx* ctx, uint32_t dir_id,
     return SXFS_OK;
 }
 
-static int name_matches(const struct sxfs_dir_entry* entry, const char* name, size_t name_len) {
-    return entry->inode_id != 0 && entry->name_length == name_len &&
+/* An entry that is part of the tree: a used slot whose inode is not doomed
+ * (SXFS_FEATURE_LINK_COUNT). A doomed inode's deletion is committed; the entry
+ * that may still carry its name is cleared by the next writable mount, and
+ * until then every reader skips it. */
+static int entry_is_live(const struct sxfs_ctx* ctx, const struct sxfs_dir_entry* entry) {
+    if (entry->inode_id == 0 || entry->inode_id > SXFS_MAX_INODES) {
+        return entry->inode_id != 0;
+    }
+    return !sxfs_inode_doomed(ctx->superblock.features, &ctx->inodes[entry->inode_id - 1]);
+}
+
+static int name_matches(const struct sxfs_ctx* ctx, const struct sxfs_dir_entry* entry,
+                        const char* name, size_t name_len) {
+    return entry_is_live(ctx, entry) && entry->name_length == name_len &&
         memcmp(entry->name, name, name_len) == 0;
 }
 
@@ -292,7 +304,7 @@ static int resolve_path(struct sxfs_ctx* ctx, const char* relpath,
         uint32_t found = 0;
         uint16_t found_type = 0;
         for (uint32_t i = 0; i < count; ++i) {
-            if (name_matches(&entries[i], p, comp_len)) {
+            if (name_matches(ctx, &entries[i], p, comp_len)) {
                 found = entries[i].inode_id;
                 found_type = entries[i].type;
                 break;
@@ -422,7 +434,7 @@ int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
     sb->data_lba = SXFS_DATA_LBA;
     sb->max_inodes = SXFS_MAX_INODES;
     sb->root_inode = SXFS_ROOT_INODE;
-    sb->features = SXFS_FEATURE_OWNERSHIP;
+    sb->features = SXFS_FEATURE_OWNERSHIP | SXFS_FEATURE_LINK_COUNT;
 
     /* La region de metadata (todo lo anterior a los datos) queda ocupada. */
     for (uint32_t sector = 0; sector < SXFS_DATA_LBA; ++sector) {
@@ -568,7 +580,7 @@ int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
         uint32_t found = 0;
         uint16_t found_type = 0;
         for (uint32_t i = 0; i < count; ++i) {
-            if (name_matches(&entries[i], p, comp_len)) {
+            if (name_matches(ctx, &entries[i], p, comp_len)) {
                 found = entries[i].inode_id;
                 found_type = entries[i].type;
                 break;
@@ -604,7 +616,7 @@ static int dir_is_empty(struct sxfs_ctx* ctx, uint32_t dir_id, int* out_empty) {
         return rc;
     }
     for (uint32_t i = 0; i < count; ++i) {
-        if (entries[i].inode_id != 0) {
+        if (entry_is_live(ctx, &entries[i])) {
             *out_empty = 0;
             return SXFS_OK;
         }
@@ -660,7 +672,7 @@ int sxfs_remove(struct sxfs_ctx* ctx, const char* relpath) {
 
     uint32_t slot = count;
     for (uint32_t i = 0; i < count; ++i) {
-        if (name_matches(&entries[i], leaf, leaf_len)) {
+        if (name_matches(ctx, &entries[i], leaf, leaf_len)) {
             slot = i;
             break;
         }
@@ -841,8 +853,11 @@ static int validate_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
             (entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
             return SXFS_ERR_INVALID;
         }
+        if (!entry_is_live(ctx, entry)) {
+            continue; /* well formed, and not part of the tree */
+        }
         for (uint32_t previous = 0; previous < index; ++previous) {
-            if (entries[previous].inode_id != 0 && entries[previous].name_length == entry->name_length &&
+            if (entry_is_live(ctx, &entries[previous]) && entries[previous].name_length == entry->name_length &&
                 memcmp(entries[previous].name, entry->name, entry->name_length) == 0) {
                 return SXFS_ERR_INVALID;
             }
@@ -984,7 +999,7 @@ int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
         if (rc != SXFS_OK) {
             return rc;
         }
-        if (entry.inode_id == 0) {
+        if (!entry_is_live(ctx, &entry)) {
             continue;
         }
 
@@ -1029,6 +1044,9 @@ int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
     }
 
     for (uint32_t inode_id = SXFS_ROOT_INODE + 1u; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        if (sxfs_inode_doomed(ctx->superblock.features, &ctx->inodes[inode_id - 1u])) {
+            continue; /* a committed deletion the next writable mount finishes */
+        }
         if (sxfs_bitmap_test(ctx->inode_bitmap, inode_id - 1u) && !visited[inode_id - 1u]) {
             /* Un inode asignado pero no alcanzable no se puede conservar
              * razonablemente en una reconstruccion: fallamos antes de perderlo. */
