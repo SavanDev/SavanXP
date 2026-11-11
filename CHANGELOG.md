@@ -137,6 +137,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **The loader rejects a PIE (`ET_DYN`) segment whose end wraps the address space** at validation, not at the copy.
+  See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E7.
+
 - **A user process can no longer take the port name of a system service or fill the port table.**
   `SXN_SYS_PORT_CREATE` answers `EPERM` for the services' names and anything under `sys.`, and user ports share 8 of
   the 16 slots. See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#third-pass-audit-2026-11-04), E3.

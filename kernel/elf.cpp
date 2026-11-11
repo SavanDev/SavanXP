@@ -397,7 +397,12 @@ bool load_user_image(
             ((program.alignment & (program.alignment - 1)) == 0 &&
              (program.offset % program.alignment) == (vaddr % program.alignment));
         const uint64_t image_end = vaddr + program.memory_size;
-        const bool address_range_valid = program.memory_size != 0 && image_end >= program.virtual_address &&
+        // Both sums are compared against what they were added to: the bias
+        // must not wrap the start, nor the size the end. Comparing the end
+        // against the unbiased p_vaddr let an ET_DYN segment wrap by less
+        // than the bias (KERNEL_SECURITY.md, E7).
+        const bool address_range_valid = program.memory_size != 0 &&
+            vaddr >= program.virtual_address && image_end >= vaddr &&
             vaddr >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
         const bool mapped_range_valid = address_range_valid &&
             align_up(image_end, memory::kPageSize) >= image_end;

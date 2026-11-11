@@ -231,7 +231,7 @@ at fixed addresses, and the kernel is not relocated.
 | VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Open |
 | Sections | File-section cache is never invalidated by writes (E5) | Low | Open |
 | Sections | An anonymous section may grant write and execute to separate views (E6) | Low | Accepted |
-| ELF | ET_DYN wrap check uses the unbiased `p_vaddr` (E7) | Low | Open |
+| ELF | ET_DYN wrap check uses the unbiased `p_vaddr` (E7) | Low | Fixed |
 
 ## Second-pass audit disposition
 
@@ -376,11 +376,14 @@ and one executable view of it give memory that is written and then run, with no
 If no JIT appears, refusing write and execute together in an anonymous
 section's grant closes it without touching file-backed images.
 
-**E7 — Low. The `ET_DYN` wrap check uses the unbiased address.** The loader
-checks `image_end >= p_vaddr` where `image_end` already includes the load bias,
-so a segment whose end wraps by less than the bias passes validation. The image
-can only overwrite its own pages and the copy fails on unmapped ones, so this
-crosses no boundary; the check should compare against the biased address.
+**E7 — Low, fixed. The `ET_DYN` wrap check used the unbiased address.** The
+loader checked `image_end >= p_vaddr` where `image_end` already includes the
+load bias, so a segment whose end wrapped by less than the bias passed
+validation. The image could only overwrite its own pages and the copy failed
+on unmapped ones, so this crossed no boundary. The check now compares the
+biased start against `p_vaddr` and the end against the biased start. No test
+tells the two apart from user space: the wrapped image was already refused
+one step later, by the copy.
 
 **Still open from the earlier passes.** `/dev/net0` is `0666`, so any user can
 set TCP fault injection (`NET_IOC_SET_TCP_FAULT`). `/dev/gpu0` is `0666` and
@@ -392,7 +395,7 @@ quota.
 
 ## Required follow-up work
 
-First, the open third-pass findings: E4 together with E5, then E7. E3 is
+First, the open third-pass findings: E4 together with E5. E3 and E7 are
 fixed.
 
 The next security phase should not add more ad-hoc device checks. The process
