@@ -99,6 +99,9 @@ Cut-off notes:
 
 ### Changed
 
+- **`smp-stats:` names who holds the kernel lock.** A third line, `top held`, lists the four syscalls
+  with the most time held; `report=` shows what the report cost and keeps it out of the longest hold.
+  How to read it, and the plan it serves: `docs/roadmaps/open/SMP_ROADMAP.md`, phase 5.
 - **The tray volume popup is redesigned: output device and master slider, one slider per application, and a Sound settings link.**
   Each application shows its window's icon; the speaker beside the device toggles mute. Audiod's snapshot gains each stream's `pid`.
   See [SOUND.md](docs/media/SOUND.md#volume-popup).
@@ -301,7 +304,7 @@ Cut-off notes:
 
 - **The kernel lock reports its contention**: `smp-stats:` lines next to `timer-stats:`, per entry
   point (syscall, timer, irq, ...), with the longest hold and the syscall behind it. See
-  `docs/roadmaps/done/SMP_ROADMAP.md#reading-smp-stats`.
+  `docs/roadmaps/open/SMP_ROADMAP.md#reading-smp-stats`.
 
 - **Task Manager: Applications tab** (End Task, Switch To, New Task). Any WM client can read the
   task list and switch to or close a task (`SAVANXP_WM_WINDOW_ACTION_TASK_LIST`/`_ACTIVATE`/`_CLOSE`,
@@ -409,7 +412,7 @@ Cut-off notes:
 
 - **QEMU boots two cores by default** (`build.sh`, `tools/run_qemu.py`, `tools/run_smoke.py`,
   `tools/shoot.sh`, `SAVANXP_SMP`), smokes included; `--smp 1` keeps one. See
-  `docs/roadmaps/done/SMP_ROADMAP.md#two-cores-by-default`.
+  `docs/roadmaps/open/SMP_ROADMAP.md#two-cores-by-default`.
 
 - **Task Manager is a SUN program**, `/bin/taskmgr.sxe`, built from `system/taskmgr`; the POSIX
   `/bin/taskmgr` is removed from the image. It looks and behaves as before, and its idle window no

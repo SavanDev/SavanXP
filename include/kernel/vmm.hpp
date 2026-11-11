@@ -136,7 +136,7 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
 
 /* --- TLB coherence across cores ----------------------------------------------
  *
- * KERNEL HALF (docs/roadmaps/done/SMP_ROADMAP.md, phase 3). Every core shares it, and
+ * KERNEL HALF (docs/roadmaps/open/SMP_ROADMAP.md, phase 3). Every core shares it, and
  * an invlpg only clears the TLB of the core that runs it. It is solved without
  * IPIs, on top of the big kernel lock: every access to kernel memory that can
  * be unmapped happens with the lock held, so a core only has to catch up

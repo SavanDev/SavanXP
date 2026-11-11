@@ -73,7 +73,7 @@ it cannot run master at all, so it does not drive this decision.
 The same model as `ahci`, `ata` and `virtio-blk`: completion is found by
 reading the event ring. One interrupter, its ring drained by whoever needs a
 result. The kernel cannot sleep on a kernel stack
-([SMP_ROADMAP.md](../done/SMP_ROADMAP.md)), so an interrupt would have nothing to wake.
+([SMP_ROADMAP.md](../open/SMP_ROADMAP.md)), so an interrupt would have nothing to wake.
 MSI or MSI-X comes when the kernel can block, not before.
 
 The cost is latency on HID: a key is seen at the next tick, which is the same

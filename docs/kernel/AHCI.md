@@ -70,7 +70,7 @@ around them are. See [`SXFS_ROADMAP.md`](../roadmaps/open/SXFS_ROADMAP.md#where-
 
 - **Interrupts.** Completion is polled with interrupts disabled, like every
   storage driver here: the kernel's syscalls cannot sleep on a kernel stack
-  ([`SMP_ROADMAP.md`](../roadmaps/done/SMP_ROADMAP.md)). NCQ and multiple slots buy nothing
+  ([`SMP_ROADMAP.md`](../roadmaps/open/SMP_ROADMAP.md)). NCQ and multiple slots buy nothing
   until requests can overlap.
 - **Port multipliers, hot plug, link power management.** Ports are probed once
   at boot.

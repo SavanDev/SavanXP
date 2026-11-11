@@ -86,7 +86,7 @@ but the boot path calls `fs::mount` directly and needs the driver's own check.
 | `FF_USE_FASTSEEK` | 1 | Lets a later per-vnode open file keep a cluster link map; unused while every `read` reopens the file |
 | `FF_USE_MKFS` | 1 | The host test formats its images with it; small |
 | `FF_FS_NORTC` | 0 | `get_fattime` from `rtc::epoch_seconds` |
-| `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](../done/SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
+| `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
 | `FF_LBA64` | 0 | `block::` addresses sectors with 32 bits |
 
 FatFs is C. It builds as an object library with the kernel's freestanding

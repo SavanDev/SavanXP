@@ -336,7 +336,7 @@ section), but it is still the cost of the work.
 
 **Every millisecond of it is a frozen system, not a slow program.** The syscall
 gate is an interrupt gate and nothing re-enables interrupts in the syscall path
-(see [`SMP_ROADMAP.md`](../done/SMP_ROADMAP.md)), and both block drivers poll
+(see [`SMP_ROADMAP.md`](SMP_ROADMAP.md)), and both block drivers poll
 the device to completion inside the syscall. Until a write returns, no other
 process runs and no timer is serviced, cursor included.
 

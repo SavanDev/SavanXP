@@ -187,7 +187,7 @@ namespace
     // hay MADT/IOAPIC cae en silencio y el sistema sigue con el PIC legacy.
     ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     // The APs, once the BSP's local APIC is up and the GSIs are routed
-    // (docs/roadmaps/done/SMP_ROADMAP.md).
+    // (docs/roadmaps/open/SMP_ROADMAP.md).
     smp::initialize(boot_info);
     smp::selftest_ipi();
     smp::selftest_tlb();

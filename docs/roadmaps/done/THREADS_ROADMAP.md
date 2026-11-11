@@ -41,7 +41,7 @@ work split in two very different halves, and all of it has landed since:
 - **The second thread is what is actually hard**, because it breaks one rule the
   SMP work wrote down: *an address space is loaded on at most one core at a
   time*. That rule is why user-space TLB coherence needed no mechanism
-  ([SMP_ROADMAP.md](SMP_ROADMAP.md#phase-3--tlb-shootdown)). Two threads of
+  ([SMP_ROADMAP.md](../open/SMP_ROADMAP.md#phase-3--tlb-shootdown)). Two threads of
   one process on two cores need a real user-space shootdown.
 
 The plan keeps those apart: the split lands first with no new behaviour, the

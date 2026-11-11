@@ -104,7 +104,7 @@ for recorded.
 Neither is on this port's path, and that is why they are last.
 
 - **Threads are kernel work** — scheduling, TLS, a futex or equivalent, a C runtime
-  that is safe to share. [SMP_ROADMAP.md](../done/SMP_ROADMAP.md) records that
+  that is safe to share. [SMP_ROADMAP.md](SMP_ROADMAP.md) records that
   user space has none today and leans on that. A consumer that runs fine on one
   thread cannot validate them.
 - **SDL** would unlock the largest number of future ports, and would let this one

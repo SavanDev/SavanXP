@@ -191,8 +191,6 @@ all its phases have landed; the links to it move with it.
 
 ### Done — `roadmaps/done/`
 
-- [`SMP_ROADMAP.md`](roadmaps/done/SMP_ROADMAP.md) — multi-core startup, scheduler locking,
-  and TLB shootdown work.
 - [`THREADS_ROADMAP.md`](roadmaps/done/THREADS_ROADMAP.md) — threads: what moves from the
   process to the thread, the decisions taken, and the phases to get there.
 - [`SXGFX_ROADMAP.md`](roadmaps/done/SXGFX_ROADMAP.md) — hardening of the 2D rasterization
@@ -205,6 +203,9 @@ all its phases have landed; the links to it move with it.
 
 ### Open — `roadmaps/open/`
 
+- [`SMP_ROADMAP.md`](roadmaps/open/SMP_ROADMAP.md) — more than one core: startup, the big
+  kernel lock, TLB shootdown and the lock's counters, all done; and phase 5,
+  taking the lock apart, planned with the measurement that says when.
 - [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.

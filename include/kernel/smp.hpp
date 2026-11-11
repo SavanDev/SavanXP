@@ -7,7 +7,7 @@
 
 /* The application processors and the state of each core.
  *
- * Phase 0 of docs/roadmaps/done/SMP_ROADMAP.md: the APs start, identify themselves and
+ * Phase 0 of docs/roadmaps/open/SMP_ROADMAP.md: the APs start, identify themselves and
  * stay parked in a hlt loop, and an IPI ping checks that the ICR delivers.
  *
  * Phase 1: each core has its own TSS and its own smp::Cpu entry, indexed by
@@ -175,10 +175,10 @@ void lock_kernel(Door door = Door::other);
 void unlock_kernel();
 bool kernel_locked_here();
 
-// Prints the kernel lock's contention since the previous call, two lines
+// Prints the kernel lock's contention since the previous call, three lines
 // that start with `smp-stats:`, and starts a new window. The BSP's tick calls
 // it next to `timer-stats:`, with the lock held. Silent on one core. What it
-// measures, and how to read it: docs/roadmaps/done/SMP_ROADMAP.md, phase 4.
+// measures, and how to read it: docs/roadmaps/open/SMP_ROADMAP.md, phase 4.
 void report_lock_stats();
 
 // Names what the current holder is doing, for the longest hold in the report:

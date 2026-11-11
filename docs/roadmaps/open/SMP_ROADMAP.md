@@ -1,10 +1,13 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phases 0 to 4 done, on master. The roadmap is closed; what remains
-> is splitting the big kernel lock, one subsystem at a time, when
-> [`smp-stats`](#reading-smp-stats) says which.** This document was the
-> measurement: what the kernel already had, what it was missing, and in what
-> order to attack it so that every phase boots and can be verified on its own.
+> **Status: phases 0 to 4 done, on master. [Phase 5](#phase-5--taking-the-lock-apart--planned),
+> taking the big kernel lock apart, is planned and not started.** The
+> measurement it was waiting for is taken: on a desktop in use the lock is
+> free nine tenths of the time, so splitting it by subsystem waits. Storage is
+> the exception — a 4 MB copy holds the lock for most of a minute — and its
+> slice goes first. This document was the measurement: what the kernel already
+> had, what it was missing, and in what order to attack it so that every phase
+> boots and can be verified on its own.
 >
 > Phase 0 landed as `smp::` ([smp.hpp](../../../include/kernel/smp.hpp),
 > [smp.cpp](../../../arch/x86_64/smp.cpp)): the APs start, identify themselves by
@@ -35,6 +38,10 @@
 > the lock counts its own contention per entry point (`smp-stats:`). The
 > counters' first finding was QEMU's: under TCG, `pause` in the lock's spin
 > made four cores crawl.
+>
+> Phase 5 is the plan for what remains, with what the counters say today, the
+> conditions that start each slice, and what the lock quietly guarantees that a
+> split has to guarantee some other way.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -355,7 +362,7 @@ What it actually took, against the plan below: **no IPI at all.**
 
 **Threads ended the user-space half of that argument.** Two threads of one
 process on two cores share an address space, so "loaded on at most one core"
-no longer holds; phase 2 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md) replaced
+no longer holds; phase 2 of [THREADS_ROADMAP.md](../done/THREADS_ROADMAP.md) replaced
 it with a user shootdown built the same way: an IPI that nobody waits for, a
 flush at the next `lock_kernel()`, and pages freed only after every core
 involved has flushed.
@@ -377,7 +384,7 @@ being modified ([`vmm.cpp:473`](../../kernel/vmm.cpp:473),
   holding the BKL. A `CR3` reload flushes non-global entries, so a core that ran
   the process earlier does not keep stale entries. Native threads lifted the
   one-core rule with a user-space shootdown
-  ([THREADS_ROADMAP.md](THREADS_ROADMAP.md#phase-2--the-address-space-on-many-cores--done)).
+  ([THREADS_ROADMAP.md](../done/THREADS_ROADMAP.md#phase-2--the-address-space-on-many-cores--done)).
 - **Kernel space: a real requirement.** `create_address_space()` copies the
   kernel PML4 entries into every new space
   ([`vmm.cpp:406`](../../kernel/vmm.cpp:406)) — those entries point at *shared*
@@ -470,7 +477,8 @@ What it actually took:
   The APs now mirror the BSP ([KERNEL_SECURITY.md](../../kernel/KERNEL_SECURITY.md)).
   `-cpu max,-x2apic` is the better way to test xAPIC: it drops only the x2APIC.
 
-**Not done, on purpose: splitting the BKL.** Each subsystem is split when
+**Not done, on purpose: splitting the BKL**, which became
+[phase 5](#phase-5--taking-the-lock-apart--planned). Each subsystem is split when
 `smp-stats` shows it is the one, and not before. What the counters showed when
 this phase closed is [below](#what-the-counters-showed); the candidates, in the
 order the global counts suggest, and what each split must respect, are the
@@ -483,6 +491,7 @@ flush stops being enough and the IPI comes back.
 ```
 smp-stats: window=3826 ms acq=24559 contended=10% wait=38% of 4 cores (max 689221 us) held=54% (max 690095 us, syscall #59 posix)
 smp-stats: doors acq/wait ms/held ms: syscall=8675/4313/2477 timer=8039/2945/69 resched=0/0/0 irq=0/0/0 fault=447/0/4 wake=7316/60/7 other=0/0/0
+smp-stats: top held ms/max us/calls: native#4117=702/4156/48324 posix#39=391/5778/12696 native#4104=45/2459/60414 posix#43=45/2899/12081 report=38116 us
 ```
 
 - `contended` is the share of acquisitions that found the lock taken.
@@ -496,6 +505,16 @@ smp-stats: doors acq/wait ms/held ms: syscall=8675/4313/2477 timer=8039/2945/69 
   (`handle_syscall` tags it); `#59 posix` is `SAVANXP_SYS_FSCHECK`.
 - The second line splits acquisitions, milliseconds waited and milliseconds held
   by door. Silent on one core.
+- The third line, added when phase 5 was planned, names the four syscalls that
+  held the lock the most **in total**: milliseconds held, their longest hold
+  in microseconds, and how many calls. `native#4117` is `SXN_SYS_DEVICE_CONTROL`
+  (`0x1015`), `posix#39` is `SAVANXP_SYS_POLL`. This is the line that says
+  which subsystem a split would relieve; the longest hold only says who froze
+  the others once.
+- `report=` is what the previous report cost: the tick that printed it,
+  `timer-stats:` included, with the lock held. It is kept out of the window it
+  opens — before, it was the "longest hold" of every quiet window, 25-40 ms
+  under KVM — but the other cores' wait behind it is real and stays in `wait`.
 
 ### What the counters showed
 
@@ -556,6 +575,256 @@ picks a destination CPU instead of pinning to the BSP
 ([`ioapic.cpp:262`](../../kernel/ioapic.cpp:262)) — including logical destination
 mode, since an x2APIC ID does not necessarily fit in the 8 bits the current
 write uses.
+
+## Phase 5 — taking the lock apart — **PLANNED**
+
+**Goal:** kernel work on one core stops excluding kernel work on another, one
+subsystem at a time, and no device wait freezes the machine. Every slice
+boots, passes the suite and can be measured on its own, as in phases 0 to 4.
+
+### The measurement that was owed
+
+Phase 4 ended on a question: the lock is busy under a smoke that launches a
+dozen programs back to back, but does a desktop in use feel it? Measured on a
+Ryzen 5 1600 (12 logical CPUs), QEMU 11.1 under KVM, AHCI, `tools/shoot.sh
+--accel kvm` scenarios, windows of 2000 ticks. `held` and `wait` are the range
+over the windows of one run; "syscalls" and "tick" are the share of one core
+the lock was held from each door over the whole run.
+
+| Run | Cores | `held` | `wait` | Syscalls | Tick | Longest syscall hold |
+| --- | --- | --- | --- | --- | --- | --- |
+| `desktop` (idle) | 2 | 7-11% | 0-1% | 3.3% | 5.9% | 7 ms, `SAVANXP_SYS_WRITE` |
+| `files` | 2 | 6-13% | 0-2% | 3.8% | 5.6% | 19 ms, `SAVANXP_SYS_SPAWN` |
+| `webview` | 2 | 5-14% | 0-2% | 4.4% | 6.1% | 20 ms, `SAVANXP_SYS_SPAWN` |
+| `console` | 2 | 5-12% | 0-3% | 4.0% | 5.9% | 14 ms, `SXN_SYS_WRITE` |
+| `startmenu` | 2 | 7-16% | 0-3% | 5.0% | 6.2% | 16 ms, `SAVANXP_SYS_SPAWN` |
+| `startmenu` | 4 | 7-19% | 1-5% | 5.4% | 7.2% | 19 ms, `SAVANXP_SYS_SPAWN` |
+| `nightwood` (a game, ~80 fps, sound) | 2 | 7-13% | 0-2% | 4.7% | 4.7% | 17 ms, `SAVANXP_SYS_SPAWN` |
+| `nightwood` | 4 | 9-14% | 0-3% | 5.2% | 6.3% | 17 ms, `SAVANXP_SYS_SPAWN` |
+| Gfx Demo's `spin`, 60 s (display path saturated, ~5 400 fps) | 2 | up to 68% | up to 20% | 35% | 4.4% | 20 ms, `SAVANXP_SYS_SPAWN` |
+| the same | 4 | up to 66% | up to 8% | 35% | 5.7% | 17 ms, `SAVANXP_SYS_SPAWN` |
+| `cp` of a 4 MB file, desktop otherwise idle | 2 | **97-99%** | **48-49%** | — | — | **2.3 s**, the idle's `SAVANXP_SYS_YIELD` |
+| `spin` plus that `cp` | 2 | 96-99% | 48-50% | — | — | 338 ms, `SAVANXP_SYS_WRITE` |
+| `spin` plus that `cp` | 4 | up to 99% | up to 74% | — | — | 183 ms, `SAVANXP_SYS_WRITE` |
+
+What it says:
+
+- **A desktop in use leaves the lock free about nine tenths of the time.**
+  Every syscall of every process together holds it 3-5% of one core; nobody
+  waits (0-3%). Going from two cores to four changes nothing. There is no
+  contention here for a split to remove.
+- **The biggest holder on a calm desktop is not a syscall: it is the BSP's
+  tick**, 5-7% of a core, more than all syscalls together. A thousand times a
+  second it polls the display, the input drivers and the audio codec and
+  walks the thread table several times, 60-80 µs each under KVM, where every
+  port read leaves the VM.
+- **The longest holds on a calm desktop are the diagnostics.** `timer-stats:`
+  and `smp-stats:` cost 20-45 ms every two seconds, and the stats lines
+  `windowd` and `compositord` write to `/dev/serial` 7-15 ms each:
+  `serial_write_char()` waits for the UART a character at a time, with the
+  lock held and interrupts off. Before `report=` existed
+  ([reading `smp-stats`](#reading-smp-stats)) the report's own print was the
+  "longest hold" of every quiet window. On hardware with a real COM1 at 38400
+  baud the same lines cost more, not less.
+- **Launching a program holds the lock 13-28 ms.** The 50-76 ms of phase 4's
+  reading are gone with the block read cache; what is left is one or two
+  frames, once per launch.
+- **The display path is the only kernel work that scales with use**, and only
+  in a benchmark: `spin` drives `SXN_SYS_DEVICE_CONTROL` (the compositor's
+  present, ~14 µs a call) and POSIX `poll` (~30 µs a call) hundreds of
+  thousands of times and keeps the lock held 60-68%. At 60 frames a second the
+  same path is under 1%.
+- **Storage is the exception, and it is not a matter of contention.** Copying
+  4 MB took about 50 s, with the lock held 97-99% of that, the compositor at
+  2 frames a second and the tick clock losing 87% of its ticks — the system's
+  time ran eight times slow. The copy was 1 018 `write` calls; a commit has
+  four ordering points and QEMU turns each device flush into an `fsync` of the
+  image on the host ([SXFS_ROADMAP.md](SXFS_ROADMAP.md)). [Block writeback](../../kernel/BLOCK_WRITEBACK.md) moved those waits
+  out of the writer, but not out of the lock: the idle core's
+  `SAVANXP_SYS_YIELD` drains the queue (one hold of 2.3 s), and once the queue
+  passes its 8 MiB cap the writer drains it itself (`make_room`, 39 ms per
+  `write` on average, up to 338 ms). Either way a core polls the disk with the
+  kernel lock held and `IF=0`, which freezes one core as surely as four. The
+  figures depend on what an `fsync` costs on the host; the shape does not.
+
+### Verdict: not yet for the split, now for storage
+
+**Splitting the lock by subsystem waits.** The reasons, in order of weight:
+
+1. **There is nothing to win on anything measured except storage.** A lock
+   held 10% and waited on 1% bounds the gain of a perfect split at about that
+   1%.
+2. **Nothing in user space would collect it.** Processes are single-threaded
+   with three exceptions (Nightwood's and Sound's audio threads, and ports
+   through pthreads); what runs in parallel is distinct processes, and they
+   spend 3-5% of their time in the kernel.
+3. **The cost is at its highest now.** The kernel has no lock discipline to
+   extend, the lock carries more than exclusion
+   ([below](#what-the-lock-carries-besides-exclusion)), and the suite runs
+   under TCG, which cannot show a memory-ordering race. Splitting locks before
+   there is contention is how a kernel acquires races it cannot reproduce;
+   that sentence from [the end of this document](#is-it-worth-it) still holds.
+4. **The cheap gains need no new lock.** The tick, the serial port and the
+   commit count are all shorter holds of the same lock (slice 5.1).
+
+**Storage does not wait**, because what it needs is not a finer lock but a
+device wait that happens outside the lock and with interrupts on (slice 5.2).
+That is also the first real split, the one phase 2's `windowd-smoke --smp 4`
+failure already pointed at, and the one every later slice learns from.
+
+**What reopens the rest.** Any one of these, read under KVM or on hardware,
+never under TCG:
+
+- `held` above 50% for consecutive windows, with `wait` above 10% of the
+  cores, in something a person does — not a smoke, not `spin` — after 5.1 and
+  5.2 have landed. The `top held` line names the subsystem.
+- A syscall whose longest hold stays above a frame (16 ms) in normal use and
+  cannot be shortened by deferring the work, the way block writeback did.
+- A consumer that needs the kernel in parallel: a port that does I/O from
+  several threads (Xash3D, a browser engine), overlapping storage requests
+  ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md), D4), a network server.
+- More than two cores by default.
+
+### What the lock carries besides exclusion
+
+The audit a split starts from. Each of these is true today only because one
+lock is taken at every door, and each needs its own answer before the code it
+covers leaves the lock.
+
+| What | Where it is written down |
+| --- | --- |
+| Exclusion over every mutable global in `kernel/` and `arch/`, none of which has an owner lock | the inventory above |
+| **Kernel TLB coherence.** A core flushes when it takes the lock; nobody waits for anybody | `vm::sync_kernel_tlb()`, [phase 3](#phase-3--tlb-shootdown--done) |
+| **User TLB coherence** for threads on several cores, and the late release of unmapped pages | `vm::sync_user_tlb()`, `vm::reclaim_deferred_views()` |
+| **A kernel stack has one user.** The lock is released only after the stack switch | `context.S`, `arch::resume_context` |
+| **A waker finishes the sleeper's syscall**, writing into another process's threads, objects and memory | `wake_blocked_readers_for_pipe()` and the other wakers in `process.cpp` |
+| Copying to another process loads its address space for one `memcpy`, with nothing able to unmap in between | `sx::write_user_memory`, `vmm.hpp` |
+| Ending a process that runs on another core is deferred to that core's next entry | `terminate_process`, `exit_requested` |
+| A process that reaps itself frees the stack it is running on | [THREADS_ROADMAP.md](../done/THREADS_ROADMAP.md), phase 0 |
+| No lost wake between reading a word and parking on it | `SXN_SYS_WAIT_ADDRESS` |
+| The console, the serial port and the system log are not interleaved, and take no lock of their own | [SYSTEM_LOG.md](../../kernel/SYSTEM_LOG.md) |
+| uACPI's locks never wait | `uacpi_glue.cpp` |
+| Drivers written as if alone: virtio-gpu's `AtomicSectionGuard` and recovery, RTL8139's ring, AC'97's feed loop, FatFs with `FF_FS_REENTRANT` 0 | each driver; [FAT_ROADMAP.md](FAT_ROADMAP.md) |
+| The lock's own counters, and every `*-stats:` line | `smp.cpp` |
+
+### The rules every slice keeps
+
+- **The lock moves from the door to the dispatch, one syscall at a time.**
+  The doors keep taking it. A syscall whose subsystem has its own locks is
+  marked as running without it, and `handle_syscall` skips the acquisition
+  for that one; an interrupt handler the same way, per handler. The lock
+  stays, for good, as the lock of everything nobody converted. There is never
+  a tree where a subsystem is half under one scheme and half under the other.
+- **Spinlocks only, taken with `IF=0`, never held across a return to ring 3.**
+  This kernel does not sleep on a kernel stack
+  ([advantage 2](#two-structural-advantages-worth-naming-first)), so a lock is
+  never held by a thread that is not running: no sleeping locks, no priority
+  inversion, no lock held by a preempted thread. A wait for a device is not a
+  lock hold (5.2).
+- **One written order.** Every lock has a rank in one header, the kernel lock
+  first; a debug build checks on each acquisition that this core holds nothing
+  of a higher rank. Converted code called from unconverted code takes its own
+  lock inside the kernel lock, never the reverse.
+- **New locks spin with `arch::lock_spin_hint()`** ([known traps](#known-traps)),
+  and each one reports like the kernel lock does, or it cannot be shown to be
+  the next bottleneck.
+- **The phase 3 rule.** Code that touches unmappable kernel memory without the
+  kernel lock needs the TLB answer of 5.4 first.
+- **Verified under KVM on four cores**, not only under TCG, and with a stress
+  program that hammers the converted subsystem from every core.
+
+### The slices
+
+**5.0 — the instrument. Done with the plan.** `smp-stats` names the syscalls
+that hold the lock the most in total (`top held`) and no longer counts its own
+print as the longest hold (`report=`). Still owed before the first split: the
+rank check above, and a KVM run of the suite as routine.
+
+**5.1 — shorter holds, no new lock. Start now.** Nothing here adds
+concurrency, so nothing here can add a race.
+
+- *The serial port.* The system log already keeps every line
+  ([SYSTEM_LOG.md](../../kernel/SYSTEM_LOG.md)). The UART becomes a reader of
+  that log, fed a few characters per tick while its transmitter is free; only
+  a panic writes synchronously. Expected: the longest hold on a calm desktop
+  falls from 20-45 ms to under 1 ms, and `timer-stats`' lost ticks with it.
+- *The tick.* Measure its parts before touching them (it already has
+  `timer-stats`): which polls have an interrupt they could wait for instead,
+  which can run every N ticks, and whether the walks of the thread table can
+  be one. Re-measure on hardware, where a port read does not cost a VM
+  exit.
+- *Commits per operation.* A copy should not pay a journal commit's flushes
+  for every `write`; confirm the count first. This is SxFS work
+  ([SXFS_ROADMAP.md](SXFS_ROADMAP.md), "Where the remaining cost is") and it
+  is what turns 50 s into about one, lock or no lock.
+- *`poll`.* 30 µs a call is the desktop's main loop; look for the scan.
+
+**5.2 — device waits leave the lock. Start after 5.1's serial slice, which
+makes it measurable.** The first split, and it is in time rather than in
+data: while a core waits for the disk it holds neither the kernel lock nor
+`IF=0`. `ahci::issue()`'s poll of `PxCI` is the one place where the default
+disk waits. What it must respect:
+
+- The device is owned by a lock of its own for the length of a command, taken
+  before the kernel lock is released. A second core that wants the same disk
+  must not spin for it holding the kernel lock, or nothing was gained: it
+  queues its request or parks its thread.
+- Everything above the wait — block cache and queue, SxFS, FAT, the VFS, the
+  ELF loader, `exec` — runs again on another core while the first one waits.
+  That is the same audit phase 2 did for four `sti; hlt` sites, now for every
+  path that reaches the disk, and it is the real work of the slice. The
+  cheapest first cut keeps callers out of it: only the writeback drain
+  (`block::writeback_step()`, which runs from the idle and from the tick and
+  has no caller state above it) waits without the lock, and the writer parks
+  when the queue is full instead of draining it (`make_room`), the way `sync`
+  callers already park on their durability frontier.
+- The wait must not touch unmappable kernel memory. The AHCI command tables
+  and bounce buffer are mapped once and never unmapped, which is why this
+  slice can go before 5.4.
+- Completion by interrupt is not required: polling with interrupts on already
+  ends the freeze. It becomes worth it with D4's request contract.
+- Then the same for the GPU's command waits
+  ([VIRGL_ROADMAP.md](VIRGL_ROADMAP.md): up to 2 s spinning) and Azalia's
+  ([AZALIA_ROADMAP.md](AZALIA_ROADMAP.md), AZ-3).
+
+Done when the 4 MB copy of the table above leaves `held` and the compositor's
+frame rate where an idle desktop has them, and the tick clock loses no time.
+
+**5.3 — leaf locks.** `physical_memory`, `heap`, and the console with the
+system log each get a lock of their own, still taken under the kernel lock,
+where they never wait. They buy nothing by themselves; they are what lets any
+later slice allocate or print without the kernel lock. Order from the global
+counts of the original plan in [phase 4](#phase-4--the-debt-around-the-bkl-and-a-way-to-measure-it--done).
+
+**5.4 — the scheduler's lock, and the TLB without the kernel lock.** The gate
+to every syscall that can block or wake. The thread table, the ready queue and
+the wait state get one lock; "released after the stack switch" becomes that
+lock's rule. The two TLB syncs move from `lock_kernel()` to the kernel's
+entries, and an unmap waits until every core has entered the kernel since, or
+is outside it. That wait is bounded because an entry runs to completion —
+with `smp::wait_for_interrupt()`'s sleepers counted as outside, since they
+sync when they wake. The design to evaluate first; if it does not hold, the
+IPI phase 3 set aside comes back, against cores that wait with interrupts on.
+
+**5.5 — objects.** Handle tables per process; pipes, ports, events and
+sections per object. The wakers are the hard part: a waker that completes a
+sleeper's read holds the object, the sleeper's thread and its address space at
+once, which fixes the order of those three ranks. The first syscalls that can
+be marked as running without the kernel lock are the ones the desktop's
+round trip is made of — pipe read and write, `WAIT_ONE`, `EVENT_SET` — and
+`spin` is the measurement.
+
+**5.6 — files.** The VFS, then SxFS per volume, then FatFs with
+`FF_FS_REENTRANT`. After 5.2 the paths are already audited for running twice.
+
+**5.7 — drivers.** The bulk of the lines, as the original plan said, and the
+least urgent: one lock per device instance, interrupt handlers marked one by
+one. GPU first, because `SXN_SYS_DEVICE_CONTROL` is the top holder under
+`spin`; then input, audio, network.
+
+**Size.** 5.1 is days per item. 5.2's first cut is on the order of phase 3;
+the full version is on the order of phase 2. 5.3 to 5.7 are each a phase 2 or
+more, months together, and none of them should start on a guess.
 
 ## Verification
 
@@ -657,7 +926,7 @@ Honestly: not yet, and the reason is worth writing down.
 
 **There were no threads** when this was written. A process was one context,
 so SMP parallelized *distinct processes* and nothing else; native threads
-([THREADS_ROADMAP.md](THREADS_ROADMAP.md)) now run in parallel too, and POSIX
+([THREADS_ROADMAP.md](../done/THREADS_ROADMAP.md)) now run in parallel too, and POSIX
 gets them with pthreads. The heaviest consumer in the
 system, Doom, is single-threaded — it does not get faster on four cores. What
 would genuinely improve is latency across the desktop: the compositor painting
@@ -671,7 +940,9 @@ subsystem is the bottleneck. Splitting locks before there is contention to split
 is how a kernel acquires races it cannot reproduce.
 
 Threads have landed, and phase 4 built the measurement. Its first reading
-names program loading and the GPU path as where the lock is held longest, but
+named program loading and the GPU path as where the lock is held longest, but
 under a smoke that launches a dozen programs back to back
-([numbers](#what-the-counters-showed)); whether an interactive desktop feels
-it is the next measurement, and the one to take before splitting anything.
+([numbers](#what-the-counters-showed)). The reading on a desktop in use is
+[phase 5's](#the-measurement-that-was-owed): the lock is not what limits it,
+storage's device waits are what freeze it, and the split by subsystem waits
+for a measurement that asks for it.

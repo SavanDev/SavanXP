@@ -86,6 +86,23 @@ uint32_t g_hold_tag = kNoTag;
 uint32_t g_hold_max_tag = kNoTag;
 uint64_t g_stats_window_start = 0;
 
+// Time held per tagged syscall, so the report can name who holds the lock the
+// most in total and not only the one longest hold. Indexed by subsystem and
+// by the low bits of the syscall number: POSIX numbers are small and native
+// ones are 0x1000 plus a small one, so neither collides with itself.
+struct TagStats {
+    uint64_t holds;
+    uint64_t hold_cycles;
+    uint64_t hold_max;
+};
+
+constexpr uint32_t kTagSubsystems = 2;
+constexpr uint32_t kTagSlots = 128;
+constexpr uint32_t kTopHolders = 4;
+TagStats g_tag_stats[kTagSubsystems][kTagSlots] = {};
+// How long the previous report took to print, lock held: the next one says it.
+uint64_t g_report_cycles = 0;
+
 // Que cores planifican, por indice denso. El BSP siempre.
 bool g_can_schedule[smp::kMaxCpus] = {true};
 uint32_t g_scheduling_count = 1;
@@ -705,6 +722,14 @@ void unlock_kernel() {
             g_hold_max_tag = g_hold_tag;
         }
     }
+    if (g_hold_tag != kNoTag && (g_hold_tag >> 16) < kTagSubsystems) {
+        TagStats& tagged = g_tag_stats[g_hold_tag >> 16][(g_hold_tag & 0xffffu) % kTagSlots];
+        ++tagged.holds;
+        tagged.hold_cycles += hold;
+        if (hold > tagged.hold_max) {
+            tagged.hold_max = hold;
+        }
+    }
     sync::release(g_kernel_lock);
 }
 
@@ -721,6 +746,11 @@ void report_lock_stats() {
     if (first || khz == 0 || g_scheduling_count <= 1) {
         for (DoorStats& stats : g_door_stats) {
             stats = {};
+        }
+        for (auto& subsystem_stats : g_tag_stats) {
+            for (TagStats& tagged : subsystem_stats) {
+                tagged = {};
+            }
         }
         g_hold_max_tag = kNoTag;
         return;
@@ -796,9 +826,54 @@ void report_lock_stats() {
         cells[4][0], cells[4][1], cells[4][2], cells[5][0], cells[5][1], cells[5][2],
         cells[6][0], cells[6][1], cells[6][2]);
 
+    // The syscalls that held the lock the most in total: milliseconds held,
+    // longest hold in microseconds, and how many times. Then what the previous
+    // report cost, which is the one hold this report cannot see: its own.
+    console::printf("smp-stats: top held ms/max us/calls:");
+    for (uint32_t rank = 0; rank < kTopHolders; ++rank) {
+        TagStats* best = nullptr;
+        uint32_t best_subsystem = 0;
+        uint32_t best_slot = 0;
+        for (uint32_t subsystem = 0; subsystem < kTagSubsystems; ++subsystem) {
+            for (uint32_t slot = 0; slot < kTagSlots; ++slot) {
+                TagStats& tagged = g_tag_stats[subsystem][slot];
+                if (tagged.hold_cycles != 0 && (best == nullptr || tagged.hold_cycles > best->hold_cycles)) {
+                    best = &tagged;
+                    best_subsystem = subsystem;
+                    best_slot = slot;
+                }
+            }
+        }
+        if (best == nullptr) {
+            break;
+        }
+        console::printf(" %s#%u=%llu/%llu/%llu",
+            best_subsystem == 0 ? "posix" : "native",
+            static_cast<unsigned>(best_subsystem == 0 ? best_slot : 0x1000u + best_slot),
+            (unsigned long long)(to_us(best->hold_cycles) / 1000ull),
+            (unsigned long long)to_us(best->hold_max),
+            (unsigned long long)best->holds);
+        *best = {};
+    }
+    console::printf(" report=%llu us\n", (unsigned long long)to_us(g_report_cycles));
+
     for (DoorStats& stats : g_door_stats) {
         stats = {};
     }
+    for (auto& subsystem_stats : g_tag_stats) {
+        for (TagStats& tagged : subsystem_stats) {
+            tagged = {};
+        }
+    }
+    // Printing is slow (the serial port, a character at a time) and happens
+    // with the lock held. Restarting the hold here keeps this tick and its
+    // reports, `timer-stats:` included, out of the window it opens, where
+    // they would be the longest hold of every quiet one; `report=` carries
+    // them instead. The other cores' wait behind it is real and stays in
+    // `wait`.
+    const uint64_t end = arch::read_timestamp_counter();
+    g_report_cycles = end - g_hold_start;
+    g_hold_start = end;
 }
 
 bool kernel_locked_here() {
