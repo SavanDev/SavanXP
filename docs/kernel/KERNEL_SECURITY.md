@@ -1,6 +1,7 @@
 # Kernel security model and hardening
 
-Status: audited on 2026-11-04 (third pass, against `bd08141`). The first audit
+Status: audited on 2026-11-04 (third pass, against `bd08141`) and reconciled
+with the tree on 2026-11-11 (fourth pass, against `cd58936`). The first audit
 and its second-pass review date from 2026-09-23.
 
 This document defines SavanXP's current kernel security boundary, records the
@@ -8,16 +9,22 @@ findings from the kernel audits, and distinguishes mitigations already in the
 tree from risks that still require architectural work. It is not a claim that
 SavanXP is a hardened multi-user operating system. The newest findings, and
 what the third pass verified, are in
-[Third-pass audit](#third-pass-audit-2026-11-04).
+[Third-pass audit](#third-pass-audit-2026-11-04). What changed under the
+document since, and which parts of the kernel no audit has read, is in
+[Fourth-pass review](#fourth-pass-review-2026-11-11).
 
 ## Trust boundary
 
 The kernel treats the following inputs as hostile unless a stronger statement
 is made below:
 
-- ELF files executed from `/bin` or `/rescue/bin`;
+- ELF files executed from any SxFS volume: `/bin`, `/system`, `/rescue/bin`,
+  the user's profile, and a disk or USB stick mounted under `/mnt` (a FAT
+  volume never gives a file the execute bit, so nothing runs from one);
 - pointers, lengths and flags supplied through system calls;
-- SxFS metadata and directory trees read from disk;
+- SxFS and FAT metadata and directory trees read from disk, and GPT and MBR
+  partition tables;
+- descriptors, reports and transfer lengths supplied by USB devices;
 - the initramfs CPIO archive supplied by the boot configuration;
 - packet lengths and used-ring entries reported by NIC hardware;
 - ACPI, PCI and MMIO descriptions supplied by firmware or virtual hardware;
@@ -127,10 +134,10 @@ The loader now rejects an image before exposing its entry point when it has:
 The maximum is 64 program headers and 64 load segments. This is deliberately
 smaller than the architectural ELF limit: the table is validated and held on
 the fixed kernel stack, so an untrusted image cannot turn header count into
-unbounded kernel stack use. SavanXP also deliberately rejects `PT_LOAD` page
-overlap and `p_memsz == 0`; its linker contract uses 4 KiB maximum page size,
-and accepting shared pages would require a permission-union policy that never
-creates W+X.
+unbounded kernel stack use. SavanXP also deliberately rejects `p_memsz == 0`.
+Two segments may share a page since the shared-library work, under the
+permission-union rule described above, which never creates W+X; segments that
+overlap by more than that shared page are still refused.
 
 ### Compiler hardening
 
@@ -190,6 +197,8 @@ at fixed addresses, and the kernel is not relocated.
   instead of leaving `CAPR` stuck on the same malformed packet.
 - Shared sections are capped at 64 MiB and checked for alignment and allocation
   arithmetic overflow before any pages are requested.
+- Received IPv4, ICMP, TCP and UDP checksums are verified and fragments are
+  dropped; see [`NETWORKING.md`](../net/NETWORKING.md).
 
 ### Access and process lifecycle
 
@@ -214,7 +223,7 @@ at fixed addresses, and the kernel is not relocated.
 | User memory | No NX/W^X, stack canaries or mapping randomization | High | Partially fixed |
 | Devices | Mutating ioctls required only query access | High | Fixed |
 | Processes | `kill(1, ...)` and orphan zombies | High | Fixed |
-| Resource use | No process quotas or PMM ownership bitmap | High | Open |
+| Resource use | No process quotas or PMM ownership bitmap; only ports have a user share | High | Open |
 | Authorization | UID/GID, VFS modes and elevation exist; the display session is open to every user | High | Partially fixed |
 | ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Open |
 | PCI | No central resource manager for BAR/I/O ranges | High | Open |
@@ -228,8 +237,8 @@ at fixed addresses, and the kernel is not relocated.
 | VFS | POSIX `open` with no access mode skipped the permission check and granted read (E1) | High | Fixed |
 | Ports | A port sent over its own pending connection leaked with its name (E2) | Medium | Fixed |
 | Ports | Global 16-slot namespace with no ACL on service names (E3) | Medium | Fixed |
-| VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Open |
-| Sections | File-section cache is never invalidated by writes (E5) | Low | Open |
+| VFS | Vnode slots are never reclaimed; create/unlink exhausts the table (E4) | Medium | Fixed |
+| Sections | File-section cache is never invalidated by writes (E5) | Low | Fixed |
 | Sections | An anonymous section may grant write and execute to separate views (E6) | Low | Accepted |
 | ELF | ET_DYN wrap check uses the unbiased `p_vaddr` (E7) | Low | Fixed |
 
@@ -243,7 +252,7 @@ loader restriction; it is not a reproduced runtime failure.
 | --- | --- |
 | A1 | Fixed: RTL8139 bounds CRC-inclusive records, uses the wrap tail and resynchronizes invalid records with `CBR`. |
 | A2 | Fixed: the keyboard-layout popup opens `/dev/input0` read/write and reports setter failures. |
-| A3 | Policy retained: 1,065 current ELF artifacts had no shared `PT_LOAD` pages, zero `p_memsz`, RWX or low vaddr cases. |
+| A3 | Policy retained then, since relaxed for shared pages only (see ELF validation): 1,065 ELF artifacts of the time had no shared `PT_LOAD` pages, zero `p_memsz`, RWX or low vaddr cases. |
 | A4 | Fixed: every application processor establishes its own NX baseline. |
 | A5 | Fixed: the kernel canary hook uses the compiler builtin return address. |
 | B1 | Fixed: kernel boot and each new process receive a nonconstant canary; `fork` inherits it. |
@@ -354,20 +363,24 @@ volume connect to them. The limit is per identity and not per process, which
 is what the fix first proposed: a per-process limit is defeated by spawning.
 `elevtest` checks the refusals and the limit as the user.
 
-**E4 — Medium. The VFS node table only grows.** `add_node` appends to a
-768-slot table; `unlink` and `rmdir` mark a slot invalid and nothing reuses it.
-SxFS files enter the table through `install_volume_file`, so a user process that
-creates and deletes files in its own profile exhausts the table, after which
-every create and mkdir in the system fails with `ENOMEM` until reboot. Normal
-use leaks slots too. Fix: a free list of invalidated slots, landed together
-with E5, because a reused slot would otherwise match a stale file section.
+**E4 — Medium, fixed. The VFS node table only grew.** `add_node` appended to
+a 768-slot table; `unlink` and `rmdir` marked a slot invalid and nothing reused
+it, so a user process that created and deleted files in its own profile
+exhausted the table for the whole system until reboot. Fixed by the storage
+work that followed the audit, together with E5 as the audit asked: the table
+holds 2048 slots, and `retire_node` and `detach_subtree` return a slot to a
+free list (`g_free_nodes` in `vfs.cpp`) once nothing holds its node. The
+table is still global: a user can fill it with files that exist, which is the
+quota problem below and not this one.
 
-**E5 — Low. Cached file sections go stale.** A file-backed section is looked up
-by `(vnode, offset, length)` and filled once. Writing or truncating the file
-does not invalidate it, so a library rewritten in place at the same size keeps
-serving the old pages to new mappings while any view of it lives. Sections are
-not counted by `vnode_has_open_references` either. The cached section also keeps
-the access mask of its first opener.
+**E5 — Low, fixed. Cached file sections went stale.** A file-backed section
+was looked up by `(vnode, offset, length)` and filled once, so a library
+rewritten in place at the same size kept serving the old pages. The key now
+includes `Vnode::content_generation`, which every write, truncate and slot
+reuse moves on ([`SECTIONS.md`](./SECTIONS.md)), and unmount counts sections
+as holders of their file (`object::section_uses_vnode`). One part remains and
+fails closed: a cached section keeps the access mask of its first opener, so a
+later opener that asks for more gets a handle whose `map_view` is refused.
 
 **E6 — Low, accepted. W^X is per view, not per section.** An anonymous
 section may be created with read, write and execute granted; one writable view
@@ -399,10 +412,71 @@ on ports alone and then adopted the sender's address is gone. See
  Thread, port, section and node tables are global with no per-process
 quota.
 
+## Fourth-pass review (2026-11-11)
+
+Not a new line-by-line audit: a comparison of this document with the tree at
+`cd58936`, 78 commits after the third pass. Each
+claim below was checked in the source on that date. The "Verified" list of the
+third pass was not walked again.
+
+### What the document had wrong
+
+- **E4 and E5 were fixed and still listed as open.** The storage and SxFS v2
+  commits landed the free list and the generation key without marking them.
+- **The node table is 2048 slots, not 768.**
+- **The ELF section contradicted itself**: it described the shared-page union
+  rule and, two sections later, said shared pages are rejected.
+- **The trust boundary named `/bin` and `/rescue/bin` only.** Programs now run
+  from `/system` and from SxFS volumes mounted under `/mnt`, and FAT and
+  partition metadata and USB devices are hostile inputs it did not list.
+- **"Protected storage mutation" was listed as needing a system check.** It
+  has one: raw I/O, rescan, mount and unmount (`SXN_SYS_STORAGE_*`) all answer
+  `EPERM` unless the caller acts as the system.
+
+### Still true, checked again
+
+- SMEP and `CR0.WP` only; no SMAP, KPTI, CET, KASLR or CFI.
+- Kernel stacks are eight contiguous pages with a canary and no guard page.
+- The ELF loader holds at most 64 program headers; the `ET_DYN` load bias is
+  the constant `kUserBase`; only the section-view window is randomized.
+- Sections are capped at 64 MiB. `mmap` refuses `PROT_EXEC` (`mmaptest`).
+- Kernel, userland and the external SDK build with `-fstack-protector-strong`.
+- `/dev/input0` and `/dev/mouse0` are `0600`; ports do not travel over pipes
+  on either dispatcher; a spawn with an identity requires the system.
+- `/dev/gpu0` is `0666` and the display session is first come, first served.
+- `find_table` in `acpi.cpp` trusts the root table's length and maps every
+  entry without a bound or a checksum.
+- Process, thread, section and node tables have no per-process or per-user
+  share. Ports are the first table that does.
+
+### Closed in this pass
+
+E3, E7, the received-checksum and TCP-tuple findings, and the open fault
+injector. Each is marked where it was recorded above.
+
+### Never audited
+
+These entered the kernel after the third pass, or were out of its scope, and
+all of them parse input this document calls hostile. None has been read as an
+attacker would read it, and no finding above speaks for them:
+
+| Code | Hostile input |
+| --- | --- |
+| `kernel/usb/` (xHCI, hubs, HID, mass storage) | Descriptors, HID report descriptors and transfer lengths from any device plugged in |
+| `kernel/fat.cpp` and the vendored FatFs | The metadata of a FAT volume on a stick (its files cannot be executed) |
+| `kernel/partition.cpp` | GPT and MBR tables of any disk |
+| `kernel/virtio_gpu.cpp`, the `GPU_IOC_3D_*` ioctls | virgl command streams from any process, since `/dev/gpu0` is `0666`; the host renderer is the parser |
+| `kernel/net.cpp`, native sockets (`SXN_SYS_SOCKET_*`) | Reviewed here only for checksums and tuple matching |
+| `kernel/azalia/` | Codec responses; read against the OpenBSD source on 2026-11-11 for fidelity, not for hostile hardware |
+| `kernel/sxfs.cpp` after v2 | Link counts and copy-on-write directories read from a hostile disk |
+| `kernel/ahci.cpp`, block writeback | Carried over from the third pass, which read them only at the system-call edge |
+
 ## Required follow-up work
 
-First, the open third-pass findings: E4 together with E5. E3 and E7 are
-fixed.
+The third-pass findings are all closed or accepted. What comes first now is
+the list in [Fourth-pass review](#fourth-pass-review-2026-11-11): the display
+session, the ACPI table walk, and a first audit of the drivers that parse
+hostile input and have never had one.
 
 The next security phase should not add more ad-hoc device checks. The process
 security context it called for now exists in part: every process carries a
@@ -436,7 +510,7 @@ Memory safety should then proceed in this order:
    binding does. See [`SECTIONS.md`](./SECTIONS.md).
 
 Firmware and hardware inputs need their own parser tests: fuzz CPIO, ACPI/MADT,
-SxFS and virtio rings; validate every PCI BAR against physical memory, reserved
+SxFS, FAT, partition tables, USB descriptors and virtio rings; validate every PCI BAR against physical memory, reserved
 regions and already assigned windows; and add finite waits to legacy I/O
 paths such as UART and AC'97.
 
