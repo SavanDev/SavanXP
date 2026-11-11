@@ -71,6 +71,8 @@ object/process factoring, not before.
   `_ACCEPT_EX`, `SXN_SPAWN_FLAG_IDENTITY`), for elevation.
 - Slice 27: what a task list reads (`SXN_SYS_PROCESS_SNAPSHOT`,
   `SXN_SYS_SYSTEM_INFO`), and `SXN_SYS_TERMINATE` under kill's rule.
+- Slice 28: storage for Disk Management (`SXN_SYS_STORAGE_*`).
+- Slice 29: `SXN_SYS_LOG_READ`, the system log for Log Viewer.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -250,6 +252,24 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 29: reading the system log
+
+What Log Viewer needs ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)). Native
+only.
+
+- `SXN_SYS_LOG_READ` (`0x103c`): rdi = first sequence wanted, rsi = `struct
+  sxn_log_record[]` (written), rdx = how many fit, r10 = the record size.
+  Copies the complete lines of the system log, oldest first, from the first
+  one at or after rdi the caller may read; returns the count, 0 when nothing
+  is newer, `-EINVAL` for a count of 0, a size below
+  `SXN_LOG_RECORD_V1_SIZE` or a bad buffer. The kernel's and the system's
+  lines are open to everyone, another user's programs' lines only to the
+  system. The ring, the attribution of each line and the rules are in
+  [SYSTEM_LOG.md](SYSTEM_LOG.md).
+
+`nativetest` asserts the call, including the per-user rule with two children
+running as different users.
 
 ## Slice 28: storage for Disk Management
 

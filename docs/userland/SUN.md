@@ -204,6 +204,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
 | `comctl32` + a message loop | `sxngui_app_init`, `sxngui_app_run` (`sxn/sxngui.h`) | done (Task Manager) |
+| Event Log (`OpenEventLog`, `ReadEventLog`) | `sxn_log_read` over the kernel's line ring ([SYSTEM_LOG.md](../kernel/SYSTEM_LOG.md)) | done (slice 29, Log Viewer); lines, not typed events |
 
 ## Slices driven by the console
 

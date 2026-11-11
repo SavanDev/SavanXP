@@ -209,6 +209,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/console.cpp
     kernel/device.cpp
     kernel/serial_dev.cpp
+    kernel/klog.cpp
     kernel/display.cpp
     kernel/ahci.cpp
     kernel/ata.cpp
@@ -652,6 +653,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/diskmgmt"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sound"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/mouse"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/logview"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

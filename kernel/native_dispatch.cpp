@@ -8,6 +8,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/klog.hpp"
 #include "kernel/object.hpp"
 #include "kernel/net.hpp"
 #include "kernel/process_detail.hpp"
@@ -600,6 +601,31 @@ int native_process_snapshot(uint64_t index, uint64_t user_out, uint64_t size) {
     return sx::copy_to_user(user_out, &info, length) ? 1 : sx::negative_error(SX_EINVAL);
 }
 
+// The system log, oldest first: as many complete lines as fit, from the first
+// one at or after `sequence` that the caller may read (docs/kernel/SYSTEM_LOG.md).
+int native_log_read(const Process& caller, uint64_t sequence, uint64_t user_out, uint64_t count,
+    uint64_t size)
+{
+    if (count == 0 || count > 0x10000u || size < SXN_LOG_RECORD_V1_SIZE || size > 0x10000u) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const size_t length = size < sizeof(sxn_log_record) ? static_cast<size_t>(size) : sizeof(sxn_log_record);
+    if (!sx::validate_user_range(user_out, static_cast<size_t>(count * size), true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+
+    uint64_t copied = 0;
+    sxn_log_record record = {};
+    while (copied < count && klog::next(caller.credentials, sequence, record)) {
+        if (!sx::copy_to_user(user_out + copied * size, &record, length)) {
+            return sx::negative_error(SX_EINVAL);
+        }
+        sequence = record.sequence + 1;
+        ++copied;
+    }
+    return static_cast<int>(copied);
+}
+
 int native_system_info(uint64_t user_out, uint64_t size) {
     savanxp_system_info info = {};
 
@@ -944,6 +970,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 return context;
             }
 
+            klog::ScopedSource source(caller->pid, caller->credentials.uid, caller->name);
             console::printf("native[%u]: %s\n", static_cast<unsigned>(caller->pid), message);
             context->rax = 0;
             return context;
@@ -1344,6 +1371,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_SYSTEM_INFO:
             context->rax = static_cast<uint64_t>(native_system_info(context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_LOG_READ:
+            context->rax = static_cast<uint64_t>(
+                native_log_read(*caller, context->rdi, context->rsi, context->rdx, context->r10));
             return context;
         case SXN_SYS_STORAGE_SNAPSHOT:
             context->rax = static_cast<uint64_t>(

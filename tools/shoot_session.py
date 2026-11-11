@@ -1361,6 +1361,40 @@ def scenario_appwiz(s):
     s.shot("progman-rotulo")
 
 
+def scenario_logview(s):
+    """Log Viewer (docs/userland/LOG_VIEWER.md): the system log, its
+    categories, a kernel subsystem picked from them, and Find."""
+    s.run("logview")
+    image = s.shot("logview")
+    # "All lines" starts selected, so its neighbours are what is on white.
+    if find_text(image, (0, 0, 1280, 770), "Problems", TEXT, FIELD)[0] is None:
+        raise Failure("Log Viewer does not list its categories")
+    kernel = find_text(image, (0, 0, 1280, 770), "Kernel", TEXT, FIELD)[0]
+    if kernel is None:
+        raise Failure("Log Viewer has no Kernel category")
+    if find_text(image, (0, 0, 1280, 770), "Message", TEXT, FACE)[0] is None:
+        raise Failure("Log Viewer's list has no header")
+    # The row under Kernel is its first subsystem.
+    s.qmp.move_to(kernel[0] + 20, kernel[1] + 20)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("logview-subsystem")
+    if find_text(image, (0, 0, 1280, 770), "Programs", TEXT, FIELD)[0] is None:
+        raise Failure("Log Viewer shows no programs: the system's lines are everyone's")
+    # The first line of that subsystem: the panel below shows it whole.
+    header = find_text(image, (0, 0, 1280, 770), "Message", TEXT, FACE)[0]
+    if header is None:
+        raise Failure("Log Viewer's list lost its header")
+    s.qmp.move_to(header[0] + 40, header[1] + 22)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.qmp.chord("ctrl", "c")
+    time.sleep(1.0)
+    image = s.shot("logview-copied")
+    if find_text(image, (0, 0, 1280, 770), "Copied line", TEXT, FACE)[0] is None:
+        raise Failure("Ctrl+C did not copy the selected line")
+
+
 def scenario_diskmgmt(s):
     """Disk Management (docs/userland/DISK_MANAGEMENT.md): the volume list,
     the disk map, Properties, then Initialize and New Partition on a blank
@@ -3022,6 +3056,7 @@ def scenario_cursor_settings(s):
 SCENARIOS = {
     "cursor_settings": scenario_cursor_settings,
     "sound": scenario_sound,
+    "logview": scenario_logview,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
     "audio_ports_offline": scenario_audio_ports_offline,

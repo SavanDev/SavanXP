@@ -199,6 +199,15 @@ static inline long sxn_process_snapshot(unsigned long index, struct savanxp_proc
     return sxn_trap(SXN_SYS_PROCESS_SNAPSHOT, index, (unsigned long)out, sizeof(*out));
 }
 
+/* The system log's complete lines, oldest first: up to `capacity` records
+ * from the first one at or after `sequence` that this process may read
+ * (the kernel's, the system's, and its own user's programs'). Returns how
+ * many were written, 0 when there is nothing newer. Pass the last sequence
+ * seen plus one to follow it. docs/kernel/SYSTEM_LOG.md. */
+static inline long sxn_log_read(uint64_t sequence, struct sxn_log_record* out, unsigned long capacity) {
+    return sxn_trap4(SXN_SYS_LOG_READ, (unsigned long)sequence, (unsigned long)out, capacity, sizeof(*out));
+}
+
 /* The machine and its live counters (free memory, cpu_ticks_total, cores). */
 static inline long sxn_system_info(struct savanxp_system_info* out) {
     return sxn_trap(SXN_SYS_SYSTEM_INFO, (unsigned long)out, sizeof(*out), 0);

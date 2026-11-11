@@ -1,0 +1,10 @@
+# SXE resources of Log Viewer. See docs/userland/SXE_FORMAT.md; as a SUN
+# program it also gets them compiled in (logview.sunres.h).
+name=Log Viewer
+description=The system log, by subsystem and by program
+version=system
+vendor=SavanXP
+subsystem=native
+accent=5f4f2f
+icon=app-logview
+category=System

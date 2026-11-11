@@ -66,6 +66,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "diskmgmt")) {
         return "DISKMGMT SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "logview")) {
+        return "LOGVIEW SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "mines")) {
         return "MINES SMOKE";
     }
@@ -134,6 +137,7 @@ static int run_automation_spec(const char* spec) {
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* taskmgr_selftest_argv[] = {"/system/taskmgr.sxe", "--selftest", 0};
     const char* diskmgmt_selftest_argv[] = {"/system/diskmgmt.sxe", "--selftest", 0};
+    const char* logview_selftest_argv[] = {"/system/logview.sxe", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
@@ -216,6 +220,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "diskmgmt-selftest") == 0 || strcmp(spec, "diskmgmt") == 0) {
             path = "/system/diskmgmt.sxe";
             argv = diskmgmt_selftest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "logview-selftest") == 0 || strcmp(spec, "logview") == 0) {
+            path = "/system/logview.sxe";
+            argv = logview_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {
             path = "/bin/mines";

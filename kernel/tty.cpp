@@ -5,6 +5,7 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/input.hpp"
+#include "kernel/klog.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
@@ -65,6 +66,8 @@ void handle_input_char(char character) {
     }
 
     g_main_tty.pending_line[g_main_tty.pending_length++] = character;
+    // The echo of what is typed is input, not a message for the log.
+    klog::ScopedMute mute;
     console::write_char(character);
 }
 
@@ -75,11 +78,15 @@ void handle_backspace() {
 
     --g_main_tty.pending_length;
     g_main_tty.pending_line[g_main_tty.pending_length] = '\0';
+    klog::ScopedMute mute;
     console::write_char('\b');
 }
 
 void submit_line() {
-    console::write_char('\n');
+    {
+        klog::ScopedMute mute;
+        console::write_char('\n');
+    }
     g_main_tty.pending_line[g_main_tty.pending_length] = '\0';
     g_main_tty.line_ready = true;
     process::notify_tty_line_ready();

@@ -2153,6 +2153,74 @@ static void test_native_tcp(unsigned port) {
     check(sxn_close(socket) == 0);
 }
 
+/* LOG_READ: walks the whole system log this process may read. Finds the
+ * record whose text contains `marker`, checks the sequences only grow and
+ * says whether a kernel line was seen. */
+static int text_contains(const char* text, const char* marker) {
+    unsigned long index;
+    unsigned long length = 0;
+    while (marker[length] != '\0') length += 1;
+    for (; *text != '\0'; ++text) {
+        for (index = 0; index < length && text[index] == marker[index]; ++index) {
+        }
+        if (index == length) return 1;
+    }
+    return 0;
+}
+
+static struct sxn_log_record g_log_records[64];
+
+static int log_scan(const char* marker, struct sxn_log_record* found, int* saw_kernel, int* ordered) {
+    uint64_t next = 1;
+    uint64_t previous = 0;
+    long count;
+    long index;
+    int hit = 0;
+
+    *saw_kernel = 0;
+    *ordered = 1;
+    while ((count = sxn_log_read(next, g_log_records, 64)) > 0) {
+        for (index = 0; index < count; ++index) {
+            const struct sxn_log_record* record = &g_log_records[index];
+            if (record->sequence <= previous) *ordered = 0;
+            previous = record->sequence;
+            if (record->pid == 0u && streq(record->source, "kernel")) *saw_kernel = 1;
+            if (text_contains(record->text, marker)) {
+                *found = *record;
+                hit = 1;
+            }
+        }
+        next = g_log_records[count - 1].sequence + 1u;
+    }
+    return count == 0 && hit;
+}
+
+/* As user 1001: its own line and the system's are readable. */
+static void log_user_child(void) {
+    struct sxn_native_info self;
+    struct sxn_log_record found;
+    int saw_kernel;
+    int ordered;
+
+    if (sxn_info(&self) != 0) sxn_exit(1);
+    if (sxn_log("nativetest: log-user own line") != 0) sxn_exit(2);
+    if (!log_scan("log-user own line", &found, &saw_kernel, &ordered)) sxn_exit(3);
+    if (found.pid != self.pid || !saw_kernel || !ordered) sxn_exit(4);
+    if (!log_scan("log-read system marker", &found, &saw_kernel, &ordered)) sxn_exit(5);
+    sxn_exit(0);
+}
+
+/* As user 1002: user 1001's line is not its to read. */
+static void log_other_child(void) {
+    struct sxn_log_record found;
+    int saw_kernel;
+    int ordered;
+
+    if (!log_scan("log-read system marker", &found, &saw_kernel, &ordered) || !saw_kernel) sxn_exit(1);
+    if (log_scan("log-user own line", &found, &saw_kernel, &ordered)) sxn_exit(2);
+    sxn_exit(0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -2186,6 +2254,12 @@ int main(int argc, char** argv) {
         if (sxn_write_file("/users/native-file-private.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(4);
         if (sxn_write_file("/system/native-file-test.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(5);
         sxn_exit(0);
+    }
+    if (argc > 1 && streq(argv[1], "log-user")) {
+        log_user_child();
+    }
+    if (argc > 1 && streq(argv[1], "log-other")) {
+        log_other_child();
     }
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
@@ -2628,6 +2702,44 @@ int main(int argc, char** argv) {
         check(system.cpu_online >= 1u && system.memory_free_bytes > 0u && system.cpu_ticks_total > 0u &&
             system.process_count >= 1u);
         check(sxn_log("nativetest: process snapshot and system info done") == 0);
+    }
+
+    /* LOG_READ: the system log Log Viewer shows. A line this process logs
+     * comes back under its pid and name, after the kernel's; the sequences
+     * only grow; reading past the end is 0. A user sees the kernel's lines,
+     * the system's and its own, never another user's. */
+    {
+        struct sxn_log_record found;
+        struct sxn_identity user = {1001u, 1001u, 100u, 0u};
+        struct sxn_spawn_request request;
+        char* args[] = {"/bin/nativetest.sxe", "log-user"};
+        int saw_kernel = 0;
+        int ordered = 0;
+        int status = -1;
+        long child;
+
+        check(sxn_log("nativetest: log-read system marker") == 0);
+        check(log_scan("log-read system marker", &found, &saw_kernel, &ordered));
+        check(found.pid == info.pid && streq(found.source, "nativetest.sxe") && saw_kernel && ordered);
+        check(found.flags == 0u && found.time_ns > 0u);
+        check(sxn_log_read(found.sequence + 1000000u, g_log_records, 64) == 0);
+        check(sxn_log_read(1, g_log_records, 0) == -SAVANXP_EINVAL);
+        check(sxn_trap4(SXN_SYS_LOG_READ, 1, (unsigned long)g_log_records, 1, SXN_LOG_RECORD_V1_SIZE - 1u) ==
+            -SAVANXP_EINVAL);
+        check(sxn_log_read(1, (struct sxn_log_record*)1, 1) == -SAVANXP_EINVAL);
+        sxn_spawn_request_init(&request, args[0], args, 2);
+        child = sxn_spawn_ex_as(&request, &user);
+        check(child > 0);
+        if (child > 0) check(sxn_waitpid(child, &status) == child && status == 0);
+        args[1] = "log-other";
+        user.uid = user.euid = 1002u;
+        status = -1;
+        sxn_spawn_request_init(&request, args[0], args, 2);
+        child = sxn_spawn_ex_as(&request, &user);
+        check(child > 0);
+        if (child > 0) check(sxn_waitpid(child, &status) == child && status == 0);
+        check(sxn_log_read(found.sequence, g_log_records, 1) == 1 && g_log_records[0].sequence == found.sequence);
+        check(sxn_log("nativetest: log read done") == 0);
     }
 
     /* STORAGE_SNAPSHOT (slice 28): the devices Disk Management lists. The

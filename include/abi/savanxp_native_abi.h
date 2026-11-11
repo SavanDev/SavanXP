@@ -332,7 +332,43 @@ enum sxn_syscall_number {
      * infinite). Returns the first ready index or -ETIMEDOUT. Events use
      * interests=0 and are consumed just as by WAIT_MANY. */
     SXN_SYS_WAIT_IO = 0x103b,
+    /* rdi = first sequence wanted, rsi = struct sxn_log_record[] (written),
+     * rdx = how many records fit, r10 = sizeof(struct sxn_log_record).
+     * Copies the system log's complete lines, oldest first, starting at the
+     * first retained record whose sequence is >= rdi; an overwritten sequence
+     * starts at the oldest record. The kernel's and the system's lines are
+     * open to everyone, another user's programs' lines are skipped, so a gap
+     * in the sequences is not necessarily a loss. Writes at most
+     * r10 bytes per record. Returns the count (0 = nothing newer), or -EINVAL
+     * for a count of 0 or a size below SXN_LOG_RECORD_V1_SIZE.
+     * docs/kernel/SYSTEM_LOG.md. */
+    SXN_SYS_LOG_READ = 0x103c,
 };
+
+/* SXN_SYS_LOG_READ. One line of the system log as it left for the serial
+ * port, without the line break. Grows at the end only. */
+#define SXN_LOG_TEXT_MAX 200u
+#define SXN_LOG_SOURCE_MAX 32u
+
+enum sxn_log_flags {
+    /* The text continues the previous record of the same source: the line
+     * was longer than SXN_LOG_TEXT_MAX - 1 characters. */
+    SXN_LOG_CONTINUED = 1u << 0,
+    /* The line was committed without its line break: its writer stopped
+     * mid-line and the slot was needed by another writer. */
+    SXN_LOG_UNTERMINATED = 1u << 1,
+};
+
+struct sxn_log_record {
+    uint64_t sequence;  /* 1, 2, 3...; never reused while the system runs */
+    uint64_t time_ns;   /* monotonic clock at the line's first character; 0 before it is calibrated */
+    uint32_t pid;       /* 0 = the kernel */
+    uint32_t flags;     /* enum sxn_log_flags */
+    char source[SXN_LOG_SOURCE_MAX]; /* "kernel", or the program's name when it wrote */
+    char text[SXN_LOG_TEXT_MAX];     /* NUL-terminated */
+};
+
+#define SXN_LOG_RECORD_V1_SIZE 256u
 
 #define SXN_WRITE_FILE_MAX 4096u
 

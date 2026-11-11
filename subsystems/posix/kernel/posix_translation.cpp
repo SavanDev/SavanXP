@@ -12,6 +12,7 @@
 #include "kernel/elf.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
+#include "kernel/klog.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
@@ -917,6 +918,9 @@ int write_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_
         case process::HandleKind::tty: {
             char scratch[detail::kPipeChunkSize] = {};
             size_t written = 0;
+            // What a program prints on the text console is its own in the
+            // system log, not the kernel's.
+            klog::ScopedSource source(proc.pid, proc.credentials.uid, proc.name);
             while (written < count) {
                 const size_t step = (count - written) < sizeof(scratch) ? (count - written) : sizeof(scratch);
                 if (!read_from_process_memory(proc, scratch, user_buffer + written, step)) {

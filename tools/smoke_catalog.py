@@ -196,6 +196,12 @@ SCENARIOS: dict[str, Scenario] = {
         "TASKMGR SMOKE FAIL",
         "Task Manager process and CPU self-test",
     ),
+    "logview-smoke": _qemu_scenario(
+        "logview-selftest",
+        "LOGVIEW SMOKE PASS",
+        "LOGVIEW SMOKE FAIL",
+        "Log Viewer: reads the system log and files it by subsystem and program",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

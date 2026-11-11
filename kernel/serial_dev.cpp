@@ -5,6 +5,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
+#include "kernel/klog.hpp"
 #include "kernel/process.hpp"
 #include "abi/savanxp_abi.h"
 
@@ -39,6 +40,11 @@ int serial_write(uint64_t user_buffer, size_t count) {
     if (!process::validate_user_range(user_buffer, count, false)) {
         return -static_cast<int>(SX_EINVAL);
     }
+    process::Process* const writer = process::current();
+    if (writer == nullptr) {
+        return -static_cast<int>(SX_EINVAL);
+    }
+    klog::ScopedSource source(writer->pid, writer->credentials.uid, writer->name);
 
     /* De a pedazos y por una copia intermedia: el buffer es de usuario y no se
      * lee directo, y un write grande no puede quedarse con una copia entera en

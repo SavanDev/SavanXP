@@ -97,6 +97,10 @@ target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")
 # Sound control panel: SUN consumer of audiod's native control port.
 savanxp_system_service(NAME sound SOURCES sound.c)
 
+# Log Viewer (docs/userland/LOG_VIEWER.md): the system log on screen, the
+# consumer of SXN_SYS_LOG_READ.
+savanxp_system_service(NAME logview SOURCES logview.c)
+
 # Mouse Properties: native cursor scheme selection and previews.
 savanxp_system_service(NAME mouse SOURCES mouse.c
     SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c system/compositord/shadow.c

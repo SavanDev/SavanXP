@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Log Viewer (`logview`, System menu) shows the system log without a serial cable, by program and by kernel subsystem.**
+  Problems, Find, follow and copy; `logview --print [category]` for the text console. The kernel keeps the last 2048
+  lines for `sxn_log_read` (`SXN_SYS_LOG_READ`). See [LOG_VIEWER.md](docs/userland/LOG_VIEWER.md).
+
 - **`sxfs-cli recover` and `sxfs-cli repair [--dry-run]` fix an interrupted or damaged SxFS image on the host.**
   Repair works on a copy, keeps the original as `<image>.before-repair` and rescues lost files to `/lost+found`.
   See [SXFS_CHECK.md](docs/fs/SXFS_CHECK.md).

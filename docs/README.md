@@ -32,6 +32,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SHARED_LIBRARIES.md`](kernel/SHARED_LIBRARIES.md) — the shared-library subsystem: what
   is built and measured, the decisions and the bugs behind them, and the remaining
   work as ordered phases with the dependencies between them.
+- [`SYSTEM_LOG.md`](kernel/SYSTEM_LOG.md) — the system log: the ring of lines sent
+  to the serial port, who each line is attributed to, and who may read it
+  (`SXN_SYS_LOG_READ`).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`FILESYSTEMS.md`](kernel/FILESYSTEMS.md) — the VFS, the `fs::` registry and
   what a filesystem driver provides: the system disk as the root, `/dev` and
@@ -98,6 +101,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`DISK_MANAGEMENT.md`](userland/DISK_MANAGEMENT.md) — Disk Management: the window,
   why storage is reached through calls and not `/dev/disk<n>`, the SxFS GPT type GUID,
   the rules for the operations that write, and its tests.
+- [`LOG_VIEWER.md`](userland/LOG_VIEWER.md) — Log Viewer: the system log on screen,
+  by subsystem and by program, how it spots problems, and `logview --print`.
 - [`SETUP_AND_UPDATES.md`](userland/SETUP_AND_UPDATES.md) — the planned setup and
   updater: a wizard on the LiveCD over a scriptable engine, the target disk
   layout, the kernel pieces still missing, upgrade from newer media, the update
