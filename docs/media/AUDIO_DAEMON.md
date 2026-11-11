@@ -104,7 +104,7 @@ The record size is the whole design:
   the program by the clock at a lead it chooses.
 - **Playback connections use their slot number**, 1 to 16
   (`SAVANXP_AUDIOD_NATIVE_FIRST_PORT`), below every port UDP hands out, so the
-  census, `SET_VOLUME` and the volume popup treat it like any other stream.
+  census and `SET_VOLUME` treat it like any other stream.
   `DECLARE` names it; `LIST` is answered with REPLY records on the event pipe.
   Closing the pipe ends the connection, and the stream expires with its
   silence like a UDP one.

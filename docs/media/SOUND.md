@@ -2,9 +2,31 @@
 
 `/system/sound.sxe` is a SUN application drawn with SxGUI. Open **Sound settings...**
 in the speaker popup, or start `sound.sxe` from the Command Prompt or the
-System program group. The popup keeps its compact size and shows up to three
-application rows (including its overflow row); the panel lists every stream
-that `audiod` currently mixes.
+System program group. The panel lists every stream that `audiod` currently
+mixes; the popup shows up to three (see below).
+
+## Volume popup
+
+The speaker in the taskbar tray opens a 232-by-284 popup
+(`subsystems/posix/userland/desktop/desktop_volume.c`) drawn in the desktop's
+classic palette:
+
+- **Volume** title, then **Output device** with the selected playback connector
+  (`Default output (AC'97)`) and the master slider with its percentage. The
+  speaker beside the device toggles master mute and is crossed out while muted.
+  Master volume and mute are kernel ioctls, saved to `audio.cfg` like `volume`.
+- **Applications**: one row per stream with its name, slider and percentage
+  (`Muted` when muted in Sound). More than three streams turn the last row into
+  `+N more in Sound settings`. The wheel adjusts the row under the pointer, or
+  the master elsewhere.
+- **Sound settings...** opens this panel and closes the popup.
+
+The rows come from `audiod`'s native control port (`sxnaudio_control_query`
+and `sxnaudio_control_change`), the same snapshot this panel reads. The legacy
+UDP census must not be used for the tray: it only answers where an IPv4 address
+is configured, so on a physical host without a supported NIC the popup listed
+no applications at all. `smoke volume-popup-offline` boots without a NIC and
+checks the rows, the wheel, mute and the link.
 
 The panel is a fixed-size property sheet modelled on the classic Sounds and
 Audio Devices sheet, with five tabs:

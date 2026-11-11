@@ -553,6 +553,14 @@ SCENARIOS: dict[str, Scenario] = {
         ready_wait=45.0, host_action="visual", visual_scenario="sound", clean_audio_preferences=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "volume-popup-offline": _qemu_scenario(
+        "", "VOLUME POPUP SMOKE PASS", "VOLUME POPUP SMOKE FAIL",
+        "Tray volume popup lists and adjusts native audio streams with no NIC",
+        300.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="volume_popup", clean_audio_preferences=True,
+        no_network=True,
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "sxgui-smoke": _qemu_scenario(
         "",
         "SXGUI SMOKE PASS",

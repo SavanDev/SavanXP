@@ -99,6 +99,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The tray volume popup is redesigned: output device and master slider, one slider per application, and a Sound settings link.**
+  The speaker beside the device toggles mute. See [SOUND.md](docs/media/SOUND.md#volume-popup).
+
 - **Sound is now a classic Sounds and Audio Devices property sheet: Volume, Applications, Audio, Voice and Hardware tabs.**
   OK/Cancel/Apply replace Close; Cancel restores the device levels. See [SOUND.md](docs/media/SOUND.md).
 
@@ -143,6 +146,9 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **The tray volume popup lists playing applications on hosts without a supported network card.**
+  It read the legacy UDP census, which needs a configured IPv4 address; it now uses audiod's native port.
 
 - **The kernel's own ACPI parser bounds every table length and address it reads from firmware.**
   A table with a wrong checksum is still used and logged as `acpi: XXXX has a wrong checksum, using it anyway`.

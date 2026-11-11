@@ -2857,6 +2857,66 @@ def scenario_audio_ports_offline(s):
     s.shot("offline-ports-closed")
 
 
+def scenario_volume_popup(s):
+    """The tray volume popup lists audiod's native streams and adjusts them.
+
+    Run without a NIC by the volume-popup-offline smoke: the legacy UDP census
+    needed a configured IPv4 address, so on a host without a supported NIC the
+    popup listed nothing while Sound, on the native port, listed everything.
+    """
+    s.open_console()
+    s.qmp.type_line("volume 80; volume unmute; start nativetest.sxe audio-source ToneA; start nativetest.sxe audio-source ToneB; exit")
+    s.qmp.tap("ret")
+    time.sleep(5.0)
+    s.qmp.move_to(1208,787)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    time.sleep(2.0)
+    image = s.shot("volume-popup")
+    anchor = find_caption(image,"Applications")
+    if anchor is None:
+        raise Failure("the volume popup does not show its Applications section")
+    # "Applications" is drawn at popup (10,110).
+    x,y = anchor[0]-10,anchor[1]-110
+    box = (x,y,x+232,y+284)
+    expect_text(image,box,"Output device",TEXT,FACE,"popup names the output device")
+    expect_text(image,box,"Default output (AC'97)",(128,128,128),FACE,"popup shows the selected connector")
+    expect_text(image,box,"80%",TEXT,FACE,"master slider shows the kernel volume")
+    expect_text(image,(x,y+130,x+232,y+170),"ToneA",TEXT,FACE,"first application row")
+    expect_text(image,(x,y+170,x+232,y+210),"ToneB",TEXT,FACE,"second application row")
+    expect_text(image,(x,y+250,x+232,y+284),"Sound settings...",(0,0,255),FACE,"popup links to Sound")
+    # The wheel over ToneB's row lowers that stream only.
+    s.qmp.move_to(x+100,y+176)
+    s.qmp.wheel(-2)
+    time.sleep(1.5)
+    image = s.shot("volume-popup-wheel")
+    expect_text(image,(x+180,y+186,x+232,y+206),"90%",TEXT,FACE,"wheel lowers the application under the pointer")
+    expect_text(image,(x+180,y+146,x+232,y+166),"100%",TEXT,FACE,"the other application keeps its level")
+    # The speaker glyph beside the device mutes the master.
+    s.qmp.move_to(x+19,y+49)
+    s.qmp.click()
+    s.qmp.move_to(x+150,y+20)
+    time.sleep(1.0)
+    image = s.shot("volume-popup-muted")
+    expect_pixel(image,x+22,y+46,(192,0,0),"muted speaker is crossed out")
+    s.qmp.move_to(x+19,y+49)
+    s.qmp.click()
+    s.qmp.move_to(x+150,y+20)
+    time.sleep(1.0)
+    s.shot("volume-popup-unmuted")
+    # The link opens Sound and closes the popup.
+    s.qmp.move_to(x+190,y+264)
+    s.qmp.click()
+    s.qmp.move_to(1000,120)
+    for _ in range(15):
+        time.sleep(1.0)
+        image = s.shot("volume-popup-sound")
+        if find_caption(image,"Device volume") is not None:
+            break
+    else:
+        raise Failure("the popup link did not open Sound")
+
+
 def scenario_sound(s):
     """Open Sound from the volume popup and exercise live SUN mixer controls.
 
@@ -2871,10 +2931,10 @@ def scenario_sound(s):
     s.qmp.click()
     time.sleep(2.0)
     popup = s.shot("sound-popup")
-    expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,
+    expect_text(popup,(1044,740,1276,772),"Sound settings...",(0,0,255),FACE,
                 "volume popup offers Sound settings")
     def from_popup():
-        s.qmp.move_to(1200,758)
+        s.qmp.move_to(1190,752)
         s.qmp.click()
     x,y = open_sound_sheet(s,"sound-open",launch=from_popup)
     def settle(name):
@@ -2969,9 +3029,9 @@ def scenario_sound_capture(s):
     time.sleep(3.0)
     s.qmp.move_to(1208,787); s.qmp.click(); time.sleep(1.0)
     popup = s.shot("capture-popup")
-    expect_text(popup,(1132,748,1276,772),"Sound settings...",TEXT,FACE,"popup opens native recording settings")
+    expect_text(popup,(1044,740,1276,772),"Sound settings...",(0,0,255),FACE,"popup opens native recording settings")
     def from_popup():
-        s.qmp.move_to(1200,758); s.qmp.click()
+        s.qmp.move_to(1190,752); s.qmp.click()
     x,y = open_sound_sheet(s,"capture-open",launch=from_popup)
     def settle(name):
         s.qmp.move_to(1000,120)
@@ -3125,6 +3185,7 @@ def scenario_cursor_settings(s):
 SCENARIOS = {
     "cursor_settings": scenario_cursor_settings,
     "sound": scenario_sound,
+    "volume_popup": scenario_volume_popup,
     "logview": scenario_logview,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,

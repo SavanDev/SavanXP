@@ -28,7 +28,7 @@ VIRTIO=0
 SMP=2
 BOOT_WAIT=45
 KEEP_RUNNING=0
-SCENARIOS="desktop alttab clipboard calc mines paint files console appwiz system display effects resolution taskbar startmenu sound kbdlayout contextmenu desktopicons filesmenu filestoolbar taskmgrmenu diskmgmt logview wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
+SCENARIOS="desktop alttab clipboard calc mines paint files console appwiz system display effects resolution taskbar startmenu sound volume_popup kbdlayout contextmenu desktopicons filesmenu filestoolbar taskmgrmenu diskmgmt logview wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
 
 usage() {
     cat <<'EOF'

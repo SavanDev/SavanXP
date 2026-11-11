@@ -1,191 +1,240 @@
 #include "desktop.h"
-#include "savanxp/audio_server.h"
+#include "sxn/sxnaudio.h"
 
 #include <stdio.h>
 
 /*
  * The volume popup: a popup of the desktop, anchored in the tray corner above
- * the speaker button. No widgets: it uses sxgui's palette, not the toolkit.
- * Sliders apply live. Sound settings opens the SUN Sound control panel;
- * the speaker button or a press outside also closes the popup.
+ * the speaker button. No widgets: it paints with sxgui's palette and handles
+ * its own pointer. Sliders apply live; the speaker glyph beside the output
+ * device toggles mute; "Sound settings..." opens the SUN Sound sheet. The
+ * speaker button or a press outside closes it.
  *
- * At the top, as always, against /dev/audio0: master slider, mute and
- * persistence in /audio.cfg. Below, one row per application playing, with
- * its own slider, from the daemon's census (asynchronous query every second;
- * without the daemon, the text and nothing else). The per-application level
- * lasts for the session: it is not persisted.
+ *   Volume                                   [speaker]
+ *   ---------------------------------------------------
+ *   [speaker] Output device
+ *             Default output (AC'97)
+ *   [====================O-------]  75%
+ *   ---------------------------------------------------
+ *   Applications
+ *   [app] Doom
+ *   [=========O------------------]  55%
+ *   ...
+ *   ---------------------------------------------------
+ *                                    Sound settings...
+ *
+ * Master volume and mute are kernel ioctls on /dev/audio0, persisted in the
+ * profile's audio.cfg as `volume` does. The application rows come from
+ * audiod's native control port, the same snapshot the Sound sheet reads: it
+ * needs no network stack, unlike the legacy UDP census, which only answers
+ * where an IPv4 address is configured -- not on a host without a supported
+ * NIC. Application levels are saved by audiod itself.
  */
 
-#define VOLUMEPOPUP_MARGIN 2
-#define VOLUMEPOPUP_WIDTH 144
-#define VOLUMEPOPUP_HEIGHT 140
+#define VP_WIDTH 232
+#define VP_PAD 10
+#define VP_TEXT_X 34
+#define VP_PERCENT_WIDTH 40
 
-#define VOLUMEPOPUP_MUTE_ROW_HEIGHT 20
-#define VOLUMEPOPUP_MUTE_BOX 12
-#define VOLUMEPOPUP_TROUGH_X 8
-#define VOLUMEPOPUP_TROUGH_Y 32
-#define VOLUMEPOPUP_TROUGH_WIDTH 128
-#define VOLUMEPOPUP_TROUGH_HEIGHT 12
-#define VOLUMEPOPUP_THUMB_WIDTH 10
-#define VOLUMEPOPUP_THUMB_HEIGHT 16
-#define VOLUMEPOPUP_WHEEL_STEP 5
+#define VP_TITLE_Y 8
+#define VP_RULE1_Y 32
+#define VP_DEVICE_Y 40
+#define VP_MASTER_Y 76
+#define VP_RULE2_Y 102
+#define VP_APPS_TITLE_Y 110
+#define VP_APP_Y(row) (130 + (row) * 40)
+#define VP_APP_ROWS 3
+#define VP_RULE3_Y VP_APP_Y(VP_APP_ROWS)
+#define VP_LINK_Y (VP_RULE3_Y + 8)
+#define VP_HEIGHT (VP_LINK_Y + 26)
 
-#define VOLUMEPOPUP_APP_ROWS 3
-#define VOLUMEPOPUP_APP_ROW_Y(index) (46 + (index) * 24)
-#define VOLUMEPOPUP_APP_ROW_HEIGHT 20
-#define VOLUMEPOPUP_APP_NAME_X 6
-#define VOLUMEPOPUP_APP_NAME_WIDTH 52
-#define VOLUMEPOPUP_APP_TROUGH_X 64
-#define VOLUMEPOPUP_APP_TROUGH_WIDTH 72
-#define VOLUMEPOPUP_APP_TROUGH_HEIGHT 10
-#define VOLUMEPOPUP_APP_THUMB_WIDTH 8
-#define VOLUMEPOPUP_APP_THUMB_HEIGHT 14
+/* A slider is a sunken track with a raised thumb across [x, x+width). */
+#define VP_SLIDER_X VP_PAD
+#define VP_SLIDER_WIDTH (VP_WIDTH - VP_PAD * 2 - VP_PERCENT_WIDTH)
+#define VP_SLIDER_HEIGHT 20
+#define VP_TRACK_HEIGHT 4
+#define VP_THUMB_WIDTH 10
+#define VP_THUMB_HEIGHT 18
+#define VP_TRAVEL (VP_SLIDER_WIDTH - VP_THUMB_WIDTH)
 
-#define VOLUMEPOPUP_POLL_MS 1000u
-#define VOLUMEPOPUP_QUERY_TIMEOUT_MS 300u
+#define VP_WHEEL_STEP 5
+#define VP_POLL_MS 500u
+#define VP_QUERY_TIMEOUT_MS 1000u
+#define VP_RETRY_MS 1000u
+
+#define VP_LINK_TEXT "Sound settings..."
+#define VP_LINK_COLOUR SXGUI_RGB(0, 0, 255)
 
 /* The user's, in the profile (savanxp_settings_path), as `volume` keeps it. */
-#define VOLUMEPOPUP_CONFIG_NAME "audio.cfg"
+#define VP_CONFIG_NAME "audio.cfg"
 
-static struct sx_rect popup_mute_rect(void)
+enum
 {
-    return sx_rect_make(
-        VOLUMEPOPUP_MARGIN,
-        VOLUMEPOPUP_MARGIN,
-        VOLUMEPOPUP_WIDTH - (VOLUMEPOPUP_MARGIN * 2),
-        VOLUMEPOPUP_MUTE_ROW_HEIGHT);
-}
-
-static int popup_slider_thumb_x(int volume, int trough_x, int travel);
-static int popup_slider_volume_at(int x, int trough_x, int travel);
-
-static struct sx_rect popup_thumb_rect(int volume)
-{
-    int trough_center_y = VOLUMEPOPUP_TROUGH_Y + VOLUMEPOPUP_TROUGH_HEIGHT / 2;
-    int travel = VOLUMEPOPUP_TROUGH_WIDTH - VOLUMEPOPUP_THUMB_WIDTH;
-
-    return sx_rect_make(
-        popup_slider_thumb_x(volume, VOLUMEPOPUP_TROUGH_X, travel),
-        trough_center_y - VOLUMEPOPUP_THUMB_HEIGHT / 2,
-        VOLUMEPOPUP_THUMB_WIDTH,
-        VOLUMEPOPUP_THUMB_HEIGHT);
-}
-
-static int popup_in_rect(struct sx_rect rect, int x, int y)
-{
-    return x >= rect.x && x < rect.x + rect.width &&
-        y >= rect.y && y < rect.y + rect.height;
-}
-
-/* Una fila por app sonando: nombre a la izquierda, mini-slider a la derecha.
- * Hasta VOLUMEPOPUP_APP_ROWS; si hay mas, la ultima fila dice cuantos. */
-struct popup_app_row {
-    uint16_t port;
-    uint8_t volume;
-    char name[SAVANXP_AUDIOD_NAME_BYTES];
+    VP_DRAG_NONE = -1,
+    VP_DRAG_MASTER = -2,
 };
 
-static struct sx_rect popup_app_rect(int row)
+static int vp_in_rect(struct sx_rect rect, int x, int y)
+{
+    return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+}
+
+static int vp_clamp_volume(int volume)
+{
+    return volume < 0 ? 0 : volume > 100 ? 100 : volume;
+}
+
+/* The whole slider row at `y`, which is also its hit area. */
+static struct sx_rect vp_slider_rect(int y)
+{
+    return sx_rect_make(VP_SLIDER_X, y, VP_SLIDER_WIDTH, VP_SLIDER_HEIGHT);
+}
+
+static struct sx_rect vp_thumb_rect(int y, int volume)
 {
     return sx_rect_make(
-        VOLUMEPOPUP_MARGIN,
-        VOLUMEPOPUP_APP_ROW_Y(row),
-        VOLUMEPOPUP_WIDTH - (VOLUMEPOPUP_MARGIN * 2),
-        VOLUMEPOPUP_APP_ROW_HEIGHT);
+        VP_SLIDER_X + vp_clamp_volume(volume) * VP_TRAVEL / 100,
+        y + (VP_SLIDER_HEIGHT - VP_THUMB_HEIGHT) / 2,
+        VP_THUMB_WIDTH,
+        VP_THUMB_HEIGHT);
 }
 
-static struct sx_rect popup_app_trough_rect(int row)
+/* The volume for a thumb whose left edge is at x. */
+static int vp_volume_at(int x)
 {
-    int center_y = VOLUMEPOPUP_APP_ROW_Y(row) + VOLUMEPOPUP_APP_ROW_HEIGHT / 2;
-
-    return sx_rect_make(
-        VOLUMEPOPUP_APP_TROUGH_X,
-        center_y - VOLUMEPOPUP_APP_TROUGH_HEIGHT / 2,
-        VOLUMEPOPUP_APP_TROUGH_WIDTH,
-        VOLUMEPOPUP_APP_TROUGH_HEIGHT);
+    return vp_clamp_volume(((x - VP_SLIDER_X) * 100 + VP_TRAVEL / 2) / VP_TRAVEL);
 }
 
-static int popup_slider_thumb_x(int volume, int trough_x, int travel)
+static struct sx_rect vp_mute_rect(void)
 {
-    if (volume < 0)
-    {
-        volume = 0;
-    }
-    if (volume > 100)
-    {
-        volume = 100;
-    }
-    return trough_x + (volume * travel) / 100;
+    return sx_rect_make(VP_PAD - 2, VP_DEVICE_Y - 2, 22, 22);
 }
 
-static int popup_slider_volume_at(int x, int trough_x, int travel)
+static struct sx_rect vp_link_rect(void)
 {
-    int volume = ((x - trough_x) * 100) / travel;
-
-    if (volume < 0)
-    {
-        volume = 0;
-    }
-    if (volume > 100)
-    {
-        volume = 100;
-    }
-    return volume;
+    int width = gfx_text_width(VP_LINK_TEXT);
+    return sx_rect_make(VP_WIDTH - VP_PAD - width - 2, VP_LINK_Y - 2, width + 4, gfx_text_height() + 4);
 }
 
-static struct sx_rect popup_app_thumb_rect(int row, int volume)
+static int vp_app_slider_y(int row)
 {
-    struct sx_rect trough = popup_app_trough_rect(row);
-    int travel = VOLUMEPOPUP_APP_TROUGH_WIDTH - VOLUMEPOPUP_APP_THUMB_WIDTH;
-    int center_y = trough.y + trough.height / 2;
-
-    return sx_rect_make(
-        popup_slider_thumb_x(volume, trough.x, travel),
-        center_y - VOLUMEPOPUP_APP_THUMB_HEIGHT / 2,
-        VOLUMEPOPUP_APP_THUMB_WIDTH,
-        VOLUMEPOPUP_APP_THUMB_HEIGHT);
+    return VP_APP_Y(row) + 16;
 }
 
-/* Copia con NUL garantizado: el demonio ya la manda asi, pero el cable
- * no se audita dos veces. */
-static void popup_copy_name(char* out, const char* in)
-{
-    size_t index = 0;
+/* ---- state ------------------------------------------------------------------ */
 
-    memset(out, 0, SAVANXP_AUDIOD_NAME_BYTES);
-    if (in == 0)
-    {
-        return;
-    }
-    while (index + 1u < SAVANXP_AUDIOD_NAME_BYTES && in[index] != '\0')
-    {
-        out[index] = in[index];
-        ++index;
-    }
+static long g_audio_fd = -1;
+static int g_volume = 100;
+static int g_muted = 0;
+static char g_device[96];
+
+static struct sxnaudio_control g_control = {-1, -1};
+static struct savanxp_audiod_snapshot g_snapshot;
+static int g_census_valid = 0;
+static uint32_t g_sequence = 0;
+static uint32_t g_pending = 0;
+static uint64_t g_query_ms = 0;
+static uint64_t g_next_query_ms = 0;
+
+static int g_drag = VP_DRAG_NONE;
+static uint32_t g_drag_id = 0;
+static int g_drag_offset = 0;
+static int g_mute_armed = 0;
+static int g_hot = 0; /* 1 mute glyph, 2 link */
+static uint32_t g_last_buttons = 0;
+
+/* Rows shown: the census up to VP_APP_ROWS, the last one becoming "+N more"
+ * when it does not fit. */
+static int vp_rows_shown(void)
+{
+    int count = g_census_valid ? (int)g_snapshot.count : 0;
+    return count > VP_APP_ROWS ? VP_APP_ROWS - 1 : count;
 }
 
-static int app_total_row_is_overflow(int row, int app_total)
+static struct savanxp_audiod_stream_state *vp_stream(uint32_t id)
 {
-    return app_total > VOLUMEPOPUP_APP_ROWS && row + 1 == VOLUMEPOPUP_APP_ROWS;
-}
-
-static int popup_find_row(const struct popup_app_row* apps, int count, uint16_t port)
-{
-    int row;
-
-    for (row = 0; row < count && row < VOLUMEPOPUP_APP_ROWS; ++row)
+    uint32_t index;
+    for (index = 0; index < g_snapshot.count; ++index)
     {
-        if (apps[row].port == port)
+        if (g_snapshot.streams[index].id == id)
         {
-            return row;
+            return &g_snapshot.streams[index];
         }
     }
-    return -1;
+    return 0;
 }
 
-/* Recorta el nombre al ancho dado, sin puntos suspensivos: el painter no
- * recorta y el texto se derramaria sobre el slider. */
-static void popup_fit_name(char* out, size_t capacity, const char* name, int max_width)
+/* ---- painting --------------------------------------------------------------- */
+
+static void vp_rule(struct sx_painter *painter, int y)
+{
+    sx_painter_hline(painter, VP_PAD, y, VP_WIDTH - VP_PAD * 2, SXGUI_COLOR_SHADOW);
+    sx_painter_hline(painter, VP_PAD, y + 1, VP_WIDTH - VP_PAD * 2, SXGUI_COLOR_LIGHT);
+}
+
+/* 16x16 speaker; crossed out in red when muted. */
+static void vp_speaker(struct sx_painter *painter, int x, int y, int muted)
+{
+    const struct sx_point cone[] = {{x + 5, y + 5}, {x + 10, y + 1}, {x + 10, y + 14}, {x + 5, y + 10}};
+    sx_painter_fill_rect(painter, sx_rect_make(x + 1, y + 5, 5, 6), SXGUI_COLOR_BEVEL);
+    sx_painter_fill_polygon(painter, cone, 4, SXGUI_COLOR_BEVEL);
+    sx_painter_draw_polyline(painter, cone, 4, 1, SXGUI_COLOR_DARK);
+    sx_painter_draw_frame(painter, sx_rect_make(x + 1, y + 5, 5, 6), SXGUI_COLOR_DARK);
+    if (muted)
+    {
+        const uint32_t red = SXGUI_RGB(192, 0, 0);
+        sx_painter_draw_line(painter, x + 11, y + 5, x + 15, y + 10, red);
+        sx_painter_draw_line(painter, x + 12, y + 5, x + 16, y + 10, red);
+        sx_painter_draw_line(painter, x + 15, y + 5, x + 11, y + 10, red);
+        sx_painter_draw_line(painter, x + 16, y + 5, x + 12, y + 10, red);
+        return;
+    }
+    if (sx_painter_push_clip(painter, sx_rect_make(x + 11, y, 6, 16)))
+    {
+        sx_painter_draw_ellipse(painter, sx_rect_make(x + 6, y + 4, 8, 8), SXGUI_COLOR_SELECT);
+        sx_painter_draw_ellipse(painter, sx_rect_make(x + 4, y + 1, 12, 14), SXGUI_COLOR_SELECT);
+        sx_painter_pop_clip(painter);
+    }
+}
+
+/* 16x14 application window: what a stream is, without a per-role icon set. */
+static void vp_app_glyph(struct sx_painter *painter, int x, int y)
+{
+    struct sx_rect window = sx_rect_make(x + 1, y + 1, 14, 12);
+    sx_painter_fill_rect(painter, window, SXGUI_COLOR_FIELD);
+    sx_painter_draw_frame(painter, window, SXGUI_COLOR_DARK);
+    sx_painter_fill_rect(painter, sx_rect_make(x + 2, y + 2, 12, 3), SXGUI_COLOR_SELECT);
+}
+
+static void vp_slider(struct sx_painter *painter, int y, int volume, int pressed, int enabled)
+{
+    struct sx_rect track = sx_rect_make(
+        VP_SLIDER_X, y + (VP_SLIDER_HEIGHT - VP_TRACK_HEIGHT) / 2, VP_SLIDER_WIDTH, VP_TRACK_HEIGHT);
+    struct sx_rect thumb = vp_thumb_rect(y, volume);
+    char percent[8];
+
+    sx_painter_fill_rect(painter, track, SXGUI_COLOR_FIELD);
+    desktop_bevel(painter, track, 1);
+    sx_painter_fill_rect(painter, thumb, SXGUI_COLOR_FACE);
+    desktop_bevel(painter, thumb, pressed);
+    (void)snprintf(percent, sizeof(percent), "%d%%", vp_clamp_volume(volume));
+    if (enabled)
+    {
+        sx_painter_draw_text(
+            painter, VP_WIDTH - VP_PAD - gfx_text_width(percent),
+            y + (VP_SLIDER_HEIGHT - gfx_text_height()) / 2, percent, SXGUI_COLOR_TEXT);
+    }
+    else
+    {
+        sx_painter_draw_text(
+            painter, VP_WIDTH - VP_PAD - gfx_text_width(percent),
+            y + (VP_SLIDER_HEIGHT - gfx_text_height()) / 2, percent, SXGUI_COLOR_DISABLED_TEXT);
+    }
+}
+
+/* Cuts the text to max_width without an ellipsis: the painter does not clip,
+ * and a long name would spill over the percentage. */
+static void vp_fit(char *out, size_t capacity, const char *text, int max_width)
 {
     size_t length = 0;
 
@@ -193,9 +242,10 @@ static void popup_fit_name(char* out, size_t capacity, const char* name, int max
     {
         return;
     }
-    while (name[length] != '\0' && length + 1u < capacity)
+    out[0] = '\0';
+    while (text[length] != '\0' && length + 1u < capacity)
     {
-        out[length] = name[length];
+        out[length] = text[length];
         out[length + 1u] = '\0';
         if (gfx_text_width(out) > max_width && length > 0)
         {
@@ -206,139 +256,94 @@ static void popup_fit_name(char* out, size_t capacity, const char* name, int max
     }
 }
 
-static void popup_paint(
-    struct savanxp_gfx_context *gfx,
-    int volume,
-    int muted,
-    int mute_hot,
-    int master_dragging,
-    const struct popup_app_row *apps,
-    int app_total,
-    int drag_row,
-    int hot_row)
+static void volume_paint(struct savanxp_gfx_context *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
     struct sx_rect frame;
-    struct sx_rect mute_rect = popup_mute_rect();
-    struct sx_rect trough = sx_rect_make(
-        VOLUMEPOPUP_TROUGH_X,
-        VOLUMEPOPUP_TROUGH_Y,
-        VOLUMEPOPUP_TROUGH_WIDTH,
-        VOLUMEPOPUP_TROUGH_HEIGHT);
-    struct sx_rect thumb = popup_thumb_rect(volume);
-    struct sx_rect box = sx_rect_make(
-        mute_rect.x + 4,
-        mute_rect.y + (mute_rect.height - VOLUMEPOPUP_MUTE_BOX) / 2,
-        VOLUMEPOPUP_MUTE_BOX,
-        VOLUMEPOPUP_MUTE_BOX);
-    char percent[8];
-    int text_y = mute_rect.y + (mute_rect.height - gfx_text_height()) / 2;
+    struct sx_rect link = vp_link_rect();
+    char text[64];
+    int font;
     int row;
+    int shown = vp_rows_shown();
 
     sx_bitmap_wrap(&bitmap, gfx->pixels, &gfx->info, SX_PIXEL_FORMAT_BGRX8888);
     sx_painter_init(&painter, &bitmap);
-
     frame = sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height);
     sx_painter_fill_rect(&painter, frame, SXGUI_COLOR_FACE);
     desktop_bevel(&painter, frame, 0);
 
-    /* Keep the panel shortcut visible even when no application is playing. */
-    {
-        struct sx_rect settings = sx_rect_make(4,116,VOLUMEPOPUP_WIDTH-8,20);
-        sx_painter_fill_rect(&painter,settings,SXGUI_COLOR_FACE);
-        desktop_bevel(&painter,settings,0);
-        sx_painter_draw_text(&painter,settings.x+6,settings.y+3,"Sound settings...",SXGUI_COLOR_TEXT);
-    }
-    /* Fila de mute: casilla mas etiqueta, y el nivel a la derecha. */
-    sx_painter_fill_rect(
-        &painter, mute_rect, mute_hot ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE);
-    sx_painter_fill_rect(&painter, box, SXGUI_COLOR_FIELD);
-    desktop_bevel(&painter, box, 1);
-    if (muted)
-    {
-        /* Sin primitiva de linea, una marca es un bloque macizo. */
-        struct sx_rect mark = sx_rect_make(box.x + 3, box.y + 3, box.width - 6, box.height - 6);
-        sx_painter_fill_rect(&painter, mark, SXGUI_COLOR_TEXT);
-    }
-    sx_painter_draw_text(
-        &painter,
-        box.x + box.width + 4,
-        text_y,
-        "Mute",
-        mute_hot ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
-    (void)snprintf(percent, sizeof(percent), "%d%%", volume);
-    sx_painter_draw_text(
-        &painter,
-        mute_rect.x + mute_rect.width - 4 - gfx_text_width(percent),
-        text_y,
-        percent,
-        mute_hot ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
+    font = sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
+    sx_painter_draw_text(&painter, VP_PAD, VP_TITLE_Y, "Volume", SXGUI_COLOR_TEXT);
+    (void)sx_painter_set_font(&painter, font);
+    vp_speaker(&painter, VP_WIDTH - VP_PAD - 16, VP_TITLE_Y + 2, g_muted);
+    vp_rule(&painter, VP_RULE1_Y);
 
-    /* Slider: carril hundido, cursor levantado (hundido mientras se
-     * arrastra, como los botones de la taskbar). */
-    sx_painter_fill_rect(&painter, trough, SXGUI_COLOR_FACE);
-    desktop_bevel(&painter, trough, 1);
-    sx_painter_fill_rect(&painter, thumb, SXGUI_COLOR_FACE);
-    desktop_bevel(&painter, thumb, master_dragging);
-
-    /* Una fila por app sonando: nombre y mini-slider con su nivel. Sin
-     * streams, una linea gris que lo dice en vez de filas vacias. */
-    if (app_total == 0)
+    /* Output device: the glyph is the mute toggle, raised while hovered. */
+    if (g_hot == 1)
     {
-        int empty_y = VOLUMEPOPUP_APP_ROW_Y(0) +
-            (VOLUMEPOPUP_APP_ROW_HEIGHT - gfx_text_height()) / 2;
+        desktop_bevel(&painter, vp_mute_rect(), g_mute_armed);
+    }
+    vp_speaker(&painter, VP_PAD + 1, VP_DEVICE_Y + 1, g_muted);
+    sx_painter_draw_text(&painter, VP_TEXT_X, VP_DEVICE_Y, "Output device", SXGUI_COLOR_TEXT);
+    vp_fit(text, sizeof(text), g_device, VP_WIDTH - VP_TEXT_X - VP_PAD);
+    sx_painter_draw_text(&painter, VP_TEXT_X, VP_DEVICE_Y + 16, text, SXGUI_COLOR_SHADOW);
+    vp_slider(&painter, VP_MASTER_Y, g_volume, g_drag == VP_DRAG_MASTER, !g_muted);
+    vp_rule(&painter, VP_RULE2_Y);
+
+    sx_painter_draw_text(&painter, VP_PAD, VP_APPS_TITLE_Y, "Applications", SXGUI_COLOR_TEXT);
+    if (!g_census_valid || g_snapshot.count == 0)
+    {
         sx_painter_draw_text(
-            &painter, VOLUMEPOPUP_MARGIN + 4, empty_y,
-            "(no audio)", SXGUI_COLOR_DISABLED_TEXT);
-        return;
+            &painter, VP_PAD, VP_APP_Y(0) + 4,
+            g_census_valid ? "No application is playing sound." : "Audio service unavailable.",
+            SXGUI_COLOR_DISABLED_TEXT);
     }
-    for (row = 0; row < app_total && row < VOLUMEPOPUP_APP_ROWS; ++row)
+    for (row = 0; row < shown; ++row)
     {
-        struct sx_rect row_rect = popup_app_rect(row);
-        struct sx_rect row_trough = popup_app_trough_rect(row);
-        struct sx_rect row_thumb = popup_app_thumb_rect(row, apps[row].volume);
-        char name[16];
-        int row_text_y = row_rect.y + (row_rect.height - gfx_text_height()) / 2;
-        int hot = row == hot_row;
+        const struct savanxp_audiod_stream_state *stream = &g_snapshot.streams[row];
+        const char *name = stream->name[0] != '\0' ? stream->name : "Unnamed application";
 
-        if (app_total > VOLUMEPOPUP_APP_ROWS && row == VOLUMEPOPUP_APP_ROWS - 1)
+        vp_app_glyph(&painter, VP_PAD, VP_APP_Y(row) - 1);
+        vp_fit(text, sizeof(text), name, VP_SLIDER_WIDTH - (VP_TEXT_X - VP_PAD));
+        sx_painter_draw_text(&painter, VP_TEXT_X, VP_APP_Y(row), text, SXGUI_COLOR_TEXT);
+        if (stream->muted)
         {
-            char more[16];
-            (void)snprintf(more, sizeof(more), "+%d more", app_total - VOLUMEPOPUP_APP_ROWS + 1);
-            sx_painter_draw_text(&painter, row_rect.x + 4, row_text_y, more, SXGUI_COLOR_TEXT);
-            break;
+            sx_painter_draw_text(
+                &painter, VP_WIDTH - VP_PAD - gfx_text_width("Muted"), VP_APP_Y(row), "Muted",
+                SXGUI_COLOR_DISABLED_TEXT);
         }
-        sx_painter_fill_rect(
-            &painter, row_rect, hot ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE);
-        popup_fit_name(name, sizeof(name), apps[row].name[0] != '\0' ? apps[row].name : "(?)",
-                       VOLUMEPOPUP_APP_NAME_WIDTH);
-        sx_painter_draw_text(
-            &painter, row_rect.x + 4, row_text_y, name,
-            hot ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
-        sx_painter_fill_rect(&painter, row_trough, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, row_trough, 1);
-        sx_painter_fill_rect(&painter, row_thumb, SXGUI_COLOR_FACE);
-        desktop_bevel(&painter, row_thumb, row == drag_row);
+        vp_slider(&painter, vp_app_slider_y(row), stream->volume,
+                  g_drag == row && g_drag_id == stream->id, !stream->muted);
     }
+    if (g_census_valid && (int)g_snapshot.count > shown && shown == VP_APP_ROWS - 1)
+    {
+        (void)snprintf(text, sizeof(text), "+%u more in Sound settings",
+                       (unsigned)(g_snapshot.count - (uint32_t)shown));
+        sx_painter_draw_text(&painter, VP_PAD, VP_APP_Y(shown) + 4, text, SXGUI_COLOR_TEXT);
+    }
+    vp_rule(&painter, VP_RULE3_Y);
+
+    sx_painter_draw_text(&painter, link.x + 2, link.y + 2, VP_LINK_TEXT, VP_LINK_COLOUR);
+    sx_painter_hline(&painter, link.x + 2, link.y + 2 + gfx_text_height(), link.width - 4, VP_LINK_COLOUR);
 }
 
-/* Guarda el par que el kernel ya tiene: la fuente de verdad es el ioctl, el
- * fichero solo recuerda para el proximo arranque. Igual que `volume`. */
-static void popup_persist(int volume, int muted)
+/* ---- master volume ------------------------------------------------------------ */
+
+/* Saves the pair the kernel already holds: the ioctl is the source of truth,
+ * the file only remembers it for the next boot. Same as `volume`. */
+static void vp_persist(void)
 {
     char text[16];
     char path[256];
     long config_fd;
 
-    (void)snprintf(text, sizeof(text), "%d %d\n", volume, muted);
-    if (savanxp_settings_path(VOLUMEPOPUP_CONFIG_NAME, 1, path, sizeof(path)) < 0)
+    (void)snprintf(text, sizeof(text), "%d %d\n", g_volume, g_muted);
+    if (savanxp_settings_path(VP_CONFIG_NAME, 1, path, sizeof(path)) < 0)
     {
         return;
     }
-    config_fd = savanxp_open_mode(
-        path,
-        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    config_fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
     if (config_fd < 0)
     {
         return;
@@ -348,38 +353,74 @@ static void popup_persist(int volume, int muted)
     (void)savanxp_sync();
 }
 
-static long g_audio_fd = -1;
-static int g_volume = 100;
-static int g_muted = 0;
-static int g_mute_hot = 0;
-static int g_mute_armed = 0;
-static int g_drag_offset = 0;
-/* -1 idle, -2 the master slider, 0..3 an application row. */
-static int g_drag_row = -1;
-static int g_hot_row = -1;
-static uint16_t g_drag_port = 0;
-static struct popup_app_row g_apps[VOLUMEPOPUP_APP_ROWS];
-static int g_apps_total = 0;
-static long g_census_sock = -1;
-static uint64_t g_last_poll_ms = 0;
-static int g_query_out = 0;
-static uint64_t g_query_ms = 0;
-static struct popup_app_row g_staging[VOLUMEPOPUP_APP_ROWS];
-static int g_staging_total = -1;
-static int g_staging_count = 0;
-static uint32_t g_last_buttons = 0;
-
-static void volume_close(void)
+static uint32_t vp_set_master(int volume)
 {
-    if (g_census_sock >= 0)
+    volume = vp_clamp_volume(volume);
+    if (volume == g_volume)
     {
-        savanxp_close((int)g_census_sock);
-        g_census_sock = -1;
+        return DESKTOP_ACTION_NONE;
     }
-    if (g_audio_fd >= 0)
+    g_volume = volume;
+    (void)audio_set_volume((int)g_audio_fd, g_volume);
+    return DESKTOP_ACTION_TASKBAR_CHANGED | DESKTOP_ACTION_REPAINT;
+}
+
+/* The output device's name: the selected playback connector, as Sound shows
+ * it on its Hardware tab. */
+static void vp_read_device(void)
+{
+    uint32_t index;
+
+    (void)snprintf(g_device, sizeof(g_device), "Default device");
+    for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index)
     {
-        savanxp_close((int)g_audio_fd);
-        g_audio_fd = -1;
+        struct savanxp_audio_endpoint_query query;
+        const struct savanxp_audio_endpoint *endpoint = &query.endpoint;
+
+        memset(&query, 0, sizeof(query));
+        query.index = index;
+        if (savanxp_ioctl((int)g_audio_fd, AUDIO_IOC_GET_ENDPOINT, (unsigned long)(uintptr_t)&query) < 0)
+        {
+            break;
+        }
+        query.endpoint.name[sizeof(query.endpoint.name) - 1] = '\0';
+        query.endpoint.device_name[sizeof(query.endpoint.device_name) - 1] = '\0';
+        if ((endpoint->flags & SAVANXP_AUDIO_PLAYBACK) && (endpoint->flags & SAVANXP_AUDIO_SELECTED))
+        {
+            (void)snprintf(g_device, sizeof(g_device), "%s (%s)", endpoint->name, endpoint->device_name);
+            return;
+        }
+    }
+}
+
+/* ---- application census -------------------------------------------------------- */
+
+static void vp_control_drop(uint64_t now_ms)
+{
+    sxnaudio_control_close(&g_control);
+    g_pending = 0;
+    g_census_valid = 0;
+    g_next_query_ms = now_ms + VP_RETRY_MS;
+    if (g_drag >= 0)
+    {
+        g_drag = VP_DRAG_NONE;
+    }
+}
+
+static void vp_app_set(struct savanxp_audiod_stream_state *stream, int volume)
+{
+    volume = vp_clamp_volume(volume);
+    if (g_control.request < 0 || volume == (int)stream->volume)
+    {
+        return;
+    }
+    if (sxnaudio_control_change(&g_control, stream, SAVANXP_AUDIOD_STREAM_VOLUME, (uint8_t)volume) == 0)
+    {
+        stream->volume = (uint8_t)volume;
+        /* A reply to an earlier query may predate this change: discard it so
+         * the slider does not jump back, and ask again after the command. */
+        g_pending = 0;
+        g_next_query_ms = 0;
     }
 }
 
@@ -387,19 +428,15 @@ static int volume_open(void)
 {
     long status;
 
-    g_mute_hot = 0;
+    g_drag = VP_DRAG_NONE;
+    g_drag_id = 0;
     g_mute_armed = 0;
-    g_drag_offset = 0;
-    g_drag_row = -1;
-    g_hot_row = -1;
-    g_drag_port = 0;
-    g_apps_total = 0;
-    g_last_poll_ms = 0;
-    g_query_out = 0;
-    g_query_ms = 0;
-    g_staging_total = -1;
-    g_staging_count = 0;
+    g_hot = 0;
     g_last_buttons = 0;
+    g_census_valid = 0;
+    g_pending = 0;
+    g_next_query_ms = 0;
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
 
     /* Only for the ioctls: nothing is ever read or written through this fd. */
     g_audio_fd = (long)audio_open();
@@ -412,7 +449,8 @@ static int volume_open(void)
     if (status < 0 || status > 100)
     {
         puts_fd(2, "desktop: AUDIO_IOC_GET_VOLUME failed\n");
-        volume_close();
+        savanxp_close((int)g_audio_fd);
+        g_audio_fd = -1;
         return -1;
     }
     g_volume = (int)status;
@@ -420,322 +458,196 @@ static int volume_open(void)
     if (status != 0 && status != 1)
     {
         puts_fd(2, "desktop: AUDIO_IOC_GET_MUTED failed\n");
-        volume_close();
+        savanxp_close((int)g_audio_fd);
+        g_audio_fd = -1;
         return -1;
     }
     g_muted = (int)status;
+    vp_read_device();
 
-    /* The census socket: without it the popup still opens (master and mute
-     * are kernel ioctls), only without rows. Non-blocking, so the 16 ms loop
-     * never waits for replies. */
+    /* Without audiod the popup still opens: master and mute are kernel
+     * ioctls. The tick retries the connection. */
+    if (sxnaudio_control_open(&g_control) < 0)
     {
-        long sock = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
-        if (sock >= 0)
-        {
-            if (savanxp_fcntl((int)sock, SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
-            {
-                savanxp_close((int)sock);
-            }
-            else
-            {
-                g_census_sock = sock;
-            }
-        }
+        g_control.request = g_control.reply = -1;
+        g_next_query_ms = (uint64_t)uptime_ms() + VP_RETRY_MS;
     }
     return 0;
+}
+
+static void volume_close(void)
+{
+    sxnaudio_control_close(&g_control);
+    if (g_audio_fd >= 0)
+    {
+        savanxp_close((int)g_audio_fd);
+        g_audio_fd = -1;
+    }
 }
 
 static uint32_t volume_tick(void)
 {
     uint64_t now_ms = (uint64_t)uptime_ms();
     uint32_t actions = DESKTOP_ACTION_NONE;
+    struct savanxp_audiod_snapshot snapshot;
+    long result;
 
-    /* Asynchronous census: ask every second, collect replies without
-     * blocking the 16 ms loop. Without the daemon the send fails and is
-     * retried next cycle; the rows stay as they are. */
-    if (g_census_sock >= 0 && !g_query_out &&
-        (g_last_poll_ms == 0 || now_ms - g_last_poll_ms >= VOLUMEPOPUP_POLL_MS))
+    if (g_control.request < 0)
     {
-        struct savanxp_audiod_list_query query;
-        struct savanxp_sockaddr_in address;
-
-        memset(&query, 0, sizeof(query));
-        query.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
-        query.version = SAVANXP_AUDIOD_CONTROL_VERSION;
-        query.kind = SAVANXP_AUDIOD_LIST;
-        address.ipv4 = SAVANXP_AUDIOD_HOST_IPV4;
-        address.port = SAVANXP_AUDIOD_PORT;
-        address.reserved0 = 0;
-        if (savanxp_sendto(g_census_sock, &query, sizeof(query), &address) ==
-            (long)sizeof(query))
+        if (now_ms >= g_next_query_ms && sxnaudio_control_open(&g_control) < 0)
         {
-            g_query_out = 1;
-            g_query_ms = now_ms;
-            g_staging_total = -1;
-            g_staging_count = 0;
+            g_control.request = g_control.reply = -1;
+            g_next_query_ms = now_ms + VP_RETRY_MS;
         }
-        else
-        {
-            g_last_poll_ms = now_ms;
-        }
+        return actions;
     }
-    if (g_query_out)
+    while ((result = sxnaudio_control_receive_full(&g_control, &snapshot, 0, 0, 0)) > 0)
     {
-        int done = 0;
-        int want = 0;
-
-        for (;;)
+        if (result != 1 || !g_pending || snapshot.request_id != g_pending)
         {
-            struct savanxp_sockaddr_in source;
-            unsigned char datagram[128];
-            struct savanxp_audiod_list_reply reply;
-            long got = savanxp_recvfrom(
-                (int)g_census_sock, datagram, sizeof(datagram), &source, 0);
-
-            if (got <= 0)
+            continue;
+        }
+        g_pending = 0;
+        g_snapshot = snapshot;
+        g_census_valid = 1;
+        g_next_query_ms = now_ms + VP_POLL_MS;
+        /* The dragged row follows its stream id; a stream that ended drops
+         * the drag. */
+        if (g_drag >= 0)
+        {
+            uint32_t index;
+            g_drag = VP_DRAG_NONE;
+            for (index = 0; index < g_snapshot.count && (int)index < vp_rows_shown(); ++index)
             {
-                break;
-            }
-            if (got != (long)sizeof(reply))
-            {
-                continue;
-            }
-            memcpy(&reply, datagram, sizeof(reply));
-            if (reply.magic != SAVANXP_AUDIOD_CONTROL_MAGIC ||
-                reply.version != SAVANXP_AUDIOD_CONTROL_VERSION ||
-                reply.kind != SAVANXP_AUDIOD_REPLY)
-            {
-                continue;
-            }
-            if (g_staging_total < 0)
-            {
-                g_staging_total = reply.count;
-                if (g_staging_total == 0)
+                if (g_snapshot.streams[index].id == g_drag_id)
                 {
-                    done = 1;
-                    break;
+                    g_drag = (int)index;
                 }
-            }
-            else if (reply.count != (uint8_t)g_staging_total)
-            {
-                continue;
-            }
-            want = g_staging_total < VOLUMEPOPUP_APP_ROWS
-                ? g_staging_total
-                : VOLUMEPOPUP_APP_ROWS;
-            if (reply.count > 0 && reply.index < reply.count &&
-                reply.index < VOLUMEPOPUP_APP_ROWS)
-            {
-                g_staging[reply.index].port = reply.port;
-                g_staging[reply.index].volume = reply.volume;
-                popup_copy_name(g_staging[reply.index].name, reply.name);
-                ++g_staging_count;
-            }
-            if (g_staging_count >= want)
-            {
-                done = 1;
-                break;
             }
         }
-        if (done)
+        actions |= DESKTOP_ACTION_REPAINT;
+    }
+    if (result < 0 || (g_pending && now_ms - g_query_ms >= VP_QUERY_TIMEOUT_MS))
+    {
+        vp_control_drop(now_ms);
+        return actions | DESKTOP_ACTION_REPAINT;
+    }
+    if (!g_pending && now_ms >= g_next_query_ms)
+    {
+        ++g_sequence;
+        if (g_sequence == 0)
         {
-            int row;
-            int shown = 0;
-
-            if (g_staging_total > 0)
-            {
-                shown = g_staging_total < VOLUMEPOPUP_APP_ROWS
-                    ? g_staging_total
-                    : VOLUMEPOPUP_APP_ROWS;
-                for (row = 0; row < shown; ++row)
-                {
-                    g_apps[row] = g_staging[row];
-                }
-                g_apps_total = g_staging_total;
-            }
-            else if (g_staging_total == 0)
-            {
-                g_apps_total = 0;
-            }
-            if (g_drag_row >= 0)
-            {
-                int at = popup_find_row(g_apps, g_apps_total, g_drag_port);
-                if (at < 0)
-                {
-                    g_drag_row = -1;
-                }
-                else
-                {
-                    g_drag_row = at;
-                }
-            }
-            g_query_out = 0;
-            g_last_poll_ms = now_ms;
+            ++g_sequence;
+        }
+        result = sxnaudio_control_query(&g_control, g_sequence);
+        if (result == 0)
+        {
+            g_pending = g_sequence;
+            g_query_ms = now_ms;
+        }
+        else if (result != -SAVANXP_EAGAIN)
+        {
+            vp_control_drop(now_ms);
             actions |= DESKTOP_ACTION_REPAINT;
         }
-        else if (now_ms - g_query_ms >= VOLUMEPOPUP_QUERY_TIMEOUT_MS)
-        {
-            /* Sin respuesta completa a tiempo se conserva el censo
-             * anterior: mejor una fila vieja un segundo mas que
-             * parpadeos. El proximo poll lo corrige. */
-            g_query_out = 0;
-            g_last_poll_ms = now_ms;
-        }
     }
-
     return actions;
 }
+
+/* ---- pointer ---------------------------------------------------------------------- */
 
 static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
-    struct sx_rect mute_rect = popup_mute_rect();
-    struct sx_rect thumb = popup_thumb_rect(g_volume);
-    int in_mute = popup_in_rect(mute_rect, pointer->x, pointer->y);
-    int in_thumb = popup_in_rect(thumb, pointer->x, pointer->y);
-    int in_trough = pointer->x >= VOLUMEPOPUP_TROUGH_X &&
-        pointer->x < VOLUMEPOPUP_TROUGH_X + VOLUMEPOPUP_TROUGH_WIDTH &&
-        pointer->y >= VOLUMEPOPUP_TROUGH_Y - 4 &&
-        pointer->y < VOLUMEPOPUP_TROUGH_Y + VOLUMEPOPUP_TROUGH_HEIGHT + 4;
-    int row;
-    int in_row = -1;
-    int in_row_trough = 0;
-    int in_row_thumb = 0;
-    struct sx_rect row_thumb = sx_rect_make(0, 0, 0, 0);
     uint32_t actions = DESKTOP_ACTION_NONE;
+    int x = pointer->x;
+    int y = pointer->y;
+    int hot = vp_in_rect(vp_mute_rect(), x, y) ? 1 : vp_in_rect(vp_link_rect(), x, y) ? 2 : 0;
+    int over_row = -1;
+    int row;
 
-    if ((down & SAVANXP_MOUSE_BUTTON_LEFT) &&
-        popup_in_rect(sx_rect_make(4,116,VOLUMEPOPUP_WIDTH-8,20),pointer->x,pointer->y))
-    {
-        if (desktop_launch("/system/sound.sxe",SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) >= 0)
-            return DESKTOP_ACTION_CLOSE;
-    }
     (void)gfx;
-    for (row = 0; row < g_apps_total && row < VOLUMEPOPUP_APP_ROWS; ++row)
+    for (row = 0; row < vp_rows_shown(); ++row)
     {
-        if (app_total_row_is_overflow(row, g_apps_total))
+        if (y >= VP_APP_Y(row) - 2 && y < VP_APP_Y(row) + 38 && x >= 0 && x < VP_WIDTH)
         {
-            break;
-        }
-        if (popup_in_rect(popup_app_rect(row), pointer->x, pointer->y))
-        {
-            struct sx_rect trough = popup_app_trough_rect(row);
-            row_thumb = popup_app_thumb_rect(row, g_apps[row].volume);
-            in_row = row;
-            in_row_trough =
-                pointer->x >= trough.x - 2 && pointer->x < trough.x + trough.width + 2 &&
-                pointer->y >= trough.y - 4 && pointer->y < trough.y + trough.height + 4;
-            in_row_thumb = popup_in_rect(row_thumb, pointer->x, pointer->y);
-            break;
+            over_row = row;
         }
     }
 
     /* Reconcile with the real button state, only when the event carries no
      * edge: if the button is released outside the popup, another window gets
-     * the up, and the drag or the armed mute would hang until the next click.
-     * The popup's own up is left alone: the branch below handles it, with its
-     * persist. */
-    if (((down | up) & SAVANXP_MOUSE_BUTTON_LEFT) == 0 &&
-        (pointer->buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
+     * the up, and a drag or the armed mute would hang until the next click. */
+    if (((down | up) & SAVANXP_MOUSE_BUTTON_LEFT) == 0 && (pointer->buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
     {
-        if (g_drag_row == -2)
+        if (g_drag == VP_DRAG_MASTER)
         {
-            g_drag_row = -1;
-            popup_persist(g_volume, g_muted);
+            vp_persist();
+        }
+        if (g_drag != VP_DRAG_NONE || g_mute_armed)
+        {
             actions |= DESKTOP_ACTION_REPAINT;
         }
-        else if (g_drag_row >= 0)
-        {
-            g_drag_row = -1;
-            actions |= DESKTOP_ACTION_REPAINT;
-        }
+        g_drag = VP_DRAG_NONE;
         g_mute_armed = 0;
     }
+    if (hot != g_hot)
+    {
+        g_hot = hot;
+        actions |= DESKTOP_ACTION_REPAINT;
+    }
 
-    if (in_mute != g_mute_hot)
-    {
-        g_mute_hot = in_mute;
-        actions |= DESKTOP_ACTION_REPAINT;
-    }
-    if (in_row != g_hot_row)
-    {
-        g_hot_row = in_row;
-        actions |= DESKTOP_ACTION_REPAINT;
-    }
     if (pointer->wheel != 0)
     {
-        if (in_row >= 0 && g_census_sock >= 0)
+        if (over_row >= 0)
         {
-            int next = (int)g_apps[in_row].volume + pointer->wheel * VOLUMEPOPUP_WHEEL_STEP;
-            if (next < 0)
-            {
-                next = 0;
-            }
-            if (next > 100)
-            {
-                next = 100;
-            }
-            if (next != (int)g_apps[in_row].volume)
-            {
-                g_apps[in_row].volume = (uint8_t)next;
-                (void)sx_audio_server_set_volume(
-                    (int)g_census_sock, g_apps[in_row].port, next);
-                actions |= DESKTOP_ACTION_REPAINT;
-            }
+            struct savanxp_audiod_stream_state *stream = &g_snapshot.streams[over_row];
+            vp_app_set(stream, (int)stream->volume + pointer->wheel * VP_WHEEL_STEP);
+            actions |= DESKTOP_ACTION_REPAINT;
         }
         else
         {
-            int next = g_volume + pointer->wheel * VOLUMEPOPUP_WHEEL_STEP;
-            if (next < 0)
+            uint32_t changed = vp_set_master(g_volume + pointer->wheel * VP_WHEEL_STEP);
+            if (changed)
             {
-                next = 0;
+                vp_persist();
             }
-            if (next > 100)
-            {
-                next = 100;
-            }
-            if (next != g_volume)
-            {
-                g_volume = next;
-                (void)audio_set_volume((int)g_audio_fd, g_volume);
-            actions |= DESKTOP_ACTION_TASKBAR_CHANGED;
-                popup_persist(g_volume, g_muted);
-                actions |= DESKTOP_ACTION_REPAINT;
-            }
+            actions |= changed;
         }
     }
+
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
     {
-        if (in_mute)
+        struct sx_rect master = vp_slider_rect(VP_MASTER_Y);
+        if (hot == 2)
+        {
+            if (desktop_launch("/system/sound.sxe", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) >= 0)
+            {
+                return DESKTOP_ACTION_CLOSE;
+            }
+        }
+        else if (hot == 1)
         {
             g_mute_armed = 1;
-        }
-        else if (in_trough)
-        {
-            g_drag_row = -2;
-            /* Agarrar el cursor por donde cayo en vez de
-             * recentrarlo: el salto se nota con 118 px de
-             * recorrido para 100 unidades. */
-            g_drag_offset = in_thumb ? pointer->x - thumb.x : VOLUMEPOPUP_THUMB_WIDTH / 2;
-            g_volume = popup_slider_volume_at(pointer->x - g_drag_offset, VOLUMEPOPUP_TROUGH_X, VOLUMEPOPUP_TROUGH_WIDTH - VOLUMEPOPUP_THUMB_WIDTH);
-            (void)audio_set_volume((int)g_audio_fd, g_volume);
-            actions |= DESKTOP_ACTION_TASKBAR_CHANGED;
             actions |= DESKTOP_ACTION_REPAINT;
         }
-        else if (in_row >= 0 && in_row_trough && g_census_sock >= 0)
+        else if (vp_in_rect(master, x, y))
         {
-            int travel =
-                VOLUMEPOPUP_APP_TROUGH_WIDTH - VOLUMEPOPUP_APP_THUMB_WIDTH;
-            g_drag_row = in_row;
-            g_drag_port = g_apps[in_row].port;
-            g_drag_offset = in_row_thumb
-                ? pointer->x - row_thumb.x
-                : VOLUMEPOPUP_APP_THUMB_WIDTH / 2;
-            g_apps[in_row].volume = (uint8_t)popup_slider_volume_at(
-                pointer->x - g_drag_offset, VOLUMEPOPUP_APP_TROUGH_X, travel);
-            (void)sx_audio_server_set_volume(
-                (int)g_census_sock, g_apps[in_row].port, g_apps[in_row].volume);
+            struct sx_rect thumb = vp_thumb_rect(VP_MASTER_Y, g_volume);
+            /* Grab the thumb where it was pressed instead of re-centring it. */
+            g_drag = VP_DRAG_MASTER;
+            g_drag_offset = vp_in_rect(thumb, x, y) ? x - thumb.x : VP_THUMB_WIDTH / 2;
+            actions |= vp_set_master(vp_volume_at(x - g_drag_offset)) | DESKTOP_ACTION_REPAINT;
+        }
+        else if (over_row >= 0 && vp_in_rect(vp_slider_rect(vp_app_slider_y(over_row)), x, y))
+        {
+            struct savanxp_audiod_stream_state *stream = &g_snapshot.streams[over_row];
+            struct sx_rect thumb = vp_thumb_rect(vp_app_slider_y(over_row), stream->volume);
+            g_drag = over_row;
+            g_drag_id = stream->id;
+            g_drag_offset = vp_in_rect(thumb, x, y) ? x - thumb.x : VP_THUMB_WIDTH / 2;
+            vp_app_set(stream, vp_volume_at(x - g_drag_offset));
             actions |= DESKTOP_ACTION_REPAINT;
         }
     }
@@ -743,76 +655,50 @@ static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct sav
     {
         if (g_mute_armed)
         {
-            if (in_mute)
+            if (hot == 1)
             {
-                g_muted = g_muted == 0 ? 1 : 0;
+                g_muted = !g_muted;
                 (void)audio_set_muted((int)g_audio_fd, g_muted);
+                vp_persist();
                 actions |= DESKTOP_ACTION_TASKBAR_CHANGED;
-                popup_persist(g_volume, g_muted);
             }
             g_mute_armed = 0;
             actions |= DESKTOP_ACTION_REPAINT;
         }
-        if (g_drag_row == -2)
+        if (g_drag == VP_DRAG_MASTER)
         {
-            g_drag_row = -1;
-            popup_persist(g_volume, g_muted);
-            actions |= DESKTOP_ACTION_REPAINT;
+            vp_persist();
         }
-        else if (g_drag_row >= 0)
+        if (g_drag != VP_DRAG_NONE)
         {
-            /* El nivel por app es sesion: no se persiste. */
-            g_drag_row = -1;
+            g_drag = VP_DRAG_NONE;
             actions |= DESKTOP_ACTION_REPAINT;
         }
     }
-    else if (g_drag_row == -2)
+    else if (g_drag == VP_DRAG_MASTER)
     {
-        int next = popup_slider_volume_at(pointer->x - g_drag_offset, VOLUMEPOPUP_TROUGH_X, VOLUMEPOPUP_TROUGH_WIDTH - VOLUMEPOPUP_THUMB_WIDTH);
-        if (next != g_volume)
-        {
-            g_volume = next;
-            (void)audio_set_volume((int)g_audio_fd, g_volume);
-            actions |= DESKTOP_ACTION_TASKBAR_CHANGED;
-            actions |= DESKTOP_ACTION_REPAINT;
-        }
+        actions |= vp_set_master(vp_volume_at(x - g_drag_offset));
     }
-    else if (g_drag_row >= 0 && g_census_sock >= 0)
+    else if (g_drag >= 0)
     {
-        int travel = VOLUMEPOPUP_APP_TROUGH_WIDTH - VOLUMEPOPUP_APP_THUMB_WIDTH;
-        int here = popup_find_row(g_apps, g_apps_total, g_drag_port);
-        int next;
-        if (here < 0)
+        struct savanxp_audiod_stream_state *stream = vp_stream(g_drag_id);
+        if (stream == 0)
         {
-            g_drag_row = -1;
-            actions |= DESKTOP_ACTION_REPAINT;
+            g_drag = VP_DRAG_NONE;
         }
         else
         {
-            g_drag_row = here;
-            next = popup_slider_volume_at(pointer->x - g_drag_offset, VOLUMEPOPUP_APP_TROUGH_X, travel);
-            if (next != (int)g_apps[here].volume)
-            {
-                g_apps[here].volume = (uint8_t)next;
-                (void)sx_audio_server_set_volume(
-                    (int)g_census_sock, g_apps[here].port, next);
-                actions |= DESKTOP_ACTION_REPAINT;
-            }
+            vp_app_set(stream, vp_volume_at(x - g_drag_offset));
         }
+        actions |= DESKTOP_ACTION_REPAINT;
     }
     g_last_buttons = pointer->buttons;
     return actions;
 }
 
-static void volume_paint(struct savanxp_gfx_context *gfx)
-{
-    popup_paint(gfx, g_volume, g_muted, g_mute_hot, g_drag_row == -2, g_apps,
-                g_apps_total, g_drag_row, g_hot_row);
-}
-
 const struct desktop_popup_ops desktop_volume_ops = {
-    VOLUMEPOPUP_WIDTH,
-    VOLUMEPOPUP_HEIGHT,
+    VP_WIDTH,
+    VP_HEIGHT,
     1,
     volume_open,
     volume_close,

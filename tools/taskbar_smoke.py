@@ -157,18 +157,18 @@ def _volume_button() -> tuple[int, int]:
 
 
 def _expect_volume_popup(image: Image.Image, state: str) -> None:
-    # A 144x140 popup anchored like the layout one: x=1280-4-144, y=772-140.
-    # Without the cursor: it depends on the volume inherited from the image (the
-    # one persisted in /audio.cfg), so its position is asserted by the drag,
-    # not by opening it.
-    if _pixel(image, 1132, 632) != LIGHT:
+    # A 232x284 popup anchored like the layout one: x=1280-4-232, y=772-284.
+    # Its master slider is popup (10,76) 172x20; the track is the 4 rows in
+    # the middle (y=572..575 on screen). The thumb depends on the volume
+    # inherited from the image, so the drag asserts its position.
+    if _pixel(image, 1044, 488) != LIGHT:
         raise TaskbarSmokeError(f"{state}: volume popup frame expected {LIGHT}")
-    # Fila de mute entre la casilla (termina en x=1150) y el texto (x=1154).
-    if _pixel(image, 1152, 646) != FACE:
+    # Between the "Volume" title and the header speaker.
+    if _pixel(image, 1150, 500) != FACE:
         raise TaskbarSmokeError(f"{state}: volume popup face expected {FACE}")
-    # Carril hundido (borde sombra).
-    if _pixel(image, 1150, 664) != SHADOW:
-        raise TaskbarSmokeError(f"{state}: volume trough expected {SHADOW}")
+    # Sunken track (shadow edge), left of any thumb above volume 2.
+    if _pixel(image, 1056, 572) != SHADOW:
+        raise TaskbarSmokeError(f"{state}: volume track expected {SHADOW}")
 
 
 def _move_to(client: QmpClient, x: int, y: int) -> None:
@@ -377,46 +377,47 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         screenshots.append(output_dir / "09-volumen-toggle.png")
         _expect_volume_popup(seventh, "volume reopened")
 
-        # Arrastre del cursor a 50: del centro del cursor (pantalla 1263,670,
-        # popup 131,38) a pantalla 1204 (popup 72). Con offset de agarre 5,
-        # v=(72-5-8)*100/118=50 exacto; el cursor queda en popup 67..76.
-        # The grab point is fixed in the popup; the offset is taken from the
-        # speaker cell's centre (1208,787).
-        client.relative(55, -117)
+        # Drag the thumb to 50. At 100 it is popup x 172..181 (screen
+        # 1216..1225), centre 1221,574; grabbed 5 px from its left edge, a
+        # thumb left edge at 1135 gives ((1135-1054)*100+81)/162 = 50.
+        # The pointer starts at the speaker cell's centre (1208,787).
+        for dx, dy in ((13, -60), (0, -60), (0, -60), (0, -33)):
+            client.relative(dx, dy)
+            time.sleep(0.05)
         time.sleep(0.5)
         client.button("left", True)
         time.sleep(0.25)
-        client.relative(-30, 0)
+        client.relative(-40, 0)
         time.sleep(0.2)
-        client.relative(-29, 0)
+        client.relative(-41, 0)
         time.sleep(0.2)
         client.button("left", False)
         time.sleep(2.0)
-        # Estacionar lejos: el cursor pisaria el cursor del slider.
+        # Park away: the pointer would cover the thumb.
         client.relative(-564, -370)
         time.sleep(0.5)
         eighth = _capture(client, output_dir, "10-volumen-arrastrado")
         screenshots.append(output_dir / "10-volumen-arrastrado.png")
-        if _pixel(eighth, 1203, 662) != LIGHT:
+        if _pixel(eighth, 1135, 574) != LIGHT:
             raise TaskbarSmokeError("drag: thumb did not reach 50")
-        if _pixel(eighth, 1262, 670) != FACE:
-            raise TaskbarSmokeError("drag: old thumb spot is not trough")
+        if _pixel(eighth, 1225, 566) != FACE:
+            raise TaskbarSmokeError("drag: old thumb spot is not empty")
 
-        # Mute: click en la casilla mute (popup local 12,11 -> pantalla
-        # 1144,643). La marca de la casilla y el glifo del boton (por
-        # polling) lo confirman.
-        client.relative(504, 343)
+        # Mute: click the speaker beside "Output device" (popup 19,49 ->
+        # screen 1063,537). Its red cross and the taskbar glyph (by polling)
+        # confirm it.
+        client.relative(564 - 77, 370 - 37)
         time.sleep(0.5)
         client.button("left", True)
         time.sleep(0.25)
         client.button("left", False)
         time.sleep(3.0)
-        client.relative(-504, -343)
+        client.relative(-487, -333)
         time.sleep(0.5)
         ninth = _capture(client, output_dir, "11-volumen-mute")
         screenshots.append(output_dir / "11-volumen-mute.png")
-        if _pixel(ninth, 1144, 644) != (0, 0, 0):
-            raise TaskbarSmokeError("mute: checkbox mark missing")
+        if _pixel(ninth, 1066, 534) != (192, 0, 0):
+            raise TaskbarSmokeError("mute: speaker cross missing")
         # The muted speaker, 16x16, centred in its cell (1196..1219), so at
         # x=1200..1215, y=779..794.
         _expect_icon(ninth, VOLUME_MUTED_ICON, 1200, 779, "mute: taskbar glyph did not switch")
