@@ -224,7 +224,7 @@ at fixed addresses, and the kernel is not relocated.
 | Devices | Mutating ioctls required only query access | High | Fixed |
 | Processes | `kill(1, ...)` and orphan zombies | High | Fixed |
 | Resource use | No process quotas or PMM ownership bitmap; only ports have a user share | High | Open |
-| Authorization | UID/GID, VFS modes and elevation exist; the display session is open to every user | High | Partially fixed |
+| Authorization | UID/GID, VFS modes and elevation exist; capabilities beyond the elevation rule do not | High | Partially fixed |
 | ACPI | Hand-written MADT/S5 parsing needs complete bounds/checksum validation | High | Open |
 | PCI | No central resource manager for BAR/I/O ranges | High | Open |
 | Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Fixed |
@@ -398,12 +398,14 @@ biased start against `p_vaddr` and the end against the biased start. No test
 tells the two apart from user space: the wrapped image was already refused
 one step later, by the copy.
 
-**Still open from the earlier passes.** `/dev/gpu0` is `0666` and
-the display session goes to whoever acquires it first, so a user process can
-take the screen whenever `compositord` has released it. `find_table` trusts
-the RSDT/XSDT length and checksum.
+**Still open from the earlier passes.** `find_table` trusts the RSDT/XSDT
+length and checksum.
 
-**Closed from the earlier passes (2026-11-11).** `/dev/net0` stays `0666`, but
+**Closed from the earlier passes (2026-11-11).** `/dev/gpu0` stays `0666`, for
+queries and per-process 3D contexts, but `GPU_IOC_ACQUIRE` requires the
+system: the display session went to whoever asked first, so a user process
+could take the screen whenever `compositord` had released it. `elevtest`
+checks the refusal. `/dev/net0` stays `0666`, but
 `NET_IOC_SET_TCP_FAULT` now requires the system. Incoming IPv4, ICMP, TCP and
 UDP checksums are verified, fragments are dropped, and a segment reaches a
 connecting socket only when the whole tuple matches; the fallback that matched
@@ -443,7 +445,6 @@ third pass was not walked again.
 - Kernel, userland and the external SDK build with `-fstack-protector-strong`.
 - `/dev/input0` and `/dev/mouse0` are `0600`; ports do not travel over pipes
   on either dispatcher; a spawn with an identity requires the system.
-- `/dev/gpu0` is `0666` and the display session is first come, first served.
 - `find_table` in `acpi.cpp` trusts the root table's length and maps every
   entry without a bound or a checksum.
 - Process, thread, section and node tables have no per-process or per-user
@@ -451,8 +452,8 @@ third pass was not walked again.
 
 ### Closed in this pass
 
-E3, E7, the received-checksum and TCP-tuple findings, and the open fault
-injector. Each is marked where it was recorded above.
+E3, E7, the received-checksum and TCP-tuple findings, the open fault
+injector and the display session. Each is marked where it was recorded above.
 
 ### Never audited
 
@@ -474,8 +475,8 @@ attacker would read it, and no finding above speaks for them:
 ## Required follow-up work
 
 The third-pass findings are all closed or accepted. What comes first now is
-the list in [Fourth-pass review](#fourth-pass-review-2026-11-11): the display
-session, the ACPI table walk, and a first audit of the drivers that parse
+the list in [Fourth-pass review](#fourth-pass-review-2026-11-11): the ACPI
+table walk, and a first audit of the drivers that parse
 hostile input and have never had one.
 
 The next security phase should not add more ad-hoc device checks. The process
@@ -484,9 +485,9 @@ uid, euid and gid ([`USERS_AND_PERMISSIONS.md`](USERS_AND_PERMISSIONS.md)).
 What remains:
 
 1. Capability bitmaps, or at least the elevation rule, beyond file modes.
-2. A system check for the display session. Network fault injection and
-   storage mutation (`SXN_SYS_STORAGE_*`) have theirs. Shutdown stays
-   unelevated by design.
+2. Done: the display session, network fault injection and storage mutation
+   (`SXN_SYS_STORAGE_*`) require the system. Shutdown stays unelevated by
+   design.
 3. PID 1 as a real subreaper with a non-blocking reap loop.
 4. Per-process memory, object, handle and I/O quotas.
 5. `FD_CLOEXEC` and references for blocked-wait objects.

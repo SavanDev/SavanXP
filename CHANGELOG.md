@@ -137,6 +137,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Only the system can take the display session: `GPU_IOC_ACQUIRE` answers `EPERM` to a user process.**
+  `/dev/gpu0` stays open to everyone for queries and 3D contexts.
+
 - **Received IPv4, ICMP, TCP and UDP checksums are verified, and damaged packets and IPv4 fragments are dropped.**
   A TCP handshake only completes from the address it was sent to. `NET_IOC_SET_TCP_FAULT` now requires the system
   and gains `corrupt_rx_every`. See [NETWORKING.md](docs/net/NETWORKING.md#testing-what-only-a-bad-network-exercises).

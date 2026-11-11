@@ -207,6 +207,22 @@ static void inject_network_faults(void)
     (void)savanxp_close((int)fd);
 }
 
+/* The screen is the system's to hand out. compositord holds the session
+ * here, so the refusal has to be EPERM and not the EBUSY of a taken one: the
+ * user gets the same answer while it is free. */
+static void take_the_screen(void)
+{
+    long fd = savanxp_open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+
+    check(fd >= 0, "the user opens /dev/gpu0");
+    if (fd < 0)
+    {
+        return;
+    }
+    check(savanxp_ioctl((int)fd, GPU_IOC_ACQUIRE, 0) == -SAVANXP_EPERM, "the user cannot take the display session");
+    (void)savanxp_close((int)fd);
+}
+
 /* Asks, and right behind the request writes what a forged answer would look
  * like -- windowd's and the broker's. The host presses N: the answer has to
  * be no, whatever the pipe carried. */
@@ -334,6 +350,7 @@ static int run_user(void)
     ask_windowd_directly();
     take_service_names();
     inject_network_faults();
+    take_the_screen();
     ask_and_forge();
     ask_while_y_is_held();
 

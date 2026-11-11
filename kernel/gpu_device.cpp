@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/credentials.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/heap.hpp"
@@ -166,6 +167,16 @@ int gpu_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             const uint32_t pid = process::current_pid();
             if (pid == 0) {
                 return negative_error(SX_EBADF);
+            }
+            // The screen and the input that follows it are the system's to
+            // hand out: compositord takes the session, and a user process
+            // draws through it. Checked before the owner, so the answer is
+            // the same whether or not the session is free. /dev/gpu0 stays
+            // open to everyone for queries and for 3D contexts, which belong
+            // to their process and need no session.
+            const process::Process* caller = process::current();
+            if (caller == nullptr || !cred::acts_as_system(caller->credentials)) {
+                return negative_error(SX_EPERM);
             }
             return display::acquire_session(pid) ? 0 : negative_error(SX_EBUSY);
         }
