@@ -119,6 +119,10 @@ Cut-off notes:
   cannot be removed (`EBUSY`) or its volume unmounted while a process stands in it. Renaming a directory someone has
   open or stands in is now allowed. Subsystems get `subsystem::register_process_state_hooks`.
 
+- **FAT volumes publish a directory the first time it is looked into**, not their whole tree at mount
+  (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`): a USB stick with more files than the VFS's
+  2048 nodes mounts. A single directory too large for the VFS fails its own lookup (VFS-C slice 1).
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

@@ -331,6 +331,85 @@ void case_holders_are_counted(uint8_t* image) {
     hoststub::detach_device();
 }
 
+// --- Directories published on demand (VFS-C) ------------------------------------
+
+// A driver with nothing behind it but what populate publishes: "/lazy" holds
+// a, b and the directory sub; "/lazy/sub" holds x; "/broken" publishes two
+// entries and then fails, as a driver that ran out of memory would.
+int g_populates = 0;
+int g_forgets = 0;
+bool g_broken_fails = true;
+fs::Driver g_lazy_driver = {};
+
+fs::Status lazy_populate(vfs::Vnode& directory) {
+    ++g_populates;
+    char path[vfs::kMaxPathLength] = {};
+    if (!vfs::path_of(directory, path, sizeof(path))) {
+        return fs::Status::invalid;
+    }
+    if (strcmp(path, "/lazy") == 0) {
+        const bool ok = vfs::install_volume_file("/lazy/a", g_lazy_driver, nullptr, 0, false) != nullptr &&
+            vfs::install_volume_file("/lazy/b", g_lazy_driver, nullptr, 0, false) != nullptr &&
+            vfs::install_volume_directory("/lazy/sub", g_lazy_driver) != nullptr;
+        return ok ? fs::Status::ok : fs::Status::no_space;
+    }
+    if (strcmp(path, "/lazy/sub") == 0) {
+        return vfs::install_volume_file("/lazy/sub/x", g_lazy_driver, nullptr, 0, false) != nullptr
+            ? fs::Status::ok : fs::Status::no_space;
+    }
+    if (strcmp(path, "/broken") == 0) {
+        (void)vfs::install_volume_file("/broken/one", g_lazy_driver, nullptr, 0, false);
+        (void)vfs::install_volume_directory("/broken/two", g_lazy_driver);
+        if (g_broken_fails) {
+            return fs::Status::no_space;
+        }
+        return fs::Status::ok;
+    }
+    return fs::Status::ok;
+}
+
+void lazy_forget(vfs::Vnode&) {
+    ++g_forgets;
+}
+
+fs::Status lazy_read(vfs::Vnode&, size_t, void*, size_t) {
+    return fs::Status::ok;
+}
+
+void lazy_refresh(vfs::Vnode&) {}
+
+void case_directories_published_on_demand(uint8_t* image) {
+    printf("case: directories published on demand\n");
+    if (!check(build_image(image) && mount_image(image), "volume mounted")) {
+        return;
+    }
+    g_lazy_driver = {};
+    g_lazy_driver.name = "lazy";
+    g_lazy_driver.read = &lazy_read;
+    g_lazy_driver.refresh = &lazy_refresh;
+    g_lazy_driver.populate = &lazy_populate;
+    g_lazy_driver.forget = &lazy_forget;
+    g_populates = 0;
+    g_forgets = 0;
+    g_broken_fails = true;
+
+    vfs::Vnode* lazy = vfs::install_volume_directory("/lazy", g_lazy_driver);
+    check(lazy != nullptr && !lazy->populated && g_populates == 0, "installed, nothing published yet");
+    check(vfs::child_count(*lazy) == 3 && g_populates == 1 && lazy->populated, "listing it publishes it, once");
+    check(vfs::child_count(*lazy) == 3 && g_populates == 1, "a second listing does not populate again");
+    check(vfs::resolve("/lazy/sub/x") != nullptr && g_populates == 2, "a lookup publishes each directory on the way");
+    check(vfs::resolve("/lazy/sub/missing") == nullptr && g_populates == 2, "a miss in a published directory");
+
+    vfs::Vnode* broken = vfs::install_volume_directory("/broken", g_lazy_driver);
+    check(vfs::resolve("/broken/one") == nullptr, "a failed populate fails the lookup");
+    check(broken != nullptr && !broken->populated && vfs::child_count(*broken) == 0 && g_forgets == 4,
+          "what it published is taken back, and the driver told");
+    g_broken_fails = false;
+    check(vfs::resolve("/broken/one") != nullptr && broken->populated, "the next look tries again");
+    check(vfs::child_count(*broken) == 2, "and publishes each entry once");
+    hoststub::detach_device();
+}
+
 void case_power_cut_with_an_unlinked_file_open(uint8_t* image) {
     printf("case: a power cut with an unlinked file still open\n");
     if (!check(build_image(image) && mount_image(image), "volume mounted")) {
@@ -672,6 +751,7 @@ int main() {
     case_rename_replaces(image);
     case_unlinked_file_lives_while_held(image);
     case_holders_are_counted(image);
+    case_directories_published_on_demand(image);
     case_power_cut_with_an_unlinked_file_open(image);
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);

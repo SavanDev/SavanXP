@@ -52,7 +52,10 @@ size_t flushes();
 
 // Tabla de vnodes publicados por attach(). Sustituye al arbol del vfs.
 void reset_vfs();
+// Publishes the directories above `path` first, as the real VFS's lookup
+// does (fs::Driver::populate); populate_path does only that.
 vfs::Vnode* find_node(const char* path);
+bool populate_path(const char* path);
 size_t node_count();
 
 } // namespace hoststub

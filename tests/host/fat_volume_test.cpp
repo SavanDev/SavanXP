@@ -23,8 +23,9 @@
  *   - a name the VFS cannot hold is left out, not truncated;
  *   - a partitioned disk is never claimed as a whole, although FatFs alone
  *     would mount its first partition through it;
- *   - a tree larger than the VFS fails attach cleanly, and unmount frees the
- *     slot for the next volume;
+ *   - directories are published when looked into: a tree larger than the VFS
+ *     mounts, what is visited fits, a single directory larger than the VFS
+ *     fails its own lookup, and unmount frees the slot for the next volume;
  *   - FAT dates convert to seconds and back.
  */
 
@@ -232,14 +233,17 @@ const vfs::Ownership kNewFile = {0, 0, vfs::kModeFile | 0644};
 const vfs::Ownership kNewDirectory = {0, 0, vfs::kModeDirectory | 0755};
 
 // The driver's operations as the checks below use them: did it work.
+// The VFS looks a new name up before creating it, which publishes the
+// directories above it first; the helpers do the same.
 vfs::Vnode* make_file(const fs::Driver& driver, fs::VolumeId id, const char* path) {
     vfs::Vnode* node = nullptr;
-    return fs::ok(driver.create_file(id, path, kNewFile, node)) ? node : nullptr;
+    return hoststub::populate_path(path) && fs::ok(driver.create_file(id, path, kNewFile, node)) ? node : nullptr;
 }
 
 vfs::Vnode* make_directory(const fs::Driver& driver, fs::VolumeId id, const char* path) {
     vfs::Vnode* node = nullptr;
-    return fs::ok(driver.create_directory(id, path, kNewDirectory, node)) ? node : nullptr;
+    return hoststub::populate_path(path) && fs::ok(driver.create_directory(id, path, kNewDirectory, node)) ? node
+                                                                                                         : nullptr;
 }
 
 bool drv_truncate(vfs::Vnode& node, size_t size) {
@@ -591,18 +595,49 @@ void partitioned_disk_is_not_claimed() {
     free(disk);
 }
 
+// Adds `count` empty files under the directory `inner` of the image, through
+// the build drive.
+void add_files(const char* inner, size_t count) {
+    check(fat_disk::bind(kBuildDrive, 0), "bind the build drive");
+    char root[3] = {static_cast<char>('0' + kBuildDrive), ':', 0};
+    FATFS fs = {};
+    check(f_mount(&fs, root, 1) == FR_OK, "mount the image to fill it");
+    char path[300];
+    snprintf(path, sizeof(path), "%s/%s", root, inner);
+    check(f_mkdir(path) == FR_OK || f_stat(path, nullptr) == FR_OK, "mkdir the filler directory");
+    for (size_t index = 0; index < count; ++index) {
+        snprintf(path, sizeof(path), "%s/%s/f%zu", root, inner, index);
+        check(write_file(path, "", 0), "write a filler file");
+    }
+    check(f_mount(nullptr, root, 0) == FR_OK, "unmount the build drive");
+    fat_disk::unbind(kBuildDrive);
+}
+
+// Directories are published when looked into, so a volume with more entries
+// than the VFS has nodes mounts, and what is visited fits. A single
+// directory larger than the VFS fails its own lookup, cleanly.
 void tree_larger_than_the_vfs() {
     printf("fat-volume-test: a tree larger than the VFS\n");
     constexpr uint32_t kSectors = 16384;
     uint8_t* image = static_cast<uint8_t*>(malloc(static_cast<size_t>(kSectors) * kSector));
-    // The host VFS holds 256 nodes.
-    build_image(image, kSectors, FM_FAT, 300);
+    // The host VFS holds 256 nodes; the volume has more than 500 entries.
+    build_image(image, kSectors, FM_FAT, 0);
+    add_files("many", 0);
+    add_files("many/fits", 200);
+    add_files("many/too-big", 300);
 
     const fs::Driver& driver = fat::driver();
     hoststub::reset_vfs();
     const fs::VolumeId id = driver.probe(0, "/mnt/big");
     check(id != fs::kInvalidVolume, "probe claims it");
-    check(!driver.attach(id, false), "attach fails when the VFS is full");
+    check(driver.attach(id, false), "attach publishes only the root");
+    check(hoststub::node_count() == 1, "one node after attach");
+    fs::VolumeStats stats = {};
+    check(driver.stats(id, stats) && stats.file_count == 4 + 200 + 300, "stats count every file, published or not");
+    check(hoststub::node_count() == 1, "counting published nothing");
+    check(hoststub::find_node("/mnt/big/many/fits/f199") != nullptr, "a file in a directory that fits is found");
+    check(hoststub::find_node("/mnt/big/a/b/big.bin") != nullptr, "other directories stay reachable");
+    check(hoststub::find_node("/mnt/big/many/too-big/f0") == nullptr, "a directory larger than the VFS fails");
     driver.unmount(id);
 
     hoststub::reset_vfs();

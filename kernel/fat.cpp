@@ -13,7 +13,8 @@
 
 /* The FAT driver (docs/roadmaps/open/FAT_ROADMAP.md). FatFs does the format; this file
  * maps it onto fs::Driver: probe mounts a FatFs volume, attach publishes its
- * whole tree, and an operation opens the file by its path, because FatFs
+ * root, each directory's entries are published the first time it is looked
+ * into (populate), and an operation opens the file by its path, because FatFs
  * names files by path, not by cluster -- unless something holds the file, in
  * which case one FatFs file stays open for it (see "Files kept open"). */
 
@@ -23,8 +24,7 @@ using fs::Status;
 
 
 constexpr size_t kSectorSize = block::kSectorSize;
-// Directories nested deeper than this are not published. Each level holds an
-// open FatFs directory and a FILINFO, on the heap.
+// Directories nested deeper than this are not published, nor counted.
 constexpr size_t kMaxDepth = 24;
 // "N:" in front of a path inside the volume.
 constexpr size_t kDrivePrefix = 2;
@@ -32,7 +32,8 @@ constexpr size_t kFatfsPathCapacity = kDrivePrefix + vfs::kMaxPathLength;
 
 // A published file or directory. The path is the one FatFs opens, inside the
 // volume ("/a/b"). A file's vnode points back here through its data; a
-// directory's vnode is a plain in-memory one, found by searching the list.
+// directory's vnode is an in-memory one stamped with the driver, found by
+// searching the list.
 struct Node {
     Node* next;
     uint8_t volume;
@@ -58,11 +59,15 @@ struct Volume {
     size_t device_index;
     FATFS fs;
     char mount_point[fs::kMountPointCapacity];
+    // The mount point's vnode: the directory whose inner path is "".
+    vfs::Vnode* root;
     Node* nodes;
+    // Files on the volume the VFS could publish, counted by walking the
+    // directories the first time stats asks (count_files), then kept by
+    // create and unlink. Not the published ones: those are only what was
+    // looked into.
     size_t file_count;
-    // Entries attach left out: a name or a path the VFS cannot hold, or a
-    // directory too deep.
-    size_t skipped;
+    bool file_count_known;
 };
 
 Volume g_volumes[fat_disk::kDrives] = {};
@@ -158,9 +163,6 @@ Node* new_node(uint8_t id, bool directory, const char* inner) {
 void link_node(Volume& volume, Node* entry) {
     entry->next = volume.nodes;
     volume.nodes = entry;
-    if (!entry->directory) {
-        ++volume.file_count;
-    }
 }
 
 // Takes `entry` out of its volume's list and frees it.
@@ -168,9 +170,6 @@ void drop_node(Volume& volume, Node* entry) {
     for (Node** link = &volume.nodes; *link != nullptr; link = &(*link)->next) {
         if (*link == entry) {
             *link = entry->next;
-            if (!entry->directory && volume.file_count > 0) {
-                --volume.file_count;
-            }
             heap::free(entry);
             return;
         }
@@ -185,11 +184,10 @@ void free_nodes(Volume& volume) {
         entry = next;
     }
     volume.nodes = nullptr;
-    volume.file_count = 0;
 }
 
-// One directory being published. On the heap, with its path buffers, so a
-// deep tree does not eat the 32 KiB kernel stack.
+// One directory being read. On the heap, with its path buffers: FILINFO
+// carries a 256-byte long name, and the kernel stack is 32 KiB.
 struct Level {
     DIR dir;
     FILINFO info;
@@ -202,10 +200,104 @@ bool is_dot_entry(const char* name) {
     return name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0));
 }
 
-// Publishes what the directory `inner` ("" for the root) holds, and below.
-// False only when the VFS refused a node or memory ran out: the volume is then
-// left half published, and fs::release takes it back.
-bool publish_directory(Volume& volume, uint8_t id, const char* inner, size_t depth) {
+// The inner path of the entry `name` in the directory `inner` ("" for the
+// root) into `child`, if the VFS can hold it: the name and the whole path
+// fit. Names that do not are left out, never truncated.
+bool child_path(const char* inner, const char* name, char* child, size_t capacity) {
+    const size_t inner_length = strlen(inner);
+    const size_t name_length = strlen(name);
+    if (name_length >= vfs::kMaxPathComponentLength || inner_length + 1 + name_length >= capacity) {
+        return false;
+    }
+    memcpy(child, inner, inner_length);
+    child[inner_length] = '/';
+    memcpy(child + inner_length + 1, name, name_length + 1);
+    return true;
+}
+
+// How deep `inner` is: one per component.
+size_t depth_of(const char* inner) {
+    size_t depth = 0;
+    for (const char* cursor = inner; *cursor != 0; ++cursor) {
+        depth += *cursor == '/' ? 1u : 0u;
+    }
+    return depth;
+}
+
+// Publishes what the directory `inner` ("" for the root) holds: its files,
+// and its subdirectories as directories published later in turn. What the
+// VFS cannot hold is left out and logged.
+Status publish_entries(Volume& volume, uint8_t id, const char* inner) {
+    Level* level = static_cast<Level*>(heap::allocate(sizeof(Level)));
+    if (level == nullptr) {
+        return Status::no_space;
+    }
+    memset(level, 0, sizeof(Level));
+    if (!drive_path(id, inner, level->fatfs_path, sizeof(level->fatfs_path))) {
+        heap::free(level);
+        return Status::invalid;
+    }
+    const FRESULT opened = f_opendir(&level->dir, level->fatfs_path);
+    if (opened != FR_OK) {
+        heap::free(level);
+        return opened == FR_NO_PATH || opened == FR_NO_FILE ? Status::not_found : Status::io_error;
+    }
+
+    const bool too_deep = depth_of(inner) + 1 >= kMaxDepth;
+    size_t skipped = 0;
+    Status status = Status::ok;
+    for (;;) {
+        const FRESULT read = f_readdir(&level->dir, &level->info);
+        if (read != FR_OK) {
+            status = Status::io_error;
+            break;
+        }
+        const char* name = level->info.fname;
+        if (name[0] == 0) {
+            break;
+        }
+        if (is_dot_entry(name)) {
+            continue;
+        }
+        const bool directory = (level->info.fattrib & AM_DIR) != 0;
+        if ((directory && too_deep) || !child_path(inner, name, level->child, sizeof(level->child)) ||
+            !fs::join_mount_path(volume.mount_point, level->child + 1, level->absolute, sizeof(level->absolute))) {
+            ++skipped;
+            continue;
+        }
+        Node* entry = new_node(id, directory, level->child);
+        if (entry == nullptr) {
+            status = Status::no_space;
+            break;
+        }
+        const bool writable = file_writable(volume, level->info.fattrib);
+        entry->vnode = directory
+            ? vfs::install_volume_directory(level->absolute, driver_ref())
+            : vfs::install_volume_file(level->absolute, driver_ref(), entry, level->info.fsize, writable);
+        if (entry->vnode == nullptr) {
+            heap::free(entry);
+            status = Status::no_space;
+            break;
+        }
+        publish_ownership(*entry->vnode, volume, directory, writable, level->info.fdate, level->info.ftime);
+        link_node(volume, entry);
+    }
+
+    (void)f_closedir(&level->dir);
+    if (skipped != 0) {
+        console::printf("fat: %s%s: %u entries left out (name too long, path too long or too deep)\n",
+                        volume.mount_point, inner, static_cast<unsigned>(skipped));
+    }
+    if (status == Status::no_space) {
+        console::printf("fat: %s%s: the directory does not fit in the VFS\n", volume.mount_point, inner);
+    }
+    heap::free(level);
+    return status;
+}
+
+// Counts the files below `inner` the VFS could publish, by the same rules
+// as publish_entries, without publishing anything. False on a read error.
+bool count_files(Volume& volume, uint8_t id, const char* inner, size_t& count) {
     Level* level = static_cast<Level*>(heap::allocate(sizeof(Level)));
     if (level == nullptr) {
         return false;
@@ -214,62 +306,28 @@ bool publish_directory(Volume& volume, uint8_t id, const char* inner, size_t dep
     if (!drive_path(id, inner, level->fatfs_path, sizeof(level->fatfs_path)) ||
         f_opendir(&level->dir, level->fatfs_path) != FR_OK) {
         heap::free(level);
-        ++volume.skipped;
-        return true;
+        return false;
     }
-
+    const bool too_deep = depth_of(inner) + 1 >= kMaxDepth;
     bool ok = true;
     while (ok) {
-        if (f_readdir(&level->dir, &level->info) != FR_OK || level->info.fname[0] == 0) {
+        if (f_readdir(&level->dir, &level->info) != FR_OK) {
+            ok = false;
             break;
         }
         const char* name = level->info.fname;
-        if (is_dot_entry(name)) {
-            continue;
-        }
-
-        char* child = level->child;
-        char* absolute = level->absolute;
-        const size_t inner_length = strlen(inner);
-        const size_t name_length = strlen(name);
-        if (name_length >= vfs::kMaxPathComponentLength || inner_length + 1 + name_length >= sizeof(level->child)) {
-            ++volume.skipped;
-            continue;
-        }
-        memcpy(child, inner, inner_length);
-        child[inner_length] = '/';
-        memcpy(child + inner_length + 1, name, name_length + 1);
-        if (!fs::join_mount_path(volume.mount_point, child + 1, absolute, sizeof(level->absolute))) {
-            ++volume.skipped;
-            continue;
-        }
-
-        const bool directory = (level->info.fattrib & AM_DIR) != 0;
-        Node* entry = new_node(id, directory, child);
-        if (entry == nullptr) {
-            ok = false;
+        if (name[0] == 0) {
             break;
         }
-        const bool writable = file_writable(volume, level->info.fattrib);
-        entry->vnode = directory ? vfs::ensure_directory(absolute)
-                                 : vfs::install_volume_file(absolute, driver_ref(), entry, level->info.fsize, writable);
-        if (entry->vnode == nullptr) {
-            heap::free(entry);
-            ok = false;
-            break;
+        if (is_dot_entry(name) || !child_path(inner, name, level->child, sizeof(level->child))) {
+            continue;
         }
-        publish_ownership(*entry->vnode, volume, directory, writable, level->info.fdate, level->info.ftime);
-        link_node(volume, entry);
-
-        if (directory) {
-            if (depth + 1 >= kMaxDepth) {
-                ++volume.skipped;
-                continue;
-            }
-            ok = publish_directory(volume, id, child, depth + 1);
+        if ((level->info.fattrib & AM_DIR) == 0) {
+            ++count;
+        } else if (!too_deep) {
+            ok = count_files(volume, id, level->child, count);
         }
     }
-
     (void)f_closedir(&level->dir);
     heap::free(level);
     return ok;
@@ -354,19 +412,14 @@ bool attach(fs::VolumeId id, bool read_only) {
         // Every vnode is published from this, and every write path checks it.
         volume->writable = false;
     }
-    vfs::Vnode* root = vfs::ensure_directory(volume->mount_point);
+    // Only the root: every directory, the root included, is published the
+    // first time it is looked into (populate).
+    vfs::Vnode* root = vfs::install_volume_directory(volume->mount_point, driver_ref());
     if (root == nullptr) {
         return false;
     }
     publish_ownership(*root, *volume, true, volume->writable, 0, 0);
-    if (!publish_directory(*volume, static_cast<uint8_t>(id), "", 0)) {
-        console::printf("fat: %s: the tree does not fit in the VFS, not mounted\n", volume->mount_point);
-        return false;
-    }
-    if (volume->skipped != 0) {
-        console::printf("fat: %s: %u entries left out (name too long, path too long or too deep)\n",
-                        volume->mount_point, static_cast<unsigned>(volume->skipped));
-    }
+    volume->root = root;
     return true;
 }
 
@@ -629,6 +682,9 @@ Status unlink(vfs::Vnode& node, bool) {
     node.data = nullptr;
     node.size = 0;
     drop_node(*volume, file);
+    if (volume->file_count > 0) {
+        --volume->file_count;
+    }
     return Status::ok;
 }
 
@@ -680,6 +736,7 @@ Status create_file(fs::VolumeId id, const char* path, const vfs::Ownership&, vfs
     const uint32_t now = get_fattime();
     publish_ownership(*entry->vnode, *volume, false, true, static_cast<uint16_t>(now >> 16), static_cast<uint16_t>(now));
     link_node(*volume, entry);
+    ++volume->file_count;
     created = entry->vnode;
     return Status::ok;
 }
@@ -703,7 +760,7 @@ Status create_directory(fs::VolumeId id, const char* path, const vfs::Ownership&
         heap::free(entry);
         return status_of(made);
     }
-    entry->vnode = vfs::ensure_directory(path);
+    entry->vnode = vfs::install_volume_directory(path, driver_ref());
     if (entry->vnode == nullptr) {
         (void)f_unlink(fatfs_path);
         heap::free(entry);
@@ -821,6 +878,13 @@ bool stats(fs::VolumeId id, fs::VolumeStats& out) {
     }
     const uint64_t cluster_bytes = static_cast<uint64_t>(volume->fs.csize) * kSectorSize;
     out.writable = volume->writable;
+    if (!volume->file_count_known) {
+        size_t count = 0;
+        if (count_files(*volume, static_cast<uint8_t>(id), "", count)) {
+            volume->file_count = count;
+            volume->file_count_known = true;
+        }
+    }
     out.file_count = volume->file_count;
     out.total_bytes = static_cast<uint64_t>(volume->fs.n_fatent - 2) * cluster_bytes;
     out.free_bytes = static_cast<uint64_t>(free_clusters) * cluster_bytes;
@@ -848,6 +912,47 @@ void adopt_owner(fs::VolumeId id, const fs::Owner& owner) {
     if (volume != nullptr) {
         volume->owner = owner;
     }
+}
+
+// The volume and inner path of a directory the driver stamped: a volume's
+// root, or a directory it published.
+Volume* directory_volume(const vfs::Vnode& node, const char*& inner) {
+    for (Volume& volume : g_volumes) {
+        if (volume.in_use && volume.root == &node) {
+            inner = "";
+            return &volume;
+        }
+    }
+    Node* directory = directory_from_vnode(node);
+    if (directory == nullptr) {
+        return nullptr;
+    }
+    inner = directory->path;
+    return volume_for_id(directory->volume);
+}
+
+Status populate(vfs::Vnode& node) {
+    const char* inner = nullptr;
+    Volume* volume = directory_volume(node, inner);
+    if (volume == nullptr) {
+        return Status::invalid;
+    }
+    return publish_entries(*volume, static_cast<uint8_t>(volume - g_volumes), inner);
+}
+
+// The VFS gives a published entry's slot back; it stays on the disk.
+void forget(vfs::Vnode& node) {
+    Node* entry = file_from_vnode(node);
+    if (entry == nullptr) {
+        entry = directory_from_vnode(node);
+    }
+    Volume* volume = entry != nullptr ? volume_for_id(entry->volume) : nullptr;
+    if (volume == nullptr) {
+        return;
+    }
+    entry->held = false;
+    (void)close_kept(*entry);
+    drop_node(*volume, entry);
 }
 
 void open_file(vfs::Vnode& node) {
@@ -898,6 +1003,8 @@ const fs::Driver kDriver = {
     .sync_deferred = &sync_deferred,
     .open = &open_file,
     .close = &close_file,
+    .populate = &populate,
+    .forget = &forget,
 };
 
 const fs::Driver& driver_ref() {

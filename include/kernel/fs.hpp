@@ -161,6 +161,16 @@ struct Driver {
     // it does an unheld one. nullptr: nothing to keep.
     void (*open)(vfs::Vnode& node) = nullptr;
     void (*close)(vfs::Vnode& node) = nullptr;
+    // Publishes the entries of a directory the driver installed with
+    // vfs::install_volume_directory: files with vfs::install_volume_file,
+    // subdirectories with install_volume_directory (themselves published
+    // later, when looked into). Only that directory, never below it. On a
+    // failure the VFS takes back what was published, calling forget for each.
+    Status (*populate)(vfs::Vnode& directory) = nullptr;
+    // The VFS is retiring a node the driver published, not because it was
+    // deleted but to give its slot back (a failed populate, and later the
+    // cache): the driver drops its own record of it. The entry stays on disk.
+    void (*forget)(vfs::Vnode& node) = nullptr;
 };
 
 struct MountInfo {

@@ -291,14 +291,16 @@ is known, what the fix is. The SxFS side is in
 - `fs::kMaxDrivers` is 4 and `fs::kMaxMounts` is 4: root, `/boot`, and two for
   `/mnt` (the installer's target among them). SxFS holds 3 volumes at once
   (`kMaxVolumes`, about 3 MiB of kernel memory each).
-- **Every volume's whole tree is published at attach, out of one pool.** There
-  is no lookup on demand: a driver publishes every file and directory before
-  the volume is usable, and the VFS holds 2048 nodes (`kMaxNodes`) for the
-  initramfs, `/dev` and every mounted volume together. A volume whose tree
-  does not fit does not mount (FAT fails attach cleanly and `fs::release`
-  takes back what was published). A USB stick with a few thousand files is
-  enough. The fix is publishing a directory's children when it is first
-  looked up, which changes how every driver attaches.
+- **The published tree comes out of one pool,** 2048 nodes (`kMaxNodes`) for
+  the initramfs, `/dev` and every mounted volume together. A driver may
+  publish a directory on demand (`vfs::install_volume_directory` and
+  `fs::Driver::populate`): its entries enter the tree the first time it is
+  looked up or listed, and a failed populate is taken back so the next look
+  tries again. FAT does; SxFS still publishes its whole tree at attach, so an
+  SxFS tree that does not fit does not mount. Nothing published is given
+  back while the volume is mounted, so a session that visits enough fills
+  the pool; a bounded cache is VFS-C's next slice
+  ([VFS_ROADMAP.md](../roadmaps/open/VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches)).
 - **Names are at most 63 bytes, paths at most 255** (`kMaxPathComponentLength`,
   `kMaxPathLength`). FAT allows 255-character names; the FAT driver leaves out
   what does not fit and logs it, never truncating a name.

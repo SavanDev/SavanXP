@@ -1,6 +1,7 @@
 #include "sxfs_host_stubs.hpp"
 
 #include "kernel/block.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 
@@ -191,7 +192,45 @@ void reset_vfs() {
     g_node_count = 0;
 }
 
+// What the real VFS does on a lookup: every directory above `path` that a
+// driver publishes on demand is published first (fs::Driver::populate).
+bool populate_path(const char* path) {
+    char prefix[kPathCapacity] = {};
+    const size_t length = path != nullptr ? strlen(path) : 0;
+    if (length == 0 || length >= sizeof(prefix)) {
+        return false;
+    }
+    for (size_t end = 1; end <= length; ++end) {
+        if (end != length && path[end] != '/') {
+            continue;
+        }
+        if (end == length) {
+            break;
+        }
+        memcpy(prefix, path, end);
+        prefix[end] = '\0';
+        // The stub has no entries for the directories above a mount point.
+        Entry* directory = find_entry(prefix);
+        if (directory == nullptr) {
+            continue;
+        }
+        vfs::Vnode& node = directory->node;
+        if (node.type == vfs::NodeType::directory && node.volume_driver != nullptr && !node.populated &&
+            node.volume_driver->populate != nullptr) {
+            node.populated = true;
+            if (!fs::ok(node.volume_driver->populate(node))) {
+                node.populated = false;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 vfs::Vnode* find_node(const char* path) {
+    if (!populate_path(path)) {
+        return nullptr;
+    }
     Entry* entry = find_entry(path);
     return entry != nullptr ? &entry->node : nullptr;
 }
@@ -395,6 +434,15 @@ Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* dat
     Vnode* node = install_external_file(path, Backend::volume, data, size, writable);
     if (node != nullptr) {
         node->volume_driver = &driver;
+    }
+    return node;
+}
+
+Vnode* install_volume_directory(const char* path, const fs::Driver& driver) {
+    Vnode* node = ensure_directory(path);
+    if (node != nullptr && node->volume_driver != &driver) {
+        node->volume_driver = &driver;
+        node->populated = false;
     }
     return node;
 }

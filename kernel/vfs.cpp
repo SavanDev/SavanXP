@@ -106,7 +106,52 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     return node_index;
 }
 
+void retire_node(vfs::Vnode& node);
+
+// Publishes a volume directory's entries the first time it is looked into
+// (VFS-C, docs/roadmaps/open/VFS_ROADMAP.md). It is marked published before
+// the driver runs, because publishing looks the new names up in it. On a
+// failure what was published is taken back -- none of it can be held yet --
+// so the next look tries again; false, with last_error saying why.
+bool populate_directory(int index) {
+    vfs::Vnode& directory = g_nodes[index].vnode;
+    if (directory.type != vfs::NodeType::directory || directory.populated || directory.volume_driver == nullptr ||
+        directory.volume_driver->populate == nullptr) {
+        return true;
+    }
+    const fs::Driver& driver = *directory.volume_driver;
+    // New entries are appended: what follows the current last child is what
+    // this populate published.
+    int last_before = -1;
+    for (int child = directory.first_child; child >= 0; child = g_nodes[child].vnode.next_sibling) {
+        last_before = child;
+    }
+    directory.populated = true;
+    const fs::Status status = driver.populate(directory);
+    if (fs::ok(status)) {
+        return true;
+    }
+    int child = last_before >= 0 ? g_nodes[last_before].vnode.next_sibling : directory.first_child;
+    while (child >= 0) {
+        const int next = g_nodes[child].vnode.next_sibling;
+        vfs::Vnode& entry = g_nodes[child].vnode;
+        if (!node_is_held(entry) && entry.first_child < 0) {
+            if (driver.forget != nullptr) {
+                driver.forget(entry);
+            }
+            retire_node(entry);
+        }
+        child = next;
+    }
+    directory.populated = false;
+    g_last_error = fs::error_of(status);
+    return false;
+}
+
 int find_child(int parent, const char* name) {
+    if (!populate_directory(parent)) {
+        return -1;
+    }
     int index = g_nodes[parent].vnode.first_child;
     while (index >= 0) {
         if (node_is_named(g_nodes[index].vnode) &&
@@ -411,7 +456,16 @@ bool node_is_ancestor(int ancestor, int node) {
     return false;
 }
 
+int index_of(const vfs::Vnode& node) {
+    return static_cast<int>(reinterpret_cast<const NodeSlot*>(&node) - g_nodes);
+}
+
 bool node_has_valid_children(const vfs::Vnode& node) {
+    // An unpublished directory is not known to be empty until it is looked
+    // into; if that fails, it is not taken for empty either.
+    if (!populate_directory(index_of(node))) {
+        return true;
+    }
     int child = node.first_child;
     while (child >= 0) {
         if (node_is_named(g_nodes[child].vnode)) {
@@ -1130,6 +1184,15 @@ Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* dat
     return node;
 }
 
+Vnode* install_volume_directory(const char* path, const fs::Driver& driver) {
+    Vnode* node = ensure_directory(path);
+    if (node != nullptr && node->volume_driver != &driver) {
+        node->volume_driver = &driver;
+        node->populated = false;
+    }
+    return node;
+}
+
 bool unlink(const cred::Credentials& who, const char* path) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
@@ -1699,6 +1762,9 @@ bool chown(const cred::Credentials& who, const char* path, uint32_t uid, uint32_
 }
 
 const Vnode* child_at(const Vnode& directory, size_t index) {
+    if (!populate_directory(index_of(directory))) {
+        return nullptr;
+    }
     int child = directory.first_child;
     size_t current = 0;
     while (child >= 0) {
@@ -1714,6 +1780,9 @@ const Vnode* child_at(const Vnode& directory, size_t index) {
 }
 
 size_t child_count(const Vnode& directory) {
+    if (!populate_directory(index_of(directory))) {
+        return 0;
+    }
     size_t count = 0;
     int child = directory.first_child;
     while (child >= 0) {

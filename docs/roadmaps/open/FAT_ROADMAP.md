@@ -119,7 +119,9 @@ slot → `device_index` table.
 | `fs::Driver` | FatFs |
 |---|---|
 | `probe` | `f_mount(..., 1)`. `FR_NO_FILESYSTEM` → `kInvalidVolume` ("not my format") |
-| `attach` | Walk the tree with `f_opendir`/`f_readdir`; `vfs::ensure_directory` for directories, `vfs::install_volume_file` for files |
+| `attach` | The mount point only, with `vfs::install_volume_directory`: nothing below it is read |
+| `populate` | One directory with `f_opendir`/`f_readdir`, the first time it is looked into: `vfs::install_volume_file` for files, `install_volume_directory` for subdirectories (populated in turn) |
+| `forget` | Drops the record of an entry the VFS gives back without deleting it (a failed populate) |
 | `read` | `f_open` + `f_lseek` + `f_read` + `f_close` |
 | `write`, `truncate` | `f_open(FA_WRITE)` + `f_lseek` + `f_write` / `f_truncate` + `f_close` |
 | `create_file`, `create_directory` | `f_open(FA_CREATE_NEW)`, `f_mkdir` |
@@ -177,19 +179,23 @@ Points worth knowing before writing it:
   everything below a moved directory.
 - **FatFs moves a directory into its own subtree without complaint**, leaving
   it hanging from itself, unreachable. `rename` refuses that itself.
-- **What attach leaves out.** A name longer than a VFS path component (63
-  bytes), a path longer than 255, and anything below 24 levels of directories.
-  They are counted and logged (`fat: /boot: N entries left out ...`), never
-  truncated. Each directory level being published is on the heap, not on the
-  32 KiB kernel stack.
-- **The whole tree is published at attach, and the VFS has 2048 nodes**
-  shared by the initramfs, `/dev` and every mounted volume
-  ([FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#limits)). The ESP has a few
-  dozen; a FAT stick mounted from Disk Management can have far more than what
-  is left. `attach` fails cleanly when the VFS runs out, and `fs::release`
-  takes back the part already published, as it does for a volume that never
-  attached. Publishing lazily, a directory when it is first opened, is the real
-  fix and a VFS change of its own.
+- **What is left out.** A name longer than a VFS path component (63 bytes), a
+  path longer than 255, and anything below 24 levels of directories. They are
+  counted and logged per directory when it is published
+  (`fat: /boot/dir: N entries left out ...`), never truncated. The directory
+  being read is on the heap, not on the 32 KiB kernel stack.
+- **Directories are published when looked into** (VFS-C slice 1,
+  [VFS_ROADMAP.md](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches)).
+  Attach publishes the mount point; the first lookup or listing of a
+  directory publishes its entries. A stick with more files than the VFS's
+  2048 nodes mounts, and what is visited is resident. A single directory with
+  more entries than the VFS has free fails its own lookup (`fat: ... the
+  directory does not fit in the VFS`), and what it had published is taken
+  back. Nothing is given back yet once published: a long session that visits
+  every directory still fills the pool, which is VFS-C's next slice.
+- **The file count is the volume's, not what is published.** `stats` walks
+  the directories once, without publishing (`count_files`, by the same
+  left-out rules), the first time it is asked; create and unlink keep it.
 - **Priority below SxFS** (SxFS is 100). A FAT32 boot sector and an SxFS
   superblock must not be mistaken for each other; SxFS probes first.
 
@@ -291,8 +297,9 @@ Each phase builds, boots and is verified on its own.
 - Volumes up to 2 TiB (32-bit sector numbers).
 - No `chmod`/`chown` on FAT; ownership is fixed.
 - Unmount follows SxFS's (`fs::release`); the ESP at `/boot` stays mounted.
-- A FAT volume with more files and directories than the VFS has free nodes
-  does not mount.
+- A single FAT directory with more entries than the VFS has free nodes cannot
+  be listed, and visiting more than the pool holds fails until VFS-C gives
+  slots back.
 
 ## Open questions
 

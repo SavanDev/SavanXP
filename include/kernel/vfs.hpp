@@ -75,6 +75,11 @@ struct Vnode {
     // file-backed sections read from it. Unlink, rename, rmdir and unmount
     // read it to decide whether a node can go.
     uint32_t references;
+    // A volume directory published on demand (install_volume_directory)
+    // carries its driver in volume_driver, with backend memory. Until its
+    // first lookup or listing its entries are not in the tree; then the
+    // driver's populate publishes them and this is set.
+    bool populated;
 };
 
 /* --- permissions ------------------------------------------------------------
@@ -137,6 +142,10 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
 bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node));
 
 Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable);
+// A directory of a volume whose entries are published on demand: created (or
+// found) at `path` and stamped with `driver`, whose populate publishes what it
+// holds the first time it is looked into. A mount point too, at attach.
+Vnode* install_volume_directory(const char* path, const fs::Driver& driver);
 
 // Holders of a node: whoever keeps a Vnode pointer past the call that found
 // it (an open handle, a file-backed section) retains it, and releases it when
