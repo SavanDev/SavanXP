@@ -62,9 +62,6 @@ int complete_blocked_wait(Thread& thread, int result);
 short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
-// True when some open file still references the vnode (unlink/rmdir/rename
-// guard). The IoObject pool lives in kernel/process.cpp, so the check does.
-bool vnode_has_open_references(const vfs::Vnode& node);
 
 } // namespace detail
 } // namespace process

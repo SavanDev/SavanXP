@@ -1071,7 +1071,6 @@ int complete_blocked_wait(Thread& thread, int result);
 short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
-bool vnode_has_open_references(const vfs::Vnode& node);
 void destroy_io_object(object::Header* header);
 
 uint64_t now_ms() {
@@ -1287,7 +1286,12 @@ void discard_io_object(object::IoObject*& file_ptr) {
         return;
     }
     process_assert(file_ptr->header.refcount == 0, "process: discard referenced io object");
+    // A file object never installed still holds its node (sx::open_file).
+    vfs::Vnode* released = file_ptr->kind == process::HandleKind::vnode ? file_ptr->node : nullptr;
     memset(file_ptr, 0, sizeof(*file_ptr));
+    if (released != nullptr) {
+        vfs::release(*released);
+    }
     file_ptr = nullptr;
 }
 
@@ -1596,19 +1600,11 @@ void destroy_io_object(object::Header* header) {
 
     vfs::Vnode* released = file->kind == process::HandleKind::vnode ? file->node : nullptr;
     memset(file, 0, sizeof(*file));
-    // After the handle is gone, so the VFS sees the node without it: the last
-    // close of an unlinked file is what frees it.
+    // After the handle is gone: the last close of an unlinked file is what
+    // frees it.
     if (released != nullptr) {
-        vfs::node_released(*released);
+        vfs::release(*released);
     }
-}
-bool vnode_has_open_references(const vfs::Vnode& node) {
-    for (const object::IoObject& file : g_io_objects) {
-        if (file.in_use && file.kind == process::HandleKind::vnode && file.node == &node) {
-            return true;
-        }
-    }
-    return false;
 }
 } // namespace detail
 } // namespace process

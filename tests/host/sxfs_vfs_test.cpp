@@ -52,37 +52,15 @@ const cred::Credentials kSystem = cred::system();
 const char kHello[] = "hello, held file\n";
 const char kOther[] = "the other one\n";
 
-// --- The holders: what the process layer is in the kernel ----------------------
-
-constexpr size_t kMaxHeld = 8;
-const vfs::Vnode* g_held[kMaxHeld] = {};
-
-bool is_held(const vfs::Vnode& node) {
-    for (const vfs::Vnode* held : g_held) {
-        if (held == &node) {
-            return true;
-        }
-    }
-    return false;
-}
+// --- The holders: what an open handle does in the kernel ----------------------
 
 void hold(vfs::Vnode* node) {
-    for (const vfs::Vnode*& slot : g_held) {
-        if (slot == nullptr) {
-            slot = node;
-            return;
-        }
-    }
+    vfs::retain(*node);
 }
 
-// The last close: the handle goes, then the VFS is told.
+// The last close: the handle goes, and the VFS is told.
 void let_go(vfs::Vnode* node) {
-    for (const vfs::Vnode*& slot : g_held) {
-        if (slot == node) {
-            slot = nullptr;
-        }
-    }
-    vfs::node_released(*node);
+    vfs::release(*node);
 }
 
 // --- Image and mount -----------------------------------------------------------
@@ -135,10 +113,8 @@ size_t g_mount = fs::kInvalidMount;
 
 // Boots the whole stack on `image`: VFS, registry, driver, root mounted at "/".
 bool mount_image(uint8_t* image, bool writable = true, uint32_t sectors = kTotalSectors) {
-    memset(g_held, 0, sizeof(g_held));
     hoststub::attach_device(image, sectors, writable);
     vfs::initialize(kEmptyArchive, sizeof(kEmptyArchive) - 1u);
-    vfs::set_holder_probe(&is_held);
     fs::initialize();
     sxfs::initialize();
     static bool registered = false;
@@ -314,6 +290,44 @@ void case_unlinked_file_lives_while_held(uint8_t* image) {
     check(!vfs::rmdir(kSystem, "/empty") && vfs::last_error() == SX_EBUSY, "rmdir of an open directory: EBUSY");
     let_go(directory);
     check(vfs::rmdir(kSystem, "/empty"), "and it goes once closed");
+    hoststub::detach_device();
+}
+
+// Holders are counted on the node: a handle and a section on the same file
+// are two, and the file is freed only when both are gone, exactly once.
+void case_holders_are_counted(uint8_t* image) {
+    printf("case: holders are counted\n");
+    if (!check(build_image(image) && mount_image(image), "volume mounted")) {
+        return;
+    }
+    vfs::Vnode* file = open_read("/docs/hello.txt");
+    if (!check(file != nullptr && !vfs::is_held(*file), "a node nobody retained is not held")) {
+        hoststub::detach_device();
+        return;
+    }
+    hold(file);
+    hold(file);
+    check(vfs::is_held(*file) && file->references == 2, "two holders, two references");
+    check(vfs::unlink(kSystem, "/docs/hello.txt") && report_of().pending_deletions == 1, "unlinked while held");
+    let_go(file);
+    check(report_of().pending_deletions == 1 && node_reads(file, kHello, sizeof(kHello) - 1u),
+          "one holder left: still pending, still readable");
+    let_go(file);
+    check(report_of().pending_deletions == 0 && volume_is_clean(), "the second release frees it");
+    check(file->type == vfs::NodeType::invalid && file->references == 0, "the slot is cleared");
+
+    // An unbalanced release changes nothing: the count does not wrap into
+    // "held forever" and nothing is freed twice.
+    let_go(file);
+    check(!vfs::is_held(*file) && volume_is_clean(), "an extra release is ignored");
+
+    // A held directory cannot be removed or detached; a released one can.
+    vfs::Vnode* directory = vfs::open(kSystem, "/full", SAVANXP_OPEN_READ, 0);
+    hold(directory);
+    check(!vfs::detach_subtree("/full", &vfs::is_held) && vfs::last_error() == SX_EBUSY,
+          "a held subtree does not detach");
+    let_go(directory);
+    check(!vfs::is_held(*directory), "released");
     hoststub::detach_device();
 }
 
@@ -657,6 +671,7 @@ int main() {
     case_errors_are_precise(image);
     case_rename_replaces(image);
     case_unlinked_file_lives_while_held(image);
+    case_holders_are_counted(image);
     case_power_cut_with_an_unlinked_file_open(image);
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);

@@ -529,7 +529,7 @@ int rmdir_path(process::Process& proc, const char* path) {
     if (node->type != vfs::NodeType::directory) {
         return sx::negative_error(SAVANXP_ENOTDIR);
     }
-    if (detail::vnode_has_open_references(*node)) {
+    if (vfs::is_held(*node)) {
         return sx::negative_error(SAVANXP_EBUSY);
     }
     if (!vfs::rmdir(proc.credentials, path)) {
@@ -557,7 +557,7 @@ int rename_path(process::Process& proc, const char* old_path, const char* new_pa
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
     }
-    if (node->type == vfs::NodeType::directory && detail::vnode_has_open_references(*node)) {
+    if (node->type == vfs::NodeType::directory && vfs::is_held(*node)) {
         return sx::negative_error(SAVANXP_EBUSY);
     }
     if (!vfs::rename(proc.credentials, old_path, new_path)) {

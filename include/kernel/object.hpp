@@ -135,9 +135,10 @@ struct SectionObject {
     uint32_t access_mask;
     // Valid only with file_backed. The cache key: two requests for the same
     // file find the same section and so the same physical pages. The vnode is
-    // unique across volumes and is not reused after an unlink, which an inode
-    // number is not. See docs/kernel/SECTIONS.md for what it does NOT cover.
-    const vfs::Vnode* source_node;
+    // unique across volumes, and the section holds it (vfs::retain), so its
+    // slot is not reused while the section lives. See docs/kernel/SECTIONS.md
+    // for what it does NOT cover.
+    vfs::Vnode* source_node;
     /* Offset and length of the part of the file backing the section. They are
      * part of the cache key with source_node: the whole file and one slice of
      * it are different sections, and mixing them up returns a section larger
@@ -277,7 +278,6 @@ bool can_satisfy_wait(const Header* object);
 void section_live_counts(uint32_t& live, uint32_t& file_backed);
 // True while a live file-backed section was made from this vnode: a program
 // or library mapped from it. Unmount refuses such a volume.
-bool section_uses_vnode(const vfs::Vnode& node);
 bool try_acquire_wait(Header* object);
 
 } // namespace object

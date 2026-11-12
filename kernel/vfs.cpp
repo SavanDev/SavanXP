@@ -37,10 +37,8 @@ size_t g_node_count = 0;
 int g_free_nodes = -1;
 bool g_ready = false;
 int g_last_error = SX_ENOENT;
-bool (*g_holder_probe)(const vfs::Vnode& node) = nullptr;
-
 bool node_is_held(const vfs::Vnode& node) {
-    return g_holder_probe != nullptr && g_holder_probe(node);
+    return node.references != 0;
 }
 
 // A node that has a name in the tree: not invalidated, and not unlinked while
@@ -1161,7 +1159,7 @@ bool unlink(const cred::Credentials& who, const char* path) {
     }
 
     // A file something holds loses its name and keeps its contents for
-    // those holders; node_released() frees it when the last one goes.
+    // those holders; release() frees it when the last one goes.
     const bool held = node_is_held(node);
     switch (node.backend) {
         case Backend::memory:
@@ -1195,11 +1193,20 @@ bool unlink(const cred::Credentials& who, const char* path) {
     return true;
 }
 
-void set_holder_probe(bool (*held)(const Vnode& node)) {
-    g_holder_probe = held;
+void retain(Vnode& node) {
+    ++node.references;
 }
 
-void node_released(Vnode& node) {
+bool is_held(const Vnode& node) {
+    return node_is_held(node);
+}
+
+void release(Vnode& node) {
+    // An unbalanced release must not wrap the count into "held forever".
+    if (node.references == 0) {
+        return;
+    }
+    --node.references;
     if (!node.unlinked || node.type == NodeType::invalid || node_is_held(node)) {
         return;
     }

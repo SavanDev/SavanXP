@@ -176,11 +176,14 @@ existing name is `EEXIST` and nothing changes.
 over it, removes the name at once: it is in no lookup and no listing, and the
 name can be created again. Handles and sections that had the file keep
 reading and writing its contents (`Vnode::unlinked`), and the driver's
-`release` frees it when the last one goes (`vfs::node_released`, called when
-an I/O object is destroyed; `vfs::set_holder_probe` is how the VFS asks
-whether anything holds a node). A driver without `release` (FAT) refuses to
-unlink or replace a held file with `EBUSY`. A directory that is some
-process's open handle is refused the same way.
+`release` frees it when the last one goes. Holders are counted on the node
+(`Vnode::references`): whoever keeps a vnode past the call that found it
+calls `vfs::retain`, and `vfs::release` when done. An open handle does it in
+`sx::open_file` and when its I/O object is destroyed; a file-backed section
+when it is created and destroyed. The last release of an unlinked node frees
+the file. A driver without `release` (FAT) refuses to unlink or replace a held
+file with `EBUSY`. A directory that is some process's open handle is refused
+the same way.
 
 **Identity.** A vnode's address is stable while anything holds it. A slot is
 reused once the node is gone and released, and `content_generation` never
@@ -237,9 +240,8 @@ reused: `fs::mount` takes the first free one.
 `vfs::detach_subtree` to take the mount point and everything below it out of
 the tree, and only then lets the driver free its state (`unmount`). The detach
 first walks the subtree, unlinked nodes included, and refuses with `EBUSY` if
-any node is still held: an open file or directory handle
-(`process::detail::vnode_has_open_references`) or a live section mapped from a
-file (`object::section_uses_vnode`), which is what a running program from the
+any node is still held (`vfs::is_held`): an open file or directory handle, or
+a live section read from a file, which is what a running program from the
 volume has. Under the kernel lock nothing else can be holding a vnode between
 two system calls, so when nothing is found nothing points at the subtree, and
 its node slots go to a free list `add_node` takes from first. The root

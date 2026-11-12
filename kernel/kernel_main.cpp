@@ -227,8 +227,6 @@ namespace
     }
     boot_screen::show("Loading userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
-    // Open handles are what keeps an unlinked file alive (vfs::unlink).
-    vfs::set_holder_probe(&process::detail::vnode_has_open_references);
     device::initialize();
     boot_screen::show("Preparing display");
     // Elegir el backend de display: cada driver se registra y bind_best corre

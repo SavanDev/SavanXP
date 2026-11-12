@@ -8,10 +8,8 @@
 #include "kernel/fat.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/console.hpp"
-#include "kernel/object.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/string.hpp"
-#include "kernel/process_detail.hpp"
 #include "kernel/sx.hpp"
 #include "kernel/vfs.hpp"
 #include "sxfs/sxfs_format.h"
@@ -80,12 +78,6 @@ bool overlaps_mounted(size_t disk, uint64_t start, uint64_t count) {
         }
     }
     return false;
-}
-
-// Whether anything still holds a vnode: an open file or directory handle, or a
-// section mapped from it.
-bool vnode_referenced(const vfs::Vnode& node) {
-    return process::detail::vnode_has_open_references(node) || object::section_uses_vnode(node);
 }
 
 constexpr const char kMountParent[] = "/mnt";
@@ -252,7 +244,7 @@ int unmount(const char* path) {
         strcmp(path, fs::kBootMountPoint) == 0) {
         return sx::negative_error(SX_EINVAL);
     }
-    return fs::release(mounted, &vnode_referenced);
+    return fs::release(mounted, &vfs::is_held);
 }
 
 size_t mount_boot_volume() {
@@ -335,7 +327,7 @@ bool forget_disk(size_t index) {
             continue;
         }
         if (is_root_mount(mount) || strcmp(mounted.mount_point, fs::kBootMountPoint) == 0 ||
-            fs::release(mount, &vnode_referenced) != 0) {
+            fs::release(mount, &vfs::is_held) != 0) {
             return false;
         }
         console::printf("storage: %s released, its disk is gone\n", mounted.mount_point);

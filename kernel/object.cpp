@@ -62,7 +62,13 @@ void destroy_section(Header* header) {
         heap::free(section_object->physical_pages);
     }
 
+    vfs::Vnode* released = section_object->file_backed != 0 ? section_object->source_node : nullptr;
     memset(section_object, 0, sizeof(*section_object));
+    // After the section is gone, as for a handle: the last holder of an
+    // unlinked file frees it.
+    if (released != nullptr) {
+        vfs::release(*released);
+    }
 }
 
 void destroy_port(Header* header) {
@@ -313,15 +319,6 @@ void section_live_counts(uint32_t& live, uint32_t& file_backed) {
     }
 }
 
-bool section_uses_vnode(const vfs::Vnode& node) {
-    for (const SectionObject& section_object : g_section_objects) {
-        if (section_object.in_use && section_object.file_backed != 0 && section_object.source_node == &node) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static SectionObject* find_file_section(const vfs::Vnode* source, uint64_t offset, uint64_t length) {
     if (source == nullptr) {
         return nullptr;
@@ -369,7 +366,7 @@ SectionObject* acquire_file_range_section(
     /* The identity key is the vnode of a file on a mounted volume. An
      * initramfs file is read the same way but not cached: it has no volume
      * behind it, and the cache has only ever served volume files. */
-    const vfs::Vnode* source = nullptr;
+    vfs::Vnode* source = nullptr;
     if (node.backend == vfs::Backend::volume) {
         source = &node;
         if (SectionObject* existing = find_file_section(source, offset, size_bytes)) {
@@ -387,7 +384,12 @@ SectionObject* acquire_file_range_section(
     }
 
     section_object->file_backed = 1;
+    // The section holds its file for as long as it lives (destroy_section
+    // releases it), so the node and its slot are not reused under it.
     section_object->source_node = source;
+    if (source != nullptr) {
+        vfs::retain(*source);
+    }
     section_object->source_offset = offset;
     section_object->source_length = size_bytes;
     section_object->source_generation = node.content_generation;

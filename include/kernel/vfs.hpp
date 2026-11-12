@@ -69,8 +69,12 @@ struct Vnode {
     uint32_t content_generation;
     // The name is gone (unlink, or a rename over it) while something still
     // holds the node: it is out of every lookup and listing, and its contents
-    // stay usable through the handles that have it until node_released().
+    // stay usable through the handles that have it until the last release().
     bool unlinked;
+    // Holders counted on the node (retain/release): open handles, and the
+    // file-backed sections read from it. Unlink, rename, rmdir and unmount
+    // read it to decide whether a node can go.
+    uint32_t references;
 };
 
 /* --- permissions ------------------------------------------------------------
@@ -134,14 +138,15 @@ bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node));
 
 Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* data, size_t size, bool writable);
 
-// Whether something outside the VFS holds a node: an open handle. Set once at
-// boot by whoever owns the handles. Unlink and rename ask it to decide between
-// freeing a file and keeping it for its holders; without a probe nothing is
-// ever held.
-void set_holder_probe(bool (*held)(const Vnode& node));
-// A holder of `node` is gone. When it was the last one of an unlinked node,
-// the file is freed (fs::Driver::release) and the node invalidated.
-void node_released(Vnode& node);
+// Holders of a node: whoever keeps a Vnode pointer past the call that found
+// it (an open handle, a file-backed section) retains it, and releases it when
+// done. Unlink and rename keep a held file for its holders instead of freeing
+// it; rmdir and unmount refuse a held node.
+void retain(Vnode& node);
+// One holder is gone. When it was the last one of an unlinked node, the file
+// is freed (fs::Driver::release) and the node invalidated.
+void release(Vnode& node);
+bool is_held(const Vnode& node);
 
 // Removes a file's name. A file something still holds keeps its contents for
 // those holders (Vnode::unlinked); on a volume whose driver cannot do that,

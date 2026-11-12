@@ -43,16 +43,19 @@ One thing is deliberately missing, and one rule holds the cache together:
 - **The cache key is the file's vnode, the range backed and the file's content
   generation** (`source_generation`). The range matters because "the whole
   file" and "one slice of it" are different sections. The vnode, unlike an
-  inode number, is unique across mounted volumes. Its slot is reused after the
-  file is gone and released, and a file's bytes change under the same vnode,
+  inode number, is unique across mounted volumes. The section holds it
+  (`vfs::retain` at creation, `vfs::release` when it is destroyed), so the
+  slot is not reused while the section lives: unlinking the file keeps it for
+  the section, and FAT, which cannot do that, refuses with `EBUSY`. A file's
+  bytes still change under the same vnode,
   so the key also carries `Vnode::content_generation`, which the VFS moves on
   every write, truncate and slot reuse and never repeats
   ([FILESYSTEMS.md](FILESYSTEMS.md#the-file-contract)). A section opened after
   a write is read again; views mapped before it keep the image they had, which
   is the same thing an unlinked file's holders get. A read error while filling
   a section destroys it and fails the open, never caching a short image.
-  `sxfs-vfs-test` checks the generation rules; unmount still refuses while a
-  live section names a node of the volume
+  `sxfs-vfs-test` checks the generation rules; unmount refuses while a live
+  section holds a node of the volume
   ([FILESYSTEMS.md](FILESYSTEMS.md#mounting-and-unmounting-at-run-time)).
 - **No end-to-end execution from the mapping.** `sectiontest` proves the bytes
   arrive intact and that the view maps executable, but code that actually *runs*

@@ -107,6 +107,10 @@ Cut-off notes:
   `seek_file` and `close_handle`, with results that carry a status and a length. A read or write that fails partway
   returns the bytes it moved, and a seek past the 64-bit range is `EINVAL` (VFS-A step 1).
 
+- **Open handles and file-backed sections are counted on the vnode** (`vfs::retain`, `vfs::release`, `vfs::is_held`),
+  replacing `vfs::set_holder_probe`. A file a live section was read from now survives its unlink until the section goes;
+  on FAT that unlink is `EBUSY`.
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

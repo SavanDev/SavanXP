@@ -377,8 +377,8 @@ quota problem below and not this one.
 was looked up by `(vnode, offset, length)` and filled once, so a library
 rewritten in place at the same size kept serving the old pages. The key now
 includes `Vnode::content_generation`, which every write, truncate and slot
-reuse moves on ([`SECTIONS.md`](./SECTIONS.md)), and unmount counts sections
-as holders of their file (`object::section_uses_vnode`). One part remains and
+reuse moves on ([`SECTIONS.md`](./SECTIONS.md)), and a section holds its
+file (`vfs::retain`), so unmount counts it. One part remains and
 fails closed: a cached section keeps the access mask of its first opener, so a
 later opener that asks for more gets a handle whose `map_view` is refused.
 

@@ -68,6 +68,11 @@ sx_status open_file(const cred::Credentials& who, const char* path, uint32_t fla
         ((flags & SAVANXP_OPEN_WRITE) != 0 ? process::open_write : 0u) |
         ((flags & SAVANXP_OPEN_NONBLOCK) != 0 ? process::open_nonblock : 0u);
     file->node = node;
+    if (!is_device) {
+        // The handle holds the node until destroy_io_object (or
+        // discard_io_object, when it is never installed) releases it.
+        vfs::retain(*node);
+    }
     file->device = is_device ? static_cast<device::Device*>(node->data) : nullptr;
     file->header.destroy = process::detail::destroy_io_object;
     if ((flags & SAVANXP_OPEN_APPEND) != 0 && node->type == vfs::NodeType::file) {
