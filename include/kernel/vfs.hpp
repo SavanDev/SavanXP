@@ -224,6 +224,36 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
 const Vnode* child_at(const Vnode& directory, size_t index);
 size_t child_count(const Vnode& directory);
 
+/* --- enumeration cursors (VFS-C slice 5) -------------------------------------
+ * A position in a directory's listing, kept by whoever lists it (an open
+ * directory handle) and known to the VFS while open, so that changes to the
+ * directory move it instead of breaking it:
+ *   - an entry removed, or moved to another directory, while a cursor is
+ *     about to return it: the cursor moves on to the entry after it, so
+ *     nothing is skipped (rm -r deletes what it just read);
+ *   - an entry added: appended, and listed if the cursor has not reached the
+ *     end;
+ *   - an entry renamed inside the directory: it goes to the end, so it may
+ *     be listed again under its new name.
+ * Each step is O(1), where child_at walks from the start every time. The
+ * directory must be held (vfs::retain) while the cursor is open. */
+struct DirCursor {
+    Vnode* directory;
+    // The slot of the next entry to look at; kCursorAtStart before the first
+    // step, -1 at the end.
+    int next;
+    bool open;
+    DirCursor* link; // the VFS's list of open cursors
+};
+constexpr int kCursorAtStart = -2;
+void open_cursor(DirCursor& cursor, Vnode& directory);
+// Safe on a cursor never opened.
+void close_cursor(DirCursor& cursor);
+// The next entry, nullptr at the end (or when the directory could not be
+// published: last_error says so).
+const Vnode* next_entry(DirCursor& cursor);
+void rewind_cursor(DirCursor& cursor);
+
 /* --- the bounded cache (VFS-C, docs/roadmaps/open/VFS_ROADMAP.md) ------------
  * Published volume directories are given back when slots run low: their
  * entries leave the tree (the driver is told to forget each one) and the

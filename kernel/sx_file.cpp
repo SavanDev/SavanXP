@@ -72,6 +72,9 @@ sx_status open_file(const cred::Credentials& who, const char* path, uint32_t fla
         // The handle holds the node until destroy_io_object (or
         // discard_io_object, when it is never installed) releases it.
         vfs::retain(*node);
+        if (node->type == vfs::NodeType::directory) {
+            vfs::open_cursor(file->cursor, *node);
+        }
     }
     file->device = is_device ? static_cast<device::Device*>(node->data) : nullptr;
     file->header.destroy = process::detail::destroy_io_object;

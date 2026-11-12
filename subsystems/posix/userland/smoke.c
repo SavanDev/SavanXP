@@ -284,9 +284,14 @@ int main(void) {
     const char* rm_argv[] = {"/bin/rm", "/smoke/readme.moved", 0};
     const char* ps_argv[] = {"/bin/ps", 0};
     /* The recursive forms: a tree made with mkdir -p, copied with cp -r and
-     * removed with rm -r, both copies. */
+     * removed with rm -r, both copies. Several entries per directory: rm -r
+     * deletes each right after reading it, which an index-based listing
+     * would answer by skipping every other one (VFS-C slice 5a). */
     const char* mkdir_tree_argv[] = {"/bin/mkdir", "-p", "/smoke/tree/sub", 0};
     const char* cp_into_tree_argv[] = {"/bin/cp", "/README", "/smoke/tree/sub", 0};
+    const char* cp_second_argv[] = {"/bin/cp", "/README", "/smoke/tree/sub/second", 0};
+    const char* cp_third_argv[] = {"/bin/cp", "/README", "/smoke/tree/sub/third", 0};
+    const char* cp_beside_sub_argv[] = {"/bin/cp", "/README", "/smoke/tree/beside", 0};
     const char* cp_tree_argv[] = {"/bin/cp", "-r", "/smoke/tree", "/smoke/tree2", 0};
     const char* rm_tree_argv[] = {"/bin/rm", "-r", "/smoke/tree", "/smoke/tree2", 0};
     const char* libctest_argv[] = {"/bin/libctest", 0};
@@ -401,6 +406,9 @@ int main(void) {
         !file_missing("/smoke/readme.moved") ||
         !run_and_expect("/bin/mkdir", mkdir_tree_argv, 3, 0) ||
         !run_and_expect("/bin/cp", cp_into_tree_argv, 3, 0) ||
+        !run_and_expect("/bin/cp", cp_second_argv, 3, 0) ||
+        !run_and_expect("/bin/cp", cp_third_argv, 3, 0) ||
+        !run_and_expect("/bin/cp", cp_beside_sub_argv, 3, 0) ||
         !run_and_expect("/bin/cp", cp_tree_argv, 4, 0) ||
         !validate_file_contains("/smoke/tree2/sub/README", "SavanXP") ||
         !run_and_expect("/bin/rm", rm_tree_argv, 4, 0) ||

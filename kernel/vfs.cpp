@@ -468,6 +468,10 @@ void drop_name(int index, char* storage) {
     }
 }
 
+// The open enumeration cursors (vfs::DirCursor), so that taking a node out
+// of its directory moves the ones about to return it.
+vfs::DirCursor* g_cursors = nullptr;
+
 void detach_node(int index) {
     if (index <= 0 || static_cast<size_t>(index) >= g_node_count) {
         return;
@@ -476,6 +480,12 @@ void detach_node(int index) {
     const int parent = g_nodes[index].vnode.parent;
     if (parent < 0 || static_cast<size_t>(parent) >= g_node_count) {
         return;
+    }
+
+    for (vfs::DirCursor* cursor = g_cursors; cursor != nullptr; cursor = cursor->link) {
+        if (cursor->next == index) {
+            cursor->next = g_nodes[index].vnode.next_sibling;
+        }
     }
 
     if (g_nodes[parent].vnode.first_child == index) {
@@ -861,6 +871,7 @@ void initialize(const void* archive, size_t size) {
     g_free_nodes = -1;
     g_free_listed = 0;
     g_use_clock = 0;
+    g_cursors = nullptr;
     g_ready = false;
 
     if (add_node(NodeType::directory, "/", -1) != 0) {
@@ -2081,6 +2092,57 @@ size_t child_count(const Vnode& directory) {
 
 bool path_of(const Vnode& node, char* out, size_t capacity) {
     return node.type != NodeType::invalid && !node.unlinked && path_of_node(node, out, capacity);
+}
+
+void open_cursor(DirCursor& cursor, Vnode& directory) {
+    close_cursor(cursor);
+    cursor.directory = &directory;
+    cursor.next = kCursorAtStart;
+    cursor.open = true;
+    cursor.link = g_cursors;
+    g_cursors = &cursor;
+}
+
+void close_cursor(DirCursor& cursor) {
+    if (!cursor.open) {
+        return;
+    }
+    for (DirCursor** link = &g_cursors; *link != nullptr; link = &(*link)->link) {
+        if (*link == &cursor) {
+            *link = cursor.link;
+            break;
+        }
+    }
+    cursor = {};
+}
+
+const Vnode* next_entry(DirCursor& cursor) {
+    if (!cursor.open || cursor.directory == nullptr) {
+        return nullptr;
+    }
+    g_last_error = 0;
+    if (cursor.next == kCursorAtStart) {
+        // Published on the first step, not at open: an opened directory that
+        // is never listed costs nothing.
+        if (!populate_directory(index_of(*cursor.directory))) {
+            return nullptr;
+        }
+        cursor.next = cursor.directory->first_child;
+    }
+    while (cursor.next >= 0) {
+        const Vnode& entry = g_nodes[cursor.next].vnode;
+        cursor.next = entry.next_sibling;
+        if (node_is_named(entry)) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+void rewind_cursor(DirCursor& cursor) {
+    if (cursor.open) {
+        cursor.next = kCursorAtStart;
+    }
 }
 
 /* --- the bounded cache (VFS-C) ---------------------------------------------

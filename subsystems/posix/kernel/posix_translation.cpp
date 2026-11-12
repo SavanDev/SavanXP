@@ -765,7 +765,7 @@ int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
         return sx::negative_error(SAVANXP_EINVAL);
     }
 
-    const vfs::Vnode* child = vfs::child_at(*file->node, file->iterator_index++);
+    const vfs::Vnode* child = vfs::next_entry(file->cursor);
     if (child == nullptr) {
         char zero = '\0';
         (void)write_to_process_memory(proc, user_buffer, &zero, 1);

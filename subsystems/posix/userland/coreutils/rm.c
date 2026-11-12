@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <limits.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,42 +13,33 @@ static int g_recursive = 0;
 
 static int remove_path(const char* path);
 
-/* Reads the first entry of a directory other than "." and "..". 1 if found. */
-static int first_entry(const char* path, char* out, size_t capacity) {
+/* Removes what is in a directory, then the directory, listing it once:
+ * deleting each entry right after reading it is safe, because the kernel
+ * moves the listing past an entry removed under it (VFS-C slice 5a). */
+static int remove_directory(const char* path) {
+    char child[PATH_MAX];
     DIR* directory = opendir(path);
     struct dirent* entry;
-    int found = 0;
+    int failed = 0;
 
     if (directory == NULL) {
-        return -1;
+        cu_fail("rm", "can't read", path);
+        return 1;
     }
-    while ((entry = readdir(directory)) != NULL) {
-        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            found = cu_join(out, capacity, path, entry->d_name) == 0 ? 1 : -1;
-            break;
+    while (!failed && (entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (cu_join(child, sizeof(child), path, entry->d_name) != 0) {
+            cu_fail("rm", "path too long", path);
+            failed = 1;
+        } else if (remove_path(child) != 0) {
+            failed = 1;
         }
     }
     closedir(directory);
-    return found;
-}
-
-static int remove_directory(const char* path) {
-    char child[256];
-
-    /* Reopen after every removal instead of deleting while iterating: a
-     * directory changing under readdir may skip entries. */
-    for (;;) {
-        const int found = first_entry(path, child, sizeof(child));
-        if (found < 0) {
-            cu_fail("rm", "can't read", path);
-            return 1;
-        }
-        if (found == 0) {
-            break;
-        }
-        if (remove_path(child) != 0) {
-            return 1;
-        }
+    if (failed) {
+        return 1;
     }
     if (rmdir(path) != 0) {
         cu_fail("rm", "can't remove", path);

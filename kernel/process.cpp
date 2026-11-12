@@ -1292,6 +1292,7 @@ void discard_io_object(object::IoObject*& file_ptr) {
     process_assert(file_ptr->header.refcount == 0, "process: discard referenced io object");
     // A file object never installed still holds its node (sx::open_file).
     vfs::Vnode* released = file_ptr->kind == process::HandleKind::vnode ? file_ptr->node : nullptr;
+    vfs::close_cursor(file_ptr->cursor);
     memset(file_ptr, 0, sizeof(*file_ptr));
     if (released != nullptr) {
         vfs::release(*released);
@@ -1603,6 +1604,7 @@ void destroy_io_object(object::Header* header) {
     }
 
     vfs::Vnode* released = file->kind == process::HandleKind::vnode ? file->node : nullptr;
+    vfs::close_cursor(file->cursor);
     memset(file, 0, sizeof(*file));
     // After the handle is gone: the last close of an unlinked file is what
     // frees it.

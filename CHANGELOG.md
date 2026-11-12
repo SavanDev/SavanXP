@@ -127,6 +127,10 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **Listing a directory while entries are deleted or added no longer skips any**: `readdir` keeps a cursor the VFS
+  moves past a removed entry (`vfs::DirCursor`), each step O(1). `rm -r` now lists each directory once instead of
+  reopening it after every deletion (VFS-C slice 5a).
+
 - **A name or path that is too long fails with `ENAMETOOLONG`** (36, `SX_ENAMETOOLONG`), instead of `EINVAL`: past
   the 1023 bytes a system call copies, the VFS's 255-byte names, or a format's own limits (SxFS's 63-byte names).
 

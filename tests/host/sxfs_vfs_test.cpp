@@ -861,6 +861,59 @@ void case_sxfs_tree_larger_than_the_pool() {
     free(big);
 }
 
+// Enumeration cursors (VFS-C slice 5): a listing survives the directory
+// changing under it. rm -r deletes each entry right after reading it; a
+// deletion of the entry the cursor is about to return moves it on.
+void case_cursors_survive_changes(uint8_t* image) {
+    printf("case: a listing survives changes to its directory\n");
+    if (!check(build_image(image) && mount_image(image), "volume mounted")) {
+        return;
+    }
+    const char* names[] = {"a", "b", "c", "d", "e"};
+    char path[32] = {};
+    bool made = vfs::mkdir(kSystem, "/list", 0755) != nullptr;
+    for (const char* name : names) {
+        snprintf(path, sizeof(path), "/list/%s", name);
+        made = made && create(path) != nullptr;
+    }
+    vfs::Vnode* directory = const_cast<vfs::Vnode*>(vfs::resolve("/list"));
+    if (!check(made && directory != nullptr, "a directory of five files")) {
+        hoststub::detach_device();
+        return;
+    }
+    vfs::retain(*directory);
+    vfs::DirCursor cursor = {};
+    vfs::open_cursor(cursor, *directory);
+
+    const vfs::Vnode* first = vfs::next_entry(cursor);
+    check(first != nullptr && strcmp(first->name, "a") == 0, "the first entry");
+    check(vfs::unlink(kSystem, "/list/a"), "deleting the entry just read");
+    check(vfs::unlink(kSystem, "/list/b"), "and the one the cursor would return next");
+    const vfs::Vnode* after = vfs::next_entry(cursor);
+    check(after != nullptr && strcmp(after->name, "c") == 0, "the listing goes on with the one after them");
+    check(create("/list/f") != nullptr, "an entry added while listing");
+    int seen = 0;
+    bool saw_f = false;
+    for (const vfs::Vnode* entry = vfs::next_entry(cursor); entry != nullptr; entry = vfs::next_entry(cursor)) {
+        ++seen;
+        saw_f = saw_f || strcmp(entry->name, "f") == 0;
+    }
+    check(seen == 3 && saw_f, "is listed with the rest (d, e, f)");
+    check(vfs::next_entry(cursor) == nullptr, "and the end stays the end");
+
+    vfs::rewind_cursor(cursor);
+    int again = 0;
+    while (vfs::next_entry(cursor) != nullptr) {
+        ++again;
+    }
+    check(again == 4, "a rewound listing sees what is there now (c, d, e, f)");
+    vfs::close_cursor(cursor);
+    vfs::close_cursor(cursor);
+    check(vfs::next_entry(cursor) == nullptr, "a closed cursor lists nothing, closed twice is harmless");
+    vfs::release(*directory);
+    hoststub::detach_device();
+}
+
 int main() {
     printf("SxFS VFS TEST START\n");
     uint8_t* image = static_cast<uint8_t*>(malloc(kImageBytes));
@@ -876,6 +929,7 @@ int main() {
     case_directories_published_on_demand(image);
     case_published_directories_are_trimmed(image);
     case_sxfs_tree_larger_than_the_pool();
+    case_cursors_survive_changes(image);
     case_power_cut_with_an_unlinked_file_open(image);
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);

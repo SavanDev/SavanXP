@@ -5,6 +5,7 @@
 
 #include "kernel/credentials.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/vfs.hpp"
 
 namespace device {
 struct Device;
@@ -14,9 +15,7 @@ namespace net {
 struct Socket;
 }
 
-namespace vfs {
-struct Vnode;
-}
+
 
 namespace process {
 enum class HandleKind : uint8_t;
@@ -108,7 +107,8 @@ struct IoObject {
     net::Socket* socket;
     process::Pipe* pipe;
     size_t offset;
-    size_t iterator_index;
+    // A directory's listing position (readdir), open while the handle is.
+    vfs::DirCursor cursor;
 };
 
 struct EventObject {

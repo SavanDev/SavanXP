@@ -340,8 +340,11 @@ is known, what the fix is. The SxFS side is in
   `fs::Driver::open` and `close` run when a vnode's reference count leaves
   and returns to zero, so state is per file, not per handle: FAT keeps one
   FatFs file open for a held file ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md#how-fatfs-maps-onto-fsdriver)).
-  A driver that needs state per opening (an enumeration cursor, a lock)
-  needs the open descriptions VFS-B still plans.
+  A driver that needs state per opening (a lock) needs the open
+  descriptions VFS-B still plans. Listing is not that: a directory handle's
+  position is a VFS cursor (`vfs::DirCursor`), and deleting or adding entries
+  while listing moves it instead of skipping one
+  ([VFS_ROADMAP.md](../roadmaps/open/VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches), slice 5a).
 - **`fsync` is the whole-system barrier.** Correct, and as slow as `sync` on a
   machine with several busy volumes.
 - **A deferred write error reaches whoever synchronizes next**, as `EIO` from

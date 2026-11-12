@@ -42,11 +42,11 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until its last `vfs::release` |
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `open`/`close` at a vnode's first and last holder (FAT keeps a FatFs file open between them) and `release` for the last holder of an unlinked file, but nothing per opening |
-| Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles, file-backed sections and POSIX's current directory (a retained vnode, whose path is rebuilt with `vfs::path_of` and follows renames). There are no directory cursors or name caches to count yet |
+| Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles, file-backed sections and POSIX's current directory (a retained vnode, whose path is rebuilt with `vfs::path_of` and follows renames). Directory cursors are held through their handle; there are no name caches yet |
 | Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; handle I/O returns `sx::IoResult` (status and length), but path operations and `vfs::read`/`vfs::write` themselves still report through the global `vfs::last_error()` |
 | Paths | 255-byte names (up to 47 bytes in the node's slot, longer on the heap), 1023-byte paths of up to 64 components (`vfs::PathBuffer` keeps them off the kernel stack), lexical normalization and linear child lookup; no symbolic-link traversal |
 | Name comparison | By the directory's driver (`fs::Driver::same_name`), byte for byte without one; FAT folds case as FatFs does. No 8.3 short-name aliases |
-| Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
+| Directories | Volume directories are published as memory vnodes; a directory handle lists through a VFS cursor (`vfs::DirCursor`) that changes to the directory move instead of break |
 | Mounts | Four slots and 32-byte mount-point buffers; a read-only mount is a flag of `fs::attach` the VFS enforces, with no remount and no per-mount policy beyond it |
 | File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write; no exclusive-create flag and no positioned I/O |
 | Mutation order | A path mutation reaches the driver first and the resident tree second; a tree update that failed after the driver succeeded would leave the two disagreeing |
@@ -70,7 +70,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 | --- | --- | --- |
 | VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
-| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test`. Slice 4: name comparison by the driver, FAT case-insensitive; 1023-byte paths and 255-byte names (`fat-vfs-test`) | Relative resolution and cursors |
+| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test`. Slice 4: name comparison by the driver, FAT case-insensitive; 1023-byte paths and 255-byte names (`fat-vfs-test`); `ENAMETOOLONG`. Slice 5a: enumeration cursors | Directory-relative resolution (5b) |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
 | VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
 
@@ -280,6 +280,22 @@ Slices, each shippable alone:
    before the driver changes the disk, so the tree cannot be left behind.
 5. **Directory-relative resolution and enumeration cursors**, the rest of
    the paragraphs above.
+
+   Enumeration cursors are done (5a). A directory handle carries a
+   `vfs::DirCursor`: the slot of the next entry, on a list the VFS keeps, so
+   `detach_node` moves every cursor about to return a node it takes out of
+   a directory on to the entry after it. Nothing is skipped when an entry
+   is deleted right after being read (`rm -r`) or right before; entries
+   added are appended and listed if the cursor has not reached the end; an
+   entry renamed inside the directory goes to the end and may be listed
+   again under its new name. Each step is O(1) where `child_at` walked from
+   the start every call, and restart is `rewind_cursor` (the SDK's
+   `rewinddir` reopens). The cursor is the VFS's, not a driver cookie: the
+   VFS holds the directory's entries while it is published, and a listed
+   directory is held, so the bounded cache never trims it under a cursor.
+   Driver cookies matter only once a directory is too large to publish.
+
+   Directory-relative resolution is still open (5b).
 
 **Done when:** the real VFS uses a mounted tree beyond the old 2048-node ceiling
 through a bounded cache; SxFS/FAT retain their actual format limits. Test cache
