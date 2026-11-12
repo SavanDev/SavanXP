@@ -46,7 +46,10 @@ struct Node {
     vfs::Vnode* vnode;
     // On the heap, about 600 bytes with its sector buffer.
     FIL* kept;
-    char path[vfs::kMaxPathLength];
+    // On the heap too, `path_capacity` bytes: paths go up to
+    // vfs::kMaxPathLength, most are a fraction of it.
+    char* path;
+    size_t path_capacity;
 };
 
 struct Volume {
@@ -150,14 +153,42 @@ Node* new_node(uint8_t id, bool directory, const char* inner) {
         return nullptr;
     }
     Node* entry = static_cast<Node*>(heap::allocate(sizeof(Node)));
-    if (entry == nullptr) {
+    char* path = static_cast<char*>(heap::allocate(length + 1, 1));
+    if (entry == nullptr || path == nullptr) {
+        heap::free(entry);
+        heap::free(path);
         return nullptr;
     }
     memset(entry, 0, sizeof(Node));
     entry->volume = id;
     entry->directory = directory;
+    entry->path = path;
+    entry->path_capacity = length + 1;
     memcpy(entry->path, inner, length + 1);
     return entry;
+}
+
+void free_node(Node* entry) {
+    heap::free(entry->path);
+    heap::free(entry);
+}
+
+// Makes room for a path of `length` bytes in the record, keeping what it
+// holds. Done before a rename touches the disk, so that rewriting the paths
+// after it cannot fail.
+bool reserve_path(Node& entry, size_t length) {
+    if (length + 1 <= entry.path_capacity) {
+        return true;
+    }
+    char* grown = static_cast<char*>(heap::allocate(length + 1, 1));
+    if (grown == nullptr) {
+        return false;
+    }
+    memcpy(grown, entry.path, strlen(entry.path) + 1);
+    heap::free(entry.path);
+    entry.path = grown;
+    entry.path_capacity = length + 1;
+    return true;
 }
 
 void link_node(Volume& volume, Node* entry) {
@@ -170,7 +201,7 @@ void drop_node(Volume& volume, Node* entry) {
     for (Node** link = &volume.nodes; *link != nullptr; link = &(*link)->next) {
         if (*link == entry) {
             *link = entry->next;
-            heap::free(entry);
+            free_node(entry);
             return;
         }
     }
@@ -180,7 +211,7 @@ void free_nodes(Volume& volume) {
     Node* entry = volume.nodes;
     while (entry != nullptr) {
         Node* next = entry->next;
-        heap::free(entry);
+        free_node(entry);
         entry = next;
     }
     volume.nodes = nullptr;
@@ -275,7 +306,7 @@ Status publish_entries(Volume& volume, uint8_t id, const char* inner) {
             ? vfs::install_volume_directory(level->absolute, driver_ref())
             : vfs::install_volume_file(level->absolute, driver_ref(), entry, level->info.fsize, writable);
         if (entry->vnode == nullptr) {
-            heap::free(entry);
+            free_node(entry);
             status = Status::no_space;
             break;
         }
@@ -722,7 +753,7 @@ Status create_file(fs::VolumeId id, const char* path, const vfs::Ownership&, vfs
     FIL handle = {};
     const FRESULT opened = f_open(&handle, fatfs_path, FA_WRITE | FA_CREATE_NEW);
     if (opened != FR_OK) {
-        heap::free(entry);
+        free_node(entry);
         return status_of(opened);
     }
     const bool closed = f_close(&handle) == FR_OK;
@@ -730,7 +761,7 @@ Status create_file(fs::VolumeId id, const char* path, const vfs::Ownership&, vfs
     if (entry->vnode == nullptr) {
         // The VFS is full: the file must not stay on the disk unpublished.
         (void)f_unlink(fatfs_path);
-        heap::free(entry);
+        free_node(entry);
         return closed ? Status::no_space : Status::io_error;
     }
     const uint32_t now = get_fattime();
@@ -757,13 +788,13 @@ Status create_directory(fs::VolumeId id, const char* path, const vfs::Ownership&
     }
     const FRESULT made = f_mkdir(fatfs_path);
     if (made != FR_OK) {
-        heap::free(entry);
+        free_node(entry);
         return status_of(made);
     }
     entry->vnode = vfs::install_volume_directory(path, driver_ref());
     if (entry->vnode == nullptr) {
         (void)f_unlink(fatfs_path);
-        heap::free(entry);
+        free_node(entry);
         return Status::no_space;
     }
     const uint32_t now = get_fattime();
@@ -813,9 +844,15 @@ Status rename(fs::VolumeId id, const char* old_path, const char* new_path, bool)
         return Status::invalid;
     }
     for (Node* entry = volume->nodes; entry != nullptr; entry = entry->next) {
-        if (path_under(entry->path, old_inner, old_length) &&
-            strlen(entry->path) - old_length + new_length >= vfs::kMaxPathLength) {
+        if (!path_under(entry->path, old_inner, old_length)) {
+            continue;
+        }
+        const size_t renamed_length = strlen(entry->path) - old_length + new_length;
+        if (renamed_length >= vfs::kMaxPathLength) {
             return Status::invalid;
+        }
+        if (!reserve_path(*entry, renamed_length)) {
+            return Status::no_space;
         }
     }
     // A kept file points into the directory entry the rename moves: close
@@ -838,11 +875,11 @@ Status rename(fs::VolumeId id, const char* old_path, const char* new_path, bool)
         if (!path_under(entry->path, old_inner, old_length)) {
             continue;
         }
-        char renamed[vfs::kMaxPathLength] = {};
+        // Room was reserved above. memmove: the tail moves inside the
+        // record's own buffer.
         const size_t tail = strlen(entry->path) - old_length;
-        memcpy(renamed, new_inner, new_length);
-        memcpy(renamed + new_length, entry->path + old_length, tail + 1);
-        memcpy(entry->path, renamed, new_length + tail + 1);
+        memmove(entry->path + new_length, entry->path + old_length, tail + 1);
+        memcpy(entry->path, new_inner, new_length);
     }
     reopen_held(*volume);
     return Status::ok;

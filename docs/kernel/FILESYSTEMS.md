@@ -305,9 +305,13 @@ is known, what the fix is. The SxFS side is in
   the next must be retained** (`vfs::retain`); an unretained one may point at
   a reused slot
   ([VFS_ROADMAP.md](../roadmaps/open/VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches)).
-- **Names are at most 63 bytes, paths at most 255** (`kMaxPathComponentLength`,
-  `kMaxPathLength`). FAT allows 255-character names; the FAT driver leaves out
-  what does not fit and logs it, never truncating a name.
+- **Names are at most 63 bytes, paths at most 1023 and 64 components**
+  (`kMaxPathComponentLength`, `kMaxPathLength`, `PATH_MAX` in the SDK). FAT
+  allows 255-character names; the FAT driver leaves out what does not fit and
+  logs it, never truncating a name. SxFS keeps its own format limit of 255
+  bytes below its mount point. A path is too big for the 32 KiB kernel stack
+  more than once or twice: the VFS and the system-call dispatchers keep theirs
+  in `vfs::PathBuffer`, on the heap, and a failed allocation is `ENOMEM`.
 
 ### Semantics
 

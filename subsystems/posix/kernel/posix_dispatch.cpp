@@ -78,10 +78,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_OPEN: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -102,15 +110,23 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         case SAVANXP_SYS_SPAWN:
         case SAVANXP_SYS_SPAWN_FD: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
             if (arguments == nullptr) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(caller, *context, path, sizeof(path), *arguments) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(caller, *context, path, path.capacity(), *arguments) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_E2BIG));
                 return context;
@@ -132,15 +148,23 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_EXEC: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
             if (arguments == nullptr) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(caller, *context, path, sizeof(path), *arguments) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(caller, *context, path, path.capacity(), *arguments) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_E2BIG));
                 return context;
@@ -252,10 +276,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(seek_fd(caller, context->rdi, static_cast<int64_t>(context->rsi), context->rdx));
             return context;
         case SAVANXP_SYS_UNLINK: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -263,10 +295,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_MKDIR: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -274,10 +314,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_RMDIR: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -285,10 +333,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_TRUNCATE: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -296,14 +352,30 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_RENAME: {
-            char old_path[process::kProcessPathLength] = {};
-            char new_path[process::kProcessPathLength] = {};
-            char resolved_old[process::kProcessPathLength] = {};
-            char resolved_new[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, old_path, sizeof(old_path)) ||
-                !copy_user_string(caller, context->rsi, new_path, sizeof(new_path)) ||
-                !resolve_process_path(caller, old_path, resolved_old, sizeof(resolved_old)) ||
-                !resolve_process_path(caller, new_path, resolved_new, sizeof(resolved_new))) {
+            vfs::PathBuffer old_path;
+            if (old_path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer new_path;
+            if (new_path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved_old;
+            if (resolved_old == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved_new;
+            if (resolved_new == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, old_path, old_path.capacity()) ||
+                !copy_user_string(caller, context->rsi, new_path, new_path.capacity()) ||
+                !resolve_process_path(caller, old_path, resolved_old, resolved_old.capacity()) ||
+                !resolve_process_path(caller, new_path, resolved_new, resolved_new.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -353,10 +425,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 set_identity(caller, static_cast<uint32_t>(context->rdi), static_cast<uint32_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_MKDIR_MODE: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -366,10 +446,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         }
         case SAVANXP_SYS_CHMOD:
         case SAVANXP_SYS_CHOWN: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -383,10 +471,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 fchmod_fd(caller, context->rdi, static_cast<uint16_t>(context->rsi & vfs::kModePermissions)));
             return context;
         case SAVANXP_SYS_ACCESS: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -395,10 +491,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         }
         case SAVANXP_SYS_STAT:
         case SAVANXP_SYS_STAT_EX: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -412,10 +516,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 fstat_fd(caller, context->rdi, context->rsi, context->rax == SAVANXP_SYS_FSTAT_EX));
             return context;
         case SAVANXP_SYS_CHDIR: {
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
+                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }

@@ -716,8 +716,11 @@ int access_path(process::Process& proc, const char* path, uint32_t want) {
 }
 
 int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
-    char cwd[vfs::kMaxPathLength] = {};
-    if (!posix::current_directory(proc, cwd, sizeof(cwd))) {
+    vfs::PathBuffer cwd;
+    if (cwd == nullptr) {
+        return sx::negative_error(SAVANXP_ENOMEM);
+    }
+    if (!posix::current_directory(proc, cwd, cwd.capacity())) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
     const size_t length = strlen(cwd) + 1;
@@ -733,8 +736,8 @@ int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
 // kernel's (resolve_path_from_root) is the one used when there is no current
 // directory to ask.
 bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
-    char cwd[vfs::kMaxPathLength] = {};
-    return posix::current_directory(proc, cwd, sizeof(cwd)) &&
+    vfs::PathBuffer cwd;
+    return cwd != nullptr && posix::current_directory(proc, cwd, cwd.capacity()) &&
         vfs::normalize_path(cwd, input, output, capacity);
 }
 

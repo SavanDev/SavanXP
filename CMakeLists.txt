@@ -896,6 +896,7 @@ add_executable(savanxp-sxfs-vfs-test
     kernel/fs_path.cpp
     tests/host/kernel_string_stubs.cpp
     tests/host/sxfs_host_stubs.cpp
+    tests/host/heap_host_stubs.cpp
     tests/host/sxfs_vfs_test.cpp
     libsxfs/sxfs_core.c)
 target_include_directories(savanxp-sxfs-vfs-test PRIVATE
@@ -915,6 +916,7 @@ add_executable(savanxp-sxfs-recovery-test
     kernel/fs_path.cpp
     tests/host/kernel_string_stubs.cpp
     tests/host/sxfs_host_stubs.cpp
+    tests/host/heap_host_stubs.cpp
     tests/host/sxfs_recovery_test.cpp
     libsxfs/sxfs_core.c)
 target_include_directories(savanxp-sxfs-recovery-test PRIVATE

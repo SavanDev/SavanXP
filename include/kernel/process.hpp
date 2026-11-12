@@ -27,7 +27,8 @@ constexpr size_t kMaxThreads = 256;
 constexpr size_t kMaxFileHandles = 64;
 constexpr size_t kMaxWaitHandles = 16;
 constexpr size_t kProcessNameLength = 32;
-constexpr size_t kProcessPathLength = 256;
+// A path a system call takes from user space: as long as the VFS's.
+constexpr size_t kProcessPathLength = vfs::kMaxPathLength;
 
 // A thread's scheduling state. zombie: the thread ended and its slot (and
 // kernel stack) is not released yet.

@@ -13,7 +13,8 @@ constexpr size_t kMaxNodes = 2048;
 constexpr size_t kMaxNameLength = vfs::kMaxPathComponentLength;
 constexpr size_t kMaxDynamicFiles = 32;
 constexpr size_t kDynamicFileCapacity = 16384;
-constexpr size_t kMaxNormalizedPathComponents = 32;
+// Components in one path: a 1 KiB path of short names can be deep.
+constexpr size_t kMaxNormalizedPathComponents = 64;
 
 struct NodeSlot {
     vfs::Vnode vnode;
@@ -645,8 +646,12 @@ bool spelled_path(int parent, const char* leaf, char* out, size_t capacity) {
 } // namespace
 
 bool may_access(const cred::Credentials& who, const char* path, uint32_t want) {
-    char normalized[kMaxPathLength] = {};
-    if (path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -672,18 +677,22 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
         return false;
     }
 
-    char working[kMaxPathLength] = {};
+    PathBuffer working;
+    if (working == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
     size_t working_length = 0;
     if (input[0] == '/') {
         working_length = strlen(input);
-        if (working_length >= sizeof(working)) {
+        if (working_length >= working.capacity()) {
             return false;
         }
         memcpy(working, input, working_length + 1);
     } else {
         const size_t cwd_length = strlen(cwd);
         const size_t input_length = strlen(input);
-        if (cwd_length + (cwd_length > 1 ? 1u : 0u) + input_length >= sizeof(working)) {
+        if (cwd_length + (cwd_length > 1 ? 1u : 0u) + input_length >= working.capacity()) {
             return false;
         }
         memcpy(working, cwd, cwd_length + 1);
@@ -695,7 +704,11 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
         memcpy(working + working_length, input, input_length + 1);
     }
 
-    char components[kMaxNormalizedPathComponents][kMaxNameLength] = {};
+    // Each component is where it starts in `working`, and how long it is:
+    // copying them out would put kMaxNormalizedPathComponents names on the
+    // kernel stack.
+    const char* components[kMaxNormalizedPathComponents] = {};
+    size_t lengths[kMaxNormalizedPathComponents] = {};
     size_t component_count = 0;
     char* cursor = working;
     while (*cursor != '\0') {
@@ -727,21 +740,22 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
         if (component_count >= kMaxNormalizedPathComponents || length >= kMaxNameLength) {
             return false;
         }
-        memcpy(components[component_count], start, length);
-        components[component_count][length] = '\0';
+        components[component_count] = start;
+        lengths[component_count] = length;
         ++component_count;
     }
 
     // The legacy /disk prefix (kLegacyDiskAlias) names the root.
     size_t first = 0;
-    if (component_count > 0 && strcmp(components[0], kLegacyDiskAlias) == 0) {
+    const size_t alias_length = strlen(kLegacyDiskAlias);
+    if (component_count > 0 && lengths[0] == alias_length && memcmp(components[0], kLegacyDiskAlias, alias_length) == 0) {
         first = 1;
     }
 
     size_t written = 0;
     output[written++] = '/';
     for (size_t index = first; index < component_count; ++index) {
-        const size_t length = strlen(components[index]);
+        const size_t length = lengths[index];
         if (written + length + 1 >= capacity) {
             return false;
         }
@@ -884,8 +898,12 @@ const Vnode* root() {
 }
 
 const Vnode* resolve(const char* path) {
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path != nullptr ? path : "", normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
+    if (!normalize_path("/", path != nullptr ? path : "", normalized, normalized.capacity())) {
         return nullptr;
     }
     const int index = resolve_index(normalized);
@@ -903,8 +921,12 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
         return nullptr;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -958,9 +980,13 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
         return nullptr;
     }
 
-    char parent_path[kMaxPathLength] = {};
+    PathBuffer parent_path;
+    if (parent_path == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
     char leaf_name[kMaxNameLength] = {};
-    if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+    if (!split_parent_path(normalized, parent_path, parent_path.capacity(), leaf_name, sizeof(leaf_name))) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -989,8 +1015,12 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
-        char spelled[kMaxPathLength] = {};
-        if (!spelled_path(index, leaf_name, spelled, sizeof(spelled))) {
+        PathBuffer spelled;
+        if (spelled == nullptr) {
+            g_last_error = SX_ENOMEM;
+            return nullptr;
+        }
+        if (!spelled_path(index, leaf_name, spelled, spelled.capacity())) {
             g_last_error = SX_EINVAL;
             return nullptr;
         }
@@ -1030,8 +1060,12 @@ Vnode* ensure_directory(const char* path) {
         return nullptr;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -1078,8 +1112,12 @@ Vnode* ensure_directory(const char* path) {
 }
 
 bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node)) {
-    char normalized[kMaxPathLength] = {};
-    if (!g_ready || path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!g_ready || path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1110,8 +1148,12 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
         return nullptr;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -1126,9 +1168,13 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
         return nullptr;
     }
 
-    char parent_path[kMaxPathLength] = {};
+    PathBuffer parent_path;
+    if (parent_path == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
     char leaf_name[kMaxNameLength] = {};
-    if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+    if (!split_parent_path(normalized, parent_path, parent_path.capacity(), leaf_name, sizeof(leaf_name))) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -1150,8 +1196,12 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
-        char spelled[kMaxPathLength] = {};
-        if (!spelled_path(parent, leaf_name, spelled, sizeof(spelled))) {
+        PathBuffer spelled;
+        if (spelled == nullptr) {
+            g_last_error = SX_ENOMEM;
+            return nullptr;
+        }
+        if (!spelled_path(parent, leaf_name, spelled, spelled.capacity())) {
             g_last_error = SX_EINVAL;
             return nullptr;
         }
@@ -1181,15 +1231,23 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
         return nullptr;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
 
-    char parent_path[kMaxPathLength] = {};
+    PathBuffer parent_path;
+    if (parent_path == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return nullptr;
+    }
     char leaf_name[kMaxNameLength] = {};
-    if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+    if (!split_parent_path(normalized, parent_path, parent_path.capacity(), leaf_name, sizeof(leaf_name))) {
         g_last_error = SX_EINVAL;
         return nullptr;
     }
@@ -1258,8 +1316,12 @@ bool unlink(const cred::Credentials& who, const char* path) {
         return false;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1354,8 +1416,12 @@ bool rmdir(const cred::Credentials& who, const char* path) {
         return false;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized)) || is_mount_point(normalized)) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity()) || is_mount_point(normalized)) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1409,8 +1475,12 @@ bool truncate(const cred::Credentials& who, const char* path, size_t size) {
         return false;
     }
 
-    char normalized[kMaxPathLength] = {};
-    if (!normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1480,10 +1550,18 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         return false;
     }
 
-    char normalized_old[kMaxPathLength] = {};
-    char normalized_new[kMaxPathLength] = {};
-    if (!normalize_path("/", old_path, normalized_old, sizeof(normalized_old)) ||
-        !normalize_path("/", new_path, normalized_new, sizeof(normalized_new)) ||
+    PathBuffer normalized_old;
+    if (normalized_old == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    PathBuffer normalized_new;
+    if (normalized_new == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!normalize_path("/", old_path, normalized_old, normalized_old.capacity()) ||
+        !normalize_path("/", new_path, normalized_new, normalized_new.capacity()) ||
         is_mount_point(normalized_old) || is_mount_point(normalized_new)) {
         g_last_error = SX_EINVAL;
         return false;
@@ -1493,9 +1571,13 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
     if (node_index < 0) {
         return false;
     }
-    char parent_path[kMaxPathLength] = {};
+    PathBuffer parent_path;
+    if (parent_path == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
     char leaf_name[kMaxNameLength] = {};
-    if (!split_parent_path(normalized_new, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+    if (!split_parent_path(normalized_new, parent_path, parent_path.capacity(), leaf_name, sizeof(leaf_name))) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1592,10 +1674,18 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
             return false;
         }
         // The driver gets the names as the tree spells them (spelled_path).
-        char spelled_old[kMaxPathLength] = {};
-        char spelled_new[kMaxPathLength] = {};
-        if (!path_of_node(node, spelled_old, sizeof(spelled_old)) ||
-            !spelled_path(new_parent, leaf_name, spelled_new, sizeof(spelled_new))) {
+        PathBuffer spelled_old;
+        if (spelled_old == nullptr) {
+            g_last_error = SX_ENOMEM;
+            return false;
+        }
+        PathBuffer spelled_new;
+        if (spelled_new == nullptr) {
+            g_last_error = SX_ENOMEM;
+            return false;
+        }
+        if (!path_of_node(node, spelled_old, spelled_old.capacity()) ||
+            !spelled_path(new_parent, leaf_name, spelled_new, spelled_new.capacity())) {
             g_last_error = SX_EINVAL;
             return false;
         }
@@ -1744,8 +1834,12 @@ bool path_of_node(const Vnode& node, char* out, size_t capacity) {
 // Records ownership on `node`, through the driver of the volume it is on when
 // it is on one (a volume's directories are in-memory vnodes, found by path).
 bool store_ownership(Vnode& node, const Ownership& owner) {
-    char path[kMaxPathLength] = {};
-    if (!path_of_node(node, path, sizeof(path))) {
+    PathBuffer path;
+    if (path == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
+    if (!path_of_node(node, path, path.capacity())) {
         g_last_error = SX_EINVAL;
         return false;
     }
@@ -1777,8 +1871,12 @@ bool store_ownership(Vnode& node, const Ownership& owner) {
 }
 
 int resolve_reachable(const cred::Credentials& who, const char* path) {
-    char normalized[kMaxPathLength] = {};
-    if (path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
+    PathBuffer normalized;
+    if (normalized == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return -1;
+    }
+    if (path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
         g_last_error = SX_EINVAL;
         return -1;
     }
@@ -1931,8 +2029,12 @@ bool subtree_can_go(int index, size_t& count) {
             return false;
         }
         if (at != 0 && node.type == NodeType::directory) {
-            char path[kMaxPathLength];
-            if (!path_of_node(node, path, sizeof(path)) || is_mount_point(path)) {
+            PathBuffer path;
+            if (path == nullptr) {
+                g_last_error = SX_ENOMEM;
+                return false;
+            }
+            if (!path_of_node(node, path, path.capacity()) || is_mount_point(path)) {
                 return false;
             }
         }

@@ -127,6 +127,9 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **Paths can be up to 1023 bytes, was 255** (`vfs::kMaxPathLength`, `PATH_MAX` 1024 in the SDK), with up to 64
+  components; the kernel keeps them on the heap (`vfs::PathBuffer`). SxFS keeps its 255-byte format limit.
+
 - **Names on FAT volumes are case-insensitive, as FAT is**: `/boot/LIMINE.CONF` finds `limine.conf`, creating
   `Readme` next to `README` opens it, and renaming to another case renames (`fs::Driver::same_name`, VFS-C slice 4a).
   SxFS and the rest of the tree stay case-sensitive.

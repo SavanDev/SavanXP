@@ -35,6 +35,7 @@ extern "C" int memcmp(const void*, const void*, size_t);
 extern "C" void* memset(void*, int, size_t);
 extern "C" int strcmp(const char*, const char*);
 extern "C" size_t strlen(const char*);
+extern "C" char* strcat(char*, const char*);
 
 // --- Kernel services the driver uses that the shared stubs do not provide ---
 
@@ -202,6 +203,49 @@ void names_fold_case(uint8_t* image) {
     hoststub::detach_device();
 }
 
+// Paths past the old 255-byte limit (vfs::kMaxPathLength is 1024): six
+// directories of 60-byte names, a file at the bottom, a rename of the top one
+// that rewrites every path below it, and a remount.
+void long_paths(uint8_t* image) {
+    printf("case: paths longer than 255 bytes\n");
+    if (!check(build_image(image) && mount_image(image), "mounted at /boot")) {
+        return;
+    }
+    char path[vfs::kMaxPathLength] = "/boot";
+    char level[64] = {};
+    bool made = true;
+    for (int depth = 0; depth < 6 && made; ++depth) {
+        snprintf(level, sizeof(level), "/level-%d-%052d", depth, 0);
+        strcat(path, level);
+        made = vfs::mkdir(kSystem, path, 0755) != nullptr;
+    }
+    check(made && strlen(path) > 300, "six directories deep, past 300 bytes");
+    strcat(path, "/bottom.txt");
+    vfs::Vnode* bottom = vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644);
+    check(bottom != nullptr && vfs::write(*bottom, 0, "deep", 4, false) == 4 && reads(path, "deep"),
+          "a file at the bottom is written and read");
+
+    snprintf(level, sizeof(level), "/level-%d-%052d", 0, 0);
+    char top[96] = "/boot";
+    strcat(top, level);
+    check(vfs::rename(kSystem, top, "/boot/a-longer-top-directory-name-so-that-every-path-below-it-grows-x"),
+          "renaming the top directory");
+    char moved[vfs::kMaxPathLength] = "/boot/a-longer-top-directory-name-so-that-every-path-below-it-grows-x";
+    strcat(moved, path + strlen(top));
+    check(strlen(moved) > strlen(path) && reads(moved, "deep"), "rewrites the longer paths below it");
+    check(fs::sync(g_mount), "sync");
+    unmount_image();
+    check(mount_image(image) && reads(moved, "deep"), "and they are on the disk");
+
+    char too_long[vfs::kMaxPathLength + 16] = "/boot/";
+    memset(too_long + 6, 'x', sizeof(too_long) - 7);
+    too_long[sizeof(too_long) - 1] = '\0';
+    check(vfs::resolve(too_long) == nullptr && vfs::open(kSystem, too_long, SAVANXP_OPEN_READ, 0) == nullptr,
+          "a path longer than 1023 bytes is refused");
+    unmount_image();
+    hoststub::detach_device();
+}
+
 } // namespace
 
 int main() {
@@ -212,6 +256,7 @@ int main() {
         return 1;
     }
     names_fold_case(image);
+    long_paths(image);
     free(image);
     printf("%s (%d checks, %d failures)\n", g_failures == 0 ? "FAT VFS TEST PASS" : "FAT VFS TEST FAIL", g_checks,
            g_failures);

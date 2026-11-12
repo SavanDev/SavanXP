@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/credentials.hpp"
+#include "kernel/heap.hpp"
 
 namespace fs {
 struct Driver;
@@ -11,8 +12,34 @@ struct Driver;
 
 namespace vfs {
 
-constexpr size_t kMaxPathLength = 256;
+// A whole path, its terminating NUL included. It was 256 until names past 63
+// bytes (VFS-C slice 4): a 255-byte name did not fit in a path.
+constexpr size_t kMaxPathLength = 1024;
 constexpr size_t kMaxPathComponentLength = 64;
+
+// A path-sized buffer on the kernel heap, freed when it goes out of scope. A
+// system call nests its dispatcher, the VFS, a driver and FatFs on a 32 KiB
+// kernel stack, and at 1 KiB a path no longer belongs on it. Converts to
+// char*, so it is used like the array it replaces, but its size is
+// capacity(), never sizeof: check it before use, nullptr means no memory.
+class PathBuffer {
+public:
+    PathBuffer() : data_(static_cast<char*>(heap::allocate(kMaxPathLength, 1))) {
+        if (data_ != nullptr) {
+            data_[0] = '\0';
+        }
+    }
+    ~PathBuffer() { heap::free(data_); }
+    PathBuffer(const PathBuffer&) = delete;
+    PathBuffer& operator=(const PathBuffer&) = delete;
+
+    operator char*() { return data_; }
+    operator const char*() const { return data_; }
+    static constexpr size_t capacity() { return kMaxPathLength; }
+
+private:
+    char* data_;
+};
 
 /* The tree's layout (docs/kernel/FILESYSTEMS.md#the-root-is-the-system-disk).
  * The system disk is mounted at "/". Two subtrees stay in memory whatever is

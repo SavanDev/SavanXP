@@ -44,7 +44,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `open`/`close` at a vnode's first and last holder (FAT keeps a FatFs file open between them) and `release` for the last holder of an unlinked file, but nothing per opening |
 | Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles, file-backed sections and POSIX's current directory (a retained vnode, whose path is rebuilt with `vfs::path_of` and follows renames). There are no directory cursors or name caches to count yet |
 | Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; handle I/O returns `sx::IoResult` (status and length), but path operations and `vfs::read`/`vfs::write` themselves still report through the global `vfs::last_error()` |
-| Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
+| Paths | 63-byte names, 1023-byte paths of up to 64 components (`vfs::PathBuffer` keeps them off the kernel stack), lexical normalization and linear child lookup; no symbolic-link traversal |
 | Name comparison | By the directory's driver (`fs::Driver::same_name`), byte for byte without one; FAT folds case as FatFs does. No 8.3 short-name aliases |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
 | Mounts | Four slots and 32-byte mount-point buffers; a read-only mount is a flag of `fs::attach` the VFS enforces, with no remount and no per-mount policy beyond it |
@@ -269,7 +269,11 @@ Slices, each shippable alone:
    may spell the directories above a new name differently from the disk,
    create, mkdir and rename hand the driver a path rebuilt from the tree
    (`spelled_path`), which keeps drivers that store paths byte-exact.
-   Names past 63 bytes are 4b.
+   Names past 63 bytes are 4b. Its first step is done: paths went from 255
+   to 1023 bytes (a 255-byte name did not fit in a path), held on the heap
+   (`vfs::PathBuffer`) in the VFS and both dispatchers, FAT's records keep a
+   path sized to fit and reserve the room a rename needs before touching the
+   disk, and `normalize_path` no longer copies components onto the stack.
 5. **Directory-relative resolution and enumeration cursors**, the rest of
    the paragraphs above.
 

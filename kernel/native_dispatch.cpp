@@ -215,9 +215,12 @@ int native_wait_io(Thread& self, uint64_t user_entries, uint64_t count, int64_t 
 
 /* Open existing regular files only; query access never grants read access. */
 int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
-    char path[vfs::kMaxPathLength] = {};
+    vfs::PathBuffer path;
+    if (path == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
     if ((access & ~SXN_FILE_READ) != 0 ||
-        !sx::copy_user_string(path, sizeof(path), user_path) || path[0] != '/') {
+        !sx::copy_user_string(path, path.capacity(), user_path) || path[0] != '/') {
         return sx::negative_error(SX_EINVAL);
     }
     object::IoObject* file = nullptr;
@@ -231,9 +234,12 @@ int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
 }
 
 int native_write_file(Process& proc, uint64_t user_path, uint64_t user_bytes, size_t count) {
-    char path[vfs::kMaxPathLength] = {};
+    vfs::PathBuffer path;
+    if (path == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
     uint8_t bytes[SXN_WRITE_FILE_MAX];
-    if (count > sizeof(bytes) || !sx::copy_user_string(path, sizeof(path), user_path) || path[0] != '/' ||
+    if (count > sizeof(bytes) || !sx::copy_user_string(path, path.capacity(), user_path) || path[0] != '/' ||
         (count && !sx::copy_from_user(bytes, user_bytes, count)))
         return sx::negative_error(SX_EINVAL);
     // Check type before a write open can mutate a device or directory.
@@ -951,15 +957,23 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             // Same register convention as the POSIX spawn: the child comes
             // from create_process_internal, and the EI_OSABI of its image,
             // not its parent's subsystem, decides which subsystem it runs in.
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                return context;
+            }
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
             if (arguments == nullptr) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(*caller, *context, path, sizeof(path), *arguments) ||
-                !resolve_path_from_root(path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(*caller, *context, path, path.capacity(), *arguments) ||
+                !resolve_path_from_root(path, resolved, resolved.capacity())) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_E2BIG));
                 return context;
@@ -1030,15 +1044,23 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             spawn_context.rdi = request.path;
             spawn_context.rsi = request.argv;
             spawn_context.rdx = static_cast<uint64_t>(static_cast<int64_t>(request.argc));
-            char path[process::kProcessPathLength] = {};
-            char resolved[process::kProcessPathLength] = {};
+            vfs::PathBuffer path;
+            if (path == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                return context;
+            }
+            vfs::PathBuffer resolved;
+            if (resolved == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                return context;
+            }
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
             if (arguments == nullptr) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(*caller, spawn_context, path, sizeof(path), *arguments) ||
-                !resolve_path_from_root(path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(*caller, spawn_context, path, path.capacity(), *arguments) ||
+                !resolve_path_from_root(path, resolved, resolved.capacity())) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_E2BIG));
                 return context;
