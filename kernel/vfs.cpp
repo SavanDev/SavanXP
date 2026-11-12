@@ -35,6 +35,10 @@ size_t g_node_count = 0;
 // (vnode, generation) never takes the next file in the slot for the last one
 // (docs/kernel/SECTIONS.md).
 int g_free_nodes = -1;
+size_t g_free_listed = 0;
+// Stamps Vnode::last_used each time a directory is looked into, so trim()
+// gives back the directories nobody visited lately first.
+uint32_t g_use_clock = 0;
 bool g_ready = false;
 int g_last_error = SX_ENOENT;
 bool node_is_held(const vfs::Vnode& node) {
@@ -72,6 +76,7 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     if (g_free_nodes >= 0) {
         node_index = g_free_nodes;
         g_free_nodes = g_nodes[node_index].vnode.next_sibling;
+        --g_free_listed;
     } else if (g_node_count < kMaxNodes) {
         node_index = static_cast<int>(g_node_count++);
     } else {
@@ -115,6 +120,7 @@ void retire_node(vfs::Vnode& node);
 // so the next look tries again; false, with last_error saying why.
 bool populate_directory(int index) {
     vfs::Vnode& directory = g_nodes[index].vnode;
+    directory.last_used = ++g_use_clock;
     if (directory.type != vfs::NodeType::directory || directory.populated || directory.volume_driver == nullptr ||
         directory.volume_driver->populate == nullptr) {
         return true;
@@ -486,6 +492,7 @@ void clear_slot(int index) {
     g_nodes[index].vnode.content_generation = generation;
     g_nodes[index].vnode.next_sibling = g_free_nodes;
     g_free_nodes = index;
+    ++g_free_listed;
 }
 
 // Takes a node nothing holds out of the tree for good and gives its slot
@@ -737,6 +744,8 @@ void initialize(const void* archive, size_t size) {
     memset(g_dynamic_files, 0, sizeof(g_dynamic_files));
     g_node_count = 0;
     g_free_nodes = -1;
+    g_free_listed = 0;
+    g_use_clock = 0;
     g_ready = false;
 
     if (add_node(NodeType::directory, "/", -1) != 0) {
@@ -1796,6 +1805,132 @@ size_t child_count(const Vnode& directory) {
 
 bool path_of(const Vnode& node, char* out, size_t capacity) {
     return node.type != NodeType::invalid && !node.unlinked && path_of_node(node, out, capacity);
+}
+
+/* --- the bounded cache (VFS-C) ---------------------------------------------
+ * Published volume directories are given back when the slots run low. What
+ * makes it safe is where it runs: trim_if_low() is called at the entry of a
+ * system call, under the kernel lock, where no kernel code is halfway through
+ * a lookup. A Vnode pointer kept past the call that found it must be retained
+ * (vfs::retain); an unretained one is only good until the next system call. */
+
+namespace {
+
+// Free slots below which a system call's entry trims, and how many it frees
+// up to when it does.
+constexpr size_t kTrimLowWater = kMaxNodes / 8;
+constexpr size_t kTrimTarget = kMaxNodes / 4;
+// After a trim that could not reach the low-water mark, the entry does not
+// try again until this many more directory looks have happened: they are
+// what makes something evictable, and a full tree of held or always-resident
+// nodes would otherwise be searched on every system call.
+constexpr uint32_t kTrimRetryLooks = 64;
+
+bool g_trim_skip[kMaxNodes];
+bool g_trim_stalled = false;
+uint32_t g_trim_stalled_at = 0;
+
+// A published, on-demand directory with entries, nothing holding it.
+bool trim_candidate(int index) {
+    const Vnode& node = g_nodes[index].vnode;
+    return !g_trim_skip[index] && node.type == NodeType::directory && node.populated && node.first_child >= 0 &&
+           node.volume_driver != nullptr && node.volume_driver->populate != nullptr && !node_is_held(node);
+}
+
+// The directory nobody looked into for the longest time. The ages are taken
+// against the clock, so a wrapped clock still orders them.
+int oldest_trim_candidate() {
+    int best = -1;
+    uint32_t best_age = 0;
+    for (size_t index = 1; index < g_node_count; ++index) {
+        if (!trim_candidate(static_cast<int>(index))) {
+            continue;
+        }
+        const uint32_t age = g_use_clock - g_nodes[index].vnode.last_used;
+        if (best < 0 || age > best_age) {
+            best = static_cast<int>(index);
+            best_age = age;
+        }
+    }
+    return best;
+}
+
+// Everything under the directory can go: nothing in it is held or unlinked,
+// it all belongs to the directory's driver, and no other volume is mounted
+// inside it. Leaves the subtree in g_subtree, `count` entries.
+bool subtree_can_go(int index, size_t& count) {
+    const Vnode& directory = g_nodes[index].vnode;
+    count = collect_subtree(index);
+    if (count >= kMaxNodes) {
+        return false;
+    }
+    for (size_t at = 0; at < count; ++at) {
+        const Vnode& node = g_nodes[g_subtree[at]].vnode;
+        if (node_is_held(node) || node.unlinked || node.volume_driver != directory.volume_driver) {
+            return false;
+        }
+        if (at != 0 && node.type == NodeType::directory) {
+            char path[kMaxPathLength];
+            if (!path_of_node(node, path, sizeof(path)) || is_mount_point(path)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+size_t free_slots() {
+    return (kMaxNodes - g_node_count) + g_free_listed;
+}
+
+size_t trim(size_t target_free) {
+    if (!g_ready) {
+        return 0;
+    }
+    const int saved_error = g_last_error;
+    memset(g_trim_skip, 0, sizeof(g_trim_skip));
+    size_t given_back = 0;
+    while (free_slots() < target_free) {
+        const int directory = oldest_trim_candidate();
+        if (directory < 0) {
+            break;
+        }
+        g_trim_skip[directory] = true;
+        size_t count = 0;
+        if (!subtree_can_go(directory, count)) {
+            continue;
+        }
+        const fs::Driver& driver = *g_nodes[directory].vnode.volume_driver;
+        // Deepest first: collect_subtree lists a directory before its
+        // entries, so walking it backwards empties each chain before the
+        // directory that owns it goes.
+        for (size_t at = count; at-- > 1;) {
+            Vnode& node = g_nodes[g_subtree[at]].vnode;
+            if (driver.forget != nullptr) {
+                driver.forget(node);
+            }
+            retire_node(node);
+        }
+        g_nodes[directory].vnode.populated = false;
+        given_back += count - 1;
+    }
+    g_last_error = saved_error;
+    return given_back;
+}
+
+void trim_if_low() {
+    if (!g_ready || free_slots() >= kTrimLowWater) {
+        g_trim_stalled = false;
+        return;
+    }
+    if (g_trim_stalled && g_use_clock - g_trim_stalled_at < kTrimRetryLooks) {
+        return;
+    }
+    trim(kTrimTarget);
+    g_trim_stalled = free_slots() < kTrimLowWater;
+    g_trim_stalled_at = g_use_clock;
 }
 
 } // namespace vfs

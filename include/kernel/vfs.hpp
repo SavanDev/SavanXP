@@ -80,6 +80,9 @@ struct Vnode {
     // first lookup or listing its entries are not in the tree; then the
     // driver's populate publishes them and this is set.
     bool populated;
+    // When the directory was last looked into, on the VFS's own clock: the
+    // bounded cache gives back the ones unvisited longest first.
+    uint32_t last_used;
 };
 
 /* --- permissions ------------------------------------------------------------
@@ -185,5 +188,21 @@ size_t read(Vnode& node, size_t offset, void* buffer, size_t count);
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate);
 const Vnode* child_at(const Vnode& directory, size_t index);
 size_t child_count(const Vnode& directory);
+
+/* --- the bounded cache (VFS-C, docs/roadmaps/open/VFS_ROADMAP.md) ------------
+ * Published volume directories are given back when slots run low: their
+ * entries leave the tree (the driver is told to forget each one) and the
+ * directory is published again on its next look. A directory goes only with
+ * nothing under it held, and only at the entry of a system call, under the
+ * kernel lock. The rule that follows for all kernel code: a Vnode pointer
+ * kept from one system call to the next must be retained. */
+size_t free_slots();
+// Gives back the least recently looked-into directories until `target_free`
+// slots are free or nothing more can go. The slots given back.
+size_t trim(size_t target_free);
+// What a system call's entry calls: trims when free slots are below the
+// low-water mark, and does not search again for a while after a trim that
+// found too little.
+void trim_if_low();
 
 } // namespace vfs

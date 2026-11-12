@@ -38,7 +38,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 
 | Area | Current limit |
 | --- | --- |
-| Resident tree | 2048 nodes shared by volumes, devices and initramfs; FAT publishes a directory when it is first looked into (`populate`), SxFS its whole tree at attach; nothing published is given back while mounted |
+| Resident tree | 2048 nodes shared by volumes, devices and initramfs; FAT publishes a directory when it is first looked into (`populate`), SxFS its whole tree at attach; published on-demand directories are given back, least recently looked into first, when free slots drop below 256 (`vfs::trim_if_low`, at system-call entry) |
 | Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until its last `vfs::release` |
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `open`/`close` at a vnode's first and last holder (FAT keeps a FatFs file open between them) and `release` for the last holder of an unlinked file, but nothing per opening |
@@ -70,7 +70,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 | --- | --- | --- |
 | VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
-| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first | The bounded cache (slice 2), SxFS on demand, names, relative resolution and cursors. The cache is the one open item of SxFS v2's scale work |
+| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`) | SxFS on demand, names, relative resolution and cursors. SxFS on demand is the one open item of SxFS v2's scale work |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
 | VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
 
@@ -223,12 +223,31 @@ Slices, each shippable alone:
    A mount costs one directory, and a volume larger than the pool mounts:
    only what is visited is resident. FAT first, the format of the sticks
    that ran into the ceiling.
-2. **A bounded cache.** Published directories nothing holds and nobody
+2. **A bounded cache. Done.** Published directories nothing holds and nobody
    visited lately are given back (their entries retired, the driver told to
    `forget` them) to keep free slots above a low-water mark. Eviction runs
    only at a point where no unretained vnode pointer can exist: the entry of
    a system call, under the kernel lock. Splitting the VFS off that lock
    (SMP phase 5.6) has to revisit this rule.
+
+   As built: `vfs::trim_if_low()` runs at the top of `handle_syscall`. Below
+   `kMaxNodes / 8` free slots it calls `vfs::trim(kMaxNodes / 4)`, which
+   takes the on-demand directory looked into longest ago (`Vnode::last_used`,
+   stamped on every look) and gives back its whole subtree, when nothing in
+   it is held or unlinked, all of it belongs to that directory's driver, and
+   no other volume is mounted inside. The directory itself stays, marked
+   unpublished; a held directory (an open listing, a current directory) keeps
+   its own entries. A trim that cannot reach the low-water mark is not
+   retried until 64 more directory looks have happened, so a tree full of
+   held or always-resident nodes is not searched on every call.
+
+   **The rule this sets for all kernel code:** a `Vnode*` kept from one
+   system call to the next is retained (`vfs::retain`), or it may point at a
+   slot given to another node. Inside one call, an unretained pointer is
+   safe as long as the call does not sleep in `smp::wait_for_interrupt()`
+   between finding it and using it; the sleeping calls today (tty, network,
+   PC speaker, the idle yield) hold none. Driver records point at their
+   vnodes and are dropped by `forget`.
 3. **SxFS on demand**, with the same two hooks.
 4. **Names**: comparison as a mount capability (FAT case-insensitive), and
    names past 63 bytes.

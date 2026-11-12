@@ -28,6 +28,7 @@
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/vfs.hpp"
 
 namespace {
 
@@ -2948,6 +2949,10 @@ SavedContext* handle_syscall(SavedContext* context) {
     Thread* const caller = this_cpu().current;
     const subsystem::Id id = caller != nullptr ? caller->process->subsystem_id : subsystem::Id::posix;
     smp::tag_lock_hold(static_cast<uint32_t>(id), static_cast<uint32_t>(context->rax));
+    // The one point where no kernel code is halfway through a lookup with an
+    // unretained Vnode pointer: published directories are given back here
+    // when the tree runs low (docs/roadmaps/open/VFS_ROADMAP.md, VFS-C).
+    vfs::trim_if_low();
     SavedContext* result = subsystem::dispatch(id, context);
 
     // Its process was asked to end while it was in this syscall. If it is

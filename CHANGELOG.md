@@ -123,6 +123,10 @@ Cut-off notes:
   (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`): a USB stick with more files than the VFS's
   2048 nodes mounts. A single directory too large for the VFS fails its own lookup (VFS-C slice 1).
 
+- **The VFS gives published directories back when its node pool runs low** (`vfs::trim_if_low` at system-call
+  entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
+  no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

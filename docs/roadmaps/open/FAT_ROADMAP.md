@@ -191,8 +191,9 @@ Points worth knowing before writing it:
   2048 nodes mounts, and what is visited is resident. A single directory with
   more entries than the VFS has free fails its own lookup (`fat: ... the
   directory does not fit in the VFS`), and what it had published is taken
-  back. Nothing is given back yet once published: a long session that visits
-  every directory still fills the pool, which is VFS-C's next slice.
+  back. Published directories are given back when the pool runs low (VFS-C
+  slice 2): the VFS calls `forget` on each entry, which drops its record, and
+  the directory is read from the disk again on its next look.
 - **The file count is the volume's, not what is published.** `stats` walks
   the directories once, without publishing (`count_files`, by the same
   left-out rules), the first time it is asked; create and unlink keep it.
@@ -298,8 +299,7 @@ Each phase builds, boots and is verified on its own.
 - No `chmod`/`chown` on FAT; ownership is fixed.
 - Unmount follows SxFS's (`fs::release`); the ESP at `/boot` stays mounted.
 - A single FAT directory with more entries than the VFS has free nodes cannot
-  be listed, and visiting more than the pool holds fails until VFS-C gives
-  slots back.
+  be listed, even after the bounded cache has given back what it can.
 
 ## Open questions
 

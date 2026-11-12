@@ -816,6 +816,11 @@ round trip is made of — pipe read and write, `WAIT_ONE`, `EVENT_SET` — and
 
 **5.6 — files.** The VFS, then SxFS per volume, then FatFs with
 `FF_FS_REENTRANT`. After 5.2 the paths are already audited for running twice.
+The VFS's bounded cache gives slots back at system-call entry because, under
+the one lock, no other core can be halfway through a lookup there
+([VFS_ROADMAP.md](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches),
+slice 2): taking the VFS off that lock needs another rule for when an
+unretained `Vnode*` is safe.
 
 **5.7 — drivers.** The bulk of the lines, as the original plan said, and the
 least urgent: one lock per device instance, interrupt handlers marked one by

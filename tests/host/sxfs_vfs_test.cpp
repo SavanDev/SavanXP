@@ -739,6 +739,61 @@ void case_files_growing_side_by_side(uint8_t* small_image) {
 
 } // namespace
 
+// The bounded cache: published directories are given back, least recently
+// looked into first, never with anything under them held, and published
+// again on the next look.
+constexpr size_t kHuge = 1u << 20;
+
+void case_published_directories_are_trimmed(uint8_t* image) {
+    printf("case: published directories are trimmed\n");
+    if (!check(build_image(image) && mount_image(image), "volume mounted")) {
+        return;
+    }
+    g_lazy_driver = {};
+    g_lazy_driver.name = "lazy";
+    g_lazy_driver.read = &lazy_read;
+    g_lazy_driver.refresh = &lazy_refresh;
+    g_lazy_driver.populate = &lazy_populate;
+    g_lazy_driver.forget = &lazy_forget;
+    g_populates = 0;
+    g_forgets = 0;
+
+    vfs::Vnode* lazy = vfs::install_volume_directory("/lazy", g_lazy_driver);
+    vfs::Vnode* x = const_cast<vfs::Vnode*>(vfs::resolve("/lazy/sub/x"));
+    vfs::Vnode* sub = const_cast<vfs::Vnode*>(vfs::resolve("/lazy/sub"));
+    if (!check(lazy != nullptr && x != nullptr && sub != nullptr && g_populates == 2, "both directories published")) {
+        hoststub::detach_device();
+        return;
+    }
+    const size_t free_before = vfs::free_slots();
+
+    vfs::retain(*x);
+    check(vfs::trim(kHuge) == 0 && g_forgets == 0, "a held file keeps every directory above it");
+    vfs::release(*x);
+
+    // /lazy is looked into after /lazy/sub: sub is the older one.
+    (void)vfs::child_count(*lazy);
+    check(vfs::trim(free_before + 1) == 1 && g_forgets == 1, "the least recently used directory goes first");
+    check(!sub->populated && lazy->populated, "and only as much as was asked");
+    check(vfs::free_slots() == free_before + 1, "its slot is free");
+
+    vfs::retain(*lazy);
+    (void)vfs::resolve("/lazy/sub/x");
+    check(vfs::trim(kHuge) == 1 && lazy->populated, "a held directory keeps its entries, not its subdirectories'");
+    vfs::release(*lazy);
+
+    check(vfs::trim(kHuge) == 3 && !lazy->populated && g_forgets == 5, "the rest goes, the driver told of each");
+    check(vfs::free_slots() == free_before + 4, "every slot is back");
+    const int populates_before = g_populates;
+    check(vfs::resolve("/lazy/sub/x") != nullptr && g_populates == populates_before + 2,
+          "the next look publishes it again");
+
+    const size_t free_now = vfs::free_slots();
+    vfs::trim_if_low();
+    check(vfs::free_slots() == free_now && lazy->populated, "with slots to spare, a system call trims nothing");
+    hoststub::detach_device();
+}
+
 int main() {
     printf("SxFS VFS TEST START\n");
     uint8_t* image = static_cast<uint8_t*>(malloc(kImageBytes));
@@ -752,6 +807,7 @@ int main() {
     case_unlinked_file_lives_while_held(image);
     case_holders_are_counted(image);
     case_directories_published_on_demand(image);
+    case_published_directories_are_trimmed(image);
     case_power_cut_with_an_unlinked_file_open(image);
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);

@@ -297,9 +297,13 @@ is known, what the fix is. The SxFS side is in
   `fs::Driver::populate`): its entries enter the tree the first time it is
   looked up or listed, and a failed populate is taken back so the next look
   tries again. FAT does; SxFS still publishes its whole tree at attach, so an
-  SxFS tree that does not fit does not mount. Nothing published is given
-  back while the volume is mounted, so a session that visits enough fills
-  the pool; a bounded cache is VFS-C's next slice
+  SxFS tree that does not fit does not mount. When free slots drop below 256,
+  the entry of the next system call gives back the on-demand directories
+  looked into longest ago (`vfs::trim_if_low`): their entries leave the tree,
+  the driver `forget`s each one, and the next look publishes them again.
+  Nothing under a held node goes. **A `Vnode*` kept from one system call to
+  the next must be retained** (`vfs::retain`); an unretained one may point at
+  a reused slot
   ([VFS_ROADMAP.md](../roadmaps/open/VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches)).
 - **Names are at most 63 bytes, paths at most 255** (`kMaxPathComponentLength`,
   `kMaxPathLength`). FAT allows 255-character names; the FAT driver leaves out
