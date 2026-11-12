@@ -931,6 +931,56 @@ Volume* directory_volume(const vfs::Vnode& node, const char*& inner) {
     return volume_for_id(directory->volume);
 }
 
+// One code point from UTF-8 (FF_LFN_UNICODE 2), moving `text` past it. False
+// on a malformed sequence.
+bool next_code_point(const char*& text, uint32_t& code_point) {
+    const uint8_t lead = static_cast<uint8_t>(*text);
+    size_t extra = 0;
+    if (lead < 0x80u) {
+        code_point = lead;
+    } else if ((lead & 0xe0u) == 0xc0u) {
+        code_point = lead & 0x1fu;
+        extra = 1;
+    } else if ((lead & 0xf0u) == 0xe0u) {
+        code_point = lead & 0x0fu;
+        extra = 2;
+    } else if ((lead & 0xf8u) == 0xf0u) {
+        code_point = lead & 0x07u;
+        extra = 3;
+    } else {
+        return false;
+    }
+    ++text;
+    for (size_t index = 0; index < extra; ++index, ++text) {
+        const uint8_t next = static_cast<uint8_t>(*text);
+        if ((next & 0xc0u) != 0x80u) {
+            return false;
+        }
+        code_point = (code_point << 6) | (next & 0x3fu);
+    }
+    return true;
+}
+
+// FAT names are the same entry when they match with case folded, by the
+// table FatFs itself compares long names with (ff_wtoupper), so the VFS finds
+// exactly what f_open would. Short 8.3 aliases ("PROGRA~1") are not names the
+// VFS knows. A malformed name compares byte for byte.
+bool same_name(const char* a, const char* b) {
+    const char* left = a;
+    const char* right = b;
+    while (*left != '\0' && *right != '\0') {
+        uint32_t left_point = 0;
+        uint32_t right_point = 0;
+        if (!next_code_point(left, left_point) || !next_code_point(right, right_point)) {
+            return strcmp(a, b) == 0;
+        }
+        if (left_point != right_point && ff_wtoupper(left_point) != ff_wtoupper(right_point)) {
+            return false;
+        }
+    }
+    return *left == '\0' && *right == '\0';
+}
+
 Status populate(vfs::Vnode& node) {
     const char* inner = nullptr;
     Volume* volume = directory_volume(node, inner);
@@ -1005,6 +1055,7 @@ const fs::Driver kDriver = {
     .close = &close_file,
     .populate = &populate,
     .forget = &forget,
+    .same_name = &same_name,
 };
 
 const fs::Driver& driver_ref() {

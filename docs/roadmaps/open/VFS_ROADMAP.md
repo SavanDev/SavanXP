@@ -45,7 +45,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles, file-backed sections and POSIX's current directory (a retained vnode, whose path is rebuilt with `vfs::path_of` and follows renames). There are no directory cursors or name caches to count yet |
 | Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; handle I/O returns `sx::IoResult` (status and length), but path operations and `vfs::read`/`vfs::write` themselves still report through the global `vfs::last_error()` |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
-| Name comparison | Byte for byte on every volume; FAT's case-insensitive rules are not applied, so a differently cased name misses, or passes the VFS and is refused by the format |
+| Name comparison | By the directory's driver (`fs::Driver::same_name`), byte for byte without one; FAT folds case as FatFs does. No 8.3 short-name aliases |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
 | Mounts | Four slots and 32-byte mount-point buffers; a read-only mount is a flag of `fs::attach` the VFS enforces, with no remount and no per-mount policy beyond it |
 | File semantics | Rename replaces and unlink keeps open files alive where the driver supports it (SxFS; FAT answers `EEXIST`/`EBUSY`); append initially positions at EOF rather than enforcing append on each write; no exclusive-create flag and no positioned I/O |
@@ -70,7 +70,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 | --- | --- | --- |
 | VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
-| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test` | Names, relative resolution and cursors |
+| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test`. Slice 4a: name comparison by the driver, FAT case-insensitive (`fat-vfs-test`) | Names past 63 bytes, relative resolution and cursors |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
 | VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
 
@@ -259,6 +259,17 @@ Slices, each shippable alone:
    VFS's.
 4. **Names**: comparison as a mount capability (FAT case-insensitive), and
    names past 63 bytes.
+
+   Comparison is done (4a). It is a driver hook, `same_name`, that the
+   child lookup uses in the directories a driver publishes; FAT's compares
+   code points through `ff_wtoupper`, the table FatFs compares long names
+   with, so the VFS finds exactly what `f_open` would. Creating a name that
+   exists in another case opens the existing entry, and a rename to another
+   case of the same name renames instead of being a no-op. Because a caller
+   may spell the directories above a new name differently from the disk,
+   create, mkdir and rename hand the driver a path rebuilt from the tree
+   (`spelled_path`), which keeps drivers that store paths byte-exact.
+   Names past 63 bytes are 4b.
 5. **Directory-relative resolution and enumeration cursors**, the rest of
    the paragraphs above.
 
@@ -349,7 +360,7 @@ no single change is expected to complete VFS-E.
 | SxFS v2 reliability | Done: it landed the driver status results, unlink while open, replacing rename and `fsync` it needed, in this layer |
 | SxFS v2 scale | Done: on-demand publication and the bounded cache (VFS-C slices 1-3); format ceilings remain unchanged |
 | SxFS v3 | Agree VFS/driver contracts during format design; qualify VFS-C/E before claiming large-tree or coherent-mapping support |
-| [FAT](FAT_ROADMAP.md) and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior. FAT waits on VFS-B for per-open state, and on VFS-C for name comparison and names past 63 bytes |
+| [FAT](FAT_ROADMAP.md) and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior. FAT waits on VFS-B for per-open state, and on VFS-C for names past 63 bytes |
 | [Linux](LINUX_SUBSYSTEM_ROADMAP.md) | Consume measured neutral operations for L3/L4; private file mappings arrive with its S2b slice at L4; add directory-relative I/O, links and locking with the profiles that require them |
 | [Win32](WIN32_SUBSYSTEM_ROADMAP.md) | Its first profile stores settings with `sxn_write_file` and installs names lower-cased until a native enumeration call exists. Later: common identity, rights, sharing/deletion mechanisms and mappings; paths, dispositions, flags and errors are translated in Win32 |
 | [Drivers D5](DRIVERS_ROADMAP.md#d5--general-plug-and-play-and-safe-removal) | VFS-B references and VFS-E teardown define what a removed disk leaves behind; USB storage is the first consumer |

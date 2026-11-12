@@ -311,12 +311,16 @@ is known, what the fix is. The SxFS side is in
 
 ### Semantics
 
-- **Names are compared byte for byte** (`strcmp` in the child lookup). FAT is
-  case-insensitive, the VFS is not: `/boot/LIMINE.CONF` is not found although
-  FAT would find it, and creating `Readme` next to `README` passes the VFS's
-  check and is then refused by the format, reported as `ENOSPC`. Read in the
-  code, not yet exercised. A per-volume flag asking for case-insensitive
-  lookup would be the smallest fix.
+- **Names compare by the format's rules.** The child lookup asks the
+  directory's driver (`fs::Driver::same_name`) and falls back to byte for
+  byte. FAT folds case with FatFs's own table (`ff_wtoupper`), so
+  `/boot/LIMINE.CONF` finds `limine.conf`, creating `Readme` next to `README`
+  opens `README`, and renaming `a.txt` to `A.TXT` changes the case on the
+  disk. SxFS, `/dev`, `/rescue` and everything above a mount point stay
+  case-sensitive. FAT's short 8.3 aliases (`PROGRA~1`) are not names the VFS
+  knows. A driver that keeps paths is handed the existing directories as the
+  tree spells them and the new leaf as the caller did, never the caller's
+  spelling of the directories above it.
 - **A handle opened before a volume went read-only keeps its vnode.** The
   policy is checked at the operations that start from a path; a write through
   an already open handle reaches the driver, which refuses it. Nothing remounts

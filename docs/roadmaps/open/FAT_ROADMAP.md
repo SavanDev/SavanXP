@@ -300,6 +300,8 @@ Each phase builds, boots and is verified on its own.
 - Unmount follows SxFS's (`fs::release`); the ESP at `/boot` stays mounted.
 - A single FAT directory with more entries than the VFS has free nodes cannot
   be listed, even after the bounded cache has given back what it can.
+- Names fold case as FatFs folds them (VFS-C slice 4a), but the 8.3 short
+  aliases of long names are not looked up.
 
 ## Open questions
 

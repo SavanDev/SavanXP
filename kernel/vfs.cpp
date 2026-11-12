@@ -158,10 +158,14 @@ int find_child(int parent, const char* name) {
     if (!populate_directory(parent)) {
         return -1;
     }
+    // A volume's directory compares names by its format's rules (VFS-C).
+    const fs::Driver* driver = g_nodes[parent].vnode.volume_driver;
+    bool (*same_name)(const char*, const char*) = driver != nullptr ? driver->same_name : nullptr;
     int index = g_nodes[parent].vnode.first_child;
     while (index >= 0) {
-        if (node_is_named(g_nodes[index].vnode) &&
-            strcmp(g_nodes[index].vnode.name, name) == 0) {
+        const vfs::Vnode& child = g_nodes[index].vnode;
+        if (node_is_named(child) &&
+            (same_name != nullptr ? same_name(child.name, name) : strcmp(child.name, name) == 0)) {
             return index;
         }
         index = g_nodes[index].vnode.next_sibling;
@@ -614,6 +618,32 @@ bool permits(const cred::Credentials& who, const Vnode& node, uint32_t want) {
     return (granted & want) == want;
 }
 
+namespace {
+
+bool path_of_node(const Vnode& node, char* out, size_t capacity);
+
+// The path a driver is given for a new name: the directories above it as the
+// tree spells them, and the leaf as the caller does. On a volume that folds
+// case the caller may have spelled the directories differently, and drivers
+// that keep paths compare them byte for byte.
+bool spelled_path(int parent, const char* leaf, char* out, size_t capacity) {
+    if (!path_of_node(g_nodes[parent].vnode, out, capacity)) {
+        return false;
+    }
+    size_t length = strlen(out);
+    const size_t leaf_length = strlen(leaf);
+    if (length + 1 + leaf_length + 1 > capacity) {
+        return false;
+    }
+    if (length > 1) {
+        out[length++] = '/';
+    }
+    memcpy(out + length, leaf, leaf_length + 1);
+    return true;
+}
+
+} // namespace
+
 bool may_access(const cred::Credentials& who, const char* path, uint32_t want) {
     char normalized[kMaxPathLength] = {};
     if (path == nullptr || !normalize_path("/", path, normalized, sizeof(normalized))) {
@@ -959,8 +989,13 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
+        char spelled[kMaxPathLength] = {};
+        if (!spelled_path(index, leaf_name, spelled, sizeof(spelled))) {
+            g_last_error = SX_EINVAL;
+            return nullptr;
+        }
         Vnode* node = nullptr;
-        const fs::Status created = volume.driver->create_file(volume.volume, normalized, owner, node);
+        const fs::Status created = volume.driver->create_file(volume.volume, spelled, owner, node);
         if (!fs::ok(created) || node == nullptr) {
             g_last_error = fs::ok(created) ? SX_ENOSPC : fs::error_of(created);
             return nullptr;
@@ -1115,8 +1150,13 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
             g_last_error = kNoWriteOperation;
             return nullptr;
         }
+        char spelled[kMaxPathLength] = {};
+        if (!spelled_path(parent, leaf_name, spelled, sizeof(spelled))) {
+            g_last_error = SX_EINVAL;
+            return nullptr;
+        }
         Vnode* directory = nullptr;
-        const fs::Status created = volume.driver->create_directory(volume.volume, normalized, owner, directory);
+        const fs::Status created = volume.driver->create_directory(volume.volume, spelled, owner, directory);
         if (!fs::ok(created) || directory == nullptr) {
             g_last_error = fs::ok(created) ? SX_ENOSPC : fs::error_of(created);
             return nullptr;
@@ -1453,17 +1493,21 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
     if (node_index < 0) {
         return false;
     }
-    const int replaced_index = resolve_index(normalized_new);
-    if (replaced_index == node_index) {
-        // Two spellings of one name (the /disk alias): nothing to do.
-        return true;
-    }
-
     char parent_path[kMaxPathLength] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(normalized_new, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
         g_last_error = SX_EINVAL;
         return false;
+    }
+    int replaced_index = resolve_index(normalized_new);
+    if (replaced_index == node_index) {
+        // Two spellings of one name: the /disk alias, nothing to do; or, on
+        // a volume that folds case, a new case for the same name, which is
+        // a rename that replaces nothing.
+        if (strcmp(g_nodes[node_index].name, leaf_name) == 0) {
+            return true;
+        }
+        replaced_index = -1;
     }
 
     const int new_parent = resolve_index(parent_path);
@@ -1547,7 +1591,15 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
             g_last_error = kNoWriteOperation;
             return false;
         }
-        const fs::Status renamed = volume.driver->rename(volume.volume, normalized_old, normalized_new, keep_replaced);
+        // The driver gets the names as the tree spells them (spelled_path).
+        char spelled_old[kMaxPathLength] = {};
+        char spelled_new[kMaxPathLength] = {};
+        if (!path_of_node(node, spelled_old, sizeof(spelled_old)) ||
+            !spelled_path(new_parent, leaf_name, spelled_new, sizeof(spelled_new))) {
+            g_last_error = SX_EINVAL;
+            return false;
+        }
+        const fs::Status renamed = volume.driver->rename(volume.volume, spelled_old, spelled_new, keep_replaced);
         if (!fs::ok(renamed)) {
             g_last_error = renamed == fs::Status::unsupported ? SX_EBUSY : fs::error_of(renamed);
             return false;

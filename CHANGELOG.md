@@ -127,6 +127,10 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **Names on FAT volumes are case-insensitive, as FAT is**: `/boot/LIMINE.CONF` finds `limine.conf`, creating
+  `Readme` next to `README` opens it, and renaming to another case renames (`fs::Driver::same_name`, VFS-C slice 4a).
+  SxFS and the rest of the tree stay case-sensitive.
+
 - **SxFS volumes publish a directory the first time it is looked into too**: a mount publishes only its mount point,
   and an SxFS volume with more entries than the VFS's 2048 nodes mounts and is read whole (VFS-C slice 3).
 

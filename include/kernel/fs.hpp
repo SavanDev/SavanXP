@@ -171,6 +171,11 @@ struct Driver {
     // deleted but to give its slot back (a failed populate, and later the
     // cache): the driver drops its own record of it. The entry stays on disk.
     void (*forget)(vfs::Vnode& node) = nullptr;
+    // Whether two names are the same entry on this format, for the VFS's
+    // lookups in the directories the driver publishes (VFS-C). nullptr: byte
+    // for byte. FAT folds case as FatFs does, so "README.TXT" finds
+    // "readme.txt" and creating one when the other exists opens it instead.
+    bool (*same_name)(const char* a, const char* b) = nullptr;
 };
 
 struct MountInfo {
