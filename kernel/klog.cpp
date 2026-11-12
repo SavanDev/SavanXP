@@ -37,6 +37,21 @@ sxn_log_record g_ring[klog::kCapacity];
 uint32_t g_ring_uid[klog::kCapacity];
 uint64_t g_last_sequence = 0;
 
+// The first kBootKept records are the boot: the processor, the PCI devices,
+// what each driver found. They are never overwritten, so a machine that has
+// been up for hours still shows how it started. The rest of the array is the
+// ring for every later line.
+constexpr size_t kBootKept = klog::kBootKept;
+constexpr size_t kRolling = klog::kCapacity - kBootKept;
+static_assert(kBootKept < klog::kCapacity, "the ring needs room past the boot lines");
+
+size_t slot_of(uint64_t sequence) {
+    if (sequence <= kBootKept) {
+        return static_cast<size_t>(sequence - 1);
+    }
+    return kBootKept + static_cast<size_t>((sequence - kBootKept - 1) % kRolling);
+}
+
 Pending g_pending[kPendingSlots];
 uint64_t g_touch_clock = 0;
 
@@ -70,7 +85,7 @@ void commit(Pending& pending, uint32_t extra_flags) {
     }
 
     const uint64_t sequence = ++g_last_sequence;
-    const size_t index = static_cast<size_t>((sequence - 1) % klog::kCapacity);
+    const size_t index = slot_of(sequence);
     sxn_log_record& record = g_ring[index];
 
     record.sequence = sequence;
@@ -208,14 +223,24 @@ bool next(const cred::Credentials& reader, uint64_t sequence, sxn_log_record& ou
     if (g_last_sequence == 0) {
         return false;
     }
-    const uint64_t oldest = g_last_sequence > kCapacity ? g_last_sequence - kCapacity + 1 : 1;
-    if (sequence < oldest) {
-        sequence = oldest;
+    if (sequence == 0) {
+        sequence = 1;
+    }
+    // Past the boot lines, the oldest the ring still holds; the sequences in
+    // between were overwritten.
+    const uint64_t oldest_rolling = g_last_sequence > kCapacity
+        ? g_last_sequence - kRolling + 1
+        : kBootKept + 1;
+    if (sequence > kBootKept && sequence < oldest_rolling) {
+        sequence = oldest_rolling;
     }
 
     const bool system = cred::acts_as_system(reader);
     for (; sequence <= g_last_sequence; ++sequence) {
-        const size_t index = static_cast<size_t>((sequence - 1) % kCapacity);
+        if (sequence == kBootKept + 1 && sequence < oldest_rolling) {
+            sequence = oldest_rolling;
+        }
+        const size_t index = slot_of(sequence);
         const sxn_log_record& record = g_ring[index];
         const uint32_t owner = g_ring_uid[index];
         // Another user's programs are theirs; the kernel's and the system's

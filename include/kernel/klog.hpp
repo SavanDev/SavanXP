@@ -9,8 +9,9 @@
 /*
  * The system log (docs/kernel/SYSTEM_LOG.md).
  *
- * A ring of the last kCapacity lines that left for the serial port, each one
- * with when it started, who wrote it and the writer's name. On real hardware
+ * The first kBootKept lines that left for the serial port and a ring of the
+ * latest ones after them, kCapacity in all, each one with when it started,
+ * who wrote it and the writer's name. On real hardware
  * there is often no serial cable: this is what lets a program in the system
  * show the same log QEMU prints to the terminal.
  *
@@ -22,6 +23,8 @@
 namespace klog {
 
 constexpr size_t kCapacity = 2048;
+// Of those, the first lines ever written, kept for the life of the system.
+constexpr size_t kBootKept = SXN_LOG_BOOT_KEPT;
 
 void write_char(char character);
 void write(const char* text, size_t length);

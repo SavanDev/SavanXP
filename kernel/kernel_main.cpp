@@ -150,6 +150,12 @@ namespace
 
     console::printf("%s %s booting...\n", SAVANXP_SYSTEM_NAME, SAVANXP_FULL_VERSION_STRING);
     console::printf("boot: options \"%s\"\n", boot_info.cmdline != nullptr ? boot_info.cmdline : "");
+    // BIOS or UEFI, and which loader: the first thing to know about a run on a
+    // machine whose screen is all there is (docs/hardware/REAL_HARDWARE.md).
+    console::printf("boot: firmware %s, loader %s %s\n",
+        firmware_type_name(boot_info.firmware_type),
+        boot_info.bootloader_name != nullptr ? boot_info.bootloader_name : "unknown",
+        boot_info.bootloader_version != nullptr ? boot_info.bootloader_version : "");
 
     boot_screen::show("Initializing physical memory");
     memory::initialize(boot_info);

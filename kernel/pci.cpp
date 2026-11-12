@@ -1,6 +1,7 @@
 #include "kernel/pci.hpp"
 
 #include "arch/x86/io.hpp"
+#include "kernel/console.hpp"
 #include "kernel/string.hpp"
 
 namespace {
@@ -9,7 +10,10 @@ using namespace arch::x86::port_io;
 
 constexpr uint16_t kConfigAddressPort = 0x0cf8;
 constexpr uint16_t kConfigDataPort = 0x0cfc;
-constexpr size_t kMaxDevices = 64;
+// The development host has 41 functions; a board of the ICH era with every
+// UHCI companion enabled has about 30. 256 leaves room for anything with a
+// few add-in cards, and what does not fit is counted and reported.
+constexpr size_t kMaxDevices = 256;
 constexpr uint16_t kPciCommandOffset = 0x04;
 constexpr uint16_t kPciStatusOffset = 0x06;
 constexpr uint16_t kPciCapabilitiesPointerOffset = 0x34;
@@ -20,6 +24,7 @@ constexpr uint8_t kCapabilityVendorSpecific = 0x09;
 
 pci::DeviceInfo g_devices[kMaxDevices] = {};
 size_t g_device_count = 0;
+size_t g_dropped_count = 0;
 bool g_ready = false;
 
 uint32_t config_address(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset) {
@@ -62,6 +67,7 @@ uint64_t decode_bar_size(uint32_t sized_low, uint32_t sized_high, bool io_space,
 
 void append_device(uint8_t bus, uint8_t slot, uint8_t function) {
     if (g_device_count >= kMaxDevices) {
+        ++g_dropped_count;
         return;
     }
 
@@ -119,6 +125,63 @@ void scan_slot(uint8_t bus, uint8_t slot) {
     }
 }
 
+void append_hex(char* line, size_t& length, size_t capacity, uint32_t value, int digits) {
+    static const char kDigits[] = "0123456789abcdef";
+    for (int shift = (digits - 1) * 4; shift >= 0 && length + 1 < capacity; shift -= 4) {
+        line[length++] = kDigits[(value >> shift) & 0xfu];
+    }
+    line[length] = '\0';
+}
+
+void append_text(char* line, size_t& length, size_t capacity, const char* text) {
+    for (const char* cursor = text; *cursor != '\0' && length + 1 < capacity; ++cursor) {
+        line[length++] = *cursor;
+    }
+    line[length] = '\0';
+}
+
+// Every function found, one line each, in the order lspci prints them:
+// bus:slot.function, vendor:device, [subsystem], class.subclass.prog_if,
+// revision and the firmware's IRQ line. On a machine with no serial port this
+// is how the devices of a run reach Log Viewer.
+void report_devices() {
+    console::printf("pci: %u function(s)\n", static_cast<unsigned int>(g_device_count));
+    for (size_t index = 0; index < g_device_count; ++index) {
+        const pci::DeviceInfo& device = g_devices[index];
+        char line[96] = {};
+        size_t length = 0;
+        const size_t capacity = sizeof(line);
+        append_text(line, length, capacity, "pci: ");
+        append_hex(line, length, capacity, device.bus, 2);
+        append_text(line, length, capacity, ":");
+        append_hex(line, length, capacity, device.slot, 2);
+        append_text(line, length, capacity, ".");
+        append_hex(line, length, capacity, device.function, 1);
+        append_text(line, length, capacity, " ");
+        append_hex(line, length, capacity, device.vendor_id, 4);
+        append_text(line, length, capacity, ":");
+        append_hex(line, length, capacity, device.device_id, 4);
+        append_text(line, length, capacity, " [");
+        append_hex(line, length, capacity, device.subsystem_vendor_id, 4);
+        append_text(line, length, capacity, ":");
+        append_hex(line, length, capacity, device.subsystem_device_id, 4);
+        append_text(line, length, capacity, "] class ");
+        append_hex(line, length, capacity, device.class_code, 2);
+        append_text(line, length, capacity, ".");
+        append_hex(line, length, capacity, device.subclass, 2);
+        append_text(line, length, capacity, ".");
+        append_hex(line, length, capacity, device.prog_if, 2);
+        append_text(line, length, capacity, " rev ");
+        append_hex(line, length, capacity, device.revision, 2);
+        append_text(line, length, capacity, " irq ");
+        console::printf("%s%u\n", line, static_cast<unsigned int>(device.irq_line));
+    }
+    if (g_dropped_count != 0) {
+        console::printf("pci: table full at %u functions, %u more not recorded\n",
+            static_cast<unsigned int>(kMaxDevices), static_cast<unsigned int>(g_dropped_count));
+    }
+}
+
 } // namespace
 
 namespace pci {
@@ -126,6 +189,7 @@ namespace pci {
 void initialize() {
     memset(g_devices, 0, sizeof(g_devices));
     g_device_count = 0;
+    g_dropped_count = 0;
 
     for (uint16_t bus = 0; bus < 256; ++bus) {
         for (uint8_t slot = 0; slot < 32; ++slot) {
@@ -133,6 +197,7 @@ void initialize() {
         }
     }
 
+    report_devices();
     g_ready = true;
 }
 

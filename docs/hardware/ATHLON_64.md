@@ -40,7 +40,7 @@ the kernel does not use:
 | `CMPXCHG16B`, `LAHF`/`SAHF` in long mode, `RDTSCP` | Missing on the early revisions | Unused. Nothing in the tree is compiled past the AMD64 baseline, which is the [rule](REAL_HARDWARE.md#the-instruction-set-baseline-is-a-compatibility-rule) that keeps this target alive |
 | x2APIC, SMEP, SMAP, `RDRAND` | No | xAPIC over MMIO; `cpu: SMEP unavailable on this processor`; fallback entropy |
 | Invariant TSC | **No** | See below |
-| C1E | On revision F and later dual-core parts, when the firmware enables it | Can stop the local APIC timer (HW-9) |
+| C1E | On revision F and later dual-core parts, when the firmware enables it | Can stop the local APIC timer; the kernel clears it on revision F and later (HW-9) |
 | Cores | 1, or 2 on the X2 | Started by Limine |
 
 ### The clock is the first thing to fix
@@ -111,8 +111,8 @@ network. A board with a PCIe x1 slot (most AM2 ones) also takes an xHCI card.
 
 1. **Inventory the board.** Until the chipset is known this document is a
    list of possibilities.
-2. **HW-9: the clock.** Selection by the invariant-TSC bit, wrap counting on
-   the 24-bit PM timer, and the C1E bits. Without it no measurement taken on
+2. **HW-9: the clock.** Selection by the invariant-TSC bit and wrap counting
+   on the 24-bit PM timer; the C1E bits are already cleared. Without it no measurement taken on
    the machine can be believed, including the ones the next steps need.
 3. **Run it as it is** from a DVD with the boot log on screen and PS/2 input.
    Record `cpu:`, `timer:`, `smp:`, `fb_gpu:`, `ata:` and `ac97:`.

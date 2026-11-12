@@ -218,13 +218,18 @@ static void add_record(const struct sxn_log_record* record) {
 
     if (g_entry_count == LV_MAX_ENTRIES) {
         /* Full: forget the oldest block at once rather than one line per
-         * line read. */
+         * line read. The boot lines stay, as they do in the kernel's ring:
+         * they are what a run on a new machine is read for. */
+        int keep = 0;
         int index;
-        for (index = 0; index < LV_DROP_WHEN_FULL; ++index) {
+        while (keep < g_entry_count && g_entries[keep].record.sequence <= SXN_LOG_BOOT_KEPT) {
+            keep += 1;
+        }
+        for (index = keep; index < keep + LV_DROP_WHEN_FULL; ++index) {
             count_entry(&g_entries[index], -1);
         }
-        memmove(&g_entries[0], &g_entries[LV_DROP_WHEN_FULL],
-            sizeof(g_entries[0]) * (size_t)(LV_MAX_ENTRIES - LV_DROP_WHEN_FULL));
+        memmove(&g_entries[keep], &g_entries[keep + LV_DROP_WHEN_FULL],
+            sizeof(g_entries[0]) * (size_t)(LV_MAX_ENTRIES - LV_DROP_WHEN_FULL - keep));
         g_entry_count -= LV_DROP_WHEN_FULL;
     }
 

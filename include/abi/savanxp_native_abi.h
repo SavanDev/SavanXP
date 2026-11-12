@@ -380,6 +380,9 @@ enum sxn_syscall_number {
  * port, without the line break. Grows at the end only. */
 #define SXN_LOG_TEXT_MAX 200u
 #define SXN_LOG_SOURCE_MAX 32u
+/* Sequences 1 to SXN_LOG_BOOT_KEPT, the first lines since boot, are never
+ * overwritten; the ring only recycles the ones after them. */
+#define SXN_LOG_BOOT_KEPT 512u
 
 enum sxn_log_flags {
     /* The text continues the previous record of the same source: the line

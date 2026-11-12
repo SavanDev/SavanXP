@@ -38,8 +38,10 @@ the serial log has nowhere to go.
   mounted from Disk Management is the way to take the log off a machine.
 
 The program keeps its own copy of up to 4096 lines, so while it stays open it
-remembers more than the kernel's ring of 2048. What the ring overwrote before
-the program started is gone.
+remembers more than the kernel's ring. When the copy fills it forgets the
+oldest 512 lines after the boot ones: like the kernel, it never drops the first
+`SXN_LOG_BOOT_KEPT` lines. What the kernel's ring overwrote before the program
+started is gone, except the boot, which is always there.
 
 A user sees the kernel's lines, the system's services and their own
 programs, never another user's (see

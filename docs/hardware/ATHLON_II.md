@@ -33,7 +33,7 @@ Athlon II is family 10h without an L3 cache: Regor (X2), Rana (X3) and Propus
 | SMEP, SMAP | No | Boots with `cpu: SMEP unavailable on this processor` |
 | `RDRAND` | No | The TSC-mixed fallback seeds ASLR |
 | Cores | 2 to 4 | Started by Limine; well inside `kMaxCpus` |
-| C1E | Enabled by most firmware | **Stops the local APIC timer** (HW-9) |
+| C1E | Enabled by most firmware | Stops the local APIC timer; the kernel switches it off on every core (HW-9) |
 
 ### C1E is the first check
 
@@ -43,9 +43,12 @@ timer stops. `master` takes its tick from that timer and idles with `hlt`. An
 idle desktop would then stand still until something else interrupts it, and
 move again in bursts.
 
-Before anything else, boot with **boot log on screen**, leave the machine
-idle and watch `timer-stats:`. If it reports lost time, turn "C1E support"
-off in the firmware and compare. The kernel fix is small and is in HW-9.
+The kernel now clears the C1E bits on every core and before every idle halt
+(HW-9), and says what it found: `cpu: AMD erratum 400 range, C1E on halt was
+enabled by the firmware; disabled`. That has only run in QEMU. On the
+machine, leave it idle on the desktop and read `timer-stats:` in Log Viewer:
+`perdido` should stay in single-digit percent. If it does not, turn "C1E
+support" off in the firmware and compare.
 
 ## Chipset graphics
 
@@ -61,10 +64,10 @@ off in the firmware and compare. The kernel fix is small and is in HW-9.
 | NVIDIA MCP61, MCP68, MCP78 | GeForce 6150SE, 7025, 8200 | `10de:*` |
 
 **Today:** the board's video BIOS sets a VBE mode for Limine and the kernel
-draws into it (HW-11). The boot entries ask for `1280x800x32`; a VBIOS of this
-generation offers the VESA 4:3 modes reliably and widescreen ones only
-sometimes, so expect 1024x768 or 1280x1024 on a wide monitor until the mode
-can be chosen. The framebuffer comes out of system RAM the firmware lends to
+draws into it (HW-11). The boot entries ask for `1024x768x32`, which a VBIOS
+of this generation offers reliably; widescreen modes it offers only
+sometimes, so expect 1024x768 on a wide monitor until the mode can be
+chosen. The framebuffer comes out of system RAM the firmware lends to
 the graphics core (and SidePort memory on boards that have it), so the mode
 list also depends on the "share memory" setting.
 
@@ -103,9 +106,10 @@ USB ports with the stack that exists.
 ## Work for this target
 
 1. **Run it as it is.** Boot log on screen, PS/2 input, SATA set to AHCI.
-   Record the `cpu:`, `timer:`, `smp:`, `fb_gpu:`, `ahci:` and `azalia:`
-   lines and the `timer-stats:` behaviour idle.
-2. **HW-9**, if C1E turns out to stop the tick.
+   Record the `boot:`, `cpu:`, `pci:`, `timer:`, `smp:`, `fb_gpu:`, `ahci:`
+   and `azalia:` lines and the `timer-stats:` behaviour idle
+   ([reading the log on the machine](REAL_HARDWARE.md#reading-the-log-on-the-machine)).
+2. **HW-9**, the rest of it, if the tick is still lost with C1E cleared.
 3. **HW-6.** The SBx00 row of `azalia_configure_pci`, then the codec.
 4. **HW-1.** Most likely the same Realtek family as the development host, so
    this arrives with the work done there.

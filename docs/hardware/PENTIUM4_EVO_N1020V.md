@@ -187,7 +187,7 @@ them. **Expected**, not run:
 
 | Area | On an LGA 775 Pentium 4 or Pentium D |
 | --- | --- |
-| CPU | Long mode and XD; the firmware may have XD switched off (HW-10). Hyper-Threading or two cores through xAPIC. No SMEP, no x2APIC |
+| CPU | Long mode and XD; the firmware may have XD switched off, which the kernel undoes (HW-10). Hyper-Threading or two cores through xAPIC. No SMEP, no x2APIC |
 | Timer | NetBurst is the family the local APIC timer erratum is about (HW-9). The PM timer on Intel's south bridges of the time is expected to be 24 bits wide, which puts the wall clock on the TSC; that TSC runs at a constant rate |
 | Storage | ICH5, ICH6 or ICH7 with SATA in IDE mode and a PATA channel (HW-3); AHCI only on the R variants |
 | USB | UHCI and EHCI (HW-2) |

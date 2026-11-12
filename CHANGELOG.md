@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The boot log says which machine it ran on: `boot:` (firmware and loader), `cpu:` (vendor, family, model, stepping,
+  brand, features) and one `pci:` line per function.** Log Viewer never drops the boot lines, so they are readable on a
+  machine without a serial port. See [REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md#reading-the-log-on-the-machine).
+
 - **Common Open and Save As dialogs for SUN programs (`sxn_file_dialog_begin`); Log Viewer saves the log with File > Save Log...**
   New native calls list directories and stream files of any size: `sxn_query_path`, `sxn_open_directory`,
   `sxn_read_directory`, `sxn_create_file`, `sxn_flush_file` (`SXN_SYS_QUERY_PATH` to `SXN_SYS_FLUSH_FILE`).
@@ -22,8 +26,8 @@ Cut-off notes:
   `/users/user/SxGLDiag.txt`; `sxgldiag --selftest` runs it without a window. See [SXGL_DIAG.md](docs/desktop/SXGL_DIAG.md).
 
 - **Log Viewer (`logview`, System menu) shows the system log without a serial cable, by program and by kernel subsystem.**
-  Problems, Find, follow and copy; `logview --print [category]` for the text console. The kernel keeps the last 2048
-  lines for `sxn_log_read` (`SXN_SYS_LOG_READ`). See [LOG_VIEWER.md](docs/userland/LOG_VIEWER.md).
+  Problems, Find, follow and copy; `logview --print [category]` for the text console. The kernel keeps the first 512
+  lines since boot (`SXN_LOG_BOOT_KEPT`) and the latest 1536 for `sxn_log_read` (`SXN_SYS_LOG_READ`). See [LOG_VIEWER.md](docs/userland/LOG_VIEWER.md).
 
 - **`sxfs-cli recover` and `sxfs-cli repair [--dry-run]` fix an interrupted or damaged SxFS image on the host.**
   Repair works on a copy, keeps the original as `<image>.before-repair` and rescues lost files to `/lost+found`.
@@ -107,6 +111,11 @@ Cut-off notes:
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Changed
+
+- **The ISO asks Limine for `1024x768x32` instead of `1280x800x32`**, a VESA mode every video BIOS offers. `run` and the
+  smokes keep 1280x800 (`boot/limine-dev.conf`).
+
+- **The PCI table holds 256 functions instead of 64**; `pci: table full` counts any that do not fit.
 
 - **Native and POSIX file handles go through one kernel file path**: `sx::open_file`, `read_file`, `write_file`,
   `seek_file` and `close_handle`, with results that carry a status and a length. A read or write that fails partway
@@ -211,6 +220,10 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **Old CPUs: C1E on halt is switched off on AMD K8 revision F and family 10h (erratum 400), and XD disabled in the
+  firmware is switched back on for Intel**, instead of a stalling tick or `cpu: NX/W^X is required`. Both are logged on
+  `cpu:` lines. See [REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md#hw-9--timers-on-old-cpus) (HW-9, HW-10).
 
 - **`sxfs::check` (fscheck) no longer reports a healthy directory with more than 32 subdirectories as unreadable**,
   nor the files below the extra ones as orphan inodes. The 32 limit applies to depth, as mounting applies it.

@@ -17,7 +17,7 @@ interchangeable:
 
 ## The targets
 
-| Target | Document | Branch | Status on 2026-11-10 |
+| Target | Document | Branch | Status on 2026-11-12 |
 | --- | --- | --- | --- |
 | AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop on the firmware framebuffer, USB keyboard and mouse, analog audio in and out. No Ethernet, NVMe or native Vega driver |
 | Intel Pentium 4, Compaq Evo N1020v | [PENTIUM4_EVO_N1020V.md](PENTIUM4_EVO_N1020V.md) | `legacy` (i386) | Cannot run `master`: no long mode, no NX. The i386 port on `legacy` boots, mounts SxFS and runs one ring 3 program in QEMU |
@@ -32,13 +32,13 @@ Each of those documents ends with the facts to collect from the unit.
 
 ## What `master` requires of a machine
 
-Read from the tree on 2026-11-10. A machine that fails a **hard** row does not
+Read from the tree on 2026-11-12. A machine that fails a **hard** row does not
 boot; a machine that fails a soft one boots with something missing.
 
 | Area | Requirement | Where |
 | --- | --- | --- |
 | CPU, hard | Long mode. Limine refuses a CPU without it before the kernel is loaded | [Limine protocol](https://github.com/limine-bootloader/limine-protocol/blob/trunk/PROTOCOL.md): *"Only 64-bit, Little Endian machines are supported"* |
-| CPU, hard | NX. The BSP panics with `cpu: NX/W^X is required`; an AP without it halts | `enable_nx()` in `arch/x86_64/cpu_init.cpp`, [KERNEL_SECURITY.md](../kernel/KERNEL_SECURITY.md) |
+| CPU, hard | NX. The BSP panics with `cpu: NX/W^X is required`; an AP without it halts. On Intel, XD switched off in the firmware is switched back on first (HW-10) | `enable_nx()` in `arch/x86_64/cpu_init.cpp`, [KERNEL_SECURITY.md](../kernel/KERNEL_SECURITY.md) |
 | CPU, soft | Local APIC; xAPIC over MMIO or x2APIC over MSRs. Without one the PIT drives a single core | `initialize_local_apic()`, `arch/x86_64/timer.cpp` |
 | CPU, soft | SMEP, enabled when present (`cpu: SMEP unavailable on this processor` otherwise). `RDRAND`, with a TSC-mixed fallback. SMAP is not used | `enable_smep()`, [KERNEL_SECURITY.md](../kernel/KERNEL_SECURITY.md) |
 | CPU, limit | 32 logical processors (`arch::kMaxCpus`) | `include/arch/x86_64/cpu.hpp` |
@@ -46,14 +46,14 @@ boot; a machine that fails a soft one boots with something missing.
 | Firmware | Legacy BIOS with INT 13h extensions, or 64-bit UEFI. Limine 10.8.5; the ISO is hybrid (El Torito for both, and `dd`-able to a USB stick). The 32-bit UEFI loader is not staged | `boot/limine.conf`, `CMakeLists.txt` (`savanxp_iso`) |
 | ACPI | An RSDP from the loader and a FADT. A MADT moves interrupts to the IOAPIC with its source overrides applied; without one the legacy PIC is used. uACPI resolves `_PRT` | `kernel/acpi.cpp`, `kernel/ioapic.cpp`, `kernel/uacpi_glue.cpp` |
 | Clocks | A CMOS RTC: the LAPIC timer is calibrated across two RTC second edges. PIT channel 2: the TSC is calibrated against it. The wall clock is the ACPI PM timer when it is 32 bits wide and the **TSC otherwise** | [TIME.md](../kernel/TIME.md) |
-| Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The boot entries ask Limine for `1280x800x32`. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
+| Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The ISO's boot entries ask Limine for `1024x768x32`, a VESA mode every video BIOS offers; the development configuration keeps `1280x800x32`, which the QEMU scenarios click against. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
 | Memory | The LiveCD root is a 256 MiB SxFS volume Limine loads into RAM as a module, next to the kernel and the initramfs. The floor has not been measured; 1 GiB is the least worth trying | `SAVANXP_ISO_SECTORS` in `CMakeLists.txt` |
 | Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. No NVMe, no ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/usb/umass.cpp` |
 | USB | xHCI only. A machine whose ports hang off EHCI, UHCI or OHCI has no USB | [USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md) |
 | Input | PS/2 (8042) keyboard and mouse, or USB HID behind xHCI | `kernel/ps2.cpp`, [INPUT.md](../kernel/INPUT.md) |
 | Network | Realtek RTL8139 (`10ec:8139`) and nothing else | `kernel/rtl8139.cpp` |
 | Audio | HD Audio: any class `04/03` controller, with the PCI quirk of one (`1022:1457`). AC'97: any class `04/01` function, driven as an Intel ICH. No HDMI or DisplayPort audio | [AZALIA.md](../kernel/AZALIA.md), `kernel/ac97.cpp` |
-| PCI | Configuration mechanism #1, every bus scanned, a flat table of 64 functions; the 65th is dropped without a message | `kernel/pci.cpp` |
+| PCI | Configuration mechanism #1, every bus scanned, a flat table of 256 functions. Each one is logged as a `pci:` line; what does not fit is counted in `pci: table full` | `kernel/pci.cpp` |
 | Power | Power button, S5 and reboot. No sleep, no CPU frequency or idle states, no thermal handling; every GPE is masked | `kernel/acpi.cpp`, `kernel/power.cpp` |
 
 ### The instruction-set baseline is a compatibility rule
@@ -109,11 +109,11 @@ as `azalia` and the xHCI quirks were.
 | HW-6 | HD Audio: the other controllers' PCI quirks, more codecs | S + per codec | done for this board | **needed** | **needed** | on late boards | — |
 | HW-7 | AC'97: bind by controller, not by class; non-Intel controllers | S–M | — | — | on 945 boards | **needed** | **needed** |
 | HW-8 | PS/2 pointer on real pads | S | — | — | laptops | — | **needed** |
-| HW-9 | Timers on old CPUs: C1E, NetBurst APIC timer, a wall clock that is not the TSC | S–M | — | **check first** | low risk | **needed** | **needed** |
-| HW-10 | Intel XD bit disabled by firmware | XS | — | — | **check first** | — | 64-bit models |
+| HW-9 | Timers on old CPUs: C1E (done), NetBurst APIC timer, a wall clock that is not the TSC | S–M | — | C1E done; check `timer-stats:` | low risk | wall clock **needed** | **needed** |
+| HW-10 | Intel XD bit disabled by firmware | XS | **done** | | | | |
 | HW-11 | Video: choosing the firmware mode, reporting it, native mode setting | S, then L per GPU family | mode choice | mode choice | mode choice; native is plausible | mode choice | mode choice |
 | HW-12 | Running from a disk: setup, and a LiveCD that fits small memory | roadmap | to install | to install | to install | **needed** below 1 GiB | **needed** |
-| HW-13 | PCI table size and a truncation message | XS | 41 of 64 used | — | — | — | — |
+| HW-13 | PCI table size and a truncation message | XS | **done**: 256, overflow logged | | | | |
 | HW-14 | ACPI on real firmware: GPEs, EC, battery, lid, thermal, CPU frequency | L | later | later | laptops | later | **needed** for a laptop |
 | HW-15 | Other Ethernet controllers | M each | — | per board | per board | per board | per unit |
 
@@ -240,9 +240,14 @@ Three separate defects, all invisible in an emulator:
   and on family 10h, when the firmware enables C1E the timer stops once every
   core has halted, and the tick with it. Symptoms: a machine that only moves
   while something else interrupts it, and `timer-stats:` reporting lost time.
-  The firmware switch "C1E support" is the test and the workaround; the fix is
-  clearing the two C1E bits of MSR `C001_0055` on each core, as FreeBSD does,
-  or a tick that does not come from the local APIC.
+  **Done, not yet run on metal:** on those families, outside a hypervisor,
+  every core clears the two "on compare halt" bits of MSR `C001_0055`
+  (`SmiOnCmpHalt`, `C1eOnCmpHalt`) at start and again before every idle
+  `hlt`, as FreeBSD does, since SMM code may set them back. The boot log says
+  `cpu: AMD erratum 400 range, C1E on halt was enabled by the firmware;
+  disabled` or `... is off`. If `timer-stats:` still loses time idle, switch
+  "C1E support" off in the firmware and record the difference: the remaining
+  fix is a tick that does not come from the local APIC.
 - **NetBurst local APIC timer erratum.** The divide-by-16 periodic
   configuration is the one Intel's Pentium 4 errata warn about. The PIT
   backend exists but is chosen only when there is no local APIC.
@@ -257,8 +262,14 @@ Three separate defects, all invisible in an emulator:
 
 Intel firmware has an "Execute Disable Bit" setting. Off, it sets
 `IA32_MISC_ENABLE[34]`, CPUID stops reporting NX and the kernel panics on a
-CPU that has it. Clearing that bit before `enable_nx()` reads CPUID removes
-the dependency on a BIOS setting. Intel only.
+CPU that has it.
+
+**Done, not yet run on metal.** On Intel family 0Fh, and family 6 from model
+0Dh, every core clears that bit before `enable_nx()` reads CPUID, together
+with bit 22 ("Limit CPUID Maxval"), which hides the leaves from 3 up, as
+Linux does. The boot log says `cpu: XD was disabled by the firmware;
+re-enabled` when it acted. A CPU with no XD at all (a Core Duo, an early
+Pentium 4) still panics: that is a missing feature, not a setting.
 
 ### HW-11 — Video on firmware framebuffers
 
@@ -267,8 +278,9 @@ here, so the old concern about uncached video memory does not apply. What is
 left:
 
 - **The mode is chosen once, by a line in `boot/limine.conf`.** Every entry
-  asks for `1280x800x32`; when the firmware has no such mode Limine picks
-  another. A VBE BIOS from this era offers the VESA 4:3 list and often none of
+  asks for `1024x768x32`, the one VESA mode with 32 bpp a video BIOS of any
+  age can be expected to list; when the firmware has no such mode Limine
+  picks another. A VBE BIOS from this era offers the VESA 4:3 list and often none of
   the widescreen modes its own panel needs; GOP offers what the monitor
   reports. Wanted: boot entries or an option for the mode, and the native
   resolution by default.
@@ -348,6 +360,31 @@ Then boot the SavanXP ISO with **boot log on screen** and photograph the
 lines beginning `cpu:`, `timer:`, `smp:`, `fb_gpu:`, `ahci:`, `ata:`, `xhci:`,
 `ps2:`, `azalia:` and `acpi:`. With a serial port, capture COM1 (`0x3F8`,
 38400 8N1) instead.
+
+### Reading the log on the machine
+
+When the desktop comes up, **Log Viewer** (System menu,
+[LOG_VIEWER.md](../userland/LOG_VIEWER.md)) has the whole boot, with no
+cable: the first 512 lines are never overwritten
+([SYSTEM_LOG.md](../kernel/SYSTEM_LOG.md)), so it is all still there however
+long the machine has run. Its kernel categories group the lines by prefix;
+the ones a run is read for:
+
+| Prefix | What it says |
+| --- | --- |
+| `boot:` | The firmware (`x86 BIOS`, `UEFI 64`) and the loader with its version |
+| `cpu:` | Vendor, family, model, stepping and brand string; the features the kernel cares about (`nx`, `x2apic`, `smep`, `invtsc`...); what the XD and C1E quirks did |
+| `pci:` | Every function: `bus:slot.function vendor:device [subsystem] class.subclass.prog_if rev irq` -- the `lspci -nn` of the run |
+| `timer:`, `timer-stats:` | Which clocks were chosen; lost ticks every two seconds |
+| `fb_gpu:`, `boot ready:` | The video mode Limine got; usable memory |
+
+Problems gathers the lines that read like errors. To take the log away, File >
+Save Log... writes it to any volume that is mounted; the LiveCD's own volume
+is lost at reboot, so mount a FAT partition from Disk Management first (on a
+disk the kernel can drive: AHCI, or USB behind xHCI). Otherwise photograph the
+screen. Without a desktop, from any shell on the text console, `logview
+--print` prints the same, and `logview --print pci` only one prefix. If the
+boot stops before either, the **boot log on screen** entry is what is left.
 
 ## Recording a run
 

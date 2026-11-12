@@ -54,14 +54,22 @@ least recently gives up its slot, and its unfinished text is committed with
 `SXN_LOG_UNTERMINATED`. A line still being written is not visible; a program
 that prints a prompt and waits leaves it pending until its next line break.
 
-The ring holds `klog::kCapacity` records (2048, 512 KiB in the kernel image);
-the oldest are overwritten. It lives in RAM: it does not survive a reboot.
+The log holds `klog::kCapacity` records (2048, 512 KiB in the kernel image).
+The first `SXN_LOG_BOOT_KEPT` (512) are the boot and are **never
+overwritten**: the processor, the PCI devices and what every driver found stay
+readable however long the machine has been up, which is what a run on new
+hardware is read for. The other 1536 are a ring for every later line, the
+oldest overwritten first, so the periodic `timer-stats:` and `smp-stats:`
+lines cannot push the boot out. A reader that asks for an overwritten sequence
+past the boot lines starts at the oldest one the ring still holds. The log
+lives in RAM: it does not survive a reboot.
 
 ## Reading: `SXN_SYS_LOG_READ`
 
 `sxn_log_read(sequence, records, capacity)` (`include/sxn/sxn.h`) copies the
 complete lines from the first one at or after `sequence` that the caller may
-read, oldest first, and returns how many. 0 means nothing newer. A reader
+read, oldest first, and returns how many. Between the boot lines and the ring
+there may be a gap of overwritten sequences. 0 means nothing newer. A reader
 follows the log by passing the last sequence it saw plus one; a sequence
 already overwritten starts at the oldest record. The call passes the record
 size, and the kernel writes at most that much per record, so the struct can

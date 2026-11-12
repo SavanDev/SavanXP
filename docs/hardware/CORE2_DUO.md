@@ -26,8 +26,8 @@ Limine stops with *"This CPU does not support 64-bit mode."*
 
 ## Verdict
 
-The CPU meets every hard requirement, with one firmware setting that can make
-it look as if it does not (the XD bit). The ISO should reach the desktop
+The CPU meets every hard requirement. The one firmware setting that could make
+it look as if it does not, the XD bit, the kernel now undoes (HW-10). The ISO should reach the desktop
 through Limine's BIOS path at a VBE mode, with PS/2 input -- the built-in
 keyboard on a laptop. It will not have USB, most likely no network, and on
 the most common desktop south bridge of the period no AHCI either. Of the
@@ -39,17 +39,20 @@ most within reach.
 | Feature | Core 2 | Effect on `master` |
 | --- | --- | --- |
 | Long mode | Yes | Boots |
-| XD (NX) | Yes, **switchable in the firmware** | With "Execute Disable Bit" off the kernel panics with `cpu: NX/W^X is required` (HW-10) |
+| XD (NX) | Yes, switchable in the firmware | Switched back on by the kernel if the firmware turned it off (HW-10) |
 | SSE3, SSSE3, `CMPXCHG16B` | Yes | Unused; the baseline is SSE2 |
 | TSC | Constant rate across frequency changes; stops only in deep idle states the kernel never requests. The CPUID invariant-TSC bit is not set | Sound as a wall clock. A future selection by that CPUID bit (HW-9) must not demote this family |
 | Local APIC timer | Runs in C1, stops in C3 and deeper | Safe: the kernel idles with `hlt` |
 | x2APIC, SMEP, SMAP, `RDRAND` | No | xAPIC over MMIO; `cpu: SMEP unavailable on this processor`; fallback entropy |
 | Cores | 2 | Started by Limine |
 
-### The XD bit is the first check
+### The XD bit
 
-Turn "Execute Disable Bit" (or "XD", "No-Execute Memory Protection") **on** in
-the firmware before the first boot. HW-10 removes the dependency.
+The kernel clears the firmware's "XD disable" bit on every core before it
+looks for NX (HW-10) and logs `cpu: XD was disabled by the firmware;
+re-enabled` when it did. That has only run in QEMU: if the first boot still
+panics with `cpu: NX/W^X is required`, turn "Execute Disable Bit" (or "XD",
+"No-Execute Memory Protection") on in the firmware and record which it was.
 
 ## Chipset graphics
 
@@ -65,7 +68,8 @@ the firmware before the first boot. HW-10 removes the dependency.
 | GM965, GL960 | GMA X3100 | `8086:2a02` | Laptops, 2007-2008 |
 | GM45, GS45 | GMA 4500MHD | `8086:2a42` | Laptops, 2008-2010 |
 
-**Today:** VBE through Limine (HW-11), with a defect particular to Intel. The
+**Today:** VBE through Limine (HW-11) at `1024x768x32`, which every one of
+these video BIOSes lists, with a defect particular to Intel. The
 video BIOS of these chipsets carries a fixed mode table that usually lacks
 the widescreen sizes -- 1280x800, 1366x768, 1440x900, 1680x1050 -- even on a
 laptop whose own panel is one of them. Limine then falls back to a 4:3 mode
@@ -102,10 +106,12 @@ card for a network, a PCIe xHCI card for USB. A laptop has neither slot.
 
 ## Work for this target
 
-1. **Identify the CPU and turn XD on**, then run it as it is with the boot
-   log on screen. Record the `cpu:`, `timer:`, `smp:`, `fb_gpu:`, `ata:`,
-   `ahci:` and `azalia:` lines.
-2. **HW-10**, so the firmware setting stops mattering.
+1. **Identify the CPU**, then run it as it is with the boot log on screen.
+   Record the `boot:`, `cpu:`, `pci:`, `timer:`, `smp:`, `fb_gpu:`, `ata:`,
+   `ahci:` and `azalia:` lines
+   ([reading the log on the machine](REAL_HARDWARE.md#reading-the-log-on-the-machine)).
+2. **HW-10** on metal: whether `cpu: XD was disabled by the firmware` appeared,
+   with the firmware setting it was booted with.
 3. **HW-3.** On an ICH7 desktop this is the only way to a disk.
 4. **HW-2**, EHCI then UHCI.
 5. **HW-6**: Intel's row of `azalia_configure_pci`, then the codec the unit

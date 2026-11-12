@@ -203,6 +203,196 @@ bool running_under_tcg() {
     return ebx == 0x54474354u && ecx == 0x43544743u && edx == 0x47435447u;
 }
 
+// Family and model as CPUID leaf 1 encodes them, with the extended fields
+// folded in the way both vendors define: the extended family counts only on
+// family 0Fh, the extended model on families 06h and 0Fh.
+struct CpuSignature {
+    uint32_t family;
+    uint32_t model;
+    uint32_t stepping;
+};
+
+CpuSignature cpu_signature() {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    CpuSignature signature = {};
+    const uint32_t base_family = (eax >> 8) & 0xfu;
+    const uint32_t base_model = (eax >> 4) & 0xfu;
+    signature.stepping = eax & 0xfu;
+    signature.family = base_family == 0xfu ? base_family + ((eax >> 20) & 0xffu) : base_family;
+    signature.model = (base_family == 0x6u || base_family == 0xfu)
+        ? base_model | (((eax >> 16) & 0xfu) << 4)
+        : base_model;
+    return signature;
+}
+
+bool cpu_vendor_is(uint32_t ebx_word) {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(0, 0, eax, ebx, ecx, edx);
+    return ebx == ebx_word;
+}
+
+constexpr uint32_t kVendorIntelEbx = 0x756e6547u;  // "Genu"
+constexpr uint32_t kVendorAmdEbx = 0x68747541u;    // "Auth"
+
+bool running_under_hypervisor() {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    return (ecx & (1u << 31)) != 0;
+}
+
+// HW-10 (docs/hardware/REAL_HARDWARE.md). Intel firmware can turn XD off
+// ("Execute Disable Bit"), which sets IA32_MISC_ENABLE[34] and makes CPUID
+// stop reporting NX on a CPU that has it. It can also cap the basic CPUID
+// leaves (bit 22, "Limit CPUID Maxval"), which hides leaf 7. Both are undone
+// before anything reads CPUID, on every core, as Linux does. The MSR exists
+// from the Pentium 4 and from family 6 model 0Dh (Dothan) on.
+constexpr uint32_t kMiscEnableMsr = 0x1a0;
+constexpr uint64_t kMiscEnableLimitCpuid = 1ull << 22;
+constexpr uint64_t kMiscEnableXdDisable = 1ull << 34;
+
+// What the BSP's quirks found, for the log line it prints once.
+uint64_t g_misc_enable_cleared = 0;
+
+uint64_t clear_intel_cpuid_limits() {
+    if (!cpu_vendor_is(kVendorIntelEbx)) {
+        return 0;
+    }
+    const CpuSignature signature = cpu_signature();
+    if (!(signature.family == 0xfu || (signature.family == 0x6u && signature.model >= 0xdu))) {
+        return 0;
+    }
+    const uint64_t misc = read_msr(kMiscEnableMsr);
+    const uint64_t wanted = misc & (kMiscEnableXdDisable | kMiscEnableLimitCpuid);
+    if (wanted != 0) {
+        write_msr(kMiscEnableMsr, misc & ~wanted);
+    }
+    return wanted;
+}
+
+// HW-9, AMD erratum 400. On K8 from revision F and on family 10h, firmware
+// that enables C1E makes the processor enter it once every core has halted,
+// and the local APIC timer stops there -- the tick this kernel runs on. The
+// two "on compare halt" bits of the interrupt pending message register
+// (MSR C001_0055) are what send it there; FreeBSD clears them, and so does
+// this, on every core and again before every idle halt, because SMM code is
+// free to set them back. Skipped under a hypervisor, which may not implement
+// the register at all: QEMU's default qemu64 claims to be a K8.
+constexpr uint32_t kAmdInterruptPendingMsr = 0xc0010055u;
+constexpr uint64_t kAmdC1eOnCmpHalt = 1ull << 28;
+constexpr uint64_t kAmdSmiOnCmpHalt = 1ull << 27;
+constexpr uint64_t kAmdCmpHalt = kAmdC1eOnCmpHalt | kAmdSmiOnCmpHalt;
+
+bool g_amd_c1e_quirk = false;
+bool g_amd_c1e_was_enabled = false;
+
+bool amd_c1e_erratum_applies() {
+    if (!cpu_vendor_is(kVendorAmdEbx) || running_under_hypervisor()) {
+        return false;
+    }
+    const CpuSignature signature = cpu_signature();
+    return (signature.family == 0xfu && signature.model >= 0x40u) || signature.family == 0x10u;
+}
+
+// Returns whether the bits were set.
+bool clear_amd_c1e() {
+    const uint64_t value = read_msr(kAmdInterruptPendingMsr);
+    if ((value & kAmdCmpHalt) == 0) {
+        return false;
+    }
+    write_msr(kAmdInterruptPendingMsr, value & ~kAmdCmpHalt);
+    return true;
+}
+
+// One line naming the processor and one with the features the kernel cares
+// about. On a machine with no serial port this is the only way to tell from
+// Log Viewer which processor the run was on.
+void report_cpu() {
+    arch::CpuIdentity identity = {};
+    arch::query_cpu_identity(identity);
+    const CpuSignature signature = cpu_signature();
+    console::printf("cpu: %s family 0x%x model 0x%x stepping %u, \"%s\"\n",
+        identity.vendor, signature.family, signature.model, signature.stepping,
+        identity.brand[0] != '\0' ? identity.brand : "no brand string");
+
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    const uint32_t leaf1_ecx = ecx;
+    const uint32_t leaf1_edx = edx;
+    uint32_t leaf7_ebx = 0;
+    cpuid(0, 0, eax, ebx, ecx, edx);
+    if (eax >= 7) {
+        cpuid(7, 0, eax, leaf7_ebx, ecx, edx);
+    }
+    uint32_t ext1_ecx = 0;
+    uint32_t ext1_edx = 0;
+    uint32_t ext7_edx = 0;
+    cpuid(0x80000000u, 0, eax, ebx, ecx, edx);
+    const uint32_t highest_extended = eax;
+    if (highest_extended >= 0x80000001u) {
+        cpuid(0x80000001u, 0, eax, ebx, ext1_ecx, ext1_edx);
+    }
+    if (highest_extended >= 0x80000007u) {
+        cpuid(0x80000007u, 0, eax, ebx, ecx, ext7_edx);
+    }
+
+    struct Flag {
+        bool present;
+        const char* name;
+    };
+    const Flag flags[] = {
+        {(ext1_edx & (1u << 29)) != 0, "lm"},
+        {(ext1_edx & (1u << 20)) != 0, "nx"},
+        {(leaf1_edx & (1u << 26)) != 0, "sse2"},
+        {(leaf1_ecx & (1u << 0)) != 0, "sse3"},
+        {(leaf1_ecx & (1u << 9)) != 0, "ssse3"},
+        {(leaf1_ecx & (1u << 19)) != 0, "sse4.1"},
+        {(leaf1_ecx & (1u << 20)) != 0, "sse4.2"},
+        {(ext1_ecx & (1u << 6)) != 0, "sse4a"},
+        {(leaf1_ecx & (1u << 13)) != 0, "cx16"},
+        {(ext1_ecx & (1u << 0)) != 0, "lahf_lm"},
+        {(leaf1_ecx & (1u << 23)) != 0, "popcnt"},
+        {(leaf1_ecx & (1u << 28)) != 0, "avx"},
+        {(leaf1_edx & (1u << 9)) != 0, "apic"},
+        {(leaf1_ecx & (1u << 21)) != 0, "x2apic"},
+        {(leaf1_ecx & (1u << 30)) != 0, "rdrand"},
+        {(leaf7_ebx & (1u << 7)) != 0, "smep"},
+        {(leaf7_ebx & (1u << 20)) != 0, "smap"},
+        {(ext7_edx & (1u << 8)) != 0, "invtsc"},
+        {(ext1_edx & (1u << 26)) != 0, "pdpe1gb"},
+        {(leaf1_ecx & (1u << 31)) != 0, "hypervisor"},
+    };
+    char line[160] = {};
+    size_t length = 0;
+    for (const Flag& flag : flags) {
+        if (!flag.present) {
+            continue;
+        }
+        for (const char* p = flag.name; *p != '\0' && length + 2 < sizeof(line); ++p) {
+            line[length++] = *p;
+        }
+        if (length + 2 < sizeof(line)) {
+            line[length++] = ' ';
+        }
+    }
+    if (length > 0) {
+        line[length - 1] = '\0';
+    }
+    console::printf("cpu: features %s\n", line);
+}
+
 // Whether the BSP turned SMEP on. Every AP does the same as the BSP: all
 // cores enforce it or none does.
 bool g_smep_enabled = false;
@@ -792,6 +982,21 @@ void fpu_init_area(void* area) {
 
 void initialize_cpu() {
     disable_interrupts();
+    // Before anything reads CPUID: these change what it reports.
+    g_misc_enable_cleared = clear_intel_cpuid_limits();
+    report_cpu();
+    if ((g_misc_enable_cleared & kMiscEnableXdDisable) != 0) {
+        console::printf("cpu: XD was disabled by the firmware; re-enabled\n");
+    }
+    if ((g_misc_enable_cleared & kMiscEnableLimitCpuid) != 0) {
+        console::printf("cpu: CPUID was limited by the firmware; limit removed\n");
+    }
+    g_amd_c1e_quirk = amd_c1e_erratum_applies();
+    if (g_amd_c1e_quirk) {
+        g_amd_c1e_was_enabled = clear_amd_c1e();
+        console::printf("cpu: AMD erratum 400 range, C1E on halt %s\n",
+            g_amd_c1e_was_enabled ? "was enabled by the firmware; disabled" : "is off");
+    }
     uint32_t eax = 0;
     uint32_t ebx = 0;
     uint32_t ecx = 0;
@@ -823,6 +1028,11 @@ void initialize_cpu() {
 
 void ap_initialize_cpu() {
     disable_interrupts();
+    // The BSP's quirks again, on this core: the MSRs are per core.
+    clear_intel_cpuid_limits();
+    if (g_amd_c1e_quirk) {
+        clear_amd_c1e();
+    }
     // EFER belongs to each logical processor. Do not rely on Limine leaving
     // NXE enabled on an AP before the scheduler can run user NX mappings there.
     if (!enable_nx()) {
@@ -1245,6 +1455,10 @@ void halt_once() {
 }
 
 void enable_interrupts_and_halt() {
+    // AMD erratum 400: SMM may have set C1E on halt back since the last idle.
+    if (g_amd_c1e_quirk) {
+        clear_amd_c1e();
+    }
     asm volatile("sti; hlt");
 }
 
