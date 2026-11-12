@@ -11,8 +11,11 @@ section lists what to read from the machine first.
 
 ## Which processor this is
 
-The machine was described as an "Intel Pentium 2 Core Duo". Three different
-processors hide behind names that close, and one of them cannot run `master`:
+The owner confirmed on 2026-11-12 that the unit is a **Core 2 Duo**, the
+first row below; an earlier description, "Intel Pentium 2 Core Duo", was a
+typo. The exact model is not known yet: the boot log's first `cpu:` line
+gives it. The table stays because the names are easy to confuse, and one of
+them cannot run `master`:
 
 | Name on the case | Core | Long mode | Branch |
 | --- | --- | --- | --- |
@@ -20,9 +23,7 @@ processors hide behind names that close, and one of them cannot run `master`:
 | Pentium Dual-Core (E2xxx, E5xxx, E6xxx; T23xx, T24xx, T3xxx, T4xxx) | The same cores with less cache | Yes | `master` |
 | **Core Duo** (T2xxx, L2xxx), and Pentium Dual-Core T20xx, T21xx | **Yonah** | **No** | `legacy`, like the [Pentium 4](PENTIUM4_EVO_N1020V.md) |
 
-This document assumes the first row. Settle it before anything else:
-`lscpu | grep -w lm` on any live Linux, or boot the ISO -- on a Core Duo,
-Limine stops with *"This CPU does not support 64-bit mode."*
+On a Core Duo, Limine stops with *"This CPU does not support 64-bit mode."*
 
 ## Verdict
 
@@ -106,7 +107,7 @@ card for a network, a PCIe xHCI card for USB. A laptop has neither slot.
 
 ## Work for this target
 
-1. **Identify the CPU**, then run it as it is with the boot log on screen.
+1. **Run it as it is** with the boot log on screen.
    Record the `boot:`, `cpu:`, `pci:`, `timer:`, `smp:`, `fb_gpu:`, `ata:`,
    `ahci:` and `azalia:` lines
    ([reading the log on the machine](REAL_HARDWARE.md#reading-the-log-on-the-machine)).
