@@ -25,6 +25,7 @@ size_t g_pending_write_failures = 0;
 // 0 = disarmed; otherwise the write that brings it to 1 fails.
 size_t g_fail_write_countdown = 0;
 size_t g_writes_issued = 0;
+size_t g_reads_issued = 0;
 bool g_power_cut_armed = false;
 size_t g_power_cut_remaining = 0;
 size_t g_sectors_written = 0;
@@ -118,6 +119,7 @@ void attach_device(uint8_t* image, uint32_t sector_count, bool writable) {
     g_pending_write_failures = 0;
     g_fail_write_countdown = 0;
     g_writes_issued = 0;
+    g_reads_issued = 0;
     g_fail_reads = false;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
@@ -132,6 +134,7 @@ void detach_device() {
     g_pending_write_failures = 0;
     g_fail_write_countdown = 0;
     g_writes_issued = 0;
+    g_reads_issued = 0;
     g_fail_reads = false;
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
@@ -150,6 +153,10 @@ void fail_write_number(size_t ordinal) {
 
 size_t writes_issued() {
     return g_writes_issued;
+}
+
+size_t reads_issued() {
+    return g_reads_issued;
 }
 
 size_t rejected_writes() {
@@ -233,6 +240,7 @@ bool device_info(size_t index, DeviceInfo& info) {
 }
 
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
+    ++g_reads_issued;
     if (buffer == nullptr || g_fail_reads || !range_ok(index, lba, sector_count)) {
         return false;
     }

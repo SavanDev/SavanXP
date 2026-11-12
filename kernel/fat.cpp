@@ -13,8 +13,9 @@
 
 /* The FAT driver (docs/roadmaps/open/FAT_ROADMAP.md). FatFs does the format; this file
  * maps it onto fs::Driver: probe mounts a FatFs volume, attach publishes its
- * whole tree, and every operation reopens the file by its path, because FatFs
- * names files by path, not by cluster. */
+ * whole tree, and an operation opens the file by its path, because FatFs
+ * names files by path, not by cluster -- unless something holds the file, in
+ * which case one FatFs file stays open for it (see "Files kept open"). */
 
 namespace {
 
@@ -36,7 +37,14 @@ struct Node {
     Node* next;
     uint8_t volume;
     bool directory;
+    // A holder has the file (fs::Driver::open until close), so `kept` should
+    // be open; it is not when opening it failed or while a rename moves it.
+    bool held;
+    // Opened with FA_WRITE: the volume and the file take writes.
+    bool kept_writable;
     vfs::Vnode* vnode;
+    // On the heap, about 600 bytes with its sector buffer.
+    FIL* kept;
     char path[vfs::kMaxPathLength];
 };
 
@@ -62,6 +70,7 @@ Volume g_volumes[fat_disk::kDrives] = {};
 const uint8_t kZeros[kSectorSize] = {};
 
 const fs::Driver& driver_ref();
+FRESULT close_kept(Node& file);
 
 Volume* volume_for_id(fs::VolumeId id) {
     return id < fat_disk::kDrives && g_volumes[id].in_use ? &g_volumes[id] : nullptr;
@@ -370,6 +379,11 @@ void unmount(fs::VolumeId id) {
     }
     char root[4] = {};
     drive_root(static_cast<uint8_t>(id), root);
+    // Nothing holds a node any more; this only guards against a driver bug
+    // leaving a FatFs file open on a volume about to go.
+    for (Node* entry = volume->nodes; entry != nullptr; entry = entry->next) {
+        (void)close_kept(*entry);
+    }
     free_nodes(*volume);
     (void)f_mount(nullptr, root, 0);
     fat_disk::unbind(static_cast<uint8_t>(id));
@@ -400,22 +414,122 @@ Status writable_path(const Volume* volume, bool have_path) {
     return volume->writable ? Status::ok : Status::read_only;
 }
 
+/* --- Files kept open --------------------------------------------------------
+ *
+ * While something holds a file's vnode, the driver keeps one FatFs file open
+ * for it: a read goes on from where the previous one stopped instead of
+ * opening the file by its path and walking its cluster chain from the start.
+ * Every operation on that file goes through the kept one, because two open
+ * FatFs files over the same file would each cache its size, its clusters and
+ * a sector of it. A write is synced before it returns, as closing the file
+ * after it used to do. The kept file is closed while a rename moves its
+ * directory entry, which it points into, and while an operation has to
+ * write through a file kept open read-only. */
+
+bool open_kept(Node& file) {
+    Volume* volume = volume_for_id(file.volume);
+    char path[kFatfsPathCapacity] = {};
+    if (volume == nullptr || file.directory || !drive_path(file.volume, file.path, path, sizeof(path))) {
+        return false;
+    }
+    FIL* handle = static_cast<FIL*>(heap::allocate(sizeof(FIL)));
+    if (handle == nullptr) {
+        return false;
+    }
+    memset(handle, 0, sizeof(FIL));
+    bool writable = volume->writable;
+    FRESULT opened = f_open(handle, path, writable ? (FA_READ | FA_WRITE) : FA_READ);
+    if (opened == FR_DENIED && writable) {
+        // FAT's read-only bit: kept for reading.
+        writable = false;
+        opened = f_open(handle, path, FA_READ);
+    }
+    if (opened != FR_OK) {
+        heap::free(handle);
+        return false;
+    }
+    file.kept = handle;
+    file.kept_writable = writable;
+    return true;
+}
+
+FRESULT close_kept(Node& file) {
+    if (file.kept == nullptr) {
+        return FR_OK;
+    }
+    const FRESULT closed = f_close(file.kept);
+    heap::free(file.kept);
+    file.kept = nullptr;
+    file.kept_writable = false;
+    return closed;
+}
+
+// The FatFs file one operation works through: the kept one, or one opened by
+// path for this operation and closed at its end.
+struct Access {
+    FIL* handle;
+    bool temporary_open;
+    FIL temporary;
+};
+
+FRESULT begin_access(Node& file, BYTE mode, Access& access) {
+    access.handle = nullptr;
+    access.temporary_open = false;
+    if (file.kept != nullptr && ((mode & FA_WRITE) == 0 || file.kept_writable)) {
+        access.handle = file.kept;
+        return FR_OK;
+    }
+    // A write through a file kept for reading: never two open at once.
+    (void)close_kept(file);
+    char path[kFatfsPathCapacity] = {};
+    if (!drive_path(file.volume, file.path, path, sizeof(path))) {
+        return FR_INVALID_NAME;
+    }
+    memset(&access.temporary, 0, sizeof(access.temporary));
+    const FRESULT opened = f_open(&access.temporary, path, mode);
+    if (opened != FR_OK) {
+        if (file.held) {
+            (void)open_kept(file);
+        }
+        return opened;
+    }
+    access.handle = &access.temporary;
+    access.temporary_open = true;
+    return FR_OK;
+}
+
+// Closes a file opened for the operation, or syncs the kept one after a
+// write; then opens the kept file again if the operation had to close it.
+FRESULT end_access(Node& file, Access& access, bool wrote) {
+    FRESULT result = FR_OK;
+    if (access.temporary_open) {
+        result = f_close(&access.temporary);
+    } else if (wrote && access.handle != nullptr) {
+        result = f_sync(access.handle);
+    }
+    access.handle = nullptr;
+    access.temporary_open = false;
+    if (file.held && file.kept == nullptr) {
+        (void)open_kept(file);
+    }
+    return result;
+}
+
 Status read(vfs::Vnode& node, size_t offset, void* buffer, size_t count) {
     Node* file = file_from_vnode(node);
-    char path[kFatfsPathCapacity] = {};
-    if (file == nullptr || !drive_path(file->volume, file->path, path, sizeof(path))) {
+    if (file == nullptr) {
         return Status::invalid;
     }
-    FIL handle = {};
-    const FRESULT opened = f_open(&handle, path, FA_READ);
+    Access access;
+    const FRESULT opened = begin_access(*file, FA_READ, access);
     if (opened != FR_OK) {
         return status_of(opened, Status::io_error);
     }
     UINT done = 0;
-    const bool ok = f_lseek(&handle, static_cast<FSIZE_t>(offset)) == FR_OK &&
-        f_read(&handle, buffer, static_cast<UINT>(count), &done) == FR_OK && done == count;
-    node.size = f_size(&handle);
-    (void)f_close(&handle);
+    const bool ok = f_lseek(access.handle, static_cast<FSIZE_t>(offset)) == FR_OK &&
+        f_read(access.handle, buffer, static_cast<UINT>(count), &done) == FR_OK && done == count;
+    node.size = f_size(access.handle);
+    (void)end_access(*file, access, false);
     return ok ? Status::ok : Status::io_error;
 }
 
@@ -426,16 +540,16 @@ Status write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, 
     written = 0;
     Node* file = file_from_vnode(node);
     Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
-    char path[kFatfsPathCapacity] = {};
-    const Status allowed = writable_path(volume, file != nullptr && drive_path(file->volume, file->path, path, sizeof(path)));
+    const Status allowed = writable_path(volume, file != nullptr);
     if (allowed != Status::ok) {
         return allowed;
     }
-    FIL handle = {};
-    const FRESULT opened = f_open(&handle, path, FA_WRITE);
+    Access access;
+    const FRESULT opened = begin_access(*file, FA_WRITE, access);
     if (opened != FR_OK) {
         return status_of(opened, Status::read_only);
     }
+    FIL& handle = *access.handle;
     bool ok = true;
     if (truncate) {
         ok = f_lseek(&handle, 0) == FR_OK && f_truncate(&handle) == FR_OK;
@@ -456,7 +570,7 @@ Status write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, 
         status = wrote != FR_OK ? status_of(wrote) : (done != 0 ? Status::ok : Status::no_space);
     }
     node.size = f_size(&handle);
-    if (f_close(&handle) != FR_OK && status == Status::ok) {
+    if (end_access(*file, access, true) != FR_OK && status == Status::ok) {
         status = Status::io_error;
     }
     return status;
@@ -466,16 +580,16 @@ Status write(vfs::Vnode& node, size_t offset, const void* buffer, size_t count, 
 Status truncate(vfs::Vnode& node, size_t size) {
     Node* file = file_from_vnode(node);
     Volume* volume = file != nullptr ? volume_for_id(file->volume) : nullptr;
-    char path[kFatfsPathCapacity] = {};
-    const Status allowed = writable_path(volume, file != nullptr && drive_path(file->volume, file->path, path, sizeof(path)));
+    const Status allowed = writable_path(volume, file != nullptr);
     if (allowed != Status::ok) {
         return allowed;
     }
-    FIL handle = {};
-    const FRESULT opened = f_open(&handle, path, FA_WRITE);
+    Access access;
+    const FRESULT opened = begin_access(*file, FA_WRITE, access);
     if (opened != FR_OK) {
         return status_of(opened, Status::read_only);
     }
+    FIL& handle = *access.handle;
     const FSIZE_t target = static_cast<FSIZE_t>(size);
     Status status = Status::ok;
     if (target <= f_size(&handle)) {
@@ -487,7 +601,7 @@ Status truncate(vfs::Vnode& node, size_t size) {
         status = Status::no_space;
     }
     node.size = f_size(&handle);
-    if (f_close(&handle) != FR_OK && status == Status::ok) {
+    if (end_access(*file, access, true) != FR_OK && status == Status::ok) {
         status = Status::io_error;
     }
     return status;
@@ -504,6 +618,10 @@ Status unlink(vfs::Vnode& node, bool) {
     if (allowed != Status::ok) {
         return allowed;
     }
+    // The VFS never unlinks a held file here (no release), but a kept file
+    // must not outlive the clusters it points at.
+    file->held = false;
+    (void)close_kept(*file);
     const FRESULT removed = f_unlink(path);
     if (removed != FR_OK) {
         return status_of(removed, Status::read_only);
@@ -598,6 +716,15 @@ Status create_directory(fs::VolumeId id, const char* path, const vfs::Ownership&
     return Status::ok;
 }
 
+// Opens again every held file whose kept file was closed.
+void reopen_held(Volume& volume) {
+    for (Node* entry = volume.nodes; entry != nullptr; entry = entry->next) {
+        if (entry->held && entry->kept == nullptr) {
+            (void)open_kept(*entry);
+        }
+    }
+}
+
 // `prefix` names `path` itself or a directory above it.
 bool path_under(const char* path, const char* prefix, size_t prefix_length) {
     return strncmp(path, prefix, prefix_length) == 0 && (path[prefix_length] == 0 || path[prefix_length] == '/');
@@ -634,9 +761,18 @@ Status rename(fs::VolumeId id, const char* old_path, const char* new_path, bool)
             return Status::invalid;
         }
     }
+    // A kept file points into the directory entry the rename moves: close
+    // the ones below the old name, and open them again, by the new name or
+    // the old one if the rename failed.
+    for (Node* entry = volume->nodes; entry != nullptr; entry = entry->next) {
+        if (entry->kept != nullptr && path_under(entry->path, old_inner, old_length)) {
+            (void)close_kept(*entry);
+        }
+    }
     // f_rename refuses a target that exists.
     const FRESULT moved = f_rename(old_fatfs, new_fatfs);
     if (moved != FR_OK) {
+        reopen_held(*volume);
         return status_of(moved);
     }
     // old_inner and new_inner point into the VFS's buffers, not into a record,
@@ -651,6 +787,7 @@ Status rename(fs::VolumeId id, const char* old_path, const char* new_path, bool)
         memcpy(renamed + new_length, entry->path + old_length, tail + 1);
         memcpy(entry->path, renamed, new_length + tail + 1);
     }
+    reopen_held(*volume);
     return Status::ok;
 }
 
@@ -713,6 +850,26 @@ void adopt_owner(fs::VolumeId id, const fs::Owner& owner) {
     }
 }
 
+void open_file(vfs::Vnode& node) {
+    Node* file = file_from_vnode(node);
+    if (file == nullptr) {
+        return;
+    }
+    file->held = true;
+    if (file->kept == nullptr) {
+        (void)open_kept(*file);
+    }
+}
+
+void close_file(vfs::Vnode& node) {
+    Node* file = file_from_vnode(node);
+    if (file == nullptr) {
+        return;
+    }
+    file->held = false;
+    (void)close_kept(*file);
+}
+
 const fs::Driver kDriver = {
     .name = "fat",
     // Below SxFS (100): it probes first.
@@ -739,6 +896,8 @@ const fs::Driver kDriver = {
     .sync = &sync,
     .adopt_owner = &adopt_owner,
     .sync_deferred = &sync_deferred,
+    .open = &open_file,
+    .close = &close_file,
 };
 
 const fs::Driver& driver_ref() {

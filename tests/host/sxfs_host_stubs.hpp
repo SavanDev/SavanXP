@@ -28,6 +28,8 @@ void fail_next_writes(size_t count);
 void fail_write_number(size_t ordinal);
 // block::write_cached calls since attach_device(), failed ones included.
 size_t writes_issued();
+// block::read calls since attach_device(), failed ones included.
+size_t reads_issued();
 
 // Every read fails while set: a device that stopped answering.
 void fail_reads(bool fail);

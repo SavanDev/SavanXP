@@ -14,6 +14,9 @@
  *     mkdir, rename of a directory with files below it, unlink (an open
  *     vnode then reads nothing), rmdir, and all of it still there after an
  *     unmount and a new mount;
+ *   - a file something holds is kept open: reads, writes, truncate, renames
+ *     of it and of its directory go through it, and each write is on the
+ *     disk when it returns;
  *   - FAT's read-only bit makes a file read-only, a full volume writes what
  *     fits, and a read-only device mounts read-only with every write refused;
  *   - a volume mounted for someone is theirs, found and created alike;
@@ -358,6 +361,116 @@ void writes_round_trip() {
     free(image);
 }
 
+// While something holds a file (fs::Driver::open until close), the driver
+// keeps one FatFs file open for it. Everything still reads and writes the
+// same, through a rename of the file or of the directory above it, and each
+// write is on the disk when it returns, not when the file is closed.
+void kept_files() {
+    printf("fat-volume-test: files kept open\n");
+    constexpr uint32_t kSectors = 65536;
+    const size_t bytes = static_cast<size_t>(kSectors) * kSector;
+    uint8_t* image = static_cast<uint8_t*>(malloc(bytes));
+    uint8_t* copy = static_cast<uint8_t*>(malloc(bytes));
+    build_image(image, kSectors, FM_FAT, 0);
+    const fs::Driver& driver = fat::driver();
+    check(driver.open != nullptr && driver.close != nullptr, "FAT keeps files open for their holders");
+    hoststub::reset_vfs();
+    fs::VolumeId id = driver.probe(0, "/mnt/k");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount a writable volume");
+
+    // Sequential reads of the big file through the kept file, in pieces that
+    // do not line up with sectors or clusters.
+    vfs::Vnode* big = hoststub::find_node("/mnt/k/a/b/big.bin");
+    check(big != nullptr, "the big file");
+    if (big != nullptr) {
+        driver.open(*big);
+        static uint8_t piece[3001];
+        bool exact = true;
+        for (size_t offset = 0; exact && offset < kBigFileBytes; offset += sizeof(piece)) {
+            const size_t count = offset + sizeof(piece) <= kBigFileBytes ? sizeof(piece) : kBigFileBytes - offset;
+            exact = read_node(big, offset, piece, count);
+            for (size_t index = 0; exact && index < count; ++index) {
+                exact = piece[index] == pattern_at(offset + index);
+            }
+        }
+        check(exact, "sequential reads through the kept file are exact");
+        check(read_node(big, 7, piece, 10) && piece[0] == pattern_at(7), "and a read back near the start");
+
+        // The point of keeping it: a small read near the end of the file
+        // costs the same as one near its start, instead of opening the file
+        // by its path and walking its cluster chain from the start.
+        const size_t near_end = kBigFileBytes - 100;
+        const size_t before_held = hoststub::reads_issued();
+        check(read_node(big, near_end, piece, 10), "a read near the end while held");
+        const size_t held_cost = hoststub::reads_issued() - before_held;
+        driver.close(*big);
+        const size_t before_unheld = hoststub::reads_issued();
+        check(read_node(big, near_end, piece, 10), "the same read unheld");
+        const size_t unheld_cost = hoststub::reads_issued() - before_unheld;
+        printf("fat-volume-test: a read near the end: %zu device reads held, %zu unheld\n", held_cost, unheld_cost);
+        check(held_cost < unheld_cost, "held, it reads fewer sectors");
+    }
+
+    vfs::Vnode* file = make_file(driver, id, "/mnt/k/held.txt");
+    if (file != nullptr) {
+        driver.open(*file);
+    }
+    check(write_node(file, 0, "hello", false) && node_reads(file, "hello", 5), "write and read while held");
+    check(write_node(file, 8, "!", false) && file != nullptr && file->size == 9 && node_is_zero(file, 5, 8),
+          "a hole while held");
+    check(file != nullptr && drv_truncate(*file, 5) && node_reads(file, "hello", 5), "truncate while held");
+
+    // Still held, never closed: the bytes are on the image already.
+    memcpy(copy, image, bytes);
+    check(drv_rename(id, "/mnt/k/held.txt", "/mnt/k/moved.txt"), "rename the held file");
+    check(write_node(file, 5, " you", false) && node_reads(file, "hello you", 9), "it reads and writes after");
+    check(make_directory(driver, id, "/mnt/k/dir") != nullptr && drv_rename(id, "/mnt/k/moved.txt", "/mnt/k/dir/f.txt") &&
+              drv_rename(id, "/mnt/k/dir", "/mnt/k/dir2"),
+          "move it into a directory and rename the directory");
+    check(write_node(file, 9, "!", false) && node_reads(file, "hello you!", 10), "still the same file");
+    check(!drv_rename(id, "/mnt/k/dir2/f.txt", "/mnt/k/a"), "a failed rename");
+    check(node_reads(file, "hello you!", 10), "leaves it readable");
+
+    // FAT's read-only bit: kept for reading, and a write refuses without
+    // losing the file for its holder.
+    vfs::Vnode* locked = make_file(driver, id, "/mnt/k/locked.txt");
+    check(write_node(locked, 0, "keep", false), "write a file to lock");
+    char locked_path[16] = {};
+    snprintf(locked_path, sizeof(locked_path), "%d:/locked.txt", static_cast<int>(id));
+    check(f_chmod(locked_path, AM_RDO, AM_RDO) == FR_OK, "set FAT's read-only bit");
+    if (locked != nullptr) {
+        driver.open(*locked);
+        check(!write_node(locked, 0, "x", false), "a held read-only file refuses a write");
+        check(node_reads(locked, "keep", 4), "and still reads");
+        driver.close(*locked);
+    }
+    if (file != nullptr) {
+        driver.close(*file);
+    }
+    check(node_reads(file, "hello you!", 10), "after close it reads by its path");
+    driver.unmount(id);
+    hoststub::detach_device();
+
+    // The copy taken while the file was held and never closed.
+    hoststub::attach_device(copy, kSectors, true);
+    hoststub::reset_vfs();
+    id = driver.probe(0, "/mnt/k");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount the copy taken while held");
+    check(node_reads(hoststub::find_node("/mnt/k/held.txt"), "hello", 5), "every write was on the disk");
+    driver.unmount(id);
+    hoststub::detach_device();
+
+    hoststub::attach_device(image, kSectors, true);
+    hoststub::reset_vfs();
+    id = driver.probe(0, "/mnt/k");
+    check(id != fs::kInvalidVolume && driver.attach(id, false), "mount it again");
+    check(node_reads(hoststub::find_node("/mnt/k/dir2/f.txt"), "hello you!", 10), "the renames are on the disk");
+    driver.unmount(id);
+    hoststub::detach_device();
+    free(copy);
+    free(image);
+}
+
 void full_volume_writes_what_fits() {
     printf("fat-volume-test: a full volume\n");
     constexpr uint32_t kSectors = 1024;
@@ -522,6 +635,7 @@ int main() {
     mounted_volume_reads_back("FAT16", 65536, FM_FAT, FS_FAT16);
     mounted_volume_reads_back("FAT32", 131072, FM_FAT32, FS_FAT32);
     writes_round_trip();
+    kept_files();
     full_volume_writes_what_fits();
     read_only_device();
     owner_is_adopted();

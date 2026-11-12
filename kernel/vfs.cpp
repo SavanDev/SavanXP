@@ -1194,7 +1194,10 @@ bool unlink(const cred::Credentials& who, const char* path) {
 }
 
 void retain(Vnode& node) {
-    ++node.references;
+    if (node.references++ == 0 && node.backend == Backend::volume && node.volume_driver != nullptr &&
+        node.volume_driver->open != nullptr) {
+        node.volume_driver->open(node);
+    }
 }
 
 bool is_held(const Vnode& node) {
@@ -1207,7 +1210,13 @@ void release(Vnode& node) {
         return;
     }
     --node.references;
-    if (!node.unlinked || node.type == NodeType::invalid || node_is_held(node)) {
+    if (node_is_held(node)) {
+        return;
+    }
+    if (node.backend == Backend::volume && node.volume_driver != nullptr && node.volume_driver->close != nullptr) {
+        node.volume_driver->close(node);
+    }
+    if (!node.unlinked || node.type == NodeType::invalid) {
         return;
     }
     if (node.backend == Backend::volume && node.volume_driver != nullptr &&

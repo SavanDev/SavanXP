@@ -111,6 +111,10 @@ Cut-off notes:
   replacing `vfs::set_holder_probe`. A file a live section was read from now survives its unlink until the section goes;
   on FAT that unlink is `EBUSY`.
 
+- **FAT keeps a file open while something holds it**, through the new `fs::Driver::open`/`close` (first and last
+  holder): reads go on from where they stopped instead of reopening the file by path and walking its clusters.
+  Each write is still on the disk when it returns.
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

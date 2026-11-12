@@ -153,6 +153,14 @@ struct Driver {
     // Queue the same clean metadata/flush ordering without draining writeback.
     // A durability checkpoint must follow before reporting successful sync.
     bool (*sync_deferred)(VolumeId volume) = nullptr;
+    // The first holder of a file vnode the driver published has arrived
+    // (vfs::retain), and the last one has gone (vfs::release; before
+    // release() for an unlinked file). Between the two the driver may keep
+    // state open for the file, such as an open handle of its format. open
+    // cannot fail: a driver that could not keep anything serves the file as
+    // it does an unheld one. nullptr: nothing to keep.
+    void (*open)(vfs::Vnode& node) = nullptr;
+    void (*close)(vfs::Vnode& node) = nullptr;
 };
 
 struct MountInfo {

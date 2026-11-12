@@ -83,7 +83,7 @@ but the boot path calls `fs::mount` directly and needs the driver's own check.
 | `FF_LFN_UNICODE` | 2 | UTF-8 in and out, as every path in the system is |
 | `FF_CODE_PAGE` | 437 | Only for short names; avoids carrying every code page table |
 | `FF_FS_EXFAT` | 0 | No exFAT |
-| `FF_USE_FASTSEEK` | 1 | Lets a later per-vnode open file keep a cluster link map; unused while every `read` reopens the file |
+| `FF_USE_FASTSEEK` | 1 | Lets a kept file hold a cluster link map for random seeks; not used yet, since a kept file already seeks from where it is |
 | `FF_USE_MKFS` | 1 | The host test formats its images with it; small |
 | `FF_FS_NORTC` | 0 | `get_fattime` from `rtc::epoch_seconds` |
 | `FF_FS_REENTRANT` | 0 | Every driver call runs under the big kernel lock ([SMP_ROADMAP.md](SMP_ROADMAP.md)). Splitting the filesystem off the BKL means turning this on, with `ff_mutex_*` over a kernel lock |
@@ -126,8 +126,9 @@ slot → `device_index` table.
 | `unlink`, `remove_directory` | `f_unlink` |
 | `rename` | `f_rename` (fails when the target exists, as SxFS does) |
 | `refresh` | `f_stat`: size and the read-only attribute |
+| `open`, `close` | `f_open` of a file kept for its holders, `f_close` when the last one goes (below) |
 | `stats` | `f_getfree` and the volume size |
-| `sync` | `CTRL_SYNC`; files are already flushed on `f_close` |
+| `sync` | `CTRL_SYNC`; files are already flushed by `f_close`, or `f_sync` for a kept one |
 | `set_ownership` | `nullptr`: FAT has no owners, so `chmod`/`chown` are refused |
 | `unmount` | `f_unmount` and free the slot. `fs::release` has already synced the volume and detached its tree (refused while a file is open), as for SxFS ([FILESYSTEMS.md](../../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)) |
 
@@ -136,9 +137,20 @@ Points worth knowing before writing it:
 - **A vnode's record is a path, not a cluster.** FatFs opens files by name, so
   `vnode.data` holds the FatFs volume and the path inside it. Renaming a
   directory has to rewrite the stored path of every vnode below it.
-- **Every `read` opens the file again**, which walks the directories on the
-  way. Fine for `limine.conf` and a kernel image; a per-vnode open `FIL` cache
-  is a later optimisation, not part of the first version.
+- **A held file is kept open.** While something holds a file's vnode (an open
+  handle, a section), the driver keeps one FatFs `FIL` open for it, from
+  `fs::Driver::open` (the first `vfs::retain`) to `close` (the last
+  `vfs::release`), on the heap (about 600 bytes). Reads go on from where the
+  last one stopped instead of opening the file by its path and walking its
+  cluster chain again; a file nobody holds is still opened per operation.
+  Every operation on a held file goes through its `FIL`: two open over one
+  file would each cache its size, clusters and a sector. A write is
+  `f_sync`ed before it returns, as `f_close` did. The `FIL` points into the
+  file's directory entry, so a rename closes the kept files below the old
+  name and opens them again under the new one; a write to a file kept open
+  read-only (FAT's `AM_RDO`) closes it around a separate open. The state is
+  per vnode, not per handle: FAT needs nothing per opening (the offset is
+  the handle's), and one `FIL` per file is what keeps the caches single.
 - **Ownership is synthesized.** Everything on a volume belongs to one owner:
   directories `0755`, files `0644`, minus the write bits when the device is
   read-only or the file has FAT's read-only attribute (`AM_RDO`). No execute

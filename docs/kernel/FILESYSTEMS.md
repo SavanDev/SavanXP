@@ -313,10 +313,12 @@ is known, what the fix is. The SxFS side is in
   policy is checked at the operations that start from a path; a write through
   an already open handle reaches the driver, which refuses it. Nothing remounts
   a volume read-only today, so it cannot happen yet.
-- **A driver never sees an open or a close.** It is told when the last holder
-  of an unlinked file goes (`release`) and nothing else, so it cannot keep
-  state per open file: FAT opens the file again on every `read`, walking its
-  cluster chain from the start each time.
+- **A driver sees the first holder and the last, not each opening.**
+  `fs::Driver::open` and `close` run when a vnode's reference count leaves
+  and returns to zero, so state is per file, not per handle: FAT keeps one
+  FatFs file open for a held file ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md#how-fatfs-maps-onto-fsdriver)).
+  A driver that needs state per opening (an enumeration cursor, a lock)
+  needs the open descriptions VFS-B still plans.
 - **`fsync` is the whole-system barrier.** Correct, and as slow as `sync` on a
   machine with several busy volumes.
 - **A deferred write error reaches whoever synchronizes next**, as `EIO` from
