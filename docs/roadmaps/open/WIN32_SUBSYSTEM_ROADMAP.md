@@ -1,7 +1,8 @@
 # Win32 subsystem — Windows applications on Sx
 
-> **Status: design settled; W0 complete (2026-11-12); W1 started: the PE32
-> parser exists, described in [WIN32.md](../../userland/WIN32.md).** The
+> **Status: design settled; W0 complete (2026-11-12); W1's host half done
+> (2026-11-12): parser, loader, gate harness and fixtures, checked against
+> Windows XP, described in [WIN32.md](../../userland/WIN32.md).** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -539,9 +540,11 @@ commit.
 green; none needs the one after it.
 
 1. W0, the inventory. Done on 2026-11-12; it left no code in the tree.
-2. W1, host half: `subsystems/win32/pe/` with its host tests (done
-   2026-11-12), the fixture build (`lld-link` in CMake discovery), and the
-   host harness that runs `hello.exe` on the build host. No kernel change.
+2. W1, host half: `subsystems/win32/pe/` with its host tests, the fixture
+   build (`lld-link` in CMake discovery), and the host harness that runs
+   `hello.exe` on the build host. No kernel change. Done on 2026-11-12;
+   `hello.exe` and `initorder.exe` give the same bytes and statuses on
+   Windows XP and in the harness.
 3. K2, then K1, each with its `nativetest` assertions.
 4. W1, guest half: `winhost` on SavanXP and the `win32-hello` smoke scenario.
 5. W2 onward, in order.

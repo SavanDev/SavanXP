@@ -17,6 +17,12 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
+The Win32 subsystem's DLLs and test fixtures are PE32 images: Clang compiles
+them for `i686-pc-windows-msvc` (a target every LLVM build includes) and
+`lld-link`, from the same `lld` package as `ld.lld`, links them. CMake finds it
+on `PATH` as `SAVANXP_LLD_LINK`. Neither the Windows SDK nor MinGW is used; see
+[WIN32.md](../userland/WIN32.md#build).
+
 The `hda-capture`, `virtio-capture`, `audio-devices` and `sound-capture-smoke` scenarios also
 require QEMU's ALSA audio backend and ALSA library plugins (`alsa-lib` on Arch).
 They generate a deterministic virtual microphone through the ALSA file/null

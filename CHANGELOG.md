@@ -12,9 +12,11 @@ Cut-off notes:
 
 ### Added
 
-- **Win32 subsystem, first piece: a PE32 parser and mapper (`subsystems/win32/pe/`), with `win32-pe-test` on a malformed
-  corpus.** `win32-pe-fixtures-test` checks the user's Windows XP `sol.exe` and `cards.dll` when `SAVANXP_WIN32_FIXTURES`
-  names their folder. See [WIN32.md](docs/userland/WIN32.md).
+- **Win32 subsystem on the build host: PE32 parser, loader, `ntdll.dll` and `kernel32.dll`, and `savanxp-win32-harness`,
+  which runs PE32 executables on Linux x86-64 through a 32-bit gate.** Fixtures (`hello.exe`, `initorder.exe`) give the
+  same bytes and exit statuses as on Windows XP; tests `win32-pe-test`, `win32-harness-test`, and `win32-pe-fixtures-test`
+  for the user's `sol.exe` and `cards.dll` (`SAVANXP_WIN32_FIXTURES`). The build now requires `lld-link` (from `lld`).
+  See [WIN32.md](docs/userland/WIN32.md).
 
 - **POSIX programs can change their window title: `gfx_set_title`, the POSIX side of SUN's `sxnwm_set_title`.** Paint
   uses it for `untitled - Paint` and `<file> - Paint`. Subsystems now keep feature parity (`AGENTS.md`).

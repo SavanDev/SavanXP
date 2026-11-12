@@ -1,13 +1,26 @@
 # Win32 subsystem
 
-> **Status: W1 in progress.** This document describes what exists under
+> **Status: W1 in progress; the host half is done.** This document describes what exists under
 > `subsystems/win32/`. The plan, the phases and the reasons behind them are in
 > the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the API
 > surface of the first profile is in
 > [WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md).
 
-So far the subsystem is one build-host library, the PE32 parser and mapper.
-Nothing of it is installed in the image yet.
+So far the subsystem runs on the build host only: the PE32 parser, the
+loader, the first two DLLs, the gate of the host harness, and the fixtures
+that check all of it against Windows XP. Nothing is installed in the image
+yet; `winhost` on SavanXP is the guest half of W1.
+
+```text
+subsystems/win32/
+  include/       windows.h (the subsystem's own), sxw_abi.h (host <-> DLLs)
+  pe/            the PE32 parser and mapper, portable C
+  loader/        the process loader, portable C
+  dlls/          ntdll.dll and kernel32.dll, PE32
+  fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing
+  harness/       win32-harness: the loader and gate on Linux x86-64
+  Win32.cmake
+```
 
 ## The PE32 parser — `subsystems/win32/pe/`
 
@@ -86,6 +99,173 @@ and the offending value, and `pe_format_error()` turns it into a line such as
 - A TLS template that ends before it starts, an index slot or callback outside
   the image, a callback outside an executable section.
 
+## The loader — `subsystems/win32/loader/`
+
+Portable C like the parser, shared by the harness and `winhost`. Memory and
+files come from a platform table (`map` at an exact address, `protect`,
+`unmap`, `open_image`, `close_image`). Guest addresses are below 4 GiB and
+both platforms map them at the same host address, so the loader writes guest
+memory through plain pointers.
+
+`sxw_load()` does, in order:
+
+1. **Map the executable, then each DLL it imports, depth first.** An image
+   goes at its preferred base when the range is free, otherwise at the first
+   free 64 KiB step from `0x10000000`, and is relocated. Names are compared
+   without case and opened lower-case: next to the executable first, then in
+   the system folder. `ntdll.dll` is always loaded.
+2. **Bind every import** from the lookup table. A forwarder (`DLL.Name` or
+   `DLL.#N`) loads its DLL if needed and is followed up to eight times.
+3. **Order initialization**: `ntdll.dll` first, then a post-order walk from
+   the executable, so every DLL comes after the ones it imports from (both
+   the DLL an import names and the one a forwarder ends at). The executable
+   is last.
+4. **Set up static TLS**: one block per module that has a TLS directory,
+   filled from its template, its index written into the image, and the
+   pointer array in the TEB.
+5. **Map the stack** (the executable's reserve, 64 KiB to 16 MiB, all
+   committed: there are no guard pages before S2), **the TEB, the PEB and the
+   start block**, one page each.
+6. **Give each image its final protections**, one call per protection run.
+
+A failure at any step releases every region and file taken so far and
+leaves two things: a line that names the module and the cause, and the NT
+status Windows XP ends the process with for the same failure.
+
+| Failure | Diagnostic | Status |
+| --- | --- | --- |
+| A DLL is not found | `missingdll.exe: missing DLL nosuch.dll` | `0xC0000135` |
+| A function is not exported | `missingsym.exe: kernel32.dll!MissingFunction is not exported` | `0xC0000139` |
+| An ordinal is not exported | `app.exe: foo.dll ordinal 7 is not exported` | `0xC0000138` |
+| The parser refuses an image | `foo.dll: section 2 is both writable and executable` | `0xC000007B` |
+| No guest address space left | `out of guest address space` | `0xC0000017` |
+
+After a successful load the files are closed: nothing after the load reads
+them.
+
+## The gate and process start
+
+`include/sxw_abi.h` is the private contract between the host and the DLLs,
+versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
+
+- **TEB and PEB.** The host fills the fields the DLLs read: exception list
+  head (`0xffffffff`), stack base and limit, self pointer, PEB pointer, TLS
+  pointer, and at `0xC0`, Windows' `WOW32Reserved`, the address the guest
+  calls to reach the host. The PEB holds the image base.
+- **Services.** `ntdll!SxwService(number, arguments)` calls through that
+  address with a flat array of 32-bit values. The host checks every guest
+  address against the regions it mapped and never calls guest code. W1 has
+  five services: version, exit, standard handle, write, debug output.
+- **Process start.** The host enters the guest once, at
+  `ntdll!SxwProcessStart`, with a start block listing every module in
+  initialization order. `ntdll` runs, for each DLL, its TLS callbacks and
+  `DllMain(DLL_PROCESS_ATTACH)` (a failure ends the process with
+  `0xC0000142`), then the executable's TLS callbacks, then its entry point.
+- **Process exit.** `kernel32!ExitProcess`, or the entry point returning,
+  goes to `ntdll!RtlExitUserProcess`. Every DLL whose attach ran is detached
+  in reverse order, its TLS callbacks and then `DllMain(DLL_PROCESS_DETACH)`
+  with a non-null `lpReserved`; the executable's TLS callbacks come last.
+  This order is the one Windows XP produced for `initorder.exe`.
+
+## The DLLs — `subsystems/win32/dlls/`
+
+Each DLL is a directory with C sources and a `.def` file. They are built at
+Windows XP's own bases (`ntdll.dll` at `0x7C900000`, `kernel32.dll` at
+`0x7C800000`), so none of them relocates. `include/windows.h` is the
+subsystem's own header; it declares what the DLLs and fixtures use and grows
+with the W0 matrix.
+
+| DLL | Exports |
+| --- | --- |
+| `ntdll.dll` | `RtlExitUserProcess`; private: `SxwProcessStart`, `SxwService` |
+| `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile` |
+
+## Build
+
+`Win32.cmake` compiles each source with the project's Clang for
+`i686-pc-windows-msvc` (`-ffreestanding -fno-builtin -fno-stack-protector`)
+and links with `lld-link /nodefaultlib /Brepro`. Every image declares
+subsystem version 5.01, below which Windows XP refuses to load it, and
+`/Brepro` makes the build reproducible, so a fixture has the same hash on
+every machine. The outputs, under the build directory:
+
+- `win32/system32/`: the subsystem's DLLs;
+- `win32/fixtures/`: the fixtures and the DLLs only a fixture uses;
+- `win32/stubs/`: DLLs built only for their import libraries, never
+  installed (`nosuch.dll`, and a `kernel32.dll` that exports a function the
+  real one does not).
+
+The target is `savanxp_win32`; `./build.sh test` builds it.
+
+## Fixtures
+
+Each fixture is built here and runs unchanged on Windows XP.
+
+| Fixture | What it checks | Output and status on Windows XP |
+| --- | --- | --- |
+| `hello.exe` | An imported `GetStdHandle` and `WriteFile`; `ExitProcess` | `Hello from a PE32 executable.\r\n`, status 42 |
+| `initorder.exe` | Imports from `alpha.dll` and `beta.dll`, which share a preferred base so one is relocated; `alpha.dll` imports from `beta.dll`; static TLS with two callbacks and no C runtime | The attach and detach order below, status 7 |
+| `missingdll.exe` | An import from a DLL that is not installed | No output, status `0xC0000135` |
+| `missingsym.exe` | An import `kernel32.dll` does not export | No output, status `0xC0000139` |
+
+`initorder.exe` writes, on Windows XP and in the harness, byte for byte:
+
+```text
+beta: attach, static load, pointers agree
+alpha: attach, beta says 7, pointers agree
+initorder: TLS callback 1, reason 1
+initorder: TLS callback 2, reason 1
+initorder: entry, thread value 7, alpha says 3, beta says 7
+alpha: detach, process ending
+beta: detach, process ending
+initorder: TLS callback 1, reason 0
+initorder: TLS callback 2, reason 0
+```
+
+"Pointers agree" means a pointer stored in the DLL's data, which only a base
+relocation can make right, equals the address the code computes. The
+thread value is the template's 5 plus one from each callback.
+
+Windows XP shows a message box when a console program fails to load, and
+its text does not describe the failure (for the missing function it said
+"terminated by Ctrl+C"). The status the command prompt received is the
+reference: `-1073741515` (`0xC0000135`) and `-1073741511` (`0xC0000139`).
+
+Recorded on 2026-11-12, on the user's Windows XP SP3 virtual machine, from
+these files built with Clang and lld 23.1.4:
+
+| File | SHA-256 |
+| --- | --- |
+| `hello.exe` | `8ced2cebedac96a1585a877257265fce06a44a6b452da031be24a5a98c27b8d3` |
+| `initorder.exe` | `a3d7c11df9db3fa33f680d70f3c67ab64b7bc6d58719ccc661c2e51203c8e9b5` |
+| `alpha.dll` | `8f01657090eb24064b09da6711bc9ae50af97bdb1317427bf26d15423d917198` |
+| `beta.dll` | `2ee1d8a68606b23b5986cb1d707cdcf7e832b7f836207f9383f3571d6163e79a` |
+| `missingdll.exe` | `0e81e4bea9b9d08b4fb6fad7b1864e428f86f42207eb40c8567df83d1ad045cf` |
+| `missingsym.exe` | `43d78fd4b444d7fee9df762b429e4681a39439ed886637e6a071d799ba5b7b9c` |
+
+A different compiler version may change the bytes, not the behaviour; when
+a fixture changes, it is run on Windows XP again and this table follows. The
+files went to the machine on a USB disk image the batch file wrote its
+output and `%errorlevel%` back to. The first run showed the one difference
+the harness had: Windows XP detaches on exit, which `RtlExitUserProcess` now
+does.
+
+## The host harness — `subsystems/win32/harness/`
+
+`savanxp-win32-harness [--dlls DIR] program.exe` runs a fixture on the
+Linux x86-64 build host through the same loader and DLLs as `winhost`. The
+guest's standard output is the harness's; the guest's 32-bit exit status, or
+the load failure's NT status, is printed as `win32: exit status 0x...` and
+its low byte is the harness's exit status.
+
+The gate uses Linux's own selectors: `0x23` for 32-bit code, `0x2b` for data,
+`0x33` for 64-bit code. FS holds an LDT entry (`modify_ldt`) whose base is the
+TEB while guest code runs; glibc's FS base is put back with `arch_prctl`
+before any host C code runs. The 32-bit halves of each transition, and the
+64-bit landings they far-jump to, live in a page at `0x7FFE0000`, since a
+32-bit far jump cannot reach the harness's own code. A fault in guest code
+prints its address and ends the harness with 125.
+
 ## Tests
 
 `win32-pe-test` (in `./build.sh test`) is built with the address and
@@ -98,6 +278,11 @@ undefined-behaviour sanitizers. It:
   each expecting its own status and a message;
 - applies 20,000 random byte changes and truncations to the image and runs
   every stage on each, so a read outside a buffer fails the test.
+
+`win32-harness-test` runs the four fixtures through the harness and
+compares the output bytes and the full 32-bit status with what Windows XP
+produced for the same files. A failed load must also name its cause and
+release every mapping and file.
 
 `win32-pe-fixtures-test` reads the user's Windows XP `sol.exe` and `cards.dll`
 from the folder named by `SAVANXP_WIN32_FIXTURES`, as an environment or CMake

@@ -1,0 +1,3 @@
+LIBRARY alpha.dll
+EXPORTS
+    AlphaValue
