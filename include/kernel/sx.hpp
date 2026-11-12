@@ -39,6 +39,14 @@ struct SemaphoreObject;
 struct TimerObject;
 }
 
+namespace object {
+struct IoObject;
+}
+
+namespace cred {
+struct Credentials;
+}
+
 namespace vfs {
 struct Vnode;
 }
@@ -104,5 +112,61 @@ object::SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask)
 object::SectionObject* open_file_section(vfs::Vnode& node, uint64_t offset, uint64_t length, uint32_t access_mask);
 int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_t requested_access, uint32_t granted_access, uint64_t base, bool share_on_fork);
 int unmap_view(process::Process& proc, uint64_t base_address);
+
+// Files: the one open/read/write/seek/close path every subsystem goes through
+// (kernel/sx_file.cpp). Results carry a status and a length instead of
+// leaving the error in vfs::last_error(). Checking the user buffer, handle
+// allocation, and turning a result into a syscall's return value stay with
+// each subsystem, as for sections.
+
+// sx_status has no name for success; this is it.
+constexpr sx_status kStatusOk = static_cast<sx_status>(0);
+
+// What a transfer did: `length` bytes moved, then it stopped for `status`
+// (kStatusOk: done, or end of file). A late failure keeps the bytes already
+// moved.
+struct IoResult {
+    sx_status status;
+    size_t length;
+};
+
+// The bytes moved when there were any, otherwise -status (0 at end of file).
+int io_result_value(const IoResult& result);
+
+// The largest count a call that reports its length as an int can ask for.
+constexpr size_t kMaxIoCount = 0x7fffffffu;
+
+// What open_file accepts besides a regular file. A directory opens for
+// reading only (writing one is EISDIR); a device node becomes a device
+// handle. Without the bit, a directory is EISDIR and a device EINVAL.
+enum OpenAccept : uint32_t {
+    open_accept_file = 0,
+    open_accept_directory = 1u << 0,
+    open_accept_device = 1u << 1,
+};
+
+// Resolves `path` through the VFS with SAVANXP_OPEN_* flags and builds the
+// I/O object over the node, positioned at the end with SAVANXP_OPEN_APPEND.
+// The object is in no handle table yet: on success the caller installs it or
+// discards it.
+sx_status open_file(const cred::Credentials& who, const char* path, uint32_t flags,
+                    uint16_t create_permissions, uint32_t accept, object::IoObject*& out);
+
+// Reads from / writes to an open file at its offset, and advances it by what
+// moved. `user_buffer` is in `proc` and has already been checked.
+IoResult read_file(process::Process& proc, object::IoObject& file, uint64_t user_buffer, size_t count);
+IoResult write_file(process::Process& proc, object::IoObject& file, uint64_t user_buffer, size_t count);
+
+enum class SeekOrigin : uint8_t {
+    start,
+    current,
+    end,
+};
+
+// Moves an open file's offset; past the end is allowed, before 0 is EINVAL.
+sx_status seek_file(object::IoObject& file, int64_t offset, SeekOrigin origin, uint64_t& position);
+
+// Closes a handle of `proc`: the object goes when its last handle does.
+sx_status close_handle(process::Process& proc, uint64_t handle);
 
 } // namespace sx

@@ -10,7 +10,6 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
-#include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/klog.hpp"
 #include "kernel/net.hpp"
@@ -345,13 +344,8 @@ int duplicate_fd_to(process::Process& proc, uint64_t oldfd, uint64_t newfd) {
 }
 
 int close_fd(process::Process& proc, uint64_t fd) {
-    if (fd >= process::kMaxFileHandles || proc.handles[fd].object == nullptr) {
-        return sx::negative_error(SAVANXP_EBADF);
-    }
-    object::release(proc.handles[fd].object);
-    proc.handles[fd].granted_access = object::access_none;
-    proc.handles[fd].flags = object::handle_none;
-    return 0;
+    const sx_status status = sx::close_handle(proc, fd);
+    return status != sx::kStatusOk ? sx::negative_error(status) : 0;
 }
 
 int open_node(process::Process& proc, const char* path, uint32_t flags, uint16_t create_permissions) {
@@ -361,29 +355,11 @@ int open_node(process::Process& proc, const char* path, uint32_t flags, uint16_t
     if ((flags & (SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE)) == 0) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
-    vfs::Vnode* node = vfs::open(proc.credentials, path, flags, create_permissions);
-    if (node == nullptr) {
-        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
-    }
-    if (node->type == vfs::NodeType::directory && (flags & SAVANXP_OPEN_WRITE) != 0) {
-        return sx::negative_error(SAVANXP_EISDIR);
-    }
-
-    object::IoObject* file = detail::allocate_io_object();
-    if (file == nullptr) {
-        return sx::negative_error(SAVANXP_ENOMEM);
-    }
-
-    file->kind = node->backend == vfs::Backend::device ? process::HandleKind::device : process::HandleKind::vnode;
-    file->open_flags =
-        ((flags & SAVANXP_OPEN_READ) != 0 ? process::open_read : 0) |
-        ((flags & SAVANXP_OPEN_WRITE) != 0 ? process::open_write : 0) |
-        ((flags & SAVANXP_OPEN_NONBLOCK) != 0 ? process::open_nonblock : 0);
-    file->node = node;
-    file->device = node->backend == vfs::Backend::device ? static_cast<device::Device*>(node->data) : nullptr;
-    file->header.destroy = detail::destroy_io_object;
-    if ((flags & SAVANXP_OPEN_APPEND) != 0 && node->type == vfs::NodeType::file) {
-        file->offset = node->size;
+    object::IoObject* file = nullptr;
+    const sx_status status = sx::open_file(proc.credentials, path, flags, create_permissions,
+        sx::open_accept_directory | sx::open_accept_device, file);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
     }
     const int fd = detail::allocate_fd(proc, &file->header, detail::object_access_for_open_flags(file->open_flags), object::handle_none);
     if (fd < 0) {
@@ -498,31 +474,25 @@ int seek_fd(process::Process& proc, uint64_t fd, int64_t offset, uint64_t whence
     if (file == nullptr || file->kind != process::HandleKind::vnode || file->node == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
-    if (file->node->type != vfs::NodeType::file) {
-        return sx::negative_error(SAVANXP_EISDIR);
-    }
-
-    int64_t base = 0;
+    sx::SeekOrigin origin = sx::SeekOrigin::start;
     switch (whence) {
         case SAVANXP_SEEK_SET:
             break;
         case SAVANXP_SEEK_CUR:
-            base = static_cast<int64_t>(file->offset);
+            origin = sx::SeekOrigin::current;
             break;
         case SAVANXP_SEEK_END:
-            base = static_cast<int64_t>(file->node->size);
+            origin = sx::SeekOrigin::end;
             break;
         default:
             return sx::negative_error(SAVANXP_EINVAL);
     }
-
-    const int64_t position = base + offset;
-    if (position < 0) {
-        return sx::negative_error(SAVANXP_EINVAL);
+    uint64_t position = 0;
+    const sx_status status = sx::seek_file(*file, offset, origin, position);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
     }
-
-    file->offset = static_cast<size_t>(position);
-    return static_cast<int>(file->offset);
+    return static_cast<int>(position);
 }
 
 int unlink_path(process::Process& proc, const char* path) {
@@ -827,33 +797,9 @@ int read_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t
             self.blocked_read_capacity = count;
             self.state = process::State::blocked_read;
             return process::kBlockedResult;
-        case process::HandleKind::vnode: {
-            if (file->node == nullptr || file->node->type != vfs::NodeType::file) {
-                return sx::negative_error(SAVANXP_EBADF);
-            }
-            uint8_t scratch[detail::kPipeChunkSize] = {};
-            size_t total = 0;
-            while (total < count) {
-                const size_t step = (count - total) < sizeof(scratch) ? (count - total) : sizeof(scratch);
-                const size_t consumed = vfs::read(*file->node, file->offset, scratch, step);
-                if (consumed == 0) {
-                    // A device error is not the end of the file.
-                    if (total == 0 && vfs::last_error() != 0) {
-                        return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
-                    }
-                    break;
-                }
-                if (!write_to_process_memory(proc, user_buffer + total, scratch, consumed)) {
-                    return sx::negative_error(SAVANXP_EINVAL);
-                }
-                file->offset += consumed;
-                total += consumed;
-                if (consumed < step) {
-                    break;
-                }
-            }
-            return static_cast<int>(total);
-        }
+        case process::HandleKind::vnode:
+            return sx::io_result_value(sx::read_file(proc, *file, user_buffer,
+                count < sx::kMaxIoCount ? count : sx::kMaxIoCount));
         case process::HandleKind::pipe: {
             int result = detail::try_pipe_read(proc, *file, user_buffer, count);
             if (result == process::kBlockedResult && (file->open_flags & process::open_nonblock) != 0) {
@@ -898,9 +844,6 @@ int read_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t
     }
 }
 
-// Largest piece of a write handed to a file in one vfs::write.
-constexpr size_t kFileWriteChunk = 64u * 1024u;
-
 int write_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t count) {
     process::Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_write);
@@ -933,47 +876,9 @@ int write_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_
             }
             return static_cast<int>(count);
         }
-        case process::HandleKind::vnode: {
-            if (file->node == nullptr || file->node->type != vfs::NodeType::file) {
-                return sx::negative_error(SAVANXP_EBADF);
-            }
-
-            // The file sees one vfs::write per chunk, and on SxFS every write
-            // that grows a file is a metadata commit: with the 256-byte stack
-            // scratch, a 3 KB file was 12 commits. The heap buffer makes it
-            // one per kFileWriteChunk; the stack scratch is the fallback when
-            // the heap cannot spare one.
-            uint8_t stack_scratch[detail::kPipeChunkSize] = {};
-            const size_t heap_size = count < kFileWriteChunk ? count : kFileWriteChunk;
-            uint8_t* heap_scratch = static_cast<uint8_t*>(heap::allocate(heap_size));
-            uint8_t* scratch = heap_scratch != nullptr ? heap_scratch : stack_scratch;
-            const size_t scratch_size = heap_scratch != nullptr ? heap_size : sizeof(stack_scratch);
-            size_t written = 0;
-            int result = 0;
-            while (written < count) {
-                const size_t step = (count - written) < scratch_size ? (count - written) : scratch_size;
-                if (!read_from_process_memory(proc, scratch, user_buffer + written, step)) {
-                    result = sx::negative_error(SAVANXP_EINVAL);
-                    break;
-                }
-                const size_t produced = vfs::write(*file->node, file->offset, scratch, step, false);
-                if (produced == 0 && step != 0) {
-                    const int error = vfs::last_error();
-                    result = written != 0
-                        ? static_cast<int>(written)
-                        : sx::negative_error(static_cast<savanxp_error_code>(error != 0 ? error : SAVANXP_EIO));
-                    break;
-                }
-                file->offset += produced;
-                written += produced;
-                result = static_cast<int>(written);
-                if (produced < step) {
-                    break;
-                }
-            }
-            heap::free(heap_scratch);
-            return result;
-        }
+        case process::HandleKind::vnode:
+            return sx::io_result_value(sx::write_file(proc, *file, user_buffer,
+                count < sx::kMaxIoCount ? count : sx::kMaxIoCount));
         case process::HandleKind::pipe: {
             const bool nonblocking = (file->open_flags & process::open_nonblock) != 0;
             /* No-bloqueante y el registro no entra entero: EAGAIN sin escribir

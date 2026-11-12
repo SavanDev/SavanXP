@@ -103,6 +103,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Native and POSIX file handles go through one kernel file path**: `sx::open_file`, `read_file`, `write_file`,
+  `seek_file` and `close_handle`, with results that carry a status and a length. A read or write that fails partway
+  returns the bytes it moved, and a seek past the 64-bit range is `EINVAL` (VFS-A step 1).
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

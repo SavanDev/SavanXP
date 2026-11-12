@@ -73,6 +73,10 @@ object/process factoring, not before.
   `SXN_SYS_SYSTEM_INFO`), and `SXN_SYS_TERMINATE` under kill's rule.
 - Slice 28: storage for Disk Management (`SXN_SYS_STORAGE_*`).
 - Slice 29: `SXN_SYS_LOG_READ`, the system log for Log Viewer.
+- Files (VFS-A step 1): `sx::open_file`, `read_file`, `write_file`,
+  `seek_file`, `close_handle` in `kernel/sx_file.cpp`, with `sx::IoResult`;
+  native dispatch and POSIX translation both call them
+  ([VFS_ROADMAP.md](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
 
 ## Isolation: making the kernel indifferent to userland
 

@@ -43,7 +43,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `release` for the last holder of an unlinked file, but no open/close |
 | Holders | A vnode has no reference count: the VFS asks a probe that scans the I/O object table (`vfs::set_holder_probe`), and unmount also asks the section cache. A current directory is a path string in POSIX state and holds nothing |
-| Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; results still travel through the global `vfs::last_error()`, and a `read` or `write` that returns 0 needs it to tell an error from EOF |
+| Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; handle I/O returns `sx::IoResult` (status and length), but path operations and `vfs::read`/`vfs::write` themselves still report through the global `vfs::last_error()` |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
 | Name comparison | Byte for byte on every volume; FAT's case-insensitive rules are not applied, so a differently cased name misses, or passes the VFS and is refused by the format |
 | Directories | Volume directories are published as memory vnodes; enumeration indexes the resident child list |
@@ -53,7 +53,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Durability | `fsync` and `sync` are one whole-system barrier; a deferred write error is the `EIO` of whoever synchronizes next, not of the handle that wrote |
 | Mappings | File-backed sections are private copies of one content generation; no shared writable mapping and no page cache coherent with writes |
 | Large I/O | Internal offsets are `size_t`, but the seek position and transfer counts return through `int`, and the stat ABI carries a 32-bit size |
-| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`) and saves a whole file of up to 4096 bytes (`sxn_write_file`); no seek, size query, streaming write or enumeration. Native dispatch and POSIX translation each build the `IoObject` over `vfs::` themselves: there is no neutral file layer in `sx::` |
+| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`) and saves a whole file of up to 4096 bytes (`sxn_write_file`); no seek, size query, streaming write or enumeration. Native dispatch and POSIX translation open, read, write, seek and close through `sx::` (`kernel/sx_file.cpp`) |
 
 The contract these rows describe is
 [`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract), landed with
@@ -68,7 +68,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 
 | Phase | Landed | Still open |
 | --- | --- | --- |
-| VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions | A neutral file layer shared by the subsystems; results carrying status and length; 64-bit positions and sizes; the rest of the native surface |
+| VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test` | Entries apart from file identity; counted references; driver open/close; directory references |
 | VFS-C | Nothing | All of it. It is the one open item of SxFS v2's scale work |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
@@ -106,8 +106,8 @@ for FAT rather than claiming that it stores native ownership.
 **Open, first contract work.** Driver status results and read errors distinct
 from EOF are in place, and SUN has its first two file calls. Move neutral file
 operations behind Sx, with SUN/POSIX translating their userland conventions.
-Today `native_open_file` and the POSIX open each allocate and fill the
-`IoObject` over `vfs::`, so a third subsystem would copy that a third time.
+Both `native_open_file` and the POSIX open now build the `IoObject` with
+`sx::open_file`, so a third subsystem does not copy it a third time.
 Linux and Win32 must not call POSIX translation internals to reach a file.
 Preserve handle rights and credential checks, including query-only opens that
 must never grant read access.
@@ -134,7 +134,12 @@ Suggested order, each slice shippable alone:
 
 1. One neutral open/read/write/seek/close path in `sx::` that returns status
    and length, with POSIX translation and native dispatch as its two callers.
-   No new API; existing tests are the regression.
+   No new API; existing tests are the regression. **Done:** `sx::open_file`
+   (what it accepts besides a regular file is the caller's `sx::OpenAccept`),
+   `read_file`, `write_file`, `seek_file` and `close_handle` return
+   `sx::IoResult` or `sx_status`; `sx::io_result_value` turns one into a
+   syscall's `int`. Positions are already 64-bit inside `seek_file`; the
+   `int` the syscalls return is step 2's.
 2. 64-bit positions and sizes through seek and stat, then the native size and
    seek calls.
 3. Native streaming create/write, then enumeration.

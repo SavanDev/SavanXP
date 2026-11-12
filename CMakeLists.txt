@@ -271,6 +271,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/process.cpp
     kernel/native_dispatch.cpp
     kernel/sx.cpp
+    kernel/sx_file.cpp
     kernel/subsystem.cpp
     kernel/panic.cpp
     kernel/runtime.cpp
