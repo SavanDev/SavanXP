@@ -136,6 +136,13 @@
   check does not fail, extract the binary from `build/disk.img` and look at it
   before believing the check.
 
+## Visual checks with `tools/shoot.sh`
+
+- Keep `--out-dir` short, for example `build/shots-<name>`. QEMU opens its
+  monitor and QMP sockets inside that directory, and a Unix socket path must
+  be under 108 bytes: a deep temporary or scratch directory makes QEMU exit
+  with `UNIX socket path ... is too long` before the scenario starts.
+
 ## Current reference case
 
 - `ports/doomgeneric` is the canonical Doom port and persistence regression.
