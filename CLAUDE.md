@@ -82,6 +82,13 @@ something, the program is the consumer of the slice that adds it, with its
 in its own commit with its own changelog entry. POSIX stays for ports and
 external programs.
 
+### 7. Feature parity between subsystems
+
+What SUN can do, POSIX should too, and the other way round, as far as the
+platform allows. A gap is closed in the subsystem that lacks it, not worked
+around in the program, and a planned port to SUN is no reason to leave POSIX
+without it.
+
 ## Build commands
 
 Native Linux path:

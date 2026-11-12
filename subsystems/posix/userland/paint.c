@@ -229,6 +229,26 @@ static void write_le32(unsigned char *p, uint32_t value)
     p[3] = (unsigned char)((value >> 24) & 0xFFu);
 }
 
+/* Window title as in the original: "untitled - Paint", or the file's own
+ * name without its directory. Sent to the WM only when it changes. */
+static void update_title(void)
+{
+    static char last[SAVANXP_WM_PRESENTATION_TITLE_CAPACITY];
+    char title[SAVANXP_WM_PRESENTATION_TITLE_CAPACITY];
+    const char *slash = strrchr(g_path, '/');
+    const char *name = g_path[0] == '\0' ? "untitled" : (slash != 0 ? slash + 1 : g_path);
+
+    snprintf(title, sizeof(title), "%s - Paint", name);
+    if (strcmp(title, last) == 0 || g_app.gfx.header == 0)
+    {
+        return;
+    }
+    if (gfx_set_title(&g_app.gfx, title) == 0)
+    {
+        snprintf(last, sizeof(last), "%s", title);
+    }
+}
+
 static void update_status(const char *note)
 {
     const char *name = g_path[0] != '\0' ? g_path : "(untitled)";
@@ -242,6 +262,7 @@ static void update_status(const char *note)
     {
         snprintf(tool, sizeof(tool), "%s", k_tool_names[g_tool]);
     }
+    update_title();
     if (note != 0 && note[0] != '\0')
     {
         snprintf(g_status, sizeof(g_status), "%s | %s%s | undo %d", name, note,
@@ -2137,6 +2158,7 @@ int main(int argc, char **argv)
     g_app.on_paint = on_paint;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
+    update_title();
     (void)sxgui_app_set_content_size(&g_app, PAINT_WINDOW_WIDTH, PAINT_WINDOW_HEIGHT);
     paint_layout();
 

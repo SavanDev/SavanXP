@@ -34,7 +34,8 @@ the window layout is sized for), and the canvas frame shrinks to fit it. Declare
 in `paint.sxres`, but that is capability, not default: association policy
 lives in the registry (SXE phase 5), as in Notepad.
 
-The message pane reads `<name> | <tool> | undo <n>`, with a `*` while dirty;
+The title reads `untitled - Paint`, or the file's name without its directory
+(`gfx_set_title`). The message pane reads `<name> | <tool> | undo <n>`, with a `*` while dirty;
 the next pane shows the pixel under the cursor and the last the picture size.
 
 ## Tools

@@ -1224,6 +1224,28 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
     return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
 }
 
+long gfx_set_title(const struct savanxp_gfx_context* context, const char* title) {
+    struct savanxp_wm_presentation* out = 0;
+    uint32_t sequence = 0;
+    uint32_t index = 0;
+
+    if (context == 0 || context->header == 0 || title == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    out = &context->header->requests.presentation;
+    /* Seqlock: odd while the title is being written. */
+    sequence = out->sequence | 1u;
+    out->sequence = sequence;
+    __asm__ volatile("" ::: "memory");
+    memset(out->title, 0, sizeof(out->title));
+    for (index = 0; title[index] != '\0' && index + 1u < sizeof(out->title); ++index) {
+        out->title[index] = title[index];
+    }
+    __asm__ volatile("" ::: "memory");
+    out->sequence = sequence + 1u;
+    return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
+}
+
 long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height) {
     struct savanxp_wm_client_requests* requests = 0;
 

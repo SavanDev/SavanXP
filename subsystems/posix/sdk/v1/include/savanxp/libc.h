@@ -268,6 +268,11 @@ long gfx_desktop_launch_arg(
 int gfx_shell_request_fd(void);
 int gfx_shell_window_list_fd(void);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
+/* SetWindowText: a new window title; icon, accent and style stay as published
+ * from the program's resources. Titles longer than
+ * SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. The POSIX side of
+ * sxnwm_set_title. 0, -EINVAL or -EIO. */
+long gfx_set_title(const struct savanxp_gfx_context* context, const char* title);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
  * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en
  * la geometria con la que se lanzo (ver savanxp/wm_protocol.h). El cambio

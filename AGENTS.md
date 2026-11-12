@@ -94,6 +94,18 @@
 - POSIX stays supported for ports and external programs (`ports/`,
   `tools/build-user.sh`). Nothing here removes it.
 
+## Feature parity between subsystems
+
+- What one subsystem can do, the other should too, as far as the platform
+  allows. A program or port must not lose a capability (a window title, a
+  cursor shape, a dialog) only because of which API it is written against.
+- A gap found in either direction is closed in the subsystem that lacks it,
+  each side in its own idiom (`sxnwm_set_title` in SUN, `gfx_set_title` in the
+  POSIX runtime), not worked around in the program. A planned port to SUN is
+  not a reason to leave POSIX without it.
+- When a gap cannot be closed (the platform has no way to do it), say so in
+  the subsystem's documentation instead of leaving it to be rediscovered.
+
 ## Repository rules
 
 - Do not break the persistence of external apps installed in `build/disk.img`.

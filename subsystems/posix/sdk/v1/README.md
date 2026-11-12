@@ -37,7 +37,7 @@ Categorías soportadas:
 - descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `poll`, `select`, `raise`
-- graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_present_region`, `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`, `gfx_should_close`
+- graphics: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_present_region`, `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`, `gfx_should_close`, `gfx_set_title` (the window title, like SUN's `sxnwm_set_title`)
 - toolkit 2D: `sx_bitmap`, `sx_painter`, `sx_rect_set`, `gfx_present_rects`
 - presentation helper: `sx_scaled_presenter` for centered integer-scaled pixel-art frames
 - optional PCM playback: `savanxp/audio.h` and `sx_audio_mixer` (`-Audio`)

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **POSIX programs can change their window title: `gfx_set_title`, the POSIX side of SUN's `sxnwm_set_title`.** Paint
+  uses it for `untitled - Paint` and `<file> - Paint`. Subsystems now keep feature parity (`AGENTS.md`).
+
 - **USB on machines from before xHCI: EHCI, UHCI and OHCI drivers, with EHCI handing low- and full-speed devices to
   its companions.** Keyboards, mice, hubs and sticks as on xHCI; device lines now name the controller (`usb: uhci1 port 2`).
   `tools/run_qemu.py --usb-host`, and `uhci-smoke`, `ehci-stick-smoke`, `ohci-hotplug-smoke` and the rest. See [USB_HOST_CONTROLLERS.md](docs/kernel/USB_HOST_CONTROLLERS.md).
