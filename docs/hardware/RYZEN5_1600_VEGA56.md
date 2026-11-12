@@ -54,8 +54,8 @@ In the order that makes the machine more useful soonest:
 3. **Both AHCI controllers and their disks (HW-4).** The kernel sees disks on
    one of them and has never read a sector there. Reading is safe; note that
    a disk holding an SxFS volume becomes the root in place of the live system.
-4. **The display mode (HW-11).** The ISO's boot entries ask for `1024x768x32`
-   on a 1920x1080 monitor. See below.
+4. **The display mode (HW-11).** The ISO's default entry now takes the
+   monitor's preferred mode; confirm it comes up at 1920x1080. See below.
 5. **NVMe (HW-5)**, then setup (HW-12): the path to an installed system on
    this machine's main disk.
 6. **The physical audio checks** still owed to the follow-up software, below.
@@ -96,10 +96,10 @@ desktop needs it today.
 
 ### What is worth doing instead (HW-11)
 
-- **Let the mode follow the monitor.** GOP offers the modes the monitor's EDID
-  reports. Dropping the fixed `resolution:` line, or adding entries for the
-  common panel sizes, puts the desktop at 1920x1080 here with no driver at
-  all.
+- **Let the mode follow the monitor.** Done in the ISO: its entries no longer
+  carry a fixed `resolution:` line, so Limine takes the mode the monitor's
+  EDID prefers from GOP, which should put the desktop at 1920x1080 here with
+  no driver at all. Not yet confirmed on this machine.
 - **Report what was received.** A `fb_gpu:` line with the mode, depth and the
   mapping's real cache type, and Display Properties showing a fixed mode as
   fixed.

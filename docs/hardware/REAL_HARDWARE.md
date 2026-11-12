@@ -46,7 +46,7 @@ boot; a machine that fails a soft one boots with something missing.
 | Firmware | Legacy BIOS with INT 13h extensions, or 64-bit UEFI. Limine 10.8.5; the ISO is hybrid (El Torito for both, and `dd`-able to a USB stick). The 32-bit UEFI loader is not staged | `boot/limine.conf`, `CMakeLists.txt` (`savanxp_iso`) |
 | ACPI | An RSDP from the loader and a FADT. A MADT moves interrupts to the IOAPIC with its source overrides applied; without one the legacy PIC is used. uACPI resolves `_PRT` | `kernel/acpi.cpp`, `kernel/ioapic.cpp`, `kernel/uacpi_glue.cpp` |
 | Clocks | A CMOS RTC: the LAPIC timer is calibrated across two RTC second edges. PIT channel 2: the TSC is calibrated against it. The wall clock is the ACPI PM timer when it is 32 bits wide and the **TSC otherwise** | [TIME.md](../kernel/TIME.md) |
-| Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The ISO's boot entries ask Limine for `1024x768x32`, a VESA mode every video BIOS offers; the development configuration keeps `1280x800x32`, which the QEMU scenarios click against. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
+| Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The ISO's boot entries let Limine take the monitor's preferred mode from EDID, and a **SavanXP (1024x768)** entry forces the VESA mode every video BIOS offers; the development configuration keeps `1280x800x32`, which the QEMU scenarios click against. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
 | Memory | The LiveCD root is a 256 MiB SxFS volume Limine loads into RAM as a module, next to the kernel and the initramfs. The floor has not been measured; 1 GiB is the least worth trying | `SAVANXP_ISO_SECTORS` in `CMakeLists.txt` |
 | Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. No NVMe, no ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/usb/umass.cpp` |
 | USB | xHCI, EHCI, UHCI and OHCI. Low speed and split transactions have not been run: QEMU cannot show them | [USB_HOST_CONTROLLERS.md](../kernel/USB_HOST_CONTROLLERS.md) |
@@ -271,13 +271,16 @@ Limine maps the framebuffer write-combining through the PAT on every CPU
 here, so the old concern about uncached video memory does not apply. What is
 left:
 
-- **The mode is chosen once, by a line in `boot/limine.conf`.** Every entry
-  asks for `1024x768x32`, the one VESA mode with 32 bpp a video BIOS of any
-  age can be expected to list; when the firmware has no such mode Limine
-  picks another. A VBE BIOS from this era offers the VESA 4:3 list and often none of
-  the widescreen modes its own panel needs; GOP offers what the monitor
-  reports. Wanted: boot entries or an option for the mode, and the native
-  resolution by default.
+- **The mode is chosen once, by Limine, before the kernel starts.** The
+  ISO's entries carry no `resolution:` line, so Limine asks the monitor for
+  its preferred mode (EDID) and picks another when the firmware does not
+  offer it. GOP offers what the monitor reports, so a UEFI machine gets its
+  native resolution. A VBE BIOS from this era offers the VESA 4:3 list and
+  often none of the widescreen modes its own panel needs. The
+  **SavanXP (1024x768)** entry forces `1024x768x32`, the one VESA mode with
+  32 bpp a video BIOS of any age can be expected to list, for a machine where
+  the preferred mode does not light up. Display Properties still cannot
+  change the mode afterwards.
 - **`fb_gpu:` does not say what it got.** Its log line prints
   `tipo del firmware` for the cache type of any adapter that is not Bochs'.
   It should print the mapping's real type and the bit depth.

@@ -70,8 +70,10 @@ panics with `cpu: NX/W^X is required`, turn "Execute Disable Bit" (or "XD",
 | GM965, GL960 | GMA X3100 | `8086:2a02` | Laptops, 2007-2008 |
 | GM45, GS45 | GMA 4500MHD | `8086:2a42` | Laptops, 2008-2010 |
 
-**Today:** VBE through Limine (HW-11) at `1024x768x32`, which every one of
-these video BIOSes lists, with a defect particular to Intel. The
+**Today:** VBE through Limine (HW-11) at the monitor's preferred mode when the
+video BIOS lists it; the **SavanXP (1024x768)** entry forces `1024x768x32`,
+which every one of these video BIOSes lists. There is a defect particular to
+Intel. The
 video BIOS of these chipsets carries a fixed mode table that usually lacks
 the widescreen sizes -- 1280x800, 1366x768, 1440x900, 1680x1050 -- even on a
 laptop whose own panel is one of them. Limine then falls back to a 4:3 mode

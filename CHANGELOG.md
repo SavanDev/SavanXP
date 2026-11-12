@@ -116,8 +116,9 @@ Cut-off notes:
 
 ### Changed
 
-- **The ISO asks Limine for `1024x768x32` instead of `1280x800x32`**, a VESA mode every video BIOS offers. `run` and the
-  smokes keep 1280x800 (`boot/limine-dev.conf`).
+- **The ISO boots at the monitor's preferred resolution (EDID) instead of a fixed `1280x800x32`**; a new
+  **SavanXP (1024x768)** boot entry forces the VESA mode every video BIOS offers. `run` and the smokes keep 1280x800
+  (`boot/limine-dev.conf`).
 
 - **The PCI table holds 256 functions instead of 64**; `pci: table full` counts any that do not fit.
 

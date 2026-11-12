@@ -64,10 +64,10 @@ support" off in the firmware and compare.
 | NVIDIA MCP61, MCP68, MCP78 | GeForce 6150SE, 7025, 8200 | `10de:*` |
 
 **Today:** the board's video BIOS sets a VBE mode for Limine and the kernel
-draws into it (HW-11). The boot entries ask for `1024x768x32`, which a VBIOS
-of this generation offers reliably; widescreen modes it offers only
-sometimes, so expect 1024x768 on a wide monitor until the mode can be
-chosen. The framebuffer comes out of system RAM the firmware lends to
+draws into it (HW-11). The default entry asks Limine for the monitor's
+preferred mode (EDID); a VBIOS of this generation offers widescreen modes
+only sometimes, and Limine falls back to another mode when it lacks it. The
+**SavanXP (1024x768)** entry forces the mode it offers reliably. The framebuffer comes out of system RAM the firmware lends to
 the graphics core (and SidePort memory on boards that have it), so the mode
 list also depends on the "share memory" setting.
 
