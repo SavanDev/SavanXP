@@ -708,10 +708,14 @@ bool may_access(const cred::Credentials& who, const char* path, uint32_t want) {
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
     const int index = resolve_index(normalized);
     if (index < 0) {
         g_last_error = SX_ENOENT;
@@ -731,6 +735,7 @@ bool may_execute(const cred::Credentials& who, const char* path) {
 
 bool normalize_path(const char* cwd, const char* input, char* output, size_t capacity) {
     if (cwd == nullptr || input == nullptr || output == nullptr || capacity < 2) {
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -743,6 +748,7 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
     if (input[0] == '/') {
         working_length = strlen(input);
         if (working_length >= working.capacity()) {
+            g_last_error = SX_ENAMETOOLONG;
             return false;
         }
         memcpy(working, input, working_length + 1);
@@ -750,6 +756,7 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
         const size_t cwd_length = strlen(cwd);
         const size_t input_length = strlen(input);
         if (cwd_length + (cwd_length > 1 ? 1u : 0u) + input_length >= working.capacity()) {
+            g_last_error = SX_ENAMETOOLONG;
             return false;
         }
         memcpy(working, cwd, cwd_length + 1);
@@ -795,6 +802,7 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
             continue;
         }
         if (component_count >= kMaxNormalizedPathComponents || length >= kMaxNameLength) {
+            g_last_error = SX_ENAMETOOLONG;
             return false;
         }
         components[component_count] = start;
@@ -814,6 +822,7 @@ bool normalize_path(const char* cwd, const char* input, char* output, size_t cap
     for (size_t index = first; index < component_count; ++index) {
         const size_t length = lengths[index];
         if (written + length + 1 >= capacity) {
+            g_last_error = SX_ENAMETOOLONG;
             return false;
         }
         memcpy(output + written, components[index], length);
@@ -988,10 +997,14 @@ Vnode* open(const cred::Credentials& who, const char* path, uint32_t flags, uint
         g_last_error = SX_ENOMEM;
         return nullptr;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return nullptr;
     }
+    g_last_error = entry_error;
 
     const bool wants_write = (flags & SAVANXP_OPEN_WRITE) != 0;
     const bool wants_create = (flags & SAVANXP_OPEN_CREATE) != 0;
@@ -1127,10 +1140,14 @@ Vnode* ensure_directory(const char* path) {
         g_last_error = SX_ENOMEM;
         return nullptr;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return nullptr;
     }
+    g_last_error = entry_error;
 
     const int existing = resolve_index(normalized);
     if (existing >= 0) {
@@ -1179,10 +1196,14 @@ bool detach_subtree(const char* path, bool (*referenced)(const Vnode& node)) {
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!g_ready || path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
     const int root = resolve_index(normalized);
     if (root <= 0 || g_nodes[root].vnode.type != NodeType::directory) {
         g_last_error = SX_EINVAL;
@@ -1215,10 +1236,14 @@ Vnode* mkdir(const cred::Credentials& who, const char* path, uint16_t permission
         g_last_error = SX_ENOMEM;
         return nullptr;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return nullptr;
     }
+    g_last_error = entry_error;
 
     const int existing = resolve_index(normalized);
     if (existing >= 0) {
@@ -1298,10 +1323,14 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
         g_last_error = SX_ENOMEM;
         return nullptr;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return nullptr;
     }
+    g_last_error = entry_error;
 
     PathBuffer parent_path;
     if (parent_path == nullptr) {
@@ -1383,10 +1412,14 @@ bool unlink(const cred::Credentials& who, const char* path) {
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
 
     const int index = resolve_index(normalized);
     if (index < 0) {
@@ -1483,10 +1516,14 @@ bool rmdir(const cred::Credentials& who, const char* path) {
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity()) || is_mount_point(normalized)) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
 
     const int index = resolve_index(normalized);
     if (index < 0) {
@@ -1542,10 +1579,14 @@ bool truncate(const cred::Credentials& who, const char* path, size_t size) {
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
 
     const int index = resolve_index(normalized);
     if (index < 0) {
@@ -1622,12 +1663,16 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         g_last_error = SX_ENOMEM;
         return false;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (!normalize_path("/", old_path, normalized_old, normalized_old.capacity()) ||
         !normalize_path("/", new_path, normalized_new, normalized_new.capacity()) ||
         is_mount_point(normalized_old) || is_mount_point(normalized_new)) {
-        g_last_error = SX_EINVAL;
         return false;
     }
+    g_last_error = entry_error;
 
     const int node_index = resolve_index(normalized_old);
     if (node_index < 0) {
@@ -1944,10 +1989,14 @@ int resolve_reachable(const cred::Credentials& who, const char* path) {
         g_last_error = SX_ENOMEM;
         return -1;
     }
+    // EINVAL unless normalize_path says why it failed (ENAMETOOLONG); once
+    // it succeeds, the error this function started with stands.
+    const int entry_error = g_last_error;
+    g_last_error = SX_EINVAL;
     if (path == nullptr || !normalize_path("/", path, normalized, normalized.capacity())) {
-        g_last_error = SX_EINVAL;
         return -1;
     }
+    g_last_error = entry_error;
     const int index = resolve_index(normalized);
     if (index < 0) {
         g_last_error = SX_ENOENT;

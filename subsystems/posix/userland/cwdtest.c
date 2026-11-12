@@ -8,7 +8,9 @@
  * It checks the initial directory, chdir/getcwd, relative resolution, fork
  * inheritance and exec preservation -- the two things moving state tends to
  * break quietly -- and, since the directory is held, that it follows a rename
- * of itself and cannot be removed while the process stands in it.
+ * of itself and cannot be removed while the process stands in it. And what
+ * is too long says so: ENAMETOOLONG from the copy of a path, from the VFS's
+ * limits and from SxFS's.
  *
  *     cwdtest            the parent: checks everything and runs the children
  *     cwdtest child      a fork: the child must inherit the directory
@@ -101,6 +103,34 @@ int main(int argc, char** argv) {
     check(savanxp_unlink("/tmp/cwdtest-b/here.txt") == 0, "the file is where the directory now is");
     check(savanxp_chdir(CWDTEST_EXPECTED_PARENT) == 0, "chdir back");
     check(savanxp_rmdir("/tmp/cwdtest-b") == 0, "rmdir once nobody stands in it");
+
+    /* 4c. Too long is ENAMETOOLONG, wherever the limit is: a name past the
+     * 63 bytes SxFS stores (/tmp is on the system disk), a name past the
+     * VFS's 255, and a path past the 1023 a system call copies. */
+    {
+        static char path[1200];
+        size_t length = 0;
+        memcpy(path, "/tmp/", 5);
+        length = 5;
+        while (length < 5 + 64) {
+            path[length++] = 'n';
+        }
+        path[length] = '\0';
+        check(savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE) == -SAVANXP_ENAMETOOLONG,
+              "a 64-byte name on SxFS is ENAMETOOLONG");
+        while (length < 5 + 256) {
+            path[length++] = 'n';
+        }
+        path[length] = '\0';
+        check(savanxp_open_mode(path, SAVANXP_OPEN_READ) == -SAVANXP_ENAMETOOLONG,
+              "a 256-byte name is ENAMETOOLONG");
+        for (length = 0; length < sizeof(path) - 1; ++length) {
+            path[length] = (length % 32 == 0) ? '/' : 'p';
+        }
+        path[length] = '\0';
+        check(savanxp_open_mode(path, SAVANXP_OPEN_READ) == -SAVANXP_ENAMETOOLONG,
+              "a path past 1023 bytes is ENAMETOOLONG");
+    }
 
     /* 5. fork hereda el cwd. */
     {

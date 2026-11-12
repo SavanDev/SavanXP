@@ -74,6 +74,7 @@ int error_of(Status status) {
         case Status::not_directory: return SX_ENOTDIR;
         case Status::is_directory: return SX_EISDIR;
         case Status::unsupported: return SX_ENOSYS;
+        case Status::name_too_long: return SX_ENAMETOOLONG;
     }
     return SX_EIO;
 }

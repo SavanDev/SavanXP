@@ -68,6 +68,10 @@ bool write_user_memory(process::Process& proc, uint64_t user_address,
                        const void* source, size_t count);
 bool copy_user_string_from(const process::Process& proc, uint64_t user_address,
                            char* buffer, size_t capacity);
+// The same for a path, saying why it failed: SX_ENAMETOOLONG when no NUL
+// comes within `capacity` bytes, SX_EINVAL when the memory cannot be read.
+sx_status copy_user_path_from(const process::Process& proc, uint64_t user_address,
+                              char* buffer, size_t capacity);
 
 int negative_error(sx_status code);
 

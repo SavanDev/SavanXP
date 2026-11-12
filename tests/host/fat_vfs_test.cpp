@@ -240,8 +240,9 @@ void long_paths(uint8_t* image) {
     char too_long[vfs::kMaxPathLength + 16] = "/boot/";
     memset(too_long + 6, 'x', sizeof(too_long) - 7);
     too_long[sizeof(too_long) - 1] = '\0';
-    check(vfs::resolve(too_long) == nullptr && vfs::open(kSystem, too_long, SAVANXP_OPEN_READ, 0) == nullptr,
-          "a path longer than 1023 bytes is refused");
+    check(vfs::resolve(too_long) == nullptr && vfs::open(kSystem, too_long, SAVANXP_OPEN_READ, 0) == nullptr &&
+              vfs::last_error() == SX_ENAMETOOLONG,
+          "a path longer than 1023 bytes is refused, ENAMETOOLONG");
     unmount_image();
     hoststub::detach_device();
 }
@@ -265,8 +266,9 @@ void long_names(uint8_t* image) {
     name[255] = 'n';
     name[256] = '\0';
     snprintf(path, sizeof(path), "/boot/%s", name);
-    check(vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644) == nullptr,
-          "a 256-byte name is refused");
+    check(vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644) == nullptr &&
+              vfs::last_error() == SX_ENAMETOOLONG,
+          "a 256-byte name is refused, ENAMETOOLONG");
 
     const char* kMiddle = "/boot/Docs/a directory whose name runs well past the sixty-three bytes the VFS once held";
     check(vfs::mkdir(kSystem, kMiddle, 0755) != nullptr, "a long directory name");

@@ -70,25 +70,29 @@ bool write_user_memory(process::Process& proc, uint64_t user_address, const void
     return true;
 }
 
-bool copy_user_string_from(const process::Process& proc, uint64_t user_address, char* buffer, size_t capacity) {
+sx_status copy_user_path_from(const process::Process& proc, uint64_t user_address, char* buffer, size_t capacity) {
     if (buffer == nullptr || capacity == 0 || user_address == 0) {
-        return false;
+        return SX_EINVAL;
     }
 
     size_t index = 0;
     while (index + 1 < capacity) {
         if (!read_user_memory(proc, &buffer[index], user_address + index, 1, false)) {
             buffer[0] = '\0';
-            return false;
+            return SX_EINVAL;
         }
         if (buffer[index] == '\0') {
-            return true;
+            return kStatusOk;
         }
         ++index;
     }
 
     buffer[capacity - 1] = '\0';
-    return false;
+    return SX_ENAMETOOLONG;
+}
+
+bool copy_user_string_from(const process::Process& proc, uint64_t user_address, char* buffer, size_t capacity) {
+    return copy_user_path_from(proc, user_address, buffer, capacity) == kStatusOk;
 }
 
 bool copy_from_user(void* destination, uint64_t user_address, size_t count) {

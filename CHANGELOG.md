@@ -127,6 +127,9 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **A name or path that is too long fails with `ENAMETOOLONG`** (36, `SX_ENAMETOOLONG`), instead of `EINVAL`: past
+  the 1023 bytes a system call copies, the VFS's 255-byte names, or a format's own limits (SxFS's 63-byte names).
+
 - **Names can be up to 255 bytes, was 63** (`vfs::kMaxPathComponentLength`): FAT's long names are published whole
   instead of being left out. Names of more than 47 bytes are kept on the heap. SxFS keeps its 63-byte format limit.
 

@@ -735,10 +735,24 @@ int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
 // POSIX resolution: relative to the process's current directory. The
 // kernel's (resolve_path_from_root) is the one used when there is no current
 // directory to ask.
-bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
+sx_status resolve_process_path_status(const process::Process& proc, const char* input, char* output,
+                                      size_t capacity) {
     vfs::PathBuffer cwd;
-    return cwd != nullptr && posix::current_directory(proc, cwd, cwd.capacity()) &&
-        vfs::normalize_path(cwd, input, output, capacity);
+    if (cwd == nullptr) {
+        return SX_ENOMEM;
+    }
+    if (!posix::current_directory(proc, cwd, cwd.capacity())) {
+        return SX_EINVAL;
+    }
+    // normalize_path leaves why it failed in last_error.
+    if (!vfs::normalize_path(cwd, input, output, capacity)) {
+        return vfs::last_error() == SX_ENAMETOOLONG ? SX_ENAMETOOLONG : SX_EINVAL;
+    }
+    return sx::kStatusOk;
+}
+
+bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
+    return resolve_process_path_status(proc, input, output, capacity) == sx::kStatusOk;
 }
 
 int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity) {

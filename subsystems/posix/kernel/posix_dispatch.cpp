@@ -48,6 +48,21 @@ void initialize_posix_subsystem() {
     register_posix_process_state();
 }
 
+namespace {
+
+// A path argument: copied from `user` and resolved against the caller's
+// current directory. 0, or the negative error: ENAMETOOLONG for a path or a
+// name past the VFS's limits, EINVAL for one that cannot be read.
+int path_argument(Process& caller, uint64_t user, char* path, char* resolved) {
+    sx_status status = sx::copy_user_path_from(caller, user, path, vfs::kMaxPathLength);
+    if (status == sx::kStatusOk) {
+        status = resolve_process_path_status(caller, path, resolved, vfs::kMaxPathLength);
+    }
+    return status == sx::kStatusOk ? 0 : sx::negative_error(status);
+}
+
+} // namespace
+
 SavedContext* dispatch_posix_syscall(SavedContext* context) {
     if (smp::this_cpu().current == nullptr) {
         return context;
@@ -88,9 +103,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             // Binaries built before modes existed leave rdx undefined, so the
@@ -286,9 +301,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(unlink_path(caller, resolved));
@@ -305,9 +320,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(mkdir_path(caller, resolved, vfs::kDefaultDirectoryPermissions));
@@ -324,9 +339,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(rmdir_path(caller, resolved));
@@ -343,9 +358,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(truncate_path(caller, resolved, context->rsi));
@@ -372,11 +387,12 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, old_path, old_path.capacity()) ||
-                !copy_user_string(caller, context->rsi, new_path, new_path.capacity()) ||
-                !resolve_process_path(caller, old_path, resolved_old, resolved_old.capacity()) ||
-                !resolve_process_path(caller, new_path, resolved_new, resolved_new.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            int bad_path = path_argument(caller, context->rdi, old_path, resolved_old);
+            if (bad_path == 0) {
+                bad_path = path_argument(caller, context->rsi, new_path, resolved_new);
+            }
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(rename_path(caller, resolved_old, resolved_new));
@@ -435,9 +451,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(mkdir_path(
@@ -456,9 +472,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(context->rax == SAVANXP_SYS_CHMOD
@@ -481,9 +497,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(access_path(caller, resolved, static_cast<uint32_t>(context->rsi)));
@@ -501,9 +517,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(
@@ -526,9 +542,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_user_string(caller, context->rdi, path, path.capacity()) ||
-                !resolve_process_path(caller, path, resolved, resolved.capacity())) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            const int bad_path = path_argument(caller, context->rdi, path, resolved);
+            if (bad_path != 0) {
+                context->rax = static_cast<uint64_t>(bad_path);
                 return context;
             }
             context->rax = static_cast<uint64_t>(chdir_path(caller, resolved));

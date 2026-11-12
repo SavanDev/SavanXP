@@ -78,6 +78,8 @@ enum sx_status {
     // A call cut short because its thread is ending (a kill, or an exec of
     // a sibling). The thread never returns to user mode to see it.
     SX_EINTR = 4,
+    // A name or a path longer than the VFS, or the volume's format, takes.
+    SX_ENAMETOOLONG = 36,
 };
 
 // El nombre de POSIX para los mismos numeros, para userland. El kernel nunca
@@ -111,6 +113,7 @@ typedef enum sx_status savanxp_error_code;
 #define SAVANXP_ETIMEDOUT SX_ETIMEDOUT
 #define SAVANXP_ECONNREFUSED SX_ECONNREFUSED
 #define SAVANXP_EINTR SX_EINTR
+#define SAVANXP_ENAMETOOLONG SX_ENAMETOOLONG
 
 
 struct savanxp_stat {

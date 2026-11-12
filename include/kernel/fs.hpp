@@ -60,6 +60,7 @@ enum class Status : uint8_t {
     not_directory,
     is_directory,
     unsupported,   // the driver has no such operation
+    name_too_long, // a name or path past the format's limits
 };
 
 constexpr bool ok(Status status) {

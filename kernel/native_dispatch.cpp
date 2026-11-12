@@ -219,8 +219,14 @@ int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
     if (path == nullptr) {
         return sx::negative_error(SX_ENOMEM);
     }
-    if ((access & ~SXN_FILE_READ) != 0 ||
-        !sx::copy_user_string(path, path.capacity(), user_path) || path[0] != '/') {
+    if ((access & ~SXN_FILE_READ) != 0) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const sx_status copied = sx::copy_user_path_from(proc, user_path, path, path.capacity());
+    if (copied != sx::kStatusOk) {
+        return sx::negative_error(copied);
+    }
+    if (path[0] != '/') {
         return sx::negative_error(SX_EINVAL);
     }
     object::IoObject* file = nullptr;
@@ -239,9 +245,16 @@ int native_write_file(Process& proc, uint64_t user_path, uint64_t user_bytes, si
         return sx::negative_error(SX_ENOMEM);
     }
     uint8_t bytes[SXN_WRITE_FILE_MAX];
-    if (count > sizeof(bytes) || !sx::copy_user_string(path, path.capacity(), user_path) || path[0] != '/' ||
-        (count && !sx::copy_from_user(bytes, user_bytes, count)))
+    if (count > sizeof(bytes)) {
         return sx::negative_error(SX_EINVAL);
+    }
+    const sx_status copied = sx::copy_user_path_from(proc, user_path, path, path.capacity());
+    if (copied != sx::kStatusOk) {
+        return sx::negative_error(copied);
+    }
+    if (path[0] != '/' || (count && !sx::copy_from_user(bytes, user_bytes, count))) {
+        return sx::negative_error(SX_EINVAL);
+    }
     // Check type before a write open can mutate a device or directory.
     vfs::Vnode* node = vfs::open(proc.credentials, path, 0, 0);
     if (node && node->type == vfs::NodeType::directory) return sx::negative_error(SX_EISDIR);

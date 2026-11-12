@@ -936,6 +936,7 @@ char* sx_strerror(int error_number) {
         case ERANGE: return "result out of range";
         case ENOSYS: return "function not implemented";
         case ENOTEMPTY: return "directory not empty";
+        case ENAMETOOLONG: return "file name too long";
         case E2BIG: return "argument list too long";
         case EXDEV: return "cross-device link";
         case EROFS: return "read-only file system";

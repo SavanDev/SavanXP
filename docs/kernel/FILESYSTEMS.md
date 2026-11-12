@@ -314,6 +314,11 @@ is known, what the fix is. The SxFS side is in
   format limits below its mount point: 63-byte names, 255-byte paths. A path is too big for the 32 KiB kernel stack
   more than once or twice: the VFS and the system-call dispatchers keep theirs
   in `vfs::PathBuffer`, on the heap, and a failed allocation is `ENOMEM`.
+- **Too long is `ENAMETOOLONG`, wherever the limit is.** A path a system
+  call copies past 1023 bytes (`sx::copy_user_path_from`), a name past 255 or
+  a path past the VFS's limits (`normalize_path` leaves it in `last_error`),
+  and a name or path past a format's own (`fs::Status::name_too_long`, which
+  SxFS returns past 63-byte names and 255-byte relative paths).
 
 ### Semantics
 

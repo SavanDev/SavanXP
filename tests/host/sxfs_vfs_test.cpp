@@ -173,6 +173,14 @@ void case_errors_are_precise(uint8_t* image) {
     check(!vfs::unlink(kSystem, "/docs") && vfs::last_error() == SX_EISDIR, "unlink of a directory: EISDIR");
     check(!vfs::rmdir(kSystem, "/full") && vfs::last_error() == SX_ENOTEMPTY, "rmdir of a full directory: ENOTEMPTY");
     check(!vfs::rmdir(kSystem, "/docs/hello.txt") && vfs::last_error() == SX_ENOTDIR, "rmdir of a file: ENOTDIR");
+    // 64 bytes: the VFS takes it, SxFS's format (63) does not.
+    const char* kPastSxfs = "/docs/a-name-of-sixty-four-bytes-one-more-than-sxfs-can-store-xxxxxxxx";
+    check(create(kPastSxfs) == nullptr && vfs::last_error() == SX_ENAMETOOLONG,
+          "create of a name past SxFS's 63 bytes: ENAMETOOLONG");
+    check(!vfs::rename(kSystem, "/docs/hello.txt", kPastSxfs) && vfs::last_error() == SX_ENAMETOOLONG,
+          "rename to it: ENAMETOOLONG");
+    check(vfs::mkdir(kSystem, kPastSxfs, 0755) == nullptr && vfs::last_error() == SX_ENAMETOOLONG,
+          "mkdir of it: ENAMETOOLONG");
     check(!vfs::rename(kSystem, "/docs/hello.txt", "/rescue/hello.txt") && vfs::last_error() == SX_EXDEV,
           "rename out of the volume: EXDEV");
 

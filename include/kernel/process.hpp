@@ -371,6 +371,9 @@ int getcwd_path(Process& proc, uint64_t user_buffer, size_t capacity);
 // POSIX-only path resolution: relative to the process's current directory,
 // which lives in the POSIX subsystem's private per-process state.
 bool resolve_process_path(const Process& proc, const char* input, char* output, size_t capacity);
+// The same, saying why it failed: SX_ENAMETOOLONG for a result past the VFS's
+// limits, SX_EINVAL otherwise.
+sx_status resolve_process_path_status(const Process& proc, const char* input, char* output, size_t capacity);
 int readdir_node(Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity);
 int ioctl_handle(Process& proc, uint64_t fd, uint64_t request, uint64_t argument);
 int read_handle(Thread& self, uint64_t fd, uint64_t user_buffer, size_t count);

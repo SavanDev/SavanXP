@@ -626,6 +626,30 @@ bool split_relative_parent(const char* relative, char* parent, size_t parent_cap
     return true;
 }
 
+// Why a path below the volume cannot be one of its entries: longer than the
+// format takes (a name past kMaxDirNameLength, a relative path past
+// kMaxRelativePath: name_too_long), or not a path of this volume (invalid).
+Status unrepresentable_path(Volume& volume, const char* path) {
+    const char* cursor = path != nullptr ? fs::path_below(volume.mount_point, path) : nullptr;
+    if (cursor == nullptr) {
+        return Status::invalid;
+    }
+    while (*cursor == '/') {
+        ++cursor;
+    }
+    if (strlen(cursor) > kMaxRelativePath) {
+        return Status::name_too_long;
+    }
+    size_t component = 0;
+    for (; *cursor != '\0'; ++cursor) {
+        component = *cursor == '/' ? 0 : component + 1;
+        if (component > kMaxDirNameLength) {
+            return Status::name_too_long;
+        }
+    }
+    return Status::invalid;
+}
+
 bool join_relative_path(const char* parent, const char* leaf, char* out, size_t capacity) {
     const size_t parent_length = parent != nullptr ? strlen(parent) : 0;
     const size_t leaf_length = leaf != nullptr ? strlen(leaf) : 0;
@@ -2455,7 +2479,7 @@ Status create_status(const char* path, bool directory, const vfs::Ownership* own
     char leaf[64] = {};
     if (!parse_relative_path(*volume, path, relative, sizeof(relative)) ||
         !split_relative_parent(relative, parent_relative, sizeof(parent_relative), leaf, sizeof(leaf))) {
-        return Status::invalid;
+        return unrepresentable_path(*volume, path);
     }
     if (find_record_by_relative_path(*volume, relative) != nullptr) {
         return Status::exists;
@@ -2705,8 +2729,10 @@ Status rename_status(const char* old_path, const char* new_path, bool keep_repla
     char new_parent_relative[256] = {};
     char new_leaf[64] = {};
     if (!parse_relative_path(*volume, new_path, new_relative, sizeof(new_relative)) ||
-        !split_relative_parent(new_relative, new_parent_relative, sizeof(new_parent_relative), new_leaf, sizeof(new_leaf)) ||
-        strcmp(target->path, new_relative) == 0) {
+        !split_relative_parent(new_relative, new_parent_relative, sizeof(new_parent_relative), new_leaf, sizeof(new_leaf))) {
+        return unrepresentable_path(*volume, new_path);
+    }
+    if (strcmp(target->path, new_relative) == 0) {
         return Status::invalid;
     }
 
