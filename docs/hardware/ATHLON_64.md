@@ -21,7 +21,7 @@ kernel from a DVD. From there this is the target with the most in its way:
 - the wall clock is not trustworthy on this CPU as the kernel chooses it
   today, on a dual-core part in particular (HW-9);
 - the disk controller is almost certainly not AHCI (HW-3);
-- there is no USB (HW-2);
+- USB has only run in QEMU (HW-2);
 - memory may be too small for the LiveCD's RAM volume (HW-12);
 - audio is likely an AC'97 controller the driver would mishandle (HW-7).
 
@@ -96,7 +96,7 @@ for this target.
 | --- | --- | --- | --- |
 | Firmware | Legacy BIOS (Award, AMI, Phoenix) | Limine BIOS from a DVD. Booting from a USB stick depends on the firmware offering "USB-HDD" with INT 13h extensions | — |
 | Disks | PATA for most disks and every optical drive. SATA as an IDE-class or RAID-class function on nForce4/MCP51/MCP61, SB400, VIA and SiS. AHCI only on SB600, later MCPs and VT8251, each with quirks | **Probably no disk.** The legacy-port ATA driver reaches a PATA disk only where the firmware left the channel in compatibility mode, and then in PIO | HW-3, HW-4 |
-| USB | OHCI and EHCI (NVIDIA, ATI, ULi, SiS) or UHCI and EHCI (VIA) | **No USB**, and no card to fix it on a board without PCIe. PS/2 keyboard and mouse | HW-2 |
+| USB | OHCI and EHCI (NVIDIA, ATI, ULi, SiS) or UHCI and EHCI (VIA) | EHCI, OHCI and UHCI drivers, run only in QEMU. PS/2 keyboard and mouse as a fallback | HW-2 |
 | Audio | AC'97 on the older boards: NVIDIA (ICH-like), ATI IXP on SB400, VIA VT823x, SiS 7012, with Realtek ALC650/655/850 codecs. HD Audio on MCP51 and later, SB600, VT8237A/VT8251 | `ac97.cpp` binds any AC'97-class function and drives it as an Intel ICH. That is close on NVIDIA and SiS and **wrong on ATI and VIA**. HD Audio lacks the ATI and NVIDIA quirks | HW-7, HW-6 |
 | Ethernet | NVIDIA's own MAC on nForce; **Realtek RTL8139/8100C** on many ATI, VIA, SiS and OEM boards; RTL8110S/8169 or RTL8111B; VIA Rhine or Velocity; SiS 900; Marvell or Broadcom on early enthusiast boards | An RTL8139 (`10ec:8139`) should work with the existing driver. Anything else: no network | HW-15, HW-1 |
 | Input | Two PS/2 ports | Works with the existing driver | — |
@@ -105,7 +105,7 @@ for this target.
 | Memory | 256 MiB to 4 GiB; 512 MiB to 2 GiB is typical, less what the graphics core borrows | Below 1 GiB the LiveCD's 256 MiB volume leaves too little. Build a smaller one, or install | HW-12 |
 
 On a board with PCI slots only, the RTL8139 card is still the cheap way to a
-network. A board with a PCIe x1 slot (most AM2 ones) also takes an xHCI card.
+network.
 
 ## Work for this target
 
@@ -123,7 +123,7 @@ network. A board with a PCIe x1 slot (most AM2 ones) also takes an xHCI card.
    and every SATA controller here that is not AHCI.
 6. **HW-12.** With a disk driver, an installed system removes the memory
    problem.
-7. **HW-2**, EHCI then OHCI or UHCI by chipset.
+7. **HW-2** on metal, whichever companion the chipset has.
 8. **Audio and network**, per the controllers the unit has.
 
 Steps 2, 4, 5 and 7 are the same code the

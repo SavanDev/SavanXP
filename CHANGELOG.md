@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **USB on machines from before xHCI: EHCI, UHCI and OHCI drivers, with EHCI handing low- and full-speed devices to
+  its companions.** Keyboards, mice, hubs and sticks as on xHCI; device lines now name the controller (`usb: uhci1 port 2`).
+  `tools/run_qemu.py --usb-host`, and `uhci-smoke`, `ehci-stick-smoke`, `ohci-hotplug-smoke` and the rest. See [USB_HOST_CONTROLLERS.md](docs/kernel/USB_HOST_CONTROLLERS.md).
+
 - **The boot log says which machine it ran on: `boot:` (firmware and loader), `cpu:` (vendor, family, model, stepping,
   brand, features) and one `pci:` line per function.** Log Viewer never drops the boot lines, so they are readable on a
   machine without a serial port. See [REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md#reading-the-log-on-the-machine).

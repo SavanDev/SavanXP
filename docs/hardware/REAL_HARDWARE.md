@@ -21,8 +21,8 @@ interchangeable:
 | --- | --- | --- | --- |
 | AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop on the firmware framebuffer, USB keyboard and mouse, analog audio in and out. No Ethernet, NVMe or native Vega driver |
 | Intel Pentium 4, Compaq Evo N1020v | [PENTIUM4_EVO_N1020V.md](PENTIUM4_EVO_N1020V.md) | `legacy` (i386) | Cannot run `master`: no long mode, no NX. The i386 port on `legacy` boots, mounts SxFS and runs one ring 3 program in QEMU |
-| AMD Athlon II + chipset graphics | [ATHLON_II.md](ATHLON_II.md) | `master` | Not run. **Expected** to reach the desktop with PS/2 input; no USB, no network |
-| Intel Core 2 Duo + chipset graphics | [CORE2_DUO.md](CORE2_DUO.md) | `master` | Not run. **Expected** to reach the desktop with PS/2 input; no USB, no network |
+| AMD Athlon II + chipset graphics | [ATHLON_II.md](ATHLON_II.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and OHCI, run only in QEMU; no network |
+| Intel Core 2 Duo + chipset graphics | [CORE2_DUO.md](CORE2_DUO.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and UHCI, run only in QEMU; no network |
 | AMD Athlon 64 + chipset graphics | [ATHLON_64.md](ATHLON_64.md) | `master` | Not run. The oldest CPU `master` can boot; storage, USB and the wall clock all need work first |
 
 Only the first two machines have been inventoried. The other three are known
@@ -49,7 +49,7 @@ boot; a machine that fails a soft one boots with something missing.
 | Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The ISO's boot entries ask Limine for `1024x768x32`, a VESA mode every video BIOS offers; the development configuration keeps `1280x800x32`, which the QEMU scenarios click against. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
 | Memory | The LiveCD root is a 256 MiB SxFS volume Limine loads into RAM as a module, next to the kernel and the initramfs. The floor has not been measured; 1 GiB is the least worth trying | `SAVANXP_ISO_SECTORS` in `CMakeLists.txt` |
 | Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. No NVMe, no ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/usb/umass.cpp` |
-| USB | xHCI only. A machine whose ports hang off EHCI, UHCI or OHCI has no USB | [USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md) |
+| USB | xHCI, EHCI, UHCI and OHCI. Low speed and split transactions have not been run: QEMU cannot show them | [USB_HOST_CONTROLLERS.md](../kernel/USB_HOST_CONTROLLERS.md) |
 | Input | PS/2 (8042) keyboard and mouse, or USB HID behind xHCI | `kernel/ps2.cpp`, [INPUT.md](../kernel/INPUT.md) |
 | Network | Realtek RTL8139 (`10ec:8139`) and nothing else | `kernel/rtl8139.cpp` |
 | Audio | HD Audio: any class `04/03` controller, with the PCI quirk of one (`1022:1457`). AC'97: any class `04/01` function, driven as an Intel ICH. No HDMI or DisplayPort audio | [AZALIA.md](../kernel/AZALIA.md), `kernel/ac97.cpp` |
@@ -102,7 +102,7 @@ as `azalia` and the xHCI quirks were.
 | # | Work | Size | Ryzen | Athlon II | Core 2 | Athlon 64 | Pentium 4 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | **needed** | likely | common | some | — |
-| HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | **needed** | **needed** | **needed** | **needed** |
+| HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | done in QEMU; run it | done in QEMU; run it | done in QEMU; run it | `legacy` has none |
 | HW-3 | PCI IDE: native-mode BARs, bus-master DMA, 48-bit LBA | M | — | unless AHCI is selected | **needed** on ICH7 | **needed** | **needed** |
 | HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | **needed** | useful | useful | on SB600 | — |
 | HW-5 | NVMe | M | **needed** to install | — | — | — | — |
@@ -137,30 +137,24 @@ this tree records, so that card is also its first test on metal.
 
 Every machine before about 2012 routes its ports to an EHCI controller for
 high speed and to UHCI (Intel, VIA) or OHCI (AMD, ATI, NVIDIA, ALi, SiS)
-companions for low and full speed. With xHCI alone such a machine has no USB
-keyboard, mouse or stick once the kernel is running.
+companions for low and full speed. With xHCI alone such a machine had no USB
+keyboard, mouse or stick once the kernel was running.
 
-`kernel/usb/` was built for this: the core reaches controllers through an
-interface of its own, so a second controller driver does not touch HID, hubs
-or mass storage ([USB_ROADMAP.md](../roadmaps/done/USB_ROADMAP.md), "Where the
-code lives"). Order that pays soonest:
+**Done in QEMU** (2026-11-12): EHCI, UHCI and OHCI drivers beside xHCI, all
+polled, with EHCI handing low- and full-speed devices to its companions
+([USB_HOST_CONTROLLERS.md](../kernel/USB_HOST_CONTROLLERS.md)). Keyboards
+behind a hub, a stick, and hot plug pass on each (`uhci-smoke`,
+`ohci-stick-smoke`, `ehci-hotplug-smoke` and the rest). Log:
+`ehci: 0:1d.7 8086:293a, 6 ports, 3 companions`, `uhci: 0:1d.0 8086:2934 at
+I/O 0x66a0, 2 ports`, `ohci: 0:3.0 106b:3f, revision 10, 4 ports`, and
+`ehci: port 3: full-speed device, handed to the companion`.
 
-1. **EHCI.** Sticks and anything behind a USB 2.0 hub, on every old machine
-   regardless of vendor. Needs split transactions for low and full speed
-   devices behind a hub's transaction translator.
-2. **UHCI** or **OHCI**, whichever the machine at hand has: keyboards and mice
-   plugged straight into a root port.
-
-Reference: OpenBSD `ehci(4)`, `uhci(4)`, `ohci(4)`, and the BIOS handoff in
-`ehci_pci.c`. All three are polled, like the xHCI driver.
-
-Two workarounds exist today, neither verified. A legacy BIOS with "USB legacy
-support" emulates a PS/2 keyboard from a USB one for as long as no driver
-takes the controllers, and the kernel never touches them; whether the
-emulation survives `ps2.cpp`'s controller reset and self-test is a property of
-each firmware. And on a desktop with a PCIe slot, an add-in xHCI card gives
-working USB ports with the driver that exists; only AMD's own controllers have
-been run on metal.
+**Left for the machines:** low-speed devices (every QEMU device is full or
+high speed, a real keyboard or mouse is usually low), split transactions
+behind a high-speed hub (QEMU has none), the real firmware handoff, and the
+chipsets' quirks. A driver that takes a controller ends the firmware's PS/2
+emulation of a USB keyboard on it; if USB then fails, the ISO's *no USB* entry
+(`nousb`) leaves every controller to the firmware.
 
 ### HW-3 — PCI IDE
 
@@ -377,11 +371,12 @@ the ones a run is read for:
 | `pci:` | Every function: `bus:slot.function vendor:device [subsystem] class.subclass.prog_if rev irq` -- the `lspci -nn` of the run |
 | `timer:`, `timer-stats:` | Which clocks were chosen; lost ticks every two seconds |
 | `fb_gpu:`, `boot ready:` | The video mode Limine got; usable memory |
+| `ehci:`, `uhci:`, `ohci:`, `xhci:`, `usb:` | Each USB controller started, ports handed to a companion, and every device with its controller, port and speed (`usb: uhci1 port 2 ... low-speed`) |
 
 Problems gathers the lines that read like errors. To take the log away, File >
 Save Log... writes it to any volume that is mounted; the LiveCD's own volume
 is lost at reboot, so mount a FAT partition from Disk Management first (on a
-disk the kernel can drive: AHCI, or USB behind xHCI). Otherwise photograph the
+disk the kernel can drive: AHCI, or a USB stick). Otherwise photograph the
 screen. Without a desktop, from any shell on the text console, `logview
 --print` prints the same, and `logview --print pci` only one prefix. If the
 boot stops before either, the **boot log on screen** entry is what is left.

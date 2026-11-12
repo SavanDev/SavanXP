@@ -21,11 +21,6 @@ namespace {
 using usb::Device;
 using usb::Speed;
 
-// PCI class of an xHCI controller: serial bus, USB, xHCI interface.
-constexpr uint8_t kClassSerialBus = 0x0c;
-constexpr uint8_t kSubclassUsb = 0x03;
-constexpr uint8_t kProgIfXhci = 0x30;
-
 constexpr uint16_t kVendorIntel = 0x8086;
 // Intel's EHCI/xHCI port switching (8 Series and later): which ports the
 // firmware may hand over, and the registers that hand them over.
@@ -33,13 +28,6 @@ constexpr uint8_t kIntelXusb2pr = 0xd0;
 constexpr uint8_t kIntelXusb2prm = 0xd4;
 constexpr uint8_t kIntelUsb3Pssen = 0xd8;
 constexpr uint8_t kIntelUsb3prm = 0xdc;
-// PCI power management capability: PMCSR bits 0-1 are the power state.
-constexpr uint8_t kPciCapabilityPowerManagement = 0x01;
-
-constexpr uint8_t kPciCommandOffset = 0x04;
-constexpr uint16_t kPciCommandMemory = 1u << 1;
-constexpr uint16_t kPciCommandBusMaster = 1u << 2;
-constexpr uint16_t kPciCommandInterruptDisable = 1u << 10;
 
 // Capability registers.
 constexpr uint32_t kCapLength = 0x00;
@@ -256,12 +244,10 @@ void write64(volatile uint8_t* base, uint32_t offset, uint64_t value) {
     write32(base, offset + 4, static_cast<uint32_t>(value >> 32));
 }
 
-uint64_t now_ms() {
-    return timer::monotonic_ns() / 1000000u;
-}
+using usb::hc::now_ms;
 
 Controller& controller_of(const Device& device) {
-    return g_controllers[device.controller];
+    return g_controllers[usb::hc::local_index(device.controller)];
 }
 
 DeviceState& state_of(const Device& device) {
@@ -695,24 +681,6 @@ bool set_up_memory(Controller& controller) {
     return true;
 }
 
-// A controller the firmware left in a low-power state answers every read
-// with all ones: bring it to D0 first (PCI PM 1.2, 10 ms to recover from D3).
-void power_up(const pci::DeviceInfo& info) {
-    uint8_t capability = 0;
-    if (!pci::find_capability(info, kPciCapabilityPowerManagement, capability)) {
-        return;
-    }
-    const uint8_t pmcsr = static_cast<uint8_t>(capability + 4);
-    const uint16_t control = pci::read_config_u16(info.bus, info.slot, info.function, pmcsr);
-    if ((control & 0x3u) == 0) {
-        return;
-    }
-    console::printf("xhci: %x:%x.%u was in D%u, waking it\n", static_cast<unsigned>(info.bus),
-        static_cast<unsigned>(info.slot), static_cast<unsigned>(info.function), static_cast<unsigned>(control & 0x3u));
-    pci::write_config_u16(info.bus, info.slot, info.function, pmcsr, static_cast<uint16_t>(control & ~0x3u));
-    usb::delay_ms(10);
-}
-
 // Intel 8 Series and later boot with their USB 2 and USB 3 ports routed to
 // the EHCI controller; the firmware says which may move to xHCI, and this
 // moves them (OpenBSD's xhci_pci_port_route).
@@ -740,11 +708,7 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
         console::write_line("xhci: cannot map the registers");
         return false;
     }
-    uint16_t pci_command = pci::read_config_u16(info.bus, info.slot, info.function, kPciCommandOffset);
-    pci_command = static_cast<uint16_t>(pci_command | kPciCommandMemory | kPciCommandBusMaster |
-        kPciCommandInterruptDisable);
-    pci::write_config_u16(info.bus, info.slot, info.function, kPciCommandOffset, pci_command);
-    power_up(info);
+    usb::hc::prepare_pci(info, "xhci", false);
 
     controller.cap = static_cast<volatile uint8_t*>(base);
     if (read32(controller.cap, kHccParams1) == 0xffffffffu) {
@@ -864,29 +828,12 @@ uint32_t context_entries_of(const Controller& controller, const DeviceState& sta
 
 } // namespace
 
-namespace usb::hc {
+namespace usb::xhci {
 
-size_t initialize() {
-    g_controller_count = 0;
-    if (!pci::ready()) {
-        return 0;
-    }
-    for (size_t index = 0; index < pci::device_count() && g_controller_count < kMaxControllers; ++index) {
-        pci::DeviceInfo info = {};
-        if (!pci::device_info(index, info) || info.class_code != kClassSerialBus || info.subclass != kSubclassUsb ||
-            info.prog_if != kProgIfXhci) {
-            continue;
-        }
-        if (start_controller(info, g_controllers[g_controller_count])) {
-            ++g_controller_count;
-        }
-    }
-    return g_controller_count;
-}
+using hc::InterruptCallback;
+using hc::kMaxBulkBytes;
 
-size_t controller_count() {
-    return g_controller_count;
-}
+void disable_device(Device& device);
 
 size_t port_count(uint8_t controller) {
     return controller < g_controller_count ? g_controllers[controller].ports : 0;
@@ -1234,10 +1181,43 @@ bool submit_interrupt(Device& device, uint8_t address, uint16_t length, Interrup
     return true;
 }
 
-void poll() {
-    for (size_t index = 0; index < g_controller_count; ++index) {
-        drain(g_controllers[index]);
-    }
+void poll(uint8_t index) {
+    drain(g_controllers[index]);
 }
 
-} // namespace usb::hc
+const hc::ControllerOps kOps = {
+    "xhci",
+    &port_count,
+    &port_connected,
+    &reset_port,
+    &take_port_changes,
+    &port_events_pending,
+    &enable_device,
+    &set_max_packet0,
+    &disable_device,
+    &set_hub,
+    &control,
+    &add_endpoint,
+    &bulk,
+    &reset_endpoint,
+    &submit_interrupt,
+    &poll,
+};
+
+size_t start() {
+    g_controller_count = 0;
+    for (size_t index = 0; index < pci::device_count() && g_controller_count < kMaxControllers; ++index) {
+        pci::DeviceInfo info = {};
+        if (!pci::device_info(index, info) || info.class_code != hc::kClassSerialBus ||
+            info.subclass != hc::kSubclassUsb || info.prog_if != hc::kProgIfXhci) {
+            continue;
+        }
+        if (start_controller(info, g_controllers[g_controller_count]) &&
+            hc::add_controller(kOps, static_cast<uint8_t>(g_controller_count))) {
+            ++g_controller_count;
+        }
+    }
+    return g_controller_count;
+}
+
+} // namespace usb::xhci

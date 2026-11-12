@@ -218,7 +218,11 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/usb/hub.cpp
     kernel/usb/umass.cpp
     kernel/usb/usb.cpp
+    kernel/usb/hc.cpp
     kernel/usb/xhci.cpp
+    kernel/usb/ehci.cpp
+    kernel/usb/uhci.cpp
+    kernel/usb/ohci.cpp
     kernel/virtio_blk.cpp
     kernel/partition.cpp
     kernel/fs.cpp

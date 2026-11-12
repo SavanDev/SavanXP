@@ -13,9 +13,9 @@ the machine before trusting any of it.
 
 The CPU meets every hard requirement, and the instruction set is not a
 concern. From a DVD or a USB stick the ISO should reach the desktop through
-Limine's BIOS path, at a VBE mode, with a PS/2 keyboard and mouse. What it
-will not have: USB of any kind, a network, and disks if the firmware's SATA
-mode is IDE. One defect can make the machine unusable before any of that
+Limine's BIOS path, at a VBE mode, with a PS/2 keyboard and mouse, and USB
+through the EHCI and OHCI drivers, which have only run in QEMU. What it will
+not have: a network, and disks if the firmware's SATA mode is IDE. One defect can make the machine unusable before any of that
 matters -- the local APIC timer under C1E -- and it is the first thing to
 check.
 
@@ -92,16 +92,15 @@ native display driver.
 | Firmware | Legacy BIOS; UEFI only on the last 8- and 9-series boards | Limine BIOS, DVD or `dd`-written stick | — |
 | SATA | SB700, SB710, SB750 or SB850. One controller with a firmware setting: IDE (`1002:4390`), AHCI (`1002:4391`) or RAID | **Set it to AHCI** and the existing driver should find the disks. In native IDE mode the legacy-port ATA driver does not reach them | HW-3, HW-4 |
 | PATA | One channel on the south bridge (`1002:439c`) | Not driven unless the firmware leaves it at the legacy ports | HW-3 |
-| USB | OHCI companions (`1002:4397`, `4398`, `4399`) and EHCI (`1002:4396`). xHCI only as a separate chip on some late boards | **No USB.** A PS/2 keyboard and mouse are required | HW-2 |
+| USB | OHCI companions (`1002:4397`, `4398`, `4399`) and EHCI (`1002:4396`). xHCI only as a separate chip on some late boards | EHCI and OHCI drivers, run only in QEMU: low-speed keyboards and mice and the firmware handoff are first seen here. A PS/2 keyboard as a fallback, with `nousb` | HW-2 |
 | Analog audio | SB7x0 HD Audio `1002:4383` with a Realtek codec: ALC662, ALC887, ALC888, ALC892 | The controller attaches without the SBx00 snooping quirk; sound is unverified. A board with an ALC892 has the one codec that has been heard | HW-6 |
 | Ethernet | Realtek RTL8111 (`10ec:8168`) on most boards; RTL8101/8102 (`10ec:8136`) or Atheros on some; NVIDIA's own MAC on nForce boards | No network | HW-1, HW-15 |
 | Input | PS/2 port, often one shared keyboard/mouse connector | Works with the existing driver | — |
 | Timers | HPET and the ACPI PM timer present | HPET unused. The wall clock is the PM timer if 32 bits wide, the TSC otherwise; both are sound here | HW-9 |
 | Memory | 2 to 8 GiB of DDR2 or DDR3 | Enough for the LiveCD | — |
 
-Two stopgaps with hardware that costs almost nothing, neither verified: a PCI
-RTL8139 card is a network with the driver that exists, and a PCIe xHCI card is
-USB ports with the stack that exists.
+A stopgap with hardware that costs almost nothing, not verified: a PCI
+RTL8139 card is a network with the driver that exists.
 
 ## Work for this target
 
@@ -113,8 +112,8 @@ USB ports with the stack that exists.
 3. **HW-6.** The SBx00 row of `azalia_configure_pci`, then the codec.
 4. **HW-1.** Most likely the same Realtek family as the development host, so
    this arrives with the work done there.
-5. **HW-2**, EHCI then OHCI. This is what turns the machine from a
-   demonstration with a PS/2 keyboard into one that takes a USB stick.
+5. **HW-2** on metal: the `ehci:` and `ohci:` lines, a USB keyboard (likely
+   low speed, which QEMU never showed), a stick at high speed.
 6. **HW-3**, for firmware that cannot be switched to AHCI and for the PATA
    channel.
 7. **HW-11**, the mode choice first; AtomBIOS mode setting only if the VBE

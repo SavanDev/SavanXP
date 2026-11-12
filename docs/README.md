@@ -44,6 +44,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`INPUT.md`](kernel/INPUT.md) — the input layer: how drivers register, why
   registration order decides which keyboard and pointer win, and the keyboard
   core that turns set 1 key positions into keys, text and modifiers.
+- [`USB_HOST_CONTROLLERS.md`](kernel/USB_HOST_CONTROLLERS.md) — xHCI, EHCI, UHCI and OHCI
+  behind one controller table: start order, taking them from the firmware,
+  EHCI's companion routing, each one's schedule, and what QEMU cannot test.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
@@ -206,7 +209,7 @@ all its phases have landed; the links to it move with it.
   layer and its planned role in the desktop stack.
 - [`SXGL_ROADMAP.md`](roadmaps/done/SXGL_ROADMAP.md) — why the 3D layer sits beside SxGFX, the
   design it was built against, and how its batches landed.
-- [`USB_ROADMAP.md`](roadmaps/done/USB_ROADMAP.md) — the USB stack: xHCI only and polled,
+- [`USB_ROADMAP.md`](roadmaps/done/USB_ROADMAP.md) — the USB stack: xHCI first and polled,
   HID, mass storage, hubs and hot plug, what was copied from OpenBSD and what
   was only read, the QEMU harness, and the run on real hardware.
 

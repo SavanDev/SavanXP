@@ -18,6 +18,10 @@ void initialize(const boot::BootInfo& boot_info);
 bool ready();
 bool allocate_page(PageAllocation& allocation);
 bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation);
+// A run that ends at or below `limit`: DMA for devices that address only
+// 32 bits (UHCI, OHCI, most EHCI) passes kDma32Limit.
+bool allocate_contiguous_pages_below(uint64_t page_count, uint64_t limit, PageAllocation& allocation);
+constexpr uint64_t kDma32Limit = 1ull << 32;
 bool free_pages(uint64_t physical_address, uint64_t page_count);
 bool free_allocation(const PageAllocation& allocation);
 uint64_t total_page_count();

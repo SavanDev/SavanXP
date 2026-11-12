@@ -209,8 +209,9 @@ namespace
     // USB before input and storage: its class drivers register keyboards,
     // pointers and disks like any other driver (docs/roadmaps/done/USB_ROADMAP.md).
     boot_screen::show("Starting USB");
-    // `nousb` leaves the xHCI controllers to the firmware: the way to boot a
-    // machine whose controller the driver cannot handle.
+    // `nousb` leaves every USB controller to the firmware, and with it a
+    // legacy BIOS's PS/2 emulation of a USB keyboard: the way to boot a
+    // machine whose controller the drivers cannot handle.
     if (boot::has_option(boot_info.cmdline, "nousb"))
     {
         console::write_line("usb: disabled by the nousb boot option");

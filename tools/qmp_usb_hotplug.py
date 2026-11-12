@@ -8,8 +8,9 @@ saw; then it types kbd-smoke's keys. They can only reach kbdtest through the
 keyboard plugged in after boot, so the guest's own PASS proves the HID half,
 and the log lines checked here prove the storage half.
 
-The serial log comes from SAVANXP_SMOKE_SERIAL_LOG, which run_smoke.py sets
-for its callbacks.
+The serial log comes from SAVANXP_SMOKE_SERIAL_LOG, and the bus to plug into
+from SAVANXP_SMOKE_USB_BUS (xhci.0 by default), which run_smoke.py sets for
+its callbacks.
 """
 
 from __future__ import annotations
@@ -68,6 +69,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
     log = Path(os.environ["SAVANXP_SMOKE_SERIAL_LOG"])
+    bus = os.environ.get("SAVANXP_SMOKE_USB_BUS", "xhci.0")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stick = args.out_dir / "hotstick.img"
     with stick.open("wb") as handle:
@@ -79,7 +81,12 @@ def main() -> int:
             keyboards = count(log, "usb-hid: keyboard on")
             client.execute("device_del", {"id": "usbkbd"})
             wait_for(log, "627:1 removed", 1)
-            client.execute("device_add", {"driver": "usb-kbd", "bus": "xhci.0", "id": "usbkbd2"})
+            # On EHCI a full-speed keyboard, which the EHCI hands to a
+            # companion controller while the system runs.
+            keyboard = {"driver": "usb-kbd", "bus": bus, "id": "usbkbd2"}
+            if bus.startswith("ehci"):
+                keyboard["usb_version"] = 1
+            client.execute("device_add", keyboard)
             wait_for(log, "usb-hid: keyboard on", keyboards + 1)
             print("qmp_usb_hotplug: keyboard pulled out and plugged in again", flush=True)
 
@@ -94,7 +101,7 @@ def main() -> int:
             )
             client.execute(
                 "device_add",
-                {"driver": "usb-storage", "bus": "xhci.0", "drive": "hotstick", "id": "hotstick",
+                {"driver": "usb-storage", "bus": bus, "drive": "hotstick", "id": "hotstick",
                  "serial": "SXHOT0"},
             )
             wait_for(log, f"serial \"SXHOT0\", {STICK_MIB * 2048} sectors", 1)

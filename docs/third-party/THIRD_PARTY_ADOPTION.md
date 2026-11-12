@@ -105,6 +105,7 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
 - `tcp_input.c`: read-only, for retransmission timers, sliding window and close
   states. Coupled to mbuf, not portable
 - USB drivers: `xhci.c`, `xhci_pci.c` (BIOS handoff and vendor quirks),
+  `ehci.c`, `ehci_pci.c`, `uhci.c`, `uhci_pci.c`, `ohci.c`, `ohci_pci.c`,
   `uhub.c`, `umass.c`, `usb_quirks.c` and the HID keyboard and mouse drivers.
   Coupled to `autoconf`, `bus_dma` and interrupt-driven sleeping, so they are
   read, not ported

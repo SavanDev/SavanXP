@@ -60,13 +60,18 @@ to change shape:
 
 ## Decisions
 
-### xHCI only, until a machine asks for more
+### xHCI first, the older controllers when a machine asks for them
 
 xHCI covers low, full, high and super speed on one controller, so one driver
 reaches every device on a modern machine. Older machines route USB 1.1 and
 2.0 ports to UHCI/OHCI plus EHCI companions, which is three drivers and a
 routing problem. The [Compaq](../../hardware/PENTIUM4_EVO_N1020V.md) is one of those machines, but
-it cannot run master at all, so it does not drive this decision.
+it cannot run master at all, so it did not drive this decision.
+
+**Later:** the Athlon II and Core 2 Duo targets did
+([REAL_HARDWARE.md](../../hardware/REAL_HARDWARE.md), HW-2). EHCI, UHCI and
+OHCI drivers now sit beside xHCI behind one controller table
+([USB_HOST_CONTROLLERS.md](../../kernel/USB_HOST_CONTROLLERS.md)).
 
 ### Polled, no interrupts
 
@@ -86,6 +91,11 @@ device table), `hid.cpp` (keyboard and pointer), `umass.cpp` (mass storage),
 plus the copied OpenBSD headers with their notices. The USB core sees
 controllers through a small interface of its own, so EHCI could be added later
 without touching HID or storage.
+
+**Later:** that interface is now `hc.cpp`'s table, and `ehci.cpp`,
+`uhci.cpp` and `ohci.cpp` were added behind it without touching HID, hubs or
+storage ([USB_HOST_CONTROLLERS.md](../../kernel/USB_HOST_CONTROLLERS.md)).
+Device lines name the controller since: `usb: xhci0 port 5 ...`.
 
 ### HID: boot protocol first
 
@@ -377,7 +387,9 @@ kernel does see; the run did not touch them.
 
 ## Out of scope
 
-- EHCI, OHCI, UHCI, until a target machine needs them.
+- ~~EHCI, OHCI, UHCI, until a target machine needs them.~~ Done for the
+  Athlon II and Core 2 Duo targets
+  ([USB_HOST_CONTROLLERS.md](../../kernel/USB_HOST_CONTROLLERS.md)).
 - Isochronous transfers: audio, webcams.
 - UAS, USB 3 streams, power management, selective suspend.
 - Booting or installing the system from USB. The ISO already boots from a
@@ -390,4 +402,5 @@ kernel does see; the run did not touch them.
   delivering every event twice.
 - Whether HID polling at the timer tick is good enough for a mouse at 1000 Hz,
   or whether the event ring needs draining more often.
-- Whether EHCI is ever needed: the first target machine has only xHCI.
+- ~~Whether EHCI is ever needed: the first target machine has only xHCI.~~
+  The older targets needed it; it exists.

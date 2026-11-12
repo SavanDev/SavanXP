@@ -42,8 +42,30 @@ void free_device(Device& device) {
     device.generation = generation;
 }
 
-// "1" for a root port, "1.3" for port 3 of a hub on root port 1.
+// "uhci1 port 1" for root port 1 of the second UHCI controller, "uhci1 port
+// 1.3" for port 3 of a hub on that root port.
 void format_path(const Device& device, char* out, size_t capacity) {
+    size_t prefix = 0;
+    const char* name = usb::hc::controller_name(device.controller);
+    for (size_t i = 0; name[i] != 0 && prefix + 1 < capacity; ++i) {
+        out[prefix++] = name[i];
+    }
+    unsigned local = usb::hc::local_index(device.controller);
+    char index_digits[4] = {};
+    size_t digit_count = 0;
+    do {
+        index_digits[digit_count++] = static_cast<char>('0' + local % 10);
+        local /= 10;
+    } while (local != 0 && digit_count < sizeof(index_digits));
+    while (digit_count > 0 && prefix + 1 < capacity) {
+        out[prefix++] = index_digits[--digit_count];
+    }
+    for (const char* text = " port "; *text != 0 && prefix + 1 < capacity; ++text) {
+        out[prefix++] = *text;
+    }
+    out += prefix;
+    capacity -= prefix;
+
     char reversed[32] = {};
     size_t length = 0;
     const Device* node = &device;
@@ -311,17 +333,17 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
         }
     }
 
-    char path[24] = {};
+    char path[40] = {};
     format_path(device, path, sizeof(path));
     if (!hc::enable_device(device)) {
-        console::printf("usb: port %s: cannot address the device\n", path);
+        console::printf("usb: %s: cannot address the device\n", path);
         free_device(device);
         return nullptr;
     }
     // A full-speed device's endpoint 0 may take more than 8 bytes; the
     // first 8 bytes of the descriptor say how many.
     if (get_descriptor(device, kDescriptorDevice, 0, &device.descriptor, 8) != status_ok) {
-        console::printf("usb: port %s: no device descriptor\n", path);
+        console::printf("usb: %s: no device descriptor\n", path);
         hc::disable_device(device);
         free_device(device);
         return nullptr;
@@ -333,7 +355,7 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
     }
     if (get_descriptor(device, kDescriptorDevice, 0, &device.descriptor, sizeof(device.descriptor)) != status_ok ||
         !read_configuration(device)) {
-        console::printf("usb: port %s: cannot read the descriptors\n", path);
+        console::printf("usb: %s: cannot read the descriptors\n", path);
         hc::disable_device(device);
         free_device(device);
         return nullptr;
@@ -344,7 +366,7 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
     setup.request = kRequestSetConfiguration;
     setup.value = configuration.configuration_value;
     if (hc::control(device, setup, nullptr) != status_ok) {
-        console::printf("usb: port %s: SET_CONFIGURATION failed\n", path);
+        console::printf("usb: %s: SET_CONFIGURATION failed\n", path);
         hc::disable_device(device);
         free_device(device);
         return nullptr;
@@ -352,7 +374,7 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
 
     char product[48] = {};
     usb::read_string(device, device.descriptor.product_index, product, sizeof(product));
-    console::printf("usb: port %s %x:%x class %x %s-speed \"%s\"\n", path,
+    console::printf("usb: %s %x:%x class %x %s-speed \"%s\"\n", path,
         static_cast<unsigned>(device.descriptor.vendor_id), static_cast<unsigned>(device.descriptor.product_id),
         static_cast<unsigned>(device.descriptor.device_class), speed_name(speed), product);
     offer_interfaces(device);
@@ -373,9 +395,9 @@ void detach(Device& device) {
             driver->detach(device);
         }
     }
-    char path[24] = {};
+    char path[40] = {};
     format_path(device, path, sizeof(path));
-    console::printf("usb: port %s: %x:%x removed\n", path, static_cast<unsigned>(device.descriptor.vendor_id),
+    console::printf("usb: %s: %x:%x removed\n", path, static_cast<unsigned>(device.descriptor.vendor_id),
         static_cast<unsigned>(device.descriptor.product_id));
     hc::disable_device(device);
     free_device(device);

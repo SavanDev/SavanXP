@@ -7,6 +7,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/physical_memory.hpp"
+
+namespace pci {
+struct DeviceInfo;
+}
+
 namespace usb {
 
 // The xHCI default speed IDs (PORTSC bits 10-13, slot context bits 20-23).
@@ -222,11 +228,15 @@ void read_string(Device& device, uint8_t index, char* out, size_t capacity);
 int get_descriptor(Device& device, uint8_t type, uint8_t index, void* buffer, uint16_t length);
 int clear_halt(Device& device, uint8_t endpoint_address);
 
-// The host controller (xhci.cpp). Every call is synchronous unless it says
-// otherwise, and completes by polling the controller's event ring.
+// The host controllers (hc.cpp), whatever their kind: xHCI, EHCI, UHCI or
+// OHCI. `controller` is the index in hc.cpp's table, which Device::controller
+// holds. Every call is synchronous unless it says otherwise, and completes by
+// polling the controller.
 namespace hc {
 
-// Finds and starts every xHCI controller. Returns how many started.
+// Finds and starts every controller: xHCI, then EHCI, then the UHCI and OHCI
+// companions, so that an EHCI controller has its ports before its companions
+// look at theirs. Returns how many started.
 size_t initialize();
 size_t controller_count();
 size_t port_count(uint8_t controller);
@@ -275,10 +285,86 @@ using InterruptCallback = void (*)(Device& device, uint8_t endpoint_address, int
     const uint8_t* data, uint32_t length);
 bool submit_interrupt(Device& device, uint8_t endpoint_address, uint16_t length, InterruptCallback callback);
 
-// Drains every controller's event ring: completes interrupt reads and
-// records port changes.
+// Drains every controller's event ring or schedule: completes interrupt
+// reads and records port changes.
 void poll();
 
+// What a controller driver gives hc.cpp. `local` is the driver's own index of
+// the controller; calls about a device find it from Device::controller with
+// local_index(). Each entry has the meaning of the hc:: function of that name.
+struct ControllerOps {
+    const char* name;
+    size_t (*port_count)(uint8_t local);
+    bool (*port_connected)(uint8_t local, uint8_t port);
+    Speed (*reset_port)(uint8_t local, uint8_t port);
+    uint64_t (*take_port_changes)(uint8_t local, bool all);
+    bool (*port_events_pending)(uint8_t local);
+    bool (*enable_device)(Device& device);
+    bool (*set_max_packet0)(Device& device, uint16_t max_packet);
+    void (*disable_device)(Device& device);
+    bool (*set_hub)(Device& device);
+    int (*control)(Device& device, const SetupPacket& setup, void* data, uint32_t* actual);
+    bool (*add_endpoint)(Device& device, const EndpointDescriptor& endpoint, uint8_t max_burst);
+    int (*bulk)(Device& device, uint8_t endpoint_address, void* buffer, uint32_t length, uint32_t* actual,
+        uint32_t timeout_ms);
+    bool (*reset_endpoint)(Device& device, uint8_t endpoint_address);
+    bool (*submit_interrupt)(Device& device, uint8_t endpoint_address, uint16_t length,
+        InterruptCallback callback);
+    void (*poll)(uint8_t local);
+};
+
+// Eight UHCI or OHCI and two EHCI on a 2008 south bridge, and room for xHCI.
+constexpr size_t kMaxControllers = 16;
+
+// Called by a driver's start() for each controller it brought up.
+bool add_controller(const ControllerOps& ops, uint8_t local);
+uint8_t local_index(uint8_t controller);
+// "xhci", "ehci", "uhci" or "ohci", for the log.
+const char* controller_name(uint8_t controller);
+
+} // namespace hc
+
+// The controller drivers. start() finds and starts every controller of its
+// kind and adds each to hc.cpp's table; it returns how many it started.
+namespace xhci {
+size_t start();
+}
+namespace ehci {
+size_t start();
+}
+namespace uhci {
+size_t start();
+}
+namespace ohci {
+size_t start();
+}
+
+// What the PCI-side drivers share (hc.cpp).
+namespace hc {
+// PCI class of a USB controller: serial bus, USB; the programming interface
+// says which kind.
+constexpr uint8_t kClassSerialBus = 0x0c;
+constexpr uint8_t kSubclassUsb = 0x03;
+constexpr uint8_t kProgIfUhci = 0x00;
+constexpr uint8_t kProgIfOhci = 0x10;
+constexpr uint8_t kProgIfEhci = 0x20;
+constexpr uint8_t kProgIfXhci = 0x30;
+
+// Memory or I/O decode and bus mastering on, the interrupt line off (every
+// driver here polls), and the function brought to D0 if the firmware left it
+// in a low-power state. `name` prefixes the log line.
+void prepare_pci(const pci::DeviceInfo& info, const char* name, bool io_space);
+// Zeroed pages below 4 GiB, for the controllers that address only 32 bits.
+bool allocate_dma32(size_t pages, memory::PageAllocation& allocation);
+void release_dma(memory::PageAllocation& allocation);
+uint64_t now_ms();
+
+// For the controllers without device slots (EHCI, UHCI, OHCI): picks a free
+// address on the device's controller and sends SET_ADDRESS to address 0
+// through the controller's own control(); Device::slot then holds the
+// address. The driver must already know endpoint 0's packet size.
+bool assign_address(Device& device);
+void release_address(Device& device);
 } // namespace hc
 
 } // namespace usb

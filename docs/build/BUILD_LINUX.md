@@ -210,8 +210,9 @@ the system two different ways, and only one of them belongs to each path:
 The ISO's menu waits 3 seconds and has two more entries for real hardware,
 where there is no serial port: **SavanXP (boot log on screen)** passes
 `verbose`, which leaves the kernel log on screen instead of the splash, and
-**SavanXP (no USB, boot log on screen)** adds `nousb`, which leaves the xHCI
-controllers to the firmware. The kernel reads them from the entry's `cmdline:`
+**SavanXP (no USB, boot log on screen)** adds `nousb`, which leaves every USB
+controller (xHCI, EHCI, UHCI, OHCI) to the firmware, and with it a legacy
+BIOS's PS/2 emulation of a USB keyboard. The kernel reads them from the entry's `cmdline:`
 (`boot::has_option`) and logs what it got as `boot: options "..."`.
 
 In the development path the module was pure overhead. `kernel_main.cpp` registers

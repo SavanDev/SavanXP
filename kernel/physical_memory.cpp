@@ -145,6 +145,12 @@ bool allocate_page(PageAllocation& allocation) {
 }
 
 bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation) {
+    return allocate_contiguous_pages_below(page_count, ~0ull, allocation);
+}
+
+// Regions are sorted by address and each allocation is carved from the bottom
+// of the first that fits, so this hands out the lowest free run.
+bool allocate_contiguous_pages_below(uint64_t page_count, uint64_t limit, PageAllocation& allocation) {
     if (!g_ready || page_count == 0) {
         return false;
     }
@@ -152,6 +158,9 @@ bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation) 
     const uint64_t byte_count = page_count * kPageSize;
     for (size_t index = 0; index < g_region_count; ++index) {
         FreeRegion& region = g_regions[index];
+        if (region.base >= limit || region.base + byte_count > limit) {
+            break;
+        }
         if ((region.end - region.base) < byte_count) {
             continue;
         }

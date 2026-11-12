@@ -21,7 +21,7 @@ from smoke_profile import reset_display_preferences, reset_audio_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
 from audio_wav import verify_tone, verify_duplex, verify_recording, verify_preferences
-from run_qemu import USB_POINTERS, build_qemu_args, find_qemu, prepare_image
+from run_qemu import USB_HOSTS, USB_POINTERS, build_qemu_args, usb_host_devices, find_qemu, prepare_image
 
 
 def _die_with_parent() -> None:
@@ -119,7 +119,7 @@ def make_smoke_copy(source: Path, destination: Path, sxfs_cli: Path) -> None:
         raise
 
 
-def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str) -> None:
+def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str, usb_host: str) -> None:
     """Run a port-owned one-shot QMP action at the guest ready token."""
     output_dir = log_dir / f"{run_tag}-callback"
     command = [
@@ -130,8 +130,13 @@ def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str
         "--out-dir",
         str(output_dir),
     ]
-    # The guest's serial log, for a callback that checks what the guest saw.
-    environment = dict(os.environ, SAVANXP_SMOKE_SERIAL_LOG=str(log_dir / f"{run_tag}.serial.log"))
+    # The guest's serial log, for a callback that checks what the guest saw,
+    # and the bus of the USB host controller, for one that plugs devices in.
+    environment = dict(
+        os.environ,
+        SAVANXP_SMOKE_SERIAL_LOG=str(log_dir / f"{run_tag}.serial.log"),
+        SAVANXP_SMOKE_USB_BUS=usb_host_devices(usb_host)[1],
+    )
     try:
         result = subprocess.run(
             command,
@@ -217,6 +222,8 @@ def main() -> int:
                              "PS/2 mouse a tablet would take the clicks (run_qemu.USB_POINTERS).")
     parser.add_argument("--usb-hub", action="store_true",
                         help="Put the USB keyboard and pointer behind a usb-hub.")
+    parser.add_argument("--usb-host", choices=USB_HOSTS, default="xhci",
+                        help="The USB host controller --usb uses (run_qemu.USB_HOSTS).")
     parser.add_argument("--no-ps2", action="store_true",
                         help="Boot without the 8042 PS/2 controller (i8042=off), so input can "
                              "only arrive through the other devices.")
@@ -361,6 +368,7 @@ def main() -> int:
         ps2=not args.no_ps2,
         usb_pointer=args.usb_pointer,
         usb_hub=args.usb_hub,
+        usb_host=args.usb_host,
     )
     qemu_args[0] = qemu
 
@@ -466,7 +474,8 @@ def main() -> int:
                                 try:
                                     if args.qmp_callback:
                                         run_qmp_callback(
-                                            args.qmp_callback.resolve(), qmp_path, log_dir, run_tag
+                                            args.qmp_callback.resolve(), qmp_path, log_dir, run_tag,
+                                            args.usb_host,
                                         )
                                     else:
                                         with QmpClient(qmp_path) as client:

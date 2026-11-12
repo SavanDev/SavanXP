@@ -44,6 +44,41 @@ DISK_BUSES = ("ahci", "ide")
 # relative moves to the mouse but buttons to whichever pointer it last
 # activated, and the tablet reports a click at its own position.
 USB_POINTERS = ("tablet", "mouse")
+# The USB host controller --usb puts the devices on. ehci is an ICH9 EHCI
+# with its three UHCI companions, as on a Core 2 board: high-speed devices
+# stay on EHCI, the rest are handed to a UHCI. ehci-ohci gives the same EHCI
+# two OHCI companions instead, as on an AMD board. (QEMU's plain usb-ehci
+# takes no companions.)
+USB_HOSTS = ("xhci", "ehci", "ehci-ohci", "uhci", "ohci")
+
+
+def usb_host_devices(usb_host: str) -> tuple[list[str], str]:
+    """The -device arguments of a USB host controller and its bus name."""
+    if usb_host == "xhci":
+        return ["-device", "qemu-xhci,id=xhci"], "xhci.0"
+    if usb_host == "uhci":
+        return ["-device", "piix3-usb-uhci,id=uhci"], "uhci.0"
+    if usb_host == "ohci":
+        return ["-device", "pci-ohci,id=ohci,num-ports=4"], "ohci.0"
+    if usb_host == "ehci":
+        devices = ["-device", "ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on"]
+        for index in range(3):
+            devices += [
+                "-device",
+                f"ich9-usb-uhci{index + 1},masterbus=ehci.0,firstport={index * 2},"
+                f"addr=1d.{index},multifunction=on",
+            ]
+        return devices, "ehci.0"
+    if usb_host == "ehci-ohci":
+        devices = ["-device", "ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on"]
+        for index in range(2):
+            devices += [
+                "-device",
+                f"pci-ohci,masterbus=ehci.0,firstport={index * 3},num-ports=3,"
+                f"addr=1d.{index},multifunction=on",
+            ]
+        return devices, "ehci.0"
+    raise SystemExit(f"unknown USB host {usb_host!r}; expected one of {', '.join(USB_HOSTS)}")
 
 # The window QEMU shows. GTK is the default: it scales and has menus. Its pointer
 # grab cannot confine the host pointer on a Wayland session, so a game that
@@ -98,6 +133,7 @@ def build_qemu_args(
     ps2: bool = True,
     usb_pointer: str = "tablet",
     usb_hub: bool = False,
+    usb_host: str = "xhci",
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -113,9 +149,10 @@ def build_qemu_args(
     scenarios that need a disk of their own to write (Disk Management's). The
     serial is how the guest tells them from the system's disk.
 
-    usb adds an xHCI controller with a keyboard and a pointer on it (a tablet,
-    or a relative mouse with usb_pointer="mouse"); usb_stick
-    adds a raw image as a USB mass-storage device on the same controller
+    usb adds a USB host controller (xHCI unless usb_host says otherwise, see
+    USB_HOSTS) with a keyboard and a pointer on it (a tablet, or a relative
+    mouse with usb_pointer="mouse"); usb_stick adds a raw image as a USB
+    mass-storage device on the same controller
     (docs/roadmaps/done/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
     usb_xhci_* trace events to PATH.
     """
@@ -226,8 +263,9 @@ def build_qemu_args(
             "-device",
             "VGA,edid=on,xres=1280,yres=800",
         ]
+    host_devices, usb_bus = usb_host_devices(usb_host)
     if usb or usb_stick is not None:
-        args_list += ["-device", "qemu-xhci,id=xhci"]
+        args_list += host_devices
         trace_path = os.environ.get("SAVANXP_USB_TRACE")
         if trace_path:
             args_list += ["-trace", f"enable=usb_xhci_*,file={trace_path}"]
@@ -238,19 +276,19 @@ def build_qemu_args(
         # on root port 1.
         hub_ports = (",port=1.1", ",port=1.2") if usb_hub else ("", "")
         if usb_hub:
-            args_list += ["-device", "usb-hub,bus=xhci.0,port=1,id=usbhub"]
+            args_list += ["-device", f"usb-hub,bus={usb_bus},port=1,id=usbhub"]
         args_list += [
             "-device",
-            f"usb-kbd,bus=xhci.0,id=usbkbd{hub_ports[0]}",
+            f"usb-kbd,bus={usb_bus},id=usbkbd{hub_ports[0]}",
             "-device",
-            f"usb-{usb_pointer},bus=xhci.0,id=usb{usb_pointer}{hub_ports[1]}",
+            f"usb-{usb_pointer},bus={usb_bus},id=usb{usb_pointer}{hub_ports[1]}",
         ]
     if usb_stick is not None:
         args_list += [
             "-drive",
             f"if=none,id=usbstick,media=disk,format=raw,file={usb_stick}",
             "-device",
-            "usb-storage,bus=xhci.0,drive=usbstick,id=usbstorage,serial=SXUSB0",
+            f"usb-storage,bus={usb_bus},drive=usbstick,id=usbstorage,serial=SXUSB0",
         ]
     if wav_path is not None:
         audio1 = f"wav,id=audio1,path={wav_path}"
@@ -345,6 +383,8 @@ def main() -> int:
                         help="the pointer --usb adds (default: tablet)")
     parser.add_argument("--usb-stick", type=Path,
                         help="attach this raw image as a USB mass-storage device")
+    parser.add_argument("--usb-host", choices=USB_HOSTS, default="xhci",
+                        help="the USB host controller --usb uses (default: xhci)")
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
@@ -383,6 +423,7 @@ def main() -> int:
         usb=args.usb,
         usb_stick=args.usb_stick.resolve() if args.usb_stick else None,
         usb_pointer=args.usb_pointer,
+        usb_host=args.usb_host,
     )
     args_list[0] = qemu
 

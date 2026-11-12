@@ -30,8 +30,9 @@ On a Core Duo, Limine stops with *"This CPU does not support 64-bit mode."*
 The CPU meets every hard requirement. The one firmware setting that could make
 it look as if it does not, the XD bit, the kernel now undoes (HW-10). The ISO should reach the desktop
 through Limine's BIOS path at a VBE mode, with PS/2 input -- the built-in
-keyboard on a laptop. It will not have USB, most likely no network, and on
-the most common desktop south bridge of the period no AHCI either. Of the
+keyboard on a laptop -- and USB through EHCI and UHCI, which have only run in
+QEMU. It will most likely have no network, and on the most common desktop
+south bridge of the period no AHCI either. Of the
 three older targets this is the one where native graphics mode setting is
 most within reach.
 
@@ -94,7 +95,7 @@ No acceleration.
 | Firmware | Legacy BIOS | Limine BIOS, DVD or `dd`-written stick | — |
 | SATA | ICH7 (945, G31, G41): IDE mode only on the plain desktop part (`8086:27c0`); AHCI on ICH7R and ICH7-M (`27c1`, `27c5`). ICH8, ICH9, ICH10: AHCI on most variants (`2821`, `2922`, `3a22`), often shipped set to IDE | In AHCI mode the existing driver should work. In IDE mode the disks answer at the legacy ports only if the firmware chose "compatible" or "combined", and then in PIO | HW-3 |
 | PATA | ICH7 has one channel; later ones need an extra chip | As above | HW-3 |
-| USB | Four to six UHCI controllers and one or two EHCI | **No USB.** Desktop: PS/2 keyboard and mouse. Laptop: the built-in keyboard is PS/2 | HW-2 |
+| USB | Four to six UHCI controllers and one or two EHCI | EHCI and UHCI drivers, run only in QEMU on this very layout (ICH9: an EHCI and three UHCI at `00:1d`). Low-speed keyboards and mice and the firmware handoff are first seen here. A laptop's built-in keyboard is PS/2 either way | HW-2 |
 | Audio | HD Audio on ICH7 and later (`8086:27d8`, `284b`, `293e`, `3a3e`). Codecs by vendor: Realtek ALC66x/88x on retail boards, IDT/SigmaTel on Dell and HP, Analog Devices on ThinkPads, Conexant on many laptops. AC'97 (`8086:27de`) on some 945 boards | The controller attaches without Intel's traffic-class quirk; no codec of these has been heard | HW-6, HW-7 |
 | Ethernet | Intel 82566/82567 or 8257x on Intel and business boards; Realtek RTL8111 (`10ec:8168`) or RTL8101 (`10ec:8136`) on consumer boards and laptops; Broadcom on Dell and HP; Marvell or Atheros on some | No network | HW-1, HW-15 |
 | Pointer, laptop | Synaptics or ALPS pad on the 8042's second port | Unverified; a pad that rejects the init sequence leaves no pointer | HW-8 |
@@ -102,8 +103,8 @@ No acceleration.
 | Battery, lid, brightness, fan policy | Embedded controller through ACPI | None. The fan keeps its firmware default | HW-14 |
 | Memory | 1 to 8 GiB | The LiveCD wants 1 GiB at the least | HW-12 |
 
-The stopgaps of the other desktops apply to a desktop here too: a PCI RTL8139
-card for a network, a PCIe xHCI card for USB. A laptop has neither slot.
+The stopgap of the other desktops applies to a desktop here too: a PCI
+RTL8139 card for a network. A laptop has no slot for it.
 
 ## Work for this target
 
@@ -114,7 +115,8 @@ card for a network, a PCIe xHCI card for USB. A laptop has neither slot.
 2. **HW-10** on metal: whether `cpu: XD was disabled by the firmware` appeared,
    with the firmware setting it was booted with.
 3. **HW-3.** On an ICH7 desktop this is the only way to a disk.
-4. **HW-2**, EHCI then UHCI.
+4. **HW-2** on metal: `ehci:` and `uhci:` lines, a USB keyboard (likely low
+   speed, which QEMU never showed), a stick at high speed.
 5. **HW-6**: Intel's row of `azalia_configure_pci`, then the codec the unit
    has.
 6. **HW-1 or HW-15**, whichever controller the unit has.

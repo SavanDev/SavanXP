@@ -42,6 +42,7 @@ class Scenario:
     no_ps2: bool = False
     usb_pointer: str = "mouse"
     usb_hub: bool = False
+    usb_host: str = "xhci"
 
 
 def _qemu_scenario(
@@ -75,6 +76,7 @@ def _qemu_scenario(
     no_ps2: bool = False,
     usb_pointer: str = "mouse",
     usb_hub: bool = False,
+    usb_host: str = "xhci",
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -107,6 +109,7 @@ def _qemu_scenario(
         no_ps2=no_ps2,
         usb_pointer=usb_pointer,
         usb_hub=usb_hub,
+        usb_host=usb_host,
     )
 
 
@@ -474,6 +477,42 @@ SCENARIOS: dict[str, Scenario] = {
         no_ps2=True,
         usb_hub=True,
     ),
+    # usb-hub-smoke on the controllers that came before xHCI
+    # (docs/hardware/REAL_HARDWARE.md, HW-2). On ehci and ehci-ohci the
+    # full-speed hub is handed by the EHCI to one of its UHCI or OHCI
+    # companions.
+    **{
+        f"{host}-smoke": _qemu_scenario(
+            "kbdtest",
+            "KBD SMOKE PASS",
+            "KBD SMOKE FAIL",
+            f"USB keyboard behind a USB hub on {host.upper()}",
+            180.0,
+            "KBD SMOKE READY",
+            "kbd",
+            usb=True,
+            no_ps2=True,
+            usb_hub=True,
+            usb_host=host,
+        )
+        for host in ("uhci", "ohci", "ehci", "ehci-ohci")
+    },
+    # diskmgmt-smoke's FAT stick on the same controllers: bulk transfers. On
+    # ehci the stick stays on the EHCI, at high speed.
+    **{
+        f"{host}-stick-smoke": _qemu_scenario(
+            "diskmgmt-selftest",
+            "DISKMGMT SMOKE PASS",
+            "DISKMGMT SMOKE FAIL",
+            f"Disk Management with its FAT USB stick on {host.upper()}",
+            timeout=300.0,
+            extra_disk_mib=64,
+            fat_disk_mib=16,
+            usb_stick_mib=16,
+            usb_host=host,
+        )
+        for host in ("uhci", "ohci", "ehci")
+    },
     # kbd-smoke's keys, typed on a USB keyboard plugged in after the old one
     # was pulled out; a stick is plugged in and pulled out on the way
     # (tools/qmp_usb_hotplug.py checks the guest's log for it).
@@ -488,6 +527,24 @@ SCENARIOS: dict[str, Scenario] = {
         usb=True,
         no_ps2=True,
     ),
+    # usb-hotplug-smoke on EHCI, where the new keyboard is handed to a UHCI
+    # companion and the stick stays at high speed, and on OHCI. Both find
+    # port changes by reading the ports, with no event ring.
+    **{
+        f"{host}-hotplug-smoke": _qemu_scenario(
+            "kbdtest",
+            "KBD SMOKE PASS",
+            "KBD SMOKE FAIL",
+            f"USB keyboard and stick plugged in and pulled out on {host.upper()}",
+            180.0,
+            "KBD SMOKE READY",
+            qmp_callback="./tools/qmp_usb_hotplug.py",
+            usb=True,
+            no_ps2=True,
+            usb_host=host,
+        )
+        for host in ("ohci", "ehci", "ehci-ohci")
+    },
     # pointer-smoke's moves and click on a machine whose only pointer is
     # QEMU's usb-tablet: absolute positions through the HID report parser.
     "usb-pointer-smoke": _qemu_scenario(
@@ -876,6 +933,7 @@ def main() -> int:
             "no_ps2",
             "usb_pointer",
             "usb_hub",
+            "usb_host",
         ),
         required=False,
     )
