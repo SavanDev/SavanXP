@@ -1,6 +1,7 @@
 # Win32 subsystem — Windows applications on Sx
 
-> **Status: design settled, implementation not started (2026-11-10).** The
+> **Status: design settled; W0 complete (2026-11-12); implementation not
+> started.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -372,22 +373,19 @@ the exports of `cards.dll`, the resources with each dialog's controls and
 each bitmap format, and the scan for what the design assumes is absent:
 loads of FS, `int 0x2e`, `sysenter`, a TLS directory, delay imports.
 
-**Remaining:**
+**Done (2026-11-12):** the run-time trace under Wine and the reference
+captures from Windows XP, in the same document. 113 of the 124 imports are
+called, and the profile classifies each by the phase that first needs it.
+The trace settled the three open questions: mouse play never reaches
+`SetCursorPos`, only keyboard play does; the game-number dialog and its edit
+control are never created; and the currency symbol comes from the program's
+own registry key, where it is absent, so `$` is built in. It also found a
+fourth guest callback, the timer procedure given to `SetTimer`, and showed
+that every card face and back on Windows XP equals the `cards.dll` bitmap
+decoded on the host.
 
-- A relay trace of the same files under Wine on a build host, from start-up
-  through a game, the Deck and Options dialogs, About and exit. It marks each
-  function as needed at start-up, needed in play, or reachable only from a
-  feature declared out of scope, and lists the raster operations, window
-  messages, system metrics, stock objects and registry values actually used.
-- Reference captures from Windows XP in a virtual machine: the main window,
-  each menu and dialog, all card faces and backs, and the victory animation.
-- Three decisions the trace settles: whether mouse play reaches
-  `SetCursorPos` (the desktop has no request to move the pointer), whether
-  the edit control of the hidden game-number dialog is in scope, and how the
-  currency format for Vegas scoring is read.
-
-Help is out of scope. `LoadLibraryA` of `hhctrl.ocx` fails and `WinHelpW`
-reports failure, which the program handles with its own message.
+Help is out of scope. `F1` fails to load the HTML Help control, and the
+program reports it with its own message box.
 
 **Done when:** the profile also carries that classification, the run-time
 lists and the reference captures.
@@ -462,8 +460,9 @@ Size L.
 The resource loader (find, load and size; bitmaps, strings, icons, cursors,
 accelerators), device-independent to device bitmaps in both header formats
 and at the three depths `cards.dll` contains, memory device contexts, `BitBlt`, `StretchBlt` and `PatBlt` with the
-raster operations the trace lists, brushes and pens, clipping, saved device
-context state, and pixel access.
+raster operations the trace lists (`SRCCOPY`, `PATCOPY`, `BLACKNESS`, and
+`R2_NOT` and `R2_COPYPEN` for lines), brushes and pens, clipping, saved
+device context state, and pixel access.
 
 **Done when:** a fixture written here loads the user's **original
 `cards.dll`** and draws every face, every back and the special cards through
@@ -482,8 +481,8 @@ owned windows, the modal loop, dialog units from the font, and the controls
 the templates contain. The inventory lists them: push and default buttons,
 automatic check boxes, radio buttons that the program checks itself, group
 boxes, left- and right-aligned static text, and **owner-drawn buttons**, which
-the Deck dialog uses for its twelve card backs. The edit control only if the
-trace puts the game-number dialog in scope. `MessageBoxW`, `ShellAboutW` in
+the Deck dialog uses for its twelve card backs. No edit control: the only
+dialog that has one is never created. `MessageBoxW`, `ShellAboutW` in
 `shell32`, and `InitCommonControlsEx` in a `comctl32` that registers no
 class. There is no status bar control: Solitaire draws its own.
 
@@ -540,9 +539,7 @@ commit.
 **Order of work.** Each line is one or more commits that leave the tree
 green; none needs the one after it.
 
-1. W0, the rest of the inventory: the run-time trace and the reference
-   captures. No code in the tree; it needs the user's files and Wine on a
-   build host.
+1. W0, the inventory. Done on 2026-11-12; it left no code in the tree.
 2. W1, host half: `subsystems/win32/pe/` with its host tests, the fixture
    build (`lld-link` in CMake discovery), and the host harness that runs
    `hello.exe` on the build host. No kernel change.
@@ -666,10 +663,10 @@ them.
 
 | Risk | Effect | Answer |
 | --- | --- | --- |
-| The run-time trace shows behaviour the import list hides: a message, a raster operation or a metric that is costly | A phase grows | The static surface is fixed at 124 functions; the trace is taken before W3 starts |
+| The run-time trace shows behaviour the import list hides: a message, a raster operation or a metric that is costly | A phase grows | Taken at W0: three raster operations and two line modes, no system metrics, one timer procedure. The static surface stays 124 functions |
 | `winhost` grows past `0x01000000`, where `sol.exe` must load | The load fails | Asserted at load and in the build. If it ever does not fit, `winhost` is linked above the guest range instead |
 | A later program reloads FS | Its TEB access faults | Solitaire does not. The fix is a per-thread descriptor, a known extension of K1 |
-| Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | Decided from the trace: a neutral `windowd` request with its own consumer, or a stated limit of the first profile |
+| Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | The W0 trace confirms only keyboard play calls it; mouse play is complete without it. Chosen at W3: a neutral `windowd` request with its own consumer, or a stated limit of the first profile |
 | 64 views are not enough | The load fails cleanly | Count at W1; coalesce protection runs; raise the limit with its test |
 | Pixel comparison is too strict across font or metric differences | False failures | Compare card art and geometry exactly, text regions by layout; record each tolerance |
 | The work turns into an API catalogue | The goal recedes | The matrix is the scope. A function without a consumer in it is not written |
