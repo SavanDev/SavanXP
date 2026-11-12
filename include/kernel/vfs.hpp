@@ -15,7 +15,9 @@ namespace vfs {
 // A whole path, its terminating NUL included. It was 256 until names past 63
 // bytes (VFS-C slice 4): a 255-byte name did not fit in a path.
 constexpr size_t kMaxPathLength = 1024;
-constexpr size_t kMaxPathComponentLength = 64;
+// One name, its NUL included: 255 bytes, as FAT's long names (FatFs hands
+// out up to FF_LFN_BUF bytes of UTF-8) and NAME_MAX in the SDK.
+constexpr size_t kMaxPathComponentLength = 256;
 
 // A path-sized buffer on the kernel heap, freed when it goes out of scope. A
 // system call nests its dispatcher, the VFS, a driver and FatFs on a 32 KiB

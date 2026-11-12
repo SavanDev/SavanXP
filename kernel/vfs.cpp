@@ -16,9 +16,14 @@ constexpr size_t kDynamicFileCapacity = 16384;
 // Components in one path: a 1 KiB path of short names can be deep.
 constexpr size_t kMaxNormalizedPathComponents = 64;
 
+// Names up to this many bytes (the NUL included) live in the slot; longer
+// ones, up to kMaxNameLength, on the heap at their own size. Most names are
+// short, and 2048 slots of 256 bytes each would be half a megabyte.
+constexpr size_t kInlineNameLength = 48;
+
 struct NodeSlot {
     vfs::Vnode vnode;
-    char name[kMaxNameLength];
+    char name[kInlineNameLength];
 };
 
 struct DynamicFile {
@@ -72,7 +77,39 @@ bool parse_hex_u32(const char* text, size_t count, uint32_t& value_out) {
     return true;
 }
 
+// Gives back a name kept on the heap. The slot's vnode.name is left alone.
+void release_name(NodeSlot& slot) {
+    if (slot.vnode.name != nullptr && slot.vnode.name != slot.name) {
+        heap::free(const_cast<char*>(slot.vnode.name));
+    }
+}
+
+// Where a name of `length` bytes will live in `slot`: the slot itself, or a
+// new heap string. nullptr when it is too long or the heap is out.
+char* name_storage(NodeSlot& slot, size_t length) {
+    if (length >= kMaxNameLength) {
+        return nullptr;
+    }
+    if (length < kInlineNameLength) {
+        return slot.name;
+    }
+    return static_cast<char*>(heap::allocate(length + 1, 1));
+}
+
 int add_node(vfs::NodeType type, const char* name, int parent) {
+    const size_t name_length = strlen(name);
+    if (name_length >= kMaxNameLength) {
+        return -1;
+    }
+    // A long name is allocated before a slot is taken, so a full heap takes
+    // nothing.
+    char* heap_name = nullptr;
+    if (name_length >= kInlineNameLength) {
+        heap_name = static_cast<char*>(heap::allocate(name_length + 1, 1));
+        if (heap_name == nullptr) {
+            return -1;
+        }
+    }
     int node_index = -1;
     if (g_free_nodes >= 0) {
         node_index = g_free_nodes;
@@ -81,6 +118,7 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     } else if (g_node_count < kMaxNodes) {
         node_index = static_cast<int>(g_node_count++);
     } else {
+        heap::free(heap_name);
         return -1;
     }
 
@@ -88,10 +126,11 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     const uint32_t generation = slot.vnode.content_generation;
     memset(&slot, 0, sizeof(slot));
     slot.vnode.content_generation = generation;
-    strcpy(slot.name, name);
+    char* storage = heap_name != nullptr ? heap_name : slot.name;
+    memcpy(storage, name, name_length + 1);
     slot.vnode.type = type;
     slot.vnode.backend = vfs::Backend::memory;
-    slot.vnode.name = slot.name;
+    slot.vnode.name = storage;
     slot.vnode.parent = parent;
     slot.vnode.first_child = -1;
     slot.vnode.next_sibling = -1;
@@ -400,16 +439,33 @@ bool is_mount_point(const char* path) {
     return fs::find(path) != fs::kInvalidMount;
 }
 
-bool set_node_name(int index, const char* name) {
+// A rename's new name in two steps, so that nothing can fail once the driver
+// has changed the disk: reserve_name finds where it will live (allocating it
+// when it is long), adopt_name puts it there, drop_name gives back what was
+// reserved for a rename that did not happen.
+char* reserve_name(int index, const char* name) {
     if (index < 0 || static_cast<size_t>(index) >= g_node_count || name == nullptr) {
-        return false;
+        return nullptr;
     }
-    if (strlen(name) >= kMaxNameLength) {
-        return false;
+    return name_storage(g_nodes[index], strlen(name));
+}
+
+void adopt_name(int index, char* storage, const char* name) {
+    NodeSlot& slot = g_nodes[index];
+    // The old name may be on the heap: copy the new one first, then let the
+    // old one go (when it is not where the new one now lives).
+    const char* old = slot.vnode.name;
+    memcpy(storage, name, strlen(name) + 1);
+    slot.vnode.name = storage;
+    if (old != nullptr && old != slot.name && old != storage) {
+        heap::free(const_cast<char*>(old));
     }
-    strcpy(g_nodes[index].name, name);
-    g_nodes[index].vnode.name = g_nodes[index].name;
-    return true;
+}
+
+void drop_name(int index, char* storage) {
+    if (storage != nullptr && storage != g_nodes[index].name) {
+        heap::free(storage);
+    }
 }
 
 void detach_node(int index) {
@@ -490,6 +546,7 @@ bool node_has_valid_children(const vfs::Vnode& node) {
 // A slot cleared for reuse. Its content generation is kept and moved on.
 void clear_slot(int index) {
     const uint32_t generation = g_nodes[index].vnode.content_generation + 1u;
+    release_name(g_nodes[index]);
     memset(&g_nodes[index], 0, sizeof(g_nodes[index]));
     g_nodes[index].vnode.type = vfs::NodeType::invalid;
     g_nodes[index].vnode.parent = -1;
@@ -784,6 +841,11 @@ bool is_memory_path(const char* path) {
 }
 
 void initialize(const void* archive, size_t size) {
+    // A second initialize (the host tests boot the VFS over and over) gives
+    // back the long names of the first.
+    for (size_t index = 0; index < g_node_count; ++index) {
+        release_name(g_nodes[index]);
+    }
     memset(g_nodes, 0, sizeof(g_nodes));
     memset(g_dynamic_files, 0, sizeof(g_dynamic_files));
     g_node_count = 0;
@@ -1586,7 +1648,7 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         // Two spellings of one name: the /disk alias, nothing to do; or, on
         // a volume that folds case, a new case for the same name, which is
         // a rename that replaces nothing.
-        if (strcmp(g_nodes[node_index].name, leaf_name) == 0) {
+        if (strcmp(g_nodes[node_index].vnode.name, leaf_name) == 0) {
             return true;
         }
         replaced_index = -1;
@@ -1666,31 +1728,37 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         keep_replaced = held;
     }
 
-    // Everything the tree needs is checked: once the driver succeeds, moving
-    // the node cannot fail, so the disk never gets ahead of the tree.
+    // Everything the tree needs is checked, and the new name's room taken:
+    // once the driver succeeds, moving the node cannot fail, so the disk
+    // never gets ahead of the tree.
+    char* name_storage_reserved = reserve_name(node_index, leaf_name);
+    if (name_storage_reserved == nullptr) {
+        g_last_error = SX_ENOMEM;
+        return false;
+    }
     if (on_volume) {
         if (volume.driver->rename == nullptr) {
+            drop_name(node_index, name_storage_reserved);
             g_last_error = kNoWriteOperation;
             return false;
         }
         // The driver gets the names as the tree spells them (spelled_path).
         PathBuffer spelled_old;
-        if (spelled_old == nullptr) {
-            g_last_error = SX_ENOMEM;
-            return false;
-        }
         PathBuffer spelled_new;
-        if (spelled_new == nullptr) {
+        if (spelled_old == nullptr || spelled_new == nullptr) {
+            drop_name(node_index, name_storage_reserved);
             g_last_error = SX_ENOMEM;
             return false;
         }
         if (!path_of_node(node, spelled_old, spelled_old.capacity()) ||
             !spelled_path(new_parent, leaf_name, spelled_new, spelled_new.capacity())) {
+            drop_name(node_index, name_storage_reserved);
             g_last_error = SX_EINVAL;
             return false;
         }
         const fs::Status renamed = volume.driver->rename(volume.volume, spelled_old, spelled_new, keep_replaced);
         if (!fs::ok(renamed)) {
+            drop_name(node_index, name_storage_reserved);
             g_last_error = renamed == fs::Status::unsupported ? SX_EBUSY : fs::error_of(renamed);
             return false;
         }
@@ -1704,7 +1772,7 @@ bool rename(const cred::Credentials& who, const char* old_path, const char* new_
         }
     }
     detach_node(node_index);
-    (void)set_node_name(node_index, leaf_name);
+    adopt_name(node_index, name_storage_reserved, leaf_name);
     attach_node(node_index, new_parent);
     return true;
 }
@@ -1812,7 +1880,7 @@ bool path_of_node(const Vnode& node, char* out, size_t capacity) {
         if (depth == kMaxNormalizedPathComponents) {
             return false;
         }
-        names[depth++] = g_nodes[index].name;
+        names[depth++] = g_nodes[index].vnode.name;
     }
     size_t written = 0;
     out[written++] = '/';

@@ -246,6 +246,54 @@ void long_paths(uint8_t* image) {
     hoststub::detach_device();
 }
 
+// Names past the old 63-byte limit, up to 255 bytes (VFS-C slice 4b). Short
+// names live in the VFS's slot and long ones on the heap, so renames go both
+// ways across that line.
+void long_names(uint8_t* image) {
+    printf("case: names up to 255 bytes\n");
+    if (!check(build_image(image) && mount_image(image), "mounted at /boot")) {
+        return;
+    }
+    char name[300] = {};
+    char path[vfs::kMaxPathLength] = {};
+    memset(name, 'n', 255);
+    name[255] = '\0';
+    snprintf(path, sizeof(path), "/boot/%s", name);
+    vfs::Vnode* longest = vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644);
+    check(longest != nullptr && strlen(longest->name) == 255 && vfs::write(*longest, 0, "255", 3, false) == 3,
+          "a 255-byte name is created");
+    name[255] = 'n';
+    name[256] = '\0';
+    snprintf(path, sizeof(path), "/boot/%s", name);
+    check(vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644) == nullptr,
+          "a 256-byte name is refused");
+
+    const char* kMiddle = "/boot/Docs/a directory whose name runs well past the sixty-three bytes the VFS once held";
+    check(vfs::mkdir(kSystem, kMiddle, 0755) != nullptr, "a long directory name");
+    snprintf(path, sizeof(path), "%s/inside.txt", kMiddle);
+    vfs::Vnode* inside = vfs::open(kSystem, path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE, 0644);
+    check(inside != nullptr && vfs::write(*inside, 0, "in", 2, false) == 2, "with a file inside");
+
+    check(vfs::rename(kSystem, "/boot/Docs/ReadMe.txt",
+                      "/boot/Docs/ReadMe, renamed to a name far longer than the slot keeps in place.txt"),
+          "a short name renamed long");
+    check(vfs::rename(kSystem, kMiddle, "/boot/Docs/short"), "and a long one renamed short");
+    check(reads("/boot/Docs/short/inside.txt", "in"), "with what is below it reachable");
+    check(fs::sync(g_mount), "sync");
+    unmount_image();
+
+    check(mount_image(image), "mounted again");
+    memset(name, 'n', 255);
+    name[255] = '\0';
+    snprintf(path, sizeof(path), "/boot/%s", name);
+    check(reads(path, "255"), "the 255-byte name is on the disk");
+    check(reads("/boot/docs/README, RENAMED TO A NAME FAR LONGER THAN THE SLOT KEEPS IN PLACE.TXT", kReadme),
+          "the long rename too, found in any case");
+    check(named("/boot/Docs/short", "short") && reads("/boot/Docs/short/inside.txt", "in"), "and the short one");
+    unmount_image();
+    hoststub::detach_device();
+}
+
 } // namespace
 
 int main() {
@@ -257,6 +305,7 @@ int main() {
     }
     names_fold_case(image);
     long_paths(image);
+    long_names(image);
     free(image);
     printf("%s (%d checks, %d failures)\n", g_failures == 0 ? "FAT VFS TEST PASS" : "FAT VFS TEST FAIL", g_checks,
            g_failures);

@@ -127,6 +127,9 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **Names can be up to 255 bytes, was 63** (`vfs::kMaxPathComponentLength`): FAT's long names are published whole
+  instead of being left out. Names of more than 47 bytes are kept on the heap. SxFS keeps its 63-byte format limit.
+
 - **Paths can be up to 1023 bytes, was 255** (`vfs::kMaxPathLength`, `PATH_MAX` 1024 in the SDK), with up to 64
   components; the kernel keeps them on the heap (`vfs::PathBuffer`). SxFS keeps its 255-byte format limit.
 

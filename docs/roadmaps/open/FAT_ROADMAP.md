@@ -179,8 +179,11 @@ Points worth knowing before writing it:
   everything below a moved directory.
 - **FatFs moves a directory into its own subtree without complaint**, leaving
   it hanging from itself, unreachable. `rename` refuses that itself.
-- **What is left out.** A name longer than a VFS path component (63 bytes), a
-  path longer than 255, and anything below 24 levels of directories. They are
+- **What is left out.** A path longer than 1023 bytes and anything below 24
+  levels of directories. Names reach 255 bytes since VFS-C slice 4b, which is
+  as much UTF-8 as FatFs hands out (`FF_LFN_BUF`): a long name whose UTF-8
+  is longer than that comes out of FatFs as its 8.3 short name, and is
+  published under it. They are
   counted and logged per directory when it is published
   (`fat: /boot/dir: N entries left out ...`), never truncated. The directory
   being read is on the heap, not on the 32 KiB kernel stack.

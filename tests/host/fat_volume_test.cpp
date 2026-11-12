@@ -20,7 +20,7 @@
  *   - FAT's read-only bit makes a file read-only, a full volume writes what
  *     fits, and a read-only device mounts read-only with every write refused;
  *   - a volume mounted for someone is theirs, found and created alike;
- *   - a name the VFS cannot hold is left out, not truncated;
+ *   - a name past the old 63-byte limit is published whole (names reach 255);
  *   - a partitioned disk is never claimed as a whole, although FatFs alone
  *     would mount its first partition through it;
  *   - directories are published when looked into: a tree larger than the VFS
@@ -86,8 +86,9 @@ constexpr uint32_t kSector = 512;
 // lowest free one, so they never meet.
 constexpr uint8_t kBuildDrive = fat_disk::kDrives - 1;
 constexpr const char* kLongUtf8Name = "Ñandú con un nombre largo.txt";
-// 70 characters: more than a VFS path component holds.
-constexpr const char* kTooLongName =
+// 70 characters: more than a VFS path component held before names reached
+// 255 bytes (VFS-C slice 4b).
+constexpr const char* kLongName =
     "this-name-is-far-too-long-for-a-vfs-path-component-of-sixty-four.txt";
 constexpr const char* kLimineText = "timeout: 0\nserial: yes\n";
 constexpr size_t kBigFileBytes = 300 * 1024 + 123;
@@ -128,8 +129,8 @@ int build_image(uint8_t* image, uint32_t sectors, BYTE format, size_t extra_root
     check(write_file(path, kLimineText, strlen(kLimineText)), "write boot/limine.conf");
     snprintf(path, sizeof(path), "%s/%s", root, kLongUtf8Name);
     check(write_file(path, "utf-8\n", 6), "write the long UTF-8 name");
-    snprintf(path, sizeof(path), "%s/%s", root, kTooLongName);
-    check(write_file(path, "x", 1), "write the name too long for the VFS");
+    snprintf(path, sizeof(path), "%s/%s", root, kLongName);
+    check(write_file(path, "x", 1), "write a name past 63 bytes");
     snprintf(path, sizeof(path), "%s/a", root);
     check(f_mkdir(path) == FR_OK, "mkdir a");
     snprintf(path, sizeof(path), "%s/a/b", root);
@@ -191,9 +192,8 @@ void mounted_volume_reads_back(const char* label, uint32_t sectors, BYTE format,
     char long_path[128];
     snprintf(long_path, sizeof(long_path), "/boot/%s", kLongUtf8Name);
     check(hoststub::find_node(long_path) != nullptr, "a long UTF-8 name is published as is");
-    char too_long_path[128];
-    snprintf(too_long_path, sizeof(too_long_path), "/boot/%s", kTooLongName);
-    check(hoststub::find_node(too_long_path) == nullptr, "a name the VFS cannot hold is left out");
+    snprintf(long_path, sizeof(long_path), "/boot/%s", kLongName);
+    check(hoststub::find_node(long_path) != nullptr, "a name past 63 bytes is published whole");
 
     vfs::Vnode* empty = hoststub::find_node("/boot/a/b/empty");
     check(empty != nullptr && empty->size == 0, "an empty file");
@@ -220,7 +220,7 @@ void mounted_volume_reads_back(const char* label, uint32_t sectors, BYTE format,
     check(stats.writable && stats.total_bytes > 0 && stats.used_bytes > 0 &&
               stats.used_bytes + stats.free_bytes == stats.total_bytes,
           "stats add up and say writable");
-    check(stats.file_count == 4, "four files published (the long name left out)");
+    check(stats.file_count == 5, "five files, the long name among them");
     check(driver.sync(id), "sync");
 
     driver.unmount(id);
@@ -345,7 +345,7 @@ void writes_round_trip() {
     }
 
     fs::VolumeStats stats = {};
-    check(driver.stats(id, stats) && stats.file_count == 6, "the file count follows creates and unlinks");
+    check(driver.stats(id, stats) && stats.file_count == 7, "the file count follows creates and unlinks");
     check(driver.sync(id), "sync");
     driver.unmount(id);
 
@@ -633,7 +633,7 @@ void tree_larger_than_the_vfs() {
     check(driver.attach(id, false), "attach publishes only the root");
     check(hoststub::node_count() == 1, "one node after attach");
     fs::VolumeStats stats = {};
-    check(driver.stats(id, stats) && stats.file_count == 4 + 200 + 300, "stats count every file, published or not");
+    check(driver.stats(id, stats) && stats.file_count == 5 + 200 + 300, "stats count every file, published or not");
     check(hoststub::node_count() == 1, "counting published nothing");
     check(hoststub::find_node("/mnt/big/many/fits/f199") != nullptr, "a file in a directory that fits is found");
     check(hoststub::find_node("/mnt/big/a/b/big.bin") != nullptr, "other directories stay reachable");
