@@ -1426,6 +1426,69 @@ def scenario_logview(s):
         raise Failure("Ctrl+C did not copy the selected line")
 
 
+def scenario_sxgldiag(s):
+    """SxGL Diagnostic Tool (docs/desktop/SXGL_DIAG.md): the System page, the
+    Display page with a software test run to the end, and the Renderer page."""
+    whole = (0, 0, 1280, 770)
+    s.run("sxgldiag")
+    image = s.shot("sxgldiag-system")
+    if find_text(image, whole, "System information", TEXT, FACE)[0] is None:
+        raise Failure("SxGL Diagnostic Tool did not open on its System page")
+    if find_text(image, whole, "1.1 SxGL subset", TEXT, FACE)[0] is None:
+        raise Failure("the System page does not show SxGL's version")
+    tab = find_text(image, whole, "Display", TEXT, FACE)[0]
+    if tab is None:
+        raise Failure("SxGL Diagnostic Tool has no Display tab")
+    s.qmp.move_to(tab[0] + 10, tab[1] + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("sxgldiag-display")
+    button = find_text(image, whole, "Test software", TEXT, FACE)[0]
+    if button is None:
+        raise Failure("the Display page has no Test software button")
+    s.qmp.move_to(button[0] + 20, button[1] + 6)
+    s.qmp.click()
+    # Five seconds of test, plus the frames TCG is slow to present.
+    time.sleep(12.0)
+    image = s.shot("sxgldiag-tested")
+    if find_text(image, whole, "Software test passed", TEXT, FIELD)[0] is None:
+        raise Failure("the software test did not report a pass in the Notes")
+    # The GPU button is drawn in black only when it is enabled: on a machine
+    # with virgl its test has to pass too.
+    button = find_text(image, whole, "Test GPU", TEXT, FACE)[0]
+    if button is not None:
+        s.qmp.move_to(button[0] + 10, button[1] + 6)
+        s.qmp.click()
+        time.sleep(12.0)
+        image = s.shot("sxgldiag-gpu-tested")
+        if find_text(image, whole, "GPU test passed", TEXT, FIELD)[0] is None:
+            raise Failure("the GPU test did not report a pass in the Notes")
+    tab = find_text(image, whole, "Renderer", TEXT, FACE)[0]
+    if tab is None:
+        raise Failure("SxGL Diagnostic Tool has no Renderer tab")
+    s.qmp.move_to(tab[0] + 10, tab[1] + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("sxgldiag-renderer")
+    if find_text(image, whole, "GL_RENDERER", TEXT, FIELD)[0] is None:
+        raise Failure("the Renderer page does not list GL_RENDERER")
+    button = find_text(image, whole, "Save All Information...", TEXT, FACE)[0]
+    if button is None:
+        raise Failure("SxGL Diagnostic Tool has no Save All Information button")
+    s.qmp.move_to(button[0] + 20, button[1] + 6)
+    s.qmp.click()
+    time.sleep(2.0)
+    button = find_text(image, whole, "Next Page", TEXT, FACE)[0]
+    s.qmp.move_to(button[0] + 10, button[1] + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("sxgldiag-help")
+    if find_text(image, whole, "Saved to /users/user/SxGLDiag.txt", TEXT, FACE)[0] is None:
+        raise Failure("Save All Information did not save the report")
+    if find_text(image, whole, "Where to look next:", TEXT, FACE)[0] is None:
+        raise Failure("Next Page did not reach More Help")
+
+
 def scenario_diskmgmt(s):
     """Disk Management (docs/userland/DISK_MANAGEMENT.md): the volume list,
     the disk map, Properties, then Initialize and New Partition on a blank
@@ -3288,6 +3351,7 @@ SCENARIOS = {
     "sound": scenario_sound,
     "volume_popup": scenario_volume_popup,
     "logview": scenario_logview,
+    "sxgldiag": scenario_sxgldiag,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
     "audio_ports_offline": scenario_audio_ports_offline,

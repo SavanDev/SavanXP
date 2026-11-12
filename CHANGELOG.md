@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SxGL Diagnostic Tool (`sxgldiag`, System menu): the machine, the display and both SxGL backends on tabbed pages.**
+  Test software / Test GPU draw a lit, textured cube, check the frame and report fps; Save All Information writes
+  `/users/user/SxGLDiag.txt`; `sxgldiag --selftest` runs it without a window. See [SXGL_DIAG.md](docs/desktop/SXGL_DIAG.md).
+
 - **Log Viewer (`logview`, System menu) shows the system log without a serial cable, by program and by kernel subsystem.**
   Problems, Find, follow and copy; `logview --print [category]` for the text console. The kernel keeps the last 2048
   lines for `sxn_log_read` (`SXN_SYS_LOG_READ`). See [LOG_VIEWER.md](docs/userland/LOG_VIEWER.md).

@@ -11,7 +11,7 @@ in, what is not, and where SxGL deliberately differs from the specification.
 | Header | `include/sxgfx/sxgl.h` |
 | Source | `system/gfx/sxgl.c` (runtime group `gl` in `units.txt`) |
 | Host test | `tests/host/sxgl_test.cpp`, `./build.sh smoke sxgl-test` |
-| Consumers | `/bin/gears` (POSIX), `/system/nightwood.sxe` (SUN) |
+| Consumers | `/bin/gears` (POSIX), `/system/nightwood.sxe` (SUN), `/system/sxgldiag.sxe` (SUN, [SXGL_DIAG.md](SXGL_DIAG.md)) |
 
 ## Where it lives and who presents
 

@@ -123,6 +123,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   subsystem (the window client, the application frame), and the toolkit's host.
 - [`SXGL.md`](desktop/SXGL.md) — SxGL, the 3D rasterizer: the GL 1.1 subset call by
   call, who presents, and every deliberate difference from the specification.
+- [`SXGL_DIAG.md`](desktop/SXGL_DIAG.md) — SxGL Diagnostic Tool (`sxgldiag`):
+  where each page's figures come from, the 3D test of each backend and how it
+  judges a frame, the saved report and `--selftest`.
 - [`GRAPHICS_PERF.md`](desktop/GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the

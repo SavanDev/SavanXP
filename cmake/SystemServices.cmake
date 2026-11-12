@@ -97,6 +97,10 @@ target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")
 # Sound control panel: SUN consumer of audiod's native control port.
 savanxp_system_service(NAME sound SOURCES sound.c)
 
+# SxGL Diagnostic Tool (docs/desktop/SXGL_DIAG.md): the machine, the display
+# and both SxGL backends, with a 3D test of each.
+savanxp_system_service(NAME sxgldiag SOURCES sxgldiag.c)
+
 # Log Viewer (docs/userland/LOG_VIEWER.md): the system log on screen, the
 # consumer of SXN_SYS_LOG_READ.
 savanxp_system_service(NAME logview SOURCES logview.c)

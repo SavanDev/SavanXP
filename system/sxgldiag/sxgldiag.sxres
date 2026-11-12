@@ -1,0 +1,10 @@
+# SxGL Diagnostic Tool, a SUN program (docs/desktop/SXGL_DIAG.md).
+name=SxGL Diagnostic Tool
+description=The machine, the display and SxGL, with a 3D test of each backend
+version=system
+vendor=SavanXP
+subsystem=native
+window_flags=fixed_size
+accent=000080
+icon_file=../../assets/desktop/icons/16x16/app-sxgldiag.png,../../assets/desktop/icons/32x32/app-sxgldiag.png
+category=System

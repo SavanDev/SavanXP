@@ -658,6 +658,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sound"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/mouse"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/logview"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxgldiag"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS
