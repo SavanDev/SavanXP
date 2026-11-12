@@ -4,9 +4,11 @@
 Windows 98/2000 Explorer without its web-view side panel. Source in
 `subsystems/posix/userland/filesapp.c`, built as PIE against `libgfx2d`,
 `libsxgui` and `libsxgfx`, with `file_assoc.c` (which program opens a file),
-`mime_icon.c` and `mime_icon_large.c` (which icon a file gets) and
+`system/gfx/mime_icon.c` and `mime_icon_large.c` (which icon a file gets,
+shared with the SUN file dialog, with `mime_icon_posix.c` as their POSIX
+file reader) and
 `shortcut.c` (what "open" means, shared with the desktop). The toolbar
-glyphs are drawn by `filesapp_toolbar/gen_icons.py`.
+glyphs are drawn by `system/gfx/toolbar_glyphs/gen_icons.py`, shared with the file dialog.
 
 This document pins how its window, views and commands work and why, and
 what is planned next.
@@ -187,8 +189,8 @@ eviction (the catalogue fits by design):
 
 | Cache | Per icon | Total BSS | Where |
 |---|---|---|---|
-| 16x16 (`mime_icon_small`) | 1 KiB | 12 KiB | `mime_icon.c` |
-| 32x32 (`mime_icon_large`) | 4 KiB | 48 KiB | `mime_icon_large.c` |
+| 16x16 (`mime_icon_small`) | 1 KiB | 12 KiB | `system/gfx/mime_icon.c` |
+| 32x32 (`mime_icon_large`) | 4 KiB | 48 KiB | `system/gfx/mime_icon_large.c` |
 
 The large cache is in a file of its own on purpose. The desktop links
 `mime_icon.c` for the icon *names* but draws its own 32x32 copies, and BSS

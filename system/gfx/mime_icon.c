@@ -1,16 +1,18 @@
-#include "mime_icon.h"
+#include "sxgfx/mime_icon.h"
+
+#include <stdio.h>
+#include <string.h>
 
 #include "savanxp/sxe.h"
 
-#include <stdio.h>
-
-/* --- estado --------------------------------------------------------------- */
+/* --- state ---------------------------------------------------------------- */
 
 static struct mime_icon_entry g_entries[MIME_ICON_MAX_ENTRIES];
 static int g_entry_count = 0;
 
-/* Reservadas: no son extensiones, asi que no entran en g_entries. Vacias
- * significa "no hay regla", que es distinto de "hay regla y el icono falta". */
+/* The reserved keys: they are not extensions, so they stay out of g_entries.
+ * Empty means "no rule", which is not the same as "a rule whose icon is
+ * missing". */
 static char g_icon_folder[MIME_ICON_NAME_CAPACITY];
 static char g_icon_program[MIME_ICON_NAME_CAPACITY];
 static char g_icon_default[MIME_ICON_NAME_CAPACITY];
@@ -20,7 +22,10 @@ static uint32_t g_small_pixels[MIME_ICON_CACHE_ENTRIES * MIME_ICON_SMALL_SIZE * 
 static struct mime_icon_cache g_small_cache = {
     MIME_ICON_SMALL_SIZE, 0, g_small_slots, g_small_pixels};
 
+static mime_icon_reader g_reader = 0;
+
 static int g_selftest_failures = 0;
+static void (*g_selftest_report)(const char *label) = 0;
 
 /* --- helpers -------------------------------------------------------------- */
 
@@ -97,7 +102,7 @@ static char *trim(char *text)
     return text;
 }
 
-/* Extension de un nombre, con punto y en minusculas. 0 si no tiene. */
+/* A name's extension, with the dot and in lower case. 0 if it has none. */
 static const char *extension_of(const char *file_name, char *out, size_t capacity)
 {
     const char *dot = 0;
@@ -109,8 +114,8 @@ static const char *extension_of(const char *file_name, char *out, size_t capacit
     }
     for (index = 0; file_name[index] != '\0'; ++index)
     {
-        /* index > 0 deja afuera los dotfiles: ".bashrc" no tiene extension
-         * ".bashrc", no tiene extension y punto. */
+        /* index > 0 leaves dotfiles out: ".bashrc" has no extension
+         * ".bashrc", it has no extension at all. */
         if (file_name[index] == '.' && index > 0 && file_name[index + 1] != '\0')
         {
             dot = &file_name[index];
@@ -124,7 +129,7 @@ static const char *extension_of(const char *file_name, char *out, size_t capacit
     return out;
 }
 
-/* --- politica ------------------------------------------------------------- */
+/* --- policy --------------------------------------------------------------- */
 
 static int assign_reserved(const char *key, const char *value)
 {
@@ -146,8 +151,9 @@ static int assign_reserved(const char *key, const char *value)
     return 0;
 }
 
-/* Ultima linea gana: reasignar una extension la pisa en vez de duplicarla, que
- * es lo que hace util editar el archivo agregando lineas al final. */
+/* The last line wins: assigning an extension again replaces it instead of
+ * adding a duplicate, which is what makes appending lines to the file a way
+ * to edit it. */
 static int upsert(const char *extension, const char *icon)
 {
     int index = 0;
@@ -216,8 +222,7 @@ int mime_icon_parse_policy(const char *text, size_t length)
             continue;
         }
 
-        /* Sin strchr: la libc de userland no lo trae, y file_assoc resuelve
-         * lo mismo con un barrido a mano. */
+        /* The first '=': a key holds none, a value may. */
         {
             size_t scan = 0;
 
@@ -247,9 +252,9 @@ int mime_icon_parse_policy(const char *text, size_t length)
         {
             continue;
         }
-        /* Cualquier clave que no sea reservada tiene que ser una extension, y
-         * una extension empieza con punto. Una clave suelta es un typo, y
-         * tragarselo en silencio esconderia el error. */
+        /* Any key that is not reserved has to be an extension, and an
+         * extension starts with a dot. A bare key is a typo, and swallowing
+         * it silently would hide the mistake. */
         if (key[0] != '.' || key[1] == '\0')
         {
             continue;
@@ -261,41 +266,27 @@ int mime_icon_parse_policy(const char *text, size_t length)
     return added;
 }
 
-int mime_icon_load(void)
+void mime_icon_set_reader(mime_icon_reader reader)
+{
+    g_reader = reader;
+}
+
+int mime_icon_load_file(const char *path)
 {
     static char file_buffer[MIME_ICON_POLICY_MAX_BYTES];
-    char path[256];
-    int fd = savanxp_settings_path(MIME_ICON_POLICY_NAME, 0, path, sizeof(path)) == 0
-        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
-        : -1;
-    long total = 0;
+    long total = g_reader != 0 && path != 0 ? g_reader(path, file_buffer, sizeof(file_buffer) - 1u) : -1;
 
-    g_entry_count = 0;
-    if (fd < 0)
-    {
-        /* Sin archivo no hay iconos y tampoco hay error: la lista se dibuja
-         * como se dibujaba antes de que esta capa existiera. */
-        return 0;
-    }
-    while (total < (long)(sizeof(file_buffer) - 1u))
-    {
-        long got = savanxp_read(fd, file_buffer + total, sizeof(file_buffer) - 1u - (size_t)total);
-
-        if (got <= 0)
-        {
-            break;
-        }
-        total += got;
-    }
-    (void)savanxp_close(fd);
     if (total <= 0)
     {
+        /* No file means no icons and no error either: the list is drawn as
+         * it was before this layer existed. */
+        (void)mime_icon_parse_policy(0, 0);
         return 0;
     }
     return mime_icon_parse_policy(file_buffer, (size_t)total);
 }
 
-/* --- resolucion ----------------------------------------------------------- */
+/* --- resolution ----------------------------------------------------------- */
 
 static const char *or_null(const char *text)
 {
@@ -328,7 +319,7 @@ const char *mime_icon_name_for(const char *file_name, int is_dir, int launchable
     return or_null(g_icon_default);
 }
 
-/* --- pixeles -------------------------------------------------------------- */
+/* --- pixels --------------------------------------------------------------- */
 
 static struct mime_icon_cache_slot *cache_find(struct mime_icon_cache *cache, const char *icon_name)
 {
@@ -385,6 +376,7 @@ const struct sx_bitmap *mime_icon_cache_load(struct mime_icon_cache *cache, cons
     struct mime_icon_cache_slot *slot = 0;
     struct sxe_icons icons;
     char path[MIME_ICON_NAME_CAPACITY + 48];
+    long length;
     int slot_index;
 
     if (icon_name == 0 || icon_name[0] == '\0')
@@ -411,7 +403,8 @@ const struct sx_bitmap *mime_icon_cache_load(struct mime_icon_cache *cache, cons
     slot->valid = 0;
 
     snprintf(path, sizeof(path), "%s/%s.sxicon", MIME_ICON_DIRECTORY, icon_name);
-    if (sxe_load_icon_file(path, scratch, sizeof(scratch), &icons) != SXE_OK)
+    length = g_reader != 0 ? g_reader(path, scratch, sizeof(scratch)) : -1;
+    if (length <= 0 || sxe_icons_open(scratch, (size_t)length, &icons) != SXE_OK)
     {
         return 0;
     }
@@ -449,7 +442,10 @@ static void expect(int condition, const char *label)
 {
     if (!condition)
     {
-        printf("FILESAPP SMOKE FAIL %s\n", label);
+        if (g_selftest_report != 0)
+        {
+            g_selftest_report(label);
+        }
         g_selftest_failures += 1;
     }
 }
@@ -457,34 +453,34 @@ static void expect(int condition, const char *label)
 static void selftest_parse(void)
 {
     static const char k_policy[] =
-        "# comentario\n"
-        "; otro comentario\n"
+        "# a comment\n"
+        "; another comment\n"
         "\n"
         "folder=folder\n"
         "program=application-x-executable\n"
         "default=text-x-generic\n"
         "  .TXT  =  text-x-generic  \n"
         ".png=image-x-generic\n"
-        "sin-punto=deberia-ignorarse\n"
-        ".sin-valor=\n"
-        "linea sin igual\n"
+        "no-dot=should-be-ignored\n"
+        ".no-value=\n"
+        "line without equals\n"
         ".png=image-x-generic\n";
 
     const char *name = 0;
 
     expect(mime_icon_parse_policy(k_policy, sizeof(k_policy) - 1u) == 2,
-        "parse: dos extensiones nuevas");
-    expect(mime_icon_count() == 2, "parse: no cuenta reservadas ni basura");
+        "parse: two new extensions");
+    expect(mime_icon_count() == 2, "parse: reserved keys and junk are not counted");
 
-    /* La clave se normaliza a minusculas y se le sacan los espacios. */
-    name = mime_icon_name_for("notas.TXT", 0, 0);
-    expect(name != 0 && strcmp(name, "text-x-generic") == 0, "parse: extension en mayusculas");
-    name = mime_icon_name_for("captura.png", 0, 0);
-    expect(name != 0 && strcmp(name, "image-x-generic") == 0, "parse: extension simple");
+    /* The key is lower-cased and its spaces trimmed. */
+    name = mime_icon_name_for("notes.TXT", 0, 0);
+    expect(name != 0 && strcmp(name, "text-x-generic") == 0, "parse: upper-case extension");
+    name = mime_icon_name_for("capture.png", 0, 0);
+    expect(name != 0 && strcmp(name, "image-x-generic") == 0, "parse: plain extension");
 
-    /* Una clave sin punto es un typo y no se registra como extension. */
-    expect(mime_icon_name_for("archivo.sin-punto", 0, 0) != 0, "parse: typo cae al default");
-    name = mime_icon_name_for("archivo.desconocido", 0, 0);
+    /* A key without a dot is a typo and is not registered as an extension. */
+    expect(mime_icon_name_for("file.no-dot", 0, 0) != 0, "parse: a typo falls to the default");
+    name = mime_icon_name_for("file.unknown", 0, 0);
     expect(name != 0 && strcmp(name, "text-x-generic") == 0, "parse: default");
 }
 
@@ -501,31 +497,31 @@ static void selftest_precedence(void)
 
     (void)mime_icon_parse_policy(k_policy, sizeof(k_policy) - 1u);
 
-    /* Directorio gana sobre todo, incluso con extension. */
-    name = mime_icon_name_for("carpeta.txt", 1, 0);
-    expect(name != 0 && strcmp(name, "folder") == 0, "precedencia: directorio gana");
+    /* A directory wins over everything, even with an extension. */
+    name = mime_icon_name_for("folder.txt", 1, 0);
+    expect(name != 0 && strcmp(name, "folder") == 0, "precedence: a directory wins");
 
-    /* Lanzable gana sobre la extension: un programa sin extension igual
-     * muestra el icono de programa. */
+    /* Launchable wins over the extension: a program without an extension
+     * still shows the program icon. */
     name = mime_icon_name_for("doom", 0, 1);
     expect(name != 0 && strcmp(name, "application-x-executable") == 0,
-        "precedencia: lanzable sin extension");
-    name = mime_icon_name_for("notas.txt", 0, 1);
+        "precedence: launchable without an extension");
+    name = mime_icon_name_for("notes.txt", 0, 1);
     expect(name != 0 && strcmp(name, "application-x-executable") == 0,
-        "precedencia: lanzable gana a la extension");
+        "precedence: launchable wins over the extension");
 
-    /* Un dotfile no tiene extension: cae al default. */
-    name = mime_icon_name_for(".perfil", 0, 0);
-    expect(name != 0 && strcmp(name, "text-x-generic") == 0, "precedencia: dotfile sin extension");
+    /* A dotfile has no extension: it falls to the default. */
+    name = mime_icon_name_for(".profile", 0, 0);
+    expect(name != 0 && strcmp(name, "text-x-generic") == 0, "precedence: a dotfile has no extension");
 
-    /* La ultima linea gana en vez de duplicar. */
+    /* The last line wins instead of adding a duplicate. */
     {
         static const char k_override[] = ".txt=text-x-generic\n.txt=x-office-document\n";
 
         expect(mime_icon_parse_policy(k_override, sizeof(k_override) - 1u) == 1,
-            "precedencia: reasignar no duplica");
-        name = mime_icon_name_for("notas.txt", 0, 0);
-        expect(name != 0 && strcmp(name, "x-office-document") == 0, "precedencia: ultima linea gana");
+            "precedence: assigning again does not duplicate");
+        name = mime_icon_name_for("notes.txt", 0, 0);
+        expect(name != 0 && strcmp(name, "x-office-document") == 0, "precedence: the last line wins");
     }
 }
 
@@ -533,26 +529,26 @@ static void selftest_limits(void)
 {
     static char big[MIME_ICON_POLICY_MAX_BYTES];
     static const char k_long[] =
-        ".txt=un-nombre-de-icono-absurdamente-largo-que-no-entra-en-la-capacidad\n";
+        ".txt=an-absurdly-long-icon-name-that-does-not-fit-in-the-capacity\n";
     const struct mime_icon_entry *entry = 0;
     size_t offset = 0;
     int index = 0;
 
-    /* Sin politica: todo resuelve a 0, que es "sin icono" y no un crash. */
-    expect(mime_icon_parse_policy(0, 0) == 0, "limites: texto nulo");
-    expect(mime_icon_name_for("notas.txt", 0, 0) == 0, "limites: sin politica no hay icono");
-    expect(mime_icon_name_for(0, 0, 0) == 0, "limites: nombre nulo");
-    expect(mime_icon_small(0) == 0, "limites: nombre de icono nulo");
-    expect(mime_icon_small("") == 0, "limites: nombre de icono vacio");
+    /* No policy: everything resolves to 0, which is "no icon", not a crash. */
+    expect(mime_icon_parse_policy(0, 0) == 0, "limits: null text");
+    expect(mime_icon_name_for("notes.txt", 0, 0) == 0, "limits: no policy means no icon");
+    expect(mime_icon_name_for(0, 0, 0) == 0, "limits: null name");
+    expect(mime_icon_small(0) == 0, "limits: null icon name");
+    expect(mime_icon_small("") == 0, "limits: empty icon name");
 
-    /* El nombre se trunca sin desbordar. */
+    /* The name is truncated without overflowing. */
     (void)mime_icon_parse_policy(k_long, sizeof(k_long) - 1u);
     entry = mime_icon_at(0);
-    expect(entry != 0, "limites: entrada truncada existe");
+    expect(entry != 0, "limits: the truncated entry exists");
     expect(entry != 0 && strlen(entry->icon) == MIME_ICON_NAME_CAPACITY - 1u,
-        "limites: nombre truncado a capacidad");
+        "limits: the name is truncated to the capacity");
 
-    /* Mas extensiones que MIME_ICON_MAX_ENTRIES: se corta, no se desborda. */
+    /* More extensions than MIME_ICON_MAX_ENTRIES: cut, not overflowed. */
     for (index = 0; index < MIME_ICON_MAX_ENTRIES + 16; ++index)
     {
         int written = snprintf(big + offset, sizeof(big) - offset, ".e%d=text-x-generic\n", index);
@@ -564,21 +560,36 @@ static void selftest_limits(void)
         offset += (size_t)written;
     }
     (void)mime_icon_parse_policy(big, offset);
-    expect(mime_icon_count() == MIME_ICON_MAX_ENTRIES, "limites: se corta en el tope");
-    expect(mime_icon_at(MIME_ICON_MAX_ENTRIES) == 0, "limites: indice fuera de rango");
+    expect(mime_icon_count() == MIME_ICON_MAX_ENTRIES, "limits: cut at the cap");
+    expect(mime_icon_at(MIME_ICON_MAX_ENTRIES) == 0, "limits: index out of range");
 }
 
-int mime_icon_selftest(void)
+int mime_icon_selftest(void (*report)(const char *label))
 {
-    g_selftest_failures = 0;
+    /* The checks overwrite the policy; the loaded one is put back afterwards
+     * so the rest of the process does not inherit the test's. */
+    static struct mime_icon_entry saved_entries[MIME_ICON_MAX_ENTRIES];
+    static char saved_folder[MIME_ICON_NAME_CAPACITY];
+    static char saved_program[MIME_ICON_NAME_CAPACITY];
+    static char saved_default[MIME_ICON_NAME_CAPACITY];
+    const int saved_count = g_entry_count;
 
+    memcpy(saved_entries, g_entries, sizeof(saved_entries));
+    memcpy(saved_folder, g_icon_folder, sizeof(saved_folder));
+    memcpy(saved_program, g_icon_program, sizeof(saved_program));
+    memcpy(saved_default, g_icon_default, sizeof(saved_default));
+
+    g_selftest_failures = 0;
+    g_selftest_report = report;
     selftest_parse();
     selftest_precedence();
     selftest_limits();
+    g_selftest_report = 0;
 
-    /* El selftest deja la politica pisada; recargar la real para que el resto
-     * del proceso no herede el estado de prueba. */
-    (void)mime_icon_load();
-
+    memcpy(g_entries, saved_entries, sizeof(saved_entries));
+    memcpy(g_icon_folder, saved_folder, sizeof(saved_folder));
+    memcpy(g_icon_program, saved_program, sizeof(saved_program));
+    memcpy(g_icon_default, saved_default, sizeof(saved_default));
+    g_entry_count = saved_count;
     return g_selftest_failures;
 }

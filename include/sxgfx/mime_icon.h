@@ -1,16 +1,22 @@
 #pragma once
 
-#include "libc.h"
+#include <stddef.h>
+#include <stdint.h>
 
-#include "savanxp/gfx2d.h"
+#include "sxgfx/gfx2d.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
- * Icons by file type.
+ * Icons by file type, shared by the POSIX programs (Files, the desktop) and
+ * the SUN ones (the file dialog in sxngui).
  *
  * Answers "which icon does this file get" with the same split file_assoc uses
  * for "which program opens it":
  *
- *   - The MAPPING is data in the image, /mimeicon.ini, not a compiled table.
+ *   - The MAPPING is data in the image, mimeicon.ini, not a compiled table.
  *     docs/userland/SXE_FORMAT.md decides that the system carries no central
  *     table of "which type is each extension"; here that table exists but is
  *     editable and goes into no binary.
@@ -24,15 +30,21 @@
  * ("text-x-generic", "image-x-generic"). That is what allows changing where
  * the art comes from without touching the mapping.
  *
+ * This unit makes no system call: reading a file is the subsystem's, through
+ * mime_icon_set_reader. POSIX programs get theirs from mime_icon_load
+ * (subsystems/posix/userland/mime_icon_posix.c); the SUN file dialog installs
+ * one over sxn_open_file.
+ *
  * No malloc: fixed capacities and truncation, as in file_assoc.
  */
 
-/* Con punto y en minusculas: ".txt". */
+/* With the dot and in lower case: ".txt". */
 #define MIME_ICON_EXT_CAPACITY 16
 #define MIME_ICON_NAME_CAPACITY 40
 #define MIME_ICON_MAX_ENTRIES 64
 
 #define MIME_ICON_POLICY_NAME "mimeicon.ini" /* in the profile: savanxp_settings_path */
+#define MIME_ICON_SYSTEM_POLICY "/mimeicon.ini" /* the system's, at the root */
 #define MIME_ICON_POLICY_MAX_BYTES 4096
 #define MIME_ICON_DIRECTORY "/icons"
 
@@ -83,20 +95,32 @@ struct mime_icon_entry
     char icon[MIME_ICON_NAME_CAPACITY];
 };
 
-/* Loads /mimeicon.ini. No file is not an error: it stays without a mapping and
- * everything resolves to 0, which is "this file shows no icon". Returns how
- * many extensions ended up mapped. */
+/* Reads up to `capacity` bytes of the file at the absolute `path` into
+ * `buffer`. Returns how many, or a negative value when it cannot be read. */
+typedef long (*mime_icon_reader)(const char *path, void *buffer, size_t capacity);
+
+/* The subsystem's file reader; until one is set, nothing loads and every
+ * icon is 0. */
+void mime_icon_set_reader(mime_icon_reader reader);
+
+/* Loads the mapping from `path` with the reader. A missing file is not an
+ * error: it stays without a mapping and everything resolves to 0, which is
+ * "this file shows no icon". Returns how many extensions ended up mapped. */
+int mime_icon_load_file(const char *path);
+
+/* POSIX only (mime_icon_posix.c): installs the POSIX reader and loads the
+ * profile's mimeicon.ini, or the system's. */
 int mime_icon_load(void);
 
-/* Parseo puro del texto, punto de entrada del selftest. */
+/* Pure parsing of the text, the selftest's entry point. */
 int mime_icon_parse_policy(const char *text, size_t length);
 
 /*
- * Nombre de icono para un archivo, o 0 si ninguna regla aplica.
+ * The icon name for a file, or 0 if no rule applies.
  *
- * Precedencia: directorio > lanzable > extension > default. Que el flag de
- * lanzable gane sobre la extension es lo que hace que un programa sin
- * extension igual muestre el icono de programa.
+ * Precedence: directory > launchable > extension > default. The launchable
+ * flag winning over the extension is what makes a program without an
+ * extension still show the program icon.
  */
 const char *mime_icon_name_for(const char *file_name, int is_dir, int launchable);
 
@@ -125,5 +149,11 @@ const struct sx_bitmap *mime_icon_large_for_file(const char *file_name, int is_d
 int mime_icon_count(void);
 const struct mime_icon_entry *mime_icon_at(int index);
 
-/* Valida parseo, reservadas, precedencia, truncado y limites. 0 si todo pasa. */
-int mime_icon_selftest(void);
+/* Checks parsing, the reserved keys, precedence, truncation and the limits,
+ * and puts the loaded mapping back afterwards. Returns how many checks
+ * failed; `report`, when given, is called with each failed check's label. */
+int mime_icon_selftest(void (*report)(const char *label));
+
+#ifdef __cplusplus
+}
+#endif

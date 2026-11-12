@@ -1,4 +1,4 @@
-#include "mime_icon.h"
+#include "sxgfx/mime_icon.h"
 
 /*
  * The 32x32 cache, 48 KiB of BSS, in a file of its own so that only the

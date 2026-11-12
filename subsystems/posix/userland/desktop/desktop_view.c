@@ -1,7 +1,7 @@
 #include "desktop.h"
 
 #include "desktop_icons.h"
-#include "mime_icon.h"
+#include "sxgfx/mime_icon.h"
 #include "shortcut.h"
 #include "savanxp/sxe.h"
 

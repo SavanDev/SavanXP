@@ -8,7 +8,7 @@
 #include "shared/version.h"
 
 #include "file_assoc.h"
-#include "mime_icon.h"
+#include "sxgfx/mime_icon.h"
 #include "shortcut.h"
 
 #include <string.h>
@@ -31,8 +31,9 @@
  */
 
 /* ---- toolbar glyphs ----------------------------------------------------------
- * Drawn by filesapp_toolbar/gen_icons.py, embedded (see that file for why). */
-#include "filesapp_toolbar/icons.inc"
+ * Drawn by system/gfx/toolbar_glyphs/gen_icons.py, embedded (see that file
+ * for why). */
+#include "../../../system/gfx/toolbar_glyphs/icons.inc"
 
 static struct sx_bitmap g_glyph_bitmaps[6];
 /* One-element arrays: a toolbar button reads its glyph from item_icons[0]. */
@@ -48,23 +49,23 @@ static const struct sx_bitmap *filesapp_glyph(int slot, const uint32_t *pixels)
     struct savanxp_fb_info info;
 
     memset(&info, 0, sizeof(info));
-    info.width = FILES_TOOLBAR_ICON_SIZE;
-    info.height = FILES_TOOLBAR_ICON_SIZE;
-    info.pitch = FILES_TOOLBAR_ICON_SIZE * (uint32_t)sizeof(uint32_t);
+    info.width = TOOLBAR_GLYPH_SIZE;
+    info.height = TOOLBAR_GLYPH_SIZE;
+    info.pitch = TOOLBAR_GLYPH_SIZE * (uint32_t)sizeof(uint32_t);
     info.bpp = 32u;
-    info.buffer_size = info.pitch * FILES_TOOLBAR_ICON_SIZE;
+    info.buffer_size = info.pitch * TOOLBAR_GLYPH_SIZE;
     sx_bitmap_wrap(&g_glyph_bitmaps[slot], (uint32_t *)pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
     return &g_glyph_bitmaps[slot];
 }
 
 static void filesapp_build_toolbar_glyphs(void)
 {
-    k_glyph_back[0] = filesapp_glyph(0, files_toolbar_go_previous);
-    k_glyph_forward[0] = filesapp_glyph(1, files_toolbar_go_next);
-    k_glyph_up[0] = filesapp_glyph(2, files_toolbar_go_up);
-    k_glyph_delete[0] = filesapp_glyph(3, files_toolbar_edit_delete);
-    k_glyph_properties[0] = filesapp_glyph(4, files_toolbar_document_properties);
-    k_glyph_views[0] = filesapp_glyph(5, files_toolbar_view_choose);
+    k_glyph_back[0] = filesapp_glyph(0, toolbar_glyph_go_previous);
+    k_glyph_forward[0] = filesapp_glyph(1, toolbar_glyph_go_next);
+    k_glyph_up[0] = filesapp_glyph(2, toolbar_glyph_go_up);
+    k_glyph_delete[0] = filesapp_glyph(3, toolbar_glyph_edit_delete);
+    k_glyph_properties[0] = filesapp_glyph(4, toolbar_glyph_document_properties);
+    k_glyph_views[0] = filesapp_glyph(5, toolbar_glyph_view_choose);
 }
 
 #define FILESAPP_PATH_CAPACITY 256
@@ -1687,6 +1688,12 @@ static struct sxgui_menubar g_menubar = {
 
 /* ---- selftest ------------------------------------------------------------- */
 
+/* mime_icon's failed checks, in the line the smoke harness stops on. */
+static void filesapp_report_mime_failure(const char *label)
+{
+    printf("FILESAPP SMOKE FAIL %s\n", label);
+}
+
 static int filesapp_selftest(void)
 {
     int failures = 0;
@@ -1757,7 +1764,7 @@ static int filesapp_selftest(void)
      * asi que el volcado tiene que salir antes del selftest o no se ve nunca
      * cuando algo falla. */
     failures = file_assoc_selftest();
-    failures += mime_icon_selftest();
+    failures += mime_icon_selftest(filesapp_report_mime_failure);
     failures += shortcut_selftest();
 
     if (failures != 0)
