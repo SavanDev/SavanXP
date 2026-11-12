@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 subsystem, first piece: a PE32 parser and mapper (`subsystems/win32/pe/`), with `win32-pe-test` on a malformed
+  corpus.** `win32-pe-fixtures-test` checks the user's Windows XP `sol.exe` and `cards.dll` when `SAVANXP_WIN32_FIXTURES`
+  names their folder. See [WIN32.md](docs/userland/WIN32.md).
+
 - **POSIX programs can change their window title: `gfx_set_title`, the POSIX side of SUN's `sxnwm_set_title`.** Paint
   uses it for `untitled - Paint` and `<file> - Paint`. Subsystems now keep feature parity (`AGENTS.md`).
 

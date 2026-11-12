@@ -1091,6 +1091,8 @@ add_test(NAME fs-registry-test COMMAND savanxp-fs-registry-test)
 add_test(NAME fat-volume-test COMMAND savanxp-fat-volume-test)
 add_test(NAME fat-vfs-test COMMAND savanxp-fat-vfs-test)
 
+include("${CMAKE_SOURCE_DIR}/subsystems/win32/Win32.cmake")
+
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"
     COMMAND "${SAVANXP_HOST_CC}"

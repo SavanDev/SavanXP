@@ -87,6 +87,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   next to Sx and POSIX, its pieces, the system's own API rather than a Win32
   replica, the rules that grow it, its Win32 counterparts as a reading aid, and
   the slices the Command Prompt drives.
+- [`WIN32.md`](userland/WIN32.md) — the Win32 subsystem as built: the PE32
+  parser and mapper, what it accepts and refuses by name, and its host tests
+  against a malformed corpus and the user's own Windows XP files.
 - [`WIN32_SOLITAIRE_PROFILE.md`](userland/WIN32_SOLITAIRE_PROFILE.md) — the
   measured scope of the first Win32 profile: the user's Windows XP `sol.exe`
   and `cards.dll` by hash, their headers, the 124 imported functions by DLL,
