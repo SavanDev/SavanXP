@@ -87,7 +87,26 @@ new one. Two rules keep it honest:
 - The range must be entirely free. A second view over an occupied address is
   refused rather than replacing the first.
 
-`base == 0` is exactly `map_view`.
+The refusals say which rule broke, so a loader can fall back to another
+address only when that is the cure:
+
+| Case | Result |
+| --- | --- |
+| Base not page-aligned | `EINVAL` |
+| Range below `kUserBase` (`0x400000`), past the stack guard, or wrapping | `EINVAL` |
+| Something already mapped anywhere in the range | `EEXIST` |
+| No view slot or page tables left | `ENOMEM` |
+
+`base == 0` is exactly `map_view`. Views the kernel chooses start at
+`kSectionViewBase` (`0x1000000000`), above 4 GiB, so a caller that places its
+own views below 4 GiB never meets one.
+
+Native programs reach the same call as `SXN_SYS_MAP_VIEW_AT`
+(`sxn_map_view_at(handle, base, flags)`), POSIX ones as `map_view_at`. Its
+first native consumer is the Win32 loader, which places PE images at their
+preferred base ([WIN32_SUBSYSTEM_ROADMAP.md](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md#k2--a-native-view-at-a-chosen-address));
+`nativetest` asserts the placement, each refusal, and a remap of the same
+section at the same base with a different access.
 
 ## The grant is the intersection of three things
 

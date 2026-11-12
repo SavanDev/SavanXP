@@ -308,15 +308,26 @@ int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_
         return negative_error(SX_EINVAL);
     }
 
-    /* base == 0 deja que el kernel elija, como map_view. Con base fija, el
-     * cargador la elige para respetar el p_vaddr que pide el ELF. La pagina se
-     * alinea igual hacia abajo: el kernel mapea por paginas completas y no puede
-     * mapear un parcial. */
+    /* base == 0 lets the kernel choose, as map_view does. A fixed base is the
+     * loader's choice, to honour an ELF's p_vaddr or a PE's image base. It
+     * must be page-aligned: the kernel maps whole pages, and rounding down
+     * would hand back a view that starts before the address asked for. */
     if (base != 0 && (base & (memory::kPageSize - 1)) != 0) {
         return negative_error(SX_EINVAL);
     }
     uint64_t base_address = base;
     if (!vm::map_section_view(proc.address_space, section, requested_access, base_address, share_on_fork)) {
+        /* At a chosen base, say why: a range outside the user half is the
+         * caller's mistake (EINVAL), and an occupied one is EEXIST, as
+         * Linux's MAP_FIXED_NOREPLACE answers. A loader that falls back to
+         * another address needs to tell the two from running out of memory. */
+        if (base != 0) {
+            switch (vm::classify_fixed_range(proc.address_space, base, section.size_bytes)) {
+                case vm::FixedRange::outside: return negative_error(SX_EINVAL);
+                case vm::FixedRange::occupied: return negative_error(SX_EEXIST);
+                case vm::FixedRange::free: break;
+            }
+        }
         return negative_error(SX_ENOMEM);
     }
     return static_cast<int64_t>(base_address);

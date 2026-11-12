@@ -108,7 +108,7 @@ Read from the tree on 2026-11-10. Recheck before relying on a row.
 | A thread switch saves and restores the FPU state (`fxsave64`) and the FS and GS bases through their MSRs. The data segment selectors are not per-thread state | `kernel/process.cpp`, `arch/x86_64/cpu_init.cpp` | DS, ES, FS and GS selectors must become per-thread. K1 |
 | A native program's segment bases are its own: the shared runtime installs no thread block at `%fs` for it (`sx_tls_init` returns early), `errno` is a global, and the stack guard is the global `__stack_chk_guard` | `subsystems/posix/sdk/v1/runtime/pthread.c`; the disassembly of `nativetest` | `%fs` is free in `winhost` and can hold the 32-bit TEB |
 | Program images load at `0x400000`; kernel-chosen views start at `0x1000000000`; the stack top is `0x7000000000` | `include/kernel/vmm.hpp` | The range a PE32 image wants is free in a native process |
-| `vm::map_section_view` honours a caller-chosen base, and POSIX exposes it as `map_view_at`. The native call `SXN_SYS_MAP_VIEW` takes a handle and flags only | `kernel/vmm.cpp`, `include/abi/savanxp_native_abi.h` | A native loader cannot place an image. K2 |
+| `vm::map_section_view` honours a caller-chosen base, and POSIX exposes it as `map_view_at`. The native call `SXN_SYS_MAP_VIEW` takes a handle and flags only | `kernel/vmm.cpp`, `include/abi/savanxp_native_abi.h` | A native loader cannot place an image. K2, done: `SXN_SYS_MAP_VIEW_AT` |
 | W^X is enforced per view; a section may grant read, write and execute. There is no `mprotect`. A process has 64 views | [SECTIONS.md](../../kernel/SECTIONS.md) | Images are filled through a writable view and remapped executable. The view budget must be counted |
 | The native file API opens existing regular files for sequential reading, saves whole files of up to 4096 bytes, streams new files, queries paths and lists directories. No seek | [SUN.md](../../userland/SUN.md#files-and-small-profile-saves) | Enough to load images and keep Solitaire's settings. Case-insensitive lookup can now be built on the listing |
 | A process has one connection to `windowd`, a main window framed by the window manager and up to four owned windows: framed dialogs, or frameless popups placed in the owner's client area. Pointer capture, cursor shape and resize exist | [OWNED_WINDOWS.md](../../desktop/OWNED_WINDOWS.md), `include/sxn/sxnwm.h` | A top-level window, a modal dialog and a popup menu each map to something that exists |
@@ -326,6 +326,14 @@ code ends that process alone. The refused `int 0x80` is asserted.
 [KERNEL_SECURITY.md](../../kernel/KERNEL_SECURITY.md) record the new contract.
 
 ### K2 — a native view at a chosen address
+
+**Done (2026-11-12).** `SXN_SYS_MAP_VIEW_AT` and `sxn_map_view_at`. A
+refused base now says why for native and POSIX callers alike: `EINVAL` when
+misaligned or outside the user half, `EEXIST` when the range is occupied
+([SECTIONS.md](../../kernel/SECTIONS.md#map_view_at-and-why-a-loader-needs-it)).
+The user half starts at `0x400000`, so `winhost`'s guest allocator starts
+there on SavanXP; the harness's starts at `0x10000`. The view count is still
+to be taken at the guest half of W1.
 
 Size S. `SXN_SYS_MAP_VIEW_AT`: what `vm::map_section_view` already does and
 POSIX already reaches. The base is page-aligned, the range must be free, and
@@ -545,7 +553,7 @@ green; none needs the one after it.
    `hello.exe` on the build host. No kernel change. Done on 2026-11-12;
    `hello.exe` and `initorder.exe` give the same bytes and statuses on
    Windows XP and in the harness.
-3. K2, then K1, each with its `nativetest` assertions.
+3. K2 (done 2026-11-12), then K1, each with its `nativetest` assertions.
 4. W1, guest half: `winhost` on SavanXP and the `win32-hello` smoke scenario.
 5. W2 onward, in order.
 

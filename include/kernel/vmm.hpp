@@ -108,6 +108,13 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination);
 uint64_t resident_user_bytes(const VmSpace& space);
 bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork);
 bool unmap_section_view(VmSpace& space, uint64_t base_address);
+
+/* Why a view at a caller-chosen base cannot go there: the range is outside
+ * the user half below the stack guard (or empty, or wraps), or something is
+ * already mapped in it. Lets MAP_VIEW_AT answer EINVAL or EEXIST instead of
+ * map_section_view's bare false. */
+enum class FixedRange : uint8_t { free, outside, occupied };
+FixedRange classify_fixed_range(const VmSpace& space, uint64_t base_address, uint64_t size);
 bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base);
 bool unmap_kernel_pages(void* virtual_base, uint64_t page_count);
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);

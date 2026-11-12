@@ -374,6 +374,15 @@ enum sxn_syscall_number {
      * through to the disk before returning. 0, -EBADF, -EIO.
      * FlushFileBuffers. */
     SXN_SYS_FLUSH_FILE = 0x1041,
+    /* rdi = section handle, rsi = base address, rdx = flags (as MAP_VIEW).
+     * Maps the view with its first byte at base: what a loader needs to put
+     * an image where its headers say. The base is page-aligned and the whole
+     * range free, inside the user half and below the stack guard; base 0
+     * lets the kernel choose, as MAP_VIEW. Returns base, or -EINVAL
+     * (misaligned or outside the user half, or writable and executable),
+     * -EEXIST (something is mapped in the range), -EACCES, -EBADF, -ENOMEM.
+     * Same call as the POSIX map_view_at. MapViewOfFileEx. */
+    SXN_SYS_MAP_VIEW_AT = 0x1042,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

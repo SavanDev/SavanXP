@@ -28,7 +28,8 @@
  * events and streams; and TERMINATE:
  * a third child ("sleeper") waits forever until the parent ends it, and
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
- * then ended with that status, then gone. And the heap
+ * then ended with that status, then gone. MAP_VIEW_AT at a chosen low
+ * address, with its refusals. And the heap
  * (docs/userland/NATIVE_HEAP.md): several MiB across arenas from the native
  * page source. And threads (docs/roadmaps/done/THREADS_ROADMAP.md): workers that
  * share memory and end with their own codes, joined through their handles; a
@@ -210,6 +211,54 @@ static void check_gpu_3d(long gpu, const struct savanxp_gpu_info* info)
     check(sxn_unmap_view((uint64_t)view) == 0);
     check(sxn_close(section) == 0);
     (void)sxn_log(matches ? "nativetest: gpu 3d clear read back" : "nativetest: gpu 3d clear mismatch");
+}
+
+/* SXN_SYS_MAP_VIEW_AT (docs/kernel/SECTIONS.md): a view at a chosen low
+ * address, where the Win32 loader puts PE images; refused misaligned, outside
+ * the user half and over an occupied range; and the same section mapped again
+ * at the same base with a different access after unmapping it. Views the
+ * kernel chooses land above 4 GiB, so they never collide with a 32-bit
+ * guest's range. */
+static void test_view_at(void) {
+    const uint64_t base = 0x10000000ull;
+    const long section = sxn_section_create(2u * 4096u, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    long view;
+
+    check(section >= 0);
+    if (section < 0) {
+        return;
+    }
+    view = sxn_map_view_at(section, base, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    check(view == (long)base);
+    if (view == (long)base) {
+        volatile uint32_t* words = (volatile uint32_t*)(uintptr_t)base;
+
+        words[0] = 0x5EC71011u;
+        words[1024] = 0x77u;
+        /* Over itself, and overlapping its second page: refused, not replaced. */
+        check(sxn_map_view_at(section, base, SXN_SECTION_READ) == -SAVANXP_EEXIST);
+        check(sxn_map_view_at(section, base + 4096u, SXN_SECTION_READ) == -SAVANXP_EEXIST);
+        check(sxn_unmap_view(base) == 0);
+
+        view = sxn_map_view_at(section, base, SXN_SECTION_READ);
+        check(view == (long)base);
+        if (view == (long)base) {
+            check(words[0] == 0x5EC71011u && words[1024] == 0x77u);
+            check(sxn_unmap_view(base) == 0);
+        }
+    }
+    check(sxn_map_view_at(section, base + 8u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    /* Below the user half (kUserBase), and the process's own image at it. */
+    check(sxn_map_view_at(section, 0x10000u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    check(sxn_map_view_at(section, 0x400000u, SXN_SECTION_READ) == -SAVANXP_EEXIST);
+
+    view = sxn_map_view_at(section, 0, SXN_SECTION_READ);
+    check(view > 0 && (uint64_t)view > 0xffffffffull);
+    if (view > 0) {
+        check(sxn_unmap_view((uint64_t)view) == 0);
+    }
+    check(sxn_close(section) == 0);
+    check(sxn_log("nativetest: view at done") == 0);
 }
 
 static int streq(const char* a, const char* b) {
@@ -3097,6 +3146,7 @@ int main(int argc, char** argv) {
     }
 
     test_files();
+    test_view_at();
     test_threads(&info);
     test_thread_bases();
     test_address_waits();

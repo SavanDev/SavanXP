@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Native programs can map a section view at a chosen address: `SXN_SYS_MAP_VIEW_AT` (`sxn_map_view_at`), the native
+  side of POSIX `map_view_at`.** At a fixed base, both now answer `-EEXIST` for an occupied range and `-EINVAL` for one
+  outside the user half, instead of `-ENOMEM`. See [SECTIONS.md](docs/kernel/SECTIONS.md#map_view_at-and-why-a-loader-needs-it).
+
 - **Win32 subsystem on the build host: PE32 parser, loader, `ntdll.dll` and `kernel32.dll`, and `savanxp-win32-harness`,
   which runs PE32 executables on Linux x86-64 through a 32-bit gate.** Fixtures (`hello.exe`, `initorder.exe`) give the
   same bytes and exit statuses as on Windows XP; tests `win32-pe-test`, `win32-harness-test`, and `win32-pe-fixtures-test`

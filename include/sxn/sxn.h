@@ -88,6 +88,12 @@ static inline long sxn_map_view(long handle, unsigned flags) {
     return sxn_trap(SXN_SYS_MAP_VIEW, (unsigned long)handle, (unsigned long)flags, 0);
 }
 
+/* The view at a chosen, page-aligned base (SXN_SYS_MAP_VIEW_AT). */
+static inline long sxn_map_view_at(long handle, uint64_t base_address, unsigned flags) {
+    return sxn_trap(SXN_SYS_MAP_VIEW_AT, (unsigned long)handle, (unsigned long)base_address,
+                    (unsigned long)flags);
+}
+
 static inline long sxn_unmap_view(uint64_t base_address) {
     return sxn_trap(SXN_SYS_UNMAP_VIEW, (unsigned long)base_address, 0, 0);
 }

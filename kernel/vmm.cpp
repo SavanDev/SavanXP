@@ -897,6 +897,13 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
     return true;
 }
 
+FixedRange classify_fixed_range(const VmSpace& space, uint64_t base_address, uint64_t size) {
+    if (!canonical_user_range(base_address, size)) {
+        return FixedRange::outside;
+    }
+    return user_range_is_free(space, base_address, size) ? FixedRange::free : FixedRange::occupied;
+}
+
 bool unmap_section_view(VmSpace& space, uint64_t base_address) {
     VmSpace::SectionView* view = find_section_view(space, base_address);
     if (view == nullptr) {

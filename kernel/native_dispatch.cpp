@@ -1036,6 +1036,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_SET_NONBLOCKING:
         case SXN_SYS_SECTION_CREATE:
         case SXN_SYS_MAP_VIEW:
+        case SXN_SYS_MAP_VIEW_AT:
         case SXN_SYS_UNMAP_VIEW:
         case SXN_SYS_CLOSE:
         case SXN_SYS_DUPLICATE:
@@ -1321,6 +1322,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_MAP_VIEW:
             context->rax = static_cast<uint64_t>(map_view_handle(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
+        case SXN_SYS_MAP_VIEW_AT:
+            context->rax = static_cast<uint64_t>(map_view_base_handle(*caller, context->rdi, context->rsi,
+                static_cast<uint32_t>(context->rdx)));
             return context;
         case SXN_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(*caller, context->rdi));
