@@ -9,6 +9,8 @@ Dispatcher g_table[static_cast<size_t>(Id::count)] = {};
 size_t g_state_size[static_cast<size_t>(Id::count)] = {};
 size_t g_thread_state_size[static_cast<size_t>(Id::count)] = {};
 WaitRecheck g_wait_recheck[static_cast<size_t>(Id::count)] = {};
+StateHook g_state_copied[static_cast<size_t>(Id::count)] = {};
+StateHook g_state_released[static_cast<size_t>(Id::count)] = {};
 
 } // namespace
 
@@ -24,6 +26,10 @@ void reset() {
     }
     for (auto& hook : g_wait_recheck) {
         hook = nullptr;
+    }
+    for (size_t index = 0; index < static_cast<size_t>(Id::count); ++index) {
+        g_state_copied[index] = nullptr;
+        g_state_released[index] = nullptr;
     }
 }
 
@@ -67,6 +73,29 @@ size_t process_state_size(Id id) {
         return 0;
     }
     return g_state_size[index];
+}
+
+void register_process_state_hooks(Id id, StateHook copied, StateHook released) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return;
+    }
+    g_state_copied[index] = copied;
+    g_state_released[index] = released;
+}
+
+void process_state_copied(Id id, process::Process& proc) {
+    const auto index = static_cast<size_t>(id);
+    if (index < static_cast<size_t>(Id::count) && g_state_copied[index] != nullptr) {
+        g_state_copied[index](proc);
+    }
+}
+
+void process_state_released(Id id, process::Process& proc) {
+    const auto index = static_cast<size_t>(id);
+    if (index < static_cast<size_t>(Id::count) && g_state_released[index] != nullptr) {
+        g_state_released[index](proc);
+    }
 }
 
 void register_thread_state_size(Id id, size_t bytes) {

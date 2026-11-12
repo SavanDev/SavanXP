@@ -1,18 +1,18 @@
 #include "libc.h"
 
 /*
- * Directorio actual: la propiedad que la rebanada B de aislamiento movio de
- * sitio. Antes vivia en un campo cwd de Process, en el kernel; ahora vive en el
- * estado privado que declara el subsistema POSIX y el kernel solo lo reserva.
+ * The current directory: what isolation slice B moved out of the kernel's
+ * Process into the state the POSIX subsystem declares, and VFS-B made a held
+ * vnode instead of a path string.
  *
- * El comportamiento no cambio, asi que esto no es un test nuevo: es la
- * asercion que faltaba. chdir/getcwd no los probaba nadie, y el cambio movia
- * justo la herencia por fork y la conservacion por exec, que son las dos cosas
- * que un movimiento de estado suele romper sin que se note.
+ * It checks the initial directory, chdir/getcwd, relative resolution, fork
+ * inheritance and exec preservation -- the two things moving state tends to
+ * break quietly -- and, since the directory is held, that it follows a rename
+ * of itself and cannot be removed while the process stands in it.
  *
- *     cwdtest            el padre: comprueba todo y despacha a los hijos
- *     cwdtest child      un fork: el hijo tiene que heredar el cwd
- *     cwdtest exec       un exec: el cwd se conserva (exec no lo cambia)
+ *     cwdtest            the parent: checks everything and runs the children
+ *     cwdtest child      a fork: the child must inherit the directory
+ *     cwdtest exec       an exec: the directory is kept (exec does not change it)
  */
 
 #define CWDTEST_EXPECTED_PARENT "/bin"
@@ -82,6 +82,25 @@ int main(int argc, char** argv) {
     /* 4. Errores que deben seguir siendo errores. */
     check(savanxp_chdir("/no_existe") < 0, "chdir to a missing directory fails");
     check(savanxp_chdir("/bin/progman") < 0, "chdir to a file fails");
+
+    /* 4b. The current directory is held (VFS-B): it follows a rename of
+     * itself, cannot be removed while a process stands in it, and can once
+     * the process leaves. */
+    (void)savanxp_rmdir("/tmp/cwdtest-a");
+    (void)savanxp_rmdir("/tmp/cwdtest-b");
+    check(savanxp_mkdir("/tmp/cwdtest-a") == 0, "mkdir a directory to stand in");
+    check(savanxp_chdir("/tmp/cwdtest-a") == 0, "chdir into it");
+    check(savanxp_rmdir("/tmp/cwdtest-a") < 0, "rmdir of the current directory refuses");
+    check(savanxp_rename("/tmp/cwdtest-a", "/tmp/cwdtest-b") == 0, "rename of the current directory");
+    expect_cwd("/tmp/cwdtest-b", "getcwd follows the rename");
+    fd = savanxp_open_mode("here.txt", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE);
+    check(fd >= 0, "a relative path resolves in the renamed directory");
+    if (fd >= 0) {
+        savanxp_close((int)fd);
+    }
+    check(savanxp_unlink("/tmp/cwdtest-b/here.txt") == 0, "the file is where the directory now is");
+    check(savanxp_chdir(CWDTEST_EXPECTED_PARENT) == 0, "chdir back");
+    check(savanxp_rmdir("/tmp/cwdtest-b") == 0, "rmdir once nobody stands in it");
 
     /* 5. fork hereda el cwd. */
     {

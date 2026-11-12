@@ -1725,4 +1725,8 @@ size_t child_count(const Vnode& directory) {
     return count;
 }
 
+bool path_of(const Vnode& node, char* out, size_t capacity) {
+    return node.type != NodeType::invalid && !node.unlinked && path_of_node(node, out, capacity);
+}
+
 } // namespace vfs

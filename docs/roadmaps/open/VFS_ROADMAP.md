@@ -42,7 +42,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until its last `vfs::release` |
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `open`/`close` at a vnode's first and last holder (FAT keeps a FatFs file open between them) and `release` for the last holder of an unlinked file, but nothing per opening |
-| Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles and file-backed sections. A current directory is a path string in POSIX state and holds nothing; there are no directory cursors or name caches to count yet |
+| Holders | Counted on the vnode (`Vnode::references`, `vfs::retain`/`release`/`is_held`) by open handles, file-backed sections and POSIX's current directory (a retained vnode, whose path is rebuilt with `vfs::path_of` and follows renames). There are no directory cursors or name caches to count yet |
 | Errors | Driver operations return `fs::Status` and a failed read is an error, not EOF; handle I/O returns `sx::IoResult` (status and length), but path operations and `vfs::read`/`vfs::write` themselves still report through the global `vfs::last_error()` |
 | Paths | 63-byte names, 255-byte paths, lexical normalization and linear child lookup; no driver lookup on demand or symbolic-link traversal |
 | Name comparison | Byte for byte on every volume; FAT's case-insensitive rules are not applied, so a differently cased name misses, or passes the VFS and is refused by the format |
@@ -69,7 +69,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 | Phase | Landed | Still open |
 | --- | --- | --- |
 | VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
-| VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open | Entries apart from file identity; driver state per opening; directory references (current directory, cursors) |
+| VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
 | VFS-C | Nothing | All of it. It is the one open item of SxFS v2's scale work |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
 | VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
@@ -158,8 +158,9 @@ file. Separate entries from file identity and extend the existing open
 descriptions. References are counted on the object (`Vnode::references`):
 open handles take one in `sx::open_file`, file-backed sections one for their
 lifetime; this replaced a holder probe that scanned every I/O object per
-question. Current-directory objects, directory cursors and caches take theirs
-when they exist. Drivers get `open`/`close` next to `release`, at a vnode's
+question. POSIX's current directory is a retained vnode too: it follows a
+rename of itself, and keeps its directory from being removed or unmounted.
+Directory cursors and caches take theirs when they exist. Drivers get `open`/`close` next to `release`, at a vnode's
 first and last holder: FAT keeps one FatFs file open between them instead of
 reopening the file and walking its cluster chain on every read. That is state
 per file; state per opening (directory cursors, locks) waits for the open

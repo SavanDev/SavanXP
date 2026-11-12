@@ -557,9 +557,8 @@ int rename_path(process::Process& proc, const char* old_path, const char* new_pa
     if (node == nullptr) {
         return sx::negative_error(SAVANXP_ENOENT);
     }
-    if (node->type == vfs::NodeType::directory && vfs::is_held(*node)) {
-        return sx::negative_error(SAVANXP_EBUSY);
-    }
+    // A held directory (an open handle, some process's current directory)
+    // can be renamed: holders keep the vnode, and its path follows the move.
     if (!vfs::rename(proc.credentials, old_path, new_path)) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
@@ -622,14 +621,18 @@ int chdir_path(process::Process& proc, const char* path) {
     }
     posix::ProcessState* const owned = posix::state(proc);
     if (owned == nullptr) {
-        // Sin estado no hay donde guardar el cwd: el proceso no tiene donde
-        // estar, y quedarse en "/" es la respuesta que no inventa.
+        // With no state there is nowhere to keep the directory: staying at
+        // "/" is the answer that invents nothing.
         return sx::negative_error(SAVANXP_ENOMEM);
     }
-    if (strlen(path) >= sizeof(owned->cwd)) {
-        return sx::negative_error(SAVANXP_EINVAL);
+    // The new directory is held before the old one is let go: chdir to where
+    // the process already is must not drop the last reference in between.
+    vfs::Vnode* const directory = const_cast<vfs::Vnode*>(node);
+    vfs::retain(*directory);
+    if (owned->cwd != nullptr) {
+        vfs::release(*owned->cwd);
     }
-    strcpy(owned->cwd, path);
+    owned->cwd = directory;
     return 0;
 }
 
@@ -713,7 +716,10 @@ int access_path(process::Process& proc, const char* path, uint32_t want) {
 }
 
 int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
-    const char* const cwd = posix::cwd_or_root(proc);
+    char cwd[vfs::kMaxPathLength] = {};
+    if (!posix::current_directory(proc, cwd, sizeof(cwd))) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
     const size_t length = strlen(cwd) + 1;
     if (capacity < length || !vm::is_user_range_accessible(proc.address_space, user_buffer, capacity, true)) {
         return sx::negative_error(SAVANXP_EINVAL);
@@ -723,10 +729,13 @@ int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
         : sx::negative_error(SAVANXP_EINVAL);
 }
 
-// Resolucion POSIX: relativa al directorio actual del proceso. La del kernel
-// (resolve_path_from_root) es la que se usa cuando no hay cwd que consultar.
+// POSIX resolution: relative to the process's current directory. The
+// kernel's (resolve_path_from_root) is the one used when there is no current
+// directory to ask.
 bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
-    return vfs::normalize_path(posix::cwd_or_root(proc), input, output, capacity);
+    char cwd[vfs::kMaxPathLength] = {};
+    return posix::current_directory(proc, cwd, sizeof(cwd)) &&
+        vfs::normalize_path(cwd, input, output, capacity);
 }
 
 int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity) {
@@ -1289,3 +1298,35 @@ void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_d
 
 } // namespace posix
 
+
+namespace posix {
+
+bool current_directory(const process::Process& proc, char* out, size_t capacity) {
+    const ProcessState* const owned = state(proc);
+    if (owned == nullptr || owned->cwd == nullptr) {
+        if (capacity < 2) {
+            return false;
+        }
+        out[0] = '/';
+        out[1] = '\0';
+        return true;
+    }
+    return vfs::path_of(*owned->cwd, out, capacity);
+}
+
+void state_copied(process::Process& proc) {
+    ProcessState* const owned = state(proc);
+    if (owned != nullptr && owned->cwd != nullptr) {
+        vfs::retain(*owned->cwd);
+    }
+}
+
+void state_released(process::Process& proc) {
+    ProcessState* const owned = state(proc);
+    if (owned != nullptr && owned->cwd != nullptr) {
+        vfs::release(*owned->cwd);
+        owned->cwd = nullptr;
+    }
+}
+
+} // namespace posix

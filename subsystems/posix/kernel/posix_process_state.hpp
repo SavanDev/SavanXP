@@ -4,17 +4,20 @@
 #include <stdint.h>
 
 #include "kernel/process.hpp"
+#include "kernel/vfs.hpp"
 
 /*
- * Estado privado por proceso de POSIX (rebanada B de aislamiento).
+ * POSIX's private per-process state (isolation slice B).
  *
- * El kernel reserva estos bytes segun lo que POSIX declara en
- * subsystem::register_process_state_size y no mira dentro. Ac vive el
- * directorio actual, que es estado de RESOLUCION DE RUTAS: pertenece a la
- * capa que traduce, no al kernel. Por eso Process ya no tiene campo cwd.
+ * The kernel reserves these bytes for what POSIX declares in
+ * subsystem::register_process_state_size and never looks inside. The current
+ * directory lives here: it is path-resolution state, and belongs to the layer
+ * that translates, not to the kernel. That is why Process has no cwd field.
  *
- * Para escribirlo no hace falta ningun mecanismo nuevo: se copia al buffer
- * del proceso con la misma primitiva que usa el resto de la traduccion.
+ * The current directory is held: a retained vnode, not a path string. The
+ * kernel tells POSIX when it copies these bytes into a child or is about to
+ * free them (subsystem::register_process_state_hooks), and POSIX takes or
+ * drops the reference then.
  */
 
 namespace posix {
@@ -27,7 +30,10 @@ namespace posix {
 constexpr size_t POSIX_MAX_POLL_ENTRIES = process::kMaxFileHandles;
 
 struct ProcessState {
-    char cwd[process::kProcessPathLength];
+    // The current directory, retained (vfs::retain) so it cannot be removed
+    // or unmounted under the process; its path is rebuilt from the tree when
+    // needed, so it follows renames. nullptr is "/".
+    vfs::Vnode* cwd;
 };
 
 // POSIX per-thread blocking requests. The common kernel knows only that the
@@ -58,22 +64,21 @@ inline ThreadState* existing_thread_state(const process::Thread& thread) {
         : nullptr;
 }
 
-// El estado del proceso actual, o nullptr si no hay (nativo, o sin memoria).
-// El heap devuelve memoria alineada a 16 (heap::allocate), pero el puntero
-// guardado en Process es uint8_t*: por eso el reinterpret_cast y no un
-// static_cast.
+// The process's state, or nullptr when it has none (native, or no memory).
+// The heap returns 16-byte aligned memory (heap::allocate), but Process
+// stores a uint8_t*: hence reinterpret_cast rather than static_cast.
 inline ProcessState* state(const process::Process& proc) {
     return reinterpret_cast<ProcessState*>(proc.subsystem_state);
 }
 
-// El directorio actual, con la regla de POSIX: vacio o sin estado es "/".
-inline const char* cwd_or_root(const process::Process& proc) {
-    const ProcessState* const owned = state(proc);
-    if (owned == nullptr || owned->cwd[0] == '\0') {
-        return "/";
-    }
-    return owned->cwd;
-}
+// The current directory's path now into `out`, with POSIX's rule that no
+// directory or no state is "/". False only when the path does not fit.
+bool current_directory(const process::Process& proc, char* out, size_t capacity);
+
+// The state hooks (posix_translation.cpp): a forked or spawned child takes its
+// own reference on the inherited directory; freed state drops it.
+void state_copied(process::Process& proc);
+void state_released(process::Process& proc);
 
 // The poll path (slice C), implemented in posix_translation.cpp.
 bool commit_poll_entries(ThreadState& state, process::Process& proc);

@@ -160,6 +160,10 @@ struct Process {
     // memory.
     uint8_t* subsystem_state;
     size_t subsystem_state_bytes;
+    // The subsystem whose layout those bytes have: an exec changes
+    // subsystem_id before the state is checked, and the old owner's
+    // released hook must be the one that runs.
+    subsystem::Id subsystem_state_owner;
     // Whom it acts as (kernel/credentials.hpp). Zero, which is the system, for
     // init and anything spawned from it until something lowers it.
     cred::Credentials credentials;

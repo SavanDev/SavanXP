@@ -115,6 +115,10 @@ Cut-off notes:
   holder): reads go on from where they stopped instead of reopening the file by path and walking its clusters.
   Each write is still on the disk when it returns.
 
+- **A POSIX process's current directory holds its directory**: `getcwd` follows a rename of it, and the directory
+  cannot be removed (`EBUSY`) or its volume unmounted while a process stands in it. Renaming a directory someone has
+  open or stands in is now allowed. Subsystems get `subsystem::register_process_state_hooks`.
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).

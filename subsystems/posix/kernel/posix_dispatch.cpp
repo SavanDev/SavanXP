@@ -16,6 +16,7 @@
 // whether it is ready now.
 static void register_posix_process_state(void) {
     subsystem::register_process_state_size(subsystem::Id::posix, sizeof(posix::ProcessState));
+    subsystem::register_process_state_hooks(subsystem::Id::posix, &posix::state_copied, &posix::state_released);
     subsystem::register_thread_state_size(subsystem::Id::posix, sizeof(posix::ThreadState));
     subsystem::register_wait_recheck(subsystem::Id::posix, &posix::recheck_parked_poll);
 }

@@ -132,7 +132,10 @@ state** without ever reading it: each subsystem registers the size it needs
 declares `posix::ProcessState` (the cwd) in
 `subsystems/posix/kernel/posix_process_state.hpp`; native registers zero,
 which is what makes "no POSIX left in the kernel" measurable instead of
-hopeful.
+hopeful. State that holds references registers hooks too
+(`subsystem::register_process_state_hooks`): `copied` after fork or spawn
+copied the bytes into a child, `released` before the kernel frees them. Since
+VFS-B the POSIX cwd is a retained vnode, and the hooks keep its count right.
 
 Two rules that are easy to get wrong and are why this is not mechanical:
 

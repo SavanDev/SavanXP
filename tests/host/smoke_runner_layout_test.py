@@ -209,7 +209,10 @@ def main() -> int:
     assert "char cwd[" not in process_hpp
     assert "subsystem_state" in process_hpp
     posix_state = (root / "subsystems" / "posix" / "kernel" / "posix_process_state.hpp").read_text(encoding="utf-8")
-    assert "char cwd[" in posix_state
+    # Since VFS-B the directory is a held vnode, kept counted by the state
+    # hooks the kernel calls on copy and free.
+    assert "vfs::Vnode* cwd;" in posix_state
+    assert "register_process_state_hooks" in (root / "include" / "kernel" / "subsystem.hpp").read_text(encoding="utf-8")
     assert "resolve_path_from_root" in process_cpp
     assert "resolve_path_from_root" in (root / "kernel" / "native_dispatch.cpp").read_text(encoding="utf-8")
     # Isolation C: no poll state in the kernel. The kernel only knows a

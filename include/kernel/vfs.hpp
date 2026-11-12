@@ -147,6 +147,10 @@ void retain(Vnode& node);
 // is freed (fs::Driver::release) and the node invalidated.
 void release(Vnode& node);
 bool is_held(const Vnode& node);
+// The absolute path a node has now, rebuilt from its parents, so it follows
+// renames of the node and of the directories above it. False when it does not
+// fit in `capacity` or the node is not in the tree.
+bool path_of(const Vnode& node, char* out, size_t capacity);
 
 // Removes a file's name. A file something still holds keeps its contents for
 // those holders (Vnode::unlinked); on a volume whose driver cannot do that,

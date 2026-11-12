@@ -1123,6 +1123,9 @@ process::Process* allocate_process_slot(bool idle) {
 
 void reset_process_slot(process::Process& proc) {
     const bool idle = proc.idle;
+    // A creation that failed after its state was copied: free it, and what it
+    // holds, instead of losing it to the memset. A no-op once freed.
+    process::free_subsystem_state(proc);
     memset(&proc, 0, sizeof(proc));
     proc.idle = idle;
     proc.life = process::Lifecycle::unused;
@@ -1634,18 +1637,21 @@ void ensure_subsystem_state(Process& proc) {
     }
 
     uint8_t* fresh = static_cast<uint8_t*>(heap::allocate(needed));
-    // Sin memoria no es motivo para no crear el proceso: el subsistema ve
-    // estado vacio (nullptr), que POSIX trata igual que "/".
+    // No memory is no reason not to create the process: the subsystem sees
+    // no state (nullptr), which POSIX reads as "/".
     if (fresh != nullptr) {
         memset(fresh, 0, needed);
     }
     free_subsystem_state(proc);
     proc.subsystem_state = fresh;
     proc.subsystem_state_bytes = fresh != nullptr ? needed : 0;
+    proc.subsystem_state_owner = proc.subsystem_id;
 }
 
 void free_subsystem_state(Process& proc) {
     if (proc.subsystem_state != nullptr) {
+        // What the state holds goes before its bytes do.
+        subsystem::process_state_released(proc.subsystem_state_owner, proc);
         heap::free(proc.subsystem_state);
         proc.subsystem_state = nullptr;
     }
@@ -1679,14 +1685,16 @@ void free_thread_subsystem_state(Thread& thread) {
     thread.subsystem_state_bytes = 0;
 }
 
-// fork hereda el estado privado tal cual: el hijo arranca donde estaba el
-// padre, que para POSIX significa el mismo cwd.
+// fork and spawn inherit the private state as it is: the child starts where
+// the parent stood, which for POSIX is the same current directory. The copied
+// hook then takes the child's own references on what the bytes name.
 void copy_subsystem_state(Process& child, const process::Process& parent) {
     child.subsystem_id = parent.subsystem_id;
     ensure_subsystem_state(child);
     if (child.subsystem_state != nullptr && parent.subsystem_state != nullptr &&
         child.subsystem_state_bytes == parent.subsystem_state_bytes) {
         memcpy(child.subsystem_state, parent.subsystem_state, parent.subsystem_state_bytes);
+        subsystem::process_state_copied(child.subsystem_state_owner, child);
     }
 }
 

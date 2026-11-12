@@ -182,8 +182,10 @@ calls `vfs::retain`, and `vfs::release` when done. An open handle does it in
 `sx::open_file` and when its I/O object is destroyed; a file-backed section
 when it is created and destroyed. The last release of an unlinked node frees
 the file. A driver without `release` (FAT) refuses to unlink or replace a held
-file with `EBUSY`. A directory that is some process's open handle is refused
-the same way.
+file with `EBUSY`. A directory that is some process's open handle or POSIX
+current directory (which holds its vnode too) cannot be removed (`EBUSY`) and
+keeps its volume mounted, but can be renamed: its holders keep the vnode, and
+`getcwd` rebuilds the path from the tree (`vfs::path_of`).
 
 **Identity.** A vnode's address is stable while anything holds it. A slot is
 reused once the node is gone and released, and `content_generation` never

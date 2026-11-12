@@ -35,6 +35,16 @@ process::SavedContext* dispatch(Id id, process::SavedContext* context);
 void register_process_state_size(Id id, size_t bytes);
 size_t process_state_size(Id id);
 
+// The lifecycle of that state, for a subsystem whose state holds references
+// (POSIX's current directory holds its vnode). `copied` runs on a child right
+// after the parent's bytes were copied into it (fork, spawn); `released` runs
+// right before the bytes are freed (exit, an exec into another subsystem, a
+// creation that failed). nullptr: the state is plain bytes.
+using StateHook = void (*)(process::Process& proc);
+void register_process_state_hooks(Id id, StateHook copied, StateHook released);
+void process_state_copied(Id id, process::Process& proc);
+void process_state_released(Id id, process::Process& proc);
+
 // Per-thread private state, the same way: a subsystem declares how much each
 // of its threads needs and the kernel allocates it on first use
 // (process::thread_subsystem_state) and frees it with the thread. POSIX keeps
