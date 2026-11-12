@@ -267,7 +267,11 @@ Each phase builds, boots and is verified on its own.
      `boot/initramfs.cpio` as files and edits `limine.conf`, instead of
      rewriting the ESP image ([SETUP_AND_UPDATES.md](../../userland/SETUP_AND_UPDATES.md),
      phase 5). There is no updater yet.
-   - Removable media wait for a USB mass-storage driver, which does not exist.
+   - **Removable media. Done.** USB sticks are block devices (`usb0`,
+     `usb1`...; [USB_ROADMAP.md](../done/USB_ROADMAP.md)) and Disk Management
+     mounts their FAT volumes like any other disk; `diskmgmt-smoke` attaches
+     one (serial `SXUSB0`) and mounts, writes and remounts it. A stick pulled
+     out while mounted has its volumes released.
 
 ## Limits accepted
 
