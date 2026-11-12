@@ -1894,6 +1894,101 @@ static int file_bytes_equal(const char *a, const char *b, unsigned count) {
     return 1;
 }
 
+static int file_names_equal(const char *a, const char *b) {
+    while (*a && *a == *b) { ++a; ++b; }
+    return *a == *b;
+}
+
+static struct sxn_directory_entry g_entry;
+static char g_big_file[6000];
+
+/* QUERY_PATH, OPEN/READ_DIRECTORY, CREATE_FILE and FLUSH_FILE: what the
+ * file dialog lists and Log Viewer saves with. */
+static void test_file_listing(void) {
+    struct sxn_file_info info;
+    long handle;
+    long result;
+    int found = 0;
+    int dots = 0;
+    unsigned i;
+
+    check(sxn_query_path("/system/native-file-test.txt", &info) == 0);
+    check(info.type == SXN_FILE_TYPE_FILE && info.size == 22u);
+    check(sxn_query_path("/system", &info) == 0 && info.type == SXN_FILE_TYPE_DIRECTORY && info.size == 0u);
+    check(sxn_query_path("/dev/serial", &info) == 0 && info.type == SXN_FILE_TYPE_DEVICE);
+    check(sxn_query_path("/system/no-such-native-fixture", &info) == -SAVANXP_ENOENT);
+    check(sxn_query_path("relative", &info) == -SAVANXP_EINVAL);
+    check(sxn_query_path((const char*)1, &info) == -SAVANXP_EINVAL);
+    check(sxn_trap(SXN_SYS_QUERY_PATH, (unsigned long)"/system", (unsigned long)&info,
+                   SXN_FILE_INFO_V1_SIZE - 1u) == -SAVANXP_EINVAL);
+    check(sxn_trap(SXN_SYS_QUERY_PATH, (unsigned long)"/system", 1, sizeof(info)) == -SAVANXP_EINVAL);
+
+    handle = sxn_open_directory("/system");
+    check(handle >= 0);
+    if (handle >= 0) {
+        while ((result = sxn_read_directory(handle, &g_entry)) == 1) {
+            if (file_names_equal(g_entry.name, ".") || file_names_equal(g_entry.name, "..")) ++dots;
+            if (file_names_equal(g_entry.name, "native-file-test.txt")) {
+                found = g_entry.info.type == SXN_FILE_TYPE_FILE && g_entry.info.size == 22u;
+            }
+        }
+        check(result == 0 && found && dots == 0);
+        check(sxn_read_directory(handle, &g_entry) == 0);
+        check(sxn_trap(SXN_SYS_READ_DIRECTORY, (unsigned long)handle, (unsigned long)&g_entry,
+                       SXN_DIRECTORY_ENTRY_V1_SIZE - 1u) == -SAVANXP_EINVAL);
+        check(sxn_read(handle, &g_entry, 1) == -SAVANXP_EBADF);
+        check(sxn_close(handle) == 0);
+    }
+    check(sxn_open_directory("/system/native-file-test.txt") == -SAVANXP_ENOTDIR);
+    check(sxn_open_directory("/dev/serial") == -SAVANXP_ENOTDIR);
+    check(sxn_open_directory("/system/no-such-native-fixture") == -SAVANXP_ENOENT);
+    check(sxn_open_directory("relative") == -SAVANXP_EINVAL);
+    handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
+    if (handle >= 0) {
+        check(sxn_read_directory(handle, &g_entry) == -SAVANXP_EBADF);
+        check(sxn_flush_file(handle) == -SAVANXP_EBADF);
+        (void)sxn_close(handle);
+    }
+
+    /* Larger than SXN_WRITE_FILE_MAX, written in pieces. */
+    for (i = 0; i < sizeof(g_big_file); ++i) g_big_file[i] = (char)('a' + i % 26u);
+    handle = sxn_create_file("/users/native-create-test", SXN_CREATE_ALWAYS);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_write(handle, g_big_file, 4000) == 4000);
+        check(sxn_write(handle, g_big_file + 4000, sizeof(g_big_file) - 4000) == (long)(sizeof(g_big_file) - 4000));
+        check(sxn_read(handle, &g_entry, 1) == -SAVANXP_EBADF);
+        check(sxn_flush_file(handle) == 0);
+        check(sxn_close(handle) == 0);
+    }
+    check(sxn_query_path("/users/native-create-test", &info) == 0 && info.size == sizeof(g_big_file));
+    handle = sxn_open_file("/users/native-create-test", SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        static char back[sizeof(g_big_file)];
+        long total = 0;
+        while (total < (long)sizeof(back) && (result = sxn_read(handle, back + total, sizeof(back) - (unsigned long)total)) > 0)
+            total += result;
+        check(total == (long)sizeof(back) && file_bytes_equal(back, g_big_file, sizeof(back)));
+        (void)sxn_close(handle);
+    }
+    check(sxn_create_file("/users/native-create-test", SXN_CREATE_NEW) == -SAVANXP_EEXIST);
+    check(sxn_query_path("/users/native-create-test", &info) == 0 && info.size == sizeof(g_big_file));
+    handle = sxn_create_file("/users/native-create-test", SXN_CREATE_ALWAYS);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_write(handle, "abc", 3) == 3);
+        check(sxn_close(handle) == 0);
+    }
+    check(sxn_query_path("/users/native-create-test", &info) == 0 && info.size == 3u);
+    check(sxn_create_file("/system", SXN_CREATE_ALWAYS) == -SAVANXP_EISDIR);
+    check(sxn_create_file("/dev/serial", SXN_CREATE_ALWAYS) == -SAVANXP_EINVAL);
+    check(sxn_create_file("relative", SXN_CREATE_ALWAYS) == -SAVANXP_EINVAL);
+    check(sxn_create_file("/users/native-create-test", 0) == -SAVANXP_EINVAL);
+    check(sxn_create_file("/users/native-create-test", 3) == -SAVANXP_EINVAL);
+    check(sxn_create_file("/no-such-native-parent/file", SXN_CREATE_NEW) == -SAVANXP_ENOENT);
+}
+
 static void test_files(void) {
     char bytes[64];
     long handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
@@ -1960,6 +2055,7 @@ static void test_files(void) {
     handle = sxn_open_file("/users/native-file-write-test", SXN_FILE_READ);
     check(handle >= 0);
     if (handle >= 0) { check(sxn_read(handle, bytes, 1) == 0); (void)sxn_close(handle); }
+    test_file_listing();
     check(sxn_log("nativetest: files done") == 0);
 }
 
@@ -2259,6 +2355,13 @@ int main(int argc, char** argv) {
         if (sxn_open_file("/users/native-file-private/readable.txt", 0) != -SAVANXP_EACCES) sxn_exit(3);
         if (sxn_write_file("/users/native-file-private.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(4);
         if (sxn_write_file("/system/native-file-test.txt", "x", 1) != -SAVANXP_EACCES) sxn_exit(5);
+        {
+            struct sxn_file_info info;
+            if (sxn_query_path("/users/native-file-private/readable.txt", &info) != -SAVANXP_EACCES) sxn_exit(6);
+            /* Refused before anything is emptied: the fixture keeps its size. */
+            if (sxn_create_file("/system/native-file-test.txt", SXN_CREATE_ALWAYS) != -SAVANXP_EACCES) sxn_exit(7);
+            if (sxn_query_path("/system/native-file-test.txt", &info) != 0 || info.size != 22u) sxn_exit(8);
+        }
         sxn_exit(0);
     }
     if (argc > 1 && streq(argv[1], "log-user")) {

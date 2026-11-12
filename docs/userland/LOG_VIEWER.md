@@ -29,6 +29,13 @@ the serial log has nowhere to go.
   as `[time] source: message`.
 - **Clear** empties the view; the kernel's ring is untouched, and lines that
   arrive later show up as usual.
+- **File > Save Log...** (Ctrl+S) writes the lines shown, in `--print`'s
+  format, to a file picked in the common Save As dialog
+  ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)): the category and Find chosen
+  decide what is saved. It starts in `/users/user` with `system-log.txt`,
+  lists `*.txt` and `*.log`, and adds `.txt` to a name without an extension.
+  The status bar says how many lines were saved and where. A USB stick
+  mounted from Disk Management is the way to take the log off a machine.
 
 The program keeps its own copy of up to 4096 lines, so while it stays open it
 remembers more than the kernel's ring of 2048. What the ring overwrote before
@@ -58,6 +65,9 @@ logview --print xhci           # one subsystem or program
 
 Writes `[time] source message` lines to stdout and exits; it works from the
 text console, where there is no desktop. `logview --selftest` checks the
-parsing and the reading against the live log; `./build.sh smoke
+parsing and the reading against the live log, saves the whole log to
+`/users/logview-selftest.txt` and reads it back, and runs the file dialog's
+own checks (`sxn_file_dialog_selftest`); `./build.sh smoke
 logview-smoke` runs it, and `./tools/shoot.sh --scenario logview` looks at the
-window.
+window, and saves through the dialog twice: once under the suggested name,
+then over it, to see the replace question.

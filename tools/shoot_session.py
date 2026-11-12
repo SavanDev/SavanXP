@@ -1424,6 +1424,45 @@ def scenario_logview(s):
     image = s.shot("logview-copied")
     if find_text(image, (0, 0, 1280, 770), "Copied line", TEXT, FACE)[0] is None:
         raise Failure("Ctrl+C did not copy the selected line")
+    # Save Log... (docs/desktop/FILE_DIALOG.md): the Save As dialog lists
+    # the profile, Enter saves under the suggested name, and saving it again
+    # asks before replacing it.
+    s.qmp.chord("ctrl", "s")
+    time.sleep(2.0)
+    image = s.shot("logview-save-as")
+    if find_text(image, (0, 0, 1280, 770), "Save in:", TEXT, FACE)[0] is None:
+        raise Failure("Ctrl+S did not open the Save As dialog")
+    if find_text(image, (0, 0, 1280, 770), "File name:", TEXT, FACE)[0] is None:
+        raise Failure("the Save As dialog has no File name field")
+    s.qmp.tap("ret")
+    time.sleep(2.0)
+    image = s.shot("logview-saved")
+    if find_text(image, (0, 0, 1280, 770), "replace it?", TEXT, FACE)[0] is not None:
+        # Left from an earlier run: Tab moves from No to Yes.
+        s.qmp.tap("tab")
+        s.qmp.tap("ret")
+        time.sleep(2.0)
+        image = s.shot("logview-saved")
+    if find_text(image, (0, 0, 1280, 770), "Saved", TEXT, FACE)[0] is None:
+        raise Failure("Save Log... did not report the lines saved")
+    s.qmp.chord("ctrl", "s")
+    time.sleep(2.0)
+    s.qmp.tap("ret")
+    time.sleep(2.0)
+    image = s.shot("logview-replace")
+    if find_text(image, (0, 0, 1280, 770), "replace it?", TEXT, FACE)[0] is None:
+        raise Failure("saving over an existing file did not ask first")
+    # No is the default: back to the Save As dialog, then Esc cancels it.
+    s.qmp.tap("ret")
+    time.sleep(2.0)
+    image = s.shot("logview-save-again")
+    if find_text(image, (0, 0, 1280, 770), "Save in:", TEXT, FACE)[0] is None:
+        raise Failure("No did not bring the Save As dialog back")
+    s.qmp.tap("esc")
+    time.sleep(2.0)
+    image = s.shot("logview-save-cancelled")
+    if find_text(image, (0, 0, 1280, 770), "Save in:", TEXT, FACE)[0] is not None:
+        raise Failure("Esc did not close the Save As dialog")
 
 
 def scenario_sxgldiag(s):

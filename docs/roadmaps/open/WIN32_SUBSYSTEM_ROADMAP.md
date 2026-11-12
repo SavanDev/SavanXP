@@ -109,7 +109,7 @@ Read from the tree on 2026-11-10. Recheck before relying on a row.
 | Program images load at `0x400000`; kernel-chosen views start at `0x1000000000`; the stack top is `0x7000000000` | `include/kernel/vmm.hpp` | The range a PE32 image wants is free in a native process |
 | `vm::map_section_view` honours a caller-chosen base, and POSIX exposes it as `map_view_at`. The native call `SXN_SYS_MAP_VIEW` takes a handle and flags only | `kernel/vmm.cpp`, `include/abi/savanxp_native_abi.h` | A native loader cannot place an image. K2 |
 | W^X is enforced per view; a section may grant read, write and execute. There is no `mprotect`. A process has 64 views | [SECTIONS.md](../../kernel/SECTIONS.md) | Images are filled through a writable view and remapped executable. The view budget must be counted |
-| The native file API opens existing regular files for sequential reading and saves whole files of up to 4096 bytes. No seek, no size query, no directory enumeration | [SUN.md](../../userland/SUN.md#files-and-small-profile-saves) | Enough to load images and keep Solitaire's settings. Not enough for case-insensitive lookup |
+| The native file API opens existing regular files for sequential reading, saves whole files of up to 4096 bytes, streams new files, queries paths and lists directories. No seek | [SUN.md](../../userland/SUN.md#files-and-small-profile-saves) | Enough to load images and keep Solitaire's settings. Case-insensitive lookup can now be built on the listing |
 | A process has one connection to `windowd`, a main window framed by the window manager and up to four owned windows: framed dialogs, or frameless popups placed in the owner's client area. Pointer capture, cursor shape and resize exist | [OWNED_WINDOWS.md](../../desktop/OWNED_WINDOWS.md), `include/sxn/sxnwm.h` | A top-level window, a modal dialog and a popup menu each map to something that exists |
 | The desktop's body face is MS Sans Serif 8pt at 96 DPI as a 13 px bitmap strike | [UI_FONTS.md](../../desktop/UI_FONTS.md) | The font Windows XP dialogs and menus are laid out for is already in the system |
 | The build requires clang, `ld.lld`, `llvm-objcopy` and `llvm-readelf`. `subsystems/` holds only `posix` | `build.sh`, `CMakeLists.txt` | The PE toolchain is the LLVM that is already there |
@@ -277,9 +277,10 @@ The guest's `C:` is `/system/win/drive_c`. Our DLLs install to
 `drive_c/Program Files/Solitaire/`. The build syncs the files it owns and
 never touches the rest, by the same rule that protects `/bin` and `/games`.
 
-Names are lower-cased on lookup and installed lower-case, because the native
-API cannot enumerate a directory. Real case-insensitive lookup waits for a
-native enumeration call with its own consumer.
+Names are lower-cased on lookup and installed lower-case. The native API
+lists directories now (`sxn_read_directory`, with the file dialog as its
+consumer), so real case-insensitive lookup can be built on it when the
+subsystem needs it.
 
 `HKEY_CURRENT_USER` is one small text file per user, written whole with
 `sxn_write_file`. Its path is pinned in W2. Windows path rules, sharing modes

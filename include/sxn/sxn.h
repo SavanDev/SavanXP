@@ -123,6 +123,31 @@ static inline long sxn_write_file(const char* path, const void* bytes, unsigned 
     return sxn_trap(SXN_SYS_WRITE_FILE, (unsigned long)path, (unsigned long)bytes, count);
 }
 
+/* What is at an absolute path (GetFileAttributesEx). 0 or -errno. */
+static inline long sxn_query_path(const char* path, struct sxn_file_info* out) {
+    return sxn_trap(SXN_SYS_QUERY_PATH, (unsigned long)path, (unsigned long)out, sizeof(*out));
+}
+
+/* List a directory: open it, then read one entry per call until 0. */
+static inline long sxn_open_directory(const char* path) {
+    return sxn_trap(SXN_SYS_OPEN_DIRECTORY, (unsigned long)path, 0, 0);
+}
+
+static inline long sxn_read_directory(long handle, struct sxn_directory_entry* out) {
+    return sxn_trap(SXN_SYS_READ_DIRECTORY, (unsigned long)handle, (unsigned long)out, sizeof(*out));
+}
+
+/* Open a file for writing from its start (SXN_CREATE_NEW or
+ * SXN_CREATE_ALWAYS); write it with sxn_write, make it durable with
+ * sxn_flush_file, close it with sxn_close. */
+static inline long sxn_create_file(const char* path, unsigned disposition) {
+    return sxn_trap(SXN_SYS_CREATE_FILE, (unsigned long)path, disposition, 0);
+}
+
+static inline long sxn_flush_file(long handle) {
+    return sxn_trap(SXN_SYS_FLUSH_FILE, (unsigned long)handle, 0, 0);
+}
+
 static inline long sxn_open_device(const char* name, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
 }

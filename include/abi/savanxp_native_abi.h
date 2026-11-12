@@ -343,6 +343,37 @@ enum sxn_syscall_number {
      * for a count of 0 or a size below SXN_LOG_RECORD_V1_SIZE.
      * docs/kernel/SYSTEM_LOG.md. */
     SXN_SYS_LOG_READ = 0x103c,
+    /* rdi = absolute path, rsi = struct sxn_file_info (written), rdx = its
+     * size. What is at the path: its type, size, date, owner and permission
+     * bits. Needs only to reach it (search on every directory above), as
+     * POSIX stat. Writes at most `size` bytes. 0, -ENOENT, -EACCES, or
+     * -EINVAL for a relative path or a size below SXN_FILE_INFO_V1_SIZE.
+     * GetFileAttributesEx. */
+    SXN_SYS_QUERY_PATH = 0x103d,
+    /* rdi = absolute path. Opens a directory for listing with
+     * READ_DIRECTORY; needs read permission on it. A handle, -ENOTDIR for
+     * anything else, -ENOENT, -EACCES, -EINVAL. FindFirstFile's open half. */
+    SXN_SYS_OPEN_DIRECTORY = 0x103e,
+    /* rdi = directory handle, rsi = struct sxn_directory_entry (written),
+     * rdx = its size. The next entry, in no particular order and without
+     * "." or "..". An entry removed while listing is never returned after
+     * its removal and does not make the listing skip another; an entry added
+     * meanwhile may or may not appear. 1, 0 past the last entry, -EBADF for a
+     * handle that is not a directory, -EINVAL for a size below
+     * SXN_DIRECTORY_ENTRY_V1_SIZE. FindNextFile. */
+    SXN_SYS_READ_DIRECTORY = 0x103f,
+    /* rdi = absolute path, rsi = SXN_CREATE_NEW or SXN_CREATE_ALWAYS.
+     * Opens a regular file for writing from offset 0: a missing one is
+     * created (0600, the parent must exist), an existing one is emptied
+     * (CREATE_ALWAYS, keeping its owner and mode) or refused (CREATE_NEW,
+     * -EEXIST). WRITE appends what it is given; FLUSH_FILE makes it durable.
+     * A handle, -EISDIR, -EINVAL (a device, a relative path, bad flags),
+     * -ENOENT (no parent), -EACCES, -EROFS. CreateFile. */
+    SXN_SYS_CREATE_FILE = 0x1040,
+    /* rdi = handle of a file open for writing. Writes the file's volume
+     * through to the disk before returning. 0, -EBADF, -EIO.
+     * FlushFileBuffers. */
+    SXN_SYS_FLUSH_FILE = 0x1041,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial
@@ -374,6 +405,38 @@ struct sxn_log_record {
 
 /* Desired access for OPEN_FILE. Zero grants query access only. */
 #define SXN_FILE_READ 1u
+
+/* SXN_SYS_QUERY_PATH and SXN_SYS_READ_DIRECTORY. Both grow at the end only. */
+enum sxn_file_type {
+    SXN_FILE_TYPE_FILE = 1,
+    SXN_FILE_TYPE_DIRECTORY = 2,
+    SXN_FILE_TYPE_DEVICE = 3,
+};
+
+struct sxn_file_info {
+    uint32_t type;   /* enum sxn_file_type */
+    uint32_t mode;   /* permission bits (07777); no write bits on a read-only volume */
+    uint32_t uid;
+    uint32_t gid;
+    uint64_t size;   /* bytes; 0 for a directory or a device */
+    uint64_t mtime;  /* seconds since 1970 UTC; 0 when nothing recorded one */
+};
+
+#define SXN_FILE_INFO_V1_SIZE 32u
+
+/* The longest name an entry carries, with its NUL. */
+#define SXN_NAME_MAX 256u
+
+struct sxn_directory_entry {
+    struct sxn_file_info info;
+    char name[SXN_NAME_MAX];
+};
+
+#define SXN_DIRECTORY_ENTRY_V1_SIZE (SXN_FILE_INFO_V1_SIZE + SXN_NAME_MAX)
+
+/* Dispositions for CREATE_FILE. */
+#define SXN_CREATE_NEW 1u     /* fail with -EEXIST if the file exists */
+#define SXN_CREATE_ALWAYS 2u  /* empty an existing file */
 
 /* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */
 #define SXN_STORAGE_MAX_TRANSFER 128u

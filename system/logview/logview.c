@@ -12,8 +12,12 @@
  * filed under the program's name. "Problems" gathers the lines that read
  * like an error or a warning, by their words: the log has no levels.
  *
+ * File > Save Log... writes the lines shown to a file chosen in the common
+ * Save As dialog (include/sxn/sxnfiledlg.h), in --print's format.
+ *
  * Without a window, `logview --print [category]` writes the log to stdout,
- * for the text console; `--selftest` checks the reading and the filing.
+ * for the text console; `--selftest` checks the reading, the filing and the
+ * saving.
  */
 
 #include <stdint.h>
@@ -25,6 +29,7 @@
 #include "sxgfx/pixels.h"
 #include "sxgfx/sxgui.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnfiledlg.h"
 #include "sxn/sxngui.h"
 
 #include "logview.sunres.h"
@@ -36,6 +41,9 @@
 #define LV_ROW_CAPACITY 288
 #define LV_READ_BATCH 64
 #define LV_DETAIL_LINES 8
+/* Where Save Log... starts, and the file the selftest writes. */
+#define LV_SAVE_FOLDER "/users/user"
+#define LV_SELFTEST_FILE "/users/logview-selftest.txt"
 
 #define LV_DEFAULT_WIDTH 760
 #define LV_DEFAULT_HEIGHT 520
@@ -318,6 +326,54 @@ static void format_source(const struct sxn_log_record* record, char* out, size_t
     (void)snprintf(out, capacity, "%s [%u]", name, (unsigned)record->pid);
 }
 
+/* One line as --print and Save Log... write it. */
+static void format_line(const struct lv_entry* entry, char* out, size_t capacity) {
+    char time[24];
+    char source[48];
+    format_time(entry->record.time_ns, time, sizeof(time));
+    format_source(&entry->record, source, sizeof(source));
+    (void)snprintf(out, capacity, "[%10s] %-16s %s\n", time, source, entry->record.text);
+}
+
+/* ---- saving --------------------------------------------------------------------- */
+
+static char g_save_buffer[8192];
+
+/* Writes the entries at `indices` (all of them when NULL) to `path`,
+ * replacing what it held, and makes it durable. The line count, or -errno. */
+static long save_entries(const char* path, const int* indices, int count) {
+    char line[LV_ROW_CAPACITY + 64];
+    size_t used = 0;
+    long handle = sxn_create_file(path, SXN_CREATE_ALWAYS);
+    long result = 0;
+    int index;
+
+    if (handle < 0) {
+        return handle;
+    }
+    for (index = 0; index < count && result >= 0; ++index) {
+        size_t length;
+        format_line(&g_entries[indices != 0 ? indices[index] : index], line, sizeof(line));
+        length = strlen(line);
+        if (used + length > sizeof(g_save_buffer)) {
+            result = sxn_write(handle, g_save_buffer, used);
+            if (result >= 0 && (size_t)result != used) result = -SAVANXP_EIO;
+            used = 0;
+        }
+        memcpy(g_save_buffer + used, line, length);
+        used += length;
+    }
+    if (result >= 0 && used > 0) {
+        result = sxn_write(handle, g_save_buffer, used);
+        if (result >= 0 && (size_t)result != used) result = -SAVANXP_EIO;
+    }
+    if (result >= 0) {
+        result = sxn_flush_file(handle);
+    }
+    (void)sxn_close(handle);
+    return result < 0 ? result : count;
+}
+
 /* ---- --print ---------------------------------------------------------------- */
 
 static void write_out(const char* text) {
@@ -338,8 +394,6 @@ static int category_named(const char* name) {
 
 static int run_print(const char* name) {
     char line[LV_ROW_CAPACITY + 64];
-    char time[24];
-    char source[48];
     int category;
     int index;
 
@@ -354,9 +408,7 @@ static int run_print(const char* name) {
     for (index = 0; index < g_entry_count; ++index) {
         const struct lv_entry* entry = &g_entries[index];
         if (!entry_in_category(entry, category)) continue;
-        format_time(entry->record.time_ns, time, sizeof(time));
-        format_source(&entry->record, source, sizeof(source));
-        (void)snprintf(line, sizeof(line), "[%10s] %-16s %s\n", time, source, entry->record.text);
+        format_line(entry, line, sizeof(line));
         write_out(line);
     }
     return 0;
@@ -415,6 +467,35 @@ static int run_selftest(void) {
     /* Nothing new means nothing read twice. */
     index = g_entry_count;
     LV_CHECK(read_new() == 0 && g_entry_count == index);
+
+    /* Save Log...: the whole log, larger than one small save, and read back. */
+    {
+        struct sxn_file_info info;
+        char first[LV_ROW_CAPACITY + 64];
+        char back[64];
+        long handle;
+        uint64_t expected = 0;
+
+        for (index = 0; index < g_entry_count; ++index) {
+            format_line(&g_entries[index], first, sizeof(first));
+            expected += strlen(first);
+        }
+        LV_CHECK(save_entries(LV_SELFTEST_FILE, 0, g_entry_count) == g_entry_count);
+        LV_CHECK(sxn_query_path(LV_SELFTEST_FILE, &info) == 0 && info.size == expected && expected > SXN_WRITE_FILE_MAX);
+        format_line(&g_entries[0], first, sizeof(first));
+        handle = sxn_open_file(LV_SELFTEST_FILE, SXN_FILE_READ);
+        LV_CHECK(handle >= 0);
+        if (handle >= 0) {
+            size_t want = strlen(first) < sizeof(back) ? strlen(first) : sizeof(back);
+            LV_CHECK(sxn_read(handle, back, want) == (long)want && memcmp(back, first, want) == 0);
+            (void)sxn_close(handle);
+        }
+        /* A second save replaces the file, it does not append. */
+        LV_CHECK(save_entries(LV_SELFTEST_FILE, 0, 1) == 1);
+        LV_CHECK(sxn_query_path(LV_SELFTEST_FILE, &info) == 0 && info.size == strlen(first));
+        LV_CHECK(save_entries("/no-such-folder/log.txt", 0, 1) == -SAVANXP_ENOENT);
+    }
+    LV_CHECK(sxn_file_dialog_selftest() == 0);
 #undef LV_CHECK
 
     (void)sxn_log(failures == 0 ? "logview: selftest passed" : "logview: selftest failed");
@@ -438,6 +519,7 @@ enum {
 
 enum {
     LV_CMD_EXIT = 1,
+    LV_CMD_SAVE,
     LV_CMD_COPY,
     LV_CMD_CLEAR,
     LV_CMD_FOLLOW,
@@ -449,6 +531,8 @@ static struct sxgui_widget g_widgets[LV_WIDGET_COUNT];
 static struct sxgui_menubar g_menubar;
 
 static struct sxgui_menu_item g_file_items[] = {
+    {"Save Log...\tCtrl+S", LV_CMD_SAVE, 0},
+    {0, 0, 0},
     {"Exit", LV_CMD_EXIT, 0},
 };
 static struct sxgui_menu_item g_edit_items[] = {
@@ -461,7 +545,7 @@ static struct sxgui_menu_item g_view_items[] = {
     {"Clear", LV_CMD_CLEAR, 0},
 };
 static const struct sxgui_menu g_menus[] = {
-    {"File", g_file_items, 1},
+    {"File", g_file_items, 3},
     {"Edit", g_edit_items, 1},
     {"View", g_view_items, 4},
 };
@@ -755,11 +839,53 @@ static void clear_view(void) {
     refresh_all(1);
 }
 
+static void show_notice(void) {
+    g_notice_until_ms = sxngui_uptime_ms() + 5000u;
+    sxngui_app_request_repaint(&g_app);
+}
+
+static void on_save_chosen(struct sxngui_app* app, const char* path, void* user) {
+    long saved;
+    (void)app;
+    (void)user;
+    if (path == 0) {
+        return;
+    }
+    saved = save_entries(path, g_row_entry, g_row_count);
+    if (saved < 0) {
+        (void)snprintf(g_status, sizeof(g_status), "Could not save %.80s (error %ld).", path, -saved);
+    } else {
+        (void)snprintf(g_status, sizeof(g_status), "Saved %ld lines to %.80s.", saved, path);
+    }
+    show_notice();
+}
+
+/* Saves the lines shown: the category and Find chosen are what is saved. */
+static void begin_save(void) {
+    struct sxn_file_dialog_request request;
+    memset(&request, 0, sizeof(request));
+    request.mode = SXN_FILE_DIALOG_SAVE;
+    request.title = "Save Log As";
+    request.initial_directory = LV_SAVE_FOLDER;
+    request.file_name = "system-log.txt";
+    request.filter_description = "Text files (*.txt; *.log)";
+    request.filter_patterns = "*.txt;*.log";
+    request.default_extension = "txt";
+    request.on_done = on_save_chosen;
+    if (sxn_file_dialog_begin(&g_app, &request) != 0) {
+        (void)snprintf(g_status, sizeof(g_status), "Not enough memory for the Save As dialog.");
+        show_notice();
+    }
+}
+
 static void on_menu_command(int id, void* user) {
     (void)user;
     switch (id) {
     case LV_CMD_EXIT:
         sxngui_app_quit(&g_app, 0);
+        break;
+    case LV_CMD_SAVE:
+        begin_save();
         break;
     case LV_CMD_COPY:
         copy_selected();
@@ -815,6 +941,11 @@ static int on_key(struct sxngui_app* app, const struct savanxp_input_event* even
     }
     if (event->key == SAVANXP_KEY_F5) {
         on_menu_command(LV_CMD_REFRESH, 0);
+        return 1;
+    }
+    if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 && (event->ascii == 's' || event->ascii == 'S' ||
+        event->ascii == 19) && !sxgui_dialog_active(&g_app.ui)) {
+        begin_save();
         return 1;
     }
     /* Ctrl+C in the Find box copies its text, as anywhere else. */

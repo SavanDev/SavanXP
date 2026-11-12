@@ -198,7 +198,9 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host | done (Task Manager's Run box) |
-| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file` | Existing regular files, sequential reads and durable whole-file saves up to 4 KiB; enumeration is missing. |
+| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
+| `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
+| `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, no New Folder |
 | Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
@@ -251,8 +253,8 @@ none of them a kernel slice: everything they need was already open to SUN.
 
 A registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
-a native `fork`, and the rest of the file surface below: seek, size queries,
-streaming writes and directory enumeration
+a native `fork`, and the rest of the file surface below: seek, positioned
+or appending writes, and the path operations (mkdir, rename, unlink)
 ([VFS-A](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
 Each one waits for a consumer, by rule 1.
 
@@ -264,9 +266,21 @@ permits reading. Directories return `-EISDIR`; devices, relative paths and
 unknown access flags return `-EINVAL`. Missing files return `-ENOENT` and
 permission failures `-EACCES`. `sxn_read` advances the offset, may return a
 partial read and returns 0 at EOF. Duplicates share the offset. Close with
-`sxn_close`; process teardown also releases the handle. Seeking, size queries
-and directory enumeration are still missing. Compositord's cursor catalog is
-the first consumer; `nativetest` covers the contract.
+`sxn_close`; process teardown also releases the handle. Seeking is still
+missing. Compositord's cursor catalog is the first consumer; `nativetest`
+covers the contract.
+
+`sxn_query_path(path, &info)` says what is at a path (type, size, date, owner,
+permission bits) and needs only to reach it, as `stat`. `sxn_open_directory`
+and `sxn_read_directory` list a directory one `struct sxn_directory_entry` per
+call, each with the same `info`, until 0; an entry removed while listing does
+not make the listing skip another. `sxn_create_file(path, SXN_CREATE_NEW or
+SXN_CREATE_ALWAYS)` opens a file for writing from offset 0, created 0600 when
+missing or emptied (keeping its owner and mode); `sxn_write` appends to it and
+`sxn_flush_file` makes it durable. The file dialog
+([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) and Log Viewer's Save Log... are
+the consumers; `nativetest` covers the contract, including a refused
+`CREATE_ALWAYS` that leaves the file it was refused on intact.
 
 `sxn_write_file(absolute_path, bytes, count)` saves a complete small regular file
 (up to `SXN_WRITE_FILE_MAX`, 4096 bytes), creating it with mode 0600 or replacing

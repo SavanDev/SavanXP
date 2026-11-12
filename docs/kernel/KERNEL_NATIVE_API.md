@@ -815,3 +815,44 @@ with `-EIO` and may leave incomplete contents; this call does not promise
 atomic replacement. The SUN wrapper is `sxn_write_file`; the cursor profile
 is its consumer and `nativetest` asserts creation, shrinking, empty files,
 validation before mutation and denied writes. This call is native-only.
+
+### Listing directories and streaming writes
+
+Five calls, landed together with the file dialog
+([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) and Log Viewer's Save Log... as
+their consumers (VFS-A step 3). All take absolute paths; a relative one is
+`-EINVAL`, one longer than 1023 bytes `-ENAMETOOLONG`.
+
+- `SXN_SYS_QUERY_PATH` (`0x103d`): rdi = path, rsi = `struct sxn_file_info`,
+  rdx = its size (at least `SXN_FILE_INFO_V1_SIZE`; the call writes at most
+  that many bytes, so the struct can grow at the end). Type (file, directory,
+  device), size, `mtime`, owner and permission bits, with the write bits
+  cleared on a read-only volume. A query open: it needs search permission on
+  the directories above and nothing on the node, as `stat`.
+  `GetFileAttributesEx`.
+- `SXN_SYS_OPEN_DIRECTORY` (`0x103e`): rdi = path. A handle for listing,
+  with read permission on the directory checked as for a POSIX `opendir`.
+  `-ENOTDIR` for anything that is not a directory, devices included.
+- `SXN_SYS_READ_DIRECTORY` (`0x103f`): rdi = handle, rsi =
+  `struct sxn_directory_entry` (an `sxn_file_info` and a 256-byte name), rdx =
+  its size. 1 per entry, 0 at the end, `-EBADF` for a handle that is not a
+  directory. No `.` or `..`. The handle's position is a `vfs::DirCursor`
+  (VFS-C slice 5a): an entry removed while listing does not make the
+  listing skip another. `FindFirstFile`/`FindNextFile`.
+- `SXN_SYS_CREATE_FILE` (`0x1040`): rdi = path, rsi = `SXN_CREATE_NEW` or
+  `SXN_CREATE_ALWAYS`. A write handle at offset 0: a missing file is created
+  0600 (its parent must exist), an existing one is emptied keeping its owner
+  and mode, or refused with `-EEXIST` under `CREATE_NEW`. The type is checked
+  before the open that empties it, so a directory is `-EISDIR` and a device
+  `-EINVAL` with nothing changed, and a denied write leaves the file intact.
+  `SXN_SYS_WRITE` writes to it through `sx::write_file`. `CreateFile`.
+- `SXN_SYS_FLUSH_FILE` (`0x1041`): rdi = a file handle open for writing.
+  Syncs the file's volume before returning, as `sxn_write_file` does;
+  `-EBADF` for any other handle. `FlushFileBuffers`.
+
+`nativetest` asserts each: types and sizes of a fixture, a directory and a
+device; a listing of `/system` that finds the fixture and no dot entries; a
+6000-byte file written in two pieces, flushed, read back, then replaced by a
+3-byte one; `CREATE_NEW` over an existing file; the refusals above; and, as
+user 1001, a query through a directory it cannot search and a refused
+`CREATE_ALWAYS` that leaves the fixture's size as it was.

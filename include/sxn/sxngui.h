@@ -65,6 +65,11 @@ struct sxngui_app {
     struct sxnwm_client popup;
     struct savanxp_fb_info popup_info;
     int popup_window_open;
+
+    /* Owned by the frame: the dialog sxngui_app_watch_dialog watches. */
+    struct sxgui_dialog *watched_dialog;
+    void (*watched_closed)(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user);
+    void *watched_user;
 };
 
 /* The toolkit's host for SUN. sxngui_app_init installs it; a SUN program
@@ -86,6 +91,17 @@ int sxngui_app_set_content_size(struct sxngui_app *app, int width, int height);
 
 void sxngui_app_request_repaint(struct sxngui_app *app);
 void sxngui_app_quit(struct sxngui_app *app, int exit_code);
+
+/* Calls `closed` once `dialog` is no longer the active one, however it went:
+ * its own button, ESC, the window's close button, or another dialog begun
+ * over it. It runs after the event that closed the dialog, with the watch
+ * already cleared, so it may begin another dialog and watch that one; read
+ * dialog->result to tell an OK from a cancel. One watch at a time: a new one
+ * replaces the old one, and NULL `dialog` clears it. A program asking for a
+ * file through sxnfiledlg.h does not need this; the file dialog does. */
+void sxngui_app_watch_dialog(struct sxngui_app *app, struct sxgui_dialog *dialog,
+                             void (*closed)(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user),
+                             void *user);
 
 /* Run until sxngui_app_quit or the window is closed; returns the exit code.
  * Closes the window on the way out. */

@@ -79,8 +79,9 @@ patterns: when the user picks an image no larger than 256 pixels on either
 side, the dialog switches the position to Tile; picking a large one while
 Tile is set switches it to Stretch. A centred image stays centred.
 
-**Browse...** asks for the path of any BMP on the disk; there is no file
-open dialog in the toolkit yet. The image is checked before it joins the
+**Browse...** asks for the path of any BMP on the disk. The common Open
+dialog ([FILE_DIALOG.md](FILE_DIALOG.md)) is SUN's, and Display Properties is
+still a POSIX program; it gets the dialog when it moves to SUN. The image is checked before it joins the
 list, so the list never shows something the desktop cannot draw.
 
 ## The dialog

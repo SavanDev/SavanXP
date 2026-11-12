@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Common Open and Save As dialogs for SUN programs (`sxn_file_dialog_begin`); Log Viewer saves the log with File > Save Log...**
+  New native calls list directories and stream files of any size: `sxn_query_path`, `sxn_open_directory`,
+  `sxn_read_directory`, `sxn_create_file`, `sxn_flush_file` (`SXN_SYS_QUERY_PATH` to `SXN_SYS_FLUSH_FILE`).
+  See [FILE_DIALOG.md](docs/desktop/FILE_DIALOG.md).
+
 - **SxGL Diagnostic Tool (`sxgldiag`, System menu): the machine, the display and both SxGL backends on tabbed pages.**
   Test software / Test GPU draw a lit, textured cube, check the frame and report fps; Save All Information writes
   `/users/user/SxGLDiag.txt`; `sxgldiag --selftest` runs it without a window. See [SXGL_DIAG.md](docs/desktop/SXGL_DIAG.md).

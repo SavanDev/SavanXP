@@ -273,6 +273,170 @@ int native_write_file(Process& proc, uint64_t user_path, uint64_t user_bytes, si
     return 0;
 }
 
+// The absolute path at user_path into `path`, or why not.
+sx_status native_absolute_path(Process& proc, uint64_t user_path, vfs::PathBuffer& path) {
+    if (path == nullptr) {
+        return SX_ENOMEM;
+    }
+    const sx_status copied = sx::copy_user_path_from(proc, user_path, path, path.capacity());
+    if (copied != sx::kStatusOk) {
+        return copied;
+    }
+    return path[0] == '/' ? sx::kStatusOk : SX_EINVAL;
+}
+
+void fill_file_info(const vfs::Vnode& node, sxn_file_info& info) {
+    memset(&info, 0, sizeof(info));
+    const vfs::Ownership owner = vfs::ownership_of(node);
+    info.mode = owner.mode & vfs::kModePermissions;
+    if (node.backend == vfs::Backend::volume && !node.writable) {
+        info.mode &= ~0222u;
+    }
+    if (node.backend == vfs::Backend::device) {
+        info.type = SXN_FILE_TYPE_DEVICE;
+    } else if (node.type == vfs::NodeType::directory) {
+        info.type = SXN_FILE_TYPE_DIRECTORY;
+    } else {
+        info.type = SXN_FILE_TYPE_FILE;
+        info.size = node.size;
+    }
+    info.uid = owner.uid;
+    info.gid = owner.gid;
+    info.mtime = node.mtime;
+}
+
+// Writes min(size, sizeof(T)) bytes of `value` to the caller.
+template <typename T>
+int copy_versioned_out(Process& proc, uint64_t user_out, size_t size, const T& value) {
+    const size_t count = size < sizeof(value) ? size : sizeof(value);
+    if (!sx::validate_user_range(user_out, count, true) ||
+        !process::write_to_process_memory(proc, user_out, &value, count)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return 0;
+}
+
+int native_query_path(Process& proc, uint64_t user_path, uint64_t user_out, size_t size) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    if (size < SXN_FILE_INFO_V1_SIZE) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    // A query open: reaching the node is the whole check, as for stat.
+    const vfs::Vnode* node = vfs::open(proc.credentials, path, 0, 0);
+    if (node == nullptr) {
+        return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    }
+    sxn_file_info info;
+    fill_file_info(*node, info);
+    return copy_versioned_out(proc, user_out, size, info);
+}
+
+int native_open_directory(Process& proc, uint64_t user_path) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    const vfs::Vnode* node = vfs::open(proc.credentials, path, 0, 0);
+    if (node == nullptr) {
+        return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    }
+    if (node->type != vfs::NodeType::directory || node->backend == vfs::Backend::device) {
+        return sx::negative_error(SX_ENOTDIR);
+    }
+    object::IoObject* directory = nullptr;
+    const sx_status opened = sx::open_file(proc.credentials, path, SAVANXP_OPEN_READ, 0,
+        sx::open_accept_directory, directory);
+    if (opened != sx::kStatusOk) {
+        return sx::negative_error(opened);
+    }
+    const int handle = detail::allocate_fd(proc, &directory->header,
+        detail::object_access_for_open_flags(directory->open_flags), object::handle_none);
+    if (handle < 0) detail::discard_io_object(directory);
+    return handle;
+}
+
+int native_read_directory(Process& proc, uint64_t handle, uint64_t user_out, size_t size) {
+    object::IoObject* directory = detail::fd_to_io_object(proc, handle, object::access_read);
+    if (directory == nullptr || directory->kind != HandleKind::vnode || directory->node == nullptr ||
+        directory->node->type != vfs::NodeType::directory) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (size < SXN_DIRECTORY_ENTRY_V1_SIZE) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const vfs::Vnode* child = vfs::next_entry(directory->cursor);
+    if (child == nullptr) {
+        return 0;
+    }
+    // On the heap: the entry carries a 256-byte name.
+    sxn_directory_entry* entry = static_cast<sxn_directory_entry*>(heap::allocate(sizeof(sxn_directory_entry)));
+    if (entry == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    fill_file_info(*child, entry->info);
+    memset(entry->name, 0, sizeof(entry->name));
+    const size_t length = strlen(child->name);
+    memcpy(entry->name, child->name, length < sizeof(entry->name) ? length : sizeof(entry->name) - 1);
+    const int copied = copy_versioned_out(proc, user_out, size, *entry);
+    heap::free(entry);
+    return copied == 0 ? 1 : copied;
+}
+
+int native_create_file(Process& proc, uint64_t user_path, uint64_t disposition) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    if (disposition != SXN_CREATE_NEW && disposition != SXN_CREATE_ALWAYS) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    // The type is checked before the write open, which would empty the node.
+    const vfs::Vnode* existing = vfs::open(proc.credentials, path, 0, 0);
+    if (existing != nullptr) {
+        if (existing->type == vfs::NodeType::directory) return sx::negative_error(SX_EISDIR);
+        if (existing->type != vfs::NodeType::file || existing->backend == vfs::Backend::device)
+            return sx::negative_error(SX_EINVAL);
+        if (disposition == SXN_CREATE_NEW) return sx::negative_error(SX_EEXIST);
+    } else if (vfs::last_error() != SX_ENOENT) {
+        return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+    }
+    object::IoObject* file = nullptr;
+    const sx_status opened = sx::open_file(proc.credentials, path,
+        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE, 0600, sx::open_accept_file, file);
+    if (opened != sx::kStatusOk) {
+        return sx::negative_error(opened);
+    }
+    const int handle = detail::allocate_fd(proc, &file->header,
+        detail::object_access_for_open_flags(file->open_flags), object::handle_none);
+    if (handle < 0) detail::discard_io_object(file);
+    return handle;
+}
+
+int native_flush_file(Process& proc, uint64_t handle) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_write);
+    if (file == nullptr || file->kind != HandleKind::vnode || file->node == nullptr ||
+        file->node->type != vfs::NodeType::file || (file->open_flags & open_write) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    vfs::PathBuffer path;
+    if (path == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    // A file unlinked while open has no path and nothing left to flush.
+    if (!vfs::path_of(*file->node, path, path.capacity())) {
+        return 0;
+    }
+    const size_t mount = fs::owner_of(path);
+    if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
+    return 0;
+}
+
 /* Devices live under /dev; a native process names them without the
  * directory, so it cannot reach anything else through this call. */
 int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
@@ -1275,6 +1439,21 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_WRITE_FILE:
             context->rax = static_cast<uint64_t>(native_write_file(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
+            return context;
+        case SXN_SYS_QUERY_PATH:
+            context->rax = static_cast<uint64_t>(native_query_path(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
+            return context;
+        case SXN_SYS_OPEN_DIRECTORY:
+            context->rax = static_cast<uint64_t>(native_open_directory(*caller, context->rdi));
+            return context;
+        case SXN_SYS_READ_DIRECTORY:
+            context->rax = static_cast<uint64_t>(native_read_directory(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
+            return context;
+        case SXN_SYS_CREATE_FILE:
+            context->rax = static_cast<uint64_t>(native_create_file(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_FLUSH_FILE:
+            context->rax = static_cast<uint64_t>(native_flush_file(*caller, context->rdi));
             return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));

@@ -146,6 +146,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   address bar, history and Properties, the toolbar widgets
   (`SXGUI_FLAG_TOOLBAR`), the Large Icons and Details views over one widget
   (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM, and what is next.
+- [`FILE_DIALOG.md`](desktop/FILE_DIALOG.md) — the common Open and Save As
+  dialogs for SUN programs (`sxnfiledlg.h`): the window, what its buttons do,
+  the non-blocking API, and what it leaves out.
 - [`ICON_STYLE.md`](desktop/ICON_STYLE.md) — the Windows 2000 look of the house
   icon set: the drawing rules, the shared kit and generator, and what is exempt.
 - [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)

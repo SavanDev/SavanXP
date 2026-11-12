@@ -461,6 +461,41 @@ static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
     (void)sxn_wait_many(handles, count, timeout_ms);
 }
 
+void sxngui_app_watch_dialog(struct sxngui_app *app, struct sxgui_dialog *dialog,
+                             void (*closed)(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user),
+                             void *user)
+{
+    if (app == 0)
+    {
+        return;
+    }
+    app->watched_dialog = closed != 0 ? dialog : 0;
+    app->watched_closed = dialog != 0 ? closed : 0;
+    app->watched_user = user;
+}
+
+/* The watched dialog is gone: tell its watcher, once. The handler may watch
+ * another dialog, so the watch is cleared before it runs. */
+static void sxngui_check_watch(struct sxngui_app *app)
+{
+    struct sxgui_dialog *dialog = app->watched_dialog;
+    void (*closed)(struct sxngui_app *, struct sxgui_dialog *, void *) = app->watched_closed;
+    void *user = app->watched_user;
+
+    if (dialog == 0 || app->ui.modal == dialog)
+    {
+        return;
+    }
+    app->watched_dialog = 0;
+    app->watched_closed = 0;
+    app->watched_user = 0;
+    if (closed != 0)
+    {
+        closed(app, dialog, user);
+    }
+    app->needs_repaint = 1;
+}
+
 int sxngui_app_run(struct sxngui_app *app)
 {
     unsigned long next_tick_ms;
@@ -518,6 +553,7 @@ int sxngui_app_run(struct sxngui_app *app)
         sxngui_apply_resize(app);
         sxngui_drain_owned(app);
         sxngui_drain_main(app);
+        sxngui_check_watch(app);
         if (!app->running)
         {
             break;
