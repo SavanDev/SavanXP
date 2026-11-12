@@ -149,6 +149,12 @@ Vnode* install_volume_file(const char* path, const fs::Driver& driver, void* dat
 // found) at `path` and stamped with `driver`, whose populate publishes what it
 // holds the first time it is looked into. A mount point too, at attach.
 Vnode* install_volume_directory(const char* path, const fs::Driver& driver);
+// The same for a directory inside a volume, from its driver's populate: a
+// directory the tree already has with no driver (/dev, /rescue, a mount
+// point's parent made before the volume) is stamped and merged with what the
+// volume holds there, but one another volume publishes (a mount point) is
+// left to it. The caller compares the result's volume_driver to tell.
+Vnode* publish_volume_directory(const char* path, const fs::Driver& driver);
 
 // Holders of a node: whoever keeps a Vnode pointer past the call that found
 // it (an open handle, a file-backed section) retains it, and releases it when

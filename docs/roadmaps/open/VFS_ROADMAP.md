@@ -38,7 +38,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 
 | Area | Current limit |
 | --- | --- |
-| Resident tree | 2048 nodes shared by volumes, devices and initramfs; FAT publishes a directory when it is first looked into (`populate`), SxFS its whole tree at attach; published on-demand directories are given back, least recently looked into first, when free slots drop below 256 (`vfs::trim_if_low`, at system-call entry) |
+| Resident tree | 2048 nodes shared by volumes, devices and initramfs; FAT and SxFS publish a directory when it is first looked into (`populate`), attach publishing only the mount point; published on-demand directories are given back, least recently looked into first, when free slots drop below 256 (`vfs::trim_if_low`, at system-call entry) |
 | Reclamation | Node slots are reused once a node is gone and released; a held node keeps its slot until its last `vfs::release` |
 | Object identity | `Vnode` includes one name and parent, coupling the file with its location; caches key on the vnode plus `content_generation`, which never repeats across slot reuse |
 | Open lifetime | `IoObject` has references, offset and flags; drivers get `open`/`close` at a vnode's first and last holder (FAT keeps a FatFs file open between them) and `release` for the last holder of an unlinked file, but nothing per opening |
@@ -70,7 +70,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 | --- | --- | --- |
 | VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
-| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`) | SxFS on demand, names, relative resolution and cursors. SxFS on demand is the one open item of SxFS v2's scale work |
+| VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test` | Names, relative resolution and cursors |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
 | VFS-E | Read-only mounts from attach; a `probe` that writes nothing; root eligibility (`can_be_root`); absent write callbacks answered with `EROFS`; unmount that refuses held nodes | Remount and policy on open handles; device removal; coherent mappings; lock order and I/O outside the global lock |
 
@@ -248,7 +248,15 @@ Slices, each shippable alone:
    between finding it and using it; the sleeping calls today (tty, network,
    PC speaker, the idle yield) hold none. Driver records point at their
    vnodes and are dropped by `forget`.
-3. **SxFS on demand**, with the same two hooks.
+3. **SxFS on demand. Done.** With the same two hooks. SxFS already keeps a
+   record per inode in memory, so `populate` finds the directory by its path
+   and publishes the records whose parent it is, and `forget` only drops the
+   record's vnode pointer. A directory the tree already has with no driver
+   (`/dev`, `/rescue`) is merged, one another volume publishes (a mount
+   point) is left to it (`vfs::publish_volume_directory`). Republishing a
+   record clears any other record still pointing at that slot. The record
+   table (4095 per volume) stays resident: it is SxFS's format limit, not the
+   VFS's.
 4. **Names**: comparison as a mount capability (FAT case-insensitive), and
    names past 63 bytes.
 5. **Directory-relative resolution and enumeration cursors**, the rest of
@@ -339,9 +347,9 @@ no single change is expected to complete VFS-E.
 | Consumer / roadmap | Dependency |
 | --- | --- |
 | SxFS v2 reliability | Done: it landed the driver status results, unlink while open, replacing rename and `fsync` it needed, in this layer |
-| SxFS v2 scale | VFS-C for on-demand publication and bounded caches: the one part of SxFS v2's scale work left, owned here; format ceilings remain unchanged |
+| SxFS v2 scale | Done: on-demand publication and the bounded cache (VFS-C slices 1-3); format ceilings remain unchanged |
 | SxFS v3 | Agree VFS/driver contracts during format design; qualify VFS-C/E before claiming large-tree or coherent-mapping support |
-| [FAT](FAT_ROADMAP.md) and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior. FAT waits on VFS-B for per-open state, and on VFS-C for name comparison, names past 63 bytes and trees larger than the node pool |
+| [FAT](FAT_ROADMAP.md) and future formats | Implement the common contract and advertise actual capabilities; exercise format-specific names, ownership, I/O and failure behavior. FAT waits on VFS-B for per-open state, and on VFS-C for name comparison and names past 63 bytes |
 | [Linux](LINUX_SUBSYSTEM_ROADMAP.md) | Consume measured neutral operations for L3/L4; private file mappings arrive with its S2b slice at L4; add directory-relative I/O, links and locking with the profiles that require them |
 | [Win32](WIN32_SUBSYSTEM_ROADMAP.md) | Its first profile stores settings with `sxn_write_file` and installs names lower-cased until a native enumeration call exists. Later: common identity, rights, sharing/deletion mechanisms and mappings; paths, dispositions, flags and errors are translated in Win32 |
 | [Drivers D5](DRIVERS_ROADMAP.md#d5--general-plug-and-play-and-safe-removal) | VFS-B references and VFS-E teardown define what a removed disk leaves behind; USB storage is the first consumer |

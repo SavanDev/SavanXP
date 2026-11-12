@@ -794,6 +794,65 @@ void case_published_directories_are_trimmed(uint8_t* image) {
     hoststub::detach_device();
 }
 
+// SxFS publishes on demand too (VFS-C slice 3): a mount publishes the mount
+// point, and a volume with more entries than the VFS's 2048 nodes is read
+// whole, the bounded cache giving back what was visited before.
+void case_sxfs_tree_larger_than_the_pool() {
+    printf("case: an SxFS tree larger than the node pool\n");
+    constexpr uint32_t kBigSectors = 32768;
+    constexpr int kDirectories = 52;
+    constexpr int kFilesEach = 50;
+    uint8_t* big = static_cast<uint8_t*>(calloc(kBigSectors, SXFS_SECTOR_SIZE));
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
+    if (!check(big != nullptr && ctx != nullptr, "memory for the image")) {
+        free(big);
+        free(ctx);
+        return;
+    }
+    ImageCookie cookie = {big, kBigSectors};
+    sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+    bool built = sxfs_format(ctx, kBigSectors) == SXFS_OK;
+    char path[64] = {};
+    for (int directory = 0; built && directory < kDirectories; ++directory) {
+        for (int file = 0; built && file < kFilesEach; ++file) {
+            snprintf(path, sizeof(path), "d%02d/f%02d", directory, file);
+            built = sxfs_write_file(ctx, path, "x", 1) == SXFS_OK;
+        }
+    }
+    built = built && sxfs_flush(ctx) == SXFS_OK;
+    free(ctx);
+    if (!check(built, "an image with 2652 entries") || !check(mount_image(big, true, kBigSectors), "it mounts")) {
+        hoststub::detach_device();
+        free(big);
+        return;
+    }
+    const size_t free_at_mount = vfs::free_slots();
+    check(vfs::resolve("/d00") != nullptr && vfs::free_slots() + kDirectories == free_at_mount,
+          "the first look publishes the root's entries only");
+
+    int read_back = 0;
+    size_t lowest = vfs::free_slots();
+    for (int directory = 0; directory < kDirectories; ++directory) {
+        for (int file = 0; file < kFilesEach; ++file) {
+            vfs::trim_if_low(); // each read is a system call
+            snprintf(path, sizeof(path), "/d%02d/f%02d", directory, file);
+            if (path_reads(path, "x", 1)) {
+                ++read_back;
+            }
+            if (vfs::free_slots() < lowest) {
+                lowest = vfs::free_slots();
+            }
+        }
+    }
+    check(read_back == kDirectories * kFilesEach, "every file reads back");
+    check(lowest > 0, "the pool never ran out");
+    vfs::trim_if_low();
+    check(path_reads("/d00/f00", "x", 1), "a directory given back is published again");
+    check(volume_is_clean(), "fscheck walks a directory with more than 32 subdirectories");
+    hoststub::detach_device();
+    free(big);
+}
+
 int main() {
     printf("SxFS VFS TEST START\n");
     uint8_t* image = static_cast<uint8_t*>(malloc(kImageBytes));
@@ -808,6 +867,7 @@ int main() {
     case_holders_are_counted(image);
     case_directories_published_on_demand(image);
     case_published_directories_are_trimmed(image);
+    case_sxfs_tree_larger_than_the_pool();
     case_power_cut_with_an_unlinked_file_open(image);
     case_churn_reuses_nodes(image);
     case_content_generation_moves(image);

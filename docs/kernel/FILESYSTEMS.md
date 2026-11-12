@@ -296,8 +296,8 @@ is known, what the fix is. The SxFS side is in
   publish a directory on demand (`vfs::install_volume_directory` and
   `fs::Driver::populate`): its entries enter the tree the first time it is
   looked up or listed, and a failed populate is taken back so the next look
-  tries again. FAT does; SxFS still publishes its whole tree at attach, so an
-  SxFS tree that does not fit does not mount. When free slots drop below 256,
+  tries again. FAT and SxFS both do: a mount publishes its mount point only.
+  When free slots drop below 256,
   the entry of the next system call gives back the on-demand directories
   looked into longest ago (`vfs::trim_if_low`): their entries leave the tree,
   the driver `forget`s each one, and the next look publishes them again.

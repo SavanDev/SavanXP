@@ -56,7 +56,8 @@ const fs::Driver& driver();
 // Recognises the SxFS on the device and loads its metadata. Publishes no
 // vnode and writes nothing: an interrupted volume is recovered in memory.
 VolumeId probe(size_t device_index, const char* mount_point);
-// Publishes the volume's tree under its mount point. Writable unless
+// Publishes the volume's mount point; the directories below it are published
+// when they are first looked into (fs::Driver::populate). Writable unless
 // `read_only`: this is where the recovery probe did in memory is persisted
 // and a power cut's leftovers are finished. A read-only attach, or a device
 // that refuses the recovery, leaves the volume on the recovered view with

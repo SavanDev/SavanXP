@@ -127,6 +127,9 @@ Cut-off notes:
   entry), least recently looked into first and never with anything under them held, so visiting a whole large stick
   no longer fills the pool. Kernel code must `vfs::retain` a `Vnode*` it keeps past a system call (VFS-C slice 2).
 
+- **SxFS volumes publish a directory the first time it is looked into too**: a mount publishes only its mount point,
+  and an SxFS volume with more entries than the VFS's 2048 nodes mounts and is read whole (VFS-C slice 3).
+
 - **The Start menu cascades: Programs ▸ and Settings ▸ open beside it on hover (400 ms) or click.**
   Display, Mouse, Sound, Add/Remove Programs and System Properties declare `category=Settings` and leave Programs.
   The banner shows the edition only when it fits. See [START_MENU.md](docs/desktop/START_MENU.md).
@@ -186,6 +189,9 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **`sxfs::check` (fscheck) no longer reports a healthy directory with more than 32 subdirectories as unreadable**,
+  nor the files below the extra ones as orphan inodes. The 32 limit applies to depth, as mounting applies it.
 
 - **Task Manager's One Graph Per CPU shows up to 32 cores instead of the first 8.**
   The per-core graphs wrap into rows and columns when one row would make them too narrow.

@@ -175,7 +175,7 @@ What remains is owned elsewhere:
 
 | Open | Owner |
 | --- | --- |
-| The whole tree resident at attach; 2048 VFS nodes; a 344-byte record per inode | [VFS-C](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches) |
+| A 344-byte record per inode, resident for the whole mount (the VFS publishes on demand and gives directories back since VFS-C slice 3) | [VFS-C](VFS_ROADMAP.md#vfs-c--component-resolution-and-bounded-directory-caches) |
 | A durability barrier cheaper than the global one; write errors delivered to the writing handle; open/close callbacks | [VFS-A/B/D](VFS_ROADMAP.md) |
 | Shared writable mappings; a page cache coherent with file writes | [VFS-E](VFS_ROADMAP.md#vfs-e--mounts-coherent-mappings-and-scalable-io) |
 | Overwrites inside a file's size are not atomic (metadata journal only) | v3 journal |

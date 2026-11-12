@@ -1202,6 +1202,15 @@ Vnode* install_volume_directory(const char* path, const fs::Driver& driver) {
     return node;
 }
 
+Vnode* publish_volume_directory(const char* path, const fs::Driver& driver) {
+    Vnode* node = ensure_directory(path);
+    if (node != nullptr && node->volume_driver == nullptr) {
+        node->volume_driver = &driver;
+        node->populated = false;
+    }
+    return node;
+}
+
 bool unlink(const cred::Credentials& who, const char* path) {
     g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {

@@ -200,15 +200,17 @@ bool populate_path(const char* path) {
     if (length == 0 || length >= sizeof(prefix)) {
         return false;
     }
-    for (size_t end = 1; end <= length; ++end) {
-        if (end != length && path[end] != '/') {
+    // end == 0 stands for "/" itself, the directory above everything.
+    for (size_t end = 0; end < length; ++end) {
+        if (end != 0 && path[end] != '/') {
             continue;
         }
-        if (end == length) {
-            break;
+        if (end == 0) {
+            strcpy(prefix, "/");
+        } else {
+            memcpy(prefix, path, end);
+            prefix[end] = '\0';
         }
-        memcpy(prefix, path, end);
-        prefix[end] = '\0';
         // The stub has no entries for the directories above a mount point.
         Entry* directory = find_entry(prefix);
         if (directory == nullptr) {
@@ -445,6 +447,28 @@ Vnode* install_volume_directory(const char* path, const fs::Driver& driver) {
         node->populated = false;
     }
     return node;
+}
+
+Vnode* publish_volume_directory(const char* path, const fs::Driver& driver) {
+    Vnode* node = ensure_directory(path);
+    if (node != nullptr && node->volume_driver == nullptr) {
+        node->volume_driver = &driver;
+        node->populated = false;
+    }
+    return node;
+}
+
+bool path_of(const Vnode& node, char* out, size_t capacity) {
+    for (size_t index = 0; index < g_node_count; ++index) {
+        if (g_nodes[index].in_use && &g_nodes[index].node == &node) {
+            if (strlen(g_nodes[index].path) >= capacity) {
+                return false;
+            }
+            strcpy(out, g_nodes[index].path);
+            return true;
+        }
+    }
+    return false;
 }
 
 void set_ownership(Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode) {

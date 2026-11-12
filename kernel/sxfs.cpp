@@ -1556,51 +1556,61 @@ void publish_ownership(Volume& volume, uint32_t inode_id, vfs::Vnode* node) {
     }
 }
 
-void mount_record(Volume& volume, sxfs::FileRecord& record) {
+// `node` publishes `record` now. A slot the VFS gave back (vfs::trim, an
+// unmount) can come back as another node, so no other record may keep
+// pointing at it: file_from_vnode would find the stale one.
+void claim_vnode(sxfs::FileRecord& record, vfs::Vnode* node) {
+    if (node != nullptr) {
+        for (Volume& volume : g_volumes) {
+            for (sxfs::FileRecord& other : volume.records) {
+                if (&other != &record && other.vnode == node) {
+                    other.vnode = nullptr;
+                }
+            }
+        }
+    }
+    record.vnode = node;
+}
+
+// Publishes one record in the tree. A directory is published on demand: its
+// own entries enter on its first look (driver_populate). One that another
+// volume publishes there (a mount point) is left to it and the record keeps
+// no vnode. False when the tree has no room.
+bool mount_record(Volume& volume, sxfs::FileRecord& record) {
     char absolute[262] = {};
     if (!make_absolute_path(volume, record.path, absolute, sizeof(absolute))) {
-        return;
+        return false;
     }
 
+    vfs::Vnode* node = nullptr;
     if (record.directory) {
-        record.vnode = vfs::ensure_directory(absolute);
+        node = vfs::publish_volume_directory(absolute, sxfs::driver());
+        if (node != nullptr && node->volume_driver != &sxfs::driver()) {
+            claim_vnode(record, nullptr);
+            return true;
+        }
     } else {
-        record.vnode = vfs::install_volume_file(
+        node = vfs::install_volume_file(
             absolute,
             sxfs::driver(),
             &record,
             record.size,
             volume.status != sxfs::MountStatus::read_only);
     }
+    claim_vnode(record, node);
     publish_ownership(volume, record.inode_id, record.vnode);
+    return node != nullptr;
 }
 
+// Attach publishes the mount point only; what is below it enters the tree
+// when it is looked into.
 bool initialize_record_mounts(Volume& volume) {
-    vfs::Vnode* root = vfs::ensure_directory(volume.mount_point);
+    vfs::Vnode* root = vfs::install_volume_directory(volume.mount_point, sxfs::driver());
     if (root == nullptr) {
         return false;
     }
     volume.root_vnode = root;
     publish_ownership(volume, kRootInodeId, root);
-
-    for (sxfs::FileRecord& record : volume.records) {
-        if (record.in_use && record.directory) {
-            mount_record(volume, record);
-            if (record.vnode == nullptr) {
-                return false;
-            }
-        }
-    }
-
-    for (sxfs::FileRecord& record : volume.records) {
-        if (record.in_use && !record.directory) {
-            mount_record(volume, record);
-            if (record.vnode == nullptr) {
-                return false;
-            }
-        }
-    }
-
     return true;
 }
 
@@ -1950,17 +1960,27 @@ namespace {
 
 // Recorre el arbol desde la raiz y deja en `visited` el conjunto de inodes
 // alcanzables. Cuenta la poblacion que ve y los defectos de estructura.
+// The directories walk_reachable has still to read, each with how deep it
+// is. Every inode is pushed at most once (the visited bitmap), so this is
+// enough for any tree; it is static because 32 KiB does not fit on the
+// kernel stack, and check() runs one at a time under the kernel lock.
+struct PendingDirectory {
+    uint32_t inode_id;
+    uint32_t level;
+};
+PendingDirectory g_check_pending[kMaxInodes];
+
 void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckReport& report) {
-    uint32_t pending[kMaxDirectoryDepth];
-    uint32_t depth = 0;
+    uint32_t pending = 0;
 
     if (!bitmap_test(visited, root_id - 1u)) {
         bitmap_set(visited, root_id - 1u, true);
-        pending[depth++] = root_id;
+        g_check_pending[pending++] = {root_id, 0};
     }
 
-    while (depth != 0) {
-        const uint32_t dir_id = pending[--depth];
+    while (pending != 0) {
+        const PendingDirectory next = g_check_pending[--pending];
+        const uint32_t dir_id = next.inode_id;
         const Inode* directory = inode_for_id(volume, dir_id);
         if (directory == nullptr || directory->type != kInodeTypeDirectory) {
             ++report.unreadable_dirs;
@@ -2008,8 +2028,12 @@ void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckRep
             bitmap_set(visited, entry.inode_id - 1u, true);
 
             if (entry.type == kInodeTypeDirectory) {
-                if (depth < kMaxDirectoryDepth) {
-                    pending[depth++] = entry.inode_id;
+                // The stack used to be kMaxDirectoryDepth entries for every
+                // pending directory, so a directory with more than 32
+                // subdirectories reported the rest unreadable and their
+                // files orphaned. The limit is on depth, as mount applies it.
+                if (next.level < kMaxDirectoryDepth && pending < kMaxInodes) {
+                    g_check_pending[pending++] = {entry.inode_id, next.level + 1u};
                 } else {
                     ++report.unreadable_dirs; // deeper than the format allows
                 }
@@ -2497,7 +2521,7 @@ Status create_status(const char* path, bool directory, const vfs::Ownership* own
         strcpy(record->name, leaf);
         strcpy(record->path, relative);
         if (mounted(volume_index(*volume))) {
-            mount_record(*volume, *record);
+            (void)mount_record(*volume, *record);
         }
         refresh_directory_vnode(*volume, parent_inode);
     }
@@ -2943,6 +2967,50 @@ void driver_release(vfs::Vnode& node) {
     }
 }
 
+// A directory's entries, the first time it is looked into (VFS-C). The
+// directory is found by its path, not by its vnode: the records already hold
+// the whole namespace, so this publishes the ones whose parent it is.
+Status driver_populate(vfs::Vnode& directory) {
+    char path[vfs::kMaxPathLength] = {};
+    if (!vfs::path_of(directory, path, sizeof(path))) {
+        return Status::invalid;
+    }
+    Volume* volume = volume_for_path(path);
+    char relative[256] = {};
+    if (volume == nullptr || !parse_relative_path(*volume, path, relative, sizeof(relative), /*allow_root=*/true)) {
+        return Status::ok; // a directory of the tree this volume has nothing in
+    }
+    uint32_t inode_id = kRootInodeId;
+    if (relative[0] == '\0') {
+        volume->root_vnode = &directory;
+    } else {
+        FileRecord* record = find_record_by_relative_path(*volume, relative);
+        if (record == nullptr || !record->directory) {
+            return Status::ok;
+        }
+        claim_vnode(*record, &directory);
+        inode_id = record->inode_id;
+    }
+    for (FileRecord& record : volume->records) {
+        if (record.in_use && !record.unlinked && record.parent_inode_id == inode_id && !mount_record(*volume, record)) {
+            return Status::no_space;
+        }
+    }
+    return Status::ok;
+}
+
+// The VFS gave the entry's slot back (vfs::trim, or a failed populate taken
+// back). The record stays: it is the namespace.
+void driver_forget(vfs::Vnode& node) {
+    for (Volume& volume : g_volumes) {
+        for (FileRecord& record : volume.records) {
+            if (record.in_use && record.vnode == &node) {
+                record.vnode = nullptr;
+            }
+        }
+    }
+}
+
 // Paths carry their volume (volume_for_path), so the id fs:: hands in is not
 // needed here. create_status has already published the vnode, or taken the
 // file back off the disk when the tree had no room for it.
@@ -3058,6 +3126,8 @@ const fs::Driver kDriver = {
     // SxFS records owners per inode.
     .adopt_owner = nullptr,
     .sync_deferred = &sync_deferred,
+    .populate = &driver_populate,
+    .forget = &driver_forget,
 };
 
 } // namespace
