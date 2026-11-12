@@ -116,6 +116,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Paint looks like the Win9x one:** colour toolbox icons, a brush/eraser size box, the picture in a grey workspace,
+  the 28-colour box at the bottom with a foreground/background well (right click sets the background, which the eraser
+  paints), position and size panes in the status bar, and `Image > Clear Image`. See [PAINT.md](docs/desktop/PAINT.md).
+
 - **The ISO boots at the monitor's preferred resolution (EDID) instead of a fixed `1280x800x32`**; a new
   **SavanXP (1024x768)** boot entry forces the VESA mode every video BIOS offers. `run` and the smokes keep 1280x800
   (`boot/limine-dev.conf`).

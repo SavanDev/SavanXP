@@ -793,13 +793,12 @@ def scenario_mines(s):
 
 
 def scenario_paint(s):
-    """Paint: la caja a la izquierda, los colores arriba, el lienzo al centro.
+    """Paint: toolbox on the left, picture in the workspace, colours below.
 
-    Todo por TECLADO, igual que mines: 1-7 cambian de herramienta y la barra
-    de estado lo refleja. Se afirma el texto de la barra en algun sitio de la
-    pantalla (find_text), no en una posicion: el harness no depende de la
-    geometria interna de la ventana, que es lo que cambia cada vez que se toca
-    el layout.
+    All by KEYBOARD, like mines: 1-8 switch tools and the status bar shows it.
+    The status text is asserted anywhere on screen (find_text), not at a
+    position: the harness does not depend on the window's internal geometry,
+    which is what changes every time the layout is touched.
     """
     s.open_paint()
     # solid_only en las cinco: el borde antialiaseado de estos glifos sale

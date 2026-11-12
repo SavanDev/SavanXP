@@ -1,9 +1,10 @@
 # Paint: the sketchbook
 
-`/bin/paint` ("Paint") is the in-tree Accessories drawing app, in the spirit
-of the WinXP one: toolbox on the left, colour strip on top, canvas over a
-status bar. In-tree demo in `subsystems/posix/userland/paint.c` (about 1800 lines),
-built as PIE against `libgfx2d`, `libsxgui`, `libsxgfx` and `libsximg`.
+`/bin/paint` ("Paint") is the in-tree Accessories drawing app, laid out like
+the Win9x one: toolbox and options box on the left, the picture in a grey
+workspace, the 28-colour box under it and a status bar. In-tree demo in
+`subsystems/posix/userland/paint.c` (about 2000 lines), built as PIE against
+`libgfx2d`, `libsxgui`, `libsxgfx` and `libsximg`.
 
 This document pins what it draws, what it opens and saves, and what proves
 it — so the app can grow tools without rediscovering the ownership rules.
@@ -11,10 +12,20 @@ it — so the app can grow tools without rediscovering the ownership rules.
 ## Layout: chrome without widgets
 
 None of the chrome are widgets: SXGUI has no toolbar or palette, so the
-toolbox and the colour strip paint in `on_paint` and hit-test in
-`on_pointer`, like the Mines grid in `mines.c`. The only widget in the
-window is the status label. Tool selection reads sunken, like a button left
-pressed.
+toolbox, the options box and the colour box paint in `on_paint` and hit-test
+in `on_pointer`, like the Mines grid in `mines.c`. The only widgets in the
+window are the three status panes. The selected tool reads pressed: sunken,
+over a white/face checkerboard. Tool icons are 16x16 character maps in the
+source (one character per pixel), so they need no asset files.
+
+- **Options box:** for the brush and eraser, four sizes (radius 1, 2, 4, 6);
+  the current one is highlighted. Empty for the other tools.
+- **Colour box:** the well shows the foreground square over the background
+  one. A left click on a swatch sets the foreground, a right click the
+  background. The eraser paints the background colour and
+  `Image > Clear Image` fills the picture with it (one undo step).
+- **Workspace:** grey (`#808080`), the picture 3 px in from its top-left
+  corner and clipped to it when the window is smaller than the picture.
 
 The canvas is an `sx_bitmap` the app owns: the WM keeps no backing store, so
 there is no Expose — the app blits the original on every `on_paint`. A new
@@ -23,7 +34,8 @@ the window layout is sized for), and the canvas frame shrinks to fit it. Declare
 in `paint.sxres`, but that is capability, not default: association policy
 lives in the registry (SXE phase 5), as in Notepad.
 
-The status bar reads `<name> | <tool> | undo <n>`, with a `*` while dirty.
+The message pane reads `<name> | <tool> | undo <n>`, with a `*` while dirty;
+the next pane shows the pixel under the cursor and the last the picture size.
 
 ## Tools
 

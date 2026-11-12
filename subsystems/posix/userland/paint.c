@@ -11,13 +11,14 @@
 #include "shared/version.h"
 
 /*
- * Paint, laid out like the WinXP-era one: toolbox on the left, colours on
- * top and the canvas in the middle over the status bar.
+ * Paint, laid out like the Win9x one: toolbox and options box on the left,
+ * the picture in a grey workspace, the colour box under it and a status bar
+ * with message, position and size panes.
  *
  * None of that is widgets: sxgui has no toolbar or palette, so the toolbox
- * and the colour strip paint in on_paint and hit-test in on_pointer, like the
- * Mines grid in mines.c. The only widget in the window is the status label.
- * The selected tool reads sunken, like a button left pressed.
+ * and the colour box paint in on_paint and hit-test in on_pointer, like the
+ * Mines grid in mines.c. The only widgets in the window are the status
+ * panes. The selected tool reads sunken, like a button left pressed.
  *
  * The document lives in an sx_bitmap the app owns (the WM keeps nothing:
  * without a backing store there is no Expose, so the app owns the original
@@ -54,14 +55,35 @@
 
 #define PAINT_UNDO_DEPTH 8
 
-#define PAINT_CELL_SIZE 30
-#define PAINT_CELL_GAP 2
-#define PAINT_TOOL_PAD 4
+/* Toolbox: 25 px buttons that touch, two columns, and the options box under
+ * them, as in the Win9x original. */
+#define PAINT_CELL_SIZE 25
+#define PAINT_TOOL_PAD 3
+#define PAINT_OPTIONS_WIDTH 41
+#define PAINT_OPTIONS_HEIGHT 70
+#define PAINT_OPTION_COUNT 4
+#define PAINT_ICON_SIZE 16
 
-#define PAINT_SWATCH_COUNT 16
-#define PAINT_SWATCH_SIZE 22
-#define PAINT_SWATCH_GAP 3
-#define PAINT_CURRENT_SIZE 30
+/* Colour box: the foreground/background well, then 14 x 2 swatches. */
+#define PAINT_SWATCH_COLS 14
+#define PAINT_SWATCH_ROWS 2
+#define PAINT_SWATCH_COUNT (PAINT_SWATCH_COLS * PAINT_SWATCH_ROWS)
+#define PAINT_SWATCH_SIZE 16
+#define PAINT_WELL_WIDTH 30
+#define PAINT_WELL_HEIGHT 32
+#define PAINT_COLORBOX_HEIGHT 40
+
+/* Grey workspace around the picture, and the gap to its corner. */
+#define PAINT_WORKSPACE_COLOR SXGUI_RGB(0x80, 0x80, 0x80)
+#define PAINT_WORKSPACE_PAD 3
+
+#define PAINT_STATUS_POS_WIDTH 90
+#define PAINT_STATUS_SIZE_WIDTH 90
+#define PAINT_POS_CAPACITY 32
+
+/* Client size that shows a full 512x384 picture with its workspace margin. */
+#define PAINT_WINDOW_WIDTH 584
+#define PAINT_WINDOW_HEIGHT 488
 
 #define PAINT_PATH_CAPACITY 256
 #define PAINT_STATUS_CAPACITY 160
@@ -86,34 +108,35 @@ enum paint_menu_id {
     PAINT_MENU_TOOL_LINE,
     PAINT_MENU_TOOL_RECT,
     PAINT_MENU_TOOL_ELLIPSE,
+    PAINT_MENU_CLEAR_IMAGE,
     PAINT_MENU_ABOUT
 };
 
+/* The classic 28-colour box: the dark row on top, its light row below. */
 static const uint32_t k_palette[PAINT_SWATCH_COUNT] = {
-    SXGUI_RGB(0x00, 0x00, 0x00),
-    SXGUI_RGB(0x80, 0x80, 0x80),
-    SXGUI_RGB(0x80, 0x00, 0x00),
-    SXGUI_RGB(0xFF, 0x00, 0x00),
-    SXGUI_RGB(0x80, 0x40, 0x00),
-    SXGUI_RGB(0xFF, 0x80, 0x00),
-    SXGUI_RGB(0x80, 0x80, 0x00),
-    SXGUI_RGB(0xFF, 0xFF, 0x00),
-    SXGUI_RGB(0x00, 0x80, 0x00),
-    SXGUI_RGB(0x00, 0xFF, 0x00),
-    SXGUI_RGB(0x00, 0x80, 0x80),
-    SXGUI_RGB(0x00, 0xFF, 0xFF),
-    SXGUI_RGB(0x00, 0x00, 0x80),
-    SXGUI_RGB(0x00, 0x00, 0xFF),
-    SXGUI_RGB(0x80, 0x00, 0x80),
-    SXGUI_RGB(0xFF, 0xFF, 0xFF),
+    SXGUI_RGB(0x00, 0x00, 0x00), SXGUI_RGB(0x80, 0x80, 0x80), SXGUI_RGB(0x80, 0x00, 0x00),
+    SXGUI_RGB(0x80, 0x80, 0x00), SXGUI_RGB(0x00, 0x80, 0x00), SXGUI_RGB(0x00, 0x80, 0x80),
+    SXGUI_RGB(0x00, 0x00, 0x80), SXGUI_RGB(0x80, 0x00, 0x80), SXGUI_RGB(0x80, 0x80, 0x40),
+    SXGUI_RGB(0x00, 0x40, 0x40), SXGUI_RGB(0x00, 0x80, 0xFF), SXGUI_RGB(0x00, 0x40, 0x80),
+    SXGUI_RGB(0x80, 0x00, 0xFF), SXGUI_RGB(0x80, 0x40, 0x00),
+
+    SXGUI_RGB(0xFF, 0xFF, 0xFF), SXGUI_RGB(0xC0, 0xC0, 0xC0), SXGUI_RGB(0xFF, 0x00, 0x00),
+    SXGUI_RGB(0xFF, 0xFF, 0x00), SXGUI_RGB(0x00, 0xFF, 0x00), SXGUI_RGB(0x00, 0xFF, 0xFF),
+    SXGUI_RGB(0x00, 0x00, 0xFF), SXGUI_RGB(0xFF, 0x00, 0xFF), SXGUI_RGB(0xFF, 0xFF, 0x80),
+    SXGUI_RGB(0x00, 0xFF, 0x80), SXGUI_RGB(0x80, 0xFF, 0xFF), SXGUI_RGB(0x80, 0x80, 0xFF),
+    SXGUI_RGB(0xFF, 0x00, 0x80), SXGUI_RGB(0xFF, 0x80, 0x40),
 };
+
+/* Brush and eraser sizes the options box offers, as radii. */
+static const int k_option_radius[PAINT_OPTION_COUNT] = {1, 2, 4, 6};
 
 static const char *k_tool_names[PAINT_TOOL_COUNT] = {
     "Pencil", "Brush", "Eraser", "Picker", "Fill", "Line", "Rectangle", "Ellipse"
 };
 
 static struct sxgui_app g_app;
-static struct sxgui_widget g_widgets[1];
+/* Status bar: the message pane, then the cursor position and picture size. */
+static struct sxgui_widget g_widgets[3];
 
 static struct sx_bitmap g_doc;
 static struct sx_painter g_doc_painter;
@@ -137,6 +160,8 @@ static size_t doc_bytes(void)
 
 static int g_tool = PAINT_TOOL_PENCIL;
 static uint32_t g_color = SXGUI_RGB(0x00, 0x00, 0x00);
+/* Background colour: what the eraser leaves and Clear Image fills with. */
+static uint32_t g_bg_color = SXGUI_RGB(0xFF, 0xFF, 0xFF);
 static int g_brush_radius = PAINT_BRUSH_DEFAULT_RADIUS;
 static int g_dirty = 0;
 
@@ -149,13 +174,16 @@ static int g_undo_count = 0;
 static char g_path[PAINT_PATH_CAPACITY];
 static char g_status[PAINT_STATUS_CAPACITY];
 static char g_open_path[PAINT_PATH_CAPACITY];
+static char g_pos_text[PAINT_POS_CAPACITY];
+static char g_size_text[PAINT_POS_CAPACITY];
 
-/* Geometria calculada en paint_layout a partir del tamano de la ventana. */
-static struct sx_rect g_tool_panel;
+/* Geometry, computed by paint_layout from the window size. */
 static struct sx_rect g_tool_cells[PAINT_TOOL_COUNT];
-static struct sx_rect g_current_rect;
+static struct sx_rect g_options_rect;
+static struct sx_rect g_well_rect;
 static struct sx_rect g_swatch_rect;
-static struct sx_rect g_canvas_outer;
+static struct sx_rect g_workspace_outer;
+static struct sx_rect g_workspace_inner;
 static struct sx_rect g_canvas_inner;
 
 /* Trazo en curso: ancla donde cayo el boton y punto actual para el preview. */
@@ -632,6 +660,30 @@ static void paint_select_tool(int tool)
     update_status(0);
 }
 
+/* Image > Clear Image: the whole picture in the background colour, as one
+ * undo step. A picture already that colour is left alone. */
+static void paint_clear_image(void)
+{
+    size_t count = (size_t)doc_w() * (size_t)doc_h();
+    size_t index;
+
+    for (index = 0; index < count; ++index)
+    {
+        if (g_doc.pixels[index] != g_bg_color)
+        {
+            break;
+        }
+    }
+    if (index == count)
+    {
+        return;
+    }
+    undo_push();
+    paint_clear(g_bg_color);
+    g_dirty = 1;
+    update_status(0);
+}
+
 /* --- dialogos ------------------------------------------------------------- */
 
 static void on_open_accept(struct sxgui_widget *widget, void *user)
@@ -763,6 +815,9 @@ static void on_menu_command(int id, void *user)
     case PAINT_MENU_TOOL_ELLIPSE:
         paint_select_tool(PAINT_TOOL_ELLIPSE);
         break;
+    case PAINT_MENU_CLEAR_IMAGE:
+        paint_clear_image();
+        break;
     case PAINT_MENU_ABOUT:
         sxgui_dialog_begin(&g_app.ui, &g_about_dialog, PAINT_ABOUT_WIDTH, PAINT_ABOUT_HEIGHT);
         break;
@@ -796,6 +851,10 @@ static const struct sxgui_menu_item k_tool_items[] = {
     {"Ellipse", PAINT_MENU_TOOL_ELLIPSE, 0},
 };
 
+static const struct sxgui_menu_item k_image_items[] = {
+    {"Clear Image", PAINT_MENU_CLEAR_IMAGE, 0},
+};
+
 static const struct sxgui_menu_item k_help_items[] = {
     {"About Paint", PAINT_MENU_ABOUT, 0},
 };
@@ -804,6 +863,7 @@ static const struct sxgui_menu k_menus[] = {
     {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
     {"Edit", k_edit_items, (int)(sizeof(k_edit_items) / sizeof(k_edit_items[0]))},
     {"Tool", k_tool_items, (int)(sizeof(k_tool_items) / sizeof(k_tool_items[0]))},
+    {"Image", k_image_items, (int)(sizeof(k_image_items) / sizeof(k_image_items[0]))},
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
 };
 
@@ -823,49 +883,65 @@ static void paint_layout(void)
     int top = sxgui_menubar_height();
     int width = (int)g_app.gfx.info.width;
     int height = (int)g_app.gfx.info.height;
-    int colors_y = top + SXGUI_MARGIN;
-    int swatch_x = SXGUI_MARGIN + PAINT_CURRENT_SIZE + SXGUI_GAP;
-    int tools_y = colors_y + PAINT_CURRENT_SIZE + SXGUI_GAP;
-    int grid_width = PAINT_TOOL_COLS * PAINT_CELL_SIZE + (PAINT_TOOL_COLS - 1) * PAINT_CELL_GAP;
+    int status_y = height - SXGUI_STATUS_HEIGHT - 2;
+    int colors_y = status_y - PAINT_COLORBOX_HEIGHT;
+    int tools_x = PAINT_TOOL_PAD;
+    int tools_y = top + PAINT_TOOL_PAD;
     int grid_rows = (PAINT_TOOL_COUNT + PAINT_TOOL_COLS - 1) / PAINT_TOOL_COLS;
-    int grid_height = grid_rows * PAINT_CELL_SIZE + (grid_rows - 1) * PAINT_CELL_GAP;
-    int canvas_x = SXGUI_MARGIN + grid_width + PAINT_TOOL_PAD * 2 + SXGUI_GAP;
-    int status_y = height - SXGUI_MARGIN - SXGUI_STATUS_HEIGHT;
+    int grid_width = PAINT_TOOL_COLS * PAINT_CELL_SIZE;
+    int workspace_x = tools_x + grid_width + PAINT_TOOL_PAD;
+    int message_width = width - 4 - PAINT_STATUS_POS_WIDTH - PAINT_STATUS_SIZE_WIDTH - 4;
     int index;
 
-    g_current_rect = sx_rect_make(SXGUI_MARGIN, colors_y, PAINT_CURRENT_SIZE, PAINT_CURRENT_SIZE);
-    g_swatch_rect = sx_rect_make(swatch_x, colors_y + (PAINT_CURRENT_SIZE - PAINT_SWATCH_SIZE) / 2,
-                                 PAINT_SWATCH_COUNT * (PAINT_SWATCH_SIZE + PAINT_SWATCH_GAP),
-                                 PAINT_SWATCH_SIZE);
-
-    g_tool_panel = sx_rect_make(SXGUI_MARGIN, tools_y, grid_width + PAINT_TOOL_PAD * 2,
-                                grid_height + PAINT_TOOL_PAD * 2);
     for (index = 0; index < PAINT_TOOL_COUNT; ++index)
     {
         int column = index % PAINT_TOOL_COLS;
         int row = index / PAINT_TOOL_COLS;
 
-        g_tool_cells[index] = sx_rect_make(g_tool_panel.x + PAINT_TOOL_PAD +
-                                           column * (PAINT_CELL_SIZE + PAINT_CELL_GAP),
-                                           g_tool_panel.y + PAINT_TOOL_PAD +
-                                           row * (PAINT_CELL_SIZE + PAINT_CELL_GAP),
-                                           PAINT_CELL_SIZE, PAINT_CELL_SIZE);
+        g_tool_cells[index] = sx_rect_make(tools_x + column * PAINT_CELL_SIZE,
+                                           tools_y + row * PAINT_CELL_SIZE, PAINT_CELL_SIZE,
+                                           PAINT_CELL_SIZE);
     }
+    g_options_rect = sx_rect_make(tools_x + (grid_width - PAINT_OPTIONS_WIDTH) / 2,
+                                  tools_y + grid_rows * PAINT_CELL_SIZE + 6, PAINT_OPTIONS_WIDTH,
+                                  PAINT_OPTIONS_HEIGHT);
 
-    g_canvas_outer = sx_rect_make(canvas_x, tools_y, doc_w() + SXGUI_BORDER_SUNKEN * 2,
-                                  doc_h() + SXGUI_BORDER_SUNKEN * 2);
-    g_canvas_inner = sx_rect_make(g_canvas_outer.x + SXGUI_BORDER_SUNKEN,
-                                  g_canvas_outer.y + SXGUI_BORDER_SUNKEN, doc_w(), doc_h());
+    g_workspace_outer = sx_rect_make(workspace_x, top + 1, width - workspace_x - 2,
+                                     colors_y - top - 3);
+    g_workspace_inner = sx_rect_make(g_workspace_outer.x + SXGUI_BORDER_SUNKEN,
+                                     g_workspace_outer.y + SXGUI_BORDER_SUNKEN,
+                                     g_workspace_outer.width - SXGUI_BORDER_SUNKEN * 2,
+                                     g_workspace_outer.height - SXGUI_BORDER_SUNKEN * 2);
+    g_canvas_inner = sx_rect_make(g_workspace_inner.x + PAINT_WORKSPACE_PAD,
+                                  g_workspace_inner.y + PAINT_WORKSPACE_PAD, doc_w(), doc_h());
 
-    if (status_y < tools_y + g_canvas_outer.height + SXGUI_GAP &&
-        status_y < tools_y + g_tool_panel.height + SXGUI_GAP)
-    {
-        status_y = tools_y + g_canvas_outer.height + SXGUI_GAP;
-    }
-    g_widgets[0] = sxgui_label(sx_rect_make(SXGUI_MARGIN, status_y, width - SXGUI_MARGIN * 2,
-                                            SXGUI_STATUS_HEIGHT),
+    g_well_rect = sx_rect_make(4, colors_y + (PAINT_COLORBOX_HEIGHT - PAINT_WELL_HEIGHT) / 2,
+                               PAINT_WELL_WIDTH, PAINT_WELL_HEIGHT);
+    g_swatch_rect = sx_rect_make(g_well_rect.x + PAINT_WELL_WIDTH + 2, g_well_rect.y,
+                                 PAINT_SWATCH_COLS * PAINT_SWATCH_SIZE,
+                                 PAINT_SWATCH_ROWS * PAINT_SWATCH_SIZE);
+
+    snprintf(g_size_text, sizeof(g_size_text), "%dx%d", doc_w(), doc_h());
+    g_widgets[0] = sxgui_label(sx_rect_make(2, status_y, message_width, SXGUI_STATUS_HEIGHT),
                                g_status);
-    g_widgets[0].flags |= SXGUI_FLAG_SUNKEN;
+    g_widgets[1] = sxgui_label(sx_rect_make(2 + message_width + 2, status_y,
+                                            PAINT_STATUS_POS_WIDTH, SXGUI_STATUS_HEIGHT),
+                               g_pos_text);
+    g_widgets[2] = sxgui_label(sx_rect_make(2 + message_width + 2 + PAINT_STATUS_POS_WIDTH + 2,
+                                            status_y, PAINT_STATUS_SIZE_WIDTH,
+                                            SXGUI_STATUS_HEIGHT),
+                               g_size_text);
+    for (index = 0; index < 3; ++index)
+    {
+        g_widgets[index].flags |= SXGUI_FLAG_SUNKEN;
+    }
+}
+
+/* Where the picture shows: its own rectangle, cut by the workspace when the
+ * window is smaller than the picture. */
+static struct sx_rect paint_canvas_visible(void)
+{
+    return sx_rect_intersect(g_canvas_inner, g_workspace_inner);
 }
 
 static void on_resize(struct sxgui_app *app)
@@ -892,14 +968,51 @@ static int tool_at_point(int x, int y)
 
 static int swatch_at_point(int x, int y)
 {
+    int column;
+    int row;
+
+    if (!sx_rect_contains_point(g_swatch_rect, x, y))
+    {
+        return -1;
+    }
+    column = (x - g_swatch_rect.x) / PAINT_SWATCH_SIZE;
+    row = (y - g_swatch_rect.y) / PAINT_SWATCH_SIZE;
+    return row * PAINT_SWATCH_COLS + column;
+}
+
+static struct sx_rect swatch_cell(int index)
+{
+    return sx_rect_make(g_swatch_rect.x + (index % PAINT_SWATCH_COLS) * PAINT_SWATCH_SIZE,
+                        g_swatch_rect.y + (index / PAINT_SWATCH_COLS) * PAINT_SWATCH_SIZE,
+                        PAINT_SWATCH_SIZE, PAINT_SWATCH_SIZE);
+}
+
+/* The options box only offers something for the tools that have a size. */
+static int tool_has_size(int tool)
+{
+    return tool == PAINT_TOOL_BRUSH || tool == PAINT_TOOL_ERASER;
+}
+
+static struct sx_rect option_cell(int index)
+{
+    int row_height = (g_options_rect.height - SXGUI_BORDER_SUNKEN * 2) / PAINT_OPTION_COUNT;
+
+    return sx_rect_make(g_options_rect.x + SXGUI_BORDER_SUNKEN,
+                        g_options_rect.y + SXGUI_BORDER_SUNKEN + index * row_height,
+                        g_options_rect.width - SXGUI_BORDER_SUNKEN * 2, row_height);
+}
+
+static int option_at_point(int x, int y)
+{
     int index;
 
-    for (index = 0; index < PAINT_SWATCH_COUNT; ++index)
+    if (!tool_has_size(g_tool))
     {
-        struct sx_rect cell = sx_rect_make(g_swatch_rect.x + index * (PAINT_SWATCH_SIZE + PAINT_SWATCH_GAP),
-                                           g_swatch_rect.y, PAINT_SWATCH_SIZE, PAINT_SWATCH_SIZE);
-
-        if (sx_rect_contains_point(cell, x, y))
+        return -1;
+    }
+    for (index = 0; index < PAINT_OPTION_COUNT; ++index)
+    {
+        if (sx_rect_contains_point(option_cell(index), x, y))
         {
             return index;
         }
@@ -907,72 +1020,247 @@ static int swatch_at_point(int x, int y)
     return -1;
 }
 
-/* Mini-glifo de cada herramienta, centrado en su celda. Tinta plana sobre la
- * cara del boton: es una caja de iconos, no un lienzo. */
-static void paint_tool_glyph(struct sx_painter *painter, int tool, struct sx_rect cell)
+/* Tool icons, 16x16, one character per pixel: '.' is the button face. */
+static const char *const k_icon_pencil[PAINT_ICON_SIZE] = {
+    "................",
+    "............kk..",
+    "...........kppk.",
+    "..........kgppk.",
+    ".........kyygk..",
+    "........kyyyk...",
+    ".......kyyyk....",
+    "......kyyyk.....",
+    ".....kyyyk......",
+    "....kyyyk.......",
+    "...kooyk........",
+    "...kook.........",
+    "...kkk..........",
+    "................",
+    "................",
+    "................",
+};
+
+static const char *const k_icon_brush[PAINT_ICON_SIZE] = {
+    "................",
+    ".............kk.",
+    "............kook",
+    "...........kook.",
+    "..........kook..",
+    ".........kook...",
+    "........kook....",
+    ".......kssk.....",
+    "......kssk......",
+    "....kkkkk.......",
+    "...kkkkk........",
+    "...kkkk.........",
+    "..kkkk..........",
+    "..kkk...........",
+    "..k.............",
+    "................",
+};
+
+static const char *const k_icon_eraser[PAINT_ICON_SIZE] = {
+    "................",
+    "................",
+    "................",
+    "........kkkkkkk.",
+    ".......kwwwwwwkk",
+    "......kwwwwwwkyk",
+    ".....kwwwwwwkyyk",
+    "....kwwwwwwkyyk.",
+    "...kwwwwwwkyyk..",
+    "..kkkkkkkkyyk...",
+    "..kyyyyyykyk....",
+    "..kyyyyyykk.....",
+    "..kkkkkkkk......",
+    "................",
+    "................",
+    "................",
+};
+
+static const char *const k_icon_picker[PAINT_ICON_SIZE] = {
+    "................",
+    "............kkk.",
+    "...........kkkkk",
+    "..........kkkkkk",
+    "........kkkkkkk.",
+    ".........kkkkk..",
+    "........kwckk...",
+    ".......kwck.k...",
+    "......kwck......",
+    ".....kwck.......",
+    "....kwck........",
+    "...kwck.........",
+    "...kck..........",
+    "..kk............",
+    "..k.............",
+    "................",
+};
+
+static const char *const k_icon_fill[PAINT_ICON_SIZE] = {
+    "................",
+    "......kk........",
+    ".....k..k.......",
+    ".....k..kk......",
+    "....kk.kwwk.....",
+    "...bkkkwwwwk....",
+    "..bbkwwwwwwwk...",
+    "..bbbkwwwwwwwk..",
+    "..bbbbkwwwwwwk..",
+    "..bbb.kgwwwwk...",
+    "..bbb..kgwwk....",
+    "..bb....kgk.....",
+    "..bb.....k......",
+    "...b............",
+    "................",
+    "................",
+};
+
+static uint32_t icon_colour(char code)
 {
-    int x0 = cell.x + 5;
-    int y0 = cell.y + 5;
-    int x1 = cell.x + cell.width - 6;
-    int y1 = cell.y + cell.height - 6;
+    switch (code)
+    {
+    case 'k': return SXGUI_RGB(0x00, 0x00, 0x00);
+    case 'w': return SXGUI_RGB(0xFF, 0xFF, 0xFF);
+    case 'g': return SXGUI_RGB(0x80, 0x80, 0x80);
+    case 's': return SXGUI_RGB(0xC0, 0xC0, 0xC0);
+    case 'y': return SXGUI_RGB(0xFF, 0xFF, 0x00);
+    case 'o': return SXGUI_RGB(0xC0, 0x80, 0x40);
+    case 'p': return SXGUI_RGB(0xFF, 0x80, 0x80);
+    case 'b': return SXGUI_RGB(0x00, 0x00, 0xFF);
+    case 'c': return SXGUI_RGB(0x00, 0xFF, 0xFF);
+    default: return SXGUI_RGB(0xC0, 0xC0, 0xC0);
+    }
+}
+
+static void paint_icon_map(struct sx_painter *painter, const char *const *map, int x, int y)
+{
+    int row;
+    int column;
+
+    for (row = 0; row < PAINT_ICON_SIZE; ++row)
+    {
+        for (column = 0; column < PAINT_ICON_SIZE; ++column)
+        {
+            if (map[row][column] != '.')
+            {
+                sx_painter_set_pixel(painter, x + column, y + row, icon_colour(map[row][column]));
+            }
+        }
+    }
+}
+
+/* A pressed toggle button: white and face in a checkerboard, as Win9x draws
+ * a toolbar button that stays down. */
+static void paint_dither(struct sx_painter *painter, struct sx_rect rect)
+{
+    int x;
+    int y;
+
+    for (y = rect.y; y < rect.y + rect.height; ++y)
+    {
+        for (x = rect.x; x < rect.x + rect.width; ++x)
+        {
+            sx_painter_set_pixel(painter, x, y,
+                                 ((x + y) & 1) != 0 ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_FACE);
+        }
+    }
+}
+
+/* Each tool's icon, centred in its button; a pressed button shifts it one
+ * pixel down and right. */
+static void paint_tool_glyph(struct sx_painter *painter, int tool, struct sx_rect cell, int pressed)
+{
+    int x = cell.x + (cell.width - PAINT_ICON_SIZE) / 2 + pressed;
+    int y = cell.y + (cell.height - PAINT_ICON_SIZE) / 2 + pressed;
 
     switch (tool)
     {
     case PAINT_TOOL_PENCIL:
-        sx_painter_draw_line(painter, x0, y1 - 2, x1 - 2, y0 + 2, SXGUI_COLOR_TEXT);
-        sx_painter_fill_rect(painter, sx_rect_make(x1 - 3, y0 + 1, 3, 3), SXGUI_COLOR_TEXT);
+        paint_icon_map(painter, k_icon_pencil, x, y);
         break;
     case PAINT_TOOL_BRUSH:
-        sx_painter_fill_ellipse(painter, sx_rect_make(x0 + 3, y1 - 10, 7, 7), SXGUI_COLOR_TEXT);
-        sx_painter_draw_line(painter, x0 + 8, y1 - 8, x1 - 2, y0 + 2, SXGUI_COLOR_TEXT);
+        paint_icon_map(painter, k_icon_brush, x, y);
         break;
     case PAINT_TOOL_ERASER:
-        sx_painter_fill_rect(painter, sx_rect_make(x0 + 4, y0 + 9, 12, 8),
-                             SXGUI_COLOR_FIELD);
-        sx_painter_draw_frame(painter, sx_rect_make(x0 + 4, y0 + 9, 12, 8), SXGUI_COLOR_TEXT);
-        sx_painter_draw_line(painter, x0 + 4, y1 - 4, x0 + 15, y0 + 9, SXGUI_COLOR_TEXT);
+        paint_icon_map(painter, k_icon_eraser, x, y);
         break;
     case PAINT_TOOL_PICKER:
-        sx_painter_draw_line(painter, x1 - 2, y0 + 2, x0 + 9, y0 + 11, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 5, y1 - 5, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 6, y1 - 4, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 4, y1 - 4, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 5, y1 - 3, SXGUI_COLOR_TEXT);
+        paint_icon_map(painter, k_icon_picker, x, y);
         break;
     case PAINT_TOOL_FILL:
-    {
-        /* Cubo ladeado que vierte una gota. */
-        struct sx_point body[4];
-
-        body[0].x = x0 + 5;
-        body[0].y = y0 + 5;
-        body[1].x = x1 - 3;
-        body[1].y = y0 + 8;
-        body[2].x = x1 - 7;
-        body[2].y = y1 - 8;
-        body[3].x = x0 + 8;
-        body[3].y = y1 - 8;
-        sx_painter_fill_polygon(painter, body, 4, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 12, y1 - 4, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 11, y1 - 3, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 13, y1 - 3, SXGUI_COLOR_TEXT);
-        sx_painter_set_pixel(painter, x0 + 12, y1 - 2, SXGUI_COLOR_TEXT);
+        paint_icon_map(painter, k_icon_fill, x, y);
         break;
-    }
     case PAINT_TOOL_LINE:
-        sx_painter_draw_line(painter, x0, y1, x1, y0, SXGUI_COLOR_TEXT);
+        sx_painter_draw_line(painter, x + 2, y + 13, x + 13, y + 2, SXGUI_COLOR_TEXT);
         break;
     case PAINT_TOOL_RECT:
-        sx_painter_draw_frame(painter, sx_rect_make(x0, y0 + 3, x1 - x0, y1 - y0 - 6),
-                              SXGUI_COLOR_TEXT);
+        sx_painter_draw_frame(painter, sx_rect_make(x + 1, y + 3, 14, 10), SXGUI_COLOR_TEXT);
         break;
     case PAINT_TOOL_ELLIPSE:
-        sx_painter_draw_ellipse(painter, sx_rect_make(x0, y0 + 3, x1 - x0, y1 - y0 - 6),
-                                SXGUI_COLOR_TEXT);
+        sx_painter_draw_ellipse(painter, sx_rect_make(x + 1, y + 3, 14, 10), SXGUI_COLOR_TEXT);
         break;
     default:
         break;
     }
+}
+
+/* Options box under the toolbox: for the brush and the eraser, the sizes to
+ * pick from, the current one highlighted; empty for the other tools. */
+static void paint_options(struct sx_painter *painter)
+{
+    int index;
+
+    sx_painter_fill_rect(painter, g_options_rect, SXGUI_COLOR_FACE);
+    sxgui_draw_sunken_edge(painter, g_options_rect);
+    if (!tool_has_size(g_tool))
+    {
+        return;
+    }
+    for (index = 0; index < PAINT_OPTION_COUNT; ++index)
+    {
+        struct sx_rect cell = option_cell(index);
+        int radius = k_option_radius[index];
+        int diameter = radius * 2 + 1;
+        int selected = radius == g_brush_radius;
+        uint32_t ink = selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT;
+        struct sx_rect mark = sx_rect_make(cell.x + (cell.width - diameter) / 2,
+                                           cell.y + (cell.height - diameter) / 2, diameter,
+                                           diameter);
+
+        if (selected)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(cell.x + 2, cell.y + 1, cell.width - 4,
+                                                       cell.height - 2),
+                                 SXGUI_COLOR_SELECT);
+        }
+        if (g_tool == PAINT_TOOL_ERASER)
+        {
+            sx_painter_fill_rect(painter, mark, ink);
+        }
+        else
+        {
+            sx_painter_fill_ellipse(painter, mark, ink);
+        }
+    }
+}
+
+/* The colour well: background square behind, foreground square in front. */
+static void paint_color_well(struct sx_painter *painter)
+{
+    struct sx_rect inner = sx_rect_make(g_well_rect.x + SXGUI_BORDER_SUNKEN,
+                                        g_well_rect.y + SXGUI_BORDER_SUNKEN,
+                                        g_well_rect.width - SXGUI_BORDER_SUNKEN * 2,
+                                        g_well_rect.height - SXGUI_BORDER_SUNKEN * 2);
+    struct sx_rect back = sx_rect_make(inner.x + 10, inner.y + 12, 14, 14);
+    struct sx_rect front = sx_rect_make(inner.x + 3, inner.y + 3, 14, 14);
+
+    paint_dither(painter, inner);
+    sxgui_draw_sunken_edge(painter, g_well_rect);
+    sx_painter_fill_rect(painter, back, g_bg_color);
+    sxgui_draw_raised_edge(painter, back);
+    sx_painter_fill_rect(painter, front, g_color);
+    sxgui_draw_raised_edge(painter, front);
 }
 
 /* Pincel y goma: no hay sx_pen, asi que el trazo grueso es sellos de elipse
@@ -1150,58 +1438,54 @@ static void commit_drag(void)
 static void on_paint(struct sxgui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
+    struct sx_rect visible = paint_canvas_visible();
     int index;
 
-    /* Caja de herramientas: la seleccion queda hundida. */
-    sxgui_draw_raised_edge(painter, g_tool_panel);
+    /* Toolbox: the selected tool stays pressed. */
     for (index = 0; index < PAINT_TOOL_COUNT; ++index)
     {
+        struct sx_rect cell = g_tool_cells[index];
+
         if (index == g_tool)
         {
-            sxgui_draw_sunken_edge(painter, g_tool_cells[index]);
-        }
-        else
-        {
-            sxgui_draw_raised_edge(painter, g_tool_cells[index]);
-        }
-        paint_tool_glyph(painter, index, g_tool_cells[index]);
-    }
-
-    /* Colores: el actual en grande y la tira al lado. */
-    sx_painter_fill_rect(painter, g_current_rect, g_color);
-    sxgui_draw_sunken_edge(painter, g_current_rect);
-    for (index = 0; index < PAINT_SWATCH_COUNT; ++index)
-    {
-        struct sx_rect cell = sx_rect_make(g_swatch_rect.x + index * (PAINT_SWATCH_SIZE + PAINT_SWATCH_GAP),
-                                           g_swatch_rect.y, PAINT_SWATCH_SIZE, PAINT_SWATCH_SIZE);
-
-        sx_painter_fill_rect(painter, cell, k_palette[index]);
-        if (k_palette[index] == g_color)
-        {
+            paint_dither(painter, cell);
             sxgui_draw_sunken_edge(painter, cell);
         }
         else
         {
             sxgui_draw_raised_edge(painter, cell);
         }
+        paint_tool_glyph(painter, index, cell, index == g_tool);
+    }
+    paint_options(painter);
+
+    /* Colour box. */
+    paint_color_well(painter);
+    for (index = 0; index < PAINT_SWATCH_COUNT; ++index)
+    {
+        struct sx_rect cell = swatch_cell(index);
+
+        sx_painter_fill_rect(painter, cell, k_palette[index]);
+        sxgui_draw_sunken_edge(painter, cell);
     }
 
-    /* Lienzo. */
-    sxgui_draw_sunken_edge(painter, g_canvas_outer);
-    sx_painter_blit_bitmap(painter, &g_doc, g_canvas_inner.x, g_canvas_inner.y);
-
-    /* Preview del arrastre sobre el lienzo, sin tocar el documento: el proximo
-     * frame vuelve a blitear el original. Solo las formas lo tienen; el lapiz,
-     * el pincel, la goma y el cuentagotas pintan (o leen) al andar. */
-    if (g_dragging && (g_tool == PAINT_TOOL_LINE || g_tool == PAINT_TOOL_RECT ||
-                       g_tool == PAINT_TOOL_ELLIPSE))
+    /* Workspace, and the picture in its top-left corner. */
+    sxgui_draw_sunken_edge(painter, g_workspace_outer);
+    sx_painter_fill_rect(painter, g_workspace_inner, PAINT_WORKSPACE_COLOR);
+    if (sx_painter_push_clip(painter, visible))
     {
-        if (sx_painter_push_clip(painter, g_canvas_inner))
+        sx_painter_blit_bitmap(painter, &g_doc, g_canvas_inner.x, g_canvas_inner.y);
+
+        /* The drag preview goes on the screen, not into the document: the
+         * next frame blits the original again. Only shapes have one; pencil,
+         * brush, eraser and picker paint (or read) as they move. */
+        if (g_dragging && (g_tool == PAINT_TOOL_LINE || g_tool == PAINT_TOOL_RECT ||
+                           g_tool == PAINT_TOOL_ELLIPSE))
         {
             paint_shape(painter, g_tool, g_anchor_x, g_anchor_y, g_current_x, g_current_y,
                         g_color);
-            sx_painter_pop_clip(painter);
         }
+        sx_painter_pop_clip(painter);
     }
 }
 
@@ -1212,12 +1496,37 @@ static int toolkit_owns_input(void)
     return sxgui_dialog_active(&g_app.ui) || g_menubar.open_menu >= 0;
 }
 
+/* Status bar position pane: the pixel under the cursor, blank off the
+ * picture. Returns whether the text changed. */
+static int paint_update_position(int x, int y)
+{
+    char text[PAINT_POS_CAPACITY];
+
+    if (sx_rect_contains_point(paint_canvas_visible(), x, y))
+    {
+        snprintf(text, sizeof(text), "%d,%d", x - g_canvas_inner.x, y - g_canvas_inner.y);
+    }
+    else
+    {
+        text[0] = '\0';
+    }
+    if (strcmp(text, g_pos_text) == 0)
+    {
+        return 0;
+    }
+    snprintf(g_pos_text, sizeof(g_pos_text), "%s", text);
+    return 1;
+}
+
 static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
 {
     uint32_t buttons = event->buttons;
     int left = (buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0u;
     int left_before = (g_last_buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0u;
+    int right = (buttons & SAVANXP_MOUSE_BUTTON_RIGHT) != 0u;
+    int right_before = (g_last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT) != 0u;
     int tool;
+    int option;
     int swatch;
 
     (void)app;
@@ -1239,6 +1548,20 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
         return 1;
     }
 
+    option = option_at_point(event->x, event->y);
+    if (option >= 0)
+    {
+        if (left && !left_before)
+        {
+            g_brush_radius = k_option_radius[option];
+            update_status(0);
+        }
+        g_last_buttons = buttons;
+        return 1;
+    }
+
+    /* Swatches: the left button picks the foreground colour, the right one
+     * the background. */
     swatch = swatch_at_point(event->x, event->y);
     if (swatch >= 0)
     {
@@ -1247,13 +1570,21 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
             g_color = k_palette[swatch];
             g_dragging = 0;
             update_status(0);
-            sxgui_app_request_repaint(&g_app);
+        }
+        else if (right && !right_before)
+        {
+            g_bg_color = k_palette[swatch];
+            update_status(0);
         }
         g_last_buttons = buttons;
         return 1;
     }
 
-    if (sx_rect_contains_point(g_canvas_inner, event->x, event->y))
+    if (paint_update_position(event->x, event->y))
+    {
+        sxgui_app_request_repaint(&g_app);
+    }
+    if (sx_rect_contains_point(paint_canvas_visible(), event->x, event->y))
     {
         int doc_x = event->x - g_canvas_inner.x;
         int doc_y = event->y - g_canvas_inner.y;
@@ -1296,7 +1627,7 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
             {
                 uint32_t ink = g_tool == PAINT_TOOL_BRUSH
                     ? g_color
-                    : SXGUI_RGB(0xFF, 0xFF, 0xFF);
+                    : g_bg_color;
 
                 undo_push();
                 paint_stamp(&g_doc_painter, doc_x, doc_y, ink, g_brush_radius);
@@ -1323,7 +1654,7 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
             {
                 uint32_t ink = g_tool == PAINT_TOOL_BRUSH
                     ? g_color
-                    : SXGUI_RGB(0xFF, 0xFF, 0xFF);
+                    : g_bg_color;
 
                 paint_stamp_walk(g_last_x - g_canvas_inner.x, g_last_y - g_canvas_inner.y,
                                  doc_x, doc_y, ink, g_brush_radius);
@@ -1797,7 +2128,7 @@ int main(int argc, char **argv)
     g_dirty = 0;
     update_status(0);
 
-    if (sxgui_app_init(&g_app, "paint", g_widgets, 1) < 0)
+    if (sxgui_app_init(&g_app, "paint", g_widgets, 3) < 0)
     {
         return 1;
     }
@@ -1806,7 +2137,7 @@ int main(int argc, char **argv)
     g_app.on_paint = on_paint;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
-    (void)sxgui_app_set_content_size(&g_app, 620, 520);
+    (void)sxgui_app_set_content_size(&g_app, PAINT_WINDOW_WIDTH, PAINT_WINDOW_HEIGHT);
     paint_layout();
 
     /* argv[1] es el archivo a abrir: es como lo lanza Files. */
