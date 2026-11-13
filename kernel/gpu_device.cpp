@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/cpu.hpp"
 #include "kernel/credentials.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
@@ -197,6 +198,8 @@ int gpu_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             if (!process::validate_user_range(argument, fb.buffer_size, false)) {
                 return negative_error(SX_EINVAL);
             }
+            // The backend reads the caller's pixels in place (SMAP window).
+            const arch::UserAccess user_access;
             return display::present(reinterpret_cast<const void*>(argument), fb.buffer_size)
                 ? 0
                 : negative_error(SX_EIO);
@@ -226,6 +229,8 @@ int gpu_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 return negative_error(SX_EINVAL);
             }
 
+            // The backend reads the caller's pixels in place (SMAP window).
+            const arch::UserAccess user_access;
             return display::present_region(
                 reinterpret_cast<const void*>(region.pixels),
                 region.source_pitch,

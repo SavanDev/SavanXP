@@ -23,6 +23,12 @@
 .macro CONTEXT_ENTRY name, handler, door
 \name:
     cld
+    /* Close the user-access window ring 3 may have left open (RFLAGS.AC).
+     * Only with SMAP: without it `clac` is #UD. iretq restores the caller's. */
+    cmpb $0, _ZN4arch14g_smap_enabledE(%rip)
+    je 1f
+    clac
+1:
     pushq %rax
     pushq %rbx
     pushq %rcx

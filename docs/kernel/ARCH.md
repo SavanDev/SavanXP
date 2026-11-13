@@ -30,6 +30,7 @@ kernel subsystem that needs something from the processor calls it by name:
 | Short section with interrupts off, from any context | `arch::save_and_disable_interrupts()` / `arch::restore_interrupts()` |
 | Switch or read the page table root, drop one translation | `arch::load_page_table_root()`, `read_page_table_root()`, `invalidate_page()`, `flush_tlb()` |
 | Model-specific registers, cycle counter | `arch::read_msr()`, `write_msr()`, `read_timestamp_counter()` |
+| Touch user memory in place (SMAP window) | `arch::user_access_begin()` / `user_access_end()`, or a scoped `arch::UserAccess` |
 | Port I/O | `out8/16/32`, `in8/16/32`, `io_wait()` from `arch/x86/io.hpp` |
 
 The check is mechanical and must print nothing:
@@ -45,6 +46,8 @@ A compiler-only barrier is not assembly: it is
 `context.S` defines `arch::resume_context` under its C++ mangled name
 (`_ZN4arch14resume_contextEPN7process12SavedContextEm`). Renaming the namespace
 or changing that signature means changing the label too, or the link fails.
+The entry stubs read `arch::g_smap_enabled` the same way
+(`_ZN4arch14g_smap_enabledE`).
 
 ## The contract is x86-shaped, and says so
 

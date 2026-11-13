@@ -39,13 +39,17 @@ bool read_user_memory(const process::Process& proc, void* destination, uint64_t 
     }
 
     if (&proc == current()) {
+        arch::user_access_begin();
         memcpy(destination, reinterpret_cast<const void*>(user_address), count);
+        arch::user_access_end();
         return true;
     }
 
     const uint64_t previous_cr3 = arch::read_page_table_root();
     arch::load_page_table_root(proc.address_space.pml4_physical);
+    arch::user_access_begin();
     memcpy(destination, reinterpret_cast<const void*>(user_address), count);
+    arch::user_access_end();
     arch::load_page_table_root(previous_cr3);
     return true;
 }
@@ -59,13 +63,17 @@ bool write_user_memory(process::Process& proc, uint64_t user_address, const void
     }
 
     if (&proc == current()) {
+        arch::user_access_begin();
         memcpy(reinterpret_cast<void*>(user_address), source, count);
+        arch::user_access_end();
         return true;
     }
 
     const uint64_t previous_cr3 = arch::read_page_table_root();
     arch::load_page_table_root(proc.address_space.pml4_physical);
+    arch::user_access_begin();
     memcpy(reinterpret_cast<void*>(user_address), source, count);
+    arch::user_access_end();
     arch::load_page_table_root(previous_cr3);
     return true;
 }

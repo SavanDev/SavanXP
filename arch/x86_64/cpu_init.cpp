@@ -33,6 +33,7 @@ constexpr uint32_t kEferMsr = 0xc0000080;
 constexpr uint64_t kEferNoExecuteEnable = 1ull << 11;
 constexpr uint64_t kCr0WriteProtect = 1ull << 16;
 constexpr uint64_t kCr4Smep = 1ull << 20;
+constexpr uint64_t kCr4Smap = 1ull << 21;
 constexpr uint32_t kApicBaseEnable = 1u << 11;
 constexpr uint32_t kApicBaseX2ApicEnable = 1u << 10;
 constexpr uint32_t kX2ApicMsrBase = 0x800;
@@ -433,6 +434,32 @@ bool enable_smep() {
     return true;
 }
 
+// SMAP: the kernel faults on a user page unless RFLAGS.AC opens the access
+// (arch::user_access_begin). Turned on after SMEP and on the same terms: the
+// BSP decides, every AP follows or stays offline. AC is cleared first, so the
+// core does not come out of here with the window already open.
+bool enable_smap() {
+    uint32_t maximum_leaf = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(0, 0, maximum_leaf, ebx, ecx, edx);
+    if (maximum_leaf < 7) {
+        return false;
+    }
+
+    cpuid(7, 0, maximum_leaf, ebx, ecx, edx);
+    if ((ebx & (1u << 20)) == 0) {
+        return false;
+    }
+
+    uint64_t cr4 = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= kCr4Smap;
+    asm volatile("clac\n\tmov %0, %%cr4" ::"r"(cr4) : "memory");
+    return true;
+}
+
 uint64_t random_u64_local() {
     for (uint32_t attempt = 0; g_rdrand_available && attempt < 16; ++attempt) {
         uint64_t value = 0;
@@ -510,6 +537,18 @@ uint64_t read_cr2() {
     }
     if (vector == 14) {
         console::printf("cr2: 0x%llx\n", read_cr2());
+        // Present page, supervisor access, not an instruction fetch, on a
+        // user address: SMAP refused it. A kernel path read or wrote user
+        // memory outside arch::user_access_begin/end.
+        constexpr uint64_t kPfPresent = 1u << 0;
+        constexpr uint64_t kPfUser = 1u << 2;
+        constexpr uint64_t kPfFetch = 1u << 4;
+        constexpr uint64_t kLowerHalfEnd = 0x0000800000000000ULL;
+        if (arch::g_smap_enabled && has_error_code &&
+            (error_code & (kPfPresent | kPfUser | kPfFetch)) == kPfPresent &&
+            read_cr2() < kLowerHalfEnd) {
+            console::printf("exception: SMAP violation, kernel access to user memory outside a user-access window\n");
+        }
     }
     if (frame != nullptr) {
         console::printf("rip: 0x%llx cs: 0x%llx rflags: 0x%llx\n", frame->rip, frame->cs, frame->rflags);
@@ -734,15 +773,22 @@ void run_breakpoint_probe() {
 // igual que los stubs de syscall y timer en context.S.
 #define CLEAR_DIRECTION_FLAG() asm volatile("cld")
 
+// The same for RFLAGS.AC: ring 3 can set it with popf, and with SMAP on it is
+// the bit that lets the kernel touch user pages. Every entry closes it; iretq
+// gives the interrupted code its own AC back.
+#define CLOSE_USER_ACCESS() arch::user_access_end()
+
 #define DEFINE_ISR_NOERR(VECTOR) \
     __attribute__((interrupt)) void isr_##VECTOR(InterruptFrame* frame) { \
         CLEAR_DIRECTION_FLAG(); \
+        CLOSE_USER_ACCESS(); \
         handle_exception(VECTOR, frame, 0, false); \
     }
 
 #define DEFINE_ISR_ERR(VECTOR) \
     __attribute__((interrupt)) void isr_##VECTOR(InterruptFrame* frame, uint64_t error_code) { \
         CLEAR_DIRECTION_FLAG(); \
+        CLOSE_USER_ACCESS(); \
         handle_exception(VECTOR, frame, error_code, true); \
     }
 
@@ -750,6 +796,7 @@ void run_breakpoint_probe() {
     __attribute__((interrupt)) void vector_##VECTOR(InterruptFrame* frame) { \
         (void)frame; \
         CLEAR_DIRECTION_FLAG(); \
+        CLOSE_USER_ACCESS(); \
         dispatch_external_vector(VECTOR); \
     }
 
@@ -1044,6 +1091,10 @@ void initialize_cpu() {
     if (!g_smep_enabled) {
         console::printf("cpu: SMEP unavailable on this processor\n");
     }
+    arch::g_smap_enabled = enable_smap();
+    if (!arch::g_smap_enabled) {
+        console::printf("cpu: SMAP unavailable on this processor\n");
+    }
     install_tss_descriptors();
     load_gdt();
     remap_pic();
@@ -1067,6 +1118,9 @@ void ap_initialize_cpu() {
     // SMEP as on the BSP. Requiring it unconditionally left every AP halted
     // on a processor without it (QEMU's qemu64), and the system on one core.
     if (g_smep_enabled && !enable_smep()) {
+        halt_forever();
+    }
+    if (arch::g_smap_enabled && !enable_smap()) {
         halt_forever();
     }
     // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core
@@ -1491,6 +1545,9 @@ void enable_interrupts_and_halt() {
 // See lock_spin_hint() in cpu.hpp. initialize_cpu() clears it under TCG,
 // before any AP starts.
 bool g_lock_spin_pause = true;
+
+// See user_access_begin() in cpu.hpp. Set by initialize_cpu() on the BSP.
+bool g_smap_enabled = false;
 
 [[noreturn]] void halt_forever() {
     for (;;) {

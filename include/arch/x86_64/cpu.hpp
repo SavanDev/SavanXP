@@ -236,6 +236,38 @@ inline void lock_spin_hint() {
     }
 }
 
+// Whether CR4.SMAP is on. Set by the BSP at boot; every AP matches it or stays
+// offline, so it holds for all cores. With it on, the kernel faults on any
+// access to a user page outside a user-access window.
+extern bool g_smap_enabled;
+
+// Opens a user-access window (`stac`): the kernel may touch user pages until
+// user_access_end(). Keep the window around the copy alone, never around the
+// validation or anything that could block. A no-op without SMAP, where `stac`
+// would be #UD.
+inline void user_access_begin() {
+    if (g_smap_enabled) {
+        asm volatile("stac" : : : "memory");
+    }
+}
+
+// Closes the window (`clac`). Every kernel entry also runs it, because ring 3
+// can set RFLAGS.AC itself and an interrupt gate does not clear it.
+inline void user_access_end() {
+    if (g_smap_enabled) {
+        asm volatile("clac" : : : "memory");
+    }
+}
+
+// A user-access window for one scope.
+class UserAccess {
+public:
+    UserAccess() { user_access_begin(); }
+    ~UserAccess() { user_access_end(); }
+    UserAccess(const UserAccess&) = delete;
+    UserAccess& operator=(const UserAccess&) = delete;
+};
+
 // Full barrier: every earlier load and store, to memory or MMIO, is globally
 // visible before any later one. For device rings in shared memory (virtio,
 // AHCI command lists) before the doorbell write.

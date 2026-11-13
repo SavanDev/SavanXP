@@ -2701,7 +2701,8 @@ bool read_wait_word(const Process& proc, uint64_t address, uint64_t size, uint64
     }
     // The caller's address space is the loaded one, and the kernel lock keeps
     // the page mapped while it is read. One load of the word's own size, the
-    // same access the user side makes.
+    // same access the user side makes, inside a user-access window (SMAP).
+    const arch::UserAccess user_access;
     switch (size) {
         case 1: value = __atomic_load_n(reinterpret_cast<const volatile uint8_t*>(address), __ATOMIC_SEQ_CST); return true;
         case 2: value = __atomic_load_n(reinterpret_cast<const volatile uint16_t*>(address), __ATOMIC_SEQ_CST); return true;

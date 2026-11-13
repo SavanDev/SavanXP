@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/cpu.hpp"
 #include "abi/savanxp_native_abi.h"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
@@ -1408,6 +1409,8 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 return context;
             }
 
+            // The backend reads the caller's pixels in place (SMAP window).
+            arch::user_access_begin();
             const bool presented = display::present_region(
                 reinterpret_cast<const void*>(region.pixels),
                 region.source_pitch,
@@ -1416,6 +1419,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 region.width,
                 region.height
             );
+            arch::user_access_end();
             context->rax = static_cast<uint64_t>(presented ? 0 : sx::negative_error(SX_EIO));
             return context;
         }

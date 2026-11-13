@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SMAP: on a CPU that has it, every core sets `CR4.SMAP` and the kernel touches user memory only inside
+  `arch::user_access_begin`/`user_access_end`; a stray access stops the system with `SMAP violation`.** Without it the
+  boot logs `cpu: SMAP unavailable on this processor`. See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#user-access-windows-smap).
+
 - **Pin to the Start menu: Files' item menu has Pin to Start Menu for programs, `.exe` files and shortcuts, and a right
   click on a pinned row offers Unpin from Start Menu.** The pins are the user's `Start Menu` folder, seeded once from
   `/system/start`; a `.exe` is named by its version resource's `FileDescription` (`sxgfx/pe_version.h`). See [START_MENU.md](docs/desktop/START_MENU.md#shortcuts).

@@ -88,7 +88,11 @@ The audit confirmed the following defenses were already present:
   `CR0.WP`. The baseline is the BSP's: on a CPU without SMEP every core runs
   without it, and an AP that cannot match a BSP that has it remains offline.
   (Until phase 4 of [SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md) the APs demanded SMEP
-  outright, so on such a CPU they all stayed offline.) SMAP is not enabled yet.
+  outright, so on such a CPU they all stayed offline.)
+- SMAP follows the same rule: when CPUID advertises it, every core sets
+  `CR4.SMAP` (or the boot says `cpu: SMAP unavailable on this processor`), and
+  an AP that cannot match the BSP stays offline. See
+  [User-access windows](#user-access-windows-smap).
 - ELF `PT_LOAD` segments marked both writable and executable are rejected.
   Executable segments are mapped without `PF_W`; non-executable segments, BSS
   and stacks are mapped with NX. Section views no longer belong in that
@@ -122,6 +126,33 @@ The audit confirmed the following defenses were already present:
   yet. The eight-page backing allocation is intentionally contiguous: it trades
   fragmentation resistance for a simple, bounded stack layout until the PMM can
   provide non-contiguous ownership and guard-page support.
+
+### User-access windows (SMAP)
+
+With SMAP on, a kernel load or store to a user page faults unless `RFLAGS.AC`
+is set. The rules that keep that true:
+
+- **Only the copy runs inside the window.** `arch::user_access_begin()` (`stac`)
+  and `user_access_end()` (`clac`), or the scoped `arch::UserAccess`, wrap the
+  access itself; validation (`vm::is_user_range_accessible`) stays outside.
+  Both are no-ops on a CPU without SMAP, where the instructions are `#UD`.
+- **The windows in the tree:** `sx::read_user_memory` and `write_user_memory`
+  (every `copy_from_user`, `copy_to_user`, user string and path copy goes
+  through them), `read_wait_word` for wait-on-address, and the three present
+  paths whose backend reads the caller's pixels in place (`GPU_IOC_PRESENT`,
+  `GPU_IOC_PRESENT_REGION`, `SXN_SYS_GFX_PRESENT`). New code copies through the
+  helpers; a new in-place reader opens its own window and is listed here.
+- **Every kernel entry closes the window.** Ring 3 may set `AC` itself with
+  `popf`, and an interrupt gate does not clear it, so the `context.S` stubs and
+  the `__attribute__((interrupt))` handlers run `clac` first. `iretq` restores
+  the interrupted code's own `AC`, so an exception inside a window is safe.
+- **A violation is a kernel bug and stops the system.** The `#PF` report adds
+  `exception: SMAP violation, kernel access to user memory outside a
+  user-access window` when a present user page was refused to a supervisor
+  data access.
+
+The windows do not depend on exception-table recovery: every access is
+validated against the page tables first, under the kernel lock.
 
 ### ELF validation
 
@@ -236,7 +267,7 @@ at fixed addresses, and the kernel is not relocated.
 | Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Fixed |
 | Kernel stacks | Canary and 32 KiB size, but no non-present guard page | Medium | Partial |
 | Fault handling | No exception-table-based `copy_*_user` recovery | Medium | Open |
-| CPU isolation | SMEP is enabled when available; SMAP/KPTI are not enabled | Medium | Partial |
+| CPU isolation | SMEP and SMAP are enabled when available; KPTI is not | Medium | Partial |
 | Control flow | No CET shadow stacks, PIE, KASLR or compiler CFI | Medium | Open |
 | SMP panic | Panic halts only the reporting core | Medium | Fixed: `smp::stop_other_cores` |
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |
@@ -440,7 +471,8 @@ third pass was not walked again.
 
 ### Still true, checked again
 
-- SMEP and `CR0.WP` only; no SMAP, KPTI, CET, KASLR or CFI.
+- SMEP and `CR0.WP` only; no SMAP, KPTI, CET, KASLR or CFI. (SMAP since
+  closed: see [User-access windows](#user-access-windows-smap).)
 - Kernel stacks are eight contiguous pages with a canary and no guard page.
 - The ELF loader holds at most 64 program headers; the `ET_DYN` load bias is
   the constant `kUserBase`; only the section-view window is randomized.
@@ -542,7 +574,8 @@ Memory safety should then proceed in this order:
    the second half is now partly done — `elf.cpp` accepts `ET_DYN` and relocates
    it onto a base — but the base is still a constant, and no userland image is
    linked as PIE yet;
-5. exception-table user-copy helpers before enabling SMAP;
+5. exception-table user-copy helpers (SMAP is on without them: every copy is
+   validated first, see [User-access windows](#user-access-windows-smap));
 6. per-stack non-present guard pages (the SMP-wide panic stop is done).
 7. for the shared-library loader: `mprotect` with per-page copy-on-write, and
    RELRO. Dropping write on a view another process still holds writable would
