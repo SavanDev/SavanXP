@@ -6,36 +6,39 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W2 complete (2026-11-12).** This document describes what exists
+> **Status: W3 complete (2026-11-12).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
 > [WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md).
 
-A PE32 console program runs on SavanXP: `winhost.sxe` loads it and its DLLs
-below 4 GiB and runs it as 32-bit code. The same loader and DLLs run on the
-build host in a harness, and the fixtures that check both give the bytes and
-exit statuses Windows XP gives. Nothing of the Windows API beyond what those
-fixtures import exists yet, and nothing starts a `.exe` but a command line
-naming `winhost`.
+A PE32 program runs on SavanXP: `winhost.sxe` loads it and its DLLs below
+4 GiB and runs it as 32-bit code, and its top-level window is a `windowd`
+window. The same loader and DLLs run on the build host in a harness, with
+offscreen windows and scripted input, and the fixtures that check both give
+the bytes, the messages and the pixels Windows XP gives. Nothing of the
+Windows API beyond what those fixtures import exists yet, and nothing starts
+a `.exe` but a command line naming `winhost`.
 
 ```text
 subsystems/win32/
   include/       windows.h (the subsystem's own), sxw_abi.h (host <-> DLLs)
   pe/            the PE32 parser and mapper, portable C
   loader/        the process loader, portable C
-  dlls/          ntdll.dll and kernel32.dll, PE32
-  fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing
+  dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32 (PE32);
+                 common/ holds the code page, regions and memcpy they share
+  fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing, startup,
+                 window (+ its input script)
   harness/       win32-harness: the loader and gate on Linux x86-64
   host/          winhost.sxe: the loader and gate on SavanXP
-  tests/         win32test.sxe: the win32-hello smoke runner
+  tests/         win32test.sxe: the win32-hello and win32-window smoke runner
   Win32.cmake
 ```
 
 On the disk image, under `/system/win/drive_c` (the guest's `C:`):
 
 ```text
-windows/system32/   ntdll.dll, kernel32.dll
+windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32 and user32 .dll
 tests/              the fixtures, when the test applications are built
 ```
 
@@ -177,9 +180,11 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 - **Services.** `ntdll!SxwService(number, arguments)` calls through that
   address with a flat array of 32-bit values. The host checks every guest
   address against the regions it mapped and never calls guest code. Version
-  2 has fourteen: version, exit, standard handle, write, debug output; the
-  clock; a new region for the heap; find, load and resolve a module; and
-  open, close, query and set a registry key or value.
+  3 has twenty-one: version, exit, standard handle, write, debug output; the
+  clock; a new region for the heap; find, load and resolve a module; open,
+  close, query and set a registry key or value; and for windows, the
+  millisecond clock, the screen's size, create, destroy, title and present
+  a top-level window, and wait for an event (pointer, key, resize, close).
   `loader/services.c` answers them for both hosts.
 - **Process parameters.** `RTL_USER_PROCESS_PARAMETERS` sits in the PEB's
   page with the image path, the command line and the standard handles. A
@@ -206,8 +211,9 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 
 Each DLL is a directory with C sources and a `.def` file. They are built at
 Windows XP's own bases (`ntdll.dll` at `0x7C900000`, `kernel32.dll` at
-`0x7C800000`, `msvcrt.dll` at `0x77C10000`, `advapi32.dll` at `0x77DD0000`),
-so none of them relocates. `include/windows.h` is the subsystem's own header;
+`0x7C800000`, `msvcrt.dll` at `0x77C10000`, `advapi32.dll` at `0x77DD0000`,
+`gdi32.dll` at `0x77F10000`, `user32.dll` at `0x7E410000`), so none of them
+relocates. `include/windows.h` is the subsystem's own header;
 it declares what the DLLs and fixtures use and grows with the W0 matrix.
 `dlls/common/codepage.c`, compiled into the DLLs that need it, converts
 between UTF-16 and the "ANSI" code page, Windows-1252, the one Windows XP uses
@@ -219,6 +225,8 @@ in Western European languages.
 | `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; the matrix's nine: `GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress` |
 | `msvcrt.dll` | The matrix's eighteen: `__set_app_type`, `__p__fmode`, `__p__commode`, `_adjust_fdiv`, `__setusermatherr`, `_initterm`, `__getmainargs`, `_acmdln`, `_controlfp`, `_except_handler3`, `_XcptFilter`, `exit`, `_exit`, `_cexit`, `_c_exit`, `rand`, `srand`, `time` |
 | `advapi32.dll` | The matrix's six: `RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey` |
+| `gdi32.dll` | Of the matrix's twenty-seven, the twenty a window needs: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC` |
+| `user32.dll` | Of the matrix's sixty-two, the forty-five of windows and messages: classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor` and `LoadCursorW` (the full list is `dlls/user32/user32.def`) |
 
 ### What they do, and what they refuse
 
@@ -261,6 +269,84 @@ in Western European languages.
   a class and security attributes are not kept; `RegCreateKeyExW` accepts the
   default options only. The ANSI functions convert names and string data
   through Windows-1252.
+
+## user32 and gdi32
+
+`user32` is the window manager of the guest; the host's window manager only
+frames its top-level windows. Everything is in guest memory: classes, the
+window tree, the message queue, invalid regions, timers, focus, capture and
+activation. One thread, so a sent message is a call to the window procedure.
+The messages each call sends, and their order, are the ones Windows XP sent
+`window.exe` (see [Fixtures](#fixtures)); among them:
+
+- `CreateWindowEx` sends `WM_GETMINMAXINFO` (top-level only), `WM_NCCREATE`,
+  `WM_NCCALCSIZE` and `WM_CREATE`. A child then gets `WM_SIZE` and `WM_MOVE`
+  at once and its parent `WM_PARENTNOTIFY`; a top-level window gets them from
+  `DefWindowProc`'s `WM_WINDOWPOSCHANGED` the first time it is shown.
+- The first `ShowWindow` creates the host window and sends `WM_SHOWWINDOW`,
+  `WM_WINDOWPOSCHANGING`, the activation (`WM_ACTIVATEAPP`, `WM_NCACTIVATE`,
+  `WM_ACTIVATE`, whose default sets the focus), then erases the window and
+  its children now (`WM_ERASEBKGND`), then `WM_WINDOWPOSCHANGED`.
+- `GetMessage` takes posted messages, then `WM_QUIT`, then input, then
+  `WM_PAINT` (parents before children), then `WM_TIMER`, and presents what
+  was drawn before it waits. A mouse message, when it is taken, first sends
+  `WM_NCHITTEST`, a click's `WM_PARENTNOTIFY` up the parents, a click's
+  `WM_MOUSEACTIVATE` when its window is not the active one, and
+  `WM_SETCURSOR`; none of them while the pointer is captured. `GetKeyState`
+  changes as each input message is taken, not as it arrives.
+- `TranslateMessage` posts `WM_CHAR` with the character the host typed for
+  the key; a double click is two presses within 500 ms and 2 pixels in a
+  `CS_DBLCLKS` window.
+- `DestroyWindow` hides the window, deactivates it (`WM_NCACTIVATE`,
+  `WM_ACTIVATE`, `WM_ACTIVATEAPP`, `WM_KILLFOCUS`), then sends `WM_DESTROY`
+  parents first and `WM_NCDESTROY` children first.
+- The frame's close (its button, or Alt+F4, which the window manager keeps)
+  arrives as an input `WM_SYSCOMMAND(SC_CLOSE)`; `DefWindowProc` makes it
+  `WM_CLOSE`, and `WM_CLOSE` `DestroyWindow`.
+
+**Drawing.** A top-level window's client area is a buffer in guest memory,
+0x00RRGGBB per pixel, which every window of its tree draws on through a
+device context: the window's origin on it and a clip region (inside its
+ancestors, without its children when it has `WS_CLIPCHILDREN`, and inside
+the update region for `BeginPaint`). gdi32 records what each call touched,
+and user32 sends those rectangles to the host
+(`SXW_SVC_WINDOW_PRESENT`), which copies them onto the window's surface;
+copying, rather than mapping the surface a second time below 4 GiB, keeps
+the guest out of `windowd`'s surface layout and costs no view. Regions are
+up to 32 disjoint rectangles (`dlls/common/region.c`); `gdi32/raster.c`
+fills under any ROP3 that reads no source, draws lines under any ROP2 with
+the end point left out and a tie going to the smaller coordinate, the rule
+Windows XP's lines follow in every octant, and draws glyphs.
+
+**Text.** Every font is the platform's 13 px UI strike, MS Sans Serif
+([UI_FONTS.md](../desktop/UI_FONTS.md)), compiled into `gdi32` from the same
+table the desktop uses. A weight of 600 or more, and the stock System font,
+which is bold on Windows, are drawn twice one pixel apart with one more pixel
+of advance, as Windows emboldens a bitmap font. Text is therefore laid out
+alike but not drawn like Windows XP's TrueType faces, which is why fixtures
+keep it out of the pixels they compare with Windows XP. `TextOutW` is
+left- and top-aligned and opaque; `DrawTextW` breaks lines, aligns them,
+draws `&` prefixes and computes rectangles, but does not clip to its
+rectangle.
+
+What is refused or bounded, and why:
+
+- **One top-level window per process**, the `windowd` main window; a
+  program's dialogs and popups are owned windows, W5's. `CreateWindowEx`
+  with a menu bar fails with `ERROR_CALL_NOT_IMPLEMENTED` until W5.
+- **The window manager owns a top-level window's size and place.** A size
+  it does not grant arrives as `WM_SIZE`; `MoveWindow` moves and sizes a
+  child but only moves a top-level window; `ClientToScreen` counts from the
+  position the program gave, since `windowd` does not say where it put the
+  window.
+- **`SetCursorPos` fails** with `ERROR_CALL_NOT_IMPLEMENTED`: the pointer is
+  the window manager's. Only keyboard play in Solitaire calls it, to put the
+  pointer on the selected card, and the game is complete with the mouse
+  ([WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md#decisions)).
+- `LoadCursorW` gives the system cursors only; a program's own cursors are
+  resources, W4's. `GetSysColor` answers Windows XP's classic colours.
+- `GetDC(NULL)` answers `GetDeviceCaps` (the screen's size, 96 DPI, 32 bits)
+  and draws nothing.
 
 ## The registry
 
@@ -316,6 +402,7 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `missingdll.exe` | An import from a DLL that is not installed | No output, status `0xC0000135` |
 | `missingsym.exe` | An import `kernel32.dll` does not export | No output, status `0xC0000139` |
 | `startup.exe` | It starts the way `sol.exe` does: the same runtime imports, an SEH frame at `fs:[0]` with `_except_handler3`, C and C++ initializers through `_initterm`, `__getmainargs`, the tail of `_acmdln`, a `WinMain`. Then every non-GUI function of the matrix, failure paths included: `rand` after two seeds, `MulDiv`'s rounding and overflow, a missing module and procedure, `beta.dll` loaded at run time and found by name and ordinal, 115 `LPTR` blocks, and the registry (a counter, `ERROR_MORE_DATA`, a size query, an ANSI read, the value name `Atrás`, a missing value and key) | Run twice as `startup.exe alpha "two words" 3`: `expected/startup-1.out` then `startup-2.out`, where the counter reads back the first run's 1 as 2; status 5 |
+| `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
 
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'
@@ -356,6 +443,7 @@ these files built with Clang and lld 23.1.4:
 | `missingdll.exe` | `0e81e4bea9b9d08b4fb6fad7b1864e428f86f42207eb40c8567df83d1ad045cf` |
 | `missingsym.exe` | `43d78fd4b444d7fee9df762b429e4681a39439ed886637e6a071d799ba5b7b9c` |
 | `startup.exe` | `e1d9283206f99e0748495794d9df3a1cc7b1c529a7fb1b4079cc21fe5d7ad9ba` |
+| `window.exe` | `1ec8351db7662ff5471b7bd587ef1734da6fca73416def7e4d39b91875e30dba` |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -366,10 +454,47 @@ does. `startup.exe` was run the same way; the batch file puts its redirection
 first (`>s1.out startup.exe ...`), because `cmd` keeps the blank before a
 trailing `> file` in the program's command line.
 
+`window.exe` was driven by its input script over QMP (`tools/win32_input.py`)
+on the same machine, in the classic style, once with the argument `all`,
+which writes every message, and once without. What `all` showed decided the
+list the fixture keeps: it leaves out the hit tests and cursor queries every
+pointer move brings, the pointer moves themselves (how many a drag makes
+depends on the device), the frame's own messages (`WM_NCPAINT`,
+`WM_GETICON`, `WM_NCACTIVATE`, the input method's), `WM_MOVE` (the window
+manager places the window) and the keys that close it, which differ by
+environment while the `WM_SYSCOMMAND` they produce does not.
+`expected/window.ppm.gz` is the client area the harness dumps at the end of
+the script; outside the text box it is pixel for pixel the one on Windows
+XP's screen.
+
+## Input scripts
+
+A fixture with a window comes with an input script, played the same way in
+every environment: by the harness itself (`--input`), and over QMP into
+Windows XP and into SavanXP (`tools/win32_input.py`, which finds the client
+area on a screenshot by the fixture's marker, a 4x4 magenta square at its
+top-left corner, and needs an absolute pointer). One action per line, in the
+main window's client coordinates:
+
+```text
+move X Y                 the pointer moves
+down|up left|right X Y   a button goes down or up there
+keydown VK [CHAR]        a key goes down: virtual key, and the UTF-16
+keyup VK                 character it types (numbers in C syntax)
+wait MS                  nothing happens for MS milliseconds
+close                    the frame's close (Alt+F4 over QMP)
+dump FILE                the client area, saved as a binary PPM
+```
+
+In the harness the guest's millisecond clock is virtual: it moves only
+through `wait`, and an action is given only when the guest waits for input,
+so timers fire at the same point of every run and a program that only polls
+sees no input.
+
 ## The host harness — `subsystems/win32/harness/`
 
 `savanxp-win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS]
-program.exe [arguments...]` runs a fixture on the
+[--input SCRIPT] program.exe [arguments...]` runs a fixture on the
 Linux x86-64 build host through the same loader and DLLs as `winhost`. The
 guest's standard output is the harness's; the guest's 32-bit exit status, or
 the load failure's NT status, is printed as `win32: exit status 0x...` and
@@ -411,17 +536,27 @@ It is the same loader as the harness over a different platform:
   halves of each transition live in a section at `0x7FFE0000`, as in the
   harness.
 - **Services** come from `loader/services.c`, shared with the harness.
+- **Windows** are `windowd`'s, through `sxnwm` (SUN's windowing layer). The
+  first top-level window connects; the title goes in its presentation, the
+  client size is asked for and waited on for up to a second, and a size the
+  window manager gives later, or its close, becomes an event. Presenting
+  copies the guest's rectangles onto the surface and submits them. Input
+  comes from the native ring: pointer records as they are, keys as Windows
+  virtual keys with the character the keyboard layout typed (none with Ctrl
+  or Alt held), the window manager's own shortcuts (Alt+F4, Alt+Tab) never
+  reaching the guest. The guest's millisecond clock is the native one.
 
-`winhost` itself is linked at `0x400000` and ends near `0x470000`, well
+`winhost` itself is linked at `0x400000` and ends near `0x48A000`, well
 below `0x01000000`, where `sol.exe` must load. A fixture that prefers
 `0x400000` is relocated.
 
-**Views.** The kernel gives a process 64 section views. `hello.exe` uses 14:
-three images of about five protection runs each (headers, code, read-only
-data, data, relocations), the stack, the TEB block and the trampoline.
-`initorder.exe` uses 29. Solitaire's ten images would need about 50 before
-W3 adds two per window surface; [the roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md#w1--the-loader-the-gate-and-the-first-executable)
-records the options.
+**Views.** The kernel gives a process 128 section views
+([SECTIONS.md](../kernel/SECTIONS.md#the-budget)). `hello.exe` uses 14: three
+images of about five protection runs each (headers, code, read-only data,
+data, relocations), the stack, the TEB block and the trampoline.
+`initorder.exe` uses 29. A window adds `windowd`'s two (surface and input
+ring) and the region of its pixel buffer when it is larger than a heap
+arena; Solitaire's ten images need about 50.
 
 ## Tests
 
@@ -450,7 +585,22 @@ and compaction when values are replaced again and again.
 `win32-harness-test` runs the fixtures through the harness and
 compares the output bytes and the full 32-bit status with what Windows XP
 produced for the same files. A failed load must also name its cause and
-release every mapping and file.
+release every mapping and file. `window.exe` plays its input script, and
+the client area it dumps must equal `expected/window.ppm.gz`; a different
+one is kept in the build directory as `win32-window-actual.ppm`.
+
+`win32-window-test` checks the pure parts of `user32` and `gdi32` with the
+sanitizers on: regions against a brute-force set of pixels, including what
+happens at the 32-rectangle bound; every ROP2 and ROP3 against its truth
+table; 3,000 random lines against the rule above; clipped fills and glyphs.
+
+`win32-window` (`./build.sh smoke win32-window`) boots SavanXP with a USB
+tablet and runs `win32test.sxe --window`, which starts `compositord` and
+`windowd` with no desktop, then `window.exe` under `winhost`, and logs
+`WIN32 WINDOW READY`. The host (`tools/win32_window_smoke.py`) then plays
+the input script over QMP and compares the client area of its `dump` with
+the golden image, while the guest compares the messages and the status
+with Windows XP's. Run it under `--accel kvm` as well.
 
 `win32-pe-fixtures-test` reads the user's Windows XP `sol.exe` and `cards.dll`
 from the folder named by `SAVANXP_WIN32_FIXTURES`, as an environment or CMake

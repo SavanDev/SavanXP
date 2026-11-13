@@ -9,6 +9,12 @@
  *
  * Each case is reported as a line of the system log, which reaches the
  * serial port; exits 0 when every case matches.
+ *
+ * With --window it runs the win32-window scenario instead: it starts
+ * compositord and windowd with no desktop, then runs
+ * window.exe and logs "WIN32 WINDOW READY". The host plays the fixture's
+ * input script over QMP and checks the pixels (tools/win32_window_smoke.py);
+ * here the output and the status are compared with Windows XP's.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -28,16 +34,21 @@ typedef struct fixture {
     uint32_t status;
     int registry;
     int with_arguments; /* alpha "two words" 3 */
+    int ready;          /* log WINDOW_READY once it runs */
 } fixture;
 
+#define WINDOW_READY "WIN32 WINDOW READY"
+
 static const fixture k_fixtures[] = {
-    {"hello.exe", "hello.out", 42u, 0, 0},
-    {"initorder.exe", "initorder.out", 7u, 0, 0},
-    {"missingdll.exe", 0, 0xc0000135u, 0, 0},
-    {"missingsym.exe", 0, 0xc0000139u, 0, 0},
-    {"startup.exe", "startup-1.out", 5u, 1, 1},
-    {"startup.exe", "startup-2.out", 5u, 1, 1},
+    {"hello.exe", "hello.out", 42u, 0, 0, 0},
+    {"initorder.exe", "initorder.out", 7u, 0, 0, 0},
+    {"missingdll.exe", 0, 0xc0000135u, 0, 0, 0},
+    {"missingsym.exe", 0, 0xc0000139u, 0, 0, 0},
+    {"startup.exe", "startup-1.out", 5u, 1, 1, 0},
+    {"startup.exe", "startup-2.out", 5u, 1, 1, 0},
 };
+
+static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, 1};
 
 static uint32_t length_of(const char *text) {
     uint32_t n = 0;
@@ -92,8 +103,8 @@ static long read_file(const char *path, char *buffer, uint32_t capacity) {
 
 /* Runs one fixture; 1 when its output and status match. */
 static int run(const fixture *f) {
-    static char output[8192];
-    static char expected[8192];
+    static char output[32768];
+    static char expected[32768];
     char path[128];
     join(path, sizeof(path), TESTS, f->name);
 
@@ -136,6 +147,9 @@ static int run(const fixture *f) {
         say("win32test: FAIL ", f->name, ": cannot start winhost");
         return 0;
     }
+    if (f->ready) {
+        (void)sxn_log(WINDOW_READY);
+    }
     uint32_t total = 0;
     for (;;) {
         long count = sxn_read(pipe[0], output + total, sizeof(output) - total);
@@ -158,7 +172,51 @@ static int run(const fixture *f) {
     return ok;
 }
 
-int main(void) {
+static int start(char *path) {
+    char *argv[1] = {path};
+    struct sxn_spawn_request request;
+    sxn_spawn_request_init(&request, path, argv, 1);
+    return sxn_spawn_ex(&request) > 0;
+}
+
+/* compositord and windowd as sessiond starts them, with no desktop. windowd
+ * gives up when compositord's port is not there yet (under TCG it can take a
+ * few seconds), so it is started again until its own port takes a
+ * connection, as sessiond restarts it. */
+static int start_windowd(void) {
+    if (!start("/system/compositord.sxe")) {
+        return 0;
+    }
+    long idle = sxn_event_create(0);
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        if (attempt % 30 == 0 && !start("/system/windowd.sxe")) {
+            break;
+        }
+        int32_t handles[2] = {-1, -1};
+        if (sxn_port_connect("windowd", handles) == 0) {
+            (void)sxn_close(handles[0]);
+            (void)sxn_close(handles[1]);
+            (void)sxn_close(idle);
+            return 1;
+        }
+        (void)sxn_wait_one(idle, 100);
+    }
+    (void)sxn_close(idle);
+    return 0;
+}
+
+static int run_window(void) {
+    if (!start_windowd()) {
+        say("win32test: FAIL ", "windowd", ": did not start");
+        return 0;
+    }
+    return run(&k_window);
+}
+
+int main(int argc, char **argv) {
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'w') {
+        sxn_exit(run_window() ? 0 : 1);
+    }
     /* A fresh registry, so the counter starts where Windows XP's did. */
     static const char empty[] = "SavanXP registry 1\n";
     if (sxn_write_file(REGISTRY, empty, length_of(empty)) != 0) {

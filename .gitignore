@@ -32,6 +32,8 @@ tools/*
 !tools/audio_capture_fixture.py
 !tools/qmp_client.py
 !tools/taskbar_smoke.py
+!tools/win32_input.py
+!tools/win32_window_smoke.py
 !tools/build-user.sh
 !tools/lib/
 !tools/run-user.sh

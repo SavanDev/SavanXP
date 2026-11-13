@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 2u
+#define SXW_ABI_VERSION 3u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -83,6 +83,56 @@
 #define SXW_SVC_REG_CLOSE 11u /* (hkey) */
 #define SXW_SVC_REG_QUERY 12u /* (hkey, name, out type, data, in/out size) */
 #define SXW_SVC_REG_SET 13u   /* (hkey, name, type, data, size) */
+
+/* Windows and input (W3). A window here is a top-level window of the host
+ * (a windowd window on SavanXP, an offscreen surface in the harness); its
+ * frame and caption are the host's. The guest owns the pixels: user32 keeps
+ * one buffer per window, 0x00RRGGBB per pixel, and presents rectangles of it.
+ * Child windows, the message queue and the rest of the window manager are
+ * user32's. */
+/* () -> milliseconds since the process started; GetTickCount and the
+ * timers. A test run may drive it (the harness's input script). */
+#define SXW_SVC_TICKS 14u
+/* (out size[2]) -> 0: the screen's width and height in pixels. */
+#define SXW_SVC_DISPLAY 15u
+/* (title, width, height, out size[2]) -> a window id, or 0. Asks for a
+ * client area of width x height; out size is the one the host gave, which a
+ * window manager may clip. The title is UTF-16. */
+#define SXW_SVC_WINDOW_CREATE 16u
+/* (window) -> 0 */
+#define SXW_SVC_WINDOW_DESTROY 17u
+/* (window, pixels, stride, size[2], rects, count) -> 0, or SXW_FAILED.
+ * Copies count RECTs (left, top, right, bottom) of the guest's buffer
+ * (stride bytes per row, size[0] x size[1]) to the window and shows them. */
+#define SXW_SVC_WINDOW_PRESENT 18u
+/* (window, title) -> 0, or SXW_FAILED */
+#define SXW_SVC_WINDOW_TITLE 19u
+/* (timeout, out event) -> 1 with an event, 0 when the timeout passed.
+ * timeout is in milliseconds, SXW_INFINITE to wait for an event, 0 to poll.
+ * out points at an sxw_event. */
+#define SXW_SVC_WAIT_EVENT 20u
+#define SXW_SVC_COUNT 21u
+
+#define SXW_INFINITE 0xffffffffu
+
+/* Events from the host, in client coordinates of the window they name. */
+#define SXW_EVENT_POINTER 1u /* a = x, b = y, c = buttons (SXW_BUTTON_*) */
+#define SXW_EVENT_KEY 2u     /* a = virtual key, b = 1 down / 0 up, c = UTF-16 character or 0 */
+#define SXW_EVENT_RESIZE 3u  /* a = client width, b = client height */
+#define SXW_EVENT_CLOSE 4u   /* the frame's close button, or its shortcut */
+
+#define SXW_BUTTON_LEFT 1u
+#define SXW_BUTTON_RIGHT 2u
+#define SXW_BUTTON_MIDDLE 4u
+
+typedef struct sxw_event {
+    unsigned int kind;
+    unsigned int window;
+    unsigned int a;
+    unsigned int b;
+    unsigned int c;
+    unsigned int time; /* SXW_SVC_TICKS when it happened */
+} sxw_event;
 
 #define SXW_FAILED 0xffffffffu
 

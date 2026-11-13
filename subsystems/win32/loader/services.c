@@ -233,16 +233,108 @@ static uint32_t registry_service(sxw_services *s, uint32_t service, const uint32
     }
 }
 
+#define SXW_MAX_RECTS 64u
+
+static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t *a) {
+    sxw_process *p = s->process;
+    const sxw_window_platform *w = s->windows;
+    char title[SXW_MAX_STRING];
+    switch (service) {
+    case SXW_SVC_TICKS:
+        return w != 0 ? w->ticks(s->context) : 0u;
+    case SXW_SVC_DISPLAY: {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        if (w != 0) {
+            w->display(s->context, &width, &height);
+        }
+        return write_word(p, a[0], width) && write_word(p, a[0] + 4u, height) ? 0u : SXW_FAILED;
+    }
+    case SXW_SVC_WINDOW_CREATE: {
+        uint32_t width = a[1];
+        uint32_t height = a[2];
+        if (w == 0 || !read_utf16(p, a[0], title) || !sxw_guest_range(p, a[3], 8u) || width == 0u ||
+            height == 0u || width > 0x4000u || height > 0x4000u) {
+            return 0;
+        }
+        uint32_t id = w->create(s->context, title, &width, &height);
+        if (id != 0u) {
+            write_word(p, a[3], width);
+            write_word(p, a[3] + 4u, height);
+        }
+        return id;
+    }
+    case SXW_SVC_WINDOW_DESTROY:
+        if (w != 0) {
+            w->destroy(s->context, a[0]);
+        }
+        return 0;
+    case SXW_SVC_WINDOW_TITLE:
+        return w != 0 && read_utf16(p, a[1], title) && w->set_title(s->context, a[0], title) == 0 ? 0u
+                                                                                                 : SXW_FAILED;
+    case SXW_SVC_WINDOW_PRESENT: {
+        uint32_t size[2];
+        int32_t rects[4u * SXW_MAX_RECTS];
+        const uint32_t count = a[5];
+        if (w == 0 || !read_words(p, a[3], 2, size) || size[0] == 0u || size[1] == 0u || size[0] > 0x4000u ||
+            size[1] > 0x4000u || (a[2] & 3u) != 0u || a[2] > 4u * 0x4000u || a[2] / 4u < size[0] || (a[1] & 3u) != 0u ||
+            !sxw_guest_range(p, a[1], a[2] * (size[1] - 1u) + 4u * size[0]) || count > SXW_MAX_RECTS ||
+            !read_words(p, a[4], 4u * count, (uint32_t *)rects)) {
+            return SXW_FAILED;
+        }
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            int32_t *r = &rects[4u * i];
+            int32_t left = r[0] < 0 ? 0 : r[0];
+            int32_t top = r[1] < 0 ? 0 : r[1];
+            int32_t right = r[2] > (int32_t)size[0] ? (int32_t)size[0] : r[2];
+            int32_t bottom = r[3] > (int32_t)size[1] ? (int32_t)size[1] : r[3];
+            if (left < right && top < bottom) {
+                int32_t *k = &rects[4u * kept++];
+                k[0] = left;
+                k[1] = top;
+                k[2] = right;
+                k[3] = bottom;
+            }
+        }
+        if (kept == 0u) {
+            return 0;
+        }
+        return w->present(s->context, a[0], (const uint32_t *)(uintptr_t)a[1], a[2] / 4u, size[0], size[1], rects,
+                          kept) == 0
+                   ? 0u
+                   : SXW_FAILED;
+    }
+    case SXW_SVC_WAIT_EVENT: {
+        sxw_event event;
+        if (!sxw_guest_range(p, a[1], sizeof(event))) {
+            return 0;
+        }
+        if (w == 0 || !w->wait_event(s->context, a[0], &event)) {
+            return 0;
+        }
+        const uint32_t words[6] = {event.kind, event.window, event.a, event.b, event.c, event.time};
+        for (uint32_t i = 0; i < 6u; ++i) {
+            write_word(p, a[1] + 4u * i, words[i]);
+        }
+        return 1;
+    }
+    default:
+        return SXW_FAILED;
+    }
+}
+
 uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     sxw_process *p = s->process;
     uint32_t frame[3];
-    uint32_t a[5];
+    uint32_t a[8];
     if (!read_words(p, guest_esp, 3, frame)) {
         end_process(s, SXW_STATUS_ACCESS_VIOLATION);
         return 0;
     }
     const uint32_t service = frame[1];
-    static const uint8_t argument_count[] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5, 1, 5, 5};
+    static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
+                                                           1, 5, 5, 0, 1, 4, 1, 6, 2, 2};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -334,7 +426,12 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         write_word(p, a[4], error);
         return 0;
     }
-    default:
+    case SXW_SVC_REG_OPEN:
+    case SXW_SVC_REG_CLOSE:
+    case SXW_SVC_REG_QUERY:
+    case SXW_SVC_REG_SET:
         return registry_service(s, service, a);
+    default:
+        return window_service(s, service, a);
     }
 }

@@ -44,6 +44,19 @@ target_compile_options(savanxp-win32-registry-test PRIVATE
 target_link_options(savanxp-win32-registry-test PRIVATE -fsanitize=address,undefined)
 add_dependencies(savanxp_tests savanxp-win32-registry-test)
 add_test(NAME win32-registry-test COMMAND savanxp-win32-registry-test)
+# The pure parts of user32 and gdi32: regions, raster operations, lines.
+add_executable(savanxp-win32-window-test
+    "${SAVANXP_WIN32_ROOT}/dlls/common/region.c"
+    "${SAVANXP_WIN32_ROOT}/dlls/gdi32/raster.c"
+    tests/host/win32_window_test.c)
+target_include_directories(savanxp-win32-window-test PRIVATE
+    "${SAVANXP_WIN32_ROOT}/dlls/common" "${SAVANXP_WIN32_ROOT}/dlls/gdi32")
+set_target_properties(savanxp-win32-window-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
+target_compile_options(savanxp-win32-window-test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(savanxp-win32-window-test PRIVATE -fsanitize=address,undefined)
+add_dependencies(savanxp_tests savanxp-win32-window-test)
+add_test(NAME win32-window-test COMMAND savanxp-win32-window-test)
 add_test(NAME win32-pe-fixtures-test
     COMMAND savanxp-win32-pe-test --fixtures "${SAVANXP_WIN32_FIXTURES}")
 set_tests_properties(win32-pe-fixtures-test PROPERTIES SKIP_RETURN_CODE 77)
@@ -152,6 +165,13 @@ sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY D
 sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
     SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c"
     DEF "${SXW_DLLS}/advapi32/advapi32.def" LIBS ntdll)
+sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
+    SOURCES "${SXW_DLLS}/gdi32/gdi32.c" "${SXW_DLLS}/gdi32/raster.c" "${SXW_DLLS}/common/region.c"
+            "${SXW_DLLS}/common/memory.c"
+    DEF "${SXW_DLLS}/gdi32/gdi32.def" LIBS ntdll)
+sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
+    SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
+    DEF "${SXW_DLLS}/user32/user32.def" LIBS gdi32 kernel32 ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -165,6 +185,8 @@ sxw_image(NAME initorder.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console EN
     SOURCES "${SXW_FX}/initorder/initorder.c" LIBS alpha beta kernel32)
 sxw_image(NAME startup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/startup/startup.c" LIBS msvcrt kernel32 advapi32)
+sxw_image(NAME window.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/window/window.c" LIBS user32 gdi32 kernel32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -186,6 +208,7 @@ set(SAVANXP_WIN32_COPY_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${SXW_SYSTEM32}/ntdll.dll" "${SXW_SYSTEM32}/kernel32.dll"
             "${SXW_SYSTEM32}/msvcrt.dll" "${SXW_SYSTEM32}/advapi32.dll"
+            "${SXW_SYSTEM32}/gdi32.dll" "${SXW_SYSTEM32}/user32.dll"
             "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/")
 if(SAVANXP_INCLUDE_TEST_APPS)
     list(APPEND SAVANXP_WIN32_COPY_COMMANDS
@@ -194,7 +217,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
-                "${SXW_FIXTURES}/startup.exe"
+                "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")

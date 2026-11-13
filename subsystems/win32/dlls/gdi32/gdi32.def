@@ -1,0 +1,24 @@
+LIBRARY gdi32.dll
+EXPORTS
+    CreateFontW
+    CreateSolidBrush
+    DeleteObject
+    GetDeviceCaps
+    GetPixel
+    GetStockObject
+    GetTextExtentPoint32W
+    GetTextMetricsW
+    LineDDA
+    LineTo
+    MoveToEx
+    PatBlt
+    PtVisible
+    SelectObject
+    SetBkColor
+    SetBrushOrgEx
+    SetPixel
+    SetROP2
+    SetTextColor
+    TextOutW
+    SxwCreateSurfaceDC
+    SxwSurfaceOfDC

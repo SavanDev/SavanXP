@@ -2,11 +2,29 @@
  * harness.c -- win32-harness: run a PE32 executable on the Linux x86-64
  * build host through the same loader and DLLs as winhost.
  *
- *     win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] program.exe [arguments...]
+ *     win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] [--input SCRIPT]
+ *                   program.exe [arguments...]
  *
  * The arguments follow the program in its command line. HKEY_CURRENT_USER
  * lives in FILE (in memory only without it); --time fixes the guest clock's
  * start, so a run that seeds from the time repeats.
+ *
+ * Windows are offscreen surfaces of a 1024x768 display. Their input comes from
+ * SCRIPT, one action per line, given whenever the guest waits for input: a
+ * guest that only polls sees none. Coordinates are the main window's client
+ * coordinates (the first window still open), as in every environment's
+ * script (docs/userland/WIN32.md, "Input scripts"):
+ *
+ *     move X Y                 the pointer moves
+ *     down|up left|right X Y   a button goes down or up there
+ *     keydown VK [CHAR]        a key goes down (virtual key and the UTF-16
+ *     keyup VK                 character it types, numbers in C syntax)
+ *     wait MS                  nothing happens for MS milliseconds
+ *     close                    the frame's close button
+ *     dump FILE                the main window's pixels, as a binary PPM
+ *
+ * With a script the guest's millisecond clock is virtual: it advances only
+ * through waits, so timers fire at the same point of every run.
  *
  * DLLs are looked up next to the executable, then in DIR. The guest's
  * standard output and error are this process's. The guest's 32-bit exit
@@ -216,11 +234,262 @@ static int save_registry_file(void *context, const char *text, size_t length) {
     return close(fd) == 0 ? 0 : 1;
 }
 
+/* ---- Windows and input --------------------------------------------------- */
+
+#define DISPLAY_WIDTH 1024u
+#define DISPLAY_HEIGHT 768u
+#define MAX_WINDOWS 8u
+/* How long a guest may keep waiting on timers after the script ended. */
+#define AFTER_SCRIPT_MS 60000u
+
+typedef struct offscreen {
+    int used;
+    uint32_t width;
+    uint32_t height;
+    uint32_t *pixels;
+} offscreen;
+
+static offscreen g_windows[MAX_WINDOWS];
+static FILE *g_script;
+static const char *g_script_path;
+static unsigned g_script_line;
+static uint32_t g_clock;      /* virtual milliseconds, with a script */
+static uint32_t g_wait_left;  /* of the script's current wait */
+static uint32_t g_after_script;
+static uint32_t g_buttons;
+static struct timespec g_started;
+
+static uint32_t ticks(void *context) {
+    (void)context;
+    if (g_script_path != NULL) {
+        return g_clock;
+    }
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)((now.tv_sec - g_started.tv_sec) * 1000 + (now.tv_nsec - g_started.tv_nsec) / 1000000);
+}
+
+static void display(void *context, uint32_t *width, uint32_t *height) {
+    (void)context;
+    *width = DISPLAY_WIDTH;
+    *height = DISPLAY_HEIGHT;
+}
+
+static uint32_t window_create(void *context, const char *title, uint32_t *width, uint32_t *height) {
+    (void)context;
+    (void)title;
+    for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (!g_windows[i].used) {
+            uint32_t w = *width > DISPLAY_WIDTH ? DISPLAY_WIDTH : *width;
+            uint32_t h = *height > DISPLAY_HEIGHT ? DISPLAY_HEIGHT : *height;
+            g_windows[i].pixels = calloc((size_t)w * h, 4);
+            if (g_windows[i].pixels == NULL) {
+                return 0;
+            }
+            g_windows[i].used = 1;
+            g_windows[i].width = *width = w;
+            g_windows[i].height = *height = h;
+            return i + 1u;
+        }
+    }
+    return 0;
+}
+
+static offscreen *window_of(uint32_t id) {
+    return id >= 1u && id <= MAX_WINDOWS && g_windows[id - 1u].used ? &g_windows[id - 1u] : NULL;
+}
+
+static void window_destroy(void *context, uint32_t id) {
+    (void)context;
+    offscreen *w = window_of(id);
+    if (w != NULL) {
+        free(w->pixels);
+        memset(w, 0, sizeof(*w));
+    }
+}
+
+static int window_title(void *context, uint32_t id, const char *title) {
+    (void)context;
+    (void)title;
+    return window_of(id) != NULL ? 0 : 1;
+}
+
+static int window_present(void *context, uint32_t id, const uint32_t *pixels, uint32_t stride, uint32_t width,
+                          uint32_t height, const int32_t *rects, uint32_t count) {
+    (void)context;
+    (void)height;
+    offscreen *w = window_of(id);
+    if (w == NULL) {
+        return 1;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        const int32_t *r = &rects[4u * i];
+        uint32_t right = (uint32_t)r[2] < w->width ? (uint32_t)r[2] : w->width;
+        uint32_t bottom = (uint32_t)r[3] < w->height ? (uint32_t)r[3] : w->height;
+        (void)width;
+        for (uint32_t y = (uint32_t)r[1]; y < bottom; ++y) {
+            for (uint32_t x = (uint32_t)r[0]; x < right; ++x) {
+                w->pixels[y * w->width + x] = pixels[y * stride + x];
+            }
+        }
+    }
+    return 0;
+}
+
+static uint32_t main_window(void) {
+    for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (g_windows[i].used) {
+            return i + 1u;
+        }
+    }
+    return 0;
+}
+
+static void dump(const char *path) {
+    offscreen *w = window_of(main_window());
+    FILE *f = w != NULL ? fopen(path, "wb") : NULL;
+    if (f == NULL) {
+        fprintf(stderr, "win32: %s:%u: cannot dump the main window to %s\n", g_script_path, g_script_line, path);
+        exit(125);
+    }
+    fprintf(f, "P6\n%u %u\n255\n", w->width, w->height);
+    for (uint32_t i = 0; i < w->width * w->height; ++i) {
+        const uint32_t p = w->pixels[i];
+        const unsigned char rgb[3] = {(unsigned char)(p >> 16), (unsigned char)(p >> 8), (unsigned char)p};
+        fwrite(rgb, 1, 3, f);
+    }
+    fclose(f);
+}
+
+static __attribute__((noreturn)) void script_error(const char *what) {
+    fprintf(stderr, "win32: %s:%u: %s\n", g_script_path, g_script_line, what);
+    exit(125);
+}
+
+static uint32_t button_bit(const char *name) {
+    if (strcmp(name, "left") == 0) {
+        return SXW_BUTTON_LEFT;
+    }
+    if (strcmp(name, "right") == 0) {
+        return SXW_BUTTON_RIGHT;
+    }
+    if (strcmp(name, "middle") == 0) {
+        return SXW_BUTTON_MIDDLE;
+    }
+    script_error("unknown button");
+}
+
+/* The next action of the script: 1 with an event, 0 after a wait (in
+ * g_wait_left) or at its end (g_script closed). */
+static int next_action(sxw_event *event) {
+    char line[512];
+    while (fgets(line, sizeof(line), g_script) != NULL) {
+        ++g_script_line;
+        char verb[32] = "";
+        char word[400] = "";
+        long x = 0;
+        long y = 0;
+        if (sscanf(line, "%31s", verb) != 1 || verb[0] == '#') {
+            continue;
+        }
+        memset(event, 0, sizeof(*event));
+        event->window = main_window();
+        if (event->window == 0u && strcmp(verb, "wait") != 0) {
+            script_error("there is no window");
+        }
+        if (strcmp(verb, "move") == 0 && sscanf(line, "%*s %ld %ld", &x, &y) == 2) {
+            event->kind = SXW_EVENT_POINTER;
+        } else if ((strcmp(verb, "down") == 0 || strcmp(verb, "up") == 0) &&
+                   sscanf(line, "%*s %31s %ld %ld", word, &x, &y) == 3) {
+            const uint32_t bit = button_bit(word);
+            g_buttons = verb[0] == 'd' ? g_buttons | bit : g_buttons & ~bit;
+            event->kind = SXW_EVENT_POINTER;
+        } else if (strcmp(verb, "keydown") == 0 || strcmp(verb, "keyup") == 0) {
+            unsigned long vk = 0;
+            unsigned long ch = 0;
+            if (sscanf(line, "%*s %li %li", (long *)&vk, (long *)&ch) < 1 || vk == 0 || vk > 0xff) {
+                script_error("a key needs a virtual key from 1 to 0xff");
+            }
+            event->kind = SXW_EVENT_KEY;
+            event->a = (uint32_t)vk;
+            event->b = verb[3] == 'd' ? 1u : 0u;
+            event->c = event->b ? (uint32_t)ch : 0u;
+        } else if (strcmp(verb, "close") == 0) {
+            event->kind = SXW_EVENT_CLOSE;
+        } else if (strcmp(verb, "wait") == 0 && sscanf(line, "%*s %ld", &x) == 1 && x > 0) {
+            g_wait_left = (uint32_t)x;
+            return 0;
+        } else if (strcmp(verb, "dump") == 0 && sscanf(line, "%*s %399s", word) == 1) {
+            dump(word);
+            continue;
+        } else {
+            script_error("not an action");
+        }
+        if (event->kind == SXW_EVENT_POINTER) {
+            event->a = (uint32_t)x;
+            event->b = (uint32_t)y;
+            event->c = g_buttons;
+        }
+        event->time = g_clock;
+        return 1;
+    }
+    fclose(g_script);
+    g_script = NULL;
+    return 0;
+}
+
+static int wait_event(void *context, uint32_t timeout, sxw_event *event) {
+    (void)context;
+    if (g_script_path == NULL) {
+        if (timeout == SXW_INFINITE) {
+            fprintf(stderr, "win32: the guest waits for input and there is no --input script\n");
+            exit(125);
+        }
+        struct timespec pause = {(time_t)(timeout / 1000u), (long)(timeout % 1000u) * 1000000L};
+        nanosleep(&pause, NULL);
+        return 0;
+    }
+    if (timeout == 0u) {
+        return 0;
+    }
+    for (;;) {
+        if (g_wait_left != 0u) {
+            const uint32_t step = timeout < g_wait_left ? timeout : g_wait_left;
+            g_clock += step;
+            g_wait_left -= step;
+            return 0;
+        }
+        if (g_script == NULL) {
+            if (timeout == SXW_INFINITE || g_after_script >= AFTER_SCRIPT_MS) {
+                fprintf(stderr, "win32: the input script ended and the guest still waits\n");
+                exit(125);
+            }
+            g_after_script += timeout;
+            g_clock += timeout;
+            return 0;
+        }
+        if (next_action(event)) {
+            return 1;
+        }
+    }
+}
+
+static const sxw_window_platform g_window_platform = {
+    .ticks = ticks,
+    .display = display,
+    .create = window_create,
+    .destroy = window_destroy,
+    .set_title = window_title,
+    .present = window_present,
+    .wait_event = wait_event,
+};
+
 static sxw_services g_services = {
     .process = &g_process,
     .write = write_stream,
     .now = now_seconds,
     .registry = &g_registry,
+    .windows = &g_window_platform,
 };
 
 uint32_t sxw_host_service(uint64_t guest_esp) {
@@ -323,7 +592,8 @@ static int set_teb_segment(uint32_t teb) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] program.exe [arguments...]\n");
+    fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] [--input SCRIPT] "
+                    "program.exe [arguments...]\n");
     exit(2);
 }
 
@@ -368,6 +638,8 @@ int main(int argc, char **argv) {
             g_registry_path = argv[++i];
         } else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) {
             g_services.fixed_time = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
+            g_script_path = argv[++i];
         } else if (argv[i][0] != '-') {
             exe = argv[i];
             join_arguments(argv + i + 1, argc - i - 1, tail, sizeof(tail));
@@ -380,6 +652,11 @@ int main(int argc, char **argv) {
         usage();
     }
     load_registry();
+    clock_gettime(CLOCK_MONOTONIC, &g_started);
+    if (g_script_path != NULL && (g_script = fopen(g_script_path, "r")) == NULL) {
+        fprintf(stderr, "win32: cannot read %s\n", g_script_path);
+        return 2;
+    }
     const char *slash = strrchr(exe, '/');
     if (slash == NULL) {
         snprintf(g_exe_dir, sizeof(g_exe_dir), ".");

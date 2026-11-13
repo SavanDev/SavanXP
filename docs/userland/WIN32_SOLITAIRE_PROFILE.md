@@ -237,7 +237,8 @@ fails the load. It needs an entry point, not behaviour.
 - **`SetCursorPos`: keyboard play only.** Every call follows a
   `WM_KEYDOWN` (Tab, arrows, Space, Enter), to put the pointer on the
   selected card. Mouse play never calls it. The first profile can be played
-  completely with the mouse without a request to move the pointer.
+  completely with the mouse without a request to move the pointer. W3 made it the first profile's stated limit: `SetCursorPos` fails, and
+  keyboard play leaves the pointer where it is.
 - **The edit control is out of scope.** The game-number dialog is never
   created (see [Resources](#resources)). `Alt+Shift+2` is in scope: it is
   the program's own command, and the quickest way to the end-of-game

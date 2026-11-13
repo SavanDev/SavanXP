@@ -4,10 +4,11 @@ SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
 Win32 is the API it implements. What exists so far is described in
 [WIN32.md](../../userland/WIN32.md).
 
-> **Status: design settled; W0, K1, K2, W1 and W2 complete (2026-11-12): a
-> PE32 program that starts the way `sol.exe` does runs on SavanXP under
+> **Status: design settled; W0, K1, K2, W1, W2 and W3 complete (2026-11-12):
+> a PE32 program that starts the way `sol.exe` does runs on SavanXP under
 > `winhost`, with the C runtime, `kernel32` and registry functions of the
-> matrix, described in [WIN32.md](../../userland/WIN32.md). Next: W3.** The
+> matrix, and opens a `windowd` window it paints and drives through `user32`
+> and `gdi32`, described in [WIN32.md](../../userland/WIN32.md). Next: W4.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -508,6 +509,34 @@ log matches the Windows XP reference for a recorded input sequence, and its
 pixels match a golden image. Native and POSIX windows and the taskbar behave
 as before. `win32-window` is a smoke scenario.
 
+**Done (2026-11-12).** `window.exe`, driven by one input script (clicks, a
+double click, a right click, a click on a child, a captured drag, keys with
+Shift, an invalidated rectangle, the frame's close), writes byte-identical
+output with status 3 on Windows XP, in `win32-harness-test` and in
+`win32-window` (KVM and TCG): its messages, and its client area outside the
+text box read back with `GetPixel`, lines in every octant included. The
+client area on SavanXP's screen equals the harness's golden image, which
+equals Windows XP's screen outside the text box. `sxgui-smoke` and the other
+regressions pass.
+
+What changed from the plan above, and why:
+
+- **The surface is copied, not mapped twice.** `user32` keeps each
+  top-level window's pixels in guest memory and the host copies presented
+  rectangles onto the `windowd` surface. It costs a copy of what changed,
+  saves two views per window and keeps the guest out of the surface
+  section's layout.
+- **The font is compiled into `gdi32`**, from the same generated table the
+  desktop's UI strike uses, rather than exposed by the host: it is static
+  data, and the harness gets it the same way.
+- **`SetCursorPos` is a stated limit of the first profile**, not a `windowd`
+  request: it fails, and only Solitaire's keyboard play calls it.
+- **Twenty-one services** rather than about forty: windows need seven
+  (clock, screen, create, destroy, title, present, wait for an event). The
+  rest of the window manager is `user32`'s.
+- `tools/win32_input.py` plays an input script over QMP into Windows XP and
+  SavanXP alike, so one script drives all three environments.
+
 ### W4 — bitmaps, resources and `cards.dll`
 
 Size L.
@@ -725,7 +754,7 @@ them.
 | The run-time trace shows behaviour the import list hides: a message, a raster operation or a metric that is costly | A phase grows | Taken at W0: three raster operations and two line modes, no system metrics, one timer procedure. The static surface stays 124 functions |
 | `winhost` grows past `0x01000000`, where `sol.exe` must load | The load fails | Asserted at load and in the build. If it ever does not fit, `winhost` is linked above the guest range instead |
 | A later program reloads FS | Its TEB access faults | Solitaire does not. The fix is a per-thread descriptor, a known extension of K1 |
-| Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | The W0 trace confirms only keyboard play calls it; mouse play is complete without it. Chosen at W3: a neutral `windowd` request with its own consumer, or a stated limit of the first profile |
+| Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | The W0 trace confirms only keyboard play calls it; mouse play is complete without it. Chosen at W3: a stated limit of the first profile; `SetCursorPos` fails |
 | 64 views are not enough | The load fails cleanly | Counted at W1 (about 5 per image); the limit is now 128 views and 512 sections |
 | Pixel comparison is too strict across font or metric differences | False failures | Compare card art and geometry exactly, text regions by layout; record each tolerance |
 | The work turns into an API catalogue | The goal recedes | The matrix is the scope. A function without a consumer in it is not written |

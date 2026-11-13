@@ -1,0 +1,36 @@
+# The input script of window.exe (docs/userland/WIN32.md, "Input scripts"):
+# the same actions on Windows XP, in the host harness and on SavanXP, in the
+# main window's client coordinates.
+wait 300
+move 30 30
+down left 30 30
+up left 30 30
+down left 30 30
+up left 30 30
+wait 700
+move 250 100
+down right 250 100
+up right 250 100
+move 250 195
+down left 250 195
+up left 250 195
+wait 700
+move 150 120
+down left 150 120
+move 160 125
+move 170 130
+up left 170 130
+keydown 0x41 0x61
+keyup 0x41
+keydown 0x10
+keydown 0x42 0x42
+keyup 0x42
+keyup 0x10
+keydown 0x52 0x72
+keyup 0x52
+move 400 300
+wait 300
+keydown 0x50 0x70
+keyup 0x50
+dump window.ppm
+close

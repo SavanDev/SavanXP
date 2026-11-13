@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 programs open windows: `user32.dll` and `gdi32.dll` for windows, messages, painting, timers and input, the
+  top-level window a `windowd` window under `winhost`.** `win32-harness --input` drives a fixture from a script; smoke
+  scenario `win32-window` checks messages and pixels against Windows XP. See [WIN32.md](docs/userland/WIN32.md#user32-and-gdi32).
+
 - **Win32 base runtime: `msvcrt.dll` and `advapi32.dll`, and `kernel32.dll`'s module, memory and command-line functions,
   so a program that starts like Windows XP Solitaire runs under `winhost`.** HKCU lives in `/users/user/Settings/win32.reg`;
   `winhost --registry` and `--time` choose another file and fix the clock. See [WIN32.md](docs/userland/WIN32.md).

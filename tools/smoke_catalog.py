@@ -738,6 +738,18 @@ SCENARIOS: dict[str, Scenario] = {
         "WIN32 HELLO FAIL",
         "PE32 fixtures through winhost, byte for byte against Windows XP",
     ),
+    "win32-window": _qemu_scenario(
+        "win32window",
+        "WIN32 WINDOW PASS",
+        "WIN32 WINDOW FAIL",
+        "A Win32 window under windowd: messages against Windows XP, pixels against the golden image",
+        240.0,
+        ready="WIN32 WINDOW READY",
+        qmp_callback="tools/win32_window_smoke.py",
+        usb=True,
+        no_ps2=True,
+        usb_pointer="tablet",
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
