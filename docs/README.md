@@ -82,6 +82,14 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`COMPAQ_21N2F7AR.md`](hardware/COMPAQ_21N2F7AR.md) — a Skylake-U laptop (Core i7-6500U,
   HD Graphics 520) verified on a legacy boot: the unit against the retail listing,
   what the boot log shows device by device, performance, and what is left.
+- [`AMD_A6_3500.md`](hardware/AMD_A6_3500.md) — a Llano desktop (A75, GeForce GT 610)
+  verified on a legacy boot: EHCI/OHCI with low-speed devices on metal, SATA in
+  native IDE mode, the steady tick loss.
+- [`AMD_FX_4100.md`](hardware/AMD_FX_4100.md) — a Bulldozer desktop on a 760G/SB7x0
+  board verified on a legacy boot: the failed PS/2 keyboard, a disk on the legacy
+  ATA ports at the 28-bit limit, APIC IDs from 16.
+- [`CORE_I5_4440.md`](hardware/CORE_I5_4440.md) — a Haswell desktop (H81) verified
+  under UEFI: xHCI and EHCI hubs, AHCI, the steady tick loss, frequent late writers.
 
 ## Userland — `userland/`
 

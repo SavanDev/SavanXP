@@ -17,7 +17,7 @@ interchangeable:
 
 ## The targets
 
-| Target | Document | Branch | Status on 2026-11-12 |
+| Target | Document | Branch | Status |
 | --- | --- | --- | --- |
 | AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop at 1920x1080 on the firmware framebuffer, all 12 processors, USB keyboard and mouse, four SATA disks read, analog audio in and out. No Ethernet, NVMe or native Vega driver |
 | Intel Pentium 4, Compaq Evo N1020v | [PENTIUM4_EVO_N1020V.md](PENTIUM4_EVO_N1020V.md) | `legacy` (i386) | Cannot run `master`: no long mode, no NX. The i386 port on `legacy` boots, mounts SxFS and runs one ring 3 program in QEMU |
@@ -25,12 +25,52 @@ interchangeable:
 | Intel Core 2 Duo + chipset graphics | [CORE2_DUO.md](CORE2_DUO.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and UHCI, run only in QEMU; no network |
 | AMD Athlon 64 + chipset graphics | [ATHLON_64.md](ATHLON_64.md) | `master` | Not run. The oldest CPU `master` can boot; storage, USB and the wall clock all need work first |
 | Intel Core i7-6500U, Compaq Presario 21N2F7AR | [COMPAQ_21N2F7AR.md](COMPAQ_21N2F7AR.md) | `master` | **Verified:** boots from USB through the legacy BIOS path, desktop at 1920x1080, built-in keyboard and touchpad, USB mouse, SATA disk, internal speakers, jack and microphone, on battery. No Ethernet (`10ec:8168`); UEFI not yet run |
+| AMD A6-3500 + GeForce GT 610 (Gigabyte, A75) | [AMD_A6_3500.md](AMD_A6_3500.md) | `master` | **Verified** (2026-11-13): legacy BIOS boot from USB, desktop at 1024x768, low-speed USB keyboard and mouse through EHCI/OHCI. SATA in native IDE mode, so no disk (HW-3); steady 7% tick loss; no Ethernet; audio attached, not heard (no speakers) |
+| AMD FX-4100 (ASRock, 760G + SB7x0) | [AMD_FX_4100.md](AMD_FX_4100.md) | `master` | **Verified** (2026-11-13): legacy BIOS boot from USB, desktop at 1280x1024, low-speed USB mouse through OHCI, a SATA disk on the legacy ATA ports capped at 128 GiB. The **PS/2 keyboard did not work** (HW-8); Atheros Ethernet with no driver; audio attached, not heard |
+| Intel Core i5-4440 (MSI MS-7817, H81) | [CORE_I5_4440.md](CORE_I5_4440.md) | `master` | **Verified** (2026-11-13): UEFI boot from USB, desktop at 1920x1080, low-speed USB keyboard and mouse on xHCI, SATA SSD on AHCI. Steady 7% tick loss; no Ethernet (`10ec:8168`); audio attached, not heard |
 
-Only the first two machines and the Compaq Presario 21N2F7AR have been
-inventoried. The other three are known
-by CPU family, which decides what the kernel may assume about the processor
-but not which chipset, disk controller, NIC or audio codec is on the board.
-Each of those documents ends with the facts to collect from the unit.
+Five machines have run `master`, the last runs all from v0.4.3 (Build 701);
+the A6, FX and i5 runs are known from their boot logs only, with no Linux
+inventory. The Athlon II, Core 2 Duo and Athlon 64 targets are known by CPU
+family, which decides what the kernel may assume about the processor but not
+which chipset, disk controller, NIC or audio codec is on the board. Each of
+those documents ends with the facts to collect from the unit.
+
+### What the 2026-11-13 runs showed across machines
+
+- **Every machine reached the desktop**, under both boot paths, at the
+  monitor's preferred mode where the firmware offered it.
+- **EHCI, OHCI and low-speed devices work on metal** (HW-2): a Dell keyboard
+  and two mice behind OHCI companions on the A75 and SB7x0, and low-speed
+  devices on xHCI on the Haswell and Zen boards.
+- **Four of the five `master` machines carry the `10ec:8168`** (HW-1): the
+  Ryzen, the Compaq, the A6 and the i5. The FX has an Atheros AR8151 (HW-15).
+- **Long reads under the global lock** cause the media player's micro-cuts,
+  below.
+- **A steady tick loss** on two machines, below in HW-9.
+
+### Long reads under the global lock
+
+On every machine where the media player ran, `smp-stats:` names POSIX syscall
+#0, `read`, as the longest holder of the global lock while it plays:
+
+| Machine | Windows naming `posix#0` | Longest hold |
+| --- | --- | --- |
+| Ryzen 5 1600 | 129 | 978 ms |
+| A6-3500 | 68 | 55 ms |
+| FX-4100 | 54 | 54 ms |
+| i5-4440 | 29 | 47 ms |
+| i7-6500U (player not run) | 1 | 10 µs |
+
+During those windows the tick loses time and the player's `audiod` port
+counts underruns by the tens of thousands; on the Ryzen, the only machine
+with speakers in these runs, they are heard as micro-cuts. The 978 ms hold
+also stopped the HD Audio stream (`azalia: DMA polling deadline missed`).
+`windowd` reported the player as not responding once on the A6 and once on
+the i5. The file was most likely on the USB stick, the only data volume
+mounted in each run, which points at a block read done with the global lock
+held; that is not confirmed. It is a kernel problem, not a hardware one, and
+QEMU should be able to reproduce it with the same file on a USB disk.
 
 ## What `master` requires of a machine
 
@@ -152,10 +192,15 @@ behind a hub, a stick, and hot plug pass on each (`uhci-smoke`,
 I/O 0x66a0, 2 ports`, `ohci: 0:3.0 106b:3f, revision 10, 4 ports`, and
 `ehci: port 3: full-speed device, handed to the companion`.
 
-**Left for the machines:** low-speed devices (every QEMU device is full or
-high speed, a real keyboard or mouse is usually low), split transactions
-behind a high-speed hub (QEMU has none), the real firmware handoff, and the
-chipsets' quirks. A driver that takes a controller ends the firmware's PS/2
+**Run on metal** (2026-11-13): on the A75 ([AMD_A6_3500.md](AMD_A6_3500.md))
+and the SB7x0 ([AMD_FX_4100.md](AMD_FX_4100.md)), EHCI handed low-speed
+devices to OHCI and a Dell keyboard and two mice worked through it, after the
+firmware's handoff. The H81 ([CORE_I5_4440.md](CORE_I5_4440.md)) brought up
+both EHCI controllers with their rate-matching hubs, with nothing behind them.
+
+**Left for the machines:** split transactions behind a high-speed hub (QEMU
+has none; an Intel 7-series or later board with a device on an EHCI port is
+the test), UHCI on any Intel ICH, and the other chipsets' quirks. A driver that takes a controller ends the firmware's PS/2
 emulation of a USB keyboard on it; if USB then fails, the ISO's *no USB* entry
 (`nousb`) leaves every controller to the firmware.
 
@@ -181,6 +226,14 @@ What a real IDE-class controller needs:
 Reference: OpenBSD `pciide(4)` and `wdc(4)`. This is the storage driver of
 every pre-AHCI machine, and of later ones whose firmware is set to IDE mode.
 
+Seen on metal on 2026-11-13. The A6-3500's A75 SATA was in native IDE mode
+(class `01.01.8f`) and no disk was found. On the FX-4100's SB7x0 the SATA
+function was in AHCI mode, yet the disk answered on the legacy primary
+channel, probably through the south bridge's "IDE combined" ports, and was
+reported as `268435455 sectors`: the 28-bit ceiling, 128 GiB of a 160 GB
+disk. The first disk `ata.cpp` has found on metal, and the first to show the
+limit.
+
 ### HW-4 — AHCI coverage
 
 `find_hba()` keeps the first AHCI function and `kMaxDisks` is 4. The
@@ -204,8 +257,14 @@ targets need are in the vendored source and not compiled: ATI SB450/SBx00
 (`1002:437b`, `1002:4383`) and NVIDIA MCP snooping, and Intel's traffic-class
 select. Without them a controller may attach and play silence or noise.
 
+On 2026-11-13 the SB7x0 controller (`1002:4383`, FX-4100) and the A75's
+(`1022:780d`, A6-3500) both attached and found an output and a capture path,
+with no quirk applied. Neither machine had speakers, so whether they play is
+still open.
+
 Codecs are a separate question. The graph walk is generic, the quirk table is
-not compiled, and only the ALC892 has been heard. Each new codec (ALC66x/88x,
+not compiled, and only the ALC892 and ALC269 have been heard. The ALC887
+(A6, i5) and ALC662 (FX) attached and were not heard. Each new codec (ALC66x/88x,
 AD198x, IDT 92HD, Conexant) is its own check, with the pin dump recorded in
 the target document as it was for the ALC892 ([AZALIA.md](../kernel/AZALIA.md)).
 
@@ -223,13 +282,28 @@ may have the legacy I/O BARs disabled in favour of the memory ones, and the
 mixer needs a real delay after its reset, not a spin count. Other controllers
 (`auixp`, `auvia`, `auacer` in OpenBSD) only when a target has one.
 
-### HW-8 — PS/2 pointers
+### HW-8 — PS/2 devices
+
+**The keyboard failed on the first desktop that had one.** On the FX-4100
+(2026-11-13) a PS/2 keyboard was plugged in, the log said
+`ps2: keyboard reset failed`, and it did not type. `initialize_keyboard()`
+gives up on the keyboard when the reset fails. `keyboard_reset_device()` waits
+for the ACK and then the self-test result (`0xAA`) through `data_read()`,
+which spins `kIoWaitSpinCount` (100000) status reads: at roughly a microsecond
+per port read, about 100 ms. A keyboard may take up to several hundred
+milliseconds to finish its self-test after a reset, so a real keyboard can
+miss that window where an emulated one and the Compaq's embedded controller
+did not. That is the likely cause, not a confirmed one. The fix is a deadline
+in time rather than in spins, and not discarding a keyboard whose reset timed
+out but which answers afterwards. Until then, a machine with only a PS/2
+keyboard cannot be used.
 
 `initialize_mouse()` requires the pad to acknowledge a reset, defaults and the
 IntelliMouse sample-rate knock; a pad that does not gets
-`ps2: mouse reset failed` and no pointer. Laptop pads from Synaptics and ALPS
-answer in their own ways, and none has been tried. Relative three-byte
-packets are enough for a first pointer; the absolute modes are a later step.
+`ps2: mouse reset failed` and no pointer. The Compaq 21N2F7AR's pad answered;
+Synaptics and ALPS pads answer in their own ways, and none has been tried.
+Relative three-byte packets are enough for a first pointer; the absolute
+modes are a later step.
 
 ### HW-9 — Timers on old CPUs
 
@@ -247,6 +321,17 @@ Three separate defects, all invisible in an emulator:
   disabled` or `... is off`. If `timer-stats:` still loses time idle, switch
   "C1E support" off in the firmware and record the difference: the remaining
   fix is a tick that does not come from the local APIC.
+- **A steady loss on two modern machines** (2026-11-13). The A6-3500 and the
+  i5-4440 lost time in almost every `timer-stats:` window, idle included,
+  mostly 7%, with a handler of 30 µs and 3 µs. The FX-4100, the Ryzen and
+  the Compaq lose nothing idle. It is not erratum 400: family 12h is outside
+  it, and Haswell's APIC timer runs through C-states. The two machines do not
+  share a wall clock either (PM timer on the A6, TSC on the i5), and the i5's
+  APIC timer calibrated to exactly 100 MHz, so neither ruler is obviously
+  wrong. Candidates: SMIs from the firmware (USB legacy emulation, for one)
+  keeping interrupts off, or the idle loop's `hlt`. To tell them apart, run
+  with *no USB* and compare, and read SMI counts where the CPU has them
+  (`MSR_SMI_COUNT` on the i5).
 - **NetBurst local APIC timer erratum.** The divide-by-16 periodic
   configuration is the one Intel's Pentium 4 errata warn about. The PIT
   backend exists but is chosen only when there is no local APIC.
@@ -325,7 +410,8 @@ It also rules out any fix that depends on `_CST` or `_PSS`.
 
 One driver per family, taken on when a target has it: Intel `em(4)` (82566,
 82567, 8257x), NVIDIA `nfe(4)`, Broadcom `bge(4)`, Marvell `msk(4)`, VIA
-`vr(4)`, SiS `sis(4)`, Atheros `alc(4)`. Wireless is out of scope: it needs an
+`vr(4)`, SiS `sis(4)`, Atheros `alc(4)`. The FX-4100 has the first of these
+seen on a target: an Atheros AR8151 (`1969:1083`), for `alc(4)`. Wireless is out of scope: it needs an
 802.11 stack and vendor firmware.
 
 ## Order of work
@@ -333,17 +419,22 @@ One driver per family, taken on when a target has it: Intel `em(4)` (82566,
 What the packages above buy, most reach first:
 
 1. **HW-1.** A network on the development host, where everything else is
-   already tested.
-2. **HW-9 and HW-10.** Small, and they are the ones that can stop an old
+   already tested, and on three of the four other machines run so far.
+2. **The PS/2 keyboard (HW-8)** and **the steady tick loss (HW-9).** The
+   first leaves a machine without a USB keyboard unusable; the second runs
+   every clock that counts ticks 7% slow on two of five machines. The long
+   `read` under the global lock is kernel work outside this list, and as
+   urgent: it is what is heard on the one machine with speakers.
+3. **The rest of HW-9, and HW-10.** Small, and they are the ones that can stop an old
    machine from being usable at all.
-3. **HW-6, HW-13, HW-4.** Small widenings of drivers that exist.
-4. **HW-3.** Disks on every machine older than the development host.
-5. **HW-2.** USB on those same machines.
-6. **HW-11**, the mode choice and the log line; native mode setting only
+4. **HW-6, HW-13, HW-4.** Small widenings of drivers that exist.
+5. **HW-3.** Disks on every machine older than the development host.
+6. **HW-2.** UHCI and split transactions on metal; EHCI and OHCI already ran.
+7. **HW-11**, the mode choice and the log line; native mode setting only
    after a target has been run on its firmware framebuffer and found wanting.
-7. **HW-5, HW-12.** Installing.
+8. **HW-5, HW-12.** Installing.
 
-HW-7, HW-8, HW-14 and HW-15 wait for a machine that needs them.
+HW-7, HW-14 and HW-15 wait for a machine that needs them.
 
 ## Collecting a machine's facts
 

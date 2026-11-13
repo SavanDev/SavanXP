@@ -9,6 +9,14 @@ the processor family is known, the board is not. Everything about devices is
 **expected** from the platform, and the last section lists what to read from
 the machine before trusting any of it.
 
+The board side has since been seen once: the FX-4100 in
+[AMD_FX_4100.md](AMD_FX_4100.md) sits on an ASRock 760G + SB7x0 board, the
+same chipset this document expects. Its run on 2026-11-13 confirmed the EHCI
+and OHCI rows below with a low-speed mouse, showed that "set SATA to AHCI" is
+not the whole story (its disk answered on the legacy ATA ports, capped at
+128 GiB), and that a PS/2 keyboard is **not** a fallback today (HW-8). The
+processor and its C1E check are still unrun.
+
 ## Verdict
 
 The CPU meets every hard requirement, and the instruction set is not a
@@ -92,7 +100,7 @@ native display driver.
 | Firmware | Legacy BIOS; UEFI only on the last 8- and 9-series boards | Limine BIOS, DVD or `dd`-written stick | — |
 | SATA | SB700, SB710, SB750 or SB850. One controller with a firmware setting: IDE (`1002:4390`), AHCI (`1002:4391`) or RAID | **Set it to AHCI** and the existing driver should find the disks. In native IDE mode the legacy-port ATA driver does not reach them | HW-3, HW-4 |
 | PATA | One channel on the south bridge (`1002:439c`) | Not driven unless the firmware leaves it at the legacy ports | HW-3 |
-| USB | OHCI companions (`1002:4397`, `4398`, `4399`) and EHCI (`1002:4396`). xHCI only as a separate chip on some late boards | EHCI and OHCI drivers, run only in QEMU: low-speed keyboards and mice and the firmware handoff are first seen here. A PS/2 keyboard as a fallback, with `nousb` | HW-2 |
+| USB | OHCI companions (`1002:4397`, `4398`, `4399`) and EHCI (`1002:4396`). xHCI only as a separate chip on some late boards | EHCI and OHCI drivers. **Verified** on an SB7x0 board (FX-4100, 2026-11-13) with a low-speed mouse after the firmware handoff. A PS/2 keyboard is not a fallback until HW-8 | HW-2, HW-8 |
 | Analog audio | SB7x0 HD Audio `1002:4383` with a Realtek codec: ALC662, ALC887, ALC888, ALC892 | The controller attaches without the SBx00 snooping quirk; sound is unverified. A board with an ALC892 has the one codec that has been heard | HW-6 |
 | Ethernet | Realtek RTL8111 (`10ec:8168`) on most boards; RTL8101/8102 (`10ec:8136`) or Atheros on some; NVIDIA's own MAC on nForce boards | No network | HW-1, HW-15 |
 | Input | PS/2 port, often one shared keyboard/mouse connector | Works with the existing driver | — |

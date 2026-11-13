@@ -12,6 +12,7 @@ shared contract and the numbered work packages (HW-n) are in
 | **Verified**, 2026-11-07 | Analog playback through the ALC892 after the Azalia port in `2ac6c50` |
 | **Verified**, 2026-11-08 | Sound recognizes the microphone, records it and replays it. Doom and Celeste audio, once the ISO carried the rebuilt ports (`22ae69e`) |
 | **Verified**, 2026-11-12 | One boot log captured, v0.4.3 (Build 701) under UEFI: all 12 processors online, the wall clock on the 32-bit PM timer, 1920x1080 from GOP, four SATA disks found and their partition tables read, a USB stick as `usb0` with a partition mounted through Disk Management's elevation prompt. See [The boot log](#the-boot-log-2026-11-12) |
+| **Verified**, 2026-11-13 | A second, 35-minute run of the same build under UEFI: Celeste, Nightwood, the media player and `sxgldiag` (241 fps). Audio played throughout, but the **media player had audible micro-cuts** now and then, and nothing else did. See [The second run](#the-second-run-2026-11-13) |
 | Not working | Ethernet, NVMe, Wi-Fi, HDMI and DisplayPort audio, anything of the Vega beyond the framebuffer the firmware set |
 | Never exercised on the machine | Writing the SATA disks, USB hubs and hot plug |
 
@@ -82,6 +83,28 @@ boot ready: 32293 MiB usable, 116 MiB reclaimable, video 1920x1080
   machine's SATA disks. That is also the most `kMaxDisks` allows. Their
   partitions were read (`ahci0p1` to `ahci3p3`). No write to them is
   recorded. The `ahci:` line does not name the controller.
+
+## The second run, 2026-11-13
+
+Same build, same boot path, 35 minutes (`system-log-ryzen.txt`, not in the
+tree). Devices and timers came up as in the first log. New in it:
+
+- A USB optical drive (`e8d:1836`, "MT1836") was seen and refused:
+  `usb-storage: device type 5 not supported`.
+- `sxgldiag`: 1205 frames in 5 s, 241 fps, 5289 triangles.
+- **The media player's micro-cuts have a cause in the log.** The windows
+  where `timer-stats:` lost time (124 of 729) are the ones in which the
+  player was running, 64–147 s and 867–1009 s, and in them `smp-stats:`
+  names POSIX syscall #0, `read`, as the longest holder of the global lock:
+  about 10–19 ms per call, around 190 ms of every two seconds. The player's
+  `audiod` port counted up to 197838 underruns. Celeste and Nightwood, run
+  later with sound, lost nothing. The same holds on the other
+  machines that ran the player (see
+  [REAL_HARDWARE.md](REAL_HARDWARE.md#long-reads-under-the-global-lock)).
+- At 31–33 s a single `read` held the lock for **978 ms**: every core waited,
+  the tick lost 979 ms, and the HD Audio stream was dropped
+  (`azalia: DMA polling deadline missed; stream stopped`). It recovered: the
+  later streams played and stopped with `drops=0 underruns=0`.
 
 ## Work for this target
 
