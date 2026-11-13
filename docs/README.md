@@ -112,6 +112,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   and `cards.dll` by hash, their headers, the 124 imported functions by DLL,
   their resources, a Wine trace that classifies each function by when it is
   needed, and the Windows XP reference captures.
+- [`WIN32_WORDPAD_PROFILE.md`](userland/WIN32_WORDPAD_PROFILE.md) — the
+  measured scope of the second Win32 profile, Windows XP WordPad: its files
+  and the MFC and RichEdit libraries it runs on, by hash; the import closure
+  against what SSW exports; resources and control classes; a Wine trace by
+  phase; and the Windows XP reference captures.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
 - [`NIGHTWOOD.md`](userland/NIGHTWOOD.md) — Nightwood, the forest game: the first game

@@ -701,6 +701,12 @@ What changed from the plan above, and why:
 Not planned in detail. Each extension names an application and records its
 own inventory before any code:
 
+**The next profile is Windows XP WordPad** (2026-11-13). Its inventory is in
+[WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md): the
+user's `wordpad.exe` runs on the original MFC (`mfc42u.dll`) and RichEdit
+(`msftedit.dll`) libraries, which pulls several of the items below onto one
+path at once. Its phases are planned from that document.
+
 - S2 and S3 with their Windows consumers: `VirtualAlloc` semantics and
   structured exception handling.
 - Threads beyond the first, with the loader lock and attach and detach calls.
