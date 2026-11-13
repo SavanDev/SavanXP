@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 1u
+#define SXW_ABI_VERSION 2u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -31,7 +31,20 @@
 /* ---- Process environment block ------------------------------------------ */
 
 #define SXW_PEB_IMAGE_BASE 0x08u
+#define SXW_PEB_PROCESS_PARAMETERS 0x10u
 #define SXW_PEB_SIZE 0x1000u
+
+/* RTL_USER_PROCESS_PARAMETERS, 32-bit layout, the fields we fill. The host
+ * puts it in the PEB's page at SXW_PEB_PARAMETERS_OFFSET, its strings after
+ * it. A UNICODE_STRING is {uint16 Length, uint16 MaximumLength, uint32
+ * Buffer}, lengths in bytes without the terminator. */
+#define SXW_PEB_PARAMETERS_OFFSET 0x400u
+#define SXW_PARAMS_STD_INPUT 0x18u
+#define SXW_PARAMS_STD_OUTPUT 0x1cu
+#define SXW_PARAMS_STD_ERROR 0x20u
+#define SXW_PARAMS_IMAGE_PATH 0x38u
+#define SXW_PARAMS_COMMAND_LINE 0x40u
+#define SXW_PARAMS_SIZE 0x90u
 
 /* ---- Services ------------------------------------------------------------ */
 /*
@@ -46,8 +59,51 @@
 #define SXW_SVC_STD_HANDLE 2u    /* (which: 0 in, 1 out, 2 err) -> handle or 0 */
 #define SXW_SVC_WRITE 3u         /* (handle, buffer, length) -> bytes written, or SXW_FAILED */
 #define SXW_SVC_DEBUG_OUTPUT 4u  /* (buffer, length) -> 0 */
+/* () -> seconds since 1970 UTC, as a 32-bit time_t; a test run may fix the
+ * start time (winhost --time). */
+#define SXW_SVC_TIME 5u
+/* (size) -> address of a new zeroed read-write region of at least size
+ * bytes, or 0. The heap's arenas. */
+#define SXW_SVC_ALLOCATE 6u
+/* (name) -> base of the loaded module with that file name (an ANSI string,
+ * any case, a path allowed), or 0. */
+#define SXW_SVC_FIND_MODULE 7u
+/* (name, modules, capacity, error) -> base, or 0 with a Win32 error code in
+ * *error. Loads the DLL and what it needs; the modules loaded by this call
+ * are written to modules[capacity] (sxw_start_module, initialization order)
+ * and their count is the low half of *error on success. */
+#define SXW_SVC_LOAD_LIBRARY 8u
+/* (base, name or ordinal, modules, capacity, error) -> address, or 0 with a
+ * Win32 error in *error. A name below 0x10000 is an ordinal. A forwarder may
+ * load DLLs, reported as SXW_SVC_LOAD_LIBRARY reports them. */
+#define SXW_SVC_GET_PROC 9u
+/* Registry. Keys are handles from the host; the predefined ones are
+ * Windows' (SXW_HKEY_*). Strings are UTF-16. Each returns a Win32 error. */
+#define SXW_SVC_REG_OPEN 10u  /* (hkey, subkey, create, out hkey, out disposition) */
+#define SXW_SVC_REG_CLOSE 11u /* (hkey) */
+#define SXW_SVC_REG_QUERY 12u /* (hkey, name, out type, data, in/out size) */
+#define SXW_SVC_REG_SET 13u   /* (hkey, name, type, data, size) */
 
 #define SXW_FAILED 0xffffffffu
+
+#define SXW_HKEY_CLASSES_ROOT 0x80000000u
+#define SXW_HKEY_CURRENT_USER 0x80000001u
+#define SXW_HKEY_LOCAL_MACHINE 0x80000002u
+
+/* Win32 error codes the services return. */
+#define SXW_ERROR_SUCCESS 0u
+#define SXW_ERROR_FILE_NOT_FOUND 2u
+#define SXW_ERROR_ACCESS_DENIED 5u
+#define SXW_ERROR_INVALID_HANDLE 6u
+#define SXW_ERROR_NOT_ENOUGH_MEMORY 8u
+#define SXW_ERROR_INVALID_PARAMETER 87u
+#define SXW_ERROR_MOD_NOT_FOUND 126u
+#define SXW_ERROR_PROC_NOT_FOUND 127u
+#define SXW_ERROR_INVALID_ORDINAL 182u
+#define SXW_ERROR_BAD_EXE_FORMAT 193u
+#define SXW_ERROR_MORE_DATA 234u
+#define SXW_ERROR_DLL_INIT_FAILED 1114u
+#define SXW_ERROR_REGISTRY_IO_FAILED 1016u
 
 /* ---- Process start ------------------------------------------------------- */
 /*

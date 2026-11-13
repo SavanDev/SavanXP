@@ -5,6 +5,9 @@
 
 #include "sxw_abi.h"
 
+#define SXW_MAX_STRING 256u   /* bytes of a name the guest passes, with its NUL */
+#define SXW_MAX_ADDED 32u     /* modules one LoadLibrary may report */
+
 int sxw_guest_range(const sxw_process *process, uint32_t address, uint32_t length) {
     for (uint32_t i = 0; i < process->region_count; ++i) {
         const sxw_region *r = &process->regions[i];
@@ -16,16 +19,87 @@ int sxw_guest_range(const sxw_process *process, uint32_t address, uint32_t lengt
     return 0;
 }
 
+static uint32_t get32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void set32(uint8_t *p, uint32_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
 static int read_words(const sxw_process *process, uint32_t address, uint32_t count, uint32_t *out) {
     if (!sxw_guest_range(process, address, 4u * count)) {
         return 0;
     }
     const uint8_t *p = (const uint8_t *)(uintptr_t)address;
     for (uint32_t i = 0; i < count; ++i) {
-        out[i] = (uint32_t)p[4 * i] | ((uint32_t)p[4 * i + 1] << 8) | ((uint32_t)p[4 * i + 2] << 16) |
-                 ((uint32_t)p[4 * i + 3] << 24);
+        out[i] = get32(p + 4u * i);
     }
     return 1;
+}
+
+static int write_word(const sxw_process *process, uint32_t address, uint32_t value) {
+    if (!sxw_guest_range(process, address, 4u)) {
+        return 0;
+    }
+    set32((uint8_t *)(uintptr_t)address, value);
+    return 1;
+}
+
+/* An 8-bit string of the guest, copied with its NUL. 0 when it is not guest
+ * memory, empty, or longer than the buffer. */
+static int read_ansi(const sxw_process *process, uint32_t address, char *out) {
+    for (uint32_t i = 0; i < SXW_MAX_STRING; ++i) {
+        if (!sxw_guest_range(process, address + i, 1u)) {
+            return 0;
+        }
+        out[i] = *(const char *)(uintptr_t)(address + i);
+        if (out[i] == 0) {
+            return i != 0u;
+        }
+    }
+    return 0;
+}
+
+/* A UTF-16 string of the guest, as UTF-8 with its NUL. Address 0 is the
+ * empty string. 0 when it is not guest memory or does not fit. */
+static int read_utf16(const sxw_process *process, uint32_t address, char *out) {
+    uint32_t n = 0;
+    out[0] = 0;
+    if (address == 0u) {
+        return 1;
+    }
+    for (uint32_t i = 0;; ++i) {
+        if (!sxw_guest_range(process, address + 2u * i, 2u)) {
+            return 0;
+        }
+        const uint8_t *p = (const uint8_t *)(uintptr_t)(address + 2u * i);
+        uint32_t c = (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+        if (c == 0u) {
+            out[n] = 0;
+            return 1;
+        }
+        if (c >= 0xd800u && c <= 0xdfffu) {
+            c = '?'; /* surrogates: the first profile has none */
+        }
+        uint32_t need = c < 0x80u ? 1u : c < 0x800u ? 2u : 3u;
+        if (n + need + 1u > SXW_MAX_STRING) {
+            return 0;
+        }
+        if (need == 1u) {
+            out[n++] = (char)c;
+        } else if (need == 2u) {
+            out[n++] = (char)(0xc0u | (c >> 6));
+            out[n++] = (char)(0x80u | (c & 0x3fu));
+        } else {
+            out[n++] = (char)(0xe0u | (c >> 12));
+            out[n++] = (char)(0x80u | ((c >> 6) & 0x3fu));
+            out[n++] = (char)(0x80u | (c & 0x3fu));
+        }
+    }
 }
 
 static void end_process(sxw_services *s, uint32_t status) {
@@ -50,31 +124,145 @@ static void write_text(sxw_services *s, const char *text) {
     (void)s->write(s->context, 2, text, length);
 }
 
+void sxw_services_start(sxw_services *s) {
+    s->start_time = s->now(s->context);
+    s->exit_requested = 0;
+}
+
+static uint32_t guest_time(sxw_services *s) {
+    uint64_t now = s->now(s->context);
+    if (s->fixed_time != 0u) {
+        return s->fixed_time + (uint32_t)(now - s->start_time);
+    }
+    return (uint32_t)now;
+}
+
+/* Writes the modules a load added, and their count in the low half of the
+ * error word. */
+static uint32_t report_added(const sxw_process *p, uint32_t buffer, uint32_t capacity, uint32_t error_out,
+                             const sxw_start_module *added, uint32_t count) {
+    if (count > capacity || !sxw_guest_range(p, buffer, 16u * count)) {
+        return 0;
+    }
+    uint8_t *q = (uint8_t *)(uintptr_t)buffer;
+    for (uint32_t i = 0; i < count; ++i) {
+        set32(q + 16u * i + 0u, added[i].base);
+        set32(q + 16u * i + 4u, added[i].entry);
+        set32(q + 16u * i + 8u, added[i].tls_callbacks);
+        set32(q + 16u * i + 12u, added[i].flags);
+    }
+    return write_word(p, error_out, count);
+}
+
+static uint32_t save_registry(sxw_services *s) {
+    if (!s->registry->dirty || s->save_registry == 0) {
+        return SXW_ERROR_SUCCESS;
+    }
+    size_t length = 0;
+    if (sxw_reg_serialize(s->registry, s->registry_text, sizeof(s->registry_text), &length) != 0 ||
+        s->save_registry(s->context, s->registry_text, length) != 0) {
+        write_text(s, "win32: the registry could not be saved\n");
+        return SXW_ERROR_REGISTRY_IO_FAILED;
+    }
+    s->registry->dirty = 0;
+    return SXW_ERROR_SUCCESS;
+}
+
+static uint32_t registry_service(sxw_services *s, uint32_t service, const uint32_t *a) {
+    sxw_process *p = s->process;
+    char name[SXW_MAX_STRING];
+    switch (service) {
+    case SXW_SVC_REG_OPEN: {
+        uint32_t handle = 0;
+        uint32_t disposition = 0;
+        if (!read_utf16(p, a[1], name) || !sxw_guest_range(p, a[3], 4u) ||
+            (a[4] != 0u && !sxw_guest_range(p, a[4], 4u))) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        uint32_t error = sxw_reg_open(s->registry, a[0], name, a[2] != 0u, &handle, &disposition);
+        if (error == SXW_ERROR_SUCCESS) {
+            write_word(p, a[3], handle);
+            if (a[4] != 0u) {
+                write_word(p, a[4], disposition);
+            }
+            error = save_registry(s);
+        }
+        return error;
+    }
+    case SXW_SVC_REG_CLOSE:
+        return sxw_reg_close(s->registry, a[0]);
+    case SXW_SVC_REG_QUERY: {
+        uint32_t type = 0;
+        uint32_t size = 0;
+        uint32_t capacity = 0;
+        if (!read_utf16(p, a[1], name) || (a[2] != 0u && !sxw_guest_range(p, a[2], 4u))) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        if (a[4] == 0u) {
+            if (a[3] != 0u) {
+                return SXW_ERROR_INVALID_PARAMETER;
+            }
+        } else if (!read_words(p, a[4], 1, &capacity)) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        if (a[3] != 0u && !sxw_guest_range(p, a[3], capacity)) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        uint32_t error = sxw_reg_query(s->registry, a[0], name, &type,
+                                       a[3] != 0u ? (uint8_t *)(uintptr_t)a[3] : 0, capacity, &size);
+        if (error == SXW_ERROR_SUCCESS || error == SXW_ERROR_MORE_DATA) {
+            if (a[2] != 0u) {
+                write_word(p, a[2], type);
+            }
+            if (a[4] != 0u) {
+                write_word(p, a[4], size);
+            }
+        }
+        return error;
+    }
+    case SXW_SVC_REG_SET: {
+        if (!read_utf16(p, a[1], name) || (a[4] != 0u && !sxw_guest_range(p, a[3], a[4]))) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        uint32_t error = sxw_reg_set(s->registry, a[0], name, a[2],
+                                     a[4] != 0u ? (const uint8_t *)(uintptr_t)a[3] : 0, a[4]);
+        return error == SXW_ERROR_SUCCESS ? save_registry(s) : error;
+    }
+    default:
+        return SXW_ERROR_INVALID_PARAMETER;
+    }
+}
+
 uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
-    const sxw_process *p = s->process;
+    sxw_process *p = s->process;
     uint32_t frame[3];
-    uint32_t a[3];
+    uint32_t a[5];
     if (!read_words(p, guest_esp, 3, frame)) {
         end_process(s, SXW_STATUS_ACCESS_VIOLATION);
         return 0;
     }
-    switch (frame[1]) {
+    const uint32_t service = frame[1];
+    static const uint8_t argument_count[] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5, 1, 5, 5};
+    if (service >= sizeof(argument_count)) {
+        write_text(s, "win32: unknown service\n");
+        end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
+        return 0;
+    }
+    if (argument_count[service] != 0u && !read_words(p, frame[2], argument_count[service], a)) {
+        end_process(s, SXW_STATUS_ACCESS_VIOLATION);
+        return 0;
+    }
+    switch (service) {
     case SXW_SVC_VERSION:
         return SXW_ABI_VERSION;
     case SXW_SVC_EXIT_PROCESS:
-        end_process(s, read_words(p, frame[2], 1, a) ? a[0] : SXW_STATUS_ACCESS_VIOLATION);
+        end_process(s, a[0]);
         return 0;
     case SXW_SVC_STD_HANDLE:
-        if (!read_words(p, frame[2], 1, a) || a[0] > 2u) {
-            return 0;
-        }
-        return SXW_HANDLE_STDIN + 4u * a[0];
+        return a[0] > 2u ? 0u : SXW_HANDLE_STDIN + 4u * a[0];
     case SXW_SVC_WRITE: {
-        if (!read_words(p, frame[2], 3, a) || !sxw_guest_range(p, a[1], a[2])) {
-            return SXW_FAILED;
-        }
         int stream = stream_of(a[0]);
-        if (stream < 0) {
+        if (stream < 0 || !sxw_guest_range(p, a[1], a[2])) {
             return SXW_FAILED;
         }
         uint32_t done = 0;
@@ -88,15 +276,65 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         return done;
     }
     case SXW_SVC_DEBUG_OUTPUT:
-        if (read_words(p, frame[2], 2, a) && sxw_guest_range(p, a[0], a[1])) {
+        if (sxw_guest_range(p, a[0], a[1])) {
             write_text(s, "win32: debug: ");
             (void)s->write(s->context, 2, (const void *)(uintptr_t)a[0], a[1]);
             write_text(s, "\n");
         }
         return 0;
-    default:
-        write_text(s, "win32: unknown service\n");
-        end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
+    case SXW_SVC_TIME:
+        return guest_time(s);
+    case SXW_SVC_ALLOCATE: {
+        uint32_t base = 0;
+        return sxw_allocate_region(p, a[0], &base) == 0 ? base : 0u;
+    }
+    case SXW_SVC_FIND_MODULE: {
+        char name[SXW_MAX_STRING];
+        const sxw_module *m = read_ansi(p, a[0], name) ? sxw_find_module(p, name) : 0;
+        return m != 0 ? m->base : 0u;
+    }
+    case SXW_SVC_LOAD_LIBRARY: {
+        char name[SXW_MAX_STRING];
+        sxw_start_module added[SXW_MAX_ADDED];
+        uint32_t count = 0;
+        uint32_t base = 0;
+        uint32_t error = SXW_ERROR_INVALID_PARAMETER;
+        if (!sxw_guest_range(p, a[3], 4u)) {
+            return 0;
+        }
+        if (read_ansi(p, a[0], name) &&
+            sxw_load_library(p, name, added, a[2] < SXW_MAX_ADDED ? a[2] : SXW_MAX_ADDED, &count, &base,
+                             &error) == 0) {
+            if (report_added(p, a[1], a[2], a[3], added, count)) {
+                return base;
+            }
+            error = SXW_ERROR_INVALID_PARAMETER;
+        }
+        write_word(p, a[3], error);
         return 0;
+    }
+    case SXW_SVC_GET_PROC: {
+        char name[SXW_MAX_STRING];
+        sxw_start_module added[SXW_MAX_ADDED];
+        uint32_t count = 0;
+        uint32_t address = 0;
+        uint32_t error = SXW_ERROR_INVALID_PARAMETER;
+        if (!sxw_guest_range(p, a[4], 4u)) {
+            return 0;
+        }
+        const int by_ordinal = a[1] < 0x10000u;
+        if ((by_ordinal || read_ansi(p, a[1], name)) &&
+            sxw_get_proc(p, a[0], by_ordinal ? 0 : name, (uint16_t)a[1], added,
+                         a[3] < SXW_MAX_ADDED ? a[3] : SXW_MAX_ADDED, &count, &address, &error) == 0) {
+            if (report_added(p, a[2], a[3], a[4], added, count)) {
+                return address;
+            }
+            error = SXW_ERROR_INVALID_PARAMETER;
+        }
+        write_word(p, a[4], error);
+        return 0;
+    }
+    default:
+        return registry_service(s, service, a);
     }
 }

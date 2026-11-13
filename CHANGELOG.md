@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 base runtime: `msvcrt.dll` and `advapi32.dll`, and `kernel32.dll`'s module, memory and command-line functions,
+  so a program that starts like Windows XP Solitaire runs under `winhost`.** HKCU lives in `/users/user/Settings/win32.reg`;
+  `winhost --registry` and `--time` choose another file and fix the clock. See [WIN32.md](docs/userland/WIN32.md).
+
 - **SUN programs can read the date: `sxn_system_time()` (`SXN_SYS_SYSTEM_TIME`), seconds since 1970 UTC, the clock POSIX
   `realtime()` and file times use.**
 

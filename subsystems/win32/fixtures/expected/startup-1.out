@@ -1,0 +1,29 @@
+startup: fmode 0, commode 0, adjust_fdiv 0
+startup: control word 0x0009001f, after _PC_53 0x0009001f, chopping 0x0009031f, back to nearest 0x0009001f
+startup: initializers: C 1, C++ 2
+startup: argc 4, [alpha], [two words], [3]
+startup: STARTUPINFOA size 68
+winmain: previous instance: yes, tail [alpha "two words" 3], show 10
+winmain: srand(1): 41 18467 6334 26500 19169 15724
+winmain: srand(12345): 7584 19164 25795 22125 5828 23405
+winmain: time plausible: yes
+winmain: MulDiv: 8 -8 -8 -8 4 -4 0 1 400 -1 -1 -2147483647 2147483647 13
+winmain: lstrlenW: 9 0
+winmain: GetCommandLineW tail: [alpha "two words" 3]
+winmain: GetModuleHandleA(NULL) is the instance: yes, kernel32 by two names: yes
+winmain: GetModuleHandleA(nosuch): yes, error 126
+winmain: LoadLibraryA(kernel32) is the loaded one: yes
+winmain: LoadLibraryA(nosuch.dll): yes, error 126
+winmain: GetProcAddress(kernel32, MulDiv) is the import: yes
+beta: attach, dynamic load, pointers agree
+winmain: LoadLibraryA(beta.dll): yes
+winmain: BetaValue by name says 7, by ordinal the same: yes
+winmain: GetProcAddress(beta, Nope): yes, error 127
+winmain: LocalAlloc 115 LPTR blocks: yes, LocalFree: yes, zero bytes: yes
+winmain: RegCreateKeyExW: 0, disposition 1
+winmain: counter before: -2, set: 0, read back: 1 type 4 size 4
+winmain: REG_SZ set: 0, small buffer: 234 needs 20, size query: 0 20
+winmain: RegQueryValueExA: 0 [Solitario] size 10
+winmain: Atrás: set 0, read through ANSI: 0 53
+winmain: missing value: 2, missing key: 2, reopen: 0 close 0, close: 0
+beta: detach, process ending

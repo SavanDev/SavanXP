@@ -4,3 +4,7 @@
 # Preserve upstream cursor licenses and artwork byte for byte.
 assets/desktop/cursors/retrosmart/* -text -whitespace
 assets/desktop/cursors/hackneyed/* -text -whitespace
+
+# Output recorded on Windows XP for the Win32 fixtures: CRLF and Windows-1252
+# bytes, compared byte for byte.
+subsystems/win32/fixtures/expected/* -text -whitespace

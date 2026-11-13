@@ -1,13 +1,16 @@
 /*
  * winhost.c -- winhost.sxe: runs a PE32 executable on SavanXP.
  *
- *     winhost [--dlls DIR] /path/to/program.exe
+ *     winhost [--dlls DIR] [--registry FILE] [--time SECONDS] /path/to/program.exe [arguments...]
  *
  * A SUN program (docs/userland/WIN32.md, "winhost"). It loads the image and
  * its DLLs below 4 GiB with the portable loader, each protection run in its
  * own section placed with SXN_SYS_MAP_VIEW_AT, and runs the 32-bit guest in
  * the user 32-bit code segment (0x2b). DLLs are looked up next to the
  * executable, then in DIR (default /system/win/drive_c/windows/system32).
+ * The arguments follow the program in its command line. HKEY_CURRENT_USER
+ * lives in FILE (default /users/user/Settings/win32.reg); --time fixes the
+ * guest clock's start, so a run that seeds from the time repeats.
  *
  * The guest's standard output and error are winhost's. The exit status is
  * the guest's 32-bit status, or the NT status Windows XP gives a failed load;
@@ -35,7 +38,9 @@
 #define USER_CODE64_SELECTOR 0x23
 #define USER_CODE32_SELECTOR 0x2b
 
-#define DEFAULT_SYSTEM_DIR "/system/win/drive_c/windows/system32"
+#define DRIVE_C "/system/win/drive_c"
+#define DEFAULT_SYSTEM_DIR DRIVE_C "/windows/system32"
+#define DEFAULT_REGISTRY "/users/user/Settings/win32.reg"
 
 /* The 32-bit halves of the gate, filled at start-up (as in the harness):
  * back32 and service32 far-jump to 64-bit landings that jump into this
@@ -340,7 +345,97 @@ static long write_stream(void *context, int stream, const void *buffer, uint32_t
     return sxn_write(stream, buffer, length);
 }
 
-static sxw_services g_services = {.process = &g_process, .write = write_stream};
+static const char *g_registry_path = DEFAULT_REGISTRY;
+static sxw_registry g_registry;
+
+static uint64_t now_seconds(void *context) {
+    (void)context;
+    return sxn_system_time();
+}
+
+/* The whole file, replaced and made durable. */
+static int save_registry_file(void *context, const char *text, size_t length) {
+    (void)context;
+    long handle = sxn_create_file(g_registry_path, SXN_CREATE_ALWAYS);
+    if (handle < 0) {
+        return 1;
+    }
+    size_t done = 0;
+    while (done < length) {
+        long n = sxn_write(handle, text + done, (unsigned long)(length - done));
+        if (n <= 0) {
+            break;
+        }
+        done += (size_t)n;
+    }
+    int ok = done == length && sxn_flush_file(handle) == 0;
+    (void)sxn_close(handle);
+    return ok ? 0 : 1;
+}
+
+static sxw_services g_services = {
+    .process = &g_process,
+    .write = write_stream,
+    .now = now_seconds,
+    .save_registry = save_registry_file,
+    .registry = &g_registry,
+};
+
+static void load_registry(void) {
+    sxw_reg_init(&g_registry);
+    file_buffer file;
+    if (read_whole(g_registry_path, &file) == 0) {
+        if (sxw_reg_parse(&g_registry, (const char *)file.data, (size_t)file.size) != 0) {
+            say("win32: the registry file is malformed; starting empty\n");
+        }
+        free(file.data);
+    }
+}
+
+/* The arguments as a command-line tail: each quoted when it holds a blank
+ * or is empty, which is what a program splitting it gets back. */
+static void join_arguments(char **arguments, int count, char *out, uint32_t capacity) {
+    uint32_t n = 0;
+    for (int i = 0; i < count; ++i) {
+        const char *a = arguments[i];
+        int quote = a[0] == 0;
+        for (const char *c = a; *c != 0; ++c) {
+            quote |= *c == ' ' || *c == '\t';
+        }
+        if (n + text_length(a) + 4u >= capacity) {
+            break;
+        }
+        if (i != 0) {
+            out[n++] = ' ';
+        }
+        if (quote) {
+            out[n++] = '"';
+        }
+        for (const char *c = a; *c != 0; ++c) {
+            out[n++] = *c;
+        }
+        if (quote) {
+            out[n++] = '"';
+        }
+    }
+    out[n] = 0;
+}
+
+static uint32_t parse_decimal(const char *text) {
+    uint32_t value = 0;
+    while (*text >= '0' && *text <= '9') {
+        value = value * 10u + (uint32_t)(*text++ - '0');
+    }
+    return value;
+}
+
+static int same_text(const char *a, const char *b) {
+    while (*a != 0 && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == *b;
+}
 
 uint32_t sxw_host_service(uint64_t guest_esp) {
     uint32_t result = sxw_service(&g_services, (uint32_t)guest_esp);
@@ -410,20 +505,27 @@ static __attribute__((noreturn)) void finish(uint32_t status) {
 
 int main(int argc, char **argv) {
     const char *exe = 0;
+    static char tail[2048];
     for (int i = 1; i < argc; ++i) {
-        if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 'd' && i + 1 < argc) {
+        if (same_text(argv[i], "--dlls") && i + 1 < argc) {
             g_system_dir = argv[++i];
-        } else if (exe == 0 && argv[i][0] == '/') {
+        } else if (same_text(argv[i], "--registry") && i + 1 < argc) {
+            g_registry_path = argv[++i];
+        } else if (same_text(argv[i], "--time") && i + 1 < argc) {
+            g_services.fixed_time = parse_decimal(argv[++i]);
+        } else if (argv[i][0] == '/') {
             exe = argv[i];
+            join_arguments(argv + i + 1, argc - i - 1, tail, sizeof(tail));
+            break;
         } else {
-            exe = 0;
             break;
         }
     }
     if (exe == 0) {
-        say("usage: winhost [--dlls DIR] /path/to/program.exe\n");
+        say("usage: winhost [--dlls DIR] [--registry FILE] [--time SECONDS] /path/to/program.exe [arguments...]\n");
         sxn_exit(2);
     }
+    load_registry();
     uint32_t slash = 0;
     for (uint32_t i = 0; exe[i] != 0; ++i) {
         if (exe[i] == '/') {
@@ -452,8 +554,9 @@ int main(int argc, char **argv) {
         .open_image = platform_open,
         .close_image = platform_close,
         .gate = TRAMPOLINE + TRAMPOLINE_SERVICE32,
+        .drive_c = DRIVE_C,
     };
-    if (sxw_load(&g_process, &platform, exe) != 0) {
+    if (sxw_load(&g_process, &platform, exe, tail) != 0) {
         say("win32: ");
         say(g_process.diagnostic);
         say("\n");
@@ -472,6 +575,7 @@ int main(int argc, char **argv) {
     uint32_t esp = g_process.stack_top - 16u;
     put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
     put32((uint8_t *)(uintptr_t)(esp + 4u), g_process.start_block);
+    sxw_services_start(&g_services);
     uint32_t returned = sxw_gate_enter(g_process.start_entry, esp);
     if (!sxw_exit_requested) {
         say_hex("win32: SxwProcessStart returned without exiting: ", returned);

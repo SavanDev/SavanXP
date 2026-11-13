@@ -1,0 +1,9 @@
+beta: attach, static load, pointers agree
+alpha: attach, beta says 7, pointers agree
+initorder: TLS callback 1, reason 1
+initorder: TLS callback 2, reason 1
+initorder: entry, thread value 7, alpha says 3, beta says 7
+alpha: detach, process ending
+beta: detach, process ending
+initorder: TLS callback 1, reason 0
+initorder: TLS callback 2, reason 0

@@ -2,7 +2,11 @@
  * harness.c -- win32-harness: run a PE32 executable on the Linux x86-64
  * build host through the same loader and DLLs as winhost.
  *
- *     win32-harness [--dlls DIR] program.exe
+ *     win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] program.exe [arguments...]
+ *
+ * The arguments follow the program in its command line. HKEY_CURRENT_USER
+ * lives in FILE (in memory only without it); --time fixes the guest clock's
+ * start, so a run that seeds from the time repeats.
  *
  * DLLs are looked up next to the executable, then in DIR. The guest's
  * standard output and error are this process's. The guest's 32-bit exit
@@ -23,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -185,7 +190,38 @@ static long write_stream(void *context, int stream, const void *buffer, uint32_t
     return write(stream, buffer, length);
 }
 
-static sxw_services g_services = {.process = &g_process, .write = write_stream};
+static const char *g_registry_path;
+static sxw_registry g_registry;
+
+static uint64_t now_seconds(void *context) {
+    (void)context;
+    return (uint64_t)time(NULL);
+}
+
+static int save_registry_file(void *context, const char *text, size_t length) {
+    (void)context;
+    int fd = open(g_registry_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return 1;
+    }
+    size_t done = 0;
+    while (done < length) {
+        ssize_t n = write(fd, text + done, length - done);
+        if (n <= 0) {
+            close(fd);
+            return 1;
+        }
+        done += (size_t)n;
+    }
+    return close(fd) == 0 ? 0 : 1;
+}
+
+static sxw_services g_services = {
+    .process = &g_process,
+    .write = write_stream,
+    .now = now_seconds,
+    .registry = &g_registry,
+};
 
 uint32_t sxw_host_service(uint64_t guest_esp) {
     uint32_t result = sxw_service(&g_services, (uint32_t)guest_esp);
@@ -287,17 +323,55 @@ static int set_teb_segment(uint32_t teb) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: win32-harness [--dlls DIR] program.exe\n");
+    fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] program.exe [arguments...]\n");
     exit(2);
+}
+
+/* The arguments as a command-line tail: each quoted when it holds a blank
+ * or is empty, which is what a program splitting it gets back. */
+static void join_arguments(char **arguments, int count, char *out, size_t capacity) {
+    size_t n = 0;
+    out[0] = 0;
+    for (int i = 0; i < count; ++i) {
+        int quote = arguments[i][0] == 0 || strpbrk(arguments[i], " \t") != NULL;
+        size_t need = strlen(arguments[i]) + (quote ? 2u : 0u) + (i != 0 ? 1u : 0u);
+        if (n + need + 1u > capacity) {
+            break;
+        }
+        n += (size_t)snprintf(out + n, capacity - n, "%s%s%s%s", i != 0 ? " " : "", quote ? "\"" : "",
+                              arguments[i], quote ? "\"" : "");
+    }
+}
+
+static void load_registry(void) {
+    sxw_reg_init(&g_registry);
+    if (g_registry_path == NULL) {
+        return;
+    }
+    file_buffer file;
+    if (read_whole(g_registry_path, &file) == 0) {
+        if (sxw_reg_parse(&g_registry, (const char *)file.data, file.size) != 0) {
+            fprintf(stderr, "win32: %s is not a registry file; starting empty\n", g_registry_path);
+        }
+        free(file.data);
+    }
+    g_services.save_registry = save_registry_file;
 }
 
 int main(int argc, char **argv) {
     const char *exe = NULL;
+    static char tail[2048];
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--dlls") == 0 && i + 1 < argc) {
             g_dll_dir = argv[++i];
-        } else if (exe == NULL && argv[i][0] != '-') {
+        } else if (strcmp(argv[i], "--registry") == 0 && i + 1 < argc) {
+            g_registry_path = argv[++i];
+        } else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) {
+            g_services.fixed_time = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (argv[i][0] != '-') {
             exe = argv[i];
+            join_arguments(argv + i + 1, argc - i - 1, tail, sizeof(tail));
+            break;
         } else {
             usage();
         }
@@ -305,6 +379,7 @@ int main(int argc, char **argv) {
     if (exe == NULL) {
         usage();
     }
+    load_registry();
     const char *slash = strrchr(exe, '/');
     if (slash == NULL) {
         snprintf(g_exe_dir, sizeof(g_exe_dir), ".");
@@ -328,7 +403,7 @@ int main(int argc, char **argv) {
         .close_image = platform_close,
         .gate = TRAMPOLINE + TRAMPOLINE_SERVICE32,
     };
-    if (sxw_load(&g_process, &platform, exe) != 0) {
+    if (sxw_load(&g_process, &platform, exe, tail) != 0) {
         fprintf(stderr, "win32: %s\n", g_process.diagnostic);
         if (g_live_bytes != 0 || g_open_files != 0) {
             fprintf(stderr, "win32: failed load left %llu bytes mapped and %d files open\n",
@@ -360,6 +435,7 @@ int main(int argc, char **argv) {
     uint32_t esp = g_process.stack_top - 16u;
     put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
     put32((uint8_t *)(uintptr_t)(esp + 4u), g_process.start_block);
+    sxw_services_start(&g_services);
     uint32_t returned = sxw_gate_enter(g_process.start_entry, esp);
     if (!sxw_exit_requested) {
         fprintf(stderr, "win32: SxwProcessStart returned 0x%08x without exiting\n", returned);

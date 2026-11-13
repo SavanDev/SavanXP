@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include "pe.h"
+#include "sxw_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +54,10 @@ typedef struct sxw_platform {
     void (*close_image)(void *context, void *handle);
     /* The guest address the TEB's gate field points at. */
     uint32_t gate;
+    /* The host folder that is the guest's C: drive ("/system/win/drive_c"),
+     * or NULL. A path under it is C:\...; any other is Z:\..., Z: being the
+     * host's root, as Wine names it. */
+    const char *drive_c;
 } sxw_platform;
 
 typedef struct sxw_module {
@@ -92,9 +97,30 @@ typedef struct sxw_process {
     uint32_t status;
 } sxw_process;
 
-/* Loads the executable named exe and everything it needs. On failure, every
- * region and file is released and diagnostic names the cause. 0 on success. */
-int sxw_load(sxw_process *process, const sxw_platform *platform, const char *exe);
+/* Loads the executable named exe and everything it needs. arguments is what
+ * follows the program in its command line (UTF-8, already quoted where it
+ * needs to be), or NULL. On failure, every region and file is released and
+ * diagnostic names the cause. 0 on success. */
+int sxw_load(sxw_process *process, const sxw_platform *platform, const char *exe,
+             const char *arguments);
+
+/* A new zeroed read-write region of at least size bytes for the guest (the
+ * heap's arenas). 0, or -1 when there is no room. */
+int sxw_allocate_region(sxw_process *process, uint32_t size, uint32_t *base);
+
+/* LoadLibrary: the DLL named name (ANSI, a path allowed) and what it needs,
+ * into a running process. Loaded ones only return their base. The modules
+ * this call added are written to added[capacity] in initialization order
+ * (the guest runs their DllMain), *count of them. On failure nothing it
+ * added stays, and *error is the Win32 error. 0 on success. */
+int sxw_load_library(sxw_process *process, const char *name, sxw_start_module *added,
+                     uint32_t capacity, uint32_t *count, uint32_t *base, uint32_t *error);
+
+/* GetProcAddress: the export of the module at base, by name (name != NULL)
+ * or ordinal. A forwarder may load DLLs, reported as sxw_load_library does. */
+int sxw_get_proc(sxw_process *process, uint32_t base, const char *name, uint16_t ordinal,
+                 sxw_start_module *added, uint32_t capacity, uint32_t *count, uint32_t *address,
+                 uint32_t *error);
 
 /* Releases every region and file of a loaded process. */
 void sxw_unload(sxw_process *process);

@@ -4,9 +4,10 @@ SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
 Win32 is the API it implements. What exists so far is described in
 [WIN32.md](../../userland/WIN32.md).
 
-> **Status: design settled; W0, K1, K2 and W1 complete (2026-11-12): a PE32
-> console program runs on SavanXP under `winhost`, described in
-> [WIN32.md](../../userland/WIN32.md). Next: W2.** The
+> **Status: design settled; W0, K1, K2, W1 and W2 complete (2026-11-12): a
+> PE32 program that starts the way `sol.exe` does runs on SavanXP under
+> `winhost`, with the C runtime, `kernel32` and registry functions of the
+> matrix, described in [WIN32.md](../../userland/WIN32.md). Next: W3.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -472,6 +473,23 @@ runs, so a deal that depends on it can be repeated.
 imports, a `WinMain`) runs on all three environments with identical output,
 and a registry value written by a fixture is read back after a guest restart.
 Each failure path the matrix marks as reachable has an assertion.
+
+**Done (2026-11-12).** `startup.exe`, run twice, writes byte-identical output
+with status 5 on Windows XP, in `win32-harness-test` and in `win32-hello`
+(KVM and TCG); its second run reads back the counter the first wrote. The
+failure paths Solitaire can reach have their assertions in it: a missing
+module, procedure, registry value and registry key (Help's path), and
+`ERROR_MORE_DATA`. `win32-registry-test` covers the store's own errors.
+
+What this phase added beyond its list, and why:
+
+- `SXN_SYS_SYSTEM_TIME` (`sxn_system_time`) in SUN, the date for `time`:
+  POSIX had it and SUN did not, and `winhost` is its consumer.
+- `msvcrt.dll` and `advapi32.dll` as DLLs of their own, at Windows XP's
+  bases, and `LoadLibraryA`/`GetProcAddress` over the real loader, so a DLL
+  loaded at run time is initialized and detached like any other. Help is the
+  only caller in Solitaire, and its load fails cleanly.
+- `LMEM_MOVEABLE` is refused: Solitaire only allocates `LPTR`.
 
 ### W3 — windows and messages
 

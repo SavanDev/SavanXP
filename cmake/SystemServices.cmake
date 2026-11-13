@@ -118,6 +118,7 @@ savanxp_program(NAME winhost NATIVE SOURCES
     subsystems/win32/host/winhost.c
     subsystems/win32/loader/loader.c
     subsystems/win32/loader/services.c
+    subsystems/win32/loader/registry.c
     subsystems/win32/pe/pe.c)
 target_include_directories(winhost PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/win32/include"

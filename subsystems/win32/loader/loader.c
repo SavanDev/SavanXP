@@ -192,7 +192,7 @@ static int find_index(const sxw_process *p, const char *name, uint32_t *index) {
 
 const sxw_module *sxw_find_module(const sxw_process *p, const char *name) {
     uint32_t index;
-    return find_index(p, name, &index) ? &p->modules[index] : 0;
+    return find_index(p, base_name(name), &index) ? &p->modules[index] : 0;
 }
 
 static int load_module(sxw_process *p, const char *name, const char *requester, uint32_t *index);
@@ -529,7 +529,105 @@ static uint32_t tls_callbacks_va(const sxw_module *m) {
     return m->base + tls.callbacks_rva;
 }
 
-static int setup_process(sxw_process *p) {
+/* ---- Process parameters -------------------------------------------------- */
+
+static void put16(uint32_t address, uint16_t value) {
+    uint8_t *q = guest(address);
+    q[0] = (uint8_t)value;
+    q[1] = (uint8_t)(value >> 8);
+}
+
+/* Appends UTF-8 text to a UTF-16 string at *at (in units), bounded by limit.
+ * Code points above U+FFFF and malformed bytes become '?'. With slashes,
+ * '/' becomes '\\'. */
+static void put_utf16(uint32_t buffer, uint32_t *at, uint32_t limit, const char *text, int slashes) {
+    const uint8_t *s = (const uint8_t *)text;
+    while (*s != 0 && *at < limit) {
+        uint32_t c = *s++;
+        if (c >= 0x80u) {
+            uint32_t extra = c >= 0xf0u ? 3u : c >= 0xe0u ? 2u : c >= 0xc0u ? 1u : 0u;
+            c = extra == 0u ? '?' : c & (0x3fu >> extra);
+            for (uint32_t k = 0; k < extra; ++k) {
+                if ((*s & 0xc0u) != 0x80u) {
+                    c = '?';
+                    break;
+                }
+                c = (c << 6) | (*s++ & 0x3fu);
+            }
+            if (c > 0xffffu) {
+                c = '?';
+            }
+        }
+        if (slashes && c == '/') {
+            c = '\\';
+        }
+        put16(buffer + 2u * *at, (uint16_t)c);
+        ++*at;
+    }
+}
+
+/* The executable's Windows path: C:\... under the platform's drive_c,
+ * Z:\... anywhere else. */
+static void put_windows_path(const sxw_platform *platform, uint32_t buffer, uint32_t *at, uint32_t limit,
+                             const char *path) {
+    const char *rest = path;
+    const char *drive = "Z:";
+    if (platform->drive_c != 0) {
+        const char *a = platform->drive_c;
+        const char *b = path;
+        while (*a != 0 && *a == *b) {
+            ++a;
+            ++b;
+        }
+        if (*a == 0 && (*b == '/' || *b == 0)) {
+            drive = "C:";
+            rest = b;
+        }
+    }
+    put_utf16(buffer, at, limit, drive, 0);
+    put_utf16(buffer, at, limit, rest, 1);
+}
+
+/* RTL_USER_PROCESS_PARAMETERS in the PEB's page: the image path, and the
+ * command line "C:\path\program.exe" arguments, as Windows builds it for a
+ * program started with that path. */
+static void setup_parameters(sxw_process *p, const char *exe, const char *arguments) {
+    const uint32_t params = p->peb + SXW_PEB_PARAMETERS_OFFSET;
+    const uint32_t strings = params + SXW_PARAMS_SIZE;
+    const uint32_t units = (PE_PAGE_SIZE - SXW_PEB_PARAMETERS_OFFSET - SXW_PARAMS_SIZE) / 2u;
+    const uint32_t half = units / 4u; /* the image path takes the first quarter */
+
+    uint32_t at = 0;
+    put_windows_path(&p->platform, strings, &at, half - 1u, exe);
+    put16(strings + 2u * at, 0);
+    put16(params + SXW_PARAMS_IMAGE_PATH, (uint16_t)(2u * at));
+    put16(params + SXW_PARAMS_IMAGE_PATH + 2u, (uint16_t)(2u * at + 2u));
+    put32(params + SXW_PARAMS_IMAGE_PATH + 4u, strings);
+
+    const uint32_t line = strings + 2u * half;
+    at = 0;
+    put_utf16(line, &at, units - half - 1u, "\"", 0);
+    put_windows_path(&p->platform, line, &at, units - half - 1u, exe);
+    put_utf16(line, &at, units - half - 1u, "\"", 0);
+    if (arguments != 0 && arguments[0] != 0) {
+        put_utf16(line, &at, units - half - 1u, " ", 0);
+        put_utf16(line, &at, units - half - 1u, arguments, 0);
+    }
+    put16(line + 2u * at, 0);
+    put16(params + SXW_PARAMS_COMMAND_LINE, (uint16_t)(2u * at));
+    put16(params + SXW_PARAMS_COMMAND_LINE + 2u, (uint16_t)(2u * at + 2u));
+    put32(params + SXW_PARAMS_COMMAND_LINE + 4u, line);
+
+    put32(params + 0u, SXW_PARAMS_SIZE); /* MaximumLength */
+    put32(params + 4u, SXW_PARAMS_SIZE); /* Length */
+    put32(params + 8u, 1u);              /* Flags: PARAMS_NORMALIZED */
+    put32(params + SXW_PARAMS_STD_INPUT, 3u);
+    put32(params + SXW_PARAMS_STD_OUTPUT, 7u);
+    put32(params + SXW_PARAMS_STD_ERROR, 11u);
+    put32(p->peb + SXW_PEB_PROCESS_PARAMETERS, params);
+}
+
+static int setup_process(sxw_process *p, const char *exe_path, const char *arguments) {
     const sxw_module *exe = &p->modules[0];
     uint32_t stack = exe->image.size_of_stack_reserve;
     stack = stack < SXW_MIN_STACK ? SXW_MIN_STACK : stack > SXW_MAX_STACK ? SXW_MAX_STACK : stack;
@@ -555,6 +653,7 @@ static int setup_process(sxw_process *p) {
     put32(p->teb + SXW_TEB_PEB, p->peb);
     put32(p->teb + SXW_TEB_GATE, p->platform.gate);
     put32(p->peb + SXW_PEB_IMAGE_BASE, exe->base);
+    setup_parameters(p, exe_path, arguments);
 
     if (setup_tls(p, p->teb) != 0) {
         return -1;
@@ -574,8 +673,8 @@ static int setup_process(sxw_process *p) {
     return 0;
 }
 
-static int protect_images(sxw_process *p) {
-    for (uint32_t i = 0; i < p->module_count; ++i) {
+static int protect_images(sxw_process *p, uint32_t first) {
+    for (uint32_t i = first; i < p->module_count; ++i) {
         const sxw_module *m = &p->modules[i];
         pe_run runs[PE_MAX_SECTIONS + 2u];
         uint32_t count = 0;
@@ -616,7 +715,7 @@ void sxw_unload(sxw_process *p) {
     p->order_count = 0;
 }
 
-int sxw_load(sxw_process *p, const sxw_platform *platform, const char *exe) {
+int sxw_load(sxw_process *p, const sxw_platform *platform, const char *exe, const char *arguments) {
     p->platform = *platform;
     p->module_count = 0;
     p->order_count = 0;
@@ -655,11 +754,147 @@ int sxw_load(sxw_process *p, const sxw_platform *platform, const char *exe) {
     order_from(p, ntdll, &visited);
     order_from(p, exe_index, &visited);
 
-    if (setup_process(p) != 0 || protect_images(p) != 0) {
+    if (setup_process(p, exe, arguments) != 0 || protect_images(p, 0) != 0) {
         fail_status(p, SXW_STATUS_INVALID_IMAGE_FORMAT);
         sxw_unload(p);
         return -1;
     }
     close_files(p);
     return 0;
+}
+
+/* ---- Loading at run time -------------------------------------------------- */
+
+static uint32_t win32_error_for(uint32_t status) {
+    switch (status) {
+    case SXW_STATUS_DLL_NOT_FOUND: return SXW_ERROR_MOD_NOT_FOUND;
+    case SXW_STATUS_ENTRYPOINT_NOT_FOUND: return SXW_ERROR_PROC_NOT_FOUND;
+    case SXW_STATUS_ORDINAL_NOT_FOUND: return SXW_ERROR_INVALID_ORDINAL;
+    case SXW_STATUS_NO_MEMORY: return SXW_ERROR_NOT_ENOUGH_MEMORY;
+    case SXW_STATUS_DLL_INIT_FAILED: return SXW_ERROR_DLL_INIT_FAILED;
+    default: return SXW_ERROR_BAD_EXE_FORMAT;
+    }
+}
+
+/* Releases every module and region added after the marks. */
+static void roll_back(sxw_process *p, uint32_t modules, uint32_t regions, uint32_t order) {
+    for (uint32_t i = modules; i < p->module_count; ++i) {
+        if (p->modules[i].handle != 0) {
+            p->platform.close_image(p->platform.context, p->modules[i].handle);
+            p->modules[i].handle = 0;
+        }
+        p->depends[i] = 0;
+    }
+    while (p->region_count > regions) {
+        --p->region_count;
+        p->platform.unmap(p->platform.context, p->regions[p->region_count].base,
+                          p->regions[p->region_count].size);
+    }
+    p->module_count = modules;
+    p->order_count = order;
+}
+
+/* Binds, orders and protects the modules from `first` on, and lists them in
+ * initialization order for the guest to run their DllMain. */
+static int finish_added(sxw_process *p, uint32_t first, sxw_start_module *added, uint32_t capacity,
+                        uint32_t *count) {
+    if (bind_all(p) != 0) {
+        return -1;
+    }
+    for (uint32_t i = first; i < p->module_count; ++i) {
+        const sxw_module *m = &p->modules[i];
+        if (m->image.directories[PE_DIR_TLS].size != 0u) {
+            /* Windows XP loads such a DLL and its TLS does not work. */
+            fail_status(p, SXW_STATUS_DLL_INIT_FAILED);
+            d_put(p, m->name);
+            d_put(p, ": a DLL loaded at run time cannot have a TLS directory");
+            return -1;
+        }
+    }
+    if (p->module_count - first > capacity) {
+        fail_status(p, SXW_STATUS_NO_MEMORY);
+        d_put(p, "too many DLLs loaded at once");
+        return -1;
+    }
+    uint32_t visited = 0;
+    for (uint32_t i = 0; i < first; ++i) {
+        visited |= 1u << i;
+    }
+    uint32_t order_first = p->order_count;
+    for (uint32_t i = first; i < p->module_count; ++i) {
+        order_from(p, i, &visited);
+    }
+    if (protect_images(p, first) != 0) {
+        return -1;
+    }
+    for (uint32_t i = first; i < p->module_count; ++i) {
+        if (p->modules[i].handle != 0) {
+            p->platform.close_image(p->platform.context, p->modules[i].handle);
+            p->modules[i].handle = 0;
+        }
+    }
+    *count = p->order_count - order_first;
+    for (uint32_t k = 0; k < *count; ++k) {
+        const sxw_module *m = &p->modules[p->order[order_first + k]];
+        added[k].base = m->base;
+        added[k].entry = m->image.entry_rva != 0u ? m->base + m->image.entry_rva : 0u;
+        added[k].tls_callbacks = 0;
+        added[k].flags = SXW_START_DLL;
+    }
+    return 0;
+}
+
+int sxw_load_library(sxw_process *p, const char *name, sxw_start_module *added, uint32_t capacity,
+                     uint32_t *count, uint32_t *base, uint32_t *error) {
+    const uint32_t modules = p->module_count;
+    const uint32_t regions = p->region_count;
+    const uint32_t order = p->order_count;
+    uint32_t index;
+    d_reset(p);
+    *count = 0;
+    if (load_module(p, name, "LoadLibrary", &index) != 0 ||
+        finish_added(p, modules, added, capacity, count) != 0) {
+        *error = win32_error_for(p->status);
+        roll_back(p, modules, regions, order);
+        return -1;
+    }
+    *base = p->modules[index].base;
+    *error = SXW_ERROR_SUCCESS;
+    return 0;
+}
+
+int sxw_get_proc(sxw_process *p, uint32_t base, const char *name, uint16_t ordinal,
+                 sxw_start_module *added, uint32_t capacity, uint32_t *count, uint32_t *address,
+                 uint32_t *error) {
+    const uint32_t modules = p->module_count;
+    const uint32_t regions = p->region_count;
+    const uint32_t order = p->order_count;
+    d_reset(p);
+    *count = 0;
+    uint32_t index = SXW_MAX_MODULES;
+    for (uint32_t i = 0; i < p->module_count; ++i) {
+        if (p->modules[i].base == base) {
+            index = i;
+        }
+    }
+    if (index == SXW_MAX_MODULES) {
+        *error = SXW_ERROR_INVALID_HANDLE;
+        return -1;
+    }
+    uint32_t provider;
+    if (resolve(p, "GetProcAddress", p->modules[index].name, name, ordinal, 0, address, &provider) != 0 ||
+        finish_added(p, modules, added, capacity, count) != 0) {
+        /* Windows answers a missing ordinal as it answers a missing name. */
+        *error = p->status == SXW_STATUS_ORDINAL_NOT_FOUND ? SXW_ERROR_PROC_NOT_FOUND
+                                                           : win32_error_for(p->status);
+        roll_back(p, modules, regions, order);
+        return -1;
+    }
+    *error = SXW_ERROR_SUCCESS;
+    return 0;
+}
+
+int sxw_allocate_region(sxw_process *p, uint32_t size, uint32_t *base) {
+    d_reset(p);
+    return size == 0u ? -1 : map_region(p, size, base);
 }

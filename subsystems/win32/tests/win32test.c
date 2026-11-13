@@ -1,42 +1,42 @@
 /*
  * win32test.sxe -- The win32-hello smoke scenario's runner: a SUN parent that
- * runs each W1 fixture through winhost, captures its standard output through
- * a pipe and compares the bytes and the exit status with what Windows XP
- * produced for the same files (docs/userland/WIN32.md, "Fixtures"; the host
- * harness checks the same expectations in tests/host/win32_harness_test.py).
+ * runs each fixture through winhost, captures its standard output through a
+ * pipe and compares the bytes and the exit status with what Windows XP
+ * produced for the same files. The expected bytes are the files under
+ * /system/win/drive_c/tests/expected, the same ones the host harness test
+ * reads (docs/userland/WIN32.md, "Fixtures"). startup.exe runs twice on one
+ * registry file: the second run reads back what the first wrote.
+ *
  * Each case is reported as a line of the system log, which reaches the
  * serial port; exits 0 when every case matches.
  */
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "abi/savanxp_abi.h"
 #include "abi/savanxp_native_abi.h"
 #include "sxn/sxn.h"
 
 #define WINHOST "/system/winhost.sxe"
-#define FIXTURES "/system/win/drive_c/tests"
+#define TESTS "/system/win/drive_c/tests"
+#define EXPECTED TESTS "/expected"
+#define REGISTRY TESTS "/registry.reg"
 
 typedef struct fixture {
     const char *name;
-    const char *output;
+    const char *expected; /* a file under EXPECTED, or 0 for no output */
     uint32_t status;
+    int registry;
+    int with_arguments; /* alpha "two words" 3 */
 } fixture;
 
 static const fixture k_fixtures[] = {
-    {"hello.exe", "Hello from a PE32 executable.\r\n", 42u},
-    {"initorder.exe",
-     "beta: attach, static load, pointers agree\r\n"
-     "alpha: attach, beta says 7, pointers agree\r\n"
-     "initorder: TLS callback 1, reason 1\r\n"
-     "initorder: TLS callback 2, reason 1\r\n"
-     "initorder: entry, thread value 7, alpha says 3, beta says 7\r\n"
-     "alpha: detach, process ending\r\n"
-     "beta: detach, process ending\r\n"
-     "initorder: TLS callback 1, reason 0\r\n"
-     "initorder: TLS callback 2, reason 0\r\n",
-     7u},
-    {"missingdll.exe", "", 0xc0000135u},
-    {"missingsym.exe", "", 0xc0000139u},
+    {"hello.exe", "hello.out", 42u, 0, 0},
+    {"initorder.exe", "initorder.out", 7u, 0, 0},
+    {"missingdll.exe", 0, 0xc0000135u, 0, 0},
+    {"missingsym.exe", 0, 0xc0000139u, 0, 0},
+    {"startup.exe", "startup-1.out", 5u, 1, 1},
+    {"startup.exe", "startup-2.out", 5u, 1, 1},
 };
 
 static uint32_t length_of(const char *text) {
@@ -60,38 +60,85 @@ static void say(const char *a, const char *b, const char *c) {
     (void)sxn_log(line);
 }
 
+static void join(char *out, uint32_t capacity, const char *dir, const char *name) {
+    uint32_t n = 0;
+    for (const char *p = dir; *p != 0 && n + 2u < capacity; ++p) {
+        out[n++] = *p;
+    }
+    out[n++] = '/';
+    for (const char *p = name; *p != 0 && n + 1u < capacity; ++p) {
+        out[n++] = *p;
+    }
+    out[n] = 0;
+}
+
+/* A whole small file into buffer; its size, or -1. */
+static long read_file(const char *path, char *buffer, uint32_t capacity) {
+    long handle = sxn_open_file(path, SXN_FILE_READ);
+    if (handle < 0) {
+        return -1;
+    }
+    uint32_t total = 0;
+    for (;;) {
+        long count = sxn_read(handle, buffer + total, capacity - total);
+        if (count <= 0) {
+            break;
+        }
+        total += (uint32_t)count;
+    }
+    (void)sxn_close(handle);
+    return (long)total;
+}
+
 /* Runs one fixture; 1 when its output and status match. */
 static int run(const fixture *f) {
-    static char output[4096];
+    static char output[8192];
+    static char expected[8192];
     char path[128];
-    uint32_t n = 0;
-    for (const char *p = FIXTURES "/"; *p != 0; ++p) {
-        path[n++] = *p;
+    join(path, sizeof(path), TESTS, f->name);
+
+    long expected_size = 0;
+    if (f->expected != 0) {
+        char expected_path[128];
+        join(expected_path, sizeof(expected_path), EXPECTED, f->expected);
+        expected_size = read_file(expected_path, expected, sizeof(expected));
+        if (expected_size < 0) {
+            say("win32test: FAIL ", f->name, ": no expected output file");
+            return 0;
+        }
     }
-    for (const char *p = f->name; *p != 0 && n + 1u < sizeof(path); ++p) {
-        path[n++] = *p;
-    }
-    path[n] = 0;
 
     int32_t pipe[2] = {-1, -1};
     if (sxn_pipe_create(pipe) != 0) {
-        say("win32test: ", f->name, ": no pipe\n");
+        say("win32test: FAIL ", f->name, ": no pipe");
         return 0;
     }
-    char *argv[2] = {WINHOST, path};
+    char *argv[9];
+    int argc = 0;
+    argv[argc++] = WINHOST;
+    if (f->registry) {
+        argv[argc++] = "--registry";
+        argv[argc++] = REGISTRY;
+    }
+    argv[argc++] = path;
+    if (f->with_arguments) {
+        argv[argc++] = "alpha";
+        argv[argc++] = "two words";
+        argv[argc++] = "3";
+    }
     struct sxn_spawn_request request;
-    sxn_spawn_request_init(&request, WINHOST, argv, 2);
+    sxn_spawn_request_init(&request, WINHOST, argv, argc);
     request.std_handles[1] = pipe[1];
     long child = sxn_spawn_ex(&request);
     (void)sxn_close(pipe[1]);
     if (child <= 0) {
         (void)sxn_close(pipe[0]);
-        say("win32test: ", f->name, ": cannot start winhost\n");
+        say("win32test: FAIL ", f->name, ": cannot start winhost");
         return 0;
     }
     uint32_t total = 0;
     for (;;) {
-        long count = sxn_read(pipe[0], output + total, sizeof(output) - 1u - total);
+        long count = sxn_read(pipe[0], output + total, sizeof(output) - total);
         if (count <= 0) {
             break;
         }
@@ -101,18 +148,23 @@ static int run(const fixture *f) {
     int status = -1;
     long reaped = sxn_waitpid(child, &status);
 
-    uint32_t expected = length_of(f->output);
-    int same = total == expected;
-    for (uint32_t i = 0; same && i < expected; ++i) {
-        same = output[i] == f->output[i];
+    int same = (long)total == expected_size;
+    for (uint32_t i = 0; same && i < total; ++i) {
+        same = output[i] == expected[i];
     }
     int ok = same && reaped == child && (uint32_t)status == f->status;
-    say(ok ? "win32test: ok   " : "win32test: FAIL ", f->name,
-        !same ? " (output differs)\n" : (uint32_t)status != f->status ? " (status differs)\n" : "\n");
+    say(ok ? "win32test: ok   " : "win32test: FAIL ", f->expected != 0 ? f->expected : f->name,
+        !same ? " (output differs)" : (uint32_t)status != f->status ? " (status differs)" : "");
     return ok;
 }
 
 int main(void) {
+    /* A fresh registry, so the counter starts where Windows XP's did. */
+    static const char empty[] = "SavanXP registry 1\n";
+    if (sxn_write_file(REGISTRY, empty, length_of(empty)) != 0) {
+        say("win32test: FAIL ", REGISTRY, ": cannot be written");
+        sxn_exit(1);
+    }
     int failures = 0;
     for (uint32_t i = 0; i < sizeof(k_fixtures) / sizeof(k_fixtures[0]); ++i) {
         failures += !run(&k_fixtures[i]);

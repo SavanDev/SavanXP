@@ -30,6 +30,20 @@ target_link_options(savanxp-win32-pe-test PRIVATE -fsanitize=address,undefined)
 add_dependencies(savanxp_tests savanxp-win32-pe-test)
 
 add_test(NAME win32-pe-test COMMAND savanxp-win32-pe-test)
+
+# HKEY_CURRENT_USER's store: the file format, every error the services
+# return, and data compaction.
+add_executable(savanxp-win32-registry-test
+    "${SAVANXP_WIN32_ROOT}/loader/registry.c"
+    tests/host/win32_registry_test.c)
+target_include_directories(savanxp-win32-registry-test PRIVATE
+    "${SAVANXP_WIN32_ROOT}/include" "${SAVANXP_WIN32_ROOT}/loader")
+set_target_properties(savanxp-win32-registry-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
+target_compile_options(savanxp-win32-registry-test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(savanxp-win32-registry-test PRIVATE -fsanitize=address,undefined)
+add_dependencies(savanxp_tests savanxp-win32-registry-test)
+add_test(NAME win32-registry-test COMMAND savanxp-win32-registry-test)
 add_test(NAME win32-pe-fixtures-test
     COMMAND savanxp-win32-pe-test --fixtures "${SAVANXP_WIN32_FIXTURES}")
 set_tests_properties(win32-pe-fixtures-test PROPERTIES SKIP_RETURN_CODE 77)
@@ -54,7 +68,7 @@ file(MAKE_DIRECTORY "${SXW_SYSTEM32}" "${SXW_FIXTURES}" "${SXW_STUBS}" "${SXW_OB
 
 set(SXW_CFLAGS
     --target=i686-pc-windows-msvc -ffreestanding -fno-stack-protector -fno-builtin
-    -O1 -Wall -Wextra -Werror -I "${SAVANXP_WIN32_ROOT}/include")
+    -O1 -Wall -Wextra -Werror -I "${SAVANXP_WIN32_ROOT}/include" -I "${SAVANXP_WIN32_ROOT}/dlls/common")
 # /Brepro: the timestamp is a hash of the contents, so a fixture keeps its
 # hash across builds and machines. Windows XP refuses an image whose
 # subsystem version is above 5.1, which sxw_image sets.
@@ -132,6 +146,12 @@ sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000
     SOURCES "${SXW_DLLS}/ntdll/ntdll.c" DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
     SOURCES "${SXW_DLLS}/kernel32/kernel32.c" DEF "${SXW_DLLS}/kernel32/kernel32.def" LIBS ntdll)
+sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY DllMain
+    SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/common/codepage.c"
+    DEF "${SXW_DLLS}/msvcrt/msvcrt.def" LIBS kernel32 ntdll)
+sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
+    SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c"
+    DEF "${SXW_DLLS}/advapi32/advapi32.def" LIBS ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -143,6 +163,8 @@ sxw_image(NAME alpha.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY Dl
     SOURCES "${SXW_FX}/initorder/alpha.c" DEF "${SXW_FX}/initorder/alpha.def" LIBS beta kernel32)
 sxw_image(NAME initorder.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/initorder/initorder.c" LIBS alpha beta kernel32)
+sxw_image(NAME startup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/startup/startup.c" LIBS msvcrt kernel32 advapi32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -163,6 +185,7 @@ set(SAVANXP_WIN32_COPY_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${SXW_SYSTEM32}/ntdll.dll" "${SXW_SYSTEM32}/kernel32.dll"
+            "${SXW_SYSTEM32}/msvcrt.dll" "${SXW_SYSTEM32}/advapi32.dll"
             "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/")
 if(SAVANXP_INCLUDE_TEST_APPS)
     list(APPEND SAVANXP_WIN32_COPY_COMMANDS
@@ -171,7 +194,10 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
-                "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/")
+                "${SXW_FIXTURES}/startup.exe"
+                "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
 endif()
 
 # ---- The host harness -----------------------------------------------------
@@ -186,6 +212,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
         "${SAVANXP_WIN32_ROOT}/harness/gate_x86_64.S"
         "${SAVANXP_WIN32_ROOT}/loader/loader.c"
         "${SAVANXP_WIN32_ROOT}/loader/services.c"
+        "${SAVANXP_WIN32_ROOT}/loader/registry.c"
         "${SAVANXP_WIN32_ROOT}/pe/pe.c")
     target_include_directories(savanxp-win32-harness PRIVATE
         "${SAVANXP_WIN32_ROOT}/include" "${SAVANXP_WIN32_ROOT}/pe" "${SAVANXP_WIN32_ROOT}/loader")
@@ -197,5 +224,6 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
     add_test(NAME win32-harness-test
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/win32_harness_test.py"
                 --harness "$<TARGET_FILE:savanxp-win32-harness>"
-                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}")
+                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
+                --expected "${SXW_FX}/expected")
 endif()

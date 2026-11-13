@@ -1,0 +1,20 @@
+LIBRARY msvcrt.dll
+EXPORTS
+    _XcptFilter
+    __getmainargs
+    __p__commode
+    __p__fmode
+    __set_app_type
+    __setusermatherr
+    _acmdln DATA
+    _adjust_fdiv DATA
+    _c_exit
+    _cexit
+    _controlfp
+    _except_handler3
+    _exit
+    _initterm
+    exit
+    rand
+    srand
+    time

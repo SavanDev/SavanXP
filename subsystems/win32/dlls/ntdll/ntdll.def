@@ -1,5 +1,12 @@
 LIBRARY ntdll.dll
 EXPORTS
     RtlExitUserProcess
+    SxwFindModule
+    SxwGetProcAddress
+    SxwHeapAllocate
+    SxwHeapFree
+    SxwHeapSize
+    SxwLoadLibrary
     SxwProcessStart
     SxwService
+    SxwTime

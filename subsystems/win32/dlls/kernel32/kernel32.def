@@ -1,5 +1,14 @@
 LIBRARY kernel32.dll
 EXPORTS
     ExitProcess
+    GetCommandLineW
+    GetModuleHandleA
+    GetProcAddress
+    GetStartupInfoA
     GetStdHandle
+    LoadLibraryA
+    LocalAlloc
+    LocalFree
+    MulDiv
     WriteFile
+    lstrlenW
