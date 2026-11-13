@@ -1,0 +1,5 @@
+# The Start menu's shortcut to Solitaire (docs/userland/WIN32.md,
+# "Solitaire"). sol.exe is the user's own, never part of the build: the menu
+# lists this shortcut only once the file is at its target.
+target=/system/win/drive_c/program files/solitaire/sol.exe
+workdir=/system/win/drive_c/program files/solitaire

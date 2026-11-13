@@ -1,16 +1,20 @@
 #include "desktop.h"
 
 #include "shared/version.h"
+#include "shortcut.h"
 #include "start_logo.h"
+#include "start_shortcuts.h"
 
 /*
  * The Start menu: a popup of the desktop, anchored at the bottom left above
- * the taskbar (docs/desktop/START_MENU.md). Two cascading entries, Programs
- * and Settings, and below an etched separator Shut Down... and Restart...,
- * which open the Shut Down dialog (desktop_shutdown.c). Mouse only: it has no
- * keyboard. It closes when a program is launched from its cascade, when the
- * Start button is clicked again, or on a press outside it (windowd asks, the
- * desktop closes it).
+ * the taskbar (docs/desktop/START_MENU.md). At the top, above an etched
+ * separator, the Start menu's own shortcuts when there are any
+ * (start_shortcuts.h); then two cascading entries, Programs and Settings, and
+ * below an etched separator Shut Down... and Restart..., which open the Shut
+ * Down dialog (desktop_shutdown.c). Mouse only: it has no keyboard. It closes
+ * when a shortcut is opened, when a program is launched from its cascade,
+ * when the Start button is clicked again, or on a press outside it (windowd
+ * asks, the desktop closes it).
  *
  * The cascade (desktop_submenu.c) opens to the right of an entry when the
  * pointer rests on it for STARTMENU_CASCADE_DELAY_MS, or at once when it is
@@ -40,6 +44,8 @@
  * under it, before the first footer row. */
 #define STARTMENU_FOOTER_GAP 5
 #define STARTMENU_FOOTER_HEIGHT (2 + STARTMENU_FOOTER_GAP + STARTMENU_FOOTER_ROWS * STARTMENU_ROW_HEIGHT)
+/* Between the shortcuts and the entries: the same etched line and gap. */
+#define STARTMENU_SHORTCUTS_GAP (2 + STARTMENU_FOOTER_GAP)
 /* The banner caption is the system name in the caption face followed by the
  * edition in the UI face, rotated bottom to top, as in NT 4. */
 #define STARTMENU_CAPTION_GAP 4
@@ -306,6 +312,13 @@ static int g_pending_cascade = -1;
 static unsigned long g_cascade_due_ms = 0;
 /* The footer action chosen: its dialog opens once the menu has closed. */
 static int g_pending_action = -1;
+/* The shortcuts shown this time, the one under the pointer, the one pressed,
+ * and the one chosen: it opens once the menu has closed. */
+static int g_shortcut_count = 0;
+static int g_hot_shortcut = -1;
+static int g_pressed_shortcut = -1;
+static int g_pending_shortcut = -1;
+static char g_pending_shortcut_path[SHORTCUT_PATH_CAPACITY];
 
 static const char *entry_label(int entry)
 {
@@ -317,19 +330,47 @@ static const struct savanxp_embedded_bitmap_asset *entry_icon(int entry)
     return g_entries[entry] == DESKTOP_SUBMENU_SETTINGS ? &k_settings_icon : &k_programs_icon;
 }
 
-/* Entries start under the top margin; the footer follows the last one. */
+/* Shortcuts start under the top margin; the entries follow them and their
+ * separator, and the footer follows the last entry. */
+static struct sx_rect shortcut_rect(int index)
+{
+    return sx_rect_make(
+        STARTMENU_MARGIN + STARTMENU_STRIP_WIDTH,
+        STARTMENU_MARGIN + index * STARTMENU_ROW_HEIGHT,
+        STARTMENU_WIDTH - STARTMENU_MARGIN * 2 - STARTMENU_STRIP_WIDTH,
+        STARTMENU_ROW_HEIGHT);
+}
+
+static int entries_top(void)
+{
+    return STARTMENU_MARGIN + g_shortcut_count * STARTMENU_ROW_HEIGHT +
+           (g_shortcut_count > 0 ? STARTMENU_SHORTCUTS_GAP : 0);
+}
+
 static struct sx_rect entry_rect(int entry)
 {
     return sx_rect_make(
         STARTMENU_MARGIN + STARTMENU_STRIP_WIDTH,
-        STARTMENU_MARGIN + entry * STARTMENU_ROW_HEIGHT,
+        entries_top() + entry * STARTMENU_ROW_HEIGHT,
         STARTMENU_WIDTH - STARTMENU_MARGIN * 2 - STARTMENU_STRIP_WIDTH,
         STARTMENU_ROW_HEIGHT);
 }
 
 static int entries_bottom(void)
 {
-    return STARTMENU_MARGIN + g_entry_count * STARTMENU_ROW_HEIGHT;
+    return entries_top() + g_entry_count * STARTMENU_ROW_HEIGHT;
+}
+
+static int shortcut_hit(int x, int y)
+{
+    for (int index = 0; index < g_shortcut_count; ++index)
+    {
+        if (sx_rect_contains_point(shortcut_rect(index), x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
 }
 
 /* The rect of footer row `action` (0 = Shut Down, 1 = Restart): first the
@@ -371,18 +412,20 @@ static int footer_hit(int x, int y)
     return -1;
 }
 
-/* Which entries there are: Programs always, Settings when the catalog has a
- * Settings group. Sized to them, so the measure decides the height. */
+/* Which rows there are: the shortcuts whose targets exist, Programs always,
+ * Settings when the catalog has a Settings group. Sized to them, so the
+ * measure decides the height. */
 static void startmenu_measure(int *width, int *height)
 {
     desktop_submenu_refresh_catalog();
+    g_shortcut_count = start_shortcuts_load();
     g_entry_count = 0;
     g_entries[g_entry_count++] = DESKTOP_SUBMENU_PROGRAMS;
     if (!desktop_submenu_is_empty(DESKTOP_SUBMENU_SETTINGS))
     {
         g_entries[g_entry_count++] = DESKTOP_SUBMENU_SETTINGS;
     }
-    g_height = STARTMENU_MARGIN * 2 + g_entry_count * STARTMENU_ROW_HEIGHT + STARTMENU_FOOTER_HEIGHT;
+    g_height = STARTMENU_MARGIN + entries_bottom() + STARTMENU_FOOTER_HEIGHT;
     *width = STARTMENU_WIDTH;
     *height = g_height;
 }
@@ -439,12 +482,29 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx)
         frame.y + STARTMENU_MARGIN,
         frame.height - (STARTMENU_MARGIN * 2));
 
+    for (int index = 0; index < g_shortcut_count; ++index)
+    {
+        const struct start_shortcut *shortcut = start_shortcuts_at(index);
+        struct savanxp_embedded_bitmap_asset icon = {
+            START_SHORTCUTS_ICON_EXTENT, START_SHORTCUTS_ICON_EXTENT, shortcut->icon};
+
+        paint_row(&painter, shortcut_rect(index), shortcut->has_icon ? &icon : &k_programs_icon, shortcut->name,
+                  index == g_hot_shortcut, 0);
+    }
+    if (g_shortcut_count > 0)
+    {
+        int line_y = STARTMENU_MARGIN + g_shortcut_count * STARTMENU_ROW_HEIGHT + STARTMENU_FOOTER_GAP / 2;
+
+        sx_painter_hline(&painter, separator_x, line_y, separator_width, SXGUI_COLOR_SHADOW);
+        sx_painter_hline(&painter, separator_x, line_y + 1, separator_width, SXGUI_COLOR_LIGHT);
+    }
+
     for (entry = 0; entry < g_entry_count; ++entry)
     {
         /* Lit under the pointer, and while its cascade is open and the
          * pointer is not on another row of this menu. */
         int selected = entry == g_hot_entry ||
-                       (g_hot_entry < 0 && g_hot_footer < 0 && entry == g_open_cascade);
+                       (g_hot_entry < 0 && g_hot_footer < 0 && g_hot_shortcut < 0 && entry == g_open_cascade);
 
         paint_row(&painter, entry_rect(entry), entry_icon(entry), entry_label(entry), selected, 1);
     }
@@ -497,10 +557,11 @@ static void startmenu_want_cascade(int entry)
 void desktop_startmenu_submenu_entered(void)
 {
     g_pending_cascade = g_open_cascade;
-    if (g_hot_entry != -1 || g_hot_footer != -1)
+    if (g_hot_entry != -1 || g_hot_footer != -1 || g_hot_shortcut != -1)
     {
         g_hot_entry = -1;
         g_hot_footer = -1;
+        g_hot_shortcut = -1;
         desktop_repaint_popup(DESKTOP_POPUP_START_MENU);
     }
 }
@@ -525,6 +586,9 @@ static int startmenu_open(void)
     g_pending_cascade = -1;
     g_cascade_due_ms = 0;
     g_pending_action = -1;
+    g_hot_shortcut = -1;
+    g_pressed_shortcut = -1;
+    g_pending_shortcut = -1;
     return 0;
 }
 
@@ -544,6 +608,13 @@ static void startmenu_close(void)
     {
         desktop_shutdown_dialog(DESKTOP_SHUTDOWN_RESTART);
     }
+    /* A shortcut opens the way the desktop opens one: a .exe through its
+     * association, which is winhost. */
+    if (g_pending_shortcut >= 0)
+    {
+        g_pending_shortcut = -1;
+        (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
+    }
 }
 
 static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
@@ -552,29 +623,32 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
     uint32_t up = g_last_buttons & ~pointer->buttons;
     int entry = entry_hit(pointer->x, pointer->y);
     int footer = footer_hit(pointer->x, pointer->y);
+    int shortcut = shortcut_hit(pointer->x, pointer->y);
     uint32_t actions = DESKTOP_ACTION_NONE;
 
     (void)gfx;
     g_last_buttons = pointer->buttons;
-    if (entry != g_hot_entry || footer != g_hot_footer)
+    if (entry != g_hot_entry || footer != g_hot_footer || shortcut != g_hot_shortcut)
     {
         g_hot_entry = entry;
         g_hot_footer = footer;
+        g_hot_shortcut = shortcut;
         actions |= DESKTOP_ACTION_REPAINT;
     }
-    /* Resting on an entry asks for its cascade, on the footer for none. The
-     * banner and the separator ask for nothing. */
+    /* Resting on an entry asks for its cascade, on a shortcut or the footer
+     * for none. The banner and the separators ask for nothing. */
     if (entry >= 0)
     {
         startmenu_want_cascade(entry);
     }
-    else if (footer >= 0)
+    else if (footer >= 0 || shortcut >= 0)
     {
         startmenu_want_cascade(-1);
     }
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
     {
         g_pressed_footer = footer;
+        g_pressed_shortcut = shortcut;
         /* A click does not wait for the delay. */
         if (entry >= 0 && entry != g_open_cascade)
         {
@@ -591,7 +665,16 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
             g_pending_action = footer;
             actions |= DESKTOP_ACTION_CLOSE;
         }
+        else if (shortcut >= 0 && shortcut == g_pressed_shortcut)
+        {
+            const struct start_shortcut *chosen = start_shortcuts_at(shortcut);
+
+            memcpy(g_pending_shortcut_path, chosen->path, sizeof(g_pending_shortcut_path));
+            g_pending_shortcut = shortcut;
+            actions |= DESKTOP_ACTION_CLOSE;
+        }
         g_pressed_footer = -1;
+        g_pressed_shortcut = -1;
     }
     return actions;
 }
@@ -614,10 +697,11 @@ static uint32_t startmenu_tick(void)
 static uint32_t startmenu_pointer_left(void)
 {
     g_pending_cascade = g_open_cascade;
-    if (g_hot_entry != -1 || g_hot_footer != -1)
+    if (g_hot_entry != -1 || g_hot_footer != -1 || g_hot_shortcut != -1)
     {
         g_hot_entry = -1;
         g_hot_footer = -1;
+        g_hot_shortcut = -1;
         return DESKTOP_ACTION_REPAINT;
     }
     return DESKTOP_ACTION_NONE;

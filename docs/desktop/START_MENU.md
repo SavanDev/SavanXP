@@ -7,6 +7,8 @@ mouse only.
 
 ```
 +--+------------------+
+|  | [] Solitaire     |
+|  |------------------|
 |  | [] Programs    > |--+------------------+
 |  | [] Settings    > |  | Accessories      |
 |  |------------------|  | [] Calculator    |
@@ -17,6 +19,8 @@ mouse only.
 
 ## What it shows
 
+- **Shortcuts**, at the top above an etched separator, when there are any
+  (see [Shortcuts](#shortcuts)).
 - **Programs ▸**: a cascade with every group of progman's catalog except
   Settings. Each group appears under a grey header, followed by its items.
 - **Settings ▸**: a cascade with the items of the `Settings` group and no
@@ -32,6 +36,29 @@ System Properties) declare `category=Settings`, the way Windows 95 kept its
 Control Panel out of Programs. Any other category is a Programs group. Moving
 a program between the two cascades is a change to its manifest, not to the
 menu.
+
+## Shortcuts
+
+The menu's own shortcuts are `.sxlnk` files
+([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)) in two folders: the system's,
+`/system/start`, which the build fills, and the user's, `Start Menu` in the
+profile. `start_shortcuts.c` reads both each time the menu opens and lists,
+sorted by name, every shortcut whose target exists, up to eight; a name in
+both folders is the user's. This is the area above Programs where Windows'
+classic Start menu keeps what is pinned to it, and it is how a program that
+progman's catalog cannot discover reaches the menu: a Windows program, which
+has no `.sxres`.
+
+A row is the file's name without `.sxlnk` and a 16x16 icon: the shortcut's
+`icon=` or its target's, from a program's `.sxicon` or, for a `.exe`, the
+first icon group of its PE resources (`sxgfx/pe_icon.h`). A click closes the
+menu and opens the shortcut as the desktop does (`shortcut_open_path`), so a
+`.exe` goes to `winhost` through its association. Resting on a row closes an
+open cascade.
+
+The build installs `Solitaire.sxlnk`, whose target is the user's own
+`sol.exe` ([WIN32.md](../userland/WIN32.md#solitaire)): it shows only once
+that file is in place.
 
 ## One level of cascade
 
@@ -101,3 +128,8 @@ grows. A future visual setting can turn the switch off.
 - Resting on Programs replaces the Settings cascade.
 - The arrow strips are checked when the Programs cascade overflows.
 - Both footer rows open the Shut Down dialog.
+
+The shortcuts' section has no shot of its own: the build's only shortcut
+needs the user's `sol.exe`. `pe-icon-test` checks the icon reader, and the
+section was checked by hand with Solitaire installed (the shortcut listed with
+its icon, Solitaire started from it, and absent without the file).

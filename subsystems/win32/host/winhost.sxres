@@ -1,0 +1,12 @@
+# SXE resources of winhost, the Win32 subsystem's host
+# (docs/userland/WIN32.md, "winhost"). ext_open declares the capability to
+# run a Windows program: Files and the desktop open a .exe with it through
+# file_assoc. No category, so it is not a Start menu item of its own.
+name=Windows Program Host
+description=Runs a Windows XP program (PE32)
+version=system
+vendor=SavanXP
+subsystem=native
+accent=3a6ea5
+icon=app-gears
+ext_open=.exe

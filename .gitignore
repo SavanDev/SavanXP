@@ -35,6 +35,7 @@ tools/*
 !tools/win32_input.py
 !tools/win32_window_smoke.py
 !tools/win32_dialog_smoke.py
+!tools/win32_solitaire_smoke.py
 !tools/build-user.sh
 !tools/lib/
 !tools/run-user.sh

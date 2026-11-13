@@ -10,7 +10,7 @@
  * executable, then in DIR (default /system/win/drive_c/windows/system32).
  * The arguments follow the program in its command line. HKEY_CURRENT_USER
  * lives in FILE (default /users/user/Settings/win32.reg); --time fixes the
- * guest clock's start, so a run that seeds from the time repeats.
+ * guest's clock at that second, so a run that seeds from the time repeats.
  *
  * The guest's standard output and error are winhost's. The exit status is
  * the guest's 32-bit status, or the NT status Windows XP gives a failed load;
@@ -399,6 +399,31 @@ typedef struct host_window {
 static host_window g_hosts[HOST_WINDOWS];
 static uint64_t g_started_ns;
 
+/* What the main window says about itself (sxnwm_set_presentation): its
+ * title and, once the guest gives one, its icon. Sent whole each time. */
+static char g_main_title[128];
+static uint32_t g_main_icon[SXW_ICON_EXTENT * SXW_ICON_EXTENT];
+static int g_main_has_icon;
+
+static int present_main(void) {
+    struct sxnwm_presentation_source presentation = {0};
+    presentation.title = g_main_title;
+    if (g_main_has_icon) {
+        presentation.icon_extent = SXW_ICON_EXTENT;
+        presentation.icon_pixels = g_main_icon;
+    }
+    return sxnwm_set_presentation(&g_hosts[0].client, &presentation) == 0 ? 0 : 1;
+}
+
+static void keep_title(const char *title) {
+    uint32_t n = 0;
+    while (title[n] != 0 && n + 1u < sizeof(g_main_title)) {
+        g_main_title[n] = title[n];
+        ++n;
+    }
+    g_main_title[n] = 0;
+}
+
 static uint32_t ticks(void *context) {
     (void)context;
     return (uint32_t)((sxn_clock_ns() - g_started_ns) / 1000000ull);
@@ -427,9 +452,8 @@ static uint32_t create_main(const char *title, uint32_t *width, uint32_t *height
     }
     g_hosts[0].open = 1;
     g_hosts[0].close_sent = 0;
-    struct sxnwm_presentation_source presentation = {0};
-    presentation.title = title;
-    (void)sxnwm_set_presentation(wm, &presentation);
+    keep_title(title);
+    (void)present_main();
     /* Ask for the client size and wait a little for the window manager's
      * answer; a later change arrives as a resize event. */
     if (wm->width != *width || wm->height != *height) {
@@ -513,9 +537,24 @@ static int window_title(void *context, uint32_t window, const char *title) {
     if (window != 1u) {
         return sxnwm_set_title(&h->client, title) == 0 ? 0 : 1;
     }
-    struct sxnwm_presentation_source presentation = {0};
-    presentation.title = title;
-    return sxnwm_set_presentation(&h->client, &presentation) == 0 ? 0 : 1;
+    keep_title(title);
+    return present_main();
+}
+
+/* The main window's icon; an owned window shows its owner's. */
+static int window_icon(void *context, uint32_t window, const uint32_t *pixels) {
+    (void)context;
+    if (host_of(window) == NULL) {
+        return 1;
+    }
+    if (window != 1u) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < SXW_ICON_EXTENT * SXW_ICON_EXTENT; ++i) {
+        g_main_icon[i] = pixels[i];
+    }
+    g_main_has_icon = 1;
+    return present_main();
 }
 
 static int window_present(void *context, uint32_t window, const uint32_t *pixels, uint32_t stride, uint32_t width,
@@ -759,6 +798,7 @@ static const sxw_window_platform g_window_platform = {
     .create = window_create,
     .destroy = window_destroy,
     .set_title = window_title,
+    .set_icon = window_icon,
     .present = window_present,
     .wait_event = wait_event,
 };

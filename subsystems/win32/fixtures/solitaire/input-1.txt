@@ -1,0 +1,728 @@
+# Run 1 of sol.exe (WIN32.md, "Solitaire"): the whole first game by pointer,
+# the end-of-game animation stopped with Esc, "No" in its message box, then
+# a new deck back and new options, saved for run 2. Coordinates count from
+# the menu bar's top left; dumps leave the status bar out, and the pointer
+# is over it before each one, so no screenshot shows it.
+wait 500
+move 292 143
+down left 292 143
+move 415 155
+move 538 167
+up left 538 167
+wait 600
+move 292 181
+down left 292 181
+up left 292 181
+wait 600
+move 300 395
+dump m000.ppm 585x387
+move 292 140
+down left 292 140
+move 169 144
+move 46 149
+up left 46 149
+wait 600
+move 292 178
+down left 292 178
+up left 292 178
+wait 600
+move 292 178
+down left 292 178
+up left 292 178
+down left 292 178
+up left 292 178
+wait 600
+move 292 175
+down left 292 175
+up left 292 175
+wait 600
+move 538 152
+down left 538 152
+move 292 158
+move 46 164
+up left 46 164
+wait 600
+move 538 190
+down left 538 190
+up left 538 190
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 32
+down left 156 32
+move 347 98
+move 538 164
+up left 538 164
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 32
+down left 156 32
+move 347 105
+move 538 179
+up left 538 179
+wait 600
+move 142 73
+down left 142 73
+up left 142 73
+down left 142 73
+up left 142 73
+wait 600
+move 128 32
+down left 128 32
+move 292 98
+move 456 164
+up left 456 164
+wait 600
+move 128 32
+down left 128 32
+move 333 113
+move 538 194
+up left 538 194
+wait 600
+move 300 395
+dump m010.ppm 585x387
+move 128 32
+down left 128 32
+move 128 92
+move 128 152
+up left 128 152
+wait 600
+move 374 146
+down left 374 146
+move 251 156
+move 128 167
+up left 128 167
+wait 600
+move 374 184
+down left 374 184
+up left 374 184
+wait 600
+move 374 143
+down left 374 143
+move 456 176
+move 538 209
+up left 538 209
+wait 600
+move 374 181
+down left 374 181
+up left 374 181
+wait 600
+move 374 181
+down left 374 181
+up left 374 181
+down left 374 181
+up left 374 181
+wait 600
+move 374 178
+down left 374 178
+up left 374 178
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 32
+down left 156 32
+move 183 93
+move 210 155
+up left 210 155
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 32
+down left 156 32
+move 142 107
+move 128 182
+up left 128 182
+wait 600
+move 300 395
+dump m020.ppm 585x387
+move 142 32
+down left 142 32
+move 217 90
+move 292 149
+up left 292 149
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 73
+down left 156 73
+up left 156 73
+down left 156 73
+up left 156 73
+wait 600
+move 128 223
+down left 128 223
+up left 128 223
+down left 128 223
+up left 128 223
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 73
+down left 156 73
+up left 156 73
+down left 156 73
+up left 156 73
+wait 600
+move 46 220
+down left 46 220
+up left 46 220
+down left 46 220
+up left 46 220
+wait 600
+move 300 395
+dump m030.ppm 585x387
+move 46 205
+down left 46 205
+up left 46 205
+down left 46 205
+up left 46 205
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 73
+down left 156 73
+up left 156 73
+down left 156 73
+up left 156 73
+wait 600
+move 46 190
+down left 46 190
+up left 46 190
+down left 46 190
+up left 46 190
+wait 600
+move 142 73
+down left 142 73
+up left 142 73
+down left 142 73
+up left 142 73
+wait 600
+move 46 175
+down left 46 175
+up left 46 175
+down left 46 175
+up left 46 175
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 142 32
+down left 142 32
+move 94 83
+move 46 134
+up left 46 134
+wait 600
+move 456 149
+down left 456 149
+move 251 149
+move 46 149
+up left 46 149
+wait 600
+move 456 187
+down left 456 187
+up left 456 187
+wait 600
+move 300 395
+dump m040.ppm 585x387
+move 456 187
+down left 456 187
+up left 456 187
+down left 456 187
+up left 456 187
+wait 600
+move 456 184
+down left 456 184
+up left 456 184
+wait 600
+move 128 32
+down left 128 32
+move 87 105
+move 46 179
+up left 46 179
+wait 600
+move 210 140
+down left 210 140
+move 128 167
+move 46 194
+up left 46 194
+wait 600
+move 210 178
+down left 210 178
+up left 210 178
+wait 600
+move 374 137
+down left 374 137
+move 292 144
+move 210 152
+up left 210 152
+wait 600
+move 374 175
+down left 374 175
+up left 374 175
+wait 600
+move 128 73
+down left 128 73
+up left 128 73
+down left 128 73
+up left 128 73
+wait 600
+move 128 73
+down left 128 73
+up left 128 73
+down left 128 73
+up left 128 73
+wait 600
+move 128 208
+down left 128 208
+up left 128 208
+down left 128 208
+up left 128 208
+wait 600
+move 128 193
+down left 128 193
+up left 128 193
+down left 128 193
+up left 128 193
+wait 600
+move 210 193
+down left 210 193
+up left 210 193
+down left 210 193
+up left 210 193
+wait 600
+move 210 178
+down left 210 178
+up left 210 178
+down left 210 178
+up left 210 178
+wait 600
+move 210 175
+down left 210 175
+up left 210 175
+wait 600
+move 300 395
+dump m050.ppm 585x387
+move 128 32
+down left 128 32
+move 292 95
+move 456 158
+up left 456 158
+wait 600
+move 374 134
+down left 374 134
+move 251 143
+move 128 152
+up left 128 152
+wait 600
+move 456 143
+down left 456 143
+move 415 138
+move 374 134
+up left 374 134
+wait 600
+move 456 181
+down left 456 181
+up left 456 181
+wait 600
+move 456 140
+down left 456 140
+move 374 152
+move 292 164
+up left 292 164
+wait 600
+move 456 178
+down left 456 178
+up left 456 178
+wait 600
+move 456 178
+down left 456 178
+up left 456 178
+down left 456 178
+up left 456 178
+wait 600
+move 456 175
+down left 456 175
+up left 456 175
+wait 600
+move 292 205
+down left 292 205
+up left 292 205
+down left 292 205
+up left 292 205
+wait 600
+move 456 134
+down left 456 134
+move 333 141
+move 210 149
+up left 210 149
+wait 600
+move 538 149
+down left 538 149
+move 497 141
+move 456 134
+up left 456 134
+wait 600
+move 538 187
+down left 538 187
+up left 538 187
+wait 600
+move 128 137
+down left 128 137
+move 333 149
+move 538 161
+up left 538 161
+wait 600
+move 128 175
+down left 128 175
+up left 128 175
+wait 600
+move 538 146
+down left 538 146
+move 292 185
+move 46 224
+up left 46 224
+wait 600
+move 538 184
+down left 538 184
+up left 538 184
+wait 600
+move 300 395
+dump m060.ppm 585x387
+move 538 184
+down left 538 184
+up left 538 184
+down left 538 184
+up left 538 184
+wait 600
+move 538 181
+down left 538 181
+up left 538 181
+wait 600
+move 46 295
+down left 46 295
+up left 46 295
+down left 46 295
+up left 46 295
+wait 600
+move 46 280
+down left 46 280
+up left 46 280
+down left 46 280
+up left 46 280
+wait 600
+move 128 175
+down left 128 175
+up left 128 175
+down left 128 175
+up left 128 175
+wait 600
+move 128 73
+down left 128 73
+up left 128 73
+down left 128 73
+up left 128 73
+wait 600
+move 46 265
+down left 46 265
+up left 46 265
+down left 46 265
+up left 46 265
+wait 600
+move 292 190
+down left 292 190
+up left 292 190
+down left 292 190
+up left 292 190
+wait 600
+move 210 190
+down left 210 190
+up left 210 190
+down left 210 190
+up left 210 190
+wait 600
+move 292 175
+down left 292 175
+up left 292 175
+down left 292 175
+up left 292 175
+wait 600
+move 210 175
+down left 210 175
+up left 210 175
+down left 210 175
+up left 210 175
+wait 600
+move 300 395
+dump m070.ppm 585x387
+move 538 181
+down left 538 181
+up left 538 181
+down left 538 181
+up left 538 181
+wait 600
+move 538 178
+down left 538 178
+up left 538 178
+wait 600
+move 538 178
+down left 538 178
+up left 538 178
+down left 538 178
+up left 538 178
+wait 600
+move 538 175
+down left 538 175
+up left 538 175
+wait 600
+move 46 250
+down left 46 250
+up left 46 250
+down left 46 250
+up left 46 250
+wait 600
+move 374 190
+down left 374 190
+up left 374 190
+down left 374 190
+up left 374 190
+wait 600
+move 456 235
+down left 456 235
+up left 456 235
+down left 456 235
+up left 456 235
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 73
+down left 156 73
+up left 156 73
+down left 156 73
+up left 156 73
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 300 395
+dump m080.ppm 585x387
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 156 73
+down left 156 73
+up left 156 73
+down left 156 73
+up left 156 73
+wait 600
+move 538 175
+down left 538 175
+up left 538 175
+down left 538 175
+up left 538 175
+wait 600
+move 46 235
+down left 46 235
+up left 46 235
+down left 46 235
+up left 46 235
+wait 600
+move 46 220
+down left 46 220
+up left 46 220
+down left 46 220
+up left 46 220
+wait 600
+move 456 220
+down left 456 220
+up left 456 220
+down left 456 220
+up left 456 220
+wait 600
+move 456 205
+down left 456 205
+up left 456 205
+down left 456 205
+up left 456 205
+wait 600
+move 142 73
+down left 142 73
+up left 142 73
+down left 142 73
+up left 142 73
+wait 600
+move 456 190
+down left 456 190
+up left 456 190
+down left 456 190
+up left 456 190
+wait 600
+move 128 73
+down left 128 73
+up left 128 73
+down left 128 73
+up left 128 73
+wait 600
+move 300 395
+dump m090.ppm 585x387
+move 46 205
+down left 46 205
+up left 46 205
+down left 46 205
+up left 46 205
+wait 600
+move 46 190
+down left 46 190
+up left 46 190
+down left 46 190
+up left 46 190
+wait 600
+move 46 175
+down left 46 175
+up left 46 175
+down left 46 175
+up left 46 175
+wait 600
+move 456 175
+down left 456 175
+up left 456 175
+down left 456 175
+up left 456 175
+wait 600
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 128 73
+down left 128 73
+up left 128 73
+down left 128 73
+up left 128 73
+wait 600
+move 374 175
+down left 374 175
+up left 374 175
+down left 374 175
+up left 374 175
+wait 600
+wait 3000
+keydown 0x1b 0x1b
+keyup 0x1b
+wait 1500
+keydown 0x09 0x09
+keyup 0x09
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 1000
+move 300 395
+dump after.ppm 585x387
+# Deck: the frog, then OK.
+move 15 10
+down left 15 10
+up left 15 10
+wait 600
+move 40 73
+down left 40 73
+up left 40 73
+wait 1000
+window 1 267
+move 73 112
+down left 73 112
+up left 73 112
+wait 600
+move 300 250
+dump deck.ppm 267x182
+move 96 163
+down left 96 163
+up left 96 163
+wait 1000
+window 0
+# Options: draw one, untimed, outline dragging, then OK.
+move 15 10
+down left 15 10
+up left 15 10
+wait 600
+move 40 90
+down left 40 90
+up left 40 90
+wait 1000
+window 1 246
+move 20 31
+down left 20 31
+up left 20 31
+wait 600
+move 19 81
+down left 19 81
+up left 19 81
+wait 600
+move 19 120
+down left 19 120
+up left 19 120
+wait 600
+move 300 250
+dump options.ppm 246x164
+move 78 147
+down left 78 147
+up left 78 147
+wait 1000
+window 0
+# Exit from the menu.
+move 15 10
+down left 15 10
+up left 15 10
+wait 600
+move 40 116
+down left 40 116
+up left 40 116
+wait 1500

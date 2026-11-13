@@ -4,14 +4,12 @@ SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
 Win32 is the API it implements. What exists so far is described in
 [WIN32.md](../../userland/WIN32.md).
 
-> **Status: design settled; W0, K1, K2, W1, W2, W3, W4 and W5 complete
-> (2026-11-13): a PE32 program that starts the way `sol.exe` does runs on
-> SavanXP under `winhost`, with the C runtime, `kernel32` and registry
-> functions of the matrix, opens a `windowd` window it paints and drives
-> through `user32` and `gdi32`, loads its resources, the user's own
-> `cards.dll` draws every card as on Windows XP, and its menus, dialogs and
-> message boxes behave as there, described in
-> [WIN32.md](../../userland/WIN32.md). Next: W6.** The
+> **Status: design settled; W0, K1, K2 and W1 to W6 complete (2026-11-13):
+> the user's own Windows XP Solitaire runs unchanged on the SavanXP desktop
+> under `winhost`, from Files and from the Start menu, and a recorded game is
+> won with the pixels Windows XP shows, described in
+> [WIN32.md](../../userland/WIN32.md#solitaire). Next: W7, each later
+> profile with its own consumer.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -660,6 +658,42 @@ a window that opens or a board that renders once does not close the goal.
 Native and POSIX windows and the taskbar stay correct, and the game, its
 files and its settings survive a normal build. `win32-solitaire` is a smoke
 scenario, skipped when the files are absent.
+
+**Done (2026-11-13).** The user's `sol.exe` and `cards.dll`, copied to
+`C:\Program Files\Solitaire`, open from Files through the `.exe`
+association with `winhost` and from a shortcut at the top of the Start menu,
+with the program's own icon there and on its window. With the clock fixed,
+the first deal is the same on Windows XP and here: two recorded runs win it
+in 98 pointer moves (clicks, drags, double clicks), stop the end-of-game
+animation, answer its message box, change the deck and the options, then
+start again on the saved settings to draw one card, drag an outline and
+undo. Every board dumped on Windows XP equals the harness's outside the
+pointer and the menu text, as does the Deck dialog outside its buttons' text,
+and the registry holds the same values. `win32-solitaire-test` and the
+`win32-solitaire` smoke scenario check the same images by hash, skipped
+without the user's files; the files and every image of them stay outside the
+tree, the build and `build/disk.img`.
+
+What changed from the plan above, and why:
+
+- **Launching needed a Start menu section.** The menu discovers programs by
+  their `.sxres`, which a `.exe` has not. It now lists, above Programs, the
+  `.sxlnk` shortcuts of `/system/start` and of the user's `Start Menu`
+  folder whose targets exist; the build ships one for Solitaire. The shell
+  reads a `.exe`'s icon from its PE resources (`sxgfx/pe_icon.h`), and the
+  guest hands its window's icon to the host (ABI version 5).
+- **Fonts report Windows XP's vertical metrics.** Solitaire sizes its status
+  bar from the System font's height: with the strike's 13 pixels the bar was
+  4 pixels off. The strike still draws every font.
+- **Found by playing:** a child's `WS_BORDER` frame (`WM_NCPAINT`), the grey
+  menu bar of a disabled window, and F1's `WM_KEYF1` and `WM_HELP`.
+- **Deviations kept:** `windowd` does not report minimizing to the program;
+  `MessageBoxW` is laid out in dialog units, a pixel wider than Windows XP's
+  here, with English button labels; `SetCursorPos` still fails, so keyboard
+  play does not move the pointer.
+- **The input scripts wait 600 ms after a click**, since two clicks on one
+  spot closer than the double-click time are a double click, and how close
+  they land depends on each system's pace.
 
 ### W7 — later profiles
 

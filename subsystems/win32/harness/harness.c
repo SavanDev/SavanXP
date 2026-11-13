@@ -6,8 +6,8 @@
  *                   program.exe [arguments...]
  *
  * The arguments follow the program in its command line. HKEY_CURRENT_USER
- * lives in FILE (in memory only without it); --time fixes the guest clock's
- * start, so a run that seeds from the time repeats.
+ * lives in FILE (in memory only without it); --time fixes the guest's clock
+ * at that second, so a run that seeds from the time repeats.
  *
  * Windows are offscreen surfaces of a 1024x768 display. Their input comes from
  * SCRIPT, one action per line, given whenever the guest waits for input: a
@@ -335,6 +335,12 @@ static int window_title(void *context, uint32_t id, const char *title) {
     return window_of(id) != NULL ? 0 : 1;
 }
 
+static int window_icon(void *context, uint32_t id, const uint32_t *pixels) {
+    (void)context;
+    (void)pixels;
+    return window_of(id) != NULL ? 0 : 1;
+}
+
 static int window_present(void *context, uint32_t id, const uint32_t *pixels, uint32_t stride, uint32_t width,
                           uint32_t height, const int32_t *rects, uint32_t count) {
     (void)context;
@@ -622,6 +628,7 @@ static const sxw_window_platform g_window_platform = {
     .create = window_create,
     .destroy = window_destroy,
     .set_title = window_title,
+    .set_icon = window_icon,
     .present = window_present,
     .wait_event = wait_event,
 };

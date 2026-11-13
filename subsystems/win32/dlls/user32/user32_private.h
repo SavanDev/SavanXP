@@ -44,6 +44,7 @@ typedef struct wclass {
     int window_extra;
     HINSTANCE instance;
     HICON icon;
+    HICON small_icon; /* RegisterClassExW's hIconSm */
     HCURSOR cursor;
     HBRUSH background;
     LPCWSTR menu_name; /* an id, or menu_text */
@@ -74,6 +75,8 @@ struct window {
     /* Invalid area, client coordinates, and whether it needs erasing. */
     sxw_region invalid;
     int erase;
+    /* The frame needs WM_NCPAINT before the next WM_PAINT. */
+    int frame_dirty;
     /* A top-level window has not had its first WM_SIZE and WM_MOVE. */
     int need_size;
     int destroying;

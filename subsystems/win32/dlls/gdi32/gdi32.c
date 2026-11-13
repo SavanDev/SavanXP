@@ -58,10 +58,15 @@ typedef struct pen {
     u32 color;
 } pen;
 
+/* The vertical metrics a font reports and draws its baseline with; see
+ * font_metrics(). */
 typedef struct font {
     int used;
     int stock;
     int bold;
+    int height;
+    int ascent;
+    int leading;
 } font;
 
 typedef struct bitmap {
@@ -179,10 +184,13 @@ static void init_stock(void) {
         g_brushes[i].color = i < 5u ? k_grays[i] : 0;
     }
     /* Windows' System font, the stock font a device context starts with,
-     * is a bold face. */
+     * is a bold face 16 pixels high with an ascent of 13 at 96 dpi. */
     g_fonts[0].used = 1;
     g_fonts[0].stock = 1;
     g_fonts[0].bold = 1;
+    g_fonts[0].height = 16;
+    g_fonts[0].ascent = 13;
+    g_fonts[0].leading = 3;
     g_bitmaps[0].used = 1;
     g_bitmaps[0].stock = 1;
     g_bitmaps[0].mono = 1;
@@ -224,12 +232,34 @@ HBRUSH WINAPI CreateSolidBrush(COLORREF color) {
     return NULL;
 }
 
-/* Any face, size, width, angle and quality: the platform has one strike.
- * A weight of 600 or more is bold. */
+/* The height, ascent and internal leading Windows XP gives Tahoma, the face
+ * MS Shell Dlg maps to, at a requested height: a negative height is the em
+ * size, a positive one the cell height, 0 the platform's own strike. Ascent
+ * and descent are 2049 and 423 units of a 2048-unit em, each rounded on its
+ * own as the TrueType rasterizer rounds them. Programs size windows from
+ * these numbers (Solitaire's status bar, dialog units), so they follow the
+ * requested font even though every font is drawn with the one strike. */
+static void font_metrics(int requested, font *f) {
+    if (requested == 0) {
+        f->height = SX_NOTO_LINE_HEIGHT;
+        f->ascent = SX_NOTO_ASCENT;
+        f->leading = 2;
+        return;
+    }
+    const int cell = requested > 0;
+    const int units = cell ? 2049 + 423 : 2048;
+    const int size = cell ? requested : -requested;
+    f->ascent = (size * 2049 + units / 2) / units;
+    const int descent = (size * 423 + units / 2) / units;
+    f->height = f->ascent + descent;
+    f->leading = f->height - (cell ? (size * 2048 + units / 2) / units : size);
+}
+
+/* Any face, width, angle and quality: the platform has one strike. A weight
+ * of 600 or more is bold; the height sets the metrics only. */
 HFONT WINAPI CreateFontW(int cHeight, int cWidth, int cEscapement, int cOrientation, int cWeight, DWORD bItalic,
                          DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision,
                          DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName) {
-    (void)cHeight;
     (void)cWidth;
     (void)cEscapement;
     (void)cOrientation;
@@ -250,6 +280,7 @@ HFONT WINAPI CreateFontW(int cHeight, int cWidth, int cEscapement, int cOrientat
             g_fonts[i].used = 1;
             g_fonts[i].stock = 0;
             g_fonts[i].bold = cWeight >= 600;
+            font_metrics(cHeight, &g_fonts[i]);
             return (HFONT)make_handle(OBJ_FONT, i);
         }
     }
@@ -615,6 +646,12 @@ static int is_bold(const dc *d) {
     return f != 0 && f->bold;
 }
 
+/* The selected font; a device context always has one. */
+static const font *selected_font(const dc *d) {
+    const font *f = font_of(d->font);
+    return f != 0 ? f : &g_fonts[0];
+}
+
 static int advance_of(unsigned int c, int bold) {
     return sx_noto_glyph(c)->advance + (bold ? 1 : 0);
 }
@@ -630,7 +667,7 @@ BOOL WINAPI GetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl
         width += advance_of(lpString[i], bold);
     }
     psizl->cx = width;
-    psizl->cy = SX_NOTO_LINE_HEIGHT;
+    psizl->cy = selected_font(d)->height;
     return TRUE;
 }
 
@@ -649,10 +686,11 @@ BOOL WINAPI GetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm) {
     for (unsigned i = 0; i < sizeof(*lptm); ++i) {
         p[i] = 0;
     }
-    lptm->tmHeight = SX_NOTO_LINE_HEIGHT;
-    lptm->tmAscent = SX_NOTO_ASCENT;
-    lptm->tmDescent = SX_NOTO_DESCENT;
-    lptm->tmInternalLeading = 2;
+    const font *f = selected_font(d);
+    lptm->tmHeight = f->height;
+    lptm->tmAscent = f->ascent;
+    lptm->tmDescent = f->height - f->ascent;
+    lptm->tmInternalLeading = f->leading;
     lptm->tmAveCharWidth = advance_of('x', bold);
     lptm->tmMaxCharWidth = widest;
     lptm->tmWeight = bold ? FW_BOLD : FW_NORMAL;
@@ -685,7 +723,7 @@ BOOL WINAPI TextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c) {
     for (int i = 0; i < c; ++i) {
         const struct sx_noto_glyph *g = sx_noto_glyph(lpString[i]);
         const int gx = pen + g->left;
-        const int gy = d->y + y + SX_NOTO_ASCENT - g->top;
+        const int gy = d->y + y + selected_font(d)->ascent - g->top;
         for (int pass = 0; pass <= bold; ++pass) {
             sxw_raster_glyph(&t, &d->visible, gx + pass, gy, kNotoCoverage + g->offset, g->width, g->rows,
                              device_color(d, d->text_color));

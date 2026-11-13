@@ -113,7 +113,8 @@ static wclass *find_class(LPCWSTR name) {
 }
 
 static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE instance, HICON icon,
-                           HCURSOR cursor, HBRUSH background, LPCWSTR name, LPCWSTR menu_name) {
+                           HICON small_icon, HCURSOR cursor, HBRUSH background, LPCWSTR name,
+                           LPCWSTR menu_name) {
     if (proc == NULL || name == NULL || (u32)name < 0x10000u || window_extra < 0 || window_extra > 1024) {
         set_last_error(ERROR_INVALID_PARAMETER);
         return 0;
@@ -134,6 +135,7 @@ static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE
             c->window_extra = window_extra;
             c->instance = instance;
             c->icon = icon;
+            c->small_icon = small_icon;
             c->cursor = cursor;
             c->background = background;
             if ((u32)menu_name >= 0x10000u) {
@@ -151,7 +153,7 @@ static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE
 
 /* One of the system's classes (controls.c), with the atom Windows gives it. */
 ATOM register_system_class(UINT style, WNDPROC proc, LPCWSTR name, ATOM atom, HBRUSH background) {
-    const ATOM made = register_class(style, proc, 0, NULL, NULL, NULL, background, name, NULL);
+    const ATOM made = register_class(style, proc, 0, NULL, NULL, NULL, NULL, background, name, NULL);
     for (int i = 0; i < MAX_CLASSES && made != 0; ++i) {
         if (g_classes[i].used && g_classes[i].atom == made) {
             g_classes[i].atom = atom;
@@ -163,7 +165,7 @@ ATOM register_system_class(UINT style, WNDPROC proc, LPCWSTR name, ATOM atom, HB
 
 ATOM WINAPI RegisterClassW(const WNDCLASSW *lpWndClass) {
     return register_class(lpWndClass->style, lpWndClass->lpfnWndProc, lpWndClass->cbWndExtra,
-                          lpWndClass->hInstance, lpWndClass->hIcon, lpWndClass->hCursor,
+                          lpWndClass->hInstance, lpWndClass->hIcon, NULL, lpWndClass->hCursor,
                           lpWndClass->hbrBackground, lpWndClass->lpszClassName, lpWndClass->lpszMenuName);
 }
 
@@ -173,7 +175,7 @@ ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *lpWndClass) {
         return 0;
     }
     return register_class(lpWndClass->style, lpWndClass->lpfnWndProc, lpWndClass->cbWndExtra,
-                          lpWndClass->hInstance, lpWndClass->hIcon, lpWndClass->hCursor,
+                          lpWndClass->hInstance, lpWndClass->hIcon, lpWndClass->hIconSm, lpWndClass->hCursor,
                           lpWndClass->hbrBackground, lpWndClass->lpszClassName, lpWndClass->lpszMenuName);
 }
 
@@ -311,6 +313,7 @@ HDC window_dc(window *w, const sxw_region *clip) {
     return (HDC)SxwCreateSurfaceDC(&top->surface, ox, oy, &visible);
 }
 
+
 /* ---- Frame metrics ------------------------------------------------------------ */
 
 /* Left, top, right and bottom thickness of the frame a style asks for. */
@@ -417,6 +420,54 @@ void invalidate(window *w, const sxw_rect *rect, int erase, int children) {
     }
 }
 
+/* Shown, moved or resized: the frame of the window and of its children is
+ * painted again (WM_NCPAINT) before their next WM_PAINT. */
+static void invalidate_frame(window *w) {
+    w->frame_dirty = 1;
+    for (window *c = w->child; c != 0; c = c->next) {
+        invalidate_frame(c);
+    }
+}
+
+/* DefWindowProc's WM_NCPAINT: the one-pixel COLOR_WINDOWFRAME border of a
+ * child with WS_BORDER, clipped like its client area. A top-level window's
+ * frame is the window manager's. */
+static void paint_border(window *w) {
+    if (w->parent == 0 || (w->style & WS_BORDER) == 0 || !visible_chain(w)) {
+        return;
+    }
+    int px;
+    int py;
+    client_origin(w->parent, &px, &py);
+    sxw_rect frame = w->rect;
+    sxw_rect_offset(&frame, px, py);
+    sxw_rect inner = w->client;
+    sxw_rect_offset(&inner, px, py);
+    sxw_region visible;
+    sxw_region_set(&visible, &frame);
+    sxw_region_subtract_rect(&visible, &inner);
+    for (const window *a = w->parent; a != 0; a = a->parent) {
+        int ax;
+        int ay;
+        client_origin(a, &ax, &ay);
+        sxw_rect ar = {ax, ay, ax + client_width(a), ay + client_height(a)};
+        sxw_region_intersect_rect(&visible, &ar);
+    }
+    if ((w->style & WS_CLIPSIBLINGS) != 0) {
+        for (const window *s = w->parent->child; s != 0 && s != w; s = s->next) {
+            if ((s->style & WS_VISIBLE) != 0) {
+                sxw_rect sr = s->rect;
+                sxw_rect_offset(&sr, px, py);
+                sxw_region_subtract_rect(&visible, &sr);
+            }
+        }
+    }
+    HDC dc = (HDC)SxwCreateSurfaceDC(&top_of(w)->surface, frame.left, frame.top, &visible);
+    const RECT r = {0, 0, frame.right - frame.left, frame.bottom - frame.top};
+    FrameRect(dc, &r, system_brush(COLOR_WINDOWFRAME));
+    DeleteObject(dc);
+}
+
 /* WM_ERASEBKGND for the invalid part; 1 when the window erased it. */
 static int erase_background(window *w) {
     HDC dc = window_dc(w, &w->invalid);
@@ -475,6 +526,10 @@ HDC WINAPI BeginPaint(HWND hWnd, LPPAINTSTRUCT lpPaint) {
         return NULL;
     }
     zero(lpPaint, sizeof(*lpPaint));
+    if (w->frame_dirty) {
+        w->frame_dirty = 0;
+        send(w, WM_NCPAINT, 1, 0);
+    }
     sxw_region update = w->invalid;
     if (w->erase) {
         w->erase = 0;
@@ -964,6 +1019,8 @@ BOOL WINAPI DestroyWindow(HWND hWnd) {
 
 /* ---- Showing, moving and enabling ----------------------------------------------- */
 
+static void send_icon(window *w);
+
 /* A top-level window's host window: a window of the program's own, or one
  * its owner owns (a dialog), with the menu bar above the client area. */
 static int show_host(window *w) {
@@ -991,6 +1048,9 @@ static int show_host(window *w) {
         size_surface(w, (int)size[0], (int)size[1]);
     }
     menu_draw_bar(w);
+    if (owner == 0) {
+        send_icon(w);
+    }
     return 1;
 }
 
@@ -1049,6 +1109,7 @@ BOOL WINAPI ShowWindow(HWND hWnd, int nCmdShow) {
             activate(w);
         }
     }
+    invalidate_frame(w);
     invalidate(w, 0, 1, 1);
     if (visible_chain(w)) {
         erase_now(w);
@@ -1117,6 +1178,7 @@ BOOL WINAPI MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, BOOL bR
     if (bRepaint && w->parent != 0) {
         sxw_rect before = old;
         invalidate(w->parent, &before, 1, 0);
+        invalidate_frame(w);
         invalidate(w, 0, 1, 1);
     }
     return TRUE;
@@ -1130,12 +1192,18 @@ BOOL WINAPI EnableWindow(HWND hWnd, BOOL bEnable) {
     const BOOL was_disabled = (w->style & WS_DISABLED) != 0;
     if (bEnable && was_disabled) {
         w->style &= ~(DWORD)WS_DISABLED;
+        if (w->parent == 0 && w->menu != NULL) {
+            menu_draw_bar(w);
+        }
         send(w, WM_ENABLE, TRUE, 0);
     } else if (!bEnable && !was_disabled) {
         send(w, WM_CANCELMODE, 0, 0);
         w->style |= WS_DISABLED;
         if (g_focus != 0 && within(g_focus, w)) {
             SetFocus(NULL);
+        }
+        if (w->parent == 0 && w->menu != NULL) {
+            menu_draw_bar(w);
         }
         send(w, WM_ENABLE, FALSE, 0);
     }
@@ -1640,6 +1708,7 @@ static void resize_event(const sxw_event *e) {
     menu_draw_bar(top);
     window_pos(top, 0);
     send(top, WM_SIZE, SIZE_RESTORED, MAKELPARAM(client_width(top), client_height(top)));
+    invalidate_frame(top);
     invalidate(top, 0, 1, 1);
 }
 
@@ -1859,9 +1928,16 @@ DWORD WINAPI MsgWaitForMultipleObjects(DWORD nCount, const HANDLE *pHandles, BOO
     }
 }
 
+/* Posted by TranslateMessage for F1, turned into WM_HELP by DefWindowProc. */
+#define WM_KEYF1 0x004d
+
 BOOL WINAPI TranslateMessage(const MSG *lpMsg) {
     if (lpMsg == NULL || (lpMsg->message != WM_KEYDOWN && lpMsg->message != WM_SYSKEYDOWN)) {
         return FALSE;
+    }
+    if (lpMsg->message == WM_KEYDOWN && lpMsg->wParam == VK_F1) {
+        PostMessageW(lpMsg->hwnd, WM_KEYF1, 0, 0);
+        return TRUE;
     }
     const WCHAR c = g_key_char[lpMsg->wParam & 0xffu];
     if (c == 0) {
@@ -2190,6 +2266,81 @@ static HICON load_group(u32 base, LPCWSTR name, int cursor, int width, int heigh
     return NULL;
 }
 
+/* An icon's image as 16x16 pixels 0xAARRGGBB, top row first, for the host
+ * (SXW_SVC_WINDOW_ICON): a 1, 4, 8, 24 or 32-bit DIB with its AND mask,
+ * sampled by nearest pixel when it is another size. A 32-bit image with any
+ * alpha uses it; otherwise the mask makes pixels transparent. 0 when the
+ * handle is not an image of the program's. */
+static int icon_pixels(HICON handle, u32 *out) {
+    const u32 h = (u32)handle;
+    const int slot = (int)((h & 0xffffu) / 4u) - 1;
+    if ((h & 0xffff0000u) != 0x00020000u || slot < 0 || slot >= MAX_ICONS || !g_icons[slot].used ||
+        g_icons[slot].cursor) {
+        return 0;
+    }
+    const icon *c = &g_icons[slot];
+    const unsigned char *dib = c->data;
+    const u32 header = get32(dib);
+    const int bits = (int)get16(dib + 14);
+    const int width = c->width;
+    const int height = c->height;
+    if (header < 40u || width <= 0 || height <= 0 ||
+        (bits != 1 && bits != 4 && bits != 8 && bits != 24 && bits != 32)) {
+        return 0;
+    }
+    u32 colors = bits <= 8 ? get32(dib + 32) : 0;
+    if (bits <= 8 && colors == 0) {
+        colors = 1u << bits;
+    }
+    const unsigned char *palette = dib + header;
+    const unsigned char *xor_bits = palette + 4u * colors;
+    const u32 xor_stride = (((u32)width * (u32)bits + 31u) / 32u) * 4u;
+    const unsigned char *and_bits = xor_bits + xor_stride * (u32)height;
+    const u32 and_stride = (((u32)width + 31u) / 32u) * 4u;
+    if (and_bits + and_stride * (u32)height > c->data + c->size) {
+        return 0;
+    }
+    int alpha = 0;
+    for (int y = 0; bits == 32 && y < height && !alpha; ++y) {
+        for (int x = 0; x < width && !alpha; ++x) {
+            alpha = xor_bits[(u32)y * xor_stride + 4u * (u32)x + 3u] != 0;
+        }
+    }
+    for (int oy = 0; oy < (int)SXW_ICON_EXTENT; ++oy) {
+        for (int ox = 0; ox < (int)SXW_ICON_EXTENT; ++ox) {
+            const int x = ox * width / (int)SXW_ICON_EXTENT;
+            const u32 row = (u32)(height - 1 - oy * height / (int)SXW_ICON_EXTENT); /* bottom-up */
+            const unsigned char *line = xor_bits + row * xor_stride;
+            u32 pixel;
+            if (bits == 32) {
+                pixel = get32(line + 4u * (u32)x);
+            } else if (bits == 24) {
+                pixel = (u32)line[3 * x] | (u32)line[3 * x + 1] << 8 | (u32)line[3 * x + 2] << 16;
+            } else {
+                const u32 bit = (u32)x * (u32)bits;
+                const u32 index = (line[bit / 8u] >> (8u - (u32)bits - bit % 8u)) & ((1u << bits) - 1u);
+                pixel = index < colors ? get32(palette + 4u * index) & 0xffffffu : 0;
+            }
+            if (!alpha) {
+                const int masked = (and_bits[row * and_stride + (u32)x / 8u] >> (7u - (u32)x % 8u)) & 1;
+                pixel = masked ? 0 : (pixel & 0xffffffu) | 0xff000000u;
+            }
+            out[oy * (int)SXW_ICON_EXTENT + ox] = pixel;
+        }
+    }
+    return 1;
+}
+
+/* The class's small icon, or its icon, to the host of a program's window. */
+static void send_icon(window *w) {
+    static u32 pixels[SXW_ICON_EXTENT * SXW_ICON_EXTENT];
+    if (w->cls == 0 || !(icon_pixels(w->cls->small_icon, pixels) || icon_pixels(w->cls->icon, pixels))) {
+        return;
+    }
+    u32 arguments[2] = {w->host, (u32)pixels};
+    SxwService(SXW_SVC_WINDOW_ICON, arguments);
+}
+
 /* The system cursors and icons by id. */
 static HANDLE system_image(LPCWSTR name, int cursor) {
     const u32 id = (u32)name;
@@ -2418,6 +2569,24 @@ LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
             return TRUE;
         }
         return LOWORD(lParam) == HTCLIENT && w->cls->cursor != NULL;
+    case WM_NCPAINT:
+        paint_border(w);
+        return 0;
+    case WM_KEYF1: {
+        /* Help about the window, where the pointer is. */
+        HELPINFO help;
+        zero(&help, sizeof(help));
+        help.cbSize = sizeof(help);
+        help.iContextType = HELPINFO_WINDOW;
+        help.iCtrlId = w->parent != 0 ? (int)w->id : 0;
+        help.hItemHandle = hWnd;
+        help.MousePos = g_last_point;
+        send(w, WM_HELP, 0, (LPARAM)&help);
+        return 0;
+    }
+    case WM_HELP:
+        /* A child's goes to its parent; a top-level window's stops. */
+        return w->parent != 0 && (w->style & WS_CHILD) != 0 ? send(w->parent, WM_HELP, wParam, lParam) : 0;
     case WM_ERASEBKGND:
         if (w->cls->background == NULL) {
             return 0;

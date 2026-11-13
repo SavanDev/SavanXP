@@ -16,6 +16,14 @@ its window with a menu open and its Settings dialog.
 With --cards FOLDER it runs only cards.exe, with the user's own cards.dll
 from FOLDER copied next to it in a temporary folder; without the file it
 exits 77, skipped.
+
+With --solitaire FOLDER it runs the user's own sol.exe and cards.dll from
+FOLDER twice on one fresh registry, with the clock fixed so the first deal
+is always the same, playing fixtures/solitaire/input-1.txt and input-2.txt
+(docs/userland/WIN32.md, "Solitaire"). The registry after the first run must
+equal expected/solitaire.reg, and each image the scripts dump must have the
+SHA-256 expected/solitaire.sha256 lists: the images show Microsoft's card
+art, so only their hashes are kept. Without the files it exits 77.
 """
 
 import argparse
@@ -26,7 +34,12 @@ import subprocess
 import sys
 import tempfile
 
+import hashlib
+
 STARTUP_ARGUMENTS = ["alpha", "two words", "3"]
+
+# The clock sol.exe seeds its deal from (time() & 0x7fff), 2001-08-24 02:56 UTC.
+SOLITAIRE_TIME = "998621760"
 
 # (fixture, arguments, expected output file or None for no output, status,
 #  a line standard error must hold, uses the registry, input script or None)
@@ -79,6 +92,46 @@ def run_cards(args, expected_dir):
     return 0
 
 
+def run_solitaire(args, expected_dir):
+    folder = pathlib.Path(args.solitaire) if args.solitaire else None
+    if folder is None or not all((folder / name).is_file() for name in ("sol.exe", "cards.dll")):
+        print("skipped: needs the user's sol.exe and cards.dll in SAVANXP_WIN32_FIXTURES")
+        return 77
+    wanted = {}
+    for line in (expected_dir / "solitaire.sha256").read_text().splitlines():
+        digest, name = line.split()
+        wanted[name] = digest
+    problems = []
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = pathlib.Path(scratch)
+        for name in ("sol.exe", "cards.dll"):
+            shutil.copyfile(folder / name, scratch / name)
+        registry = scratch / "hkcu.reg"
+        for run in (1, 2):
+            script = expected_dir.parent / f"solitaire/input-{run}.txt"
+            result = subprocess.run([args.harness, "--dlls", args.system32, "--registry", str(registry),
+                                     "--time", SOLITAIRE_TIME, "--input", str(script), str(scratch / "sol.exe")],
+                                    capture_output=True, timeout=300, cwd=scratch)
+            errors = result.stderr.decode(errors="replace").splitlines()
+            if result.returncode != 0 or "win32: exit status 0x00000000" not in errors:
+                problems.append(f"run {run}: status {result.returncode} {errors[-3:]!r}")
+            if run == 1 and registry.read_bytes() != (expected_dir / "solitaire.reg").read_bytes():
+                problems.append(f"the registry after run 1 is {registry.read_text()!r}")
+        for name, digest in wanted.items():
+            dump = scratch / name
+            if not dump.exists():
+                problems.append(f"{name} was not written")
+            elif hashlib.sha256(dump.read_bytes()).hexdigest() != digest:
+                kept = pathlib.Path.cwd() / f"win32-solitaire-{name}"
+                kept.write_bytes(dump.read_bytes())
+                problems.append(f"{name} differs; it is kept as {kept}")
+    if problems:
+        print("FAIL sol.exe: " + "; ".join(problems))
+        return 1
+    print(f"ok   sol.exe: {len(wanted)} images")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness", required=True)
@@ -86,10 +139,13 @@ def main():
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--expected", required=True)
     parser.add_argument("--cards", help="the folder holding the user's cards.dll")
+    parser.add_argument("--solitaire", help="the folder holding the user's sol.exe and cards.dll")
     args = parser.parse_args()
     expected_dir = pathlib.Path(args.expected)
     if args.cards is not None:
         return run_cards(args, expected_dir)
+    if args.solitaire is not None:
+        return run_solitaire(args, expected_dir)
 
     failures = 0
     with tempfile.TemporaryDirectory() as scratch:

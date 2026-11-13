@@ -639,7 +639,8 @@ if(NOT SAVANXP_SXE_CONFIG_OLD STREQUAL SAVANXP_SXE_CONFIG_CONTENT)
 endif()
 file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres"
-    "${CMAKE_SOURCE_DIR}/system/*.sxres")
+    "${CMAKE_SOURCE_DIR}/system/*.sxres"
+    "${CMAKE_SOURCE_DIR}/subsystems/win32/host/*.sxres")
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png")
@@ -664,6 +665,8 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/mouse"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/logview"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxgldiag"
+            # The Win32 subsystem's host, whose sources live with the subsystem.
+            --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/win32/host"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

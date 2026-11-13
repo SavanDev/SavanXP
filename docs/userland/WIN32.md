@@ -6,7 +6,7 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W5 complete (2026-11-13).** This document describes what exists
+> **Status: W6 complete (2026-11-13).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
@@ -19,9 +19,12 @@ offscreen windows and scripted input, and the fixtures that check both give
 the bytes, the messages and the pixels Windows XP gives. The user's own
 Windows XP `cards.dll` draws every card here exactly as it does there, and a
 program's menu bar, popup menus, dialogs, message boxes and the controls
-Solitaire's dialogs hold behave, by pointer and by keyboard, as they do there. Nothing of the
-Windows API beyond what those fixtures import exists yet, and nothing starts
-a `.exe` but a command line naming `winhost`.
+Solitaire's dialogs hold behave, by pointer and by keyboard, as they do there.
+The user's own Windows XP Solitaire runs unchanged and is played to a win
+with the same pixels Windows XP shows (see [Solitaire](#solitaire)). A `.exe`
+opens from Files through its association with `winhost`, and Solitaire has a
+shortcut at the top of the Start menu. Nothing of the Windows API beyond what
+`sol.exe` and the fixtures import exists.
 
 ```text
 subsystems/win32/
@@ -310,7 +313,9 @@ The messages each call sends, and their order, are the ones Windows XP sent
   `WM_SETCURSOR`; none of them while the pointer is captured. `GetKeyState`
   changes as each input message is taken, not as it arrives.
 - `TranslateMessage` posts `WM_CHAR` with the character the host typed for
-  the key; a double click is two presses within 500 ms and 2 pixels in a
+  the key, and for F1 the undocumented `WM_KEYF1` (`0x004D`), which
+  `DefWindowProc` turns into `WM_HELP` with a `HELPINFO` for the window, as
+  Windows XP does and Solitaire expects; a double click is two presses within 500 ms and 2 pixels in a
   `CS_DBLCLKS` window.
 - `DestroyWindow` hides the window, deactivates it (`WM_NCACTIVATE`,
   `WM_ACTIVATE`, `WM_ACTIVATEAPP`, `WM_KILLFOCUS`), then sends `WM_DESTROY`
@@ -318,6 +323,16 @@ The messages each call sends, and their order, are the ones Windows XP sent
 - The frame's close (its button, or Alt+F4, which the window manager keeps)
   arrives as an input `WM_SYSCOMMAND(SC_CLOSE)`; `DefWindowProc` makes it
   `WM_CLOSE`, and `WM_CLOSE` `DestroyWindow`.
+
+**Frames.** A child with `WS_BORDER` has a one-pixel `COLOR_WINDOWFRAME`
+border outside its client area, which `DefWindowProc` paints on
+`WM_NCPAINT`; `BeginPaint` sends that first when the window was shown, moved
+or resized since. A top-level window's frame is the window manager's, and a
+disabled one draws its menu bar in `COLOR_GRAYTEXT`, flat, as Windows XP
+does while a dialog or message box it owns is open. The program's main
+window takes its class's small icon (`RegisterClassExW`'s `hIconSm`, else
+its icon) to the host as 16x16 pixels (`SXW_SVC_WINDOW_ICON`), for its
+caption and taskbar button.
 
 **Drawing.** A top-level window's client area is a buffer in guest memory,
 0x00RRGGBB per pixel, which every window of its tree draws on through a
@@ -333,13 +348,20 @@ fills under any ROP3 that reads no source, draws lines under any ROP2 with
 the end point left out and a tie going to the smaller coordinate, the rule
 Windows XP's lines follow in every octant, and draws glyphs.
 
-**Text.** Every font is the platform's 13 px UI strike, MS Sans Serif
-([UI_FONTS.md](../desktop/UI_FONTS.md)), compiled into `gdi32` from the same
-table the desktop uses. A weight of 600 or more, and the stock System font,
-which is bold on Windows, are drawn twice one pixel apart with one more pixel
-of advance, as Windows emboldens a bitmap font. Text is therefore laid out
-alike but not drawn like Windows XP's TrueType faces, which is why fixtures
-keep it out of the pixels they compare with Windows XP. `TextOutW` is
+**Text.** Every font is drawn with the platform's 13 px UI strike, MS Sans
+Serif ([UI_FONTS.md](../desktop/UI_FONTS.md)), compiled into `gdi32` from the
+same table the desktop uses. A weight of 600 or more, and the stock System
+font, which is bold on Windows, are drawn twice one pixel apart with one more
+pixel of advance, as Windows emboldens a bitmap font. The vertical metrics a
+font reports are the requested font's on Windows XP, because programs size
+windows from them: the System font is 16 pixels high with an ascent of 13,
+and a font made with `CreateFontW` has Tahoma's (MS Shell Dlg's) proportions
+at its height, an ascent and a descent of 2049 and 423 units of a 2048-unit
+em, each rounded (13 pixels at -11, 14 at -12). Solitaire's status bar is
+the System font's height plus its border. Glyphs sit on the font's baseline
+and the widths are the strike's. Text is therefore laid out alike but not
+drawn like Windows XP's TrueType faces, which is why fixtures keep it out of
+the pixels they compare with Windows XP. `TextOutW` is
 left- and top-aligned and opaque; `DrawTextW` breaks lines, aligns them,
 draws `&` prefixes and computes rectangles, but does not clip to its
 rectangle.
@@ -683,7 +705,15 @@ dump FILE [WxH]          the client area, W x H or the whole, saved as a
 
 The harness counts coordinates from each window's marker too, gives the
 pointer to a popup it is over, and keys to the newest dialog, as a window
-manager would.
+manager would. Without a marker it counts them from the window's top-left
+corner, the menu bar's when it has one.
+
+A program that draws no marker, Solitaire, is found by its client area
+instead: `win32_input.py --anchor R,G,B:WIDTH:DY` takes the first row of the
+screen with a run of exactly WIDTH pixels of that colour and moves DY rows
+(`0,128,0:585:-20`: the green board, the menu bar above it), and
+`window N WIDTH` finds a dialog by a run of WIDTH pixels of `COLOR_BTNFACE`
+along its client top (the harness ignores WIDTH).
 
 In the harness the guest's millisecond clock is virtual: it moves only
 through `wait`, and an action is given only when the guest waits for input,
@@ -711,8 +741,9 @@ prints its address and ends the harness with 125.
 
 `winhost.sxe [--dlls DIR] [--registry FILE] [--time SECONDS]
 /path/to/program.exe [arguments...]` is a SUN program in `/system`. `--time`
-fixes where the guest's clock starts, so a program that seeds `srand` from
-`time` repeats its run; the clock still advances from there. DLLs are looked up next to the executable, then in `DIR`, by
+fixes the guest's clock at that second, so a program that seeds `srand` from
+`time` repeats its run however long its start takes; the millisecond clock
+still runs. DLLs are looked up next to the executable, then in `DIR`, by
 default `/system/win/drive_c/windows/system32`. The guest's standard output
 and error are `winhost`'s; its exit status is the guest's full 32-bit status,
 or the NT status of a failed load, with `win32: exit status 0x...` and any
@@ -736,7 +767,8 @@ It is the same loader as the harness over a different platform:
   harness.
 - **Services** come from `loader/services.c`, shared with the harness.
 - **Windows** are `windowd`'s, through `sxnwm` (SUN's windowing layer). The
-  first top-level window connects; the title goes in its presentation, the
+  first top-level window connects; the title and the guest's icon go in its
+  presentation, the
   client size is asked for and waited on for up to a second, and a size the
   window manager gives later, or its close, becomes an event. Every other
   window is an owned window of that connection (`sxnwm_window_open_ex`): a
@@ -764,6 +796,55 @@ data, relocations), the stack, the TEB block and the trampoline.
 ring) and the region of its pixel buffer when it is larger than a heap
 arena; an open dialog or menu adds the view of its surface. Solitaire's ten
 images need about 50.
+
+## Solitaire
+
+The first profile's application: the user's own Windows XP `sol.exe` and
+`cards.dll` (WIN32_SOLITAIRE_PROFILE.md), unchanged. They are installed by
+copying them, by hand or with Files, to
+`/system/win/drive_c/program files/solitaire/`, in lower case; the build
+never touches that folder, so they survive `./build.sh build`. From there:
+
+- **Launching.** `winhost.sxe` declares `ext_open=.exe` in its `.sxres`
+  (`host/winhost.sxres`), so Files and the desktop open a `.exe` with it
+  through `file_assoc`. The build installs `/system/start/Solitaire.sxlnk`,
+  whose target is that `sol.exe`; the Start menu lists it at the top, with
+  the program's own icon read from its PE resources, once the file is there
+  ([START_MENU.md](../desktop/START_MENU.md#shortcuts)). Under the window
+  manager the window shows the same icon, from the class `sol.exe` registers.
+- **Settings** are the registry's, `HKCU\Software\Microsoft\Solitaire`
+  (`Atrás` for the deck, `Opciones` for the options), in the user's
+  `win32.reg`, so they persist from one run, and one boot, to the next.
+- **What runs** is everything Solitaire does: dealing, the stock, moves by
+  click, drag and double click, the outline dragging of the options, Undo,
+  both menus, Deck, Options, About, the end-of-game animation and its
+  message box, Help's error message. Moving, covering, minimizing and
+  restoring the window need no repaint, since `windowd` keeps its surface;
+  resizing it repaints.
+
+**The same game as on Windows XP.** Solitaire seeds every deal with
+`srand(time() & 0x7fff)`. With the clock fixed at 998621760 (2001-08-24
+02:56 UTC: `winhost --time`, the harness's `--time`, and on Windows XP a
+launcher that sets the clock before starting `sol.exe`), the first deal is
+the same everywhere. `fixtures/solitaire/input-1.txt` wins it in 98 moves by
+pointer, found by a solver, with every click 600 ms after the last so that
+no two make a double click on one system and not on the other; then it stops
+the end-of-game animation, answers No, picks a deck and options and exits.
+`input-2.txt` starts again on the same registry: the deck and options read
+back, a card drawn alone, a dragged card as an outline, Undo, About, and the
+frame's close. Played on Windows XP, every board those scripts dump (15)
+equals the harness's outside the pointer and the menu bar's text, the Deck
+dialog does outside its buttons' text, and the registry holds the same two
+values. The images show Microsoft's card art, so only their SHA-256 are
+kept (`expected/solitaire.sha256`), with the registry after run 1
+(`expected/solitaire.reg`).
+
+**Limits.** `MessageBoxW` lays its box out from a dialog template in dialog
+units, so it is a pixel wider than Windows XP's here and its buttons are
+labelled in English. `windowd` does not tell a program its window was
+minimized: `IsIconic` stays false and no `WM_SIZE(SIZE_MINIMIZED)` arrives.
+`SetCursorPos` fails, so keyboard play leaves the pointer where it is. Help
+reports that it cannot load, as it does on a Windows without HTML Help.
 
 ## Tests
 
@@ -832,6 +913,25 @@ scenario names the user's files it needs (`win32_files` in
 boots, under `/system/win/drive_c/tests`, never into the build or
 `build/disk.img`, and exits with 77, skipped, without them. `win32-hello`
 runs `resource.exe` with the other fixtures.
+
+`win32-solitaire-test` runs the user's `sol.exe` and `cards.dll` from
+`SAVANXP_WIN32_FIXTURES` through the harness twice, on one fresh registry
+and with the clock fixed, playing `fixtures/solitaire/input-1.txt` and
+`input-2.txt`; the registry after run 1 and the SHA-256 of every image they
+dump must be the expected ones. Without the files it is reported as skipped.
+
+`win32-solitaire` (`./build.sh smoke win32-solitaire`) does the same on
+SavanXP under `windowd`: the runner copies the two files to
+`program files/solitaire` in the disposable disk (`NAME@DIR` in
+`win32_files`), `win32test.sxe --solitaire` runs `sol.exe` twice from there
+and checks the statuses and the registry, and the host
+(`tools/win32_solitaire_smoke.py`) finds the board by its colour, plays both
+scripts and compares the hashes.
+
+`pe-icon-test` checks the shell's reader of a `.exe`'s icon
+(`sxgfx/pe_icon.h`) with the sanitizers on: `resource.exe`'s icon at 32 and
+16 pixels against known checksums, a program without one, and 20,000 random
+byte changes and truncations of the file.
 
 `win32-pe-fixtures-test` reads the user's Windows XP `sol.exe` and `cards.dll`
 from the folder named by `SAVANXP_WIN32_FIXTURES`, as an environment or CMake

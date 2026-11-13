@@ -45,8 +45,9 @@ class Scenario:
     usb_host: str = "xhci"
     # The user's own Windows files the scenario needs, by name, from the
     # folder SAVANXP_WIN32_FIXTURES names: copied into the disposable disk
-    # under /system/win/drive_c/tests, never into the build. Without them the
-    # scenario is skipped (exit 77), not failed.
+    # under /system/win/drive_c/tests, or with NAME@DIR under drive_c/DIR,
+    # never into the build. Without them the scenario is skipped (exit 77),
+    # not failed.
     win32_files: tuple[str, ...] = ()
 
 
@@ -775,6 +776,19 @@ SCENARIOS: dict[str, Scenario] = {
         usb=True,
         no_ps2=True,
         usb_pointer="tablet",
+    ),
+    "win32-solitaire": _qemu_scenario(
+        "win32solitaire",
+        "WIN32 SOLITAIRE PASS",
+        "WIN32 SOLITAIRE FAIL",
+        "The user's Windows XP sol.exe played to a win under windowd, twice: pixels against the harness's",
+        900.0,
+        ready="WIN32 SOLITAIRE READY",
+        qmp_callback="tools/win32_solitaire_smoke.py",
+        usb=True,
+        no_ps2=True,
+        usb_pointer="tablet",
+        win32_files=("sol.exe@program files/solitaire", "cards.dll@program files/solitaire"),
     ),
     "native-test": _qemu_scenario(
         "nativetest",

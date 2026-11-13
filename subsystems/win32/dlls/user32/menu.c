@@ -391,6 +391,9 @@ void menu_draw_bar(window *top) {
     RECT all = {0, 0, top->surface.width, top->menu_height};
     fill_rect(dc, &all, GetSysColor(COLOR_MENU));
     const int tracked = g_track.active && g_track.owner == top;
+    /* A disabled window's bar (its owner of a dialog or message box) is drawn
+     * in COLOR_GRAYTEXT, flat, as Windows XP draws it. */
+    const int disabled = (top->style & WS_DISABLED) != 0;
     for (int i = 0; i < m->count; ++i) {
         menu_item *item = &m->items[i];
         RECT r = item->rect;
@@ -406,7 +409,8 @@ void menu_draw_bar(window *top) {
                       CLR_INVALID);
         }
         item_text(dc, item->text, item->length, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-                  GetSysColor(COLOR_MENUTEXT), (item->state & MF_GRAYED) != 0, 0, !(tracked && g_track.show_accel));
+                  GetSysColor(disabled ? COLOR_GRAYTEXT : COLOR_MENUTEXT), !disabled && (item->state & MF_GRAYED) != 0, 0,
+                  !(tracked && g_track.show_accel));
     }
     DeleteObject(dc);
     sxw_rect dirty = {0, 0, top->surface.width, top->menu_height};

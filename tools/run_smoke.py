@@ -119,7 +119,8 @@ def make_smoke_copy(source: Path, destination: Path, sxfs_cli: Path) -> None:
         raise
 
 
-def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str, usb_host: str) -> None:
+def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str, usb_host: str,
+                     limit: float = 60.0) -> None:
     """Run a port-owned one-shot QMP action at the guest ready token."""
     output_dir = log_dir / f"{run_tag}-callback"
     command = [
@@ -145,8 +146,9 @@ def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str
             check=False,
             env=environment,
             # A callback may answer several prompts in turn (qmp_elevation.py
-            # takes about 15 s); this only catches one that hangs.
-            timeout=60.0,
+            # takes about 15 s), or play a whole game (win32-solitaire);
+            # this only catches one that hangs.
+            timeout=limit,
         )
     except subprocess.TimeoutExpired as exc:
         raise QmpError(f"QMP callback timed out: {callback}") from exc
@@ -187,7 +189,8 @@ def main() -> int:
         action="append",
         default=[],
         help="A file of the user's from SAVANXP_WIN32_FIXTURES to copy into the disposable image's "
-             "/system/win/drive_c/tests; the scenario is skipped (exit 77) without it",
+             "/system/win/drive_c/tests, or NAME@DIR into drive_c/DIR; the scenario is skipped (exit 77) "
+             "without it",
     )
     parser.add_argument(
         "--remove-path",
@@ -265,8 +268,10 @@ def main() -> int:
         # The user's own Windows files (docs/userland/WIN32.md, "Tests"): from
         # their folder into the disposable copy only, never into the build.
         folder = os.environ.get("SAVANXP_WIN32_FIXTURES", "")
-        win32_sources = [Path(folder) / name for name in args.win32_file]
-        missing = [str(path) for path in win32_sources if not folder or not path.is_file()]
+        for entry in args.win32_file:
+            name, _, where = entry.partition("@")
+            win32_sources.append((Path(folder) / name, where or "tests"))
+        missing = [str(path) for path, _ in win32_sources if not folder or not path.is_file()]
         if missing:
             print(f"smoke: {args.scenario}: skipped: needs the user's "
                   f"{', '.join(args.win32_file)} in SAVANXP_WIN32_FIXTURES", flush=True)
@@ -311,10 +316,10 @@ def main() -> int:
             if win32_sources:
                 stage = log_dir / f"{run_tag}.win32-files"
                 shutil.rmtree(stage, ignore_errors=True)
-                tests = stage / "system/win/drive_c/tests"
-                tests.mkdir(parents=True)
-                for path in win32_sources:
-                    shutil.copyfile(path, tests / path.name.lower())
+                for path, where in win32_sources:
+                    target = stage / "system/win/drive_c" / where.lower()
+                    target.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, target / path.name.lower())
                 synced = subprocess.run(
                     [sys.executable, str(Path(__file__).resolve().parent / "sxfs_sync.py"), "--image", str(run_disk),
                      "--source", str(stage), "--cli", str(args.sxfs_cli.resolve())],
@@ -508,7 +513,7 @@ def main() -> int:
                                     if args.qmp_callback:
                                         run_qmp_callback(
                                             args.qmp_callback.resolve(), qmp_path, log_dir, run_tag,
-                                            args.usb_host,
+                                            args.usb_host, max(60.0, deadline - time.monotonic()),
                                         )
                                     else:
                                         with QmpClient(qmp_path) as client:

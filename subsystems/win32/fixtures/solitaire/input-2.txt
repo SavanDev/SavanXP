@@ -1,0 +1,43 @@
+# Run 2 of sol.exe: the back and options run 1 saved, a card drawn alone,
+# a dragged card as an outline, Undo, About, and the frame's close. Before
+# a dump the pointer is over the status bar, below the rows dumped.
+wait 1000
+move 300 395
+dump start.ppm 585x387
+move 46 70
+down left 46 70
+up left 46 70
+wait 600
+move 300 395
+dump drawn.ppm 585x387
+move 46 220
+down left 46 220
+move 150 300
+move 300 395
+wait 300
+dump outline.ppm 585x387
+up left 300 395
+wait 600
+move 15 10
+down left 15 10
+up left 15 10
+wait 600
+move 40 56
+down left 40 56
+up left 40 56
+wait 600
+move 300 395
+dump undone.ppm 585x387
+move 58 10
+down left 58 10
+up left 58 10
+wait 600
+move 80 90
+down left 80 90
+up left 80 90
+wait 1500
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 600
+close
+wait 1000

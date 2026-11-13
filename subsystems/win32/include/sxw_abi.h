@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 4u
+#define SXW_ABI_VERSION 5u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -121,7 +121,11 @@
  * timeout is in milliseconds, SXW_INFINITE to wait for an event, 0 to poll.
  * out points at an sxw_event. */
 #define SXW_SVC_WAIT_EVENT 20u
-#define SXW_SVC_COUNT 21u
+/* (window, pixels) -> 0, or SXW_FAILED: the window's 16x16 icon, 256 words
+ * 0xAARRGGBB, top row first, for its caption and its taskbar button. */
+#define SXW_SVC_WINDOW_ICON 21u
+#define SXW_ICON_EXTENT 16u
+#define SXW_SVC_COUNT 22u
 
 #define SXW_INFINITE 0xffffffffu
 

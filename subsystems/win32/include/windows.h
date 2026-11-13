@@ -95,6 +95,17 @@ typedef struct tagPOINT {
     LONG y;
 } POINT, *LPPOINT;
 
+/* WM_HELP's lParam. */
+typedef struct tagHELPINFO {
+    UINT cbSize;
+    int iContextType;
+    int iCtrlId;
+    HANDLE hItemHandle;
+    ULONG_PTR dwContextId;
+    POINT MousePos;
+} HELPINFO, *LPHELPINFO;
+#define HELPINFO_WINDOW 1
+
 typedef struct tagSIZE {
     LONG cx;
     LONG cy;
@@ -616,6 +627,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define COLOR_ACTIVECAPTION 2
 #define COLOR_MENU 4
 #define COLOR_WINDOW 5
+#define COLOR_WINDOWFRAME 6
 #define COLOR_MENUTEXT 7
 #define COLOR_WINDOWTEXT 8
 #define COLOR_BTNFACE 15

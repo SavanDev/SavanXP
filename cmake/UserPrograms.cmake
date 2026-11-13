@@ -380,8 +380,10 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/shortcut.c
+    subsystems/posix/userland/start_shortcuts.c
     subsystems/posix/userland/file_assoc.c
     system/gfx/mime_icon.c
+    system/gfx/pe_icon.c
     subsystems/posix/userland/mime_icon_posix.c)
 savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c

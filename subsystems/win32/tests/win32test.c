@@ -21,6 +21,14 @@
  *
  * With --cards it runs cards.exe, which draws every card with the user's own
  * cards.dll; the win32-cards scenario copies that file next to it.
+ *
+ * With --solitaire it runs the user's own sol.exe from where it is installed
+ * (the win32-solitaire scenario copies it and cards.dll there) twice under
+ * windowd, on a fresh registry and with the clock fixed, so its first deal is
+ * always the same; "WIN32 SOLITAIRE READY" tells the host to play
+ * fixtures/solitaire/input-1.txt, and "WIN32 SOLITAIRE RUN 2" input-2.txt
+ * (tools/win32_solitaire_smoke.py). Both runs must exit with 0, and the
+ * registry the first leaves must equal expected/solitaire.reg.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -33,6 +41,11 @@
 #define TESTS "/system/win/drive_c/tests"
 #define EXPECTED TESTS "/expected"
 #define REGISTRY TESTS "/registry.reg"
+#define SOLITAIRE "/system/win/drive_c/program files/solitaire/sol.exe"
+#define SOLITAIRE_REGISTRY TESTS "/solitaire.reg"
+/* The clock sol.exe seeds its deal from, 2001-08-24 02:56 UTC; the same as
+ * tests/host/win32_harness_test.py's. */
+#define SOLITAIRE_TIME "998621760"
 
 typedef struct fixture {
     const char *name;
@@ -45,6 +58,8 @@ typedef struct fixture {
 
 #define WINDOW_READY "WIN32 WINDOW READY"
 #define DIALOG_READY "WIN32 DIALOG READY"
+#define SOLITAIRE_READY "WIN32 SOLITAIRE READY"
+#define SOLITAIRE_SECOND "WIN32 SOLITAIRE RUN 2"
 
 static const fixture k_fixtures[] = {
     {"hello.exe", "hello.out", 42u, 0, 0, 0},
@@ -250,6 +265,50 @@ static int run_window(const fixture *f) {
     return run(f);
 }
 
+/* sol.exe once under windowd on the solitaire registry; 1 when it exits 0. */
+static int run_solitaire_once(int pass) {
+    char *argv[] = {WINHOST, "--registry", SOLITAIRE_REGISTRY, "--time", SOLITAIRE_TIME, SOLITAIRE};
+    struct sxn_spawn_request request;
+    sxn_spawn_request_init(&request, WINHOST, argv, 6);
+    long child = sxn_spawn_ex(&request);
+    if (child <= 0) {
+        say("win32test: FAIL ", "sol.exe", ": cannot start winhost");
+        return 0;
+    }
+    (void)sxn_log(pass == 1 ? SOLITAIRE_READY : SOLITAIRE_SECOND);
+    int status = -1;
+    long reaped = sxn_waitpid(child, &status);
+    const int ok = reaped == child && status == 0;
+    say(ok ? "win32test: ok   " : "win32test: FAIL ", pass == 1 ? "sol.exe run 1" : "sol.exe run 2",
+        ok ? "" : " (status differs)");
+    return ok;
+}
+
+static int run_solitaire(void) {
+    static const char empty[] = "SavanXP registry 1\n";
+    if (sxn_write_file(SOLITAIRE_REGISTRY, empty, length_of(empty)) != 0) {
+        say("win32test: FAIL ", SOLITAIRE_REGISTRY, ": cannot be written");
+        return 0;
+    }
+    if (!start_windowd()) {
+        say("win32test: FAIL ", "windowd", ": did not start");
+        return 0;
+    }
+    int ok = run_solitaire_once(1);
+    /* What run 1 saved: the deck back and the options. */
+    static char got[1024];
+    static char wanted[1024];
+    const long got_size = read_file(SOLITAIRE_REGISTRY, got, sizeof(got));
+    const long wanted_size = read_file(EXPECTED "/solitaire.reg", wanted, sizeof(wanted));
+    int same = got_size >= 0 && got_size == wanted_size;
+    for (long i = 0; same && i < got_size; ++i) {
+        same = got[i] == wanted[i];
+    }
+    say(same ? "win32test: ok   " : "win32test: FAIL ", "solitaire.reg", same ? "" : " (registry differs)");
+    ok = run_solitaire_once(2) && same && ok;
+    return ok;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'w') {
         sxn_exit(run_window(&k_window) ? 0 : 1);
@@ -259,6 +318,9 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c') {
         sxn_exit(run(&k_cards) ? 0 : 1);
+    }
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 's') {
+        sxn_exit(run_solitaire() ? 0 : 1);
     }
     /* A fresh registry, so the counter starts where Windows XP's did. */
     static const char empty[] = "SavanXP registry 1\n";

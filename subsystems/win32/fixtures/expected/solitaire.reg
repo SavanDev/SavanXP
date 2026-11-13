@@ -1,0 +1,6 @@
+SavanXP registry 1
+[Software]
+[Software\Microsoft]
+[Software\Microsoft\Solitaire]
+"Atrás"=dword:00000004
+"Opciones"=dword:00000005

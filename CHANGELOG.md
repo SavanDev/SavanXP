@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Windows XP Solitaire runs: the user's own `sol.exe` and `cards.dll` in `C:\Program Files\Solitaire` open from Files
+  (`.exe` is associated with `winhost`) and from a Solitaire shortcut in the Start menu, with their own icon.** The Start
+  menu lists the `.sxlnk` shortcuts of `/system/start` and the user's `Start Menu` above Programs. `win32-solitaire-test`
+  and smoke scenario `win32-solitaire` win a recorded game, skipped (77) without the files. See
+  [WIN32.md](docs/userland/WIN32.md#solitaire).
+
 - **Win32 menus and dialogs: menu bars and popup menus by pointer and keyboard, `DialogBoxParamW` with its keyboard
   interface, the Button and Static controls, `MessageBoxW`, and new `shell32.dll` (`ShellAboutW`) and `comctl32.dll`
   (`InitCommonControlsEx`).** Dialogs and menus are `windowd` owned windows (private ABI v4); smoke scenario
@@ -275,6 +281,10 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **Win32 windows lay out as on Windows XP: fonts report Windows XP's heights (the System font's 16 pixels), a child's
+  `WS_BORDER` is drawn, a disabled window's menu bar turns grey, and F1 sends `WM_HELP`.** See
+  [WIN32.md](docs/userland/WIN32.md#user32-and-gdi32).
 
 - **Win32 programs no longer fail to present a large buffer: the guest heap stopped merging free blocks across two
   arenas the host happened to map side by side.** See [WIN32.md](docs/userland/WIN32.md#what-they-do-and-what-they-refuse).

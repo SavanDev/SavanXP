@@ -38,6 +38,9 @@ typedef struct sxw_window_platform {
                        uint32_t kind, int32_t x, int32_t y);
     void (*destroy)(void *context, uint32_t window);
     int (*set_title)(void *context, uint32_t window, const char *title);
+    /* The window's SXW_ICON_EXTENT-square icon, 0xAARRGGBB, top row first.
+     * 0 on success. */
+    int (*set_icon)(void *context, uint32_t window, const uint32_t *pixels);
     /* Copies the rectangles, already clipped to the buffer, from pixels
      * (stride pixels per row, width x height) and shows them. 0 on success. */
     int (*present)(void *context, uint32_t window, const uint32_t *pixels, uint32_t stride, uint32_t width,
@@ -60,10 +63,10 @@ typedef struct sxw_services {
     int (*save_registry)(void *context, const char *text, size_t length);
     /* HKEY_CURRENT_USER, loaded by the platform before the guest starts. */
     sxw_registry *registry;
-    /* With fixed_time nonzero, the guest's clock starts there (a test run)
-     * and advances with now(). */
+    /* With fixed_time nonzero, the guest's clock reads that second and stays
+     * there (a test run): a program that seeds from it deals the same however
+     * long its start takes. */
     uint32_t fixed_time;
-    uint64_t start_time;
     /* Set when the guest asked to end, with its 32-bit status. */
     int exit_requested;
     uint32_t exit_status;

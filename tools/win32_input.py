@@ -10,12 +10,16 @@ absolute pointer (a USB or virtio tablet).
 The client area is found on a screenshot by the fixture's marker: a 4x4
 magenta square at its top-left corner. `window N` switches to the client
 area of a dialog, whose marker is cyan (`window 0` is the main window).
+A program that draws no marker (Solitaire) is found with --anchor instead:
+the first row of the screen with a run of exactly WIDTH pixels of a colour,
+moved by DY rows (its menu bar), and `window N WIDTH` finds a dialog by a run
+of WIDTH pixels of the dialog colour (COLOR_BTNFACE) along its client top.
 `close` is Alt+F4, which both window managers turn into the frame's close;
 `dump FILE [WxH]` saves the client area of a screenshot as a binary PPM, W x H
 or the size given with --client.
 
     win32_input.py --socket qmp.sock --script input.txt --client 320x240 \\
-                   [--dump-dir DIR] [--marker-timeout 60]
+                   [--dump-dir DIR] [--marker-timeout 60] [--anchor R,G,B:WIDTH:DY]
 """
 
 from __future__ import annotations
@@ -33,6 +37,8 @@ MAGENTA = (255, 0, 255)
 # The marker of each window a script switches to with "window N": the main
 # window's, then the dialog's.
 MARKERS = [MAGENTA, (0, 255, 255)]
+# COLOR_BTNFACE of the classic scheme, the background of a dialog.
+BTNFACE = (212, 208, 200)
 
 # Windows virtual keys to QEMU key codes, for the keys scripts use.
 VK_QCODES = {
@@ -118,6 +124,47 @@ def wait_for_marker(screen: Screen, timeout: float, color: tuple[int, int, int] 
     raise TimeoutError("the fixture's marker never appeared")
 
 
+def find_run(width: int, height: int, rgb: bytes, color: tuple[int, int, int], run: int) -> tuple[int, int] | None:
+    """The left end of the first run, top to bottom, of exactly `run` pixels
+    of the colour, or None."""
+    pixel = bytes(color)
+    for y in range(height):
+        row = rgb[y * width * 3:(y + 1) * width * 3]
+        x = 0
+        while x < width:
+            at = row.find(pixel, x * 3)
+            while at >= 0 and at % 3 != 0:
+                at = row.find(pixel, at + 1)
+            if at < 0:
+                break
+            x = at // 3
+            end = x
+            while end < width and row[end * 3:end * 3 + 3] == pixel:
+                end += 1
+            if end - x == run:
+                return x, y
+            x = end
+    return None
+
+
+def wait_for_run(screen: Screen, timeout: float, color: tuple[int, int, int], run: int) -> tuple[int, int, int, int]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        width, height, rgb = screen.grab()
+        found = find_run(width, height, rgb, color, run)
+        if found is not None:
+            return found[0], found[1], width, height
+        time.sleep(0.5)
+    raise TimeoutError(f"no run of {run} pixels of {color} appeared")
+
+
+def wait_for_anchor(screen: Screen, timeout: float, anchor: str) -> tuple[int, int, int, int]:
+    """--anchor R,G,B:WIDTH:DY: the client origin at that run, moved by DY."""
+    color, run, dy = anchor.split(":")
+    x, y, width, height = wait_for_run(screen, timeout, tuple(int(v) for v in color.split(",")), int(run))
+    return x, y + int(dy), width, height
+
+
 class Player:
     def __init__(self, qmp: QmpClient, screen: Screen, origin: tuple[int, int], display: tuple[int, int],
                  client: tuple[int, int], dump_dir: Path, pace: float = 0.06) -> None:
@@ -183,6 +230,9 @@ class Player:
                 index = int(args[0])
                 if index == 0:
                     self.origin = self.main_origin
+                elif len(args) > 1:
+                    x, y, _w, _h = wait_for_run(self.screen, 20.0, BTNFACE, int(args[1]))
+                    self.origin = (x, y)
                 else:
                     x, y, _w, _h = wait_for_marker(self.screen, 20.0, MARKERS[index])
                     self.origin = (x, y)
@@ -202,11 +252,15 @@ def main() -> int:
     parser.add_argument("--client", required=True, help="the client area's size, WxH")
     parser.add_argument("--dump-dir", type=Path, default=Path("."))
     parser.add_argument("--marker-timeout", type=float, default=60.0)
+    parser.add_argument("--anchor", help="R,G,B:WIDTH:DY, for a program without a marker")
     args = parser.parse_args()
     client = tuple(int(v) for v in args.client.split("x"))
     with QmpClient(args.socket, timeout=10.0) as qmp:
         screen = Screen(qmp)
-        x, y, width, height = wait_for_marker(screen, args.marker_timeout)
+        if args.anchor:
+            x, y, width, height = wait_for_anchor(screen, args.marker_timeout, args.anchor)
+        else:
+            x, y, width, height = wait_for_marker(screen, args.marker_timeout)
         print(f"win32-input: client area at {x},{y} on a {width}x{height} screen", flush=True)
         Player(qmp, screen, (x, y), (width, height), client, args.dump_dir).play(args.script)
     return 0

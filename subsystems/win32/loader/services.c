@@ -125,16 +125,11 @@ static void write_text(sxw_services *s, const char *text) {
 }
 
 void sxw_services_start(sxw_services *s) {
-    s->start_time = s->now(s->context);
     s->exit_requested = 0;
 }
 
 static uint32_t guest_time(sxw_services *s) {
-    uint64_t now = s->now(s->context);
-    if (s->fixed_time != 0u) {
-        return s->fixed_time + (uint32_t)(now - s->start_time);
-    }
-    return (uint32_t)now;
+    return s->fixed_time != 0u ? s->fixed_time : (uint32_t)s->now(s->context);
 }
 
 /* Writes the modules a load added, and their count in the low half of the
@@ -273,6 +268,13 @@ static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t
     case SXW_SVC_WINDOW_TITLE:
         return w != 0 && read_utf16(p, a[1], title) && w->set_title(s->context, a[0], title) == 0 ? 0u
                                                                                                  : SXW_FAILED;
+    case SXW_SVC_WINDOW_ICON: {
+        uint32_t icon[SXW_ICON_EXTENT * SXW_ICON_EXTENT];
+        return w != 0 && read_words(p, a[1], SXW_ICON_EXTENT * SXW_ICON_EXTENT, icon) &&
+                       w->set_icon(s->context, a[0], icon) == 0
+                   ? 0u
+                   : SXW_FAILED;
+    }
     case SXW_SVC_WINDOW_PRESENT: {
         uint32_t size[2];
         int32_t rects[4u * SXW_MAX_RECTS];
@@ -335,7 +337,7 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     }
     const uint32_t service = frame[1];
     static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
-                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2};
+                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);

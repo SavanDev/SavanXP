@@ -243,8 +243,10 @@ add_custom_target(savanxp_win32 DEPENDS ${SXW_ALL_OUTPUTS}
     COMMENT "Building the Win32 DLLs and fixtures")
 
 # What the disk image carries (savanxp_diskfs expands the list): the DLL set
-# in C:\windows\system32, and with the test applications the fixtures in
-# C:\tests, where win32test runs them. Never a Microsoft file.
+# in C:\windows\system32, the Start menu's shortcut to Solitaire in
+# /system/start (shown once the user puts sol.exe at its target), and with the
+# test applications the fixtures in C:\tests, where win32test runs them.
+# Never a Microsoft file.
 set(SXW_DRIVE_C "system/win/drive_c")
 set(SAVANXP_WIN32_COPY_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32"
@@ -253,7 +255,10 @@ set(SAVANXP_WIN32_COPY_COMMANDS
             "${SXW_SYSTEM32}/msvcrt.dll" "${SXW_SYSTEM32}/advapi32.dll"
             "${SXW_SYSTEM32}/gdi32.dll" "${SXW_SYSTEM32}/user32.dll"
             "${SXW_SYSTEM32}/shell32.dll" "${SXW_SYSTEM32}/comctl32.dll"
-            "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/")
+            "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/start"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${SAVANXP_WIN32_ROOT}/start/Solitaire.sxlnk" "${SAVANXP_DISKFS_ROOT}/system/start/")
 if(SAVANXP_INCLUDE_TEST_APPS)
     list(APPEND SAVANXP_WIN32_COPY_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests"
@@ -301,4 +306,26 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
                 --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
                 --expected "${SXW_FX}/expected" --cards "${SAVANXP_WIN32_FIXTURES}")
     set_tests_properties(win32-cards-test PROPERTIES SKIP_RETURN_CODE 77)
+    # The user's own sol.exe, played to the end twice; skipped without it.
+    add_test(NAME win32-solitaire-test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/win32_harness_test.py"
+                --harness "$<TARGET_FILE:savanxp-win32-harness>"
+                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
+                --expected "${SXW_FX}/expected" --solitaire "${SAVANXP_WIN32_FIXTURES}")
+    set_tests_properties(win32-solitaire-test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+# The shell's reader of a .exe's icon (include/sxgfx/pe_icon.h), on the
+# resource.exe fixture and 20,000 damaged copies of it.
+add_executable(savanxp-pe-icon-test
+    "${CMAKE_SOURCE_DIR}/system/gfx/pe_icon.c"
+    tests/host/pe_icon_test.c)
+target_include_directories(savanxp-pe-icon-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+set_target_properties(savanxp-pe-icon-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
+target_compile_options(savanxp-pe-icon-test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(savanxp-pe-icon-test PRIVATE -fsanitize=address,undefined)
+add_dependencies(savanxp-pe-icon-test savanxp_win32)
+add_dependencies(savanxp_tests savanxp-pe-icon-test)
+add_test(NAME pe-icon-test
+    COMMAND savanxp-pe-icon-test "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/hello.exe")
