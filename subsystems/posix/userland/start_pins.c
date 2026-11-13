@@ -1,7 +1,11 @@
 #include "start_pins.h"
 
+#include "sxgfx/pe_version.h"
+
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -34,6 +38,71 @@ static int join(char *out, size_t capacity, const char *folder, const char *name
     int written = snprintf(out, capacity, "%s/%s", folder, name);
 
     return written > 0 && (size_t)written < capacity;
+}
+
+/* The largest Windows program whose version is read. */
+#define START_PINS_PE_MAX (1024u * 1024u)
+
+/* A Windows program's FileDescription, as Windows XP names a pinned program
+ * ("Juego Solitario" for sol.exe), made a file name: no slashes, no blanks
+ * at the ends. 0 when it has none. */
+static int exe_description(const char *path, char *out, size_t capacity)
+{
+    uint8_t *file = malloc(START_PINS_PE_MAX);
+    size_t total = 0;
+    int fd;
+    int found = 0;
+
+    if (file == 0)
+    {
+        return 0;
+    }
+    fd = open(path, O_RDONLY);
+    if (fd >= 0)
+    {
+        for (;;)
+        {
+            ssize_t count = read(fd, file + total, START_PINS_PE_MAX - total);
+
+            if (count <= 0)
+            {
+                break;
+            }
+            total += (size_t)count;
+            if (total == START_PINS_PE_MAX)
+            {
+                break;
+            }
+        }
+        close(fd);
+        found = pe_version_string(file, total, "FileDescription", out, capacity);
+    }
+    free(file);
+    if (found)
+    {
+        size_t start = 0;
+        size_t end = strlen(out);
+
+        for (char *c = out; *c != '\0'; ++c)
+        {
+            if (*c == '/' || *c == '\\')
+            {
+                *c = '-';
+            }
+        }
+        while (out[start] == ' ')
+        {
+            ++start;
+        }
+        while (end > start && out[end - 1u] == ' ')
+        {
+            --end;
+        }
+        memmove(out, out + start, end - start);
+        out[end - start] = '\0';
+        found = out[0] != '\0' && strcmp(out, ".") != 0 && strcmp(out, "..") != 0;
+    }
+    return found;
 }
 
 /* A copy of each default shortcut, into the new folder. */
@@ -150,12 +219,19 @@ enum start_pin_result start_pins_pin(const char *path)
         shortcut_for_target(path, &link, name, sizeof(name));
         if (ends_with_nocase(name, ".exe" SHORTCUT_EXTENSION))
         {
-            /* "sol", not "sol.exe", and started where the program is, as
-             * Windows fills a new shortcut's Start in. */
+            /* Named by its description ("Juego Solitario"), or else "sol",
+             * not "sol.exe"; started where the program is, as Windows fills
+             * a new shortcut's Start in. */
             size_t length = strlen(name) - (sizeof(SHORTCUT_EXTENSION) - 1u) - 4u;
             const char *slash = strrchr(path, '/');
+            char description[64];
 
             name[length] = '\0';
+            if (exe_description(path, description, sizeof(description)))
+            {
+                snprintf(name, sizeof(name), "%s", description);
+                length = strlen(name);
+            }
             strncat(name, SHORTCUT_EXTENSION, sizeof(name) - length - 1u);
             if (slash != 0 && slash != path && (size_t)(slash - path) < sizeof(link.workdir))
             {

@@ -57,8 +57,11 @@ default the user unpins stays unpinned across boots and rebuilds.
 - **Pinning.** Files' item menu has **Pin to Start Menu**, next to Send To
   Desktop and enabled for a program (`/bin`, an `.sxe`), a Windows program
   (`.exe`) or a shortcut. It writes a shortcut named as Send To Desktop names
-  one. A `.exe` loses its extension (`sol`) and starts in its own folder, as
-  Windows fills a new shortcut's *Start in*. A shortcut is copied under its
+  one. A `.exe` is named, as Windows XP names a pinned program, by the
+  `FileDescription` of its version resource (`sxgfx/pe_version.h`): "Juego
+  Solitario" for the Spanish `sol.exe`. Without one it is its file name
+  without `.exe` (`sol`). It starts in its own folder, as Windows fills a
+  new shortcut's *Start in*. A shortcut is copied under its
   own name. A target already pinned with the same argument is refused ("It
   is already on the Start menu"), and so is a ninth pin.
 - **Unpinning.** A right click on a shortcut row closes the menu and opens
@@ -148,9 +151,11 @@ grows. A future visual setting can turn the switch off.
 - Both footer rows open the Shut Down dialog.
 
 The shortcuts' section has no shot of its own: the build's only default
-needs the user's `sol.exe`. `pe-icon-test` checks the icon reader, and the
+needs the user's `sol.exe`. `pe-icon-test` checks the icon and version
+readers on `resource.exe`, and on the user's `sol.exe` with
+`SAVANXP_WIN32_FIXTURES`, and the
 section was checked by hand with Solitaire installed: the default seeded into
 a profile without the folder, listed with its icon and started from it;
 unpinned from its context menu, and not seeded again; `sol.exe` pinned from
-Files as `sol` and started from it, a second pin refused, and Pin to Start
+Files as "Juego Solitario" and started from it, a second pin refused, and Pin to Start
 Menu disabled on `cards.dll`.

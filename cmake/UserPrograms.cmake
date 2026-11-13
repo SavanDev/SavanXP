@@ -382,8 +382,10 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/shortcut.c
     subsystems/posix/userland/start_shortcuts.c
     subsystems/posix/userland/start_pins.c
+    system/gfx/pe_version.c
     subsystems/posix/userland/file_assoc.c
     system/gfx/mime_icon.c
+    system/gfx/pe_resource.c
     system/gfx/pe_icon.c
     subsystems/posix/userland/mime_icon_posix.c)
 savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
@@ -406,13 +408,17 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
     system/gfx/mime_icon_large.c
     subsystems/posix/userland/mime_icon_posix.c
     subsystems/posix/userland/shortcut.c
-    subsystems/posix/userland/start_pins.c)# El editor es la app con mejor verificacion automatizada del arbol: el escenario
-# shoot_session notepadwheel teclea 40 lineas, captura, scrollea con la rueda y
-# COMPARA PIXELES. Si SxGUI viniera de una libreria y dibujara distinto, el
-# scroll no moveria el area y la comparacion fallaria.
+    subsystems/posix/userland/start_pins.c
+    system/gfx/pe_resource.c
+    system/gfx/pe_version.c)
+# The editor is the app with the best automated check in the tree: the
+# shoot_session notepadwheel scenario types 40 lines, captures, scrolls with
+# the wheel and COMPARES PIXELS. If SxGUI came from a library and drew
+# differently, the scroll would not move the area and the comparison would
+# fail.
 #
-# Ese escenario es lo que faltaba para poder decir que SxGUI funciona bajo una
-# libreria: ningun self-test llega al camino de dibujo.
+# That scenario is what was missing to say SxGUI works as a library: no
+# self-test reaches the drawing path.
 savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/notepad.c)
 savanxp_program(NAME webview DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES

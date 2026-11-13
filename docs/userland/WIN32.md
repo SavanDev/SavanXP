@@ -929,10 +929,13 @@ and checks the statuses and the registry, and the host
 (`tools/win32_solitaire_smoke.py`) finds the board by its colour, plays both
 scripts and compares the hashes.
 
-`pe-icon-test` checks the shell's reader of a `.exe`'s icon
-(`sxgfx/pe_icon.h`) with the sanitizers on: `resource.exe`'s icon at 32 and
-16 pixels against known checksums, a program without one, and 20,000 random
-byte changes and truncations of the file.
+`pe-icon-test` checks the shell's readers of a `.exe` with the sanitizers
+on. The icon (`sxgfx/pe_icon.h`): `resource.exe`'s at 32 and 16 pixels
+against known checksums. The version strings (`sxgfx/pe_version.h`): those
+of a minimal PE the test writes itself, so no fixture changes and none needs
+a new run on Windows XP, and, with `SAVANXP_WIN32_FIXTURES`, `sol.exe`'s
+"Juego Solitario". Also a program with neither, and 20,000 random byte
+changes and truncations of each file.
 
 `win32-pe-fixtures-test` reads the user's Windows XP `sol.exe` and `cards.dll`
 from the folder named by `SAVANXP_WIN32_FIXTURES`, as an environment or CMake

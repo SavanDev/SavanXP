@@ -129,7 +129,12 @@ static void add(const char *folder, const char *file_name)
     memset(s, 0, sizeof(*s));
     if (name_length >= sizeof(s->name))
     {
+        /* Cut on a character boundary: never inside a UTF-8 sequence. */
         name_length = sizeof(s->name) - 1u;
+        while (name_length > 0 && ((unsigned char)file_name[name_length] & 0xc0u) == 0x80u)
+        {
+            --name_length;
+        }
     }
     memcpy(s->name, file_name, name_length);
     memcpy(s->path, path, (size_t)written + 1u);

@@ -316,10 +316,13 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
     set_tests_properties(win32-solitaire-test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-# The shell's reader of a .exe's icon (include/sxgfx/pe_icon.h), on the
-# resource.exe fixture and 20,000 damaged copies of it.
+# The shell's readers of a .exe's icon and version strings
+# (include/sxgfx/pe_icon.h, pe_version.h), on the resource.exe fixture and
+# 20,000 damaged copies of it.
 add_executable(savanxp-pe-icon-test
+    "${CMAKE_SOURCE_DIR}/system/gfx/pe_resource.c"
     "${CMAKE_SOURCE_DIR}/system/gfx/pe_icon.c"
+    "${CMAKE_SOURCE_DIR}/system/gfx/pe_version.c"
     tests/host/pe_icon_test.c)
 target_include_directories(savanxp-pe-icon-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
 set_target_properties(savanxp-pe-icon-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)

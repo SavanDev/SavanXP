@@ -14,7 +14,7 @@ Cut-off notes:
 
 - **Pin to the Start menu: Files' item menu has Pin to Start Menu for programs, `.exe` files and shortcuts, and a right
   click on a pinned row offers Unpin from Start Menu.** The pins are the user's `Start Menu` folder, seeded once from
-  `/system/start`. See [START_MENU.md](docs/desktop/START_MENU.md#shortcuts).
+  `/system/start`; a `.exe` is named by its version resource's `FileDescription` (`sxgfx/pe_version.h`). See [START_MENU.md](docs/desktop/START_MENU.md#shortcuts).
 
 - **Windows XP Solitaire runs: the user's own `sol.exe` and `cards.dll` in `C:\Program Files\Solitaire` open from Files
   (`.exe` is associated with `winhost`) and from a Solitaire shortcut in the Start menu, with their own icon.** The Start
