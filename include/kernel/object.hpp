@@ -27,19 +27,20 @@ namespace object {
 constexpr size_t kMaxIoObjects = 256;
 constexpr size_t kMaxEventObjects = 128;
 constexpr size_t kMaxTimerObjects = 128;
-/* Secciones del sistema, tabla GLOBAL (no por proceso).
+/* The system's sections: one GLOBAL table, not per process.
  *
- * El presupuesto que la fija son las arenas de heap, no las imagenes de
- * librerias: cada proceso puede retener SX_ARENA_CAPACITY (8), asi que el techo
- * teorico es kMaxProcesses (64) x 8 = 512. Una sesion real corre 8-12 procesos,
- * y 12 x 8 + unas 10 librerias + superficies anda por 115; 256 deja margen para
- * duplicarlo. Agotarla degrada con ENOMEM limpio, no es una corrupcion.
- * sizeof(SectionObject) son 80 bytes, asi que el reparto son 20 KiB de BSS.
+ * Two budgets set it (docs/kernel/SECTIONS.md#the-budget). The heap: each
+ * process may hold SX_ARENA_CAPACITY (8) arenas, so a session of 8-12
+ * processes with ~10 libraries and its surfaces sits near 115. And the Win32
+ * subsystem: winhost makes one section per view, about 50 for Solitaire
+ * before its surfaces. 512 holds a session plus several Win32 programs.
+ * Running out is a clean ENOMEM, never corruption. sizeof(SectionObject) is
+ * 80 bytes, so the table is 40 KiB of BSS.
  *
- * Quien escriba el cargador de librerias deberia leer antes
- * docs/kernel/SECTIONS.md: por que esta tabla -- y no una sola para imagenes -- es el
- * lugar donde va a vivir la identidad de un archivo respaldado. */
-constexpr size_t kMaxSectionObjects = 256;
+ * Whoever writes a library loader should first read docs/kernel/SECTIONS.md:
+ * why this table -- and not a separate one for images -- is where the
+ * identity of a file-backed section lives. */
+constexpr size_t kMaxSectionObjects = 512;
 constexpr size_t kMaxSemaphoreObjects = 64;
 /* Ports: named rendezvous points (docs/desktop/DESKTOP_ARCHITECTURE.md, phase
  * 3). A handful of system services, not one per program. */

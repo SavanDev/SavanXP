@@ -19,6 +19,14 @@ static const unsigned char kExecProbe[] = { 0xb8, 0x3c, 0x00, 0x00, 0x00, 0xc3 }
  * antes de que el ultimo termine. */
 #define kFillerChildren 8
 
+/* Views held at once by one process: above the old per-process limit of 64,
+ * below today's 128 with room for the arenas and views already held. */
+#define kHeldViews 100
+
+/* The global section table's size before it was raised for the Win32
+ * subsystem; the fillers must get past it. */
+#define kOldSectionObjects 256
+
 /* Ranuras de la pagina de barrera, en este orden:
  *   [0, kFillerChildren)                    cuentas por hijo
  *   [kFillerChildren, kTallyRelease)        aviso por hijo, uno cada uno
@@ -30,13 +38,13 @@ static const unsigned char kExecProbe[] = { 0xb8, 0x3c, 0x00, 0x00, 0x00, 0xc3 }
  * tienen que reservar secciones de 4 KiB. */
 #define kBarrierAttempts 20000
 
-/* Crea secciones hasta que el sistema las niegue, y devuelve cuantas logro
- * dejar vivas. La vista es lo que las mantiene vivas: cerrar el handle no las
- * destruye mientras esten mapeadas en algun lado.
+/* Creates sections until the system refuses one, and returns how many it
+ * left alive. The view is what keeps each alive: closing the handle does not
+ * destroy a section while it is mapped somewhere.
  *
- * El handle se cierra en cada vuelta justamente para no acumular descriptores:
- * el tope de fds por proceso es 64 y el de vistas tambien, asi que sin esto el
- * hijo toparia antes por descriptor que por tabla global. */
+ * The handle is closed every round so descriptors do not pile up: a process
+ * has 64, fewer than its 128 views, so without this a child would run out of
+ * descriptors before the global table did. */
 static unsigned long fill_sections_until_full(void) {
     unsigned long count = 0;
 
@@ -537,14 +545,14 @@ int main(void) {
     }
     savanxp_close((int)plain_section);
 
-    /* Mapear y desmapear en ciclo no tiene que agotar los lugares de vista:
-     * si unmap_view no liberara el lugar, el ultimo map_view fallaria. Y
-     * tampoco en paralelo -- con 48 a la vez, este bloque se cae si el tope
-     * vuelve a ser 32. */
-    void* held_views[48];
-    for (int round = 0; round < 48; ++round) {
-        /* RW, no R+X: el objetivo aca es el tope de vistas, y una vista R+X
-         * rightly no se puede escribir. */
+    /* Mapping and unmapping in a loop must not exhaust the view slots: if
+     * unmap_view did not free its slot, the last map_view would fail. Nor
+     * holding many at once -- kHeldViews at a time is more than the old limit
+     * of 64, so this block fails if kMaxSectionViews drops back to it. */
+    void* held_views[kHeldViews];
+    for (int round = 0; round < kHeldViews; ++round) {
+        /* RW, not R+X: the point here is the view limit, and an R+X view
+         * rightly cannot be written. */
         held_views[round] = map_view((int)code_section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
         if (!expect_pointer(held_views[round], "map held view")) {
             for (int done = 0; done < round; ++done) {
@@ -556,14 +564,14 @@ int main(void) {
             return 1;
         }
     }
-    /* Las 48 son vistas distintas de la MISMA seccion, asi que las 48 tienen
-     * que ver el mismo byte: comparten la pagina fisica, no cada una la suya.
-     * Se planta el marcador por una sola y se lee por las 48. */
+    /* They are distinct views of the SAME section, so all of them must see
+     * the same byte: they share the physical page rather than each having
+     * its own. The marker is planted through one and read through all. */
     ((volatile unsigned char*)held_views[0])[0] = 0x5a;
-    for (int round = 0; round < 48; ++round) {
+    for (int round = 0; round < kHeldViews; ++round) {
         if (((volatile unsigned char*)held_views[round])[0] != 0x5a) {
-            eprintf("sectiontest: la vista %d de 48 no ve la pagina compartida\n", round);
-            for (int done = 0; done < 48; ++done) {
+            eprintf("sectiontest: view %d of %d does not see the shared page\n", round, kHeldViews);
+            for (int done = 0; done < kHeldViews; ++done) {
                 (void)unmap_view(held_views[done]);
             }
             unmap_view(runnable);
@@ -572,7 +580,7 @@ int main(void) {
             return 1;
         }
     }
-    for (int round = 0; round < 48; ++round) {
+    for (int round = 0; round < kHeldViews; ++round) {
         if (!expect_success(unmap_view(held_views[round]), "unmap held view")) {
             return 1;
         }
@@ -644,12 +652,12 @@ int main(void) {
         return 1;
     }
 
-    /* --- la tabla global de secciones, llenada entre varios ---------------
+    /* --- the global section table, filled by several processes ------------
      *
-     * Un proceso solo nunca alcanza esa tabla: sus secciones viven mientras
-     * tenga vistas mapeadas, y de ahi el tope son 64. Se llena entre varios
-     * procesos, que es como se llena de verdad -- cada uno aporta sus arenas
-     * y sus librerias.
+     * One process alone never reaches that table: its sections live while it
+     * has them mapped, so it stops at its view limit (128). The table fills
+     * across processes, which is how it fills for real -- each brings its
+     * arenas and libraries.
      *
      * Los hijos necesitan una barrera, y por un motivo que no es obvio: sin
      * ella NO se solapan. El padre forkea sin esperar, asi que el hijo 0 puede
@@ -718,18 +726,18 @@ int main(void) {
         eprintf("sectiontest: solo %d de %d hijos llegaron a la barrera\n", announced, kFillerChildren);
         failed = 1;
     } else {
-        /* Los ocho tienen sus secciones vivas AHORA. Con el tope viejo (64)
-         * esta suma no podia pasar de 64; con el nuevo tiene que llegar ademas
-         * a haber encontrado la tabla llena y devuelto ENOMEM limpio. */
+        /* All eight hold their sections NOW. The total must pass the old
+         * table size, which proves the table grew, and every child must have
+         * stopped on a clean ENOMEM, which it did to get here. */
         unsigned long total = 0;
         for (int slot = 0; slot < kFillerChildren; ++slot) {
             total += tally[slot];
         }
-        if (total <= 64) {
-            eprintf("sectiontest: la tabla global solo llego a %lu secciones vivas\n", total);
+        if (total <= kOldSectionObjects) {
+            eprintf("sectiontest: the global table reached only %lu live sections\n", total);
             failed = 1;
         } else {
-            eprintf("sectiontest: %lu secciones vivas entre %d procesos, tabla llena limpio\n", total, kFillerChildren);
+            eprintf("sectiontest: %lu live sections across %d processes, table full cleanly\n", total, kFillerChildren);
         }
     }
 

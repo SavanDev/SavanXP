@@ -137,6 +137,9 @@ Cut-off notes:
 
 ### Changed
 
+- **A process may hold 128 section views (was 64) and the system 512 sections (was 256)**, so a Win32 program fits:
+  `winhost` maps one section per protection run of each image. See [SECTIONS.md](docs/kernel/SECTIONS.md#the-budget).
+
 - **Paint looks like the Win9x one:** colour toolbox icons, a brush/eraser size box, the picture in a grey workspace,
   the 28-colour box at the bottom with a foreground/background well (right click sets the background, which the eraser
   paints), position and size panes in the status bar, and `Image > Clear Image`. See [PAINT.md](docs/desktop/PAINT.md).

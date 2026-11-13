@@ -444,9 +444,11 @@ output; `missingdll.exe` and `missingsym.exe` end with XP's `0xC0000135` and
 The view count it asked for: about five views per image as lld lays our
 DLLs out (headers R, `.text` RX, `.rdata` R, `.data` RW, `.reloc` R), so
 `hello.exe` takes 14 and Solitaire's ten images would take about 50 before
-surfaces. Before W3 adds two per surface, one of these is chosen and recorded:
-order our DLLs' sections so read-only data and relocations sit together
-(four runs each), or raise `kMaxSectionViews` with its `sectiontest` update.
+surfaces. Chosen on 2026-11-12: `kMaxSectionViews` went from 64 to 128 and
+`kMaxSectionObjects` from 256 to 512, since `winhost` makes one section per
+view; about 150 KiB more of kernel BSS
+([SECTIONS.md](../../kernel/SECTIONS.md#the-budget)). Reordering sections
+would only have helped our own DLLs, not `sol.exe` or `cards.dll`.
 
 ### W2 — base runtime for the measured closure
 
@@ -702,7 +704,7 @@ them.
 | `winhost` grows past `0x01000000`, where `sol.exe` must load | The load fails | Asserted at load and in the build. If it ever does not fit, `winhost` is linked above the guest range instead |
 | A later program reloads FS | Its TEB access faults | Solitaire does not. The fix is a per-thread descriptor, a known extension of K1 |
 | Keyboard play needs `SetCursorPos` and the desktop cannot move the pointer | Playing without a mouse is incomplete | The W0 trace confirms only keyboard play calls it; mouse play is complete without it. Chosen at W3: a neutral `windowd` request with its own consumer, or a stated limit of the first profile |
-| 64 views are not enough | The load fails cleanly | Count at W1; coalesce protection runs; raise the limit with its test |
+| 64 views are not enough | The load fails cleanly | Counted at W1 (about 5 per image); the limit is now 128 views and 512 sections |
 | Pixel comparison is too strict across font or metric differences | False failures | Compare card art and geometry exactly, text regions by layout; record each tolerance |
 | The work turns into an API catalogue | The goal recedes | The matrix is the scope. A function without a consumer in it is not written |
 

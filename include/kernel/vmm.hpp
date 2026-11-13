@@ -36,20 +36,21 @@ constexpr uint64_t kUserStackGuardBottom =
 
 constexpr uint64_t kSectionViewBase = 0x0000001000000000ULL;
 
-/* Lugares de vista POR PROCESO.
+/* View slots PER PROCESS.
  *
- * El arreglo es en linea dentro de VmSpace, que a su vez es miembro de Process,
- * asi que cada vista cuesta sizeof(SectionView) = 32 bytes en los kMaxProcesses
- * procesos de la tabla: 64 vistas x 32 bytes x 64 procesos son 128 KiB de kernel,
- * y subir mas no compra nada.
+ * The array is inline in VmSpace, which is a member of Process, so each slot
+ * costs sizeof(SectionView) = 32 bytes in every one of the kMaxProcesses
+ * processes: 128 views x 32 bytes x 64 processes is 256 KiB of kernel BSS.
  *
- * El presupuesto que hay que cubrir, con el cargador de librerias en el medio:
- *   - hasta SX_ARENA_CAPACITY (8) arenas de heap por proceso
- *   - hasta 3 vistas por libreria (texto/rodata respaldado por el archivo,
- *     datos privados, bss): 6 librerias son 18
- *   - mmap anonimos explicitos y superficies de GPU, un puñado
- * Eso da ~40 en el peor caso realista, y 32 era el numero que lo rozaba. */
-constexpr size_t kMaxSectionViews = 64;
+ * The budget it covers (docs/kernel/SECTIONS.md#the-budget):
+ *   - a POSIX or SUN program: up to SX_ARENA_CAPACITY (8) heap arenas, up to
+ *     3 views per library, and a handful of mmaps and GPU surfaces; ~40 in
+ *     the realistic worst case;
+ *   - winhost: one view per protection run of each PE image, about 5 per
+ *     image, so ~50 for Solitaire's ten images, plus the stack, the TEB and
+ *     two per window surface from W3 on.
+ * 64 covered the first and not the second. */
+constexpr size_t kMaxSectionViews = 128;
 
 enum PageFlags : uint64_t {
     kPagePresent = 1ULL << 0,
