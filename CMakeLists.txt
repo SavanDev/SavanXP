@@ -1310,12 +1310,13 @@ add_custom_target(savanxp_diskfs
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets/desktop/cursors" "${SAVANXP_DISKFS_ROOT}/system/cursors"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
+    ${SAVANXP_WIN32_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
             --project-root "${CMAKE_SOURCE_DIR}"
             --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
-    DEPENDS ${SAVANXP_USER_TARGETS} ${SAVANXP_USER_LIBRARY_TARGETS}
+    DEPENDS ${SAVANXP_USER_TARGETS} ${SAVANXP_USER_LIBRARY_TARGETS} savanxp_win32
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Staging persistent disk tree"
     VERBATIM

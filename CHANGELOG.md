@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **PE32 console programs run on SavanXP: `/system/winhost.sxe program.exe`, with the subsystem's `ntdll.dll` and
+  `kernel32.dll` in `/system/win/drive_c/windows/system32`.** Smoke scenario `win32-hello` checks the fixtures against
+  Windows XP's output and exit status. See [WIN32.md](docs/userland/WIN32.md#winhost--subsystemswin32host).
+
 - **Native programs can run 32-bit code: a ring-3 32-bit code segment (`0x2b`) and per-thread DS, ES, FS and GS.**
   User data `0x1b` is now a valid 32-bit stack segment, TSS selectors start at `0x30`, and `int 0x80` from 32-bit code
   returns `-ENOSYS`. See [ARCH.md](docs/kernel/ARCH.md#segments).

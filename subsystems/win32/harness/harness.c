@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "loader.h"
+#include "services.h"
 #include "sxw_abi.h"
 
 #define TRAMPOLINE 0x7ffe0000u
@@ -179,91 +180,20 @@ static void platform_close(void *context, void *handle) {
 
 /* ---- Services ------------------------------------------------------------ */
 
-/* Whether [address, address + length) lies inside one region of the guest. */
-static int guest_range(uint32_t address, uint32_t length) {
-    for (uint32_t i = 0; i < g_process.region_count; ++i) {
-        const sxw_region *r = &g_process.regions[i];
-        if (address >= r->base && address - r->base <= r->size && length <= r->size - (address - r->base)) {
-            return 1;
-        }
-    }
-    return 0;
+static long write_stream(void *context, int stream, const void *buffer, uint32_t length) {
+    (void)context;
+    return write(stream, buffer, length);
 }
 
-static int guest_arguments(uint32_t address, uint32_t count, uint32_t *out) {
-    if (count == 0) {
-        return 1;
-    }
-    if (!guest_range(address, 4u * count)) {
-        return 0;
-    }
-    memcpy(out, (const void *)(uintptr_t)address, 4u * count);
-    return 1;
-}
-
-static int handle_fd(uint32_t handle) {
-    switch (handle) {
-    case 3: return 0;
-    case 7: return 1;
-    case 11: return 2;
-    default: return -1;
-    }
-}
+static sxw_services g_services = {.process = &g_process, .write = write_stream};
 
 uint32_t sxw_host_service(uint64_t guest_esp) {
-    uint32_t frame[3];
-    if (!guest_arguments((uint32_t)guest_esp, 3, frame)) {
+    uint32_t result = sxw_service(&g_services, (uint32_t)guest_esp);
+    if (g_services.exit_requested) {
+        g_exit_status = g_services.exit_status;
         sxw_exit_requested = 1;
-        g_exit_status = 0xc0000005u;
-        return 0;
     }
-    uint32_t service = frame[1];
-    uint32_t a[3];
-    switch (service) {
-    case SXW_SVC_VERSION:
-        return SXW_ABI_VERSION;
-    case SXW_SVC_EXIT_PROCESS:
-        if (!guest_arguments(frame[2], 1, a)) {
-            a[0] = 0xc0000005u;
-        }
-        g_exit_status = a[0];
-        sxw_exit_requested = 1;
-        return 0;
-    case SXW_SVC_STD_HANDLE:
-        /* The console handles Windows XP gives a console program. */
-        if (!guest_arguments(frame[2], 1, a) || a[0] > 2) {
-            return 0;
-        }
-        return 3u + 4u * a[0];
-    case SXW_SVC_WRITE: {
-        if (!guest_arguments(frame[2], 3, a) || !guest_range(a[1], a[2])) {
-            return SXW_FAILED;
-        }
-        int fd = handle_fd(a[0]);
-        if (fd < 0) {
-            return SXW_FAILED;
-        }
-        uint32_t done = 0;
-        while (done < a[2]) {
-            ssize_t n = write(fd, (const char *)(uintptr_t)a[1] + done, a[2] - done);
-            if (n <= 0) {
-                return done != 0 ? done : SXW_FAILED;
-            }
-            done += (uint32_t)n;
-        }
-        return done;
-    }
-    case SXW_SVC_DEBUG_OUTPUT:
-        if (guest_arguments(frame[2], 2, a) && guest_range(a[0], a[1])) {
-            dprintf(2, "win32: debug: %.*s\n", (int)a[1], (const char *)(uintptr_t)a[0]);
-        }
-        return 0;
-    default:
-        dprintf(2, "win32: unknown service %u\n", service);
-        sxw_exit_requested = 1;
-        g_exit_status = 0xc000001cu; /* STATUS_INVALID_SYSTEM_SERVICE */
-        return 0;
-    }
+    return result;
 }
 
 /* ---- Faults ------------------------------------------------------------- */
@@ -390,6 +320,7 @@ int main(int argc, char **argv) {
 
     sxw_platform platform = {
         .context = NULL,
+        .guest_low = 0x10000,
         .map = platform_map,
         .protect = platform_protect,
         .unmap = platform_unmap,

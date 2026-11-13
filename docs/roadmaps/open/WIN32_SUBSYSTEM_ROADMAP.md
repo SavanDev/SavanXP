@@ -1,8 +1,8 @@
 # Win32 subsystem — Windows applications on Sx
 
-> **Status: design settled; W0 complete (2026-11-12); W1's host half done
-> (2026-11-12): parser, loader, gate harness and fixtures, checked against
-> Windows XP, described in [WIN32.md](../../userland/WIN32.md).** The
+> **Status: design settled; W0, K1, K2 and W1 complete (2026-11-12): a PE32
+> console program runs on SavanXP under `winhost`, described in
+> [WIN32.md](../../userland/WIN32.md). Next: W2.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -434,6 +434,20 @@ in the diagnostic, and a failed load leaves no view or handle behind.
 `win32-hello` is a registered smoke scenario; ELF and SXE launches are
 unaffected.
 
+**Done (2026-11-12).** `hello.exe` and `initorder.exe` give byte-identical
+output and the same status on Windows XP, in `win32-harness-test` and in
+`win32-hello` (KVM and TCG), where `win32test.sxe` captures `winhost`'s
+output; `missingdll.exe` and `missingsym.exe` end with XP's `0xC0000135` and
+`0xC0000139`, name the DLL or function, and leave nothing mapped or open.
+`smoke`, `native-test` and the persistence check pass.
+
+The view count it asked for: about five views per image as lld lays our
+DLLs out (headers R, `.text` RX, `.rdata` R, `.data` RW, `.reloc` R), so
+`hello.exe` takes 14 and Solitaire's ten images would take about 50 before
+surfaces. Before W3 adds two per surface, one of these is chosen and recorded:
+order our DLLs' sections so read-only data and relocations sit together
+(four runs each), or raise `kMaxSectionViews` with its `sectiontest` update.
+
 ### W2 — base runtime for the measured closure
 
 Size S. Only the non-GUI functions of the W0 matrix: 18 in `msvcrt`, 9 in
@@ -565,6 +579,7 @@ green; none needs the one after it.
 3. K2, then K1, each with its `nativetest` assertions. Both done
    2026-11-12.
 4. W1, guest half: `winhost` on SavanXP and the `win32-hello` smoke scenario.
+   Done on 2026-11-12.
 5. W2 onward, in order.
 
 **What is already proven on the build host** (2026-11-10, clang 23 and lld;

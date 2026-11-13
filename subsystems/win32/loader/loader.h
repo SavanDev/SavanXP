@@ -29,17 +29,21 @@ extern "C" {
 #define SXW_MODULE_NAME 64u
 #define SXW_DIAGNOSTIC 256u
 
-/* Guest addresses the loader places regions in. */
-#define SXW_GUEST_LOW 0x00010000u
+/* Guest addresses the loader places regions in: from the platform's
+ * guest_low (0x10000 in the harness; on SavanXP the user half starts at
+ * 0x400000) up to 2 GiB. A relocated image goes at 0x10000000 or above. */
 #define SXW_GUEST_HIGH 0x80000000u
 #define SXW_RELOCATED_LOW 0x10000000u
 
 typedef struct sxw_platform {
     void *context;
+    /* The lowest guest address the platform can map. */
+    uint32_t guest_low;
     /* Maps size zeroed, read-write bytes at exactly base. Nonzero when the
-     * range is not free. */
+     * range is not free. An image is mapped one protection run per call, and
+     * protect() is later called with exactly the base and size of one map(). */
     int (*map)(void *context, uint32_t base, uint32_t size);
-    /* Gives a mapped range its final protection. */
+    /* Gives a mapped range its final protection, keeping its contents. */
     int (*protect)(void *context, uint32_t base, uint32_t size, pe_protection protection);
     void (*unmap)(void *context, uint32_t base, uint32_t size);
     /* Opens an image by the name an import uses (or the executable's path).

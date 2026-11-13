@@ -728,6 +728,16 @@ SCENARIOS: dict[str, Scenario] = {
         host_server="tcp",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    # The Win32 subsystem's W1 gate (docs/userland/WIN32.md): a SUN parent runs
+    # the PE32 fixtures through winhost and compares output and exit status
+    # with Windows XP's. Run it under --accel kvm too: TCG does not fault on a
+    # lost data selector in 32-bit code (docs/kernel/ARCH.md#segments).
+    "win32-hello": _qemu_scenario(
+        "win32test",
+        "WIN32 HELLO PASS",
+        "WIN32 HELLO FAIL",
+        "PE32 fixtures through winhost, byte for byte against Windows XP",
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",

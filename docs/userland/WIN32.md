@@ -1,15 +1,17 @@
 # Win32 subsystem
 
-> **Status: W1 in progress; the host half is done.** This document describes what exists under
-> `subsystems/win32/`. The plan, the phases and the reasons behind them are in
-> the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the API
-> surface of the first profile is in
+> **Status: W1 complete (2026-11-12).** This document describes what exists
+> under `subsystems/win32/`. The plan, the phases and the reasons behind them
+> are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
+> API surface of the first profile is in
 > [WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md).
 
-So far the subsystem runs on the build host only: the PE32 parser, the
-loader, the first two DLLs, the gate of the host harness, and the fixtures
-that check all of it against Windows XP. Nothing is installed in the image
-yet; `winhost` on SavanXP is the guest half of W1.
+A PE32 console program runs on SavanXP: `winhost.sxe` loads it and its DLLs
+below 4 GiB and runs it as 32-bit code. The same loader and DLLs run on the
+build host in a harness, and the fixtures that check both give the bytes and
+exit statuses Windows XP gives. Nothing of the Windows API beyond what those
+fixtures import exists yet, and nothing starts a `.exe` but a command line
+naming `winhost`.
 
 ```text
 subsystems/win32/
@@ -19,7 +21,16 @@ subsystems/win32/
   dlls/          ntdll.dll and kernel32.dll, PE32
   fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing
   harness/       win32-harness: the loader and gate on Linux x86-64
+  host/          winhost.sxe: the loader and gate on SavanXP
+  tests/         win32test.sxe: the win32-hello smoke runner
   Win32.cmake
+```
+
+On the disk image, under `/system/win/drive_c` (the guest's `C:`):
+
+```text
+windows/system32/   ntdll.dll, kernel32.dll
+tests/              the fixtures, when the test applications are built
 ```
 
 ## The PE32 parser — `subsystems/win32/pe/`
@@ -107,11 +118,15 @@ files come from a platform table (`map` at an exact address, `protect`,
 both platforms map them at the same host address, so the loader writes guest
 memory through plain pointers.
 
-`sxw_load()` does, in order:
+`sxw_load()` does, in order. The platform gives the lowest guest address it
+can map (`guest_low`): `0x10000` in the harness, `0x400000` on SavanXP, where
+the user half starts.
 
 1. **Map the executable, then each DLL it imports, depth first.** An image
    goes at its preferred base when the range is free, otherwise at the first
-   free 64 KiB step from `0x10000000`, and is relocated. Names are compared
+   free 64 KiB step from `0x10000000`, and is relocated. It is mapped as one
+   platform mapping per protection run (on SavanXP, one section each), so
+   every run can take its own final access. Names are compared
    without case and opened lower-case: next to the executable first, then in
    the system folder. `ntdll.dll` is always loaded.
 2. **Bind every import** from the lookup table. A forwarder (`DLL.Name` or
@@ -266,6 +281,44 @@ before any host C code runs. The 32-bit halves of each transition, and the
 32-bit far jump cannot reach the harness's own code. A fault in guest code
 prints its address and ends the harness with 125.
 
+## winhost — `subsystems/win32/host/`
+
+`winhost.sxe [--dlls DIR] /path/to/program.exe` is a SUN program in
+`/system`. DLLs are looked up next to the executable, then in `DIR`, by
+default `/system/win/drive_c/windows/system32`. The guest's standard output
+and error are `winhost`'s; its exit status is the guest's full 32-bit status,
+or the NT status of a failed load, with `win32: exit status 0x...` and any
+diagnostic on standard error. A failed load is also checked to have released
+every section and file; if not, `winhost` exits with 124.
+
+It is the same loader as the harness over a different platform:
+
+- **Memory.** Each region is its own section, granted read, write and execute
+  and viewed at its address with `SXN_SYS_MAP_VIEW_AT`. An image run is
+  filled through a read-write view, then unmapped and mapped again read-only
+  or read-execute. No view is ever writable and executable.
+- **Files.** `sxn_query_path`, `sxn_open_file` and `sxn_read`, the whole file
+  read into the native heap and freed once the load ends.
+- **The gate.** The 32-bit code segment is `0x2b`, 64-bit code `0x23`, data
+  `0x1b` ([ARCH.md](../kernel/ARCH.md#segments)). `winhost` loads the data
+  selector into DS, ES and FS once, then sets FS's base to the TEB with
+  `sxn_set_thread_base`, and never switches them again: the native runtime
+  does not use FS, and the kernel keeps all three per thread. The 32-bit
+  halves of each transition live in a section at `0x7FFE0000`, as in the
+  harness.
+- **Services** come from `loader/services.c`, shared with the harness.
+
+`winhost` itself is linked at `0x400000` and ends near `0x470000`, well
+below `0x01000000`, where `sol.exe` must load. A fixture that prefers
+`0x400000` is relocated.
+
+**Views.** The kernel gives a process 64 section views. `hello.exe` uses 14:
+three images of about five protection runs each (headers, code, read-only
+data, data, relocations), the stack, the TEB block and the trampoline.
+`initorder.exe` uses 29. Solitaire's ten images would need about 50 before
+W3 adds two per window surface; [the roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md#w1--the-loader-the-gate-and-the-first-executable)
+records the options.
+
 ## Tests
 
 `win32-pe-test` (in `./build.sh test`) is built with the address and
@@ -278,6 +331,13 @@ undefined-behaviour sanitizers. It:
   each expecting its own status and a message;
 - applies 20,000 random byte changes and truncations to the image and runs
   every stage on each, so a read outside a buffer fails the test.
+
+`win32-hello` (`./build.sh smoke win32-hello`) boots SavanXP and runs
+`win32test.sxe`, a SUN parent that starts `winhost` with each fixture,
+captures its standard output through a pipe and compares the bytes and the
+32-bit exit status with Windows XP's. Each case is a line in the system log.
+Run it under `--accel kvm` as well: QEMU's TCG does not fault on a null data
+selector in 32-bit code, so only KVM or hardware catches a lost one.
 
 `win32-harness-test` runs the four fixtures through the harness and
 compares the output bytes and the full 32-bit status with what Windows XP

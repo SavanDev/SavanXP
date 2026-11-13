@@ -110,3 +110,20 @@ savanxp_system_service(NAME mouse SOURCES mouse.c
     SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c system/compositord/shadow.c
         subsystems/posix/sdk/v1/runtime/sximg.c)
 target_include_directories(mouse PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord")
+
+# The Win32 subsystem's host (docs/userland/WIN32.md#winhost): a SUN program
+# that loads a PE32 executable and its DLLs below 4 GiB and runs it as 32-bit
+# code. Its sources live with the subsystem in subsystems/win32/.
+savanxp_program(NAME winhost NATIVE SOURCES
+    subsystems/win32/host/winhost.c
+    subsystems/win32/loader/loader.c
+    subsystems/win32/loader/services.c
+    subsystems/win32/pe/pe.c)
+target_include_directories(winhost PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/win32/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/win32/loader"
+    "${CMAKE_SOURCE_DIR}/subsystems/win32/pe")
+
+# The win32-hello smoke scenario's runner: a SUN parent that runs the W1
+# fixtures through winhost and compares their output with Windows XP's.
+savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32test.c)

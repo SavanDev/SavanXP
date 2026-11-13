@@ -115,21 +115,46 @@ static int map_at(sxw_process *p, uint32_t base, uint32_t size) {
     return 0;
 }
 
-/* Maps size bytes at preferred when it is free, else at the first free
- * 64 KiB-aligned address from low. */
-static int place(sxw_process *p, uint32_t size, uint32_t preferred, uint32_t low, uint32_t *base) {
-    if (size == 0u || size > SXW_GUEST_HIGH - SXW_GUEST_LOW) {
+/* Maps every run at base + its RVA, or none of them: on a failure the runs
+ * mapped in this attempt are released. 0, 1 (the range is not free) or -1
+ * (no region slot left). */
+static int map_runs_at(sxw_process *p, uint32_t base, const pe_run *runs, uint32_t count) {
+    uint32_t first = p->region_count;
+    for (uint32_t i = 0; i < count; ++i) {
+        int r = map_at(p, base + runs[i].rva, runs[i].size);
+        if (r != 0) {
+            while (p->region_count > first) {
+                --p->region_count;
+                p->platform.unmap(p->platform.context, p->regions[p->region_count].base,
+                                  p->regions[p->region_count].size);
+            }
+            return r;
+        }
+    }
+    return 0;
+}
+
+/* Places a range of size bytes made of runs (one platform mapping each, so
+ * each can get its own protection later): at preferred when it is free, else
+ * at the first free 64 KiB step from low. */
+static int place(sxw_process *p, const pe_run *runs, uint32_t count, uint32_t size,
+                 uint32_t preferred, uint32_t low, uint32_t *base) {
+    uint32_t floor = p->platform.guest_low;
+    if (size == 0u || floor >= SXW_GUEST_HIGH || size > SXW_GUEST_HIGH - floor) {
         return 1;
     }
-    if (preferred >= SXW_GUEST_LOW && preferred <= SXW_GUEST_HIGH - size) {
-        int r = map_at(p, preferred, size);
+    if (low < floor) {
+        low = floor;
+    }
+    if (preferred >= floor && preferred <= SXW_GUEST_HIGH - size) {
+        int r = map_runs_at(p, preferred, runs, count);
         if (r <= 0) {
             *base = preferred;
             return r;
         }
     }
-    for (uint32_t at = low; at <= SXW_GUEST_HIGH - size; at += SXW_GRANULARITY) {
-        int r = map_at(p, at, size);
+    for (uint32_t at = align_up(low, SXW_GRANULARITY); at <= SXW_GUEST_HIGH - size; at += SXW_GRANULARITY) {
+        int r = map_runs_at(p, at, runs, count);
         if (r <= 0) {
             *base = at;
             return r;
@@ -139,7 +164,8 @@ static int place(sxw_process *p, uint32_t size, uint32_t preferred, uint32_t low
 }
 
 static int map_region(sxw_process *p, uint32_t size, uint32_t *base) {
-    if (place(p, align_up(size, SXW_GRANULARITY), 0, SXW_GUEST_LOW, base) != 0) {
+    pe_run run = {0, align_up(size, PE_PAGE_SIZE), PE_PROT_RW};
+    if (place(p, &run, 1, run.size, 0, p->platform.guest_low, base) != 0) {
         fail_status(p, SXW_STATUS_NO_MEMORY);
         d_put(p, "out of guest address space");
         return -1;
@@ -245,7 +271,16 @@ static int load_module(sxw_process *p, const char *name, const char *requester, 
         d_put(p, " is a DLL, not an executable");
         return -1;
     }
-    if (place(p, m->image.size_of_image, m->image.image_base, SXW_RELOCATED_LOW, &m->base) != 0) {
+    /* One mapping per protection run, so each can take its final access
+     * once the image is filled. */
+    pe_run runs[PE_MAX_SECTIONS + 2u];
+    uint32_t run_count = 0;
+    if (pe_protection_runs(&m->image, runs, PE_MAX_SECTIONS + 2u, &run_count, &error) != PE_OK) {
+        d_pe(p, m->name, &error);
+        return -1;
+    }
+    if (place(p, runs, run_count, m->image.size_of_image, m->image.image_base, SXW_RELOCATED_LOW,
+              &m->base) != 0) {
         fail_status(p, SXW_STATUS_NO_MEMORY);
         d_put(p, m->name);
         d_put(p, ": no room in the guest address space");

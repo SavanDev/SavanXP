@@ -95,7 +95,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`WIN32.md`](userland/WIN32.md) — the Win32 subsystem as built: the PE32
   parser and what it refuses by name, the loader and its NT statuses, the
   gate and process start and exit, the first DLLs, the reproducible fixture
-  build, the host harness, and the fixtures' output recorded on Windows XP.
+  build, `winhost` on SavanXP and the host harness, the view budget, and the
+  fixtures' output recorded on Windows XP.
 - [`WIN32_SOLITAIRE_PROFILE.md`](userland/WIN32_SOLITAIRE_PROFILE.md) — the
   measured scope of the first Win32 profile: the user's Windows XP `sol.exe`
   and `cards.dll` by hash, their headers, the 124 imported functions by DLL,

@@ -120,6 +120,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && (text_contains(spec, "nativetest") || text_contains(spec, "nativecapture") || text_contains(spec, "nativedevices") || text_contains(spec, "nativepreferences"))) {
         return "NATIVE TEST";
     }
+    if (spec != 0 && text_contains(spec, "win32test")) {
+        return "WIN32 HELLO";
+    }
     return "SMOKE";
 }
 
@@ -169,6 +172,7 @@ static int run_automation_spec(const char* spec) {
     const char* nativepreferences_argv[] = {"/bin/nativetest.sxe", "audio-preferences", 0};
     const char* nightwood_argv[] = {"/system/nightwood.sxe", "--selftest", 0};
     const char* sxgltest_argv[] = {"/system/sxgltest.sxe", 0};
+    const char* win32test_argv[] = {"/system/win32test.sxe", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/bin/sessiontest", 0};
     const char* elevtest_argv[] = {"/bin/elevtest", 0};
@@ -338,6 +342,11 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "sxgltest") == 0) {
             path = "/system/sxgltest.sxe";
             argv = sxgltest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "win32test") == 0) {
+            /* The Win32 fixtures through winhost (docs/userland/WIN32.md). */
+            path = "/system/win32test.sxe";
+            argv = win32test_argv;
             argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
             path = "/bin/ccleste";

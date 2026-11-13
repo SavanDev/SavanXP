@@ -155,6 +155,25 @@ sxw_image(NAME missingsym.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console E
 add_custom_target(savanxp_win32 DEPENDS ${SXW_ALL_OUTPUTS}
     COMMENT "Building the Win32 DLLs and fixtures")
 
+# What the disk image carries (savanxp_diskfs expands the list): the DLL set
+# in C:\windows\system32, and with the test applications the fixtures in
+# C:\tests, where win32test runs them. Never a Microsoft file.
+set(SXW_DRIVE_C "system/win/drive_c")
+set(SAVANXP_WIN32_COPY_COMMANDS
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${SXW_SYSTEM32}/ntdll.dll" "${SXW_SYSTEM32}/kernel32.dll"
+            "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/")
+if(SAVANXP_INCLUDE_TEST_APPS)
+    list(APPEND SAVANXP_WIN32_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
+                "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
+                "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
+                "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/")
+endif()
+
 # ---- The host harness -----------------------------------------------------
 #
 # win32-harness runs a fixture on the Linux x86-64 build host through the
@@ -166,6 +185,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
         "${SAVANXP_WIN32_ROOT}/harness/harness.c"
         "${SAVANXP_WIN32_ROOT}/harness/gate_x86_64.S"
         "${SAVANXP_WIN32_ROOT}/loader/loader.c"
+        "${SAVANXP_WIN32_ROOT}/loader/services.c"
         "${SAVANXP_WIN32_ROOT}/pe/pe.c")
     target_include_directories(savanxp-win32-harness PRIVATE
         "${SAVANXP_WIN32_ROOT}/include" "${SAVANXP_WIN32_ROOT}/pe" "${SAVANXP_WIN32_ROOT}/loader")
