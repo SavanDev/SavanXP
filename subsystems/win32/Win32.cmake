@@ -243,8 +243,9 @@ add_custom_target(savanxp_win32 DEPENDS ${SXW_ALL_OUTPUTS}
     COMMENT "Building the Win32 DLLs and fixtures")
 
 # What the disk image carries (savanxp_diskfs expands the list): the DLL set
-# in C:\windows\system32, the Start menu's shortcut to Solitaire in
-# /system/start (shown once the user puts sol.exe at its target), and with the
+# in C:\windows\system32, the Start menu's default pin to Solitaire in
+# /system/start (copied into a new profile's Start Menu folder, and shown once
+# the user puts sol.exe at its target), and with the
 # test applications the fixtures in C:\tests, where win32test runs them.
 # Never a Microsoft file.
 set(SXW_DRIVE_C "system/win/drive_c")

@@ -381,6 +381,7 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/shortcut.c
     subsystems/posix/userland/start_shortcuts.c
+    subsystems/posix/userland/start_pins.c
     subsystems/posix/userland/file_assoc.c
     system/gfx/mime_icon.c
     system/gfx/pe_icon.c
@@ -404,7 +405,8 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
     system/gfx/mime_icon.c
     system/gfx/mime_icon_large.c
     subsystems/posix/userland/mime_icon_posix.c
-    subsystems/posix/userland/shortcut.c)# El editor es la app con mejor verificacion automatizada del arbol: el escenario
+    subsystems/posix/userland/shortcut.c
+    subsystems/posix/userland/start_pins.c)# El editor es la app con mejor verificacion automatizada del arbol: el escenario
 # shoot_session notepadwheel teclea 40 lineas, captura, scrollea con la rueda y
 # COMPARA PIXELES. Si SxGUI viniera de una libreria y dibujara distinto, el
 # scroll no moveria el area y la comparacion fallaria.

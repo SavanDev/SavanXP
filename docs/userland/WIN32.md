@@ -808,7 +808,8 @@ never touches that folder, so they survive `./build.sh build`. From there:
 - **Launching.** `winhost.sxe` declares `ext_open=.exe` in its `.sxres`
   (`host/winhost.sxres`), so Files and the desktop open a `.exe` with it
   through `file_assoc`. The build installs `/system/start/Solitaire.sxlnk`,
-  whose target is that `sol.exe`; the Start menu lists it at the top, with
+  whose target is that `sol.exe`, as a default pin copied into the user's
+  `Start Menu` folder; the Start menu lists it at the top, with
   the program's own icon read from its PE resources, once the file is there
   ([START_MENU.md](../desktop/START_MENU.md#shortcuts)). Under the window
   manager the window shows the same icon, from the class `sol.exe` registers.

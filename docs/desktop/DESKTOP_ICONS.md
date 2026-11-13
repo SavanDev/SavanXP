@@ -181,6 +181,7 @@ Applications, from a right click, Shift+F10 or the Menu key.
 
 **Files**: a right click on a row opens Open, Send To
 Desktop (a shortcut in the Desktop folder, named as the desktop would name
-it), Rename... and Delete; on `..` or the empty part of the list, Up One
+it), Pin to Start Menu ([START_MENU.md](./START_MENU.md#shortcuts)),
+Rename... and Delete; on `..` or the empty part of the list, Up One
 Level and Refresh. Shift+F10 and the Menu key open the selected row's menu,
 and Delete asks before deleting.

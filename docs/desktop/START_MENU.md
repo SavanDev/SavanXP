@@ -39,15 +39,33 @@ menu.
 
 ## Shortcuts
 
-The menu's own shortcuts are `.sxlnk` files
-([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)) in two folders: the system's,
-`/system/start`, which the build fills, and the user's, `Start Menu` in the
-profile. `start_shortcuts.c` reads both each time the menu opens and lists,
-sorted by name, every shortcut whose target exists, up to eight; a name in
-both folders is the user's. This is the area above Programs where Windows'
+The menu's own shortcuts are what the user pinned to it: `.sxlnk` files
+([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)) in `Start Menu` in the profile
+(`/users/user/Start Menu`). `start_shortcuts.c` reads the folder each time the
+menu opens and lists, sorted by name, every shortcut whose target exists, up
+to eight (`START_PINS_MAX`). This is the area above Programs where Windows'
 classic Start menu keeps what is pinned to it, and it is how a program that
 progman's catalog cannot discover reaches the menu: a Windows program, which
 has no `.sxres`.
+
+The folder is the user's alone; `start_pins.c` owns it. The system only
+seeds it, the way Windows copies the Default User profile: the first time
+the folder is needed and missing, it is created with a copy of each `.sxlnk`
+in `/system/start`, the defaults the build installs. That happens once, so a
+default the user unpins stays unpinned across boots and rebuilds.
+
+- **Pinning.** Files' item menu has **Pin to Start Menu**, next to Send To
+  Desktop and enabled for a program (`/bin`, an `.sxe`), a Windows program
+  (`.exe`) or a shortcut. It writes a shortcut named as Send To Desktop names
+  one. A `.exe` loses its extension (`sol`) and starts in its own folder, as
+  Windows fills a new shortcut's *Start in*. A shortcut is copied under its
+  own name. A target already pinned with the same argument is refused ("It
+  is already on the Start menu"), and so is a ninth pin.
+- **Unpinning.** A right click on a shortcut row closes the menu and opens
+  the row's context menu where the pointer is: **Open** and **Unpin from
+  Start Menu**, which deletes the `.sxlnk`. The context menu takes the Start
+  menu's window (see the table below), so the menu cannot stay open behind
+  it as Windows XP's does.
 
 A row is the file's name without `.sxlnk` and a 16x16 icon: the shortcut's
 `icon=` or its target's, from a program's `.sxicon` or, for a `.exe`, the
@@ -56,7 +74,7 @@ menu and opens the shortcut as the desktop does (`shortcut_open_path`), so a
 `.exe` goes to `winhost` through its association. Resting on a row closes an
 open cascade.
 
-The build installs `Solitaire.sxlnk`, whose target is the user's own
+The build's one default is `Solitaire.sxlnk`, whose target is the user's own
 `sol.exe` ([WIN32.md](../userland/WIN32.md#solitaire)): it shows only once
 that file is in place.
 
@@ -129,7 +147,10 @@ grows. A future visual setting can turn the switch off.
 - The arrow strips are checked when the Programs cascade overflows.
 - Both footer rows open the Shut Down dialog.
 
-The shortcuts' section has no shot of its own: the build's only shortcut
+The shortcuts' section has no shot of its own: the build's only default
 needs the user's `sol.exe`. `pe-icon-test` checks the icon reader, and the
-section was checked by hand with Solitaire installed (the shortcut listed with
-its icon, Solitaire started from it, and absent without the file).
+section was checked by hand with Solitaire installed: the default seeded into
+a profile without the folder, listed with its icon and started from it;
+unpinned from its context menu, and not seeded again; `sol.exe` pinned from
+Files as `sol` and started from it, a second pin refused, and Pin to Start
+Menu disabled on `cards.dll`.

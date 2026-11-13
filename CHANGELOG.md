@@ -12,9 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Pin to the Start menu: Files' item menu has Pin to Start Menu for programs, `.exe` files and shortcuts, and a right
+  click on a pinned row offers Unpin from Start Menu.** The pins are the user's `Start Menu` folder, seeded once from
+  `/system/start`. See [START_MENU.md](docs/desktop/START_MENU.md#shortcuts).
+
 - **Windows XP Solitaire runs: the user's own `sol.exe` and `cards.dll` in `C:\Program Files\Solitaire` open from Files
   (`.exe` is associated with `winhost`) and from a Solitaire shortcut in the Start menu, with their own icon.** The Start
-  menu lists the `.sxlnk` shortcuts of `/system/start` and the user's `Start Menu` above Programs. `win32-solitaire-test`
+  menu lists the `.sxlnk` shortcuts pinned in `/users/user/Start Menu` above Programs. `win32-solitaire-test`
   and smoke scenario `win32-solitaire` win a recorded game, skipped (77) without the files. See
   [WIN32.md](docs/userland/WIN32.md#solitaire).
 

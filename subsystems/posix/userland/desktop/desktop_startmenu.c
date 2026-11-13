@@ -3,6 +3,7 @@
 #include "shared/version.h"
 #include "shortcut.h"
 #include "start_logo.h"
+#include "start_pins.h"
 #include "start_shortcuts.h"
 
 /*
@@ -15,6 +16,10 @@
  * when a shortcut is opened, when a program is launched from its cascade,
  * when the Start button is clicked again, or on a press outside it (windowd
  * asks, the desktop closes it).
+ *
+ * A right click on a shortcut closes the menu and opens the shortcut's own
+ * context menu where it was, Open and Unpin from Start Menu: the context
+ * menu takes the Start menu's window (desktop.h), so both cannot be open.
  *
  * The cascade (desktop_submenu.c) opens to the right of an entry when the
  * pointer rests on it for STARTMENU_CASCADE_DELAY_MS, or at once when it is
@@ -319,6 +324,27 @@ static int g_hot_shortcut = -1;
 static int g_pressed_shortcut = -1;
 static int g_pending_shortcut = -1;
 static char g_pending_shortcut_path[SHORTCUT_PATH_CAPACITY];
+/* A right click on a shortcut: the one pressed, and whether its context menu
+ * opens, at (g_menu_x, g_menu_y) on the screen, once the menu has closed. */
+static int g_right_pressed_shortcut = -1;
+static int g_pending_shortcut_menu = 0;
+static int g_menu_x = 0;
+static int g_menu_y = 0;
+
+#define STARTMENU_CMD_OPEN 1
+#define STARTMENU_CMD_UNPIN 2
+
+static const struct sxgui_menu_item k_shortcut_items[] = {
+    {"Open", STARTMENU_CMD_OPEN, 0},
+    {0, 0, 0},
+    {"Unpin from Start Menu", STARTMENU_CMD_UNPIN, 0},
+};
+
+static const struct sxgui_menu k_shortcut_menu = {
+    "Shortcut",
+    k_shortcut_items,
+    (int)(sizeof(k_shortcut_items) / sizeof(k_shortcut_items[0])),
+};
 
 static const char *entry_label(int entry)
 {
@@ -517,6 +543,16 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx)
     }
 }
 
+/* Where the menu is on the screen: open_slot_at anchors it at x 2, on the
+ * taskbar. */
+static void menu_origin(int *x, int *y)
+{
+    const struct savanxp_gfx_context *main_window = desktop_main_window();
+
+    *x = 2;
+    *y = (int)main_window->info.height - DESKTOP_TASKBAR_HEIGHT - g_height;
+}
+
 /* Opens the cascade of `entry` beside it, or closes the open one (-1). */
 static void startmenu_apply_cascade(int entry)
 {
@@ -526,12 +562,11 @@ static void startmenu_apply_cascade(int entry)
     }
     else
     {
-        const struct savanxp_gfx_context *main_window = desktop_main_window();
-        int work_height = (int)main_window->info.height - DESKTOP_TASKBAR_HEIGHT;
-        /* Where the menu is: open_slot_at anchors it at x 2, on the taskbar. */
-        int menu_x = 2;
-        int menu_y = work_height - g_height;
+        int menu_x;
+        int menu_y;
         struct sx_rect rect = entry_rect(entry);
+
+        menu_origin(&menu_x, &menu_y);
 
         desktop_submenu_select(g_entries[entry]);
         desktop_open_submenu(
@@ -589,7 +624,21 @@ static int startmenu_open(void)
     g_hot_shortcut = -1;
     g_pressed_shortcut = -1;
     g_pending_shortcut = -1;
+    g_right_pressed_shortcut = -1;
+    g_pending_shortcut_menu = 0;
     return 0;
+}
+
+static void shortcut_command(int id)
+{
+    if (id == STARTMENU_CMD_OPEN)
+    {
+        (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
+    }
+    else if (id == STARTMENU_CMD_UNPIN && start_pins_unpin(g_pending_shortcut_path) != 0)
+    {
+        desktop_confirm("Start Menu", "Cannot unpin the shortcut.", 0, 0);
+    }
 }
 
 static void startmenu_close(void)
@@ -614,6 +663,11 @@ static void startmenu_close(void)
     {
         g_pending_shortcut = -1;
         (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
+    }
+    if (g_pending_shortcut_menu)
+    {
+        g_pending_shortcut_menu = 0;
+        desktop_context_menu(&k_shortcut_menu, shortcut_command, g_menu_x, g_menu_y);
     }
 }
 
@@ -675,6 +729,27 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
         }
         g_pressed_footer = -1;
         g_pressed_shortcut = -1;
+    }
+    if ((down & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        g_right_pressed_shortcut = shortcut;
+    }
+    else if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        /* As on Windows, the menu opens on the release. */
+        if (shortcut >= 0 && shortcut == g_right_pressed_shortcut)
+        {
+            int menu_x;
+            int menu_y;
+
+            menu_origin(&menu_x, &menu_y);
+            memcpy(g_pending_shortcut_path, start_shortcuts_at(shortcut)->path, sizeof(g_pending_shortcut_path));
+            g_menu_x = menu_x + pointer->x;
+            g_menu_y = menu_y + pointer->y;
+            g_pending_shortcut_menu = 1;
+            actions |= DESKTOP_ACTION_CLOSE;
+        }
+        g_right_pressed_shortcut = -1;
     }
     return actions;
 }

@@ -678,8 +678,9 @@ What changed from the plan above, and why:
 
 - **Launching needed a Start menu section.** The menu discovers programs by
   their `.sxres`, which a `.exe` has not. It now lists, above Programs, the
-  `.sxlnk` shortcuts of `/system/start` and of the user's `Start Menu`
-  folder whose targets exist; the build ships one for Solitaire. The shell
+  `.sxlnk` shortcuts pinned in the user's `Start Menu` folder whose targets
+  exist (Files pins, a right click unpins); the build ships a default for
+  Solitaire in `/system/start`, copied into a new profile's folder. The shell
   reads a `.exe`'s icon from its PE resources (`sxgfx/pe_icon.h`), and the
   guest hands its window's icon to the host (ABI version 5).
 - **Fonts report Windows XP's vertical metrics.** Solitaire sizes its status

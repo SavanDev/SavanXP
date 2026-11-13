@@ -1,5 +1,7 @@
 #include "start_shortcuts.h"
 
+#include "start_pins.h"
+
 #include "savanxp/sxe.h"
 #include "sxe/sxe_format.h"
 #include "sxgfx/pe_icon.h"
@@ -136,17 +138,10 @@ static void add(const char *folder, const char *file_name)
 
         s->has_icon = ends_with_nocase(source, ".exe") ? icon_from_pe(source, s->icon) : icon_from_sxe(source, s->icon);
     }
-    /* Kept sorted by name; an equal name already there (the user's, read
-     * first) stays and this one is dropped. */
+    /* Kept sorted by name. */
     for (int i = 0; i < g_count; ++i)
     {
-        int order = strcmp(s->name, g_shortcuts[i].name);
-
-        if (order == 0)
-        {
-            return;
-        }
-        if (order < 0)
+        if (strcmp(s->name, g_shortcuts[i].name) < 0)
         {
             struct start_shortcut moved = *s;
 
@@ -179,14 +174,13 @@ static void scan(const char *folder)
 
 int start_shortcuts_load(void)
 {
-    char user[SHORTCUT_PATH_CAPACITY];
+    char folder[SHORTCUT_PATH_CAPACITY];
 
     g_count = 0;
-    if (snprintf(user, sizeof(user), "%s/%s", savanxp_profile_dir(), START_SHORTCUTS_USER_DIR) < (int)sizeof(user))
+    if (start_pins_folder(folder, sizeof(folder)) == 0)
     {
-        scan(user);
+        scan(folder);
     }
-    scan(START_SHORTCUTS_SYSTEM_DIR);
     return g_count;
 }
 

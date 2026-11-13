@@ -10,6 +10,7 @@
 #include "file_assoc.h"
 #include "sxgfx/mime_icon.h"
 #include "shortcut.h"
+#include "start_pins.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -1032,15 +1033,18 @@ static void on_menu_command(int id, void *user)
 #define FILESAPP_CMD_UP 24
 #define FILESAPP_CMD_REFRESH 25
 #define FILESAPP_CMD_PROPERTIES 26
+#define FILESAPP_CMD_PIN_TO_START 27
 
 #define FILESAPP_QUESTION_WIDTH 340
 #define FILESAPP_QUESTION_HEIGHT 96
 #define FILESAPP_RENAME_HEIGHT 112
 
-static const struct sxgui_menu_item k_entry_items[] = {
+/* Not const: Pin to Start Menu is enabled only for a program or a shortcut. */
+static struct sxgui_menu_item k_entry_items[] = {
     {"Open", FILESAPP_CMD_OPEN, 0},
     {0, 0, 0},
     {"Send To Desktop", FILESAPP_CMD_SEND_TO_DESKTOP, 0},
+    {"Pin to Start Menu", FILESAPP_CMD_PIN_TO_START, 0},
     {0, 0, 0},
     {"Rename...", FILESAPP_CMD_RENAME, 0},
     {"Delete", FILESAPP_CMD_DELETE, 0},
@@ -1111,6 +1115,34 @@ static void filesapp_send_to_desktop(void)
     filesapp_set_status(shortcut_save(path, &shortcut) == 0
         ? "Shortcut created on the desktop."
         : "Cannot create the shortcut.");
+}
+
+/* A shortcut to the entry in the user's Start Menu folder, listed at the top
+ * of the Start menu (docs/desktop/START_MENU.md, "Shortcuts"). */
+static void filesapp_pin_to_start(void)
+{
+    static const char *const k_results[] = {
+        "Pinned to the Start menu.",
+        "It is already on the Start menu.",
+        "The Start menu is full: unpin something first.",
+        "Cannot pin it to the Start menu.",
+    };
+    char target[FILESAPP_PATH_CAPACITY];
+
+    if (filesapp_subject_path(target, sizeof(target)))
+    {
+        filesapp_set_status(k_results[start_pins_pin(target)]);
+    }
+}
+
+/* Whether the entry is something Pin to Start Menu takes: not a folder. */
+static int filesapp_subject_can_pin(void)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    struct stat info;
+
+    return filesapp_subject_path(path, sizeof(path)) && start_pins_can_pin(path) && stat(path, &info) == 0 &&
+           !S_ISDIR(info.st_mode);
 }
 
 static void on_question_yes(struct sxgui_widget *widget, void *user)
@@ -1376,6 +1408,9 @@ static void on_context_command(int id, void *user)
     case FILESAPP_CMD_SEND_TO_DESKTOP:
         filesapp_send_to_desktop();
         break;
+    case FILESAPP_CMD_PIN_TO_START:
+        filesapp_pin_to_start();
+        break;
     case FILESAPP_CMD_RENAME:
         filesapp_ask_rename();
         break;
@@ -1408,6 +1443,7 @@ static void filesapp_show_menu(int item, int x, int y)
         FILESAPP_LIST->value = item;
         snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
         filesapp_update_commands();
+        filesapp_enable_item(&k_entry_items[3], filesapp_subject_can_pin());
         sxgui_context_menu_open(&g_app.ui, &k_entry_menu, x, y, on_context_command, 0);
         return;
     }
