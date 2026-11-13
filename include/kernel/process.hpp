@@ -216,6 +216,10 @@ struct Thread {
     // switches away, the way it saves the FPU. 0 at creation and after exec.
     uint64_t fs_base;
     uint64_t gs_base;
+    // User DS, ES, FS, GS selectors, saved and restored with the bases
+    // (before them: loading a selector resets its base). 0 at creation and
+    // after exec. 32-bit code needs them: docs/kernel/ARCH.md#segments.
+    uint16_t selectors[4];
     // Private state of the process's subsystem for this thread
     // (subsystem::register_thread_state_size), allocated on first use by
     // thread_subsystem_state and freed with the thread. nullptr until then.
@@ -423,6 +427,8 @@ int set_thread_base(Thread& self, uint32_t which, uint64_t address);
 // The current FS and GS bases of `thread`, read from the MSRs when it is the
 // one running here. fork copies them from the parent thread this way.
 void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base);
+// The thread's data selectors: the live registers while it runs here.
+void thread_selectors(const Thread& thread, uint16_t (&selectors)[4]);
 // Wait on an address (THREADS_ROADMAP phase 4). wait_on_address parks the
 // calling thread while the `size`-byte word at `address` (1, 2, 4 or 8,
 // aligned to its size) still holds `expected`: 0 once woken, -EAGAIN when the

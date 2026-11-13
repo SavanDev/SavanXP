@@ -56,6 +56,50 @@ A non-x86 port would have to redraw that part of the contract, and that is the
 right time to do it: drawing it now, with one implementation, would be
 guessing.
 
+## Segments
+
+Long mode leaves segmentation almost empty, but a few selectors are still
+part of the contract with user code. The GDT is one table shared by every
+core (`arch/x86_64/cpu_init.cpp`):
+
+| Selector | Entry | Use |
+| --- | --- | --- |
+| `0x08` | Kernel code | 64-bit, ring 0 |
+| `0x10` | Kernel data | ring 0 |
+| `0x1b` | User data | Flat, G and D/B set: SS of every user thread, and DS/ES/SS of 32-bit code |
+| `0x23` | User code | 64-bit, ring 3 |
+| `0x2b` | User 32-bit code | L clear, D set, ring 3: a native program's 32-bit code |
+| `0x30` + 16 *n* | TSS of core *n* | `cpu_index()` reads it back with `str` |
+
+The constants are `arch::kUserDataSelector`, `kUserCodeSelector`,
+`kUserCode32Selector` and `kTssSelectorBase` (`include/arch/x86_64/cpu.hpp`).
+There is no LDT, no 16-bit segment, no call gate and no `syscall`/`sysenter`.
+
+**32-bit user code.** Any native program may far-return or far-jump to `0x2b`
+and run 32-bit code below 4 GiB, and come back through `0x23`. It is how the
+Win32 subsystem's `winhost` runs a PE32 guest
+([WIN32_SUBSYSTEM_ROADMAP.md](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md#k1--32-bit-user-segments)).
+The kernel needs nothing else for it: interrupts and exceptions from
+compatibility mode arrive through the same long-mode gates, "from user mode"
+is still `cs & 3`, `iretq` returns to whichever mode the frame names, and a
+fault in 32-bit code ends its process like any other user exception.
+
+**The system call ABI stays 64-bit.** `int 0x80` from code segment `0x2b`
+returns `-ENOSYS` before any subsystem sees it: the upper halves of the
+registers are undefined after 32-bit code, so the kernel reads none of them.
+
+**Data selectors are per-thread state.** A kernel entry does not touch DS, ES,
+FS or GS, and 64-bit code ignores them except for the FS and GS bases. 32-bit
+code does not: it needs DS and ES non-null and its own FS. The scheduler saves
+the four selectors of the thread it switches away from and loads the
+incoming thread's, then its FS and GS bases (`IA32_FS_BASE`,
+`IA32_GS_BASE`), in that order, because loading a selector resets its base. A
+new thread and an exec start with null selectors; fork copies them.
+
+Under QEMU's TCG a null DS in compatibility mode does not fault, so a lost
+selector passes unnoticed there; `nativetest`'s 32-bit checks catch one only
+on KVM or hardware.
+
 ## Port I/O marks a PC-only driver
 
 A driver pulls port I/O in with `using namespace arch::x86::port_io;` inside

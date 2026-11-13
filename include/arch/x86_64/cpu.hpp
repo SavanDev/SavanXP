@@ -46,10 +46,20 @@ uint64_t random_u64();
  */
 constexpr uint32_t kMaxCpus = 32;
 
+// The ring-3 selectors (docs/kernel/ARCH.md#segments). User data is flat with
+// D/B set and a 4 GiB limit, so the same selector is a 64-bit program's SS
+// and a 32-bit stack and data segment; 64-bit mode ignores those bits. The
+// 32-bit code segment is how a native program runs 32-bit code (the Win32
+// subsystem's guest); the kernel's ABI stays 64-bit only, so int 0x80 from it
+// is refused.
+constexpr uint16_t kUserDataSelector = 0x1b;
+constexpr uint16_t kUserCodeSelector = 0x23;
+constexpr uint16_t kUserCode32Selector = 0x2b;
+
 // There is one GDT for every core; what each core owns is its TSS. Each TSS
 // has its descriptor in the GDT, one after another starting at this selector,
 // and in long mode a TSS descriptor takes two entries (16 bytes).
-constexpr uint16_t kTssSelectorBase = 0x28;
+constexpr uint16_t kTssSelectorBase = 0x30;
 constexpr uint16_t kTssDescriptorSize = 16;
 
 // Dense index of this core: 0 is the BSP and the APs follow in start order.
@@ -144,6 +154,15 @@ void fpu_init_area(void* area);
  * Win64's TEB at %gs. */
 void save_user_segment_bases(uint64_t& fs_base, uint64_t& gs_base);
 void load_user_segment_bases(uint64_t fs_base, uint64_t gs_base);
+
+/* The data selectors DS, ES, FS and GS belong to the user thread too: a
+ * kernel entry leaves them as they were, and 64-bit code ignores them, but
+ * 32-bit code needs its DS, ES and SS non-null and its own FS. The scheduler
+ * swaps them with the bases, the selectors first, because loading a selector
+ * resets its segment's base. Index 0..3 = DS, ES, FS, GS. */
+constexpr uint32_t kUserSelectorCount = 4;
+void save_user_selectors(uint16_t (&selectors)[kUserSelectorCount]);
+void load_user_selectors(const uint16_t (&selectors)[kUserSelectorCount]);
 /* --- CPU identity (CPUID) ----------------------------------------------------
  * Who this processor is, as the processor itself says. The system properties
  * window asks for it, to show the brand and speed the way the period's "About

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Native programs can run 32-bit code: a ring-3 32-bit code segment (`0x2b`) and per-thread DS, ES, FS and GS.**
+  User data `0x1b` is now a valid 32-bit stack segment, TSS selectors start at `0x30`, and `int 0x80` from 32-bit code
+  returns `-ENOSYS`. See [ARCH.md](docs/kernel/ARCH.md#segments).
+
 - **Native programs can map a section view at a chosen address: `SXN_SYS_MAP_VIEW_AT` (`sxn_map_view_at`), the native
   side of POSIX `map_view_at`.** At a fixed base, both now answer `-EEXIST` for an occupied range and `-EINVAL` for one
   outside the user half, instead of `-ENOMEM`. See [SECTIONS.md](docs/kernel/SECTIONS.md#map_view_at-and-why-a-loader-needs-it).

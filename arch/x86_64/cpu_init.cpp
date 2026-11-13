@@ -126,19 +126,28 @@ struct ExternalHandlerSlot {
     InterruptEoi eoi;
 };
 
-// Cinco entradas fijas -- nula, codigo y datos de kernel, datos y codigo de
-// usuario -- y despues un descriptor de TSS por core. La GDT es una sola y la
-// comparten todos los cores; lo que es de cada core es su TSS.
-constexpr uint32_t kGdtFixedEntries = 5;
+// Six fixed entries -- null, kernel code and data, user data, user code, and
+// user 32-bit code -- then one TSS descriptor per core. There is one GDT,
+// shared by every core; what each core owns is its TSS.
+//
+// User data (0x1b) is flat with G and D/B set: ignored in 64-bit mode, and a
+// 32-bit stack and data segment in compatibility mode. User 32-bit code (0x2b)
+// is L=0, D=1. Neither reaches anything a 64-bit program could not: both are
+// ring 3 and flat.
+constexpr uint32_t kGdtFixedEntries = 6;
 static_assert(kGdtFixedEntries * 8 == arch::kTssSelectorBase,
-              "el primer TSS tiene que caer justo despues de las entradas fijas");
+              "the first TSS descriptor must follow the fixed entries");
+static_assert(arch::kUserDataSelector == (3 * 8 | 3) && arch::kUserCodeSelector == (4 * 8 | 3) &&
+                  arch::kUserCode32Selector == (5 * 8 | 3),
+              "the user selectors index the fixed entries at ring 3");
 
 uint64_t g_gdt[kGdtFixedEntries + 2 * arch::kMaxCpus] = {
     0x0000000000000000ULL,
     0x00af9a000000ffffULL,
     0x00af92000000ffffULL,
-    0x00aff2000000ffffULL,
+    0x00cff2000000ffffULL,
     0x00affa000000ffffULL,
+    0x00cffa000000ffffULL,
 };
 
 Tss g_tss[arch::kMaxCpus] = {};
@@ -970,6 +979,23 @@ void load_user_segment_bases(uint64_t fs_base, uint64_t gs_base) {
     constexpr uint32_t kGsBaseMsr = 0xc0000101;
     write_msr(kFsBaseMsr, fs_base);
     write_msr(kGsBaseMsr, gs_base);
+}
+
+void save_user_selectors(uint16_t (&selectors)[kUserSelectorCount]) {
+    asm volatile("movw %%ds, %0" : "=r"(selectors[0]));
+    asm volatile("movw %%es, %0" : "=r"(selectors[1]));
+    asm volatile("movw %%fs, %0" : "=r"(selectors[2]));
+    asm volatile("movw %%gs, %0" : "=r"(selectors[3]));
+}
+
+// Every value comes from save_user_selectors or is 0, so it is a selector the
+// thread could load itself: null, or a ring-3 entry of the fixed GDT. Loading
+// one at ring 0 cannot fault, and iretq to ring 3 keeps it.
+void load_user_selectors(const uint16_t (&selectors)[kUserSelectorCount]) {
+    asm volatile("movw %0, %%ds" : : "r"(selectors[0]) : "memory");
+    asm volatile("movw %0, %%es" : : "r"(selectors[1]) : "memory");
+    asm volatile("movw %0, %%fs" : : "r"(selectors[2]) : "memory");
+    asm volatile("movw %0, %%gs" : : "r"(selectors[3]) : "memory");
 }
 
 void fpu_init_area(void* area) {

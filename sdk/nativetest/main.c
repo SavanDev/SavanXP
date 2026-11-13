@@ -29,7 +29,9 @@
  * a third child ("sleeper") waits forever until the parent ends it, and
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
  * then ended with that status, then gone. MAP_VIEW_AT at a chosen low
- * address, with its refusals. And the heap
+ * address, with its refusals. 32-bit code: entered from 64-bit threads,
+ * FS-relative reads, preempted beside 64-bit threads, int 0x80 refused, and a
+ * fault in it ending only its process. And the heap
  * (docs/userland/NATIVE_HEAP.md): several MiB across arenas from the native
  * page source. And threads (docs/roadmaps/done/THREADS_ROADMAP.md): workers that
  * share memory and end with their own codes, joined through their handles; a
@@ -948,6 +950,232 @@ static void test_address_waits(void) {
         line[at] = '\0';
         check(sxn_log(line) == 0);
     }
+}
+
+/* 32-bit code (K1 of the Win32 roadmap, docs/kernel/ARCH.md#segments).
+ *
+ * nt_call32(entry, stack_top) runs 32-bit code from this 64-bit thread and
+ * returns its eax. Both addresses are below 4 GiB: this image loads at
+ * 0x400000 and the stacks are in its BSS. The 32-bit stack's top holds the
+ * thread's own 64-bit stack pointer and a far pointer back to 64-bit code, so
+ * any number of threads can be in 32-bit code at once. DS and ES take the
+ * user data selector, which 32-bit code needs non-null; FS is the caller's.
+ *
+ *     top - 8:  saved rsp           top - 16: far pointer {nt_back64, 0x23}
+ *
+ * The snippets end with `ljmp *(%esp)` through that far pointer. */
+__asm__(
+    "    .text\n"
+    "    .globl nt_call32\n"
+    "nt_call32:\n"
+    "    push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n"
+    "    mov %esi, %eax\n"
+    "    mov %rsp, -8(%rax)\n"
+    "    lea nt_back64(%rip), %rcx\n"
+    "    mov %ecx, -16(%rax)\n"
+    "    movw $0x23, -12(%rax)\n"
+    "    lea -32(%rax), %rsp\n"
+    "    mov %edi, %edi\n"
+    "    mov %rdi, (%rsp)\n"
+    "    movq $0x2b, 8(%rsp)\n"
+    "    mov $0x1b, %ecx\n"
+    "    mov %ecx, %ds\n"
+    "    mov %ecx, %es\n"
+    "    lretq\n"
+    "nt_back64:\n"
+    "    mov %esp, %esp\n"
+    "    mov 8(%rsp), %rsp\n"
+    "    pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n"
+    "    ret\n"
+    "    .code32\n"
+    /* fs:0 is a marker, fs:4 an iteration count, fs:8 the address of a zero
+     * word: mix the marker in that many times, adding the word through DS each
+     * time, then read fs:0 again. A preemption that lost DS (a #GP), or FS's
+     * selector or base, shows as a fault, a wrong result or 0xbad0bad0. */
+    "    .globl nt_code32_compute\n"
+    "nt_code32_compute:\n"
+    "    mov %fs:0, %ecx\n"
+    "    mov %fs:4, %edx\n"
+    "    mov %fs:8, %ebx\n"
+    "    xor %eax, %eax\n"
+    "1:  add %ecx, %eax\n"
+    "    add (%ebx), %eax\n"
+    "    rol $3, %eax\n"
+    "    dec %edx\n"
+    "    jnz 1b\n"
+    "    cmp %fs:0, %ecx\n"
+    "    je 2f\n"
+    "    mov $0xbad0bad0, %eax\n"
+    "2:  ljmp *(%esp)\n"
+    /* A system call from 32-bit code: refused with ENOSYS whatever eax asks. */
+    "    .globl nt_code32_int80\n"
+    "nt_code32_int80:\n"
+    "    mov $0x1000, %eax\n" /* SXN_SYS_INFO */
+    "    xor %edi, %edi\n"
+    "    int $0x80\n"
+    "    ljmp *(%esp)\n"
+    "    .globl nt_code32_fault\n"
+    "nt_code32_fault:\n"
+    "    ud2\n"
+    "    .code64\n");
+
+extern uint32_t nt_call32(uint32_t entry, uint32_t stack_top);
+extern char nt_code32_compute[];
+extern char nt_code32_int80[];
+extern char nt_code32_fault[];
+
+#define K1_THREADS32 3
+#define K1_THREADS64 2
+/* Each worker runs for this long, many time slices, so the scheduler takes
+ * it off its core in the middle of 32-bit code again and again. */
+#define K1_RUN_NS 1000000000ull
+#define K1_MIN_ROUNDS 100
+#define K1_ITERATIONS 20000u
+#define K1_STACK_BYTES 4096
+
+static uint32_t g_k1_teb[K1_THREADS32 + 1][4];
+static uint8_t g_k1_stacks[K1_THREADS32 + 1][K1_STACK_BYTES] __attribute__((aligned(16)));
+static struct tls_block g_k1_blocks64[K1_THREADS64];
+
+static uint32_t k1_address(const void* pointer) {
+    return (uint32_t)(uintptr_t)pointer;
+}
+
+static uint32_t k1_stack_top(long index) {
+    return k1_address(&g_k1_stacks[index][K1_STACK_BYTES]);
+}
+
+static uint32_t k1_expected(uint32_t marker, uint32_t iterations) {
+    uint32_t value = 0;
+
+    while (iterations-- != 0u) {
+        value += marker;
+        value = (value << 3) | (value >> 29);
+    }
+    return value;
+}
+
+/* FS takes the user data selector, then its base: loading a selector resets
+ * the base, so the order matters here as it does in the scheduler. */
+static int k1_use_teb(long index) {
+    const uint16_t data = 0x1b;
+
+    g_k1_teb[index][0] = 0x51000000u + (uint32_t)index * 0x01010101u;
+    g_k1_teb[index][1] = K1_ITERATIONS;
+    g_k1_teb[index][2] = k1_address(&g_k1_teb[index][3]);
+    g_k1_teb[index][3] = 0;
+    __asm__ volatile("movw %0, %%fs" : : "r"(data) : "memory");
+    return sxn_set_thread_base(SXN_THREAD_BASE_FS, &g_k1_teb[index][0]) == 0;
+}
+
+static void k1_worker32(void* argument) {
+    const long index = (long)(intptr_t)argument;
+    const uint32_t expected = k1_expected(0x51000000u + (uint32_t)index * 0x01010101u, K1_ITERATIONS);
+    long round;
+    int wrong = 0;
+
+    const uint64_t start = sxn_clock_ns();
+
+    if (!k1_use_teb(index)) {
+        sxn_thread_exit(2);
+    }
+    for (round = 0; round < K1_MIN_ROUNDS || sxn_clock_ns() - start < K1_RUN_NS; ++round) {
+        if (nt_call32(k1_address(nt_code32_compute), k1_stack_top(index)) != expected) {
+            wrong += 1;
+        }
+    }
+    sxn_thread_exit(wrong == 0 ? 0 : 1);
+}
+
+/* 64-bit threads beside them. Every round each loads null DS, ES and FS,
+ * which 64-bit code may, and puts its own FS base back: if the scheduler
+ * handed those selectors to a 32-bit thread it would fault, and a 32-bit
+ * thread's FS must not reach these threads either. */
+static void k1_worker64(void* argument) {
+    const long index = (long)(intptr_t)argument;
+    struct tls_block* block = &g_k1_blocks64[index];
+    long round;
+    int wrong = 0;
+
+    block->self = block;
+    block->value = 0x6400000000000000ull + (uint64_t)index;
+    if (sxn_set_thread_base(SXN_THREAD_BASE_FS, block) != 0) {
+        sxn_thread_exit(2);
+    }
+    const uint64_t start = sxn_clock_ns();
+
+    for (round = 0; round < K1_MIN_ROUNDS || sxn_clock_ns() - start < K1_RUN_NS; ++round) {
+        const uint16_t null_selector = 0;
+        volatile uint64_t spin = 0;
+        int step;
+
+        __asm__ volatile("movw %0, %%ds\n\tmovw %0, %%es\n\tmovw %0, %%fs" : : "r"(null_selector) : "memory");
+        if (sxn_set_thread_base(SXN_THREAD_BASE_FS, block) != 0) {
+            wrong += 1;
+        }
+        for (step = 0; step < 2000; ++step) {
+            spin += (uint64_t)step;
+        }
+        if (fs_value() != block->value) {
+            wrong += 1;
+        }
+    }
+    sxn_thread_exit(wrong == 0 ? 0 : 1);
+}
+
+static void fault32_child(void) {
+    if (k1_use_teb(0)) {
+        (void)nt_call32(k1_address(nt_code32_fault), k1_stack_top(0));
+    }
+    sxn_exit(1);
+}
+
+static void test_code32(void) {
+    int32_t handles[K1_THREADS32 + K1_THREADS64];
+    const uint16_t null_selector = 0;
+    int32_t code = 0;
+    long index;
+    char* fault_argv[2];
+    long child;
+    int status = -1;
+
+    /* Once from this thread, then the refused system call. */
+    check(k1_use_teb(K1_THREADS32));
+    check(nt_call32(k1_address(nt_code32_compute), k1_stack_top(K1_THREADS32)) ==
+          k1_expected(g_k1_teb[K1_THREADS32][0], K1_ITERATIONS));
+    check(nt_call32(k1_address(nt_code32_int80), k1_stack_top(K1_THREADS32)) == (uint32_t)-SAVANXP_ENOSYS);
+    __asm__ volatile("movw %0, %%fs" : : "r"(null_selector) : "memory");
+    check(sxn_set_thread_base(SXN_THREAD_BASE_FS, 0) == 0);
+
+    /* 32-bit and 64-bit threads at once, preempted and migrated as the
+     * scheduler likes. */
+    for (index = 0; index < K1_THREADS32 + K1_THREADS64; ++index) {
+        void* stack = thread_stack();
+
+        check(stack != 0);
+        handles[index] = (int32_t)sxn_thread_create(
+            index < K1_THREADS32 ? k1_worker32 : k1_worker64,
+            (void*)(intptr_t)(index < K1_THREADS32 ? index : index - K1_THREADS32), stack, 0);
+        check(handles[index] >= 0);
+    }
+    for (index = 0; index < K1_THREADS32 + K1_THREADS64; ++index) {
+        if (handles[index] < 0) {
+            continue;
+        }
+        check(sxn_wait_one(handles[index], 120000) == 0);
+        check(sxn_thread_exit_code(handles[index], &code) == 0 && code == 0);
+        (void)sxn_close(handles[index]);
+    }
+
+    /* A fault in 32-bit code ends that process alone: #UD, status 128 + 6. */
+    fault_argv[0] = "/bin/nativetest.sxe";
+    fault_argv[1] = "fault32";
+    child = sxn_spawn("/bin/nativetest.sxe", fault_argv, 2);
+    check(child > 0);
+    if (child > 0) {
+        check(sxn_waitpid(child, &status) == child && status == 128 + 6);
+    }
+    check(sxn_log("nativetest: 32-bit code done") == 0);
 }
 
 static void test_threads(const struct sxn_native_info* info) {
@@ -2422,6 +2650,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
     }
+    if (argc > 1 && streq(argv[1], "fault32")) {
+        fault32_child();
+    }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
     if (argc > 1 && streq(argv[1],"audio-preferences")) {
@@ -3147,6 +3378,7 @@ int main(int argc, char** argv) {
 
     test_files();
     test_view_at();
+    test_code32();
     test_threads(&info);
     test_thread_bases();
     test_address_waits();

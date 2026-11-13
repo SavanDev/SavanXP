@@ -32,8 +32,8 @@
 
 namespace {
 
-constexpr uint16_t kUserDataSelector = 0x1b;
-constexpr uint16_t kUserCodeSelector = 0x23;
+constexpr uint16_t kUserDataSelector = arch::kUserDataSelector;
+constexpr uint16_t kUserCodeSelector = arch::kUserCodeSelector;
 // Clase PCI de un controlador de red, para reportar el hardware que existe
 // aunque ningun driver lo haya reclamado.
 constexpr uint8_t kPciClassNetwork = 0x02;
@@ -1739,8 +1739,11 @@ void switch_to_thread(process::Thread* target) {
         if (this_cpu().current != nullptr) {
             arch::fpu_save(this_cpu().current->fpu_state);
             arch::save_user_segment_bases(this_cpu().current->fs_base, this_cpu().current->gs_base);
+            arch::save_user_selectors(this_cpu().current->selectors);
         }
         arch::fpu_restore(target->fpu_state);
+        // Selectors first: loading one resets its segment's base.
+        arch::load_user_selectors(target->selectors);
         arch::load_user_segment_bases(target->fs_base, target->gs_base);
     }
 
@@ -1895,10 +1898,15 @@ bool prepare_exec_image(
     self.blocked_write_progress = 0;
     clear_wait_state(self);
     process::detail::reset_time_slice(self);
-    // The new image starts without thread-local storage, as a new thread does.
+    // The new image starts without thread-local storage, as a new thread does,
+    // and with null data selectors.
     self.fs_base = 0;
     self.gs_base = 0;
+    for (uint16_t& selector : self.selectors) {
+        selector = 0;
+    }
     if (this_cpu().current == &self) {
+        arch::load_user_selectors(self.selectors);
         arch::load_user_segment_bases(0, 0);
     }
     fabricate_initial_context(self, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
@@ -2889,6 +2897,19 @@ int set_thread_base(Thread& self, uint32_t which, uint64_t address) {
     return 0;
 }
 
+static_assert(sizeof(Thread::selectors) / sizeof(Thread::selectors[0]) == arch::kUserSelectorCount,
+              "a thread keeps DS, ES, FS and GS");
+
+void thread_selectors(const Thread& thread, uint16_t (&selectors)[4]) {
+    if (this_cpu().current == &thread) {
+        arch::save_user_selectors(selectors);
+        return;
+    }
+    for (uint32_t index = 0; index < arch::kUserSelectorCount; ++index) {
+        selectors[index] = thread.selectors[index];
+    }
+}
+
 void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base) {
     if (this_cpu().current == &thread) {
         arch::save_user_segment_bases(fs_base, gs_base);
@@ -2948,6 +2969,13 @@ void terminate_current_from_exception(uint8_t vector) {
 }
 
 SavedContext* handle_syscall(SavedContext* context) {
+    // The system call ABI is defined for 64-bit callers only. From 32-bit code
+    // the upper halves of the registers are undefined, so none of them is
+    // read: the call is refused before any subsystem sees it.
+    if (context->cs == arch::kUserCode32Selector) {
+        context->rax = static_cast<uint64_t>(negative_error(SX_ENOSYS));
+        return context;
+    }
     Thread* const caller = this_cpu().current;
     const subsystem::Id id = caller != nullptr ? caller->process->subsystem_id : subsystem::Id::posix;
     smp::tag_lock_hold(static_cast<uint32_t>(id), static_cast<uint32_t>(context->rax));

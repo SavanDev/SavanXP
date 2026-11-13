@@ -53,6 +53,12 @@ The audit confirmed the following defenses were already present:
 - user-copy helpers walk all four paging levels and require user permissions;
 - user stack growth is bounded by a reserved region and a guard page;
 - the system call gate accepts ring 3 only and the entry stubs clear `DF`;
+  from the 32-bit user code segment (`0x2b`) it returns `ENOSYS` without
+  reading any register, since the ABI is defined for 64-bit callers only
+  ([ARCH.md](ARCH.md#segments));
+- ring-3 code may run in 32-bit compatibility mode, flat and ring 3 like the
+  64-bit segments, so it reaches nothing a 64-bit program could not; a fault
+  there ends the process as any user exception does;
 - a kernel lock serializes system calls, interrupts, scheduling and process
   teardown;
 - file-descriptor access bits are checked by normal read and write operations;

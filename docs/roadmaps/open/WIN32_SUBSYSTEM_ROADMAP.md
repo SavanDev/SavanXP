@@ -103,9 +103,9 @@ Read from the tree on 2026-11-10. Recheck before relying on a row.
 
 | Fact | Where | Consequence |
 | --- | --- | --- |
-| The GDT has five fixed entries: null, kernel code and data, user data `0x1b`, user code `0x23`. There is no 32-bit code descriptor, and the user data descriptor has D/B clear | `arch/x86_64/cpu_init.cpp` | 32-bit user code cannot run today; the data descriptor cannot be a 32-bit stack segment. K1 |
+| The GDT has five fixed entries: null, kernel code and data, user data `0x1b`, user code `0x23`. There is no 32-bit code descriptor, and the user data descriptor has D/B clear | `arch/x86_64/cpu_init.cpp` | 32-bit user code cannot run today; the data descriptor cannot be a 32-bit stack segment. K1, done |
 | Every kernel entry returns with `iretq` from a saved frame, and "from user mode" is tested as `cs & 3`. There is no `syscall`/`sysret` path | `arch/x86_64/context.S`, `kernel/process.cpp` | A thread interrupted in 32-bit code resumes correctly once the segments exist. No entry path has to change |
-| A thread switch saves and restores the FPU state (`fxsave64`) and the FS and GS bases through their MSRs. The data segment selectors are not per-thread state | `kernel/process.cpp`, `arch/x86_64/cpu_init.cpp` | DS, ES, FS and GS selectors must become per-thread. K1 |
+| A thread switch saves and restores the FPU state (`fxsave64`) and the FS and GS bases through their MSRs. The data segment selectors are not per-thread state | `kernel/process.cpp`, `arch/x86_64/cpu_init.cpp` | DS, ES, FS and GS selectors must become per-thread. K1, done |
 | A native program's segment bases are its own: the shared runtime installs no thread block at `%fs` for it (`sx_tls_init` returns early), `errno` is a global, and the stack guard is the global `__stack_chk_guard` | `subsystems/posix/sdk/v1/runtime/pthread.c`; the disassembly of `nativetest` | `%fs` is free in `winhost` and can hold the 32-bit TEB |
 | Program images load at `0x400000`; kernel-chosen views start at `0x1000000000`; the stack top is `0x7000000000` | `include/kernel/vmm.hpp` | The range a PE32 image wants is free in a native process |
 | `vm::map_section_view` honours a caller-chosen base, and POSIX exposes it as `map_view_at`. The native call `SXN_SYS_MAP_VIEW` takes a handle and flags only | `kernel/vmm.cpp`, `include/abi/savanxp_native_abi.h` | A native loader cannot place an image. K2, done: `SXN_SYS_MAP_VIEW_AT` |
@@ -303,6 +303,15 @@ Both are neutral, both follow the consumer rule of
 [SUN.md](../../userland/SUN.md), and neither mentions Windows.
 
 ### K1 — 32-bit user segments
+
+**Done (2026-11-12).** User data `0x1b` gained D/B and a 4 GiB limit, user
+32-bit code is `0x2b`, the TSS descriptors start at `0x30`, DS/ES/FS/GS are
+per-thread, and `int 0x80` from `0x2b` is `-ENOSYS`
+([ARCH.md](../../kernel/ARCH.md#segments)). `nativetest` passes on 1, 2 and 4
+vCPUs under KVM and on TCG. One lesson for every later phase: TCG does not
+fault on a null DS in compatibility mode, so the check only catches a lost
+selector on KVM, where it was seen to (#GP, `NATIVE TEST FAIL`) with the
+restore removed. Run the Win32 smoke scenarios under `--accel kvm` too.
 
 Size S. The whole of "32-bit execution on the x86-64 kernel".
 
@@ -553,7 +562,8 @@ green; none needs the one after it.
    `hello.exe` on the build host. No kernel change. Done on 2026-11-12;
    `hello.exe` and `initorder.exe` give the same bytes and statuses on
    Windows XP and in the harness.
-3. K2 (done 2026-11-12), then K1, each with its `nativetest` assertions.
+3. K2, then K1, each with its `nativetest` assertions. Both done
+   2026-11-12.
 4. W1, guest half: `winhost` on SavanXP and the `win32-hello` smoke scenario.
 5. W2 onward, in order.
 
