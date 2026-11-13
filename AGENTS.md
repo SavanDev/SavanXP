@@ -115,6 +115,13 @@
   not lose external binaries already installed in `/bin`, nor persistent
   assets under `/games`.
 
+## Commit messages
+
+- Do not put a link to an agent's session (for example a
+  `Claude-Session: https://claude.ai/...` trailer) in a commit message. A
+  co-author trailer is fine; the session link points at a private
+  conversation nobody reading the history can open.
+
 ## Practical rule for the main build
 
 - The main build may sync the internal userland onto the existing image, but it
