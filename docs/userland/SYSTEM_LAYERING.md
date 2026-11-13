@@ -81,15 +81,19 @@ The shape that was fixed in advance is what shipped:
 
 ## Planned: binary-compatibility subsystems
 
-> Status: **planned (2026-10-24), nothing built.** This records the direction
-> so that SUN is not designed toward it by mistake.
+> Status: **planned (2026-10-24); SSW's first phase done (2026-11-12): a PE32
+> console program runs under `winhost`.** This records the direction so that
+> SUN is not designed toward it by mistake.
 
 SavanXP will run programs built for other systems through subsystems of their
 own, one per foreign ABI:
 
-- **Win32 subsystem**: runs unmodified Windows programs (PE images). The
+- **SSW, the Savan Subsystem for Windows** (the Win32 subsystem): runs
+  unmodified Windows programs (PE images). Win32 is the API it implements;
+  SSW is the subsystem's name. The
   Windows user-mode libraries are reimplemented here as PE32 DLLs, loaded by a
-  64-bit SUN host program that carries the 32-bit code in its own process. The
+  64-bit SUN host program that carries the 32-bit code in its own process
+  ([WIN32.md](WIN32.md) describes what is built). The
   [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) records that
   decision and the paths it rejected, and targets **Windows XP Solitaire
   (`sol.exe`)** as its first application, with PE/DLL, window and `cards.dll`
@@ -113,7 +117,8 @@ groundwork from its first phases, most of all page-granular memory regions.
 Win32's path to Solitaire needs two smaller kernel slices of its own and
 meets that groundwork only in later profiles.
 Neither a distribution nor Wine running through Linux compatibility blocks
-Win32 work. Both remain **unstarted as of 2026-11-10**.
+Win32 work. The Linux subsystem is **unstarted**; SSW finished its first
+phase, W1, on 2026-11-12.
 
 What holds for both, by the same rules that hold for POSIX:
 

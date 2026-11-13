@@ -1,4 +1,8 @@
-# Win32 subsystem — Windows applications on Sx
+# SSW (the Win32 subsystem) — Windows applications on Sx
+
+SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
+Win32 is the API it implements. What exists so far is described in
+[WIN32.md](../../userland/WIN32.md).
 
 > **Status: design settled; W0, K1, K2 and W1 complete (2026-11-12): a PE32
 > console program runs on SavanXP under `winhost`, described in

@@ -1,4 +1,10 @@
-# Win32 subsystem
+# SSW — the Savan Subsystem for Windows
+
+SSW is SavanXP's Win32 subsystem: it runs unmodified Windows programs. Win32
+is the API it implements, as POSIX is the API of the POSIX subsystem; SSW is
+the subsystem's name. Its source tree keeps the API's name
+(`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
+`winhost`.
 
 > **Status: W1 complete (2026-11-12).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them

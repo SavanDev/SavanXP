@@ -87,12 +87,13 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 - [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the layering: the platform,
   apps on the POSIX SDK, when an app may be a SUN program instead, and the
-  planned Win32 and Linux binary-compatibility subsystems and their roadmaps.
+  Win32 (SSW) and Linux binary-compatibility subsystems and their roadmaps.
 - [`SUN.md`](userland/SUN.md) — SUN, the Savan Userland Native API: what it is
   next to Sx and POSIX, its pieces, the system's own API rather than a Win32
   replica, the rules that grow it, its Win32 counterparts as a reading aid, and
   the slices the Command Prompt drives.
-- [`WIN32.md`](userland/WIN32.md) — the Win32 subsystem as built: the PE32
+- [`WIN32.md`](userland/WIN32.md) — SSW, the Savan Subsystem for Windows (the
+  Win32 subsystem), as built: the PE32
   parser and what it refuses by name, the loader and its NT statuses, the
   gate and process start and exit, the first DLLs, the reproducible fixture
   build, `winhost` on SavanXP and the host harness, the view budget, and the
@@ -240,8 +241,8 @@ all its phases have landed; the links to it move with it.
   goal, Xeyes: a translation layer in the kernel entered by trapping
   `syscall`, memory regions, a musl profile, a small X11 server (`x11d`), the
   paths rejected, the kernel slices, and phases L0-L7 with their gates.
-- [`WIN32_SUBSYSTEM_ROADMAP.md`](roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) — Windows
-  binary compatibility under `/system/win`, for the first application goal,
+- [`WIN32_SUBSYSTEM_ROADMAP.md`](roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md) — SSW,
+  Windows binary compatibility under `/system/win`, for the first application goal,
   Windows XP Solitaire: the chosen architecture (own PE32 DLLs over a 64-bit
   SUN host, no Windows code in the kernel), the paths rejected, the two
   kernel slices, and phases W0-W7 with their acceptance gates.
