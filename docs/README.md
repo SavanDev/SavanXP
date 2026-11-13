@@ -79,6 +79,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   why native mode setting is most plausible here.
 - [`ATHLON_64.md`](hardware/ATHLON_64.md) — K8 desktops, the oldest CPU `master`
   can boot: the untrustworthy TSC, the four chipset families and their devices.
+- [`COMPAQ_21N2F7AR.md`](hardware/COMPAQ_21N2F7AR.md) — a Skylake-U laptop (Core i7-6500U,
+  HD Graphics 520) verified on a legacy boot: the unit against the retail listing,
+  what the boot log shows device by device, performance, and what is left.
 
 ## Userland — `userland/`
 

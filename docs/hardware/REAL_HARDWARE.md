@@ -19,13 +19,15 @@ interchangeable:
 
 | Target | Document | Branch | Status on 2026-11-12 |
 | --- | --- | --- | --- |
-| AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop on the firmware framebuffer, USB keyboard and mouse, analog audio in and out. No Ethernet, NVMe or native Vega driver |
+| AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop at 1920x1080 on the firmware framebuffer, all 12 processors, USB keyboard and mouse, four SATA disks read, analog audio in and out. No Ethernet, NVMe or native Vega driver |
 | Intel Pentium 4, Compaq Evo N1020v | [PENTIUM4_EVO_N1020V.md](PENTIUM4_EVO_N1020V.md) | `legacy` (i386) | Cannot run `master`: no long mode, no NX. The i386 port on `legacy` boots, mounts SxFS and runs one ring 3 program in QEMU |
 | AMD Athlon II + chipset graphics | [ATHLON_II.md](ATHLON_II.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and OHCI, run only in QEMU; no network |
 | Intel Core 2 Duo + chipset graphics | [CORE2_DUO.md](CORE2_DUO.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and UHCI, run only in QEMU; no network |
 | AMD Athlon 64 + chipset graphics | [ATHLON_64.md](ATHLON_64.md) | `master` | Not run. The oldest CPU `master` can boot; storage, USB and the wall clock all need work first |
+| Intel Core i7-6500U, Compaq Presario 21N2F7AR | [COMPAQ_21N2F7AR.md](COMPAQ_21N2F7AR.md) | `master` | **Verified:** boots from USB through the legacy BIOS path, desktop at 1920x1080, built-in keyboard and touchpad, USB mouse, SATA disk, internal speakers, jack and microphone, on battery. No Ethernet (`10ec:8168`); UEFI not yet run |
 
-Only the first two machines have been inventoried. The other three are known
+Only the first two machines and the Compaq Presario 21N2F7AR have been
+inventoried. The other three are known
 by CPU family, which decides what the kernel may assume about the processor
 but not which chipset, disk controller, NIC or audio codec is on the board.
 Each of those documents ends with the facts to collect from the unit.
@@ -104,7 +106,7 @@ as `azalia` and the xHCI quirks were.
 | HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | **needed** | likely | common | some | — |
 | HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | done in QEMU; run it | done in QEMU; run it | done in QEMU; run it | `legacy` has none |
 | HW-3 | PCI IDE: native-mode BARs, bus-master DMA, 48-bit LBA | M | — | unless AHCI is selected | **needed** on ICH7 | **needed** | **needed** |
-| HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | **needed** | useful | useful | on SB600 | — |
+| HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | at the limit | useful | useful | on SB600 | — |
 | HW-5 | NVMe | M | **needed** to install | — | — | — | — |
 | HW-6 | HD Audio: the other controllers' PCI quirks, more codecs | S + per codec | done for this board | **needed** | **needed** | on late boards | — |
 | HW-7 | AC'97: bind by controller, not by class; non-Intel controllers | S–M | — | — | on 945 boards | **needed** | **needed** |
@@ -125,8 +127,9 @@ boards and laptops, `10ec:8169` the PCI gigabit ancestor. One driver covers
 the family. Reference: OpenBSD `re(4)` (`sys/dev/ic/re.c`, `if_re_pci.c`).
 It plugs into `nic::register_driver` beside `rtl8139`.
 
-This is the single package with the most reach: it is what stands between the
-development host and everything that needs a network on metal (`ntpsync`, Web
+This is the single package with the most reach: the development host and the
+Compaq 21N2F7AR both have a `10ec:8168`, and it is what stands between them
+and everything that needs a network on metal (`ntpsync`, Web
 Viewer, the SUN sockets).
 
 Until it exists, a PCI RTL8139 card is the one way to get a network on any
@@ -181,7 +184,9 @@ every pre-AHCI machine, and of later ones whose firmware is set to IDE mode.
 ### HW-4 — AHCI coverage
 
 `find_hba()` keeps the first AHCI function and `kMaxDisks` is 4. The
-development host has two HBAs, so the disks on the second are invisible.
+development host has two HBAs, but all four of its disks are on the first
+one (`02:00.1`), so today it sees every disk; a fifth, or one on the FCH
+controller, would be invisible. The `ahci:` line should name the HBA.
 Also wanted: ATAPI ports, and the per-vendor exceptions real HBAs need — the
 ATI SB600 advertises 64-bit DMA and does not honour it.
 
