@@ -23,7 +23,7 @@ lowest one decides. From the top down:
 | `process::kMaxFileHandles` | 64 | `include/kernel/process.hpp` | Descriptors **per process**: `windowd` keeps 2 per window |
 | `process::detail::kMaxPipeCount` | 64 | `include/kernel/process_detail.hpp` | Pipes in the **whole system**, 8 KiB each |
 | `object::kMaxEventObjects` | 128 | `include/kernel/object.hpp` | Event objects in the whole system: one wake event per window, plus every program's own |
-| `object::kMaxSectionObjects` | 256 | same | Sections in the whole system: one surface per window, plus every shared library and buffer |
+| `object::kMaxSectionObjects` | 512 | same | Sections in the whole system: one surface per window, plus every shared library and buffer |
 | `process::kMaxProcesses` | 64 | `include/kernel/process.hpp` | Processes |
 | `object::kMaxPortObjects` | 16 | `include/kernel/object.hpp` | Named ports (`windowd`, `audiod`, ...) |
 | `FD_SETSIZE` | 64 | `subsystems/posix/sdk/v1/include/sys/select.h` | Descriptors `select()` can name in POSIX programs |

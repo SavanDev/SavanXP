@@ -82,12 +82,12 @@ Not chosen:
 
 ## Budget
 
-- **Views:** 64 per process (`kMaxSectionViews`, [SECTIONS.md](../kernel/SECTIONS.md)).
+- **Views:** 128 per process (`kMaxSectionViews`, [SECTIONS.md](../kernel/SECTIONS.md)).
   The heap takes at most 8. `windowd` maps about 25 with every slot full (client
   surfaces, input rings, the window list, the display, its own surface, the
   scene), so 33 with a full heap.
-- **Section objects:** 256 system-wide (`kMaxSectionObjects`), sized for 8 arenas
-  in each of a dozen processes plus surfaces and libraries.
+- **Section objects:** 512 system-wide (`kMaxSectionObjects`), sized for 8 arenas
+  in each of a dozen processes plus surfaces, libraries and Win32 programs.
 - **Memory:** a section's pages are allocated and zeroed when it is created, so
   an arena costs its whole size at once (1 MiB for the first). The bootstrap
   arena is resident in every static program, native or not, as it already is.
