@@ -4,11 +4,13 @@ SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
 Win32 is the API it implements. What exists so far is described in
 [WIN32.md](../../userland/WIN32.md).
 
-> **Status: design settled; W0, K1, K2, W1, W2 and W3 complete (2026-11-12):
-> a PE32 program that starts the way `sol.exe` does runs on SavanXP under
-> `winhost`, with the C runtime, `kernel32` and registry functions of the
-> matrix, and opens a `windowd` window it paints and drives through `user32`
-> and `gdi32`, described in [WIN32.md](../../userland/WIN32.md). Next: W4.** The
+> **Status: design settled; W0, K1, K2, W1, W2, W3 and W4 complete
+> (2026-11-13): a PE32 program that starts the way `sol.exe` does runs on
+> SavanXP under `winhost`, with the C runtime, `kernel32` and registry
+> functions of the matrix, opens a `windowd` window it paints and drives
+> through `user32` and `gdi32`, loads its resources, and the user's own
+> `cards.dll` draws every card as on Windows XP, described in
+> [WIN32.md](../../userland/WIN32.md). Next: W5.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -554,6 +556,34 @@ device context state, and pixel access.
 captures. The raster operations have host tests against computed truth
 tables. `win32-cards` is a smoke scenario that is skipped, not failed, when
 the user's files are absent.
+
+**Done (2026-11-13).** `cards.exe` draws, with the user's `cards.dll`, the 52
+faces, the 12 backs, the other modes and the backs shrunk to 33x62; its
+output, a CRC of each drawing's pixels and in a second run the pixels
+themselves, is byte-identical on Windows XP, in `win32-cards-test` and in
+`win32-cards` (KVM and TCG). The 71x96 drawings equal the W0 captures but for
+the corners `cdtDrawExt` leaves alone. `resource.exe`, with resources of its
+own in every bitmap format `cards.dll` uses, an icon, a cursor, strings and
+accelerators, is byte-identical too and runs in `win32-hello`.
+`win32-window-test` covers DIB decoding and the blits.
+
+What changed from the plan above, and why:
+
+- **No saved device context state and no clipping calls.** `SaveDC`,
+  `RestoreDC` and the clip-region functions are not in the matrix: neither
+  file imports them. Clipping is the window's and the update region's.
+- **Windows XP decided the rules a reading would have guessed:** a selected
+  bitmap can be deleted (it goes when deselected), a shrink drops the source
+  pixels left at the end, and growing samples each pixel's centre. Each is
+  in `resource.exe`'s output.
+- **Dithering is left out.** A colour brush on a monochrome bitmap is
+  dithered on Windows; nothing in the profile draws one, so it becomes the
+  nearer of black and white, and the fixture checks black and white only.
+- **The user's files reach a smoke scenario through the scenario itself**
+  (`win32_files`), copied into the disposable disk at run time. The install
+  command for `sol.exe` and `cards.dll` is W6's.
+- `llvm-rc` joined CMake's tool discovery for the first fixture with
+  resources, as planned.
 
 ### W5 — menus, dialogs and controls
 

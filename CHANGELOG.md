@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 bitmaps and resources: memory device contexts, `BitBlt`, `StretchBlt` and monochrome/colour conversion in
+  `gdi32.dll`; `LoadBitmapA`, `LoadStringW`/`A`, `LoadIconW`, `LoadImageW`, `LoadAcceleratorsW` and
+  `TranslateAcceleratorW` in `user32.dll`.** The user's own Windows XP `cards.dll` draws every card as on Windows XP;
+  smoke scenario `win32-cards` checks it and is skipped (77) without `SAVANXP_WIN32_FIXTURES`. The build needs
+  `llvm-rc`. See [WIN32.md](docs/userland/WIN32.md#user32-and-gdi32).
+
 - **Win32 programs open windows: `user32.dll` and `gdi32.dll` for windows, messages, painting, timers and input, the
   top-level window a `windowd` window under `winhost`.** `win32-harness --input` drives a fixture from a script; smoke
   scenario `win32-window` checks messages and pixels against Windows XP. See [WIN32.md](docs/userland/WIN32.md#user32-and-gdi32).

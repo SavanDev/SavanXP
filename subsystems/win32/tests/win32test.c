@@ -15,6 +15,9 @@
  * window.exe and logs "WIN32 WINDOW READY". The host plays the fixture's
  * input script over QMP and checks the pixels (tools/win32_window_smoke.py);
  * here the output and the status are compared with Windows XP's.
+ *
+ * With --cards it runs cards.exe, which draws every card with the user's own
+ * cards.dll; the win32-cards scenario copies that file next to it.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -46,9 +49,13 @@ static const fixture k_fixtures[] = {
     {"missingsym.exe", 0, 0xc0000139u, 0, 0, 0},
     {"startup.exe", "startup-1.out", 5u, 1, 1, 0},
     {"startup.exe", "startup-2.out", 5u, 1, 1, 0},
+    {"resource.exe", "resource.out", 0u, 0, 0, 0},
 };
 
 static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, 1};
+/* Needs the user's cards.dll next to it, which only the win32-cards
+ * scenario puts there. */
+static const fixture k_cards = {"cards.exe", "cards.out", 0u, 0, 0, 0};
 
 static uint32_t length_of(const char *text) {
     uint32_t n = 0;
@@ -216,6 +223,9 @@ static int run_window(void) {
 int main(int argc, char **argv) {
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'w') {
         sxn_exit(run_window() ? 0 : 1);
+    }
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c') {
+        sxn_exit(run(&k_cards) ? 0 : 1);
     }
     /* A fresh registry, so the counter starts where Windows XP's did. */
     static const char empty[] = "SavanXP registry 1\n";

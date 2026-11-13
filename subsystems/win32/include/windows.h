@@ -200,6 +200,22 @@ typedef struct tagTEXTMETRICW {
     BYTE tmCharSet;
 } TEXTMETRICW, *LPTEXTMETRICW;
 
+typedef struct tagBITMAP {
+    LONG bmType;
+    LONG bmWidth;
+    LONG bmHeight;
+    LONG bmWidthBytes;
+    WORD bmPlanes;
+    WORD bmBitsPixel;
+    LPVOID bmBits;
+} BITMAP, *LPBITMAP;
+
+typedef struct tagACCEL {
+    BYTE fVirt;
+    WORD key;
+    WORD cmd;
+} ACCEL;
+
 typedef void(WINAPI *PIMAGE_TLS_CALLBACK)(LPVOID DllHandle, DWORD Reason, LPVOID Reserved);
 
 typedef struct _IMAGE_TLS_DIRECTORY32 {
@@ -490,6 +506,19 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 
 #define ICC_WIN95_CLASSES 0x000000ff
 
+#define MAKEINTRESOURCEA(i) ((LPSTR)(ULONG_PTR)(WORD)(i))
+#define IDI_APPLICATION MAKEINTRESOURCEW(32512)
+#define IMAGE_BITMAP 0
+#define IMAGE_ICON 1
+#define IMAGE_CURSOR 2
+#define LR_DEFAULTCOLOR 0x0000
+#define LR_DEFAULTSIZE 0x0040
+#define LR_SHARED 0x8000
+#define FVIRTKEY 0x01
+#define FSHIFT 0x04
+#define FCONTROL 0x08
+#define FALT 0x10
+
 #ifndef SXW_BUILDING_KERNEL32
 #define SXW_KERNEL32_API DECLSPEC_IMPORT
 #else
@@ -587,6 +616,13 @@ SXW_USER32_API BOOL WINAPI InflateRect(LPRECT lprc, int dx, int dy);
 SXW_USER32_API BOOL WINAPI IntersectRect(LPRECT lprcDst, const RECT *lprcSrc1, const RECT *lprcSrc2);
 SXW_USER32_API BOOL WINAPI PtInRect(const RECT *lprc, POINT pt);
 SXW_USER32_API HCURSOR WINAPI LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName);
+SXW_USER32_API HBITMAP WINAPI LoadBitmapA(HINSTANCE hInstance, LPCSTR lpBitmapName);
+SXW_USER32_API int WINAPI LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax);
+SXW_USER32_API int WINAPI LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax);
+SXW_USER32_API HICON WINAPI LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName);
+SXW_USER32_API HANDLE WINAPI LoadImageW(HINSTANCE hInst, LPCWSTR name, UINT type, int cx, int cy, UINT fuLoad);
+SXW_USER32_API HACCEL WINAPI LoadAcceleratorsW(HINSTANCE hInstance, LPCWSTR lpTableName);
+SXW_USER32_API int WINAPI TranslateAcceleratorW(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg);
 
 #ifndef SXW_BUILDING_GDI32
 #define SXW_GDI32_API DECLSPEC_IMPORT
@@ -617,5 +653,13 @@ SXW_GDI32_API COLORREF WINAPI SetTextColor(HDC hdc, COLORREF color);
 SXW_GDI32_API COLORREF WINAPI SetBkColor(HDC hdc, COLORREF color);
 SXW_GDI32_API BOOL WINAPI GetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl);
 SXW_GDI32_API BOOL WINAPI GetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm);
+SXW_GDI32_API HDC WINAPI CreateCompatibleDC(HDC hdc);
+SXW_GDI32_API BOOL WINAPI DeleteDC(HDC hdc);
+SXW_GDI32_API HBITMAP WINAPI CreateCompatibleBitmap(HDC hdc, int cx, int cy);
+SXW_GDI32_API BOOL WINAPI BitBlt(HDC hdc, int x, int y, int cx, int cy, HDC hdcSrc, int x1, int y1, DWORD rop);
+SXW_GDI32_API BOOL WINAPI StretchBlt(HDC hdcDest, int xDest, int yDest, int wDest, int hDest, HDC hdcSrc, int xSrc,
+                                     int ySrc, int wSrc, int hSrc, DWORD rop);
+SXW_GDI32_API int WINAPI GetObjectA(HANDLE h, int c, LPVOID pv);
+SXW_GDI32_API BOOL WINAPI GetDCOrgEx(HDC hdc, LPPOINT lppt);
 
 #endif

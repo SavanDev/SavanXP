@@ -6,7 +6,7 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W3 complete (2026-11-12).** This document describes what exists
+> **Status: W4 complete (2026-11-13).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
@@ -16,7 +16,8 @@ A PE32 program runs on SavanXP: `winhost.sxe` loads it and its DLLs below
 4 GiB and runs it as 32-bit code, and its top-level window is a `windowd`
 window. The same loader and DLLs run on the build host in a harness, with
 offscreen windows and scripted input, and the fixtures that check both give
-the bytes, the messages and the pixels Windows XP gives. Nothing of the
+the bytes, the messages and the pixels Windows XP gives. The user's own
+Windows XP `cards.dll` draws every card here exactly as it does there. Nothing of the
 Windows API beyond what those fixtures import exists yet, and nothing starts
 a `.exe` but a command line naming `winhost`.
 
@@ -28,7 +29,8 @@ subsystems/win32/
   dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32 (PE32);
                  common/ holds the code page, regions and memcpy they share
   fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing, startup,
-                 window (+ its input script)
+                 window (+ its input script), cards, resource (+ its .rc and
+                 the script that writes its images)
   harness/       win32-harness: the loader and gate on Linux x86-64
   host/          winhost.sxe: the loader and gate on SavanXP
   tests/         win32test.sxe: the win32-hello and win32-window smoke runner
@@ -225,8 +227,8 @@ in Western European languages.
 | `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; the matrix's nine: `GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress` |
 | `msvcrt.dll` | The matrix's eighteen: `__set_app_type`, `__p__fmode`, `__p__commode`, `_adjust_fdiv`, `__setusermatherr`, `_initterm`, `__getmainargs`, `_acmdln`, `_controlfp`, `_except_handler3`, `_XcptFilter`, `exit`, `_exit`, `_cexit`, `_c_exit`, `rand`, `srand`, `time` |
 | `advapi32.dll` | The matrix's six: `RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey` |
-| `gdi32.dll` | Of the matrix's twenty-seven, the twenty a window needs: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC` |
-| `user32.dll` | Of the matrix's sixty-two, the forty-five of windows and messages: classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor` and `LoadCursorW` (the full list is `dlls/user32/user32.def`) |
+| `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB` |
+| `user32.dll` | Of the matrix's sixty-two, fifty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`) and resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`); the full list is `dlls/user32/user32.def`. Menus, dialogs, `WinHelpW` and `GetMenu` are W5's |
 
 ### What they do, and what they refuse
 
@@ -343,10 +345,48 @@ What is refused or bounded, and why:
   the window manager's. Only keyboard play in Solitaire calls it, to put the
   pointer on the selected card, and the game is complete with the mouse
   ([WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md#decisions)).
-- `LoadCursorW` gives the system cursors only; a program's own cursors are
-  resources, W4's. `GetSysColor` answers Windows XP's classic colours.
+- `GetSysColor` answers Windows XP's classic colours.
 - `GetDC(NULL)` answers `GetDeviceCaps` (the screen's size, 96 DPI, 32 bits)
   and draws nothing.
+
+**Bitmaps.** A device-dependent bitmap is monochrome or in the screen's
+32-bit format; both keep 0x00RRGGBB pixels, a monochrome one only black and
+white. Each rule below was checked against Windows XP (`cards.exe`,
+`resource.exe`):
+
+- A memory device context starts with a stock 1x1 monochrome bitmap, so
+  `CreateCompatibleBitmap` on a fresh one gives a monochrome bitmap; on any
+  other device context, a colour one.
+- `LoadBitmap` makes a monochrome bitmap of a one-bit DIB whose palette is
+  black then white, and a colour one of anything else (cards.dll's red faces
+  are one-bit DIBs too). `gdi32/dib.c` reads both header formats at 1, 4, 8,
+  24 and 32 bits, bottom-up or top-down, uncompressed.
+- `BitBlt` from monochrome to colour paints black as the destination's text
+  colour and white as its background colour; from colour to monochrome, the
+  source's background colour becomes white and the rest black. Any ROP3 is
+  computed bit by bit.
+- `StretchBlt`, when shrinking, ANDs the source pixels that fall on one
+  destination pixel (`BLACKONWHITE`, the default mode), spreading them with a
+  Bresenham walk from an error of `2 * destination - source` and dropping
+  what is left over; when growing, each destination pixel takes the source
+  pixel under its centre. Neither size may pass 4096 when they differ.
+- `DeleteObject` on a selected bitmap succeeds, and the bitmap goes when it
+  is deselected.
+- Not done: a solid colour brush on a monochrome bitmap is made the nearer of
+  black and white, where Windows dithers it. Nothing in the profile draws
+  one.
+
+**Resources** are read from the loaded image: its resource directory, type
+then name (an id, or a name compared without case) then the first language.
+`LoadStringW` with no room returns a pointer into the resource;
+`LoadStringA` converts through Windows-1252. An icon or a cursor group gives
+the image nearest the size asked for (32x32 unless `LoadImageW` names one),
+the deepest among equals; the handle keeps the resource. The system's own
+cursors and icons, by id with a NULL instance, have handles and no image.
+`TranslateAcceleratorW` sends `WM_COMMAND` with 1 in the high word for a
+`WM_KEYDOWN` or `WM_SYSKEYDOWN` that matches a virtual-key entry with exactly
+its Shift, Ctrl and Alt, or a `WM_CHAR` or `WM_SYSCHAR` that matches a
+character entry. Files (`LR_LOADFROMFILE`) are refused.
 
 ## The registry
 
@@ -389,6 +429,11 @@ every machine. The outputs, under the build directory:
   installed (`nosuch.dll`, and a `kernel32.dll` that exports a function the
   real one does not).
 
+A fixture with resources has a script compiled by `llvm-rc` (`/C 65001`: the
+scripts are UTF-8) and linked with its objects. `resource.exe`'s images are
+written into the build directory by `fixtures/resource/images.py`, so no
+binary image is kept in the tree.
+
 The target is `savanxp_win32`; `./build.sh test` builds it.
 
 ## Fixtures
@@ -403,6 +448,8 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `missingsym.exe` | An import `kernel32.dll` does not export | No output, status `0xC0000139` |
 | `startup.exe` | It starts the way `sol.exe` does: the same runtime imports, an SEH frame at `fs:[0]` with `_except_handler3`, C and C++ initializers through `_initterm`, `__getmainargs`, the tail of `_acmdln`, a `WinMain`. Then every non-GUI function of the matrix, failure paths included: `rand` after two seeds, `MulDiv`'s rounding and overflow, a missing module and procedure, `beta.dll` loaded at run time and found by name and ordinal, 115 `LPTR` blocks, and the registry (a counter, `ERROR_MORE_DATA`, a size query, an ANSI read, the value name `Atrás`, a missing value and key) | Run twice as `startup.exe alpha "two words" 3`: `expected/startup-1.out` then `startup-2.out`, where the counter reads back the first run's 1 as 2; status 5 |
 | `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
+| `cards.exe` | Loads the user's own `cards.dll` from its folder with `LoadLibraryA` and draws, with `cdtInit`, `cdtDrawExt` and `cdtTerm`, the 52 faces and 12 backs at 71x96 on Solitaire's green, the other modes (inverted, the empty pile's marks, X, O) on a few cards, and the 12 backs at 33x62 as the Deck dialog does. It writes a CRC-32 of each drawing's pixels read back with `GetPixel`, or, with the argument `pixels`, the pixels themselves | `expected/cards.out`, status 0. The pixel listing describes Microsoft's art and is kept with the user's files, never here |
+| `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'
@@ -444,6 +491,8 @@ these files built with Clang and lld 23.1.4:
 | `missingsym.exe` | `43d78fd4b444d7fee9df762b429e4681a39439ed886637e6a071d799ba5b7b9c` |
 | `startup.exe` | `e1d9283206f99e0748495794d9df3a1cc7b1c529a7fb1b4079cc21fe5d7ad9ba` |
 | `window.exe` | `1ec8351db7662ff5471b7bd587ef1734da6fca73416def7e4d39b91875e30dba` |
+| `cards.exe` | `940f7be09e9f614497ef2b889bebab73233dccdbf8c37b9d68e190c1e60cbcca` |
+| `resource.exe` | `bf9ca037356201d43996cf64670e301c4e63699ec8902f5b753d146ab0404c43` |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -466,6 +515,15 @@ environment while the `WM_SYSCOMMAND` they produce does not.
 `expected/window.ppm.gz` is the client area the harness dumps at the end of
 the script; outside the text box it is pixel for pixel the one on Windows
 XP's screen.
+
+`cards.exe` ran on the same machine with the user's `cards.dll` next to it,
+once writing CRCs and once writing pixels; here both are identical, every
+pixel of every drawing. Its 71x96 drawings also equal the W0 captures of
+Solitaire's own screen ([WIN32_SOLITAIRE_PROFILE.md](WIN32_SOLITAIRE_PROFILE.md#reference-captures))
+except the twelve corner pixels `cdtDrawExt` leaves alone, which show the
+table there and the fixture's own fill here. `resource.exe` ran three times
+there: what it first showed decided the stretch rules and the deferred
+delete above, and that a colour brush is dithered on a monochrome bitmap.
 
 ## Input scripts
 
@@ -592,7 +650,10 @@ one is kept in the build directory as `win32-window-actual.ppm`.
 `win32-window-test` checks the pure parts of `user32` and `gdi32` with the
 sanitizers on: regions against a brute-force set of pixels, including what
 happens at the 32-rectangle bound; every ROP2 and ROP3 against its truth
-table; 3,000 random lines against the rule above; clipped fills and glyphs.
+table; 3,000 random lines against the rule above; clipped fills and glyphs;
+DIBs in both header formats, the monochrome rule and every refusal; and
+blits: both format conversions, a source outside its bitmap, overlapping
+copies both ways, and the stretch rules on the cases Windows XP showed.
 
 `win32-window` (`./build.sh smoke win32-window`) boots SavanXP with a USB
 tablet and runs `win32test.sxe --window`, which starts `compositord` and
@@ -601,6 +662,19 @@ tablet and runs `win32test.sxe --window`, which starts `compositord` and
 the input script over QMP and compares the client area of its `dump` with
 the golden image, while the guest compares the messages and the status
 with Windows XP's. Run it under `--accel kvm` as well.
+
+`win32-cards-test` runs `cards.exe` through the harness with the user's
+`cards.dll`, from the folder named by `SAVANXP_WIN32_FIXTURES`, copied next to
+it in a temporary folder, and compares the output with Windows XP's. Without
+the file it is reported as skipped.
+
+`win32-cards` (`./build.sh smoke win32-cards`) does the same on SavanXP. The
+scenario names the user's files it needs (`win32_files` in
+`tools/smoke_catalog.py`); the runner copies them from
+`SAVANXP_WIN32_FIXTURES` into the disposable copy of the disk the scenario
+boots, under `/system/win/drive_c/tests`, never into the build or
+`build/disk.img`, and exits with 77, skipped, without them. `win32-hello`
+runs `resource.exe` with the other fixtures.
 
 `win32-pe-fixtures-test` reads the user's Windows XP `sol.exe` and `cards.dll`
 from the folder named by `SAVANXP_WIN32_FIXTURES`, as an environment or CMake

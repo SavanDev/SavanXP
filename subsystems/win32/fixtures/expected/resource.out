@@ -1,0 +1,92 @@
+string 1 9 "Solitario"
+string 2 16 "Atr\u00e1s y adelante"
+string 15 27 "the last of the first block"
+string 17 15 "Juego n\u00famero 17"
+string 100 10 "Puntos: %d"
+string 3 0 ""
+string 16 0 ""
+string 200 0 ""
+string 2 in 5: 4 "Atr\u00e1"
+string 1 by pointer: 9 "Solitario"
+string 2 ANSI: 16 41 74 72 e1 73 20 79 20 61 64 65 6c 61 6e 74 65 00
+string 17 ANSI in 6: 5 "Juego"
+bitmap 10 core 1-bit: 13x9 1 bpp, 2 bytes a row crc 322849d5
+bitmap 11 info 1-bit red: 11x7 32 bpp, 44 bytes a row crc bf58047a
+bitmap 12 core 4-bit: 9x5 32 bpp, 36 bytes a row crc 7f2c9367
+bitmap 13 info 24-bit: 7x6 32 bpp, 28 bytes a row crc 26df285c
+bitmap "cards": 13x9 1 bpp, 2 bytes a row crc 322849d5
+missing bitmap: NULL
+stretch 7x6 to 14x12 crc f29d226b
+   000000*2 240000*2 480000*2 6c0000*2 900000*2 b40000*2 d80000*2
+   000000*2 240000*2 480000*2 6c0000*2 900000*2 b40000*2 d80000*2
+   002800*2 242809*2 482812*2 6c281b*2 902824*2 b4282d*2 d82836*2
+   002800*2 242809*2 482812*2 6c281b*2 902824*2 b4282d*2 d82836*2
+   005000*2 245012*2 485024*2 6c5036*2 905048*2 b4505a*2 d8506c*2
+   005000*2 245012*2 485024*2 6c5036*2 905048*2 b4505a*2 d8506c*2
+   007800*2 24781b*2 487836*2 6c7851*2 90786c*2 b47887*2 d878a2*2
+   007800*2 24781b*2 487836*2 6c7851*2 90786c*2 b47887*2 d878a2*2
+   00a000*2 24a024*2 48a048*2 6ca06c*2 90a090*2 b4a0b4*2 d8a0d8*2
+   00a000*2 24a024*2 48a048*2 6ca06c*2 90a090*2 b4a0b4*2 d8a0d8*2
+   00c800*2 24c82d*2 48c85a*2 6cc887*2 90c8b4*2 b4c8e1*2 d8c80e*2
+   00c800*2 24c82d*2 48c85a*2 6cc887*2 90c8b4*2 b4c8e1*2 d8c80e*2
+stretch 9x5 to 20x11 crc c95b5eea
+   00ff00*2 10ef25*2 20df4a*3 30cf6f*2 40bf94*2 50afb9*2 609fde*3 708f03*2 807f28*2
+   00ff00*2 10ef25*2 20df4a*3 30cf6f*2 40bf94*2 50afb9*2 609fde*3 708f03*2 807f28*2
+   30cf6f*2 40bf94*2 50afb9*3 609fde*2 708f03*2 807f28*2 906f4d*3 a05f72*2 b04f97*2
+   30cf6f*2 40bf94*2 50afb9*3 609fde*2 708f03*2 807f28*2 906f4d*3 a05f72*2 b04f97*2
+   609fde*2 708f03*2 807f28*3 906f4d*2 a05f72*2 b04f97*2 c03fbc*3 d02fe1*2 e01f06*2
+   609fde*2 708f03*2 807f28*3 906f4d*2 a05f72*2 b04f97*2 c03fbc*3 d02fe1*2 e01f06*2
+   609fde*2 708f03*2 807f28*3 906f4d*2 a05f72*2 b04f97*2 c03fbc*3 d02fe1*2 e01f06*2
+   906f4d*2 a05f72*2 b04f97*3 c03fbc*2 d02fe1*2 e01f06*2 f00f2b*3 00ff00*2 10ef25*2
+   906f4d*2 a05f72*2 b04f97*3 c03fbc*2 d02fe1*2 e01f06*2 f00f2b*3 00ff00*2 10ef25*2
+   c03fbc*2 d02fe1*2 e01f06*3 f00f2b*2 00ff00*2 10ef25*2 20df4a*3 30cf6f*2 40bf94*2
+   c03fbc*2 d02fe1*2 e01f06*3 f00f2b*2 00ff00*2 10ef25*2 20df4a*3 30cf6f*2 40bf94*2
+stretch 9x5 to 4x3 crc 85d0c6fa
+   00ef00*1 20cf4a*1 40af90*1 608f02*1
+   008f00*1 000f08*1 000f00*1 800f00*1
+   800f00*2 000f00*2
+stretch 13x9 to 30x14 crc ab124f7b
+   ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2
+   ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2
+   000000*2 ffffff*3 000000*4 ffffff*3 000000*4 ffffff*2 000000*5 ffffff*2 000000*5
+   000000*5 ffffff*2 000000*5 ffffff*2 000000*4 ffffff*3 000000*4 ffffff*3 000000*2
+   000000*5 ffffff*2 000000*5 ffffff*2 000000*4 ffffff*3 000000*4 ffffff*3 000000*2
+   ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2
+   000000*2 ffffff*3 000000*4 ffffff*3 000000*4 ffffff*2 000000*5 ffffff*2 000000*5
+   000000*2 ffffff*3 000000*4 ffffff*3 000000*4 ffffff*2 000000*5 ffffff*2 000000*5
+   000000*5 ffffff*2 000000*5 ffffff*2 000000*4 ffffff*3 000000*4 ffffff*3 000000*2
+   ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2
+   ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2 000000*5 ffffff*2
+   000000*2 ffffff*3 000000*4 ffffff*3 000000*4 ffffff*2 000000*5 ffffff*2 000000*5
+   000000*5 ffffff*2 000000*5 ffffff*2 000000*4 ffffff*3 000000*4 ffffff*3 000000*2
+   000000*5 ffffff*2 000000*5 ffffff*2 000000*4 ffffff*3 000000*4 ffffff*3 000000*2
+stretch 13x9 to 6x4 crc 5edcef5c
+   000000*6
+   000000*6
+   000000*6
+   000000*6
+compatible with a memory DC: 1 bpp
+colour to monochrome crc c44da934
+brush on monochrome: 000000
+brush on monochrome: ffffff
+a selected bitmap deletes: yes
+still drawn on: 000000
+deleted again once deselected: no
+monochrome to colour crc d3ef63ae
+overlapping crc f64d4a11
+icon 20: loaded
+icon 20 at 16x16: loaded
+cursor 30: loaded
+bitmap 13 as an image: loaded
+missing icon: NULL
+system icon: loaded
+accelerators: loaded
+message 0x0100 0x71
+  WM_COMMAND 1000 from 1
+message 0x0100 0x5a
+message 0x0102 0x61
+  WM_COMMAND 1003 from 1
+message 0x0102 0x62
+  WM_CHAR 0x0062
+message 0x0101 0x71
+commands 2

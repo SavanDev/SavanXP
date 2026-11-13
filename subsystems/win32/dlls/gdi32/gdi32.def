@@ -1,9 +1,15 @@
 LIBRARY gdi32.dll
 EXPORTS
+    BitBlt
+    CreateCompatibleBitmap
+    CreateCompatibleDC
     CreateFontW
     CreateSolidBrush
+    DeleteDC
     DeleteObject
+    GetDCOrgEx
     GetDeviceCaps
+    GetObjectA
     GetPixel
     GetStockObject
     GetTextExtentPoint32W
@@ -19,6 +25,8 @@ EXPORTS
     SetPixel
     SetROP2
     SetTextColor
+    StretchBlt
     TextOutW
+    SxwCreateBitmapFromDIB
     SxwCreateSurfaceDC
     SxwSurfaceOfDC

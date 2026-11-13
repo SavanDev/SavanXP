@@ -11,11 +11,16 @@ the second run reads back what the first wrote. window.exe plays its input
 script (fixtures/window/input.txt); the client area it dumps must match the
 golden image, which equals Windows XP's outside the text box
 (docs/userland/WIN32.md, "Fixtures").
+
+With --cards FOLDER it runs only cards.exe, with the user's own cards.dll
+from FOLDER copied next to it in a temporary folder; without the file it
+exits 77, skipped.
 """
 
 import argparse
 import gzip
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,7 +45,30 @@ CASES = [
     ("startup.exe", STARTUP_ARGUMENTS, "startup-1.out", 0x5, None, True, None),
     ("startup.exe", STARTUP_ARGUMENTS, "startup-2.out", 0x5, None, True, None),
     ("window.exe", [], "window.out", 0x3, None, False, "window/input.txt"),
+    ("resource.exe", [], "resource.out", 0x0, None, False, None),
 ]
+
+
+def run_cards(args, expected_dir):
+    folder = pathlib.Path(args.cards) if args.cards else None
+    if folder is None or not (folder / "cards.dll").is_file():
+        print("skipped: needs the user's cards.dll in SAVANXP_WIN32_FIXTURES")
+        return 77
+    with tempfile.TemporaryDirectory() as scratch:
+        shutil.copyfile(pathlib.Path(args.fixtures) / "cards.exe", pathlib.Path(scratch) / "cards.exe")
+        shutil.copyfile(folder / "cards.dll", pathlib.Path(scratch) / "cards.dll")
+        result = subprocess.run([args.harness, "--dlls", args.system32, str(pathlib.Path(scratch) / "cards.exe")],
+                                capture_output=True, timeout=120)
+    want = (expected_dir / "cards.out").read_bytes()
+    if result.stdout != want or result.returncode != 0:
+        got = result.stdout.decode(errors="replace").splitlines()
+        wanted = want.decode().splitlines()
+        differ = [g for g, w in zip(got, wanted) if g != w]
+        print(f"FAIL cards.exe: status {result.returncode}, {len(differ)} lines differ, first {differ[:3]!r}; "
+              f"stderr {result.stderr.decode(errors='replace')!r}")
+        return 1
+    print("ok   cards.exe -> cards.out")
+    return 0
 
 
 def main():
@@ -49,8 +77,11 @@ def main():
     parser.add_argument("--system32", required=True)
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--expected", required=True)
+    parser.add_argument("--cards", help="the folder holding the user's cards.dll")
     args = parser.parse_args()
     expected_dir = pathlib.Path(args.expected)
+    if args.cards is not None:
+        return run_cards(args, expected_dir)
 
     failures = 0
     with tempfile.TemporaryDirectory() as scratch:

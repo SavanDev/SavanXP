@@ -183,6 +183,13 @@ def main() -> int:
         help="Python callback invoked once when the ready token appears",
     )
     parser.add_argument(
+        "--win32-file",
+        action="append",
+        default=[],
+        help="A file of the user's from SAVANXP_WIN32_FIXTURES to copy into the disposable image's "
+             "/system/win/drive_c/tests; the scenario is skipped (exit 77) without it",
+    )
+    parser.add_argument(
         "--remove-path",
         action="append",
         default=[],
@@ -253,6 +260,17 @@ def main() -> int:
     if args.host_action == "visual" and not args.visual_scenario:
         parser.error("--host-action visual requires --visual-scenario")
 
+    win32_sources = []
+    if args.win32_file:
+        # The user's own Windows files (docs/userland/WIN32.md, "Tests"): from
+        # their folder into the disposable copy only, never into the build.
+        folder = os.environ.get("SAVANXP_WIN32_FIXTURES", "")
+        win32_sources = [Path(folder) / name for name in args.win32_file]
+        missing = [str(path) for path in win32_sources if not folder or not path.is_file()]
+        if missing:
+            print(f"smoke: {args.scenario}: skipped: needs the user's "
+                  f"{', '.join(args.win32_file)} in SAVANXP_WIN32_FIXTURES", flush=True)
+            return 77
     qemu = find_qemu()
     if not qemu:
         raise SystemExit("qemu-system-x86_64 was not found in PATH or SAVANXP_QEMU")
@@ -290,6 +308,21 @@ def main() -> int:
                     raise SystemExit(
                         f"smoke: could not remove {remove_path!r} from disposable image: {detail}"
                     )
+            if win32_sources:
+                stage = log_dir / f"{run_tag}.win32-files"
+                shutil.rmtree(stage, ignore_errors=True)
+                tests = stage / "system/win/drive_c/tests"
+                tests.mkdir(parents=True)
+                for path in win32_sources:
+                    shutil.copyfile(path, tests / path.name.lower())
+                synced = subprocess.run(
+                    [sys.executable, str(Path(__file__).resolve().parent / "sxfs_sync.py"), "--image", str(run_disk),
+                     "--source", str(stage), "--cli", str(args.sxfs_cli.resolve())],
+                    text=True, capture_output=True, check=False)
+                shutil.rmtree(stage, ignore_errors=True)
+                if synced.returncode != 0:
+                    detail = (synced.stderr or synced.stdout).strip()
+                    raise SystemExit(f"smoke: could not copy the user's files into the disposable image: {detail}")
 
     vars_copy = log_dir / f"{run_tag}.OVMF_VARS.fd"
     debug_log = log_dir / f"{run_tag}.debugcon.log"

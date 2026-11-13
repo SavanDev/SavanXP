@@ -44,10 +44,12 @@ target_compile_options(savanxp-win32-registry-test PRIVATE
 target_link_options(savanxp-win32-registry-test PRIVATE -fsanitize=address,undefined)
 add_dependencies(savanxp_tests savanxp-win32-registry-test)
 add_test(NAME win32-registry-test COMMAND savanxp-win32-registry-test)
-# The pure parts of user32 and gdi32: regions, raster operations, lines.
+# The pure parts of user32 and gdi32: regions, raster operations, lines,
+# DIB decoding and blits.
 add_executable(savanxp-win32-window-test
     "${SAVANXP_WIN32_ROOT}/dlls/common/region.c"
     "${SAVANXP_WIN32_ROOT}/dlls/gdi32/raster.c"
+    "${SAVANXP_WIN32_ROOT}/dlls/gdi32/dib.c"
     tests/host/win32_window_test.c)
 target_include_directories(savanxp-win32-window-test PRIVATE
     "${SAVANXP_WIN32_ROOT}/dlls/common" "${SAVANXP_WIN32_ROOT}/dlls/gdi32")
@@ -70,6 +72,7 @@ set_tests_properties(win32-pe-fixtures-test PROPERTIES SKIP_RETURN_CODE 77)
 # win32/stubs.
 
 find_program(SAVANXP_LLD_LINK NAMES lld-link REQUIRED)
+find_program(SAVANXP_LLVM_RC NAMES llvm-rc REQUIRED)
 
 set(SXW_OUT "${CMAKE_BINARY_DIR}/win32")
 set(SXW_SYSTEM32 "${SXW_OUT}/system32")
@@ -109,11 +112,25 @@ function(sxw_object var source)
 endfunction()
 
 # sxw_image(NAME <file> KIND dll|exe DIR <dir> SOURCES ... [DEF <def>]
-#           [LIBS <names>...] [BASE <addr>] [ENTRY <symbol>] [SUBSYSTEM console|windows])
+#           [LIBS <names>...] [BASE <addr>] [ENTRY <symbol>] [SUBSYSTEM console|windows]
+#           [RC <script> RC_DEPENDS <files>... RC_INCLUDE <dir>])
 # LIBS name import libraries made by earlier sxw_image calls (without .lib).
+# RC compiles a resource script with llvm-rc, looking for the files it names
+# in RC_INCLUDE.
 function(sxw_image)
-    cmake_parse_arguments(A "" "NAME;KIND;DIR;DEF;BASE;ENTRY;SUBSYSTEM" "SOURCES;LIBS" ${ARGN})
+    cmake_parse_arguments(A "" "NAME;KIND;DIR;DEF;BASE;ENTRY;SUBSYSTEM;RC;RC_INCLUDE" "SOURCES;LIBS;RC_DEPENDS"
+        ${ARGN})
     set(objects "")
+    if(A_RC)
+        get_filename_component(rc_stem "${A_RC}" NAME_WE)
+        set(res "${SXW_OBJ}/${rc_stem}.res")
+        add_custom_command(OUTPUT "${res}"
+            COMMAND "${SAVANXP_LLVM_RC}" /nologo /C 65001 /I "${A_RC_INCLUDE}" /FO "${res}" "${A_RC}"
+            DEPENDS "${A_RC}" ${A_RC_DEPENDS}
+            COMMENT "Compiling ${rc_stem}.rc (PE32 resources)"
+            VERBATIM)
+        list(APPEND objects "${res}")
+    endif()
     foreach(source IN LISTS A_SOURCES)
         sxw_object(obj "${source}")
         list(APPEND objects "${obj}")
@@ -166,11 +183,13 @@ sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
     SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c"
     DEF "${SXW_DLLS}/advapi32/advapi32.def" LIBS ntdll)
 sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
-    SOURCES "${SXW_DLLS}/gdi32/gdi32.c" "${SXW_DLLS}/gdi32/raster.c" "${SXW_DLLS}/common/region.c"
+    SOURCES "${SXW_DLLS}/gdi32/gdi32.c" "${SXW_DLLS}/gdi32/raster.c" "${SXW_DLLS}/gdi32/dib.c"
+            "${SXW_DLLS}/common/region.c"
             "${SXW_DLLS}/common/memory.c"
     DEF "${SXW_DLLS}/gdi32/gdi32.def" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
     SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
+            "${SXW_DLLS}/common/codepage.c"
     DEF "${SXW_DLLS}/user32/user32.def" LIBS gdi32 kernel32 ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
@@ -187,6 +206,22 @@ sxw_image(NAME startup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTR
     SOURCES "${SXW_FX}/startup/startup.c" LIBS msvcrt kernel32 advapi32)
 sxw_image(NAME window.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/window/window.c" LIBS user32 gdi32 kernel32)
+sxw_image(NAME cards.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/cards/cards.c" LIBS user32 gdi32 kernel32)
+# resource.exe's images are written by a script, not kept in the tree.
+set(SXW_RESOURCE_IMAGES "${SXW_OBJ}/resource-images")
+set(SXW_RESOURCE_IMAGE_FILES "")
+foreach(image core1.bmp info1.bmp core4.bmp info24.bmp icon.ico cursor.cur)
+    list(APPEND SXW_RESOURCE_IMAGE_FILES "${SXW_RESOURCE_IMAGES}/${image}")
+endforeach()
+add_custom_command(OUTPUT ${SXW_RESOURCE_IMAGE_FILES}
+    COMMAND "${Python3_EXECUTABLE}" "${SXW_FX}/resource/images.py" "${SXW_RESOURCE_IMAGES}"
+    DEPENDS "${SXW_FX}/resource/images.py"
+    COMMENT "Writing resource.exe's images"
+    VERBATIM)
+sxw_image(NAME resource.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/resource/resource.c" LIBS user32 gdi32 kernel32
+    RC "${SXW_FX}/resource/resource.rc" RC_INCLUDE "${SXW_RESOURCE_IMAGES}" RC_DEPENDS ${SXW_RESOURCE_IMAGE_FILES})
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -217,7 +252,8 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
-                "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe"
+                "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"
+                "${SXW_FIXTURES}/resource.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
@@ -249,4 +285,11 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
                 --harness "$<TARGET_FILE:savanxp-win32-harness>"
                 --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
                 --expected "${SXW_FX}/expected")
+    # cards.exe with the user's own cards.dll; skipped without it.
+    add_test(NAME win32-cards-test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/win32_harness_test.py"
+                --harness "$<TARGET_FILE:savanxp-win32-harness>"
+                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
+                --expected "${SXW_FX}/expected" --cards "${SAVANXP_WIN32_FIXTURES}")
+    set_tests_properties(win32-cards-test PROPERTIES SKIP_RETURN_CODE 77)
 endif()

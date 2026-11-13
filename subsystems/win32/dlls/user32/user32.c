@@ -2,7 +2,8 @@
  * user32.dll -- Windows and messages (docs/userland/WIN32.md, "user32 and
  * gdi32"): window classes, the window tree, the message queue, painting,
  * timers, input, capture, focus and activation, and DefWindowProc, for the
- * functions of the W0 matrix. Menus, dialogs and resources are later phases.
+ * functions of the W0 matrix, and the resources a program loads: bitmaps,
+ * strings, icons, cursors and accelerator tables. Menus and dialogs are W5's.
  *
  * A top-level window is a host window (SXW_SVC_WINDOW_CREATE) whose frame
  * and caption are the host's; its client area is a surface in guest memory
@@ -16,6 +17,7 @@
 #define SXW_BUILDING_USER32
 #include <windows.h>
 
+#include "codepage.h"
 #include "region.h"
 #include "sxw_abi.h"
 #include "sxw_gdi.h"
@@ -1770,14 +1772,415 @@ int WINAPI ShowCursor(BOOL bShow) {
     return g_cursor_count;
 }
 
-/* The system cursors by id; a program's own cursor resources are W4's. */
-HCURSOR WINAPI LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName) {
-    const u32 id = (u32)lpCursorName;
-    if (hInstance != NULL || id < 32512u || id > 32650u) {
-        set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);
+/* ---- Resources ------------------------------------------------------------------ */
+/*
+ * Read from the loaded image itself: its resource directory, type then name
+ * then the first language, as the program's own LoadXxx calls find them.
+ */
+
+#define RT_CURSOR 1u
+#define RT_BITMAP 2u
+#define RT_ICON 3u
+#define RT_STRING 6u
+#define RT_ACCELERATOR 9u
+#define RT_GROUP_CURSOR 12u
+#define RT_GROUP_ICON 14u
+#define ERROR_RESOURCE_DATA_NOT_FOUND 1812u
+#define ERROR_RESOURCE_NAME_NOT_FOUND 1814u
+#define MAX_ICONS 64
+#define MAX_ACCELERATORS 16
+
+__declspec(dllimport) HBITMAP WINAPI SxwCreateBitmapFromDIB(const void *data, u32 size);
+
+static u32 get16(const unsigned char *p) {
+    return (u32)p[0] | ((u32)p[1] << 8);
+}
+
+static u32 get32(const unsigned char *p) {
+    return get16(p) | (get16(p + 2) << 16);
+}
+
+static u32 main_module(void) {
+    u32 peb;
+    __asm__ volatile("movl %%fs:%c1, %0" : "=r"(peb) : "i"(SXW_TEB_PEB));
+    return *(u32 *)(peb + SXW_PEB_IMAGE_BASE);
+}
+
+/* The entry of a resource directory with this id, or this name (UTF-16, any
+ * case); 0 when there is none. The entry's second word, as stored. */
+static int find_entry(const unsigned char *root, const unsigned char *dir, LPCWSTR name, u32 *entry) {
+    const u32 named = get16(dir + 12);
+    const u32 ids = get16(dir + 14);
+    for (u32 i = 0; i < named + ids; ++i) {
+        const unsigned char *e = dir + 16 + 8 * i;
+        const u32 key = get32(e);
+        int match;
+        if ((u32)name < 0x10000u) {
+            match = (key & 0x80000000u) == 0 && key == (u32)name;
+        } else if ((key & 0x80000000u) != 0) {
+            const unsigned char *string = root + (key & 0x7fffffffu);
+            const u32 length = get16(string);
+            match = 1;
+            u32 k = 0;
+            for (; k < length && match; ++k) {
+                WCHAR a = (WCHAR)get16(string + 2 + 2 * k);
+                WCHAR b = name[k];
+                a = a >= 'a' && a <= 'z' ? (WCHAR)(a - 32) : a;
+                b = b >= 'a' && b <= 'z' ? (WCHAR)(b - 32) : b;
+                match = b != 0 && a == b;
+            }
+            match = match && name[k] == 0;
+        } else {
+            match = 0;
+        }
+        if (match) {
+            *entry = get32(e + 4);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* A resource's data and size in the module at base, or 0. */
+static const unsigned char *find_resource(u32 base, u32 type, LPCWSTR name, u32 *size) {
+    const unsigned char *image = (const unsigned char *)base;
+    if (base == 0 || get16(image) != 0x5a4du) {
+        return 0;
+    }
+    const unsigned char *nt = image + get32(image + 0x3c);
+    if (get32(nt) != 0x4550u || get16(nt + 24) != 0x10bu) {
+        return 0;
+    }
+    const unsigned char *optional = nt + 24;
+    if (get32(optional + 92) <= 2u) {
+        return 0;
+    }
+    const u32 rva = get32(optional + 96 + 2 * 8);
+    if (rva == 0) {
+        return 0;
+    }
+    const unsigned char *root = image + rva;
+    u32 entry = 0;
+    if (!find_entry(root, root, (LPCWSTR)(ULONG_PTR)type, &entry) || (entry & 0x80000000u) == 0) {
+        return 0;
+    }
+    const unsigned char *names = root + (entry & 0x7fffffffu);
+    if (!find_entry(root, names, name, &entry) || (entry & 0x80000000u) == 0) {
+        return 0;
+    }
+    const unsigned char *languages = root + (entry & 0x7fffffffu);
+    if (get16(languages + 12) + get16(languages + 14) == 0u) {
+        return 0;
+    }
+    entry = get32(languages + 16 + 4);
+    if ((entry & 0x80000000u) != 0) {
+        return 0;
+    }
+    const unsigned char *data = root + entry;
+    *size = get32(data + 4);
+    return image + get32(data);
+}
+
+static u32 module_of(HINSTANCE instance) {
+    return instance != NULL ? (u32)instance : main_module();
+}
+
+/* An ANSI resource name as UTF-16, or the id it already is. */
+static LPCWSTR wide_name(LPCSTR name, WCHAR *out, int capacity) {
+    if ((u32)name < 0x10000u) {
+        return (LPCWSTR)name;
+    }
+    int n = 0;
+    while (name[n] != 0 && n + 1 < capacity) {
+        out[n] = sxw_ansi_to_wide((unsigned char)name[n]);
+        ++n;
+    }
+    out[n] = 0;
+    return out;
+}
+
+static HBITMAP load_bitmap(HINSTANCE instance, LPCWSTR name) {
+    u32 size = 0;
+    const unsigned char *data = instance != NULL ? find_resource((u32)instance, RT_BITMAP, name, &size) : 0;
+    if (data == 0) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
         return NULL;
     }
-    return (HCURSOR)(0x00010000u | id);
+    HBITMAP bitmap = SxwCreateBitmapFromDIB(data, size);
+    if (bitmap == NULL) {
+        set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+    }
+    return bitmap;
+}
+
+/* A bitmap of the module; the system's own (a NULL instance) are not here. */
+HBITMAP WINAPI LoadBitmapA(HINSTANCE hInstance, LPCSTR lpBitmapName) {
+    WCHAR name[256];
+    return load_bitmap(hInstance, wide_name(lpBitmapName, name, 256));
+}
+
+/* The string, its length in UTF-16 units; with no buffer room, a pointer to
+ * the resource itself (not terminated) in *lpBuffer. */
+static const unsigned char *find_string(HINSTANCE instance, UINT id, u32 *length) {
+    u32 size = 0;
+    const unsigned char *block =
+        find_resource(module_of(instance), RT_STRING, (LPCWSTR)(ULONG_PTR)((id >> 4) + 1u), &size);
+    if (block == 0) {
+        return 0;
+    }
+    const unsigned char *p = block;
+    for (u32 i = 0; i < (id & 15u); ++i) {
+        p += 2u + 2u * get16(p);
+        if (p >= block + size) {
+            return 0;
+        }
+    }
+    *length = get16(p);
+    return *length != 0u ? p + 2 : 0;
+}
+
+int WINAPI LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax) {
+    u32 length = 0;
+    const unsigned char *text = find_string(hInstance, uID, &length);
+    if (lpBuffer == NULL) {
+        return 0;
+    }
+    if (cchBufferMax == 0) {
+        *(const unsigned char **)lpBuffer = text;
+        return text != 0 ? (int)length : 0;
+    }
+    if (text == 0) {
+        lpBuffer[0] = 0;
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return 0;
+    }
+    int n = (int)length < cchBufferMax - 1 ? (int)length : cchBufferMax - 1;
+    for (int i = 0; i < n; ++i) {
+        lpBuffer[i] = (WCHAR)get16(text + 2 * i);
+    }
+    lpBuffer[n] = 0;
+    return n;
+}
+
+int WINAPI LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax) {
+    u32 length = 0;
+    const unsigned char *text = find_string(hInstance, uID, &length);
+    if (lpBuffer == NULL || cchBufferMax <= 0) {
+        return 0;
+    }
+    if (text == 0) {
+        lpBuffer[0] = 0;
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return 0;
+    }
+    int n = (int)length < cchBufferMax - 1 ? (int)length : cchBufferMax - 1;
+    for (int i = 0; i < n; ++i) {
+        lpBuffer[i] = (char)sxw_wide_to_ansi((unsigned short)get16(text + 2 * i));
+    }
+    lpBuffer[n] = 0;
+    return n;
+}
+
+/* Icons and cursors: the image chosen from a group, kept as the resource it
+ * is (a DIB with its AND mask under it; a cursor's starts with its hot
+ * spot). The system's own, by id with a NULL instance, carry no image. */
+typedef struct icon {
+    int used;
+    int cursor;
+    int width;
+    int height;
+    const unsigned char *data;
+    u32 size;
+} icon;
+
+static icon g_icons[MAX_ICONS];
+
+#define SYSTEM_CURSOR(id) ((HCURSOR)(0x00010000u | (id)))
+#define SYSTEM_ICON(id) ((HICON)(0x00030000u | (id)))
+
+static HICON icon_handle(int slot) {
+    return (HICON)(0x00020000u | (u32)(slot + 1) * 4u);
+}
+
+/* The group's image nearest width x height, deepest first among equals. */
+static HICON load_group(u32 base, LPCWSTR name, int cursor, int width, int height) {
+    u32 size = 0;
+    const unsigned char *group = find_resource(base, cursor ? RT_GROUP_CURSOR : RT_GROUP_ICON, name, &size);
+    if (group == 0 || size < 6u) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return NULL;
+    }
+    const u32 count = get16(group + 4);
+    int best = -1;
+    long best_score = 0;
+    for (u32 i = 0; i < count && 6u + 14u * (i + 1u) <= size; ++i) {
+        const unsigned char *e = group + 6 + 14 * i;
+        /* An icon entry has byte width and height; a cursor's are words, the
+         * height doubled. */
+        const int w = cursor ? (int)get16(e) : (e[0] == 0 ? 256 : e[0]);
+        const int h = cursor ? (int)get16(e + 2) / 2 : (e[1] == 0 ? 256 : e[1]);
+        const int depth = (int)get16(e + 6);
+        const long distance = (long)(w - width) * (w - width) + (long)(h - height) * (h - height);
+        const long score = distance * 64 - depth;
+        if (best < 0 || score < best_score) {
+            best = (int)i;
+            best_score = score;
+        }
+    }
+    if (best < 0) {
+        set_last_error(ERROR_RESOURCE_DATA_NOT_FOUND);
+        return NULL;
+    }
+    const u32 id = get16(group + 6 + 14 * (u32)best + 12);
+    u32 data_size = 0;
+    const unsigned char *data =
+        find_resource(base, cursor ? RT_CURSOR : RT_ICON, (LPCWSTR)(ULONG_PTR)id, &data_size);
+    const u32 header = cursor ? 4u : 0u;
+    if (data == 0 || data_size < header + 40u) {
+        set_last_error(ERROR_RESOURCE_DATA_NOT_FOUND);
+        return NULL;
+    }
+    for (int i = 0; i < MAX_ICONS; ++i) {
+        icon *c = &g_icons[i];
+        if (!c->used) {
+            c->used = 1;
+            c->cursor = cursor;
+            c->width = (int)get32(data + header + 4);
+            c->height = (int)get32(data + header + 8) / 2;
+            c->data = data;
+            c->size = data_size;
+            return icon_handle(i);
+        }
+    }
+    set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+    return NULL;
+}
+
+/* The system cursors and icons by id. */
+static HANDLE system_image(LPCWSTR name, int cursor) {
+    const u32 id = (u32)name;
+    if (id < 32512u || id > 32650u) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return NULL;
+    }
+    return cursor ? (HANDLE)SYSTEM_CURSOR(id) : (HANDLE)SYSTEM_ICON(id);
+}
+
+HCURSOR WINAPI LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName) {
+    return hInstance == NULL ? (HCURSOR)system_image(lpCursorName, 1)
+                             : (HCURSOR)load_group((u32)hInstance, lpCursorName, 1, 32, 32);
+}
+
+HICON WINAPI LoadIconW(HINSTANCE hInstance, LPCWSTR lpIconName) {
+    return hInstance == NULL ? (HICON)system_image(lpIconName, 0)
+                             : load_group((u32)hInstance, lpIconName, 0, 32, 32);
+}
+
+/* Bitmaps, icons and cursors from the module; not from files. A size of 0
+ * is the image's own for a bitmap and 32x32 for the others. */
+HANDLE WINAPI LoadImageW(HINSTANCE hInst, LPCWSTR name, UINT type, int cx, int cy, UINT fuLoad) {
+    if ((fuLoad & ~(UINT)(LR_DEFAULTSIZE | LR_SHARED)) != 0u) {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    switch (type) {
+    case IMAGE_BITMAP:
+        return load_bitmap(hInst, name);
+    case IMAGE_ICON:
+    case IMAGE_CURSOR:
+        if (hInst == NULL) {
+            return system_image(name, type == IMAGE_CURSOR);
+        }
+        return load_group((u32)hInst, name, type == IMAGE_CURSOR, cx != 0 ? cx : 32, cy != 0 ? cy : 32);
+    default:
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+}
+
+/* Accelerator tables: the resource itself, eight bytes an entry (flags, key,
+ * command, padding), 0x80 in the flags of the last. */
+typedef struct accelerators {
+    int used;
+    const unsigned char *entries;
+    u32 count;
+} accelerators;
+
+static accelerators g_accelerators[MAX_ACCELERATORS];
+
+HACCEL WINAPI LoadAcceleratorsW(HINSTANCE hInstance, LPCWSTR lpTableName) {
+    u32 size = 0;
+    const unsigned char *table = find_resource(module_of(hInstance), RT_ACCELERATOR, lpTableName, &size);
+    if (table == 0) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return NULL;
+    }
+    u32 count = 0;
+    while (8u * (count + 1u) <= size) {
+        ++count;
+        if ((table[8u * (count - 1u)] & 0x80u) != 0) {
+            break;
+        }
+    }
+    for (int i = 0; i < MAX_ACCELERATORS; ++i) {
+        if (!g_accelerators[i].used) {
+            g_accelerators[i].used = 1;
+            g_accelerators[i].entries = table;
+            g_accelerators[i].count = count;
+            return (HACCEL)(0x00040000u | (u32)(i + 1) * 4u);
+        }
+    }
+    set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+    return NULL;
+}
+
+/* A key message that matches an entry becomes WM_COMMAND (the high word 1,
+ * "from an accelerator") sent to the window. Virtual-key entries match
+ * WM_KEYDOWN and WM_SYSKEYDOWN with exactly their Shift, Ctrl and Alt;
+ * character entries match WM_CHAR and WM_SYSCHAR. */
+int WINAPI TranslateAcceleratorW(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg) {
+    const u32 slot = (((u32)hAccTable & 0xffffu) / 4u) - 1u;
+    if (((u32)hAccTable >> 16) != 4u || slot >= MAX_ACCELERATORS || !g_accelerators[slot].used || lpMsg == NULL) {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    window *w = checked(hWnd);
+    if (w == 0) {
+        return 0;
+    }
+    const UINT m = lpMsg->message;
+    const int key_message = m == WM_KEYDOWN || m == WM_SYSKEYDOWN;
+    const int char_message = m == WM_CHAR || m == WM_SYSCHAR;
+    if (!key_message && !char_message) {
+        return 0;
+    }
+    const accelerators *a = &g_accelerators[slot];
+    for (u32 i = 0; i < a->count; ++i) {
+        const unsigned char *e = a->entries + 8u * i;
+        const u32 flags = e[0];
+        const u32 key = get16(e + 2);
+        const u32 command = get16(e + 4);
+        if ((flags & FVIRTKEY) != 0) {
+            if (!key_message || key != (lpMsg->wParam & 0xffffu)) {
+                continue;
+            }
+            const int shift = GetKeyState(VK_SHIFT) < 0;
+            const int control = GetKeyState(VK_CONTROL) < 0;
+            const int alt = GetKeyState(VK_MENU) < 0;
+            if (shift != ((flags & FSHIFT) != 0) || control != ((flags & FCONTROL) != 0) ||
+                alt != ((flags & FALT) != 0)) {
+                continue;
+            }
+        } else {
+            if (!char_message || key != (lpMsg->wParam & 0xffffu) ||
+                ((flags & FALT) != 0) != (m == WM_SYSCHAR)) {
+                continue;
+            }
+        }
+        send(w, WM_COMMAND, MAKELPARAM(command, 1), 0);
+        return 1;
+    }
+    return 0;
 }
 
 /* ---- DefWindowProc --------------------------------------------------------------- */

@@ -25,7 +25,13 @@ EXPORTS
     InvertRect
     IsIconic
     KillTimer
+    LoadAcceleratorsW
+    LoadBitmapA
     LoadCursorW
+    LoadIconW
+    LoadImageW
+    LoadStringA
+    LoadStringW
     MoveWindow
     MsgWaitForMultipleObjects
     PeekMessageW
@@ -43,5 +49,6 @@ EXPORTS
     SetTimer
     ShowCursor
     ShowWindow
+    TranslateAcceleratorW
     TranslateMessage
     UpdateWindow

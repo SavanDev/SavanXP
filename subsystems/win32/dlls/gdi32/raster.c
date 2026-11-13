@@ -124,3 +124,130 @@ void sxw_raster_glyph(const sxw_target *t, const sxw_region *clip, int x, int y,
         }
     }
 }
+
+static unsigned int convert_pixel(const sxw_convert *c, unsigned int p) {
+    switch (c->kind) {
+    case SXW_CONVERT_MONO_TO_COLOR:
+        return (p & RGB_MASK) != 0u ? c->one : c->zero;
+    case SXW_CONVERT_COLOR_TO_MONO:
+        return (p & RGB_MASK) == (c->key & RGB_MASK) ? RGB_MASK : 0u;
+    default:
+        return p & RGB_MASK;
+    }
+}
+
+/* Which source indices make each destination index, [first, end), as
+ * Windows XP's StretchBlt spreads them: a Bresenham walk along the longer of
+ * the two, starting from an error of 2 * shorter - longer. Checked against
+ * Windows XP's 71x96 to 33x62 shrink of every card back and its own
+ * shrinks in fixtures/resource. Growing takes the source pixel under each
+ * destination pixel's centre, as Windows XP does in that fixture. */
+#define STRETCH_MAX 4096
+
+static int g_x_first[STRETCH_MAX];
+static int g_x_end[STRETCH_MAX];
+static int g_y_first[STRETCH_MAX];
+static int g_y_end[STRETCH_MAX];
+
+static void stretch_ranges(int destination, int source, int *first, int *end) {
+    if (source > destination) {
+        int err = 2 * destination - source;
+        int j = 0;
+        first[0] = 0;
+        for (int s = 0; s < source; ++s) {
+            end[j] = s + 1;
+            if (err > 0) {
+                err += 2 * destination - 2 * source;
+                if (j + 1 == destination) {
+                    break; /* what is left of the source is dropped */
+                }
+                first[++j] = s + 1;
+            } else {
+                err += 2 * destination;
+            }
+        }
+        for (++j; j < destination; ++j) {
+            first[j] = end[j] = source - 1;
+            ++end[j];
+        }
+    } else {
+        /* Growing: each destination pixel takes the source pixel under its
+         * centre. */
+        for (int j = 0; j < destination; ++j) {
+            first[j] = ((2 * j + 1) * source) / (2 * destination);
+            end[j] = first[j] + 1;
+        }
+    }
+}
+
+/* The source pixel for destination offset (i, j), the shrunk ones ANDed. */
+static unsigned int source_pixel(const sxw_target *src, int sx, int sy, int i, int j) {
+    unsigned int value = RGB_MASK;
+    for (int y = sy + g_y_first[j]; y < sy + g_y_end[j]; ++y) {
+        for (int x = sx + g_x_first[i]; x < sx + g_x_end[i]; ++x) {
+            value &= src->pixels[y * src->stride + x];
+        }
+    }
+    return value;
+}
+
+void sxw_raster_blit(const sxw_target *dst, const sxw_region *clip, int dx, int dy, int dw, int dh,
+                     const sxw_target *src, int sx, int sy, int sw, int sh, unsigned int rop_index,
+                     unsigned int pattern, const sxw_convert *convert) {
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) {
+        return;
+    }
+    const int same_size = dw == sw && dh == sh;
+    if (same_size) {
+        /* The source clipped to its bitmap moves the destination with it. */
+        if (sx < 0) {
+            dx -= sx;
+            dw += sx;
+            sx = 0;
+        }
+        if (sy < 0) {
+            dy -= sy;
+            dh += sy;
+            sy = 0;
+        }
+        if (sx + dw > src->width) {
+            dw = src->width - sx;
+        }
+        if (sy + dh > src->height) {
+            dh = src->height - sy;
+        }
+        if (dw <= 0 || dh <= 0) {
+            return;
+        }
+        sw = dw;
+        sh = dh;
+    } else if (sx < 0 || sy < 0 || sx + sw > src->width || sy + sh > src->height || dw > STRETCH_MAX ||
+               dh > STRETCH_MAX) {
+        return; /* a stretch reads only inside its source */
+    } else {
+        stretch_ranges(dw, sw, g_x_first, g_x_end);
+        stretch_ranges(dh, sh, g_y_first, g_y_end);
+    }
+    const sxw_rect area = {dx, dy, dx + dw, dy + dh};
+    /* Overlap within one bitmap: walk away from the source. */
+    const int backwards = src->pixels == dst->pixels && (dy > sy || (dy == sy && dx > sx));
+    for (int k = 0; k < clip->count; ++k) {
+        const int r = backwards ? clip->count - 1 - k : k;
+        sxw_rect part;
+        if (!sxw_rect_intersect(&part, &area, &clip->rects[r]) || !clip_bounds(dst, &part)) {
+            continue;
+        }
+        for (int jj = 0; jj < part.bottom - part.top; ++jj) {
+            const int y = backwards ? part.bottom - 1 - jj : part.top + jj;
+            unsigned int *row = dst->pixels + y * dst->stride;
+            for (int ii = 0; ii < part.right - part.left; ++ii) {
+                const int x = backwards ? part.right - 1 - ii : part.left + ii;
+                const unsigned int s =
+                    same_size ? src->pixels[(sy + y - dy) * src->stride + sx + x - dx]
+                              : source_pixel(src, sx, sy, x - dx, y - dy);
+                const unsigned int converted = convert_pixel(convert, s);
+                row[x] = rop_index == 0xccu ? converted : sxw_rop3(rop_index, pattern, converted, row[x]);
+            }
+        }
+    }
+}

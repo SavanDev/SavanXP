@@ -1,8 +1,16 @@
 /*
  * gdi32.dll -- The drawing calls of the W0 matrix that a window needs
  * (docs/userland/WIN32.md, "user32 and gdi32"): device contexts on a window's
- * surface, solid brushes, the stock pens, one font, PatBlt, lines, pixels and
- * text. Bitmaps and memory device contexts are W4's.
+ * surface and on bitmaps, device-dependent bitmaps made from resources'
+ * device-independent ones, solid brushes, the stock pens, one font, PatBlt,
+ * BitBlt, StretchBlt, lines, pixels and text.
+ *
+ * A bitmap is either monochrome or the screen's format; both keep 0x00RRGGBB
+ * pixels, a monochrome one only black and white, and colours drawn on it are
+ * first made black or white, the nearer one. Between the two formats BitBlt
+ * converts as Windows does: a monochrome source's black becomes the
+ * destination's text colour and its white the background colour; a colour
+ * source becomes white where it equals its own background colour.
  *
  * Objects live in fixed tables; a handle is (type << 16) | slot, the type
  * being Windows' own object type number. Text is the platform's 13 px UI
@@ -12,6 +20,7 @@
 #define SXW_BUILDING_GDI32
 #include <windows.h>
 
+#include "dib.h"
 #include "raster.h"
 #include "sxw_abi.h"
 #include "sxw_gdi.h"
@@ -21,15 +30,20 @@
 typedef unsigned int u32;
 
 __declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
+__declspec(dllimport) void *WINAPI SxwHeapAllocate(u32 size, u32 zero);
+__declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
 
 #define OBJ_DC 1u
 #define OBJ_PEN 2u
 #define OBJ_BRUSH 3u
 #define OBJ_FONT 6u
+#define OBJ_BITMAP 7u
 
 #define MAX_DCS 32
 #define MAX_BRUSHES 256
 #define MAX_FONTS 32
+#define MAX_BITMAPS 256
+#define WHITE 0x00ffffffu
 #define CLR_INVALID 0xffffffffu
 
 typedef struct brush {
@@ -50,8 +64,19 @@ typedef struct font {
     int bold;
 } font;
 
+typedef struct bitmap {
+    int used;
+    int stock;
+    int mono;
+    int selected; /* into a memory device context */
+    int deleted;  /* while selected: freed when it is deselected */
+    sxw_surface surface;
+} bitmap;
+
 typedef struct dc {
     int used;
+    int memory;
+    HBITMAP bitmap; /* a memory device context's */
     sxw_surface *surface;
     int x;
     int y;
@@ -71,6 +96,9 @@ typedef struct dc {
 static dc g_dcs[MAX_DCS];
 static brush g_brushes[MAX_BRUSHES];
 static font g_fonts[MAX_FONTS];
+/* Slot 0 is the stock 1x1 monochrome bitmap every memory DC starts with. */
+static bitmap g_bitmaps[MAX_BITMAPS];
+static unsigned int g_stock_bitmap_pixel;
 /* WHITE_PEN, BLACK_PEN, NULL_PEN */
 static const pen k_pens[3] = {{0, 0xffffffu}, {0, 0}, {1, 0}};
 
@@ -99,6 +127,31 @@ static brush *brush_of(HGDIOBJ h) {
 static const pen *pen_of(HGDIOBJ h) {
     u32 slot = handle_slot(h);
     return handle_type(h) == OBJ_PEN && slot < 3u ? &k_pens[slot] : 0;
+}
+
+/* A bitmap a device context may still hold after DeleteObject. */
+static bitmap *bitmap_held(HGDIOBJ h) {
+    u32 slot = handle_slot(h);
+    return handle_type(h) == OBJ_BITMAP && slot < MAX_BITMAPS && g_bitmaps[slot].used ? &g_bitmaps[slot] : 0;
+}
+
+/* A bitmap a program may name. */
+static bitmap *bitmap_of(HGDIOBJ h) {
+    bitmap *b = bitmap_held(h);
+    return b != 0 && !b->deleted ? b : 0;
+}
+
+/* A deselected bitmap is freed if it was deleted while selected. */
+static void deselect(bitmap *b) {
+    if (b == 0 || b->stock) {
+        return;
+    }
+    b->selected = 0;
+    if (b->deleted) {
+        SxwHeapFree(b->surface.pixels);
+        b->used = 0;
+        b->deleted = 0;
+    }
 }
 
 static font *font_of(HGDIOBJ h) {
@@ -130,6 +183,11 @@ static void init_stock(void) {
     g_fonts[0].used = 1;
     g_fonts[0].stock = 1;
     g_fonts[0].bold = 1;
+    g_bitmaps[0].used = 1;
+    g_bitmaps[0].stock = 1;
+    g_bitmaps[0].mono = 1;
+    g_bitmaps[0].surface.pixels = &g_stock_bitmap_pixel;
+    g_bitmaps[0].surface.stride = g_bitmaps[0].surface.width = g_bitmaps[0].surface.height = 1;
 }
 
 HGDIOBJ WINAPI GetStockObject(int i) {
@@ -216,10 +274,22 @@ BOOL WINAPI DeleteObject(HGDIOBJ ho) {
     if (pen_of(ho) != 0) {
         return TRUE;
     }
+    bitmap *bm = bitmap_of(ho);
+    if (bm != 0) {
+        if (bm->stock) {
+            return TRUE;
+        }
+        if (bm->selected) {
+            bm->deleted = 1; /* freed when it is deselected, as Windows does */
+            return TRUE;
+        }
+        SxwHeapFree(bm->surface.pixels);
+        bm->used = 0;
+        return TRUE;
+    }
     dc *d = dc_of((HDC)ho);
     if (d != 0) {
-        d->used = 0;
-        return TRUE;
+        return DeleteDC((HDC)ho);
     }
     return FALSE;
 }
@@ -239,6 +309,20 @@ HGDIOBJ WINAPI SelectObject(HDC hdc, HGDIOBJ h) {
     } else if (font_of(h) != 0) {
         old = d->font;
         d->font = (HFONT)h;
+    } else if (bitmap_of(h) != 0) {
+        bitmap *next = bitmap_of(h);
+        if (!d->memory || (next->selected && h != d->bitmap)) {
+            return NULL;
+        }
+        deselect(bitmap_held(d->bitmap));
+        old = d->bitmap;
+        if (!next->stock) {
+            next->selected = 1;
+        }
+        d->bitmap = (HBITMAP)h;
+        d->surface = &next->surface;
+        const sxw_rect whole = {0, 0, next->surface.width, next->surface.height};
+        sxw_region_set(&d->visible, &whole);
     }
     return old;
 }
@@ -254,6 +338,8 @@ __declspec(dllexport) void *WINAPI SxwCreateSurfaceDC(sxw_surface *surface, int 
         dc *d = &g_dcs[i];
         if (!d->used) {
             d->used = 1;
+            d->memory = 0;
+            d->bitmap = NULL;
             d->surface = surface;
             d->x = x;
             d->y = y;
@@ -283,6 +369,27 @@ __declspec(dllexport) sxw_surface *WINAPI SxwSurfaceOfDC(void *hdc) {
 static sxw_target target_of(const dc *d) {
     sxw_target t = {d->surface->pixels, d->surface->stride, d->surface->width, d->surface->height};
     return t;
+}
+
+static int is_mono(const dc *d) {
+    const bitmap *b = d->memory ? bitmap_held(d->bitmap) : 0;
+    return b != 0 && b->mono;
+}
+
+/* A colour as drawn on the device context: on a monochrome bitmap, black or
+ * white, whichever is nearer. */
+static u32 device_color(const dc *d, u32 pixel) {
+    if (!is_mono(d)) {
+        return pixel;
+    }
+    long dark = 0;
+    long light = 0;
+    for (int shift = 0; shift < 24; shift += 8) {
+        const long c = (long)((pixel >> shift) & 0xffu);
+        dark += c * c;
+        light += (255 - c) * (255 - c);
+    }
+    return light <= dark ? WHITE : 0;
 }
 
 /* Marks what a call touched, already in surface coordinates. */
@@ -390,7 +497,7 @@ BOOL WINAPI PatBlt(HDC hdc, int x, int y, int w, int h, DWORD rop) {
     }
     sxw_rect r = {d->x + x, d->y + y, d->x + x + w, d->y + y + h};
     sxw_target t = target_of(d);
-    sxw_raster_fill(&t, &d->visible, &r, index, b != 0 ? b->color : 0);
+    sxw_raster_fill(&t, &d->visible, &r, index, device_color(d, b != 0 ? b->color : 0));
     touched(d, &r);
     return TRUE;
 }
@@ -417,7 +524,8 @@ BOOL WINAPI LineTo(HDC hdc, int x, int y) {
     const pen *p = pen_of(d->pen);
     if (p != 0 && !p->null) {
         sxw_target t = target_of(d);
-        sxw_raster_line(&t, &d->visible, d->x + d->cx, d->y + d->cy, d->x + x, d->y + y, d->rop2, p->color);
+        sxw_raster_line(&t, &d->visible, d->x + d->cx, d->y + d->cy, d->x + x, d->y + y, d->rop2,
+                        device_color(d, p->color));
         sxw_rect r = {d->x + (d->cx < x ? d->cx : x), d->y + (d->cy < y ? d->cy : y),
                       d->x + (d->cx > x ? d->cx : x) + 1, d->y + (d->cy > y ? d->cy : y) + 1};
         touched(d, &r);
@@ -458,10 +566,11 @@ COLORREF WINAPI SetPixel(HDC hdc, int x, int y, COLORREF color) {
     if (!sxw_raster_visible(&t, &d->visible, sx, sy)) {
         return CLR_INVALID;
     }
-    t.pixels[sy * t.stride + sx] = to_pixel(color);
+    const u32 drawn = device_color(d, to_pixel(color));
+    t.pixels[sy * t.stride + sx] = drawn;
     sxw_rect r = {sx, sy, sx + 1, sy + 1};
     touched(d, &r);
-    return color & 0x00ffffffu;
+    return to_colorref(drawn);
 }
 
 COLORREF WINAPI GetPixel(HDC hdc, int x, int y) {
@@ -557,7 +666,7 @@ BOOL WINAPI TextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c) {
     sxw_target t = target_of(d);
     sxw_rect box = {d->x + x, d->y + y, d->x + x + extent.cx, d->y + y + extent.cy};
     if (d->back_mode == OPAQUE) {
-        sxw_raster_fill(&t, &d->visible, &box, 0xf0u, d->back_color);
+        sxw_raster_fill(&t, &d->visible, &box, 0xf0u, device_color(d, d->back_color));
     }
     const int bold = is_bold(d);
     int pen = d->x + x;
@@ -567,10 +676,213 @@ BOOL WINAPI TextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c) {
         const int gy = d->y + y + SX_NOTO_ASCENT - g->top;
         for (int pass = 0; pass <= bold; ++pass) {
             sxw_raster_glyph(&t, &d->visible, gx + pass, gy, kNotoCoverage + g->offset, g->width, g->rows,
-                             d->text_color);
+                             device_color(d, d->text_color));
         }
         pen += g->advance + bold;
     }
     touched(d, &box);
     return TRUE;
+}
+
+/* ---- Bitmaps and memory device contexts --------------------------------------- */
+
+static HBITMAP new_bitmap(int width, int height, int mono) {
+    if (!g_brushes[0].used) {
+        init_stock();
+    }
+    if (width <= 0 || height <= 0 || width > 0x4000 || height > 0x4000) {
+        return NULL;
+    }
+    for (u32 i = 1; i < MAX_BITMAPS; ++i) {
+        bitmap *b = &g_bitmaps[i];
+        if (!b->used) {
+            unsigned int *pixels = SxwHeapAllocate((u32)width * (u32)height * 4u, 1);
+            if (pixels == 0) {
+                return NULL;
+            }
+            b->used = 1;
+            b->stock = 0;
+            b->mono = mono;
+            b->selected = 0;
+            b->deleted = 0;
+            b->surface.pixels = pixels;
+            b->surface.stride = width;
+            b->surface.width = width;
+            b->surface.height = height;
+            sxw_region_clear(&b->surface.dirty);
+            return (HBITMAP)make_handle(OBJ_BITMAP, i);
+        }
+    }
+    return NULL;
+}
+
+/* A memory device context starts with the stock 1x1 monochrome bitmap. */
+HDC WINAPI CreateCompatibleDC(HDC hdc) {
+    (void)hdc;
+    if (!g_brushes[0].used) {
+        init_stock();
+    }
+    const sxw_rect one = {0, 0, 1, 1};
+    sxw_region visible;
+    sxw_region_set(&visible, &one);
+    HDC h = (HDC)SxwCreateSurfaceDC(&g_bitmaps[0].surface, 0, 0, &visible);
+    dc *d = dc_of(h);
+    if (d != 0) {
+        d->memory = 1;
+        d->bitmap = (HBITMAP)make_handle(OBJ_BITMAP, 0);
+    }
+    return h;
+}
+
+BOOL WINAPI DeleteDC(HDC hdc) {
+    dc *d = dc_of(hdc);
+    if (d == 0) {
+        return FALSE;
+    }
+    if (d->memory) {
+        deselect(bitmap_held(d->bitmap));
+    }
+    d->used = 0;
+    return TRUE;
+}
+
+/* Monochrome when made for a memory device context holding a monochrome
+ * bitmap (its first one, a fresh one's), else the screen's format; an empty
+ * size gives a 1x1 monochrome bitmap. */
+HBITMAP WINAPI CreateCompatibleBitmap(HDC hdc, int cx, int cy) {
+    dc *d = dc_of(hdc);
+    if (d == 0) {
+        return NULL;
+    }
+    if (cx == 0 || cy == 0) {
+        return new_bitmap(1, 1, 1);
+    }
+    return new_bitmap(cx, cy, is_mono(d));
+}
+
+/* What LoadBitmap makes of a DIB resource: a monochrome bitmap for a black
+ * and white one, else one in the screen's format. */
+__declspec(dllexport) HBITMAP WINAPI SxwCreateBitmapFromDIB(const void *data, u32 size) {
+    sxw_dib dib;
+    if (sxw_dib_parse(data, size, &dib) != 0) {
+        return NULL;
+    }
+    HBITMAP h = new_bitmap(dib.width, dib.height, sxw_dib_monochrome(&dib));
+    bitmap *b = bitmap_of(h);
+    if (b == 0) {
+        return NULL;
+    }
+    for (int y = 0; y < dib.height; ++y) {
+        sxw_dib_row(&dib, y, b->surface.pixels + y * b->surface.stride);
+    }
+    return h;
+}
+
+int WINAPI GetObjectA(HANDLE h, int c, LPVOID pv) {
+    const bitmap *b = bitmap_of(h);
+    if (b != 0) {
+        if (pv == NULL) {
+            return (int)sizeof(BITMAP);
+        }
+        if (c < (int)sizeof(BITMAP)) {
+            return 0;
+        }
+        BITMAP *out = pv;
+        out->bmType = 0;
+        out->bmWidth = b->surface.width;
+        out->bmHeight = b->surface.height;
+        out->bmWidthBytes = b->mono ? ((b->surface.width + 15) / 16) * 2 : b->surface.width * 4;
+        out->bmPlanes = 1;
+        out->bmBitsPixel = b->mono ? 1 : 32;
+        out->bmBits = NULL;
+        return (int)sizeof(BITMAP);
+    }
+    const brush *br = brush_of(h);
+    if (br != 0) {
+        /* LOGBRUSH: style, colour, hatch */
+        if (pv == NULL) {
+            return 12;
+        }
+        if (c < 12) {
+            return 0;
+        }
+        DWORD *out = pv;
+        out[0] = br->null ? 1u /* BS_NULL */ : 0u /* BS_SOLID */;
+        out[1] = to_colorref(br->color);
+        out[2] = 0;
+        return 12;
+    }
+    return 0;
+}
+
+/* The device context's origin on its surface: (0, 0) for a bitmap, the
+ * window's client origin on its top-level window for a window. */
+BOOL WINAPI GetDCOrgEx(HDC hdc, LPPOINT lppt) {
+    dc *d = dc_of(hdc);
+    if (d == 0 || lppt == NULL) {
+        return FALSE;
+    }
+    lppt->x = d->x;
+    lppt->y = d->y;
+    return TRUE;
+}
+
+static sxw_convert conversion(const dc *destination, const dc *source) {
+    sxw_convert c = {SXW_CONVERT_NONE, 0, 0, 0};
+    const int to_mono = is_mono(destination);
+    const int from_mono = is_mono(source);
+    if (from_mono && !to_mono) {
+        c.kind = SXW_CONVERT_MONO_TO_COLOR;
+        c.zero = destination->text_color;
+        c.one = destination->back_color;
+    } else if (!from_mono && to_mono) {
+        c.kind = SXW_CONVERT_COLOR_TO_MONO;
+        c.key = source->back_color;
+    }
+    return c;
+}
+
+/* Whether a ROP3 reads the source. */
+static int reads_source(u32 index) {
+    return ((index >> 2) & 0x33u) != (index & 0x33u);
+}
+
+BOOL WINAPI StretchBlt(HDC hdcDest, int xDest, int yDest, int wDest, int hDest, HDC hdcSrc, int xSrc, int ySrc,
+                       int wSrc, int hSrc, DWORD rop) {
+    dc *d = dc_of(hdcDest);
+    const u32 index = (rop >> 16) & 0xffu;
+    if (d == 0) {
+        return FALSE;
+    }
+    if (!reads_source(index)) {
+        return PatBlt(hdcDest, xDest, yDest, wDest, hDest, rop);
+    }
+    dc *s = dc_of(hdcSrc);
+    if (s == 0 || wDest < 0 || hDest < 0 || wSrc < 0 || hSrc < 0) {
+        return FALSE;
+    }
+    const brush *b = brush_of(d->brush);
+    const u32 pattern = device_color(d, b != 0 && !b->null ? b->color : 0);
+    const sxw_convert c = conversion(d, s);
+    sxw_target dt = target_of(d);
+    sxw_target st = target_of(s);
+    sxw_raster_blit(&dt, &d->visible, d->x + xDest, d->y + yDest, wDest, hDest, &st, s->x + xSrc, s->y + ySrc, wSrc,
+                    hSrc, index, pattern, &c);
+    sxw_rect r = {d->x + xDest, d->y + yDest, d->x + xDest + wDest, d->y + yDest + hDest};
+    touched(d, &r);
+    return TRUE;
+}
+
+BOOL WINAPI BitBlt(HDC hdc, int x, int y, int cx, int cy, HDC hdcSrc, int x1, int y1, DWORD rop) {
+    if (cx < 0) {
+        x += cx;
+        x1 += cx;
+        cx = -cx;
+    }
+    if (cy < 0) {
+        y += cy;
+        y1 += cy;
+        cy = -cy;
+    }
+    return StretchBlt(hdc, x, y, cx, cy, hdcSrc, x1, y1, cx, cy, rop);
 }

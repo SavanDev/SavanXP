@@ -48,4 +48,29 @@ int sxw_raster_visible(const sxw_target *t, const sxw_region *clip, int x, int y
 void sxw_raster_glyph(const sxw_target *t, const sxw_region *clip, int x, int y, const unsigned char *coverage,
                       int width, int rows, unsigned int color);
 
+/* How a source pixel becomes a destination one between bitmaps of
+ * different formats, as BitBlt converts them. */
+typedef struct sxw_convert {
+    int kind;             /* SXW_CONVERT_* */
+    unsigned int zero;    /* monochrome to colour: what a black (0) pixel becomes */
+    unsigned int one;     /* ... and a white one */
+    unsigned int key;     /* colour to monochrome: the colour that becomes white */
+} sxw_convert;
+
+#define SXW_CONVERT_NONE 0
+#define SXW_CONVERT_MONO_TO_COLOR 1 /* zero = the text colour, one = the background colour */
+#define SXW_CONVERT_COLOR_TO_MONO 2 /* key = the source's background colour */
+
+/* BitBlt and StretchBlt: the source rectangle (sw x sh at sx, sy) onto the
+ * destination's (dw x dh at dx, dy) under a ROP3, with pattern the
+ * destination's brush. The source is clipped to its bitmap, the destination
+ * to clip. Different sizes are spread as Windows XP spreads them (see
+ * raster.c); when shrinking, the source pixels that fall on one destination
+ * pixel are ANDed together, as BLACKONWHITE, the default stretch mode, does.
+ * Neither size may pass 4096 when they differ. Overlapping rectangles of
+ * one bitmap are copied as if through a copy of the source. */
+void sxw_raster_blit(const sxw_target *dst, const sxw_region *clip, int dx, int dy, int dw, int dh,
+                     const sxw_target *src, int sx, int sy, int sw, int sh, unsigned int rop_index,
+                     unsigned int pattern, const sxw_convert *convert);
+
 #endif

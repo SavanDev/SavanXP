@@ -43,6 +43,11 @@ class Scenario:
     usb_pointer: str = "mouse"
     usb_hub: bool = False
     usb_host: str = "xhci"
+    # The user's own Windows files the scenario needs, by name, from the
+    # folder SAVANXP_WIN32_FIXTURES names: copied into the disposable disk
+    # under /system/win/drive_c/tests, never into the build. Without them the
+    # scenario is skipped (exit 77), not failed.
+    win32_files: tuple[str, ...] = ()
 
 
 def _qemu_scenario(
@@ -77,6 +82,7 @@ def _qemu_scenario(
     usb_pointer: str = "mouse",
     usb_hub: bool = False,
     usb_host: str = "xhci",
+    win32_files: tuple[str, ...] = (),
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -110,6 +116,7 @@ def _qemu_scenario(
         usb_pointer=usb_pointer,
         usb_hub=usb_hub,
         usb_host=usb_host,
+        win32_files=win32_files,
     )
 
 
@@ -738,6 +745,13 @@ SCENARIOS: dict[str, Scenario] = {
         "WIN32 HELLO FAIL",
         "PE32 fixtures through winhost, byte for byte against Windows XP",
     ),
+    "win32-cards": _qemu_scenario(
+        "win32cards",
+        "WIN32 CARDS PASS",
+        "WIN32 CARDS FAIL",
+        "The user's Windows XP cards.dll draws every card under winhost as on Windows XP",
+        win32_files=("cards.dll",),
+    ),
     "win32-window": _qemu_scenario(
         "win32window",
         "WIN32 WINDOW PASS",
@@ -956,6 +970,7 @@ def main() -> int:
             "usb_pointer",
             "usb_hub",
             "usb_host",
+            "win32_files",
         ),
         required=False,
     )
@@ -969,7 +984,7 @@ def main() -> int:
     value = getattr(get_scenario(args.name), args.field)
     if args.field == "prepare":
         print("\n".join(value))
-    elif args.field == "remove_paths":
+    elif args.field in ("remove_paths", "win32_files"):
         print("\n".join(value))
     else:
         print(value)

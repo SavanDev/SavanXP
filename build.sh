@@ -167,6 +167,7 @@ SMOKE_SUCCESS="SMOKE PASS"
 SMOKE_FAILURE="SMOKE FAIL"
 SMOKE_PREPARE=""
 SMOKE_REMOVE_PATHS=""
+SMOKE_WIN32_FILES=""
 SMOKE_QMP_CALLBACK=""
 SMOKE_PORT_COMMAND=""
 SMOKE_READY=""
@@ -229,6 +230,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_USB_POINTER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_pointer)
         SMOKE_USB_HUB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_hub)
         SMOKE_USB_HOST=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_host)
+        SMOKE_WIN32_FILES=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field win32_files)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -296,7 +298,7 @@ require_tool() {
     }
 }
 
-for tool in cmake ninja ctest clang clang++ ld.lld lld-link llvm-objcopy llvm-readelf python3 git; do
+for tool in cmake ninja ctest clang clang++ ld.lld lld-link llvm-rc llvm-objcopy llvm-readelf python3 git; do
     require_tool "$tool"
 done
 
@@ -520,6 +522,12 @@ case "$COMMAND" in
                 [[ -n "$remove_path" ]] || continue
                 SMOKE_ARGS+=(--remove-path "$remove_path")
             done <<< "$SMOKE_REMOVE_PATHS"
+        fi
+        if [[ -n "$SMOKE_WIN32_FILES" ]]; then
+            while IFS= read -r win32_file; do
+                [[ -n "$win32_file" ]] || continue
+                SMOKE_ARGS+=(--win32-file "$win32_file")
+            done <<< "$SMOKE_WIN32_FILES"
         fi
         if python3 "$ROOT/tools/run_smoke.py" "${SMOKE_ARGS[@]}"; then
             smoke_status=0
