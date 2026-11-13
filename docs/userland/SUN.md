@@ -190,6 +190,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `DuplicateHandle`, `CloseHandle` | `sxn_duplicate`, `sxn_close` | done |
 | ALPC ports | `sxn_port_*`, `sxn_pipe_send_handle` | done |
 | `QueryPerformanceCounter` | `sxn_clock_ns` | done |
+| `GetSystemTimeAsFileTime` (the date, UTC) | `sxn_system_time` (seconds since 1970) | done (consumer: `winhost`, for the C runtime's `time`) |
 | `CreateWindow` + message loop | `sxnwm_connect`, `sxnwm_poll_input` | done |
 | `InvalidateRect` / partial `BitBlt` to screen | `sxnwm_submit_rects`, `sxnwm_wait_idle` | done |
 | `SetWindowPos` (size), `WM_SIZE`, `WM_CLOSE` | `sxnwm_request_size`, `sxnwm_check_resize`, `sxnwm_close_requested` | done |

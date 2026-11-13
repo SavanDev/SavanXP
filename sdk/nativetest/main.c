@@ -221,6 +221,17 @@ static void check_gpu_3d(long gpu, const struct savanxp_gpu_info* info)
  * at the same base with a different access after unmapping it. Views the
  * kernel chooses land above 4 GiB, so they never collide with a 32-bit
  * guest's range. */
+/* SXN_SYS_SYSTEM_TIME: the date, from the RTC QEMU sets to the host's.
+ * Plausible (after 2024-01-01, before 2100) and never going backwards. */
+static void test_system_time(void) {
+    const uint64_t first = sxn_system_time();
+    const uint64_t second = sxn_system_time();
+
+    check(first > 1704067200ull && first < 4102444800ull);
+    check(second >= first && second - first < 5u);
+    check(sxn_log("nativetest: system time done") == 0);
+}
+
 static void test_view_at(void) {
     const uint64_t base = 0x10000000ull;
     const long section = sxn_section_create(2u * 4096u, SXN_SECTION_READ | SXN_SECTION_WRITE);
@@ -3378,6 +3389,7 @@ int main(int argc, char** argv) {
 
     test_files();
     test_view_at();
+    test_system_time();
     test_code32();
     test_threads(&info);
     test_thread_bases();

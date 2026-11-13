@@ -12,6 +12,7 @@
 #include "kernel/object.hpp"
 #include "kernel/net.hpp"
 #include "kernel/process_detail.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 #include "kernel/storage.hpp"
 #include "kernel/sx.hpp"
@@ -1045,6 +1046,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_OPEN_DEVICE:
         case SXN_SYS_DEVICE_CONTROL:
         case SXN_SYS_CLOCK:
+        case SXN_SYS_SYSTEM_TIME:
         case SXN_SYS_PORT_CREATE:
         case SXN_SYS_PORT_CONNECT:
         case SXN_SYS_PORT_ACCEPT:
@@ -1468,6 +1470,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_CLOCK:
             context->rax = timer::monotonic_ns();
+            return context;
+        case SXN_SYS_SYSTEM_TIME:
+            context->rax = rtc::epoch_seconds();
             return context;
         case SXN_SYS_PORT_CREATE:
             context->rax = static_cast<uint64_t>(native_port_create(*caller, context->rdi));

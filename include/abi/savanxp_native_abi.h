@@ -383,6 +383,12 @@ enum sxn_syscall_number {
      * -EEXIST (something is mapped in the range), -EACCES, -EBADF, -ENOMEM.
      * Same call as the POSIX map_view_at. MapViewOfFileEx. */
     SXN_SYS_MAP_VIEW_AT = 0x1042,
+    /* No arguments. The date: seconds since 1970-01-01 UTC, read from the
+     * RTC once and carried by the monotonic clock since, or 0 when the
+     * machine never gave a date. There are no time zones (docs/kernel/
+     * TIME.md). The same clock as POSIX realtime() and file times.
+     * GetSystemTimeAsFileTime. */
+    SXN_SYS_SYSTEM_TIME = 0x1043,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

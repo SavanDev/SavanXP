@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs can read the date: `sxn_system_time()` (`SXN_SYS_SYSTEM_TIME`), seconds since 1970 UTC, the clock POSIX
+  `realtime()` and file times use.**
+
 - **PE32 console programs run on SavanXP: `/system/winhost.sxe program.exe`, with the subsystem's `ntdll.dll` and
   `kernel32.dll` in `/system/win/drive_c/windows/system32`.** Smoke scenario `win32-hello` checks the fixtures against
   Windows XP's output and exit status. See [WIN32.md](docs/userland/WIN32.md#winhost--subsystemswin32host).

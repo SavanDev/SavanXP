@@ -166,6 +166,12 @@ static inline uint64_t sxn_clock_ns(void) {
     return (uint64_t)sxn_trap(SXN_SYS_CLOCK, 0, 0, 0);
 }
 
+/* Seconds since 1970-01-01 UTC, or 0 when the machine has no date
+ * (SXN_SYS_SYSTEM_TIME). */
+static inline uint64_t sxn_system_time(void) {
+    return (uint64_t)sxn_trap(SXN_SYS_SYSTEM_TIME, 0, 0, 0);
+}
+
 static inline long sxn_port_create(const char* name) {
     return sxn_trap(SXN_SYS_PORT_CREATE, (unsigned long)name, 0, 0);
 }
