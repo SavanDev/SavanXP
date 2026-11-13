@@ -16,6 +16,9 @@
  * input script over QMP and checks the pixels (tools/win32_window_smoke.py);
  * here the output and the status are compared with Windows XP's.
  *
+ * With --dialog it runs dialog.exe the same way for win32-dialog, logging
+ * "WIN32 DIALOG READY" (tools/win32_dialog_smoke.py).
+ *
  * With --cards it runs cards.exe, which draws every card with the user's own
  * cards.dll; the win32-cards scenario copies that file next to it.
  */
@@ -37,10 +40,11 @@ typedef struct fixture {
     uint32_t status;
     int registry;
     int with_arguments; /* alpha "two words" 3 */
-    int ready;          /* log WINDOW_READY once it runs */
+    const char *ready;  /* logged once it runs, or 0 */
 } fixture;
 
 #define WINDOW_READY "WIN32 WINDOW READY"
+#define DIALOG_READY "WIN32 DIALOG READY"
 
 static const fixture k_fixtures[] = {
     {"hello.exe", "hello.out", 42u, 0, 0, 0},
@@ -52,7 +56,8 @@ static const fixture k_fixtures[] = {
     {"resource.exe", "resource.out", 0u, 0, 0, 0},
 };
 
-static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, 1};
+static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, WINDOW_READY};
+static const fixture k_dialog = {"dialog.exe", "dialog.out", 5u, 0, 0, DIALOG_READY};
 /* Needs the user's cards.dll next to it, which only the win32-cards
  * scenario puts there. */
 static const fixture k_cards = {"cards.exe", "cards.out", 0u, 0, 0, 0};
@@ -154,8 +159,8 @@ static int run(const fixture *f) {
         say("win32test: FAIL ", f->name, ": cannot start winhost");
         return 0;
     }
-    if (f->ready) {
-        (void)sxn_log(WINDOW_READY);
+    if (f->ready != 0) {
+        (void)sxn_log(f->ready);
     }
     uint32_t total = 0;
     for (;;) {
@@ -172,6 +177,31 @@ static int run(const fixture *f) {
     int same = (long)total == expected_size;
     for (uint32_t i = 0; same && i < total; ++i) {
         same = output[i] == expected[i];
+    }
+    if (!same) {
+        /* The first line that differs, both ways, for whoever reads the log. */
+        uint32_t at = 0;
+        uint32_t start = 0;
+        while (at < total && (long)at < expected_size && output[at] == expected[at]) {
+            if (output[at] == '\n') {
+                start = at + 1u;
+            }
+            ++at;
+        }
+        char got[100];
+        char wanted[100];
+        uint32_t n = 0;
+        for (uint32_t i = start; i < total && output[i] != '\n' && n + 1u < sizeof(got); ++i) {
+            got[n++] = output[i];
+        }
+        got[n] = 0;
+        n = 0;
+        for (uint32_t i = start; (long)i < expected_size && expected[i] != '\n' && n + 1u < sizeof(wanted); ++i) {
+            wanted[n++] = expected[i];
+        }
+        wanted[n] = 0;
+        say("win32test: got    ", got, "");
+        say("win32test: wanted ", wanted, "");
     }
     int ok = same && reaped == child && (uint32_t)status == f->status;
     say(ok ? "win32test: ok   " : "win32test: FAIL ", f->expected != 0 ? f->expected : f->name,
@@ -212,17 +242,20 @@ static int start_windowd(void) {
     return 0;
 }
 
-static int run_window(void) {
+static int run_window(const fixture *f) {
     if (!start_windowd()) {
         say("win32test: FAIL ", "windowd", ": did not start");
         return 0;
     }
-    return run(&k_window);
+    return run(f);
 }
 
 int main(int argc, char **argv) {
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'w') {
-        sxn_exit(run_window() ? 0 : 1);
+        sxn_exit(run_window(&k_window) ? 0 : 1);
+    }
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'd') {
+        sxn_exit(run_window(&k_dialog) ? 0 : 1);
     }
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c') {
         sxn_exit(run(&k_cards) ? 0 : 1);

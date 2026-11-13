@@ -4,13 +4,14 @@ SSW, the Savan Subsystem for Windows, is the subsystem this roadmap builds;
 Win32 is the API it implements. What exists so far is described in
 [WIN32.md](../../userland/WIN32.md).
 
-> **Status: design settled; W0, K1, K2, W1, W2, W3 and W4 complete
+> **Status: design settled; W0, K1, K2, W1, W2, W3, W4 and W5 complete
 > (2026-11-13): a PE32 program that starts the way `sol.exe` does runs on
 > SavanXP under `winhost`, with the C runtime, `kernel32` and registry
 > functions of the matrix, opens a `windowd` window it paints and drives
-> through `user32` and `gdi32`, loads its resources, and the user's own
-> `cards.dll` draws every card as on Windows XP, described in
-> [WIN32.md](../../userland/WIN32.md). Next: W5.** The
+> through `user32` and `gdi32`, loads its resources, the user's own
+> `cards.dll` draws every card as on Windows XP, and its menus, dialogs and
+> message boxes behave as there, described in
+> [WIN32.md](../../userland/WIN32.md). Next: W6.** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -603,6 +604,42 @@ class. There is no status bar control: Solitaire draws its own.
 **Done when:** a fixture with a menu and two dialogs built from the same
 resource types as `sol.exe` matches the reference in layout and in behaviour
 for a recorded sequence, including keyboard-only operation and cancelling.
+
+**Done (2026-11-13).** `dialog.exe` has a menu, an accelerator table and two
+dialogs of the kinds and styles of `sol.exe`'s Deck and Options. Driven by
+one input script (menus by pointer and by keyboard alone, a grayed item, both
+dialogs by pointer and by keyboard, a cancelled one, two accelerators,
+`MessageBoxW` twice and `ShellAboutW`), it writes byte-identical output with
+status 5 on Windows XP, in `win32-harness-test` and in `win32-dialog` (KVM
+and TCG): every message its procedures log, every control's place and size,
+the buttons' states, and the glyphs, edges and owner-drawn buttons read back
+with `GetPixel`. Screenshots of the menus and dialogs equal Windows XP's
+outside the text; on SavanXP's screen the open menu and the Settings dialog
+equal the harness's golden images.
+
+What changed from the plan above, and why:
+
+- **Dialogs and menus are `windowd` owned windows**, through the owned
+  window and popup requests the desktop already had: ABI version 4 gives
+  window creation an owner, a kind and a position. A dialog is placed by the
+  window manager, centred over its owner, rather than where its template
+  says; the layout inside it is Windows XP's.
+- **The menu bar is drawn by `user32`** on the window's surface, above the
+  client area; the host's frame is unchanged.
+- **Windows XP decided several rules** a reading would have guessed
+  differently: when the dialog asks itself `DM_GETDEFID` as the focus moves,
+  that releasing Alt after another key is `WM_KEYUP`, that an accelerator for
+  a menu command brings `WM_INITMENU`, `WM_INITMENUPOPUP` and
+  `WM_UNINITMENUPOPUP`, that a mouse-opened dialog starts with its keyboard
+  cues hidden, and that `DrawFocusRect` XORs the background colour. Each is in
+  `dialog.exe`'s output.
+- **Not drawn:** Windows XP's menu shadow, an effect of its window manager.
+- `ShellAboutW` names SavanXP, not Windows; `MessageBoxW` draws icons of its
+  own.
+- **A heap bug of W2 surfaced:** the heap merged free blocks of two arenas
+  the host had mapped side by side, and the first buffer that spanned both
+  (a popup's pixels) failed the host's range check. Blocks now merge only
+  within an arena.
 
 ### W6 — Windows XP Solitaire
 

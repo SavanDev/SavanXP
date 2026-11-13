@@ -1,0 +1,875 @@
+common controls
+adjusted -4,-42 364,244
+main WM_CREATE
+menu
+undo enabled 0x00, missing item 0xffffffff, by position 0x00
+client 360x240
+main WM_SHOWWINDOW 1 0
+main WM_ACTIVATE 1 none
+main WM_SETFOCUS none
+main WM_NCLBUTTONDOWN hit 5
+main WM_SYSCOMMAND 0xf090
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x8090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1000 flags 0x8080 game
+main WM_MENUSELECT item 1001 flags 0x8081 game
+main WM_UNINITMENUPOPUP game
+main WM_MENUSELECT item 0 flags 0x8090 bar
+main WM_MENUSELECT item 1 flags 0x8090 bar
+main WM_INITMENUPOPUP help index 1
+main WM_UNINITMENUPOPUP help
+main WM_MENUSELECT item 1 flags 0x8090 bar
+main WM_MENUSELECT item 0 flags 0x8090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1003 flags 0x8080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1003 code 0 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+settings WM_SETFONT a font
+settings WM_INITDIALOG focus control 300 param 0
+layout client 258x172
+layout 300 15,23 90x20
+layout 301 15,44 90x20
+layout 302 138,23 90x20
+layout 303 138,44 90x20
+layout 304 138,65 90x20
+layout 305 12,78 108x20
+layout 306 12,98 108x20
+layout 307 12,117 114x20
+layout 308 138,98 96x20
+layout 310 156,117 78x16
+layout 311 198,148 54x13
+layout 1 60,143 60x23
+layout 2 132,143 60x23
+settings states 1 0 1 0 0 1 1 0 0
+main WM_ACTIVATE 0 dialog
+settings WM_ACTIVATE 1 main
+settings DM_GETDEFID
+settings WM_CHANGEUISTATE 0x00000003
+settings WM_UPDATEUISTATE 0x00030001
+settings WM_SHOWWINDOW 1 0
+settings DM_GETDEFID
+settings WM_COMMAND 303 code 0 from control 303
+settings DM_GETDEFID
+settings WM_COMMAND 308 code 0 from control 308
+settings DM_GETDEFID
+settings WM_COMMAND 305 code 0 from control 305
+settings WM_CHANGEUISTATE 0x00010002
+settings WM_UPDATEUISTATE 0x00010002
+settings DM_GETDEFID
+settings WM_COMMAND 306 code 0 from control 306
+settings WM_CHANGEUISTATE 0x00030002
+settings WM_UPDATEUISTATE 0x00030002
+settings WM_COMMAND 300 code 0 from control 300
+settings DM_GETDEFID
+settings WM_COMMAND 301 code 0 from control 301
+settings DM_GETDEFID
+settings DM_GETDEFID
+settings WM_COMMAND 1 code 0 from control 1
+settings states 0 1 0 1 0 0 0 0 1
+pixels 305 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 808080*12 ffffff*1 ffffc0*3
+  4 808080*1 404040*10 d4d0c8*1 ffffff*1 ffffc0*3
+  5 808080*1 404040*1 ffffff*9 d4d0c8*1 ffffff*1 ffffc0*3
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 808080*1 d4d0c8*11 ffffff*1 ffffc0*3
+  15 ffffff*13 ffffc0*3
+  16 ffffc0*16
+  17 =
+  18 =
+  19 =
+pixels 307 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 808080*12 ffffff*1 ffffc0*3
+  4 808080*1 404040*10 d4d0c8*1 ffffff*1 ffffc0*3
+  5 808080*1 404040*1 ffffff*9 d4d0c8*1 ffffff*1 ffffc0*3
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 808080*1 d4d0c8*11 ffffff*1 ffffc0*3
+  15 ffffff*13 ffffc0*3
+  16 ffffc0*16
+  17 =
+  18 =
+  19 =
+pixels 301 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 ffffc0*5 808080*4 ffffc0*7
+  4 ffffc0*3 808080*2 404040*4 808080*2 ffffc0*5
+  5 ffffc0*2 808080*1 404040*2 ffffff*4 404040*2 ffffff*1 ffffc0*4
+  6 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  7 ffffc0*1 808080*1 404040*1 ffffff*3 000000*2 ffffff*3 d4d0c8*1 ffffff*1 ffffc0*3
+  8 ffffc0*1 808080*1 404040*1 ffffff*2 000000*4 ffffff*2 d4d0c8*1 ffffff*1 ffffc0*3
+  9 =
+  10 ffffc0*1 808080*1 404040*1 ffffff*3 000000*2 ffffff*3 d4d0c8*1 ffffff*1 ffffc0*3
+  11 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  12 ffffc0*2 808080*1 d4d0c8*2 ffffff*4 d4d0c8*2 ffffff*1 ffffc0*4
+  13 ffffc0*3 ffffff*2 d4d0c8*4 ffffff*2 ffffc0*5
+  14 ffffc0*5 ffffff*4 ffffc0*7
+  15 ffffc0*16
+  16 =
+  17 =
+  18 =
+  19 =
+pixels 300 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 ffffc0*5 808080*4 ffffc0*7
+  4 ffffc0*3 808080*2 404040*4 808080*2 ffffc0*5
+  5 ffffc0*2 808080*1 404040*2 ffffff*4 404040*2 ffffff*1 ffffc0*4
+  6 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  7 ffffc0*1 808080*1 404040*1 ffffff*8 d4d0c8*1 ffffff*1 ffffc0*3
+  8 =
+  9 =
+  10 =
+  11 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  12 ffffc0*2 808080*1 d4d0c8*2 ffffff*4 d4d0c8*2 ffffff*1 ffffc0*4
+  13 ffffc0*3 ffffff*2 d4d0c8*4 ffffff*2 ffffc0*5
+  14 ffffc0*5 ffffff*4 ffffc0*7
+  15 ffffc0*16
+  16 =
+  17 =
+  18 =
+  19 =
+pixels 1 0,0 60,3
+  0 000000*60
+  1 000000*1 ffffff*57 404040*1 000000*1
+  2 000000*1 ffffff*1 d4d0c8*55 808080*1 404040*1 000000*1
+pixels 1 0,20 60,23
+  20 000000*1 ffffff*1 808080*56 404040*1 000000*1
+  21 000000*1 404040*58 000000*1
+  22 000000*60
+pixels 2 0,0 60,3
+  0 ffffff*59 404040*1
+  1 ffffff*1 d4d0c8*57 808080*1 404040*1
+  2 =
+main WM_ENABLE 1
+settings WM_SETFOCUS control 301
+settings WM_ACTIVATE 0 main
+main WM_ACTIVATE 1 dialog
+settings WM_KILLFOCUS main
+main WM_SETFOCUS dialog
+settings ended
+settings WM_DESTROY
+settings WM_NCDESTROY
+settings 1
+main WM_KEYUP 0x0d
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYDOWN 0x47
+main WM_SYSCHAR 0x0067
+main WM_SYSCOMMAND 0xf100 0x0067
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1000 flags 0x0080 game
+main WM_MENUSELECT item 1003 flags 0x0080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1003 code 0 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+settings WM_SETFONT a font
+settings WM_INITDIALOG focus control 300 param 0
+layout client 258x172
+layout 300 15,23 90x20
+layout 301 15,44 90x20
+layout 302 138,23 90x20
+layout 303 138,44 90x20
+layout 304 138,65 90x20
+layout 305 12,78 108x20
+layout 306 12,98 108x20
+layout 307 12,117 114x20
+layout 308 138,98 96x20
+layout 310 156,117 78x16
+layout 311 198,148 54x13
+layout 1 60,143 60x23
+layout 2 132,143 60x23
+settings states 0 1 0 1 0 1 1 0 0
+main WM_ACTIVATE 0 dialog
+settings WM_ACTIVATE 1 main
+settings DM_GETDEFID
+settings WM_CHANGEUISTATE 0x00000003
+settings WM_SHOWWINDOW 1 0
+settings WM_COMMAND 2 code 0 from control 2
+settings states 0 1 0 1 0 1 1 0 0
+pixels 305 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 808080*12 ffffff*1 ffffc0*3
+  4 808080*1 404040*10 d4d0c8*1 ffffff*1 ffffc0*3
+  5 808080*1 404040*1 ffffff*9 d4d0c8*1 ffffff*1 ffffc0*3
+  6 808080*1 404040*1 ffffff*7 000000*1 ffffff*1 d4d0c8*1 ffffff*1 ffffc0*3
+  7 808080*1 404040*1 ffffff*6 000000*2 ffffff*1 d4d0c8*1 ffffff*1 ffffc0*3
+  8 808080*1 404040*1 ffffff*1 000000*1 ffffff*3 000000*3 ffffff*1 d4d0c8*1 ffffff*1 ffffc0*3
+  9 808080*1 404040*1 ffffff*1 000000*2 ffffff*1 000000*3 ffffff*2 d4d0c8*1 ffffff*1 ffffc0*3
+  10 808080*1 404040*1 ffffff*1 000000*5 ffffff*3 d4d0c8*1 ffffff*1 ffffc0*3
+  11 808080*1 404040*1 ffffff*2 000000*3 ffffff*4 d4d0c8*1 ffffff*1 ffffc0*3
+  12 808080*1 404040*1 ffffff*3 000000*1 ffffff*5 d4d0c8*1 ffffff*1 ffffc0*3
+  13 808080*1 404040*1 ffffff*9 d4d0c8*1 ffffff*1 ffffc0*3
+  14 808080*1 d4d0c8*11 ffffff*1 ffffc0*3
+  15 ffffff*13 ffffc0*3
+  16 ffffc0*16
+  17 =
+  18 =
+  19 =
+pixels 307 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 808080*12 ffffff*1 ffffc0*3
+  4 808080*1 404040*10 d4d0c8*1 ffffff*1 ffffc0*3
+  5 808080*1 404040*1 ffffff*9 d4d0c8*1 ffffff*1 ffffc0*3
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 808080*1 d4d0c8*11 ffffff*1 ffffc0*3
+  15 ffffff*13 ffffc0*3
+  16 ffffc0*16
+  17 =
+  18 =
+  19 =
+pixels 301 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 ffffc0*5 808080*4 ffffc0*7
+  4 ffffc0*3 808080*2 404040*4 808080*2 ffffc0*5
+  5 ffffc0*2 808080*1 404040*2 ffffff*4 404040*2 ffffff*1 ffffc0*4
+  6 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  7 ffffc0*1 808080*1 404040*1 ffffff*3 000000*2 ffffff*3 d4d0c8*1 ffffff*1 ffffc0*3
+  8 ffffc0*1 808080*1 404040*1 ffffff*2 000000*4 ffffff*2 d4d0c8*1 ffffff*1 ffffc0*3
+  9 =
+  10 ffffc0*1 808080*1 404040*1 ffffff*3 000000*2 ffffff*3 d4d0c8*1 ffffff*1 ffffc0*3
+  11 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  12 ffffc0*2 808080*1 d4d0c8*2 ffffff*4 d4d0c8*2 ffffff*1 ffffc0*4
+  13 ffffc0*3 ffffff*2 d4d0c8*4 ffffff*2 ffffc0*5
+  14 ffffc0*5 ffffff*4 ffffc0*7
+  15 ffffc0*16
+  16 =
+  17 =
+  18 =
+  19 =
+pixels 300 0,0 16,20
+  0 ffffc0*16
+  1 =
+  2 =
+  3 ffffc0*5 808080*4 ffffc0*7
+  4 ffffc0*3 808080*2 404040*4 808080*2 ffffc0*5
+  5 ffffc0*2 808080*1 404040*2 ffffff*4 404040*2 ffffff*1 ffffc0*4
+  6 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  7 ffffc0*1 808080*1 404040*1 ffffff*8 d4d0c8*1 ffffff*1 ffffc0*3
+  8 =
+  9 =
+  10 =
+  11 ffffc0*2 808080*1 404040*1 ffffff*6 d4d0c8*1 ffffff*1 ffffc0*4
+  12 ffffc0*2 808080*1 d4d0c8*2 ffffff*4 d4d0c8*2 ffffff*1 ffffc0*4
+  13 ffffc0*3 ffffff*2 d4d0c8*4 ffffff*2 ffffc0*5
+  14 ffffc0*5 ffffff*4 ffffc0*7
+  15 ffffc0*16
+  16 =
+  17 =
+  18 =
+  19 =
+pixels 1 0,0 60,3
+  0 000000*60
+  1 000000*1 ffffff*57 404040*1 000000*1
+  2 000000*1 ffffff*1 d4d0c8*55 808080*1 404040*1 000000*1
+pixels 1 0,20 60,23
+  20 000000*1 ffffff*1 808080*56 404040*1 000000*1
+  21 000000*1 404040*58 000000*1
+  22 000000*60
+pixels 2 0,0 60,3
+  0 ffffff*59 404040*1
+  1 ffffff*1 d4d0c8*57 808080*1 404040*1
+  2 =
+main WM_ENABLE 1
+settings WM_SETFOCUS control 301
+settings WM_ACTIVATE 0 main
+main WM_ACTIVATE 1 dialog
+settings WM_KILLFOCUS main
+main WM_SETFOCUS dialog
+settings ended
+settings WM_DESTROY
+settings WM_NCDESTROY
+settings 2
+main WM_KEYUP 0x1b
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYUP 0x12
+main WM_SYSCOMMAND 0xf100 0x0000
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_MENUSELECT item 1 flags 0x0090 bar
+main WM_INITMENUPOPUP help index 1
+main WM_MENUSELECT item 1005 flags 0x0080 help
+main WM_MENUSELECT item 2000 flags 0x0080 help
+main WM_UNINITMENUPOPUP help
+main WM_MENUSELECT item 1 flags 0x0090 bar
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1000 flags 0x0080 game
+main WM_UNINITMENUPOPUP game
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_KEYUP 0x1b
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYDOWN 0x47
+main WM_SYSCHAR 0x0067
+main WM_SYSCOMMAND 0xf100 0x0067
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1000 flags 0x0080 game
+main WM_MENUSELECT item 1002 flags 0x0080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1002 code 0 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+backs WM_SETFONT a font
+backs WM_INITDIALOG focus control 54 param 1234
+layout client 204x169
+layout 54 12,7 39x62
+layout 55 60,7 39x62
+layout 56 108,7 39x62
+layout 57 12,75 39x62
+layout 58 60,75 39x62
+layout 59 108,75 39x62
+layout 1 156,7 39x23
+layout 2 156,36 39x23
+main WM_ACTIVATE 0 dialog
+backs WM_ACTIVATE 1 main
+backs DM_GETDEFID
+backs WM_CHANGEUISTATE 0x00000003
+backs WM_SHOWWINDOW 1 0
+backs WM_DRAWITEM type 4 id 54 action 0x01 state 0x0010 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 55 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 57 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 59 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 54 action 0x04 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 55 action 0x04 state 0x0010 0,0 39,62 its window
+backs DM_GETDEFID
+backs WM_DRAWITEM type 4 id 54 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 55 action 0x04 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x04 state 0x0010 0,0 39,62 its window
+backs DM_GETDEFID
+backs WM_DRAWITEM type 4 id 55 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x02 state 0x0011 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x02 state 0x0010 0,0 39,62 its window
+backs WM_COMMAND 56 code 0 from control 56
+backs WM_DRAWITEM type 4 id 55 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x01 state 0x0010 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x04 state 0x0000 0,0 39,62 its window
+backs DM_GETDEFID
+backs WM_DRAWITEM type 4 id 56 action 0x01 state 0x0000 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 54 action 0x04 state 0x0010 0,0 39,62 its window
+backs DM_GETDEFID
+backs DM_GETDEFID
+backs WM_COMMAND 1 code 0 from control 1
+pixels 56 0,0 39,62
+  0 0a246a*39
+  1 =
+  2 0a246a*2 d4d0c8*35 0a246a*2
+  3 0a246a*2 d4d0c8*1 007800*33 d4d0c8*1 0a246a*2
+  4 =
+  5 =
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 =
+  15 =
+  16 =
+  17 =
+  18 =
+  19 =
+  20 =
+  21 =
+  22 =
+  23 =
+  24 =
+  25 =
+  26 =
+  27 =
+  28 =
+  29 =
+  30 =
+  31 =
+  32 =
+  33 =
+  34 =
+  35 =
+  36 =
+  37 =
+  38 =
+  39 =
+  40 =
+  41 =
+  42 =
+  43 =
+  44 =
+  45 =
+  46 =
+  47 =
+  48 =
+  49 =
+  50 =
+  51 =
+  52 =
+  53 =
+  54 =
+  55 =
+  56 =
+  57 =
+  58 =
+  59 0a246a*2 d4d0c8*35 0a246a*2
+  60 0a246a*39
+  61 =
+pixels 54 0,0 39,62
+  0 d4d0c8*39
+  1 =
+  2 =
+  3 d4d0c8*3 0000a0*33 d4d0c8*3
+  4 =
+  5 =
+  6 d4d0c8*3 0000a0*3 ffffff*27 0000a0*3 d4d0c8*3
+  7 d4d0c8*3 0000a0*3 ffffff*1 0000a0*25 ffffff*1 0000a0*3 d4d0c8*3
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 =
+  15 =
+  16 =
+  17 =
+  18 =
+  19 =
+  20 =
+  21 =
+  22 =
+  23 =
+  24 =
+  25 =
+  26 =
+  27 =
+  28 =
+  29 =
+  30 =
+  31 =
+  32 =
+  33 =
+  34 =
+  35 =
+  36 =
+  37 =
+  38 =
+  39 =
+  40 =
+  41 =
+  42 =
+  43 =
+  44 =
+  45 =
+  46 =
+  47 =
+  48 =
+  49 =
+  50 =
+  51 =
+  52 =
+  53 =
+  54 =
+  55 d4d0c8*3 0000a0*3 ffffff*27 0000a0*3 d4d0c8*3
+  56 d4d0c8*3 0000a0*33 d4d0c8*3
+  57 =
+  58 =
+  59 d4d0c8*39
+  60 =
+  61 =
+pixels 1 0,0 39,3
+  0 000000*39
+  1 000000*1 ffffff*36 404040*1 000000*1
+  2 000000*1 ffffff*1 d4d0c8*34 808080*1 404040*1 000000*1
+pixels 1 0,20 39,23
+  20 000000*1 ffffff*1 808080*35 404040*1 000000*1
+  21 000000*1 404040*37 000000*1
+  22 000000*39
+pixels 2 0,0 39,3
+  0 ffffff*38 404040*1
+  1 ffffff*1 d4d0c8*36 808080*1 404040*1
+  2 =
+main WM_ENABLE 1
+backs WM_DRAWITEM type 4 id 54 action 0x04 state 0x0000 0,0 39,62 its window
+backs WM_SETFOCUS control 54
+backs WM_ACTIVATE 0 main
+main WM_ACTIVATE 1 dialog
+backs WM_KILLFOCUS main
+main WM_SETFOCUS dialog
+backs ended
+backs WM_DESTROY
+backs WM_NCDESTROY
+backs 1 back 56
+main WM_KEYUP 0x0d
+main WM_INITMENU bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_COMMAND 1000 code 1 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+main WM_ACTIVATE 0 other
+main WM_ENABLE 1
+main WM_ACTIVATE 1 other
+main WM_SETFOCUS other
+message box 7
+main WM_UNINITMENUPOPUP game
+main WM_KEYUP 0x0d
+main WM_INITMENU bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_COMMAND 1000 code 1 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+main WM_ACTIVATE 0 other
+main WM_ENABLE 1
+main WM_ACTIVATE 1 other
+main WM_SETFOCUS other
+message box 6
+main WM_UNINITMENUPOPUP game
+main WM_KEYUP 0x0d
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYDOWN 0x47
+main WM_SYSCHAR 0x0067
+main WM_SYSCOMMAND 0xf100 0x0067
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x0090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1000 flags 0x0080 game
+main WM_MENUSELECT item 1001 flags 0x0080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1001 code 0 from none
+undo
+main WM_KEYUP 0x55
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYDOWN 0x10
+main WM_COMMAND 1010 code 1 from none
+won
+main WM_SYSKEYUP 0x32
+main WM_SYSKEYUP 0x10
+main WM_KEYUP 0x12
+main WM_NCLBUTTONDOWN hit 5
+main WM_SYSCOMMAND 0xf090
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x8090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x00
+main WM_MENUSELECT item 1002 flags 0x8080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1002 code 0 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+backs WM_SETFONT a font
+backs WM_INITDIALOG focus control 54 param 1234
+layout client 204x169
+layout 54 12,7 39x62
+layout 55 60,7 39x62
+layout 56 108,7 39x62
+layout 57 12,75 39x62
+layout 58 60,75 39x62
+layout 59 108,75 39x62
+layout 1 156,7 39x23
+layout 2 156,36 39x23
+main WM_ACTIVATE 0 dialog
+backs WM_ACTIVATE 1 main
+backs DM_GETDEFID
+backs WM_CHANGEUISTATE 0x00000003
+backs WM_UPDATEUISTATE 0x00030001
+backs WM_SHOWWINDOW 1 0
+backs WM_DRAWITEM type 4 id 54 action 0x01 state 0x0310 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 55 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 56 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 57 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 59 action 0x01 state 0x0300 0,0 39,62 its window
+backs DM_GETDEFID
+backs WM_DRAWITEM type 4 id 54 action 0x04 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x04 state 0x0310 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x02 state 0x0311 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 54 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x02 state 0x0310 0,0 39,62 its window
+backs WM_COMMAND 58 code 0 from control 58
+backs WM_DRAWITEM type 4 id 56 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x01 state 0x0310 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x04 state 0x0300 0,0 39,62 its window
+backs WM_DRAWITEM type 4 id 58 action 0x01 state 0x0300 0,0 39,62 its window
+backs WM_COMMAND 2 code 0 from control 2
+pixels 58 0,0 39,62
+  0 0a246a*39
+  1 =
+  2 0a246a*2 d4d0c8*35 0a246a*2
+  3 0a246a*2 d4d0c8*1 600080*33 d4d0c8*1 0a246a*2
+  4 =
+  5 =
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 =
+  15 =
+  16 =
+  17 =
+  18 =
+  19 =
+  20 =
+  21 =
+  22 =
+  23 =
+  24 =
+  25 =
+  26 =
+  27 =
+  28 =
+  29 =
+  30 =
+  31 =
+  32 =
+  33 =
+  34 =
+  35 =
+  36 =
+  37 =
+  38 =
+  39 =
+  40 =
+  41 =
+  42 =
+  43 =
+  44 =
+  45 =
+  46 =
+  47 =
+  48 =
+  49 =
+  50 =
+  51 =
+  52 =
+  53 =
+  54 =
+  55 =
+  56 =
+  57 =
+  58 =
+  59 0a246a*2 d4d0c8*35 0a246a*2
+  60 0a246a*39
+  61 =
+pixels 54 0,0 39,62
+  0 d4d0c8*39
+  1 =
+  2 =
+  3 d4d0c8*3 0000a0*33 d4d0c8*3
+  4 =
+  5 =
+  6 =
+  7 =
+  8 =
+  9 =
+  10 =
+  11 =
+  12 =
+  13 =
+  14 =
+  15 =
+  16 =
+  17 =
+  18 =
+  19 =
+  20 =
+  21 =
+  22 =
+  23 =
+  24 =
+  25 =
+  26 =
+  27 =
+  28 =
+  29 =
+  30 =
+  31 =
+  32 =
+  33 =
+  34 =
+  35 =
+  36 =
+  37 =
+  38 =
+  39 =
+  40 =
+  41 =
+  42 =
+  43 =
+  44 =
+  45 =
+  46 =
+  47 =
+  48 =
+  49 =
+  50 =
+  51 =
+  52 =
+  53 =
+  54 =
+  55 =
+  56 =
+  57 =
+  58 =
+  59 d4d0c8*39
+  60 =
+  61 =
+pixels 1 0,0 39,3
+  0 ffffff*38 404040*1
+  1 ffffff*1 d4d0c8*36 808080*1 404040*1
+  2 =
+pixels 1 0,20 39,23
+  20 ffffff*1 d4d0c8*36 808080*1 404040*1
+  21 ffffff*1 808080*37 404040*1
+  22 404040*39
+pixels 2 0,0 39,3
+  0 000000*39
+  1 000000*1 ffffff*36 404040*1 000000*1
+  2 000000*1 ffffff*1 d4d0c8*34 808080*1 404040*1 000000*1
+main WM_ENABLE 1
+backs WM_SETFOCUS control 2
+backs WM_ACTIVATE 0 main
+main WM_ACTIVATE 1 dialog
+backs WM_KILLFOCUS main
+main WM_SETFOCUS dialog
+backs ended
+backs WM_DESTROY
+backs WM_NCDESTROY
+backs 2 back 58
+main WM_NCLBUTTONDOWN hit 5
+main WM_SYSCOMMAND 0xf090
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 1 flags 0x8090 bar
+main WM_INITMENUPOPUP help index 1
+main WM_MENUSELECT item 2000 flags 0x8080 help
+main WM_UNINITMENUPOPUP help
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 2000 code 0 from none
+main WM_CANCELMODE
+main WM_KILLFOCUS none
+main WM_ENABLE 0
+main WM_ACTIVATE 0 other
+main WM_ENABLE 1
+main WM_ACTIVATE 1 other
+main WM_SETFOCUS other
+about 1
+main WM_KEYUP 0x0d
+main WM_SYSKEYDOWN 0x12
+main WM_SYSKEYDOWN 0x48
+main WM_SYSCHAR 0x0068
+main WM_SYSCOMMAND 0xf100 0x0068
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 1 flags 0x0090 bar
+main WM_INITMENUPOPUP help index 1
+main WM_MENUSELECT item 1005 flags 0x0080 help
+main WM_UNINITMENUPOPUP help
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1005 code 0 from none
+main WM_KEYUP 0x43
+main WM_NCLBUTTONDOWN hit 5
+main WM_SYSCOMMAND 0xf090
+main WM_ENTERMENULOOP 0
+main WM_INITMENU bar
+main WM_MENUSELECT item 0 flags 0x8090 bar
+main WM_INITMENUPOPUP game index 0
+main undo was 0x01
+main WM_MENUSELECT item 1004 flags 0x8080 game
+main WM_UNINITMENUPOPUP game
+main WM_CAPTURECHANGED to none
+main WM_MENUSELECT item 0 flags 0xffff none
+main WM_EXITMENULOOP 0
+main WM_COMMAND 1004 code 0 from none
+main WM_CLOSE
+main WM_ACTIVATE 0 none
+main WM_KILLFOCUS none
+main WM_DESTROY
+main WM_NCDESTROY
+quit 5

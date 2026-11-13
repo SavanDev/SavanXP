@@ -1,0 +1,80 @@
+// dialog.exe's resources: one of each kind sol.exe's menu and dialogs are
+// made of, with the same styles (docs/userland/WIN32_SOLITAIRE_PROFILE.md,
+// "Resources"), and text and layout of their own.
+
+#define VK_F2 0x71
+
+#define WS_POPUP 0x80000000
+#define WS_CAPTION 0x00c00000
+#define WS_SYSMENU 0x00080000
+#define WS_GROUP 0x00020000
+#define WS_TABSTOP 0x00010000
+#define DS_MODALFRAME 0x80
+#define DS_SETFONT 0x40
+#define DS_CONTEXTHELP 0x2000
+#define BS_OWNERDRAW 11
+
+#define DIALOG_STYLE DS_MODALFRAME | DS_SETFONT | DS_CONTEXTHELP | WS_POPUP | WS_CAPTION | WS_SYSMENU
+
+1 MENU
+BEGIN
+    POPUP "&Game"
+    BEGIN
+        MENUITEM "&New\tF2", 1000
+        MENUITEM SEPARATOR
+        MENUITEM "&Undo", 1001
+        MENUITEM "&Backs...", 1002
+        MENUITEM "&Options...", 1003
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", 1004
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&Contents\tF1", 1005
+        MENUITEM SEPARATOR
+        MENUITEM "&About", 2000
+    END
+END
+
+2 ACCELERATORS
+BEGIN
+    VK_F2, 1000, VIRTKEY
+    "2", 1010, VIRTKEY, ALT, SHIFT
+END
+
+101 DIALOG 10, 10, 136, 104
+STYLE DIALOG_STYLE
+CAPTION "Choose a back"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    PUSHBUTTON "", 54, 8, 4, 26, 38, BS_OWNERDRAW | WS_GROUP
+    PUSHBUTTON "", 55, 40, 4, 26, 38, BS_OWNERDRAW | NOT WS_TABSTOP
+    PUSHBUTTON "", 56, 72, 4, 26, 38, BS_OWNERDRAW | NOT WS_TABSTOP
+    PUSHBUTTON "", 57, 8, 46, 26, 38, BS_OWNERDRAW | NOT WS_TABSTOP
+    PUSHBUTTON "", 58, 40, 46, 26, 38, BS_OWNERDRAW | NOT WS_TABSTOP
+    PUSHBUTTON "", 59, 72, 46, 26, 38, BS_OWNERDRAW | NOT WS_TABSTOP
+    DEFPUSHBUTTON "OK", 1, 104, 4, 26, 14, WS_GROUP
+    PUSHBUTTON "Cancel", 2, 104, 22, 26, 14, WS_GROUP
+END
+
+103 DIALOG 30, 20, 172, 106
+STYLE DIALOG_STYLE
+CAPTION "Settings"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    GROUPBOX "&Draw", -1, 4, 4, 76, 40
+    RADIOBUTTON "&One card", 300, 10, 14, 60, 12, WS_GROUP | WS_TABSTOP
+    RADIOBUTTON "&Three cards", 301, 10, 27, 60, 12, NOT WS_TABSTOP
+    GROUPBOX "&Scoring", -1, 86, 4, 80, 52, WS_GROUP
+    RADIOBUTTON "St&andard", 302, 92, 14, 60, 12, WS_GROUP | WS_TABSTOP
+    RADIOBUTTON "&Vegas", 303, 92, 27, 60, 12, NOT WS_TABSTOP
+    RADIOBUTTON "&None", 304, 92, 40, 60, 12, NOT WS_TABSTOP
+    AUTOCHECKBOX "Ti&med game", 305, 8, 48, 72, 12, WS_GROUP
+    AUTOCHECKBOX "Status &bar", 306, 8, 60, 72, 12
+    AUTOCHECKBOX "Out&line dragging", 307, 8, 72, 76, 12
+    AUTOCHECKBOX "&Keep score", 308, 92, 60, 64, 12
+    LTEXT "of the round", 310, 104, 72, 52, 10
+    RTEXT "Right", 311, 132, 91, 36, 8
+    DEFPUSHBUTTON "OK", 1, 40, 88, 40, 14, WS_GROUP
+    PUSHBUTTON "Cancel", 2, 88, 88, 40, 14, WS_GROUP
+END

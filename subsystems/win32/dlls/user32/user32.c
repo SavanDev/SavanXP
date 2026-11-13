@@ -3,30 +3,22 @@
  * gdi32"): window classes, the window tree, the message queue, painting,
  * timers, input, capture, focus and activation, and DefWindowProc, for the
  * functions of the W0 matrix, and the resources a program loads: bitmaps,
- * strings, icons, cursors and accelerator tables. Menus and dialogs are W5's.
+ * strings, icons, cursors and accelerator tables. Menus are menu.c's,
+ * dialogs dialog.c's and the system's controls controls.c's; what they share
+ * is in user32_private.h.
  *
  * A top-level window is a host window (SXW_SVC_WINDOW_CREATE) whose frame
- * and caption are the host's; its client area is a surface in guest memory
- * that every window of the tree draws on through gdi32. Child windows exist
- * only here. One thread: a message is "sent" by calling the window
- * procedure.
+ * and caption are the host's; its menu bar and client area are a surface in
+ * guest memory that every window of the tree draws on through gdi32. Child
+ * windows exist only here. One thread: a message is "sent" by calling the
+ * window procedure.
  *
  * The order of the messages each call sends is Windows XP's, as
  * fixtures/window recorded it there.
  */
-#define SXW_BUILDING_USER32
-#include <windows.h>
+#include "user32_private.h"
 
 #include "codepage.h"
-#include "region.h"
-#include "sxw_abi.h"
-#include "sxw_gdi.h"
-
-typedef unsigned int u32;
-
-__declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
-__declspec(dllimport) void *WINAPI SxwHeapAllocate(u32 size, u32 zero);
-__declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
 
 #define MAX_CLASSES 32
 #define MAX_WINDOWS 128
@@ -34,14 +26,12 @@ __declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
 #define MAX_POSTED 256
 #define MAX_INPUT 128
 #define MAX_REGISTERED 32
-#define MAX_TEXT 256
 #define DOUBLE_CLICK_MS 500u
 #define DOUBLE_CLICK_DISTANCE 2 /* half of SM_CXDOUBLECLK */
 #define DESKTOP_HANDLE ((HWND)0x00010010)
+#define HTMENU 5
 #define WAIT_OBJECT_0 0u
 #define WAIT_FAILED 0xffffffffu
-#define ERROR_INVALID_WINDOW_HANDLE 1400u
-#define ERROR_CANNOT_FIND_WND_CLASS 1407u
 #define ERROR_CLASS_ALREADY_EXISTS 1410u
 #define ERROR_RESOURCE_TYPE_NOT_FOUND 1813u
 #define ERROR_CALL_NOT_IMPLEMENTED 120u
@@ -55,22 +45,22 @@ __declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
 #define METRIC_DIALOG_FRAME 3
 #define METRIC_BORDER 1
 
-static void set_last_error(DWORD error) {
+void set_last_error(DWORD error) {
     __asm__ volatile("movl %0, %%fs:%c1" : : "r"(error), "i"(SXW_TEB_LAST_ERROR) : "memory");
 }
 
-static u32 ticks(void) {
+u32 ticks(void) {
     return SxwService(SXW_SVC_TICKS, 0);
 }
 
-static void zero(void *p, u32 size) {
+void zero(void *p, u32 size) {
     unsigned char *b = p;
     for (u32 i = 0; i < size; ++i) {
         b[i] = 0;
     }
 }
 
-static int same_name(const WCHAR *a, const WCHAR *b) {
+int same_name(const WCHAR *a, const WCHAR *b) {
     for (;; ++a, ++b) {
         WCHAR ca = *a >= 'A' && *a <= 'Z' ? (WCHAR)(*a + 32) : *a;
         WCHAR cb = *b >= 'A' && *b <= 'Z' ? (WCHAR)(*b + 32) : *b;
@@ -83,7 +73,7 @@ static int same_name(const WCHAR *a, const WCHAR *b) {
     }
 }
 
-static int copy_text(WCHAR *out, const WCHAR *text, int capacity) {
+int copy_text(WCHAR *out, const WCHAR *text, int capacity) {
     int n = 0;
     if (text != NULL) {
         while (text[n] != 0 && n + 1 < capacity) {
@@ -95,24 +85,24 @@ static int copy_text(WCHAR *out, const WCHAR *text, int capacity) {
     return n;
 }
 
+int text_length(const WCHAR *text) {
+    int n = 0;
+    while (text != NULL && text[n] != 0) {
+        ++n;
+    }
+    return n;
+}
+
 /* ---- Classes ---------------------------------------------------------------- */
 
-typedef struct wclass {
-    int used;
-    ATOM atom;
-    WCHAR name[64];
-    UINT style;
-    WNDPROC proc;
-    int window_extra;
-    HINSTANCE instance;
-    HICON icon;
-    HCURSOR cursor;
-    HBRUSH background;
-} wclass;
-
 static wclass g_classes[MAX_CLASSES];
+static int g_system_classes;
 
 static wclass *find_class(LPCWSTR name) {
+    if (!g_system_classes) {
+        g_system_classes = 1;
+        register_controls();
+    }
     for (int i = 0; i < MAX_CLASSES; ++i) {
         wclass *c = &g_classes[i];
         if (c->used && ((u32)name < 0x10000u ? c->atom == (ATOM)(u32)name : same_name(c->name, name))) {
@@ -123,7 +113,7 @@ static wclass *find_class(LPCWSTR name) {
 }
 
 static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE instance, HICON icon,
-                           HCURSOR cursor, HBRUSH background, LPCWSTR name) {
+                           HCURSOR cursor, HBRUSH background, LPCWSTR name, LPCWSTR menu_name) {
     if (proc == NULL || name == NULL || (u32)name < 0x10000u || window_extra < 0 || window_extra > 1024) {
         set_last_error(ERROR_INVALID_PARAMETER);
         return 0;
@@ -146,6 +136,12 @@ static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE
             c->icon = icon;
             c->cursor = cursor;
             c->background = background;
+            if ((u32)menu_name >= 0x10000u) {
+                copy_text(c->menu_text, menu_name, 64);
+                c->menu_name = c->menu_text;
+            } else {
+                c->menu_name = menu_name;
+            }
             return c->atom;
         }
     }
@@ -153,10 +149,22 @@ static ATOM register_class(UINT style, WNDPROC proc, int window_extra, HINSTANCE
     return 0;
 }
 
+/* One of the system's classes (controls.c), with the atom Windows gives it. */
+ATOM register_system_class(UINT style, WNDPROC proc, LPCWSTR name, ATOM atom, HBRUSH background) {
+    const ATOM made = register_class(style, proc, 0, NULL, NULL, NULL, background, name, NULL);
+    for (int i = 0; i < MAX_CLASSES && made != 0; ++i) {
+        if (g_classes[i].used && g_classes[i].atom == made) {
+            g_classes[i].atom = atom;
+            g_classes[i].cursor = (HCURSOR)1;
+        }
+    }
+    return made != 0 ? atom : 0;
+}
+
 ATOM WINAPI RegisterClassW(const WNDCLASSW *lpWndClass) {
     return register_class(lpWndClass->style, lpWndClass->lpfnWndProc, lpWndClass->cbWndExtra,
                           lpWndClass->hInstance, lpWndClass->hIcon, lpWndClass->hCursor,
-                          lpWndClass->hbrBackground, lpWndClass->lpszClassName);
+                          lpWndClass->hbrBackground, lpWndClass->lpszClassName, lpWndClass->lpszMenuName);
 }
 
 ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *lpWndClass) {
@@ -166,53 +174,23 @@ ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *lpWndClass) {
     }
     return register_class(lpWndClass->style, lpWndClass->lpfnWndProc, lpWndClass->cbWndExtra,
                           lpWndClass->hInstance, lpWndClass->hIcon, lpWndClass->hCursor,
-                          lpWndClass->hbrBackground, lpWndClass->lpszClassName);
+                          lpWndClass->hbrBackground, lpWndClass->lpszClassName, lpWndClass->lpszMenuName);
 }
 
 /* ---- Windows ----------------------------------------------------------------- */
 
-typedef struct window window;
-struct window {
-    int used;
-    u32 generation;
-    wclass *cls;
-    WNDPROC proc;
-    DWORD style;
-    DWORD ex_style;
-    window *parent;
-    window *child; /* the topmost child */
-    window *next;  /* the next sibling below this one */
-    /* In the parent's client coordinates; a top-level window's in the
-     * screen's. */
-    sxw_rect rect;
-    sxw_rect client;
-    UINT_PTR id;
-    WCHAR text[MAX_TEXT];
-    unsigned char *extra;
-    /* Invalid area, client coordinates, and whether it needs erasing. */
-    sxw_region invalid;
-    int erase;
-    /* A top-level window has not had its first WM_SIZE and WM_MOVE. */
-    int need_size;
-    int destroying;
-    /* Top-level only: the host window and the surface every window of the
-     * tree draws on. */
-    u32 host;
-    sxw_surface surface;
-    int surface_capacity; /* pixels */
-};
-
-static window g_windows[MAX_WINDOWS];
+window g_windows[MAX_WINDOWS];
 static u32 g_generation = 1;
-static window *g_active;
-static window *g_focus;
-static window *g_capture;
+window *g_active;
+window *g_focus;
+window *g_capture;
+int g_keyboard_last;
 
-static HWND handle_of(const window *w) {
+HWND handle_of(const window *w) {
     return w == 0 ? NULL : (HWND)((w->generation << 16) | (u32)((w - g_windows) + 1) * 4u);
 }
 
-static window *window_of(HWND h) {
+window *window_of(HWND h) {
     const u32 v = (u32)h;
     const u32 index = (v & 0xffffu) / 4u;
     if ((v & 3u) != 0 || index == 0 || index > MAX_WINDOWS) {
@@ -222,7 +200,7 @@ static window *window_of(HWND h) {
     return w->used && w->generation == (v >> 16) ? w : 0;
 }
 
-static window *checked(HWND h) {
+window *checked(HWND h) {
     window *w = window_of(h);
     if (w == 0) {
         set_last_error(ERROR_INVALID_WINDOW_HANDLE);
@@ -230,18 +208,22 @@ static window *checked(HWND h) {
     return w;
 }
 
-static window *top_of(window *w) {
+window *top_of(window *w) {
     while (w->parent != 0) {
         w = w->parent;
     }
     return w;
 }
 
-static LRESULT send(window *w, UINT message, WPARAM wParam, LPARAM lParam) {
+LRESULT send(window *w, UINT message, WPARAM wParam, LPARAM lParam) {
     return w != 0 && w->proc != NULL ? w->proc(handle_of(w), message, wParam, lParam) : 0;
 }
 
-static int visible_chain(const window *w) {
+LRESULT send_handle(HWND h, UINT message, WPARAM wParam, LPARAM lParam) {
+    return send(window_of(h), message, wParam, lParam);
+}
+
+int visible_chain(const window *w) {
     for (; w != 0; w = w->parent) {
         if ((w->style & WS_VISIBLE) == 0) {
             return 0;
@@ -251,20 +233,21 @@ static int visible_chain(const window *w) {
 }
 
 /* Where a window's client area starts on its top-level window's surface. */
-static void client_origin(const window *w, int *x, int *y) {
+void client_origin(const window *w, int *x, int *y) {
     *x = 0;
     *y = 0;
     for (; w->parent != 0; w = w->parent) {
         *x += w->client.left;
         *y += w->client.top;
     }
+    *y += w->menu_height;
 }
 
-static int client_width(const window *w) {
+int client_width(const window *w) {
     return w->client.right - w->client.left;
 }
 
-static int client_height(const window *w) {
+int client_height(const window *w) {
     return w->client.bottom - w->client.top;
 }
 
@@ -313,7 +296,7 @@ static void visible_region(const window *w, sxw_region *out) {
 
 /* A device context on a window's client area, clipped to clip (client
  * coordinates) when it is given. */
-static HDC window_dc(window *w, const sxw_region *clip) {
+HDC window_dc(window *w, const sxw_region *clip) {
     window *top = top_of(w);
     sxw_region visible;
     visible_region(w, &visible);
@@ -341,7 +324,7 @@ static void frame_of(DWORD style, int menu, int out[4]) {
         edge = METRIC_BORDER;
     }
     out[0] = out[2] = out[3] = edge;
-    out[1] = edge + ((style & WS_CAPTION) == WS_CAPTION ? METRIC_CAPTION : 0) + (menu ? 20 : 0);
+    out[1] = edge + ((style & WS_CAPTION) == WS_CAPTION ? METRIC_CAPTION : 0) + (menu ? METRIC_MENU : 0);
 }
 
 BOOL WINAPI AdjustWindowRect(LPRECT lpRect, DWORD dwStyle, BOOL bMenu) {
@@ -385,11 +368,16 @@ static int size_surface(window *top, int width, int height) {
 }
 
 /* Shows what was drawn on every top-level window since the last time. */
-static void present_all(void) {
+void present_all(void) {
     for (int i = 0; i < MAX_WINDOWS; ++i) {
-        window *w = &g_windows[i];
+        present_window(&g_windows[i]);
+    }
+}
+
+void present_window(window *w) {
+    {
         if (!w->used || w->parent != 0 || w->host == 0 || sxw_region_empty(&w->surface.dirty)) {
-            continue;
+            return;
         }
         static RECT rects[SXW_REGION_MAX];
         const sxw_region *d = &w->surface.dirty;
@@ -411,7 +399,7 @@ static void present_all(void) {
 
 /* Adds rect (client coordinates; NULL for the whole client area) to a
  * window's invalid area, and to its children's when children is set. */
-static void invalidate(window *w, const sxw_rect *rect, int erase, int children) {
+void invalidate(window *w, const sxw_rect *rect, int erase, int children) {
     sxw_rect whole = {0, 0, client_width(w), client_height(w)};
     sxw_rect r;
     if (!sxw_rect_intersect(&r, rect != 0 ? rect : &whole, &whole)) {
@@ -579,6 +567,17 @@ HWND WINAPI SetFocus(HWND hWnd) {
     if (hWnd != NULL && w == 0) {
         return NULL;
     }
+    if (w != 0) {
+        /* The focus goes with activation: its top-level window is activated
+         * first, which may move the focus itself. */
+        window *top = top_of(w);
+        if ((top->style & WS_DISABLED) != 0) {
+            return NULL;
+        }
+        if (top != g_active) {
+            activate(top);
+        }
+    }
     window *old = g_focus;
     if (w == old) {
         return handle_of(old);
@@ -593,20 +592,25 @@ HWND WINAPI SetFocus(HWND hWnd) {
     return handle_of(old);
 }
 
-static void activate(window *w) {
+/* The window that was active hears it lost to w, then w that it won. */
+void activate(window *w) {
     if (g_active == w) {
         return;
     }
-    const int app_was_active = g_active != 0;
+    window *old = g_active;
+    if (old != 0) {
+        send(old, WM_NCACTIVATE, FALSE, 0);
+        send(old, WM_ACTIVATE, WA_INACTIVE, (LPARAM)handle_of(w));
+    }
     g_active = w;
-    if (!app_was_active) {
+    if (old == 0) {
         send(w, WM_ACTIVATEAPP, TRUE, 0);
     }
     send(w, WM_NCACTIVATE, TRUE, 0);
-    send(w, WM_ACTIVATE, WA_ACTIVE, 0);
+    send(w, WM_ACTIVATE, WA_ACTIVE, (LPARAM)handle_of(old));
 }
 
-static int within(const window *w, const window *ancestor) {
+int within(const window *w, const window *ancestor) {
     for (; w != 0; w = w->parent) {
         if (w == ancestor) {
             return 1;
@@ -615,13 +619,30 @@ static int within(const window *w, const window *ancestor) {
     return 0;
 }
 
-/* The last window of the program stops being active, and loses the focus. */
+/* The active window goes away: its owner, or another of the program's
+ * windows, is activated; with none, the program stops being active. The
+ * focus leaves it. */
 static void deactivate(window *w) {
     if (g_active == w) {
-        send(w, WM_NCACTIVATE, FALSE, 0);
-        send(w, WM_ACTIVATE, WA_INACTIVE, 0);
-        g_active = 0;
-        send(w, WM_ACTIVATEAPP, FALSE, 0);
+        window *next = 0;
+        if (w->owner != 0 && w->owner->used && (w->owner->style & (WS_VISIBLE | WS_DISABLED)) == WS_VISIBLE) {
+            next = w->owner;
+        }
+        for (int i = 0; i < MAX_WINDOWS && next == 0; ++i) {
+            window *o = &g_windows[i];
+            if (o != w && o->used && o->parent == 0 && !o->destroying && o->owner == 0 &&
+                (o->style & (WS_VISIBLE | WS_DISABLED)) == WS_VISIBLE) {
+                next = o;
+            }
+        }
+        if (next != 0) {
+            activate(next);
+        } else {
+            send(w, WM_NCACTIVATE, FALSE, 0);
+            send(w, WM_ACTIVATE, WA_INACTIVE, 0);
+            g_active = 0;
+            send(w, WM_ACTIVATEAPP, FALSE, 0);
+        }
     }
     if (g_focus != 0 && within(g_focus, w)) {
         window *old = g_focus;
@@ -658,9 +679,15 @@ HWND WINAPI GetCapture(void) {
 
 /* ---- Creation and destruction --------------------------------------------------- */
 
+/* A new child goes to the bottom of its siblings: the first one created is
+ * on top, so a dialog's controls are in their template's order. */
 static void link_child(window *parent, window *w) {
-    w->next = parent->child;
-    parent->child = w;
+    window **link = &parent->child;
+    while (*link != 0) {
+        link = &(*link)->next;
+    }
+    w->next = 0;
+    *link = w;
 }
 
 static void unlink_child(window *w) {
@@ -731,15 +758,18 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
         return NULL;
     }
     window *parent = 0;
+    window *owner = 0;
     if ((dwStyle & WS_CHILD) != 0) {
         parent = checked(hWndParent);
         if (parent == 0) {
             return NULL;
         }
-    } else if (hMenu != NULL) {
-        /* A menu bar is W5's. */
-        set_last_error(ERROR_CALL_NOT_IMPLEMENTED);
-        return NULL;
+    } else if (hWndParent != NULL && hWndParent != DESKTOP_HANDLE) {
+        owner = checked(hWndParent);
+        if (owner == 0) {
+            return NULL;
+        }
+        owner = top_of(owner);
     }
     window *w = 0;
     for (int i = 0; i < MAX_WINDOWS && w == 0; ++i) {
@@ -760,7 +790,9 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     w->style = dwStyle & ~(DWORD)WS_VISIBLE;
     w->ex_style = dwExStyle;
     w->parent = parent;
+    w->owner = owner;
     w->id = parent != 0 ? (UINT_PTR)hMenu : 0;
+    w->ui_state = parent != 0 ? parent->ui_state : 0;
     if (cls->window_extra > 0) {
         w->extra = SxwHeapAllocate((u32)cls->window_extra, 1);
         if (w->extra == 0) {
@@ -782,6 +814,10 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
             w->style |= WS_CAPTION;
         }
         w->need_size = 1;
+        w->menu = hMenu != NULL ? hMenu
+                  : cls->menu_name != NULL ? menu_load(hInstance != NULL ? hInstance : cls->instance, cls->menu_name)
+                                           : NULL;
+        w->menu_height = w->menu != NULL ? MENU_BAR_HEIGHT : 0;
     } else {
         link_child(parent, w);
     }
@@ -820,7 +856,7 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     w->client.top = r.top;
     w->client.right = r.right > r.left ? r.right : r.left;
     w->client.bottom = r.bottom > r.top ? r.bottom : r.top;
-    if (parent == 0 && !size_surface(w, client_width(w), client_height(w))) {
+    if (parent == 0 && !size_surface(w, client_width(w), client_height(w) + w->menu_height)) {
         destroy_tree(w);
         set_last_error(ERROR_NOT_ENOUGH_MEMORY);
         return NULL;
@@ -880,6 +916,11 @@ static void destroy_tree(window *w) {
     timers_of_window_end(w);
     drop_messages(w);
     unlink_child(w);
+    if (w->parent == 0 && w->menu != NULL) {
+        menu_destroy(w->menu);
+        w->menu = NULL;
+    }
+    dialog_free(w);
     if (w->host != 0) {
         u32 arguments[1] = {w->host};
         SxwService(SXW_SVC_WINDOW_DESTROY, arguments);
@@ -923,28 +964,59 @@ BOOL WINAPI DestroyWindow(HWND hWnd) {
 
 /* ---- Showing, moving and enabling ----------------------------------------------- */
 
+/* A top-level window's host window: a window of the program's own, or one
+ * its owner owns (a dialog), with the menu bar above the client area. */
 static int show_host(window *w) {
     if (w->host != 0) {
         return 1;
     }
     u32 size[2] = {0, 0};
-    u32 arguments[4] = {(u32)w->text, (u32)client_width(w), (u32)client_height(w), (u32)size};
-    if (client_width(w) <= 0 || client_height(w) <= 0) {
+    const u32 owner = w->owner != 0 ? w->owner->host : 0;
+    u32 arguments[8] = {(u32)w->text, (u32)client_width(w), (u32)(client_height(w) + w->menu_height), (u32)size,
+                        owner, owner != 0 ? SXW_WINDOW_OWNED : SXW_WINDOW_MAIN, 0, 0};
+    if (client_width(w) <= 0 || client_height(w) + w->menu_height <= 0) {
         arguments[1] = arguments[2] = 1;
     }
     w->host = SxwService(SXW_SVC_WINDOW_CREATE, arguments);
     if (w->host == 0) {
         return 0;
     }
-    if ((int)size[0] != client_width(w) || (int)size[1] != client_height(w)) {
+    const int height = (int)size[1] - w->menu_height;
+    if ((int)size[0] != client_width(w) || height != client_height(w)) {
         /* The window manager gave another size. */
         w->rect.right += (int)size[0] - client_width(w);
-        w->rect.bottom += (int)size[1] - client_height(w);
+        w->rect.bottom += height - client_height(w);
         w->client.right = w->client.left + (int)size[0];
-        w->client.bottom = w->client.top + (int)size[1];
+        w->client.bottom = w->client.top + height;
         size_surface(w, (int)size[0], (int)size[1]);
     }
+    menu_draw_bar(w);
     return 1;
+}
+
+static void drop_host(window *w) {
+    if (w->host != 0) {
+        u32 arguments[1] = {w->host};
+        SxwService(SXW_SVC_WINDOW_DESTROY, arguments);
+        w->host = 0;
+    }
+}
+
+/* SetWindowPos with SWP_HIDEWINDOW: hidden without WM_SHOWWINDOW, and if it
+ * was active another window is activated. */
+void hide_window(window *w) {
+    if ((w->style & WS_VISIBLE) == 0) {
+        return;
+    }
+    window_pos(w, 0x0080u /* SWP_HIDEWINDOW */);
+    w->style &= ~(DWORD)WS_VISIBLE;
+    if (w->parent != 0) {
+        sxw_rect r = w->rect;
+        invalidate(w->parent, &r, 1, 0);
+    } else {
+        drop_host(w);
+        deactivate(w);
+    }
 }
 
 BOOL WINAPI ShowWindow(HWND hWnd, int nCmdShow) {
@@ -959,14 +1031,7 @@ BOOL WINAPI ShowWindow(HWND hWnd, int nCmdShow) {
     }
     send(w, WM_SHOWWINDOW, show, 0);
     if (!show) {
-        window_pos(w, 0x0080u /* SWP_HIDEWINDOW */);
-        w->style &= ~(DWORD)WS_VISIBLE;
-        if (w->parent != 0) {
-            sxw_rect r = w->rect;
-            invalidate(w->parent, &r, 1, 0);
-        } else {
-            deactivate(w);
-        }
+        hide_window(w);
         return was_visible;
     }
     WINDOWPOS pos;
@@ -1067,6 +1132,7 @@ BOOL WINAPI EnableWindow(HWND hWnd, BOOL bEnable) {
         w->style &= ~(DWORD)WS_DISABLED;
         send(w, WM_ENABLE, TRUE, 0);
     } else if (!bEnable && !was_disabled) {
+        send(w, WM_CANCELMODE, 0, 0);
         w->style |= WS_DISABLED;
         if (g_focus != 0 && within(g_focus, w)) {
             SetFocus(NULL);
@@ -1218,7 +1284,7 @@ static int g_quit_code;
 static unsigned char g_key_state[256];  /* 0x80 down, 0x01 toggled */
 static unsigned char g_async_down[256]; /* as input arrives */
 static WCHAR g_key_char[256];           /* what the last press of each key typed */
-static POINT g_last_point;
+POINT g_last_point;
 
 static int matches(const MSG *m, HWND filter, UINT first, UINT last) {
     if (filter != NULL && m->hwnd != filter) {
@@ -1343,7 +1409,8 @@ static window *hit(window *w, int x, int y) {
     }
     for (window *c = w->child; c != 0; c = c->next) {
         if ((c->style & WS_VISIBLE) != 0 && x >= ox + c->rect.left && x < ox + c->rect.right &&
-            y >= oy + c->rect.top && y < oy + c->rect.bottom) {
+            y >= oy + c->rect.top && y < oy + c->rect.bottom &&
+            !control_transparent(c)) {
             window *deeper = hit(c, x, y);
             if (deeper != 0 && (deeper->style & WS_DISABLED) == 0) {
                 return deeper;
@@ -1394,18 +1461,44 @@ static u32 g_pointer_buttons;
 
 static void pointer_event(const sxw_event *e) {
     window *top = host_window(e->window);
-    if (top == 0) {
+    int x = (int)e->a;
+    int y = (int)e->b;
+    if (top == 0 && !menu_host_pointer(e->window, &top, &x, &y)) {
         return;
     }
-    const int x = (int)e->a;
-    const int y = (int)e->b;
-    window *target = g_capture != 0 && top_of(g_capture) == top ? g_capture : hit(top, x, y);
     const int moved = !g_have_pointer || x != g_pointer_x || y != g_pointer_y;
     g_have_pointer = 1;
     g_pointer_x = x;
     g_pointer_y = y;
     g_last_point.x = top->client.left + x;
-    g_last_point.y = top->client.top + y;
+    g_last_point.y = top->client.top + y - top->menu_height;
+    if ((e->c & ~g_pointer_buttons) != 0) {
+        g_keyboard_last = 0;
+    }
+    if (g_capture == 0 && top->menu_height > 0 && y >= 0 && y < top->menu_height &&
+        (top->style & WS_DISABLED) == 0) {
+        /* The menu bar, outside the client area: the non-client messages. */
+        const LPARAM screen = MAKELPARAM(g_last_point.x, g_last_point.y);
+        if (moved) {
+            queue_input(top, WM_NCMOUSEMOVE, HTMENU, screen, e->time, 0, 0);
+        }
+        static const struct {
+            u32 bit;
+            int vk;
+            UINT down;
+        } k_nc[2] = {{SXW_BUTTON_LEFT, VK_LBUTTON, WM_NCLBUTTONDOWN}, {SXW_BUTTON_RIGHT, VK_RBUTTON, 0x00a4}};
+        for (int i = 0; i < 2; ++i) {
+            const int was = (g_pointer_buttons & k_nc[i].bit) != 0;
+            const int is = (e->c & k_nc[i].bit) != 0;
+            if (was != is) {
+                g_async_down[k_nc[i].vk] = (unsigned char)is;
+                queue_input(top, is ? k_nc[i].down : k_nc[i].down + 1u, HTMENU, screen, e->time, k_nc[i].vk, is);
+            }
+        }
+        g_pointer_buttons = e->c;
+        return;
+    }
+    window *target = g_capture != 0 && top_of(g_capture) == top ? g_capture : hit(top, x, y);
     static const struct {
         u32 bit;
         int vk;
@@ -1475,6 +1568,9 @@ static void key_event(const sxw_event *e) {
     window *top = host_window(e->window);
     const int vk = (int)(e->a & 0xffu);
     const int down = e->b != 0;
+    if (down) {
+        g_keyboard_last = 1;
+    }
     window *target = g_focus != 0 ? g_focus : g_active != 0 ? g_active : top;
     const int was_down = g_async_down[vk] != 0;
     g_async_down[vk] = (unsigned char)down;
@@ -1486,6 +1582,19 @@ static void key_event(const sxw_event *e) {
     UINT message = down ? WM_KEYDOWN : WM_KEYUP;
     if (system && !g_async_down[VK_CONTROL]) {
         message = down ? WM_SYSKEYDOWN : WM_SYSKEYUP;
+    }
+    /* Alt released is WM_SYSKEYUP only when no other key went down or up
+     * while it was held. */
+    static int alt_alone;
+    if (vk == VK_MENU) {
+        if (down) {
+            alt_alone = !g_async_down[VK_CONTROL];
+        } else {
+            message = alt_alone ? WM_SYSKEYUP : WM_KEYUP;
+            alt_alone = 0;
+        }
+    } else {
+        alt_alone = 0;
     }
     LPARAM lParam = 1 | ((LPARAM)k_scan_codes[vk] << 16);
     if (alt && message != WM_KEYDOWN && message != WM_KEYUP) {
@@ -1506,6 +1615,9 @@ static void key_event(const sxw_event *e) {
 /* The frame's close: WM_SYSCOMMAND(SC_CLOSE) arrives as the frame's own
  * Alt+F4 or close button would bring it. */
 static void close_event(const sxw_event *e) {
+    if (menu_host_close(e->window)) {
+        return;
+    }
     window *top = host_window(e->window);
     if (top != 0) {
         queue_input(top, WM_SYSCOMMAND, SC_CLOSE, MAKELPARAM(g_last_point.x, g_last_point.y), e->time, 0, 0);
@@ -1514,16 +1626,18 @@ static void close_event(const sxw_event *e) {
 
 static void resize_event(const sxw_event *e) {
     window *top = host_window(e->window);
-    if (top == 0 || ((int)e->a == client_width(top) && (int)e->b == client_height(top))) {
+    const int height = top != 0 ? (int)e->b - top->menu_height : 0;
+    if (top == 0 || ((int)e->a == client_width(top) && height == client_height(top))) {
         return;
     }
     if (!size_surface(top, (int)e->a, (int)e->b)) {
         return;
     }
     top->rect.right += (int)e->a - client_width(top);
-    top->rect.bottom += (int)e->b - client_height(top);
+    top->rect.bottom += height - client_height(top);
     top->client.right = top->client.left + (int)e->a;
-    top->client.bottom = top->client.top + (int)e->b;
+    top->client.bottom = top->client.top + height;
+    menu_draw_bar(top);
     window_pos(top, 0);
     send(top, WM_SIZE, SIZE_RESTORED, MAKELPARAM(client_width(top), client_height(top)));
     invalidate(top, 0, 1, 1);
@@ -1571,6 +1685,20 @@ static void before_mouse(window *w, const MSG *m) {
     if (g_capture == w) {
         return;
     }
+    if (m->message >= WM_NCMOUSEMOVE && m->message <= 0x00a9) {
+        const LRESULT where = send(w, WM_NCHITTEST, 0, m->lParam);
+        if (m->message == WM_NCLBUTTONDOWN && w != g_active) {
+            const LRESULT answer = send(w, WM_MOUSEACTIVATE, (WPARAM)handle_of(w), MAKELPARAM(where, m->message));
+            if (answer == MA_ACTIVATE || answer == 2 /* MA_ACTIVATEANDEAT */) {
+                activate(w);
+            }
+        }
+        send(w, WM_SETCURSOR, (WPARAM)handle_of(w), MAKELPARAM(where, m->message == WM_NCMOUSEMOVE
+                                                                           ? WM_MOUSEMOVE
+                                                                           : m->message - WM_NCMOUSEMOVE +
+                                                                                 WM_MOUSEMOVE));
+        return;
+    }
     send(w, WM_NCHITTEST, 0, MAKELPARAM(g_last_point.x, g_last_point.y));
     const int click = m->message != WM_MOUSEMOVE &&
                       (m->message == WM_LBUTTONDOWN || m->message == WM_RBUTTONDOWN ||
@@ -1605,7 +1733,7 @@ static void before_mouse(window *w, const MSG *m) {
 
 /* GetMessage and PeekMessage: sent, posted, quit, input, paint, timer, in
  * Windows' order. 1 with a message, 0 when there was none and block is off. */
-static int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove, int block) {
+int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove, int block) {
     for (;;) {
         poll_events();
         queued q;
@@ -1630,7 +1758,9 @@ static int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove
                                                     ((g_key_state[q.vk] ^ (q.down ? 1 : 0)) & 1));
             }
             window *w = window_of(q.msg.hwnd);
-            if (w != 0 && remove && q.msg.message >= WM_MOUSEMOVE && q.msg.message <= WM_MBUTTONDBLCLK) {
+            if (w != 0 && remove &&
+                ((q.msg.message >= WM_MOUSEMOVE && q.msg.message <= WM_MBUTTONDBLCLK) ||
+                 (q.msg.message >= WM_NCMOUSEMOVE && q.msg.message <= 0x00a9))) {
                 before_mouse(w, &q.msg);
             }
             if (w == 0 && q.msg.hwnd != NULL) {
@@ -1673,6 +1803,11 @@ static int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove
         present_all();
         wait_event(t != 0 ? (expired(t->due, now) ? 0u : t->due - now) : SXW_INFINITE);
     }
+}
+
+int input_waiting(void) {
+    poll_events();
+    return g_posted_count != 0 || g_input_count != 0 || g_quit || any_paint(NULL) != 0;
 }
 
 BOOL WINAPI GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax) {
@@ -1786,17 +1921,16 @@ int WINAPI ShowCursor(BOOL bShow) {
 #define RT_GROUP_CURSOR 12u
 #define RT_GROUP_ICON 14u
 #define ERROR_RESOURCE_DATA_NOT_FOUND 1812u
-#define ERROR_RESOURCE_NAME_NOT_FOUND 1814u
 #define MAX_ICONS 64
 #define MAX_ACCELERATORS 16
 
 __declspec(dllimport) HBITMAP WINAPI SxwCreateBitmapFromDIB(const void *data, u32 size);
 
-static u32 get16(const unsigned char *p) {
+u32 get16(const unsigned char *p) {
     return (u32)p[0] | ((u32)p[1] << 8);
 }
 
-static u32 get32(const unsigned char *p) {
+u32 get32(const unsigned char *p) {
     return get16(p) | (get16(p + 2) << 16);
 }
 
@@ -1842,7 +1976,7 @@ static int find_entry(const unsigned char *root, const unsigned char *dir, LPCWS
 }
 
 /* A resource's data and size in the module at base, or 0. */
-static const unsigned char *find_resource(u32 base, u32 type, LPCWSTR name, u32 *size) {
+const unsigned char *find_resource(u32 base, u32 type, LPCWSTR name, u32 *size) {
     const unsigned char *image = (const unsigned char *)base;
     if (base == 0 || get16(image) != 0x5a4du) {
         return 0;
@@ -1881,7 +2015,7 @@ static const unsigned char *find_resource(u32 base, u32 type, LPCWSTR name, u32 
     return image + get32(data);
 }
 
-static u32 module_of(HINSTANCE instance) {
+u32 module_of(HINSTANCE instance) {
     return instance != NULL ? (u32)instance : main_module();
 }
 
@@ -2177,7 +2311,26 @@ int WINAPI TranslateAcceleratorW(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg) {
                 continue;
             }
         }
-        send(w, WM_COMMAND, MAKELPARAM(command, 1), 0);
+        /* A command the menu has: WM_INITMENU and WM_INITMENUPOPUP first,
+         * nothing when the item is grayed, and WM_UNINITMENUPOPUP after, as
+         * Windows XP sends them. */
+        window *top = top_of(w);
+        HMENU popup = NULL;
+        int index = 0;
+        UINT state = 0;
+        const int in_menu = top->menu != NULL && (top->style & WS_DISABLED) == 0 && g_capture == 0 &&
+                            menu_command_popup(top->menu, command, &popup, &index, &state);
+        if (in_menu) {
+            send(top, WM_INITMENU, (WPARAM)top->menu, 0);
+            send(top, WM_INITMENUPOPUP, (WPARAM)popup, MAKELPARAM(index, 0));
+            menu_command_popup(top->menu, command, &popup, &index, &state);
+        }
+        if (!in_menu || (state & (MF_GRAYED | MF_DISABLED)) == 0) {
+            send(w, WM_COMMAND, MAKELPARAM(command, 1), 0);
+        }
+        if (in_menu && window_of(handle_of(top)) != 0) {
+            send(top, WM_UNINITMENUPOPUP, (WPARAM)popup, 0);
+        }
         return 1;
     }
     return 0;
@@ -2201,6 +2354,8 @@ static void erase_with_class_brush(window *w, HDC dc) {
     }
 }
 
+static int g_menu_key;
+
 LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
     window *w = window_of(hWnd);
     if (w == 0) {
@@ -2219,7 +2374,7 @@ LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
             RECT *r = (RECT *)lParam;
             if (w->parent == 0) {
                 int f[4];
-                frame_of(w->style, 0, f);
+                frame_of(w->style, w->menu != NULL, f);
                 r->left += f[0];
                 r->top += f[1];
                 r->right -= f[2];
@@ -2233,7 +2388,16 @@ LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_NCHITTEST:
+        if (w->parent == 0 && w->menu_height > 0 && GET_Y_LPARAM(lParam) < w->client.top &&
+            GET_Y_LPARAM(lParam) >= w->client.top - w->menu_height) {
+            return HTMENU;
+        }
         return HTCLIENT;
+    case WM_NCLBUTTONDOWN:
+        if (wParam == HTMENU) {
+            send(top_of(w), WM_SYSCOMMAND, SC_MOUSEMENU + HTMENU, lParam);
+        }
+        return 0;
     case WM_NCACTIVATE:
         return TRUE;
     case WM_ACTIVATE:
@@ -2279,13 +2443,78 @@ LRESULT WINAPI DefWindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
         DestroyWindow(hWnd);
         return 0;
     case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0u) == SC_CLOSE) {
+        switch (wParam & 0xfff0u) {
+        case SC_CLOSE:
             send(w, WM_CLOSE, 0, 0);
+            break;
+        case SC_MOUSEMENU:
+            menu_track(top_of(w), 1, 0);
+            break;
+        case SC_KEYMENU:
+            menu_track(top_of(w), 0, (WCHAR)lParam);
+            break;
+        default:
+            break;
         }
         return 0;
     case WM_SYSKEYDOWN:
-        if (wParam == VK_F4 && (lParam & (1L << 29)) != 0) {
+    case WM_KEYDOWN:
+        /* Alt or F10 pressed and released alone opens the menu bar. */
+        if ((lParam & (1L << 30)) == 0) {
+            g_menu_key = (wParam == VK_MENU || wParam == VK_F10) ? (int)wParam : 0;
+        }
+        if (Msg == WM_SYSKEYDOWN && wParam == VK_F4 && (lParam & (1L << 29)) != 0) {
             send(top_of(w), WM_SYSCOMMAND, SC_CLOSE, 0);
+        }
+        return 0;
+    case WM_SYSKEYUP:
+    case WM_KEYUP:
+        if ((wParam == VK_MENU || wParam == VK_F10) && g_menu_key == (int)wParam) {
+            g_menu_key = 0;
+            send(top_of(w), WM_SYSCOMMAND, SC_KEYMENU, 0);
+        }
+        g_menu_key = 0;
+        return 0;
+    case WM_SYSCHAR:
+        if (wParam != '\r' && wParam != '\t' && wParam != 0x1b && wParam != ' ') {
+            send(top_of(w), WM_SYSCOMMAND, SC_KEYMENU, (LPARAM)wParam);
+        }
+        return 0;
+    case WM_CTLCOLORMSGBOX:
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    case WM_CTLCOLORSCROLLBAR:
+        return default_control_color(Msg, (HDC)wParam);
+    case WM_QUERYUISTATE:
+        return (LRESULT)w->ui_state;
+    case WM_CHANGEUISTATE: {
+        WORD action = LOWORD(wParam);
+        WORD flags = HIWORD(wParam);
+        if (w->parent != 0) {
+            send(w->parent, Msg, wParam, lParam);
+            return 0;
+        }
+        if (action == UIS_INITIALIZE) {
+            action = g_keyboard_last ? UIS_CLEAR : UIS_SET;
+            flags = UISF_HIDEFOCUS | UISF_HIDEACCEL;
+        }
+        const u32 changed = action == UIS_SET ? flags & ~w->ui_state : flags & w->ui_state;
+        if (changed != 0) {
+            send(w, WM_UPDATEUISTATE, MAKELPARAM(action, flags), 0);
+        }
+        return 0;
+    }
+    case WM_UPDATEUISTATE:
+        if (LOWORD(wParam) == UIS_SET) {
+            w->ui_state |= HIWORD(wParam);
+        } else if (LOWORD(wParam) == UIS_CLEAR) {
+            w->ui_state &= ~(u32)HIWORD(wParam);
+        }
+        for (window *c = w->child; c != 0; c = c->next) {
+            send(c, WM_UPDATEUISTATE, wParam, lParam);
         }
         return 0;
     case WM_RBUTTONUP:
@@ -2376,6 +2605,53 @@ DWORD WINAPI GetSysColor(int nIndex) {
     return nIndex >= 0 && nIndex < 31 ? k_colors[nIndex] : 0;
 }
 
+/* The brushes of the system colours, made once and never deleted. */
+HBRUSH system_brush(int index) {
+    static HBRUSH brushes[31];
+    if (index < 0 || index >= 31) {
+        return NULL;
+    }
+    if (brushes[index] == NULL) {
+        brushes[index] = CreateSolidBrush(GetSysColor(index));
+    }
+    return brushes[index];
+}
+
+void fill_brush(HDC dc, const RECT *r, HBRUSH brush) {
+    if (r->right <= r->left || r->bottom <= r->top || brush == NULL) {
+        return;
+    }
+    HGDIOBJ old = SelectObject(dc, brush);
+    PatBlt(dc, r->left, r->top, r->right - r->left, r->bottom - r->top, PATCOPY);
+    SelectObject(dc, old);
+}
+
+void fill_rect(HDC dc, const RECT *r, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    fill_brush(dc, r, brush);
+    DeleteObject(brush);
+}
+
+/* DefWindowProc's WM_CTLCOLOR*: text in the window text colour on the face
+ * colour, or on the window colour for edit and list boxes. */
+LRESULT default_control_color(UINT message, HDC dc) {
+    const int window_colors = message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX;
+    SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+    SetBkColor(dc, GetSysColor(window_colors ? COLOR_WINDOW : COLOR_BTNFACE));
+    return (LRESULT)system_brush(window_colors ? COLOR_WINDOW : COLOR_BTNFACE);
+}
+
+/* WM_CHANGEUISTATE to a dialog, which DefWindowProc turns into
+ * WM_UPDATEUISTATE for the window and its children when it changes. */
+void change_ui_state(window *w, WORD action, WORD flags) {
+    w = top_of(w);
+    /* Sent when anything would change, with every flag asked for. */
+    const u32 changed = action == UIS_SET ? flags & ~w->ui_state : flags & w->ui_state;
+    if (changed != 0) {
+        send(w, WM_CHANGEUISTATE, MAKELPARAM(action, flags), 0);
+    }
+}
+
 int WINAPI FrameRect(HDC hDC, const RECT *lprc, HBRUSH hbr) {
     if (lprc == NULL || lprc->right <= lprc->left || lprc->bottom <= lprc->top) {
         return 0;
@@ -2423,16 +2699,17 @@ static int text_line(HDC dc, const WCHAR *text, int length, UINT format, int x, 
     GetTextExtentPoint32W(dc, shown, n, &size);
     if (draw) {
         TextOutW(dc, x, y, shown, n);
-        if (underline >= 0) {
+        if (underline >= 0 && (format & 0x00100000u /* DT_HIDEPREFIX */) == 0) {
             SIZE before;
             SIZE glyph;
             GetTextExtentPoint32W(dc, shown, underline, &before);
             GetTextExtentPoint32W(dc, shown + underline, 1, &glyph);
             TEXTMETRICW tm;
             GetTextMetricsW(dc, &tm);
-            HGDIOBJ old = SelectObject(dc, GetStockObject(BLACK_BRUSH));
-            PatBlt(dc, x + before.cx, y + tm.tmAscent + 1, glyph.cx - 1, 1, PATCOPY);
-            SelectObject(dc, old);
+            const COLORREF color = SetTextColor(dc, 0);
+            SetTextColor(dc, color);
+            RECT bar = {x + before.cx, y + tm.tmAscent + 1, x + before.cx + glyph.cx, y + tm.tmAscent + 2};
+            fill_rect(dc, &bar, color);
         }
     }
     return size.cx;

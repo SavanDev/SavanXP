@@ -1,0 +1,210 @@
+# The input script of dialog.exe (docs/userland/WIN32.md, "Input scripts"):
+# the same actions on Windows XP, in the host harness and on SavanXP. The
+# main window's client coordinates; the menu bar is above them, at y < 0.
+# "window 1" switches to the client coordinates of the dialog that is open.
+# Before each dump the pointer waits outside the windows, where a screenshot
+# does not show it over them.
+wait 500
+
+# The Game menu with the pointer: hover, a click on the grayed Undo (the
+# menu stays), across to Help and back, then Options.
+move 15 -10
+down left 15 -10
+up left 15 -10
+wait 300
+move 50 9
+move 50 35
+down left 50 35
+up left 50 35
+wait 300
+move 58 -10
+wait 300
+move 15 -10
+wait 300
+move 50 69
+down left 50 69
+up left 50 69
+wait 1000
+
+# Settings by pointer: Vegas, which enables Keep score, Keep score, Timed
+# game off; then keys: Tab to Status bar and Space, Alt+O for One card, Down
+# to Three cards, and Enter.
+move 400 300
+window 1
+dump dialog-settings.ppm 258x172
+move 150 54
+down left 150 54
+up left 150 54
+wait 300
+move 150 108
+down left 150 108
+up left 150 108
+wait 300
+move 20 88
+down left 20 88
+up left 20 88
+wait 300
+keydown 0x09 0x09
+keyup 0x09
+keydown 0x20 0x20
+keyup 0x20
+wait 200
+keydown 0x12
+keydown 0x4f 0x6f
+keyup 0x4f
+keyup 0x12
+wait 200
+keydown 0x28
+keyup 0x28
+wait 200
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 1000
+window 0
+
+# Settings again by keyboard, cancelled with Esc.
+keydown 0x12
+keydown 0x47 0x67
+keyup 0x47
+keyup 0x12
+wait 300
+keydown 0x4f 0x6f
+keyup 0x4f
+wait 1000
+keydown 0x1b 0x1b
+keyup 0x1b
+wait 1000
+
+# The menu bar by keyboard alone: Alt, Right, Down, Up, Left, Esc, Esc.
+move 400 300
+keydown 0x12
+keyup 0x12
+wait 200
+keydown 0x27
+keyup 0x27
+keydown 0x28
+keyup 0x28
+wait 200
+dump dialog-menu.ppm
+keydown 0x26
+keyup 0x26
+keydown 0x25
+keyup 0x25
+wait 200
+keydown 0x1b 0x1b
+keyup 0x1b
+keydown 0x1b 0x1b
+keyup 0x1b
+wait 300
+
+# Backs by keyboard: Alt+G, B; Right twice, Space, Tab, Tab, Tab, Enter.
+keydown 0x12
+keydown 0x47 0x67
+keyup 0x47
+keyup 0x12
+wait 300
+keydown 0x42 0x62
+keyup 0x42
+wait 1000
+keydown 0x27
+keyup 0x27
+keydown 0x27
+keyup 0x27
+keydown 0x20 0x20
+keyup 0x20
+wait 200
+keydown 0x09 0x09
+keyup 0x09
+keydown 0x09 0x09
+keyup 0x09
+keydown 0x09 0x09
+keyup 0x09
+wait 200
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 1000
+
+# F2 (an accelerator for a menu command) twice: No by Tab and Enter, then Yes.
+keydown 0x71
+keyup 0x71
+wait 1000
+keydown 0x09 0x09
+keyup 0x09
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 600
+keydown 0x71
+keyup 0x71
+wait 1000
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 600
+
+# Undo, enabled now, by its mnemonic; then Alt+Shift+2, an accelerator for a
+# command no menu has.
+keydown 0x12
+keydown 0x47 0x67
+keyup 0x47
+keyup 0x12
+wait 300
+keydown 0x55 0x75
+keyup 0x55
+wait 300
+keydown 0x12
+keydown 0x10
+keydown 0x32 0x22
+keyup 0x32
+keyup 0x10
+keyup 0x12
+wait 300
+
+# Backs by pointer: the fifth back, then Cancel.
+move 15 -10
+down left 15 -10
+up left 15 -10
+wait 300
+move 50 52
+down left 50 52
+up left 50 52
+wait 1000
+window 1
+move 80 100
+down left 80 100
+up left 80 100
+wait 300
+move 175 47
+down left 175 47
+up left 175 47
+wait 1000
+window 0
+
+# About by pointer, closed with Enter; Contents by Alt+H, C.
+move 58 -10
+down left 58 -10
+up left 58 -10
+wait 300
+move 80 35
+down left 80 35
+up left 80 35
+wait 1500
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 600
+keydown 0x12
+keydown 0x48 0x68
+keyup 0x48
+keyup 0x12
+wait 300
+keydown 0x43 0x63
+keyup 0x43
+wait 300
+
+# Exit from the menu.
+move 15 -10
+down left 15 -10
+up left 15 -10
+wait 300
+move 50 95
+down left 50 95
+up left 50 95
+wait 1000

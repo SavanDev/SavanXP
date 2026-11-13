@@ -254,10 +254,11 @@ static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t
         uint32_t width = a[1];
         uint32_t height = a[2];
         if (w == 0 || !read_utf16(p, a[0], title) || !sxw_guest_range(p, a[3], 8u) || width == 0u ||
-            height == 0u || width > 0x4000u || height > 0x4000u) {
+            height == 0u || width > 0x4000u || height > 0x4000u || a[5] > SXW_WINDOW_POPUP ||
+            (a[5] == SXW_WINDOW_MAIN) != (a[4] == 0u)) {
             return 0;
         }
-        uint32_t id = w->create(s->context, title, &width, &height);
+        uint32_t id = w->create(s->context, title, &width, &height, a[4], a[5], (int32_t)a[6], (int32_t)a[7]);
         if (id != 0u) {
             write_word(p, a[3], width);
             write_word(p, a[3] + 4u, height);
@@ -334,7 +335,7 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     }
     const uint32_t service = frame[1];
     static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
-                                                           1, 5, 5, 0, 1, 4, 1, 6, 2, 2};
+                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);

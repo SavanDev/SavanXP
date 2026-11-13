@@ -188,9 +188,14 @@ sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
             "${SXW_DLLS}/common/memory.c"
     DEF "${SXW_DLLS}/gdi32/gdi32.def" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
-    SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
+    SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/user32/menu.c" "${SXW_DLLS}/user32/dialog.c"
+            "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
             "${SXW_DLLS}/common/codepage.c"
     DEF "${SXW_DLLS}/user32/user32.def" LIBS gdi32 kernel32 ntdll)
+sxw_image(NAME shell32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c9c0000
+    SOURCES "${SXW_DLLS}/shell32/shell32.c" DEF "${SXW_DLLS}/shell32/shell32.def" LIBS user32)
+sxw_image(NAME comctl32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x5d090000
+    SOURCES "${SXW_DLLS}/comctl32/comctl32.c" DEF "${SXW_DLLS}/comctl32/comctl32.def")
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -222,6 +227,9 @@ add_custom_command(OUTPUT ${SXW_RESOURCE_IMAGE_FILES}
 sxw_image(NAME resource.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/resource/resource.c" LIBS user32 gdi32 kernel32
     RC "${SXW_FX}/resource/resource.rc" RC_INCLUDE "${SXW_RESOURCE_IMAGES}" RC_DEPENDS ${SXW_RESOURCE_IMAGE_FILES})
+sxw_image(NAME dialog.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/dialog/dialog.c" LIBS user32 gdi32 kernel32 shell32 comctl32
+    RC "${SXW_FX}/dialog/dialog.rc" RC_INCLUDE "${SXW_FX}/dialog")
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -244,6 +252,7 @@ set(SAVANXP_WIN32_COPY_COMMANDS
             "${SXW_SYSTEM32}/ntdll.dll" "${SXW_SYSTEM32}/kernel32.dll"
             "${SXW_SYSTEM32}/msvcrt.dll" "${SXW_SYSTEM32}/advapi32.dll"
             "${SXW_SYSTEM32}/gdi32.dll" "${SXW_SYSTEM32}/user32.dll"
+            "${SXW_SYSTEM32}/shell32.dll" "${SXW_SYSTEM32}/comctl32.dll"
             "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/")
 if(SAVANXP_INCLUDE_TEST_APPS)
     list(APPEND SAVANXP_WIN32_COPY_COMMANDS
@@ -253,7 +262,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
                 "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"
-                "${SXW_FIXTURES}/resource.exe"
+                "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/dialog.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")

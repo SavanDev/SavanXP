@@ -32,8 +32,10 @@ typedef struct sxw_window_platform {
     uint32_t (*ticks)(void *context);
     void (*display)(void *context, uint32_t *width, uint32_t *height);
     /* A new top-level window with a client area of about *width x *height,
-     * which is set to the one given. The title is UTF-8. An id > 0, or 0. */
-    uint32_t (*create)(void *context, const char *title, uint32_t *width, uint32_t *height);
+     * which is set to the one given. The title is UTF-8; kind, owner and the
+     * position are SXW_SVC_WINDOW_CREATE's. An id > 0, or 0. */
+    uint32_t (*create)(void *context, const char *title, uint32_t *width, uint32_t *height, uint32_t owner,
+                       uint32_t kind, int32_t x, int32_t y);
     void (*destroy)(void *context, uint32_t window);
     int (*set_title)(void *context, uint32_t window, const char *title);
     /* Copies the rectangles, already clipped to the buffer, from pixels

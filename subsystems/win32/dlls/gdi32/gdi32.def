@@ -29,4 +29,5 @@ EXPORTS
     TextOutW
     SxwCreateBitmapFromDIB
     SxwCreateSurfaceDC
+    SxwSetBkMode
     SxwSurfaceOfDC

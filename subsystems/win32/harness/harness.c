@@ -12,8 +12,9 @@
  * Windows are offscreen surfaces of a 1024x768 display. Their input comes from
  * SCRIPT, one action per line, given whenever the guest waits for input: a
  * guest that only polls sees none. Coordinates are the main window's client
- * coordinates (the first window still open), as in every environment's
- * script (docs/userland/WIN32.md, "Input scripts"):
+ * coordinates, counted from its marker as on a screenshot (docs/userland/
+ * WIN32.md, "Input scripts"); a popup over the point gets the pointer, keys
+ * go to the newest dialog, or to the main window:
  *
  *     move X Y                 the pointer moves
  *     down|up left|right X Y   a button goes down or up there
@@ -21,7 +22,11 @@
  *     keyup VK                 character it types, numbers in C syntax)
  *     wait MS                  nothing happens for MS milliseconds
  *     close                    the frame's close button
- *     dump FILE                the main window's pixels, as a binary PPM
+ *     window N                 from here on, the N-th dialog open (0: the
+ *                              main window again)
+ *     dump FILE [WxH]          the window's client area from its marker,
+ *                              W x H or all of it, its popups over it, as a
+ *                              binary PPM: what a screenshot shows
  *
  * With a script the guest's millisecond clock is virtual: it advances only
  * through waits, so timers fire at the same point of every run.
@@ -247,9 +252,15 @@ typedef struct offscreen {
     uint32_t width;
     uint32_t height;
     uint32_t *pixels;
+    uint32_t owner;
+    uint32_t kind;
+    int32_t x; /* a popup's place in its owner's client area */
+    int32_t y;
+    uint32_t order; /* when it was created */
 } offscreen;
 
 static offscreen g_windows[MAX_WINDOWS];
+static uint32_t g_created;
 static FILE *g_script;
 static const char *g_script_path;
 static unsigned g_script_line;
@@ -257,6 +268,7 @@ static uint32_t g_clock;      /* virtual milliseconds, with a script */
 static uint32_t g_wait_left;  /* of the script's current wait */
 static uint32_t g_after_script;
 static uint32_t g_buttons;
+static uint32_t g_target;     /* the script's "window N" */
 static struct timespec g_started;
 
 static uint32_t ticks(void *context) {
@@ -275,9 +287,17 @@ static void display(void *context, uint32_t *width, uint32_t *height) {
     *height = DISPLAY_HEIGHT;
 }
 
-static uint32_t window_create(void *context, const char *title, uint32_t *width, uint32_t *height) {
+static offscreen *window_of(uint32_t id) {
+    return id >= 1u && id <= MAX_WINDOWS && g_windows[id - 1u].used ? &g_windows[id - 1u] : NULL;
+}
+
+static uint32_t window_create(void *context, const char *title, uint32_t *width, uint32_t *height, uint32_t owner,
+                              uint32_t kind, int32_t x, int32_t y) {
     (void)context;
     (void)title;
+    if (kind != SXW_WINDOW_MAIN && window_of(owner) == NULL) {
+        return 0;
+    }
     for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
         if (!g_windows[i].used) {
             uint32_t w = *width > DISPLAY_WIDTH ? DISPLAY_WIDTH : *width;
@@ -289,14 +309,15 @@ static uint32_t window_create(void *context, const char *title, uint32_t *width,
             g_windows[i].used = 1;
             g_windows[i].width = *width = w;
             g_windows[i].height = *height = h;
+            g_windows[i].owner = owner;
+            g_windows[i].kind = kind;
+            g_windows[i].x = x;
+            g_windows[i].y = y;
+            g_windows[i].order = ++g_created;
             return i + 1u;
         }
     }
     return 0;
-}
-
-static offscreen *window_of(uint32_t id) {
-    return id >= 1u && id <= MAX_WINDOWS && g_windows[id - 1u].used ? &g_windows[id - 1u] : NULL;
 }
 
 static void window_destroy(void *context, uint32_t id) {
@@ -336,27 +357,133 @@ static int window_present(void *context, uint32_t id, const uint32_t *pixels, ui
     return 0;
 }
 
-static uint32_t main_window(void) {
+/* The oldest open window of a kind, or with index > 0 the index-th one;
+ * 0 when there is none. */
+static uint32_t nth_window(uint32_t kind, uint32_t index) {
+    uint32_t found[MAX_WINDOWS];
+    uint32_t n = 0;
     for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
-        if (g_windows[i].used) {
-            return i + 1u;
+        if (g_windows[i].used && g_windows[i].kind == kind) {
+            found[n++] = i + 1u;
         }
     }
-    return 0;
+    for (uint32_t i = 1; i < n; ++i) {
+        for (uint32_t j = i; j > 0 && g_windows[found[j] - 1u].order < g_windows[found[j - 1u] - 1u].order; --j) {
+            const uint32_t t = found[j];
+            found[j] = found[j - 1u];
+            found[j - 1u] = t;
+        }
+    }
+    const uint32_t at = index > 0 ? index - 1u : 0u;
+    return at < n ? found[at] : 0u;
 }
 
-static void dump(const char *path) {
-    offscreen *w = window_of(main_window());
+/* The window the script means: the main window, or with "window N" the
+ * N-th dialog open. */
+static uint32_t target_window(void) {
+    return g_target == 0 ? nth_window(SXW_WINDOW_MAIN, 0) : nth_window(SXW_WINDOW_OWNED, g_target);
+}
+
+/* Where a window's client coordinates start on its pixels: at its marker,
+ * as the drivers find it on a screenshot (a 4x4 square, magenta for the
+ * main window and cyan for a dialog), or at its corner without one. */
+static void marker_of(const offscreen *w, int32_t *mx, int32_t *my) {
+    const uint32_t color = w->kind == SXW_WINDOW_MAIN ? 0xff00ffu : 0x00ffffu;
+    *mx = 0;
+    *my = 0;
+    for (uint32_t y = 0; y + 4u <= w->height; ++y) {
+        for (uint32_t x = 0; x + 4u <= w->width; ++x) {
+            int square = 1;
+            for (uint32_t i = 0; i < 16u && square; ++i) {
+                square = w->pixels[(y + i / 4u) * w->width + x + i % 4u] == color;
+            }
+            if (square) {
+                *mx = (int32_t)x;
+                *my = (int32_t)y;
+                return;
+            }
+        }
+    }
+}
+
+/* Script coordinates to the window an event goes to, and its coordinates
+ * there: a popup of the target window takes a pointer over it. */
+static uint32_t route_pointer(int32_t x, int32_t y, int32_t *out_x, int32_t *out_y) {
+    const uint32_t id = target_window();
+    offscreen *w = window_of(id);
+    int32_t mx;
+    int32_t my;
+    marker_of(w, &mx, &my);
+    x += mx;
+    y += my;
+    uint32_t best = 0;
+    for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
+        const offscreen *p = &g_windows[i];
+        if (p->used && p->kind == SXW_WINDOW_POPUP && p->owner == id && x >= p->x && y >= p->y &&
+            x < p->x + (int32_t)p->width && y < p->y + (int32_t)p->height &&
+            (best == 0 || p->order > g_windows[best - 1u].order)) {
+            best = i + 1u;
+        }
+    }
+    if (best != 0) {
+        *out_x = x - g_windows[best - 1u].x;
+        *out_y = y - g_windows[best - 1u].y;
+        return best;
+    }
+    *out_x = x;
+    *out_y = y;
+    return id;
+}
+
+/* Keys go to the newest dialog, or to the main window. */
+static uint32_t active_window(void) {
+    uint32_t best = nth_window(SXW_WINDOW_MAIN, 0);
+    for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (g_windows[i].used && g_windows[i].kind == SXW_WINDOW_OWNED &&
+            (best == 0 || g_windows[i].order > g_windows[best - 1u].order)) {
+            best = i + 1u;
+        }
+    }
+    return best;
+}
+
+/* The window's client area as a screenshot shows it: from its marker,
+ * width x height (0 for the rest of the window), its popups over it. */
+static void dump(const char *path, uint32_t width, uint32_t height) {
+    const uint32_t id = target_window();
+    offscreen *w = window_of(id);
     FILE *f = w != NULL ? fopen(path, "wb") : NULL;
     if (f == NULL) {
-        fprintf(stderr, "win32: %s:%u: cannot dump the main window to %s\n", g_script_path, g_script_line, path);
+        fprintf(stderr, "win32: %s:%u: cannot dump the window to %s\n", g_script_path, g_script_line, path);
         exit(125);
     }
-    fprintf(f, "P6\n%u %u\n255\n", w->width, w->height);
-    for (uint32_t i = 0; i < w->width * w->height; ++i) {
-        const uint32_t p = w->pixels[i];
-        const unsigned char rgb[3] = {(unsigned char)(p >> 16), (unsigned char)(p >> 8), (unsigned char)p};
-        fwrite(rgb, 1, 3, f);
+    int32_t mx;
+    int32_t my;
+    marker_of(w, &mx, &my);
+    if (width == 0u || width > w->width - (uint32_t)mx) {
+        width = w->width - (uint32_t)mx;
+    }
+    if (height == 0u || height > w->height - (uint32_t)my) {
+        height = w->height - (uint32_t)my;
+    }
+    fprintf(f, "P6\n%u %u\n255\n", width, height);
+    for (uint32_t y = (uint32_t)my; y < (uint32_t)my + height; ++y) {
+        for (uint32_t x = (uint32_t)mx; x < (uint32_t)mx + width; ++x) {
+            uint32_t p = w->pixels[y * w->width + x];
+            uint32_t order = 0;
+            for (uint32_t i = 0; i < MAX_WINDOWS; ++i) {
+                const offscreen *o = &g_windows[i];
+                const int32_t px = (int32_t)x - o->x;
+                const int32_t py = (int32_t)y - o->y;
+                if (o->used && o->kind == SXW_WINDOW_POPUP && o->owner == id && o->order > order && px >= 0 &&
+                    py >= 0 && px < (int32_t)o->width && py < (int32_t)o->height) {
+                    p = o->pixels[(uint32_t)py * o->width + (uint32_t)px];
+                    order = o->order;
+                }
+            }
+            const unsigned char rgb[3] = {(unsigned char)(p >> 16), (unsigned char)(p >> 8), (unsigned char)p};
+            fwrite(rgb, 1, 3, f);
+        }
     }
     fclose(f);
 }
@@ -393,9 +520,17 @@ static int next_action(sxw_event *event) {
             continue;
         }
         memset(event, 0, sizeof(*event));
-        event->window = main_window();
-        if (event->window == 0u && strcmp(verb, "wait") != 0) {
-            script_error("there is no window");
+        if (strcmp(verb, "window") == 0) {
+            if (sscanf(line, "%*s %ld", &x) != 1 || x < 0 || x >= (long)MAX_WINDOWS) {
+                script_error("window needs a number");
+            }
+            g_target = (uint32_t)x;
+            continue;
+        }
+        event->window = target_window();
+        const int keyed = strcmp(verb, "keydown") == 0 || strcmp(verb, "keyup") == 0;
+        if (event->window == 0u && strcmp(verb, "wait") != 0 && !keyed) {
+            script_error("there is no such window");
         }
         if (strcmp(verb, "move") == 0 && sscanf(line, "%*s %ld %ld", &x, &y) == 2) {
             event->kind = SXW_EVENT_POINTER;
@@ -411,6 +546,7 @@ static int next_action(sxw_event *event) {
                 script_error("a key needs a virtual key from 1 to 0xff");
             }
             event->kind = SXW_EVENT_KEY;
+            event->window = active_window();
             event->a = (uint32_t)vk;
             event->b = verb[3] == 'd' ? 1u : 0u;
             event->c = event->b ? (uint32_t)ch : 0u;
@@ -420,14 +556,20 @@ static int next_action(sxw_event *event) {
             g_wait_left = (uint32_t)x;
             return 0;
         } else if (strcmp(verb, "dump") == 0 && sscanf(line, "%*s %399s", word) == 1) {
-            dump(word);
+            unsigned width = 0;
+            unsigned height = 0;
+            (void)sscanf(line, "%*s %*s %ux%u", &width, &height);
+            dump(word, width, height);
             continue;
         } else {
             script_error("not an action");
         }
         if (event->kind == SXW_EVENT_POINTER) {
-            event->a = (uint32_t)x;
-            event->b = (uint32_t)y;
+            int32_t px;
+            int32_t py;
+            event->window = route_pointer((int32_t)x, (int32_t)y, &px, &py);
+            event->a = (uint32_t)px;
+            event->b = (uint32_t)py;
             event->c = g_buttons;
         }
         event->time = g_clock;

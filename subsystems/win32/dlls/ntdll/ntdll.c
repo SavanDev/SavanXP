@@ -177,16 +177,23 @@ static heap_block *g_free;
 static heap_arena g_arenas[64];
 static u32 g_arena_count;
 
-static int in_arena(u32 address) {
+/* The arena an address is in, 1 to g_arena_count; 0 for none. */
+static u32 arena_of(u32 address) {
     for (u32 i = 0; i < g_arena_count; ++i) {
         if (address >= g_arenas[i].start && address < g_arenas[i].end) {
-            return 1;
+            return i + 1u;
         }
     }
     return 0;
 }
 
-/* Inserts a free block in address order, merged with free neighbours. */
+static int in_arena(u32 address) {
+    return arena_of(address) != 0;
+}
+
+/* Inserts a free block in address order, merged with free neighbours of
+ * the same arena: two arenas the host happened to map next to each other
+ * are separate mappings, and a block across them is not one range. */
 static void insert_free(heap_block *block) {
     heap_block **link = &g_free;
     heap_block *previous = 0;
@@ -198,11 +205,12 @@ static void insert_free(heap_block *block) {
     block->next_free = *link;
     *link = block;
     heap_block *next = block->next_free;
-    if (next != 0 && (u32)block + block->size == (u32)next) {
+    if (next != 0 && (u32)block + block->size == (u32)next && arena_of((u32)next) == arena_of((u32)block)) {
         block->size += next->size;
         block->next_free = next->next_free;
     }
-    if (previous != 0 && (u32)previous + previous->size == (u32)block) {
+    if (previous != 0 && (u32)previous + previous->size == (u32)block &&
+        arena_of((u32)previous) == arena_of((u32)block)) {
         previous->size += block->size;
         previous->next_free = block->next_free;
     }

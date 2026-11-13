@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 3u
+#define SXW_ABI_VERSION 4u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -95,10 +95,20 @@
 #define SXW_SVC_TICKS 14u
 /* (out size[2]) -> 0: the screen's width and height in pixels. */
 #define SXW_SVC_DISPLAY 15u
-/* (title, width, height, out size[2]) -> a window id, or 0. Asks for a
- * client area of width x height; out size is the one the host gave, which a
- * window manager may clip. The title is UTF-16. */
+/* (title, width, height, out size[2], owner, kind, x, y) -> a window id, or
+ * 0. Asks for a client area of width x height; out size is the one the host
+ * gave, which a window manager may clip. The title is UTF-16. kind is one of
+ * SXW_WINDOW_*; owner is a window id, 0 for SXW_WINDOW_MAIN. */
 #define SXW_SVC_WINDOW_CREATE 16u
+/* The program's own top-level window, framed. */
+#define SXW_WINDOW_MAIN 0u
+/* Framed, above its owner, placed by the host (a dialog). */
+#define SXW_WINDOW_OWNED 1u
+/* Frameless, at (x, y) of its owner's client area (a menu). It never takes
+ * the keyboard: keys go to the owner. A press outside every window of the
+ * program closes it with SXW_EVENT_CLOSE; one on another of its windows
+ * goes to that window. */
+#define SXW_WINDOW_POPUP 2u
 /* (window) -> 0 */
 #define SXW_SVC_WINDOW_DESTROY 17u
 /* (window, pixels, stride, size[2], rects, count) -> 0, or SXW_FAILED.

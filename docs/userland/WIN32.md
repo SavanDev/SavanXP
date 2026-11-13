@@ -6,7 +6,7 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W4 complete (2026-11-13).** This document describes what exists
+> **Status: W5 complete (2026-11-13).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
@@ -17,7 +17,9 @@ A PE32 program runs on SavanXP: `winhost.sxe` loads it and its DLLs below
 window. The same loader and DLLs run on the build host in a harness, with
 offscreen windows and scripted input, and the fixtures that check both give
 the bytes, the messages and the pixels Windows XP gives. The user's own
-Windows XP `cards.dll` draws every card here exactly as it does there. Nothing of the
+Windows XP `cards.dll` draws every card here exactly as it does there, and a
+program's menu bar, popup menus, dialogs, message boxes and the controls
+Solitaire's dialogs hold behave, by pointer and by keyboard, as they do there. Nothing of the
 Windows API beyond what those fixtures import exists yet, and nothing starts
 a `.exe` but a command line naming `winhost`.
 
@@ -26,21 +28,24 @@ subsystems/win32/
   include/       windows.h (the subsystem's own), sxw_abi.h (host <-> DLLs)
   pe/            the PE32 parser and mapper, portable C
   loader/        the process loader, portable C
-  dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32 (PE32);
-                 common/ holds the code page, regions and memcpy they share
+  dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32,
+                 comctl32 (PE32); common/ holds the code page, regions and
+                 memcpy they share
   fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing, startup,
                  window (+ its input script), cards, resource (+ its .rc and
-                 the script that writes its images)
+                 the script that writes its images), dialog (+ its .rc and
+                 input script)
   harness/       win32-harness: the loader and gate on Linux x86-64
   host/          winhost.sxe: the loader and gate on SavanXP
-  tests/         win32test.sxe: the win32-hello and win32-window smoke runner
+  tests/         win32test.sxe: the runner of the win32 smoke scenarios
   Win32.cmake
 ```
 
 On the disk image, under `/system/win/drive_c` (the guest's `C:`):
 
 ```text
-windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32 and user32 .dll
+windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32
+                    and comctl32 .dll
 tests/              the fixtures, when the test applications are built
 ```
 
@@ -182,12 +187,16 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 - **Services.** `ntdll!SxwService(number, arguments)` calls through that
   address with a flat array of 32-bit values. The host checks every guest
   address against the regions it mapped and never calls guest code. Version
-  3 has twenty-one: version, exit, standard handle, write, debug output; the
+  4 has twenty-one: version, exit, standard handle, write, debug output; the
   clock; a new region for the heap; find, load and resolve a module; open,
   close, query and set a registry key or value; and for windows, the
   millisecond clock, the screen's size, create, destroy, title and present
   a top-level window, and wait for an event (pointer, key, resize, close).
-  `loader/services.c` answers them for both hosts.
+  A window is created as the program's main window, as a window owned by
+  another (a dialog, which the host places), or as a popup at a point of its
+  owner's client area (a menu: no frame, never the keyboard, closed by a
+  press outside the program's windows). `loader/services.c` answers them for
+  both hosts.
 - **Process parameters.** `RTL_USER_PROCESS_PARAMETERS` sits in the PEB's
   page with the image path, the command line and the standard handles. A
   path under the host's `drive_c` folder is `C:\...`; any other is `Z:\...`,
@@ -214,8 +223,8 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 Each DLL is a directory with C sources and a `.def` file. They are built at
 Windows XP's own bases (`ntdll.dll` at `0x7C900000`, `kernel32.dll` at
 `0x7C800000`, `msvcrt.dll` at `0x77C10000`, `advapi32.dll` at `0x77DD0000`,
-`gdi32.dll` at `0x77F10000`, `user32.dll` at `0x7E410000`), so none of them
-relocates. `include/windows.h` is the subsystem's own header;
+`gdi32.dll` at `0x77F10000`, `user32.dll` at `0x7E410000`, `shell32.dll` at
+`0x7C9C0000`, `comctl32.dll` at `0x5D090000`), so none of them relocates. `include/windows.h` is the subsystem's own header;
 it declares what the DLLs and fixtures use and grows with the W0 matrix.
 `dlls/common/codepage.c`, compiled into the DLLs that need it, converts
 between UTF-16 and the "ANSI" code page, Windows-1252, the one Windows XP uses
@@ -227,8 +236,10 @@ in Western European languages.
 | `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; the matrix's nine: `GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress` |
 | `msvcrt.dll` | The matrix's eighteen: `__set_app_type`, `__p__fmode`, `__p__commode`, `_adjust_fdiv`, `__setusermatherr`, `_initterm`, `__getmainargs`, `_acmdln`, `_controlfp`, `_except_handler3`, `_XcptFilter`, `exit`, `_exit`, `_cexit`, `_c_exit`, `rand`, `srand`, `time` |
 | `advapi32.dll` | The matrix's six: `RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey` |
-| `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB` |
-| `user32.dll` | Of the matrix's sixty-two, fifty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`) and resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`); the full list is `dlls/user32/user32.def`. Menus, dialogs, `WinHelpW` and `GetMenu` are W5's |
+| `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB`, `SxwSetBkMode` |
+| `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
+| `shell32.dll` | `ShellAboutW` |
+| `comctl32.dll` | `InitCommonControlsEx`, which registers nothing: Solitaire uses no common control |
 
 ### What they do, and what they refuse
 
@@ -251,7 +262,9 @@ in Western European languages.
   `LPTR`) and refuses `LMEM_MOVEABLE` with `ERROR_INVALID_PARAMETER`, rather
   than hand out a fixed block as if it were moveable. The heap behind it is
   in `ntdll`: first fit over 256 KiB arenas the host maps, 8-byte aligned
-  blocks, free neighbours merged. `LocalFree` of a pointer that is not a live
+  blocks, free neighbours merged when they are in the same arena (two arenas
+  the host maps side by side are still two regions, and a block across them
+  would fail the host's range checks). `LocalFree` of a pointer that is not a live
   block fails with `ERROR_INVALID_HANDLE`.
 - **`MulDiv`** rounds half away from zero over a 64-bit product and answers
   -1 for a zero divisor or a result that does not fit, as Windows XP did for
@@ -333,14 +346,15 @@ rectangle.
 
 What is refused or bounded, and why:
 
-- **One top-level window per process**, the `windowd` main window; a
-  program's dialogs and popups are owned windows, W5's. `CreateWindowEx`
-  with a menu bar fails with `ERROR_CALL_NOT_IMPLEMENTED` until W5.
+- **One main window per process**, the `windowd` main window; every other
+  top-level window (a dialog, a message box, a menu's popup) is a window it
+  owns, since `windowd` owns windows only from a main one.
 - **The window manager owns a top-level window's size and place.** A size
   it does not grant arrives as `WM_SIZE`; `MoveWindow` moves and sizes a
   child but only moves a top-level window; `ClientToScreen` counts from the
   position the program gave, since `windowd` does not say where it put the
-  window.
+  window. A dialog is placed by the window manager, centred over its owner,
+  not where its template says.
 - **`SetCursorPos` fails** with `ERROR_CALL_NOT_IMPLEMENTED`: the pointer is
   the window manager's. Only keyboard play in Solitaire calls it, to put the
   pointer on the selected card, and the game is complete with the mouse
@@ -387,6 +401,109 @@ cursors and icons, by id with a NULL instance, have handles and no image.
 `WM_KEYDOWN` or `WM_SYSKEYDOWN` that matches a virtual-key entry with exactly
 its Shift, Ctrl and Alt, or a `WM_CHAR` or `WM_SYSCHAR` that matches a
 character entry. Files (`LR_LOADFROMFILE`) are refused.
+
+## Menus, dialogs and controls
+
+`dlls/user32/menu.c`, `dialog.c` and `controls.c`; what they share with
+`user32.c` is in `user32_private.h`. The messages and their order are the
+ones Windows XP sent `dialog.exe` (see [Fixtures](#fixtures)), whose output
+is byte for byte Windows XP's.
+
+**Menus.** A `MENU` resource (the classic format) becomes a menu bar when its
+class names it, or when `CreateWindowEx` is given one. The bar is drawn on
+the window's surface, 20 pixels above the client area, which the host's
+frame does not know about; `AdjustWindowRect` and `WM_NCCALCSIZE` count 19
+for it, as Windows XP does with a caption one pixel shorter than its metric.
+A press on the bar is `WM_NCLBUTTONDOWN` with `HTMENU`, which
+`DefWindowProc` turns into `WM_SYSCOMMAND(SC_MOUSEMENU)`; Alt or F10 pressed
+and released alone, or Alt with a letter (`WM_SYSCHAR`), is
+`WM_SYSCOMMAND(SC_KEYMENU)`. Either runs the menu loop:
+
+- It captures the pointer for the owner and sends `WM_ENTERMENULOOP`,
+  `WM_INITMENU`, then for each selection `WM_MENUSELECT` (the item's index
+  on the bar, its id in a popup, with `MF_MOUSESELECT` when the pointer chose
+  it) and for each popup shown `WM_INITMENUPOPUP` and, when it goes,
+  `WM_UNINITMENUPOPUP` followed by the bar item's `WM_MENUSELECT` again.
+  It ends with `WM_CAPTURECHANGED`, `WM_MENUSELECT` with `0xFFFF` and no
+  menu, and `WM_EXITMENULOOP`; the chosen command is posted as `WM_COMMAND`.
+- The pointer moves between bar items and over popup items; a release on an
+  item chooses it, a press outside ends the loop. A grayed item can be
+  selected but not chosen.
+- Keys: arrows move along the bar and the popup (separators skipped), Enter
+  chooses, Escape closes the popup and then the menu, Alt or F10 ends it,
+  and a letter chooses the item whose mnemonic it is (`WM_MENUCHAR` when
+  none is). Keys the menu acts on are not translated into characters. A menu
+  entered by keyboard underlines its mnemonics; one entered by pointer does
+  not.
+- A popup is a host popup at the item's lower left: framed by a raised
+  edge, items 17 pixels high, separators 9, as Windows XP's classic menus.
+  Windows XP's drop shadow is not drawn.
+
+`EnableMenuItem` answers the old state, or -1 for no such item, and redraws
+nothing, as Windows waits for `DrawMenuBar`. `TranslateAcceleratorW`, for a
+command the menu has, sends `WM_INITMENU` and `WM_INITMENUPOPUP` first,
+nothing more when the item is grayed, and `WM_UNINITMENUPOPUP` after
+`WM_COMMAND`. Releasing Alt is `WM_SYSKEYUP` only when no other key went
+down or up while it was held; otherwise it is `WM_KEYUP`.
+
+**Dialogs.** `DialogBoxParamW` reads a classic `DLGTEMPLATE`. Its font gives
+the dialog base units, the alphabet's average width rounded as Windows does
+and the font's height, 6 and 13 for `MS Shell Dlg` 8 here as on Windows XP,
+so a dialog and its controls have Windows XP's sizes and places in pixels.
+In Windows XP's order: the owner is disabled (`WM_CANCELMODE`,
+`WM_KILLFOCUS`, `WM_ENABLE`), the dialog gets `WM_SETFONT`, its controls are
+made (each with `WS_EX_NOPARENTNOTIFY` and `WM_SETFONT`), `WM_INITDIALOG`
+names the first tab stop and, answered TRUE, focusing it activates the
+dialog before it is visible; `WM_CHANGEUISTATE(UIS_INITIALIZE)` follows, and
+the modal loop shows the dialog when its queue first runs dry and sends the
+owner `WM_ENTERIDLE`. `EndDialog` enables the owner, gives the dialog itself
+the focus, hides it without `WM_SHOWWINDOW` and activates the owner; the loop
+then destroys it. The dialog manager's procedure erases with the
+`WM_CTLCOLORDLG` brush, answers `DM_GETDEFID` with the template's default
+button, saves and restores the focus on deactivation, and turns `WM_CLOSE`
+into `IDCANCEL`.
+
+The keyboard is the dialog manager's: Tab and Shift+Tab move through the tab
+stops, arrows through a group (from a `WS_GROUP` control to the next), Enter
+is the focused default button or `DM_GETDEFID`'s, Escape is `IDCANCEL`, and a
+mnemonic, with or without Alt, clicks its button or focuses what follows its
+static text or group box. A push button that gets the focus becomes the
+default one while it has it. The dialog asks itself `DM_GETDEFID` when the
+focus moves, except from one push button to another or onto a push button by
+pointer, and the button that lost the focus is redrawn: Windows XP's order,
+which shows in the messages. Keyboard cues (focus rectangles and mnemonic
+underlines) start hidden in a dialog the pointer opened and shown in one the
+keyboard opened, and appear with Tab, the arrows or Alt (`WM_CHANGEUISTATE`,
+`WM_UPDATEUISTATE`).
+
+`MessageBoxW` is a dialog built in memory, with an icon of its own drawing,
+the text and its buttons (`OK`, `Cancel`, `&Yes`, `&No`, `&Abort`, `&Retry`,
+`&Ignore`); Escape is `IDCANCEL` only when there is a Cancel button, or `IDOK`
+for a lone OK. `ShellAboutW` (`shell32`) is one too, built by `shell32` and
+run through `SxwDialogBoxIndirectParamW`; it names SavanXP rather than show
+Windows' own box. `WinHelpW` fails: there is no help engine, and Solitaire
+shows its own message.
+
+**Controls.** The `Button` and `Static` classes, with Windows XP's classic
+look read back pixel by pixel: push and default push buttons, check boxes
+(automatic or not), radio buttons (automatic or not), three-state boxes, group
+boxes, owner-drawn buttons (`WM_DRAWITEM` with `ODA_DRAWENTIRE`, `ODA_FOCUS`
+and `ODA_SELECT`, and the hidden cues as `ODS_NOFOCUSRECT` and `ODS_NOACCEL`),
+and left-, centre- and right-aligned static text. A push or owner-drawn button
+asks its parent for `WM_CTLCOLORBTN`, the others for `WM_CTLCOLORSTATIC`, and
+paints the background the answer gives. A click presses a button while the
+pointer is on it and notifies `BN_CLICKED` on release; Space does the same;
+`BM_CLICK` too. An owner-drawn or radio button notifies a double click. A
+radio button the keyboard moves to is clicked, and a checked radio button is
+its group's tab stop. Group boxes and plain static text let the pointer
+through to what is under them. State changes are painted at once, as Windows
+paints them; a style change waits for the next `WM_PAINT`. The focus
+rectangle is `DrawFocusRect`'s: the outline's pixels at odd x + y XORed with
+the background colour, the others with the text colour.
+
+What is left out: dialog templates in the extended format, other control
+classes (edit, list box, combo box, scroll bar: Solitaire creates none),
+the system menu, submenus, owner-drawn menu items and menu bars that wrap.
 
 ## The registry
 
@@ -450,6 +567,7 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
 | `cards.exe` | Loads the user's own `cards.dll` from its folder with `LoadLibraryA` and draws, with `cdtInit`, `cdtDrawExt` and `cdtTerm`, the 52 faces and 12 backs at 71x96 on Solitaire's green, the other modes (inverted, the empty pile's marks, X, O) on a few cards, and the 12 backs at 33x62 as the Deck dialog does. It writes a CRC-32 of each drawing's pixels read back with `GetPixel`, or, with the argument `pixels`, the pixels themselves | `expected/cards.out`, status 0. The pixel listing describes Microsoft's art and is kept with the user's files, never here |
 | `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
+| `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
 
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'
@@ -493,6 +611,7 @@ these files built with Clang and lld 23.1.4:
 | `window.exe` | `1ec8351db7662ff5471b7bd587ef1734da6fca73416def7e4d39b91875e30dba` |
 | `cards.exe` | `940f7be09e9f614497ef2b889bebab73233dccdbf8c37b9d68e190c1e60cbcca` |
 | `resource.exe` | `bf9ca037356201d43996cf64670e301c4e63699ec8902f5b753d146ab0404c43` |
+| `dialog.exe` | `2378b6b12d0b486e7cf59fffca46ce2ef137f909905824dec91d5e9fe57836e8` |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -525,6 +644,21 @@ table there and the fixture's own fill here. `resource.exe` ran three times
 there: what it first showed decided the stretch rules and the deferred
 delete above, and that a colour brush is dithered on a monochrome bitmap.
 
+`dialog.exe` was driven by its input script on the same machine, once with
+the argument `all` and once without, and its output here is identical.
+What `all` showed decided the list it keeps: it leaves out what the
+window manager decides (`WM_NCPAINT`, `WM_NCACTIVATE`, `WM_GETTEXT` for the
+caption, the `WM_WINDOWPOS*` pairs, the input method's), what timing
+decides (`WM_ENTERIDLE`, pointer moves, hit tests and cursor queries), paint
+messages (on Windows XP the main window repaints where a dialog covered it;
+on SavanXP nothing covers it), and `WM_CTLCOLOR*`, which come with every
+paint. Screenshots of both dialogs and both menus were compared there too:
+the frames, glyphs, edges, separators, focus rectangles and the group boxes'
+labels are Windows XP's, pixel for pixel, outside the text.
+`expected/dialog-menu.ppm.gz` (the Help menu open) and
+`expected/dialog-settings.ppm.gz` (the Settings dialog) are the harness's
+images; SavanXP's screen must equal them.
+
 ## Input scripts
 
 A fixture with a window comes with an input script, played the same way in
@@ -532,7 +666,8 @@ every environment: by the harness itself (`--input`), and over QMP into
 Windows XP and into SavanXP (`tools/win32_input.py`, which finds the client
 area on a screenshot by the fixture's marker, a 4x4 magenta square at its
 top-left corner, and needs an absolute pointer). One action per line, in the
-main window's client coordinates:
+main window's client coordinates (the menu bar is above them, at y < 0), or
+a dialog's after `window 1`, found by its cyan marker:
 
 ```text
 move X Y                 the pointer moves
@@ -541,8 +676,14 @@ keydown VK [CHAR]        a key goes down: virtual key, and the UTF-16
 keyup VK                 character it types (numbers in C syntax)
 wait MS                  nothing happens for MS milliseconds
 close                    the frame's close (Alt+F4 over QMP)
-dump FILE                the client area, saved as a binary PPM
+window N                 the N-th dialog open from here on; 0 the main window
+dump FILE [WxH]          the client area, W x H or the whole, saved as a
+                         binary PPM with any popup over it
 ```
+
+The harness counts coordinates from each window's marker too, gives the
+pointer to a popup it is over, and keys to the newest dialog, as a window
+manager would.
 
 In the harness the guest's millisecond clock is virtual: it moves only
 through `wait`, and an action is given only when the guest waits for input,
@@ -597,12 +738,19 @@ It is the same loader as the harness over a different platform:
 - **Windows** are `windowd`'s, through `sxnwm` (SUN's windowing layer). The
   first top-level window connects; the title goes in its presentation, the
   client size is asked for and waited on for up to a second, and a size the
-  window manager gives later, or its close, becomes an event. Presenting
-  copies the guest's rectangles onto the surface and submits them. Input
-  comes from the native ring: pointer records as they are, keys as Windows
-  virtual keys with the character the keyboard layout typed (none with Ctrl
-  or Alt held), the window manager's own shortcuts (Alt+F4, Alt+Tab) never
-  reaching the guest. The guest's millisecond clock is the native one.
+  window manager gives later, or its close, becomes an event. Every other
+  window is an owned window of that connection (`sxnwm_window_open_ex`): a
+  dialog with its title, a menu as a popup that a press elsewhere dismisses,
+  which arrives as the popup's close. Presenting copies the guest's
+  rectangles onto the right surface and submits them. Input comes from the
+  native ring for the main window and from the event pipe for the others:
+  pointer records as they are, keys as Windows virtual keys with the
+  character the keyboard layout typed (none with Ctrl held), the window
+  manager's own shortcuts (Alt+F4, Alt+Tab) never reaching the guest. A key
+  arrives as the character it typed, so Shift and a digit are mapped back to
+  the digit's key by the layout the kernel applies (`INPUT_IOC_GET_LAYOUT`):
+  Alt+Shift+2 is the accelerator Solitaire knows in Spanish and in English.
+  The guest's millisecond clock is the native one.
 
 `winhost` itself is linked at `0x400000` and ends near `0x48A000`, well
 below `0x01000000`, where `sol.exe` must load. A fixture that prefers
@@ -614,7 +762,8 @@ images of about five protection runs each (headers, code, read-only data,
 data, relocations), the stack, the TEB block and the trampoline.
 `initorder.exe` uses 29. A window adds `windowd`'s two (surface and input
 ring) and the region of its pixel buffer when it is larger than a heap
-arena; Solitaire's ten images need about 50.
+arena; an open dialog or menu adds the view of its surface. Solitaire's ten
+images need about 50.
 
 ## Tests
 
@@ -643,9 +792,10 @@ and compaction when values are replaced again and again.
 `win32-harness-test` runs the fixtures through the harness and
 compares the output bytes and the full 32-bit status with what Windows XP
 produced for the same files. A failed load must also name its cause and
-release every mapping and file. `window.exe` plays its input script, and
-the client area it dumps must equal `expected/window.ppm.gz`; a different
-one is kept in the build directory as `win32-window-actual.ppm`.
+release every mapping and file. `window.exe` and `dialog.exe` play their
+input scripts, and what they dump must equal the golden images
+(`expected/window.ppm.gz`, `dialog-menu.ppm.gz`, `dialog-settings.ppm.gz`);
+a different one is kept in the build directory as `win32-NAME-actual.ppm`.
 
 `win32-window-test` checks the pure parts of `user32` and `gdi32` with the
 sanitizers on: regions against a brute-force set of pixels, including what
@@ -662,6 +812,13 @@ tablet and runs `win32test.sxe --window`, which starts `compositord` and
 the input script over QMP and compares the client area of its `dump` with
 the golden image, while the guest compares the messages and the status
 with Windows XP's. Run it under `--accel kvm` as well.
+
+`win32-dialog` (`./build.sh smoke win32-dialog`) does the same with
+`dialog.exe` (`win32test.sxe --dialog`, `tools/win32_dialog_smoke.py`): its
+menus and dialogs as `windowd` owned windows, its messages against Windows
+XP's, and the menu and the Settings dialog on the screen against their
+golden images. When an output differs, `win32test` logs the first line that
+does, both ways.
 
 `win32-cards-test` runs `cards.exe` through the harness with the user's
 `cards.dll`, from the folder named by `SAVANXP_WIN32_FIXTURES`, copied next to

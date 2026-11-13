@@ -361,6 +361,18 @@ __declspec(dllexport) void *WINAPI SxwCreateSurfaceDC(sxw_surface *surface, int 
     return 0;
 }
 
+/* SetBkMode is not in the profile; user32's controls and menus draw their
+ * text without a background. The previous mode, or 0. */
+__declspec(dllexport) int WINAPI SxwSetBkMode(void *hdc, int mode) {
+    dc *d = dc_of((HDC)hdc);
+    if (d == 0 || (mode != OPAQUE && mode != TRANSPARENT)) {
+        return 0;
+    }
+    const int old = d->back_mode;
+    d->back_mode = mode;
+    return old;
+}
+
 __declspec(dllexport) sxw_surface *WINAPI SxwSurfaceOfDC(void *hdc) {
     dc *d = dc_of((HDC)hdc);
     return d != 0 ? d->surface : 0;

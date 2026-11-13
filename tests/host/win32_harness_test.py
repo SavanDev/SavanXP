@@ -10,7 +10,8 @@ left a mapping or a file behind. startup.exe runs twice on one registry file:
 the second run reads back what the first wrote. window.exe plays its input
 script (fixtures/window/input.txt); the client area it dumps must match the
 golden image, which equals Windows XP's outside the text box
-(docs/userland/WIN32.md, "Fixtures").
+(docs/userland/WIN32.md, "Fixtures"). dialog.exe plays its own, and dumps
+its window with a menu open and its Settings dialog.
 
 With --cards FOLDER it runs only cards.exe, with the user's own cards.dll
 from FOLDER copied next to it in a temporary folder; without the file it
@@ -46,7 +47,14 @@ CASES = [
     ("startup.exe", STARTUP_ARGUMENTS, "startup-2.out", 0x5, None, True, None),
     ("window.exe", [], "window.out", 0x3, None, False, "window/input.txt"),
     ("resource.exe", [], "resource.out", 0x0, None, False, None),
+    ("dialog.exe", [], "dialog.out", 0x5, None, False, "dialog/input.txt"),
 ]
+
+# The images a scripted fixture dumps, each with a golden NAME.ppm.gz.
+DUMPS = {
+    "window.exe": ["window"],
+    "dialog.exe": ["dialog-menu", "dialog-settings"],
+}
 
 
 def run_cards(args, expected_dir):
@@ -104,8 +112,7 @@ def main():
                 problems.append(f"status {result.returncode} {errors!r}, expected {status_line}")
             if stderr_line is not None and stderr_line not in errors:
                 problems.append(f"stderr {errors!r} lacks {stderr_line!r}")
-            if script:
-                stem = pathlib.Path(name).stem
+            for stem in DUMPS.get(name, []) if script else []:
                 dump = pathlib.Path(scratch) / f"{stem}.ppm"
                 golden = gzip.decompress((expected_dir / f"{stem}.ppm.gz").read_bytes())
                 if not dump.exists():

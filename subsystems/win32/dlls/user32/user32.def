@@ -2,27 +2,35 @@ LIBRARY user32.dll
 EXPORTS
     AdjustWindowRect
     BeginPaint
+    CheckDlgButton
+    CheckRadioButton
     ClientToScreen
     CopyRect
     CreateWindowExW
     DefWindowProcW
     DestroyWindow
+    DialogBoxParamW
     DispatchMessageW
     DrawTextW
+    EnableMenuItem
     EnableWindow
+    EndDialog
     EndPaint
     FrameRect
     GetCapture
     GetClientRect
     GetDC
     GetDesktopWindow
+    GetDlgItem
     GetKeyState
+    GetMenu
     GetMessageW
     GetSysColor
     InflateRect
     IntersectRect
     InvalidateRect
     InvertRect
+    IsDlgButtonChecked
     IsIconic
     KillTimer
     LoadAcceleratorsW
@@ -32,6 +40,7 @@ EXPORTS
     LoadImageW
     LoadStringA
     LoadStringW
+    MessageBoxW
     MoveWindow
     MsgWaitForMultipleObjects
     PeekMessageW
@@ -52,3 +61,5 @@ EXPORTS
     TranslateAcceleratorW
     TranslateMessage
     UpdateWindow
+    WinHelpW
+    SxwDialogBoxIndirectParamW

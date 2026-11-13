@@ -764,6 +764,18 @@ SCENARIOS: dict[str, Scenario] = {
         no_ps2=True,
         usb_pointer="tablet",
     ),
+    "win32-dialog": _qemu_scenario(
+        "win32dialog",
+        "WIN32 DIALOG PASS",
+        "WIN32 DIALOG FAIL",
+        "Win32 menus and dialogs under windowd: messages against Windows XP, pixels against the golden images",
+        300.0,
+        ready="WIN32 DIALOG READY",
+        qmp_callback="tools/win32_dialog_smoke.py",
+        usb=True,
+        no_ps2=True,
+        usb_pointer="tablet",
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",

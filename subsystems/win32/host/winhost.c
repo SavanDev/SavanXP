@@ -376,18 +376,27 @@ static int save_registry_file(void *context, const char *text, size_t length) {
 
 /* ---- Windows and input ---------------------------------------------------- */
 /*
- * The guest's top-level window is a windowd window (sxnwm): the frame, the
- * caption and the window's place are the window manager's, the client area
- * is the surface, and input comes from the native ring. One top-level window
- * for now; a program's own dialogs are owned windows, W5's.
+ * The guest's first top-level window is a windowd window (sxnwm): the frame,
+ * the caption and the window's place are the window manager's, the client
+ * area is the surface, and input comes from the native ring. Its dialogs and
+ * menus are windows it owns (docs/desktop/OWNED_WINDOWS.md): a dialog is an
+ * owned window the window manager places, a menu a popup at a point of the
+ * main window's client area; their input comes from the event pipe.
  */
 
-#define WINDOW_ID 1u
 #define SIZE_WAIT_MS 1000u
 
-static struct sxnwm_client g_wm;
-static int g_wm_open;
-static int g_close_sent;
+typedef struct host_window {
+    struct sxnwm_client client;
+    int open;
+    int close_sent;
+} host_window;
+
+/* The main window is index 0 (guest id 1); owned window i, 1 to
+ * SAVANXP_WM_MAX_OWNED_WINDOWS, is the window manager's owned window i and
+ * the guest's id i + 1. */
+#define HOST_WINDOWS (1u + SAVANXP_WM_MAX_OWNED_WINDOWS)
+static host_window g_hosts[HOST_WINDOWS];
 static uint64_t g_started_ns;
 
 static uint32_t ticks(void *context) {
@@ -407,60 +416,106 @@ static void display(void *context, uint32_t *width, uint32_t *height) {
     }
 }
 
-static uint32_t window_create(void *context, const char *title, uint32_t *width, uint32_t *height) {
-    (void)context;
-    if (g_wm_open || sxnwm_connect(&g_wm) != 0) {
+static host_window *host_of(uint32_t id) {
+    return id >= 1u && id <= HOST_WINDOWS && g_hosts[id - 1u].open ? &g_hosts[id - 1u] : NULL;
+}
+
+static uint32_t create_main(const char *title, uint32_t *width, uint32_t *height) {
+    struct sxnwm_client *wm = &g_hosts[0].client;
+    if (sxnwm_connect(wm) != 0) {
         return 0;
     }
-    g_wm_open = 1;
-    g_close_sent = 0;
+    g_hosts[0].open = 1;
+    g_hosts[0].close_sent = 0;
     struct sxnwm_presentation_source presentation = {0};
     presentation.title = title;
-    (void)sxnwm_set_presentation(&g_wm, &presentation);
+    (void)sxnwm_set_presentation(wm, &presentation);
     /* Ask for the client size and wait a little for the window manager's
      * answer; a later change arrives as a resize event. */
-    if (g_wm.width != *width || g_wm.height != *height) {
-        (void)sxnwm_request_size(&g_wm, *width, *height);
+    if (wm->width != *width || wm->height != *height) {
+        (void)sxnwm_request_size(wm, *width, *height);
         const uint64_t deadline = sxn_clock_ns() + (uint64_t)SIZE_WAIT_MS * 1000000ull;
         while (sxn_clock_ns() < deadline) {
-            (void)sxnwm_check_resize(&g_wm);
-            if (g_wm.width == *width && g_wm.height == *height) {
+            (void)sxnwm_check_resize(wm);
+            if (wm->width == *width && wm->height == *height) {
                 break;
             }
-            (void)sxn_event_reset(g_wm.wake_fd);
-            (void)sxn_wait_one(g_wm.wake_fd, 20);
+            (void)sxn_event_reset(wm->wake_fd);
+            (void)sxn_wait_one(wm->wake_fd, 20);
         }
     }
-    *width = g_wm.width;
-    *height = g_wm.height;
-    return WINDOW_ID;
+    *width = wm->width;
+    *height = wm->height;
+    return 1u;
+}
+
+/* Every other window is owned by the main window, which is the only owner
+ * the window manager knows; a second unowned window becomes owned too. */
+static uint32_t window_create(void *context, const char *title, uint32_t *width, uint32_t *height, uint32_t owner,
+                              uint32_t kind, int32_t x, int32_t y) {
+    (void)context;
+    (void)owner;
+    if (!g_hosts[0].open) {
+        return kind == SXW_WINDOW_MAIN ? create_main(title, width, height) : 0u;
+    }
+    for (uint32_t i = 1; i < HOST_WINDOWS; ++i) {
+        if (g_hosts[i].open) {
+            continue;
+        }
+        const int popup = kind == SXW_WINDOW_POPUP;
+        if (sxnwm_window_open_ex(&g_hosts[0].client, &g_hosts[i].client, i, *width, *height, popup ? 0 : title,
+                                 popup ? SAVANXP_WM_WINDOW_ROLE_POPUP : SAVANXP_WM_WINDOW_ROLE_NORMAL,
+                                 popup ? SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE : 0u, x, y) != 0) {
+            return 0;
+        }
+        g_hosts[i].open = 1;
+        g_hosts[i].close_sent = 0;
+        *width = g_hosts[i].client.width;
+        *height = g_hosts[i].client.height;
+        return i + 1u;
+    }
+    return 0;
 }
 
 static void window_destroy(void *context, uint32_t window) {
     (void)context;
-    if (window != WINDOW_ID || !g_wm_open) {
+    host_window *h = host_of(window);
+    if (h == NULL) {
         return;
     }
-    (void)sxnwm_wait_idle(&g_wm, 200);
-    (void)sxn_unmap_view((uint64_t)(uintptr_t)g_wm.ring);
-    (void)sxn_unmap_view((uint64_t)(uintptr_t)g_wm.header);
-    const long handles[4] = {g_wm.wake_fd, g_wm.submit_fd, g_wm.events_fd, g_wm.request_fd};
+    if (window != 1u) {
+        (void)sxnwm_window_close(&g_hosts[0].client, &h->client, window - 1u);
+        h->open = 0;
+        return;
+    }
+    for (uint32_t i = 2; i <= HOST_WINDOWS; ++i) {
+        window_destroy(context, i);
+    }
+    struct sxnwm_client *wm = &h->client;
+    (void)sxnwm_wait_idle(wm, 200);
+    (void)sxn_unmap_view((uint64_t)(uintptr_t)wm->ring);
+    (void)sxn_unmap_view((uint64_t)(uintptr_t)wm->header);
+    const long handles[4] = {wm->wake_fd, wm->submit_fd, wm->events_fd, wm->request_fd};
     for (int i = 0; i < 4; ++i) {
         if (handles[i] >= 0) {
             (void)sxn_close(handles[i]);
         }
     }
-    g_wm_open = 0;
+    h->open = 0;
 }
 
 static int window_title(void *context, uint32_t window, const char *title) {
     (void)context;
-    if (window != WINDOW_ID || !g_wm_open) {
+    host_window *h = host_of(window);
+    if (h == NULL) {
         return 1;
+    }
+    if (window != 1u) {
+        return sxnwm_set_title(&h->client, title) == 0 ? 0 : 1;
     }
     struct sxnwm_presentation_source presentation = {0};
     presentation.title = title;
-    return sxnwm_set_presentation(&g_wm, &presentation) == 0 ? 0 : 1;
+    return sxnwm_set_presentation(&h->client, &presentation) == 0 ? 0 : 1;
 }
 
 static int window_present(void *context, uint32_t window, const uint32_t *pixels, uint32_t stride, uint32_t width,
@@ -468,20 +523,22 @@ static int window_present(void *context, uint32_t window, const uint32_t *pixels
     (void)context;
     (void)width;
     (void)height;
-    if (window != WINDOW_ID || !g_wm_open) {
+    host_window *h = host_of(window);
+    if (h == NULL) {
         return 1;
     }
+    struct sxnwm_client *wm = &h->client;
     struct savanxp_gpu_dirty_rect dirty[64];
     uint32_t kept = 0;
     for (uint32_t i = 0; i < count && kept < 64u; ++i) {
         const int32_t *r = &rects[4u * i];
-        const uint32_t right = (uint32_t)r[2] < g_wm.width ? (uint32_t)r[2] : g_wm.width;
-        const uint32_t bottom = (uint32_t)r[3] < g_wm.height ? (uint32_t)r[3] : g_wm.height;
+        const uint32_t right = (uint32_t)r[2] < wm->width ? (uint32_t)r[2] : wm->width;
+        const uint32_t bottom = (uint32_t)r[3] < wm->height ? (uint32_t)r[3] : wm->height;
         if ((uint32_t)r[0] >= right || (uint32_t)r[1] >= bottom) {
             continue;
         }
         for (uint32_t y = (uint32_t)r[1]; y < bottom; ++y) {
-            uint32_t *out = g_wm.pixels + y * g_wm.stride;
+            uint32_t *out = wm->pixels + y * wm->stride;
             const uint32_t *in = pixels + y * stride;
             for (uint32_t x = (uint32_t)r[0]; x < right; ++x) {
                 out[x] = in[x];
@@ -496,25 +553,48 @@ static int window_present(void *context, uint32_t window, const uint32_t *pixels
     if (kept == 0u) {
         return 0;
     }
-    long sequence = sxnwm_submit_rects(&g_wm, dirty, kept);
+    long sequence = sxnwm_submit_rects(wm, dirty, kept);
     if (sequence == -SAVANXP_EAGAIN) {
-        (void)sxnwm_wait_idle(&g_wm, 500);
-        sequence = sxnwm_submit_rects(&g_wm, dirty, kept);
+        (void)sxnwm_wait_idle(wm, 500);
+        sequence = sxnwm_submit_rects(wm, dirty, kept);
     }
     return sequence >= 0 ? 0 : 1;
 }
 
+/* The keyboard layout the kernel applies (SAVANXP_KEYBOARD_LAYOUT_*): a
+ * key arrives as the character it typed, and Shift with a digit types a
+ * different one in each. */
+static long g_layout = -1;
+
+static long keyboard_layout(void) {
+    if (g_layout < 0) {
+        g_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
+        long device = sxn_open_device("input0", SXN_DEVICE_READ);
+        if (device >= 0) {
+            long layout = sxn_device_control(device, INPUT_IOC_GET_LAYOUT, 0);
+            if (layout >= 0) {
+                g_layout = layout;
+            }
+            (void)sxn_close(device);
+        }
+    }
+    return g_layout;
+}
+
 /* A native key as a Windows virtual key, or 0. */
-static uint32_t virtual_key(uint32_t key) {
+static uint32_t virtual_key(uint32_t key, int shift) {
     if (key >= 'a' && key <= 'z') {
         return key - 'a' + 'A';
     }
     if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) {
         return key;
     }
-    static const char k_shifted_digits[] = ")!@#$%^&*(";
-    for (uint32_t i = 0; i < 10u; ++i) {
-        if (key == (uint32_t)(unsigned char)k_shifted_digits[i]) {
+    /* Shift and 0 to 9, by layout. */
+    static const char k_shifted_es[] = "=!\"#$%&/()";
+    static const char k_shifted_en[] = ")!@#$%^&*(";
+    const char *shifted = keyboard_layout() == SAVANXP_KEYBOARD_LAYOUT_EN ? k_shifted_en : k_shifted_es;
+    for (uint32_t i = 0; shift && i < 10u; ++i) {
+        if (key == (uint32_t)(unsigned char)shifted[i]) {
             return '0' + i;
         }
     }
@@ -556,9 +636,10 @@ static uint32_t virtual_key(uint32_t key) {
     }
 }
 
-/* One record of the ring as an event; 0 when it is not one the guest sees. */
-static int translate(const struct savanxp_wm_event *record, sxw_event *event) {
-    event->window = WINDOW_ID;
+/* One input record of window id as an event; 0 when it is not one the guest
+ * sees. */
+static int translate(const struct savanxp_wm_event *record, uint32_t id, sxw_event *event) {
+    event->window = id;
     event->time = ticks(0);
     if (record->kind == SAVANXP_WM_EVENT_POINTER) {
         event->kind = SXW_EVENT_POINTER;
@@ -570,14 +651,16 @@ static int translate(const struct savanxp_wm_event *record, sxw_event *event) {
     }
     if (record->kind == SAVANXP_WM_EVENT_KEY) {
         const struct savanxp_input_event *k = &record->payload.key;
-        const uint32_t vk = virtual_key(k->key);
+        const uint32_t vk = virtual_key(k->key, (k->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0u);
         if (vk == 0u || (k->type != SAVANXP_INPUT_EVENT_KEY_DOWN && k->type != SAVANXP_INPUT_EVENT_KEY_UP)) {
             return 0;
         }
         event->kind = SXW_EVENT_KEY;
         event->a = vk;
         event->b = k->type == SAVANXP_INPUT_EVENT_KEY_DOWN ? 1u : 0u;
-        const int control = (k->modifiers & (SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_ALT)) != 0u;
+        /* With Alt the character still goes along: it is the WM_SYSCHAR a
+         * menu or a dialog looks its mnemonics up by. */
+        const int control = (k->modifiers & SAVANXP_KEY_MOD_CTRL) != 0u;
         event->c = event->b && !control && k->ascii >= 0x20 && k->ascii < 0x100 && k->ascii != 0x7f
                        ? (uint32_t)k->ascii
                        : event->b && (vk == 0x08u || vk == 0x09u || vk == 0x0du || vk == 0x1bu) ? vk : 0u;
@@ -586,9 +669,55 @@ static int translate(const struct savanxp_wm_event *record, sxw_event *event) {
     return 0;
 }
 
+static int simple_event(sxw_event *event, uint32_t kind, uint32_t id, uint32_t a, uint32_t b) {
+    event->kind = kind;
+    event->window = id;
+    event->a = a;
+    event->b = b;
+    event->c = 0;
+    event->time = ticks(0);
+    return 1;
+}
+
+static int any_owned(void) {
+    for (uint32_t i = 1; i < HOST_WINDOWS; ++i) {
+        if (g_hosts[i].open) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* What is waiting, without waiting: 1 with an event. */
+static int poll_window_events(sxw_event *event) {
+    struct sxnwm_client *wm = &g_hosts[0].client;
+    if (sxnwm_check_resize(wm)) {
+        return simple_event(event, SXW_EVENT_RESIZE, 1u, wm->width, wm->height);
+    }
+    for (uint32_t i = 0; i < HOST_WINDOWS; ++i) {
+        if (g_hosts[i].open && !g_hosts[i].close_sent && sxnwm_close_requested(&g_hosts[i].client)) {
+            g_hosts[i].close_sent = 1;
+            return simple_event(event, SXW_EVENT_CLOSE, i + 1u, 0, 0);
+        }
+    }
+    struct savanxp_wm_event record;
+    while (sxnwm_poll_input(wm, &record) == 0) {
+        if (translate(&record, 1u, event)) {
+            return 1;
+        }
+    }
+    while (any_owned() && sxnwm_poll_owned_input(wm, &record) == 0) {
+        const uint32_t id = record.window_id + 1u;
+        if (record.window_id >= 1u && host_of(id) != NULL && translate(&record, id, event)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int wait_event(void *context, uint32_t timeout, sxw_event *event) {
     (void)context;
-    if (!g_wm_open) {
+    if (!g_hosts[0].open) {
         /* No window, so no input: only the time passes. */
         static long idle = -1;
         if (idle < 0) {
@@ -599,30 +728,11 @@ static int wait_event(void *context, uint32_t timeout, sxw_event *event) {
         }
         return 0;
     }
+    struct sxnwm_client *wm = &g_hosts[0].client;
     const uint64_t start = sxn_clock_ns();
     for (;;) {
-        if (sxnwm_check_resize(&g_wm)) {
-            event->kind = SXW_EVENT_RESIZE;
-            event->window = WINDOW_ID;
-            event->a = g_wm.width;
-            event->b = g_wm.height;
-            event->c = 0;
-            event->time = ticks(0);
+        if (poll_window_events(event)) {
             return 1;
-        }
-        if (sxnwm_close_requested(&g_wm) && !g_close_sent) {
-            g_close_sent = 1;
-            event->kind = SXW_EVENT_CLOSE;
-            event->window = WINDOW_ID;
-            event->a = event->b = event->c = 0;
-            event->time = ticks(0);
-            return 1;
-        }
-        struct savanxp_wm_event record;
-        while (sxnwm_poll_input(&g_wm, &record) == 0) {
-            if (translate(&record, event)) {
-                return 1;
-            }
         }
         const uint64_t waited_ms = (sxn_clock_ns() - start) / 1000000ull;
         if (timeout != SXW_INFINITE && waited_ms >= timeout) {
@@ -632,11 +742,14 @@ static int wait_event(void *context, uint32_t timeout, sxw_event *event) {
         if (timeout != SXW_INFINITE && (uint64_t)slice > timeout - waited_ms) {
             slice = (long)(timeout - waited_ms);
         }
-        (void)sxn_event_reset(g_wm.wake_fd);
-        if (g_wm.ring->tail < g_wm.ring->head) {
+        /* Reset, then look again: what arrives after the reset sets the
+         * event, and the wait returns at once. */
+        (void)sxn_event_reset(wm->wake_fd);
+        if (wm->ring->tail < wm->ring->head) {
             continue;
         }
-        (void)sxn_wait_one(g_wm.wake_fd, slice);
+        int32_t handles[2] = {(int32_t)wm->wake_fd, (int32_t)wm->events_fd};
+        (void)sxn_wait_many(handles, any_owned() ? 2u : 1u, slice);
     }
 }
 

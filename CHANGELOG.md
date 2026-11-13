@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 menus and dialogs: menu bars and popup menus by pointer and keyboard, `DialogBoxParamW` with its keyboard
+  interface, the Button and Static controls, `MessageBoxW`, and new `shell32.dll` (`ShellAboutW`) and `comctl32.dll`
+  (`InitCommonControlsEx`).** Dialogs and menus are `windowd` owned windows (private ABI v4); smoke scenario
+  `win32-dialog` checks them against Windows XP. See [WIN32.md](docs/userland/WIN32.md#menus-dialogs-and-controls).
+
 - **Win32 bitmaps and resources: memory device contexts, `BitBlt`, `StretchBlt` and monochrome/colour conversion in
   `gdi32.dll`; `LoadBitmapA`, `LoadStringW`/`A`, `LoadIconW`, `LoadImageW`, `LoadAcceleratorsW` and
   `TranslateAcceleratorW` in `user32.dll`.** The user's own Windows XP `cards.dll` draws every card as on Windows XP;
@@ -270,6 +275,9 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **Win32 programs no longer fail to present a large buffer: the guest heap stopped merging free blocks across two
+  arenas the host happened to map side by side.** See [WIN32.md](docs/userland/WIN32.md#what-they-do-and-what-they-refuse).
 
 - **Old CPUs: C1E on halt is switched off on AMD K8 revision F and family 10h (erratum 400), and XD disabled in the
   firmware is switched back on for Intel**, instead of a stalling tick or `cpu: NX/W^X is required`. Both are logged on

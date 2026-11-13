@@ -30,6 +30,8 @@ typedef struct sxw_surface {
  * DeleteObject on it frees it. */
 SXW_GDI32_PRIVATE void *__stdcall SxwCreateSurfaceDC(sxw_surface *surface, int x, int y,
                                                      const sxw_region *visible);
+/* SetBkMode for user32's own drawing: OPAQUE or TRANSPARENT; the old mode. */
+SXW_GDI32_PRIVATE int __stdcall SxwSetBkMode(void *dc, int mode);
 /* The surface of a device context, or 0. */
 SXW_GDI32_PRIVATE sxw_surface *__stdcall SxwSurfaceOfDC(void *dc);
 
