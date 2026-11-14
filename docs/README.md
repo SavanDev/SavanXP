@@ -7,8 +7,9 @@ together and why.
 Anything that has to stay true for the future of the OS lives here, not in a
 changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
-This branch progressively ports the system to i386. Start with
-[I386_PORT.md](I386_PORT.md) for current support and the ordered roadmap. Other
+This branch pursues v0.4.0 parity on i386 with minimal visual and internal
+changes, then advances to v0.4.1. Start with [I386_PORT.md](I386_PORT.md) for
+the pinned baseline, completion criteria, current support and ordered roadmap. Other
 subsystem documents describe the original system unless they explicitly record
 i386 support; retained code is not necessarily part of the active build.
 
@@ -21,8 +22,10 @@ i386 support; retained code is not necessarily part of the active build.
 
 ## Architecture
 
-- [`I386_PORT.md`](I386_PORT.md) — branch scope, current i386 baseline, ordered
-  porting milestones, migration rules and verification.
+- [`I386_PORT.md`](I386_PORT.md) — version parity targets and minimal-change policy,
+  completion criteria, current i386 baseline, milestones and verification.
+- [`I386_PORT_STUDY.md`](I386_PORT_STUDY.md) — evolving technical study of the
+  port: problems, mechanisms, decisions, evidence and remaining parity gaps.
 
 - [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) — the language layering: native
   POSIX SDK applications and the optional managed-app experiment.

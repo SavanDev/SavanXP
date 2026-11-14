@@ -4,12 +4,66 @@ The `legacy` branch targets i386 exclusively. `master` maintains the original
 x86_64 system. Normal commands build and run ELF32 through GRUB2/Multiboot2
 and legacy BIOS; there is no parallel x86_64 boot target here.
 
-The working kernel is in `arch/x86`. Generic kernel, POSIX, SDK, application,
-port and vendor sources that have not crossed over remain as porting material.
-Their presence does not mean they are linked or usable on i386. Existing design
-documents describe the source system unless a document explicitly records i386
-support. Preserve useful protocols and file formats while adapting pointer
-width, memory ownership, interrupts and ABI details to 32 bits.
+The [porting study](I386_PORT_STUDY.md) records the evolution of the branch:
+the problems encountered, mechanisms involved, decisions taken and evidence
+behind them. This document defines the target and orders the remaining work.
+
+## Version parity is the objective
+
+The current goal is to run **SavanXP v0.4.0 on 32-bit x86 with the smallest
+possible visual, behavioral and internal changes**, ideally none wherever the
+architecture permits. The reference is the immutable `v0.4.0` tag, commit
+`8ece07f4dae90812155a541951cbf8b3701bd92d`, where this branch diverged. Compare
+against that version's source, assets, documentation and behavior rather than
+against the moving tip of `master`.
+
+Once v0.4.0 parity is reached, the next target becomes **v0.4.1** (tag
+`v0.4.1`, commit `1e7e59c6a845423dfa125ec4868352aa6f8af82f`). Repeat this
+version-by-version process for later targets. New upstream releases do not
+advance the active target automatically or excuse unfinished v0.4.0 behavior.
+The baseline version is a compatibility target, not a claim that the current
+i386 prototype has already reached it.
+
+### Change policy
+
+- Port and reuse the reference implementation wherever possible. Preserve
+  subsystem boundaries, algorithms, protocols, persistent formats, APIs,
+  applications, artwork and interaction behavior when they do not depend on
+  the architecture. Prefer localized adaptations over replacement systems.
+- Restrict necessary differences to concrete architectural or hardware needs:
+  boot handoff, protected-mode CPU state, pointer width, calling conventions,
+  ELF32 structures/relocations and the 32-bit memory layout. Document each
+  unavoidable difference and its reason; do not use the port to redesign the
+  desktop or unrelated internals.
+- Treat `sh32`, `desktop32`, static process backing and the static Doom build as
+  temporary bring-up steps. Their tests establish progress, not final parity.
+  Restore the reference shell, desktop, process/memory facilities and shared
+  library integration as their dependencies become available.
+- Treat retained generic kernel, POSIX, SDK, application, port and vendor
+  sources as the implementation to port. Their presence alone does not mean
+  they are linked or usable on i386. Existing design documents describe the
+  reference system unless they explicitly record i386 support.
+
+### Reaching a parity target
+
+Assess the reference version feature by feature, recording what is working,
+what is still missing and any justified architectural differences. Completion
+requires evidence for all applicable reference capabilities, including:
+
+- The same graphical session, applications, assets, layout and interactions,
+  checked with comparable screenshots and input scenarios.
+- Equivalent shell, process, filesystem, SDK, library and application behavior,
+  including external programs and persistent data across rebuilds.
+- The reference internal subsystem model, adapted to the CPU/ABI rather than
+  replaced by permanent prototype shortcuts, with its relevant regressions.
+- The reference device and capacity features on supported hardware or suitable
+  emulation. A missing capability such as SMP or virtio remains a parity gap
+  even when the first physical target cannot exercise it.
+
+Record remaining gaps explicitly; passing the current minimal smoke is not
+sufficient to close v0.4.0. Move to v0.4.1 only after the v0.4.0 parity review
+has established that the target is met. Architecture-dependent differences
+must be accounted for in that review rather than silently dropping features.
 
 ## Working baseline
 
@@ -28,21 +82,24 @@ library loader are not linked into this kernel.
 
 ## Ordered next milestones
 
-Each milestone must remain bootable and have an end-to-end regression before
-adding the next dependency. Update this checklist with implementation and
-verification evidence as work lands.
+These milestones order the work needed for v0.4.0 parity; each is an
+intermediate dependency, not a smaller substitute for the final system.
+Keep each milestone bootable and add an end-to-end regression before adding
+the next dependency. Adapt the corresponding v0.4.0 implementation with minimal
+changes, and record implementation/verification evidence as work lands.
 
 1. **Fault containment and memory foundations.** Terminate a faulting user
-   process and reap it without killing the shell or siblings. Add an allocator,
-   allocation failure handling and finer user-page protection; replace static
-   image reservations. Keep supervisor mappings protected on CPUs without NX.
+   process and reap it without killing the shell or siblings. Port the reference
+   allocator, allocation failure handling and user-page protection to replace
+   static image reservations. Keep supervisor mappings protected on CPUs without NX.
 2. **File descriptors and the POSIX base.** Port per-process descriptor tables,
    regular-file read/write/seek/stat/readdir, console ownership, pipes and
-   descriptor inheritance. Restore a useful shell/BusyBox subset with explicit
-   tests of process cleanup and persistent data.
+   descriptor inheritance. Bring up the reference shell/BusyBox incrementally,
+   then restore its v0.4.0 behavior with process cleanup and persistence tests.
 3. **Memory objects and ELF32 shared libraries.** Port section objects and
    views, heap growth and ELF32 relocations/loader semantics. Check 32-bit
-   layouts, overflow, ownership and failure cleanup; do not reuse ELF64 parsing.
+   layouts, overflow, ownership and failure cleanup. Adapt the existing loader
+   design to ELF32 structures and relocations.
 4. **Graphics stack and full desktop.** Port the GPU/surface APIs, SxGUI,
    compositor/window manager and client protocols; then restore taskbar,
    Program Manager and applications. Keep the minimal desktop as a regression
@@ -53,7 +110,8 @@ verification evidence as work lands.
    The static Doom build currently verifies installation/persistence only.
 6. **Physical hardware and capacity.** Validate BIOS/E820, ATA and framebuffer
    variants on the target laptop, then address suspend/power and performance.
-   Revisit SMP and optional virtio only after the single-CPU base is reliable.
+   Port the reference SMP and optional virtio support after the single-CPU base
+   is reliable; they remain part of the parity assessment.
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); the list above is the current branch plan,

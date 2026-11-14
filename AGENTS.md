@@ -3,7 +3,14 @@
 ## Branch scope
 
 - This branch targets i386 only. The x86_64 system lives on `master`.
-- Follow `docs/I386_PORT.md` for current capabilities and porting order.
+- The active parity target is SavanXP `v0.4.0`, the branch's original baseline.
+  Preserve its visuals, behavior and internal design with the smallest possible
+  changes; reuse the reference implementation and justify architecture-specific
+  differences. Bring-up shortcuts are temporary, not final replacements.
+- Advance to `v0.4.1` only after `v0.4.0` parity is reached. Do not follow the
+  moving `master` tip as the current specification.
+- Follow `docs/I386_PORT.md` for the pinned references, completion criteria,
+  current capabilities and porting order.
   Retained subsystem sources are not evidence that a feature works on i386.
 - Normal build/run/smoke commands use GRUB2/BIOS, ELF32 and `build/disk.img`.
   Preserve existing files when migrating; ELF64 binaries remain data until rebuilt.
@@ -57,6 +64,30 @@
   explanation goes to `docs/` (new document or an existing one) and the entry
   links to it.
 - Every document in `docs/` must be listed in `docs/README.md`.
+
+## Porting study
+
+- Maintain `docs/I386_PORT_STUDY.md` as the branch's evolving technical study:
+  a concise internals narrative of how the OS reaches each x86 parity target.
+  Update it alongside the work, in the same commit as the relevant change.
+- For each substantive porting problem investigated or design path taken,
+  explain the context and observed failure, the relevant mechanism, alternatives
+  actually considered, the decision and its rationale, verification evidence,
+  limitations and the effect on version parity. Include failed experiments or
+  reversed decisions when they explain the outcome.
+- Explain why the reference implementation needs changing and why the chosen
+  adaptation is the smallest justified one. Identify temporary shortcuts and
+  what must replace them before parity can be claimed.
+- Write connected technical prose, readable without the chat history. Keep
+  chapters focused; link to subsystem documents, source and commits for detail.
+  Use reproducible commands and durable references rather than relying on
+  temporary logs. Do not turn the study into a file inventory or command diary.
+- Distinguish observed results, hypotheses and planned work. Backfill history
+  only from available evidence, and label retrospective accounts. Preserve the
+  sequence of decisions; explain later corrections or replacements explicitly.
+- Keep `docs/I386_PORT.md` as the parity policy and roadmap, `CHANGELOG.md` as
+  the user-visible change record, and the study as the explanation of the
+  branch's evolution. The study supplements subsystem docs and commit messages.
 
 ## Documentation language
 

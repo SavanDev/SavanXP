@@ -8,7 +8,13 @@ This branch progressively ports SavanXP to **i386 (32-bit x86), legacy BIOS and
 GRUB2/Multiboot2**. All normal build and run commands target i386. The original
 x86_64 system is maintained on [`master`](https://github.com/SavanDev/SavanXP/tree/master).
 
-Current version: `v0.4.0` · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+The active goal is **parity with SavanXP v0.4.0**, preserving its visuals,
+behavior and internal design with the fewest changes required by 32-bit x86.
+After reaching that target, work advances to v0.4.1 and then later parity
+targets. The minimal system below is an intermediate stage; see the
+[parity policy and roadmap](docs/I386_PORT.md).
+
+Current parity target: `v0.4.0` (in progress) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
 ## Quick start
 
