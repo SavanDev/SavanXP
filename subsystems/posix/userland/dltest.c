@@ -124,6 +124,29 @@ int main(void)
     }
     (void)dlerror();
 
+    /* A bare name resolves as a DT_NEEDED does: without a version, the latest
+     * /lib has (1.3 of libsonamelatest, over 0.7, 0.2 and the unversioned
+     * file); with the major only, the latest of that ABI (0.7); with a full
+     * version that is there, that very file (0.2). */
+    {
+        static const struct {
+            const char* name;
+            int version;
+        } cases[] = {
+            {"libsonamelatest.so", 13},
+            {"libsonamelatest.so.0", 7},
+            {"libsonamelatest.so.0.2", 2},
+        };
+        for (unsigned index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+            void* versioned = dlopen(cases[index].name, RTLD_NOW);
+            probe_fn version = versioned != 0 ? (probe_fn)dlsym(versioned, "soname_latest_version") : 0;
+            if (version == 0 || version() != cases[index].version) {
+                eprintf("dltest: %s gave version %d\n", cases[index].name, version != 0 ? version() : -1);
+                return fail("a bare name did not resolve to the version it should");
+            }
+        }
+    }
+
     /* RTLD_GLOBAL on an image already open promotes it. */
     if (dlopen("libdlmod_base.so.0.4", RTLD_NOW | RTLD_NOLOAD | RTLD_GLOBAL) != base) {
         return fail("RTLD_NOLOAD did not return the open image");
@@ -176,9 +199,10 @@ int main(void)
         return fail("a failed dlopen changed ldso_missing()");
     }
 
-    /* base, one, two: three images, loaded once each. */
-    if (ldso_count() != images_at_start + 3) {
-        eprintf("dltest: %d images, expected %d\n", ldso_count(), images_at_start + 3);
+    /* base, one, two, and the three versions of libsonamelatest the bare
+     * names resolved to: six images, loaded once each. */
+    if (ldso_count() != images_at_start + 6) {
+        eprintf("dltest: %d images, expected %d\n", ldso_count(), images_at_start + 6);
         return fail("the image count is wrong");
     }
 

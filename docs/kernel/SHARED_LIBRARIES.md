@@ -99,7 +99,7 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 | `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
 | `<dlfcn.h>`: `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, per-handle scopes | done, [see below](#dlopen) |
 | One loader for SUN and POSIX, `system/loader/ldso.c`; a SUN program maps a library | done, [see below](#one-loader-over-sxn) |
-| `DT_NEEDED` resolution: the exact file, else the highest newer minor | done, [see below](#dt_soname-resolution) |
+| `DT_NEEDED` resolution: the exact file, else the highest newer minor; the latest when a name gives no full version | done, [see below](#dt_soname-resolution) |
 | 32 library slots, 24 program headers per image | done |
 
 ### The libraries
@@ -165,7 +165,7 @@ its drawing code.
 | No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
 | The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `system/loader/ldso.c` imports only the canary, `sx_image_base` and `sx_loader_report` |
 | A SUN program maps a library through the same loader | `sun-libtest`: `sunlibtest.sxe` maps `libmath` and asserts `sqrt` came from it |
-| A missing library resolves to its highest newer minor, never an older one, and the exact file wins | `sonametest` and `sonametest-newer` |
+| A missing library resolves to its highest newer minor, never an older one, and the exact file wins; a name without a full version gets the latest | `sonametest`, `sonametest-newer` and `dltest` |
 | The stack canary is in the executable, seeded by `crt0`, with two distinct halves | `ldtest`, on every run |
 | The interpreter path reaches the loader | `interptest`, including that a library actually loaded |
 | The toolkit draws the right glyphs in the right colour | `expect_text()` in `shoot_session`, from the font tables inside the built `libsxgfx` |
@@ -986,6 +986,19 @@ breaking the ABI. The loader resolves it in this order:
    calls; the program starts without the library, as with any missing one, and
    `ldso_missing()` names `libfoo.so.0.4`, the name the program asked for.
 
+A name that does not give the full version asks for the latest one, chosen
+before anything is opened:
+
+- **`libfoo.so`, no version:** the highest `libfoo.so.M.N` of any major --
+  `1.3` over `0.7`.
+- **`libfoo.so.0`, the major only:** the highest minor of that ABI -- `0.7`,
+  and not `1.3`, which is another ABI.
+- When `/lib` has no versioned file of it, the file named as given.
+
+This tree's libraries always carry the full version in their `DT_SONAME`, so
+the second rule is for what comes from outside: a port's library linked with a
+bare name, or a `dlopen("libfoo.so")`.
+
 Exact first, and not "always the highest", was a choice: nothing a program
 already runs with changes because a newer file appears, and the cost of the
 rule is paid only by a program whose library is missing. The consequence is
@@ -994,15 +1007,19 @@ taking a library away is how an update moves them on.
 
 A library that stands in for another keeps its own name in the slot table, so a
 second image needing `libfoo.so.0.4` finds it there after the same listing and
-maps nothing twice. The rule applies to a `DT_NEEDED` given as a basename -- the
-only kind this tree produces -- and not to an explicit path: `ldso_load` and
-`dlopen` with a `/` load exactly what they are given. A bare-name `dlopen` is not
-resolved either; nothing needs it yet.
+maps nothing twice. The rule applies to a `DT_NEEDED` given as a basename and to
+a `dlopen` of a bare name (through `sx_loader_resolve`, so another subsystem's
+interface gets the same rule), and not to an explicit path: `ldso_load` and
+`dlopen` with a `/` load exactly what they are given.
 
 `sonametest.sxe` covers both halves with libraries built at 0.3, 0.4, 0.5 and
 0.6: the `sonametest` scenario, where the exact 0.4 wins over 0.5 and 0.6, and
 `sonametest-newer`, which removes the 0.4 files so that 0.6 stands in -- once,
-for two images that need it -- and the 0.3 of another library is refused.
+for two images that need it -- and the 0.3 of another library is refused. It
+also needs `libsonamelatest.so` and `libsonamemajor.so.0`, each with 0.2, 0.7
+and 1.3 beside the unversioned file, and asserts 1.3 and 0.7. `dltest` opens
+`libsonamelatest.so`, `.so.0` and `.so.0.2` by bare name and gets 1.3, 0.7 and
+0.2.
 
 ## Deliberately out of scope for the first implementation
 

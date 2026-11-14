@@ -239,8 +239,29 @@ foreach(version 3 4)
 endforeach()
 savanxp_library(NAME libsonameuser TEST SONAME libsonameuser.so.0.4 DEPENDS libsoname
     SOURCES system/loader/tests/sonameuser.c)
+# Names without a full version ask for the latest: libsonamelatest.so (none)
+# for the highest of any major, libsonamemajor.so.0 (the major only) for the
+# highest minor of that ABI. The program links against the file of that name,
+# which stays in /lib and must lose to the versioned ones.
+foreach(family latest major)
+    if(family STREQUAL "latest")
+        set(linked libsonamelatest.so)
+    else()
+        set(linked libsonamemajor.so.0)
+    endif()
+    savanxp_library(NAME libsoname${family} TEST SONAME ${linked}
+        DEFINES SONAME_FUNCTION=soname_${family}_version SONAME_VERSION=0
+        SOURCES system/loader/tests/sonamelib.c)
+    foreach(version 0.2 0.7 1.3)
+        string(REPLACE "." "" number "${version}")
+        string(REPLACE "." "_" suffix "${version}")
+        savanxp_library(NAME libsoname${family}_${suffix} TEST SONAME libsoname${family}.so.${version}
+            DEFINES SONAME_FUNCTION=soname_${family}_version SONAME_VERSION=${number}
+            SOURCES system/loader/tests/sonamelib.c)
+    endforeach()
+endforeach()
 savanxp_program(NAME sonametest TEST NATIVE LINK_PROFILE PIE
-    DEPENDS libsoname libsonameuser libsonamelow
+    DEPENDS libsoname libsonameuser libsonamelow libsonamelatest libsonamemajor
     SOURCES system/loader/tests/sonametest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite

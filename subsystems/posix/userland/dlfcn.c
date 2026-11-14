@@ -44,32 +44,14 @@ char* dlerror(void) {
     return g_dl_error;
 }
 
-void* dlopen(const char* path, int mode) {
-    if (path == 0) {
-        void* program = sx_loader_program();
-        if (program == 0) {
-            dl_fail("dlopen: the program image is not registered", 0, 0);
-            return 0;
-        }
-        sx_loader_retain(program);
-        return program;
-    }
-
-    /* A bare name is looked up where DT_NEEDED is; anything with a '/' is a
-     * path, relative ones included, and a relative one is the working
-     * directory's. */
-    char full[128];
+/* `path` made absolute against the POSIX working directory, which the loader
+ * does not know: it opens absolute paths only. 0, with dlerror set, when there
+ * is no working directory or the result does not fit. */
+static int absolute_path(const char* path, char* full, size_t size) {
     char cwd[128];
+    const char* parts[3] = {"", "", path};
     size_t used = 0;
-    int has_slash = 0;
-    for (const char* ch = path; *ch != '\0'; ++ch) {
-        if (*ch == '/') {
-            has_slash = 1;
-            break;
-        }
-    }
-    const char* parts[3] = {has_slash ? "" : "/lib/", "", path};
-    if (has_slash && path[0] != '/') {
+    if (path[0] != '/') {
         if (savanxp_getcwd(cwd, sizeof(cwd)) < 0 || cwd[0] != '/') {
             dl_fail("dlopen: no working directory for ", path, 0);
             return 0;
@@ -83,7 +65,7 @@ void* dlopen(const char* path, int mode) {
     }
     for (int part = 0; part < 3; ++part) {
         for (const char* ch = parts[part]; *ch != '\0'; ++ch) {
-            if (used >= sizeof(full) - 1) {
+            if (used >= size - 1) {
                 dl_fail("dlopen: path too long: ", path, 0);
                 return 0;
             }
@@ -91,7 +73,36 @@ void* dlopen(const char* path, int mode) {
         }
     }
     full[used] = '\0';
+    return 1;
+}
 
+void* dlopen(const char* path, int mode) {
+    if (path == 0) {
+        void* program = sx_loader_program();
+        if (program == 0) {
+            dl_fail("dlopen: the program image is not registered", 0, 0);
+            return 0;
+        }
+        sx_loader_retain(program);
+        return program;
+    }
+
+    /* A bare name is looked up where DT_NEEDED is, and resolved the same way:
+     * the latest version when it gives none, a newer minor when the exact one
+     * is missing. Anything with a '/' is a path, taken as it is. */
+    char full[128];
+    int has_slash = 0;
+    for (const char* ch = path; *ch != '\0'; ++ch) {
+        if (*ch == '/') {
+            has_slash = 1;
+            break;
+        }
+    }
+    if (!has_slash) {
+        (void)sx_loader_resolve(path, full, sizeof(full));
+    } else if (!absolute_path(path, full, sizeof(full))) {
+        return 0;
+    }
     void* image = sx_loader_find(full);
     if (image != 0) {
         if ((mode & RTLD_GLOBAL) != 0) {

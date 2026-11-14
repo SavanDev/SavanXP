@@ -12,9 +12,9 @@ Cut-off notes:
 
 ### Added
 
-- **A library a program needs resolves to the exact file under `/lib`, or else to the highest newer minor of the same
-  ABI (`libfoo.so.0.6` for `libfoo.so.0.4`), never an older one.** Scenarios `sonametest` and `sonametest-newer`; see
-  [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#dt_soname-resolution).
+- **A needed library resolves to the exact `/lib` file, else its highest newer minor (`0.6` for `libfoo.so.0.4`), never an
+  older one; a name without a full version (`libfoo.so`, `libfoo.so.0`) gets the latest, in `DT_NEEDED` or a bare
+  `dlopen`.** Scenarios `sonametest`, `sonametest-newer`; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#dt_soname-resolution).
 
 - **POSIX programs can list a directory through the native calls, `sxn_open_directory` and `sxn_read_directory`
   (`SXN_SYS_OPEN_DIRECTORY`, `SXN_SYS_READ_DIRECTORY`); the handle is a descriptor.** `handletest` asserts it.

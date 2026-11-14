@@ -4,7 +4,13 @@
  *
  * The program needs libsoname.so.0.4, libsonameuser.so.0.4 (which needs
  * libsoname.so.0.4 too) and libsonamelow.so.0.4. /lib also holds
- * libsoname.so.0.3, 0.5 and 0.6, and libsonamelow.so.0.3. The sonametest
+ * libsoname.so.0.3, 0.5 and 0.6, and libsonamelow.so.0.3.
+ *
+ * It also needs two names without a full version, which ask for the latest:
+ * libsonamelatest.so, which takes 1.3 over 0.7, 0.2 and the unversioned file
+ * itself, and libsonamemajor.so.0, which takes 0.7 and not 1.3, another ABI.
+ *
+ * The sonametest
  * scenario runs it on the full image; sonametest-newer removes both 0.4 files
  * first. The program looks at /lib itself to know which of the two it is in.
  *
@@ -18,6 +24,8 @@
 int soname_version(void);
 int soname_user_version(void);
 int soname_low_version(void);
+int soname_latest_version(void);
+int soname_major_version(void);
 
 static int g_failures = 0;
 
@@ -68,16 +76,22 @@ int main(void) {
     /* libsonameuser needs 0.4 as well: it binds to the same image. */
     check(soname_user_version() == soname_version(), "libsonameuser bound to another libsoname");
 
+    /* No version: the latest of any major, over the file named as given. */
+    check(soname_latest_version() == 13, "libsonamelatest.so did not resolve to 1.3");
+    /* The major only: the latest minor of that ABI, not of a newer one. */
+    check(soname_major_version() == 7, "libsonamemajor.so.0 did not resolve to 0.7");
+
     if (low_exact) {
         check(ldso_missing() == 0, "a dependency did not load with every file present");
         check(soname_low_version() == 4, "libsonamelow is not the 0.4");
-        /* The program, libsoname, libsonameuser, libsonamelow: no image twice. */
-        check(ldso_count() == 4, "an image was loaded twice, or one is missing");
+        /* The program, libsoname, libsonameuser, libsonamelow, and the two
+         * latest-version ones: no image twice. */
+        check(ldso_count() == 6, "an image was loaded twice, or one is missing");
     } else {
         /* Only 0.3 is there, which may lack what a 0.4 program calls. */
         check(same(ldso_missing(), "libsonamelow.so.0.4"), "libsonamelow.so.0.4 was not named as missing");
         check(ldso_lookup("soname_low_version") == 0, "an older libsonamelow stood in for 0.4");
-        check(ldso_count() == 3, "an image was loaded twice, or an older one taken");
+        check(ldso_count() == 5, "an image was loaded twice, or an older one taken");
     }
 
     (void)sxn_log(g_failures == 0 ? "SONAME TEST PASS" : "SONAME TEST FAIL");

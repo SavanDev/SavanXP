@@ -236,7 +236,7 @@ static int g_load_global = 1;
 static int g_strict = 0;
 /* Set while load_needed_chain tries the exact name a DT_NEEDED gives: a file
  * that is not there is then not reported, because a newer minor may stand in
- * for it (resolve_newer). The chain reports the miss itself if none does. */
+ * for it (pick_version). The chain reports the miss itself if none does. */
 static int g_quiet_missing = 0;
 /* The dependency whose DT_NEEDED could not be brought in. See ldso_missing(). */
 static const char* g_missing_library = 0;
@@ -1143,80 +1143,125 @@ static int loaded_slot_named(const char* soname) {
     return -1;
 }
 
-/* The highest newer minor of a library, when the one a DT_NEEDED names is
- * not in /lib (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution").
+/* How a library name is versioned (docs/kernel/SHARED_LIBRARIES.md,
+ * "DT_SONAME resolution"). A library is libfoo.so.MAJOR.MINOR: the major is the
+ * ABI and the minor the system's version. A name may give both, only the major,
+ * or neither.
  *
- * A library is named libfoo.so.MAJOR.MINOR. The major is the ABI and the minor
- * the system's version, so a program linked against libfoo.so.0.4 runs with
- * libfoo.so.0.6 -- a newer system kept the ABI -- and not with libfoo.so.0.3,
- * which may lack what it calls. The exact file always wins when it is there;
- * this runs only when it is not, so a program's startup lists no directory
- * unless something is missing.
- *
- * Writes the chosen basename to `out` and returns 1, or returns 0: the name is
- * not of that form, /lib cannot be listed, or no newer minor is there. */
-static int resolve_newer(const char* need, char* out, unsigned long size) {
-    /* Split "libfoo.so.0.4" into the prefix "libfoo.so.0." and the minor 4. */
+ * Splits `name` into the length of its stem up to and including ".so" and the
+ * numbers it gives. Returns how many it gives (0, 1 or 2), or -1 when the name
+ * is not of that form at all. */
+static int parse_version(const char* name, unsigned long* stem_length,
+                         unsigned long* major, unsigned long* minor) {
     unsigned long length = 0;
-    while (need[length] != '\0') {
+    while (name[length] != '\0') {
         length++;
     }
-    unsigned long minor_at = length;
-    while (minor_at > 0 && need[minor_at - 1] >= '0' && need[minor_at - 1] <= '9') {
-        minor_at--;
+    /* The last ".so" followed by the end or by ".digits" up to two times. */
+    for (unsigned long at = length; at >= 3; --at) {
+        if (name[at - 3] != '.' || name[at - 2] != 's' || name[at - 1] != 'o') {
+            continue;
+        }
+        /* Two scalars, not an array: clang zeroes an array with memset, which
+         * the loader does not have. */
+        unsigned long first = 0;
+        unsigned long second = 0;
+        int count = 0;
+        unsigned long index = at;
+        int valid = 1;
+        while (name[index] != '\0') {
+            if (name[index] != '.' || count == 2) {
+                valid = 0;
+                break;
+            }
+            index++;
+            unsigned long digits = 0;
+            while (name[index] >= '0' && name[index] <= '9' && digits < 7) {
+                unsigned long* number = count == 0 ? &first : &second;
+                *number = *number * 10 + (unsigned long)(name[index] - '0');
+                index++;
+                digits++;
+            }
+            if (digits == 0 || (name[index] != '\0' && name[index] != '.')) {
+                valid = 0;
+                break;
+            }
+            count++;
+        }
+        if (!valid) {
+            continue;
+        }
+        *stem_length = at;
+        *major = first;
+        *minor = second;
+        return count;
     }
-    if (minor_at == length || minor_at < 2 || need[minor_at - 1] != '.') {
-        return 0;
-    }
-    unsigned long major_at = minor_at - 1;
-    while (major_at > 0 && need[major_at - 1] >= '0' && need[major_at - 1] <= '9') {
-        major_at--;
-    }
-    if (major_at == minor_at - 1 || major_at < 4 || need[major_at - 1] != '.' ||
-        need[major_at - 2] != 'o' || need[major_at - 3] != 's' || need[major_at - 4] != '.') {
-        return 0;
-    }
-    unsigned long wanted = 0;
-    for (unsigned long index = minor_at; index < length; ++index) {
-        wanted = wanted * 10 + (unsigned long)(need[index] - '0');
-    }
+    return -1;
+}
 
+/* The version of /lib to load for `need`, chosen by listing /lib:
+ *
+ * - libfoo.so.M.N: the highest libfoo.so.M.K with K > N. Only asked once the
+ *   exact file turned out missing; an older minor may lack what the program
+ *   calls, so it never qualifies.
+ * - libfoo.so.M: the highest libfoo.so.M.K.
+ * - libfoo.so: the highest libfoo.so.M.K of any major.
+ *
+ * Writes the chosen basename to `out` and returns 1, or returns 0: the name is
+ * not of that form, /lib cannot be listed, or nothing qualifies. */
+static int pick_version(const char* need, char* out, unsigned long size) {
+    unsigned long stem = 0;
+    unsigned long want_major = 0;
+    unsigned long want_minor = 0;
+    const int given = parse_version(need, &stem, &want_major, &want_minor);
+    if (given < 0) {
+        return 0;
+    }
     const long directory = sxn_open_directory("/lib");
     if (directory < 0) {
         return 0;
     }
     struct sxn_directory_entry entry;
-    unsigned long best = wanted;
+    unsigned long best_major = 0;
+    unsigned long best_minor = 0;
     int found = 0;
     while (sxn_read_directory(directory, &entry) == 1) {
         if (entry.info.type != SXN_FILE_TYPE_FILE) {
             continue;
         }
         unsigned long index = 0;
-        while (index < minor_at && entry.name[index] == need[index]) {
+        while (index < stem && entry.name[index] == need[index]) {
             index++;
         }
-        if (index != minor_at || entry.name[index] == '\0') {
-            continue;
-        }
+        unsigned long entry_stem = 0;
+        unsigned long major = 0;
         unsigned long minor = 0;
-        int digits = 1;
-        unsigned long end = index;
-        for (; entry.name[end] != '\0'; ++end) {
-            if (entry.name[end] < '0' || entry.name[end] > '9' || end - index > 6) {
-                digits = 0;
-                break;
-            }
-            minor = minor * 10 + (unsigned long)(entry.name[end] - '0');
-        }
-        if (!digits || minor <= best || end + 1 > size) {
+        if (index != stem || parse_version(entry.name, &entry_stem, &major, &minor) != 2 ||
+            entry_stem != stem) {
             continue;
         }
-        best = minor;
-        found = 1;
+        if (given >= 1 && major != want_major) {
+            continue;
+        }
+        if (given == 2 && minor <= want_minor) {
+            continue;
+        }
+        if (found && (major < best_major || (major == best_major && minor <= best_minor))) {
+            continue;
+        }
+        unsigned long end = 0;
+        while (entry.name[end] != '\0') {
+            end++;
+        }
+        if (end + 1 > size) {
+            continue;
+        }
         for (unsigned long copy = 0; copy <= end; ++copy) {
             out[copy] = entry.name[copy];
         }
+        best_major = major;
+        best_minor = minor;
+        found = 1;
     }
     (void)sxn_close(directory);
     return found;
@@ -1276,26 +1321,46 @@ static int load_needed_chain(int parent_slot) {
             /* begin_load takes the next free slot, so this is where the
              * dependency will land if it loads. */
             int dep_slot = g_lib_count;
-            g_quiet_missing = need[0] != '/';
-            int step = ldso_load(full);
-            g_quiet_missing = 0;
-            if (step == -2 && need[0] != '/') {
-                /* The exact file is not there: a newer minor of the same ABI
-                 * stands in for it, and may be loaded already under its own
-                 * name -- another library may have needed it first. */
-                char newer[96];
-                if (resolve_newer(need, newer, sizeof(newer))) {
-                    const int already = loaded_slot_named(newer);
+            int step;
+            if (need[0] == '/') {
+                step = ldso_load(full);
+            } else {
+                unsigned long stem = 0;
+                unsigned long major = 0;
+                unsigned long minor = 0;
+                const int given = parse_version(need, &stem, &major, &minor);
+                char chosen[96];
+                /* A name without a full version asks for the latest one: it is
+                 * chosen before anything is opened, and the name as given is
+                 * the fallback when /lib has no versioned file of it. A full
+                 * version is tried exact first, and a newer minor stands in
+                 * only when the exact file is not there. */
+                int picked = given >= 0 && given < 2 && pick_version(need, chosen, sizeof(chosen));
+                if (!picked) {
+                    g_quiet_missing = 1;
+                    step = ldso_load(full);
+                    g_quiet_missing = 0;
+                    if (step == -2 && given == 2) {
+                        picked = pick_version(need, chosen, sizeof(chosen));
+                    }
+                    if (step == -2 && !picked) {
+                        report(given == 2 ? "loader: cannot open %s, and /lib has no newer minor of it (step 2)\n"
+                                          : "loader: cannot open %s, and /lib has no version of it (step 2)\n",
+                               full);
+                    }
+                }
+                if (picked) {
+                    /* The version chosen may be loaded already under its own
+                     * name: another image may have needed it first. */
+                    const int already = loaded_slot_named(chosen);
                     if (already >= 0) {
                         dep_slot = already;
                         step = 0;
                     } else {
-                        lib_path(newer, full, sizeof(full));
+                        lib_path(chosen, full, sizeof(full));
                         dep_slot = g_lib_count;
                         step = ldso_load(full);
                     }
-                } else {
-                    report("loader: cannot open %s, and /lib has no newer minor of it (step 2)\n", full);
                 }
             }
             loaded_ok = step == 0;
@@ -1784,6 +1849,29 @@ static const char* step_reason(int step) {
     case -9: return "relocation failed";
     default: return "load failed";
     }
+}
+
+int sx_loader_resolve(const char* name, char* path, unsigned long size) {
+    unsigned long stem = 0;
+    unsigned long major = 0;
+    unsigned long minor = 0;
+    const int given = parse_version(name, &stem, &major, &minor);
+    char chosen[96];
+    if (given >= 0 && given < 2 && pick_version(name, chosen, sizeof(chosen))) {
+        lib_path(chosen, path, size);
+        return 1;
+    }
+    lib_path(name, path, size);
+    if (given == 2) {
+        const long exact = sxn_open_file(path, 0);
+        if (exact >= 0) {
+            (void)sxn_close(exact);
+        } else if (pick_version(name, chosen, sizeof(chosen))) {
+            lib_path(chosen, path, size);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void* sx_loader_program(void) {

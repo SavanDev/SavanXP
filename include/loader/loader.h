@@ -14,6 +14,14 @@
 #ifndef SAVANXP_LOADER_H
 #define SAVANXP_LOADER_H
 
+/* The /lib path a bare library name resolves to, by the rule a DT_NEEDED
+ * follows (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"): a full
+ * version (libfoo.so.0.4) is the exact file, or its highest newer minor when
+ * that is missing; a name without one (libfoo.so, libfoo.so.0) is the latest
+ * version /lib has, or the name itself when it has none. Writes the path and
+ * returns 1 when another version was chosen, 0 when it is the name as given. */
+int sx_loader_resolve(const char* name, char* path, unsigned long size);
+
 /* The program's own image, which stands for the global scope, or 0 when it
  * could not be registered. */
 void* sx_loader_program(void);
