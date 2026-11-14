@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Ethernet driver `rtl8168` for the Realtek RTL8111/8168 family (`10ec:8168`, `8161`, `8136`, `8169`, `8167`),
+  adapted from OpenBSD `re(4)` under its BSD-4 license; boot logs `rtl8168:` with the chip revision and MAC.** Not yet
+  run on metal (QEMU has no model). See [REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md#hw-1--realtek-rtl811181688101).
+
 - **SMAP: on a CPU that has it, every core sets `CR4.SMAP` and the kernel touches user memory only inside
   `arch::user_access_begin`/`user_access_end`; a stray access stops the system with `SMAP violation`.** Without it the
   boot logs `cpu: SMAP unavailable on this processor`. See [KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#user-access-windows-smap).

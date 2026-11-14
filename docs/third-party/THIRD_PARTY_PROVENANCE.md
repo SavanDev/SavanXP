@@ -84,6 +84,26 @@ which is why both go into the registry.
   [AZALIA.md](../kernel/AZALIA.md) maps the upstream routines to local code
   and records every adaptation boundary.
 
+### OpenBSD re(4) Realtek gigabit driver
+
+- Origin: OpenBSD `sys/dev/ic/re.c`, `sys/dev/ic/rtl81x9reg.h` and
+  `sys/dev/mii/rgephy.c`, https://github.com/openbsd/src
+- Pinned version: commit `287e5b695b75cb0c9c794575ed99e90305f680e8`
+  (`re.c` rev 1.224)
+- Versioned: adapted in `kernel/rtl8168.cpp`; no pristine copy is kept
+- License reviewed: **BSD-4-Clause**, Copyright (c) 1997-2003 Bill Paul. Unlike
+  most of OpenBSD it keeps the advertising clause: material that advertises the
+  feature must say "This product includes software developed by Bill Paul".
+  The notice is at the top of `kernel/rtl8168.cpp`, which carries this license
+  rather than MIT.
+- Decision: `Selective port`. Taken: the revision table read from `TxConfig`,
+  the per-revision flags acted on, register offsets and bits, the reset,
+  C+ and bring-up order, and the PHY wake and autonegotiation writes. Not
+  taken: `bus_dma`, mbufs, `ifmedia`/`mii`, offloads, VLAN, jumbo frames,
+  interrupt moderation, Wake-on-LAN.
+- Distributed in: the kernel binary as the `rtl8168` NIC driver (HW-1 in
+  [REAL_HARDWARE.md](../hardware/REAL_HARDWARE.md))
+
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit
@@ -311,9 +331,9 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
   (`Bitmap`, `Painter`, `DisjointRectSet`) for the toolkit and rect handling;
   `Kernel/Devices/GPU/DisplayConnector` for the `display` layer. SavanXP
   implements its own variant in C over its own ABI, with no dependency on `AK`
-- OpenBSD (ISC and BSD-2): candidates evaluated and categorized in the adoption
-  document. No piece has been incorporated yet, so there is no distributed
-  entry to record
+- OpenBSD (mostly ISC and BSD-2): candidates evaluated and categorized in the
+  adoption document. The pieces that were incorporated (the HID parser, Azalia,
+  re(4)) have their own entries above
 
 ### Retrosmart cursor pack
 

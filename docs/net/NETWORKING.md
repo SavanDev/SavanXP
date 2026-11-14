@@ -9,7 +9,7 @@ read directly from the source; TCP is not.
 ## The shape of the stack
 
 ```
-app  ──►  socket syscalls  ──►  net::  ──►  nic::  ──►  rtl8139 / virtio-net
+app  ──►  socket syscalls  ──►  net::  ──►  nic::  ──►  rtl8139 / rtl8168 / virtio-net
                                  │
                                  ├─ ARP cache (16 entries, 60 s lifetime)
                                  ├─ ICMP echo (/dev/net0 NET_IOC_PING)

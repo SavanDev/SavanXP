@@ -93,7 +93,7 @@ boot; a machine that fails a soft one boots with something missing.
 | Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. No NVMe, no ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/usb/umass.cpp` |
 | USB | xHCI, EHCI, UHCI and OHCI. Low speed and split transactions have not been run: QEMU cannot show them | [USB_HOST_CONTROLLERS.md](../kernel/USB_HOST_CONTROLLERS.md) |
 | Input | PS/2 (8042) keyboard and mouse, or USB HID behind xHCI | `kernel/ps2.cpp`, [INPUT.md](../kernel/INPUT.md) |
-| Network | Realtek RTL8139 (`10ec:8139`) and nothing else | `kernel/rtl8139.cpp` |
+| Network | Realtek RTL8139 (`10ec:8139`). The RTL8111/8168 family (`10ec:8168`, `8161`, `8136`, `8169`, `8167`), written but not yet run on metal (HW-1). Static QEMU addressing only: no DHCP | `kernel/rtl8139.cpp`, `kernel/rtl8168.cpp` |
 | Audio | HD Audio: any class `04/03` controller, with the PCI quirk of one (`1022:1457`). AC'97: any class `04/01` function, driven as an Intel ICH. No HDMI or DisplayPort audio | [AZALIA.md](../kernel/AZALIA.md), `kernel/ac97.cpp` |
 | PCI | Configuration mechanism #1, every bus scanned, a flat table of 256 functions. Each one is logged as a `pci:` line; what does not fit is counted in `pci: table full` | `kernel/pci.cpp` |
 | Power | Power button, S5 and reboot. No sleep, no CPU frequency or idle states, no thermal handling; every GPE is masked | `kernel/acpi.cpp`, `kernel/power.cpp` |
@@ -143,7 +143,7 @@ as `azalia` and the xHCI quirks were.
 
 | # | Work | Size | Ryzen | Athlon II | Core 2 | Athlon 64 | Pentium 4 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | **needed** | likely | common | some | — |
+| HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | written; run it | likely | common | some | — |
 | HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | done in QEMU; run it | done in QEMU; run it | done in QEMU; run it | `legacy` has none |
 | HW-3 | PCI IDE: native-mode BARs, bus-master DMA, 48-bit LBA | M | — | unless AHCI is selected | **needed** on ICH7 | **needed** | **needed** |
 | HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | at the limit | useful | useful | on SB600 | — |
@@ -164,8 +164,30 @@ as `azalia` and the xHCI quirks were.
 The gigabit controller of the development host (`10ec:8168`) and of most
 consumer boards from 2007 on; `10ec:8136` is its 10/100 sibling on budget
 boards and laptops, `10ec:8169` the PCI gigabit ancestor. One driver covers
-the family. Reference: OpenBSD `re(4)` (`sys/dev/ic/re.c`, `if_re_pci.c`).
-It plugs into `nic::register_driver` beside `rtl8139`.
+the family. Adapted from OpenBSD `re(4)` into `kernel/rtl8168.cpp` (BSD-4,
+see the [provenance registry](../third-party/THIRD_PARTY_PROVENANCE.md)),
+registered with `nic::register_driver` beside `rtl8139`.
+
+**Status: written, not run.** QEMU has no model of this family, so the driver
+has only been checked to build and to leave the QEMU NICs alone. At probe it
+logs one line with the chip it found, for example
+`rtl8168: 10ec:8168 at 1:0.0, RTL8168E/8111E (TxConfig 0x2c00), mmio, pcie, mac ..., polled`,
+and `nic: driver 'rtl8168'`; bring-up logs `rtl8168: link up, 1000 Mbit/s, full duplex`
+or `rtl8168: no link yet`. The revision is the `TxConfig` field, not the PCI
+revision byte: the same `10ec:8168` covers chips from the 8168B to the 8168H,
+each with its own quirks. What a first run on metal should report is that
+line, the link line, and whether `rx_frames` grows on a live LAN.
+
+What the driver leaves out: offloads, VLAN, jumbo frames, interrupt
+moderation, Wake-on-LAN, and the old 8169S PHY DSP fixups. Devices behind a
+PCIe root port are polled, because `route_pci_intx` looks the device up in
+the root bus `_PRT` without walking bridges; every machine on this list has
+its NIC behind one.
+
+A link is not yet a usable network on a LAN: the stack's addressing is static
+and matches QEMU's user network (`10.0.2.15/24`, gateway `10.0.2.2`, see
+[NETWORKING.md](../net/NETWORKING.md)). On metal the driver can be checked by
+its counters and by traffic on a matching subnet until there is DHCP.
 
 This is the single package with the most reach: the development host and the
 Compaq 21N2F7AR both have a `10ec:8168`, and it is what stands between them

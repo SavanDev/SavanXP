@@ -231,6 +231,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/ramdisk.cpp
     kernel/nic.cpp
     kernel/rtl8139.cpp
+    kernel/rtl8168.cpp
     kernel/virtio_net.cpp
     kernel/pci.cpp
     kernel/input.cpp

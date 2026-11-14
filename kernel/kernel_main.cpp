@@ -37,6 +37,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/ramdisk.hpp"
 #include "kernel/rtl8139.hpp"
+#include "kernel/rtl8168.hpp"
 #include "kernel/serial_dev.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
@@ -273,13 +274,14 @@ namespace
         console::printf("audio: ningun driver reclamo hardware de sonido\n");
     }
     audio_device::initialize();
-    // NIC: mismo registro por prioridad que display y audio. virtio-net gana
-    // si el probe PCI lo encontro (la maquina puede usar
-    // virtio-net-pci O rtl8139 sobre el mismo netdev, nunca los dos a la vez).
-    // El probe deja el device reconocido, pero no lo levanta: la subida real
-    // la pide net:: cuando alguien hace NET_IOC_UP sobre /dev/net0.
+    // NIC: the same priority registry as display and audio. virtio-net wins
+    // when its PCI probe finds one; rtl8139 and rtl8168 claim different
+    // device IDs, so on real hardware at most one of them matches. A probe
+    // recognizes the device but does not bring it up: net:: asks for that
+    // when someone issues NET_IOC_UP on /dev/net0.
     nic::register_driver(virtio_net::driver());
     nic::register_driver(rtl8139::driver());
+    nic::register_driver(rtl8168::driver());
     if (const nic::Driver* bound = nic::bind_best())
     {
         console::printf("nic: driver '%s'\n", bound->name);

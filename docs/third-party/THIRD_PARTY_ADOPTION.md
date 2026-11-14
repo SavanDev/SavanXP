@@ -86,6 +86,11 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
 - USB: `sys/dev/usb/usb.h` and `xhcireg.h` (descriptors and registers, pure
   data), `sys/dev/hid/hid.c` (the HID report parser) and `usbdevs`. The plan
   is in [`USB_ROADMAP.md`](../roadmaps/done/USB_ROADMAP.md)
+- `sys/dev/ic/re.c`, `rtl81x9reg.h` and `sys/dev/mii/rgephy.c`: the Realtek
+  RTL8111/8168 family, adapted into `kernel/rtl8168.cpp`. These are Bill Paul's
+  **BSD-4-Clause** files, the exception to the ISC/BSD-2 rule above: the
+  advertising clause is accepted, and the derived file keeps that license and
+  notice instead of MIT
 
 `Reference`:
 
