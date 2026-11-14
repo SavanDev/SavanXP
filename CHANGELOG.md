@@ -244,6 +244,8 @@ Cut-off notes:
 
 ### Changed
 
+- **Media Player's fullscreen button is now a matching black 16x16 icon to the right of the volume control.**
+
 - **The toolkit libraries split by subsystem: `libgfx2d` (pixels, painter, chrome) and `libsxgui` (the SXGUI core) are
   neutral, `libsxgfx` is POSIX's window client; the six SUN programs that paint now map them, ~80 KB less text each.**
   A SUN PIE program links without `--export-dynamic`. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-toolkit-split-into-neutral-and-host).

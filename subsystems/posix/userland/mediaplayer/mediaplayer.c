@@ -36,7 +36,7 @@
  * esto; y nunca mas angosta que lo que piden los controles. */
 #define MP_MAX_VIDEO_WIDTH 960
 #define MP_MAX_VIDEO_HEIGHT 540
-#define MP_MIN_WIDTH 600
+#define MP_MIN_WIDTH 480
 #define MP_AUDIO_VIDEO_HEIGHT 160
 #define MP_UI_REFRESH_NS 250000000ULL
 #define MP_SEEK_STEP_US 5000000LL
@@ -168,8 +168,10 @@ static void layout(void) {
     g.widgets[W_TIME].rect = sx_rect_make(x, row_y + (SXGUI_BUTTON_HEIGHT - SXGUI_FIELD_HEIGHT) / 2, MP_TIME_WIDTH,
                                           SXGUI_FIELD_HEIGHT);
 
-    g.widgets[W_FULLSCREEN].rect = sx_rect_make(x + MP_TIME_WIDTH + SXGUI_GAP, row_y, 112, SXGUI_BUTTON_HEIGHT);
     right = width - SXGUI_MARGIN;
+    g.widgets[W_FULLSCREEN].rect =
+        sx_rect_make(right - MP_ICON_BUTTON_WIDTH, row_y, MP_ICON_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT);
+    right -= MP_ICON_BUTTON_WIDTH + MP_BUTTON_GROUP_GAP;
     g.widgets[W_VOLUME].rect =
         sx_rect_make(right - MP_VOLUME_WIDTH, row_y + (SXGUI_BUTTON_HEIGHT - SXGUI_SCROLLBAR_THICKNESS) / 2,
                      MP_VOLUME_WIDTH, SXGUI_SCROLLBAR_THICKNESS);
@@ -396,6 +398,7 @@ static void paint_control_icons(void) {
         {W_BACK, mp_icon_media_seek_backward},
         {W_STOP, mp_icon_media_playback_stop},
         {W_FORWARD, mp_icon_media_seek_forward},
+        {W_FULLSCREEN, mp_icon_view_fullscreen},
     };
     const uint32_t* volume_icon = mp_icon_audio_volume_high;
     size_t index = 0;
@@ -762,7 +765,7 @@ static void build_widgets(void) {
     g.widgets[W_PLAY] = sxgui_button(zero, "", on_button, NULL);
     g.widgets[W_STOP] = sxgui_button(zero, "", on_button, NULL);
     g.widgets[W_FORWARD] = sxgui_button(zero, "", on_button, NULL);
-    g.widgets[W_FULLSCREEN] = sxgui_button(zero, "Fullscreen (F11)", on_button, NULL);
+    g.widgets[W_FULLSCREEN] = sxgui_button(zero, "", on_button, NULL);
     g.widgets[W_TIME] = sxgui_label(zero, g.time_text);
     g.widgets[W_TIME].flags |= SXGUI_FLAG_SUNKEN;
     g.widgets[W_VOLUME_ICON] = sxgui_label(zero, "");

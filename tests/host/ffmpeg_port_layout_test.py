@@ -94,7 +94,9 @@ def main() -> int:
     assert "ext_open=" in manifest
     assert "category=Accessories" in manifest
     assert "icon_file=icon.png,icon-32.png" in manifest
-    assert len(list((player / "icons").glob("*.png"))) == 10
+    assert len(list((player / "icons").glob("*.png"))) == 11
+    assert (player / "icons" / "view-fullscreen.png").is_file()
+    assert "mp_icon_view_fullscreen[256]" in (player / "icons.inc").read_text(encoding="utf-8")
 
     assert {path.name for path in (port / "tests").glob("*.py")} == {
         "make-tone.py",

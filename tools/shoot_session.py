@@ -2767,28 +2767,44 @@ def scenario_ccleste(s):
 
 def scenario_mediaplayer_fullscreen(s):
     """Fullscreen hides chrome and controls, then restores window geometry."""
-    from PIL import Image, ImageFilter
+    from PIL import Image
 
-    def control_label(image):
-        # Black text alone also matches the solid black video area. Require
-        # the surrounding button face before accepting a glyph match.
-        mask = Image.new("L", image.size)
-        mask.putdata([255 if pixel == FACE else 0 for pixel in image.getdata()])
-        mask = mask.filter(ImageFilter.MaxFilter(7))
-        filtered = Image.composite(image, Image.new("RGB", image.size, (255, 0, 255)), mask)
-        return find_text(filtered, (0, 0, *image.size), "Fullscreen (F11)", TEXT, FACE)[0]
+    icon_dir = Path(__file__).resolve().parents[1] / "subsystems/posix/userland/mediaplayer/icons"
+    templates = {}
+    for name in ("view-fullscreen", "audio-volume-high"):
+        with Image.open(icon_dir / (name + ".png")) as source:
+            icon = source.convert("RGBA")
+            template = Image.new("RGB", icon.size, FACE)
+            template.paste(icon, mask=icon.getchannel("A"))
+            templates[name] = list(template.getdata())
+
+    def control_icon(image, name="view-fullscreen"):
+        # Match the entire glyph AND its transparent background on the button
+        # face, so solid black video cannot impersonate an icon.
+        expected = templates[name]
+        pixels = image.load()
+        for y in range(image.height - 15):
+            for x in range(image.width - 15):
+                if pixels[x, y] != expected[0] or pixels[x + 2, y + 2] != expected[34]:
+                    continue
+                if all(pixels[x + i % 16, y + i // 16] == color
+                       for i, color in enumerate(expected)):
+                    return x, y
+        return None
 
     s.open_mediaplayer()
     image = s.shot("player-window")
-    area = (0, 0, image.width, image.height)
-    origin = control_label(image)
+    origin = control_icon(image)
     if origin is None:
-        raise Failure("Media Player has no Fullscreen button")
+        raise Failure("Media Player has no fullscreen icon button")
+    volume = control_icon(image, "audio-volume-high")
+    if volume is None or origin[0] <= volume[0] + 16 + 80 or origin[1] != volume[1]:
+        raise Failure("fullscreen icon is not to the right of the volume control")
 
     def fullscreen(label):
         time.sleep(2)
         image = s.shot(label)
-        if control_label(image) is not None:
+        if control_icon(image) is not None:
             raise Failure("fullscreen still shows playback controls")
         for x, y in ((0, 0), (image.width - 1, 0),
                      (0, image.height - 1), (image.width - 1, image.height - 1)):
@@ -2797,13 +2813,13 @@ def scenario_mediaplayer_fullscreen(s):
     def restored(label):
         time.sleep(2)
         image = s.shot(label)
-        if control_label(image) != origin:
+        if control_icon(image) != origin:
             raise Failure("fullscreen did not restore window geometry and controls")
         expect_taskbar_present(image, "taskbar restored after fullscreen")
 
-    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.move_to(origin[0] + 8, origin[1] + 8)
     s.qmp.click()
-    # Keep the cursor off the label that must be compared after restoration.
+    # Keep the cursor off the icon that must be compared after restoration.
     s.qmp.move_to(image.width // 2, image.height // 2)
     fullscreen("player-button-fullscreen")
     s.qmp.tap("esc")
@@ -2841,7 +2857,7 @@ def scenario_mediaplayer_fullscreen(s):
     s.qmp.tap("esc")
     time.sleep(2)
     image = s.shot("player-video-restored")
-    if control_label(image) is None:
+    if control_icon(image) is None:
         raise Failure("video controls did not return")
 
 

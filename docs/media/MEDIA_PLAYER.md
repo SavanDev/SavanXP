@@ -171,7 +171,8 @@ dropping everything would freeze the picture while the sound goes on.
 
 ## Fullscreen
 
-Click **Fullscreen (F11)** or press **F11** to fill the desktop with video.
+Click the four-corner fullscreen icon to the right of the volume control, or
+press **F11**, to fill the desktop with video.
 The title bar, taskbar and playback controls are hidden; the picture keeps its
 aspect ratio with black bars. **Esc** or **F11** restores the previous window
 position and size, including maximized windows, without restarting playback.
@@ -185,7 +186,7 @@ cancellation, restored geometry and a decoded 4:3 picture with pillarboxing.
 
 ## Control icons
 
-The transport buttons, Open and the volume speaker are icon buttons with **our
+The transport buttons, Open, fullscreen and the volume speaker use **our
 own 16x16 art**, kept as PNGs in `subsystems/posix/userland/mediaplayer/icons/`
 and embedded as `icons.inc` (~4 KiB, useless outside this program, so not
 `.sxicon` files on disk). The app icon is separate and also our own.
