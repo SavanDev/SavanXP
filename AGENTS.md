@@ -115,6 +115,58 @@
   not lose external binaries already installed in `/bin`, nor persistent
   assets under `/games`.
 
+## Before changing a subsystem
+
+- Read its document first. `docs/README.md` lists every document with one
+  line on what it covers; the one for the area being changed states the
+  decisions and the bugs behind the current code, and a change that
+  contradicts it is wrong until the document changes too.
+- A commit does what was asked. No refactors, renames, reformatting or
+  dependency changes in files the task does not need. Something worth fixing
+  that is outside the task is reported, not fixed on the way.
+
+## Git
+
+- Work is committed straight to `master`. No feature branch and no pull
+  request, unless the change is experimental enough to destabilize `master`
+  (the i386 port on `legacy` is the example).
+- Do not rewrite history or discard work: no `git push --force`, `git reset
+  --hard`, `git rebase`, `git commit --amend` on a pushed commit,
+  `git checkout -- <file>`, `git restore`, `git clean` or `git stash drop`
+  without being asked for that operation by name. Uncommitted changes in the
+  tree that the task did not make belong to someone else: leave them.
+- Do not push without being asked.
+- Stage files by name. `git add -A` and `git add .` pick up whatever a tool
+  left in the tree.
+
+## Files that never enter the repository
+
+- Microsoft binaries and anything derived from them: `sol.exe`, `cards.dll`,
+  `wordpad.exe`, the MFC and RichEdit DLLs, captures taken from Windows XP,
+  card pixels. They live outside the tree, tests find them through
+  `SAVANXP_WIN32_FIXTURES`, and those tests are skipped when it is unset. They
+  are not copied into the build image or the ISO by any script either.
+- Game data (no `*.wad` is committed; see `ports/doomgeneric/wad/README.md`),
+  build output, logs and screenshots from a check.
+- `.gitignore` allow-lists `tools/` and `ports/`: a new file there is ignored
+  until its `!` line is added. Add the line in the same commit; do not use
+  `git add -f` to get around it.
+
+## Tests and reporting
+
+- A failing test is fixed in the code under test. Do not weaken, skip, delete
+  or loosen an assertion, a golden image, a timeout or a scenario to make it
+  pass. If the expectation itself is wrong, say so and change it as its own
+  stated decision, not as a side effect.
+- Report what was run and what it printed. "Not run", "failed" and "could not
+  verify" are valid results; a check that was not run is never reported as
+  passing. A scenario that needs something the machine lacks (KVM, the Win32
+  fixtures, a real IWAD) is named as skipped, with the reason.
+- A build that fails leaves the previous binary in the image, and every
+  scenario still passes against it. Read the output of `./build.sh build`
+  before running a check, and do not treat a passing scenario as evidence
+  until the build that precedes it succeeded.
+
 ## Commit messages
 
 - Do not put a link to an agent's session (for example a
@@ -129,7 +181,34 @@
 - If `build/disk.img` has to be recreated, that must be a deliberate and
   justified decision, not the normal behavior of `./build.sh build`.
 
-## Minimum verification when touching that area
+## Minimum verification for any change
+
+Every change: `./build.sh build` succeeds, then `./build.sh test` (the host
+tests) passes. On top of that, by area — these are the scenarios CI runs on
+every push, plus the ones specific to each area:
+
+| Area touched | Run |
+| --- | --- |
+| Kernel, POSIX runtime or userland | `./build.sh smoke smoke` |
+| Native API, SUN, a syscall | `./build.sh smoke native-test` |
+| `windowd`, `compositord`, the desktop | `./build.sh smoke windowd-smoke`, `./build.sh smoke taskbar-smoke` |
+| `libsxgui`, the loader, a program that draws | `./build.sh smoke sxgui-smoke` (see below) |
+| The loader, shared libraries | also `dltest`, `sonametest`, `sonametest-newer`, `ldfailtest`, `diamondtest` |
+| SxFS, the disk image, `build.sh`, CMake, the SDK | the persistence check below |
+| Win32 subsystem | `win32-hello`, `win32-window`, `win32-dialog` |
+| Linux subsystem | `linux-hello`, `linux-restart` |
+| A program or driver with its own scenario | that scenario |
+
+- `./build.sh smoke --list` prints every scenario with one line on what it
+  asserts. Audio, USB, networking and most apps have their own; look there
+  before deciding nothing covers the change.
+- A change that should be visible on screen is also looked at with
+  `./tools/shoot.sh`, not only asserted by a serial token.
+- A new feature comes with the assertion that proves it: a host test, a
+  `nativetest` assertion or a smoke scenario registered in
+  `tools/smoke_catalog.py`.
+
+## Minimum verification when touching the persistent image
 
 - Install an external app into the image, for example with:
   `./ports/doomgeneric/build.sh --wad ports/doomgeneric/wad/doom1.wad`

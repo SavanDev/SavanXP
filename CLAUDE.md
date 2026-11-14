@@ -89,6 +89,38 @@ platform allows. A gap is closed in the subsystem that lacks it, not worked
 around in the program, and a planned port to SUN is no reason to leave POSIX
 without it.
 
+### 8. Commit to `master`, and never discard work
+
+No feature branch and no pull request unless the change is experimental enough
+to destabilize `master`. No `push --force`, `reset --hard`, `rebase`,
+`checkout -- <file>`, `restore`, `clean` or `stash drop` unless that operation
+was asked for by name, and no push without being asked. Stage files by name,
+never `git add -A`. Changes in the tree the task did not make are left alone.
+
+### 9. A failing test is fixed in the code, and results are reported as they are
+
+Do not weaken, skip or delete an assertion, a golden image, a timeout or a
+scenario to make it pass. Report what was run and what it printed; a check
+that was not run is never reported as passing. **A build that fails leaves the
+previous binary in the image and every scenario still passes against it**:
+read the `./build.sh build` output before believing a check.
+
+### 10. Verify before calling it done
+
+Every change: `./build.sh build`, then `./build.sh test`. Then the scenario
+for the area, from the table in `AGENTS.md` ("Minimum verification for any
+change"): `smoke smoke` for the kernel and POSIX, `smoke native-test` for SUN
+and syscalls, `smoke windowd-smoke` for the desktop, `smoke sxgui-smoke` for
+the toolkit, the loader and anything that draws. `./build.sh smoke --list`
+names the rest.
+
+### 11. Stay inside the task, and read the subsystem's document first
+
+No refactors, renames or reformatting in files the task does not need.
+`docs/README.md` lists the document for each area; read it before changing the
+area. Microsoft binaries, WADs, logs and captures never enter the repository
+(`AGENTS.md`, "Files that never enter the repository").
+
 ## Build commands
 
 Native Linux path:
