@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
 
 
@@ -28,6 +30,9 @@ def main() -> int:
             encoding="utf-8",
         )
         environment = os.environ.copy()
+        environment["SAVANXP_OUTPUT_ROOT"] = str(source / "output")
+        environment["SAVANXP_PYTHON"] = sys.executable
+        environment.pop("SAVANXP_ARCH", None)
         environment["SAVANXP_CLANG"] = clang
         environment["SAVANXP_LD"] = linker
         result = subprocess.run(
@@ -50,6 +55,13 @@ def main() -> int:
                 f"external builder failed ({result.returncode})\n"
                 f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             )
+        binary = source / "output/external/external-include-test.elf"
+        data = binary.read_bytes()
+        assert data[:5] == b"\x7fELF\x01", "external builder must emit ELF32 by default"
+        elf_type, machine = struct.unpack_from("<HH", data, 16)
+        assert (elf_type, machine) == (2, 3), "expected static i386 ET_EXEC"
+        entry, = struct.unpack_from("<I", data, 24)
+        assert 0x08000000 <= entry < 0x09000000, hex(entry)
     print("external builder source-root include: PASS")
     return 0
 

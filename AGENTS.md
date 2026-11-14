@@ -1,5 +1,13 @@
 # AGENTS
 
+## Branch scope
+
+- This branch targets i386 only. The x86_64 system lives on `master`.
+- Follow `docs/I386_PORT.md` for current capabilities and porting order.
+  Retained subsystem sources are not evidence that a feature works on i386.
+- Normal build/run/smoke commands use GRUB2/BIOS, ELF32 and `build/disk.img`.
+  Preserve existing files when migrating; ELF64 binaries remain data until rebuilt.
+
 ## Toolchain
 
 - The native build uses `build.sh` and CMake, resolving tools from the host
@@ -95,7 +103,11 @@
 
 ## Minimum verification for the shared library work
 
-- `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
+- SxGUI and shared-library loading are not ported to i386 yet. Restore
+  `sxgui-smoke` with that port. Until then `./build.sh smoke desktop` checks
+  `desktop32`; it must not be reported as evidence that SxGUI works.
+
+- Once ported, run `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
   program that draws is touched. It is the only check that looks at what SxGUI
   puts on screen, and it is what caught a toolkit that stopped painting.
   `smoke` and `calc-smoke` only prove the loader works, not that the toolkit

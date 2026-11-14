@@ -34,7 +34,7 @@ def main() -> int:
     generator = (root / "tools" / "gen_sxe_resources.py").read_text(encoding="utf-8")
     assert '"include", "abi", "savanxp_native_abi.h"' in generator
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert "include/abi/savanxp_native_abi.h" in cmake
+    # Resource stamping still uses the common ABI; Haxe is not in the i386 graph.
     assert "add_subdirectory(subsystems/native)" not in cmake
     assert "find_program(HAXE)" not in cmake
 

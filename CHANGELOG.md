@@ -18,10 +18,6 @@ Cut-off notes:
   and driver work transfers between profiles. `./build.sh smoke legacy-cpu` asserts
   the CPU over QMP with `tools/check_legacy_cpu.py` before any i386 guest exists.
 
-- **The build graph has an architecture axis.** `SAVANXP_ARCH` picks the triple, the
-  compile-profile flags, the kernel linker script and the link emulation; `x86_64` is the
-  default and `i386` the legacy target (`SAVANXP_ARCH=i386 ./build.sh build`).
-
 - **The i386 kernel boots.** `SAVANXP_ARCH=i386` builds a Multiboot2 kernel in `arch/x86`
   (GRUB2 handoff, COM1 serial, 4 MiB-page identity map over the first 1 GiB) and
   `./build.sh iso` emits the BIOS GRUB2 ISO; `tools/legacy_boot_test.py` asserts the boot.
@@ -66,9 +62,21 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 is the only build and boot target on this branch.** Normal `build`,
+  `iso`, `run`, `debug` and `smoke` use ELF32 and GRUB/BIOS with `build/disk.img`;
+  existing external files survive. [Porting roadmap](docs/I386_PORT.md).
+
+- **External SDK applications and the Doom persistence build use static ELF32.**
+  The SDK supplies i386 jump/division helpers; Doom runtime support remains pending.
+
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`
   in `include/shared/version.h` feeds System Properties, the boot splash and the
   desktop stamp.
+
+### Removed
+
+- **The x86_64 boot implementation and Limine/UEFI build path are retired here.**
+  Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
 

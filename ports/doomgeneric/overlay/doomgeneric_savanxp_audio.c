@@ -5,7 +5,6 @@
 #include <string.h>
 
 #include "savanxp/audio.h"
-#include "savanxp/ldso.h"
 #include "savanxp/midi.h"
 
 #include "doomtype.h"
@@ -19,12 +18,9 @@
 
 #define SX_SOUND_PITCH_NORMAL 128u
 
-/* La musica entra por libsxmidi.so.0.4: los lumps MUS del WAD se convierten a
- * MIDI con el mus2mid de upstream y el sintetizador los renderiza a PCM una vez
- * por tema, que despues suena en loop en una voz dedicada. No hay streaming ni
- * callback nuevo en el mixer: es el mismo camino que ya usa ccleste, con la
- * diferencia de que el sintetizador es una libreria del sistema y no un decoder
- * de terceros. Ver docs/MIDI.md. */
+/* Convert upstream MUS lumps to MIDI and render them through the SDK
+ * synthesizer. The i386 persistence build links it statically until ELF32
+ * shared-library loading and the guest audio API have been ported. */
 #define DG_MUSIC_RATE SX_MIDI_DEFAULT_RATE
 #define DG_MUSIC_CENTRE 127
 
@@ -60,7 +56,6 @@ static int g_music_streaming = 0;
 static int g_music_volume = 127;
 static int g_music_paused = 0;
 static int g_music_playing = 0;
-static int g_music_missing_reported = 0;
 
 int use_libsamplerate = 0;
 float libsamplerate_scale = 1.0f;
@@ -459,17 +454,7 @@ static void *DG_Music_RegisterSong(void *data, int len) {
     if (data == 0 || len <= 0) {
         return 0;
     }
-    /* Sin la libreria en el volumen el programa arranca igual: el cargador deja
-     * las referencias sin reubicar y llamar a sx_midi_* seria un salto a
-     * cualquier lado. Se avisa una vez y la musica se ignora. */
-    if (ldso_missing() != 0) {
-        if (!g_music_missing_reported) {
-            eprintf("doomgeneric: sin %s; la musica se ignora\n", ldso_missing());
-            g_music_missing_reported = 1;
-        }
-        return 0;
-    }
-
+    /* The i386 persistence build links the synthesizer statically. */
     dg_music_bank(&genmidi, &genmidi_len, &genmidi_lump);
 
     if (len >= 4 && memcmp(data, "MUS\x1a", 4) == 0) {

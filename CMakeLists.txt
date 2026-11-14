@@ -14,37 +14,22 @@ if(NOT SAVANXP_ACCEL STREQUAL "tcg" AND NOT SAVANXP_ACCEL STREQUAL "kvm")
     message(FATAL_ERROR "SAVANXP_ACCEL must be tcg or kvm")
 endif()
 set(SAVANXP_SMP 1 CACHE STRING "Number of virtual CPUs")
-option(SAVANXP_VIRTIO "Use QEMU virtio hardware" OFF)
 option(SAVANXP_HEADLESS "Run QEMU without a graphical display" OFF)
-# La arquitectura objetivo es un eje del grafo, no una constante. x86_64 es el
-# sistema actual; i386 es el objetivo de hardware real de docs/REAL_HARDWARE.md
-# y comparte arbol. Los scripts que corren fuera de CMake leen la misma
-# variable del entorno con tools/arch-env.sh, que repite este mapeo.
-set(SAVANXP_ARCH "x86_64" CACHE STRING "Target architecture: x86_64 or i386")
-set_property(CACHE SAVANXP_ARCH PROPERTY STRINGS x86_64 i386)
-if(NOT SAVANXP_ARCH STREQUAL "x86_64" AND NOT SAVANXP_ARCH STREQUAL "i386")
-    message(FATAL_ERROR "SAVANXP_ARCH must be x86_64 or i386, got '${SAVANXP_ARCH}'")
+# This branch ports SavanXP to i386; the x86_64 system lives on master.
+set(SAVANXP_ARCH "i386" CACHE STRING "Target architecture (this branch: i386)")
+set_property(CACHE SAVANXP_ARCH PROPERTY STRINGS i386)
+if(NOT SAVANXP_ARCH STREQUAL "i386")
+    message(FATAL_ERROR "This branch supports i386 only. Use master for x86_64 and a separate build directory.")
 endif()
-set(SAVANXP_SMOKE_COMMAND "" CACHE STRING
-    "Optional init automation command staged in the smoke initramfs")
+if(NOT SAVANXP_SMP EQUAL 1)
+    message(FATAL_ERROR "The i386 kernel currently supports one CPU only.")
+endif()
 set(SAVANXP_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
-    "Shared SavanXP output root (staging, images and persistent disk)")
+    "Output root (staging, images and persistent disk)")
 set(SAVANXP_SXFS_SECTORS 2097152 CACHE STRING "Size of the persistent SxFS image in sectors")
-# El volumen de la ISO es mas chico a proposito: es un LiveCD, tiene que entrar
-# en un medio optico y ademas se carga en RAM como modulo de Limine, asi que cada
-# byte suyo es tambien un byte de memoria del invitado. La imagen de desarrollo
-# no tiene por que ser chica. Ver tools/iso_volume.py.
-set(SAVANXP_ISO_SECTORS 524288 CACHE STRING "Size of the LiveCD SxFS volume in sectors")
-
 set(SAVANXP_GENERATED_ROOT "${SAVANXP_OUTPUT_ROOT}/generated")
-set(SAVANXP_SXE_ROOT "${SAVANXP_GENERATED_ROOT}/sxe")
-set(SAVANXP_ROOTFS_ROOT "${SAVANXP_OUTPUT_ROOT}/rootfs")
-set(SAVANXP_ROOTFS_STAMP "${SAVANXP_OUTPUT_ROOT}/rootfs.stamp")
 set(SAVANXP_DISKFS_ROOT "${SAVANXP_OUTPUT_ROOT}/diskfs")
-set(SAVANXP_IMAGE_ROOT "${SAVANXP_OUTPUT_ROOT}/image")
-# Arbol de arranque de la ISO, aparte del de desarrollo. Ver savanxp_iso_root.
 set(SAVANXP_ISO_ROOT "${SAVANXP_OUTPUT_ROOT}/iso-root")
-set(SAVANXP_INITRAMFS "${SAVANXP_OUTPUT_ROOT}/initramfs.cpio")
 set(SAVANXP_DISK_IMAGE "${SAVANXP_OUTPUT_ROOT}/disk.img")
 set(SAVANXP_KERNEL_ELF "${SAVANXP_OUTPUT_ROOT}/kernel.elf")
 set(SAVANXP_ISO_IMAGE "${SAVANXP_OUTPUT_ROOT}/SavanXP.iso")
@@ -82,26 +67,10 @@ if(NOT SAVANXP_GIT_RESULT EQUAL 0 OR NOT SAVANXP_BUILD_ID)
     set(SAVANXP_BUILD_ID unknown)
 endif()
 
-# Todo lo que depende de la arquitectura se deriva aqui: el triple, la
-# emulacion con la que enlaza ld.lld, el guion de enlace del kernel y los
-# modelos de memoria de los perfiles de compilacion.
-if(SAVANXP_ARCH STREQUAL "i386")
-    set(SAVANXP_TARGET_TRIPLE i386-unknown-none-elf)
-    set(SAVANXP_LINK_EMULATION elf_i386)
-    set(SAVANXP_KERNEL_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/linker32.ld")
-    # -mcmodel no existe en 32 bits: clang lo rechaza para i386. Los valores
-    # vacios desaparecen del argv al expandirlos sin comillas.
-    set(SAVANXP_ARCH_MCMODEL_KERNEL)
-    set(SAVANXP_ARCH_MCMODEL_SMALL)
-    set(SAVANXP_ARCH_MCMODEL_MEDIUM)
-else()
-    set(SAVANXP_TARGET_TRIPLE x86_64-unknown-none-elf)
-    set(SAVANXP_LINK_EMULATION elf_x86_64)
-    set(SAVANXP_KERNEL_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/linker.ld")
-    set(SAVANXP_ARCH_MCMODEL_KERNEL -mcmodel=kernel)
-    set(SAVANXP_ARCH_MCMODEL_SMALL -mcmodel=small)
-    set(SAVANXP_ARCH_MCMODEL_MEDIUM -mcmodel=medium)
-endif()
+set(SAVANXP_TARGET_TRIPLE i386-unknown-none-elf)
+set(SAVANXP_LINK_EMULATION elf_i386)
+set(SAVANXP_KERNEL_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/linker32.ld")
+set(SAVANXP_USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker32.ld")
 
 set(SAVANXP_KERNEL_COMPILE_OPTIONS
     "-target;${SAVANXP_TARGET_TRIPLE}"
@@ -112,7 +81,6 @@ set(SAVANXP_KERNEL_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_KERNEL}
     -mno-mmx
     -mno-sse
     -mno-sse2
@@ -120,21 +88,6 @@ set(SAVANXP_KERNEL_COMPILE_OPTIONS
     -Wall
     -Wextra
     -Wpedantic
-)
-set(SAVANXP_UACPI_COMPILE_OPTIONS
-    "-target;${SAVANXP_TARGET_TRIPLE}"
-    -ffreestanding
-    -fstack-protector-strong
-    -fno-pic
-    -fno-pie
-    -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_KERNEL}
-    -mno-mmx
-    -mno-sse
-    -mno-sse2
-    -mgeneral-regs-only
-    -Wall
-    -DUACPI_USE_BUILTIN_STRING
 )
 set(SAVANXP_USER_COMPILE_OPTIONS
     "-target;${SAVANXP_TARGET_TRIPLE}"
@@ -143,7 +96,6 @@ set(SAVANXP_USER_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_SMALL}
     -mno-mmx
     -msse
     -msse2
@@ -155,34 +107,6 @@ set(SAVANXP_USER_COMPILE_OPTIONS
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
-set(SAVANXP_LIBRARY_COMPILE_OPTIONS
-    "-target;${SAVANXP_TARGET_TRIPLE}"
-    -ffreestanding
-    -fPIC
-    -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_MEDIUM}
-    -mno-mmx
-    -msse
-    -msse2
-    -fstack-protector-strong
-    -ffunction-sections
-    -fdata-sections
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-language-extension-token
-    -Wno-c23-extensions
-)
-
-# El script de enlace del userland tambien depende de la arquitectura: en
-# x86_64 la imagen vive en 0x400000 y en i386 dentro de la ventana de usuario
-# (0x08000000) que el mapa de paginacion marca con el bit de usuario.
-if(SAVANXP_ARCH STREQUAL "i386")
-    set(SAVANXP_USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker32.ld")
-else()
-    set(SAVANXP_USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld")
-endif()
-
 set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -nostdlib
     -static
@@ -193,152 +117,32 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -Wl,--gc-sections
     -Wl,--build-id=none
 )
-# El bloque PIE de verdad: sin -static, sin -T fijo, -pie y --export-dynamic.
-# Sin esto un ejecutable PIE no nace: -static y el -T compiten con -pie de un
-# modo que no se expresa como "agregar una opcion", y sin --export-dynamic la
-# salida DYN sale sin .dynsym y el cargador no tiene contra que resolver.
-#
-# --dynamic-linker va con la ruta real del interprete. lld, al ver -pie sin
-# -static, mete por defecto /lib64/ld-linux-x86-64.so.2, que es del host que
-# compila y no existe en SavanXP. El efecto no era cosmeticso: el kernel copia
-# esa ruta al stack inicial, y una imagen ET_DYN la llevaba a una posicion que
-# pisaba la cadena del ultimo argumento. Un programa recibia su propio argv con
-# una ruta de glibc en lugar de la suya.
-#
-# La ruta que va es la que el interprete tendria si fuera un archivo aparte.
-# Hoy el cargador va enlazado dentro del programa, asi que el kernel mapea la
-# imagen principal y crt0 corre el cargador; PT_INTERP no se ejecuta todavia.
-set(SAVANXP_USER_LINK_OPTIONS_PIE
-    -nostdlib
-    -fuse-ld=lld
-    "-Wl,-m,${SAVANXP_LINK_EMULATION}"
-    -pie
-    "-Wl,-z,max-page-size=0x1000"
-    "-Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
-    -Wl,--build-id=none
-    -Wl,--export-dynamic
-    "-Wl,--gc-sections"
-    -Wl,-e,_start
+set(SAVANXP_KERNEL_ARCH_SOURCES
+    arch/x86/entry32.S
+    arch/x86/process.cpp
+    arch/x86/context.cpp
+    arch/x86/interrupts32.S
+    arch/x86/serial.cpp
+    arch/x86/egatext.cpp
+    arch/x86/fb32.cpp
+    arch/x86/pit.cpp
+    arch/x86/paging.cpp
+    arch/x86/cpu.cpp
+    arch/x86/syscall.cpp
+    arch/x86/user32.cpp
+    arch/x86/ps2_32.cpp
+    arch/x86/main32.cpp
 )
-set(SAVANXP_USER_COMPILE_OPTIONS_PIE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-
-# Las fuentes de arranque son de la arquitectura: en x86_64 la entrada de
-# Limine y el resto de arch/x86_64; en i386 el kernel de arranque Multiboot2
-# de arch/x86 (entrada, consola serie y paginacion propia), el que describe
-# docs/REAL_HARDWARE.md.
-set(SAVANXP_KERNEL_ARCH_SOURCES)
-if(SAVANXP_ARCH STREQUAL "x86_64")
-    set(SAVANXP_KERNEL_ARCH_SOURCES
-        arch/x86_64/context.S
-        arch/x86_64/entry.cpp
-        arch/x86_64/cpu_init.cpp
-        arch/x86_64/timer.cpp
-        arch/x86_64/smp.cpp
-    )
-elseif(SAVANXP_ARCH STREQUAL "i386")
-    set(SAVANXP_KERNEL_ARCH_SOURCES
-        arch/x86/entry32.S
-        arch/x86/process.cpp
-        arch/x86/context.cpp
-        arch/x86/interrupts32.S
-        arch/x86/serial.cpp
-        arch/x86/egatext.cpp
-        arch/x86/fb32.cpp
-        arch/x86/pit.cpp
-        arch/x86/paging.cpp
-        arch/x86/cpu.cpp
-        arch/x86/syscall.cpp
-        arch/x86/user32.cpp
-        arch/x86/ps2_32.cpp
-        arch/x86/main32.cpp
-    )
-    # These paths execute on a bounded per-process kernel stack. Reject large
-    # Debug aggregate temporaries before they can corrupt another task.
-    set_source_files_properties(
-        arch/x86/context.cpp arch/x86/process.cpp arch/x86/user32.cpp arch/x86/syscall.cpp
-        PROPERTIES COMPILE_OPTIONS "-Wframe-larger-than=4096;-Werror=frame-larger-than"
-    )
-endif()
-
-# The full x86_64 subsystem sources remain separate from the i386
-# implementation in arch/x86, including its own process scheduler.
-set(SAVANXP_X86_64_KERNEL_SOURCES
-    kernel/kernel_main.cpp
-    kernel/boot_screen.cpp
-    kernel/console.cpp
-    kernel/device.cpp
-    kernel/serial_dev.cpp
-    kernel/display.cpp
-    kernel/ata.cpp
-    kernel/virtio_blk.cpp
-    kernel/partition.cpp
-    kernel/fs.cpp
-    kernel/ramdisk.cpp
-    kernel/nic.cpp
-    kernel/rtl8139.cpp
-    kernel/virtio_net.cpp
-    kernel/pci.cpp
-    kernel/input.cpp
-    kernel/tty.cpp
-    kernel/ui.cpp
-    kernel/virtio_pci.cpp
-    kernel/virtio_gpu.cpp
-    kernel/fb_gpu.cpp
-    kernel/gpu_device.cpp
-    kernel/virtio_input.cpp
-    kernel/virtio_sound.cpp
-    kernel/ac97.cpp
-    kernel/audio.cpp
-    kernel/audio_device.cpp
-    kernel/ps2.cpp
-    kernel/pcspeaker.cpp
-    kernel/power.cpp
-    kernel/clipboard.cpp
-    kernel/acpi.cpp
-    kernel/ioapic.cpp
-    kernel/uacpi_glue.cpp
-    kernel/rtc.cpp
-    kernel/heap.cpp
-    kernel/net.cpp
-    kernel/object.cpp
-    kernel/physical_memory.cpp
-    kernel/vmm.cpp
-    kernel/vfs.cpp
-    kernel/block.cpp
-    kernel/sxfs.cpp
-    kernel/elf.cpp
-    kernel/process.cpp
-    kernel/subsystem.cpp
-    kernel/panic.cpp
-    kernel/runtime.cpp
+# These paths execute on a bounded per-process kernel stack. Reject large
+# Debug aggregate temporaries before they can corrupt another task.
+set_source_files_properties(
+    arch/x86/context.cpp arch/x86/process.cpp arch/x86/user32.cpp arch/x86/syscall.cpp
+    PROPERTIES COMPILE_OPTIONS "-Wframe-larger-than=4096;-Werror=frame-larger-than"
 )
-file(GLOB SAVANXP_POSIX_KERNEL_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/kernel/*.cpp")
-list(SORT SAVANXP_POSIX_KERNEL_SOURCES)
-
-set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES})
-if(SAVANXP_ARCH STREQUAL "x86_64")
-    list(APPEND SAVANXP_KERNEL_SOURCES ${SAVANXP_X86_64_KERNEL_SOURCES})
-    list(APPEND SAVANXP_KERNEL_SOURCES ${SAVANXP_POSIX_KERNEL_SOURCES})
-elseif(SAVANXP_ARCH STREQUAL "i386")
-    # La pila de almacenamiento no depende de la arquitectura: ATA PIO, el
-    # registro de dispositivos de bloque, el driver MBR y SxFS sobre el VFS.
-    # El kernel i386 la usa para montar el disco persistente; el heap, el
-    # resto del kernel de 64 bits y el userland llegan en pasos posteriores
-    # (docs/REAL_HARDWARE.md).
-    list(APPEND SAVANXP_KERNEL_SOURCES
-        kernel/ata.cpp
-        kernel/block.cpp
-        kernel/partition.cpp
-        kernel/fs.cpp
-        kernel/sxfs.cpp
-        kernel/vfs.cpp
-        kernel/runtime.cpp
-    )
-endif()
-
-include("${CMAKE_SOURCE_DIR}/vendor/uacpi/uacpi.cmake")
-set(SAVANXP_UACPI_SOURCES ${UACPI_SOURCES})
+# Reused storage modules; other subsystems enter the graph as they are ported.
+set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
+    kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
+    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
 target_include_directories(savanxp_kernel_objects PRIVATE
@@ -355,36 +159,7 @@ set_target_properties(savanxp_kernel_objects PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-add_library(savanxp_uacpi_objects OBJECT ${SAVANXP_UACPI_SOURCES})
-target_include_directories(savanxp_uacpi_objects PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/uacpi/include"
-)
-target_compile_options(savanxp_uacpi_objects PRIVATE
-    ${SAVANXP_UACPI_COMPILE_OPTIONS}
-    -std=gnu11
-)
-set_target_properties(savanxp_uacpi_objects PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS YES
-)
-
-# The freestanding userland runtime is shared by every in-tree executable. The
-# final link still uses --gc-sections, so each program only retains the runtime
-# pieces it references.
-# Las unidades del runtime del usuario. UNA sola lista para los tres targets:
-# el normal, el PIC y el PIC sin math.
-#
-# Antes cada uno tenia la suya y no coincidian: el PIC traia sxgui, sxe y audio,
-# el normal no. Un programa.funcional bajo STATIC tiene que listar a mano las
-# unidades que el runtime no trae, y en cuanto se migra a PIE esas mismas
-# unidades dan simbolo duplicado. Eso hacia que cambiar de perfil no fuera un
-# cambio de una linea sino una reedicion de fuentes, que es justo lo que el
-# perfil deberia evitar.
-#
-# Sobran unidades en un programa que no las use no cuesta nada: las opciones de
-# compilacion llevan -ffunction-sections/-fdata-sections y el perfil STATIC
-# pasa --gc-sections, asi que lo no referenciado se descarta en el enlace.
+# The SDK runtime is compiled as ELF32; unused units are discarded at link.
 set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/crt0.S
     subsystems/posix/sdk/v1/runtime/libc.c
@@ -399,194 +174,6 @@ set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/audio.c
     subsystems/posix/sdk/v1/runtime/sxmidi.c
 )
-add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
-target_include_directories(savanxp_user_runtime PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_compile_definitions(savanxp_user_runtime PRIVATE
-    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-target_compile_options(savanxp_user_runtime PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
-set_target_properties(savanxp_user_runtime PROPERTIES
-    C_EXTENSIONS YES
-)
-
-set(SAVANXP_USER_COMPILE_OPTIONS_PIC
-    "-target;${SAVANXP_TARGET_TRIPLE}"
-    -ffreestanding
-    -fstack-protector-strong
-    -fPIC
-    -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_MEDIUM}
-    -mno-mmx
-    -msse
-    -msse2
-    -ffunction-sections
-    -fdata-sections
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-language-extension-token
-    -Wno-c23-extensions
-)
-# Variantes del runtime, elegidas por las librerias que el programa usa.
-#
-# Un runtime por COMBINACION de unidades que salen a una libreria. La razon es la
-# misma para todas: si el ejecutable trae la copia, el enlazador no emite
-# DT_NEEDED, la libreria no se carga y no se comparte nada. El programa tiene que
-# dejar el simbolo indefinido para que el mecanismo sea real.
-#
-# Las combinaciones las pide el programa segun sus DEPENDS, no una bandera. Con
-# math, sxgui y gfx withdrawn hay ocho subconjuntos: enumerarlos seria ocho
-# bloques casi identicos, y el sexto se olvidaria. Lo que decide es "esta
-# libreria reemplaza estas unidades", y `savanxp_program` lo lee de DEPENDS.
-#
-# El target se nombra por el conjunto que le falta, asi que dos programas con
-# DEPENDS distintos reciben targets distintos sin que nadie los enumere.
-set(SAVANXP_LIBRARY_REPLACES_libmath math.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxmidi sxmidi.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgfx gfx.c)
-set(SAVANXP_LIBRARY_REPLACES_libgfx2d gfx2d.c sxchrome.c)
-
-# El reproductor de medios es un programa de este arbol que depende de una libreria
-# que construye ports/ffmpeg. Eso rompe una suposicion: un programa se compila con
-# lo que hay en el arbol.
-#
-# Lo que hace falta son DOS cosas del port --la libreria, para el DT_NEEDED, y las
-# CABECERAS, que `configure` genera y no estan versionadas-- y por eso el programa
-# es condicional. Sin el port no hay reproductor, y el registro lo descarta igual
-# que a Doom. Se dice en voz alta porque un programa que aparece y desaparece
-#dependiendo de lo que haya en el disco es exactamente lo que no debe pasar sin
-# decirse.
-#
-# La alternativa --dejar el reproductor FUERA del port-- exige que la libreria se
-# pueda enlazar sin existir, y eso se resuelve con un stub de enlace que ademas
-# obliga a renunciar a la comprobacion de la API de FFmpeg en tiempo de enlace. Es un
-# intercambio: ahora se comprueba y el programa es condicional; con stub, el
-# programa es siempre y la comprobacion pasa a ser de arranque.
-# Dos directorios de cabeceras y no uno, porque FFmpeg separa lo que genera de lo
-# que trae: las cabeceras publicas estan en el arbol de fuentes y `configure` solo
-# pone config.h y config_components.h en el directorio de build. El port los pasa
-# con -I "$SRC" -I "$BUILD" (ports/ffmpeg/link.sh), y aqui hace falta lo mismo.
-set(SAVANXP_FFMPEG_LIBRARY "${SAVANXP_OUTPUT_ROOT}/external/libffmpeg.so.0.4")
-set(SAVANXP_FFMPEG_SOURCE "${SAVANXP_OUTPUT_ROOT}/ports/ffmpeg/work/ffmpeg-7.1.1")
-set(SAVANXP_FFMPEG_BUILD "${SAVANXP_OUTPUT_ROOT}/ports/ffmpeg/work/build")
-set(SAVANXP_HAVE_FFMPEG OFF)
-if(EXISTS "${SAVANXP_FFMPEG_LIBRARY}"
-   AND EXISTS "${SAVANXP_FFMPEG_SOURCE}/libavcodec/avcodec.h"
-   AND EXISTS "${SAVANXP_FFMPEG_BUILD}/config.h")
-    set(SAVANXP_HAVE_FFMPEG ON)
-    add_library(libffmpeg SHARED IMPORTED GLOBAL)
-    set_target_properties(libffmpeg PROPERTIES
-        IMPORTED_LOCATION "${SAVANXP_FFMPEG_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES
-            "${SAVANXP_FFMPEG_SOURCE};${SAVANXP_FFMPEG_BUILD}")
-    message(STATUS "mediaplayer: se construye con ${SAVANXP_FFMPEG_LIBRARY}")
-else()
-    message(STATUS
-        "mediaplayer: NO se construye; falta ${SAVANXP_FFMPEG_LIBRARY} o el arbol de "
-        "FFmpeg. Construi ports/ffmpeg primero. El registro lo descarta.")
-endif()
-
-function(savanxp_runtime_variant)
-    set(options PIC)
-    set(oneValueArgs NAME)
-    set(multiValueArgs EXCLUDE)
-    cmake_parse_arguments(R "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-    set(sources ${SAVANXP_USER_RUNTIME_SOURCES})
-    set(key full)
-    foreach(dropped IN LISTS R_EXCLUDE)
-        list(REMOVE_ITEM sources ${dropped})
-        get_filename_component(base "${dropped}" NAME)
-        set(key "${key}_${base}")
-    endforeach()
-    string(REGEX REPLACE "[.]c$" "" key "${key}")
-    string(REGEX REPLACE "_" "-" key "${key}")
-    add_library(${R_NAME} OBJECT ${sources})
-    target_include_directories(${R_NAME} PRIVATE
-        "${CMAKE_SOURCE_DIR}/include"
-        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
-        "${SAVANXP_GENERATED_ROOT}"
-    )
-    target_compile_definitions(${R_NAME} PRIVATE
-        DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-    if(R_PIC)
-        target_compile_options(${R_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-    else()
-        target_compile_options(${R_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
-    endif()
-    set_target_properties(${R_NAME} PROPERTIES C_EXTENSIONS YES)
-    set(SAVANXP_RUNTIME_TARGET_${key} ${R_NAME} PARENT_SCOPE)
-endfunction()
-
-# El runtime completo: el caso base, para un programa que no usa ninguna
-# libreria compartida.
-savanxp_runtime_variant(NAME savanxp_user_runtime_pic PIC)
-
-# Las demas combinaciones las crea savanxp_program segun sus DEPENDS: cada
-# programa pide las suyas y nadie mantiene una lista a mano.
-
-add_custom_target(savanxp_user_runtime_pic_check ALL
-    DEPENDS savanxp_user_runtime_pic
-)
-# trampoline that the in-tree userland runtime does not use.
-set(SAVANXP_EXTERNAL_COMPILE_OPTIONS
-    "-target;${SAVANXP_TARGET_TRIPLE}"
-    -ffreestanding
-    -fstack-protector-strong
-    -fno-pic
-    -fno-pie
-    -mno-red-zone
-    ${SAVANXP_ARCH_MCMODEL_SMALL}
-    -mno-mmx
-    -mno-sse
-    -mno-sse2
-    -mgeneral-regs-only
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-set(SAVANXP_EXTERNAL_LINK_OPTIONS
-    -nostdlib
-    -static
-    -fuse-ld=lld
-    "-Wl,-m,${SAVANXP_LINK_EMULATION}"
-    "-Wl,-T,${SAVANXP_USER_LINKER_SCRIPT}"
-    "-Wl,-z,max-page-size=0x1000"
-    -Wl,--build-id=none
-)
-# El runtime de las apps externas es el de los programas internos MENOS las unidades
-# del toolkit, mas setjmp. Se deriva en vez de restcribirse, porque son dos listas
-# que tienen que coincidir y que no coincidir no da ningun error: el enlazador se
-# queja de un simbolo indefinido que nadie sabe de donde deberia venir, mucho despues
-# del cambio que lo rompio.
-set(SAVANXP_EXTERNAL_RUNTIME_SOURCES ${SAVANXP_USER_RUNTIME_SOURCES}
-    subsystems/posix/sdk/v1/runtime/setjmp.S)
-list(REMOVE_ITEM SAVANXP_EXTERNAL_RUNTIME_SOURCES
-    subsystems/posix/sdk/v1/runtime/math.c
-    subsystems/posix/sdk/v1/runtime/audio.c
-    subsystems/posix/sdk/v1/runtime/sxe.c
-    subsystems/posix/sdk/v1/runtime/sxchrome.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
-
-add_library(savanxp_external_runtime OBJECT ${SAVANXP_EXTERNAL_RUNTIME_SOURCES})
-target_include_directories(savanxp_external_runtime PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_compile_options(savanxp_external_runtime PRIVATE ${SAVANXP_EXTERNAL_COMPILE_OPTIONS})
-set_target_properties(savanxp_external_runtime PROPERTIES
-    C_EXTENSIONS YES
-)
-
 # Desktop icon PNGs are checked-in, hand-editable source assets. Keep the
 # generator as an explicit target, but never let a normal build redraw or
 # overwrite artwork that an app author has replaced.
@@ -675,113 +262,6 @@ set_source_files_properties(${SAVANXP_GENERATED_HEADER_FILES} PROPERTIES HEADER_
 add_custom_target(savanxp_generated_headers DEPENDS ${SAVANXP_GENERATED_HEADER_FILES})
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
-# El grafo de userland es el de x86_64: sus programas se enlazan con linker.ld
-# en 0x400000 y el kernel los carga con el loader de 64 bits. En i386 lo
-# construye cmake/userland-i386.cmake.
-if(SAVANXP_ARCH STREQUAL "x86_64")
-
-include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
-
-# BusyBox is an external-style port compiled against the same freestanding
-# runtime, but it is part of the base rootfs and therefore a normal target here.
-file(GLOB SAVANXP_BUSYBOX_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/vendor/busybox-port/*.c")
-list(SORT SAVANXP_BUSYBOX_SOURCES)
-add_executable(savanxp-busybox ${SAVANXP_BUSYBOX_SOURCES})
-target_include_directories(savanxp-busybox PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/busybox-port"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/include"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_link_libraries(savanxp-busybox PRIVATE savanxp_external_runtime)
-target_compile_definitions(savanxp-busybox PRIVATE
-    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-target_compile_options(savanxp-busybox PRIVATE ${SAVANXP_EXTERNAL_COMPILE_OPTIONS})
-target_link_options(savanxp-busybox PRIVATE ${SAVANXP_EXTERNAL_LINK_OPTIONS})
-set_target_properties(savanxp-busybox PROPERTIES OUTPUT_NAME busybox SUFFIX "")
-
-set(SAVANXP_USER_TARGETS)
-get_property(SAVANXP_USER_TARGETS GLOBAL PROPERTY SAVANXP_USER_TARGETS)
-set(SAVANXP_USER_PROGRAM_NAMES)
-get_property(SAVANXP_USER_PROGRAM_NAMES GLOBAL PROPERTY SAVANXP_USER_PROGRAM_NAMES)
-
-set(SAVANXP_SXE_ARGUMENTS)
-foreach(program IN LISTS SAVANXP_USER_PROGRAM_NAMES)
-    list(APPEND SAVANXP_SXE_ARGUMENTS --program "${program}")
-endforeach()
-set(SAVANXP_SXE_STAMP "${SAVANXP_GENERATED_ROOT}/sxe-resources.stamp")
-set(SAVANXP_SXE_CONFIG_STAMP "${CMAKE_BINARY_DIR}/sxe-programs.stamp")
-set(SAVANXP_SXE_CONFIG_CONTENT
-    "include_tests=${SAVANXP_INCLUDE_TEST_APPS}\nbuild_id=${SAVANXP_BUILD_ID}\nprograms=${SAVANXP_USER_PROGRAM_NAMES}\n")
-set(SAVANXP_SXE_CONFIG_OLD "")
-if(EXISTS "${SAVANXP_SXE_CONFIG_STAMP}")
-    file(READ "${SAVANXP_SXE_CONFIG_STAMP}" SAVANXP_SXE_CONFIG_OLD)
-endif()
-if(NOT SAVANXP_SXE_CONFIG_OLD STREQUAL SAVANXP_SXE_CONFIG_CONTENT)
-    file(WRITE "${SAVANXP_SXE_CONFIG_STAMP}" "${SAVANXP_SXE_CONFIG_CONTENT}")
-endif()
-file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres")
-file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png")
-add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_SXE_ROOT}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"
-            --project-root "${CMAKE_SOURCE_DIR}"
-            --output-dir "${SAVANXP_SXE_ROOT}"
-            --build-id "${SAVANXP_BUILD_ID}"
-            --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-            # El reproductor es el unico programa con fuentes en un subdirectorio, y
-            # --manifest-dir NO es recursivo: sin esta linea su .sxres no se encuentra,
-            # el binario queda sin estampar, el escaneo del lanzador no le ve categoria
-            # y desaparece del catalogo sin decir nada.
-            --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer"
-            ${SAVANXP_SXE_ARGUMENTS}
-    COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
-    DEPENDS
-        "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"
-        "${CMAKE_SOURCE_DIR}/include/sxe/sxe_format.h"
-        "${CMAKE_SOURCE_DIR}/include/abi/savanxp_native_abi.h"
-        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include/savanxp/syscall.h"
-        "${CMAKE_SOURCE_DIR}/include/shared/version.h"
-        "${SAVANXP_SXE_CONFIG_STAMP}"
-        ${SAVANXP_GENERATED_HEADER_FILES}
-        ${SAVANXP_SXE_MANIFESTS}
-        ${SAVANXP_SXE_ASSETS}
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Generating SXE resources"
-    VERBATIM
-)
-add_custom_target(savanxp_sxe_resources DEPENDS "${SAVANXP_SXE_STAMP}")
-
-foreach(target IN LISTS SAVANXP_USER_TARGETS)
-    add_dependencies(${target} savanxp_sxe_resources)
-    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${SAVANXP_SXE_STAMP}")
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stamp_sxe.py"
-                --binary "$<TARGET_FILE:${target}>"
-                --name "${target}"
-                --resource-dir "${SAVANXP_SXE_ROOT}"
-                --objcopy "${SAVANXP_OBJCOPY}"
-                --readelf "${SAVANXP_READELF}"
-        VERBATIM
-    )
-endforeach()
-add_dependencies(savanxp-busybox savanxp_sxe_resources)
-
-endif() # x86_64: programas de userland, busybox y recursos SXE
-
-# uACPI es parte del kernel grande: su object library entra en el enlace solo
-# en x86_64. En i386 el kernel de arranque no enlaza ACPI todavia.
-if(SAVANXP_ARCH STREQUAL "x86_64")
-    set(SAVANXP_KERNEL_UACPI_OBJECTS $<TARGET_OBJECTS:savanxp_uacpi_objects>)
-    set(SAVANXP_KERNEL_UACPI_DEPENDS savanxp_uacpi_objects)
-else()
-    set(SAVANXP_KERNEL_UACPI_OBJECTS)
-    set(SAVANXP_KERNEL_UACPI_DEPENDS)
-endif()
-
 add_custom_target(savanxp_kernel
     COMMAND "${SAVANXP_LD}"
             -m "${SAVANXP_LINK_EMULATION}"
@@ -790,22 +270,12 @@ add_custom_target(savanxp_kernel
             --build-id=none
             -o "${SAVANXP_KERNEL_ELF}"
             $<TARGET_OBJECTS:savanxp_kernel_objects>
-            ${SAVANXP_KERNEL_UACPI_OBJECTS}
     COMMAND_EXPAND_LISTS
-    DEPENDS savanxp_kernel_objects ${SAVANXP_KERNEL_UACPI_DEPENDS}
+    DEPENDS savanxp_kernel_objects
     COMMENT "Linking SavanXP kernel"
     VERBATIM
 )
 add_dependencies(savanxp_kernel_objects savanxp_generated_headers)
-
-if(SAVANXP_ARCH STREQUAL "x86_64")
-
-add_custom_target(savanxp_userland
-    DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
-    COMMENT "Linking SavanXP userland"
-)
-
-endif() # x86_64: el grafo de userland no existe en i386
 
 # Host tests deliberately use the normal Linux compiler and hosted linker;
 # they are not part of the freestanding target graph.
@@ -893,8 +363,13 @@ target_include_directories(savanxp-sxfs-volume-test PRIVATE
 target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-div64-test
+    subsystems/posix/sdk/v1/runtime/div64.c tests/host/div64_test.cpp)
+target_compile_options(savanxp-div64-test PRIVATE -UNDEBUG)
+add_test(NAME div64-test COMMAND savanxp-div64-test)
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
+    DEPENDS savanxp-div64-test savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
@@ -950,9 +425,9 @@ add_test(NAME native-port-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/native_port_layout_test.py"
             --root "${CMAKE_SOURCE_DIR}")
-add_test(NAME smoke-runner-layout-test
+add_test(NAME i386-workflow-test
     COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_SOURCE_DIR}/tests/host/smoke_runner_layout_test.py"
+            "${CMAKE_SOURCE_DIR}/tests/host/i386_workflow_test.py"
             --root "${CMAKE_SOURCE_DIR}")
 add_test(NAME tcp-echo-server-test
     COMMAND "${Python3_EXECUTABLE}"
@@ -960,155 +435,7 @@ add_test(NAME tcp-echo-server-test
             --server "${CMAKE_SOURCE_DIR}/tools/tcp_echo_server.py")
 add_dependencies(savanxp_tests savanxp_sxfs_cli)
 
-# El staging del arbol de desarrollo y de la imagen persistente es de 64 bits:
-# sus fuentes son los programas de usuario de cmake/UserPrograms.cmake y busybox.
-# En i386 la imagen la monta cmake/userland-i386.cmake y solo lleva el programa
-# del MVP (docs/REAL_HARDWARE.md).
-if(SAVANXP_ARCH STREQUAL "x86_64")
-
-set(SAVANXP_APPLETS busybox ls cat echo mkdir rm mv cp ps true false sleep)
-set(SAVANXP_STAGE_COMMANDS
-    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "${CMAKE_SOURCE_DIR}/rootfs/README"
-            "${SAVANXP_ROOTFS_ROOT}/README"
-)
-foreach(target IN LISTS SAVANXP_USER_TARGETS)
-    list(APPEND SAVANXP_STAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E copy
-                "$<TARGET_FILE:${target}>"
-                "${SAVANXP_ROOTFS_ROOT}/bin/${target}"
-    )
-endforeach()
-list(APPEND SAVANXP_STAGE_COMMANDS
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-busybox>"
-            "${SAVANXP_ROOTFS_ROOT}/bin/busybox"
-)
-foreach(applet IN LISTS SAVANXP_APPLETS)
-    if(NOT applet STREQUAL "busybox")
-        list(APPEND SAVANXP_STAGE_COMMANDS
-            COMMAND "${CMAKE_COMMAND}" -E copy
-                    "$<TARGET_FILE:savanxp-busybox>"
-                    "${SAVANXP_ROOTFS_ROOT}/bin/${applet}"
-        )
-    endif()
-endforeach()
-if(SAVANXP_SMOKE_COMMAND)
-    list(APPEND SAVANXP_STAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E rm -f "${SAVANXP_ROOTFS_ROOT}/SMOKE"
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"
-                --output "${SAVANXP_ROOTFS_ROOT}/SMOKE"
-                --command "${SAVANXP_SMOKE_COMMAND}"
-    )
-else()
-    list(APPEND SAVANXP_STAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E rm -f "${SAVANXP_ROOTFS_ROOT}/SMOKE"
-    )
-endif()
-list(APPEND SAVANXP_STAGE_COMMANDS
-    COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_ROOTFS_STAMP}"
-)
-set(SAVANXP_SMOKE_CONFIG_STAMP "${CMAKE_BINARY_DIR}/smoke-config.stamp")
-set(SAVANXP_SMOKE_CONFIG_CONTENT "command=${SAVANXP_SMOKE_COMMAND}\n")
-set(SAVANXP_SMOKE_CONFIG_OLD "")
-if(EXISTS "${SAVANXP_SMOKE_CONFIG_STAMP}")
-    file(READ "${SAVANXP_SMOKE_CONFIG_STAMP}" SAVANXP_SMOKE_CONFIG_OLD)
-endif()
-if(NOT SAVANXP_SMOKE_CONFIG_OLD STREQUAL SAVANXP_SMOKE_CONFIG_CONTENT)
-    file(WRITE "${SAVANXP_SMOKE_CONFIG_STAMP}" "${SAVANXP_SMOKE_CONFIG_CONTENT}")
-endif()
-
-add_custom_command(OUTPUT "${SAVANXP_ROOTFS_STAMP}"
-    ${SAVANXP_STAGE_COMMANDS}
-    # Los binarios de verdad, no savanxp_userland. Ese es un objetivo agregado sin
-    # salida propia, asi que como dependencia de un comando personalizado no aporta
-    # ningun archivo: CMake no atraviesa objetivos personalizados para buscarles
-    # salidas, y el stamp se declaraba al dia con el arbol de rootfs viejo mientras
-    # los ejecutables ya eran nuevos.
-    #
-    # El efecto era que un cambio en cualquier programa no llegaba a la imagen. No
-    # fallaba nada: el build pasaba, check_shared_libs pasaba, y la imagen arrancaba
-    # con el binario anterior. No se nota mirando el build: si se rompe a proposito
-    # el texto de una etiqueta de la barra, build y escenario dan OK los dos,
-    # porque los dos proban el programa viejo. Solo se nota al buscar el binario
-    # extraido de la imagen.
-    DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
-            "${CMAKE_SOURCE_DIR}/rootfs/README"
-            "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"
-            "${SAVANXP_SMOKE_CONFIG_STAMP}"
-    COMMENT "Staging SavanXP initramfs tree"
-    VERBATIM
-)
-add_custom_target(savanxp_rootfs DEPENDS "${SAVANXP_ROOTFS_STAMP}")
-
-add_custom_command(OUTPUT "${SAVANXP_INITRAMFS}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"
-            --source "${SAVANXP_ROOTFS_ROOT}"
-            --output "${SAVANXP_INITRAMFS}"
-    DEPENDS "${SAVANXP_ROOTFS_STAMP}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"
-    COMMENT "Writing initramfs.cpio"
-    VERBATIM
-)
-add_custom_target(savanxp_initramfs DEPENDS "${SAVANXP_INITRAMFS}")
-
-set(SAVANXP_USER_LIBRARY_TARGETS)
-get_property(SAVANXP_USER_LIBRARY_TARGETS GLOBAL PROPERTY SAVANXP_USER_LIBRARY_TARGETS)
-
-# Shared libraries are staged inside savanxp_diskfs, after its rm -rf, or they
-# would be wiped. Its COMMAND list is variadic and cannot host a foreach, so the
-# commands are built into a list and expanded here.
-set(SAVANXP_LIB_COPY_COMMANDS)
-foreach(library IN LISTS SAVANXP_USER_LIBRARY_TARGETS)
-    get_target_property(library_file ${library} OUTPUT_NAME)
-    list(APPEND SAVANXP_LIB_COPY_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_BINARY_DIR}/${library_file}" "${SAVANXP_DISKFS_ROOT}/lib/")
-endforeach()
-
-add_custom_target(savanxp_diskfs
-    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_DISKFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/bin"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/lib"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/icons"
-    ${SAVANXP_LIB_COPY_COMMANDS}
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${SAVANXP_ROOTFS_ROOT}/bin" "${SAVANXP_DISKFS_ROOT}/bin"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
-            --project-root "${CMAKE_SOURCE_DIR}"
-            --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
-    DEPENDS savanxp_rootfs ${SAVANXP_USER_LIBRARY_TARGETS}
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Staging persistent disk tree"
-    VERBATIM
-)
-
-add_custom_target(savanxp_disk
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/sxfs_sync.py"
-            --image "${SAVANXP_DISK_IMAGE}"
-            --source "${SAVANXP_DISKFS_ROOT}"
-            --cli "${SAVANXP_SXFS_CLI}"
-            --sectors "${SAVANXP_SXFS_SECTORS}"
-    DEPENDS savanxp_diskfs savanxp_sxfs_cli
-    COMMENT "Synchronizing persistent SxFS image"
-    VERBATIM
-)
-
-endif() # x86_64: staging de rootfs, initramfs y de la imagen persistente
-
-# Cada arquitectura tiene su camino de arranque: x86_64 con Limine (arbol de
-# desarrollo y su ISO) e i386 con GRUB2 y Multiboot2 (docs/REAL_HARDWARE.md).
-# Ambos definen savanxp_iso_root, savanxp_iso y el agregado savanxp.
-if(SAVANXP_ARCH STREQUAL "x86_64")
-    include("${CMAKE_SOURCE_DIR}/cmake/iso-limine.cmake")
-else()
-    include("${CMAKE_SOURCE_DIR}/cmake/userland-i386.cmake")
-    include("${CMAKE_SOURCE_DIR}/cmake/iso-grub.cmake")
-endif()
-
+include("${CMAKE_SOURCE_DIR}/cmake/userland-i386.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/iso-grub.cmake")
+message(STATUS "SavanXP architecture: ${SAVANXP_ARCH}")
 message(STATUS "SavanXP output root: ${SAVANXP_OUTPUT_ROOT}")
-message(STATUS "SavanXP test applications: ${SAVANXP_INCLUDE_TEST_APPS}")
-message(STATUS "SavanXP build id: ${SAVANXP_BUILD_ID}")

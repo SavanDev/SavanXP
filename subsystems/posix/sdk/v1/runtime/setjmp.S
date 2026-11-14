@@ -1,32 +1,32 @@
+/* i386 SysV callee-saved registers, caller stack and return address. */
 .text
 .global sx_setjmp
 .global sx_longjmp
 
 sx_setjmp:
-    movq %rbx, 0(%rdi)
-    movq %rbp, 8(%rdi)
-    movq %r12, 16(%rdi)
-    movq %r13, 24(%rdi)
-    movq %r14, 32(%rdi)
-    movq %r15, 40(%rdi)
-    leaq 8(%rsp), %rax
-    movq %rax, 48(%rdi)
-    movq (%rsp), %rax
-    movq %rax, 56(%rdi)
+    movl 4(%esp), %edx
+    movl %ebx, 0(%edx)
+    movl %esi, 4(%edx)
+    movl %edi, 8(%edx)
+    movl %ebp, 12(%edx)
+    leal 4(%esp), %eax
+    movl %eax, 16(%edx)
+    movl (%esp), %eax
+    movl %eax, 20(%edx)
     xorl %eax, %eax
     ret
 
 sx_longjmp:
-    movl %esi, %eax
+    movl 4(%esp), %edx
+    movl 8(%esp), %eax
     testl %eax, %eax
     jne 1f
     movl $1, %eax
 1:
-    movq 0(%rdi), %rbx
-    movq 8(%rdi), %rbp
-    movq 16(%rdi), %r12
-    movq 24(%rdi), %r13
-    movq 32(%rdi), %r14
-    movq 40(%rdi), %r15
-    movq 48(%rdi), %rsp
-    jmp *56(%rdi)
+    movl 0(%edx), %ebx
+    movl 4(%edx), %esi
+    movl 8(%edx), %edi
+    movl 12(%edx), %ebp
+    movl 16(%edx), %esp
+    jmp *20(%edx)
+.section .note.GNU-stack,"",@progbits

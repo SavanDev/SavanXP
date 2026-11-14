@@ -1,14 +1,4 @@
-# Userland de i386. En x86_64 lo construye cmake/UserPrograms.cmake, con el
-# loader de 64 bits y linker.ld en 0x400000; aqui se enlaza dentro de la ventana
-# de usuario (linker32.ld) con el mismo runtime del SDK, que ya habla por
-# int $0x80 igual en los dos ABI (docs/REAL_HARDWARE.md).
-
-set(SAVANXP_I386_DISKFS_ROOT "${SAVANXP_OUTPUT_ROOT}/diskfs-i386")
-set(SAVANXP_I386_DISK_IMAGE "${SAVANXP_OUTPUT_ROOT}/disk-i386.img")
-
-# El runtime es el mismo que en x86_64 mas las rutinas de division de 64 bits,
-# que en modo 32 bits no tienen instruccion. Con --gc-sections el linker se
- # queda solo con lo que el programa usa.
+# ELF32 programs share the SDK runtime and the private user address window.
 set(SAVANXP_I386_USER_RUNTIME_SOURCES
     ${SAVANXP_USER_RUNTIME_SOURCES}
     subsystems/posix/sdk/v1/runtime/div64.c
@@ -37,8 +27,8 @@ target_link_libraries(savanxp-i386-sysinfo PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sysinfo PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sysinfo PROPERTIES OUTPUT_NAME sysinfo SUFFIX "")
 
-# El lector de eventos de teclado: diagnostico manual de la entrega por READ
-# (fuera de la cadena sysinfo -> sh32: hace bucle infinito y bloquearia al shell).
+# Manual keyboard-event diagnostic, launched explicitly from the shell.
+if(SAVANXP_INCLUDE_TEST_APPS)
 add_executable(savanxp-i386-keyecho subsystems/posix/userland/keyecho.c)
 target_include_directories(savanxp-i386-keyecho PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -50,6 +40,8 @@ target_compile_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_COMPILE_OPTIO
 target_link_libraries(savanxp-i386-keyecho PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-keyecho PROPERTIES OUTPUT_NAME keyecho SUFFIX "")
+
+endif()
 
 # Interactive shell, launched and restarted by init32.
 add_executable(savanxp-i386-sh32 subsystems/posix/userland/sh32.c)
@@ -91,6 +83,7 @@ target_link_libraries(savanxp-i386-init32 PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-init32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-init32 PROPERTIES OUTPUT_NAME init32 SUFFIX "")
 
+if(SAVANXP_INCLUDE_TEST_APPS)
 # Runtime regression: two CPU-bound workers plus process-lifecycle checks.
 add_executable(savanxp-i386-multitest32
     subsystems/posix/userland/multitest32.c
@@ -107,28 +100,25 @@ target_link_libraries(savanxp-i386-multitest32 PRIVATE savanxp_i386_user_runtime
 target_link_options(savanxp-i386-multitest32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-multitest32 PROPERTIES OUTPUT_NAME multitest32 SUFFIX "")
 
+endif()
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-multitest32 savanxp-i386-init32 savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32 savanxp-i386-desktop32
+    DEPENDS savanxp-i386-init32 savanxp-i386-sysinfo savanxp-i386-sh32 savanxp-i386-desktop32
     COMMENT "Linking the i386 userland"
 )
 
-# Imagen propia: la del userland x86_64 no se toca (regla de persistencia) y esta
-# solo lleva binarios de 32 bits.
+# Additive synchronization preserves external apps and persistent game assets.
 add_custom_target(savanxp_i386_diskfs
-    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_I386_DISKFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_I386_DISKFS_ROOT}/bin"
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_DISKFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/bin"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-sysinfo>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sysinfo"
+            "$<TARGET_FILE:savanxp-i386-sysinfo>" "${SAVANXP_DISKFS_ROOT}/bin/sysinfo"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_I386_DISKFS_ROOT}/bin/keyecho"
+            "$<TARGET_FILE:savanxp-i386-sh32>" "${SAVANXP_DISKFS_ROOT}/bin/sh32"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-sh32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sh32"
+            "$<TARGET_FILE:savanxp-i386-desktop32>" "${SAVANXP_DISKFS_ROOT}/bin/desktop32"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-desktop32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/desktop32"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-init32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/init32"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-i386-multitest32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/multitest32"
+            "$<TARGET_FILE:savanxp-i386-init32>" "${SAVANXP_DISKFS_ROOT}/bin/init32"
     DEPENDS savanxp_i386_userland
     COMMENT "Staging the i386 disk tree"
     VERBATIM
@@ -136,11 +126,22 @@ add_custom_target(savanxp_i386_diskfs
 
 add_custom_target(savanxp_i386_disk
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/sxfs_sync.py"
-            --image "${SAVANXP_I386_DISK_IMAGE}"
-            --source "${SAVANXP_I386_DISKFS_ROOT}"
+            --image "${SAVANXP_DISK_IMAGE}"
+            --source "${SAVANXP_DISKFS_ROOT}"
             --cli "${SAVANXP_SXFS_CLI}"
             --sectors "${SAVANXP_SXFS_SECTORS}"
     DEPENDS savanxp_i386_diskfs savanxp_sxfs_cli
     COMMENT "Synchronizing the i386 SxFS image"
     VERBATIM
 )
+add_custom_target(savanxp_userland DEPENDS savanxp_i386_userland)
+add_custom_target(savanxp_diskfs DEPENDS savanxp_i386_diskfs)
+add_custom_target(savanxp_disk DEPENDS savanxp_i386_disk)
+
+if(SAVANXP_INCLUDE_TEST_APPS)
+    add_dependencies(savanxp_i386_userland savanxp-i386-keyecho savanxp-i386-multitest32)
+    add_custom_command(TARGET savanxp_i386_diskfs POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_DISKFS_ROOT}/bin/keyecho"
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-multitest32>" "${SAVANXP_DISKFS_ROOT}/bin/multitest32"
+        VERBATIM)
+endif()

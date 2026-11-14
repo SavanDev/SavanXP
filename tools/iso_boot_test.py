@@ -1,192 +1,39 @@
 #!/usr/bin/env python3
-"""Check ISO El Torito metadata and boot the image through BIOS and UEFI."""
-
+"""Check the BIOS El Torito catalog and boot this branch's i386 kernel."""
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
-import signal
-import subprocess
-import tempfile
-import time
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
-
-def find_ovmf(name: str) -> Path | None:
-    candidates = [
-        os.environ.get(f"OVMF_{name.upper()}"),
-        f"/usr/share/edk2/x64/OVMF_{name.upper()}.4m.fd",
-        f"/usr/share/edk2-ovmf/x64/OVMF_{name.upper()}.fd",
-        f"/usr/share/OVMF/OVMF_{name.upper()}.fd",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            return Path(candidate)
-    return None
-
-
-def terminate(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-
-
-def run_boot(
-    qemu: str, label: str, args: list[str], serial: Path, timeout: float, require: tuple[str, ...] = ()
-) -> None:
-    """Boot the ISO and wait for init, then assert `require` also showed up.
-
-    The extra tokens matter: the ISO carries the persistent volume as a Limine
-    module and has no disk attached, so the livecd ramdisk is the only /disk it
-    can get. A boot that reaches init without it still "passes" a token-only
-    check while the system underneath has no storage at all, which is exactly
-    the regression a change to the boot tree would cause.
-    """
-    serial.unlink(missing_ok=True)
-    process = subprocess.Popen(
-        args,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    deadline = time.monotonic() + timeout
-    try:
-        while time.monotonic() < deadline:
-            text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
-            if "handoff: starting /bin/init" in text or "SMOKE PASS" in text:
-                missing = [token for token in require if token not in text]
-                if missing:
-                    raise RuntimeError(f"{label}: booted but missing {missing!r} in the serial log")
-                print(f"{label}: PASS")
-                return
-            if process.poll() is not None:
-                raise RuntimeError(f"{label}: QEMU exited with {process.returncode}")
-            time.sleep(0.2)
-        raise RuntimeError(f"{label}: boot token not observed within {timeout:g}s")
-    finally:
-        terminate(process)
+import legacy_boot_test
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", required=True, type=Path)
-    parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument("--disk-image", type=Path)
+    parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--layout-only", action="store_true")
     args = parser.parse_args()
-    iso = args.iso.resolve()
-    if not iso.is_file():
-        raise SystemExit(f"ISO does not exist: {iso}")
     xorriso = shutil.which("xorriso")
-    if not xorriso:
-        raise SystemExit("xorriso was not found in PATH")
-    report = subprocess.run(
-        [xorriso, "-indev", str(iso), "-report_el_torito", "plain"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if report.returncode != 0 or "El Torito" not in report.stdout:
-        raise SystemExit("ISO has no inspectable El Torito catalog")
-    print("ISO El Torito catalog: PASS")
+    if xorriso is None:
+        parser.error("xorriso was not found in PATH")
+    report = subprocess.run([xorriso, "-indev", str(args.iso), "-report_el_torito", "plain"],
+                            text=True, capture_output=True)
+    if report.returncode != 0 or "El Torito boot img" not in report.stdout or "BIOS" not in report.stdout:
+        parser.error("ISO has no inspectable BIOS El Torito boot entry")
+    print("ISO BIOS El Torito catalog: PASS", flush=True)
     if args.layout_only:
         return 0
-    qemu_override = os.environ.get("SAVANXP_QEMU")
-    qemu = shutil.which(qemu_override or "qemu-system-x86_64")
-    if qemu_override and not qemu:
-        candidate = Path(qemu_override)
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            qemu = str(candidate)
-    if not qemu:
-        raise SystemExit("qemu-system-x86_64 was not found in PATH or SAVANXP_QEMU")
-    with tempfile.TemporaryDirectory(prefix="savanxp-iso-boot.") as temporary:
-        root = Path(temporary)
-        serial_bios = root / "bios.serial.log"
-        serial_uefi = root / "uefi.serial.log"
-        common = [
-            qemu,
-            "-machine",
-            "q35",
-            "-accel",
-            args.accel,
-            "-m",
-            "512M",
-            "-cpu",
-            "host" if args.accel == "kvm" else "max",
-            "-display",
-            "none",
-            "-boot",
-            "d",
-            "-cdrom",
-            str(iso),
-            "-serial",
-            f"file:{serial_bios}",
-            "-no-reboot",
-            "-no-shutdown",
-        ]
-        # El volumen persistente tiene que haber llegado como modulo: en la ISO
-        # no hay disco adjunto, asi que sin el no hay /disk.
-        run_boot(
-            qemu,
-            "BIOS",
-            common,
-            serial_bios,
-            args.timeout,
-            require=("livecd(rw)", "/disk mounted"),
-        )
-        code = find_ovmf("CODE")
-        variables = find_ovmf("VARS")
-        if not code or not variables:
-            raise SystemExit("OVMF_CODE/OVMF_VARS were not found")
-        vars_copy = root / "OVMF_VARS.fd"
-        shutil.copyfile(variables, vars_copy)
-        uefi = [
-            qemu,
-            "-machine",
-            "q35",
-            "-accel",
-            args.accel,
-            "-m",
-            "512M",
-            "-cpu",
-            "host" if args.accel == "kvm" else "max",
-            "-display",
-            "none",
-            "-drive",
-            f"if=pflash,format=raw,readonly=on,file={code}",
-            "-drive",
-            f"if=pflash,format=raw,file={vars_copy}",
-            "-boot",
-            "d",
-            "-cdrom",
-            str(iso),
-            "-serial",
-            f"file:{serial_uefi}",
-            "-no-reboot",
-            "-no-shutdown",
-        ]
-        run_boot(
-            qemu,
-            "UEFI",
-            uefi,
-            serial_uefi,
-            args.timeout,
-            require=("livecd(rw)", "/disk mounted"),
-        )
-    return 0
+    command = ["--iso", str(args.iso), "--timeout", str(args.timeout), "--accel", args.accel]
+    if args.disk_image is not None:
+        command += ["--disk-image", str(args.disk_image), "--expect-user"]
+    sys.argv = [sys.argv[0], *command]
+    return legacy_boot_test.main()
 
 
 if __name__ == "__main__":

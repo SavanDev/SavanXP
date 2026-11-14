@@ -59,7 +59,7 @@ flock -n 8 || {
     exit 1
 }
 
-TEMP=$(mktemp -d /tmp/opencode/doom-persistence.XXXXXX)
+TEMP=$(mktemp -d "${TMPDIR:-/tmp}/doom-persistence.XXXXXX")
 cleanup() {
     local status=$?
     trap - EXIT
@@ -71,15 +71,6 @@ mkdir -p "$TEMP/tools" "$TEMP/external" "$TEMP/ports/doomgeneric" "$TEMP/diskfs/
 cp "$SOURCE_ROOT/disk.img" "$TEMP/disk.img"
 cp "$SOURCE_ROOT/tools/sxfs-cli" "$TEMP/tools/sxfs-cli"
 chmod +x "$TEMP/tools/sxfs-cli"
-# El port enlaza contra libsxmidi.so.0.4, que construye el build base. El
-# arbol aislado todavia no corrio, asi que se copia la libreria ya construida;
-# mas tarde el build base la reemplaza con la suya de todos modos.
-[[ -f "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" ]] || {
-    echo "verify-doom: missing $SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4; run ./build.sh build first" >&2
-    exit 1
-}
-cp "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" "$TEMP/diskfs/lib/libsxmidi.so.0.4"
-
 if [[ -z "$WAD_PATH" ]]; then
     WAD_PATH="$TEMP/freedoom1.wad"
     printf 'SAVANXP-DOOM-PERSISTENCE-FIXTURE\n' > "$WAD_PATH"

@@ -1,14 +1,7 @@
 #include <stdint.h>
 
-/* clang no tiene instruccion de division de 64 bits en modo 32 bits, asi que
- * el runtime trae las dos rutinas que el compilador pide por nombre (mismo
- * contrato que libgcc). Solo hacen falta porque algun programa del userland
- * divide un uint64_t entre un valor que no conoce en tiempo de compilacion,
- * por ejemplo al imprimir un numero decimal. */
-
-/* Division bit a bit: el cociente se construye de arriba abajo, que es lento
- * pero son 64 iteraciones y solo aparece en rutas de formato. Asume divisor
- * <= 2^63, porque con un divisor mayor el resto desbordaria al desplazar. */
+/* Compiler runtime for 64-bit integer division on i386. Build the quotient
+ * one bit at a time without using division instructions or hosted libgcc. */
 static uint64_t divide(uint64_t dividend, uint64_t divisor, uint64_t* remainder_out) {
     if (divisor == 0) {
         *remainder_out = dividend;
@@ -38,4 +31,25 @@ uint64_t __umoddi3(uint64_t dividend, uint64_t divisor) {
     uint64_t remainder = 0;
     divide(dividend, divisor, &remainder);
     return remainder;
+}
+int64_t __divdi3(int64_t dividend, int64_t divisor) {
+    uint64_t left = (uint64_t)dividend;
+    uint64_t right = (uint64_t)divisor;
+    if (dividend < 0) left = 0u - left;
+    if (divisor < 0) right = 0u - right;
+    uint64_t remainder = 0;
+    uint64_t quotient = divide(left, right, &remainder);
+    if ((dividend < 0) != (divisor < 0)) quotient = 0u - quotient;
+    return (int64_t)quotient;
+}
+
+int64_t __moddi3(int64_t dividend, int64_t divisor) {
+    uint64_t left = (uint64_t)dividend;
+    uint64_t right = (uint64_t)divisor;
+    if (dividend < 0) left = 0u - left;
+    if (divisor < 0) right = 0u - right;
+    uint64_t remainder = 0;
+    divide(left, right, &remainder);
+    if (dividend < 0) remainder = 0u - remainder;
+    return (int64_t)remainder;
 }

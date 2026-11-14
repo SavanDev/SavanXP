@@ -23,8 +23,7 @@ PYTHON=${SAVANXP_PYTHON:-python3}
 OBJCOPY=${SAVANXP_OBJCOPY:-llvm-objcopy}
 READELF=${SAVANXP_READELF:-llvm-readelf}
 
-# La arquitectura objetivo es la misma variable que lee CMakeLists.txt:
-# SAVANXP_ARCH (x86_64 por defecto) traducida a triple y flags de modelo.
+# Use the same i386 ABI as the in-tree build.
 . "$ROOT/tools/arch-env.sh"
 
 usage() {
@@ -129,6 +128,8 @@ fi
 COMMON_FLAGS=(
     -target "$SX_TARGET_TRIPLE"
     -ffreestanding
+    -ffunction-sections
+    -fdata-sections
     -fstack-protector-strong
     -fno-pic
     -fno-pie
@@ -183,12 +184,13 @@ POSIX_EXTRA=()
 if ((HEAP_MIB > 0)); then
     POSIX_EXTRA=("-DSX_HEAP_SIZE=(${HEAP_MIB}u*1024u*1024u)")
 fi
+compile_c "$SDK/runtime/div64.c" "$OBJ_ROOT/div64.o"
 compile_c "$SDK/runtime/posix.c" "$OBJ_ROOT/posix.o" "${POSIX_EXTRA[@]}"
 compile_c "$SDK/runtime/gfx.c" "$OBJ_ROOT/gfx.o"
 compile_c "$SDK/runtime/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
 compile_asm "$SDK/runtime/setjmp.S" "$OBJ_ROOT/setjmp.o"
 compile_asm "$SDK/runtime/crt0.S" "$OBJ_ROOT/crt0.o"
-RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
+RUNTIME_OBJECTS=("$OBJ_ROOT/div64.o" "$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
 if ((SSE)); then
     compile_c "$SDK/runtime/math.c" "$OBJ_ROOT/math.o" -fno-builtin
     RUNTIME_OBJECTS+=("$OBJ_ROOT/math.o")
@@ -203,8 +205,8 @@ if ((GUI)); then
     RUNTIME_OBJECTS+=("$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
 fi
 
-"$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker.ld" \
-    -z max-page-size=0x1000 --build-id=none \
+"$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker32.ld" \
+    -z max-page-size=0x1000 --build-id=none --gc-sections \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
 
 RESOURCE_ROOT="$OBJ_ROOT/sxe"

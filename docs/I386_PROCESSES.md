@@ -91,13 +91,12 @@ general descriptor table, process-group model or terminal job-control layer.
 Build both the disk image and the ISO before checking the running guest:
 
 ```sh
-SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
-  ./build.sh build
-SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
-  ./build.sh iso
-python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
-  --disk-image build/i386/disk-i386.img --expect-processes \
-  --expect-desktop build/i386-linux/desktop32 --artifacts /tmp/savanxp-i386-processes
+./build.sh build
+./build.sh smoke
+# Or invoke the underlying harness after ./build.sh iso:
+python3 tools/legacy_boot_test.py --iso build/SavanXP.iso \
+  --disk-image build/disk.img --expect-processes \
+  --expect-desktop build/linux-i386/desktop32 --artifacts /tmp/savanxp-i386-processes
 ```
 
 `multitest32` starts two instances at the same virtual addresses. Its assembly

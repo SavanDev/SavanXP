@@ -1,5 +1,10 @@
 # Real hardware: the Compaq Evo N1020v case
 
+> **Branch update:** i386 is now the only active build/boot target. See
+> [I386_PORT.md](I386_PORT.md) for the current branch roadmap and
+> [BUILD_CMAKE.md](BUILD_CMAKE.md) for normal commands. The comparative x86_64
+> analysis below describes the source system on `master`.
+>
 > **Status: Route A has a working i386 prototype in QEMU, through the minimal
 > graphical desktop and preemptive process lifecycle. Physical hardware is not validated.**
 > This document records the porting route and the remaining hardware gaps.
@@ -22,7 +27,7 @@ Three things prevent running the original x86_64 target on that CPU:
 1. the kernel, the userland, the SDK and every port are built for
    `x86_64-unknown-none-elf` ([`CMakeLists.txt:69`](../CMakeLists.txt:69)) and
    the kernel links at `0xffffffff80000000` with `-mcmodel=kernel`
-   ([`linker.ld:13`](../linker.ld:13), [`CMakeLists.txt:80`](../CMakeLists.txt:80));
+   ([`linker.ld:13`](https://github.com/SavanDev/SavanXP/blob/master/linker.ld#L13), [`CMakeLists.txt:80`](../CMakeLists.txt:80));
 2. NX is a hard requirement, not a feature
    ([`KERNEL_SECURITY.md:59`](KERNEL_SECURITY.md)), and that CPU does not have it;
 3. the `limine` boot protocol is **64-bit only** by specification, and Limine
@@ -84,13 +89,13 @@ assume a 64-bit address space:
 
 | Assumption | Where |
 | --- | --- |
-| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](../linker.ld:13), [`vmm.cpp:16`](../kernel/vmm.cpp:16) |
+| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](https://github.com/SavanDev/SavanXP/blob/master/linker.ld#L13), [`vmm.cpp:16`](../kernel/vmm.cpp:16) |
 | 4-level paging, `sign_extend_48`, 48-bit page mask | [`vmm.cpp:15-67`](../kernel/vmm.cpp), [`elf.cpp:116-137`](../kernel/elf.cpp) |
 | User stack top at 512 GiB, section views at 16 GiB | [`vmm.hpp:14-15`](../include/kernel/vmm.hpp), [`vmm.hpp:37`](../include/kernel/vmm.hpp) |
 | NX bit 63 on every kernel mapping | [`vmm.hpp:49`](../include/kernel/vmm.hpp), [`vmm.cpp:810`](../kernel/vmm.cpp) |
 | ELF64 / `EM_X86_64` only | [`elf.cpp:10-12`](../kernel/elf.cpp) |
-| 64-bit syscall context, `iretq`, `pushq` | [`context.S:26-98`](../arch/x86_64/context.S), [`process.hpp:45-66`](../include/kernel/process.hpp) |
-| 64-bit GDT, TSS with 8 ISTs, 10-byte IDT gates, `fxsave64` | [`cpu_init.cpp:59-95`](../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:755-764`](../arch/x86_64/cpu_init.cpp) |
+| 64-bit syscall context, `iretq`, `pushq` | [`context.S:26-98`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/context.S), [`process.hpp:45-66`](../include/kernel/process.hpp) |
+| 64-bit GDT, TSS with 8 ISTs, 10-byte IDT gates, `fxsave64` | [`cpu_init.cpp:59-95`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:755-764`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp) |
 | HHDM as the only physical-address path | [`vmm.cpp:967-969`](../kernel/vmm.cpp), [`physical_memory.cpp:111-113`](../kernel/physical_memory.cpp) |
 
 That is roughly 26,700 lines of kernel, 19 files with inline assembly and three
@@ -100,9 +105,9 @@ That is roughly 26,700 lines of kernel, 19 files with inline assembly and three
 
 ### NX is a boot requirement
 
-[`enable_nx()`](../arch/x86_64/cpu_init.cpp) reads `CPUID.80000001H:EDX[20]`
+[`enable_nx()`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp) reads `CPUID.80000001H:EDX[20]`
 and the BSP **panics** without it
-([`cpu_init.cpp:785-787`](../arch/x86_64/cpu_init.cpp)); an AP halts forever.
+([`cpu_init.cpp:785-787`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp)); an AP halts forever.
 `docs/KERNEL_SECURITY.md` records the policy, and it is a deliberate one. On
 this CPU it cannot be satisfied at all: the Northwood has no NX page-table bit,
 and in 32-bit protected mode without PAE there is no encoding for it. An i386
@@ -149,14 +154,14 @@ from the MADT instead of Limine's `goto_address`), and paging itself (bootstrapp
 
 | Package | Size | Notes |
 | --- | --- | --- |
-| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed.** `SAVANXP_ARCH` (`x86_64` default, `i386`) picks the triple, the flags of each compile profile, the kernel script (`linker.ld`/`linker32.ld`) and the link emulation; [`tools/arch-env.sh`](../tools/arch-env.sh) carries the same mapping to the scripts outside CMake |
+| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed and simplified.** This branch builds i386 only, using `linker32.ld` and ELF32 profiles; [`tools/arch-env.sh`](../tools/arch-env.sh) applies the same ABI to external builders |
 | `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Landed:** Multiboot2 entry, flat GDT/TSS, IDT with exceptions and IRQs, PIC+PIT, PS/2, COM1 and the EGA text console, ATA/SxFS mount, ELF32 ring 3 and syscalls live in [`arch/x86`](../arch/x86); `fxsave` context and per-process stacks have landed; AP trampolines remain future work |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | **Landed.** The bootstrap maps the first 1 GiB identity with 4 MiB PSE pages and reports over serial; `EFER` does not exist in 32-bit mode |
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. **Partial:** private per-process CR3 maps with a common ELF32 virtual window and supervisor kernel aliases; bounded static backing, no section views or ASLR. See [i386 processes](I386_PROCESSES.md) |
-| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
+| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
 | Heap off HHDM pointers | S | [`heap.cpp:224-244`](../kernel/heap.cpp) builds arenas straight on the direct map |
 | Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
-| Harness: a second QEMU machine profile | S-M | **Landed.** `--legacy` selects `qemu-system-i386`, [`tools/check_legacy_cpu.py`](../tools/check_legacy_cpu.py) asserts the CPU has no long mode or NX and [`tools/legacy_boot_test.py`](../tools/legacy_boot_test.py) boots the i386 ISO; see [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
+| Harness: a second QEMU machine profile | S-M | **Landed.** Normal commands select `qemu-system-i386` (`--legacy` remains an alias), [`tools/check_legacy_cpu.py`](../tools/check_legacy_cpu.py) asserts the CPU has no long mode or NX and [`tools/legacy_boot_test.py`](../tools/legacy_boot_test.py) boots the i386 ISO; see [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
 
 The good news for the ABI is specific and worth protecting. Syscalls are a
 DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../include/abi/savanxp_native_abi.h)),
@@ -261,11 +266,11 @@ SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
-  --disk-image build/i386/disk-i386.img --expect-user
+  --disk-image build/i386/disk.img --expect-user
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
-  --disk-image build/i386/disk-i386.img --expect-user --expect-key a --expect-key b
+  --disk-image build/i386/disk.img --expect-user --expect-key a --expect-key b
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
-  --disk-image build/i386/disk-i386.img --expect-user --expect-sh uptime \
+  --disk-image build/i386/disk.img --expect-user --expect-sh uptime \
   --expect-desktop build/i386-linux/desktop32 --artifacts /tmp/savanxp-i386-desktop
 ```
 
@@ -313,8 +318,8 @@ smokes as the guard.
 | 4 | **AC'97 mixer writes assume an emulator.** `unmute_mixer()` writes `0x0000` to NAM offset `0x00`, whose real meaning is *System Power Down*; the reset bit is 15. QEMU ignores it, real codecs may go silent | [`ac97.cpp:185-191`](../kernel/ac97.cpp) |
 | 5 | **No trackpad.** AUX init insists on `0xFF` reset, `0xF6` defaults and the IntelliMouse sample-rate knock; many 2003-era PS/2 pads do not acknowledge those. The keyboard survives, the pointer does not. No absolute or digitizer mode either. And if the pad enumerates as USB there is nothing at all: the tree has no USB stack | [`ps2.cpp:1044-1066`](../kernel/ps2.cpp) |
 | 6 | **Wrong NIC coverage.** Only exact `10EC:8139` is claimed. The 10/100 chip in this family varies by SKU (8139C, 8110/8111, 82559, BCM44xx) | [`rtl8139.cpp:23-24`](../kernel/rtl8139.cpp), [`rtl8139.cpp:369`](../kernel/rtl8139.cpp) |
-| 7 | **Local APIC timer erratum on P4-class silicon.** The periodic timer runs at divide 16 with a calibrated ~7500-count period at 1 kHz, which is the configuration the "Local APIC Timer May Run at Intermittent Intervals" erratum warns about on Pentium 4 and ICH2-4. The PIT backend already exists and is the natural default on such a CPU | [`timer.cpp:123-154`](../arch/x86_64/timer.cpp), [`timer.cpp:227-230`](../arch/x86_64/timer.cpp), [`timer.cpp:156-183`](../arch/x86_64/timer.cpp) |
-| 8 | **SMEP asymmetry.** The BSP prints a warning when SMEP is missing; an AP that cannot enable it halts forever. Pre-Nehalem has no SMEP, so on a multi-core P4 every secondary core is lost at startup | [`cpu_init.cpp:788-790`](../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:806-808`](../arch/x86_64/cpu_init.cpp) |
+| 7 | **Local APIC timer erratum on P4-class silicon.** The periodic timer runs at divide 16 with a calibrated ~7500-count period at 1 kHz, which is the configuration the "Local APIC Timer May Run at Intermittent Intervals" erratum warns about on Pentium 4 and ICH2-4. The PIT backend already exists and is the natural default on such a CPU | [`timer.cpp:123-154`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/timer.cpp), [`timer.cpp:227-230`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/timer.cpp), [`timer.cpp:156-183`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/timer.cpp) |
+| 8 | **SMEP asymmetry.** The BSP prints a warning when SMEP is missing; an AP that cannot enable it halts forever. Pre-Nehalem has no SMEP, so on a multi-core P4 every secondary core is lost at startup | [`cpu_init.cpp:788-790`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:806-808`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp) |
 | 9 | **ACPI on real firmware.** The SCI is routed without applying the MADT interrupt-source overrides, and every GPE is masked: no lid, no sleep, no wake, no battery. uACPI never runs `namespace_initialize`, so `_STA`/`_INI` never power anything up, and GPE work runs synchronously in interrupt context | [`acpi.cpp:275-288`](../kernel/acpi.cpp), [`acpi.cpp:479`](../kernel/acpi.cpp), [`uacpi_glue.cpp:125-160`](../kernel/uacpi_glue.cpp) |
 | 10 | **No way to install on metal.** Nothing in `tools/` writes to a device. The build already stages `limine-bios.sys` and the ISO target already runs `limine bios-install`, so a `--target /dev/sdX` target is plumbing, not new technology. Note Limine's BIOS stage 1 requires INT 13h extensions and has no CHS path | [`CMakeLists.txt:713-714`](../CMakeLists.txt), [`CMakeLists.txt:771`](../CMakeLists.txt) |
 | 11 | **Performance and capacity.** 256 MB-1 GB of RAM, PIO reads, no SpeedStep or thermal handling, a 256 KB static userland heap, and `resolution: 1280x800x32` hardcoded in the boot config for a panel that is not that | [`boot/limine.conf:12`](../boot/limine.conf), [`runtime/posix.c:43-44`](../subsystems/posix/sdk/v1/runtime/posix.c) |

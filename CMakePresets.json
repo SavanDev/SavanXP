@@ -10,21 +10,21 @@
       "name": "linux",
       "displayName": "SavanXP Linux debug",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/linux",
+      "binaryDir": "${sourceDir}/build/linux-i386",
       "toolchainFile": "${sourceDir}/cmake/toolchain-linux.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "SAVANXP_ARCH": "i386",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build",
-        "SAVANXP_INCLUDE_TEST_APPS": "ON",
-        "SAVANXP_SMOKE_COMMAND": ""
+        "SAVANXP_INCLUDE_TEST_APPS": "ON"
       }
     },
     {
       "name": "linux-release",
       "inherits": "linux",
       "displayName": "SavanXP Linux release",
-      "binaryDir": "${sourceDir}/build/linux-release",
+      "binaryDir": "${sourceDir}/build/linux-i386-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build/linux-release-out"
@@ -34,7 +34,7 @@
       "name": "linux-no-tests",
       "inherits": "linux",
       "displayName": "SavanXP Linux without diagnostic apps",
-      "binaryDir": "${sourceDir}/build/linux-no-tests",
+      "binaryDir": "${sourceDir}/build/linux-i386-no-tests",
       "cacheVariables": {
         "SAVANXP_INCLUDE_TEST_APPS": "OFF",
         "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build/linux-no-tests-out"

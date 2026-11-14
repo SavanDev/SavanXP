@@ -1,136 +1,99 @@
-# Native CMake build
+# Native i386 CMake build
 
-SavanXP uses one host build graph: Bash invokes CMake, and CMake owns the
-kernel, internal userland, initramfs, persistent SxFS image, EFI staging, ISO,
-and host-test targets. Tool locations are discovered from `PATH` and can be
-overridden in the CMake cache or through the documented `SAVANXP_*`
-environment variables.
+This branch builds i386 only. The x86_64 system lives on `master`; dedicated
+64-bit boot sources, Limine staging and the dual-architecture build graph have
+been retired here. Unported generic kernel and userland sources remain available
+for the [progressive port](I386_PORT.md).
 
-## Requirements
-
-The host needs Clang/LLVM, CMake, Ninja, Python 3 with Pillow, Git, QEMU, OVMF
-firmware, `xorriso`, and GNU Make for the optional FFmpeg port. On Arch the core
-package set is:
-
-```bash
-pacman -S clang lld llvm cmake ninja make python-pillow \
-  qemu-system-x86 edk2-ovmf libisoburn
-```
-
-`build.sh` fetches the pinned Limine checkout when `tools/limine` is missing.
-The first configure must therefore go through `build.sh` unless Limine has
-already been populated.
-
-## Commands
-
-From the repository root:
+## Commands and targets
 
 ```bash
 ./build.sh configure
 ./build.sh build
-./build.sh build --no-test-apps
-./build.sh kernel
 ./build.sh userland
+./build.sh kernel
 ./build.sh iso
 ./build.sh run
-./build.sh debug
-./build.sh smoke smoke
-./build.sh smoke kbd-smoke
-./build.sh smoke taskbar-smoke
-./build.sh smoke tcp-smoke
-./build.sh smoke ffmpeg-smoke
-./build.sh gpu-soak --gpu-soak-iterations 96
+./build.sh debug --headless
+./build.sh smoke
+./build.sh smoke boot
+./build.sh smoke processes
+./build.sh smoke desktop
+./build.sh smoke legacy-cpu
 ./build.sh test
-./tools/shoot.sh --scenario desktop
+./build.sh clean
 ```
 
-A catalog scenario may also be used as a direct command, for example
-`./build.sh windowd-smoke`. The smoke runner stages one line in the initramfs,
-boots a disposable copy of the persistent image, waits for the scenario's serial
-token or host-side QMP assertion, and retains logs under `build/smoke-logs/`.
-The real image is locked and is never reset by a smoke run.
+The default build directory is `build/linux-i386`; output goes to `build`.
+`build` compiles the kernel and userland and updates `disk.img`. `iso`, `run`
+and `debug` also prepare the disk and build a GRUB2 BIOS ISO. The ISO does not
+embed the disk; userland requires the attached IDE image. `run` launches
+`qemu-system-i386` with SeaBIOS/i440FX, `qemu32`, standard VGA, PS/2 and one CPU.
+`debug` adds `-s -S`. There is no UEFI firmware or Limine download.
 
-The equivalent manual CMake entry points are:
+Standard CMake targets are `savanxp`, `savanxp_kernel`, `savanxp_userland`,
+`savanxp_disk`, `savanxp_iso`, `savanxp_run`, `savanxp_debug`, and `savanxp_tests`.
+The older `savanxp_i386_*` userland/disk aliases remain available.
+`SAVANXP_ARCH=x86_64` is rejected with a pointer to `master`.
 
 ```bash
 cmake --preset linux
 cmake --build --preset linux
 ```
 
-CMake uses `build/linux/` as its binary directory while generated products and
-the persistent image remain under the shared `build/` root. The default target
-is `savanxp`; `savanxp_iso` adds the hybrid BIOS/UEFI ISO. `build.sh clean`
-removes generated CMake outputs but preserves `build/disk.img` and
-`build/external/`.
+Presets also select i386 and use a new build directory, avoiding old x86_64
+caches. A stale cache explicitly set to x86_64 is rejected by direct CMake;
+configure a separate directory rather than mixing architectures.
 
-## External applications
+## Tools and overrides
 
-The external POSIX builder is deliberately separate from the in-tree CMake
-userland registry:
+Install Clang, LLD, LLVM tools, CMake 3.25+, Ninja, Python 3.10+ with Pillow,
+Git, QEMU, `xorriso`, and GRUB2's `grub-mkrescue` and `i386-pc` platform files.
+Tools are discovered from `PATH`, with CMake cache overrides such as
+`SAVANXP_LD`, `SAVANXP_GRUB_MKRESCUE` and `SAVANXP_GRUB_I386_PC`.
+Direct CMake accepts `Python3_EXECUTABLE`; `build.sh` passes its host interpreter
+from `SAVANXP_PYTHON` (default `python3` from `PATH`).
 
-```bash
-./build.sh build
-./tools/build-user.sh --source sdk/hello/main.c --name hello
-./tools/build-user.sh --source path/to/app --name app \
-  --destination /disk/bin/app
-```
+Environment overrides include `SAVANXP_BUILD_DIR`, `SAVANXP_OUTPUT_ROOT`,
+`SAVANXP_BUILD_TYPE`, `SAVANXP_INCLUDE_TEST_APPS`, `SAVANXP_JOBS`,
+`SAVANXP_ACCEL`, `SAVANXP_HEADLESS`, and `SAVANXP_QEMU`.
+`--legacy` remains a compatibility alias; i386 is already selected.
+SMP values other than one and virtio are rejected until those features are ported.
 
-`--destination` is rooted at `/disk`; the default is `/disk/bin/NAME`. The
-builder accepts a single C/assembly file or a directory, stamps SXE resources,
-and installs through `tools/sxfs_sync.py` unless `--no-install` is selected.
+## Regression checks
 
-`tools/new-user-app.sh` creates a new application from `sdk/template`, and
-`tools/run-user.sh` builds, installs, and boots an external application in one
-step.
+`./build.sh smoke` invokes `tools/run_smoke.py` and `tools/legacy_boot_test.py` against the freshly built
+ISO and a snapshot of the normal disk. It checks boot, shell, keyboard,
+concurrent CPU workers, spawn/wait/exit, shell restart, desktop glyphs, PS/2
+buttons and cursor restoration. Logs/screenshots stay in a unique directory
+under `build/smoke-logs`. `smoke --list` lists supported cases. Former x86_64
+scenarios such as `sxgui-smoke` and `windowd-smoke` are unavailable until their
+subsystems have been ported; the minimal desktop check does not prove SxGUI.
 
-## Layout
+`./build.sh test` runs hosted regressions for reused modules, external ELF32
+construction, and the normal build/run routing. Host audio or network tests do
+not imply those drivers work in the i386 guest.
 
-- `CMakeLists.txt` defines the target graph and host-tool requirements.
-- `cmake/UserPrograms.cmake` is the explicit in-tree userland registry.
-- `tools/mkinitramfs.py` writes the newc cpio archive.
-- `tools/run_smoke.py` runs one QEMU smoke scenario and records serial output.
-- `tools/qmp_client.py` provides the keyboard and taskbar QMP drivers.
-- `tools/taskbar_smoke.py` and `tools/tcp_echo_server.py` provide host-side
-  scenario drivers.
-- `tools/smoke_catalog.py` keeps commands, tokens, and callbacks declarative.
-- `tools/build-user.sh` builds optional external POSIX applications.
-- `tools/new-user-app.sh` creates a new application from the SDK template.
-- `tools/sxfs_sync.py` creates or additively updates `build/disk.img` under a
-  lock, validates both sides, compacts when needed, and atomically retries.
-- `tools/stamp_sxe.py` stamps and verifies generated SXE sections.
-- `tools/run_qemu.py` launches the staged image with OVMF and optional virtio.
-- `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
-- `ports/doomgeneric/build.sh` builds the official Doom port independently.
-- `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and
-  installs the shared library `/disk/lib/libffmpeg.so.0.4` and no program; the
-  Media Player is built by the tree from `subsystems/posix/userland/mediaplayer/`.
-- `subsystems/native/build.sh` is the optional native Haxe builder.
-- `tools/limine/` is the ignored, pinned bootloader checkout.
+`tools/iso_boot_test.py --iso build/SavanXP.iso` checks the BIOS boot catalog
+and diskless kernel startup. `tools/shoot.sh --scenario desktop` builds and
+verifies the minimal desktop, saving screenshots under `build/shots`.
 
-The Haxe subsystem and third-party ports remain outside the base CMake target.
-They have independent build flows and must not become boot-time dependencies of
-the system image.
+## Persistence and external programs
 
-## Persistent image safety
+`cmake/userland-i386.cmake` stages the internal userland in `build/diskfs` and
+uses `tools/sxfs_sync.py` to additively synchronize `build/disk.img`. Existing
+valid images, unrelated external binaries, libraries and `/disk/games` survive.
+Updates use a validated sibling candidate and atomic replacement; `clean` does
+not remove the image. Existing ELF64 files are preserved as data, not executed.
+The old `build/i386/disk-i386.img` is not selected or reset automatically.
 
-A normal build never removes `build/disk.img`. An additive apply runs on a full
-sibling candidate; the original is replaced only after the candidate passes
-validation. If the allocator reports no contiguous run, the synchronizer
-extracts reachable data, removes build-produced files from the carryover copy,
-rebuilds a same-size staging image, validates it, and retries with a recovery
-copy available. A failed apply or replacement leaves the original image
-available; a failed apply must be treated as suspect before reuse.
+`tools/build-user.sh` builds static ELF32 and installs below `/disk` (default
+`/disk/bin/NAME`). It includes i386 `setjmp` and compiler division helpers.
+Application dependencies still require the corresponding i386 syscall support.
+`tools/run-user.sh` builds/installs and opens the shell; launch the program with
+`run /disk/bin/NAME`.
 
-The `sxfs-cli check` and `extract` paths reject pending journals, dirty
-superblocks, invalid directory entries, aliases, cycles, and unreachable
-allocated inodes rather than dropping data.
-
-The regression case is external data, not only the freshly generated rootfs:
-
-```bash
-./tools/verify_doom_persistence.sh \
-  --wad ports/doomgeneric/wad/doom1.wad
-```
-
-The check confirms that `/disk/bin/doomgeneric` and the WAD remain present after
-a normal rebuild.
+`./tools/verify_doom_persistence.sh` builds and installs the canonical Doom port
+as static ELF32 into an isolated copy, adds WAD/config/save data, then runs the
+normal build and compares hashes. This checks preservation only. Doom's file,
+audio and memory requirements are not yet implemented by the i386 guest.

@@ -7,6 +7,11 @@ together and why.
 Anything that has to stay true for the future of the OS lives here, not in a
 changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
+This branch progressively ports the system to i386. Start with
+[I386_PORT.md](I386_PORT.md) for current support and the ordered roadmap. Other
+subsystem documents describe the original system unless they explicitly record
+i386 support; retained code is not necessarily part of the active build.
+
 ## Building
 
 - [`BUILD_CMAKE.md`](BUILD_CMAKE.md) — the native Bash/CMake build graph, tools,
@@ -15,6 +20,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   ports, smoke tests, and KVM configuration.
 
 ## Architecture
+
+- [`I386_PORT.md`](I386_PORT.md) — branch scope, current i386 baseline, ordered
+  porting milestones, migration rules and verification.
 
 - [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) — the language layering: native
   POSIX SDK applications and the optional managed-app experiment.

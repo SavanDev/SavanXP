@@ -1,7 +1,4 @@
-# Camino de arranque de i386: un ISO BIOS puro con GRUB2 y Multiboot2
-# (docs/REAL_HARDWARE.md). GRUB2 entra en modo protegido de 32 bits y entrega
-# el control a boot/savanxp-kernel.elf; no hay arbol de desarrollo ni modulo
-# Limine porque el kernel de arranque no monta el livecd todavia.
+# GRUB2/Multiboot2 is the only boot path on this branch.
 find_program(SAVANXP_GRUB_MKRESCUE grub-mkrescue)
 find_path(SAVANXP_GRUB_I386_PC cdboot.img
     PATHS /usr/lib/grub/i386-pc /usr/share/grub/i386-pc
@@ -26,7 +23,7 @@ if(SAVANXP_GRUB_MKRESCUE AND SAVANXP_GRUB_I386_PC)
                 --directory "${SAVANXP_GRUB_I386_PC}"
                 --output "${SAVANXP_ISO_IMAGE}"
                 "${SAVANXP_ISO_ROOT}"
-        DEPENDS savanxp_iso_root
+        DEPENDS savanxp_iso_root savanxp_disk
         COMMENT "Creating SavanXP.iso (i386, GRUB2)"
         VERBATIM
     )
@@ -38,3 +35,21 @@ add_custom_target(savanxp
     DEPENDS savanxp_kernel savanxp_i386_disk
     COMMENT "Building the i386 kernel and its disk image"
 )
+
+set(SAVANXP_QEMU_ARGS
+    --iso "${SAVANXP_ISO_IMAGE}" --disk-image "${SAVANXP_DISK_IMAGE}"
+    --accel "${SAVANXP_ACCEL}")
+if(SAVANXP_HEADLESS)
+    list(APPEND SAVANXP_QEMU_ARGS --headless)
+endif()
+foreach(mode run debug)
+    set(mode_args)
+    if(mode STREQUAL "debug")
+        set(mode_args --debug)
+    endif()
+    add_custom_target(savanxp_${mode}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/run_qemu.py"
+                ${SAVANXP_QEMU_ARGS} ${mode_args}
+        DEPENDS savanxp_iso savanxp_disk
+        USES_TERMINAL VERBATIM)
+endforeach()
