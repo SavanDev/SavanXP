@@ -1086,7 +1086,10 @@ What is missing, in order of weight:
    kernel function and cache as the POSIX call
    ([SECTIONS.md](SECTIONS.md#section_open-and-what-it-does-not-do-yet)).
 2. **`SXN_SYS_OPEN_FILE` open to POSIX.** It is not in the forwarded list. One
-   line, plus its `handletest` check.
+   line, plus its `handletest` check. **Done (2026-11-14):** a POSIX process
+   opens a file with `sxn_open_file`, reads and closes it as a descriptor, and
+   backs a section with it; the path is absolute, since the native call knows
+   no working directory.
 3. **No C library in the loader.** `eprintf` and `strcmp` become the loader's
    own. This is the work that was reverted for lack of a consumer
    ([out of scope](#deliberately-out-of-scope-for-the-first-implementation));

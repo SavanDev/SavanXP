@@ -1,6 +1,8 @@
 #include "libc.h"
 #include "sxn/sxn.h"
 
+#include <string.h>
+
 /* How many handles a pipe queues (process::kPipeHandleQueueCapacity). */
 #define HANDLETEST_PIPE_HANDLE_QUEUE 8
 
@@ -296,8 +298,57 @@ static int test_port_from_posix(void) {
     return 1;
 }
 
+/* SXN_SYS_OPEN_FILE from POSIX: what a loader shared by SUN and POSIX opens a
+ * library with. The handle is a descriptor like any other -- read and closed
+ * with the POSIX calls -- and backs a section through the native call. The
+ * path is absolute: the native call does not know a POSIX working directory. */
+static int test_open_file_from_posix(void) {
+    static const char path[] = "/system/native-file-test.txt";
+    char bytes[8];
+    long file;
+    long query;
+    long section;
+    const char* view;
+
+    if (!expect_success(file = sxn_open_file(path, SXN_FILE_READ), "native open file")) {
+        return 0;
+    }
+    if (savanxp_read((int)file, bytes, 4) != 4 || memcmp(bytes, "SUN ", 4) != 0) {
+        eprintf("handletest: POSIX read of a native file handle did not return the file\n");
+        return 0;
+    }
+    if (!expect_success(section = sxn_section_open_range(file, 4, 4, SXN_SECTION_READ), "native file section")) {
+        return 0;
+    }
+    view = (const char*)map_view((int)section, SAVANXP_SECTION_READ);
+    if (result_is_error((long)view) || memcmp(view, "file", 4) != 0) {
+        eprintf("handletest: the native file section does not hold the file's range\n");
+        return 0;
+    }
+    (void)unmap_view((void*)view);
+    if (!expect_success(savanxp_close((int)section), "close file section") ||
+        !expect_success(savanxp_close((int)file), "close native file")) {
+        return 0;
+    }
+
+    if (!expect_success(query = sxn_open_file(path, 0), "native open file for query")) {
+        return 0;
+    }
+    if (!expect_error(savanxp_read((int)query, bytes, 1), SAVANXP_EBADF, "read a query-only handle") ||
+        !expect_error(sxn_section_open_range(query, 0, 0, SXN_SECTION_READ), SAVANXP_EBADF,
+                      "section over a query-only handle") ||
+        !expect_error(sxn_open_file("system/native-file-test.txt", SXN_FILE_READ), SAVANXP_EINVAL,
+                      "native open of a relative path") ||
+        !expect_error(sxn_open_file("/system", SXN_FILE_READ), SAVANXP_EISDIR, "native open of a directory")) {
+        return 0;
+    }
+    (void)savanxp_close((int)query);
+    return 1;
+}
+
 int main(void) {
     if (!test_section_round_trip() ||
+        !test_open_file_from_posix() ||
         !test_rejections() ||
         !test_across_fork() ||
         !test_queue_released_with_pipe() ||

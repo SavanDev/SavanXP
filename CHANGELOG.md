@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **POSIX programs can open a file through the native call, `sxn_open_file` (`SXN_SYS_OPEN_FILE`), and use the handle
+  as a descriptor or back a section with it.** `handletest` asserts it. See
+  [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).
+
 - **SUN programs can map a range of a file as a read-only section, `sxn_section_open_range` (`SXN_SYS_SECTION_OPEN_RANGE`),
   shared system-wide with the POSIX `section_open_range`; a range outside the file is now `EINVAL` in both, not
   `ENOMEM`.** The first slice of one loader for SUN and POSIX; see [SECTIONS.md](docs/kernel/SECTIONS.md).

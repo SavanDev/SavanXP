@@ -311,7 +311,10 @@ enum sxn_syscall_number {
     /* rdi = absolute path, rsi = SXN_FILE_READ or 0 (query only).
      * Opens an existing regular file; directories return -EISDIR, devices
      * and invalid flags/paths -EINVAL. Checks VFS credentials. READ/CLOSE
-     * use the returned handle; DUPLICATE shares its current offset. */
+     * use the returned handle; DUPLICATE shares its current offset. Open
+     * to every subsystem: a POSIX process gets a descriptor it can read,
+     * close and back a section with (SECTION_OPEN_RANGE), which is what a
+     * loader shared by SUN and POSIX opens a library with. */
     SXN_SYS_OPEN_FILE = 0x1033,
     /* rdi = absolute path, rsi = bytes, rdx = length (0..4096).
      * Creates (0600) or replaces a regular file and syncs its volume.
