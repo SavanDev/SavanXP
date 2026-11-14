@@ -19,4 +19,9 @@ bool write_time(const savanxp_realtime& value);
 // every call. write_time() re-reads it. 0 if the chip never gave a date.
 uint64_t epoch_seconds();
 
+// The same clock in nanoseconds since 1970-01-01 UTC: the chip's second,
+// carried by the monotonic clock's nanoseconds. 0 if the chip never gave a
+// date.
+uint64_t epoch_ns();
+
 } // namespace rtc

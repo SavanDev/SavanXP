@@ -10,6 +10,11 @@
  * Alpine root exists (subsystems/linux/Linux.cmake); without them each is
  * reported as skipped, not passed and not failed.
  *
+ * With --restart it is the linux-restart scenario instead: the first boot
+ * runs `files write`, makes the volume durable and logs
+ * "LINUX RESTART READY", the host resets the machine, and the second boot,
+ * finding the file, runs `files check` and `files remove`.
+ *
  * Then it asks the kernel to start images it must refuse, directly through
  * SXN_SPAWN_FLAG_SUBSYSTEM: a bad header, a truncated image and another
  * machine (damaged copies of hello the build makes), a missing file, a path out of the guest tree, a bad pointer in
@@ -38,6 +43,14 @@ static uint32_t length_of(const char *text) {
         ++n;
     }
     return n;
+}
+
+static int same(const char *a, const char *b) {
+    while (*a != 0 && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == *b;
 }
 
 static void say(const char *a, const char *b, const char *c) {
@@ -271,9 +284,45 @@ static void test_refusals(void) {
     refuse("an unknown subsystem", "/fixtures/hello", &bad_id, -1, -SAVANXP_EINVAL);
 }
 
+/* The linux-restart scenario's two boots (see the top of the file). */
+static int restart(void) {
+    struct sxn_file_info info;
+    if (!have_fixture("files")) {
+        say("LINUX RESTART FAIL", "", "");
+        return 1;
+    }
+    if (sxn_query_path(GUEST "/work/l2-files.dat", &info) != 0) {
+        char *write[] = {"/fixtures/files", "write", "/work"};
+        run("files-write", write, 3);
+        /* Durable before the reset: flushing any file of the volume syncs
+         * the whole of it, the fixture's file with it. */
+        long marker = sxn_create_file(GUEST "/work/restart-marker", SXN_CREATE_ALWAYS);
+        int durable = marker >= 0 && sxn_flush_file(marker) == 0;
+        if (marker >= 0) {
+            (void)sxn_close(marker);
+        }
+        if (g_failures != 0 || !durable) {
+            say("LINUX RESTART FAIL", durable ? "" : ": the volume did not sync", "");
+            return 1;
+        }
+        say("LINUX RESTART READY", "", "");
+        long never = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+        for (;;) {
+            (void)sxn_wait_one(never, -1);
+        }
+    }
+    char *check[] = {"/fixtures/files", "check", "/work"};
+    run("files-check", check, 3);
+    char *remove[] = {"/fixtures/files", "remove", "/work"};
+    run("files-remove", remove, 3);
+    say(g_failures == 0 ? "LINUX RESTART PASS" : "LINUX RESTART FAIL", "", "");
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    if (argc > 1 && same(argv[1], "--restart")) {
+        return restart();
+    }
 
     char *hello[] = {"/fixtures/hello"};
     run("hello", hello, 1);
@@ -293,6 +342,18 @@ int main(int argc, char **argv) {
     if (have_fixture("tls")) {
         char *tls[] = {"/fixtures/tls"};
         run("tls", tls, 1);
+    }
+    if (have_fixture("clock")) {
+        char *clock[] = {"/fixtures/clock"};
+        run("clock", clock, 1);
+    }
+    if (have_fixture("files")) {
+        char *write[] = {"/fixtures/files", "write", "/work"};
+        run("files-write", write, 3);
+        char *check[] = {"/fixtures/files", "check", "/work"};
+        run("files-check", check, 3);
+        char *remove[] = {"/fixtures/files", "remove", "/work"};
+        run("files-remove", remove, 3);
     }
     if (have_fixture("heap")) {
         /* heap maps and unmaps some 25 MiB of blocks. Each unmapped page

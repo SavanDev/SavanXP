@@ -653,6 +653,10 @@ bool sticky_allows(const cred::Credentials& who, int parent, const vfs::Vnode& e
 
 namespace vfs {
 
+uint32_t node_number(const Vnode& node) {
+    return static_cast<uint32_t>(index_of(node)) + 1u;
+}
+
 Ownership ownership_of(const Vnode& node) {
     if (node.mode != 0) {
         return {node.uid, node.gid, node.mode};

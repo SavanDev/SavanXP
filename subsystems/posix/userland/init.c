@@ -126,6 +126,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "linuxtest")) {
         return "LINUX TEST";
     }
+    if (spec != 0 && text_contains(spec, "linuxrestart")) {
+        return "LINUX RESTART";
+    }
     if (spec != 0 && text_contains(spec, "win32window")) {
         return "WIN32 WINDOW";
     }
@@ -189,6 +192,7 @@ static int run_automation_spec(const char* spec) {
     const char* sxgltest_argv[] = {"/system/sxgltest.sxe", 0};
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
     const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
+    const char* linuxrestart_argv[] = {"/system/linuxtest.sxe", "--restart", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
     const char* win32dialog_argv[] = {"/system/win32test.sxe", "--dialog", 0};
@@ -373,6 +377,12 @@ static int run_automation_spec(const char* spec) {
             path = "/system/linuxtest.sxe";
             argv = linuxtest_argv;
             argc = 1;
+        } else if (strcmp(spec, "linuxrestart") == 0) {
+            /* A Linux program's file read back after a restart: the host
+             * resets the machine between the two runs. */
+            path = "/system/linuxtest.sxe";
+            argv = linuxrestart_argv;
+            argc = 2;
         } else if (strcmp(spec, "win32window") == 0) {
             /* A Win32 window under windowd, driven by the host over QMP. */
             path = "/system/win32test.sxe";

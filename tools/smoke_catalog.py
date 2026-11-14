@@ -758,6 +758,19 @@ SCENARIOS: dict[str, Scenario] = {
         "Linux fixtures through the launcher, byte for byte against Linux",
         300.0,
     ),
+    # SSL's L2 gate for a file kept across a restart: the first boot writes it
+    # with the files fixture and syncs, the host resets the machine at the
+    # ready token, and the second boot reads it back and removes it.
+    "linux-restart": _qemu_scenario(
+        "linuxrestart",
+        "LINUX RESTART PASS",
+        "LINUX RESTART FAIL",
+        "A Linux program's file read back after a guest restart",
+        300.0,
+        ready="LINUX RESTART READY",
+        qmp_callback="tools/linux_restart_smoke.py",
+        remove_paths=("/system/linux/work/l2-files.dat", "/system/linux/work/restart-marker"),
+    ),
     "win32-cards": _qemu_scenario(
         "win32cards",
         "WIN32 CARDS PASS",

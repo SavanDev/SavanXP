@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **SSL L2 closes: a static musl program gets files and clocks, with `open`, `read`, `close`, `lseek`, `stat`, `fstat`
+  and `unlink` on a descriptor table of its own under `/system/linux`, and `clock_gettime` and `nanosleep`.**
+  `linux-hello` adds the `clock` and `files` fixtures; the new `linux-restart` scenario reads a Linux program's file back
+  after a guest restart. See [LINUX.md](docs/userland/LINUX.md).
+
 - **Anonymous memory regions (S2a) and SSL L2's memory half: a static musl program runs unchanged, with `mmap`,
   `munmap`, `mremap` and `brk` over `vm::map_region` and friends, whose pages appear zeroed on first touch.**
   `arch_prctl(ARCH_SET_FS)`, `set_tid_address`, `writev` and `ioctl` work too; `linux-hello` adds the `regions`, `args`,

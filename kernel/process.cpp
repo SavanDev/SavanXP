@@ -2331,6 +2331,43 @@ int unmap_view_address(process::Process& proc, uint64_t base_address) {
     return sx::unmap_view(proc, base_address);
 }
 
+namespace {
+
+// The thread's own timer for sleep_via_timer, made on its first sleep and
+// released with the thread.
+object::TimerObject* ensure_sleep_timer(process::Thread& thread) {
+    if (thread.sleep_timer != nullptr) {
+        return thread.sleep_timer;
+    }
+
+    object::TimerObject* timer_object = object::create_timer(false);
+    if (timer_object == nullptr) {
+        return nullptr;
+    }
+    object::retain(&timer_object->header);
+    thread.sleep_timer = timer_object;
+    return timer_object;
+}
+
+} // namespace
+
+// Moved here from the POSIX translation: any subsystem's sleep is a wait on
+// the thread's timer, and SSL's nanosleep is one.
+int sleep_via_timer(process::Thread& self, uint64_t milliseconds) {
+    object::TimerObject* timer_object = ensure_sleep_timer(self);
+    if (timer_object == nullptr) {
+        return negative_error(SX_ENOMEM);
+    }
+
+    const uint64_t now = process::detail::now_ms();
+    object::set_timer(timer_object, now + milliseconds, 0);
+    object::Header* handle_object = &timer_object->header;
+    if (milliseconds == 0) {
+        object::poll_timers(now, process::detail::wake_waiters_for_object);
+    }
+    return process::detail::begin_object_wait(self, &handle_object, 1, false, -1);
+}
+
 int wait_on_handle(process::Thread& self, uint64_t fd, int64_t timeout_ms) {
     object::Header* handle_object = process::detail::lookup_handle(*self.process, fd, object::access_synchronize);
     if (handle_object == nullptr) {

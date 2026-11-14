@@ -183,12 +183,14 @@ def main() -> int:
                   "unlink_path", "stat_path", "readdir_node", "ioctl_handle",
                   "read_handle", "write_handle", "create_pipe",
                   "create_timer_handle", "create_semaphore_handle",
-                  "wait_on_many_handles", "sleep_via_timer"):
+                  "wait_on_many_handles"):
         assert moved in posix_translation
         assert f"int {moved}(" not in process_cpp and f"Process* {moved}(" not in process_cpp
+    # sleep_via_timer was POSIX's alone until SSL's nanosleep used it too.
     for shared in ("waitpid_child", "create_event_handle", "wait_on_handle",
                    "create_section_handle", "map_view_handle",
-                   "create_process_internal", "clone_handles_for_spawn"):
+                   "create_process_internal", "clone_handles_for_spawn",
+                   "sleep_via_timer"):
         assert shared in process_cpp
     assert (root / "include" / "kernel" / "process_detail.hpp").is_file()
     assert "posix_translation" in (root / "include" / "kernel" / "process.hpp").read_text(encoding="utf-8")

@@ -141,6 +141,10 @@ struct Ownership {
 };
 
 Ownership ownership_of(const Vnode& node);
+// A number for the node, never 0 and unique among the nodes that exist at
+// once: what a Linux st_ino needs. A slot given back and reused gives it to
+// another node later, as inode numbers are reused on Linux.
+uint32_t node_number(const Vnode& node);
 void set_ownership(Vnode& node, uint32_t uid, uint32_t gid, uint16_t mode);
 bool permits(const cred::Credentials& who, const Vnode& node, uint32_t want);
 // The path exists, every directory above it is searchable, and `want` is

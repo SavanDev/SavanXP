@@ -15,28 +15,42 @@
 namespace ssl::abi {
 
 // System call numbers.
+constexpr uint64_t kSysRead = 0;
 constexpr uint64_t kSysWrite = 1;
+constexpr uint64_t kSysOpen = 2;
+constexpr uint64_t kSysClose = 3;
+constexpr uint64_t kSysStat = 4;
+constexpr uint64_t kSysFstat = 5;
+constexpr uint64_t kSysLseek = 8;
 constexpr uint64_t kSysMmap = 9;
 constexpr uint64_t kSysMunmap = 11;
 constexpr uint64_t kSysBrk = 12;
 constexpr uint64_t kSysIoctl = 16;
 constexpr uint64_t kSysWritev = 20;
 constexpr uint64_t kSysMremap = 25;
+constexpr uint64_t kSysNanosleep = 35;
 constexpr uint64_t kSysExit = 60;
+constexpr uint64_t kSysUnlink = 87;
 constexpr uint64_t kSysArchPrctl = 158;
 constexpr uint64_t kSysSetTidAddress = 218;
+constexpr uint64_t kSysClockGettime = 228;
 constexpr uint64_t kSysExitGroup = 231;
 
 // Errors, returned negated in RAX.
 constexpr int64_t kEPERM = 1;
+constexpr int64_t kENOENT = 2;
 constexpr int64_t kEBADF = 9;
 constexpr int64_t kENOMEM = 12;
 constexpr int64_t kEACCES = 13;
 constexpr int64_t kEFAULT = 14;
 constexpr int64_t kEEXIST = 17;
 constexpr int64_t kENODEV = 19;
+constexpr int64_t kEISDIR = 21;
 constexpr int64_t kEINVAL = 22;
+constexpr int64_t kEMFILE = 24;
 constexpr int64_t kENOTTY = 25;
+constexpr int64_t kESPIPE = 29;
+constexpr int64_t kENAMETOOLONG = 36;
 constexpr int64_t kENOSYS = 38;
 
 // The most one read or write moves (MAX_RW_COUNT): a page short of 2 GiB.
@@ -62,6 +76,59 @@ constexpr uint64_t kMapFixedNoReplace = 0x100000;
 constexpr uint64_t kMremapMayMove = 1;
 constexpr uint64_t kMremapFixed = 2;
 constexpr uint64_t kMremapDontUnmap = 4;
+
+// open (include/uapi/asm-generic/fcntl.h), lseek.
+constexpr uint64_t kOpenAccessMode = 03;
+constexpr uint64_t kOpenReadOnly = 00;
+constexpr uint64_t kOpenWriteOnly = 01;
+constexpr uint64_t kOpenReadWrite = 02;
+constexpr uint64_t kOpenCreate = 0100;
+constexpr uint64_t kOpenNoCtty = 0400;
+constexpr uint64_t kOpenTruncate = 01000;
+constexpr uint64_t kOpenLargeFile = 0100000;
+constexpr uint64_t kOpenCloseOnExec = 02000000;
+constexpr uint64_t kSeekSet = 0;
+constexpr uint64_t kSeekCur = 1;
+constexpr uint64_t kSeekEnd = 2;
+
+// struct stat of x86-64 (arch/x86/include/uapi/asm/stat.h).
+struct Stat {
+    uint64_t dev;
+    uint64_t ino;
+    uint64_t nlink;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t pad0;
+    uint64_t rdev;
+    int64_t size;
+    int64_t blksize;
+    int64_t blocks;
+    int64_t atime_sec;
+    int64_t atime_nsec;
+    int64_t mtime_sec;
+    int64_t mtime_nsec;
+    int64_t ctime_sec;
+    int64_t ctime_nsec;
+    int64_t unused[3];
+};
+static_assert(sizeof(Stat) == 144, "x86-64 struct stat is 144 bytes");
+constexpr uint32_t kModeSocket = 0140000;
+constexpr uint32_t kModeRegular = 0100000;
+constexpr uint32_t kModeDirectory = 0040000;
+constexpr uint32_t kModeCharacter = 0020000;
+constexpr uint32_t kModeFifo = 0010000;
+
+// Clocks and times (include/uapi/linux/time.h).
+constexpr uint64_t kClockRealtime = 0;
+constexpr uint64_t kClockMonotonic = 1;
+// The clock ids Linux has; one past the last.
+constexpr uint64_t kClockLimit = 12;
+struct Timespec {
+    int64_t seconds;
+    int64_t nanoseconds;
+};
+static_assert(sizeof(Timespec) == 16, "struct timespec is two 64-bit words");
 
 // arch_prctl (arch/x86/include/uapi/asm/prctl.h).
 constexpr uint64_t kArchSetFs = 0x1002;

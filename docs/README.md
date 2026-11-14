@@ -128,7 +128,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   EFER.SCE clear, the #UD entry stub, trap dispatchers
   (`subsystem::register_trap_dispatcher`), the `linux` launcher and
   `SXN_SPAWN_FLAG_SUBSYSTEM`, the guest tree, the Linux start-up stack, the
-  calls implemented, and the `linux-hello` gate.
+  descriptor table, the calls implemented, and the `linux-hello` and
+  `linux-restart` gates.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
   measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
   closure by hash, the L1-L5 fixtures and how they are built, the system call

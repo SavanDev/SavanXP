@@ -169,6 +169,8 @@ bool convert_raw(const RtcRaw& raw, savanxp_realtime& value) {
 bool g_epoch_known = false;
 uint64_t g_epoch_base = 0;
 uint64_t g_epoch_base_ms = 0;
+// The same instant on the monotonic clock in nanoseconds, for epoch_ns().
+uint64_t g_epoch_base_ns = 0;
 
 // Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
 int64_t days_from_civil(int64_t year, uint32_t month, uint32_t day) {
@@ -306,9 +308,17 @@ uint64_t epoch_seconds() {
         const int64_t days = days_from_civil(now.year, now.month, now.day);
         g_epoch_base = static_cast<uint64_t>(days) * 86400u + now.hour * 3600u + now.minute * 60u + now.second;
         g_epoch_base_ms = timer::monotonic_ms();
+        g_epoch_base_ns = timer::monotonic_ns();
         g_epoch_known = true;
     }
     return g_epoch_base + (timer::monotonic_ms() - g_epoch_base_ms) / 1000u;
+}
+
+uint64_t epoch_ns() {
+    if (epoch_seconds() == 0) {
+        return 0;
+    }
+    return g_epoch_base * 1000000000ULL + (timer::monotonic_ns() - g_epoch_base_ns);
 }
 
 } // namespace rtc

@@ -8,9 +8,11 @@
  * `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: it gets
  * -ENOSYS and nothing else.
  *
- * Implemented: write on the standard descriptors, exit and exit_group (L1);
- * memory through the anonymous regions of S2a (mmap, munmap, mremap, brk),
- * the thread pointer (arch_prctl), set_tid_address, ioctl and writev (L2).
+ * Implemented: write, exit and exit_group (L1); memory through the anonymous
+ * regions of S2a (mmap, munmap, mremap, brk), the thread pointer
+ * (arch_prctl), set_tid_address, the descriptor table and the file calls on
+ * it (open, read, write, writev, lseek, fstat, stat, close, unlink, ioctl),
+ * and the clocks (clock_gettime, nanosleep) (L2).
  * Every other number returns -ENOSYS and is logged once per process, so a
  * fixture's first run lists what it needs; a variant of a call the layer
  * does not offer fails with its Linux error and is logged once the same way.
@@ -24,10 +26,12 @@
 #include "kernel/console.hpp"
 #include "kernel/process.hpp"
 #include "kernel/region_list.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/sx.hpp"
+#include "kernel/timer.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "linux_abi.hpp"
@@ -36,6 +40,18 @@ namespace ssl {
 namespace {
 
 constexpr uint64_t kPage = 4096;
+
+// A Linux process's descriptors. Linux's own default limit is 1024; the
+// kernel's handle table is the smaller bound anyway.
+constexpr uint32_t kMaxDescriptors = 256;
+constexpr uint32_t kDescriptorCloseOnExec = 1u << 0;
+
+// One descriptor: the kernel handle it names, plus one (0 is a free slot,
+// so zeroed state is an empty table), and its Linux flags.
+struct Descriptor {
+    uint32_t handle_plus_one;
+    uint32_t flags;
+};
 
 // The per-process state the kernel reserves for SSL and never reads.
 struct ProcessState {
@@ -49,6 +65,11 @@ struct ProcessState {
     // is now. Both 0 until the first brk.
     uint64_t break_start;
     uint64_t break_current;
+    // The descriptor table, its own and not the kernel's handle table:
+    // numbering and close-on-exec follow Linux's rules. The standard three
+    // are the handles the spawn gave, entered on first use.
+    bool descriptors_ready;
+    Descriptor descriptors[kMaxDescriptors];
 };
 
 // The per-thread state, made on first use.
@@ -121,19 +142,81 @@ bool round_to_pages(uint64_t length, uint64_t& rounded) {
     return rounded >= length;
 }
 
-// A standard descriptor of the process. Until the descriptor table, a Linux
-// descriptor is the process's handle of the same number, and only the
-// standard three exist: the handles the spawn gave as 0, 1 and 2.
-bool standard_descriptor(const process::Process& proc, uint64_t descriptor) {
-    return descriptor <= 2 && process::handle_is_open(proc, descriptor);
+// The table, with the standard descriptors entered: 0, 1 and 2 name the
+// process's handles of the same numbers when the spawn gave them.
+ProcessState* descriptors_of(process::Process& proc) {
+    ProcessState* const state = state_of(proc);
+    if (state != nullptr && !state->descriptors_ready) {
+        for (uint32_t standard = 0; standard <= 2; ++standard) {
+            if (process::handle_is_open(proc, standard)) {
+                state->descriptors[standard].handle_plus_one = standard + 1;
+            }
+        }
+        state->descriptors_ready = true;
+    }
+    return state;
+}
+
+// The kernel handle a descriptor names. False for a descriptor that is not
+// open.
+bool handle_of(process::Process& proc, uint64_t descriptor, uint64_t& handle) {
+    ProcessState* const state = descriptors_of(proc);
+    if (state == nullptr || descriptor >= kMaxDescriptors ||
+        state->descriptors[descriptor].handle_plus_one == 0) {
+        return false;
+    }
+    handle = state->descriptors[descriptor].handle_plus_one - 1;
+    return true;
+}
+
+// The lowest free descriptor, now naming `handle`, as Linux numbers them; -1
+// when the table is full.
+int64_t allocate_descriptor(ProcessState& state, uint64_t handle, uint32_t flags) {
+    for (uint32_t descriptor = 0; descriptor < kMaxDescriptors; ++descriptor) {
+        if (state.descriptors[descriptor].handle_plus_one == 0) {
+            state.descriptors[descriptor].handle_plus_one = static_cast<uint32_t>(handle + 1);
+            state.descriptors[descriptor].flags = flags;
+            return descriptor;
+        }
+    }
+    return -1;
+}
+
+// A guest path from user memory, as the host path under /system/linux. A
+// relative path is taken from the guest root: the working directory is L3's,
+// and until then it is "/".
+int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::PathBuffer& host) {
+    vfs::PathBuffer guest;
+    if (guest == nullptr || host == nullptr) {
+        return -abi::kENOMEM;
+    }
+    char* const text = guest;
+    text[0] = '/';
+    const sx_status copied = sx::copy_user_path_from(proc, user_path, text + 1, guest.capacity() - 1);
+    if (copied == SX_ENAMETOOLONG) {
+        return -abi::kENAMETOOLONG;
+    }
+    if (copied != sx::kStatusOk) {
+        return -abi::kEFAULT;
+    }
+    if (text[1] == '\0') {
+        // An empty path names nothing, on Linux too.
+        return -abi::kENOENT;
+    }
+    // "/" + an absolute path is the same path with one more slash, which
+    // linux_guest_path drops.
+    if (!process::linux_guest_path(text, host, host.capacity())) {
+        return -abi::kENAMETOOLONG;
+    }
+    return 0;
 }
 
 // write(fd, buffer, count).
 process::SavedContext* linux_write(process::Thread& self, process::SavedContext* context) {
-    const uint64_t descriptor = context->rdi;
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
-    if (descriptor > 2) {
+    uint64_t descriptor = 0;
+    if (!handle_of(*self.process, context->rdi, descriptor)) {
         set_result(context, -abi::kEBADF);
         return context;
     }
@@ -158,11 +241,10 @@ process::SavedContext* linux_write(process::Thread& self, process::SavedContext*
 // the whole count. A later segment that would block ends the call short, and
 // the caller writes the rest, as musl's stdio does.
 process::SavedContext* linux_writev(process::Thread& self, process::SavedContext* context) {
-    process::Process& proc = *self.process;
-    const uint64_t descriptor = context->rdi;
     const uint64_t vector = context->rsi;
     const uint64_t count = context->rdx;
-    if (!standard_descriptor(proc, descriptor)) {
+    uint64_t descriptor = 0;
+    if (!handle_of(*self.process, context->rdi, descriptor)) {
         set_result(context, -abi::kEBADF);
         return context;
     }
@@ -229,7 +311,312 @@ process::SavedContext* linux_writev(process::Thread& self, process::SavedContext
 // -ENOTTY, which is what Linux says of a file or a pipe for TCGETS and
 // TIOCGWINSZ, the two requests musl's stdio and isatty make.
 int64_t linux_ioctl(process::Process& proc, const process::SavedContext* context) {
-    return standard_descriptor(proc, context->rdi) ? -abi::kENOTTY : -abi::kEBADF;
+    uint64_t handle = 0;
+    return handle_of(proc, context->rdi, handle) ? -abi::kENOTTY : -abi::kEBADF;
+}
+
+// read(fd, buffer, count).
+process::SavedContext* linux_read(process::Thread& self, process::SavedContext* context) {
+    const uint64_t buffer = context->rsi;
+    size_t count = static_cast<size_t>(context->rdx);
+    uint64_t handle = 0;
+    if (!handle_of(*self.process, context->rdi, handle)) {
+        set_result(context, -abi::kEBADF);
+        return context;
+    }
+    if (count > abi::kMaxRwCount) {
+        count = abi::kMaxRwCount;
+    }
+    if (count != 0 && !sx::validate_user_range(buffer, count, true)) {
+        set_result(context, -abi::kEFAULT);
+        return context;
+    }
+    const int result = process::native_read_handle(self, handle, buffer, count);
+    if (result == process::kBlockedResult) {
+        return process::choose_next_context(context);
+    }
+    set_result(context, result);
+    return context;
+}
+
+// open(path, flags, mode): a regular file under the guest root. The access
+// mode, O_CREAT, O_TRUNC and O_CLOEXEC (kept for exec, L7) are honoured;
+// O_LARGEFILE is always true here and O_NOCTTY has no terminal to refuse.
+// Any other flag is refused rather than half done: O_APPEND needs every
+// write at the end, not only the first; a directory is L3's.
+int64_t linux_open(process::Process& proc, const process::SavedContext* context) {
+    ProcessState* const state = descriptors_of(proc);
+    if (state == nullptr) {
+        return -abi::kENOMEM;
+    }
+    const uint64_t flags = context->rsi;
+    const uint64_t honoured = abi::kOpenAccessMode | abi::kOpenCreate | abi::kOpenTruncate |
+                              abi::kOpenLargeFile | abi::kOpenNoCtty | abi::kOpenCloseOnExec;
+    if ((flags & ~honoured) != 0) {
+        report_unsupported(proc, abi::kSysOpen, "open flag");
+        return -abi::kEINVAL;
+    }
+    uint32_t open_flags = 0;
+    switch (flags & abi::kOpenAccessMode) {
+        case abi::kOpenReadOnly:
+            open_flags = SAVANXP_OPEN_READ;
+            break;
+        case abi::kOpenWriteOnly:
+            open_flags = SAVANXP_OPEN_WRITE;
+            break;
+        case abi::kOpenReadWrite:
+            open_flags = SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE;
+            break;
+        default:
+            return -abi::kEINVAL;
+    }
+    if ((flags & abi::kOpenCreate) != 0) {
+        open_flags |= SAVANXP_OPEN_CREATE;
+    }
+    if ((flags & abi::kOpenTruncate) != 0) {
+        open_flags |= SAVANXP_OPEN_TRUNCATE;
+    }
+
+    vfs::PathBuffer host;
+    const int64_t resolved = guest_path_from_user(proc, context->rdi, host);
+    if (resolved != 0) {
+        return resolved;
+    }
+    // The mode as given: the umask is L3's.
+    object::IoObject* file = nullptr;
+    const sx_status opened = sx::open_file(proc.credentials, host, open_flags,
+                                           static_cast<uint16_t>(context->rdx & vfs::kModePermissions),
+                                           sx::open_accept_file, file);
+    if (opened != sx::kStatusOk) {
+        return -static_cast<int64_t>(opened);
+    }
+    // A full handle table is the only way to fail here, which Linux calls
+    // EMFILE.
+    const int handle = process::install_io_object(proc, file);
+    if (handle < 0) {
+        return -abi::kEMFILE;
+    }
+    const int64_t descriptor = allocate_descriptor(
+        *state, static_cast<uint64_t>(handle),
+        (flags & abi::kOpenCloseOnExec) != 0 ? kDescriptorCloseOnExec : 0u);
+    if (descriptor < 0) {
+        (void)sx::close_handle(proc, static_cast<uint64_t>(handle));
+        return -abi::kEMFILE;
+    }
+    return descriptor;
+}
+
+// close(fd).
+int64_t linux_close(process::Process& proc, const process::SavedContext* context) {
+    uint64_t handle = 0;
+    if (!handle_of(proc, context->rdi, handle)) {
+        return -abi::kEBADF;
+    }
+    state_of(proc)->descriptors[context->rdi] = Descriptor{0, 0};
+    (void)sx::close_handle(proc, handle);
+    return 0;
+}
+
+// lseek(fd, offset, whence). A pipe, a socket or a device has no offset.
+int64_t linux_lseek(process::Process& proc, const process::SavedContext* context) {
+    uint64_t handle = 0;
+    if (!handle_of(proc, context->rdi, handle)) {
+        return -abi::kEBADF;
+    }
+    object::IoObject* const file = process::io_object_of(proc, handle);
+    if (file == nullptr) {
+        return -abi::kEBADF;
+    }
+    if (file->kind != process::HandleKind::vnode) {
+        return -abi::kESPIPE;
+    }
+    sx::SeekOrigin origin = sx::SeekOrigin::start;
+    switch (context->rdx) {
+        case abi::kSeekSet:
+            break;
+        case abi::kSeekCur:
+            origin = sx::SeekOrigin::current;
+            break;
+        case abi::kSeekEnd:
+            origin = sx::SeekOrigin::end;
+            break;
+        default:
+            return -abi::kEINVAL;
+    }
+    uint64_t position = 0;
+    const sx_status status = sx::seek_file(*file, static_cast<int64_t>(context->rsi), origin, position);
+    if (status != sx::kStatusOk) {
+        return -static_cast<int64_t>(status);
+    }
+    return static_cast<int64_t>(position);
+}
+
+// What the VFS said went wrong, as a negative Linux error; never a success,
+// even when it left no error behind.
+int64_t vfs_failure() {
+    const int error = vfs::last_error();
+    return error > 0 ? -static_cast<int64_t>(error) : -abi::kENOENT;
+}
+
+// struct stat of a node. Times are the modification time, the only one
+// recorded.
+void stat_of_node(const vfs::Vnode& node, abi::Stat& out) {
+    memset(&out, 0, sizeof(out));
+    const vfs::Ownership owner = vfs::ownership_of(node);
+    uint32_t permissions = owner.mode & vfs::kModePermissions;
+    if (node.backend == vfs::Backend::volume && !node.writable) {
+        permissions &= ~0222u;
+    }
+    if (node.backend == vfs::Backend::device) {
+        out.mode = abi::kModeCharacter | permissions;
+    } else if (node.type == vfs::NodeType::directory) {
+        out.mode = abi::kModeDirectory | permissions;
+        out.nlink = 2;
+    } else {
+        out.mode = abi::kModeRegular | permissions;
+        out.size = static_cast<int64_t>(node.size);
+        out.blocks = static_cast<int64_t>((node.size + 511) / 512);
+    }
+    if (out.nlink == 0) {
+        out.nlink = 1;
+    }
+    out.dev = 1;
+    out.ino = vfs::node_number(node);
+    out.uid = owner.uid;
+    out.gid = owner.gid;
+    out.blksize = static_cast<int64_t>(kPage);
+    out.atime_sec = static_cast<int64_t>(node.mtime);
+    out.mtime_sec = static_cast<int64_t>(node.mtime);
+    out.ctime_sec = static_cast<int64_t>(node.mtime);
+}
+
+int64_t copy_stat_out(uint64_t user_out, const abi::Stat& value) {
+    if (!sx::validate_user_range(user_out, sizeof(value), true) || !sx::copy_to_user(user_out, &value, sizeof(value))) {
+        return -abi::kEFAULT;
+    }
+    return 0;
+}
+
+// fstat(fd, statbuf).
+int64_t linux_fstat(process::Process& proc, const process::SavedContext* context) {
+    uint64_t handle = 0;
+    if (!handle_of(proc, context->rdi, handle)) {
+        return -abi::kEBADF;
+    }
+    object::IoObject* const file = process::io_object_of(proc, handle);
+    if (file == nullptr) {
+        return -abi::kEBADF;
+    }
+    abi::Stat value;
+    if (file->kind == process::HandleKind::vnode && file->node != nullptr) {
+        stat_of_node(*file->node, value);
+    } else {
+        // A pipe, a socket or a device the process was handed: its type and
+        // nothing more is known.
+        memset(&value, 0, sizeof(value));
+        value.nlink = 1;
+        value.dev = 1;
+        value.blksize = static_cast<int64_t>(kPage);
+        value.mode = file->kind == process::HandleKind::pipe     ? abi::kModeFifo | 0600u
+                     : file->kind == process::HandleKind::socket ? abi::kModeSocket | 0777u
+                                                                 : abi::kModeCharacter | 0666u;
+    }
+    return copy_stat_out(context->rsi, value);
+}
+
+// stat(path, statbuf). lstat would be the same: the file system has no links.
+int64_t linux_stat(process::Process& proc, const process::SavedContext* context) {
+    vfs::PathBuffer host;
+    const int64_t resolved = guest_path_from_user(proc, context->rdi, host);
+    if (resolved != 0) {
+        return resolved;
+    }
+    // A query open: reaching the node is the whole check, as for stat.
+    const vfs::Vnode* node = vfs::open(proc.credentials, host, 0, 0);
+    if (node == nullptr) {
+        return vfs_failure();
+    }
+    abi::Stat value;
+    stat_of_node(*node, value);
+    return copy_stat_out(context->rsi, value);
+}
+
+// unlink(path). A directory is EISDIR, as on Linux; rmdir is its call.
+int64_t linux_unlink(process::Process& proc, const process::SavedContext* context) {
+    vfs::PathBuffer host;
+    const int64_t resolved = guest_path_from_user(proc, context->rdi, host);
+    if (resolved != 0) {
+        return resolved;
+    }
+    const vfs::Vnode* node = vfs::open(proc.credentials, host, 0, 0);
+    if (node == nullptr) {
+        return vfs_failure();
+    }
+    if (node->type == vfs::NodeType::directory) {
+        return -abi::kEISDIR;
+    }
+    if (!vfs::unlink(proc.credentials, host)) {
+        return vfs_failure();
+    }
+    return 0;
+}
+
+// clock_gettime(clock, timespec): what musl calls with no vDSO, for
+// clock_gettime itself and for time(). CLOCK_REALTIME is the RTC's date
+// carried by the monotonic clock; CLOCK_MONOTONIC is the kernel's.
+int64_t linux_clock_gettime(process::Process& proc, const process::SavedContext* context) {
+    uint64_t nanoseconds = 0;
+    switch (context->rdi) {
+        case abi::kClockRealtime:
+            nanoseconds = rtc::epoch_ns();
+            break;
+        case abi::kClockMonotonic:
+            nanoseconds = timer::monotonic_ns();
+            break;
+        default:
+            if (context->rdi < abi::kClockLimit) {
+                report_unsupported(proc, abi::kSysClockGettime, "clock");
+            }
+            return -abi::kEINVAL;
+    }
+    const abi::Timespec value{static_cast<int64_t>(nanoseconds / 1000000000ULL),
+                              static_cast<int64_t>(nanoseconds % 1000000000ULL)};
+    if (!sx::validate_user_range(context->rsi, sizeof(value), true) ||
+        !sx::copy_to_user(context->rsi, &value, sizeof(value))) {
+        return -abi::kEFAULT;
+    }
+    return 0;
+}
+
+// nanosleep(request, remaining). The kernel keeps its deadlines in
+// milliseconds: the wait is rounded up, plus one, so it is never shorter than
+// asked, as Linux promises. Nothing interrupts it (no signals yet), so
+// `remaining` is never written.
+process::SavedContext* linux_nanosleep(process::Thread& self, process::SavedContext* context) {
+    abi::Timespec request{};
+    if (!sx::copy_from_user(&request, context->rdi, sizeof(request))) {
+        set_result(context, -abi::kEFAULT);
+        return context;
+    }
+    if (request.seconds < 0 || request.nanoseconds < 0 || request.nanoseconds > 999999999) {
+        set_result(context, -abi::kEINVAL);
+        return context;
+    }
+    if (request.seconds == 0 && request.nanoseconds == 0) {
+        set_result(context, 0);
+        return context;
+    }
+    // A century is as good as forever, and keeps the arithmetic in range.
+    constexpr int64_t kLongestSeconds = 100LL * 365 * 24 * 3600;
+    const uint64_t seconds = static_cast<uint64_t>(request.seconds < kLongestSeconds ? request.seconds : kLongestSeconds);
+    const uint64_t milliseconds =
+        seconds * 1000u + (static_cast<uint64_t>(request.nanoseconds) + 999999u) / 1000000u + 1u;
+    const int result = process::sleep_via_timer(self, milliseconds);
+    if (result == process::kBlockedResult) {
+        return process::choose_next_context(context);
+    }
+    set_result(context, result);
+    return context;
 }
 
 int64_t region_error(process::Process& proc, uint64_t number, vm::RegionStatus status) {
@@ -426,8 +813,33 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
     process::Process& proc = *self->process;
 
     switch (context->rax) {
+        case abi::kSysRead:
+            return linux_read(*self, context);
         case abi::kSysWrite:
             return linux_write(*self, context);
+        case abi::kSysOpen:
+            set_result(context, linux_open(proc, context));
+            return context;
+        case abi::kSysClose:
+            set_result(context, linux_close(proc, context));
+            return context;
+        case abi::kSysStat:
+            set_result(context, linux_stat(proc, context));
+            return context;
+        case abi::kSysFstat:
+            set_result(context, linux_fstat(proc, context));
+            return context;
+        case abi::kSysLseek:
+            set_result(context, linux_lseek(proc, context));
+            return context;
+        case abi::kSysUnlink:
+            set_result(context, linux_unlink(proc, context));
+            return context;
+        case abi::kSysClockGettime:
+            set_result(context, linux_clock_gettime(proc, context));
+            return context;
+        case abi::kSysNanosleep:
+            return linux_nanosleep(*self, context);
         case abi::kSysWritev:
             return linux_writev(*self, context);
         case abi::kSysIoctl:

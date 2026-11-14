@@ -1086,20 +1086,6 @@ int pipe_receive_handle(process::Process& proc, uint64_t pipe_fd) {
     return fd;
 }
 
-object::TimerObject* ensure_sleep_timer(process::Thread& thread) {
-    if (thread.sleep_timer != nullptr) {
-        return thread.sleep_timer;
-    }
-
-    object::TimerObject* timer_object = object::create_timer(false);
-    if (timer_object == nullptr) {
-        return nullptr;
-    }
-    object::retain(&timer_object->header);
-    thread.sleep_timer = timer_object;
-    return timer_object;
-}
-
 int create_timer_handle(process::Process& proc, uint32_t flags) {
     object::TimerObject* timer_object = sx::create_timer((flags & SAVANXP_TIMER_MANUAL_RESET) != 0);
     if (timer_object == nullptr) {
@@ -1209,21 +1195,6 @@ int wait_on_many_handles(process::Thread& self, uint64_t user_handles, size_t co
     }
 
     return detail::begin_object_wait(self, handles, count, wait_all, timeout_ms);
-}
-
-int sleep_via_timer(process::Thread& self, uint64_t milliseconds) {
-    object::TimerObject* timer_object = ensure_sleep_timer(self);
-    if (timer_object == nullptr) {
-        return sx::negative_error(SAVANXP_ENOMEM);
-    }
-
-    const uint64_t now = detail::now_ms();
-    object::set_timer(timer_object, now + milliseconds, 0);
-    object::Header* handle_object = &timer_object->header;
-    if (milliseconds == 0) {
-        object::poll_timers(now, detail::wake_waiters_for_object);
-    }
-    return detail::begin_object_wait(self, &handle_object, 1, false, -1);
 }
 
 } // namespace process

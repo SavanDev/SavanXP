@@ -1,8 +1,8 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1 and L1 closed, S2a built and L2 half done (2026-11-14):
-> a static musl program starts, uses thread-local data and its heap, and
-> prints, unchanged.** What is built is described in
+> **Status: L0, E1, L1 and L2 closed, with S1 and S2a (2026-11-14): a static
+> musl program runs unchanged, with its heap, files and clocks.** What is
+> built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
 > measured first profile is
@@ -471,11 +471,29 @@ including short reads and errors. A file written by a fixture is read back
 after a guest restart. The region list has host tests for splitting, merging,
 overlap and overflow.
 
-**Memory half built on 2026-11-14:** S2a, `arch_prctl`, `set_tid_address`,
-`writev` and `ioctl`, with the region list's host tests and the `regions`,
-`args`, `tls` and `heap` fixtures against Linux, free memory checked after
-`heap`. `regions` is a libc-free fixture the plan did not have: the edges of
-anonymous memory that musl's own use never reaches. Files and clocks remain.
+**Closed on 2026-11-14** ([LINUX.md](../../userland/LINUX.md)), with S2a.
+What the plan did not say:
+
+- A libc-free fixture, `regions`, was added for the edges of anonymous
+  memory that musl's own use never reaches. It prints values rather than
+  verdicts, so Linux's run is its reference. After `heap`, `linuxtest` checks
+  that free memory came back.
+- The descriptor table holds one handle per descriptor for now; sockets will
+  need the second.
+- There is no working directory before L3: a relative path is taken from the
+  guest root. The umask is L3's too: a created file gets the mode as given.
+- `O_APPEND` is refused rather than done at open only, and a directory
+  cannot be opened before L3.
+- The kernel keeps deadlines in milliseconds, so `nanosleep` rounds up and
+  adds one. The sleep primitive moved from the POSIX half to the neutral
+  kernel for it.
+- The restart is its own scenario, `linux-restart`. A guest write is durable
+  once the volume is synced, so the first boot flushes a marker file of the
+  same volume before the host resets the machine, as a Linux program would
+  need `fsync` before a power cut.
+- The host's clang and lld moved to 23.1.5 during L2, which changed every
+  fixture's bytes; the references were retaken, unchanged but for their
+  hashes.
 
 ### L3 — a bounded static tool set
 

@@ -429,6 +429,17 @@ int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, siz
                         bool may_block = true);
 // Whether `proc` has a handle numbered `handle`, of any kind and access.
 bool handle_is_open(const Process& proc, uint64_t handle);
+// The native read on handle `handle`, published for the Linux layer like the
+// write: the byte count, a negative error, or kBlockedResult when the thread
+// parked on a pipe (the waker completes the call, as for SXN_SYS_READ).
+int native_read_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count);
+// The I/O object behind handle `handle` of `proc` (a file, pipe, device or
+// socket), whatever its access; nullptr for none or another kind of object.
+object::IoObject* io_object_of(Process& proc, uint64_t handle);
+// Puts a new I/O object, as sx::open_file builds one, in `proc`'s handle
+// table with the access its open flags give: the handle, or a negative error
+// after discarding the object.
+int install_io_object(Process& proc, object::IoObject* file);
 // SSL's guest tree: `guest`, an absolute path a Linux program names, as the
 // path of the file under /system/linux. `..` never climbs above the guest
 // root. False for a relative or too long path.

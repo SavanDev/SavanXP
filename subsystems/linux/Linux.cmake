@@ -91,6 +91,8 @@ if(SAVANXP_INCLUDE_TEST_APPS)
     set(SSL_GUEST_FIXTURES "${SAVANXP_DISKFS_ROOT}/system/linux/fixtures")
     set(SAVANXP_LINUX_COPY_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SSL_GUEST_FIXTURES}/expected"
+        # Where the files fixture writes, as /work in the guest.
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/work"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SSL_OUT}/hello" "${SSL_OUT}/startup" "${SSL_OUT}/errors" "${SSL_OUT}/regions" ${SSL_DAMAGED}
                 ${SSL_MUSL_FILES}
@@ -103,5 +105,9 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SSL_EXPECTED}/args.stdout" "${SSL_EXPECTED}/args.status"
                 "${SSL_EXPECTED}/tls.stdout" "${SSL_EXPECTED}/tls.status"
                 "${SSL_EXPECTED}/heap.stdout" "${SSL_EXPECTED}/heap.status"
+                "${SSL_EXPECTED}/clock.stdout" "${SSL_EXPECTED}/clock.status"
+                "${SSL_EXPECTED}/files-write.stdout" "${SSL_EXPECTED}/files-write.status"
+                "${SSL_EXPECTED}/files-check.stdout" "${SSL_EXPECTED}/files-check.status"
+                "${SSL_EXPECTED}/files-remove.stdout" "${SSL_EXPECTED}/files-remove.status"
                 "${SSL_GUEST_FIXTURES}/expected/")
 endif()

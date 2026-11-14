@@ -1022,6 +1022,23 @@ bool handle_is_open(const Process& proc, uint64_t handle) {
     return handle < kMaxFileHandles && proc.handles[handle].object != nullptr;
 }
 
+int native_read_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
+    return native_read(self, handle, user_buffer, count);
+}
+
+object::IoObject* io_object_of(Process& proc, uint64_t handle) {
+    return detail::fd_to_io_object(proc, handle, 0);
+}
+
+int install_io_object(Process& proc, object::IoObject* file) {
+    const int handle = detail::allocate_fd(proc, &file->header,
+        detail::object_access_for_open_flags(file->open_flags), object::handle_none);
+    if (handle < 0) {
+        detail::discard_io_object(file);
+    }
+    return handle;
+}
+
 // El subsistema nativo declara su estado privado por proceso como cualquier
 // otro (rebanada B). Hoy declara cero: un proceso nativo no tiene estado propio,
 // y decirlo es lo que hace medible la afirmacion de que al kernel no le queda

@@ -6,10 +6,10 @@ rejected and the phases still ahead are in the
 the first profile is in [LINUX_XEYES_PROFILE.md](LINUX_XEYES_PROFILE.md).
 
 **Built so far: E1, the `syscall` trap; L1 with S1, a static, libc-free
-Linux executable runs unchanged, started by the `linux` launcher; and the
-memory half of L2 with S2a: a static musl program starts, uses its
-thread-local data and its heap, and prints.** Files and clocks are the rest
-of L2. Every call not below answers `-ENOSYS`.
+Linux executable runs unchanged, started by the `linux` launcher; and L2
+with S2a: a static musl program runs unchanged, with its thread-local data,
+its heap, files under the guest root and the clocks.** Every call not below
+answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -139,7 +139,7 @@ registers, for `subsystem::Id::linux`:
 | --- | --- |
 | Trap dispatcher, `dispatch_linux_syscall` | The calls below. Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
 | Ordinary dispatcher, `dispatch_linux_int80` | `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: always `-ENOSYS` |
-| Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break |
+| Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break; the descriptor table |
 | Per-thread state | `set_tid_address`'s pointer |
 
 A call SSL has, asked for a variant it does not offer (a shared mapping, a
@@ -150,19 +150,43 @@ Linux error and is logged once per call per process:
 Linux numbers and error values are written in `linux_abi.hpp` from the Linux
 ABI, under `ssl::abi`. Nothing there comes from the POSIX SDK.
 
+### Descriptors and paths
+
+A Linux descriptor is an entry of the subsystem's own table (256 of them),
+naming one kernel handle and carrying its Linux flags; the kernel's handle
+table is not renumbered. So numbering follows Linux's rule, the lowest free
+descriptor, and `O_CLOEXEC` is kept for the exec of L7. Descriptors 0, 1 and
+2 are entered on first use from the handles of the same numbers the spawn
+gave.
+
+Every path resolves under `/system/linux` through `process::linux_guest_path`,
+`..` never above it. There is no working directory until L3: a relative
+path is taken from the guest root. Files are the VFS's (`sx::open_file`,
+`vfs::open`, `vfs::unlink`) with the process's credentials, so SavanXP's
+permission checks apply underneath. The test image has `/system/linux/work`,
+`/work` to a guest, for the files fixture.
+
 ### The calls
 
 | Call | What it does |
 | --- | --- |
-| `write` (1) | Descriptors 0, 1 and 2 are the process's handles of the same numbers, the ones the spawn gave. Any other is `-EBADF`, until the descriptor table of L2. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
-| `writev` (20) | The same descriptors. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
-| `ioctl` (16) | `-ENOTTY` on a standard descriptor, whatever the request: no descriptor is a terminal yet. That is Linux's answer for a file or a pipe to `TCGETS` and `TIOCGWINSZ`, the two musl asks. `-EBADF` otherwise |
+| `read` (0) | On an open descriptor, through the native read (`process::native_read_handle`): a pipe with nothing in it parks the thread. An unwritable buffer is `-EFAULT`; a descriptor open for writing only is `-EBADF` |
+| `write` (1) | On an open descriptor, `-EBADF` otherwise. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
+| `open` (2) | A regular file, with the access mode, `O_CREAT` (the mode as given: the umask is L3's) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, and a directory is L3's (`-EISDIR` until then). The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
+| `close` (3) | Frees the descriptor and closes its handle |
+| `stat` (4), `fstat` (5) | Linux's `struct stat`: the type, the permission bits and owner SavanXP records, the size, 512-byte blocks, the modification time for all three times, and a node number (`vfs::node_number`) for `st_ino`. A pipe, socket or device handed to the process gives its type alone |
+| `lseek` (8) | `SEEK_SET`, `SEEK_CUR` and `SEEK_END` on a file; `-ESPIPE` on a pipe, socket or device; before 0 is `-EINVAL` |
+| `unlink` (87) | Removes a file; a directory is `-EISDIR`, as on Linux |
+| `writev` (20) | On an open descriptor. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
+| `ioctl` (16) | `-ENOTTY` on an open descriptor, whatever the request: no descriptor is a terminal yet. That is Linux's answer for a file or a pipe to `TCGETS` and `TIOCGWINSZ`, the two musl asks. `-EBADF` otherwise |
 | `mmap` (9) | Private anonymous memory, an anonymous region of S2a ([MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md)). `MAP_FIXED` replaces the regions in the range; `MAP_FIXED_NOREPLACE` is `-EEXIST` over anything. A hint is taken when free. `MAP_DENYWRITE`, `MAP_EXECUTABLE`, `MAP_NORESERVE` and `MAP_STACK` change nothing here, as on Linux; another flag is refused. A shared mapping is `-EINVAL`, a file mapping `-ENODEV` (S2b, L4), writable and executable memory `-EACCES` (W^X, a recorded difference from Linux), and a fixed mapping over memory that is not a region `-EINVAL` |
 | `munmap` (11) | Takes the range out of the regions and frees its pages. A range with no region is 0; one with memory that is not a region is `-EINVAL` |
 | `mremap` (25) | Inside one region: shrinks in place, grows in place when the pages after it are free, otherwise moves with `MREMAP_MAYMOVE` (`-ENOMEM` without). Outside one region `-EFAULT`. `MREMAP_FIXED` and `MREMAP_DONTUNMAP` are refused |
 | `brk` (12) | The break starts at the end of the image (`VmSpace::image_end`); growing maps a region exactly after it, shrinking unmaps. It answers where the break is, the old place when it could not move, as Linux's does |
 | `arch_prctl` (158) | `ARCH_SET_FS` sets the thread's FS base, musl's thread pointer; an address outside the user half is `-EPERM`. Other codes are refused |
 | `set_tid_address` (218) | Keeps the pointer and answers the thread id, which is the process id: a Linux process has one thread until `clone` (L7) |
+| `clock_gettime` (228) | What musl calls with no vDSO, for `clock_gettime` and `time()`. `CLOCK_REALTIME` is the RTC's date carried by the monotonic clock in nanoseconds (`rtc::epoch_ns`); `CLOCK_MONOTONIC` is `timer::monotonic_ns`. The other clocks Linux has are refused |
+| `nanosleep` (35) | A wait on the thread's timer (`process::sleep_via_timer`). The kernel keeps deadlines in milliseconds, so the wait is rounded up, plus one: never shorter than asked. Nothing interrupts it, so the remaining time is never written |
 | `exit` (60) | Ends the calling thread with `status & 0xff`. The last thread ends the process, which with one thread is always |
 | `exit_group` (231) | Ends the process with `status & 0xff` |
 
@@ -194,12 +218,21 @@ the same files, recorded by `subsystems/linux/profile/profile.sh`:
 | `args` | Static musl: argv and the environment through musl's start-up, `getenv` |
 | `tls` | Thread-local data of the main thread: initialized, zeroed and 64-byte aligned, written, and `%fs:0` pointing at itself |
 | `heap` | `malloc` from one byte to 6 MiB, three rounds, and `realloc` to 4 MiB: `brk`, a guard page `MAP_FIXED` over the break, `mmap`, `munmap` and `mremap` moving. Then `linuxtest` checks that free memory came back within 1 MiB: an unmapped page lost would not come back even when the program exits |
+| `clock` | Both clocks, `time()`, and a 20 ms `nanosleep` that the monotonic clock sees last at least that long |
+| `files write`, `check`, `remove` | In `/work`: create a file, `write`, `writev`, close, then `fstat`, `lseek` from the start, the end and the current offset, a read in the middle and a short one at the end, end of file, `-EBADF` writing a read-only descriptor and reading a closed one, `stat`, `-ENOENT`, `-ENOTTY` from `tcgetattr` and `isatty`; read back; `unlink` and `stat` after it |
 
 Then it asks the kernel to start what it must refuse, and checks that the
 process count did not change: a bad header, an image cut after its ELF
 header, another machine, a missing file, a path climbing out of the guest
 tree, a relative path, a missing handle, an unreadable subsystem block or
 environment, and an unknown subsystem.
+
+**L2, `linux-restart`.** A file a Linux program wrote is read back after a
+restart of the machine. `linuxtest --restart` runs `files write` on the
+first boot, then creates a marker file and flushes it, which syncs the whole
+volume, and logs `LINUX RESTART READY`. The host's callback
+(`tools/linux_restart_smoke.py`) resets the machine over QMP. On the second
+boot the file is there, so `linuxtest` runs `files check` and `files remove`.
 
 The fixtures are built by `subsystems/linux/Linux.cmake` with the same
 commands `profile.sh` uses, and `linux-fixture-hash-test` checks that they are
