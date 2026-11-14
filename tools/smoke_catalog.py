@@ -965,6 +965,13 @@ SCENARIOS: dict[str, Scenario] = {
         "A non-PIE program that links the loader is told why it cannot use libraries",
         180.0,
     ),
+    "ldimagetest": _qemu_scenario(
+        "ldimagetest",
+        "LOADER IMAGE TEST PASS",
+        "LOADER IMAGE TEST FAIL",
+        "A loader that cannot register the program's image says so (step -10)",
+        180.0,
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

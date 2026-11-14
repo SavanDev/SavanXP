@@ -138,6 +138,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "ldstatictest")) {
         return "LOADER STATIC TEST";
     }
+    if (spec != 0 && text_contains(spec, "ldimagetest")) {
+        return "LOADER IMAGE TEST";
+    }
     if (spec != 0 && text_contains(spec, "linuxrestart")) {
         return "LINUX RESTART";
     }
@@ -210,6 +213,7 @@ static int run_automation_spec(const char* spec) {
     const char* sonametest_argv[] = {"/system/sonametest.sxe", 0};
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
+    const char* ldimagetest_argv[] = {"/system/ldimagetest.sxe", 0};
     const char* linuxrestart_argv[] = {"/system/linuxtest.sxe", "--restart", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
@@ -420,6 +424,11 @@ static int run_automation_spec(const char* spec) {
             /* A STATIC program that links the loader: step -11. */
             path = "/system/ldstatictest.sxe";
             argv = ldstatictest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "ldimagetest") == 0) {
+            /* The program's own image refused by the loader: step -10. */
+            path = "/system/ldimagetest.sxe";
+            argv = ldimagetest_argv;
             argc = 1;
         } else if (strcmp(spec, "sonametest") == 0) {
             /* How a DT_NEEDED resolves when the exact library is missing. */

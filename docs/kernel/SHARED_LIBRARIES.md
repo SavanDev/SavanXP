@@ -180,7 +180,7 @@ at 0 of 228 and 0 of 284 glyph pixels.
 `smoke`, `sxgui-smoke`, `taskbar-smoke`, `windowd-smoke`, `calc-smoke`, `--smp 4`,
 `verify_doom_persistence.sh`, and 18 visual scenarios in `shoot_session`. For the
 loader itself: `dltest`, `brokentest`, `missingtest`, `slottest`, `diamondtest`,
-`needstest-missing`, `ldfailtest`, `ldstatictest`, `sun-libtest`, `sonametest`,
+`needstest-missing`, `ldfailtest`, `ldstatictest`, `ldimagetest`, `sun-libtest`, `sonametest`,
 `sonametest-newer`, `posix-loader-log`, `ffmpegload`. For the SUN programs that
 map the toolkit: `taskmgr-smoke`, `logview-smoke`, `diskmgmt-smoke`,
 `cursor-settings-smoke`, and the `taskmgrmenu`, `logview`, `sound`, `sxgldiag`
@@ -739,7 +739,7 @@ are missing, and the two should not be confused. What no phase covers:
   its section: [DT_SONAME resolution](#dt_soname-resolution).)
   Nothing in this tree needs them, and nothing that runs on it needs them either.
 - **Half the loader's failure paths were untested.** Eleven return codes; four had
-  a self-test. All but `-10` have one now:
+  a self-test. All have one now:
   [The loader's failure paths](#the-loaders-failure-paths).
 - **A non-PIE program cannot use a library**, and used to find out silently: it
   links, runs, and its libraries fail to resolve. It is still not detected at build
@@ -1062,18 +1062,20 @@ its slot back, except `-8`, where the library itself loaded.
 | `-7` | no dynamic symbol table | `nodynamic.so`, no `PT_DYNAMIC` | `ldfailtest` |
 | `-8` | a dependency did not load | `needsgone.so`, needing a library not in `/lib` | `ldfailtest`, `needstest-missing` |
 | `-9` | a symbol does not resolve | `libbroken.so.0.4` | `brokentest`, `dltest` |
-| `-10` | the program's image is not registered | -- | none, see below |
+| `-10` | the program's image is not registered | `ldimagetest`, built to fit one program header | `ldimagetest` |
 | `-11` | the program has no dynamic symbol table | `ldstatictest`, STATIC with the loader linked | `ldstatictest` |
 
 `-6` goes through the path where a writable segment's source range fails to
 open after its anonymous section is mapped, which used to leave that view
 mapped; the SXN rewrite of the loader unmaps it, and this is its test.
 
-`-10` is the one without a test. It means `adopt_executable` found no ELF header
-at `sx_image_base`, which crt0 stores from `r8`, where the kernel puts the image
-it just mapped (`interptest` asserts it does). By the time a program could
-interfere, crt0 has already run the loader and `ldso_start` does not run twice.
-The step stays, with its line, for a kernel that one day passes no base.
+`-10` means `adopt_executable` refused the program's own image. In a real
+program the base comes from the kernel in `r8` (`interptest` asserts it does),
+and by the time a program could interfere crt0 has already run the loader, which
+does not run twice. So `ldimagetest` is built with
+`SAVANXP_LD_MAX_PROGRAM_HEADERS=1`, the way `slottest` lowers the slot count:
+every PIE has more program headers than that, the image is refused, and the
+program reaches `main` with no image registered and the step in the log.
 
 One case in `ldfailtest` is the opposite of a failure: `libweakref.so.0.4` holds a
 weak reference to a symbol nothing defines, and must load with it resolved to

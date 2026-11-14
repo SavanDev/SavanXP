@@ -278,6 +278,10 @@ savanxp_program(NAME ldfailtest TEST NATIVE LINK_PROFILE PIE
     SOURCES system/loader/tests/ldfailtest.c)
 savanxp_program(NAME ldstatictest TEST NATIVE
     SOURCES system/loader/tests/ldstatictest.c system/loader/ldso.c)
+# Step -10: a loader that fits one program header cannot register any PIE.
+savanxp_program(NAME ldimagetest TEST NATIVE LINK_PROFILE PIE
+    DEFINES SAVANXP_LD_MAX_PROGRAM_HEADERS=1
+    SOURCES system/loader/tests/ldimagetest.c)
 savanxp_program(NAME sonametest TEST NATIVE LINK_PROFILE PIE
     DEPENDS libsoname libsonameuser libsonamelow libsonamelatest libsonamemajor
     SOURCES system/loader/tests/sonametest.c)

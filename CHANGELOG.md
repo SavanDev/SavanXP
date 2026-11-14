@@ -375,7 +375,7 @@ Cut-off notes:
 
 - **The loader resolves a weak reference nothing defines to zero instead of failing the load, and says in words why
   a non-PIE program cannot use libraries (step 11) or why its own image was not registered (step 10).**
-  `ldfailtest` and `ldstatictest` cover every failure step; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-loaders-failure-paths).
+  `ldfailtest`, `ldstatictest` and `ldimagetest` cover every failure step; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-loaders-failure-paths).
 
 - **A SUN program can return from `main`, call `exit` or `abort`, or fail an `assert`, and it ends with that status
   instead of a #GP (status 141).** The runtime ends every process through `sx_process_exit`, which the native runtime defines with

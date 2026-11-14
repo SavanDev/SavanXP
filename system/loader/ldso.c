@@ -142,8 +142,15 @@ typedef struct {
  * array.
  *
  * Bringing it down from 64 is what makes the slot count below cheap: a slot
- * goes from 4300 B to about 1750, and thirty-two slots of 137 KB become 56 KB. */
-#define kMaxProgramHeaders 24
+ * goes from 4300 B to about 1750, and thirty-two slots of 137 KB become 56 KB.
+ *
+ * A -D can lower it for a test, as SAVANXP_LD_MAX_LIBRARIES below:
+ * ldimagetest sets 1, so the program's own image no longer fits and step -10
+ * happens for real. */
+#ifndef SAVANXP_LD_MAX_PROGRAM_HEADERS
+#define SAVANXP_LD_MAX_PROGRAM_HEADERS 24
+#endif
+#define kMaxProgramHeaders SAVANXP_LD_MAX_PROGRAM_HEADERS
 
 /* The state of ONE loaded image.
  *
