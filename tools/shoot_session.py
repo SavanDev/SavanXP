@@ -29,16 +29,18 @@ _FONTS = {}
 
 def fonts():
     if not _FONTS:
-        library = Path(os.environ.get("SAVANXP_OUTPUT_ROOT", "build")) / "diskfs" / "lib" / "libsxgfx.so.0.4"
+        # The font tables live in pixels.c, which libgfx2d carries since the
+        # toolkit split into neutral and host libraries.
+        library = Path(os.environ.get("SAVANXP_OUTPUT_ROOT", "build")) / "diskfs" / "lib" / "libgfx2d.so.0.4"
         if not library.exists():
-            library = Path("build/diskfs/lib/libsxgfx.so.0.4")
+            library = Path("build/diskfs/lib/libgfx2d.so.0.4")
         try:
             _FONTS.update(glyphs.load(library))
         except (glyphs.FontError, OSError) as exc:
             raise Failure(
-                "no se pudieron leer las tablas de fuente de %s: %s\n"
-                "Este harness afirma sobre los glifos que dibuja libsxgfx; sin las tablas\n"
-                "no puede afirmar nada, y seguiria pasando sin comprobar nada." % (library, exc)
+                "could not read the font tables from %s: %s\n"
+                "This harness asserts on the glyphs libgfx2d draws; without the tables\n"
+                "it can assert nothing, and would go on passing while checking nothing." % (library, exc)
             ) from None
     return _FONTS
 
@@ -1023,14 +1025,16 @@ def scenario_taskmgrmenu(s):
             break
         image = again
     # The Applications list, measured from its Status header: the row names
-    # the window by its title, "notepad".
+    # the program by its presentation, "Notepad". (It read "notepad" when this
+    # was written; searching the old spelling made the click land on Task
+    # Manager's own row, and End Task closed Task Manager.)
     header = find_text(image, (0, 0, 1280, 770), "Status", TEXT, FACE)[0]
     if header is None:
         raise Failure("Task Manager does not show the Applications tab")
     rows = (max(0, header[0] - 520), header[1] + 10, header[0], header[1] + 200)
     row = None
     for colour, background in ((TEXT, FIELD), (SELECT_TEXT, SELECT)):
-        row = find_text(image, rows, "notepad", colour, background)[0]
+        row = find_text(image, rows, "Notepad", colour, background)[0]
         if row is not None:
             break
     if row is None:
@@ -1055,8 +1059,8 @@ def scenario_taskmgrmenu(s):
     image = s.shot("taskmgr-ended")
     # Absence is asserted in black only: the UI font has no anti-aliasing,
     # so white text on the selection would match any white part of the list.
-    if find_text(image, rows, "notepad", TEXT, FIELD)[0] or \
-            find_text(image, (0, 772, 1280, 800), "notepad", TEXT, FACE)[0]:
+    if find_text(image, rows, "Notepad", TEXT, FIELD)[0] or \
+            find_text(image, (0, 772, 1280, 800), "Notepad", TEXT, FACE)[0]:
         raise Failure("End Task from the menu left Notepad running")
 
     # Task Manager's own row, near the list's right edge: the menu has to
@@ -2343,24 +2347,23 @@ def scenario_notepadwheel(s):
     print("  editor en", area)
     s.qmp.move_to((area[0] + area[2]) // 2, (area[1] + area[3]) // 2)
 
-    # Lo que se leyo hasta aqui era "algo se movio". Esto es "esta linea esta
-    # escrita con estas letras, en negro, sobre blanco": el glifo de cada caracter
-    # sale de la tabla que trae libsxgfx y se compara pixel a pixel contra la
-    # pantalla.
+    # What was read so far was "something moved". This is "this line is written
+    # with these letters, in black, on white": each character's glyph comes from
+    # the table libgfx2d ships and is compared pixel by pixel with the screen.
     #
-    # Sin esto, pintar el texto con SXGUI_COLOR_FACE -- invisible sobre el campo
-    # blanco -- pasaba: el scroll se comprueba con el pulgar de la barra, y el
-    # pulgar se movia igual. Un toolkit que dibuja las lineas en el color del
-    # fondo no se nota en ningun otro chequeo de este archivo.
+    # Without it, painting the text in SXGUI_COLOR_FACE -- invisible on the white
+    # field -- passed: scrolling is checked through the scroll bar's thumb, and
+    # the thumb moved all the same. A toolkit that draws the lines in the
+    # background colour shows in no other check of this file.
     #
-    # Dos lineas y no la ultima: el caret queda al final de "linea40" y pisa el
-    # ultimo pixel del cero, que es un gris de cobertura 2 y el caret lo tapa con
-    # negro. Ese pixel es real y esta ahi, pero afirmar sobre el obliga a
-    # modelar el caret, y un modelo del caret aqui no compra nada.
+    # Two lines and not the last: the caret sits at the end of "linea40" and
+    # covers the zero's last pixel, a coverage-2 grey the caret paints black.
+    # That pixel is real and there, but asserting on it means modelling the
+    # caret, and a caret model here buys nothing.
     #
-    # Dos lineas consecutivas en vez de una: ademas del glifo y del color, esto
-    # afirma el interlineado, que tiene que ser la fila del toolkit. Un solo
-    # acierto podria ser suerte de la posicion; dos seguidas, no.
+    # Two consecutive lines instead of one: besides glyph and colour, this
+    # asserts the line spacing, which has to be the toolkit's row. One match
+    # could be luck of position; two in a row cannot.
     row_height = fonts()["body"].line_height + SXGUI_ROW_LEADING
     penultimate = expect_text(image, area, "linea39", TEXT, FIELD, "el editor de notepad")
     third_last = expect_text(image, area, "linea38", TEXT, FIELD, "el editor de notepad")
@@ -2371,8 +2374,8 @@ def scenario_notepadwheel(s):
     step = penultimate[1] - third_last[1]
     if step != row_height:
         raise Failure(
-            "el interlineado del editor es %d y la fila del toolkit es %d: las lineas no "
-            "se pintan donde dicen las metrics de libsxgfx" % (step, row_height)
+            "the editor's line spacing is %d and the toolkit's row is %d: the lines are "
+            "not painted where libgfx2d's metrics say" % (step, row_height)
         )
     print("  'linea38'/'linea39' en x=%d, interlineado %d" % (penultimate[0], step))
 
@@ -2429,7 +2432,7 @@ def scenario_webview(s):
     Without arguments it shows its welcome screen (synthetic paragraphs, no
     parser); F3 opens the dialog, /welcome.html is typed, and what appears was
     produced by the real parser: the h1 in the title font and a list item in
-    the body's, asserted pixel by pixel against libsxgfx.
+    the body's, asserted pixel by pixel against libgfx2d.
 
     The slash is typed as Shift+7: the guest's active layout is ES and the
     qcode is the physical key, so "slash" would type a dash (see type_text).
@@ -2484,11 +2487,12 @@ def scenario_webview(s):
 
 
 def scenario_webview_http(s):
-    """Web Viewer v0.3: fetch HTTP, links, source y redirect.
+    """Web Viewer v0.3: HTTP fetch, links, source and redirect.
 
-    Levanta el fixture HTTP del host (el guest lo ve en 10.0.2.2 por slirp),
-    tipea la URL en la barra, sigue un link con el mouse, mira el fuente con
-    Ctrl+U y atraviesa un 302. Cada paso afirma glifos contra libsxgfx.
+    Starts the host's HTTP fixture (the guest sees it at 10.0.2.2 through
+    slirp), types the URL into the bar, follows a link with the mouse, views the
+    source with Ctrl+U and goes through a 302. Each step asserts glyphs against
+    libgfx2d.
     """
     root = Path(__file__).resolve().parent
     server = subprocess.Popen(

@@ -612,8 +612,10 @@ struct sxgui_host {
 
 /* NULL goes back to the subsystem's default host. */
 void sxgui_set_host(const struct sxgui_host *host);
-/* The default host: a weak symbol that returns NULL; the subsystem's runtime
- * overrides it (subsystems/posix/sdk/v1/runtime/sxgui_app.c for POSIX). */
+/* The default host, defined by the subsystem's runtime and linked into the
+ * program: subsystems/posix/sdk/v1/runtime/sxgui_app.c for POSIX,
+ * system/runtime/sxngui.c for SUN. The toolkit core defines none, so that in
+ * libsxgui.so the program's is the one found. */
 const struct sxgui_host *sxgui_default_host(void);
 
 #ifdef __cplusplus

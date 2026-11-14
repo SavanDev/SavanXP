@@ -71,6 +71,8 @@ typedef uint64_t Elf64_Xword;
 
 #define STT_OBJECT 1
 #define STT_FUNC 2
+/* A symbol's binding is the high nibble of st_info. */
+#define STB_WEAK 2
 
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_GLOB_DAT 6
@@ -743,6 +745,19 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
          * of one loaded after it. */
         Elf64_Addr target = 0;
         const int owner = resolve_for(slot, g_libs[slot].dynstr + symbol.st_name, &target);
+        if (owner < 0 && (symbol.st_info >> 4) == STB_WEAK) {
+            /* A weak reference nothing defines is zero, as ELF says: the code
+             * that made it weak tests the address before using it. It is how
+             * a library asks for something a program may or may not provide
+             * (sxgui_default_host), and how it keeps working with a program
+             * built before that something existed. */
+            Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
+            if (where == 0) {
+                return 0;
+            }
+            *where = 0;
+            continue;
+        }
         if (owner < 0) {
             if (tolerant) {
                 skipped++;
@@ -914,9 +929,16 @@ int ldso_start(void) {
          * starts with pointers missing their bias and fails later, somewhere
          * that says nothing of this. A program that really depends on nothing
          * does not get here, because it does not link the loader. */
+        report("loader: the program's own image could not be registered (step 10)\n");
         return -10;
     }
     if (g_libs[0].dynsym == 0) {
+        /* The loader is linked in, so the program meant to use libraries, but
+         * it is an ET_EXEC with nothing to declare a DT_NEEDED with: a non-PIE
+         * link. Said in words, because a program in this state starts, runs,
+         * and finds none of its libraries. */
+        report("loader: the program has no dynamic symbol table; link it LINK_PROFILE PIE "
+               "to use shared libraries (step 11)\n");
         return -11;
     }
     /* The chain is walked before relocating because a GOT that points into a

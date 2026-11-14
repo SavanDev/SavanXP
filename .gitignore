@@ -58,6 +58,7 @@ tools/*
 !tools/write_smoke_spec.py
 !tools/smoke_profile.py
 !tools/check_shared_libs.py
+!tools/make_loader_fixtures.py
 !tools/glyphs.py
 !tools/qmp_native_hw.py
 !tools/qmp_elevation.py

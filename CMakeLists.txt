@@ -430,9 +430,9 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
 set(SAVANXP_POSIX_RUNTIME subsystems/posix/sdk/v1/runtime)
 set(SAVANXP_LIBRARY_REPLACES_libmath ${SAVANXP_POSIX_RUNTIME}/math.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxmidi ${SAVANXP_POSIX_RUNTIME}/sxmidi.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgui system/gfx/sxgui.c ${SAVANXP_POSIX_RUNTIME}/sxgui_app.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgfx ${SAVANXP_POSIX_RUNTIME}/gfx.c system/gfx/pixels.c)
-set(SAVANXP_LIBRARY_REPLACES_libgfx2d system/gfx/gfx2d.c system/gfx/sxchrome.c ${SAVANXP_POSIX_RUNTIME}/gfx_scaled.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxgui system/gfx/sxgui.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxgfx ${SAVANXP_POSIX_RUNTIME}/gfx.c ${SAVANXP_POSIX_RUNTIME}/gfx_scaled.c)
+set(SAVANXP_LIBRARY_REPLACES_libgfx2d system/gfx/pixels.c system/gfx/gfx2d.c system/gfx/sxchrome.c)
 
 # El reproductor de medios es un programa de este arbol que depende de una libreria
 # que construye ports/ffmpeg. Eso rompe una suposicion: un programa se compila con
@@ -1302,6 +1302,14 @@ foreach(library IN LISTS SAVANXP_USER_LIBRARY_TARGETS)
                 "${CMAKE_BINARY_DIR}/${library_file}" "${SAVANXP_DISKFS_ROOT}/lib/")
 endforeach()
 
+# The files ldfailtest hands the loader, one per failure step; test images only.
+set(SAVANXP_LOADER_FIXTURE_COMMANDS)
+if(SAVANXP_INCLUDE_TEST_APPS)
+    set(SAVANXP_LOADER_FIXTURE_COMMANDS
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/make_loader_fixtures.py"
+                "${SAVANXP_DISKFS_ROOT}/system/loader-fixtures")
+endif()
+
 # Every program the tree builds goes onto the disk, and /system/programs.txt
 # names them: it is how Add or Remove Programs tells what shipped with the
 # system from what someone installed (appwiz_catalog.h). One file name per line.
@@ -1338,6 +1346,7 @@ add_custom_target(savanxp_diskfs
     ${SAVANXP_LINUX_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"
+    ${SAVANXP_LOADER_FIXTURE_COMMANDS}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stage_licenses.py" stage
             --root "${CMAKE_SOURCE_DIR}"
             --out "${SAVANXP_DISKFS_ROOT}/system/licenses"

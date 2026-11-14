@@ -949,6 +949,22 @@ SCENARIOS: dict[str, Scenario] = {
         "A POSIX program's loader notice reaches the system log without stderr",
         180.0,
     ),
+    # The loader's failure paths: a fixture per step (-3 to -8), and a STATIC
+    # program that links the loader (-11).
+    "ldfailtest": _qemu_scenario(
+        "ldfailtest",
+        "LOADER FAIL TEST PASS",
+        "LOADER FAIL TEST FAIL",
+        "Each loader failure step, provoked by a file wrong in one way",
+        180.0,
+    ),
+    "ldstatictest": _qemu_scenario(
+        "ldstatictest",
+        "LOADER STATIC TEST PASS",
+        "LOADER STATIC TEST FAIL",
+        "A non-PIE program that links the loader is told why it cannot use libraries",
+        180.0,
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

@@ -240,6 +240,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The toolkit libraries split by subsystem: `libgfx2d` (pixels, painter, chrome) and `libsxgui` (the SXGUI core) are
+  neutral, `libsxgfx` is POSIX's window client; the six SUN programs that paint now map them, ~80 KB less text each.**
+  A SUN PIE program links without `--export-dynamic`. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-toolkit-split-into-neutral-and-host).
+
 - **The shared-library loader speaks SXN and calls no C library; its messages are in English and go through the runtime
   hook `sx_loader_report`.** `dlopen` joins a relative path with the working directory itself; `check_shared_libs`
   now fails the build if the loader imports anything else. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).
@@ -368,6 +372,10 @@ Cut-off notes:
   Normal image updates retire its former files while preserving custom packs and saved preferences.
 
 ### Fixed
+
+- **The loader resolves a weak reference nothing defines to zero instead of failing the load, and says in words why
+  a non-PIE program cannot use libraries (step 11) or why its own image was not registered (step 10).**
+  `ldfailtest` and `ldstatictest` cover every failure step; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-loaders-failure-paths).
 
 - **A SUN program can return from `main`, call `exit` or `abort`, or fail an `assert`, and it ends with that status
   instead of a #GP (status 141).** The runtime ends every process through `sx_process_exit`, which the native runtime defines with

@@ -16,11 +16,11 @@
 # off, like savanxp_program's TEST.
 function(savanxp_system_service)
     set(options TEST)
-    set(oneValueArgs NAME)
-    set(multiValueArgs SOURCES SHARED_SOURCES)
+    set(oneValueArgs NAME LINK_PROFILE)
+    set(multiValueArgs SOURCES SHARED_SOURCES DEPENDS)
     cmake_parse_arguments(S "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(S_UNPARSED_ARGUMENTS OR NOT S_NAME OR NOT S_SOURCES)
-        message(FATAL_ERROR "savanxp_system_service: TEST, NAME, SOURCES and SHARED_SOURCES only")
+        message(FATAL_ERROR "savanxp_system_service: TEST, NAME, LINK_PROFILE, SOURCES, SHARED_SOURCES and DEPENDS only")
     endif()
     if(S_TEST AND NOT SAVANXP_INCLUDE_TEST_APPS)
         return()
@@ -29,7 +29,15 @@ function(savanxp_system_service)
     foreach(source IN LISTS S_SOURCES)
         list(APPEND sources "system/${S_NAME}/${source}")
     endforeach()
-    savanxp_program(NAME ${S_NAME} NATIVE SOURCES ${sources} ${S_SHARED_SOURCES})
+    set(profile "")
+    if(S_LINK_PROFILE)
+        set(profile LINK_PROFILE ${S_LINK_PROFILE})
+    endif()
+    set(depends "")
+    if(S_DEPENDS)
+        set(depends DEPENDS ${S_DEPENDS})
+    endif()
+    savanxp_program(NAME ${S_NAME} NATIVE ${profile} ${depends} SOURCES ${sources} ${S_SHARED_SOURCES})
     target_include_directories(${S_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/system/include"
         "${CMAKE_SOURCE_DIR}/system/${S_NAME}")
@@ -37,6 +45,12 @@ endfunction()
 
 # The compositor (docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord):
 # composes the scene windowd commits and presents it.
+# The SUN programs that paint with SXGUI map the toolkit rather than carry it:
+# libsxgui and libgfx2d are neutral, and the host part -- sxngui.c, the SUN
+# application frame -- is linked into each program (docs/kernel/
+# SHARED_LIBRARIES.md, "The toolkit, split into neutral and host").
+set(SAVANXP_SUN_TOOLKIT libsxgui libgfx2d)
+
 savanxp_system_service(NAME compositord SOURCES
     compositord.c
     compositord_scene.c
@@ -55,7 +69,7 @@ savanxp_system_service(NAME elevationd SOURCES elevationd.c)
 
 # Task Manager (docs/userland/SYSTEM_MONITORING.md): an application like the
 # console, and the first SUN program drawn with SXGUI (include/sxn/sxngui.h).
-savanxp_system_service(NAME taskmgr SOURCES taskmgr.c)
+savanxp_system_service(NAME taskmgr LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES taskmgr.c)
 
 # The window manager. Its sources are written against the POSIX SDK;
 # windowd_sys.h, included first by every unit, renames those calls onto SXN
@@ -90,23 +104,23 @@ savanxp_system_service(NAME sxgltest TEST SOURCES sxgltest.c)
 # Disk Management (docs/userland/DISK_MANAGEMENT.md): the consumer of the
 # storage calls. libsxdisk and the SxFS core are shared with setup and the
 # host tools.
-savanxp_system_service(NAME diskmgmt SOURCES diskmgmt.c
+savanxp_system_service(NAME diskmgmt LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES diskmgmt.c
     SHARED_SOURCES libsxdisk/sxdisk.c libsxfs/sxfs_core.c)
 target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")
 
 # Sound control panel: SUN consumer of audiod's native control port.
-savanxp_system_service(NAME sound SOURCES sound.c)
+savanxp_system_service(NAME sound LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES sound.c)
 
 # SxGL Diagnostic Tool (docs/desktop/SXGL_DIAG.md): the machine, the display
 # and both SxGL backends, with a 3D test of each.
-savanxp_system_service(NAME sxgldiag SOURCES sxgldiag.c)
+savanxp_system_service(NAME sxgldiag LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES sxgldiag.c)
 
 # Log Viewer (docs/userland/LOG_VIEWER.md): the system log on screen, the
 # consumer of SXN_SYS_LOG_READ.
-savanxp_system_service(NAME logview SOURCES logview.c)
+savanxp_system_service(NAME logview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES logview.c)
 
 # Mouse Properties: native cursor scheme selection and previews.
-savanxp_system_service(NAME mouse SOURCES mouse.c
+savanxp_system_service(NAME mouse LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES mouse.c
     SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c system/compositord/shadow.c
         subsystems/posix/sdk/v1/runtime/sximg.c)
 target_include_directories(mouse PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord")

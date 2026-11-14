@@ -5,10 +5,13 @@
 static const struct sxgui_host *g_sxgui_host;
 static int g_sxgui_host_set;
 
-__attribute__((weak)) const struct sxgui_host *sxgui_default_host(void)
-{
-    return 0;
-}
+/* Defined by the program's runtime, not here: POSIX's application frame
+ * (sxgui_app.c) or SUN's (system/runtime/sxngui.c). No weak default either --
+ * in libsxgui.so the loader would find it before the program's, which it
+ * searches last. A weak reference instead: a program built before the toolkit
+ * split defines none, and gets a toolkit without a clock or a clipboard rather
+ * than one that does not load. */
+extern const struct sxgui_host *sxgui_default_host(void) __attribute__((weak));
 
 void sxgui_set_host(const struct sxgui_host *host)
 {
@@ -20,7 +23,7 @@ static const struct sxgui_host *sxgui_host(void)
 {
     if (!g_sxgui_host_set)
     {
-        g_sxgui_host = sxgui_default_host();
+        g_sxgui_host = sxgui_default_host != 0 ? sxgui_default_host() : 0;
         g_sxgui_host_set = 1;
     }
     return g_sxgui_host;

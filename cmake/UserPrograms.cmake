@@ -122,7 +122,16 @@ function(savanxp_program)
     # ET_EXEC donde se esperaba un ET_DYN, y el cargador cargaria la imagen
     # equivocada sin que nadie lo notara.
     if(P_LINK_PROFILE STREQUAL "PIE" AND DEFINED SAVANXP_USER_LINK_OPTIONS_PIE)
-        target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS_PIE})
+        set(pie_options ${SAVANXP_USER_LINK_OPTIONS_PIE})
+        if(P_NATIVE)
+            # --export-dynamic exports every symbol, and an exported symbol is
+            # never garbage: the program would carry the whole runtime, SxGL
+            # included. lld exports on its own what a library on the link line
+            # asks of the program (memcpy, the canary, sxgui_default_host);
+            # beyond that only dlopen would need exports, and SUN has none.
+            list(REMOVE_ITEM pie_options -Wl,--export-dynamic)
+        endif()
+        target_link_options(${P_NAME} PRIVATE ${pie_options})
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIE})
     elseif(P_LINK_PROFILE STREQUAL "PIE")
         message(FATAL_ERROR "savanxp_program(${P_NAME}): LINK_PROFILE PIE sin bloque SAVANXP_USER_LINK_OPTIONS_PIE")
@@ -260,6 +269,15 @@ foreach(family latest major)
             SOURCES system/loader/tests/sonamelib.c)
     endforeach()
 endforeach()
+# The loader's failure paths: ldfailtest loads the files of
+# tools/make_loader_fixtures.py; ldstatictest is a STATIC program that links
+# the loader anyway, step -11.
+savanxp_library(NAME libweakref TEST SONAME libweakref.so.0.4
+    SOURCES system/loader/tests/weakref.c)
+savanxp_program(NAME ldfailtest TEST NATIVE LINK_PROFILE PIE
+    SOURCES system/loader/tests/ldfailtest.c)
+savanxp_program(NAME ldstatictest TEST NATIVE
+    SOURCES system/loader/tests/ldstatictest.c system/loader/ldso.c)
 savanxp_program(NAME sonametest TEST NATIVE LINK_PROFILE PIE
     DEPENDS libsoname libsonameuser libsonamelow libsonamelatest libsonamemajor
     SOURCES system/loader/tests/sonametest.c)
@@ -345,28 +363,38 @@ savanxp_library(NAME libsxmidi SONAME libsxmidi.so.0.4
 # consumer today is Paint, which maps it from /lib.
 savanxp_library(NAME libsximg SONAME libsximg.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/sximg.c)
-# SxGFX: la capa de graficos del cliente, con sus tres tablas de fuente dentro.
-# Pide del ejecutable solo syscalls y libc, asi que resuelve contra el binario
-# como las otras dos.
-savanxp_library(NAME libsxgfx SONAME libsxgfx.so.0.4
-    SOURCES subsystems/posix/sdk/v1/runtime/gfx.c system/gfx/pixels.c)
-
-# El pintor de 2D y el cromado, encima de SxGFX. gfx2d.c necesita los glifos de
-# libsxgfx y sxchrome.c necesita el pintor; no hay ninguna otra dependencia, asi
-# que la cadena queda lineal hacia abajo.
-savanxp_library(NAME libgfx2d SONAME libgfx2d.so.0.4 DEPENDS libsxgfx
+# The toolkit is split by subsystem (docs/kernel/SHARED_LIBRARIES.md, "The
+# toolkit, split into neutral and host"). What draws is neutral and shared by
+# SUN and POSIX programs alike; what talks to the window system is each
+# subsystem's.
+#
+# libgfx2d: the pixel primitives and the three font tables (pixels.c), the 2D
+# painter (gfx2d.c) and the chrome (sxchrome.c). It asks the program for
+# memory functions only, which every runtime has.
+savanxp_library(NAME libgfx2d SONAME libgfx2d.so.0.4
     SOURCES
+        system/gfx/pixels.c
         system/gfx/gfx2d.c
-        system/gfx/sxchrome.c
+        system/gfx/sxchrome.c)
+
+# libsxgfx: POSIX's window client (gfx.c) and its scaled presentation
+# (gfx_scaled.c), over libgfx2d. A SUN program talks to the window system
+# through sxnwm instead and never maps it.
+savanxp_library(NAME libsxgfx SONAME libsxgfx.so.0.4 DEPENDS libgfx2d
+    SOURCES
+        subsystems/posix/sdk/v1/runtime/gfx.c
         subsystems/posix/sdk/v1/runtime/gfx_scaled.c)
 
-# SxGUI encima de los dos. Antes pedia gfx_* y sx_* al EJECUTABLE, lo que obligaba
-# a que cada programa fuera PIE solo para poder exportar. Con las dos librerias de
-# abajo ya no le pide NADA a la aplicacion: ni un simbolo.
-savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libgfx2d libsxgfx
+# libsxgui: the SXGUI toolkit's core (sxgui.c), over libgfx2d only. Its host --
+# the clock and the clipboard -- comes from the program: sxgui_default_host is
+# defined by POSIX's application frame (sxgui_app.c, in the POSIX runtime's gui
+# group) or by SUN's (system/runtime/sxngui.c), both small and linked into the
+# program. The library itself defines none, not even a weak one: the loader
+# searches libraries before the program, so a weak default here would always
+# win over the program's.
+savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libgfx2d
     SOURCES
-        system/gfx/sxgui.c
-        subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+        system/gfx/sxgui.c)
 savanxp_library(NAME libbroken TEST ALLOW_UNDEFINED SONAME libbroken.so.0.4
     SOURCES subsystems/posix/userland/brokenlib.c)
 savanxp_library(NAME libchainbase TEST SONAME libchainbase.so.0.4

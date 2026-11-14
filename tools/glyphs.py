@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Reads the font tables out of the built libsxgfx and renders text.
+"""Reads the font tables out of the built libgfx2d and renders text.
 
 The visual scenarios could assert colour and geometry, but not the identity of the
 characters on screen: a toolkit that painted every label with the wrong glyph, in
 the wrong font, or at the wrong offset still passed every check there was. That is
 the gap this closes.
 
-The tables are read from libsxgfx.so.0.4 rather than from the generated .inc files
+The tables are read from libgfx2d.so.0.4 rather than from the generated .inc files
 on purpose. The library is what the process actually maps, so this asserts about
 the shipped artifact. A .inc that disagreed with the binary would make a
 source-derived expectation quietly meaningless.
@@ -135,7 +135,7 @@ def _load_font(obj: SharedObject, symbols: dict, name: str, ascent: int, line_he
         glyphs_at = symbols[prefix + "Glyphs"]
         coverage_at = symbols[prefix + "Coverage"]
     except KeyError as exc:
-        raise FontError(f"libsxgfx has no symbol {exc.args[0]}") from None
+        raise FontError(f"the library has no symbol {exc.args[0]}") from None
 
     # The range table is terminated by an all-zero entry and sits immediately
     # below the glyph table, so the count comes from the gap between the two
@@ -177,7 +177,7 @@ def _load_font(obj: SharedObject, symbols: dict, name: str, ascent: int, line_he
 
 
 def load(library: str | Path) -> dict[str, Font]:
-    """Returns {"body": Font, "title": Font} as shipped in libsxgfx."""
+    """Returns {"body": Font, "title": Font} as shipped in libgfx2d."""
     obj = SharedObject(Path(library))
     symbols = obj.symbols()
     # The ascent and line height are #defines, not data, so they come from the

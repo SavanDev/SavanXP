@@ -3,15 +3,17 @@
 #include <string.h>
 
 /* The toolkit's host for every POSIX program, whether it runs sxgui_app or
- * drives the widgets itself (seltest): this strong definition replaces the
- * weak one in system/gfx/sxgui.c. */
+ * drives the widgets itself (seltest). The toolkit core defines none
+ * (system/gfx/sxgui.c): it asks the program, in libsxgui.so as when linked in.
+ * Weak, because the runtime's units are linked whole into every program, a SUN
+ * one included, and SUN's frame (system/runtime/sxngui.c) defines its own. */
 static const struct sxgui_host k_posix_host = {
     uptime_ms,
     clipboard_get_text,
     clipboard_set_text,
 };
 
-const struct sxgui_host *sxgui_default_host(void)
+__attribute__((weak)) const struct sxgui_host *sxgui_default_host(void)
 {
     return &k_posix_host;
 }

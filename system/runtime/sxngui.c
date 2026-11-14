@@ -85,6 +85,13 @@ const struct sxgui_host *sxngui_host(void)
     return &k_sun_host;
 }
 
+/* The toolkit's host when nothing set one (include/sxgfx/sxgui.h): the core,
+ * in libsxgui.so or linked in, asks the program for it. */
+const struct sxgui_host *sxgui_default_host(void)
+{
+    return &k_sun_host;
+}
+
 /* ---- the window ---------------------------------------------------------------- */
 
 static void sxngui_fill_info(struct savanxp_fb_info *info, const struct sxnwm_client *window)

@@ -104,17 +104,18 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 
 ### The libraries
 
-386 KB total, seven files. The layering is strictly downward: nothing depends on
-anything above it.
+The system's libraries, measured 2026-11-14, after the toolkit split
+([The toolkit, split](#the-toolkit-split-into-neutral-and-host)). The layering is
+strictly downward: nothing depends on anything above it.
 
-| library | size | `DT_NEEDED` |
-| --- | --- | --- |
-| `libmath.so.0.4` | 44 KB | — |
-| `libsxmidi.so.0.4` | 14 KB | — |
-| `libsxgfx.so.0.4` | 100 KB | — (syscalls only) |
-| `libgfx2d.so.0.4` | 92 KB | `libsxgfx` |
-| `libsxgui.so.0.4` | 136 KB | `libgfx2d`, `libsxgfx` |
-| `libchainbase.so.0.4`, `libchaintop.so.0.4` | 4 KB each | each other (test chain) |
+| library | size | `DT_NEEDED` | subsystem |
+| --- | --- | --- | --- |
+| `libmath.so.0.4` | 41 KB | — | neutral |
+| `libsxmidi.so.0.4` | 51 KB | — | neutral |
+| `libsximg.so.0.4` | 24 KB | — | neutral |
+| `libgfx2d.so.0.4` | 132 KB | — | neutral |
+| `libsxgui.so.0.4` | 154 KB | `libgfx2d` | neutral |
+| `libsxgfx.so.0.4` | 68 KB | `libgfx2d` | POSIX |
 
 `libffmpeg.so.0.4` is not in this table because the tree does not **build** it:
 `ports/ffmpeg` links it and stages it at `/lib`, and the tree consumes it as an
@@ -124,39 +125,34 @@ larger than anything above, and
 [its section](#ffmpeg-as-one-library-and-what-it-cost-to-find-out) records what
 loading it exposed.
 
-That count is of the table above: seven files, of which two are a test chain. The
-image actually carries **fourteen**, and the number is worth reading carefully
-because most of it is not the system:
-
-- 5 interface libraries — `libmath`, `libsxmidi`, `libsxgfx`, `libgfx2d`, `libsxgui`
-- 1 from the port — `libffmpeg.so.0.4`
-- 8 that exist only to be loaded by a test — `libchainbase`, `libchaintop`,
-  `libneeded`, `libbroken`, and the four `libdia_*` of the diamond
-
-So "fourteen shared libraries" is not a claim about what the system can do. Five is.
+A test image carries **thirty-three** files in `/lib`, and the number is worth
+reading carefully because most of it is not the system: six interface libraries
+(the table), `libffmpeg.so.0.4` from the port, and twenty-six that exist only to
+be loaded by a test -- the chain, the diamond, `libneeded`, `libbroken`, the
+`libdlmod_*` of `dltest`, `libweakref`, and the versions of `sonametest`. So
+"thirty-three shared libraries" is not a claim about what the system can do. Six
+is.
 
 ### The programs
 
-93 executables: 30 are `ET_DYN`, 24 declare a `DT_NEEDED`. By library:
-`libsxgfx` 21, `libgfx2d` 16, `libsxgui` 11, `libmath` 4, `libffmpeg` 1,
-`libneeded` 1 (the test chain). `libsxmidi` has no in-tree consumer yet: the only
-program that maps it is `/bin/doomgeneric`, built by `ports/doomgeneric` and
-not part of the `/bin` scan.
+116 executables in a test image's `/bin` and `/system`: 39 are `ET_DYN`, 30
+declare a `DT_NEEDED`. By library: `libsxgui` 20, `libgfx2d` 20, `libsxgfx` 19,
+`libmath` 5, `libsximg` 1, `libffmpeg` 1, and the test libraries. Six of the
+`libsxgui` programs are SUN. `libsxmidi` has no in-tree consumer: the only
+program that maps it is `/bin/doomgeneric`, built by `ports/doomgeneric`.
 
-No library asks the application for a single symbol. What each still needs from the
-executable:
+What each library asks of the program:
 
-| library | asks the executable for |
+| library | asks the program for |
 | --- | --- |
 | `libmath` | nothing |
-| `libsxmidi` | `malloc` `calloc` `realloc` `free` `memcpy` `memset` `memcmp` |
-| `libgfx2d` | `malloc` `free` `realloc` `memcmp` `memset` |
-| `libsxgui` | `clipboard_*` `memmove` `memset` `puts_fd` `savanxp_close` `sleep_ms` `uptime_ms` |
-| `libsxgfx` | syscalls and libc |
+| `libsxmidi`, `libsximg` | memory functions |
+| `libgfx2d` | `malloc` `free` `memcpy` `memset` |
+| `libsxgui` | `memcpy` `memmove` `memset` `strlen`, and `sxgui_default_host`, weakly |
+| `libsxgfx` | POSIX calls and libc |
 
-All of those live in the runtime, not in the application. That is what removes the
-old constraint — a program no longer has to be PIE in order for a toolkit to find
-its drawing code.
+All of those live in the runtime, not in the application, and only `libsxgfx`'s
+are a single subsystem's.
 
 ### The guarantees, and what enforces each
 
@@ -182,7 +178,13 @@ at 0 of 228 and 0 of 284 glyph pixels.
 ### What runs
 
 `smoke`, `sxgui-smoke`, `taskbar-smoke`, `windowd-smoke`, `calc-smoke`, `--smp 4`,
-`verify_doom_persistence.sh`, and 18 visual scenarios in `shoot_session`.
+`verify_doom_persistence.sh`, and 18 visual scenarios in `shoot_session`. For the
+loader itself: `dltest`, `brokentest`, `missingtest`, `slottest`, `diamondtest`,
+`needstest-missing`, `ldfailtest`, `ldstatictest`, `sun-libtest`, `sonametest`,
+`sonametest-newer`, `posix-loader-log`, `ffmpegload`. For the SUN programs that
+map the toolkit: `taskmgr-smoke`, `logview-smoke`, `diskmgmt-smoke`,
+`cursor-settings-smoke`, and the `taskmgrmenu`, `logview`, `sound`, `sxgldiag`
+and `diskmgmt` visual scenarios.
 
 ### Limits that are part of the current design, not bugs
 
@@ -190,12 +192,15 @@ at 0 of 228 and 0 of 284 glyph pixels.
   `BIND_NOW` and without reading it. It costs a little work per library at startup
   and buys the property that a broken dependency is a startup failure with a name
   rather than a crash at whichever call site happened to be first.
-- **`--export-dynamic` is still required.** The raw syscall wrappers stay in the
-  executable because the loader needs them to map the first library, so every
-  library resolves `savanxp_*` against the program.
+- **`--export-dynamic` is still required for POSIX PIE programs**, for `dlopen`:
+  a library opened at run time may ask the program for anything. A SUN PIE
+  program is linked without it, so `--gc-sections` works; lld still exports what
+  the libraries on its link line ask for
+  ([The toolkit, split](#the-toolkit-split-into-neutral-and-host)).
 - **A non-PIE program cannot use a library.** An `ET_EXEC` has no `PT_DYNAMIC`, so
   it has nothing to declare a `DT_NEEDED` with. This is a property of the link
-  model, not of the loader.
+  model, not of the loader; a STATIC program that links the loader is told so at
+  startup (step `-11`).
 - **A `DT_NEEDED` is resolved by name, not by `DT_SONAME`**: the exact file under
   `/lib`, else the highest newer minor of the same ABI
   ([DT_SONAME resolution](#dt_soname-resolution)). A library's own `DT_SONAME`
@@ -733,12 +738,12 @@ are missing, and the two should not be confused. What no phase covers:
   `STV_PROTECTED`, `.symver`. (`DT_NEEDED` resolution, listed here before, has
   its section: [DT_SONAME resolution](#dt_soname-resolution).)
   Nothing in this tree needs them, and nothing that runs on it needs them either.
-- **Half the loader's failure paths are untested.** Eleven return codes; four have a
-  self-test. `-3` (a section that will not open), `-4`, `-5` (a file that is not a
-  usable ELF — the message exists, nothing produces it), `-6`, `-7`, `-8` (a
-  dependency's own chain failed) and `-10`/`-11` are all unexercised.
-- **A non-PIE program silently cannot use a library.** Not a crash: it links, runs,
-  and its libraries fail to resolve. Nothing detects it at build time.
+- **Half the loader's failure paths were untested.** Eleven return codes; four had
+  a self-test. All but `-10` have one now:
+  [The loader's failure paths](#the-loaders-failure-paths).
+- **A non-PIE program cannot use a library**, and used to find out silently: it
+  links, runs, and its libraries fail to resolve. It is still not detected at build
+  time, but the loader now says so at startup (step `-11`).
 
 ### Phase 0 — make failure diagnosable
 
@@ -970,6 +975,112 @@ namespace, and a library installed by a third party can shadow a system's. There
 no SONAME matching to keep them apart, which is the same limitation already recorded
 above and now has a practical consequence rather than only a theoretical one.
 
+## The toolkit, split into neutral and host
+
+Item 5 of [One loader over SXN](#one-loader-over-sxn), done 2026-11-14. Until then
+the toolkit's libraries mixed what draws with what talks to the window system, and
+the second half was POSIX: `libsxgfx` carried the POSIX window client next to the
+pixel primitives, `libgfx2d` needed `libsxgfx` for its glyphs, and `libsxgui`
+carried POSIX's application frame next to the toolkit. A SUN program could map
+none of them.
+
+| library | carries | `DT_NEEDED` | asks the program for |
+| --- | --- | --- | --- |
+| `libgfx2d` | `pixels.c` (primitives, the three font tables), `gfx2d.c` (the painter), `sxchrome.c` | — | `malloc` `free` `memcpy` `memset` |
+| `libsxgui` | `sxgui.c`, the toolkit core | `libgfx2d` | `memcpy` `memmove` `memset` `strlen`, `sxgui_default_host` |
+| `libsxgfx` | `gfx.c` (POSIX's window client), `gfx_scaled.c` | `libgfx2d` | POSIX calls and libc |
+
+`libgfx2d` and `libsxgui` are neutral: every runtime defines what they ask for.
+`libsxgfx` is POSIX's. The host part of the toolkit -- the clock and the
+clipboard, through `struct sxgui_host` -- is the program's: POSIX's application
+frame (`sxgui_app.c`, 4 KB, in the runtime's `gui` group) and SUN's
+(`system/runtime/sxngui.c`) each define `sxgui_default_host`, and both are
+linked into the program rather than shared.
+
+Two details decide whether that works:
+
+- **The core defines no default host, not even a weak one.** It used to have a
+  weak `sxgui_default_host` returning nothing, overridden by POSIX's frame in the
+  same library. Inside `libsxgui.so` that weak definition would win over the
+  program's: this loader searches libraries newest first and the program last
+  ([Finding the executable](#finding-the-executable)), the opposite of Linux. So
+  the symbol is now undefined in the library and the program provides it. POSIX's
+  definition is weak, because the runtime's units are linked whole into every
+  program and a SUN program brings its own.
+- **A SUN PIE program is linked without `--export-dynamic`.** That flag exports
+  every symbol, and an exported symbol is never garbage, so `--gc-sections`
+  dropped nothing and each program carried the whole runtime, SxGL included:
+  ~400 KB of text. lld exports on its own what a library on the link line asks of
+  the program, and only `dlopen` needs more, which SUN does not have. POSIX PIE
+  programs keep the flag, for `dlopen`.
+
+The six SUN programs that paint with SXGUI map the toolkit now
+(`SAVANXP_SUN_TOOLKIT` in `cmake/SystemServices.cmake`). Their private text,
+measured with `size` against the same programs linked STATIC:
+
+| program | STATIC | PIE with the toolkit mapped |
+| --- | --- | --- |
+| `taskmgr` | 160,848 | 82,393 |
+| `logview` | 169,918 | 87,566 |
+| `sound` | 163,456 | 82,086 |
+| `mouse` | 152,384 | 71,082 |
+| `diskmgmt` | 189,312 | 106,028 |
+| `sxgldiag` | 244,464 | 162,826 |
+
+About 80 KB less per process, which is the toolkit, mapped once for all of them
+and for the POSIX programs that use it. That is step 1's done criterion: a SUN
+program declares `DT_NEEDED libsxgui.so.0.4` and carries no copy of the toolkit,
+which `check_shared_libs` enforces as it does for POSIX. `taskmgr-smoke`,
+`logview-smoke`, `diskmgmt-smoke` and the visual scenarios of all six run against
+the mapped toolkit.
+
+A program built against the old layout still loads. Its `libsxgfx.so.0.4` now
+needs `libgfx2d.so.0.4`, which defines the primitives it used to, and the lookup
+finds them there. Its `libsxgui.so.0.4` asks it for `sxgui_default_host`, which it
+does not define; the reference is weak, so that program's toolkit runs without a
+clock or a clipboard instead of failing to load. Neither case has a test with a
+binary actually built before the split: no external binary in this tree maps the
+toolkit, and the weak half is asserted by `libweakref` in `ldfailtest`.
+
+## The loader's failure paths
+
+Every step `ldso_load` and `ldso_start` can fail at, how a test provokes it, and
+the line it leaves in the system log. `ldfailtest.sxe` hands the loader files from
+`/system/loader-fixtures`, which `tools/make_loader_fixtures.py` writes into the
+test image byte by byte -- a linker refuses to produce most of them, and would
+give the rest more than the one defect under test. Each failure must also give
+its slot back, except `-8`, where the library itself loaded.
+
+| step | cause | provoked by | test |
+| --- | --- | --- | --- |
+| `-1` | no free slot | `slottest`, built with 4 slots | `slottest` |
+| `-2` | the file does not open | a path not in `/lib` | `missingtest` |
+| `-3` | no section over the file | `empty.so`, 0 bytes | `ldfailtest` |
+| `-4` | shorter than an ELF header | `short.so`, 10 bytes | `ldfailtest` |
+| `-5` | not a usable shared object | `notelf.so` (no magic), `exec.so` (an `ET_EXEC`) | `ldfailtest` |
+| `-6` | a segment does not map | `badsegment.so`, a `PT_LOAD` past the file's end | `ldfailtest` |
+| `-7` | no dynamic symbol table | `nodynamic.so`, no `PT_DYNAMIC` | `ldfailtest` |
+| `-8` | a dependency did not load | `needsgone.so`, needing a library not in `/lib` | `ldfailtest`, `needstest-missing` |
+| `-9` | a symbol does not resolve | `libbroken.so.0.4` | `brokentest`, `dltest` |
+| `-10` | the program's image is not registered | -- | none, see below |
+| `-11` | the program has no dynamic symbol table | `ldstatictest`, STATIC with the loader linked | `ldstatictest` |
+
+`-6` goes through the path where a writable segment's source range fails to
+open after its anonymous section is mapped, which used to leave that view
+mapped; the SXN rewrite of the loader unmaps it, and this is its test.
+
+`-10` is the one without a test. It means `adopt_executable` found no ELF header
+at `sx_image_base`, which crt0 stores from `r8`, where the kernel puts the image
+it just mapped (`interptest` asserts it does). By the time a program could
+interfere, crt0 has already run the loader and `ldso_start` does not run twice.
+The step stays, with its line, for a kernel that one day passes no base.
+
+One case in `ldfailtest` is the opposite of a failure: `libweakref.so.0.4` holds a
+weak reference to a symbol nothing defines, and must load with it resolved to
+zero, as ELF says. Before, the loader failed the whole load at `-9`. The toolkit
+depends on it: `libsxgui` asks the program for `sxgui_default_host` weakly, so a
+program built before the toolkit split, which defines none, still loads it.
+
 ## DT_SONAME resolution
 
 A program linked against `libfoo.so.0.4` carries that name in `DT_NEEDED`. The
@@ -1092,12 +1203,13 @@ it.
 
 ## The loader is POSIX's, and SUN is static
 
-> Status: **recorded 2026-11-13; step 1's loader done 2026-11-14.** The loader
-> is `system/loader/ldso.c`, shared by SUN and POSIX, and `sunlibtest.sxe` maps
-> `libmath` through it. What step 1 still waits for is item 5 below: the
-> toolkit libraries carry the POSIX window client. The table is how it stood
-> when this was recorded; the SUN row now reads "the same loader, through
-> `LINK_PROFILE PIE` and `DEPENDS`, for the libraries that are neutral".
+> Status: **recorded 2026-11-13; steps 1 and 2 done 2026-11-14.** The loader
+> is `system/loader/ldso.c`, shared by SUN and POSIX; the toolkit is split into
+> neutral libraries and each subsystem's host
+> ([The toolkit, split](#the-toolkit-split-into-neutral-and-host)), and the six
+> SUN programs that paint map `libsxgui`. The table is how it stood when this
+> was recorded; the SUN row now reads "the same loader, through `LINK_PROFILE
+> PIE` and `DEPENDS`".
 
 Shared libraries were a POSIX capability, not a system one:
 
@@ -1134,7 +1246,9 @@ declares, and nothing is installed under that name: the interpreter is
    ([out of scope](#deliberately-out-of-scope-for-the-first-implementation)).
    See [One loader over SXN](#one-loader-over-sxn) for what it needs.
    Done when a SUN program declares `DT_NEEDED libsxgui.so.0.4`, carries no copy
-   of the toolkit, and `nativetest` asserts it.
+   of the toolkit, and `nativetest` asserts it. **Done (2026-11-14)**, asserted by
+   `check_shared_libs` and the six programs' own tests rather than `nativetest`,
+   which paints nothing: [The toolkit, split](#the-toolkit-split-into-neutral-and-host).
 2. **`DT_SONAME` resolution.** Lookup of the highest `libfoo.so.0.*`
    ([Decisions taken](#decisions-taken)). Until it exists, a shared library ties
    every external binary in `/bin` to one OS version, which is exactly what the
@@ -1222,7 +1336,8 @@ What is missing, in order of weight:
    application frame. The neutral parts (`gfx2d`, `sxchrome`, the `sxgui`
    core, `math`) resolve `memcpy` and `malloc` against the program, which both
    runtimes define, so one file serves both. The host part is per subsystem:
-   the POSIX client on one side, `sxngui` on the other.
+   the POSIX client on one side, `sxngui` on the other. **Done (2026-11-14):**
+   [The toolkit, split](#the-toolkit-split-into-neutral-and-host).
 
 ### What SSW and Linux get from it
 
