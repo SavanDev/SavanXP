@@ -1,7 +1,8 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0 and E1 closed (2026-11-14); no Linux program runs yet.** What
-> is built is described in [LINUX.md](../../userland/LINUX.md). The subsystem is
+> **Status: L0, E1 and L1 closed (2026-11-14): a static, libc-free Linux
+> executable runs unchanged.** What is built is described in
+> [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
 > measured first profile is
 > [LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md). The first
@@ -418,7 +419,7 @@ system call and request matrices marked as required at start-up, required in
 use, or reachable only from a feature declared out of scope, and the
 reference outputs are kept.
 
-**Closed on 2026-11-14** in
+**Closed on 2026-11-14** (L0) in
 [LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md), reproducible
 with `subsystems/linux/profile/profile.sh`. No musl toolchain was needed. What
 it added to the plan: `mremap` in S2a, `clock_gettime` in L2 (hidden behind
@@ -439,6 +440,15 @@ truncated images, bad pointers, an unsupported machine and a missing handle
 fail without a kernel panic or a leak. `int 0x80` from the fixture returns
 `-ENOSYS`. Native and POSIX launches are unchanged. `linux-hello` is a
 registered smoke scenario.
+
+**Closed on 2026-11-14** ([LINUX.md](../../userland/LINUX.md)), with the floor
+change landed alone before it. What the plan did not say: the selector is
+`SXN_SPAWN_FLAG_SUBSYSTEM` with a block in RDX, and its `path` is a guest
+path the kernel maps under `/system/linux`; an image with `PT_INTERP` is
+refused until L4; the bad-pointer and missing-handle cases are a third
+fixture, `errors`, whose output was taken on Linux too. S1's inheritance
+across `execve` waits for that call (L7): no Linux program can reach exec
+before it.
 
 ### L2 — static C programs
 

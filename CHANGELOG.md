@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **SSL L1: `linux [-e NAME=VALUE]... GUEST_PATH` runs a static Linux x86-64 executable from `/system/linux` unchanged,
+  with Linux's start-up stack; `write`, `exit` and `exit_group` work and every other call answers `-ENOSYS`.** SUN
+  programs reach it through `SXN_SPAWN_FLAG_SUBSYSTEM` (`sxn_spawn_ex_subsystem`). `linux-hello` compares three
+  fixtures byte for byte with Linux. See [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL E1: the kernel clears EFER.SCE on every processor, so `syscall` raises #UD; a subsystem can claim it with
   `subsystem::register_trap_dispatcher`, and Linux (`subsystem::Id::linux`) answers every call `-ENOSYS` for now.**
   A native or POSIX `syscall` still ends the process with status 134. See [LINUX.md](docs/userland/LINUX.md).

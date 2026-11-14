@@ -1,0 +1,1 @@
+strace: WARNING: Proper structure decoding for this personality is not supported, please consider building strace with mpers support enabled.

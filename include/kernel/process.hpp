@@ -317,11 +317,20 @@ bool copy_user_string(const Process& proc, uint64_t user_address, char* buffer, 
 void write_int_to_process_memory(Process& proc, uint64_t user_address, int value);
 sx_status image_failure_errno(ImageFailure failure);
 bool prepare_exec_image(Thread& self, const char* path, int argc, const char* const* argv, ImageFailure& failure);
+// A Linux program to start (SSL, docs/userland/LINUX.md): the guest path it
+// was asked for, which becomes AT_EXECFN, and its environment.
+struct LinuxLaunch {
+    const char* execfn;
+    const char* const* envp;
+    int envc;
+};
 // The child's 0, 1 and 2 are the parent's stdin_fd, stdout_fd and stderr_fd,
 // each one the parent's own 0, 1 or 2 when it is negative. Its identity is
 // the parent's, or `identity` when given (the native SPAWN_EX identity flag,
-// already checked by the caller).
-Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure, const cred::Credentials* identity = nullptr);
+// already checked by the caller). With `linux_launch`, the image must be a Linux
+// executable and the child is a Linux process; otherwise EI_OSABI decides
+// between native and POSIX.
+Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure, const cred::Credentials* identity = nullptr, const LinuxLaunch* linux_launch = nullptr);
 // Gives a spawned child the parent's handles[i] as handle 3 + i (native
 // SPAWN_EX). Reaps the child and reports false when one is not a handle, like
 // clone_handles_for_spawn.
@@ -407,6 +416,18 @@ int wait_on_many_handles(Thread& self, uint64_t user_handles, size_t count, bool
 int waitpid_child(Thread& self, int64_t waited_pid, uint64_t status_address);
 int sleep_via_timer(Thread& self, uint64_t milliseconds);
 bool copy_spawn_arguments(const Process& proc, const SavedContext& context, char* path, size_t path_capacity, SpawnArguments& arguments);
+// `count` strings from the user array at `user_array` into `strings`, which
+// must be empty. False when the array or a string cannot be read, or they do
+// not fit; nothing is truncated.
+bool copy_spawn_strings(const Process& proc, uint64_t user_array, int count, SpawnArguments& strings);
+// The native write on handle `handle`, published for the Linux layer: the
+// byte count, a negative error, or kBlockedResult when the thread parked on a
+// pipe (the waker completes the call, as for SXN_SYS_WRITE).
+int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count);
+// SSL's guest tree: `guest`, an absolute path a Linux program names, as the
+// path of the file under /system/linux. `..` never climbs above the guest
+// root. False for a relative or too long path.
+bool linux_guest_path(const char* guest, char* host, size_t capacity);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);
 // Entrada al scheduler de un AP, con el lock del kernel tomado y su timer ya

@@ -123,6 +123,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "win32test")) {
         return "WIN32 HELLO";
     }
+    if (spec != 0 && text_contains(spec, "linuxtest")) {
+        return "LINUX TEST";
+    }
     if (spec != 0 && text_contains(spec, "win32window")) {
         return "WIN32 WINDOW";
     }
@@ -185,6 +188,7 @@ static int run_automation_spec(const char* spec) {
     const char* nightwood_argv[] = {"/system/nightwood.sxe", "--selftest", 0};
     const char* sxgltest_argv[] = {"/system/sxgltest.sxe", 0};
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
+    const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
     const char* win32dialog_argv[] = {"/system/win32test.sxe", "--dialog", 0};
@@ -363,6 +367,11 @@ static int run_automation_spec(const char* spec) {
             /* The Win32 fixtures through winhost (docs/userland/WIN32.md). */
             path = "/system/win32test.sxe";
             argv = win32test_argv;
+            argc = 1;
+        } else if (strcmp(spec, "linuxtest") == 0) {
+            /* The Linux fixtures through the launcher (docs/userland/LINUX.md). */
+            path = "/system/linuxtest.sxe";
+            argv = linuxtest_argv;
             argc = 1;
         } else if (strcmp(spec, "win32window") == 0) {
             /* A Win32 window under windowd, driven by the host over QMP. */

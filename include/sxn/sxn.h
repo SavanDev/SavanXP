@@ -372,6 +372,14 @@ static inline void sxn_spawn_request_init(
     request->flags = 0;
 }
 
+/* sxn_spawn_ex for a program of another subsystem's ABI (a Linux program:
+ * docs/userland/LINUX.md); sets SXN_SPAWN_FLAG_SUBSYSTEM itself. */
+static inline long sxn_spawn_ex_subsystem(struct sxn_spawn_request* request,
+                                          const struct sxn_spawn_subsystem* subsystem) {
+    request->flags |= SXN_SPAWN_FLAG_SUBSYSTEM;
+    return sxn_trap(SXN_SYS_SPAWN_EX, (unsigned long)request, 0, (unsigned long)subsystem);
+}
+
 /* Native sockets share close/duplicate/read/write with other SUN streams. */
 static inline long sxn_socket_create(unsigned type) {
     return sxn_trap(SXN_SYS_SOCKET_CREATE, type, 0, 0);

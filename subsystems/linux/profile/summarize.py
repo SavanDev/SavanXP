@@ -24,7 +24,7 @@ import shutil
 import sys
 
 PHASES = [
-    ("L1", ["hello", "startup"]),
+    ("L1", ["hello", "startup", "errors"]),
     ("L2", ["args", "tls", "heap", "clock", "files-write", "files-check", "files-remove"]),
     ("L3", ["bb-echo", "bb-cat", "bb-ls", "bb-pwd", "bb-wc", "bb-mkdir", "bb-cat-missing"]),
     ("L4", ["jq", "jq-missing-lib", "jq-missing-interp"]),

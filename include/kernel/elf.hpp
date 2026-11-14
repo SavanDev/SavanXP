@@ -39,15 +39,16 @@ struct LoadResult {
     uint16_t fail_index;
 };
 
-// Motivo de fallo de la carga. Existe para que el llamador pueda distinguir
-// "el ELF esta mal" de "no habia memoria": colapsar ambos en un bool hacia el
-// syscall convertia un ENOMEM en un ENOENT enganoso.
+// Why a load failed. It exists so the caller can tell "the ELF is wrong" from
+// "there was no memory": folding both into a bool turned an ENOMEM into a
+// misleading ENOENT at the system call.
 enum class LoadFailure : uint8_t {
     none = 0,
-    bad_header,   // magia/clase/tipo/maquina invalidos, o phdrs fuera de la imagen
-    bad_segment,  // PT_LOAD inconsistente, solapado, fuera de usuario o sin W^X
-    truncated,    // un PT_LOAD apunta mas alla del final de la imagen
-    out_of_memory // no se pudo reservar/mapear una pagina del segmento o del stack
+    bad_header,    // bad magic, class, type, machine or OS ABI, or phdrs outside the image
+    bad_segment,   // a PT_LOAD inconsistent, overlapping, outside user space or not W^X
+    truncated,     // a PT_LOAD points past the end of the image
+    out_of_memory, // a page of a segment or of the stack could not be allocated or mapped
+    unsupported    // valid, but asks for what this ABI does not offer yet
 };
 
 // Donde fallo dentro de la imagen: 0xffff es cabecera o final, otro valor es
@@ -66,6 +67,22 @@ const char* load_failure_string(LoadFailure failure);
 // fragmentada.
 using ImageReader = bool (*)(void* context, uint64_t offset, void* destination, size_t size);
 
+// The Linux start-up (SSL, docs/userland/LINUX.md). With it the image must
+// be a Linux x86-64 executable (EI_OSABI System V or GNU), and the process
+// starts as Linux's do: RSP at argc, then argv, envp and the auxiliary
+// vector, every other register zero. An image that names an interpreter is
+// refused (unsupported) until the kernel loads one (L4).
+struct LinuxStartup {
+    const char* const* envp;
+    int envc;
+    // The guest path the program was started by, for AT_EXECFN.
+    const char* execfn;
+    uint32_t uid;
+    uint32_t euid;
+    uint32_t gid;
+    uint32_t egid;
+};
+
 bool load_user_image(
     ImageReader read_image,
     void* context,
@@ -74,7 +91,8 @@ bool load_user_image(
     int argc,
     const char* const* argv,
     LoadResult& result,
-    LoadFailure& failure
+    LoadFailure& failure,
+    const LinuxStartup* linux_startup = nullptr
 );
 
 } // namespace elf

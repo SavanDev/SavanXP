@@ -1,0 +1,17 @@
+execve("/fixtures/errors", ["/fixtures/errors"], ADDR /* 5 vars */) = 0
+write(1, 0x1000, 8) = -1 EFAULT (Bad address)
+write(1, "write from an unmapped address is -EFAULT", 41) = 41
+write(1, " ok\n", 4) = 4
+write(1, "", 0) = 0
+write(1, "write of zero bytes from it is 0", 32) = 32
+write(1, " ok\n", 4) = 4
+write(99, "x", 1) = -1 EBADF (Bad file descriptor)
+write(1, "write to a closed descriptor is -EBADF", 38) = 38
+write(1, " ok\n", 4) = 4
+syscall_0x3e8(0, 0, 0, ADDR, ADDR, ADDR) = -1 ENOSYS (Function not implemented)
+write(1, "system call 1000 is -ENOSYS", 27) = 27
+write(1, " ok\n", 4) = 4
+syscall_0xffff(0, ADDR, 0x4, ADDR, 0x1, ADDR) = -1 ENOSYS (Function not implemented)
+write(1, "int 0x80 with number 0xffff is -ENOSYS", 38) = 38
+write(1, " ok\n", 4) = 4
+exit_group(0) = ?

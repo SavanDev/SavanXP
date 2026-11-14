@@ -1,0 +1,5 @@
+write from an unmapped address is -EFAULT ok
+write of zero bytes from it is 0 ok
+write to a closed descriptor is -EBADF ok
+system call 1000 is -ENOSYS ok
+int 0x80 with number 0xffff is -ENOSYS ok

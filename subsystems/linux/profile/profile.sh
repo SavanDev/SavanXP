@@ -96,11 +96,17 @@ cmd_fixtures() {
     need clang ld.lld sha256sum
     local f="$root/fixtures"
     mkdir -p "$f"
-    clang -nostdlib -static -fuse-ld=lld -Wl,--build-id=none \
+    # The libc-free fixtures name their target, so the build (Linux.cmake)
+    # makes the same bytes whatever its compiler defaults to.
+    local target=--target=x86_64-pc-linux-gnu
+    clang $target -nostdlib -static -fuse-ld=lld -Wl,--build-id=none \
         -o "$f/hello" "$fixsrc/hello/hello.S"
-    clang -nostdlib -static -ffreestanding -fno-builtin -fno-stack-protector -O1 \
+    clang $target -nostdlib -static -ffreestanding -fno-builtin -fno-stack-protector -O1 \
         -fuse-ld=lld -s -Wl,--build-id=none \
         -o "$f/startup" "$fixsrc/startup/entry.S" "$fixsrc/startup/startup.c"
+    clang $target -nostdlib -static -ffreestanding -fno-builtin -fno-stack-protector -O1 \
+        -fuse-ld=lld -s -Wl,--build-id=none \
+        -o "$f/errors" "$fixsrc/errors/errors.c"
     for n in args tls heap clock files; do
         musl_static "$fixsrc/static/$n.c" "$f/$n"
     done
@@ -110,7 +116,7 @@ cmd_fixtures() {
         -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now \
         -o "$f/xclient" "$root/usr/lib/crt1.o" "$root/usr/lib/crti.o" \
         "$fixsrc/xclient/xclient.c" -L"$root/usr/lib" -lX11 -lc "$root/usr/lib/crtn.o"
-    (cd "$f" && sha256sum hello startup args tls heap clock files xclient)
+    (cd "$f" && sha256sum hello startup errors args tls heap clock files xclient)
 }
 
 # strace of one command; stdout and the exit status are kept beside it.
@@ -133,6 +139,7 @@ cmd_trace() {
 
     trace_one hello /fixtures/hello
     trace_one startup env -i A=1 B=two /fixtures/startup x 'y z'
+    trace_one errors /fixtures/errors
     trace_one args env -i A=1 B=two /fixtures/args x 'y z'
     trace_one tls /fixtures/tls
     trace_one heap /fixtures/heap

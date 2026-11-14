@@ -135,6 +135,7 @@ different bytes, so each output below belongs to the hash it was taken from
 | --- | --- | --- | --- |
 | `hello` | L1 | `fixtures/hello/hello.S`, libc-free | `9130a5d55763a9968c8d0474c1c6f7876ffa396fd5dab1b243cc4c5a6f7d2c20` |
 | `startup` | L1 | `fixtures/startup/`, libc-free | `0358a1a33984d5e7e2839188367808075cc9501a8a02599c1d6f51a8952a3400` |
+| `errors` | L1 | `fixtures/errors/errors.c`, libc-free, added at L1 | `ed5c314ca1f558b6f43170f04faf2c2649104716d1e54a639e669b2c59efa2fe` |
 | `args` | L2 | `fixtures/static/args.c`, static musl | `0a32f755b540fb1f60855edc7d746c5b2f0103b029a5d929b99e38485dfffbfa` |
 | `tls` | L2 | `fixtures/static/tls.c` | `2560af35461ed027456a838768762943237cb4f0843398a975881c2f0dc91871` |
 | `heap` | L2 | `fixtures/static/heap.c` | `406042fa539ef686864c6f28093229502ef581e15f6b1f2f4210180d6d978b01` |
@@ -171,6 +172,7 @@ the X request logs (`.x11`), and the screenshots under `screens/`. The runs:
 | --- | --- | ---: | --- |
 | `hello` | `/fixtures/hello` | 7 | `hello` |
 | `startup` | `env -i A=1 B=two /fixtures/startup x 'y z'` | 3 | as above |
+| `errors` | `/fixtures/errors` | 0 | five lines ending in `ok`: `-EFAULT`, a zero-byte write, `-EBADF`, `-ENOSYS` for call 1000 and for `int 0x80` |
 | `args` | `env -i A=1 B=two /fixtures/args x 'y z'` | 3 | argv, envp, `getenv` |
 | `tls` | `/fixtures/tls` | 0 | `tls ok` |
 | `heap` | `/fixtures/heap` | 0 | checksums from 1 byte to 6 MiB, `realloc` to 4 MiB |

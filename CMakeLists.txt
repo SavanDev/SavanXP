@@ -1106,6 +1106,7 @@ add_test(NAME fat-volume-test COMMAND savanxp-fat-volume-test)
 add_test(NAME fat-vfs-test COMMAND savanxp-fat-vfs-test)
 
 include("${CMAKE_SOURCE_DIR}/subsystems/win32/Win32.cmake")
+include("${CMAKE_SOURCE_DIR}/subsystems/linux/Linux.cmake")
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"
@@ -1325,6 +1326,7 @@ add_custom_target(savanxp_diskfs
             "${CMAKE_SOURCE_DIR}/assets/desktop/cursors" "${SAVANXP_DISKFS_ROOT}/system/cursors"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
     ${SAVANXP_WIN32_COPY_COMMANDS}
+    ${SAVANXP_LINUX_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stage_licenses.py" stage
@@ -1334,7 +1336,7 @@ add_custom_target(savanxp_diskfs
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
             --project-root "${CMAKE_SOURCE_DIR}"
             --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
-    DEPENDS ${SAVANXP_USER_TARGETS} ${SAVANXP_USER_LIBRARY_TARGETS} savanxp_win32
+    DEPENDS ${SAVANXP_USER_TARGETS} ${SAVANXP_USER_LIBRARY_TARGETS} savanxp_win32 savanxp_linux_fixtures
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Staging persistent disk tree"
     VERBATIM

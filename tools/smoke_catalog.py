@@ -746,6 +746,18 @@ SCENARIOS: dict[str, Scenario] = {
         "WIN32 HELLO FAIL",
         "PE32 fixtures through winhost, byte for byte against Windows XP",
     ),
+    # SSL's L1 gate (docs/userland/LINUX.md): a SUN parent runs the Linux
+    # fixtures through the launcher and compares output and exit status with
+    # what Linux gave for the same files, then checks the images it must
+    # refuse. The startup fixture makes two million trapped calls, which is
+    # slow under TCG.
+    "linux-hello": _qemu_scenario(
+        "linuxtest",
+        "LINUX TEST PASS",
+        "LINUX TEST FAIL",
+        "Linux fixtures through the launcher, byte for byte against Linux",
+        300.0,
+    ),
     "win32-cards": _qemu_scenario(
         "win32cards",
         "WIN32 CARDS PASS",

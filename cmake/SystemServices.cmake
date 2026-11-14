@@ -125,6 +125,14 @@ target_include_directories(winhost PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/win32/loader"
     "${CMAKE_SOURCE_DIR}/subsystems/win32/pe")
 
+# SSL's launcher (docs/userland/LINUX.md#the-launcher): `linux GUEST_PATH`
+# starts a Linux program from the guest tree under /system/linux.
+savanxp_program(NAME linux NATIVE SOURCES subsystems/linux/launcher/linux.c)
+
+# The linux-hello smoke scenario's runner: a SUN parent that runs the L1
+# fixtures through the launcher and compares their output with Linux's.
+savanxp_program(NAME linuxtest TEST NATIVE SOURCES subsystems/linux/tests/linuxtest.c)
+
 # The win32-hello smoke scenario's runner: a SUN parent that runs the W1
 # fixtures through winhost and compares their output with Windows XP's.
 savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32test.c)

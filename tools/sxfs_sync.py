@@ -54,6 +54,10 @@ def manifest_for(source: Path) -> tuple[str, set[str]]:
             if path.parent == source / "system" and path.name.endswith(".sxe"):
                 # Build-owned SUN images must also be executable on upgrades.
                 lines.append(f"owner\t{relative}\t0\t0\t100755")
+            elif relative.startswith("system/linux/") and path.stat().st_mode & 0o111:
+                # Linux executables have no suffix to tell them by: the build
+                # marks them executable on the host (docs/userland/LINUX.md).
+                lines.append(f"owner\t{relative}\t0\t0\t100755")
         else:
             raise SystemExit(f"sxfs: unsupported filesystem entry: {path}")
     return "\n".join(lines) + "\n", produced

@@ -1014,6 +1014,10 @@ int native_pipe_receive_handle(Process& proc, uint64_t pipe_handle) {
 
 } // namespace
 
+int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
+    return native_write(self, handle, user_buffer, count);
+}
+
 // El subsistema nativo declara su estado privado por proceso como cualquier
 // otro (rebanada B). Hoy declara cero: un proceso nativo no tiene estado propio,
 // y decirlo es lo que hace medible la afirmacion de que al kernel no le queda
@@ -1184,8 +1188,8 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
-            if ((request.flags & ~static_cast<uint32_t>(SXN_SPAWN_FLAG_IDENTITY)) != 0 ||
-                request.handle_count > SXN_SPAWN_MAX_HANDLES) {
+            constexpr uint32_t known_flags = SXN_SPAWN_FLAG_IDENTITY | SXN_SPAWN_FLAG_SUBSYSTEM;
+            if ((request.flags & ~known_flags) != 0 || request.handle_count > SXN_SPAWN_MAX_HANDLES) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
@@ -1221,41 +1225,78 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 }
             }
 
+            // Another subsystem's ABI, today only Linux: the block names it
+            // and carries the environment, copied here like argv.
+            const bool with_subsystem = (request.flags & SXN_SPAWN_FLAG_SUBSYSTEM) != 0;
+            sxn_spawn_subsystem foreign = {};
+            if (with_subsystem &&
+                (!sx::validate_user_range(context->rdx, sizeof(foreign), false) ||
+                 !sx::copy_from_user(&foreign, context->rdx, sizeof(foreign)) ||
+                 foreign.subsystem != SXN_SUBSYSTEM_LINUX)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            SpawnArguments* environment = nullptr;
+            if (with_subsystem) {
+                environment = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
+                if (environment == nullptr) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                    return context;
+                }
+                if (!copy_spawn_strings(*caller, foreign.envp, foreign.envc, *environment)) {
+                    heap::free(environment);
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                    return context;
+                }
+            }
+
             SavedContext spawn_context = *context;
             spawn_context.rdi = request.path;
             spawn_context.rsi = request.argv;
             spawn_context.rdx = static_cast<uint64_t>(static_cast<int64_t>(request.argc));
             vfs::PathBuffer path;
-            if (path == nullptr) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
-                return context;
-            }
             vfs::PathBuffer resolved;
-            if (resolved == nullptr) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
-                return context;
-            }
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
-            if (arguments == nullptr) {
+            if (path == nullptr || resolved == nullptr || arguments == nullptr) {
+                heap::free(arguments);
+                heap::free(environment);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(*caller, spawn_context, path, path.capacity(), *arguments) ||
-                !resolve_path_from_root(path, resolved, resolved.capacity())) {
+            if (!copy_spawn_arguments(*caller, spawn_context, path, path.capacity(), *arguments)) {
                 heap::free(arguments);
+                heap::free(environment);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_E2BIG));
+                return context;
+            }
+            // A Linux path names a file in the guest tree; anything else is a
+            // path from the root.
+            const bool path_ok = with_subsystem
+                ? linux_guest_path(path, resolved, resolved.capacity())
+                : resolve_path_from_root(path, resolved, resolved.capacity());
+            if (!path_ok) {
+                heap::free(arguments);
+                heap::free(environment);
+                context->rax = static_cast<uint64_t>(sx::negative_error(with_subsystem ? SX_ENOENT : SX_E2BIG));
                 return context;
             }
 
             ImageFailure failure = ImageFailure::none;
+            LinuxLaunch launch = {};
+            if (with_subsystem) {
+                launch.execfn = path;
+                launch.envp = environment->argv;
+                launch.envc = environment->argc;
+            }
             Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller,
                 request.std_handles[0], request.std_handles[1], request.std_handles[2], failure,
-                with_identity ? &child_identity : nullptr);
+                with_identity ? &child_identity : nullptr, with_subsystem ? &launch : nullptr);
             if (child != nullptr && !add_spawn_handles(*child, *caller, request.handles, request.handle_count)) {
                 failure = ImageFailure::no_handles;
                 child = nullptr;
             }
             heap::free(arguments);
+            heap::free(environment);
             context->rax = static_cast<uint64_t>(child != nullptr
                 ? static_cast<int>(child->pid)
                 : sx::negative_error(image_failure_errno(failure)));

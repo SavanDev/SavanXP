@@ -1,5 +1,6 @@
 #include "kernel/elf.hpp"
 
+#include "arch/cpu.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 
@@ -13,6 +14,11 @@ constexpr uint16_t kElfTypeShared = 3;
 constexpr uint16_t kElfMachineX86_64 = 62;
 constexpr uint32_t kProgramLoad = 1;
 constexpr uint32_t kProgramInterp = 3;
+constexpr uint32_t kProgramHeaderTable = 6;
+// EI_OSABI values a Linux executable carries: System V (what most linkers
+// write) and GNU (what one using GNU extensions such as IFUNC gets).
+constexpr uint8_t kOsAbiSystemV = 0;
+constexpr uint8_t kOsAbiGnu = 3;
 // Tope de la ruta del interprete. Es una ruta de sistema, no entrada de usuario:
 // un valor absurdo es un ELF roto, no algo que haya que truncar en silencio.
 constexpr uint64_t kMaxInterpreterPath = 512;
@@ -280,6 +286,146 @@ bool build_initial_stack(
     stack_pointer = user_sp;
     return true;
 }
+// The Linux auxiliary vector entries SSL passes (Linux's include/uapi/linux/
+// auxvec.h). There is no vDSO, so AT_SYSINFO_EHDR is absent and the C
+// library makes real system calls for the clocks.
+constexpr uint64_t kAtNull = 0;
+constexpr uint64_t kAtPhdr = 3;
+constexpr uint64_t kAtPhent = 4;
+constexpr uint64_t kAtPhnum = 5;
+constexpr uint64_t kAtPagesz = 6;
+constexpr uint64_t kAtBase = 7;
+constexpr uint64_t kAtEntry = 9;
+constexpr uint64_t kAtUid = 11;
+constexpr uint64_t kAtEuid = 12;
+constexpr uint64_t kAtGid = 13;
+constexpr uint64_t kAtEgid = 14;
+constexpr uint64_t kAtSecure = 23;
+constexpr uint64_t kAtRandom = 25;
+constexpr uint64_t kAtExecfn = 31;
+constexpr uint64_t kLinuxAuxEntries = 14; // the thirteen above and AT_NULL
+
+/* The Linux start-up stack (System V x86-64 psABI 3.4.1, and the order
+ * Linux's create_elf_tables writes). From the top down: 16 random bytes for
+ * AT_RANDOM, the AT_EXECFN string, the environment strings, the argument
+ * strings; then, from a 16-byte aligned RSP upwards: argc, argv[] and a
+ * null, envp[] and a null, the auxiliary vector ending in AT_NULL.
+ *
+ * Nothing is truncated: the spawn already bounded argv and envp, and an
+ * image whose arguments do not fit fails instead of starting with fewer. */
+bool build_linux_stack(
+    vm::VmSpace& address_space,
+    int argc,
+    const char* const* argv,
+    const elf::LinuxStartup& startup,
+    uint64_t program_headers,
+    uint64_t program_header_count,
+    uint64_t entry,
+    uint64_t& stack_pointer
+) {
+    uint8_t* backing[kInitialStackPages] = {};
+    uint64_t argv_values[kMaxArguments] = {};
+    uint64_t envp_values[kMaxArguments] = {};
+    const int envc = startup.envc;
+    const char* const execfn = startup.execfn != nullptr ? startup.execfn : "";
+
+    if (argc < 0 || static_cast<uint64_t>(argc) > kMaxArguments ||
+        envc < 0 || static_cast<uint64_t>(envc) > kMaxArguments) {
+        return false;
+    }
+
+    // Everything that goes on the stack, rounded generously: each string's
+    // terminator, the random bytes, the alignment and the parity word.
+    const uint64_t words = 1 + (static_cast<uint64_t>(argc) + 1) + (static_cast<uint64_t>(envc) + 1) +
+        2 * kLinuxAuxEntries;
+    uint64_t bytes = 16 + strlen(execfn) + 1 + 32 + words * sizeof(uint64_t);
+    for (int index = 0; index < argc; ++index) {
+        bytes += strlen(argv[index]) + 1;
+    }
+    for (int index = 0; index < envc; ++index) {
+        bytes += strlen(startup.envp[index]) + 1;
+    }
+    uint64_t pages = (bytes + memory::kPageSize - 1) / memory::kPageSize;
+    if (pages < vm::kUserStackInitialPages) {
+        pages = vm::kUserStackInitialPages;
+    }
+    if (pages > kInitialStackPages) {
+        return false;
+    }
+    const uint64_t mapped_bottom = vm::kUserStackTop - (pages * memory::kPageSize);
+    for (uint64_t page = 0; page < pages; ++page) {
+        if (!map_fresh_user_page(address_space, mapped_bottom + (page * memory::kPageSize), &backing[page])) {
+            return false;
+        }
+    }
+
+    uint64_t user_sp = vm::kUserStackTop;
+    auto push = [&](const void* source, uint64_t length) {
+        user_sp -= length;
+        memcpy(stack_kernel_pointer(backing, mapped_bottom, user_sp), source, length);
+        return user_sp;
+    };
+
+    const uint64_t random_bytes[2] = {arch::random_u64(), arch::random_u64()};
+    const uint64_t random_address = push(random_bytes, sizeof(random_bytes));
+    const uint64_t execfn_address = push(execfn, strlen(execfn) + 1);
+    for (int index = envc - 1; index >= 0; --index) {
+        envp_values[index] = push(startup.envp[index], strlen(startup.envp[index]) + 1);
+    }
+    for (int index = argc - 1; index >= 0; --index) {
+        argv_values[index] = push(argv[index], strlen(argv[index]) + 1);
+    }
+
+    // RSP must end 16-byte aligned on argc, so an odd count of words takes
+    // one word of padding above them.
+    user_sp &= ~static_cast<uint64_t>(0xf);
+    if ((words & 1) != 0) {
+        user_sp -= sizeof(uint64_t);
+    }
+    user_sp -= words * sizeof(uint64_t);
+    if (user_sp < mapped_bottom) {
+        return false;
+    }
+
+    uint64_t slot = user_sp;
+    auto put = [&](uint64_t value) {
+        memcpy(stack_kernel_pointer(backing, mapped_bottom, slot), &value, sizeof(value));
+        slot += sizeof(value);
+    };
+    put(static_cast<uint64_t>(argc));
+    for (int index = 0; index < argc; ++index) {
+        put(argv_values[index]);
+    }
+    put(0);
+    for (int index = 0; index < envc; ++index) {
+        put(envp_values[index]);
+    }
+    put(0);
+    const uint64_t aux[kLinuxAuxEntries][2] = {
+        {kAtPhdr, program_headers},
+        {kAtPhent, sizeof(ProgramHeader)},
+        {kAtPhnum, program_header_count},
+        {kAtPagesz, memory::kPageSize},
+        {kAtBase, 0},
+        {kAtEntry, entry},
+        {kAtUid, startup.uid},
+        {kAtEuid, startup.euid},
+        {kAtGid, startup.gid},
+        {kAtEgid, startup.egid},
+        {kAtSecure, 0},
+        {kAtRandom, random_address},
+        {kAtExecfn, execfn_address},
+        {kAtNull, 0},
+    };
+    for (const auto& entry_pair : aux) {
+        put(entry_pair[0]);
+        put(entry_pair[1]);
+    }
+
+    stack_pointer = user_sp;
+    return true;
+}
+
 } // namespace
 
 namespace elf {
@@ -296,6 +442,8 @@ const char* load_failure_string(LoadFailure failure) {
             return "truncated segment";
         case LoadFailure::out_of_memory:
             return "out of memory";
+        case LoadFailure::unsupported:
+            return "not supported by this ABI yet";
     }
     return "unknown";
 }
@@ -308,7 +456,8 @@ bool load_user_image(
     int argc,
     const char* const* argv,
     LoadResult& result,
-    LoadFailure& failure
+    LoadFailure& failure,
+    const LinuxStartup* linux_startup
 ) {
     ElfHeader header = {};
 
@@ -323,6 +472,10 @@ bool load_user_image(
         return false;
     }
     if (!validate_header(header, size)) {
+        failure = LoadFailure::bad_header;
+        return false;
+    }
+    if (linux_startup != nullptr && header.os_abi != kOsAbiSystemV && header.os_abi != kOsAbiGnu) {
         failure = LoadFailure::bad_header;
         return false;
     }
@@ -341,6 +494,11 @@ bool load_user_image(
     uint64_t interpreter_path_length = 0;
     size_t segment_count = 0;
     bool entry_is_executable = false;
+    // Where the program header table is in memory, for AT_PHDR: PT_PHDR's
+    // address when the image has one, else the PT_LOAD whose file range
+    // holds the table. Zero when neither maps it.
+    uint64_t program_headers_address = 0;
+    bool has_program_header_entry = false;
 
     for (uint16_t index = 0; index < header.program_header_count; ++index) {
         ProgramHeader program = {};
@@ -349,6 +507,16 @@ bool load_user_image(
 
         if (!read_image(context, header_offset, &program, sizeof(program))) {
             failure = LoadFailure::truncated;
+            return false;
+        }
+        if (program.type == kProgramHeaderTable) {
+            program_headers_address = program.virtual_address + load_bias;
+            has_program_header_entry = true;
+            continue;
+        }
+        if (program.type == kProgramInterp && linux_startup != nullptr) {
+            failure = LoadFailure::unsupported;
+            result.fail_index = index;
             return false;
         }
         if (program.type == kProgramInterp) {
@@ -453,6 +621,10 @@ bool load_user_image(
             header.entry + load_bias < vaddr + program.file_size) {
             entry_is_executable = true;
         }
+        if (!has_program_header_entry && program.offset <= header.program_header_offset &&
+            header.program_header_offset - program.offset < program.file_size) {
+            program_headers_address = vaddr + (header.program_header_offset - program.offset);
+        }
         segments[segment_count] = program;
         segment_starts[segment_count] = mapped_start;
         segment_ends[segment_count] = mapped_end;
@@ -533,7 +705,15 @@ bool load_user_image(
         }
     }
 
-    if (!build_initial_stack(
+    if (linux_startup != nullptr) {
+        if (!build_linux_stack(address_space, argc, argv, *linux_startup, program_headers_address,
+                               header.program_header_count, header.entry + load_bias, result.stack_pointer)) {
+            failure = LoadFailure::out_of_memory;
+            return false;
+        }
+        result.accepted_argc = argc;
+        result.interpreter_address = 0;
+    } else if (!build_initial_stack(
             read_image, context, address_space, argc, argv, result.accepted_argc, result.stack_pointer,
             interpreter_offset, interpreter_path_length, result.interpreter_address)) {
         failure = LoadFailure::out_of_memory;

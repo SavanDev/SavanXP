@@ -5,8 +5,10 @@ rejected and the phases still ahead are in the
 [roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md); the measured scope of
 the first profile is in [LINUX_XEYES_PROFILE.md](LINUX_XEYES_PROFILE.md).
 
-**Built so far: E1, the `syscall` trap.** No Linux process can be started
-yet. That arrives with S1 and the `linux` launcher at L1.
+**Built so far: E1, the `syscall` trap, and L1 with S1: a static, libc-free
+Linux executable runs unchanged, started by the `linux` launcher.** It can
+write to its standard descriptors and exit; every other call answers
+`-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -55,6 +57,78 @@ Linux does. A native or POSIX process that executes `syscall` therefore ends
 as it always did, and Linux numbers can never reach their tables: the
 dispatcher is chosen by the process, not by the number.
 
+## Starting a Linux program
+
+### The launcher
+
+```text
+linux [-e NAME=VALUE]... GUEST_PATH [ARGUMENT]...
+```
+
+`/system/linux.sxe` (`subsystems/linux/launcher/linux.c`), a SUN program, is
+the only way in. `GUEST_PATH` names a file in the guest tree: `/fixtures/hello`
+is `/system/linux/fixtures/hello`. The program gets `GUEST_PATH` as `argv[0]`,
+the arguments after it, and exactly the environment the `-e` options give,
+in order. Nothing is inherited. It shares the launcher's standard handles.
+The launcher waits for it and exits with its status. When the program cannot
+start, the launcher names the reason on standard error and exits with 127.
+
+### The spawn request
+
+The launcher calls `SXN_SYS_SPAWN_EX` with `SXN_SPAWN_FLAG_SUBSYSTEM` and,
+in RDX, a `struct sxn_spawn_subsystem`: `SXN_SUBSYSTEM_LINUX`, `envc` and
+`envp` (`sxn_spawn_ex_subsystem` in `sxn.h`). With that flag:
+
+- The request's `path` is a guest path. `process::linux_guest_path` puts it
+  under `/system/linux`. `.` is dropped, and `..` never climbs above the
+  guest root. A relative path is refused with `-ENOENT`.
+- The environment is copied like `argv`: at most 128 strings in 8 KiB, never
+  truncated. An unreadable block or environment, or another subsystem, is
+  `-EINVAL`.
+- The image must be a Linux x86-64 executable: `EI_OSABI` System V (0) or GNU
+  (3). Anything else, including a SavanXP image, is `-ENOEXEC`, and so is an
+  image that names an interpreter (`PT_INTERP`) until the kernel loads one
+  (L4). The selector is the only thing that makes a process Linux. Nothing is
+  guessed from the file.
+
+Without the flag, nothing changes: `EI_OSABI` chooses between native and
+POSIX, as before. A refused spawn leaves no process, handle or mapping
+behind.
+
+### The start-up state
+
+`elf::load_user_image` takes an `elf::LinuxStartup` and then builds Linux's
+stack instead of SavanXP's (`build_linux_stack` in `kernel/elf.cpp`). From
+the top down: 16 random bytes, the `AT_EXECFN` string, the environment
+strings and the argument strings. Above a 16-byte aligned RSP sit `argc`,
+`argv[]` and a null, `envp[]` and a null, and the auxiliary vector:
+
+| Entry | Value |
+| --- | --- |
+| `AT_PHDR`, `AT_PHENT`, `AT_PHNUM` | The program header table in memory (from `PT_PHDR`, or the `PT_LOAD` that holds it), 56, its count |
+| `AT_PAGESZ` | 4096 |
+| `AT_BASE` | 0: no interpreter yet |
+| `AT_ENTRY` | The image's entry point |
+| `AT_UID`, `AT_EUID`, `AT_GID`, `AT_EGID` | The process's credentials. The effective group is the group: the kernel keeps no separate one |
+| `AT_SECURE` | 0 |
+| `AT_RANDOM` | The 16 bytes, from `arch::random_u64` |
+| `AT_EXECFN` | The guest path the program was started by |
+
+`AT_SYSINFO_EHDR` is absent: there is no vDSO, so a C library makes real
+system calls for the clocks. Every general register but RSP is zero at the
+entry point.
+
+A Linux `ET_EXEC` may be linked anywhere above the user floor, `0x10000`
+([USER_ADDRESS_SPACE.md](../kernel/USER_ADDRESS_SPACE.md)); lld puts a static
+one at `0x200000`. A static PIE (`ET_DYN`) goes at `0x400000`, as any other.
+
+### What is inherited
+
+A Linux process's children would be Linux processes: `fork` copies the
+subsystem with the rest of the process. No Linux program can fork or exec
+yet, since both are `-ENOSYS` until the shell profile of L7. An exec into
+another image keeps the Linux ABI only when that call exists.
+
 ## The kernel half
 
 `subsystems/linux/kernel/`, compiled into the kernel. `initialize_linux_subsystem`
@@ -62,17 +136,59 @@ registers, for `subsystem::Id::linux`:
 
 | Registration | What it does today |
 | --- | --- |
-| Trap dispatcher, `dispatch_linux_syscall` | Every number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
+| Trap dispatcher, `dispatch_linux_syscall` | `write`, `exit` and `exit_group` (below). Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
 | Ordinary dispatcher, `dispatch_linux_int80` | `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: always `-ENOSYS` |
 | Per-process state | A bitmap of the numbers already reported (512 bits) |
 
 Linux numbers and error values are written in `linux_abi.hpp` from the Linux
 ABI, under `ssl::abi`. Nothing there comes from the POSIX SDK.
 
+### The calls
+
+| Call | What it does |
+| --- | --- |
+| `write` (1) | Descriptors 0, 1 and 2 are the process's handles of the same numbers, the ones the spawn gave. Any other is `-EBADF`, until the descriptor table of L2. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
+| `exit` (60) | Ends the calling thread with `status & 0xff`. The last thread ends the process, which with one thread is always |
+| `exit_group` (231) | Ends the process with `status & 0xff` |
+
+**The error numbers.** The kernel's own errors (`sx_status`) use Linux's
+numbers, so a kernel result reaches the program unchanged. That matters when
+the layer never sees the result: a write that blocked is finished by whoever
+wakes the thread, and that code writes the kernel's value. A `static_assert`
+in `linux_abi.hpp` fixes every shared number, so renumbering one breaks the
+build instead of a Linux program.
+
 ## How it is tested
 
-`nativetest` spawns eight children at once that execute `syscall` with RAX
-set to 1, Linux's `write`. Each must end with status 128 + 6, and none may
-write. It passes on 1, 2 and 4 virtual CPUs (`./build.sh smoke native-test
---smp N`). The Linux side of the trap needs a Linux process. Its first test
-is L1's `hello` fixture.
+**The trap for other subsystems.** `nativetest` spawns eight children at once
+that execute `syscall` with RAX set to 1, Linux's `write`. Each must end with
+status 128 + 6, and none may write. It runs on 1, 2 and 4 virtual CPUs
+(`./build.sh smoke native-test --smp N`).
+
+**L1, `linux-hello`.** `linuxtest` (`subsystems/linux/tests/linuxtest.c`), a
+SUN parent, runs three fixtures through the launcher with standard output on
+a pipe. It compares the bytes and the exit status with what Linux gave for
+the same files, recorded by `subsystems/linux/profile/profile.sh`:
+
+| Fixture | What it shows |
+| --- | --- |
+| `hello` | `hello`, status 7 |
+| `startup` | argv, the environment from `-e`, all registers zero at entry, RSP aligned, the thirteen auxiliary entries right, two million `write` calls with every preserved register intact (including XMM0, XMM7 and XMM15), RCX and R11 as `syscall` leaves them, status 3 from `exit_group` |
+| `errors` | `-EFAULT`, a zero-byte write from a bad address, `-EBADF`, `-ENOSYS` for a number Linux lacks, and `-ENOSYS` from `int 0x80` |
+
+Then it asks the kernel to start what it must refuse, and checks that the
+process count did not change: a bad header, an image cut after its ELF
+header, another machine, a missing file, a path climbing out of the guest
+tree, a relative path, a missing handle, an unreadable subsystem block or
+environment, and an unknown subsystem.
+
+The fixtures are built by `subsystems/linux/Linux.cmake` with the same
+commands `profile.sh` uses, and `linux-fixture-hash-test` checks that they are
+the files the references came from. The damaged images are made from `hello`
+by `subsystems/linux/profile/damage.py`. Test images get all of them, with
+the references, under `/system/linux/fixtures`.
+
+**Executable in the image.** A Linux executable has no suffix to tell it
+by. `tools/sxfs_sync.py` gives mode 0755 to every file under `system/linux/`
+that is executable on the build host, which is how the build leaves the
+fixtures. The references next to them stay 0644.

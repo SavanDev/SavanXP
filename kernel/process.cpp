@@ -1635,7 +1635,10 @@ void ensure_subsystem_state(Process& proc) {
         free_subsystem_state(proc);
         return;
     }
-    if (proc.subsystem_state != nullptr && proc.subsystem_state_bytes == needed) {
+    // Kept only when it is this subsystem's own: bytes of the same size from
+    // another subsystem are not its state.
+    if (proc.subsystem_state != nullptr && proc.subsystem_state_bytes == needed &&
+        proc.subsystem_state_owner == proc.subsystem_id) {
         return;
     }
 
@@ -1922,7 +1925,8 @@ process::Process* create_process_internal(
     int stdout_fd,
     int stderr_fd,
     process::ImageFailure& failure,
-    const cred::Credentials* identity
+    const cred::Credentials* identity,
+    const process::LinuxLaunch* linux_launch
 ) {
     failure = process::ImageFailure::none;
 
@@ -2017,7 +2021,18 @@ process::Process* create_process_internal(
 
     elf::LoadResult load_result = {};
     elf::LoadFailure load_failure = elf::LoadFailure::none;
-    if (!elf::load_user_image(image_reader, &image_source, image_source.size, proc->address_space, argc, argv, load_result, load_failure)) {
+    elf::LinuxStartup linux_startup = {};
+    if (linux_launch != nullptr) {
+        linux_startup.envp = linux_launch->envp;
+        linux_startup.envc = linux_launch->envc;
+        linux_startup.execfn = linux_launch->execfn;
+        linux_startup.uid = proc->credentials.uid;
+        linux_startup.euid = proc->credentials.euid;
+        linux_startup.gid = proc->credentials.gid;
+        linux_startup.egid = proc->credentials.gid;
+    }
+    if (!elf::load_user_image(image_reader, &image_source, image_source.size, proc->address_space, argc, argv,
+                              load_result, load_failure, linux_launch != nullptr ? &linux_startup : nullptr)) {
         release_all_handles(*proc);
         process::detail::release_process_resources(*proc);
         process::detail::reset_process_slot(*proc);
@@ -2029,11 +2044,16 @@ process::Process* create_process_internal(
         return nullptr;
     }
 
-    // El subsistema lo define el ABI del binario (e_ident[EI_OSABI]), no la
-    // herencia: el valor de allocate_process_slot/parent era solo el default.
-    proc->subsystem_id = load_result.os_abi == elf::kOsAbiNative
-        ? subsystem::Id::native
-        : subsystem::Id::posix;
+    // The subsystem is the one the spawn asked for (Linux), or else the
+    // binary's ABI (e_ident[EI_OSABI]) decides, not inheritance: the value
+    // from allocate_process_slot or the parent was only a default.
+    if (linux_launch != nullptr) {
+        proc->subsystem_id = subsystem::Id::linux;
+    } else {
+        proc->subsystem_id = load_result.os_abi == elf::kOsAbiNative
+            ? subsystem::Id::native
+            : subsystem::Id::posix;
+    }
     // The state copied from the parent belongs to the parent's subsystem. A
     // POSIX program started by a native one (sessiond starting windowd) would
     // otherwise run with no POSIX state at all, and poll fails on it. Same
@@ -2043,7 +2063,20 @@ process::Process* create_process_internal(
         console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }
 
-    fabricate_initial_context(*thread, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
+    process::SavedContext* const start = fabricate_initial_context(*thread, load_result.entry_point,
+        load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer,
+        load_result.interpreter_address, load_result.image_base);
+    if (linux_launch != nullptr) {
+        // A Linux process finds everything on its stack, and every register
+        // but RSP starts at zero (the psABI leaves them unspecified, and
+        // Linux clears them).
+        start->rdi = 0;
+        start->rsi = 0;
+        start->rdx = 0;
+        start->rcx = 0;
+        start->r8 = 0;
+        console::printf("process: pid=%u started as Linux\n", static_cast<unsigned>(proc->pid));
+    }
     return proc;
 }
 
@@ -2331,7 +2364,6 @@ bool copy_spawn_arguments(
     size_t path_capacity,
     process::SpawnArguments& arguments
 ) {
-    size_t used = 0;
     const int requested = static_cast<int>(static_cast<int64_t>(context.rdx));
 
     arguments.argc = 0;
@@ -2343,28 +2375,39 @@ bool copy_spawn_arguments(
     if (!copy_user_string(proc, context.rdi, path, path_capacity)) {
         return false;
     }
-    if (requested != 0 && !vm::is_user_range_accessible(proc.address_space, context.rsi, static_cast<size_t>(requested) * sizeof(uint64_t), false)) {
+    return process::copy_spawn_strings(proc, context.rsi, requested, arguments);
+}
+
+bool copy_spawn_strings(const Process& proc, uint64_t user_array, int count, SpawnArguments& strings) {
+    size_t used = 0;
+
+    strings.argc = 0;
+    strings.argv[0] = nullptr;
+    if (count < 0 || count > kMaxSpawnArguments) {
+        return false;
+    }
+    if (count != 0 && !vm::is_user_range_accessible(proc.address_space, user_array,
+                                                    static_cast<size_t>(count) * sizeof(uint64_t), false)) {
         return false;
     }
 
-    for (int index = 0; index < requested; ++index) {
-        uint64_t arg_address = 0;
-        if (!read_user_pointer(proc, context.rsi + static_cast<uint64_t>(index) * sizeof(uint64_t), arg_address)) {
+    for (int index = 0; index < count; ++index) {
+        uint64_t string_address = 0;
+        if (!read_user_pointer(proc, user_array + static_cast<uint64_t>(index) * sizeof(uint64_t), string_address)) {
             return false;
         }
-        /* Si no entra se falla, no se trunca: un argumento cortado es una ruta
-         * distinta, y el programa no tiene como enterarse. */
-        if (used >= sizeof(arguments.storage) ||
-            !copy_user_string(proc, arg_address, &arguments.storage[used],
-                              sizeof(arguments.storage) - used)) {
+        /* What does not fit fails, it is not truncated: a cut argument is a
+         * different path, and the program has no way to find out. */
+        if (used >= sizeof(strings.storage) ||
+            !copy_user_string(proc, string_address, &strings.storage[used], sizeof(strings.storage) - used)) {
             return false;
         }
-        arguments.argv[index] = &arguments.storage[used];
-        used += strlen(&arguments.storage[used]) + 1;
+        strings.argv[index] = &strings.storage[used];
+        used += strlen(&strings.storage[used]) + 1;
     }
 
-    arguments.argc = requested;
-    arguments.argv[requested] = nullptr;
+    strings.argc = count;
+    strings.argv[count] = nullptr;
     return true;
 }
 

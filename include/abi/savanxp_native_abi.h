@@ -485,6 +485,24 @@ enum sxn_spawn_flags {
      * the elevation broker is the one that does. The caller still needs the
      * right to run the image. */
     SXN_SPAWN_FLAG_IDENTITY = 1u << 0,
+    /* rdx = const struct sxn_spawn_subsystem*: start the image as a program
+     * of another subsystem's ABI, with the environment the block gives. The
+     * kernel validates the image for that ABI or fails the spawn
+     * (-ENOEXEC); nothing is guessed from the file. For Linux, `path` is a
+     * path in the guest tree, under /system/linux (docs/userland/LINUX.md).
+     * -EINVAL for an unreadable block or environment, or an unknown
+     * subsystem. */
+    SXN_SPAWN_FLAG_SUBSYSTEM = 1u << 1,
+};
+
+enum sxn_subsystem_id {
+    SXN_SUBSYSTEM_LINUX = 2,
+};
+
+struct sxn_spawn_subsystem {
+    uint32_t subsystem;       /* enum sxn_subsystem_id */
+    int32_t envc;             /* entries in envp, at most 128 */
+    uint64_t envp;            /* char* const*, "NAME=VALUE" strings */
 };
 
 /* Who a process is (docs/kernel/USERS_AND_PERMISSIONS.md#the-token). The
