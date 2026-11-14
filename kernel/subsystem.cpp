@@ -6,6 +6,7 @@ namespace subsystem {
 namespace {
 
 Dispatcher g_table[static_cast<size_t>(Id::count)] = {};
+Dispatcher g_trap_table[static_cast<size_t>(Id::count)] = {};
 size_t g_state_size[static_cast<size_t>(Id::count)] = {};
 size_t g_thread_state_size[static_cast<size_t>(Id::count)] = {};
 WaitRecheck g_wait_recheck[static_cast<size_t>(Id::count)] = {};
@@ -16,6 +17,9 @@ StateHook g_state_released[static_cast<size_t>(Id::count)] = {};
 
 void reset() {
     for (auto& entry : g_table) {
+        entry = nullptr;
+    }
+    for (auto& entry : g_trap_table) {
         entry = nullptr;
     }
     for (auto& bytes : g_state_size) {
@@ -131,6 +135,22 @@ void recheck_parked_thread(process::Thread& thread, uint64_t now_ms, bool honour
     if (hook != nullptr) {
         hook(thread, now_ms, honour_deadline);
     }
+}
+
+void register_trap_dispatcher(Id id, Dispatcher fn) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return;
+    }
+    g_trap_table[index] = fn;
+}
+
+Dispatcher trap_dispatcher_for(Id id) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return nullptr;
+    }
+    return g_trap_table[index];
 }
 
 process::SavedContext* dispatch(Id id, process::SavedContext* context) {

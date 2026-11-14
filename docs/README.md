@@ -120,6 +120,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   and the MFC and RichEdit libraries it runs on, by hash; the import closure
   against what SSW exports; resources and control classes; a Wine trace by
   phase; and the Windows XP reference captures.
+- [`LINUX.md`](userland/LINUX.md) — SSL as built: `syscall` raises #UD with
+  EFER.SCE clear, the #UD entry stub, trap dispatchers
+  (`subsystem::register_trap_dispatcher`), and the kernel half under
+  `subsystems/linux/kernel/`.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
   measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
   closure by hash, the L1-L5 fixtures and how they are built, the system call

@@ -8,6 +8,10 @@
 #include "kernel/smp.hpp"
 #include "kernel/vmm.hpp"
 
+// Where context.S sends an invalid opcode raised in ring 0: the ordinary
+// exception handler. Ring 3 goes through x86_64_invalid_opcode_entry instead.
+extern "C" void* savanxp_invalid_opcode_kernel;
+
 namespace {
 
 using namespace arch::x86::port_io;
@@ -30,6 +34,7 @@ constexpr uint16_t kPicSlaveData = 0xa1;
 constexpr uint8_t kPicEoi = 0x20;
 constexpr uint32_t kApicBaseMsr = 0x1b;
 constexpr uint32_t kEferMsr = 0xc0000080;
+constexpr uint64_t kEferSyscallEnable = 1ull << 0;
 constexpr uint64_t kEferNoExecuteEnable = 1ull << 11;
 constexpr uint64_t kCr0WriteProtect = 1ull << 16;
 constexpr uint64_t kCr4Smep = 1ull << 20;
@@ -64,6 +69,7 @@ constexpr uint32_t kIpiDeliverySpinLimit = 1000000u;
 extern "C" void x86_64_syscall_entry();
 extern "C" void x86_64_timer_entry();
 extern "C" void x86_64_reschedule_entry();
+extern "C" void x86_64_invalid_opcode_entry();
 
 struct [[gnu::packed]] GdtDescriptor {
     uint16_t limit;
@@ -179,7 +185,12 @@ void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(leaf), "c"(subleaf));
 }
 
-bool enable_nx() {
+// EFER as the kernel needs it on every processor: NX on, for W^X, and the
+// `syscall` instruction off. With SCE clear, `syscall` raises #UD, which is
+// how a subsystem receives it (subsystem::register_trap_dispatcher). With SCE
+// set and no entry point in LSTAR, ring 3 could jump into the kernel at
+// address 0, so the bit is cleared rather than inherited from the boot loader.
+bool configure_efer() {
     uint32_t eax = 0;
     uint32_t ebx = 0;
     uint32_t ecx = 0;
@@ -193,7 +204,7 @@ bool enable_nx() {
     if ((edx & (1u << 20)) == 0) {
         return false;
     }
-    write_msr(kEferMsr, read_msr(kEferMsr) | kEferNoExecuteEnable);
+    write_msr(kEferMsr, (read_msr(kEferMsr) & ~kEferSyscallEnable) | kEferNoExecuteEnable);
     return true;
 }
 
@@ -885,7 +896,10 @@ void initialize_idt() {
     set_idt_gate(3, reinterpret_cast<InterruptHandler>(isr_3), kInterruptGate);
     set_idt_gate(4, reinterpret_cast<InterruptHandler>(isr_4), kInterruptGate);
     set_idt_gate(5, reinterpret_cast<InterruptHandler>(isr_5), kInterruptGate);
-    set_idt_gate(6, reinterpret_cast<InterruptHandler>(isr_6), kInterruptGate);
+    // #UD from ring 3 needs a full saved context: it may be a subsystem's
+    // system call. The stub sends ring 0 on to isr_6.
+    savanxp_invalid_opcode_kernel = reinterpret_cast<void*>(isr_6);
+    set_idt_gate(6, reinterpret_cast<InterruptHandler>(x86_64_invalid_opcode_entry), kInterruptGate);
     set_idt_gate(7, reinterpret_cast<InterruptHandler>(isr_7), kInterruptGate);
     set_idt_gate(8, reinterpret_cast<InterruptHandler>(isr_8), kInterruptGate);
     set_idt_gate(9, reinterpret_cast<InterruptHandler>(isr_9), kInterruptGate);
@@ -950,6 +964,13 @@ void initialize_idt() {
 }
 
 } // namespace
+
+extern "C" void* savanxp_invalid_opcode_kernel = nullptr;
+
+// #UD from ring 3, entered through CONTEXT_ENTRY with the kernel lock held.
+extern "C" process::SavedContext* savanxp_handle_invalid_opcode(process::SavedContext* context) {
+    return process::handle_invalid_opcode(context);
+}
 
 namespace arch {
 
@@ -1079,7 +1100,7 @@ void initialize_cpu() {
     // The canary was seeded in _start, before any protected frame could retain
     // the boot-time zero. It stays stable for this boot so in-flight frames
     // continue to compare against the value they loaded.
-    if (!enable_nx()) {
+    if (!configure_efer()) {
         panic("cpu: NX/W^X is required");
     }
     // Before any AP starts: they all spin on the kernel lock with this.
@@ -1111,8 +1132,8 @@ void ap_initialize_cpu() {
         clear_amd_c1e();
     }
     // EFER belongs to each logical processor. Do not rely on Limine leaving
-    // NXE enabled on an AP before the scheduler can run user NX mappings there.
-    if (!enable_nx()) {
+    // NXE set, or SCE clear, on an AP before the scheduler runs user code there.
+    if (!configure_efer()) {
         halt_forever();
     }
     // SMEP as on the BSP. Requiring it unconditionally left every AP halted

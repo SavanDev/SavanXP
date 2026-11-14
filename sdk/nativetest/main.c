@@ -1141,6 +1141,49 @@ static void fault32_child(void) {
     sxn_exit(1);
 }
 
+/* The `syscall` instruction from a native process: EFER.SCE is clear on every
+ * processor, so it raises #UD and ends the process, status 128 + 6. Linux
+ * receives it through the same trap; a native or POSIX process has no trap
+ * dispatcher. RAX holds 1, Linux's `write`, so a kernel that let it through
+ * to some table would be visible as a survivor. */
+static void syscall_trap_child(void) {
+    static const char text[] = "syscall trap: not trapped\n";
+    long result;
+
+    __asm__ volatile("syscall"
+                     : "=a"(result)
+                     : "a"(1L), "D"(1L), "S"(text), "d"(sizeof(text) - 1)
+                     : "rcx", "r11", "memory");
+    (void)result;
+    sxn_exit(1);
+}
+
+#define SYSCALL_TRAP_CHILDREN 8
+
+/* Several at once, so on 2 and 4 vCPUs the traps land on more than one
+ * processor: each one's EFER was set by that processor's start-up. */
+static void test_syscall_trap(void) {
+    long children[SYSCALL_TRAP_CHILDREN];
+    char* trap_argv[2];
+    int32_t status = 0;
+    long index;
+
+    trap_argv[0] = "/bin/nativetest.sxe";
+    trap_argv[1] = "syscall-trap";
+    for (index = 0; index < SYSCALL_TRAP_CHILDREN; ++index) {
+        children[index] = sxn_spawn("/bin/nativetest.sxe", trap_argv, 2);
+        check(children[index] > 0);
+    }
+    for (index = 0; index < SYSCALL_TRAP_CHILDREN; ++index) {
+        if (children[index] <= 0) {
+            continue;
+        }
+        status = 0;
+        check(sxn_waitpid(children[index], &status) == children[index] && status == 128 + 6);
+    }
+    check(sxn_log("nativetest: syscall trap done") == 0);
+}
+
 static void test_code32(void) {
     int32_t handles[K1_THREADS32 + K1_THREADS64];
     const uint16_t null_selector = 0;
@@ -2664,6 +2707,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "fault32")) {
         fault32_child();
     }
+    if (argc > 1 && streq(argv[1], "syscall-trap")) {
+        syscall_trap_child();
+    }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
     if (argc > 1 && streq(argv[1],"audio-preferences")) {
@@ -3391,6 +3437,7 @@ int main(int argc, char** argv) {
     test_view_at();
     test_system_time();
     test_code32();
+    test_syscall_trap();
     test_threads(&info);
     test_thread_bases();
     test_address_waits();

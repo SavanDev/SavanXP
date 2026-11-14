@@ -1,6 +1,7 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0 closed (2026-11-14); no subsystem code yet.** The subsystem is
+> **Status: L0 and E1 closed (2026-11-14); no Linux program runs yet.** What
+> is built is described in [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
 > measured first profile is
 > [LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md). The first
@@ -9,8 +10,9 @@
 > 2026-11-10, replacing the plan of 2026-11-08. It keeps that plan's direction
 > (a translation layer in the kernel, over Sx), makes the decisions it left
 > open, shrinks the first kernel step, and orders the phases by what Xeyes
-> needs. `subsystems/linux/` holds only the L0 fixtures and profile tooling,
-> and the installed runtime root `/system/linux` is not created by any build.
+> needs. `subsystems/linux/` holds the L0 fixtures and profile tooling and
+> the kernel half's entry points, and the installed runtime root
+> `/system/linux` is not created by any build.
 
 ## Objective
 
@@ -94,8 +96,8 @@ relying on a row.
 
 | Fact | Where | Consequence |
 | --- | --- | --- |
-| `EFER` is `0xd00` on every virtual CPU: long mode and NX, `SCE` clear. The kernel only ORs the NX bit into what the boot loader left | QEMU monitor on the booted image; `enable_nx` in `arch/x86_64/cpu_init.cpp` | `syscall` raises #UD today. The kernel must state `SCE` itself rather than inherit it: with `SCE` set and no entry point, ring 3 could crash the kernel |
-| A ring-3 exception ends the process (`user: exception #N killed pid=`) after the stack-growth check. Every entry saves all registers and returns with `iretq` | `kernel/process.cpp`, `arch/x86_64/context.S` | The #UD path already has a kernel stack and a full register frame. No new entry code is needed |
+| `EFER` is `0xd00` on every virtual CPU: long mode and NX, `SCE` clear. The kernel only ORs the NX bit into what the boot loader left (until E1, which clears `SCE` itself) | QEMU monitor on the booted image; `configure_efer` (was `enable_nx`) in `arch/x86_64/cpu_init.cpp` | `syscall` raises #UD today. The kernel must state `SCE` itself rather than inherit it: with `SCE` set and no entry point, ring 3 could crash the kernel |
+| A ring-3 exception ends the process (`user: exception #N killed pid=`) after the stack-growth check. Every entry saves all registers and returns with `iretq` | `kernel/process.cpp`, `arch/x86_64/context.S` | **Corrected at E1:** only the `int 0x80`, timer and IPI entries save a full `SavedContext`. Exceptions use compiler-generated `__attribute__((interrupt))` stubs that cannot hand back another context, so #UD got its own small stub |
 | There is no `swapgs`; the kernel finds its CPU through TR, and `IA32_FS_BASE`/`IA32_GS_BASE` belong to the user thread | `include/arch/x86_64/cpu.hpp` | Linux TLS (`arch_prctl`) has its mechanism. A fast `syscall` entry would need per-CPU entry stubs or `swapgs` everywhere, which is why it is deferred |
 | `CR4` is `0x100620`: `OSXSAVE` is clear, and thread state is the 512-byte `fxsave64` area | QEMU monitor; `cpu.hpp` | Programs see no usable AVX and must not be given any. A libc that selects routines by CPUID stays on SSE2 |
 | Subsystems are `posix` and `native`. An id selects a dispatcher, sizes per-process and per-thread private state, and receives a wait-recheck hook | `include/kernel/subsystem.hpp` | A third id is what the interface was built for |
@@ -203,7 +205,9 @@ For the display, with the client side fixed by the goal:
 ### Entry and dispatch
 
 - `subsystem::Id::linux`, registered by `subsystems/linux/kernel/` with its
-  dispatcher and state sizes.
+  dispatchers and state sizes. The `syscall` path is a *trap dispatcher*
+  (`subsystem::register_trap_dispatcher`), separate from the one `int 0x80`
+  reaches, so the neutral kernel never names Linux.
 - The kernel clears `EFER.SCE` on every processor during start-up, so the
   behaviour no longer depends on the boot loader.
 - On #UD from ring 3 in a Linux process, the handler reads two bytes at the
@@ -332,6 +336,12 @@ application processor; the Linux id; the #UD recognition described above.
 **Done when:** `nativetest` starts a child that executes `syscall` and sees
 it die with the invalid-opcode status, on 1, 2 and 4 vCPUs. The Linux half is
 proven by L1's fixture.
+
+**Closed on 2026-11-14** ([LINUX.md](../../userland/LINUX.md)). One thing
+differed from the plan: the #UD vector needed a `CONTEXT_ENTRY` stub of its
+own, because exception entries did not save a context a dispatcher can
+use. The Linux dispatchers exist and answer `-ENOSYS` to everything; L1
+fills them in.
 
 ### Shared Sx groundwork
 

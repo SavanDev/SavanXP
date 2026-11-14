@@ -77,6 +77,21 @@ CONTEXT_ENTRY x86_64_timer_entry, savanxp_handle_timer_interrupt, 1
 CONTEXT_ENTRY x86_64_reschedule_entry, savanxp_handle_reschedule_ipi, 2
 
 /*
+ * Invalid opcode (#UD, no error code). From ring 3 it may be a system call:
+ * with EFER.SCE clear the `syscall` instruction lands here, and the handler
+ * needs the whole context to dispatch it or to end the process. From ring 0
+ * it is a kernel bug and goes, stack untouched, to the ordinary exception
+ * handler: this stub must not take the kernel lock there, since the faulting
+ * code may already hold it. CS is at 8(%rsp), above the saved RIP.
+ */
+.global x86_64_invalid_opcode_entry
+x86_64_invalid_opcode_entry:
+    testb $3, 8(%rsp)
+    jnz x86_64_invalid_opcode_user
+    jmp *savanxp_invalid_opcode_kernel(%rip)
+CONTEXT_ENTRY x86_64_invalid_opcode_user, savanxp_handle_invalid_opcode, 4
+
+/*
  * arch::resume_context(context, cr3): leave the kernel for a context without
  * having entered through one of the stubs above (the first process on each
  * core, or the return from terminate_current). It is always called with the

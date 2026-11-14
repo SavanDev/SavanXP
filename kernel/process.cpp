@@ -2387,10 +2387,12 @@ void initialize() {
     subsystem::reset();
     subsystem::register_dispatcher(subsystem::Id::posix, &dispatch_posix_syscall);
     subsystem::register_dispatcher(subsystem::Id::native, &dispatch_native_syscall);
-    // Cada subsistema declara cuanto estado privado por proceso necesita; el
-    // kernel lo reserva y lo libera sin mirar dentro (isolation slice B).
+    // Each subsystem declares how much private per-process state it needs;
+    // the kernel allocates and frees it without looking inside (isolation
+    // slice B). Linux registers its own dispatchers there.
     initialize_posix_subsystem();
     initialize_native_subsystem();
+    initialize_linux_subsystem();
 
     g_ready = true;
 }
@@ -2969,6 +2971,15 @@ void terminate_current_from_exception(uint8_t vector) {
     terminate_current(128 + vector);
 }
 
+namespace {
+
+// What follows a subsystem's dispatcher, whichever way the call came in: the
+// caller asked to end, a sibling's exec, and the handover to a thread the
+// call woke.
+SavedContext* finish_user_call(Thread* caller, SavedContext* result);
+
+} // namespace
+
 SavedContext* handle_syscall(SavedContext* context) {
     // The system call ABI is defined for 64-bit callers only. From 32-bit code
     // the upper halves of the registers are undefined, so none of them is
@@ -2984,8 +2995,46 @@ SavedContext* handle_syscall(SavedContext* context) {
     // unretained Vnode pointer: published directories are given back here
     // when the tree runs low (docs/roadmaps/open/VFS_ROADMAP.md, VFS-C).
     vfs::trim_if_low();
-    SavedContext* result = subsystem::dispatch(id, context);
+    return finish_user_call(caller, subsystem::dispatch(id, context));
+}
 
+SavedContext* handle_invalid_opcode(SavedContext* context) {
+    Thread* const caller = this_cpu().current;
+    if (caller == nullptr) {
+        panic("user: invalid opcode from ring 3 with no current thread");
+    }
+    Process& proc = *caller->process;
+    const subsystem::Dispatcher trap = subsystem::trap_dispatcher_for(proc.subsystem_id);
+    // Only 64-bit code: in a 32-bit segment the same bytes are not the 64-bit
+    // instruction, and no subsystem offers a 32-bit ABI.
+    if (trap != nullptr && context->cs == arch::kUserCodeSelector) {
+        uint8_t opcode[2] = {};
+        if (read_from_process_memory(proc, opcode, context->rip, sizeof(opcode)) &&
+            opcode[0] == 0x0f && opcode[1] == 0x05) {
+            // What the instruction itself does before entering the kernel.
+            context->rip += sizeof(opcode);
+            context->rcx = context->rip;
+            context->r11 = context->rflags;
+            smp::tag_lock_hold(static_cast<uint32_t>(proc.subsystem_id), static_cast<uint32_t>(context->rax));
+            vfs::trim_if_low();
+            return finish_user_call(caller, trap(context));
+        }
+    }
+    // The line the ordinary exception path prints, without CR2, which only a
+    // page fault sets.
+    console::printf(
+        "user: exception #6 pid=%u name=%s rip=0x%llx\n",
+        proc.pid,
+        proc.name,
+        context->rip
+    );
+    terminate_current_from_exception(6);
+    return context;  // Not reached: the process ended and this core moved on.
+}
+
+namespace {
+
+SavedContext* finish_user_call(Thread* caller, SavedContext* result) {
     // Its process was asked to end while it was in this syscall. If it is
     // still the thread running here, it stops now, before returning to ring
     // 3. If the syscall blocked it or gave the CPU to someone else, it no
@@ -3034,6 +3083,8 @@ SavedContext* handle_syscall(SavedContext* context) {
     }
     return result;
 }
+
+} // namespace
 
 SavedContext* handle_timer_tick(SavedContext* context) {
     if (this_cpu().current == nullptr) {

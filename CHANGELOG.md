@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL E1: the kernel clears EFER.SCE on every processor, so `syscall` raises #UD; a subsystem can claim it with
+  `subsystem::register_trap_dispatcher`, and Linux (`subsystem::Id::linux`) answers every call `-ENOSYS` for now.**
+  A native or POSIX `syscall` still ends the process with status 134. See [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL (Savan Subsystem for Linux) L0: `subsystems/linux/profile/profile.sh` rebuilds the pinned Alpine 3.24 profile
   unprivileged, builds the L1-L5 fixtures with the host clang against musl only, and traces them and Xeyes on Linux.**
   Reference outputs are under `subsystems/linux/profile/expected/`; see [LINUX_XEYES_PROFILE.md](docs/userland/LINUX_XEYES_PROFILE.md).

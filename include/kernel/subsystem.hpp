@@ -12,8 +12,9 @@ struct Thread;
 namespace subsystem {
 
 enum class Id : uint8_t {
-    posix = 0,   // default; coincide con el zero-init de allocate_process_slot
-    native = 1,  // stub de validacion
+    posix = 0,   // the default: matches the zeroed slot of allocate_process_slot
+    native = 1,  // the native API, SUN
+    linux = 2,   // SSL, Linux binaries (docs/roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md)
     count
 };
 
@@ -23,6 +24,19 @@ void reset();
 bool register_dispatcher(Id id, Dispatcher fn);
 Dispatcher dispatcher_for(Id id);
 process::SavedContext* dispatch(Id id, process::SavedContext* context);
+
+// The `syscall` instruction, for a subsystem whose ABI uses it.
+//
+// EFER.SCE is clear on every processor, so `syscall` raises #UD. When the
+// faulting process's subsystem registered a trap dispatcher and the bytes at
+// RIP are `0f 05`, the kernel completes the instruction as the processor
+// would (RIP past it, RCX the new RIP, R11 the flags) and calls this
+// dispatcher instead of ending the process. The software interrupt keeps
+// going to the ordinary dispatcher above. A subsystem without one, which is
+// every subsystem but Linux, sees `syscall` end the process as an invalid
+// opcode, status 128 + 6.
+void register_trap_dispatcher(Id id, Dispatcher fn);
+Dispatcher trap_dispatcher_for(Id id);
 
 // Per-process private state, declared by the subsystem that owns it.
 //

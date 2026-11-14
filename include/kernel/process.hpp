@@ -253,10 +253,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context);
 /* True for the native calls other subsystems may forward to the native
  * dispatcher (the object floor, not the lifecycle calls). */
 bool native_call_open_to_all_subsystems(uint64_t number);
-// Cada subsistema declara su estado privado por proceso. El kernel los reserva
-// y los libera sin interpretarlos (isolation slice B).
+// Each subsystem declares its private per-process state and its dispatchers.
+// The kernel allocates and frees the state without interpreting it (isolation
+// slice B). Linux's lives in subsystems/linux/kernel/.
 void initialize_posix_subsystem();
 void initialize_native_subsystem();
+void initialize_linux_subsystem();
 // Frontera de traduccion POSIX: el dispatcher compila en su propia unidad
 // (subsystems/posix/kernel/posix_dispatch.cpp) contra estas declaraciones.
 // Los cuerpos POSIX-only viven en subsystems/posix/kernel/
@@ -459,6 +461,10 @@ void terminate_current_from_exception(uint8_t vector);
 // devuelve false y el fault sigue su camino, que termina matando al proceso.
 bool grow_user_stack(uint64_t fault_address);
 SavedContext* handle_syscall(SavedContext* context);
+// An invalid opcode from ring 3: a `syscall` instruction for a subsystem with
+// a trap dispatcher, dispatched like handle_syscall; anything else ends the
+// process with status 128 + 6.
+SavedContext* handle_invalid_opcode(SavedContext* context);
 SavedContext* handle_timer_tick(SavedContext* context);
 // El IPI de replanificar (smp::kick): tomar un proceso recien despertado si
 // este core estaba ocioso, o terminar al actual si lo mataron desde otro core.
