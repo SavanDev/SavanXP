@@ -13,8 +13,9 @@
  * the POSIX runtime objects is fine (dead code never runs), but calling
  * into them would prove nothing about the native dispatcher. Reporting
  * goes through sxn_log (kernel log) and the verdict through sxn_exit
- * (waitpid status). Neither path ever returns: on return crt0 would
- * invoke the POSIX EXIT, which is ENOSYS for a native process.
+ * (waitpid status). The runtime's own ways out are checked as well:
+ * returning from main, exit() and __stack_chk_fail end a native process
+ * with their status, through the native runtime's sx_process_exit.
  *
  * Covers: INFO handshake, LOG, ENOSYS for POSIX numbers and for unknown
  * native numbers, self-spawn plus WAITPID, cross-process event plus
@@ -1189,6 +1190,41 @@ static void test_syscall_trap(void) {
         check(sxn_waitpid(children[index], &status) == children[index] && status == 128 + 6);
     }
     check(sxn_log("nativetest: syscall trap done") == 0);
+}
+
+/* The stack protector's failure path, called here directly. */
+void __stack_chk_fail(void) __attribute__((noreturn));
+
+/* The runtime ends a process through sx_process_exit, which the native
+ * runtime (system/runtime/sxn_runtime.c) defines with SXN_SYS_EXIT. Each
+ * child must end with its own status. POSIX EXIT is ENOSYS here: through it,
+ * the call came back and the hlt after it ended every case with #GP,
+ * 128 + 13. */
+static void test_runtime_exit(void) {
+    static const struct {
+        const char* mode;
+        int status;
+    } cases[] = {
+        {"return-main", 21},
+        {"libc-exit", 22},
+        {"stack-check", 134},
+    };
+    char* child_argv[2];
+    long index;
+
+    child_argv[0] = "/bin/nativetest.sxe";
+    for (index = 0; index < (long)(sizeof(cases) / sizeof(cases[0])); ++index) {
+        int status = -1;
+        long child;
+
+        child_argv[1] = (char*)cases[index].mode;
+        child = sxn_spawn("/bin/nativetest.sxe", child_argv, 2);
+        check(child > 0);
+        if (child > 0) {
+            check(sxn_waitpid(child, &status) == child && status == cases[index].status);
+        }
+    }
+    check(sxn_log("nativetest: runtime exit done") == 0);
 }
 
 static void test_code32(void) {
@@ -2717,6 +2753,15 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "syscall-trap")) {
         syscall_trap_child();
     }
+    if (argc > 1 && streq(argv[1], "return-main")) {
+        return 21;
+    }
+    if (argc > 1 && streq(argv[1], "libc-exit")) {
+        exit(22);
+    }
+    if (argc > 1 && streq(argv[1], "stack-check")) {
+        __stack_chk_fail();
+    }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
     if (argc > 1 && streq(argv[1],"audio-preferences")) {
@@ -3445,6 +3490,7 @@ int main(int argc, char** argv) {
     test_system_time();
     test_code32();
     test_syscall_trap();
+    test_runtime_exit();
     test_threads(&info);
     test_thread_bases();
     test_address_waits();

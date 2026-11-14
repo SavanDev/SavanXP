@@ -290,9 +290,7 @@ long wd_kill(int pid, int signal_number)
     return sxn_terminate(pid, 128 + signal_number);
 }
 
-/* crt0 would end the process through POSIX EXIT, which a native process does
- * not have. */
 int main(int argc, char **argv)
 {
-    sxn_exit(windowd_main(argc, argv));
+    return windowd_main(argc, argv);
 }

@@ -502,7 +502,7 @@ services need:
 | Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
 | Process termination and query | `sessiond` (ending the session), `windowd` (whether a client lives, its parent, its name) | done: ending a child (slice 16), querying any process (slice 18) |
 | POSIX access to the native object calls | POSIX clients | done (slice 15) |
-| A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit; the heap is done ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)) |
+| A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | done: the runtime's heap pages and `exit` are replaced by native ones ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)) |
 | Files | `desktop`, `progman` | missing, and not needed by the services |
 
 The graphics libraries are cheap to bring along. SXGFX (`gfx2d.c`) needs only

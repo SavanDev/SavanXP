@@ -328,6 +328,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A SUN program can return from `main`, call `exit` or `abort`, or fail an `assert`, and it ends with that status
+  instead of a #GP (status 141).** The runtime ends every process through `sx_process_exit`, which the native runtime defines with
+  `sxn_exit`. See [NATIVE_HEAP.md](docs/userland/NATIVE_HEAP.md).
+
 - **Win32 windows lay out as on Windows XP: fonts report Windows XP's heights (the System font's 16 pixels), a child's
   `WS_BORDER` is drawn, a disabled window's menu bar turns grey, and F1 sends `WM_HELP`.** See
   [WIN32.md](docs/userland/WIN32.md#user32-and-gdi32).

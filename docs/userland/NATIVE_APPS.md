@@ -19,8 +19,10 @@ the closest Win32 counterpart of each call are in [SUN.md](SUN.md).
   and `SXN_SYS_SPAWN_EX` gives it exactly the handles a request names; the
   POSIX spawn takes stdio only.
 - Errors are `-errno` (`savanxp_error_code`), same values as POSIX.
-- `main` must never return: the stock `crt0` falls through to a POSIX
-  EXIT that is `ENOSYS` for native. Every example ends in `sxn_exit`.
+- `main` may return, call `exit` or `abort`, or fail an `assert`: the native
+  runtime ends the process with `sxn_exit` and that status
+  ([NATIVE_HEAP.md](NATIVE_HEAP.md), the process's end). `sxn_exit` itself
+  works from anywhere.
 
 ## The headers
 
@@ -82,8 +84,8 @@ native too, but they are not programs of the POSIX subsystem: they live in
 `system/<service>/` and `cmake/SystemServices.cmake` registers them with
 `savanxp_system_service`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
-functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
-in `sxn_exit`. Six are:
+functions) work unchanged, and the native runtime replaces the heap's pages
+and the process's end -- but any other POSIX call is `ENOSYS`. Six are:
 
 - `compositord`: the GPU through `SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, the
   display memory a section it creates, and a port of its own that `windowd`

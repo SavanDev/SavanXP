@@ -3406,8 +3406,6 @@ static int run_window(void)
 
 int main(int argc, char **argv)
 {
-    /* A SUN program never returns from main: the stock crt0 would fall
-     * through to a POSIX exit, which is ENOSYS here. */
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
         sxn_exit(selftest());

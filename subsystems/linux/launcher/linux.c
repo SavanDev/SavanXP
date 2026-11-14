@@ -84,7 +84,5 @@ int main(int argc, char **argv) {
         put("linux: lost the program\n");
         sxn_exit(127);
     }
-    /* A SUN program ends with sxn_exit: returning from main is not a native
-     * exit. */
-    sxn_exit(status);
+    return status;
 }

@@ -100,6 +100,9 @@ long unmap_view(void* base);
  * 0. unmap: what one map returned, with the same `bytes`. */
 void* sx_heap_pages_map(size_t bytes);
 void sx_heap_pages_unmap(void* base, size_t bytes);
+/* How exit() ends the process, the same way: weak and POSIX in the runtime,
+ * SXN_SYS_EXIT in the native one. Never returns. */
+void sx_process_exit(int code) __attribute__((noreturn));
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
  * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */
 long pipe_send_handle(int pipe_fd, int handle);

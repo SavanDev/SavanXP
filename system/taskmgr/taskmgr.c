@@ -2673,8 +2673,6 @@ int main(int argc, char **argv)
 {
     struct sxn_native_info info;
 
-    /* A SUN program never returns from main: the stock crt0 would fall
-     * through to a POSIX exit, which is ENOSYS here. */
     if (sxn_info(&info) == 0)
     {
         g_self_pid = info.pid;

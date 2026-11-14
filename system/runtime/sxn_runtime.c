@@ -10,10 +10,14 @@
  * services use through savanxp_system_service, and tools/build-user.sh
  * --native -- and into nothing else.
  *
- * Today it is the heap's page source (docs/userland/NATIVE_HEAP.md): the
- * allocator in runtime/posix.c grows by arenas from sx_heap_pages_map, whose
- * runtime definitions are weak and POSIX. These strong ones do the same with
- * the native calls, so a native program has the one allocator, whole.
+ * Each piece is a runtime hook whose definition there is weak and POSIX, and
+ * whose strong one here does the same with the native calls:
+ *
+ * - The heap's page source (docs/userland/NATIVE_HEAP.md): the allocator in
+ *   runtime/posix.c grows by arenas from sx_heap_pages_map, so a native
+ *   program has the one allocator, whole.
+ * - How the process ends, sx_process_exit: exit() calls it, and so do crt0
+ *   when main returns, _exit, abort and __stack_chk_fail.
  */
 
 /* The contract (savanxp/libc.h): `bytes` (a multiple of 4 KiB) of zeroed,
@@ -42,4 +46,10 @@ void sx_heap_pages_unmap(void* base, size_t bytes)
 {
     (void)bytes;
     (void)sxn_unmap_view((uint64_t)(uintptr_t)base);
+}
+
+/* The process ends with `code` as its status; every thread goes with it. */
+__attribute__((noreturn)) void sx_process_exit(int code)
+{
+    sxn_exit(code);
 }

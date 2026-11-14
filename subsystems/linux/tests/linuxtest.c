@@ -250,7 +250,5 @@ int main(int argc, char **argv) {
     test_refusals();
 
     say(g_failures == 0 ? "LINUX TEST PASS" : "LINUX TEST FAIL", "", "");
-    /* A SUN program ends with sxn_exit: returning from main is not a native
-     * exit. */
-    sxn_exit(g_failures == 0 ? 0 : 1);
+    return g_failures == 0 ? 0 : 1;
 }

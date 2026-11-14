@@ -1404,7 +1404,5 @@ int main(int argc, char **argv)
     if (cursor_port >= 0) (void)sxn_close(cursor_port);
     for (control_index = 0; control_index < 4; ++control_index) cursor_control_close(&cursor_clients[control_index]);
     (void)sxn_close(port);
-    /* Never return: crt0 would end the process through POSIX EXIT, which a
-     * native process does not have. */
-    sxn_exit(0);
+    return 0;
 }

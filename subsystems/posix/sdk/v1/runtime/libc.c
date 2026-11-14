@@ -732,11 +732,20 @@ long savanxp_getcwd(char* buffer, size_t count) {
     return syscall2(SAVANXP_SYS_GETCWD, (unsigned long)buffer, (unsigned long)count);
 }
 
-void exit(int code) {
+/* The POSIX ending of the process. Weak: the native runtime
+ * (system/runtime/sxn_runtime.c) defines it with SXN_SYS_EXIT, since a native
+ * process has no POSIX calls (savanxp/libc.h). */
+__attribute__((weak, noreturn)) void sx_process_exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {
         asm volatile("hlt");
     }
+}
+
+/* Every way the runtime ends a process comes here: crt0 when main returns,
+ * _exit, abort, a failed assert and __stack_chk_fail. */
+void exit(int code) {
+    sx_process_exit(code);
 }
 
 int result_is_error(long result) {

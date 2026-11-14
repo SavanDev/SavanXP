@@ -47,10 +47,12 @@ _start:
      * through argv[0] to publish its presentation. */
     movq %rdi, sx_program_argc(%rip)
     movq %rsi, sx_program_argv(%rip)
+    /* Returning from main is calling exit with its value (C11 5.1.2.2.3).
+     * exit chooses the subsystem's own call: a native program has no POSIX
+     * EXIT. main returns an int, so the status is in %eax. */
     call main
-    movq %rax, %rdi
-    movq $7, %rax
-    int $0x80
+    movl %eax, %edi
+    call exit
 1:
     hlt
     jmp 1b

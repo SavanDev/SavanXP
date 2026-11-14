@@ -65,8 +65,16 @@ ones -- and into nothing else. Being strong, its definitions win over the
 runtime's weak ones at link time; the runtime is an object library, not an
 archive, so a strong definition is the only way to replace one of its
 functions. It is the place for the rest of the native runtime as it is
-needed: the next candidate is `crt0` ending a native process with `sxn_exit`
-when `main` returns, which today every native program has to do itself.
+needed.
+
+**The process's end is the second hook.** `exit()` calls `sx_process_exit`,
+weak in the runtime with POSIX `EXIT` and strong in `sxn_runtime.c` with
+`sxn_exit`. Every way the runtime ends a process goes through `exit()`:
+`crt0` when `main` returns, `_exit`, `abort`, a failed `assert` and
+`__stack_chk_fail`. In a native process, POSIX `EXIT` is `ENOSYS`: before
+the hook the call came back, the `hlt` after it raised #GP in ring 3, and the
+process ended with status 141 whatever it had asked for. `nativetest` checks
+that returning from `main`, `exit` and `__stack_chk_fail` give their own.
 
 Not chosen:
 
