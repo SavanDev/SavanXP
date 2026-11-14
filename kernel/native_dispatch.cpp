@@ -94,7 +94,7 @@ int native_read(Thread& self, uint64_t handle, uint64_t user_buffer, size_t coun
     return kBlockedResult;
 }
 
-int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
+int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count, bool may_block = true) {
     Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_write);
     if (file == nullptr || (file->open_flags & open_write) == 0) {
@@ -121,7 +121,7 @@ int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t cou
         return sx::negative_error(SX_EBADF);
     }
 
-    const bool nonblocking = (file->open_flags & open_nonblock) != 0;
+    const bool nonblocking = !may_block || (file->open_flags & open_nonblock) != 0;
     // Records up to the pipe's capacity are written whole or not at all, so a
     // reader of fixed-size records never sees half of one.
     if (nonblocking && count <= detail::kPipeCapacity && file->pipe->reader_refs != 0 &&
@@ -1014,8 +1014,12 @@ int native_pipe_receive_handle(Process& proc, uint64_t pipe_handle) {
 
 } // namespace
 
-int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
-    return native_write(self, handle, user_buffer, count);
+int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count, bool may_block) {
+    return native_write(self, handle, user_buffer, count, may_block);
+}
+
+bool handle_is_open(const Process& proc, uint64_t handle) {
+    return handle < kMaxFileHandles && proc.handles[handle].object != nullptr;
 }
 
 // El subsistema nativo declara su estado privado por proceso como cualquier

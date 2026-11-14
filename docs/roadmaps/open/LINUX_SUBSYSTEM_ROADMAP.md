@@ -1,7 +1,8 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1 and L1 closed (2026-11-14): a static, libc-free Linux
-> executable runs unchanged.** What is built is described in
+> **Status: L0, E1 and L1 closed, S2a built and L2 half done (2026-11-14):
+> a static musl program starts, uses thread-local data and its heap, and
+> prints, unchanged.** What is built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
 > measured first profile is
@@ -374,6 +375,13 @@ Rules that hold for all of them:
   Linux layer, with host tests of the region list and guest fixtures. A SUN
   call for memory regions is not added until a native program needs one.
 
+**S2a built on 2026-11-14** ([MEMORY_REGIONS.md](../../kernel/MEMORY_REGIONS.md)).
+What the plan did not say: musl's `malloc` puts a `PROT_NONE` guard page with
+`MAP_FIXED` over the first page of the break, so S2a already needed a fixed
+mapping that replaces, inside regions; replacing anything else stays S2b's.
+Pages an unmap frees while another core holds the space wait for its flush,
+as section references do.
+
 ### P1 — the pointer position for a desktop client
 
 Size S, in `windowd` and `sxnwm.h`, not in the kernel. A client may ask for
@@ -462,6 +470,12 @@ returned, and file create, read, seek, status and close, against Linux,
 including short reads and errors. A file written by a fixture is read back
 after a guest restart. The region list has host tests for splitting, merging,
 overlap and overflow.
+
+**Memory half built on 2026-11-14:** S2a, `arch_prctl`, `set_tid_address`,
+`writev` and `ioctl`, with the region list's host tests and the `regions`,
+`args`, `tls` and `heap` fixtures against Linux, free memory checked after
+`heap`. `regions` is a libc-free fixture the plan did not have: the edges of
+anonymous memory that musl's own use never reaches. Files and clocks remain.
 
 ### L3 — a bounded static tool set
 

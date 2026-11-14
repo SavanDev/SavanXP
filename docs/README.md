@@ -29,6 +29,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`USER_ADDRESS_SPACE.md`](kernel/USER_ADDRESS_SPACE.md) — the user half's layout
   (floor, image, views, stack, kernel boundary): why the floor is `0x10000`
   and why SDK programs load at `0x400000`.
+- [`MEMORY_REGIONS.md`](kernel/MEMORY_REGIONS.md) — anonymous memory regions (S2a): the
+  region list, first-touch pages, map, unmap, remap and the program break,
+  and freeing pages another core may still reach.
 - [`SECTIONS.md`](kernel/SECTIONS.md) — section objects and views: the grant model,
   execution as a view permission, W^X, the view and section budgets, and where
   shared library images belong.

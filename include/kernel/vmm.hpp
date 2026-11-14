@@ -9,6 +9,10 @@ namespace object {
 struct SectionObject;
 }
 
+namespace region {
+struct List;
+}
+
 namespace vm {
 
 // The lowest user address the kernel accepts, for every subsystem: pointers,
@@ -43,6 +47,15 @@ constexpr uint64_t kUserStackGuardBottom =
     kUserStackBottom - (kUserStackGuardPages * kPageSizeBytes);
 
 constexpr uint64_t kSectionViewBase = 0x0000001000000000ULL;
+
+// Anonymous regions (docs/kernel/MEMORY_REGIONS.md): where one goes when its
+// caller does not choose, the lowest free range from here up to the stack's
+// guard page. Above the section views' window, so the two rarely meet; when
+// they do, each avoids the other.
+constexpr uint64_t kRegionBase = 0x0000002000000000ULL;
+// Regions of one address space. Adjacent regions with the same access are
+// one, so a heap that maps and unmaps blocks stays far below it.
+constexpr uint32_t kMaxRegions = 4096;
 
 /* View slots PER PROCESS.
  *
@@ -94,6 +107,13 @@ struct VmSpace {
     uint64_t* pml4_virtual;
     uint64_t next_section_base;
     SectionView section_views[kMaxSectionViews];
+    // The anonymous regions, from the kernel heap on first use: nullptr in
+    // a space that never had one, which is every space but a Linux
+    // program's today.
+    region::List* regions;
+    // The page-aligned end of the highest segment of the image loaded into
+    // the space: where a program break begins. 0 before a load.
+    uint64_t image_end;
 };
 
 void initialize(const boot::BootInfo& boot_info);
@@ -149,6 +169,62 @@ uint64_t* physical_to_virtual(uint64_t physical_address);
 bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags);
 bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
+
+/* --- Anonymous regions (S2a, docs/kernel/MEMORY_REGIONS.md) ------------------
+ *
+ * A region is a page range with an access (region::kRead, kWrite, kExecute)
+ * and nothing behind it. Its pages appear zeroed on first touch: from the page
+ * fault handler, or from a kernel access to user memory. The list is
+ * region_list.hpp; these do the page work around it. Writable and executable
+ * at once is refused, as everywhere else. Every range is page aligned. */
+
+enum class RegionPlacement : uint8_t {
+    // At `address` when that range is free (a hint; 0 is none), otherwise the
+    // lowest free range from kRegionBase.
+    anywhere,
+    // At `address` or nowhere: anything already in the range refuses it.
+    exact,
+    // At `address`, taking out the regions there first. A mapping that is not
+    // a region (the image, the stack, a view) refuses it.
+    replace,
+};
+
+enum class RegionStatus : uint8_t {
+    ok,
+    // Unaligned, empty, wrapping, outside the user range, or writable and
+    // executable.
+    invalid,
+    // No free range that size, the list is full, or no memory for the pages'
+    // bookkeeping.
+    no_memory,
+    // `exact` over something already there.
+    occupied,
+    // The range holds a mapping that is not a region.
+    foreign,
+    // A remap of a range that is not inside one region.
+    not_mapped,
+};
+
+// A new region of `size` bytes. `address` is the hint or the place, and the
+// result on success.
+RegionStatus map_region(VmSpace& space, uint64_t& address, uint64_t size, uint8_t access,
+                        RegionPlacement placement);
+// Takes [address, address + size) out of every region it overlaps and frees
+// the pages that were there. A range that holds no region is not an error; one
+// that holds a mapping that is not a region is `foreign`, and nothing changes.
+RegionStatus unmap_regions(VmSpace& space, uint64_t address, uint64_t size);
+// Resizes [address, address + old_size), which must lie inside one region. A
+// shrink frees the tail; a growth takes the range after it when that is free,
+// otherwise, with `may_move`, moves the pages to a free range of the new
+// size, the page table entries and not their contents. `new_address` is
+// where it ended.
+RegionStatus remap_region(VmSpace& space, uint64_t address, uint64_t old_size, uint64_t new_size,
+                          bool may_move, uint64_t& new_address);
+// Maps the page of a region that holds `address`, zeroed, when the region
+// allows the access (`write`, `execute`, otherwise a read). True when the
+// page is there now. The page fault handler and is_user_range_accessible call
+// it.
+bool fault_in_region(VmSpace& space, uint64_t address, bool write, bool execute);
 
 /* --- TLB coherence across cores ----------------------------------------------
  *

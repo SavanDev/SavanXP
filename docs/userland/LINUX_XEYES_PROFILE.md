@@ -136,6 +136,7 @@ different bytes, so each output below belongs to the hash it was taken from
 | `hello` | L1 | `fixtures/hello/hello.S`, libc-free | `c2ce81d483393b87157d3b6dc7a32831939fd43773eb9fdd44a1202b676bb28d` |
 | `startup` | L1 | `fixtures/startup/`, libc-free | `83a592b9845b0c28dd44399c7234e0886a20c987f902b5586346e3040e55c363` |
 | `errors` | L1 | `fixtures/errors/errors.c`, libc-free, added at L1 | `0537105d6352e4bbb65273bc1fd029400fff33986239bcc54886a49f1a3bdcbd` |
+| `regions` | L2 | `fixtures/regions/regions.c`, libc-free, added at L2 | `d0ec2cbf9570b154f4e4018cd6340f10511db1dbc6a90f274b992d6e05052c2f` |
 | `args` | L2 | `fixtures/static/args.c`, static musl | `46383c68f2514a4fc135a78a8f607ff7798fe64f70a507d49176122f0f6655da` |
 | `tls` | L2 | `fixtures/static/tls.c` | `82f7cb63a08006160472ab1c77c3bb2306c5e183a4db58a9977f2ac0ac89f80e` |
 | `heap` | L2 | `fixtures/static/heap.c` | `67ac5b36bba61500ae2dfd6881e2bd7d8527e0bbc3df20cfc8afb5c58940b1f1` |
@@ -173,6 +174,7 @@ the X request logs (`.x11`), and the screenshots under `screens/`. The runs:
 | `hello` | `/fixtures/hello` | 7 | `hello` |
 | `startup` | `env -i A=1 B=two /fixtures/startup x 'y z'` | 3 | as above |
 | `errors` | `/fixtures/errors` | 0 | five lines ending in `ok`: `-EFAULT`, a zero-byte write, `-EBADF`, `-ENOSYS` for call 1000 and for `int 0x80` |
+| `regions` | `/fixtures/regions` | 0 | one value per case of anonymous memory at its edges: holes, `MAP_FIXED` over touched pages, `mremap` in place, blocked and moving, `brk` up and down, argument errors; one line holds the NUL byte of an untouched page |
 | `args` | `env -i A=1 B=two /fixtures/args x 'y z'` | 3 | argv, envp, `getenv` |
 | `tls` | `/fixtures/tls` | 0 | `tls ok` |
 | `heap` | `/fixtures/heap` | 0 | checksums from 1 byte to 6 MiB, `realloc` to 4 MiB |
@@ -205,15 +207,15 @@ except in the two `chroot` runs, where BusyBox's `chroot` executes `jq`.
 
 | Call | L1 | L2 | L3 | L4 | L5 start | L5 loop | L6 start | L6 loop |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `write` | 2000082 | 3 | 2 | 1 |  |  |  |  |
+| `write` | 2000082 | 159 | 2 | 1 |  |  |  |  |
 | `exit` | 1 |  |  |  |  |  |  |  |
-| `exit_group` | 2 | 7 | 7 | 3 |  | 1 |  | 1 |
+| `exit_group` | 2 | 8 | 7 | 3 |  | 1 |  | 1 |
 | `arch_prctl` |  | 7 | 7 | 2 | 1 |  | 1 |  |
 | `set_tid_address` |  | 7 | 7 | 2 | 1 |  | 1 |  |
-| `brk` |  | 3 | 8 | 7 | 2 |  | 3 |  |
-| `mmap` |  | 39 | 10 | 342 | 27 | 2 | 89 |  |
-| `munmap` |  | 37 | 5 | 324 |  | 3 | 2 |  |
-| `mremap` |  | 2 |  |  |  |  |  |  |
+| `brk` |  | 8 | 8 | 7 | 2 |  | 3 |  |
+| `mmap` |  | 48 | 10 | 342 | 27 | 2 | 89 |  |
+| `munmap` |  | 42 | 5 | 324 |  | 3 | 2 |  |
+| `mremap` |  | 8 |  |  |  |  |  |  |
 | `open` |  | 5 | 5 | 18 | 19 |  | 70 |  |
 | `read` |  | 8 | 2 | 5 | 6 |  | 91 |  |
 | `writev` |  | 13 | 4 | 27 |  | 121 | 17 | 42 |
@@ -265,6 +267,7 @@ past L6.
 | --- | --- | --- |
 | L2 | `mmap` | anonymous `PROT_READ\|PROT_WRITE`, `MAP_PRIVATE\|MAP_ANONYMOUS`, no address; and one `PROT_NONE` `MAP_FIXED` anonymous page at a hint |
 | L2 | `mremap` | `MREMAP_MAYMOVE`, growing a block (musl's `realloc` above its mmap threshold: 260 KiB to 1 MiB to 4 MiB) |
+| L2 | `mmap`, `munmap`, `mremap`, `brk` | The `regions` fixture adds the edges on purpose: holes, fixed mappings over touched pages, growth in place and refused, shrinking, the break going down, and the argument errors |
 | L2 | `ioctl` | `TIOCGWINSZ` and `TCGETS`, both answered `ENOTTY` (the output is not a terminal) |
 | L2 | `open` | `O_RDONLY`, and `O_WRONLY\|O_CREAT\|O_TRUNC` with mode `0644`; `O_LARGEFILE` always set |
 | L3 | `open` | `O_RDONLY\|O_CLOEXEC\|O_DIRECTORY` for `ls`; `getdents64` with a 2 KiB buffer |

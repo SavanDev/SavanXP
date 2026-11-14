@@ -422,8 +422,13 @@ bool copy_spawn_arguments(const Process& proc, const SavedContext& context, char
 bool copy_spawn_strings(const Process& proc, uint64_t user_array, int count, SpawnArguments& strings);
 // The native write on handle `handle`, published for the Linux layer: the
 // byte count, a negative error, or kBlockedResult when the thread parked on a
-// pipe (the waker completes the call, as for SXN_SYS_WRITE).
-int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count);
+// pipe (the waker completes the call, as for SXN_SYS_WRITE). Without
+// `may_block` it never parks: a full pipe gives what fit, or -EAGAIN, as for a
+// non-blocking handle.
+int native_write_handle(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count,
+                        bool may_block = true);
+// Whether `proc` has a handle numbered `handle`, of any kind and access.
+bool handle_is_open(const Process& proc, uint64_t handle);
 // SSL's guest tree: `guest`, an absolute path a Linux program names, as the
 // path of the file under /system/linux. `..` never climbs above the guest
 // root. False for a relative or too long path.
@@ -476,11 +481,16 @@ uint32_t live_thread_count(const Process& proc);
 // it will never run user code again. True with the code it will end with.
 bool exit_pending(const Process& proc, int& exit_code);
 void terminate_current_from_exception(uint8_t vector);
-// Atiende un #PF del proceso actual que caiga adentro de la region reservada
-// del stack: mapea la pagina que falta y devuelve true para que se reintente la
-// instruccion. Fuera de la region -- por ejemplo en la pagina de guarda --
-// devuelve false y el fault sigue su camino, que termina matando al proceso.
+// Serves a #PF of the current process inside the stack's reserved range: maps
+// the missing page and returns true so the instruction is retried. Outside the
+// range -- in the guard page, for one -- it returns false and the fault goes
+// on, which ends the process.
 bool grow_user_stack(uint64_t fault_address);
+// A not-present #PF of the current process inside one of its anonymous
+// regions (vm::fault_in_region): maps the page, zeroed, when the region allows
+// the access the error code describes, and returns true so the instruction is
+// retried. False otherwise, and the fault ends the process.
+bool fault_in_user_region(uint64_t fault_address, uint64_t error_code);
 SavedContext* handle_syscall(SavedContext* context);
 // An invalid opcode from ring 3: a `syscall` instruction for a subsystem with
 // a trap dispatcher, dispatched like handle_syscall; anything else ends the

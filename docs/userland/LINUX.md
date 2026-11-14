@@ -5,10 +5,11 @@ rejected and the phases still ahead are in the
 [roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md); the measured scope of
 the first profile is in [LINUX_XEYES_PROFILE.md](LINUX_XEYES_PROFILE.md).
 
-**Built so far: E1, the `syscall` trap, and L1 with S1: a static, libc-free
-Linux executable runs unchanged, started by the `linux` launcher.** It can
-write to its standard descriptors and exit; every other call answers
-`-ENOSYS`.
+**Built so far: E1, the `syscall` trap; L1 with S1, a static, libc-free
+Linux executable runs unchanged, started by the `linux` launcher; and the
+memory half of L2 with S2a: a static musl program starts, uses its
+thread-local data and its heap, and prints.** Files and clocks are the rest
+of L2. Every call not below answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -136,9 +137,15 @@ registers, for `subsystem::Id::linux`:
 
 | Registration | What it does today |
 | --- | --- |
-| Trap dispatcher, `dispatch_linux_syscall` | `write`, `exit` and `exit_group` (below). Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
+| Trap dispatcher, `dispatch_linux_syscall` | The calls below. Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
 | Ordinary dispatcher, `dispatch_linux_int80` | `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: always `-ENOSYS` |
-| Per-process state | A bitmap of the numbers already reported (512 bits) |
+| Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break |
+| Per-thread state | `set_tid_address`'s pointer |
+
+A call SSL has, asked for a variant it does not offer (a shared mapping, a
+file mapping, an `arch_prctl` code other than `ARCH_SET_FS`), fails with its
+Linux error and is logged once per call per process:
+`linux: pid=N syscall M: unsupported WHAT`.
 
 Linux numbers and error values are written in `linux_abi.hpp` from the Linux
 ABI, under `ssl::abi`. Nothing there comes from the POSIX SDK.
@@ -148,6 +155,14 @@ ABI, under `ssl::abi`. Nothing there comes from the POSIX SDK.
 | Call | What it does |
 | --- | --- |
 | `write` (1) | Descriptors 0, 1 and 2 are the process's handles of the same numbers, the ones the spawn gave. Any other is `-EBADF`, until the descriptor table of L2. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
+| `writev` (20) | The same descriptors. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
+| `ioctl` (16) | `-ENOTTY` on a standard descriptor, whatever the request: no descriptor is a terminal yet. That is Linux's answer for a file or a pipe to `TCGETS` and `TIOCGWINSZ`, the two musl asks. `-EBADF` otherwise |
+| `mmap` (9) | Private anonymous memory, an anonymous region of S2a ([MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md)). `MAP_FIXED` replaces the regions in the range; `MAP_FIXED_NOREPLACE` is `-EEXIST` over anything. A hint is taken when free. `MAP_DENYWRITE`, `MAP_EXECUTABLE`, `MAP_NORESERVE` and `MAP_STACK` change nothing here, as on Linux; another flag is refused. A shared mapping is `-EINVAL`, a file mapping `-ENODEV` (S2b, L4), writable and executable memory `-EACCES` (W^X, a recorded difference from Linux), and a fixed mapping over memory that is not a region `-EINVAL` |
+| `munmap` (11) | Takes the range out of the regions and frees its pages. A range with no region is 0; one with memory that is not a region is `-EINVAL` |
+| `mremap` (25) | Inside one region: shrinks in place, grows in place when the pages after it are free, otherwise moves with `MREMAP_MAYMOVE` (`-ENOMEM` without). Outside one region `-EFAULT`. `MREMAP_FIXED` and `MREMAP_DONTUNMAP` are refused |
+| `brk` (12) | The break starts at the end of the image (`VmSpace::image_end`); growing maps a region exactly after it, shrinking unmaps. It answers where the break is, the old place when it could not move, as Linux's does |
+| `arch_prctl` (158) | `ARCH_SET_FS` sets the thread's FS base, musl's thread pointer; an address outside the user half is `-EPERM`. Other codes are refused |
+| `set_tid_address` (218) | Keeps the pointer and answers the thread id, which is the process id: a Linux process has one thread until `clone` (L7) |
 | `exit` (60) | Ends the calling thread with `status & 0xff`. The last thread ends the process, which with one thread is always |
 | `exit_group` (231) | Ends the process with `status & 0xff` |
 
@@ -165,8 +180,8 @@ that execute `syscall` with RAX set to 1, Linux's `write`. Each must end with
 status 128 + 6, and none may write. It runs on 1, 2 and 4 virtual CPUs
 (`./build.sh smoke native-test --smp N`).
 
-**L1, `linux-hello`.** `linuxtest` (`subsystems/linux/tests/linuxtest.c`), a
-SUN parent, runs three fixtures through the launcher with standard output on
+**L1 and L2, `linux-hello`.** `linuxtest` (`subsystems/linux/tests/linuxtest.c`), a
+SUN parent, runs each fixture through the launcher with standard output on
 a pipe. It compares the bytes and the exit status with what Linux gave for
 the same files, recorded by `subsystems/linux/profile/profile.sh`:
 
@@ -175,6 +190,10 @@ the same files, recorded by `subsystems/linux/profile/profile.sh`:
 | `hello` | `hello`, status 7 |
 | `startup` | argv, the environment from `-e`, all registers zero at entry, RSP aligned, the thirteen auxiliary entries right, two million `write` calls with every preserved register intact (including XMM0, XMM7 and XMM15), RCX and R11 as `syscall` leaves them, status 3 from `exit_group` |
 | `errors` | `-EFAULT`, a zero-byte write from a bad address, `-EBADF`, `-ENOSYS` for a number Linux lacks, and `-ENOSYS` from `int 0x80` |
+| `regions` | Anonymous memory at its edges, libc-free: a hole punched in touched pages, `MAP_FIXED` over touched pages reading zero again, one `munmap` across pieces and a hole, the kernel reading an untouched page and refusing a `PROT_NONE` one, `mremap` in place, blocked and moving, shrinking, `brk` up, down and up again, and the argument errors. It prints values, not verdicts: Linux's output is the reference |
+| `args` | Static musl: argv and the environment through musl's start-up, `getenv` |
+| `tls` | Thread-local data of the main thread: initialized, zeroed and 64-byte aligned, written, and `%fs:0` pointing at itself |
+| `heap` | `malloc` from one byte to 6 MiB, three rounds, and `realloc` to 4 MiB: `brk`, a guard page `MAP_FIXED` over the break, `mmap`, `munmap` and `mremap` moving. Then `linuxtest` checks that free memory came back within 1 MiB: an unmapped page lost would not come back even when the program exits |
 
 Then it asks the kernel to start what it must refuse, and checks that the
 process count did not change: a bad header, an image cut after its ELF
@@ -184,7 +203,11 @@ environment, and an unknown subsystem.
 
 The fixtures are built by `subsystems/linux/Linux.cmake` with the same
 commands `profile.sh` uses, and `linux-fixture-hash-test` checks that they are
-the files the references came from. The damaged images are made from `hello`
+the files the references came from. The static musl ones link against the
+pinned `musl-dev` of the profile's Alpine root, which `profile.sh setup`
+fetches by hash; `SAVANXP_LINUX_MUSL_ROOT` points at it
+(`build/linux-profile/root` by default). Without it they are not built, and
+`linuxtest` reports each as skipped. The damaged images are made from `hello`
 by `subsystems/linux/profile/damage.py`. Test images get all of them, with
 the references, under `/system/linux/fixtures`.
 

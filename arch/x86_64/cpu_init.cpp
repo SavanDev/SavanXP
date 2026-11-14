@@ -592,14 +592,16 @@ void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code
             smp::unlock_kernel();
             stop_on_exception(vector, frame, error_code, has_error_code);
         }
-        // #PF de no-presente adentro de la region del stack: se mapea la pagina
-        // que falta y se reintenta la instruccion. El bit 0 del codigo de error
-        // distingue "la pagina no esta" de "esta pero el acceso no se permite";
-        // solo el primero se puede resolver creciendo el stack.
+        // A not-present #PF inside the stack's reserved range or inside an
+        // anonymous region: the missing page is mapped and the instruction
+        // retried. Bit 0 of the error code tells "the page is not there" from
+        // "it is, but the access is not allowed"; only the first is resolved
+        // by making the page.
         const bool not_present = has_error_code && (error_code & 0x1) == 0;
-        if (vector == 14 && not_present && process::grow_user_stack(read_cr2())) {
-            // Se vuelve al mismo proceso sobre la misma pila: soltar aca no
-            // tiene el problema que resuelve el stub de context.S.
+        if (vector == 14 && not_present &&
+            (process::grow_user_stack(read_cr2()) || process::fault_in_user_region(read_cr2(), error_code))) {
+            // Back to the same process on the same stack: releasing the lock
+            // here does not have the problem the context.S stub solves.
             smp::unlock_kernel();
             return;
         }

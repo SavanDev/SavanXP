@@ -16,13 +16,63 @@ namespace ssl::abi {
 
 // System call numbers.
 constexpr uint64_t kSysWrite = 1;
+constexpr uint64_t kSysMmap = 9;
+constexpr uint64_t kSysMunmap = 11;
+constexpr uint64_t kSysBrk = 12;
+constexpr uint64_t kSysIoctl = 16;
+constexpr uint64_t kSysWritev = 20;
+constexpr uint64_t kSysMremap = 25;
 constexpr uint64_t kSysExit = 60;
+constexpr uint64_t kSysArchPrctl = 158;
+constexpr uint64_t kSysSetTidAddress = 218;
 constexpr uint64_t kSysExitGroup = 231;
 
 // Errors, returned negated in RAX.
+constexpr int64_t kEPERM = 1;
 constexpr int64_t kEBADF = 9;
+constexpr int64_t kENOMEM = 12;
+constexpr int64_t kEACCES = 13;
 constexpr int64_t kEFAULT = 14;
+constexpr int64_t kEEXIST = 17;
+constexpr int64_t kENODEV = 19;
+constexpr int64_t kEINVAL = 22;
+constexpr int64_t kENOTTY = 25;
 constexpr int64_t kENOSYS = 38;
+
+// The most one read or write moves (MAX_RW_COUNT): a page short of 2 GiB.
+constexpr uint64_t kMaxRwCount = 0x7ffff000;
+
+// mmap and mremap (include/uapi/asm-generic/mman-common.h, mman.h).
+constexpr uint64_t kProtRead = 0x1;
+constexpr uint64_t kProtWrite = 0x2;
+constexpr uint64_t kProtExec = 0x4;
+// Accepted and meaningless on x86, as on Linux.
+constexpr uint64_t kProtSem = 0x8;
+constexpr uint64_t kMapShared = 0x01;
+constexpr uint64_t kMapPrivate = 0x02;
+constexpr uint64_t kMapSharedValidate = 0x03;
+constexpr uint64_t kMapType = 0x0f;
+constexpr uint64_t kMapFixed = 0x10;
+constexpr uint64_t kMapAnonymous = 0x20;
+constexpr uint64_t kMapDenyWrite = 0x0800;
+constexpr uint64_t kMapExecutable = 0x1000;
+constexpr uint64_t kMapNoReserve = 0x4000;
+constexpr uint64_t kMapStack = 0x20000;
+constexpr uint64_t kMapFixedNoReplace = 0x100000;
+constexpr uint64_t kMremapMayMove = 1;
+constexpr uint64_t kMremapFixed = 2;
+constexpr uint64_t kMremapDontUnmap = 4;
+
+// arch_prctl (arch/x86/include/uapi/asm/prctl.h).
+constexpr uint64_t kArchSetFs = 0x1002;
+
+// The vectors of readv and writev (UIO_MAXIOV), each a struct iovec.
+constexpr uint64_t kIovMax = 1024;
+struct Iovec {
+    uint64_t base;
+    uint64_t length;
+};
+static_assert(sizeof(Iovec) == 16, "struct iovec is two 64-bit words");
 
 // Every number the subsystem tracks fits below this; the tables in
 // syscall_64.tbl stop well before it.

@@ -643,6 +643,16 @@ bool load_user_image(
         return false;
     }
 
+    // Where a program break begins: the end of the highest segment, on a page
+    // (vm::VmSpace::image_end).
+    uint64_t highest_end = 0;
+    for (size_t index = 0; index < segment_count; ++index) {
+        if (segment_ends[index] > highest_end) {
+            highest_end = segment_ends[index];
+        }
+    }
+    address_space.image_end = highest_end;
+
     for (size_t index = 0; index < segment_count; ++index) {
         const ProgramHeader& program = segments[index];
         /* La pagina compartida por dos segmentos necesita la union de los

@@ -30,6 +30,13 @@ They generate a deterministic virtual microphone through the ALSA file/null
 plugins, without accessing the host microphone or speakers. The normal build
 and other smoke scenarios do not require ALSA.
 
+The static musl fixtures of the Linux subsystem link against the pinned
+Alpine root that `subsystems/linux/profile/profile.sh setup` fetches by hash
+(it needs `bwrap` and `curl`). CMake looks for it at
+`SAVANXP_LINUX_MUSL_ROOT`, `build/linux-profile/root` by default. Without it
+those fixtures are not built and `linux-hello` reports them as skipped; see
+[LINUX.md](../userland/LINUX.md#how-it-is-tested).
+
 Python is the `python3` command on `PATH`, the same one you run, and it
 must have Pillow. A versioned interpreter earlier in `PATH` (a uv or pyenv
 `python3.X` without Pillow) is not picked over it. To use another

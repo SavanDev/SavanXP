@@ -3005,6 +3005,18 @@ bool grow_user_stack(uint64_t fault_address) {
     return vm::ensure_user_stack_page(proc->address_space, page_address);
 }
 
+bool fault_in_user_region(uint64_t fault_address, uint64_t error_code) {
+    process::Process* proc = current();
+    if (proc == nullptr || proc->life == process::Lifecycle::unused) {
+        return false;
+    }
+    // Bit 1 of a #PF's error code is a write, bit 4 an instruction fetch.
+    constexpr uint64_t kFaultWrite = 1u << 1;
+    constexpr uint64_t kFaultFetch = 1u << 4;
+    return vm::fault_in_region(proc->address_space, fault_address, (error_code & kFaultWrite) != 0,
+                               (error_code & kFaultFetch) != 0);
+}
+
 void terminate_current_from_exception(uint8_t vector) {
     console::printf(
         "user: exception #%u killed pid=%u\n",

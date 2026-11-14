@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Anonymous memory regions (S2a) and SSL L2's memory half: a static musl program runs unchanged, with `mmap`,
+  `munmap`, `mremap` and `brk` over `vm::map_region` and friends, whose pages appear zeroed on first touch.**
+  `arch_prctl(ARCH_SET_FS)`, `set_tid_address`, `writev` and `ioctl` work too; `linux-hello` adds the `regions`, `args`,
+  `tls` and `heap` fixtures and `region-list-test` the list's host tests. See
+  [MEMORY_REGIONS.md](docs/kernel/MEMORY_REGIONS.md) and [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL L1: `linux [-e NAME=VALUE]... GUEST_PATH` runs a static Linux x86-64 executable from `/system/linux` unchanged,
   with Linux's start-up stack; `write`, `exit` and `exit_group` work and every other call answers `-ENOSYS`.** SUN
   programs reach it through `SXN_SPAWN_FLAG_SUBSYSTEM` (`sxn_spawn_ex_subsystem`). `linux-hello` compares three

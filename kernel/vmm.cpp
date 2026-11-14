@@ -1,9 +1,11 @@
 #include "kernel/vmm.hpp"
 
 #include "arch/cpu.hpp"
+#include "kernel/heap.hpp"
 #include "kernel/object.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/region_list.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 
@@ -191,6 +193,12 @@ bool user_range_is_free(const vm::VmSpace& space, uint64_t virtual_address, uint
         if (virtual_address < view_end && range_end > view.base_address) {
             return false;
         }
+    }
+
+    // A region's untouched pages have no table entry yet, and are taken all
+    // the same.
+    if (space.regions != nullptr && region::overlaps(*space.regions, virtual_address, virtual_address + size)) {
+        return false;
     }
 
     return true;
@@ -464,6 +472,282 @@ void release_after_shootdown(object::SectionObject& section) {
     section.deferred_sequence = sequence;
 }
 
+// --- Anonymous regions (vm::map_region and the rest) -------------------------
+
+// Raw pages an unmap freed while another core may still reach them through
+// its TLB. reclaim_deferred_views() frees them once those cores have flushed,
+// as it does the section references above. The record is on the kernel heap,
+// never in the pages themselves: a stale translation could still write there.
+constexpr uint32_t kDeferredPagesPerRecord = 254;
+
+struct DeferredPages {
+    DeferredPages* next;
+    uint64_t sequence;
+    uint32_t cpus;
+    uint32_t count;
+    uint64_t pages[kDeferredPagesPerRecord];
+};
+
+DeferredPages* g_deferred_pages = nullptr;
+
+constexpr uint32_t kInitialRegionCapacity = 16;
+
+const region::List kNoRegions = {nullptr, 0, 0};
+
+const region::List& regions_of(const vm::VmSpace& space) {
+    return space.regions != nullptr ? *space.regions : kNoRegions;
+}
+
+uint64_t next_boundary(uint64_t address, uint64_t span) {
+    const uint64_t next = (address & ~(span - 1)) + span;
+    return next > address ? next : ~0ULL;
+}
+
+// The first page of [start, end) that has a table entry in `space`, or `end`.
+// An absent table skips its whole span, so a large empty range costs little.
+uint64_t next_mapped_page(const vm::VmSpace& space, uint64_t start, uint64_t end) {
+    uint64_t address = start & ~(memory::kPageSize - 1);
+    while (address < end) {
+        const uint64_t pml4e = space.pml4_virtual[pml4_index(address)];
+        if ((pml4e & vm::kPagePresent) == 0) {
+            address = next_boundary(address, 1ULL << 39);
+            continue;
+        }
+        const uint64_t* pdpt = vm::physical_to_virtual(pml4e & kPageMask);
+        const uint64_t pdpte = pdpt[pdpt_index(address)];
+        if ((pdpte & vm::kPagePresent) == 0) {
+            address = next_boundary(address, 1ULL << 30);
+            continue;
+        }
+        const uint64_t* pd = vm::physical_to_virtual(pdpte & kPageMask);
+        const uint64_t pde = pd[pd_index(address)];
+        if ((pde & vm::kPagePresent) == 0) {
+            address = next_boundary(address, 1ULL << 21);
+            continue;
+        }
+        const uint64_t* pt = vm::physical_to_virtual(pde & kPageMask);
+        if ((pt[pt_index(address)] & vm::kPagePresent) != 0) {
+            return address;
+        }
+        address += memory::kPageSize;
+    }
+    return end;
+}
+
+// The table that holds the entry for `address`, made with its parents when
+// missing. nullptr when a table page could not be allocated.
+uint64_t* leaf_table(vm::VmSpace& space, uint64_t address) {
+    uint64_t* pdpt = next_table(space.pml4_virtual, pml4_index(address), vm::kPageUser);
+    if (pdpt == nullptr) {
+        return nullptr;
+    }
+    uint64_t* pd = next_table(pdpt, pdpt_index(address), vm::kPageUser);
+    if (pd == nullptr) {
+        return nullptr;
+    }
+    return next_table(pd, pd_index(address), vm::kPageUser);
+}
+
+bool loaded_on_another_core(const vm::VmSpace& space) {
+    const uint32_t self = arch::cpu_index();
+    for (uint32_t cpu = 0; cpu < arch::kMaxCpus; ++cpu) {
+        if (cpu != self && g_loaded_pml4[cpu] == space.pml4_physical) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void free_deferred_record(DeferredPages* record) {
+    for (uint32_t index = 0; index < record->count; ++index) {
+        (void)memory::free_pages(record->pages[index], 1);
+    }
+    heap::free(record);
+}
+
+// Unmaps every page of [start, end) that has an entry and frees it, or, when
+// another core holds the space, queues it until that core flushes. False,
+// with nothing changed, when the queue needs a record the heap cannot give.
+bool release_mapped_pages(vm::VmSpace& space, uint64_t start, uint64_t end) {
+    uint64_t count = 0;
+    for (uint64_t page = next_mapped_page(space, start, end); page < end;
+         page = next_mapped_page(space, page + memory::kPageSize, end)) {
+        ++count;
+    }
+    if (count == 0) {
+        return true;
+    }
+
+    DeferredPages* records = nullptr;
+    if (loaded_on_another_core(space)) {
+        for (uint64_t needed = (count + kDeferredPagesPerRecord - 1) / kDeferredPagesPerRecord; needed > 0;
+             --needed) {
+            auto* record = static_cast<DeferredPages*>(heap::allocate(sizeof(DeferredPages)));
+            if (record == nullptr) {
+                while (records != nullptr) {
+                    DeferredPages* next = records->next;
+                    heap::free(records);
+                    records = next;
+                }
+                return false;
+            }
+            record->next = records;
+            record->sequence = 0;
+            record->cpus = 0;
+            record->count = 0;
+            records = record;
+        }
+    }
+
+    DeferredPages* filling = records;
+    for (uint64_t page = next_mapped_page(space, start, end); page < end;
+         page = next_mapped_page(space, page + memory::kPageSize, end)) {
+        uint64_t physical = 0;
+        (void)vm::unmap_page(space, page, &physical);
+        if (filling == nullptr) {
+            // No other core holds the space: this one already dropped the
+            // translation, or never had it.
+            (void)memory::free_pages(physical, 1);
+            continue;
+        }
+        if (filling->count == kDeferredPagesPerRecord) {
+            filling = filling->next;
+        }
+        filling->pages[filling->count++] = physical;
+    }
+
+    uint32_t cpus = 0;
+    const uint64_t sequence = finish_shootdown(cpus);
+    while (records != nullptr) {
+        DeferredPages* next = records->next;
+        if (sequence == 0) {
+            free_deferred_record(records);
+        } else {
+            records->sequence = sequence;
+            records->cpus = cpus;
+            records->next = g_deferred_pages;
+            g_deferred_pages = records;
+        }
+        records = next;
+    }
+    return true;
+}
+
+// Room in the space's list for `extra` more entries, making the list on its
+// first use. False when the heap has none or the list would pass kMaxRegions.
+bool reserve_regions(vm::VmSpace& space, uint32_t extra) {
+    region::List* list = space.regions;
+    if (list == nullptr) {
+        list = static_cast<region::List*>(heap::allocate(sizeof(region::List)));
+        if (list == nullptr) {
+            return false;
+        }
+        *list = region::List{nullptr, 0, 0};
+        space.regions = list;
+    }
+    const uint64_t needed = static_cast<uint64_t>(list->count) + extra;
+    if (needed <= list->capacity) {
+        return true;
+    }
+    if (needed > vm::kMaxRegions) {
+        return false;
+    }
+    uint64_t capacity = list->capacity == 0 ? kInitialRegionCapacity : list->capacity * 2ULL;
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+    if (capacity > vm::kMaxRegions) {
+        capacity = vm::kMaxRegions;
+    }
+    auto* entries = static_cast<region::Region*>(heap::allocate(capacity * sizeof(region::Region)));
+    if (entries == nullptr) {
+        return false;
+    }
+    if (list->count != 0) {
+        memcpy(entries, list->entries, list->count * sizeof(region::Region));
+    }
+    if (list->entries != nullptr) {
+        heap::free(list->entries);
+    }
+    list->entries = entries;
+    list->capacity = static_cast<uint32_t>(capacity);
+    return true;
+}
+
+void free_regions(vm::VmSpace& space) {
+    if (space.regions == nullptr) {
+        return;
+    }
+    if (space.regions->entries != nullptr) {
+        heap::free(space.regions->entries);
+    }
+    heap::free(space.regions);
+    space.regions = nullptr;
+}
+
+// What [start, end) holds besides regions: a section view, the stack's
+// reserved range, or a page with an entry that no region covers (the image's,
+// the stack's). 0 when nothing; otherwise an address past the first one, for
+// region::find_gap to resume from.
+uint64_t other_mapping(void* context, uint64_t start, uint64_t end) {
+    const vm::VmSpace& space = *static_cast<const vm::VmSpace*>(context);
+    for (const vm::VmSpace::SectionView& view : space.section_views) {
+        if (view.section != nullptr && start < view.base_address + view.size_bytes &&
+            end > view.base_address) {
+            return view.base_address + view.size_bytes;
+        }
+    }
+    if (end > vm::kUserStackGuardBottom && start < vm::kUserStackTop) {
+        return vm::kUserStackTop;
+    }
+    const region::List& list = regions_of(space);
+    for (uint64_t page = next_mapped_page(space, start, end); page < end;
+         page = next_mapped_page(space, page + memory::kPageSize, end)) {
+        if (region::find(list, page) < 0) {
+            return page + memory::kPageSize;
+        }
+    }
+    return 0;
+}
+
+bool region_overlaps(const vm::VmSpace& space, uint64_t start, uint64_t end) {
+    return space.regions != nullptr && region::overlaps(*space.regions, start, end);
+}
+
+// A page-aligned range of user addresses below the stack's guard page.
+bool region_range(uint64_t start, uint64_t size) {
+    return size != 0 && (start & (memory::kPageSize - 1)) == 0 && (size & (memory::kPageSize - 1)) == 0 &&
+           canonical_user_range(start, size);
+}
+
+bool valid_region_access(uint8_t access) {
+    const uint8_t known = region::kRead | region::kWrite | region::kExecute;
+    return (access & ~known) == 0 &&
+           !((access & region::kWrite) != 0 && (access & region::kExecute) != 0);
+}
+
+uint64_t region_page_flags(uint8_t access) {
+    uint64_t flags = vm::kPageUser;
+    if ((access & region::kWrite) != 0) {
+        flags |= vm::kPageWrite;
+    }
+    if ((access & region::kExecute) == 0) {
+        flags |= vm::kPageNoExecute;
+    }
+    return flags;
+}
+
+// Moves the entry of `from`, which is mapped, to `to`, whose table exists:
+// the page changes address and keeps its contents and its access.
+void move_page(vm::VmSpace& space, uint64_t from, uint64_t to) {
+    uint64_t* from_table = page_table_for(space, from, false);
+    uint64_t* to_table = leaf_table(space, to);
+    const uint64_t entry = from_table[pt_index(from)];
+    from_table[pt_index(from)] = 0;
+    note_user_unmap(space, from);
+    to_table[pt_index(to)] = entry;
+}
+
 } // namespace
 
 namespace vm {
@@ -514,6 +798,8 @@ bool create_address_space(VmSpace& space) {
     space.pml4_virtual = pml4_virtual;
     space.next_section_base = kSectionViewBase;
     memset(space.section_views, 0, sizeof(space.section_views));
+    space.regions = nullptr;
+    space.image_end = 0;
     return true;
 }
 
@@ -567,6 +853,9 @@ void destroy_address_space(VmSpace& space) {
     space.pml4_virtual = nullptr;
     space.next_section_base = 0;
     memset(space.section_views, 0, sizeof(space.section_views));
+    // The regions' pages went with the tables above; this is their list.
+    free_regions(space);
+    space.image_end = 0;
 }
 
 uint64_t resident_user_bytes(const VmSpace& space) {
@@ -699,6 +988,17 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
         return false;
     }
     clone.next_section_base = source.next_section_base;
+    clone.image_end = source.image_end;
+    // The regions' pages are plain user pages, copied below like any other;
+    // the child needs the list that says what they are.
+    if (source.regions != nullptr && source.regions->count != 0) {
+        if (!reserve_regions(clone, source.regions->count)) {
+            destroy_address_space(clone);
+            return false;
+        }
+        memcpy(clone.regions->entries, source.regions->entries, source.regions->count * sizeof(region::Region));
+        clone.regions->count = source.regions->count;
+    }
 
     for (uint64_t pml4_slot = 0; pml4_slot < kKernelPml4Start; ++pml4_slot) {
         const uint64_t pml4e = source.pml4_virtual[pml4_slot];
@@ -1168,6 +1468,17 @@ void sync_user_tlb() {
 }
 
 void reclaim_deferred_views() {
+    DeferredPages** pages_link = &g_deferred_pages;
+    while (*pages_link != nullptr) {
+        DeferredPages* const record = *pages_link;
+        if (!flushed_since(record->cpus, record->sequence)) {
+            pages_link = &record->next;
+            continue;
+        }
+        *pages_link = record->next;
+        free_deferred_record(record);
+    }
+
     object::SectionObject** link = &g_deferred_views;
     while (*link != nullptr) {
         object::SectionObject* const section = *link;
@@ -1209,18 +1520,19 @@ bool ensure_user_stack_page(VmSpace& space, uint64_t address) {
     return true;
 }
 
-/* OJO: esta consulta TIENE efecto de lado sobre la region del stack.
+/* NOTE: this query HAS a side effect on the stack and on regions.
  *
- * El stack de usuario crece por demanda atendiendo el #PF, pero el kernel no
- * faultea cuando toca memoria de usuario: valida el rango con esta funcion y
- * despues copia. Si las paginas del stack que todavia no existen se contaran
- * como inaccesibles, un read() sobre un arreglo grande declarado en el stack
- * fallaria con EFAULT en vez de hacerlo crecer -- que es lo que le pasaba al
- * buffer de 64 KiB con el que windowd relee un .sxicon.
+ * The user stack grows on demand from the #PF handler, and a region's pages
+ * appear on first touch the same way, but the kernel does not fault when it
+ * touches user memory: it checks the range with this function and then
+ * copies. If pages not there yet counted as inaccessible, a read() into a
+ * large array on the stack would fail with EFAULT instead of growing it --
+ * which is what happened to the 64 KiB buffer windowd rereads a .sxicon
+ * with -- and a read() into fresh mmap memory would fail the same way.
  *
- * Materializar aca y no en cada llamador es deliberado: hay una veintena de
- * puntos donde el kernel valida memoria de usuario, y este es el unico por el
- * que pasan todos. */
+ * Making the pages here and not in each caller is deliberate: some twenty
+ * places in the kernel check user memory, and this is the one they all go
+ * through. */
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write) {
     if (size == 0) {
         return true;
@@ -1235,8 +1547,11 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
     const uint64_t last_page = last & ~static_cast<uint64_t>(memory::kPageSize - 1);
     while (page <= last_page) {
         if (page_table_for(space, page, require_write) == nullptr) {
-            if (page < kUserStackBottom || page >= kUserStackTop ||
-                !ensure_user_stack_page(const_cast<VmSpace&>(space), page)) {
+            VmSpace& writable = const_cast<VmSpace&>(space);
+            const bool made = (page >= kUserStackBottom && page < kUserStackTop)
+                ? ensure_user_stack_page(writable, page)
+                : fault_in_region(writable, page, require_write, false);
+            if (!made) {
                 return false;
             }
         }
@@ -1244,6 +1559,172 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
             break;
         }
         page += memory::kPageSize;
+    }
+    return true;
+}
+
+RegionStatus map_region(VmSpace& space, uint64_t& address, uint64_t size, uint8_t access,
+                        RegionPlacement placement) {
+    if (!g_ready || !valid_region_access(access) || size == 0 || (size & (memory::kPageSize - 1)) != 0) {
+        return RegionStatus::invalid;
+    }
+    uint64_t start = address;
+    if (placement == RegionPlacement::anywhere) {
+        const bool hint_free = start != 0 && region_range(start, size) &&
+                               !region_overlaps(space, start, start + size) &&
+                               other_mapping(&space, start, start + size) == 0;
+        if (!hint_free && !region::find_gap(regions_of(space), size, kRegionBase, kUserStackGuardBottom,
+                                            other_mapping, &space, start)) {
+            return RegionStatus::no_memory;
+        }
+    } else {
+        if (!region_range(start, size)) {
+            return RegionStatus::invalid;
+        }
+        const uint64_t end = start + size;
+        if (placement == RegionPlacement::exact) {
+            if (region_overlaps(space, start, end) || other_mapping(&space, start, end) != 0) {
+                return RegionStatus::occupied;
+            }
+        } else if (other_mapping(&space, start, end) != 0) {
+            return RegionStatus::foreign;
+        }
+    }
+
+    // Replacing can split one region (one entry more) before the new one
+    // goes in (another).
+    if (!reserve_regions(space, 2 * region::kMaxGrowth)) {
+        return RegionStatus::no_memory;
+    }
+    const uint64_t end = start + size;
+    if (placement == RegionPlacement::replace) {
+        if (!release_mapped_pages(space, start, end)) {
+            return RegionStatus::no_memory;
+        }
+        (void)region::remove(*space.regions, start, end);
+    }
+    if (!region::insert(*space.regions, start, end, access)) {
+        return RegionStatus::no_memory;
+    }
+    address = start;
+    return RegionStatus::ok;
+}
+
+RegionStatus unmap_regions(VmSpace& space, uint64_t address, uint64_t size) {
+    if (!g_ready || !region_range(address, size)) {
+        return RegionStatus::invalid;
+    }
+    const uint64_t end = address + size;
+    if (other_mapping(&space, address, end) != 0) {
+        return RegionStatus::foreign;
+    }
+    if (!region_overlaps(space, address, end)) {
+        return RegionStatus::ok;
+    }
+    if (!reserve_regions(space, region::kMaxGrowth) || !release_mapped_pages(space, address, end)) {
+        return RegionStatus::no_memory;
+    }
+    (void)region::remove(*space.regions, address, end);
+    return RegionStatus::ok;
+}
+
+RegionStatus remap_region(VmSpace& space, uint64_t address, uint64_t old_size, uint64_t new_size,
+                          bool may_move, uint64_t& new_address) {
+    if (!g_ready || !region_range(address, old_size) || new_size == 0 ||
+        (new_size & (memory::kPageSize - 1)) != 0) {
+        return RegionStatus::invalid;
+    }
+    const uint64_t old_end = address + old_size;
+    const int32_t index = region::containing(regions_of(space), address, old_end);
+    if (index < 0) {
+        return RegionStatus::not_mapped;
+    }
+    const uint8_t access = space.regions->entries[index].access;
+
+    if (new_size == old_size) {
+        new_address = address;
+        return RegionStatus::ok;
+    }
+    if (new_size < old_size) {
+        if (!reserve_regions(space, region::kMaxGrowth) ||
+            !release_mapped_pages(space, address + new_size, old_end)) {
+            return RegionStatus::no_memory;
+        }
+        (void)region::remove(*space.regions, address + new_size, old_end);
+        new_address = address;
+        return RegionStatus::ok;
+    }
+
+    // In place, when what follows is free.
+    const uint64_t new_end = address + new_size;
+    if (region_range(address, new_size) && !region_overlaps(space, old_end, new_end) &&
+        other_mapping(&space, old_end, new_end) == 0) {
+        if (!reserve_regions(space, region::kMaxGrowth) ||
+            !region::insert(*space.regions, old_end, new_end, access)) {
+            return RegionStatus::no_memory;
+        }
+        new_address = address;
+        return RegionStatus::ok;
+    }
+    if (!may_move) {
+        return RegionStatus::no_memory;
+    }
+
+    // Elsewhere: the pages' entries move, their contents stay put. Every
+    // table the destination needs is made first, so the move itself cannot
+    // fail half way.
+    uint64_t target = 0;
+    if (!region::find_gap(regions_of(space), new_size, kRegionBase, kUserStackGuardBottom, other_mapping, &space,
+                          target) ||
+        !reserve_regions(space, 2 * region::kMaxGrowth)) {
+        return RegionStatus::no_memory;
+    }
+    for (uint64_t page = next_mapped_page(space, address, old_end); page < old_end;
+         page = next_mapped_page(space, page + memory::kPageSize, old_end)) {
+        if (leaf_table(space, target + (page - address)) == nullptr) {
+            return RegionStatus::no_memory;
+        }
+    }
+    for (uint64_t page = next_mapped_page(space, address, old_end); page < old_end;
+         page = next_mapped_page(space, page + memory::kPageSize, old_end)) {
+        move_page(space, page, target + (page - address));
+    }
+    // The pages stay owned, so nothing waits for the other cores' flush: they
+    // only have to stop using the old addresses.
+    uint32_t cpus = 0;
+    (void)finish_shootdown(cpus);
+    (void)region::remove(*space.regions, address, old_end);
+    (void)region::insert(*space.regions, target, target + new_size, access);
+    new_address = target;
+    return RegionStatus::ok;
+}
+
+bool fault_in_region(VmSpace& space, uint64_t address, bool write, bool execute) {
+    if (!g_ready || space.regions == nullptr || !canonical_user_address(address)) {
+        return false;
+    }
+    const int32_t index = region::find(*space.regions, address);
+    if (index < 0) {
+        return false;
+    }
+    const uint8_t access = space.regions->entries[index].access;
+    if (access == 0 || (write && (access & region::kWrite) == 0) ||
+        (execute && (access & region::kExecute) == 0)) {
+        return false;
+    }
+    const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
+    // Mapped already, with the region's own access: asked twice.
+    if (page_table_for(space, page, false) != nullptr) {
+        return true;
+    }
+    memory::PageAllocation allocation = {};
+    if (!memory::allocate_page(allocation)) {
+        return false;
+    }
+    memset(allocation.virtual_address, 0, memory::kPageSize);
+    if (!map_page(space, page, allocation.physical_address, region_page_flags(access))) {
+        (void)memory::free_allocation(allocation);
+        return false;
     }
     return true;
 }

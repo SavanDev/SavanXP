@@ -1,10 +1,14 @@
 /*
- * linuxtest.sxe -- the linux-hello smoke scenario's runner (SSL's L1 gate,
- * docs/userland/LINUX.md). A SUN parent that runs each Linux fixture through
- * the launcher, /system/linux.sxe, captures its standard output through a
- * pipe, and compares the bytes and the exit status with what Linux gave for
- * the same file (subsystems/linux/profile/expected, installed under
+ * linuxtest.sxe -- the linux-hello smoke scenario's runner (SSL's L1 and L2
+ * gates, docs/userland/LINUX.md). A SUN parent that runs each Linux fixture
+ * through the launcher, /system/linux.sxe, captures its standard output
+ * through a pipe, and compares the bytes and the exit status with what Linux
+ * gave for the same file (subsystems/linux/profile/expected, installed under
  * /system/linux/fixtures/expected).
+ *
+ * The static musl fixtures of L2 are built only where the L0 profile's
+ * Alpine root exists (subsystems/linux/Linux.cmake); without them each is
+ * reported as skipped, not passed and not failed.
  *
  * Then it asks the kernel to start images it must refuse, directly through
  * SXN_SPAWN_FLAG_SUBSYSTEM: a bad header, a truncated image and another
@@ -26,6 +30,7 @@
 #define EXPECTED GUEST "/fixtures/expected"
 
 static int g_failures;
+static int g_skipped;
 
 static uint32_t length_of(const char *text) {
     uint32_t n = 0;
@@ -93,6 +98,22 @@ static int parse_status(const char *text, long size) {
         value = value * 10 + (text[i] - '0');
     }
     return value;
+}
+
+/* Free memory now, after a short pause: the pages an unmap freed while
+ * another core still held the space are released on that core's next flush
+ * (docs/kernel/MEMORY_REGIONS.md). */
+static uint64_t settled_free_memory(void) {
+    long pause = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    if (pause >= 0) {
+        (void)sxn_wait_one(pause, 200);
+        (void)sxn_close(pause);
+    }
+    struct savanxp_system_info info;
+    if (sxn_system_info(&info) != 0) {
+        return 0;
+    }
+    return info.memory_free_bytes;
 }
 
 static int live_processes(void) {
@@ -194,6 +215,19 @@ static void run(const char *name, char **arguments, int count) {
     }
 }
 
+/* A fixture that is only there when the build had the musl root. */
+static int have_fixture(const char *file) {
+    char path[160];
+    struct sxn_file_info info;
+    join(path, sizeof(path), GUEST "/fixtures", file);
+    if (sxn_query_path(path, &info) == 0) {
+        return 1;
+    }
+    say("linuxtest: skip ", file, " (not built: no musl root, see subsystems/linux/Linux.cmake)");
+    g_skipped++;
+    return 0;
+}
+
 /* A Linux spawn the kernel must refuse with `error`, leaving nothing. */
 static void refuse(const char *what, const char *path, const struct sxn_spawn_subsystem *linux_abi,
                    int std_handle, long error) {
@@ -247,8 +281,38 @@ int main(int argc, char **argv) {
     run("startup", startup, 7);
     char *errors[] = {"/fixtures/errors"};
     run("errors", errors, 1);
+
+    /* L2: anonymous memory at its edges, libc-free, then static musl
+     * programs. */
+    char *regions[] = {"/fixtures/regions"};
+    run("regions", regions, 1);
+    if (have_fixture("args")) {
+        char *args[] = {"-e", "A=1", "-e", "B=two", "/fixtures/args", "x", "y z"};
+        run("args", args, 7);
+    }
+    if (have_fixture("tls")) {
+        char *tls[] = {"/fixtures/tls"};
+        run("tls", tls, 1);
+    }
+    if (have_fixture("heap")) {
+        /* heap maps and unmaps some 25 MiB of blocks. Each unmapped page
+         * must go back: one lost in munmap or mremap would not come back
+         * even when the program exits. */
+        const uint64_t before = settled_free_memory();
+        char *heap[] = {"/fixtures/heap"};
+        run("heap", heap, 1);
+        const uint64_t after = settled_free_memory();
+        const int returned = before != 0 && after + (1u << 20) >= before;
+        say(returned ? "linuxtest: ok   " : "linuxtest: FAIL ", "heap gave its memory back", "");
+        if (!returned) {
+            g_failures++;
+        }
+    }
     test_refusals();
 
+    if (g_skipped != 0) {
+        say("linuxtest: some fixtures were skipped", "", "");
+    }
     say(g_failures == 0 ? "LINUX TEST PASS" : "LINUX TEST FAIL", "", "");
     return g_failures == 0 ? 0 : 1;
 }

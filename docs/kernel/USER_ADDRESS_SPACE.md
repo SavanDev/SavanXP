@@ -12,7 +12,9 @@ All constants are in `include/kernel/vmm.hpp` unless noted.
 | `0x0` – `0xffff` | Never mapped, and refused as a user address. Any access faults | — |
 | `0x10000` | The lowest user address: a Linux `ET_EXEC` may load here or anywhere above | `kUserFloor` |
 | `0x400000` | An SDK program image: the first `PT_LOAD`, with the ELF and program headers, then the text on the next page. Also where an `ET_DYN` image goes | `kUserBase` |
+| image end | A Linux program's break, growing upwards | `VmSpace::image_end` |
 | `0x1000000000` (64 GiB) | Kernel-chosen section views (`map_view`, `SXN_SYS_MAP_VIEW`), allocated upwards | `kSectionViewBase` |
+| `0x2000000000` (128 GiB) | Kernel-chosen anonymous regions (`mmap` of a Linux program), the lowest free range upwards ([`MEMORY_REGIONS.md`](MEMORY_REGIONS.md)) | `kRegionBase` |
 | below `kUserStackBottom` | One guard page, never mapped | `kUserStackGuardBottom` |
 | `0x7000000000` downwards | User stack: 1 MiB reserved, 8 pages mapped at start, grown on demand | `kUserStackTop` |
 | `0x800000000000` | End of the user half: PML4 entry 256 and up belong to the kernel | `kKernelPml4Start` (`kernel/vmm.cpp`) |
