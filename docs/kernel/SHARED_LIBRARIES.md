@@ -976,9 +976,11 @@ the program, and the program has to export. Removing the flag needs a real `ld.s
 mapped before everything else — the loader living in the executable is the reason
 the wrappers have to be there.
 
-**A shared POSIX layer.** `posix.c` is 5046 lines and none of it has a bootstrap
+**A shared POSIX layer.** `posix.c` is 5477 lines and none of it has a bootstrap
 reason to stay, so in principle it moves easily. It is a volume-size win, not a
-runtime one: each process maps one copy either way.
+runtime one: each process maps one copy either way. It also comes after the
+loader stops being POSIX code; see
+[The loader is POSIX's, and SUN is static](#the-loader-is-posixs-and-sun-is-static).
 
 What was reverted along with them, and why it is not coming back:
 
@@ -1007,6 +1009,135 @@ it.
 - **Unloading in `dlclose`.** `dlopen` arrived with the port that needs it,
   [Xash3D FWGS](../roadmaps/open/XASH3D_ROADMAP.md), as predicted here; unloading did not,
   because nothing needs it yet. See [`dlopen`](#dlopen).
+
+## The loader is POSIX's, and SUN is static
+
+> Status: **recorded 2026-11-13.** Nothing here is built yet; this is the order.
+
+Shared libraries are a POSIX capability today, not a system one:
+
+| Program kind | How it gets code it does not carry |
+| --- | --- |
+| POSIX | `ldso.c`, compiled into every program that declares a `DT_NEEDED`; `crt0` calls `sx_start_dynamic()` before `main` |
+| SUN | it does not: always static. `savanxp_program(NATIVE)` refuses the loader because `ldso.c` speaks POSIX, which a native process does not have |
+| SSW (Win32) | its own PE loader, `subsystems/win32/loader/`, inside `winhost.sxe` |
+| Linux (planned) | the kernel maps the image's real `PT_INTERP` ([roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md)) |
+
+There is no `ld.so` file either. `/lib/ld.so.0.4` is the `PT_INTERP` every PIE
+declares, and nothing is installed under that name: the interpreter is
+`ldso.c` inside the executable ([crt0 runs the interpreter](#crt0-runs-the-interpreter)).
+
+### Why this is a gap and not a detail
+
+- **Parity.** A POSIX program shares `libsxgfx`, `libgfx2d`, `libsxgui` and
+  `libmath`; a SUN program that paints with SXGUI-C links its own copy of all
+  of them. By the parity rule in `AGENTS.md`, the gap closes in SUN.
+- **The saving shrinks with every migration.** New programs are SUN, and POSIX
+  programs move to SUN one at a time ([SUN.md](../userland/SUN.md)). Each move
+  takes a program from the population that shares the runtime to the one that
+  duplicates it, so the measurement at the top of this file gets worse as the
+  system follows its own rules.
+
+### Order
+
+1. **One loader, written over SXN, linked by SUN and POSIX alike.** It is
+   platform code and lives in `system/`, not in `subsystems/posix/`; POSIX
+   becomes one of its consumers. The shape has a precedent: SSW's loader is
+   portable C shared by the host harness and `winhost`. A real `ld.so` mapped
+   before the program is the later form of the same thing, and the one that
+   removes `--export-dynamic` and lets `libc` be a library
+   ([out of scope](#deliberately-out-of-scope-for-the-first-implementation)).
+   See [One loader over SXN](#one-loader-over-sxn) for what it needs.
+   Done when a SUN program declares `DT_NEEDED libsxgui.so.0.4`, carries no copy
+   of the toolkit, and `nativetest` asserts it.
+2. **`DT_SONAME` resolution.** Lookup of the highest `libfoo.so.0.*`
+   ([Decisions taken](#decisions-taken)). Until it exists, a shared library ties
+   every external binary in `/bin` to one OS version, which is exactly what the
+   persistent image must not do.
+3. **Then, a POSIX client library.** With 1 and 2 in place POSIX becomes what a
+   subsystem is in NT: a dispatcher in the kernel plus a client library the
+   system loader maps, as SSW maps `kernel32`. Ideally `libc` and `posix`
+   together, not `posix` alone with `libc` left in the executable. Doing it
+   before step 1 makes the library depend on its own subsystem to be loaded.
+
+### One loader over SXN
+
+What `ldso.c` calls today: `savanxp_open`, `savanxp_read` and `savanxp_close`
+for the file; `section_open` and `section_open_range` for a section **backed by
+the file**, plus `section_create`, `map_view_at` and `unmap_view`; and from
+the C library, `eprintf` and `strcmp`.
+
+What is already there. A POSIX process reaches the native object calls:
+`native_call_open_to_all_subsystems` (`kernel/native_dispatch.cpp`) forwards
+`SECTION_CREATE`, `MAP_VIEW_AT`, `UNMAP_VIEW`, `CLOSE` and `READ`, and handles
+and descriptors share one space (`ldso.c` already closes sections with
+`savanxp_close`). A loader over SXN runs inside a POSIX process as it is.
+
+What is missing, in order of weight:
+
+1. **A file-backed section in SXN.** SXN has `SECTION_CREATE`, anonymous, and
+   no counterpart of `SAVANXP_SYS_SECTION_OPEN_RANGE`. That is why `winhost`
+   reads a whole file and copies it into anonymous sections. A loader over SXN
+   without it would load libraries dynamically and share nothing: the
+   identity cache (`inode_id` + offset + length) is only reachable through the
+   POSIX call. `SXN_SYS_SECTION_OPEN_RANGE` (file handle to section), open to
+   all subsystems, is the slice; the loader is its consumer and `nativetest`
+   its assertion.
+2. **`SXN_SYS_OPEN_FILE` open to POSIX.** It is not in the forwarded list. One
+   line, plus its `handletest` check.
+3. **No C library in the loader.** `eprintf` and `strcmp` become the loader's
+   own. This is the work that was reverted for lack of a consumer
+   ([out of scope](#deliberately-out-of-scope-for-the-first-implementation));
+   SUN is the consumer.
+4. **The runtime ends the process, not the loader.** `SXN_SYS_EXIT` and
+   `SXN_SYS_LOG` are native-only, and that stays. The loader returns a status
+   and a message; each subsystem's `crt0` reports it and exits in its own
+   terms. `dlopen` and `dlfcn.h` are a thin POSIX layer over the common core;
+   SUN names its own.
+5. **Libraries split into neutral and host.** `libsxgfx` carries `gfx.c`, the
+   POSIX window client, and `libsxgui` carries `sxgui_app.c`, the POSIX
+   application frame. The neutral parts (`gfx2d`, `sxchrome`, the `sxgui`
+   core, `math`) resolve `memcpy` and `malloc` against the program, which both
+   runtimes define, so one file serves both. The host part is per subsystem:
+   the POSIX client on one side, `sxngui` on the other.
+
+### What SSW and Linux get from it
+
+Neither runs the ELF loader: SSW maps PE images with its own loader, and a
+Linux image's `PT_INTERP` is musl's, mapped by the kernel
+([roadmap](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md)). What they share is
+the kernel primitive, not the loader.
+
+- **SSW.** `SXN_SYS_SECTION_OPEN_RANGE` lets `winhost` map the subsystem's own
+  DLLs from the file instead of copying them into the native heap. They are
+  built at Windows XP's bases and never relocate, so their code and read-only
+  data can be one copy for every Win32 process. Two conditions: the file
+  alignment has to be a page so a section maps at a page offset (`lld-link`
+  writes `0x200` today; `/FILEALIGN:0x1000` fixes it), and the pages the loader
+  writes, the import address tables, stay private copies as writable segments
+  do here.
+  A guest's own images keep the copy: they are loaded once, and their file
+  alignment is not the subsystem's choice. `winhost` itself is a SUN program,
+  so its 64-bit side gains the shared libraries like any other.
+- **Linux.** Its step S2b needs private file mappings for musl's loader. A
+  read-only file-backed range is the base of that, and gives one copy of
+  `libc.so`'s text across Linux processes. Private writable mappings, partial
+  unmap and `mprotect` are still S2b's own work: views cannot do them.
+
+### Why a shared POSIX layer is not first
+
+Measured on the current tree, `posix.c` is about 55 KB of `.text` and 369 KB
+of `.bss`. Only the text could be shared; the `.bss` is per-process state and
+stays one copy per process either way. The consumers that remain on POSIX in the
+long run are ports and external programs (`doomgeneric`, `ccleste`, FFmpeg),
+which link the `core` group statically through `runtime_units.sh` and are the
+ones that most need a stable ABI, which step 2 provides and nothing provides
+today.
+
+What is worth doing before any of it is cheap: give the POSIX layer its own
+group in `units.txt`, separate from `core`, with a declared export list a test
+checks. That makes the subsystem's contract explicit, makes the POSIX/SUN
+parity checkable, and is the export list a future `libposix` would ship.
 
 ## FFmpeg as one library, and what it cost to find out
 
