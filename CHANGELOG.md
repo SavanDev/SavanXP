@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The reference shell and BusyBox subset run on i386 with files and pipes.**
+  CPIO `/bin`, per-process descriptors, redirection, polling and `exec` are usable;
+  `smoke posix` and `verify_posix_persistence.py` check behavior and persistence.
+
 - **Faulting i386 user programs terminate without stopping the shell or siblings.**
   Allocator-backed pages replace fixed images, enforce ELF write permissions and
   guards, and recover from `ENOMEM`; `smoke memory` verifies this on 32 MiB RAM.
@@ -83,6 +87,15 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **`renametest` now performs the file rename that its checks require.**
+  It verifies directory and child-file moves separately.
+
+- **Failed shell pipelines close their descriptors and reap launched children.**
+  Missing commands and process-capacity failures return to a usable prompt.
+
+- **Long i386 shell lines no longer lose input while keyboard traces scroll.**
+  IRQ traces stay on COM1; the visible console contains the actual session.
 
 - **A fresh clone can build and run its smokes.** Two tools the tree calls were never
   committed: `tools/check_shared_libs.py`, required at the end of `./build.sh build`,

@@ -14,6 +14,9 @@
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 #include "user32.hpp"
+#include "io.hpp"
+#include "paging.hpp"
+#include "kernel/vfs.hpp"
 
 namespace i386 {
 
@@ -21,28 +24,8 @@ namespace syscall {
 
 namespace {
 
-// The GPU is global; only its owning process may operate the descriptor.
-uint32_t g_gpu_owner = 0;
-
 bool is_user_range(uint32_t address, uint32_t size, bool writable = false) {
     return process::user_range(address, size, writable);
-}
-
-/* Validate every user byte before comparing the device path. */
-bool user_path_equals(uint32_t address, const char* text) {
-    for (uint32_t index = 0; index <= 64; ++index) {
-        if (!is_user_range(address + index, 1)) {
-            return false;
-        }
-        const char value = reinterpret_cast<const char*>(static_cast<uintptr_t>(address))[index];
-        if (value != text[index]) {
-            return false;
-        }
-        if (value == '\0') {
-            return true;
-        }
-    }
-    return false;
 }
 
 int copy_user_string(uint32_t address, char* output, uint32_t capacity) {
@@ -73,44 +56,20 @@ void copy_text(char* destination, size_t capacity, const char* source) {
 
 }
 
-void release_process_resources(uint32_t pid) {
-    if (g_gpu_owner == pid) {
-        g_gpu_owner = 0;
-        fb32::console_set_enabled(true);
-    }
-}
-
 void handle(ContextFrame& frame) {
     /* Los argumentos se leen de edi/esi/edx y no de ebx/ecx/edx: las
      * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
      * ABI, y el usuario pone el numero en eax. */
     switch (frame.eax) {
-        case kSysRead: {
-            // stdin is the shared keyboard stream, one event per read.
-            // A blocked read yields its frame to the scheduler.
-            if (frame.edi != kStdinFd) {
-                frame.eax = failure(SAVANXP_EBADF);
-                return;
-            }
-            if (!is_user_range(frame.esi, frame.edx, true)) {
-                frame.eax = failure(SAVANXP_EFAULT);
-                return;
-            }
-            if (frame.edx < sizeof(savanxp_input_event)) {
-                frame.eax = failure(SAVANXP_EINVAL);
-                return;
-            }
-            savanxp_input_event event = {};
-            if (ps2_32::pop_event(event)) {
-                memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.esi)), &event,
-                       sizeof(event));
-                frame.eax = sizeof(event);
-            } else {
-                process::read_input(frame.esi);
-            }
+        case kSysRead:
+            frame.eax = io::read(*process::current(), frame.edi, frame.esi, frame.edx);
             return;
-        }
-        case kSysSpawn: {
+        case kSysWrite:
+            frame.eax = io::write(*process::current(), frame.edi, frame.esi, frame.edx);
+            return;
+        case kSysSpawn:
+        case SAVANXP_SYS_SPAWN_FD:
+        case SAVANXP_SYS_EXEC: {
             char path[256];
             int error = copy_user_string(frame.edi, path, sizeof(path));
             if (error != 0) {
@@ -137,7 +96,20 @@ void handle(ContextFrame& frame) {
                 }
                 arguments[index] = strings[index];
             }
-            frame.eax = static_cast<uint32_t>(process::spawn(path, arguments, frame.edx));
+            char resolved[256];
+            if (!vfs::normalize_path(process::current()->cwd, path, resolved, sizeof(resolved))) {
+                frame.eax = failure(SAVANXP_EINVAL); return;
+            }
+            if (frame.eax == SAVANXP_SYS_EXEC) {
+                const int result = process::replace_image(resolved, arguments, frame.edx, frame);
+                if (result) frame.eax = failure(result);
+            } else if (frame.eax == SAVANXP_SYS_SPAWN_FD) {
+                // The five-register ABI maps arguments 4/5 to ECX/EBX.
+                frame.eax = process::spawn(resolved, arguments, frame.edx,
+                                          static_cast<int>(frame.ecx), static_cast<int>(frame.ebx));
+            } else {
+                frame.eax = static_cast<uint32_t>(process::spawn(resolved, arguments, frame.edx));
+            }
             return;
         }
         case kSysWaitPid: {
@@ -154,37 +126,110 @@ void handle(ContextFrame& frame) {
             return;
         }
         case kSysOpen: {
-            /* A single GPU client gets a fixed descriptor; repeated opens return EBUSY. */
-            if (!user_path_equals(frame.edi, kGpuPath)) {
-                frame.eax = failure(SAVANXP_ENOENT);
-                return;
+            char path[256], resolved[256];
+            const int error = copy_user_string(frame.edi, path, sizeof(path));
+            if (error) { frame.eax = failure(error); return; }
+            if (!vfs::normalize_path(process::current()->cwd, path, resolved, sizeof(resolved))) {
+                frame.eax = failure(SAVANXP_EINVAL); return;
             }
-            if (!fb32::ready()) {
-                frame.eax = failure(SAVANXP_ENODEV);
-                return;
-            }
-            if (g_gpu_owner != 0) {
-                frame.eax = failure(SAVANXP_EBUSY);
-                return;
-            }
-            g_gpu_owner = process::current_pid();
-            frame.eax = kGpuFd;
-            serial::write("gpu0: opened by userland\n");
+            frame.eax = io::open(*process::current(), resolved, frame.esi);
             return;
         }
-        case kSysClose: {
-            if (frame.edi == kGpuFd && g_gpu_owner == process::current_pid()) {
-                g_gpu_owner = 0;
-                fb32::console_set_enabled(true);
-                frame.eax = 0;
-                return;
+        case kSysClose:
+            frame.eax = io::close(*process::current(), frame.edi); return;
+        case SAVANXP_SYS_KILL:
+            frame.eax = process::kill(frame.edi, static_cast<int>(frame.esi)); return;
+        case SAVANXP_SYS_DUP:
+            frame.eax = io::duplicate(*process::current(), frame.edi); return;
+        case SAVANXP_SYS_DUP2:
+            if (frame.esi >= io::kMaxHandles) { frame.eax = failure(SAVANXP_EBADF); return; }
+            frame.eax = io::duplicate(*process::current(), frame.edi, static_cast<int>(frame.esi)); return;
+        case SAVANXP_SYS_PIPE:
+            frame.eax = io::pipe(*process::current(), frame.edi); return;
+        case SAVANXP_SYS_READDIR:
+            frame.eax = io::readdir(*process::current(), frame.edi, frame.esi, frame.edx); return;
+        case SAVANXP_SYS_SEEK:
+            frame.eax = io::seek(*process::current(), frame.edi, static_cast<int32_t>(frame.esi), frame.edx); return;
+        case SAVANXP_SYS_FCNTL:
+            frame.eax = io::fcntl(*process::current(), frame.edi, frame.esi, frame.edx); return;
+        case SAVANXP_SYS_POLL:
+            frame.eax = io::poll(*process::current(), frame.edi, frame.esi, static_cast<int32_t>(frame.edx)); return;
+        case SAVANXP_SYS_FSTAT:
+            frame.eax = io::fstat(*process::current(), frame.edi, frame.esi); return;
+        case SAVANXP_SYS_CLEAR:
+            io::clear_console(); frame.eax = 0; return;
+        case SAVANXP_SYS_SYNC:
+            frame.eax = sxfs::sync(sxfs::root()) ? 0 : failure(SAVANXP_EIO); return;
+        case SAVANXP_SYS_GETCWD: {
+            const auto* task = process::current();
+            const uint32_t size = strlen(task->cwd) + 1;
+            if (frame.esi < size) { frame.eax = failure(SAVANXP_EINVAL); return; }
+            if (!is_user_range(frame.edi, frame.esi, true)) { frame.eax = failure(SAVANXP_EFAULT); return; }
+            memcpy(reinterpret_cast<void*>(frame.edi), task->cwd, size);
+            frame.eax = size - 1; return;
+        }
+        case SAVANXP_SYS_STAT:
+        case SAVANXP_SYS_CHDIR:
+        case SAVANXP_SYS_UNLINK:
+        case SAVANXP_SYS_MKDIR:
+        case SAVANXP_SYS_RMDIR:
+        case SAVANXP_SYS_TRUNCATE:
+        case SAVANXP_SYS_RENAME: {
+            char path[256], resolved[256];
+            const int error = copy_user_string(frame.edi, path, sizeof(path));
+            if (error) { frame.eax = failure(error); return; }
+            if (!vfs::normalize_path(process::current()->cwd, path, resolved, sizeof(resolved))) {
+                frame.eax = failure(SAVANXP_EINVAL); return;
             }
-            /* Standard streams are permanent kernel channels. */
-            frame.eax = failure(SAVANXP_EBADF);
+            if (frame.eax == SAVANXP_SYS_STAT) frame.eax = io::stat(*process::current(), resolved, frame.esi);
+            else if (frame.eax == SAVANXP_SYS_CHDIR) {
+                const auto* node = vfs::resolve(resolved);
+                if (!node) frame.eax = failure(SAVANXP_ENOENT);
+                else if (node->type != vfs::NodeType::directory) frame.eax = failure(SAVANXP_ENOTDIR);
+                else { strcpy(process::current()->cwd, resolved); frame.eax = 0; }
+            } else if (frame.eax == SAVANXP_SYS_RENAME) {
+                char new_path[256], new_resolved[256];
+                const int result = copy_user_string(frame.esi, new_path, sizeof(new_path));
+                if (result) { frame.eax = failure(result); return; }
+                if (!vfs::normalize_path(process::current()->cwd, new_path, new_resolved, sizeof(new_resolved))) {
+                    frame.eax = failure(SAVANXP_EINVAL); return;
+                }
+                frame.eax = io::mutate(resolved, frame.eax, 0, new_resolved);
+            } else frame.eax = io::mutate(resolved, frame.eax, frame.esi);
             return;
+        }
+        case SAVANXP_SYS_PROC_INFO: {
+            if (!is_user_range(frame.esi, sizeof(savanxp_process_info), true)) { frame.eax = failure(SAVANXP_EFAULT); return; }
+            uint32_t index = 0;
+            for (uint32_t slot = 0; slot < process::kCapacity; ++slot) {
+                const auto& task = *process::at(slot);
+                if (task.state == process::State::unused) continue;
+                if (index++ != frame.edi) continue;
+                savanxp_process_info info = {};
+                info.pid = task.pid; info.parent_pid = task.parent; info.exit_code = task.exit_status;
+                const uint32_t states[] = {SAVANXP_PROC_UNUSED, SAVANXP_PROC_READY, SAVANXP_PROC_RUNNING,
+                    SAVANXP_PROC_SLEEPING, SAVANXP_PROC_BLOCKED_READ, SAVANXP_PROC_BLOCKED_WRITE,
+                    SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_ZOMBIE};
+                info.state = states[static_cast<uint32_t>(task.state)];
+                copy_text(info.name, sizeof(info.name), task.name);
+                info.memory_bytes = paging::resident_bytes(task.directory);
+                info.handle_count = io::handle_count(task);
+                memcpy(reinterpret_cast<void*>(frame.esi), &info, sizeof(info));
+                frame.eax = 1; return;
+            }
+            frame.eax = 0; return;
         }
         case kSysIoctl: {
-            if (frame.edi != kGpuFd || g_gpu_owner != process::current_pid()) {
+            if (io::input_descriptor(*process::current(), frame.edi)) {
+                if (frame.esi == INPUT_IOC_GET_LAYOUT) frame.eax = ps2_32::get_layout();
+                else if (frame.esi == INPUT_IOC_SET_LAYOUT) {
+                    if (!io::input_descriptor(*process::current(), frame.edi, true)) frame.eax = failure(SAVANXP_EACCES);
+                    else frame.eax = ps2_32::set_layout(static_cast<int>(frame.edx)) ? 0 : failure(SAVANXP_EINVAL);
+                }
+                else frame.eax = failure(SAVANXP_ENOTTY);
+                return;
+            }
+            if (!io::gpu_descriptor(*process::current(), frame.edi)) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
             }
@@ -287,22 +332,6 @@ void handle(ContextFrame& frame) {
             frame.eax = 0;
             return;
         }
-        case kSysWrite: {
-            if (frame.edi != kStdoutFd && frame.edi != kStderrFd) {
-                frame.eax = failure(SAVANXP_EBADF);
-                return;
-            }
-            if (!is_user_range(frame.esi, frame.edx)) {
-                frame.eax = failure(SAVANXP_EFAULT);
-                return;
-            }
-            const char* text = reinterpret_cast<const char*>(static_cast<uintptr_t>(frame.esi));
-            for (uint32_t index = 0; index < frame.edx; ++index) {
-                serial::write_char(text[index]);
-            }
-            frame.eax = frame.edx;
-            return;
-        }
         case kSysGetPid: {
             frame.eax = process::current_pid();
             return;
@@ -325,6 +354,7 @@ void handle(ContextFrame& frame) {
             info.framebuffer_bpp = boot.framebuffer_bpp;
             info.block_ready = boot.block_ready;
             info.sxfs_mounted = boot.sxfs_mounted;
+            info.initramfs_size = boot.initramfs_size;
             info.memory_usable_bytes = boot.memory_usable_bytes;
             info.memory_reclaimable_bytes = boot.memory_reclaimable_bytes;
             info.memory_total_pages = memory::total_page_count();

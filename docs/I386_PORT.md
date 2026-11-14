@@ -70,7 +70,8 @@ must be accounted for in that review rather than silently dropping features.
 The graph links the i386 boot/CPU, paging, process, console, input and syscall
 implementation with the shared ATA, block, partition, filesystem, SxFS, VFS and
 runtime modules. `cmake/userland-i386.cmake` builds the SDK runtime and static
-`init32`, `sysinfo`, `sh32`, `desktop32`, plus optional `keyecho`/`multitest32`/`memhog32`.
+`init32`, the reference `sh`/BusyBox subset, core tools, `sysinfo`, `sh32` and
+`desktop32`, plus optional process, memory and POSIX diagnostics.
 The default disk is `build/disk.img`, the ISO is `build/SavanXP.iso`, and the
 CMake cache is `build/linux-i386`. See [BUILD_CMAKE.md](BUILD_CMAKE.md).
 
@@ -78,7 +79,10 @@ Private process maps/stacks, eager x87/SSE state, PIT preemption and spawn/wait/
 exit are implemented. Six process slots use allocator-backed 4 KiB user pages
 inside a 16 MiB virtual window per process; user faults terminate only their
 process. ELF write permissions, unmapped holes and a stack guard are enforced;
-supervisor mappings remain protected without NX. [I386_PROCESSES.md](I386_PROCESSES.md)
+supervisor mappings remain protected without NX. The reference descriptor model,
+regular-file/directory operations, byte pipes, canonical TTY, polling and static
+`exec` are implemented; [I386_POSIX.md](I386_POSIX.md) defines their scope.
+[I386_PROCESSES.md](I386_PROCESSES.md)
 defines the exact current guarantees. The full window manager and dynamic
 library loader are not linked into this kernel.
 
@@ -99,11 +103,16 @@ changes, and record implementation/verification evidence as work lands.
    The six-slot table, fixed virtual window and eager 64 KiB stack remain bounds;
    section objects, heap growth and reference stack-demand behavior belong to
    later memory work. This closes the milestone, not v0.4.0 parity.
-2. **File descriptors and the POSIX base — next.** Port per-process descriptor tables,
-   regular-file read/write/seek/stat/readdir, console ownership, pipes and
-   descriptor inheritance. Bring up the reference shell/BusyBox incrementally,
-   then restore its v0.4.0 behavior with process cleanup and persistence tests.
-3. **Memory objects and ELF32 shared libraries.** Port section objects and
+2. **File descriptors and the POSIX base — completed.** Per-process descriptor
+   tables and shared I/O objects support files/directories, canonical console
+   input, byte pipes, standard-channel inheritance, polling, `exec` and process
+   cleanup. The reference console `sh` and all eleven v0.4.0 BusyBox applets run
+   as static ELF32, including pipelines and redirection. `smoke posix` checks
+   behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
+   checks guest writes across a normal rebuild and a cold boot of an isolated disk.
+   The existing six-slot limit still bounds pipeline capacity; fork and complete
+   signal/object APIs remain parity gaps. [Contracts and limits](I386_POSIX.md).
+3. **Memory objects and ELF32 shared libraries — next.** Port section objects and
    views, heap growth and ELF32 relocations/loader semantics. Check 32-bit
    layouts, overflow, ownership and failure cleanup. Adapt the existing loader
    design to ELF32 structures and relocations.
@@ -134,7 +143,9 @@ rebuild individual apps rather than erasing the image. Earlier experimental
 
 Run `./build.sh build`, `./build.sh smoke`, `./build.sh smoke memory`,
 `./build.sh test`, and
-`./tools/verify_doom_persistence.sh` for build/persistence changes. The default
+`./tools/verify_doom_persistence.sh` for build/persistence changes. Run
+`python3 tools/verify_posix_persistence.py` for changes to guest file I/O,
+descriptor ownership or the POSIX base. The default
 smoke checks the current i386 shell, preemption, lifecycle and minimal desktop
 against the new binaries. Unsupported x86_64 smoke scenarios fail explicitly;
 restore them alongside the subsystem they actually verify. When SxGUI lands,

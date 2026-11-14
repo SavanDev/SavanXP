@@ -23,6 +23,9 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
     from PIL import Image
 
     fonts = glyphs.load(binary)
+    obj = glyphs.SharedObject(binary)
+    symbols = obj.symbols()
+    console = obj.read(symbols["kConsoleGlyphs"], 128 * 16)
     with tempfile.TemporaryDirectory(prefix="savanxp-desktop-check.") as temporary:
         output = artifacts or Path(temporary)
         with QmpClient(qmp_socket, timeout=10) as client:
@@ -53,6 +56,18 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                                              (0, 0, 1024, 768))
                     if not expected or any(image.getpixel(p) != c for p, c in expected.items()):
                         raise RuntimeError(f"desktop glyph mismatch: {text!r} at {(x, y)}")
+
+                # The changed filesystem label uses the fixed UniFont path.
+                # ASCII slots start at 1 for U+0020; derive bits from this ELF.
+                status = "SxFS root mounted read-write by the kernel"
+                for index, character in enumerate(status):
+                    slot = ord(character) - 0x20 + 1
+                    for row in range(16):
+                        bits = console[slot * 16 + row]
+                        for column in range(8):
+                            expected = (40, 52, 68) if bits & (0x80 >> column) else (232, 236, 242)
+                            if image.getpixel((96 + index * 8 + column, 192 + row)) != expected:
+                                raise RuntimeError("desktop filesystem status glyph mismatch")
 
             # The ready token precedes painting. Retry until a complete frame exists.
             deadline = time.monotonic() + 15

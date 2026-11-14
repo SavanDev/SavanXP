@@ -281,6 +281,16 @@ static int sh_wait_for_children(const long* pids, int count) {
     return last_status;
 }
 
+static void sh_close_pipeline_fds(int previous, int input, int output, int error, int reader, int writer) {
+    const int fds[] = {previous, input, output, error, reader, writer};
+    for (unsigned int index = 0; index < sizeof(fds) / sizeof(fds[0]); ++index) {
+        if (fds[index] <= 2) continue;
+        unsigned int earlier = 0;
+        while (earlier < index && fds[earlier] != fds[index]) ++earlier;
+        if (earlier == index) savanxp_close(fds[index]);
+    }
+}
+
 static int sh_execute_pipeline(char* line) {
     struct sh_command_stage stages[SH_MAX_STAGES];
     long pids[SH_MAX_STAGES];
@@ -288,6 +298,8 @@ static int sh_execute_pipeline(char* line) {
     int pid_count = 0;
     int previous_read_fd = -1;
     int index = 0;
+    int pipe_fds[2] = {-1, -1};
+    int input_fd = 0, output_fd = 1, error_fd = 2;
 
     if (stage_count == 0) {
         return 0;
@@ -299,16 +311,14 @@ static int sh_execute_pipeline(char* line) {
     for (index = 0; index < stage_count; ++index) {
         int is_last = (index + 1) == stage_count;
         int simple_spawn = stage_count == 1 && stages[index].input_path == 0 && stages[index].stdout_path == 0 && stages[index].stderr_path == 0;
-        int pipe_fds[2] = {-1, -1};
-        int input_fd = 0;
-        int output_fd = 1;
-        int error_fd = 2;
+        pipe_fds[0] = pipe_fds[1] = -1;
+        input_fd = 0; output_fd = 1; error_fd = 2;
         char path[256];
         long pid = -1;
 
         if (!is_last && savanxp_pipe(pipe_fds) < 0) {
             puts_fd(2, "sh: pipe failed\n");
-            return 1;
+            goto failed;
         }
         if (stages[index].input_path != 0) {
             if (previous_read_fd >= 0) {
@@ -318,7 +328,7 @@ static int sh_execute_pipeline(char* line) {
             input_fd = (int)savanxp_open_mode(stages[index].input_path, SAVANXP_OPEN_READ);
             if (input_fd < 0) {
                 puts_fd(2, "sh: input path not found\n");
-                return 1;
+                goto failed;
             }
         } else if (previous_read_fd >= 0) {
             input_fd = previous_read_fd;
@@ -328,7 +338,7 @@ static int sh_execute_pipeline(char* line) {
                 (stages[index].stdout_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (output_fd < 0) {
                 puts_fd(2, "sh: unable to open output path\n");
-                return 1;
+                goto failed;
             }
         } else if (!is_last) {
             output_fd = pipe_fds[1];
@@ -338,7 +348,7 @@ static int sh_execute_pipeline(char* line) {
                 (stages[index].stderr_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (error_fd < 0) {
                 puts_fd(2, "sh: unable to open error path\n");
-                return 1;
+                goto failed;
             }
         }
         if (stages[index].stderr_to_stdout) {
@@ -346,7 +356,7 @@ static int sh_execute_pipeline(char* line) {
         }
         if (!sh_resolve_command_path(stages[index].argv[0], path, sizeof(path))) {
             puts_fd(2, "sh: command not found\n");
-            return 1;
+            goto failed;
         }
 
         pid = simple_spawn
@@ -354,32 +364,25 @@ static int sh_execute_pipeline(char* line) {
             : spawn_fds(path, (const char* const*)stages[index].argv, stages[index].argc, input_fd, output_fd, error_fd);
         if (pid < 0) {
             puts_fd(2, "sh: command not found\n");
-            return 1;
+            goto failed;
         }
 
         pids[pid_count++] = pid;
-        if (previous_read_fd >= 0) {
-            savanxp_close(previous_read_fd);
-            previous_read_fd = -1;
-        }
-        if (input_fd > 2) {
-            savanxp_close(input_fd);
-        }
-        if (output_fd > 2) {
-            savanxp_close(output_fd);
-        }
-        if (error_fd > 2 && error_fd != output_fd) {
-            savanxp_close(error_fd);
-        }
-        if (!is_last) {
-            previous_read_fd = pipe_fds[0];
-        }
+        sh_close_pipeline_fds(previous_read_fd, input_fd, output_fd, error_fd,
+                              -1, pipe_fds[1]);
+        previous_read_fd = !is_last ? pipe_fds[0] : -1;
     }
-
-    if (previous_read_fd >= 0) {
-        savanxp_close(previous_read_fd);
-    }
+    if (previous_read_fd >= 0) savanxp_close(previous_read_fd);
     return sh_wait_for_children(pids, pid_count);
+
+failed:
+    // Closing endpoints unblocks producers; terminate sleepers/readers too,
+    // then collect every child before returning to the interactive prompt.
+    sh_close_pipeline_fds(previous_read_fd, input_fd, output_fd, error_fd,
+                          pipe_fds[0], pipe_fds[1]);
+    for (index = 0; index < pid_count; ++index) savanxp_kill((int)pids[index], SAVANXP_SIGTERM);
+    sh_wait_for_children(pids, pid_count);
+    return 1;
 }
 
 static int sh_line_is_builtin(const char* line) {

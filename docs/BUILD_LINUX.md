@@ -42,7 +42,8 @@ QEMU uses TCG by default. `./build.sh run --accel kvm` requires access to
 The kernel is currently single-CPU; virtio and the full x86_64 device set are
 porting work. `./build.sh debug` starts QEMU paused for GDB on port 1234.
 
-Normal boot opens `sh32`. `desktop` launches the minimal desktop, `multitest`
+Normal boot opens the reference `sh`, with files, pipes and redirection.
+Run `sh32` for the bring-up diagnostics: `desktop` launches the minimal desktop, `multitest`
 runs process regressions, and `run /disk/bin/NAME` launches an external ELF32.
 An existing SxFS disk is updated without discarding external files; old ELF64
 programs must be rebuilt before they can run on this branch.
@@ -56,6 +57,7 @@ python3 tools/legacy_boot_test.py --iso build/SavanXP.iso \
 ```
 
 This harness uses a disk snapshot. Attach `build/disk.img` as an IDE disk when
-using the ISO in another hypervisor; the ISO alone boots the kernel but does
-not contain userland. Physical laptop support remains subject to the gaps in
+using the ISO in another hypervisor. The ISO loads the kernel and CPIO root;
+the current init32 startup policy requires mounted SxFS. Physical laptop support
+remains subject to the gaps in
 [REAL_HARDWARE.md](REAL_HARDWARE.md).

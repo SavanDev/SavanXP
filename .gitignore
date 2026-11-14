@@ -33,6 +33,7 @@ tools/*
 !tools/new-user-app.sh
 !tools/restore_doom.sh
 !tools/verify_doom_persistence.sh
+!tools/verify_posix_persistence.py
 !tools/shoot.sh
 !tools/tcp_echo_server.py
 !tools/smoke_catalog.py

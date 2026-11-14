@@ -19,6 +19,8 @@ bool user_range(const uint32_t* directory, uint32_t address, uint32_t bytes, boo
 void* user_pointer(const uint32_t* directory, uint32_t address);
 // Copy through physical aliases, including ranges crossing noncontiguous pages.
 bool copy_to_user(uint32_t* directory, uint32_t address, const void* source, uint32_t bytes);
+bool copy_from_user(const uint32_t* directory, void* destination, uint32_t address, uint32_t bytes);
+uint32_t resident_bytes(const uint32_t* directory);
 void activate(const uint32_t* directory);
 void activate_kernel();
 }

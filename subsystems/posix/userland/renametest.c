@@ -17,11 +17,13 @@ int main(void) {
     const char* dir = "/disk/tmp/rename-a";
     const char* moved_dir = "/disk/tmp/rename-b";
     const char* file = "/disk/tmp/rename-a/file.txt";
+    const char* intermediate_file = "/disk/tmp/rename-b/file.txt";
     const char* moved_file = "/disk/tmp/rename-b/data.txt";
     const char* text = "rename works\n";
     char buffer[32];
 
     savanxp_unlink(moved_file);
+    savanxp_unlink(intermediate_file);
     savanxp_unlink(file);
     savanxp_rmdir(moved_dir);
     savanxp_rmdir(dir);
@@ -43,6 +45,12 @@ int main(void) {
 
     if (savanxp_rename(dir, moved_dir) < 0) {
         puts_fd(2, "renametest: directory rename failed\n");
+        return 1;
+    }
+    // A directory move preserves child names. Exercise the separate file
+    // rename before checking the final data.txt path.
+    if (savanxp_rename(intermediate_file, moved_file) < 0) {
+        puts_fd(2, "renametest: file rename failed\n");
         return 1;
     }
     if (savanxp_rename(moved_file, moved_dir) >= 0) {

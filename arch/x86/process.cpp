@@ -9,6 +9,8 @@
 #include "serial.hpp"
 #include "user32.hpp"
 #include "syscall.hpp"
+#include "io.hpp"
+#include "kernel/physical_memory.hpp"
 
 namespace i386::process {
 namespace {
@@ -38,15 +40,8 @@ void wake_tasks() {
         if (task.state == State::sleeping && task.wake_ms <= now) {
             task.state = State::runnable;
         }
-        if (task.state == State::reading) {
-            savanxp_input_event event = {};
-            if (ps2_32::pop_event(event)) {
-                paging::copy_to_user(task.directory, task.input_buffer, &event, sizeof(event));
-                task.frame->eax = sizeof(event);
-                task.state = State::runnable;
-            }
-        }
     }
+    io::service();
 }
 
 ContextFrame* schedule(ContextFrame* frame) {
@@ -64,6 +59,7 @@ ContextFrame* schedule(ContextFrame* frame) {
     } else {
         g_idle_frame = frame;
     }
+    io::service();
     Process* next = nullptr;
     for (uint32_t offset = 1; offset <= kCapacity; ++offset) {
         Process& candidate = g_processes[(g_last_slot + offset) % kCapacity];
@@ -125,7 +121,7 @@ bool user_range(uint32_t address, uint32_t size, bool writable) {
     return g_current != nullptr && paging::user_range(g_current->directory, address, size, writable);
 }
 
-long spawn(const char* path, const char* const* argv, uint32_t argc) {
+long spawn(const char* path, const char* const* argv, uint32_t argc, int stdin_fd, int stdout_fd) {
     for (auto& task : g_processes) {
         if (task.state != State::unused) {
             continue;
@@ -143,6 +139,16 @@ long spawn(const char* path, const char* const* argv, uint32_t argc) {
             paging::destroy_process_directory(task.directory);
             return -error;
         }
+        if (!io::initialize_handles(task, g_current, stdin_fd, stdout_fd)) {
+            paging::destroy_process_directory(task.directory);
+            return -SAVANXP_EBADF;
+        }
+        strcpy(task.cwd, g_current ? g_current->cwd : "/");
+        const char* name = path;
+        for (const char* cursor = path; *cursor; ++cursor) if (*cursor == '/') name = cursor + 1;
+        uint32_t length = strlen(name);
+        if (length >= sizeof(task.name)) length = sizeof(task.name) - 1;
+        memcpy(task.name, name, length);
         initialize_fpu_state(task.fpu);
         task.pid = g_next_pid++;
         task.parent = current_pid();
@@ -194,9 +200,38 @@ uint32_t count() {
     return total;
 }
 
-void read_input(uint32_t buffer) {
-    g_current->input_buffer = buffer;
-    g_current->state = State::reading;
+Process* current() { return g_current; }
+Process* at(uint32_t index) { return index < kCapacity ? &g_processes[index] : nullptr; }
+
+int replace_image(const char* path, const char* const* argv, uint32_t argc, ContextFrame& frame) {
+    memory::PageAllocation staging = {};
+    if (!memory::allocate_page(staging)) return SAVANXP_ENOMEM;
+    auto* directory = static_cast<uint32_t*>(staging.virtual_address);
+    paging::initialize_process_directory(directory);
+    ContextFrame replacement = {};
+    const int error = user32::load(path, directory, replacement, argc, argv);
+    if (error) {
+        paging::destroy_process_directory(directory);
+        memory::free_allocation(staging);
+        return error;
+    }
+    // Commit only after the new image is complete; failures preserve the old
+    // program, descriptors and CWD. Kernel stacks do not depend on user CR3.
+    paging::activate_kernel();
+    paging::destroy_process_directory(g_current->directory);
+    memcpy(g_current->directory, directory, 4096);
+    memory::free_allocation(staging);
+    paging::activate(g_current->directory);
+    frame = replacement;
+    initialize_fpu_state(g_current->fpu);
+    restore_fpu_state(g_current->fpu);
+    const char* name = path;
+    for (const char* cursor = path; *cursor; ++cursor) if (*cursor == '/') name = cursor + 1;
+    memset(g_current->name, 0, sizeof(g_current->name));
+    uint32_t length = strlen(name);
+    if (length >= sizeof(g_current->name)) length = sizeof(g_current->name) - 1;
+    memcpy(g_current->name, name, length);
+    return 0;
 }
 
 void sleep(uint32_t milliseconds) {
@@ -238,9 +273,8 @@ long wait(int pid, uint32_t status) {
     return 0; // The exit path fills in the actual child PID before resuming.
 }
 
-void exit(int status) {
-    Process& child = *g_current;
-    syscall::release_process_resources(child.pid);
+static void terminate(Process& child, int status) {
+    io::release_handles(child);
     serial::write("process: pid ");
     serial::write_dec(child.pid);
     serial::write(" preemptions ");
@@ -269,6 +303,21 @@ void exit(int status) {
             }
         }
     }
+}
+
+void exit(int status) { terminate(*g_current, status); }
+
+long kill(uint32_t pid, int signal) {
+    if (signal != SAVANXP_SIGINT && signal != SAVANXP_SIGKILL && signal != SAVANXP_SIGPIPE &&
+        signal != SAVANXP_SIGTERM && signal != SAVANXP_SIGCHLD) return -SAVANXP_EINVAL;
+    for (auto& task : g_processes) {
+        if (task.pid != pid || task.state == State::unused || task.state == State::zombie) continue;
+        if (signal == SAVANXP_SIGCHLD) return 0;
+        terminate(task, 128 + signal);
+        if (&task != g_current) paging::destroy_process_directory(task.directory);
+        return 0;
+    }
+    return -SAVANXP_ENOENT;
 }
 
 ContextFrame* fault(uint32_t vector) {

@@ -15,7 +15,7 @@ JOBS=${SAVANXP_JOBS:-}
 PYTHON=${SAVANXP_PYTHON:-python3}
 COMMAND=build
 SCENARIO=smoke
-TIMEOUT=120
+TIMEOUT=240
 LIST=0
 if [[ $# -gt 0 && "$1" != -* ]]; then COMMAND=$1; shift; fi
 if [[ "$COMMAND" == smoke && $# -gt 0 && "$1" != -* ]]; then SCENARIO=$1; shift; fi
@@ -47,8 +47,8 @@ Options:
   --smp 1         one CPU (SMP is not ported yet)
   --headless      disable the graphical QEMU window
   --legacy        compatibility alias; i386 is already selected
-  --scenario NAME smoke scenario: smoke, boot, processes, memory, desktop, legacy-cpu
-  --timeout SEC   smoke timeout (default: 120)
+  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, desktop, legacy-cpu
+  --timeout SEC   smoke timeout (default: 240)
   --list          list supported smoke scenarios
 EOF
             exit 0 ;;
@@ -74,7 +74,7 @@ if ((LIST)); then
 fi
 if [[ "$COMMAND" == smoke ]]; then
     case "$SCENARIO" in
-        smoke|boot|processes|memory|desktop|legacy-cpu) ;;
+        smoke|boot|processes|memory|posix|desktop|legacy-cpu) ;;
         *) echo "build.sh: '$SCENARIO' is not ported to i386; use smoke --list (x86_64 scenarios live on master)" >&2; exit 2 ;;
     esac
     INCLUDE_TEST_APPS=ON

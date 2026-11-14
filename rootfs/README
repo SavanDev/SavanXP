@@ -1,24 +1,23 @@
 SavanXP
 
-Sistema en estado experimental, pero ya usable para pruebas dentro de la shell.
+Experimental system, usable for tests from the shell.
 
-Estado general:
-- Boot UEFI con Limine
-- Consola de texto sobre framebuffer
-- TTY canonica con teclado PS/2
-- Syscalls, procesos y shell de userland
-- /disk como volumen persistente principal
+Current i386 path:
+- GRUB2/Multiboot2 BIOS boot
+- Framebuffer text console and PS/2 canonical TTY
+- Syscalls, processes and the reference userland shell
+- /disk as the main persistent volume
 
-Atajos utiles:
-- `help` para ver comandos y ejemplos
-- `sysinfo` para diagnostico general del sistema
-- `df` para ver espacio total, usado y libre de /disk
-- `cd /disk` para entrar al volumen persistente
-- `pwd` para ver el directorio actual
-- `ls` para listar el directorio actual
-- `sync` para forzar escritura de metadatos a disco
+Useful commands:
+- help: commands and examples
+- sysinfo: system diagnostics
+- df: total, used and free space on /disk
+- cd /disk: enter the persistent volume
+- pwd: show the current directory
+- ls: list the current directory
+- sync: flush filesystem metadata
 
-Notas:
-- `/README` vive en el initramfs
-- `/disk/README` vive en el filesystem persistente SxFS
-- Los binarios externos instalados en `/disk/bin` se pueden ejecutar desde la shell
+Notes:
+- /README lives in the initramfs
+- /disk/README lives in persistent SxFS
+- External programs in /disk/bin can be launched from the shell

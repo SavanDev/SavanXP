@@ -17,7 +17,7 @@ int main(void) {
     puts_out("init32: ready\n");
     launch("/disk/bin/sysinfo");
     for (;;) {
-        launch("/disk/bin/sh32");
+        launch("/disk/bin/sh");
         sleep_ms(100);
     }
 }

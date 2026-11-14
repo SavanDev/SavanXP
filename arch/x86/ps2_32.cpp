@@ -236,6 +236,8 @@ char ascii_for(uint8_t scancode, bool extended) {
         }
         return 0;
     }
+    // ISO keyboards provide the angle-bracket key needed for shell redirection.
+    if (scancode == 0x56) return shift ? '>' : '<';
     if (scancode >= kTableSize) {
         return 0;
     }
@@ -263,6 +265,7 @@ void push_event(uint32_t type, uint32_t key, int32_t ascii) {
  * lo que tools/legacy_boot_test.py --expect-key sigue exigiendo; la linea
  * decodificada va despues. */
 void handle_code(uint8_t code) {
+    serial::SerialOnly trace;
     serial::write("ps2: scan ");
     serial::write_hex(code);
     serial::write("\n");

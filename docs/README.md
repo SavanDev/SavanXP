@@ -42,6 +42,8 @@ i386 support; retained code is not necessarily part of the active build.
 - [`REAL_HARDWARE.md`](REAL_HARDWARE.md) — the i386 porting route through a
   minimal graphical desktop in QEMU, its verification commands, and the
   remaining hardware gaps for a Compaq Evo N1020v.
+- [`I386_POSIX.md`](I386_POSIX.md) — shared descriptors, files, pipes, canonical TTY,
+  reference shell/BusyBox, exec/cleanup and guest persistence verification.
 - [`I386_PROCESSES.md`](I386_PROCESSES.md) — private i386 process contexts, PIT
   preemption, allocator-backed pages, fault containment, spawn/wait/exit and regressions.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and

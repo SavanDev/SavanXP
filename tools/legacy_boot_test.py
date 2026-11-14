@@ -35,6 +35,7 @@ PIT_TOKEN = "pit: canal 0 a 100 Hz"
 VIDEO_TOKEN = "console: framebuffer 8x16 at "
 # El shell anuncia su arranque: es la senal para la segunda fase de tecleado
 # (--expect-sh), porque el shell solo existe cuando llego a ring 3.
+REFERENCE_PROMPT = "savanxp:/$ "
 SH32_TOKEN = "sh32: listo"
 # El prompt del shell: lo escribe al arrancar y al volver de cada comando.
 SH32_PROMPT = "sh32> "
@@ -43,6 +44,11 @@ SH32_PROMPT = "sh32> "
 # imprime tal cual (ps2: scan), y con la decodificacion encima exige el ascii
 # que el shell/userland reporta.
 KEY_SCANCODES = {
+    "j": 0x24,
+    "q": 0x10,
+    "z": 0x2C,
+    ".": 0x34,
+    "-": 0x35,
     "a": 0x1E,
     "b": 0x30,
     "c": 0x2E,
@@ -112,6 +118,8 @@ KEY_ASCII = {
 # llama a las letras como las llamamos aqui), pero Enter y Space no: el qcode
 # es `ret` y `spc`, y input-send-event rechaza el nombre nuestro.
 KEY_QMP_NAMES = {
+    "-": "slash",
+    ".": "dot",
     "enter": "ret",
     "space": "spc",
 }
@@ -156,14 +164,12 @@ def type_keys(qmp_socket: Path | None, keys: tuple[tuple[str, int], ...]) -> Non
 
 
 def command_to_keys(command: str) -> tuple[tuple[str, int], ...]:
-    """Un comando del shell a taps individuales: un tap por caracter, con el
-    enter del final. Letras y '0'/'5'/espacio ya estan en los mapas; cualquier
-    otra cosa es un error de programacion del propio test."""
+    """Translate commands to ES-layout key taps, including shell operators."""
     out: list[tuple[str, int]] = []
     for character in command:
-        if character == "/":
+        if character in ("/", "<", ">", "|", '"', "&"):
             # The default Spanish layout places slash on Shift+7.
-            out.append(("/", 0x08))
+            out.append((character, 0))
             continue
         if character == " ":
             name = "space"
@@ -200,9 +206,7 @@ def shell_session_pattern(commands: tuple[str, ...]) -> str:
 
 
 def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
-    """Teclea cada comando del shell con su enter, dejando al proceso leer,
-    ejecutar y responder entre comando y comando (el shell es un proceso en
-    ring 3 con solo sti;hlt detras, no hay pipeline que llenar)."""
+    """Type complete commands through QMP, allowing the guest to consume each line."""
     if qmp_socket is None:
         raise RuntimeError("no QMP socket to type on")
     deadline = time.monotonic() + 20
@@ -213,12 +217,81 @@ def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
             for name, _scancode in command_to_keys(command):
                 if name == "/":
                     client.chord("shift", "7")
+                elif name == "<":
+                    client.tap("less")
+                elif name == ">":
+                    client.chord("shift", "less")
+                elif name == "|":
+                    client.tap("grave_accent")
+                elif name == '"':
+                    client.chord("shift", "2")
+                elif name == "&":
+                    client.chord("shift", "6")
                 else:
-                    client.tap(KEY_QMP_NAMES.get(name, name))
-                time.sleep(0.2)
-            # El comando ya entro: el proceso tardo un par de ticks en leerlo
-            # y responder, y el siguiente no se teclea encima de esa respuesta.
+                    client.tap(KEY_QMP_NAMES.get(name, name), hold=0.05, pause=0.06)
+                time.sleep(0.04)
+            # Allow the submitted line to run before typing the next command.
             time.sleep(1.0)
+
+
+def wait_serial(serial: Path, pattern: str, offset: int = 0, timeout: float = 30) -> re.Match[str]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = shell_transcript(serial.read_text(errors="replace")[offset:])
+        if "POSIX FAIL" in text or "kernel: fatal exception" in text:
+            raise RuntimeError(text[-2000:])
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match
+        time.sleep(0.1)
+    raise RuntimeError(f"guest did not produce {pattern!r}; tail: {text[-1200:]}")
+
+
+def check_posix(qmp_socket: Path, serial: Path) -> None:
+    """Run the reference shell and multicall apps, not the bring-up shell."""
+    wait_serial(serial, re.escape(REFERENCE_PROMPT))
+    commands = (
+        ("posixtest32", r"POSIX PASS.*?savanxp:/\$ "),
+        ("echo failed | missing", r"sh: command not found.*?savanxp:/\$ "),
+        ("sleep 10 | sleep 10 | sleep 10 | sleep 10 | sleep 10", r"sh: command not found.*?savanxp:/\$ "),
+        ("posixtest32 audit", r"POSIX shell cleanup PASS.*?savanxp:/\$ "),
+        ("fdtest", r"fdtest: ok.*?savanxp:/\$ "),
+        ("waittest", r"waittest: ok.*?savanxp:/\$ "),
+        ("pipestress", r"pipestress: ok.*?savanxp:/\$ "),
+        ("seektest", r"seektest: ok.*?savanxp:/\$ "),
+        ("renametest", r"renametest: ok.*?savanxp:/\$ "),
+        ("truncatetest", r"truncatetest: ok.*?savanxp:/\$ "),
+        ("echo typed | cat > /disk/typed", r"savanxp:/\$ "),
+        ("cat /disk/typed", r"typed\r?\n.*?savanxp:/\$ "),
+        ("errtest redirected > /disk/out 2>&1", r"savanxp:/\$ "),
+        ("cat /disk/out", r"redirected\r?\n.*?savanxp:/\$ "),
+        ("cd /disk", r"savanxp:/disk\$ "),
+        ("pwd", r"/disk\r?\n.*?savanxp:/disk\$ "),
+        ("cd /", r"savanxp:/\$ "),
+        ("sh -c \"exec echo executed\"", r"executed\r?\n.*?savanxp:/\$ "),
+        ("exit", r"Type 'help' for commands.*?savanxp:/\$ "),
+    )
+    for command, pattern in commands:
+        offset = len(serial.read_text(errors="replace"))
+        type_shell(qmp_socket, (command,))
+        wait_serial(serial, pattern, offset, timeout=120 if command == "posixtest32" else 30)
+    text = serial.read_text(errors="replace")
+    for token in ("POSIX files and paths PASS", "POSIX inheritance and exec PASS",
+                  "POSIX pipes and poll PASS", "POSIX BusyBox applets PASS", "POSIX descriptor exhaustion PASS"):
+        if token not in text:
+            raise RuntimeError(f"missing POSIX regression: {token}")
+    baseline = re.search(r"POSIX baseline free bytes (\d+)", text)
+    audit = re.search(r"POSIX audit free bytes (\d+)", text)
+    if baseline is None or audit is None or baseline[1] != audit[1]:
+        raise RuntimeError("failed pipelines did not restore the exact free-page baseline")
+    print("i386 reference shell, BusyBox and descriptors: PASS", flush=True)
+
+
+def check_persistence(qmp_socket: Path, serial: Path, mode: str) -> None:
+    wait_serial(serial, re.escape(REFERENCE_PROMPT))
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, (f"posixtest32 persist-{mode}",))
+    wait_serial(serial, rf"POSIX PERSIST {mode.upper()} PASS.*?savanxp:/\$ ", offset)
 
 
 def check_shell_processes(qmp_socket: Path, serial: Path) -> None:
@@ -247,6 +320,9 @@ def check_shell_processes(qmp_socket: Path, serial: Path) -> None:
     wait_for(r"user: exception #6 killed pid=.*?child status 134.*?sh32> ", offset)
     offset = len(serial.read_text(errors="replace"))
     type_shell(qmp_socket, ("exit",))
+    wait_for(r"savanxp:/\$ ", offset)
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("sh32",))
     wait_for(r"sh32: listo.*?sh32> ", offset)
 
 
@@ -292,6 +368,8 @@ def run_boot(
     desktop_binary: Path | None = None,
     artifacts: Path | None = None,
     expect_processes: bool = False,
+    expect_posix: bool = False,
+    persistence: str | None = None,
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -326,17 +404,34 @@ def run_boot(
     shell_typed = False
     desktop_requested = False
     process_shell_checked = False
+    legacy_shell_requested = False
+    posix_checked = False
+    persistence_checked = False
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
             if "kernel: fatal exception" in text:
                 raise RuntimeError("kernel exception; inspect serial log")
+            if "POSIX FAIL" in text:
+                raise RuntimeError(text[text.index("POSIX FAIL"):].splitlines()[0])
             if "MULTITASK FAIL" in text:
                 raise RuntimeError(text[text.index("MULTITASK FAIL"):].splitlines()[0])
             if FAILURE_TOKEN in text:
                 lines = [line for line in text.splitlines() if line.startswith("savanxp/i386")]
                 reported = lines[-1] if lines else "no reason reported"
                 raise RuntimeError(f"bootstrap halted: {reported}")
+            if persistence and not persistence_checked and REFERENCE_PROMPT in shell_transcript(text):
+                check_persistence(qmp_socket, serial, persistence)
+                persistence_checked = True
+                continue
+            if expect_posix and not posix_checked and REFERENCE_PROMPT in shell_transcript(text):
+                check_posix(qmp_socket, serial)
+                posix_checked = True
+                continue
+            if (not expect_posix or posix_checked) and (shell_commands or desktop_binary) and not legacy_shell_requested and REFERENCE_PROMPT in shell_transcript(text):
+                type_shell(qmp_socket, ("sh32",))
+                legacy_shell_requested = True
+                continue
             input_ready = SH32_TOKEN in text if (shell_commands or desktop_binary) else PS2_TOKEN in text
             if keys and not typed and input_ready:
                 # Without an interactive session, raw scancodes can be tested
@@ -383,7 +478,7 @@ def run_boot(
                     check_console_clear(qmp_socket, artifacts)
                     type_shell(qmp_socket, ("desktop",))
                     desktop_requested = True
-                if all(token in text for token in require) and all(
+                if (not persistence or persistence_checked) and (not expect_posix or posix_checked) and all(token in text for token in require) and all(
                     pattern.search(shell_transcript(text)) for pattern in patterns
                 ):
                     if expect_processes:
@@ -396,6 +491,7 @@ def run_boot(
             if process.poll() is not None:
                 raise RuntimeError(f"QEMU exited with {process.returncode}: {qemu_log.read_text(errors='replace')}")
             time.sleep(0.2)
+        text = serial.read_text(errors="replace") if serial.exists() else ""
         missing = [token for token in (SUCCESS_TOKEN, *require) if token not in text]
         if missing:
             suffix = f"; missing {missing[0]!r}"
@@ -456,6 +552,9 @@ def main() -> int:
             "its echo plus its answer (repeatable): " + ", ".join(sorted(SH32_COMMAND_ANSWERS))
         ),
     )
+    parser.add_argument("--expect-persistence", choices=("write", "read"), help="isolated cold-boot persistence phase")
+    parser.add_argument("--writable-disk", action="store_true", help="write to a disposable persistence-test image")
+    parser.add_argument("--expect-posix", action="store_true", help="verify the reference shell, BusyBox and descriptor lifecycle")
     parser.add_argument("--expect-processes", action="store_true",
                         help="run multitest32 and prove PIT preemption, FPU preservation and process lifecycle")
     parser.add_argument("--expect-desktop", type=Path, metavar="ELF32",
@@ -474,6 +573,10 @@ def main() -> int:
     disk_image = args.disk_image.resolve() if args.disk_image is not None else None
     if disk_image is not None and not disk_image.is_file():
         raise SystemExit(f"disk image does not exist: {disk_image}")
+    if args.writable_disk and (args.expect_persistence != "write" or disk_image is None):
+        parser.error("--writable-disk requires a disposable --disk-image and --expect-persistence write")
+    if args.expect_persistence and disk_image is None:
+        parser.error("--expect-persistence requires --disk-image")
     if args.expect_desktop is not None:
         if disk_image is None or not args.expect_desktop.is_file():
             parser.error("--expect-desktop needs --disk-image and an existing desktop32 ELF")
@@ -519,7 +622,7 @@ def main() -> int:
         ]
         if disk_image is not None:
             # snapshot=on: el arranque nunca escribe en la imagen persistente.
-            command += ["-drive", f"file={disk_image},format=raw,if=ide,snapshot=on"]
+            command += ["-drive", f"file={disk_image},format=raw,if=ide,snapshot={'off' if args.writable_disk else 'on'}"]
         require = (PROCESS_TOKEN, SCHEDULER_TOKEN, "memory: reference allocator ready")
         if args.expect_processes and args.memory_mib == 32:
             require += ("MEMORY ENOMEM rollback PASS",)
@@ -536,6 +639,9 @@ def main() -> int:
             detail = " (userland program ran)"
         keys: tuple[tuple[str, int], ...] = ()
         qmp_socket: Path | None = None
+        if args.expect_posix or args.expect_persistence:
+            qmp_socket = Path(temporary) / "qmp.sock"
+            command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
         if args.expect_key:
             unknown = [key for key in args.expect_key if key not in KEY_SCANCODES]
             if unknown:
@@ -547,8 +653,9 @@ def main() -> int:
             require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
             require += (VIDEO_TOKEN,)
             detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
-            qmp_socket = Path(temporary) / "qmp.sock"
-            command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
+            if qmp_socket is None:
+                qmp_socket = Path(temporary) / "qmp.sock"
+                command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
         shell_commands: tuple[str, ...] = ()
         patterns: tuple[re.Pattern[str], ...] = ()
         if args.expect_sh:
@@ -576,7 +683,7 @@ def main() -> int:
             detail = " (desktop glyphs, PS/2 motion, buttons and cursor restoration)"
         run_boot(
             qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
-            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes,
+            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes, args.expect_posix, args.expect_persistence,
         )
     return 0
 

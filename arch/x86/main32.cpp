@@ -13,6 +13,7 @@
 #include "fb32.hpp"
 #include "multiboot2.hpp"
 #include "memory.hpp"
+#include "io.hpp"
 #include "kernel/physical_memory.hpp"
 #include "paging.hpp"
 #include "pit.hpp"
@@ -229,7 +230,9 @@ void report_block_devices() {
  * bajo /disk. La pila de almacenamiento es la misma que la de x86_64: ATA PIO,
  * registro de dispositivos de bloque, driver MBR y SxFS sobre el VFS. */
 void mount_root_filesystem() {
-    vfs::initialize(nullptr, 0);
+    const auto& boot = boot_state::state();
+    vfs::initialize(reinterpret_cast<const void*>(boot.initramfs_address), boot.initramfs_size);
+    if (!vfs::ready()) halt_with("vfs: invalid initramfs");
     block::register_driver(ata::driver());
     block::register_driver(partition::driver());
     block::probe_all();
@@ -362,6 +365,15 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
             halt_with("savanxp/i386: invalid Multiboot2 tag");
         }
 
+        if (type == 3) {
+            const auto* words = reinterpret_cast<const uint32_t*>(tag);
+            if (size < 16 || words[3] < words[2] || words[3] > paging::kDirectMapBytes)
+                halt_with("memory: invalid Multiboot2 module");
+            if (boot_state::state().initramfs_address == 0) {
+                boot_state::state().initramfs_address = words[2];
+                boot_state::state().initramfs_size = words[3] - words[2];
+            }
+        }
         switch (static_cast<TagType>(type)) {
             case TagType::cmdline:
                 serial::write("cmdline: '");
@@ -406,6 +418,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     initialize_video();
 
     mount_root_filesystem();
+    io::initialize();
 
     serial::write("I386 BOOT OK\n");
 

@@ -13,7 +13,9 @@ if(SAVANXP_GRUB_MKRESCUE AND SAVANXP_GRUB_I386_PC)
                 "${SAVANXP_KERNEL_ELF}" "${SAVANXP_ISO_ROOT}/boot/savanxp-kernel.elf"
         COMMAND "${CMAKE_COMMAND}" -E copy
                 "${CMAKE_SOURCE_DIR}/boot/grub-i386.cfg" "${SAVANXP_ISO_ROOT}/boot/grub/grub.cfg"
-        DEPENDS savanxp_kernel
+        COMMAND "${CMAKE_COMMAND}" -E copy
+                "${SAVANXP_INITRAMFS}" "${SAVANXP_ISO_ROOT}/boot/initramfs.cpio"
+        DEPENDS savanxp_kernel savanxp_i386_initramfs
         COMMENT "Staging the i386 ISO boot tree"
         VERBATIM
     )
@@ -32,7 +34,7 @@ else()
 endif()
 
 add_custom_target(savanxp
-    DEPENDS savanxp_kernel savanxp_i386_disk
+    DEPENDS savanxp_kernel savanxp_i386_disk savanxp_i386_initramfs
     COMMENT "Building the i386 kernel and its disk image"
 )
 

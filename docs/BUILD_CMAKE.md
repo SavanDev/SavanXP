@@ -19,6 +19,7 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke boot
 ./build.sh smoke processes
 ./build.sh smoke memory
+./build.sh smoke posix
 ./build.sh smoke desktop
 ./build.sh smoke legacy-cpu
 ./build.sh test
@@ -26,9 +27,10 @@ for the [progressive port](I386_PORT.md).
 ```
 
 The default build directory is `build/linux-i386`; output goes to `build`.
-`build` compiles the kernel and userland and updates `disk.img`. `iso`, `run`
+`build` compiles the kernel/userland, packs the CPIO root and updates `disk.img`. `iso`, `run`
 and `debug` also prepare the disk and build a GRUB2 BIOS ISO. The ISO does not
-embed the disk; userland requires the attached IDE image. `run` launches
+embed the disk. It loads `initramfs.cpio` as a Multiboot2 module for the reference
+`/bin` and `/README`; the current init32 boot policy requires the IDE disk. `run` launches
 `qemu-system-i386` with SeaBIOS/i440FX, `qemu32`, standard VGA, PS/2 and one CPU.
 `debug` adds `-s -S`. There is no UEFI firmware or Limine download.
 
@@ -64,10 +66,11 @@ SMP values other than one and virtio are rejected until those features are porte
 ## Regression checks
 
 `./build.sh smoke` invokes `tools/run_smoke.py` and `tools/legacy_boot_test.py` against the freshly built
-ISO and a snapshot of the normal disk. It checks boot, shell, keyboard,
+ISO and a snapshot of the normal disk. It checks the reference shell/BusyBox and
+POSIX base, then runs the diagnostic shell for keyboard,
 concurrent CPU workers, spawn/wait/exit, contained user faults, page protection,
 shell restart, desktop glyphs, PS/2
-buttons and cursor restoration. Logs/screenshots stay in a unique directory
+buttons and cursor restoration. The default timeout is 240 seconds. Logs/screenshots stay in a unique directory
 under `build/smoke-logs`. `smoke --list` lists supported cases. Former x86_64
 scenarios such as `sxgui-smoke` and `windowd-smoke` are unavailable until their
 subsystems have been ported; the minimal desktop check does not prove SxGUI.
@@ -77,6 +80,18 @@ It requires partial ELF allocation to fail with `ENOMEM`, retries it without pag
 leaks, and verifies surviving children, page reclamation and slot reuse. The
 normal 1 GiB smoke exercises table exhaustion instead. `multitest32` and its
 12 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
+
+`./build.sh smoke posix` checks all eleven BusyBox applets, shared file offsets,
+stdio inheritance, directories, pipes larger than the ring, nonblocking I/O,
+polling, transactional exec, fault cleanup, descriptor exhaustion and shell
+pipeline failure/restart. The normal shell uses canonical TTY lines; `sh32`
+and `keyecho` open raw `/dev/input0` streams for the existing diagnostics.
+Keyboard IRQ traces remain on COM1 without scrolling the graphical console.
+
+`python3 tools/verify_posix_persistence.py` boots a disposable disk copy writable,
+creates/renames/syncs a file, runs the normal build on that copy and cold-boots
+it to verify the exact content. It also checks that the source image is unchanged.
+Artifacts include both guest logs and the isolated rebuild output.
 
 `./build.sh test` runs hosted regressions for reused modules, external ELF32
 construction, and the normal build/run routing. Host audio or network tests do
@@ -99,9 +114,13 @@ The old `build/i386/disk-i386.img` is not selected or reset automatically.
 `/disk/bin/NAME`). It includes i386 `setjmp` and compiler division helpers.
 Application dependencies still require the corresponding i386 syscall support.
 `tools/run-user.sh` builds/installs and opens the shell; launch the program with
-`run /disk/bin/NAME`.
+`/disk/bin/NAME` from the reference shell.
 
 `./tools/verify_doom_persistence.sh` builds and installs the canonical Doom port
 as static ELF32 into an isolated copy, adds WAD/config/save data, then runs the
-normal build and compares hashes. This checks preservation only. Doom's file,
-audio and memory requirements are not yet implemented by the i386 guest.
+normal build and compares hashes. This checks preservation only. Doom's complete memory, graphics and audio requirements remain outside this milestone.
+
+The CPIO staging tree is a copy of the internal disk staging tree plus the
+reference root README. Debug symbols are removed from the CPIO copies with the
+already-discovered LLVM objcopy; installed disk binaries keep their build bytes.
+This keeps the read-only root small enough for the 32 MiB regression machine.

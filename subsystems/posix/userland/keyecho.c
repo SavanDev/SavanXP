@@ -40,6 +40,10 @@ static void print_line(const struct savanxp_input_event* event) {
 }
 
 int main(void) {
+    // These diagnostics consume raw events; the reference shell uses TTY lines.
+    long input = savanxp_open("/dev/input0");
+    if (input < 0 || savanxp_dup2((int)input, 0) < 0) return 1;
+    savanxp_close((int)input);
     struct savanxp_input_event event;
 
     puts_out("keyecho: leyendo stdin\n");

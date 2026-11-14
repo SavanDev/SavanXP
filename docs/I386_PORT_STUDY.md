@@ -313,16 +313,155 @@ Section objects, heap growth and reference stack-demand behavior still need
 porting. The next ordered dependency is the reference descriptor/POSIX base;
 SxGUI, the original shell and the full desktop remain later consumers.
 
+## 8. Restoring the reference descriptor and console environment
+
+The next dependency after fault containment was an environment in which the
+original shell could execute its ordinary commands. The prototype treated
+stdin as raw key records and stdout/stderr as permanent kernel channels; its
+only openable object was a fixed GPU descriptor. Adding file read/write alone
+would leave redirection, pipe lifetimes, CWD and the console ABI unresolved.
+
+The comparison source was v0.4.0's `kernel/process.cpp`,
+`include/kernel/object.hpp`, `subsystems/posix/userland/sh.c`/`shell_core.c` and
+`vendor/busybox-port`. Its BusyBox is an eleven-applet subset, not a complete
+ash installation. Reusing those applications avoids making `sh32` a permanent
+replacement. [I386_POSIX.md](I386_POSIX.md) defines the current detailed contract.
+
+### Shared objects, private descriptor tables
+
+A descriptor must identify an object, not a file offset copied into each task.
+The reference already separates per-process `HandleEntry` slots from shared
+`IoObject` state and retains objects across duplication and inherited standard
+channels. The port preserves those structures, flags, first-free allocation,
+256-object budget, 64 descriptors per task and 64 byte-pipe budget. The portable
+I/O types and object lifetime functions were extracted from the reference
+process/object modules; their interfaces and algorithms remain shared.
+
+Linking the entire reference process translation unit would also require its
+64-bit VM, SMP, device and object-wait dependencies before a file could be
+opened. Replacing the object model with independent per-task file records would
+change offset and pipe ownership semantics. The chosen adaptation keeps the
+reference objects and implements the architecture boundaries in `arch/x86/io`:
+32-bit user addresses, page-split physical-alias copies, saved i386 frames and
+retryable operations on the existing scheduler. VFS/SxFS remain the same modules.
+
+An open has its own offset; duplicates and inherited standard descriptors share
+one. Normal spawn inherits only 0/1/2, as in the reference, so unrelated file,
+pipe and GPU descriptors do not leak into children. A pipe endpoint survives
+until its last object reference closes. Exit, fault and explicit termination
+all release the handle table; zombies retain no I/O ownership. Failed pipe
+construction rolls back even when only its first descriptor fitted.
+
+The full-ring producer/consumer case needs suspended I/O state rather than a
+kernel loop waiting for another task. A blocked write records its progress; the
+PIT and scheduler boundaries retry it, complete the saved return value and make
+the caller runnable. Read, EOF, missing readers, polling and deadlines use the
+same mechanism. The existing single-CPU atomic-kernel rule keeps retained user
+buffers stable. It remains a dependency to preserve when mappings/threads grow.
+
+### The console ABI and the reference read-only root
+
+The reference `sh` reads canonical character lines. Giving it the prototype's
+raw event records would pass structure bytes to its parser. The port adapts the
+reference pending-line/edit/echo discipline to PS/2 events and the framebuffer
+console. Raw consumers explicitly open `/dev/input0`; the diagnostic shell and
+keyecho replace stdin with that descriptor. Active raw consumers suppress TTY
+draining, preserving their event stream while the canonical shell waits for
+its child. This bridge does not establish terminal job control or process groups.
+
+Keyboard traces also exposed a concrete responsiveness failure. An injected
+long command appeared only up to roughly the raw queue's capacity, despite the
+host having sent its remaining keys and Enter. Each IRQ trace painted/scrolled
+the framebuffer while interrupts were masked; canonical input was drained at
+scheduler boundaries. The evidence pointed to trace rendering delaying delivery
+and consumption enough to fill the event queue. Keeping those traces on COM1,
+without mirroring them to the visible console, made the long pipeline checks
+complete and restored a readable session. The port also adds the ISO keyboard's
+angle-bracket key so redirection can be typed with the default ES map.
+
+The reference shell and applets expect `/bin` and `/README` alongside persistent
+`/disk`. Creating special path aliases would hide another bootstrap shortcut.
+Instead, GRUB now supplies a Multiboot2 CPIO module and the existing VFS archive
+reader supplies the reference read-only tree. The allocator already reserves
+module memory from the preceding milestone. The initial Debug archive occupied
+9.5 MiB, leaving too little for the 32 MiB memory regression's successful large
+child. Stripping debug sections only from CPIO staging copies reduced it to
+about 1.2 MiB without changing loaded segments; disk binaries retain their exact
+build bytes. This preserves the format and application code while respecting
+the test machine's RAM budget.
+
+### Exec and failure cleanup belong to process ownership
+
+The shell's `exec` builtin requires replacing an image without changing PID,
+CWD or descriptors. The port follows the reference's prepare-then-commit model:
+load a complete ELF32 into a temporary directory, preserve the old image on
+error, and only then switch through the supervisor directory to release the
+old pages and install the new frame/FPU state. The regression checks failed
+missing/bad images, identity preservation, retained descriptors and fresh BSS.
+
+Failure partway through a shell pipeline exposed a reference cleanup defect:
+returning immediately could leave opened endpoints and already-launched children
+behind. The six-slot table makes that failure especially easy to reach. The
+shell now closes each owned descriptor once, terminates children that could
+remain asleep or blocked, and collects them before returning to the prompt.
+Minimal reference kill dispositions were adapted to the i386 lifecycle for this
+purpose. A host audit follows both a missing-command pipeline and a capacity
+failure, requiring exactly the expected processes, three descriptors each and restoration
+of the free-page baseline.
+The parser and ordinary successful pipeline behavior remain the reference code.
+The minimal desktop's SxFS status label now reports read/write access; its layout
+and artwork are unchanged by this porting milestone.
+
+Running the original `renametest` exposed a separate diagnostic defect: it
+moved a directory containing `file.txt` and then checked `data.txt` without
+renaming the child. The filesystem correctly retained the child's name. The
+diagnostic now performs that missing file rename before checking content and
+cleanup, so it tests both operations rather than demanding an unintended side
+effect from directory rename.
+
+### Evidence without confusing I/O throughput with pipe progress
+
+A first large-pipe test used a regular file as its output and exceeded the wait.
+A debugger backtrace found the guest in `poll_status` in `kernel/ata.cpp`, reached through
+`write_journal_payload`/`commit_metadata` from a 256-byte file write, already
+several chunks into the transfer. It was progressing through the reference's
+expensive metadata commits, rather than establishing a pipe deadlock. The
+replacement throughput regression sends 24 KiB through producer, copy and
+reader processes over two pipes and verifies every byte plus blocking/EOF;
+separate file and applet cases verify persistent-file operations. The port
+keeps the existing SxFS journal algorithm and its performance limitation.
+
+`posixtest32` exercises file/path operations, shared offsets and access checks,
+standard-channel inheritance, exec, nonblocking/wrapped pipes, polling, 96
+faulting children, descriptor exhaustion and repeated partial pipe rollback.
+It runs every original BusyBox applet and checks copied bytes. Host input then
+checks actual shell parsing, redirection, CWD, failed-pipeline recovery and
+restart, alongside the existing ELF32 process and desktop regressions.
+
+`python3 tools/verify_posix_persistence.py` passed a separate ownership boundary:
+a guest wrote, renamed and synced a file on a disposable disk copy; the normal
+build updated that copy; a cold boot read the exact bytes. The original image's
+hash remained unchanged. The canonical Doom executable/WAD/config/save rebuild
+check and all 18 host tests also passed. `./build.sh smoke` passed the combined
+reference-shell/POSIX, process/FPU/fault and desktop glyph/mouse/cursor checks; `./build.sh smoke memory` also passed on
+32 MiB with the CPIO root present. A clean build with diagnostics disabled
+retained the shell/BusyBox and omitted the test programs from staging.
+
+The milestone restores the reference console and descriptor base within the
+branch's stated bring-up bounds. The six-process capacity still limits pipeline
+depth, and fork, complete signals, memory objects, shared libraries and the full
+desktop remain parity gaps. The next ordered dependency is section objects,
+views, heap growth and ELF32 shared-library semantics; v0.4.0 parity remains open.
+
 ## Continuing the study
 
-The next planned area is per-process descriptors and the POSIX base. Its account
-should compare ownership, inheritance, blocking I/O and cleanup with v0.4.0,
-then record how the reference shell becomes usable as its dependencies arrive.
+The next planned area is memory objects and ELF32 shared libraries. Its account
+should compare section/view ownership, heap growth, relocation rules and cleanup
+with v0.4.0, then record how dynamic application dependencies become usable.
 This is planned work, not an implemented result.
 
-Current repeatable entry points are `./build.sh smoke`, `./build.sh smoke memory`,
-`./build.sh test` and `./tools/verify_doom_persistence.sh`;
-[BUILD_CMAKE.md](BUILD_CMAKE.md) describes their scope. Extend the study when a
-problem is investigated, a path is chosen, or later evidence forces a correction.
-Keep unresolved questions and temporary differences visible until the
-corresponding parity gap is closed.
+Current repeatable entry points include `./build.sh smoke`, `./build.sh smoke memory`,
+`./build.sh smoke posix`, `./build.sh test`, `python3 tools/verify_posix_persistence.py`
+and `./tools/verify_doom_persistence.sh`; [BUILD_CMAKE.md](BUILD_CMAKE.md) describes
+their scope. Keep unresolved questions and temporary differences visible until
+the corresponding parity gap is closed.

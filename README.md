@@ -25,7 +25,7 @@ OVMF and Limine are not required. See [host setup](docs/BUILD_LINUX.md).
 ```bash
 ./build.sh build       # build ELF32 kernel/userland and sync the persistent disk
 ./build.sh run         # build the GRUB ISO and boot it with the disk in QEMU
-./build.sh smoke       # boot, keyboard, preemption/lifecycle and desktop checks
+./build.sh smoke       # shell/POSIX, keyboard, processes and desktop checks
 ./build.sh test        # host regressions
 ```
 
@@ -41,27 +41,30 @@ port 1234. `--headless` disables the QEMU window. SMP and virtio are not ported.
 - Static ELF32 programs in ring 3, allocator-backed private pages and kernel stacks.
 - Local user-fault termination, ELF write protection and an unmapped stack guard.
 - PIT preemption with x87/SSE state, `spawn`, `waitpid`, `exit`, sleep and yield.
-- `init32`, the interactive `sh32` shell, `sysinfo`, and a minimal `desktop32`.
+- The reference `sh` and eleven BusyBox applets, canonical console input and CPIO `/bin`.
+- Per-process descriptors, shared offsets, files/directories, pipes, polling and `exec`.
+- `init32`, `sysinfo`, the `sh32` diagnostic and a minimal `desktop32`.
 - External static SDK applications built with `tools/build-user.sh`.
 
-At boot, `init32` runs `sysinfo` and starts `sh32`; it restarts the shell when it
-exits. Try:
+At boot, `init32` runs `sysinfo` and starts the reference `sh`; it restarts the
+shell when it exits. Try:
 
 ```text
 help
-sysinfo
-uptime
-multitest
-desktop
-run /disk/bin/hello
-start /disk/bin/hello
-wait 5
+ls /disk
+cd /disk
+pwd
+echo hello | cat > hello.txt
+cat hello.txt
+sh -c "exec echo replaced"
+sh32
 ```
 
-`wait` takes the PID printed by `start`. `desktop` opens the minimal graphical
-desktop as a child of the shell. This branch has not yet ported the full window
-manager, shared libraries, BusyBox, networking or audio. Retained source and old
-design documents are porting material, not claims of working i386 features.
+`sh32` remains a diagnostic child for `multitest`, `start`, `wait` and `desktop`.
+The reference shell launches external programs by name or full path and supports
+pipes and redirection. See the [i386 POSIX contract](docs/I386_POSIX.md).
+The full window manager, shared libraries, networking and audio remain unported.
+Retained source and older design documents are porting material until verified.
 See the [ordered porting roadmap](docs/I386_PORT.md) and
 [process implementation and limits](docs/I386_PROCESSES.md).
 

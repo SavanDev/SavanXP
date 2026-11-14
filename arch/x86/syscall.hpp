@@ -27,13 +27,8 @@ constexpr uint32_t kSysSystemInfo = 35;
 constexpr uint32_t kStdinFd = 0;
 constexpr uint32_t kStdoutFd = 1;
 constexpr uint32_t kStderrFd = 2;
-/* One GPU descriptor for the single fullscreen client. */
-constexpr uint32_t kGpuFd = 3;
-constexpr const char* kGpuPath = "/dev/gpu0";
-
 /* Set the result or block the process; the trap wrapper selects a return frame. */
 void handle(ContextFrame& frame);
-void release_process_resources(uint32_t pid);
 
 }
 

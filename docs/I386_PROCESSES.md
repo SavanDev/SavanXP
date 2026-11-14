@@ -1,7 +1,7 @@
 # i386 processes and preemptive scheduling
 
 The i386 target supports independent ELF32 processes, PIT-driven preemption,
-`spawn`, `waitpid`, `exit`, `yield`, blocking keyboard reads and sleeping. This
+`spawn`, `waitpid`, `exit`, static `exec`, `kill`, `yield`, blocking I/O and sleeping. This
 extends the [real-hardware route](REAL_HARDWARE.md) after its minimal desktop
 milestone. It does not reuse the x86_64 scheduler or promise that target's full
 POSIX/process feature set.
@@ -61,10 +61,10 @@ preempted even without `yield` or `sleep`. User execution is preemptible; kernel
 execution is atomic with respect to task switching. Long kernel work can delay
 a tick, so this is not a real-time scheduling guarantee.
 
-Processes move between running, runnable, sleeping, reading, waiting and zombie
+Processes move between running, runnable, sleeping, reading, writing, polling, waiting and zombie
 states. A blocking syscall stores its return frame and request, then returns a
 different frame to assembly; it does not retain a sleeping C++ continuation.
-PIT delivery wakes deadlines and completes pending keyboard reads. The keyboard
+PIT delivery and scheduler boundaries service deadlines, blocked I/O and polling. The keyboard
 queue is a shared console stream, not reset by spawning a child. If all tasks
 are blocked, a separate kernel idle stack/frame executes `sti; hlt` until the
 next IRQ. IRQs interrupting kernel code return to that code; the scheduler only
@@ -73,8 +73,11 @@ switches at ring 3 boundaries or from idle.
 ## 3. Process lifecycle and userland policy
 
 The kernel starts `/disk/bin/init32` as PID 1. `init32` launches `sysinfo`, waits
-for it, then launches `sh32` and restarts the shell when it exits. No kernel
-`EXIT` stage chooses the next binary. Shell commands are:
+for it, then launches the reference `sh` and restarts it on exit. CPIO supplies
+`/bin` and `/README`; the persistent `/disk/bin` remains first in command lookup.
+The [POSIX contract](I386_POSIX.md) describes canonical input, shared descriptors,
+redirection, pipes and transactional `exec`. No kernel `EXIT` stage chooses the
+next binary. `sh32` is a diagnostic child; its commands remain:
 
 - `run PATH [ARGS]`: spawn a child and wait for its exit status.
 - `start PATH [ARGS]`: spawn a child, print its PID and return to the prompt.
@@ -97,10 +100,15 @@ on exit; existing orphan zombies are reclaimed immediately. PIDs increase rather
 than being reused with slots, and stop allocating before the signed PID range
 would overflow.
 
-The GPU stays a single-client device. Its descriptor belongs to its opener PID;
-children do not inherit it. Normal exit and fault termination release video ownership only for the owning
-process. Standard input/output remain shared console channels. This is not a
-general descriptor table, process-group model or terminal job-control layer.
+The GPU stays a single-client device represented by a shared I/O object. Only
+processes holding a descriptor for that object may use it; normal spawn inherits
+only descriptors 0, 1 and 2, so unrelated GPU handles do not pass to children.
+Closing its last reference, including on exit/fault, releases video ownership.
+Input/output descriptors now follow the reference I/O model rather than permanent
+numbered kernel channels. `sh32` and `keyecho` explicitly open `/dev/input0` and
+replace their stdin to retain raw-event diagnostics; the reference shell reads
+canonical TTY lines. [I386_POSIX.md](I386_POSIX.md) defines that ownership and its
+remaining terminal limitations.
 
 ## 4. Fault containment
 
@@ -157,13 +165,14 @@ reaped children must return the exact baseline free-page count.
 
 The host also types `start`, `wait`, `run` and `exit`, checking background
 collection, fault status 134 followed by a working shell prompt, foreground
-status and shell restart by init32. The desktop check then proves that shell blocking, console clearing, graphics,
+status and return from the diagnostic to the reference shell. The POSIX check also
+verifies reference-shell restart by init32. The desktop check then proves that shell blocking, console clearing, graphics,
 mouse movement/buttons and cursor restoration still work. The harness uses a
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
 ## Remaining boundaries
 
-There is no fork, exec replacement, signal delivery, SMP, dynamic image loading,
+There is no fork, user-installed signal handlers, SMP, dynamic image loading,
 ASLR, section-object integration, heap growth or demand-grown reference stack.
 The virtual window remains 16 MiB and the stack 64 KiB; RAM above the mapped first
 GiB is not allocated. User read-only pages and supervisor mappings are protected,

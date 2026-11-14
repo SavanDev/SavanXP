@@ -12,6 +12,15 @@ namespace i386 {
 namespace serial {
 
 void init();
+// IRQ traces stay on COM1: framebuffer scrolling in a keyboard handler can
+// delay PIT delivery long enough to overflow the raw event queue.
+bool set_console_mirroring(bool enabled);
+class SerialOnly {
+    bool previous_;
+public:
+    SerialOnly() : previous_(set_console_mirroring(false)) {}
+    ~SerialOnly() { set_console_mirroring(previous_); }
+};
 
 void write_char(char character);
 void write(const char* text);

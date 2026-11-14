@@ -41,6 +41,14 @@ void serial::init() {
     outb(kModemControl, 0x03);    /* DTR + RTS */
 }
 
+namespace { bool g_console_mirroring = true; }
+
+bool serial::set_console_mirroring(bool enabled) {
+    const bool previous = g_console_mirroring;
+    g_console_mirroring = enabled;
+    return previous;
+}
+
 void serial::write_char(char character) {
     /* La espera tiene limite: en una maquina sin UART el arranque no se
      * cuelga, solo pierde las lineas. */
@@ -51,8 +59,10 @@ void serial::write_char(char character) {
     }
     outb(kData, static_cast<uint8_t>(character));
     /* Mirror serial output to the active EGA or framebuffer console. */
-    egatext::write_char(character);
-    fb32::console_write_char(character);
+    if (g_console_mirroring) {
+        egatext::write_char(character);
+        fb32::console_write_char(character);
+    }
 }
 
 void serial::write(const char* text) {

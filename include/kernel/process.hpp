@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/object.hpp"
+#include "kernel/io_types.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
@@ -65,41 +66,6 @@ struct SavedContext {
     uint64_t ss;
 };
 
-enum class HandleKind : uint8_t {
-    none = 0,
-    tty = 1,
-    vnode = 2,
-    pipe = 3,
-    device = 4,
-    socket = 5,
-};
-
-enum OpenFlags : uint32_t {
-    open_read = 1u << 0,
-    open_write = 1u << 1,
-    open_nonblock = 1u << 2,
-};
-
-// Handles en transito por el pipe (SAVANXP_SYS_PIPE_SEND_HANDLE). Es una cola
-// aparte del stream de bytes: el pipe solo los guarda, y quien los manda y quien
-// los recibe se ponen de acuerdo sobre el orden con sus propios registros. Cada
-// entrada retiene una referencia al objeto, asi que no muere mientras viaja.
-constexpr size_t kPipeHandleQueueCapacity = 4;
-
-struct Pipe {
-    bool in_use;
-    uint32_t reader_refs;
-    uint32_t writer_refs;
-    size_t read_pos;
-    size_t write_pos;
-    size_t size;
-    uint8_t* buffer;
-    object::Header* handles[kPipeHandleQueueCapacity];
-    uint32_t handle_access[kPipeHandleQueueCapacity];
-    uint32_t handle_head;
-    uint32_t handle_count;
-};
-
 enum SignalFlags : uint32_t {
     signal_none = 0,
     signal_sigint = 1u << 0,
@@ -118,12 +84,6 @@ enum class WaitReason : uint8_t {
     // parado con vencimiento --; lo que cambia es quien lo despierta y con
     // que resultado.
     poll = 3,
-};
-
-struct HandleEntry {
-    object::Header* object;
-    uint32_t granted_access;
-    uint32_t flags;
 };
 
 struct Process {

@@ -276,6 +276,10 @@ static int run_command(int argc, char* argv[]) {
 }
 
 int main(void) {
+    // These diagnostics consume raw events; the reference shell uses TTY lines.
+    long input = savanxp_open("/dev/input0");
+    if (input < 0 || savanxp_dup2((int)input, 0) < 0) return 1;
+    savanxp_close((int)input);
     char* argv[SH32_ARGV_CAPACITY];
 
     /* El token del arranque: el test lo exige para saber que el shell llego a

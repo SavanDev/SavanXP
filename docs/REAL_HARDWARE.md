@@ -180,7 +180,8 @@ Order of work, with each step independently bootable and testable:
 `PS/2 and the desktop` (landed: keyboard delivery, graphical console,
 PS/2 cursor and a minimal ring 3 desktop) ->
 `private contexts + PIT scheduler + spawn/wait/exit` (landed;
-[I386_PROCESSES.md](I386_PROCESSES.md)) -> `finer memory/fault isolation`.
+[I386_PROCESSES.md](I386_PROCESSES.md)) -> `finer memory/fault isolation` (landed) ->
+`reference descriptors, console shell and BusyBox` (landed; [I386_POSIX.md](I386_POSIX.md)).
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
 `partition` and `sxfs` compiled for `i386` untouched, `runtime.cpp` only needed the
@@ -243,8 +244,8 @@ interrupted registers before reading the IRQ number.
 The `desktop` command in `sh32` launches a child `desktop32`, which opens `/dev/gpu0`, reads the geometry and
 acquires video. Acquisition keeps serial diagnostics from painting over the
 client's pixels; release, close and process exit restore console output. One
-fixed GPU descriptor is supported; it belongs to its opener PID and duplicate
-opens return `EBUSY`. Presentation
+GPU I/O object is supported; descriptors retain it and its final close releases
+video ownership. Independent opens return `EBUSY`. Presentation
 validates user ranges and supports full frames or clipped regions. The desktop
 uses a 256 KiB buffer to present 64-row strips and redraws every 250 ms.
 
@@ -254,7 +255,8 @@ box and taskbar are decorative; there is no window manager or mouse-event device
 for applications yet. Wheel input, 24-bit video, larger resolutions, scheduling,
 per-process address spaces and physical-hardware validation remain outside this
 step. The subsequent [process milestone](I386_PROCESSES.md) adds private maps,
-preemptive scheduling and spawn/wait/exit; finer fault isolation remains future work.
+preemptive scheduling, spawn/wait/exit and fault isolation. The subsequent
+[POSIX milestone](I386_POSIX.md) restores descriptors, pipes and the reference shell.
 
 The landed packages are exercised with:
 

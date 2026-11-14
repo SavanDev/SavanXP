@@ -113,8 +113,38 @@ set_target_properties(savanxp-i386-memhog32 PROPERTIES OUTPUT_NAME memhog32 SUFF
 
 endif()
 
+# Reuse the reference console shell and BusyBox subset with the static ELF32 ABI.
+function(savanxp_i386_program name)
+    add_executable(savanxp-i386-${name} ${ARGN})
+    target_include_directories(savanxp-i386-${name} PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+        "${SAVANXP_GENERATED_ROOT}")
+    target_compile_options(savanxp-i386-${name} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+    target_link_libraries(savanxp-i386-${name} PRIVATE savanxp_i386_user_runtime)
+    target_link_options(savanxp-i386-${name} PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+    set_target_properties(savanxp-i386-${name} PROPERTIES OUTPUT_NAME ${name} SUFFIX "")
+endfunction()
+savanxp_i386_program(sh subsystems/posix/userland/sh.c subsystems/posix/userland/shell_core.c)
+file(GLOB SAVANXP_BUSYBOX_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/vendor/busybox-port/*.c")
+list(SORT SAVANXP_BUSYBOX_SOURCES)
+savanxp_i386_program(busybox ${SAVANXP_BUSYBOX_SOURCES})
+target_include_directories(savanxp-i386-busybox PRIVATE "${CMAKE_SOURCE_DIR}/vendor/busybox-port")
+set(SAVANXP_I386_CORE_APPS uname df rmdir truncate sync errtest)
+foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
+    savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
+endforeach()
+
+if(SAVANXP_INCLUDE_TEST_APPS)
+    set(SAVANXP_I386_POSIX_TESTS posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
+    foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
+        savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
+    endforeach()
+endif()
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-init32 savanxp-i386-sysinfo savanxp-i386-sh32 savanxp-i386-desktop32
+    DEPENDS savanxp-i386-init32 savanxp-i386-sysinfo savanxp-i386-sh32 savanxp-i386-desktop32 savanxp-i386-sh savanxp-i386-busybox
     COMMENT "Linking the i386 userland"
 )
 
@@ -134,6 +164,42 @@ add_custom_target(savanxp_i386_diskfs
     COMMENT "Staging the i386 disk tree"
     VERBATIM
 )
+
+set(SAVANXP_I386_APPLETS busybox ls cat echo mkdir rm mv cp ps true false sleep)
+foreach(name IN LISTS SAVANXP_I386_APPLETS)
+    add_custom_command(TARGET savanxp_i386_diskfs POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-busybox>" "${SAVANXP_DISKFS_ROOT}/bin/${name}"
+        VERBATIM)
+endforeach()
+foreach(name IN ITEMS sh ${SAVANXP_I386_CORE_APPS} ${SAVANXP_I386_POSIX_TESTS})
+    add_dependencies(savanxp_i386_userland savanxp-i386-${name})
+    add_custom_command(TARGET savanxp_i386_diskfs POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-${name}>" "${SAVANXP_DISKFS_ROOT}/bin/${name}"
+        VERBATIM)
+endforeach()
+
+# Restore the reference read-only /bin and /README through its existing CPIO
+# format. The persistent /disk/bin remains the first command search location.
+set(SAVANXP_I386_ROOT_PROGRAMS ${SAVANXP_I386_APPLETS} ${SAVANXP_I386_CORE_APPS}
+    init32 sysinfo sh32 desktop32 sh)
+if(SAVANXP_INCLUDE_TEST_APPS)
+    list(APPEND SAVANXP_I386_ROOT_PROGRAMS keyecho multitest32 memhog32 ${SAVANXP_I386_POSIX_TESTS})
+endif()
+set(SAVANXP_I386_ROOT_STRIP_COMMANDS)
+foreach(name IN LISTS SAVANXP_I386_ROOT_PROGRAMS)
+    list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
+        COMMAND "${SAVANXP_OBJCOPY}" --strip-debug "${SAVANXP_ROOTFS_ROOT}/bin/${name}")
+endforeach()
+add_custom_target(savanxp_i386_initramfs
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}" "${SAVANXP_ROOTFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/rootfs/README" "${SAVANXP_ROOTFS_ROOT}/README"
+    ${SAVANXP_I386_ROOT_STRIP_COMMANDS}
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"
+        --source "${SAVANXP_ROOTFS_ROOT}" --output "${SAVANXP_INITRAMFS}"
+    DEPENDS savanxp_i386_diskfs
+    COMMENT "Building the reference CPIO root for i386"
+    VERBATIM)
 
 add_custom_target(savanxp_i386_disk
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/sxfs_sync.py"

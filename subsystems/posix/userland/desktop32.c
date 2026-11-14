@@ -2,7 +2,7 @@
 
 #include "savanxp/syscall.h"
 
-/* Minimal i386 desktop, launched after sh32 exits (no scheduler yet).
+/* Minimal i386 desktop, launched as a child of the diagnostic or reference shell.
  * One fullscreen /dev/gpu0 client renders 64-row strips to keep its working
  * buffer at 256 KiB. The kernel composes the cursor over every presentation.
  * The window and taskbar are informational; there is no window manager. */
@@ -18,7 +18,7 @@ static const char* const kSubtitle = "i386 legacy target";
 static const char* const kBody[] = {
     "Framebuffer via /dev/gpu0",
     "PIT 100 Hz, PS/2 keyboard and mouse",
-    "SxFS root mounted read-only by the kernel",
+    "SxFS root mounted read-write by the kernel",
 };
 static const uint32_t kBodyCount = sizeof(kBody) / sizeof(kBody[0]);
 

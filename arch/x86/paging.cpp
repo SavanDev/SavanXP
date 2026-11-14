@@ -135,6 +135,28 @@ bool copy_to_user(uint32_t* directory, uint32_t address, const void* source, uin
     return true;
 }
 
+bool copy_from_user(const uint32_t* directory, void* destination, uint32_t address, uint32_t bytes) {
+    if (!user_range(directory, address, bytes, false)) return false;
+    auto* data = static_cast<uint8_t*>(destination);
+    while (bytes != 0) {
+        uint32_t chunk = kPageBytes - (address & 4095);
+        if (chunk > bytes) chunk = bytes;
+        memcpy(data, user_pointer(directory, address), chunk);
+        address += chunk; data += chunk; bytes -= chunk;
+    }
+    return true;
+}
+
+uint32_t resident_bytes(const uint32_t* directory) {
+    uint32_t pages = 0;
+    for (uint32_t index = kFirst; index < kEnd; ++index) {
+        if ((directory[index] & kPresent) == 0) continue;
+        for (uint32_t page = 0; page < 1024; ++page)
+            if (table(directory[index])[page] & kPresent) ++pages;
+    }
+    return pages * kPageBytes;
+}
+
 void activate(const uint32_t* directory) {
     asm volatile("mov %0, %%cr3" : : "r"(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory))) : "memory");
 }

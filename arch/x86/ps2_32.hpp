@@ -9,10 +9,9 @@ namespace i386 {
 
 namespace ps2_32 {
 
-/* Rebanada completa del paquete "PS/2 and the desktop" en i386: el
- * controlador 8042 por IRQ 1, la decodificacion set 1 con los layouts
- * ES/EN de kernel/ps2.cpp y la cola de eventos savanxp_input_event que el
- * userland lee por la syscall READ sobre stdin. */
+/* Legacy 8042/PS2 input with the reference ES/EN layouts. Canonical TTY
+ * consumers receive lines; raw clients read savanxp_input_event records from
+ * /dev/input0 (diagnostics can explicitly duplicate that descriptor to stdin). */
 
 void initialize();
 
@@ -22,9 +21,8 @@ bool has_pending_event();
 /* Saca el evento mas viejo a `out`. false si no habia ninguno. */
 bool pop_event(struct savanxp_input_event& out);
 
-/* Vacia la cola. El cargador la llama al entrar en cada programa: stdin es
- * estado por proceso y un programa nuevo empieza con la cola limpia, no con
- * las teclas que el anterior dejo sin leer. */
+/* Clear boot-time events when starting the scheduler. Spawning a program
+ * does not clear the shared queue. */
 void clear_queue();
 
 /* Ultimo ASCII imprimible (para el eco de la consola EGA). 0 si ninguno. */
