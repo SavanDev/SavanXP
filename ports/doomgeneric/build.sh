@@ -152,7 +152,8 @@ LINK_FLAGS=(
     -Wl,--gc-sections
     -Wl,-e,_start
 )
-# ldso.c incluye "libc.h" del userland, que no vive en el SDK.
+# The userland directory holds headers the overlay uses that the SDK does not
+# ship; the loader itself needs only the SDK and the repository's include/.
 INCLUDE_FLAGS=(
     -I "$SDK/include"
     -I "$ROOT/include"
@@ -214,14 +215,18 @@ for unit in "${RUNTIME_UNITS[@]}"; do
     RUNTIME_OBJECTS+=("$object")
 done
 ldso_object="$OBJ/ldso.o"
+dlfcn_object="$OBJ/dlfcn.o"
 # The loader goes inside the program (like mediaplayer): crt0 runs it through
 # the weak sx_run_interpreter hook, and without a DT_NEEDED it stays silent.
-compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
+# <dlfcn.h> is POSIX's layer over it and goes with it, as in every POSIX PIE.
+compile_c "$ROOT/system/loader/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
+compile_c "$ROOT/subsystems/posix/userland/dlfcn.c" "$dlfcn_object" -Wall -Wextra -Wpedantic
 
 "$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
     "${RUNTIME_OBJECTS[@]}" \
     "$ldso_object" \
+    "$dlfcn_object" \
     "${APP_OBJECTS[@]}" \
     "$SX_MIDI_LIB"
 

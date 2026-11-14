@@ -2,8 +2,8 @@
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
     # NATIVE: the program runs on the native (Sx) API, not POSIX -- EI_OSABI is
-    # stamped after linking. It has to be STATIC: the shared-library loader
-    # (ldso.c) speaks POSIX, which a native process does not have.
+    # stamped after linking. STATIC or PIE alike: the shared-library loader
+    # (system/loader/ldso.c) speaks SXN, which every subsystem has.
     set(options TEST NATIVE)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES DEPENDS DEFINES)
@@ -18,9 +18,6 @@ function(savanxp_program)
     # as a boolean.
     if("${P_NAME}" STREQUAL "" OR NOT P_SOURCES)
         message(FATAL_ERROR "savanxp_program requires NAME and SOURCES")
-    endif()
-    if(P_NATIVE AND P_LINK_PROFILE AND NOT P_LINK_PROFILE STREQUAL "STATIC")
-        message(FATAL_ERROR "savanxp_program(${P_NAME}): a NATIVE program must be STATIC")
     endif()
     # .sxe names a SUN program on disk (docs/userland/SXE_FORMAT.md, "SUN
     # programs are named .sxe"). The build adds it to a NATIVE program, so NAME
@@ -91,18 +88,24 @@ function(savanxp_program)
         else()
             target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
         endif()
-        # El cargador va con el perfil, no con el programa. Una imagen ET_DYN la
-        # mapea el kernel pero no la reubica, asi que sin ldso.c el GOT de este
-        # executable queda vacio y la primera llamada a una libreria salta a
-        # donde se le ocurra.
+        # The loader goes with the profile, not with the program. The kernel
+        # maps an ET_DYN image but does not relocate it, so without the loader
+        # this executable's GOT stays empty and the first call into a library
+        # jumps wherever it happens to point.
         #
-        # Que sea automatico no es cosmetico: con la lista a mano, calc llevo
-        # PIE sin el cargador y fallo. Y peor, ldtest lo lleva y lo lleva bien,
-        # porque llama al cargador a mano -- una regla que el build no verifica y
-        # que se cumple por costumbre en un programa y se olvida en el otro.
-        # crt0 lo corre solo por el hook debil sx_run_interpreter, que es lo que
-        # define ldso.c.
-        target_sources(${P_NAME} PRIVATE subsystems/posix/userland/ldso.c)
+        # Being automatic is not cosmetic: with the list by hand, calc went PIE
+        # without the loader and failed. Worse, ldtest carries it and carries it
+        # right, because it calls the loader by hand -- a rule the build does
+        # not check, kept by habit in one program and forgotten in the next.
+        # crt0 runs it through the weak hook sx_run_interpreter, which is what
+        # the loader defines.
+        #
+        # The loader is the same for SUN and POSIX. <dlfcn.h> is POSIX's layer
+        # over it and goes only into POSIX programs; SUN names its own.
+        target_sources(${P_NAME} PRIVATE system/loader/ldso.c)
+        if(NOT P_NATIVE)
+            target_sources(${P_NAME} PRIVATE subsystems/posix/userland/dlfcn.c)
+        endif()
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
     endif()
     # DEPENDS produce los DT_NEEDED del ejecutable. Solo el -soname de cada
@@ -206,6 +209,10 @@ savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/user
 # El unico programa que linkea contra una libreria de verdad. Todo lo demas usa
 # el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
 savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/libtest.c)
+# libtest's SUN twin: a native program that maps libmath through the shared
+# loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN").
+savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath LINK_PROFILE PIE
+    SOURCES system/loader/sunlibtest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que

@@ -94,6 +94,7 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 | A diamond in the dependency graph | handled, **not tested** |
 | `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
 | `<dlfcn.h>`: `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, per-handle scopes | done, [see below](#dlopen) |
+| One loader for SUN and POSIX, `system/loader/ldso.c`; a SUN program maps a library | done, [see below](#one-loader-over-sxn) |
 | 32 library slots, 24 program headers per image | done |
 
 ### The libraries
@@ -157,7 +158,8 @@ its drawing code.
 | guarantee | enforced by |
 | --- | --- |
 | No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
-| The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `ldso.c` imports only the canary, `sx_image_base`, `sx_loader_report` and (for `dlopen`) `savanxp_getcwd` |
+| The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `system/loader/ldso.c` imports only the canary, `sx_image_base` and `sx_loader_report` |
+| A SUN program maps a library through the same loader | `sun-libtest`: `sunlibtest.sxe` maps `libmath` and asserts `sqrt` came from it |
 | The stack canary is in the executable, seeded by `crt0`, with two distinct halves | `ldtest`, on every run |
 | The interpreter path reaches the loader | `interptest`, including that a library actually loaded |
 | The toolkit draws the right glyphs in the right colour | `expect_text()` in `shoot_session`, from the font tables inside the built `libsxgfx` |
@@ -1013,9 +1015,14 @@ it.
 
 ## The loader is POSIX's, and SUN is static
 
-> Status: **recorded 2026-11-13.** Nothing here is built yet; this is the order.
+> Status: **recorded 2026-11-13; step 1's loader done 2026-11-14.** The loader
+> is `system/loader/ldso.c`, shared by SUN and POSIX, and `sunlibtest.sxe` maps
+> `libmath` through it. What step 1 still waits for is item 5 below: the
+> toolkit libraries carry the POSIX window client. The table is how it stood
+> when this was recorded; the SUN row now reads "the same loader, through
+> `LINK_PROFILE PIE` and `DEPENDS`, for the libraries that are neutral".
 
-Shared libraries are a POSIX capability today, not a system one:
+Shared libraries were a POSIX capability, not a system one:
 
 | Program kind | How it gets code it does not carry |
 | --- | --- |
@@ -1117,8 +1124,19 @@ What is missing, in order of weight:
    `sx_start_dynamic` reports the failed step through it too. `dlopen` is the
    POSIX layer in two ways: `<dlfcn.h>`, and the working directory, since the
    core opens absolute paths only and `dlopen` joins a relative one with
-   `getcwd` first. It still lives at the end of `ldso.c`; it moves to a file
-   of its own with the loader's move to `system/`.
+   `getcwd` first.
+
+   **Moved (2026-11-14).** The core is `system/loader/ldso.c`; `<dlfcn.h>` is
+   `subsystems/posix/userland/dlfcn.c`, over the interface subsystems build
+   on, `include/loader/loader.h` (`sx_loader_open`, `_find`, `_symbol`,
+   `_address`, `_retain`, `_release`, `_make_global`, `_program`). The PIE
+   profile puts the core in every PIE program and `dlfcn.c` only in POSIX
+   ones; `savanxp_program(NATIVE)` takes `LINK_PROFILE PIE` and `DEPENDS`.
+   `sunlibtest.sxe` is the consumer: a SUN program that maps `libmath`,
+   asserted by the `sun-libtest` scenario. A SUN program started by the
+   system has no handle 2, so the native `sx_loader_report` falls back to the
+   system log, and a library that did not load still says so. A SUN program
+   that paints still links its own toolkit until item 5.
 5. **Libraries split into neutral and host.** `libsxgfx` carries `gfx.c`, the
    POSIX window client, and `libsxgui` carries `sxgui_app.c`, the POSIX
    application frame. The neutral parts (`gfx2d`, `sxchrome`, the `sxgui`
@@ -1434,8 +1452,8 @@ port would carry and run the loader's entry path for nothing.
 library has to be able to ask whether it loaded. The header moved from
 `subsystems/posix/userland/` to `subsystems/posix/sdk/v1/include/savanxp/`, and
 the port picks it up through the sysroot it already builds. The implementation
-stays in `userland/`, because it is compiled into each program rather than
-linked once.
+is compiled into each program rather than linked once; it lives in
+`system/loader/` since it became the loader of SUN programs too.
 
 ### What the Media Player does with the answer
 
@@ -1652,8 +1670,9 @@ player, which is a program of the tree, rather than to anything the port install
 
 ## dlopen
 
-`<dlfcn.h>` is implemented in `ldso.c`, on the same slot table as the startup
-loader, so it exists in every PIE program and in no STATIC one — where a call is a
+`<dlfcn.h>` is implemented in `subsystems/posix/userland/dlfcn.c`, over the
+loader's interface (`include/loader/loader.h`) and so on the same slot table as
+the startup loader. It exists in every POSIX PIE program and in no STATIC one — where a call is a
 link error rather than a silent no-op. It was built for
 [Xash3D FWGS](../roadmaps/open/XASH3D_ROADMAP.md), whose engine loads its renderer, menu,
 client and game logic by name, and its shape is what that port calls:

@@ -1,28 +1,31 @@
-/* See ldso.h. All the work is pointer arithmetic over an image already mapped,
- * plus copying the writable segments.
+/* The shared-library loader. See <savanxp/ldso.h> for what a program sees of it
+ * and <loader/loader.h> for what a subsystem builds its run-time loading on.
+ * All the work is pointer arithmetic over an image already mapped, plus
+ * copying the writable segments.
  *
- * The loader speaks SXN, not POSIX (docs/kernel/SHARED_LIBRARIES.md, "One
+ * It is platform code, not a subsystem's (docs/kernel/SHARED_LIBRARIES.md, "One
  * loader over SXN"): it opens, reads and maps files with the native object
- * calls, which every subsystem reaches, and calls no C library. What it needs
- * from the program's runtime is two things: sx_image_base, which crt0 stores,
- * and sx_loader_report, through which each runtime says in its own terms why a
- * library did not load. The loader never ends the process; it returns a step
- * and the program goes on. <dlfcn.h>, at the end, is the POSIX layer over it. */
+ * calls, which every subsystem reaches, and calls no C library, so the same
+ * file serves a SUN program and a POSIX one. What it needs from the program's
+ * runtime is two things: sx_image_base, which crt0 stores, and
+ * sx_loader_report, through which each runtime says in its own terms why a
+ * library did not load. It never ends the process; it returns a step and the
+ * program goes on. tools/check_shared_libs.py fails the build if a compiled
+ * copy imports anything else. */
 
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include <savanxp/ldso.h>
-#include <dlfcn.h>
 
+#include "loader/loader.h"
 #include "sxn/sxn.h"
 
 /* From the runtime (savanxp/libc.h). Declared here rather than by including
  * the C library's header, so a call into it cannot slip back in unnoticed. */
 extern unsigned long sx_image_base;
 void sx_loader_report(const char* text, unsigned long length);
-long savanxp_getcwd(char* buffer, size_t count);
 
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
@@ -46,8 +49,7 @@ typedef uint64_t Elf64_Xword;
 #define PF_R 4
 
 #define DT_NULL 0
-/* Indice de seccion reservado: marca un simbolo que esta declarado pero no
- * definido aqui. */
+/* Reserved section index: marks a symbol declared but not defined here. */
 #define SHN_UNDEF 0
 #define DT_NEEDED 1
 #define DT_PLTRELSZ 2
@@ -62,7 +64,7 @@ typedef uint64_t Elf64_Xword;
  * itself stays a linear scan (see "Symbol lookup was tried and rejected"). */
 #define DT_HASH 4
 #define DT_GNU_HASH 0x6ffffef5
-/* Constructors. Only dlopen runs them; see run_initializers. */
+/* Constructors. Only sx_loader_open runs them; see run_initializers. */
 #define DT_INIT 12
 #define DT_INIT_ARRAY 25
 #define DT_INIT_ARRAYSZ 27
@@ -72,15 +74,15 @@ typedef uint64_t Elf64_Xword;
 
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_GLOB_DAT 6
-/* El valor guardado ya es una direccion de enlace, sin simbolo: hay que
- * sumarle el bias de la imagen. Es lo que hace que un ejecutable PIE con
- * punteros a datos -- una tabla de vtables, una cadena constante, un GOT
- * inicial -- arranque con las direcciones donde el codigo las busca. Una
- * imagen reubicada sin esto tiene punteros al valor cero. */
+/* The stored value is already a link-time address, with no symbol: the image's
+ * bias has to be added. It is what lets a PIE executable with pointers to data
+ * -- a table of vtables, a constant string, an initial GOT -- start with the
+ * addresses where the code looks for them. An image relocated without it has
+ * pointers to the value zero. */
 #define R_X86_64_RELATIVE 8
-/* Direccion absoluta de 64 bits de un simbolo IMPORTADO, guardada en datos. Es lo
- * mismo que un GLOB_DAT --resolver por nombre y escribir el valor-- y aparece
- * cuando el codigo hace &simbolo y lo guarda en una tabla. */
+/* The absolute 64-bit address of an IMPORTED symbol, stored in data. It is the
+ * same as a GLOB_DAT -- resolve by name and write the value -- and appears when
+ * code takes &symbol and keeps it in a table. */
 #define R_X86_64_64 1
 
 typedef struct {
@@ -126,26 +128,27 @@ typedef struct {
     Elf64_Sword r_addend;
 } Elf64_Rela;
 
-/* Cuantos program headers se aceptan por imagen, y por lo tanto cuantos caben en el
- * struct de abajo. Es el techo del hueco: cada libreria guarda sus headers en un
- * array de este tamano, asi que subir kMaxLibraries sin bajar esto multiplica la
- * memoria de todos los procesos por nada.
+/* How many program headers an image may have, and so how many fit in the
+ * struct below. It is the ceiling of the slot: each library keeps its headers
+ * in an array of this size, so raising kMaxLibraries without lowering this
+ * multiplies every process's memory for nothing.
  *
- * Medido sobre todo lo que produce este arbol, el maximo e_phnum es 15. Veinticuatro
- * deja margen para un segmento mas sin convertir un rechazo raro en algo normal. Y el
- * limite se comprueba ANTES de copiar, asi que una imagen con mas headers se rechaza
- * con un motivo en vez de desbordar el array en silencio.
+ * Measured over everything this tree produces, the largest e_phnum is 15.
+ * Twenty-four leaves room for one more segment without turning a rare refusal
+ * into a normal one. And the limit is checked BEFORE copying, so an image with
+ * more headers is refused with a reason instead of silently overflowing the
+ * array.
  *
- * Bajarlo de 64 es lo que hace barato el numero de huecos de mas abajo: el hueco pasa
- * de 4300 B a unos 1750, y treinta y dos huecos de 137 KB se vuelven 56 KB. */
+ * Bringing it down from 64 is what makes the slot count below cheap: a slot
+ * goes from 4300 B to about 1750, and thirty-two slots of 137 KB become 56 KB. */
 #define kMaxProgramHeaders 24
 
-/* El estado de UNA libreria cargada.
+/* The state of ONE loaded image.
  *
- * Antes habia una sola, y por eso esto era un unico objeto global con un
- * nombre. Con una cadena de DT_NEEDED deja de alcanzar: cargar una dependencia
- * pisa el estado de la que se estaba cargando, asi que hace falta un lugar por
- * libreria y un puntero a la que esta en curso. */
+ * There used to be a single library, which is why this was one global object
+ * with a name. A DT_NEEDED chain outgrows that: loading a dependency overwrites
+ * the state of the one being loaded, so there has to be a place per library and
+ * a pointer to the one in progress. */
 typedef struct {
     int loaded;
     /* The file's handle and its whole-file section, or -1. They live only
@@ -155,11 +158,11 @@ typedef struct {
     long file_fd;
     /* Whether the two above are still open, so closing does not repeat. */
     int handles_open;
-    /* Desplazamiento de carga. Un ET_DYN tiene p_vaddr cerca de cero, y cero no
-     * es una direccion de usuario valida: el kernel no mapea por debajo de
-     * kUserBase. Asi que el primer segmento -- el que tiene p_vaddr 0 -- se pide
-     * sin base para que el kernel elija una buena, y esa direccion menos su
-     * p_vaddr es el bias contra el que va todo lo demas. */
+    /* Load bias. An ET_DYN has p_vaddr near zero, and zero is not a valid user
+     * address: the kernel maps nothing below kUserBase. So the first segment --
+     * the one with p_vaddr 0 -- is asked for without a base so the kernel picks
+     * a good one, and that address minus its p_vaddr is the bias everything
+     * else goes against. */
     unsigned long bias;
     int bias_ready;
     Elf64_Ehdr header;
@@ -167,27 +170,28 @@ typedef struct {
     const unsigned char* dynsym;
     const char* dynstr;
     size_t dynstr_size;
-    /* Cuantos DT_NEEDED ya se trajeron. Es el cursor de la cadena: con un
-     * diamante, D se carga desde A y desde C, y el segundo next_needed tiene
-     * que saltar el que ya se proceso en vez de volver a cargarlo. */
+    /* How many DT_NEEDED have been brought in already. It is the chain's
+     * cursor: with a diamond, D is loaded from A and from C, and the second
+     * next_needed has to skip the one already processed instead of loading it
+     * again. */
     unsigned needed_done;
     /* The name it was loaded under, to recognise it if another DT_NEEDED asks
      * for it again in the same chain. It is the basename: DT_NEEDED carries
      * "libmath.so.0.4" even though the path is /lib/libmath.so.0.4. */
     char soname[96];
-    /* Los program headers se leen una vez y se guardan aca: despues el
-     * descriptor sigue abierto pero no se vuelve a leer el archivo. */
+    /* The program headers are read once and kept here: the file is not read
+     * again after that. */
     Elf64_Phdr headers[kMaxProgramHeaders];
-    /* Direccion final de cada segmento, en el mismo orden que los program
-     * headers. Los indices son los de los headers, asi que un -1 es "este
-     * segmento no se pudo mapear". */
+    /* The final page address of each segment, in program-header order; 0 is
+     * "this segment is not mapped". */
     void* placed[kMaxProgramHeaders];
     /* Whether this image answers lookups from images outside its own dependency
      * tree. Everything loaded at startup or through ldso_load is global, which is
-     * what the loader always did; dlopen without RTLD_GLOBAL is not. */
+     * what the loader always did; sx_loader_open without `global` is not. */
     int global;
-    /* dlopen references not yet dropped by dlclose. Images brought in at startup
-     * or as a dependency stay at zero: nothing can close them. */
+    /* References from sx_loader_open and _retain not yet dropped by _release.
+     * Images brought in at startup or as a dependency stay at zero: nothing can
+     * close them. */
     unsigned refcount;
     /* The slots of this image's direct DT_NEEDED, one bit each. Its lookup scope
      * is itself plus the closure of these. */
@@ -195,24 +199,25 @@ typedef struct {
     /* Entries in .dynsym, from DT_HASH or DT_GNU_HASH, or 0 when the image has
      * neither and the end of the table has to be guessed. */
     unsigned long symbol_count;
-    /* The path dlopen was given or DT_NEEDED resolved to, so a second dlopen of
-     * the same file finds this image, and dladdr has a name to report. */
+    /* The path sx_loader_open was given or DT_NEEDED resolved to, so a second
+     * open of the same file finds this image, and sx_loader_address has a name
+     * to report. */
     char path[128];
 } Library;
 
-/* Cuantas librerias conviven. El ejecutable ocupa el hueco 0.
+/* How many images live together. The executable takes slot 0.
  *
- * La cadena mas larga realista del arbol es la de mediaplayer: el ejecutable, sus
- * dos librerias de interfaz y, cuando FFmpeg deje de ser estatico, libavcodec +
- * libavutil + las de escala y remuestreo. Eso son siete, y con ocho estabamos a un
- * hueco del muro -- un muro queributed descubriria la integracion de FFmpeg y no
- * nosotros. Treinta y dos deja sitio para un segundo codec; mas alla ya no hay nada
- * que justifique el numero.
+ * The longest realistic chain in the tree is the media player's: the
+ * executable, its two interface libraries and, once FFmpeg stopped being
+ * static, libavcodec + libavutil + the scaling and resampling ones. That is
+ * seven, and with eight we were one slot from the wall -- a wall the FFmpeg
+ * integration would have found, not us. Thirty-two leaves room for a second
+ * codec; beyond that nothing justifies the number.
  *
- * Subirlo solo es barato porque el hueco se abarata: a 4300 B por hueco, treinta y
- * dos costarian 137 KB residentES en cada proceso, incluido un ls que no carga
- * ninguna. Con headers[] de 24 son ~1750 B y el total baja a 56 KB. Los dos cambios
- * van juntos por eso. */
+ * Raising it is cheap only because the slot got cheaper: at 4300 B a slot,
+ * thirty-two would cost 137 KB resident in every process, an ls that loads
+ * nothing included. With headers[] of 24 a slot is ~1750 B and the total drops
+ * to 56 KB. The two changes go together for that reason. */
 #ifndef SAVANXP_LD_MAX_LIBRARIES
 #define SAVANXP_LD_MAX_LIBRARIES 32
 #endif
@@ -222,62 +227,63 @@ _Static_assert(kMaxLibraries <= 64, "Library.deps holds one bit per slot");
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
-/* What a new image gets as Library.global. dlopen lowers it for the length of
- * one call; everything else loads global. */
+/* What a new image gets as Library.global. sx_loader_open lowers it for the
+ * length of one call; everything else loads global. */
 static int g_load_global = 1;
-/* Set while dlopen runs. An unresolvable symbol then fails the load instead of
- * being skipped: the tolerant mode exists so a program can start and report a
- * missing dependency, and a dlopen caller has dlerror for that. */
+/* Set while sx_loader_open runs. An unresolvable symbol then fails the load
+ * instead of being skipped: the tolerant mode exists so a program can start and
+ * report a missing dependency, and a run-time caller gets an error for that. */
 static int g_strict = 0;
-/* La dependencia cuyo DT_NEEDED no se pudo traer. Ver ldso_missing(). */
+/* The dependency whose DT_NEEDED could not be brought in. See ldso_missing(). */
 static const char* g_missing_library = 0;
-/* Las dependencias DISTINTAS que no se pudieron traer, con su nombre.
+/* The DISTINCT dependencies that could not be brought in, by name.
  *
- * Distintas, y no un contador de intentos: quitar libsxgfx.so.0.4 hace fallar la
- * carga de libffmpeg, de libgfx2d y de libsxgui, porque las tres la necesitan, y
- * cada una reintenta. Con un contador de intentos el reproductor llegaba a decir
- * "faltan 6 librerias" cuando faltaban dos, y un numero que miente es peor que
- * ninguno. El nombre de la primera va aparte porque es lo que se enseña. */
+ * Distinct, and not a count of attempts: removing libsxgfx.so.0.4 fails the
+ * load of libffmpeg, of libgfx2d and of libsxgui, because all three need it, and
+ * each one retries. With a count of attempts the player came to say "6 libraries
+ * missing" when two were, and a number that lies is worse than none. The first
+ * one's name is kept apart because it is the one shown. */
 static char g_missing_names[kMaxLibraries][64];
 static unsigned g_missing_count = 0;
-/* El ejecutable ocupa el slot 0 y las librerias empiezan en el 1.
+/* The executable takes slot 0 and libraries start at 1.
  *
- * resolve recorre los slots de la mas nueva a la mas vieja, asi que poner el
- * ejecutable primero lo consulta AL ULTIMO. Ese orden es el del ambito de
- * simbolos: una libreria gana sobre la que la cargo, y el ejecutable queda de
- * fondo, que es donde un simbolo exportado por el programa va a caer. */
-/* La libreria que se esta cargando. Todo lo que se escribe mientras se coloca
- * una imagen va aca; el resto del arbol lo lee por indice. */
+ * resolve walks the slots from newest to oldest, so putting the executable
+ * first consults it LAST. That order is the symbol scope's: a library wins over
+ * the one that loaded it, and the executable is the background, which is where a
+ * symbol the program exports is meant to land.
+ *
+ * The library being loaded. Everything written while an image is placed goes
+ * here; the rest of the tree reads it by index. */
 static Library* g_lib;
 
-/* Ultimo segmento que no se pudo colocar, y el errno que devolvio. El codigo de
- * retorno de ldso_load solo dice "el paso"; con estos dos se sabe cual. */
+/* The last segment that could not be placed, and the error it returned.
+ * ldso_load's return code only says "the step"; these two say which. */
 int g_lib_fail_index;
 long g_lib_fail_errno;
 unsigned long g_lib_bias;
 int g_lib_reloc_step;
-/* Que simbolo y de que libreria fallaron. El paso dice donde; esto dice que.
- * El puntero apunta a la .dynstr de la libreria, que queda mapeada, asi que no
- * hay copia que hacer ni que se pueda invalidar. */
+/* Which symbol of which library failed. The step says where; this says what.
+ * The pointer points into the library's .dynstr, which stays mapped, so there
+ * is no copy to make and none to go stale. */
 const char* g_lib_fail_symbol;
 const char* g_lib_fail_library;
 
-/* La dependencia que no se pudo cargar, por nombre, o 0 si no fallo ninguna.
+/* The dependency that could not be loaded, by name, or 0 if none failed.
  *
- * Existe para que un programa pueda DECIR que le falta en vez de morirse. El
- * cargador no es fatal: sx_start_dynamic imprime el fallo y vuelve, y crt0 llama a
- * main igual, asi que un programa con un DT_NEEDED irresoluble arranca. Lo que no
- * podia era enterarse: ldso_loaded() devuelve g_lib_count, que es al menos 1 porque
- * el ejecutable ocupa el hueco 0, asi que responde "si" aunque falte una
- * dependencia. Eso era un accidente, no una interfaz.
+ * It exists so a program can SAY what it lacks instead of dying. The loader is
+ * not fatal: sx_start_dynamic reports the failure and returns, and crt0 calls
+ * main anyway, so a program with an unresolvable DT_NEEDED starts. What it could
+ * not do was find out: ldso_loaded() returns g_lib_count, which is at least 1
+ * because the executable takes slot 0, so it answered "yes" even with a
+ * dependency missing. That was an accident, not an interface.
  *
- * Ojo con lo que significa: "esta dependencia no se pudo cargar", no "falta". Un
- * archivo presente y roto tambien deja el nombre aqui, y en ese caso decir que
- * falta seria mentira. El motivo fino esta en el mensaje que el cargador ya
- * imprimio, con su paso y su razon.
+ * Mind what it means: "this dependency could not be loaded", not "it is
+ * missing". A file that is present and broken leaves its name here too, and
+ * saying it is missing would be a lie. The precise reason is in the message the
+ * loader already reported, with its step and its reason.
  *
- * No se limpia nunca. Un fallo en el arranque es permanente, y el programa lo
- * reporta cuando abre su ventana, no antes. */
+ * It is never cleared. A failure at startup is permanent, and the program
+ * reports it when it opens its window, not before. */
 const char* ldso_missing(void) {
     return g_missing_library;
 }
@@ -286,12 +292,12 @@ unsigned ldso_missing_count(void) {
     return g_missing_count;
 }
 
-/* Cuantas imagenes hay mapeadas, el ejecutable incluido. Existe para las pruebas:
- * sin el, la unica forma de comprobar que una dependencia compartida se cargo UNA
- * vez -- el caso del diamante-- seria contar ficheros.
+/* How many images are mapped, the executable included. It exists for the
+ * tests: without it, the only way to check that a shared dependency was loaded
+ * ONCE -- the diamond case -- would be to count files.
  *
- * El ejecutable cuenta porque ocupa un hueco, y porque el limite incluye su
- * hueco: con kMaxLibraries 32 hay 31 huecos para librerias. */
+ * The executable counts because it takes a slot, and because the limit includes
+ * its slot: with kMaxLibraries 32 there are 31 slots for libraries. */
 int ldso_count(void) {
     return g_lib_count;
 }
@@ -300,12 +306,9 @@ int ldso_loaded(void) {
     return g_lib_count;
 }
 
-/* Los nombres de los simbolos y los PT_LOAD se leen del archivo a traves de la
- * vista que se mapeo para eso. Se mantiene aparte del mapa final porque al final
- * el texto vive en la direccion que pidio el ELF, no en la que el kernel eligio. */
+/* The order of this file is the order of the reasoning -- validate, locate,
+ * place, relocate -- and not the order of the dependencies between functions. */
 static void copy_bytes(const void* from, void* to, size_t count);
-/* El orden del archivo es el del razonamiento --validar, ubicar, colocar,
- * reubicar-- y no el de las dependencias entre funciones. */
 static int read_header(const unsigned char* bytes, Elf64_Ehdr* out);
 static void* place_segment(const Elf64_Phdr* ph);
 static void* map_of(int slot, Elf64_Addr vaddr);
@@ -313,6 +316,7 @@ static int read_dynamic_in(int slot);
 static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out);
 static void* bias_in(int slot, Elf64_Addr value);
 static int resolve(const char* name, Elf64_Addr* value_out);
+static int resolve_in(const char* name, int slot, Elf64_Addr* value_out);
 static int resolve_for(int slot, const char* name, Elf64_Addr* value_out);
 static void count_symbols_in(int slot);
 static const char* next_needed(int slot);
@@ -350,6 +354,17 @@ static int same_string(const char* a, const char* b) {
         b++;
     }
     return *a == *b;
+}
+
+/* Appends text to a NUL-terminated buffer of `size` bytes, cutting it short. */
+static void append_text(char* buffer, unsigned long size, unsigned long* used, const char* text) {
+    if (buffer == 0 || size == 0) {
+        return;
+    }
+    while (text != 0 && *text != '\0' && *used + 1 < size) {
+        buffer[(*used)++] = *text++;
+    }
+    buffer[*used] = '\0';
 }
 
 /* One diagnostic line, handed to the runtime's sx_loader_report. The format
@@ -420,34 +435,34 @@ static void report(const char* format, ...) {
     sx_loader_report(line, (unsigned long)used);
 }
 
-/* Registra el ejecutable en g_libs para que sus simbolos entren en el ambito.
+/* Registers the executable in g_libs so its symbols enter the scope.
  *
- * El cargador no mapeo esta imagen: la mapeo el kernel. Asi que no hay un
- * descriptor ni una seccion que abrir, y la base la tiene que decir el kernel.
- * Llega en r8 y crt0 la guarda en sx_image_base.
+ * The loader did not map this image: the kernel did. So there is no handle and
+ * no section to open, and the base has to come from the kernel. It arrives in
+ * r8 and crt0 stores it in sx_image_base.
  *
- * ANTES se adivinaba. Se tomaba la direccion de una funcion de este mismo
- * archivo --que por definicion esta en la imagen-- y se retrocedia pagina a
- * pagina buscando la magia de ELF. El problema no es que la cuenta este mal: es
- * que supone que TODA pagina del camino esta mapeada, y un enlazador puede dejar
- * un hueco entre dos PT_LOAD. seltest lo tiene: su primer segmento termina en
- * 0xaff3 y el texto arranca en 0xc000, asi que la pagina 0xb000 no existe. El
- * escaneo la leia y el proceso moria con cr2 = 0x40b000 antes de llegar a main.
+ * It used to be GUESSED. The address of a function of this very file -- by
+ * definition inside the image -- was taken, and the walk went back a page at a
+ * time looking for the ELF magic. The problem is not that the arithmetic is
+ * wrong: it is that it assumes EVERY page on the way is mapped, and a linker
+ * can leave a gap between two PT_LOADs. seltest has one: its first segment ends
+ * at 0xaff3 and its text starts at 0xc000, so page 0xb000 does not exist. The
+ * scan read it and the process died with cr2 = 0x40b000 before reaching main.
  *
- * Un escaneo que puede hacer fault no es un escaneo. Con el dato del kernel no
- * hay recorrido, y no hay forma de que la cuenta falle.
+ * A scan that can fault is not a scan. With the kernel's figure there is no
+ * walk, and no way for the arithmetic to fail.
  *
- * Devuelve 0 si no hay cabecera valida, y el ambito queda como estaba: resolver
- * solo entre librerias. Un ejecutable sin .dynsym (una ET_EXEC no PIE) es un caso
- * normal, no un fallo. */
+ * Returns 0 when there is no valid header, and the scope stays as it was:
+ * resolving among libraries only. An executable without .dynsym (a non-PIE
+ * ET_EXEC) is a normal case, not a failure. */
 static int adopt_executable(void) {
     if (g_lib_count >= kMaxLibraries) {
         return 0;
     }
     const unsigned long cursor = sx_image_base & ~4095UL;
     if (cursor == 0) {
-        /* Sin base no hay nada que registrar. Preferible decirlo a leer
-         * direcciones que pueden no existir. */
+        /* Without a base there is nothing to register. Better to say so than to
+         * read addresses that may not exist. */
         return 0;
     }
 
@@ -457,9 +472,8 @@ static int adopt_executable(void) {
         return 0;
     }
     copy_bytes(bytes, &header, sizeof(header));
-    /* ET_DYN o ET_EXEC: cualquier otra cosa no es una imagen de programa. Y
-     * e_phnum tiene que caber, porque de ahi salen los segmentos que se usan
-     * para traducir direcciones. */
+    /* ET_DYN or ET_EXEC: anything else is not a program image. And e_phnum has
+     * to fit, because the segments used to translate addresses come from it. */
     if ((header.e_type != ET_DYN && header.e_type != ET_EXEC) ||
         header.e_machine != EM_X86_64 || header.e_phentsize != sizeof(Elf64_Phdr) ||
         header.e_phnum == 0 || header.e_phnum > kMaxProgramHeaders) {
@@ -485,19 +499,19 @@ static int adopt_executable(void) {
                    &exe->headers[index], sizeof(Elf64_Phdr));
         exe->placed[index] = 0;
     }
-    /* Los segmentos ya estan mapeados: el kernel los puso, y el cargador no
-     * tiene descriptor ni seccion con que mapearlos otra vez. placed[] se deduce
-     * de la geometria de la imagen.
+    /* The segments are mapped already: the kernel put them there, and the
+     * loader has neither handle nor section to map them again with. placed[] is
+     * derived from the image's geometry.
      *
-     * El bias sale de la base que dio el kernel y del primer PT_LOAD: lo que
-     * hay entre donde quedo la cabecera y donde la imagen dice que empieza su
-     * primer segmento. Para una ET_DYN, que carga en kUserBase, da kUserBase;
-     * para una ET_EXEC, que carga en sus propias direcciones de enlace, da cero.
+     * The bias comes from the base the kernel gave and the first PT_LOAD: what
+     * lies between where the header landed and where the image says its first
+     * segment starts. For an ET_DYN, which loads at kUserBase, it is kUserBase;
+     * for an ET_EXEC, which loads at its own link addresses, it is zero.
      *
-     * Antes estaba escrito como una constante --kUserBase para una ET_DYN-- con
-     * el comentario de que tiene que coincidir con kernel/elf.cpp. Coincidia, y
-     * por eso el bug no se veia. Con los dos numeros a la vista la cuenta es
-     * explicita y no puede desincronizarse sola. */
+     * It used to be written as a constant -- kUserBase for an ET_DYN -- with a
+     * comment saying it had to match kernel/elf.cpp. It matched, which is why
+     * the bug did not show. With both numbers in view the arithmetic is
+     * explicit and cannot drift on its own. */
     Elf64_Addr first_vaddr = 0;
     int found_first = 0;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
@@ -525,8 +539,8 @@ static int adopt_executable(void) {
     return 1;
 }
 
-/* El ejecutable ocupa el slot 0 desde el arranque y las librerias empiezan en 1,
- * para que resolve lo consulte al ultimo. */
+/* The executable has slot 0 from startup and libraries start at 1, so that
+ * resolve consults it last. */
 static void adopt_executable_once(void) {
     static int done = 0;
     if (done) {
@@ -536,9 +550,9 @@ static void adopt_executable_once(void) {
     (void)adopt_executable();
 }
 
-/* Reserva un slot y lo deja como la libreria en curso. El contenido del slot no
- * se limpia: cada carga escribe todos los campos que usa, y limpiarlo seria
- * otra pasada sobre lo mismo. */
+/* Reserves a slot and makes it the library in progress. The slot is not
+ * cleared: each load writes every field it uses, and clearing it would be
+ * another pass over the same thing. */
 static Library* begin_load(void) {
     adopt_executable_once();
     if (g_lib_count >= kMaxLibraries) {
@@ -572,12 +586,12 @@ static Library* begin_load(void) {
     return g_lib;
 }
 
-/* Se declara antes de end_load, que la usa: end_load suelta el puntero a la
- * libreria en curso, y con el puntero no hay forma de cerrarle nada. */
+/* Declared before end_load, which uses it: end_load lets go of the pointer to
+ * the library in progress, and without the pointer nothing can be closed. */
 static void close_file_handles(void);
 
 /* Unmaps every segment an image placed. For a load that failed before it was
- * published, and for dlopen's rollback of one that failed after. */
+ * published, and for sx_loader_open's rollback of one that failed after. */
 static void unmap_placed(Library* library) {
     for (int index = 0; index < kMaxProgramHeaders; ++index) {
         if (library->placed[index] != 0) {
@@ -601,22 +615,19 @@ static void end_load(int ok) {
     g_lib = 0;
 }
 
-/* Hace visible la libreria en curso sin soltar el puntero a ella.
+/* Makes the library in progress visible without letting go of the pointer to
+ * it.
  *
- * end_load no sirve para el punto donde hace falta: reubicar una libreria
- * depende de que sus DT_NEEDED ya estan cargadas, asi que esta tiene que estar
- * publicada antes de que se recorra la cadena. Publicar y seguir guardando el
- * puntero es lo que permite que, al volver de la cadena, las reubicaciones
- * siganmaginiendo sobre esta y no sobre la ultima dependencia traida. */
+ * end_load does not fit the place where this is needed: relocating a library
+ * depends on its DT_NEEDED being loaded already, so it has to be published
+ * before the chain is walked. Publishing and still keeping the pointer is what
+ * lets the relocations, back from the chain, keep applying to this library and
+ * not to the last dependency brought in. */
 static void publish(void) {
     g_lib->loaded = 1;
     g_lib_count++;
 }
 
-/* Aplica una tabla RELA: .rela.dyn y .rela.plt. Las dos son obligatorias antes
- * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
- * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
- * objetivo. */
 /* The three reasons a relocation with a symbol can fail, in words.
  *
  * The function that calls these returns zero, and whoever sees it only has a
@@ -658,19 +669,22 @@ static const char* image_name(int slot) {
     return g_libs[slot].soname[0] != '\0' ? g_libs[slot].soname : "the executable";
 }
 
+/* Applies one RELA table: .rela.dyn or .rela.plt. Both are needed before
+ * anything is called, so there is no lazy version; JUMP_SLOT, GLOB_DAT,
+ * R_X86_64_64 and RELATIVE are what lld emits for this target. */
 static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_size) {
-    /* Con una dependencia ausente, la imagen se reubica IGUAL Y LA ENTERA.
+    /* With a dependency missing, the image is relocated ANYWAY, and WHOLE.
      *
-     * Antes se abortaba en el primer simbolo que no se podia resolver, y como la
-     * cadena se recorre ANTES de reubicar, un solo DT_NEEDED ausente dejaba el
-     * ejecutable entero sin reubicar: main() corria con stdout --un puntero global
-     * reubicado por R_X86_64_RELATIVE-- apuntando al valor de enlace. El programa no
-     * podia ni imprimir por que estaba roto, que es justo lo que un fallo
-     * diagnosticable tiene que poder hacer.
+     * Loading used to stop at the first symbol that could not be resolved, and
+     * since the chain is walked BEFORE relocating, one missing DT_NEEDED left
+     * the whole executable unrelocated: main() ran with stdout -- a global
+     * pointer relocated by R_X86_64_RELATIVE -- pointing at its link value. The
+     * program could not even print why it was broken, which is exactly what a
+     * diagnosable failure has to be able to do.
      *
-     * Asi que en modo tolerante las entradas irresolubles se saltan y se cuentan. El
-     * nombre de lo que falta ya lo da ldso_missing(), y repetirlo una vez por cada
-     * av_* del programa seria ruido. */
+     * So in tolerant mode the unresolvable entries are skipped and counted.
+     * ldso_missing() already gives the name of what is missing, and repeating
+     * it once for every av_* in the program would be noise. */
     const int tolerant = !g_strict && g_missing_library != 0;
     unsigned int skipped = 0;
     const unsigned char* table = (const unsigned char*)map_of(slot, elf_table);
@@ -683,17 +697,17 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         copy_bytes(table + offset, &rela, sizeof(rela));
         const unsigned type = (unsigned)(rela.r_info & 0xffffffffu);
         if (type == R_X86_64_RELATIVE) {
-            /* Sin simbolo que buscar. Lo que hay que escribir es
-             * r_addend + bias, y NO sumar el bias a lo que ya esta en memoria.
+            /* No symbol to look up. What has to be written is r_addend + bias,
+             * NOT the bias added to what is already in memory.
              *
-             * La diferencia no es academica y cuesta un bug entero: lld deja la
-             * casilla EN CERO y pone el valor de enlace en r_addend. Sumarle el
-             * bias a un cero deja base + 0, que es un puntero a la propia base
-             * de la imagen. Con `stdout` eso daba 0x400000 y la primera
-             * escritura a pantalla moria con cr2 = 0x40000c.
+             * The difference is not academic and cost a whole bug: lld leaves
+             * the slot AT ZERO and puts the link value in r_addend. Adding the
+             * bias to a zero gives base + 0, a pointer to the image's own base.
+             * With `stdout` that gave 0x400000, and the first write to the
+             * screen died with cr2 = 0x40000c.
              *
-             * Leer la memoria en vez de la adenda solo funciona con enlaces que
-             * escriben tambien el valor, y SavanXP se enlaza con lld, que no. */
+             * Reading memory instead of the addend only works with links that
+             * also write the value, and SavanXP links with lld, which does not. */
             Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
             if (where == 0) {
                 return 0;
@@ -721,8 +735,8 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
 
         /* By name, not by st_value: an st_value is relative to the image that
          * DEFINED the symbol, which may be another one. And within this image's
-         * scope, so a library dlopened without RTLD_GLOBAL cannot capture the
-         * calls of one loaded after it. */
+         * scope, so a library opened without `global` cannot capture the calls
+         * of one loaded after it. */
         Elf64_Addr target = 0;
         const int owner = resolve_for(slot, g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0) {
@@ -730,17 +744,17 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
                 skipped++;
                 continue;
             }
-            /* El nombre es lo unico que hay. Sin el, el sintoma es "paso 5" y la
-             * unica manera de sacar algo es un volcado de la .dynsym. */
+            /* The name is all there is. Without it, the symptom is "step 5" and
+             * the only way to get anything out is a dump of .dynsym. */
             report_unresolved(image_name(slot), g_libs[slot].dynstr + symbol.st_name);
             return 0;
         }
         const Elf64_Addr value = (Elf64_Addr)(unsigned long)bias_in(owner, target);
         if (value == 0) {
-            /* Se encontro la imagen pero la direccion no se puede traducir: un
-             * st_value que cae en un segmento que no quedo mapeado. Distinto del
-             * caso de arriba porque el nombre SI existe, y por eso el mensaje
-             * tiene que decir las dos cosas. */
+            /* The image was found but the address cannot be translated: an
+             * st_value in a segment that was not mapped. Different from the case
+             * above because the name DOES exist, so the message has to say
+             * both things. */
             if (tolerant) {
                 skipped++;
                 continue;
@@ -750,8 +764,8 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         }
         Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
         if (where == 0) {
-            /* El GOT de esta entrada no esta en ningun segmento mapeado. Un
-             * error de la imagen, no del enlazado. */
+            /* This entry's GOT slot is in no mapped segment. A fault of the
+             * image, not of the linking. */
             if (tolerant) {
                 skipped++;
                 continue;
@@ -770,12 +784,12 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
     return 1;
 }
 
-/* Fase uno: leer donde estan la tabla de simbolos y la de nombres.
+/* Phase one: find where the symbol table and the string table are.
  *
- * Va separada de la reubicacion porque leer DT_NEEDED tambien necesita
- * dynstr, y DT_NEEDED hay que recorrer antes de reubicar: una llamada a la
- * dependencia se resuelve en un GOT que todavia esta en cero. Si se reubicara
- * primero, la cadena se resolveria contra un mundo incompleto. */
+ * It is kept apart from relocation because reading DT_NEEDED needs dynstr as
+ * well, and DT_NEEDED has to be walked before relocating: a call into the
+ * dependency resolves into a GOT that is still zero. Relocating first would
+ * resolve the chain against an incomplete world. */
 static int read_dynamic_in(int slot) {
     Library* library = &g_libs[slot];
     unsigned long strtab = 0;
@@ -799,7 +813,7 @@ static int read_dynamic_in(int slot) {
 /* How many entries .dynsym has. ELF does not say it directly; the hash table
  * does. Without the count the scan in resolve_in has to stop at the first entry
  * whose name offset falls outside .dynstr, which works because what follows the
- * table usually looks like that -- a dlsym that misses (and Xash probes for
+ * table usually looks like that -- a lookup that misses (and Xash probes for
  * optional exports on every load) walks into whatever comes next.
  *
  * DT_HASH holds the count as its second word. DT_GNU_HASH does not: the highest
@@ -846,9 +860,9 @@ static void count_symbols_in(int slot) {
     library->symbol_count = (unsigned long)last + 1;
 }
 
-/* Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
- * tiene .rela.plt, y exigirla la hacia fallar al cargar: el fallo no era de la
- * reubicacion sino de una tabla que no existe. */
+/* Both tables are OPTIONAL. A library that calls nothing outside has no
+ * .rela.plt, and requiring it made such a library fail to load: the failure was
+ * not the relocation's but a table that does not exist. */
 static int apply_relocs_in(int slot) {
     unsigned long jmprel = 0;
     unsigned long pltrelsz = 0;
@@ -865,25 +879,25 @@ static int apply_relocs_in(int slot) {
     return 1;
 }
 
-/* Prepara el ejecutable para llamar a una libreria.
+/* Gets the executable ready to call into a library.
  *
- * El kernel mapeo la imagen principal pero NO toco su GOT: deja el proceso
- * corriendo con un ejecutable que declara DT_NEEDED y tiene entradas sin
- * rellenar. Por eso hace falta este paso, y por eso el programa tiene que
- * llamarlo ANTES de usar cualquier simbolo de libreria.
+ * The kernel mapped the main image but did NOT touch its GOT: it leaves the
+ * process running with an executable that declares DT_NEEDED and has entries
+ * left empty. That is why this step exists, and why it has to run BEFORE any
+ * library symbol is used.
  *
- * El orden es el mismo que para una libreria: primero la cadena de DT_NEEDED del
- * ejecutable, y despues sus propias reubicaciones. Al reves, una llamada a una
- * dependencia se resolveria contra una libreria todavia no mapeada.
+ * The order is the same as for a library: first the executable's DT_NEEDED
+ * chain, then its own relocations. The other way round, a call into a
+ * dependency would resolve against a library not mapped yet.
  *
- * Devuelve 0 si el ejecutable quedo operativo, o un numero negativo dizendo en
- * que paso fallo, con la misma convencion que ldso_load. Un ejecutable sin
- * .dynsym no tiene nada que reubicar y devuelve 0. */
+ * Returns 0 if the executable is ready, or a negative number saying which step
+ * failed, with the same convention as ldso_load. An executable without .dynsym
+ * has nothing to relocate and returns 0. */
 int ldso_start(void) {
-    /* Idempotente a proposito: crt0 lo llama antes de main y un programa puede
-     * llamarlo otra vez. Reaplicar las reubicaciones del ejecutable escribiria
-     * los mismos valores, pero R_X86_64_RELATIVE SUMA el bias, y hacerlo dos
-     * veces dejaria los punteros de la imagen corridos por kUserBase. */
+    /* Idempotent on purpose: crt0 calls it before main and a program may call
+     * it again. Reapplying the executable's relocations would write the same
+     * values, but R_X86_64_RELATIVE ADDS the bias, and doing it twice would
+     * leave the image's pointers shifted by kUserBase. */
     static int done = 0;
     if (done) {
         return 0;
@@ -891,24 +905,26 @@ int ldso_start(void) {
     done = 1;
     adopt_executable_once();
     if (g_lib_count == 0) {
-        /* Sin la imagen no hay nada que reubicar, pero una imagen ET_DYN SI
-         * necesita que la reubiquen. Devolver 0 aqui seria mentir: el programa
-         * arranca con punteros sin sumar el bias y falla mas tarde, en un sitio
-         * que no dice nada de esto. Un programa que de verdad no depende de
-         * nada no llega aca, porque no llega a enlazar el cargador. */
+        /* Without the image there is nothing to relocate, but an ET_DYN image
+         * DOES need relocating. Returning 0 here would be a lie: the program
+         * starts with pointers missing their bias and fails later, somewhere
+         * that says nothing of this. A program that really depends on nothing
+         * does not get here, because it does not link the loader. */
         return -10;
     }
     if (g_libs[0].dynsym == 0) {
         return -11;
     }
-    /* La cadena se recorre antes que la reubicacion porque un GOT que apunta a una
-     * dependencia tiene que llenarse cuando esa dependencia ya esta mapeada. Pero si
-     * la cadena falla, la reubicacion SE HACE IGUAL y el fallo se devuelve despues.
+    /* The chain is walked before relocating because a GOT that points into a
+     * dependency has to be filled when that dependency is already mapped. But
+     * if the chain fails, relocation HAPPENS ANYWAY and the failure is returned
+     * afterwards.
      *
-     * Volver aqui no deja la imagen como estaba: deja el ejecutable entero sin
-     * reubicar, con stdout y el resto de punteros globales apuntando a sus valores
-     * de enlace. El programa arranca y no puede ni imprimir el motivo. Que el fallo
-     * sea no mortal no significa que la imagen pueda quedar a medias. */
+     * Returning here would not leave the image as it was: it would leave the
+     * whole executable unrelocated, with stdout and the other global pointers
+     * at their link values. The program starts and cannot even print the
+     * reason. A failure being non-fatal does not mean the image may be left
+     * half done. */
     const int chain_failed = load_needed_chain(0) != 0;
     const int relocated = apply_relocs_in(0);
     if (chain_failed) {
@@ -920,20 +936,19 @@ int ldso_start(void) {
     return 0;
 }
 
-/* El hook que crt0 llama antes de main.
+/* The hook crt0 calls before main.
  *
- * El nombre sigue el del campo que ya existia, sx_interpreter_path, y el modelo
- * es el que el kernel ya impone: la imagen principal la mapea el kernel y el
- * programa hace el trabajo de enlace. Asi que "correr el interprete" aca es
- * dejar operativo al ejecutable: cargar lo que declara y rellenar su GOT. */
+ * The name follows the field that already existed, sx_interpreter_path, and the
+ * model is the one the kernel already imposes: the kernel maps the main image
+ * and the program does the linking. So "running the interpreter" here is
+ * getting the executable ready: loading what it declares and filling its GOT. */
 int sx_run_interpreter(void) {
     return ldso_start();
 }
 
 int ldso_load(const char* path) {
-    /* El codigo de retorno dice EN QUE PASO fallo, para que un fallo no sea un
-     * -1 opaco: los pasos van en orden y el ultimo que se alcanzo a hacer es el
-     * que importa. */
+    /* The return code says WHICH STEP failed, so a failure is not an opaque -1:
+     * the steps go in order and the last one reached is the one that matters. */
     if (begin_load() == 0) {
         /* Not "could not load": there are already 32 and one more does not fit.
          * The step number does not tell the two apart, and the cure differs:
@@ -943,8 +958,8 @@ int ldso_load(const char* path) {
         return -1;
     }
     /* The path is absolute: the native call knows no working directory, and
-     * every path the loader builds starts at /lib. dlopen makes a relative
-     * one absolute before it gets here. */
+     * every path the loader builds starts at /lib. A subsystem's run-time
+     * layer makes a relative one absolute before it gets here. */
     const long fd = sxn_open_file(path, SXN_FILE_READ);
     if (fd < 0) {
         /* The commonest case of all and the hardest to guess: a dependency
@@ -966,7 +981,7 @@ int ldso_load(const char* path) {
     g_lib->handles_open = 1;
     g_lib->bias = 0;
     g_lib->bias_ready = 0;
-    /* El nombre se queda con el basename del path, para casar con DT_NEEDED. */
+    /* The name keeps the path's basename, to match DT_NEEDED. */
     const char* slash = path;
     for (const char* ch = path; *ch != '\0'; ++ch) {
         if (*ch == '/') {
@@ -1048,21 +1063,21 @@ int ldso_load(const char* path) {
         return -7;
     }
 
-    /* Publicar, recorrer la cadena, y recien ahi reubicar. El orden no es
-     * estetico: un GOT que apunta a una dependencia tiene que llenarse cuando
-     * la dependencia ya esta mapeada, no antes. Al reubicar antes, la
-     * dependencia todavia no existe y la carga falla.
+    /* Publish, walk the chain, and only then relocate. The order is not
+     * cosmetic: a GOT that points into a dependency has to be filled when the
+     * dependency is already mapped, not before. Relocating earlier, the
+     * dependency does not exist yet and the load fails.
      *
-     * Cada carga de la cadena pisa g_lib, asi que se guarda esta libreria y se
-     * restaura al volver. Sin eso, las reubicaciones de aqui se aplicarian
-     * sobre la ultima dependencia traida. */
+     * Each load in the chain overwrites g_lib, so this library is saved and
+     * restored on the way back. Without that, the relocations here would be
+     * applied to the last dependency brought in. */
     const int slot = (int)(g_lib - g_libs);
     Library* self = g_lib;
     publish();
     const int chain_failed = load_needed_chain(g_lib_count - 1);
     g_lib = self;
-    /* El cierre va ANTES de soltar el puntero: close_file_handles trabaja sobre
-     * g_lib, asi que ponerlo a cero primero lo dejaria sin hacer nada. */
+    /* Closing goes BEFORE letting go of the pointer: close_file_handles works
+     * on g_lib, so clearing it first would leave it doing nothing. */
     if (chain_failed != 0) {
         close_file_handles();
         g_lib = 0;
@@ -1174,30 +1189,22 @@ static int load_needed_chain(int parent_slot) {
             if (ldso_load(full) == 0) {
                 lib->deps |= (uint64_t)1 << dep_slot;
             } else {
-                /* Se guarda el NOMBRE, no solo el codigo de paso. El codigo dice
-                 * donde fallo --y donde fallo es "en algun punto de la cadena"--
-                 * y el nombre dice que falta. Sin el, un programa no puede ni
-                 * distinguir "no esta instalado" de "esta roto" ni decir cual.
+                /* The NAME is kept, not only the step code. The code says where
+                 * it failed -- and where is "somewhere in the chain" -- and the
+                 * name says what is missing. Without it a program cannot even
+                 * tell "not installed" from "broken", nor say which.
                  *
-                 * Queda el fallo MAS PROFUNDO, porque la recursion llega aqui desde
-                 * la libreria que fallo y la sobreescribe: si top -> left -> leaf y
-                 * falta leaf, el nombre guardado es el de leaf, que es el que de
-                 * verdad falta. Con varias ausentes el nombre guardado es el de la
-                 * ULTIMA que fallo, que es arbitrario; el recuento de lo que quedo
-                 * sin reubicar dice cuanto falta, no cual.
+                 * The FIRST one to fail is named, not the last. With the last,
+                 * the name depended on the order of DT_NEEDED and on the walk,
+                 * so two images missing the same three libraries could name
+                 * three different ones. With the first, the name is "the first
+                 * dependency that could not be brought in", which is a
+                 * definition and not an accident of the walk.
                  *
-                 * `need` es un basename --DT_NEEDED lo es-- y el registro es el
-                 * mismo buffer, asi que no hay copia que hacer. */
-                /* El PRIMERO que falla, no el último.
-                 *
-                 * Con el último, el nombre dependía del orden del DT_NEEDED y de qué
-                 * recursion hubo, así que dos imágenes con las mismas tres librerías ausentes
-                 * podían nombrar tres librerías distintas. Con el primero, el nombre
-                 * es "la primera dependencia que no se pudo traer", que es una
-                 * definición y no un accidente del recorrido.
-                 *
-                 * Y se cuentan todos, que es lo que permite al programa decir que
-                 * faltan tres en vez de insinuar que falta una. */
+                 * And every one is counted, which is what lets the program say
+                 * three are missing instead of implying one. `need` is a
+                 * basename -- DT_NEEDED is one -- and stays mapped, so the
+                 * first one's pointer needs no copy. */
                 unsigned seen;
                 for (seen = 0; seen < g_missing_count; ++seen) {
                     if (same_string(g_missing_names[seen], need)) {
@@ -1215,20 +1222,20 @@ static int load_needed_chain(int parent_slot) {
             }
         }
     }
-    /* Una dependencia que falta NO puede terminar el recorrido.
+    /* A missing dependency must NOT end the walk.
      *
-     * El DT_NEEDED del ejecutable es una lista, no una cadena: si libffmpeg no esta,
-     * eso dice algo de libffmpeg y nada de libsxgui, libgfx2d o libsxgfx, que son
-     * las siguientes de la lista y las necesita igual. Volver aqui las dejaba sin
-     * cargar a TODAS, y con la reubicacion tolerante --que salta lo que no resuelve
-     * en vez de abortar-- el programa arranco con las cuatro ausentes y se mato en la
-     * primera llamada al toolkit, en un salto a la casilla sin reubicar de
-     * sx_rect_make@plt. Un fallo mudo y sin relacion con su causa: lo peor de los dos
-     * mundos.
+     * The executable's DT_NEEDED is a list, not a chain: if libffmpeg is not
+     * there, that says something about libffmpeg and nothing about libsxgui,
+     * libgfx2d or libsxgfx, which come next in the list and are needed all the
+     * same. Returning here left ALL of them unloaded, and with tolerant
+     * relocation -- which skips what does not resolve instead of aborting -- the
+     * program started with all four absent and died at the first toolkit call,
+     * jumping through the unrelocated slot of sx_rect_make@plt. A silent failure
+     * unrelated to its cause: the worst of both worlds.
      *
-     * Se sigue informando del fallo, y por eso se devuelve != 0 igual, pero despues
-     * de haber cargado todo lo que si se puede. La diferencia entre esto y lo de
-     * antes es la que hay entre "no esta libffmpeg" y "no esta nada". */
+     * The failure is still reported, which is why != 0 is returned anyway, but
+     * after loading everything that can be. The difference between this and
+     * before is the one between "libffmpeg is missing" and "nothing is there". */
     return failed;
 }
 
@@ -1330,36 +1337,25 @@ static void* place_segment(const Elf64_Phdr* ph) {
     return (void*)(uintptr_t)view;
 }
 
-
-/* Traduce una direccion del ELF a la direccion real. Busca primero en la
- * libreria en curso y despues en las ya cargadas, porque una direccion de una
- * .so solo tiene sentido dentro de la libreria que la declaro: dos imagenes
- * tendrian el mismo vaddr para direcciones distintas.
+/* Translates an st_value with the segments of one particular image.
  *
- * Con una sola libreria esto era un recorrido de sus segmentos y nada mas. Con
- * una cadena, es la pregunta que no tenia respuesta antes: cual libreria
- * posee esta direccion. */
-
-/* El mismo recorrido pero solo dentro de la libreria en curso, que es lo que
- * necesitan place_segment y translate mientras se arma una imagen. */
-/* Traduce un st_value con los segmentos de una libreria concreta.
- *
- * Existe separada de at_vaddr_here porque un st_value pertenece a la libreria
- * que DEFINIO el simbolo, no a la que esta usandolo. Sesgarlo con el mapa de
- * otra imagen produce una direccion que cae dentro de la imagen equivocada y no
- * falla de forma visible: cae en codigo ajeno. */
+ * It is separate from translating an address of the image being loaded because
+ * an st_value belongs to the image that DEFINED the symbol, not to the one using
+ * it. Biasing it with another image's map gives an address inside the wrong
+ * image, and nothing visibly fails: it lands in someone else's code. */
 static void* bias_in(int slot, Elf64_Addr value) {
     return map_of(slot, value);
 }
 
-/* Traduce una direccion del ELF a la direccion real, dentro de una libreria
- * concreta.
+/* Translates an ELF address to the real one, within one particular image: an
+ * address of a shared object only means something inside the library that
+ * declared it, since two images can have the same vaddr for different things.
  *
- * placed[] guarda la DIRECCION DE PAGINA donde se mapéo el segmento, o sea
- * bias + (p_vaddr & ~4095). Restar p_vaddr sin alinear correria la direccion
- * justo lo que el segmento seSpecified antes de la pagina, y el error cae
- * dentro de la propia imagen: un GOT escrito en el lugar equivocado, una
- * llamada que salta a otra cosa y un fallo que no parece de este sitio. */
+ * placed[] keeps the PAGE ADDRESS where the segment was mapped, that is
+ * bias + (p_vaddr & ~4095). Subtracting an unaligned p_vaddr would shift the
+ * address by exactly how far the segment starts into its page, and the error
+ * lands inside the image itself: a GOT written in the wrong place, a call that
+ * jumps somewhere else, and a fault that does not look like it comes from here. */
 static void* map_of(int slot, Elf64_Addr vaddr) {
     const Library* library = &g_libs[slot];
     for (Elf64_Half index = 0; index < library->header_count; ++index) {
@@ -1384,8 +1380,8 @@ typedef struct {
     } u;
 } Elf64_Dyn;
 
-/* Recorre la tabla dinamica y deja el puntero a la entrada pedida. Las entradas
- * tienen tamaño fijo, asi que el indice se multiplica por sizeof(Elf64_Dyn). */
+/* Walks the dynamic table and stores the value of the entry asked for. Entries
+ * have a fixed size, so the offset steps by sizeof(Elf64_Dyn). */
 static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out) {
     const Library* library = &g_libs[slot];
     for (Elf64_Half index = 0; index < library->header_count; ++index) {
@@ -1414,18 +1410,17 @@ static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out) {
     return 0;
 }
 
-
-/* El nombre del primer DT_NEEDED que aun no se cargo, o 0 si no queda ninguno.
+/* The name of the first DT_NEEDED not loaded yet, or 0 when none is left.
  *
- * El indice de recorrido es lo que permite no cargar dos veces la misma
- * dependencia en una cadena con diamantes: si A necesita B y C, y ambos
- * necesitan D, D se carga una sola vez y el segundo la encuentra.
+ * The walk's index is what avoids loading the same dependency twice in a chain
+ * with diamonds: if A needs B and C, and both need D, D is loaded once and the
+ * second finds it.
  *
- * El nombre sale de esa misma libreria, traducido con SU mapa, no con el de
- * la que este en curso: con dos imagenes mapeadas, el mismo vaddr significa dos
- * cosas distintas.
+ * The name comes from that same library, translated with ITS map, not with the
+ * one in progress: with two images mapped, the same vaddr means two different
+ * things.
  *
- * slot < 0 es la libreria en curso. */
+ * slot < 0 is the library in progress. */
 static const char* next_needed(int slot) {
     Library* library = slot < 0 ? g_lib : &g_libs[slot];
     if (library == 0 || library->dynstr == 0) {
@@ -1437,12 +1432,9 @@ static const char* next_needed(int slot) {
         if (ph->p_type != PT_DYNAMIC) {
             continue;
         }
-        /* El PT_DYNAMIC esta dentro de un PT_LOAD; se traduce con los segmentos
-         * ya colocados de ESTA libreria, no con los de la que este en curso. */
+        /* PT_DYNAMIC lies inside a PT_LOAD; it is translated with the segments
+         * THIS library already placed, not with the ones in progress. */
         const unsigned char* table = (const unsigned char*)map_of(slot, ph->p_vaddr);
-        if (table == 0) {
-            return 0;
-        }
         if (table == 0) {
             return 0;
         }
@@ -1483,10 +1475,10 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
         if (symbol.st_name >= limit) {
             return -1;
         }
-        /* Una entrada INDEFINIDA con el nombre buscado no es una respuesta: es
-         * la pregunta misma. Si se aceptara, st_value = 0 se traduciria a la
-         * base de la imagen, y una llamada terminaria en el encabezado ELF.
-         * Solo contesta quien DEFINIO el simbolo. */
+        /* An UNDEFINED entry with the name sought is not an answer: it is the
+         * question itself. Accepting it, st_value = 0 would translate to the
+         * image's base, and a call would end in the ELF header. Only the image
+         * that DEFINED the symbol answers. */
         if (symbol.st_shndx == SHN_UNDEF) {
             continue;
         }
@@ -1514,7 +1506,7 @@ static uint64_t scope_of(int slot) {
 
 /* The global scope: newest image first, the executable last. That order is the
  * one this loader has always had -- a library wins over the one that loaded it
- * and the program is the fallback -- and dlsym(RTLD_DEFAULT) keeps it. */
+ * and the program is the fallback -- and a global lookup keeps it. */
 static int resolve(const char* name, Elf64_Addr* value_out) {
     for (int slot = g_lib_count - 1; slot >= 0; --slot) {
         if (!g_libs[slot].global) {
@@ -1528,9 +1520,9 @@ static int resolve(const char* name, Elf64_Addr* value_out) {
 }
 
 /* What a relocation of `slot` may bind to: every global image plus the image's
- * own dependency tree, in the same newest-first order. Before dlopen every image
- * was global, so this is the same walk as resolve() for everything loaded at
- * startup. The difference is for a library dlopened RTLD_LOCAL: it can no
+ * own dependency tree, in the same newest-first order. Before run-time loading
+ * every image was global, so this is the same walk as resolve() for everything
+ * loaded at startup. The difference is for a library opened local: it can no
  * longer answer for an image outside its tree. That is what keeps client.so and
  * hl.so, which both define PM_Move, from calling into each other. */
 static int resolve_for(int slot, const char* name, Elf64_Addr* value_out) {
@@ -1555,58 +1547,34 @@ void* ldso_lookup(const char* name) {
     if (slot < 0 || value == 0) {
         return 0;
     }
-    /* El valor es relativo a la libreria donde se encontro, asi que se traduce
-     * con SU mapa y no con el de la ultima cargada: con dos imagenes mapeadas,
-     * un vaddr igual en las dos son direcciones distintas. */
+    /* The value is relative to the library where it was found, so it is
+     * translated with ITS map and not with the last one loaded: with two images
+     * mapped, the same vaddr in both is two different addresses. */
     return map_of(slot, value);
 }
 
-/* El ejecutable es el slot 0, asi que "vino de una libreria compartida" es "el
- * slot donde se encontro no es el cero".
+/* The executable is slot 0, so "came from a shared library" is "the slot where
+ * it was found is not zero".
  *
- * La pregunta es mas util de lo que parece. Sin ella, un programa que todavia
- * trae su propia copia del simbolo en el binario pasa la misma comprobacion,
- * porque en los dos casos la direccion que reporta el resolvedor coincide con la
- * que tiene el GOT. */
+ * The question is more useful than it looks. Without it, a program that still
+ * carries its own copy of the symbol in the binary passes the same check,
+ * because in both cases the address the resolver reports matches the one in the
+ * GOT. */
 int ldso_symbol_is_shared(const char* name) {
     Elf64_Addr value = 0;
     return resolve(name, &value) > 0;
 }
 
-/* ---- <dlfcn.h> ------------------------------------------------------------
+/* ---- Run-time loading (loader/loader.h) ------------------------------------
  *
- * Built on the same slots as everything above. A handle is a pointer to the
- * image's slot; the executable's slot stands for the global scope. What is
- * deliberately missing and why is in SHARED_LIBRARIES.md#dlopen. */
+ * Built on the same slots as everything above. An image handle is a pointer to
+ * its slot; the executable's slot stands for the global scope. Each subsystem
+ * builds its own interface on this: POSIX's <dlfcn.h> is
+ * subsystems/posix/userland/dlfcn.c. What is deliberately missing and why is in
+ * SHARED_LIBRARIES.md#dlopen. */
 
-/* The last failure, until dlerror() hands it out once. */
-static char g_dl_error[256];
-static int g_dl_error_pending = 0;
-
-static void dl_error_append(size_t* used, const char* text) {
-    while (text != 0 && *text != '\0' && *used < sizeof(g_dl_error) - 1) {
-        g_dl_error[(*used)++] = *text++;
-    }
-    g_dl_error[*used] = '\0';
-}
-
-static void dl_fail(const char* first, const char* second, const char* third) {
-    size_t used = 0;
-    dl_error_append(&used, first);
-    dl_error_append(&used, second);
-    dl_error_append(&used, third);
-    g_dl_error_pending = 1;
-}
-
-char* dlerror(void) {
-    if (!g_dl_error_pending) {
-        return 0;
-    }
-    g_dl_error_pending = 0;
-    return g_dl_error;
-}
-
-/* The slot a handle names, or -1 when it is not one this loader gave out. */
+/* The slot an image handle names, or -1 when it is not one this loader gave
+ * out. */
 static int slot_of_handle(void* handle) {
     Library* library = (Library*)handle;
     if (library < &g_libs[0] || library >= &g_libs[g_lib_count]) {
@@ -1628,8 +1596,8 @@ static int loaded_slot_at(const char* path) {
     return -1;
 }
 
-/* RTLD_GLOBAL applies to the image and its whole tree, as on Linux: a symbol
- * reachable through the library becomes reachable by everyone. */
+/* Global applies to the image and its whole tree, as RTLD_GLOBAL does on
+ * Linux: a symbol reachable through the library becomes reachable by everyone. */
 static void make_global(int slot) {
     const uint64_t scope = scope_of(slot);
     for (int index = 0; index < g_lib_count; ++index) {
@@ -1639,13 +1607,13 @@ static void make_global(int slot) {
     }
 }
 
-/* Puts the slot table back to how it was before a dlopen that failed.
+/* Puts the slot table back to how it was before an open that failed.
  *
  * ldso_load publishes an image before walking its DT_NEEDED and relocating it,
  * so a failure at either step leaves it -- and any dependency it brought -- in
  * the table, mapped and visible to every later lookup. That is acceptable at
- * startup, where the program reports the failure and goes on; for dlopen it
- * would mean a library that "failed to load" still answers dlsym(RTLD_DEFAULT).
+ * startup, where the program reports the failure and goes on; at run time it
+ * would mean a library that "failed to load" still answers a global lookup.
  * Nothing else runs between, so everything from `start` up is this call's. */
 static void roll_back_to(int start) {
     for (int slot = g_lib_count - 1; slot >= start; --slot) {
@@ -1659,10 +1627,10 @@ static void roll_back_to(int start) {
  * the order glibc uses. The array was filled by R_X86_64_RELATIVE, so its entries
  * are already final addresses; 0 and -1 are the conventional empty markers.
  *
- * Only dlopen calls this. Nothing at startup runs constructors -- not crt0 for
- * the program, not the loader for its DT_NEEDED -- because nothing in this tree
- * has any; a C++ module opened at run time, like Xash3D's client.so with its
- * global CHud, is the first thing that does. */
+ * Only sx_loader_open calls this. Nothing at startup runs constructors -- not
+ * crt0 for the program, not the loader for its DT_NEEDED -- because nothing in
+ * this tree has any; a C++ module opened at run time, like Xash3D's client.so
+ * with its global CHud, is the first thing that does. */
 typedef void (*initializer_fn)(void);
 
 static void run_initializers(int slot) {
@@ -1690,7 +1658,7 @@ static void run_initializers(int slot) {
     }
 }
 
-static const char* dl_step_reason(int step) {
+static const char* step_reason(int step) {
     switch (step) {
     case -1: return "no free library slot";
     case -2: return "cannot open file";
@@ -1705,93 +1673,49 @@ static const char* dl_step_reason(int step) {
     }
 }
 
-void* dlopen(const char* path, int mode) {
+void* sx_loader_program(void) {
     adopt_executable_once();
-    if (path == 0) {
-        if (g_lib_count == 0) {
-            dl_fail("dlopen: the program image is not registered", 0, 0);
-            return 0;
-        }
-        g_libs[0].refcount++;
-        return &g_libs[0];
-    }
+    return g_lib_count != 0 ? &g_libs[0] : 0;
+}
 
-    /* A bare name is looked up where DT_NEEDED is; anything with a '/' is a
-     * path, relative ones included. The loader opens absolute paths only (the
-     * native call knows no working directory), so a relative one is made
-     * absolute here against the POSIX one: this is the POSIX layer. */
-    char full[sizeof(g_libs[0].path)];
-    char cwd[sizeof(g_libs[0].path)];
-    size_t used = 0;
-    int has_slash = 0;
-    for (const char* ch = path; *ch != '\0'; ++ch) {
-        if (*ch == '/') {
-            has_slash = 1;
-            break;
-        }
-    }
-    const char* parts[3] = {has_slash ? "" : "/lib/", "", path};
-    if (has_slash && path[0] != '/') {
-        if (savanxp_getcwd(cwd, sizeof(cwd)) < 0 || cwd[0] != '/') {
-            dl_fail("dlopen: no working directory for ", path, 0);
-            return 0;
-        }
-        size_t length = 0;
-        while (cwd[length] != '\0') {
-            length++;
-        }
-        parts[0] = cwd;
-        parts[1] = cwd[length - 1] == '/' ? "" : "/";
-    }
-    for (int part = 0; part < 3; ++part) {
-        for (const char* ch = parts[part]; *ch != '\0'; ++ch) {
-            if (used >= sizeof(full) - 1) {
-                dl_fail("dlopen: path too long: ", path, 0);
-                return 0;
-            }
-            full[used++] = *ch;
-        }
-    }
-    full[used] = '\0';
+void* sx_loader_find(const char* path) {
+    adopt_executable_once();
+    const int slot = loaded_slot_at(path);
+    return slot >= 0 ? &g_libs[slot] : 0;
+}
 
-    int slot = loaded_slot_at(full);
-    if (slot >= 0) {
-        if ((mode & RTLD_GLOBAL) != 0) {
-            make_global(slot);
-        }
-        g_libs[slot].refcount++;
-        return &g_libs[slot];
+void* sx_loader_open(const char* path, int global, char* error, unsigned long error_size) {
+    adopt_executable_once();
+    unsigned long used = 0;
+    if (error != 0 && error_size != 0) {
+        error[0] = '\0';
     }
-    if ((mode & RTLD_NOLOAD) != 0) {
-        return 0;
-    }
-
     /* ldso_missing() describes the program's startup and must not change
-     * because of a dlopen, so its state is put back however this ends. */
+     * because of a run-time open, so its state is put back however this ends. */
     const int start = g_lib_count;
     const char* missing_before = g_missing_library;
     const unsigned missing_count_before = g_missing_count;
     g_lib_fail_symbol = 0;
     g_lib_fail_library = 0;
-    g_load_global = (mode & RTLD_GLOBAL) != 0;
+    g_load_global = global != 0;
     g_strict = 1;
-    const int step = ldso_load(full);
+    const int step = ldso_load(path);
     g_strict = 0;
     g_load_global = 1;
 
     if (step != 0) {
+        append_text(error, error_size, &used, path);
         if (step == -8 && g_missing_count > missing_count_before) {
-            dl_fail(full, ": a dependency failed to load: ", g_missing_names[missing_count_before]);
+            append_text(error, error_size, &used, ": a dependency failed to load: ");
+            append_text(error, error_size, &used, g_missing_names[missing_count_before]);
         } else if (step == -9 && g_lib_fail_symbol != 0) {
-            size_t length = 0;
-            dl_error_append(&length, full);
-            dl_error_append(&length, ": unresolved symbol \"");
-            dl_error_append(&length, g_lib_fail_symbol);
-            dl_error_append(&length, "\" needed by ");
-            dl_error_append(&length, g_lib_fail_library);
-            g_dl_error_pending = 1;
+            append_text(error, error_size, &used, ": unresolved symbol \"");
+            append_text(error, error_size, &used, g_lib_fail_symbol);
+            append_text(error, error_size, &used, "\" needed by ");
+            append_text(error, error_size, &used, g_lib_fail_library);
         } else {
-            dl_fail(full, ": ", dl_step_reason(step));
+            append_text(error, error_size, &used, ": ");
+            append_text(error, error_size, &used, step_reason(step));
         }
         roll_back_to(start);
         g_missing_library = missing_before;
@@ -1803,9 +1727,9 @@ void* dlopen(const char* path, int mode) {
 
     /* begin_load gave the requested image the first free slot; its
      * dependencies came after it. */
-    slot = start;
-    if ((mode & RTLD_GLOBAL) != 0) {
-        /* Dependencies that were already loaded RTLD_LOCAL become global too. */
+    const int slot = start;
+    if (global) {
+        /* Dependencies that were already loaded local become global too. */
         make_global(slot);
     }
     g_libs[slot].refcount = 1;
@@ -1819,20 +1743,39 @@ void* dlopen(const char* path, int mode) {
     return &g_libs[slot];
 }
 
-void* dlsym(void* handle, const char* name) {
-    if (name == 0) {
-        dl_fail("dlsym: no symbol name", 0, 0);
-        return 0;
+void sx_loader_make_global(void* image) {
+    const int slot = slot_of_handle(image);
+    if (slot >= 0) {
+        make_global(slot);
     }
+}
+
+void sx_loader_retain(void* image) {
+    if (image != 0) {
+        ((Library*)image)->refcount++;
+    }
+}
+
+int sx_loader_release(void* image) {
+    const int slot = slot_of_handle(image);
+    if (slot < 0 || g_libs[slot].refcount == 0) {
+        return -1;
+    }
+    /* The image stays mapped: nothing is ever unloaded. */
+    g_libs[slot].refcount--;
+    return 0;
+}
+
+int sx_loader_symbol(void* image, const char* name, void** address) {
     Elf64_Addr value = 0;
     int owner = -1;
-    if (handle == RTLD_DEFAULT || handle == &g_libs[0]) {
+    *address = 0;
+    if (image == 0 || image == &g_libs[0]) {
         owner = resolve(name, &value);
     } else {
-        const int slot = slot_of_handle(handle);
+        const int slot = slot_of_handle(image);
         if (slot < 0) {
-            dl_fail("dlsym: invalid handle", 0, 0);
-            return 0;
+            return -1;
         }
         /* The image itself first, then its dependency tree in load order. */
         if (resolve_in(name, slot, &value) >= 0) {
@@ -1850,34 +1793,15 @@ void* dlsym(void* handle, const char* name) {
             }
         }
     }
-    void* address = owner >= 0 ? map_of(owner, value) : 0;
-    if (address == 0) {
-        dl_fail("dlsym: symbol not found: ", name, 0);
-        return 0;
-    }
-    return address;
+    *address = owner >= 0 ? map_of(owner, value) : 0;
+    return *address != 0 ? 0 : -2;
 }
 
-int dlclose(void* handle) {
-    const int slot = slot_of_handle(handle);
-    if (slot < 0 || g_libs[slot].refcount == 0) {
-        dl_fail("dlclose: handle is not open", 0, 0);
-        return -1;
-    }
-    /* The image stays mapped: see the header. */
-    g_libs[slot].refcount--;
-    return 0;
-}
-
-/* Which image holds an address, and the nearest symbol at or below it.
- *
- * Xash3D's save/restore turns function pointers into names this way. A symbol
+/* Xash3D's save/restore turns function pointers into names this way. A symbol
  * matches when the address falls inside it; one with no size matches only its
  * own address. Of the matches, the highest start wins. */
-int dladdr(const void* address, Dl_info* info) {
-    if (info == 0) {
-        return 0;
-    }
+int sx_loader_address(const void* address, const char** path, void** base,
+                      const char** symbol_name, void** symbol_address) {
     const unsigned long target = (unsigned long)address;
     for (int slot = 0; slot < g_lib_count; ++slot) {
         const Library* library = &g_libs[slot];
@@ -1905,10 +1829,10 @@ int dladdr(const void* address, Dl_info* info) {
         if (!inside) {
             continue;
         }
-        info->dli_fname = library->path;
-        info->dli_fbase = (void*)(library->bias + (first & ~(Elf64_Addr)4095));
-        info->dli_sname = 0;
-        info->dli_saddr = 0;
+        *path = library->path;
+        *base = (void*)(library->bias + (first & ~(Elf64_Addr)4095));
+        *symbol_name = 0;
+        *symbol_address = 0;
         /* Without a count there is no safe end to the table, so no name. */
         Elf64_Addr best = 0;
         for (unsigned long index = 1; index < library->symbol_count; ++index) {
@@ -1923,12 +1847,12 @@ int dladdr(const void* address, Dl_info* info) {
             }
             const int covers = symbol.st_size != 0 ? vaddr < symbol.st_value + symbol.st_size
                                                    : vaddr == symbol.st_value;
-            if (!covers || (info->dli_sname != 0 && symbol.st_value < best)) {
+            if (!covers || (*symbol_name != 0 && symbol.st_value < best)) {
                 continue;
             }
             best = symbol.st_value;
-            info->dli_sname = library->dynstr + symbol.st_name;
-            info->dli_saddr = map_of(slot, symbol.st_value);
+            *symbol_name = library->dynstr + symbol.st_name;
+            *symbol_address = map_of(slot, symbol.st_value);
         }
         return 1;
     }

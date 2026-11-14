@@ -903,6 +903,15 @@ SCENARIOS: dict[str, Scenario] = {
         "A diamond of four libraries loads the shared leaf exactly once",
         180.0,
     ),
+    # The shared loader in a SUN process: sunlibtest maps libmath through the
+    # same loader POSIX programs use, with no POSIX call on the way.
+    "sun-libtest": _qemu_scenario(
+        "sunlibtest",
+        "SUN LIBRARY TEST PASS",
+        "SUN LIBRARY TEST FAIL",
+        "A SUN program maps libmath.so through the shared loader",
+        180.0,
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

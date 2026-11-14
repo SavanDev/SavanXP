@@ -187,6 +187,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `CreateFileMapping`, `MapViewOfFile` | `sxn_section_create`, `sxn_map_view` | done |
 | `MapViewOfFileEx` (a chosen base) | `sxn_map_view_at` | done (K2 of the Win32 roadmap; consumer: the Win32 loader) |
 | `CreateFileMapping` over a file (`SEC_IMAGE`'s shared text) | `sxn_section_open_range` (read-only, one section per file range system-wide) | done; consumer: the loader shared by SUN and POSIX ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#one-loader-over-sxn)) |
+| Implicitly linked DLLs (the import table, shared text) | `savanxp_program(... NATIVE LINK_PROFILE PIE DEPENDS lib...)`: `DT_NEEDED`, mapped before `main` by the loader POSIX uses too | done for the neutral libraries (`libmath`; consumer `sunlibtest`); the toolkit's wait for their POSIX client to split out ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#one-loader-over-sxn)) |
 | `ReadFile` / `WriteFile` on pipes and devices | `sxn_read`, `sxn_write`, `sxn_set_nonblocking` | done |
 | `DuplicateHandle`, `CloseHandle` | `sxn_duplicate`, `sxn_close` | done |
 | ALPC ports | `sxn_port_*`, `sxn_pipe_send_handle` | done |

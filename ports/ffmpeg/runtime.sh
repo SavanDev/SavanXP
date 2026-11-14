@@ -42,23 +42,25 @@ compile_units libsavanxp.a core math setjmp
 compile_units libsxgui.a gui
 $RANLIB_CMD libsavanxp.a libsxgui.a
 
-# El cargador va SUELTO, no dentro de libsavanxp.a.
+# The loader goes LOOSE, not inside libsavanxp.a.
 #
-# crt0 llama a sx_start_dynamic, que en libc.c mira si el simbolo debil
-# sx_run_interpreter esta definido, y solo lo define ldso.c. Sin este objeto, esa
-# comprobacion da cero, el interprete no corre nunca y DT_NEEDED se ignora en
-# silencio: el programa arranca bien y las funciones de la libreria no existen. No
-# es un fallo ruidoso, que es lo peor.
+# crt0 calls sx_start_dynamic, which in libc.c checks whether the weak symbol
+# sx_run_interpreter is defined, and only the loader defines it. Without this
+# object the check yields zero, the interpreter never runs and DT_NEEDED is
+# ignored in silence: the program starts fine and the library's functions do not
+# exist. Not a loud failure, which is the worst kind.
 #
-# Y no se mete en libsavanxp.a porque ahi lo acabaria llevando --y ejecutando el
-# arranque de-- cada programa estatico del port, que no lo necesita.
-echo "== compilando el cargador"
-$SX_CC -c -x c "$REPO/subsystems/posix/userland/ldso.c" -o ldso.o $SX_TARGET_CFLAGS
+# And it stays out of libsavanxp.a because there every static program of the port
+# would carry it -- and run its startup -- without needing it. <dlfcn.h>, POSIX's
+# layer over the loader, goes with it.
+echo "== compiling the loader"
+$SX_CC -c -x c "$REPO/system/loader/ldso.c" -o ldso.o $SX_TARGET_CFLAGS
+$SX_CC -c -x c "$REPO/subsystems/posix/userland/dlfcn.c" -o dlfcn.o $SX_TARGET_CFLAGS
 
 sdk_fingerprint=$( {
     find "$SDK/include" "$REPO/include" "$SDK/runtime" "$REPO/system/gfx" -type f -exec sha256sum {} +
     sha256sum "$SDK/linker.ld"
-    sha256sum "$REPO/subsystems/posix/userland/ldso.c"
+    sha256sum "$REPO/system/loader/ldso.c" "$REPO/subsystems/posix/userland/dlfcn.c"
 } | sort | sha256sum | cut -d' ' -f1 )
 printf '%s\n' "$FFMPEG_COMMIT" "$SX_TARGET_CFLAGS" "$SX_TARGET_LDFLAGS" "$sdk_fingerprint" > .savanxp-runtime-fingerprint
 echo "== libsavanxp.a: $(du -h libsavanxp.a | cut -f1)  libsxgui.a: $(du -h libsxgui.a | cut -f1)"

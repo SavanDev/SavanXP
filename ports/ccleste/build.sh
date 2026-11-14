@@ -122,8 +122,8 @@ if ((SKIP_PORT == 0)); then
        "$BUILD_SRC/"
 
     INCLUDE_FLAGS=(-I "$SDK/include" -I "$REPO/include" -I "$BUILD_SRC")
-    # ldso.c incluye "libc.h" del userland, y el overlay los headers publicos
-    # de FFmpeg mas el config.h generado (igual que mediaplayer).
+    # The userland headers, and for the overlay FFmpeg's public headers plus
+    # its generated config.h (as mediaplayer does).
     INCLUDE_FLAGS+=(-I "$REPO/subsystems/posix/userland")
     if [[ -n "$FFMPEG_SRC" ]]; then
         INCLUDE_FLAGS+=(-I "$FFMPEG_SRC" -I "$FFMPEG_BUILD")
@@ -173,13 +173,15 @@ if ((SKIP_PORT == 0)); then
         RUNTIME_OBJECTS+=("$object")
     done
 
-    echo "== compilando el cargador (ldso va dentro del programa, como en mediaplayer)"
-    compile_c "$REPO/subsystems/posix/userland/ldso.c" "$OBJ/ldso.o" \
+    echo "== compiling the loader (it goes inside the program, as in mediaplayer)"
+    compile_c "$REPO/system/loader/ldso.c" "$OBJ/ldso.o" \
+        -Wall -Wextra -Wpedantic "${INCLUDE_FLAGS[@]}"
+    compile_c "$REPO/subsystems/posix/userland/dlfcn.c" "$OBJ/dlfcn.o" \
         -Wall -Wextra -Wpedantic "${INCLUDE_FLAGS[@]}"
 
     echo "== linkeando ccleste"
     LINK_ARGS=(
-        "${RUNTIME_OBJECTS[@]}" "$OBJ/ldso.o"
+        "${RUNTIME_OBJECTS[@]}" "$OBJ/ldso.o" "$OBJ/dlfcn.o"
         "${OBJECTS[@]}"
     )
     # DT_NEEDED by soname: the loader maps libffmpeg.so.0.4 from /lib, and

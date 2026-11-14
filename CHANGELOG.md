@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs can map shared libraries: `savanxp_program(NATIVE)` takes `LINK_PROFILE PIE` and `DEPENDS`, through the
+  loader POSIX uses, now `system/loader/ldso.c`; `<dlfcn.h>` is POSIX's layer over it (`include/loader/loader.h`).**
+  The `sun-libtest` scenario maps `libmath` from SUN. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).
+
 - **POSIX programs can open a file through the native call, `sxn_open_file` (`SXN_SYS_OPEN_FILE`), and use the handle
   as a descriptor or back a section with it.** `handletest` asserts it. See
   [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).

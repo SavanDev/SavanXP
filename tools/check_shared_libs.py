@@ -90,13 +90,13 @@ def defined_symbols(path: Path) -> set[str]:
     return found
 
 
-# What the loader (subsystems/posix/userland/ldso.c) may take from the program.
-# It speaks SXN through inline traps and calls no C library, so the same object
-# serves a POSIX program and a native one; anything else here is a call into one
-# subsystem's runtime that the other may not have. savanxp_getcwd is the dlopen
-# layer's, which is POSIX: a relative path is the POSIX working directory's.
+# What the loader (system/loader/ldso.c) may take from the program. It speaks
+# SXN through inline traps and calls no C library, so the same object serves a
+# POSIX program and a native one; anything else here is a call into one
+# subsystem's runtime that the other may not have. <dlfcn.h> is POSIX's layer
+# over it (subsystems/posix/userland/dlfcn.c) and is not held to this.
 LOADER_IMPORTS = {"__stack_chk_fail", "__stack_chk_guard", "sx_image_base",
-                  "sx_loader_report", "savanxp_getcwd"}
+                  "sx_loader_report"}
 
 
 def loader_violations(root: Path) -> list[str]:
@@ -111,10 +111,10 @@ def loader_violations(root: Path) -> list[str]:
     ninja = root / "build.ninja"
     if ninja.is_file():
         objects = sorted({root / match for match in re.findall(
-            r"^build (CMakeFiles/[^ :]+/subsystems/posix/userland/ldso\.c\.o):",
+            r"^build (CMakeFiles/[^ :]+/system/loader/ldso\.c\.o):",
             ninja.read_text(), re.MULTILINE)})
     else:
-        objects = sorted(root.glob("CMakeFiles/*/subsystems/posix/userland/ldso.c.o"))
+        objects = sorted(root.glob("CMakeFiles/*/system/loader/ldso.c.o"))
     for path in objects:
         if not path.is_file():
             continue
