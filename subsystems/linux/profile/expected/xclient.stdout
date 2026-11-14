@@ -1,0 +1,12 @@
+window mapped
+expose 200x150
+pointer 320 240 window 320 240
+pointer 75 50 window 75 50
+pointer 0 0 window 0 0
+pointer 149 99 window 149 99
+pointer 100 20 window 100 20
+pointer 400 300 window 400 300
+pointer 620 10 window 620 10
+pointer 10 460 window 10 460
+delete requested
+closed

@@ -1,0 +1,15 @@
+execve("/bin/busybox.static", ["/bin/busybox.static", "mkdir", "-p", "/work/tree/new/deeper"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+getuid() = 0
+umask(000) = 022
+umask(022) = 000
+mkdir("/", 0777) = -1 EEXIST (File exists)
+stat("/", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+mkdir("/work/", 0777) = -1 EEXIST (File exists)
+stat("/work/", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+mkdir("/work/tree/", 0777) = -1 EEXIST (File exists)
+stat("/work/tree/", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+mkdir("/work/tree/new/", 0777) = 0
+mkdir("/work/tree/new/deeper", 0777) = 0
+exit_group(0) = ?

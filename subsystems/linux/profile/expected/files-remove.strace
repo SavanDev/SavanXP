@@ -1,0 +1,9 @@
+execve("/fixtures/files", ["/fixtures/files", "remove", "/work"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+unlink("/work/l2-files.dat") = 0
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+writev(1, [{iov_base="unlink ok", iov_len=9}, {iov_base="\n", iov_len=1}], 2) = 10
+stat("/work/l2-files.dat", ADDR) = -1 ENOENT (No such file or directory)
+writev(1, [{iov_base="stat after unlink ENOENT ok\nfiles remove ok\n", iov_len=44}, {iov_base=NULL, iov_len=0}], 2) = 44
+exit_group(0) = ?

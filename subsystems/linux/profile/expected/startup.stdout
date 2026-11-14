@@ -1,0 +1,24 @@
+argc=3
+argv[0]=/fixtures/startup
+argv[1]=x
+argv[2]=y z
+env=A=1
+env=B=two
+envc=2
+nonzero registers at entry: none
+rsp mod 16 at entry=0
+AT_PHDR ok
+AT_PHENT ok
+AT_PHNUM ok
+AT_PAGESZ=4096
+AT_BASE=0
+AT_ENTRY ok
+AT_UID present
+AT_EUID present
+AT_GID present
+AT_EGID present
+AT_SECURE=0
+AT_RANDOM ok
+AT_EXECFN ok
+regcheck failures=0
+exit_group 3

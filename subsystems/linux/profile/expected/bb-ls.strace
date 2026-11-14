@@ -1,0 +1,34 @@
+execve("/bin/busybox.static", ["/bin/busybox.static", "ls", "-1", "/work/tree", "/work/tree/a"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+getuid() = 0
+ioctl(0, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+brk(NULL) = ADDR
+brk(ADDR) = ADDR
+mmap(ADDR, 4096, PROT_NONE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = ADDR
+mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = ADDR
+stat("/work/tree", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+stat("/work/tree/a", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+writev(1, [{iov_base="/work/tree", iov_len=10}, {iov_base=":\n", iov_len=2}], 2) = 12
+open("/work/tree", O_RDONLY|O_LARGEFILE|O_CLOEXEC|O_DIRECTORY) = 3
+fcntl(3, F_SETFD, FD_CLOEXEC) = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = ADDR
+getdents64(3, ADDR /* 4 entries */, 2048) = 96
+lstat("/work/tree/a", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+lstat("/work/tree/z", {st_mode=S_IFREG|0644, st_size=2, ...}) = 0
+getdents64(3, ADDR /* 0 entries */, 2048) = 0
+close(3) = 0
+munmap(ADDR, 8192) = 0
+open("/work/tree/a", O_RDONLY|O_LARGEFILE|O_CLOEXEC|O_DIRECTORY) = 3
+fcntl(3, F_SETFD, FD_CLOEXEC) = 0
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = ADDR
+getdents64(3, ADDR /* 4 entries */, 2048) = 104
+lstat("/work/tree/a/b", {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+lstat("/work/tree/a/f.txt", {st_mode=S_IFREG|0644, st_size=14, ...}) = 0
+getdents64(3, ADDR /* 0 entries */, 2048) = 0
+close(3) = 0
+munmap(ADDR, 8192) = 0
+writev(1, [{iov_base="a\nz\n\n/work/tree/a:\nb\nf.txt\n", iov_len=27}, {iov_base=NULL, iov_len=0}], 2) = 27
+exit_group(0) = ?

@@ -120,6 +120,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   and the MFC and RichEdit libraries it runs on, by hash; the import closure
   against what SSW exports; resources and control classes; a Wine trace by
   phase; and the Windows XP reference captures.
+- [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
+  measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
+  closure by hash, the L1-L5 fixtures and how they are built, the system call
+  and X request matrices traced on Linux with every extension absent, what
+  each call meets in the kernel today, and the reference outputs.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
 - [`NIGHTWOOD.md`](userland/NIGHTWOOD.md) — Nightwood, the forest game: the first game
@@ -258,8 +263,8 @@ all its phases have landed; the links to it move with it.
   of driver over one API: TKD in the kernel and IUD as an isolated process, what
   an IUD does and does not contain, the IOMMU phases that come first (M1-M5), the
   framework phases (F1-F5), what the common API must provide, and Wi-Fi last.
-- [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — Linux
-  binary compatibility on Sx under `/system/linux`, for the first application
+- [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — SSL,
+  the Savan Subsystem for Linux: binary compatibility on Sx under `/system/linux`, for the first application
   goal, Xeyes: a translation layer in the kernel entered by trapping
   `syscall`, memory regions, a musl profile, a small X11 server (`x11d`), the
   paths rejected, the kernel slices, and phases L0-L7 with their gates.

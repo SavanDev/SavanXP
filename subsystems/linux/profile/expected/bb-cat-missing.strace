@@ -1,0 +1,7 @@
+execve("/bin/busybox.static", ["/bin/busybox.static", "cat", "/work/tree/missing"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+getuid() = 0
+open("/work/tree/missing", O_RDONLY|O_LARGEFILE) = -1 ENOENT (No such file or directory)
+write(2, "cat: can't open '/work/tree/missing': No such fi"..., 64) = 64
+exit_group(1) = ?

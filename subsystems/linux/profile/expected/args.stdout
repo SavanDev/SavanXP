@@ -1,0 +1,8 @@
+argc=3
+argv[0]=/fixtures/args
+argv[1]=x
+argv[2]=y z
+env=A=1
+env=B=two
+envc=2
+getenv(B)=two

@@ -1,0 +1,12 @@
+Error loading shared library libonig.so.5: No such file or directory (needed by /usr/bin/jq)
+Error loading shared library libonig.so.5: No such file or directory (needed by /usr/lib/libjq.so.1)
+Error relocating /usr/lib/libjq.so.1: onig_foreach_name: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_region_new: symbol not found
+Error relocating /usr/lib/libjq.so.1: OnigEncodingUTF8: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_search: symbol not found
+Error relocating /usr/lib/libjq.so.1: OnigSyntaxPerl_NG: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_error_code_to_str: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_new: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_region_free: symbol not found
+Error relocating /usr/lib/libjq.so.1: onig_free: symbol not found
+Error relocating /usr/bin/jq: onig_set_parse_depth_limit: symbol not found

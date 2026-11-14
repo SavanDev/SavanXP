@@ -1,0 +1,182 @@
+1 open
+1 C setup LSB protocol=11 auth-name-len=0 auth-data-len=0
+1 S setup success screen=640x480
+1 C seq=1 QueryExtension len=20 name=BIG-REQUESTS
+1 S reply seq=1 QueryExtension BIG-REQUESTS answered absent (server: present)
+1 C seq=2 CreateGC len=20 gc=r+0x0
+1 C seq=3 GetProperty len=24 window=root property=RESOURCE_MANAGER type=STRING
+1 S reply seq=3 len=32
+1 C seq=4 QueryExtension len=20 name=XKEYBOARD
+1 S reply seq=4 QueryExtension XKEYBOARD answered absent (server: present)
+1 C seq=5 InternAtom len=20 only-if-exists=0 name=Custom Init
+1 S reply seq=5 len=32
+1 C seq=6 InternAtom len=20 only-if-exists=0 name=Custom Data
+1 S reply seq=6 len=32
+1 C seq=7 InternAtom len=24 only-if-exists=1 name=SCREEN_RESOURCES
+1 S reply seq=7 len=32
+1 C seq=8 InternAtom len=24 only-if-exists=0 name=WM_DELETE_WINDOW
+1 S reply seq=8 len=32
+1 C seq=9 CreatePixmap len=16 pixmap=r+0x1 depth=1 48x32
+1 C seq=10 CreateGC len=16 gc=r+0x2
+1 C seq=11 PutImage len=280 drawable=r+0x1 format=1 depth=1 48x32
+1 C seq=12 FreeGC len=8
+1 C seq=13 CreatePixmap len=16 pixmap=r+0x3 depth=1 48x32
+1 C seq=14 CreateGC len=16 gc=r+0x4
+1 C seq=15 PutImage len=280 drawable=r+0x3 format=1 depth=1 48x32
+1 C seq=16 FreeGC len=8
+1 C seq=17 CreateGC len=20 gc=r+0x5
+1 C seq=18 CreateGC len=24 gc=r+0x6
+1 C seq=19 QueryExtension len=16 name=SHAPE
+1 S reply seq=19 QueryExtension SHAPE answered absent (server: present)
+1 C seq=20 QueryExtension len=24 name=XInputExtension
+1 S reply seq=20 QueryExtension XInputExtension answered absent (server: present)
+1 C seq=21 QueryExtension len=24 name=XInputExtension
+1 S reply seq=21 QueryExtension XInputExtension answered absent (server: present)
+1 C seq=22 QueryColors len=12
+1 S reply seq=22 len=40
+1 C seq=23 QueryExtension len=16 name=RENDER
+1 S reply seq=23 QueryExtension RENDER answered absent (server: present)
+1 C seq=24 QueryColors len=12
+1 S reply seq=24 len=40
+1 C seq=25 QueryColors len=12
+1 S reply seq=25 len=40
+1 C seq=26 QueryExtension len=16 name=XFIXES
+1 C seq=27 QueryExtension len=16 name=DAMAGE
+1 C seq=28 QueryExtension len=16 name=Present
+1 S reply seq=26 QueryExtension XFIXES answered absent (server: present)
+1 S reply seq=27 QueryExtension DAMAGE answered absent (server: present)
+1 S reply seq=28 QueryExtension Present answered absent (server: present)
+1 C seq=29 CreateWindow len=52 wid=r+0x7 parent=root 150x100+0+0 mask=0x2819
+1 C seq=30 ChangeProperty len=32 window=r+0x7 property=WM_NAME type=STRING format=8 mode=0
+1 C seq=31 ChangeProperty len=32 window=r+0x7 property=WM_ICON_NAME type=STRING format=8 mode=0
+1 C seq=32 ChangeProperty len=40 window=r+0x7 property=WM_COMMAND type=STRING format=8 mode=0
+1 C seq=33 ChangeProperty len=32 window=r+0x7 property=WM_CLIENT_MACHINE type=STRING format=8 mode=0
+1 C seq=34 ChangeProperty len=96 window=r+0x7 property=WM_NORMAL_HINTS type=WM_SIZE_HINTS format=32 mode=0
+1 C seq=35 ChangeProperty len=60 window=r+0x7 property=WM_HINTS type=WM_HINTS format=32 mode=0
+1 C seq=36 ChangeProperty len=36 window=r+0x7 property=WM_CLASS type=STRING format=8 mode=0
+1 C seq=37 InternAtom len=24 only-if-exists=0 name=WM_LOCALE_NAME
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S reply seq=37 len=32
+1 C seq=38 ChangeProperty len=32 window=r+0x7 property=atom238 type=STRING format=8 mode=0
+1 C seq=39 ChangeProperty len=32 window=r+0x7 property=atom238 type=STRING format=8 mode=0
+1 C seq=40 InternAtom len=24 only-if-exists=0 name=WM_CLIENT_LEADER
+1 S event PropertyNotify
+1 S event PropertyNotify
+1 S reply seq=40 len=32
+1 C seq=41 ChangeProperty len=28 window=r+0x7 property=atom239 type=WINDOW format=32 mode=0
+1 C seq=42 CreateWindow len=48 wid=r+0x8 parent=r+0x7 150x100+0+0 mask=0x2809
+1 C seq=43 ClearArea len=16
+1 C seq=44 MapSubwindows len=8
+1 C seq=45 MapWindow len=8 window=r+0x7
+1 C seq=46 InternAtom len=20 only-if-exists=0 name=WM_PROTOCOLS
+1 S event PropertyNotify
+1 S event MapNotify
+1 S event Expose
+1 S reply seq=46 len=32
+1 C seq=47 ChangeProperty len=28 window=r+0x7 property=atom240 type=ATOM format=32 mode=0
+1 C seq=48 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=49 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=50 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=51 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=52 PolyFillArc len=36 drawable=r+0x8 bytes=24
+1 S event PropertyNotify
+1 C seq=53 QueryPointer len=8 window=r+0x8
+1 S reply seq=53 len=32
+1 C seq=54 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=55 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=56 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=57 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=58 QueryPointer len=8 window=r+0x8
+1 S reply seq=58 len=32
+1 C seq=59 QueryPointer len=8 window=r+0x8
+1 S reply seq=59 len=32
+1 C seq=60 QueryPointer len=8 window=r+0x8
+1 S reply seq=60 len=32
+1 C seq=61 QueryPointer len=8 window=r+0x8
+1 S reply seq=61 len=32
+1 C seq=62 QueryPointer len=8 window=r+0x8
+1 S reply seq=62 len=32
+1 C seq=63 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=64 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=65 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=66 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=67 QueryPointer len=8 window=r+0x8
+1 S reply seq=67 len=32
+1 C seq=68 QueryPointer len=8 window=r+0x8
+1 S reply seq=68 len=32
+1 C seq=69 QueryPointer len=8 window=r+0x8
+1 S reply seq=69 len=32
+1 C seq=70 QueryPointer len=8 window=r+0x8
+1 S reply seq=70 len=32
+1 C seq=71 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=72 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=73 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=74 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=75 QueryPointer len=8 window=r+0x8
+1 S reply seq=75 len=32
+1 C seq=76 QueryPointer len=8 window=r+0x8
+1 S reply seq=76 len=32
+1 C seq=77 QueryPointer len=8 window=r+0x8
+1 S reply seq=77 len=32
+1 C seq=78 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=79 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=80 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=81 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=82 QueryPointer len=8 window=r+0x8
+1 S reply seq=82 len=32
+1 C seq=83 QueryPointer len=8 window=r+0x8
+1 S reply seq=83 len=32
+1 C seq=84 QueryPointer len=8 window=r+0x8
+1 S reply seq=84 len=32
+1 C seq=85 QueryPointer len=8 window=r+0x8
+1 S reply seq=85 len=32
+1 C seq=86 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=87 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=88 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=89 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=90 QueryPointer len=8 window=r+0x8
+1 S reply seq=90 len=32
+1 C seq=91 QueryPointer len=8 window=r+0x8
+1 S reply seq=91 len=32
+1 C seq=92 QueryPointer len=8 window=r+0x8
+1 S reply seq=92 len=32
+1 C seq=93 QueryPointer len=8 window=r+0x8
+1 S reply seq=93 len=32
+1 C seq=94 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=95 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=96 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=97 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=98 QueryPointer len=8 window=r+0x8
+1 S reply seq=98 len=32
+1 C seq=99 QueryPointer len=8 window=r+0x8
+1 S reply seq=99 len=32
+1 C seq=100 QueryPointer len=8 window=r+0x8
+1 S reply seq=100 len=32
+1 C seq=101 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=102 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=103 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=104 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=105 QueryPointer len=8 window=r+0x8
+1 S reply seq=105 len=32
+1 C seq=106 QueryPointer len=8 window=r+0x8
+1 S reply seq=106 len=32
+1 C seq=107 QueryPointer len=8 window=r+0x8
+1 S reply seq=107 len=32
+1 C seq=108 QueryPointer len=8 window=r+0x8
+1 S reply seq=108 len=32
+1 C seq=109 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=110 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=111 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=112 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=113 QueryPointer len=8 window=r+0x8
+1 S reply seq=113 len=32
+1 C seq=114 QueryPointer len=8 window=r+0x8
+1 S reply seq=114 len=32
+1 S event ClientMessage sent
+1 close by client

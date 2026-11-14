@@ -1,0 +1,20 @@
+create ok
+write ok
+writev ok
+close after write ok
+open for reading ok
+fstat size ok
+lseek set ok
+read middle ok
+lseek end ok
+short read at end ok
+read at end of file ok
+lseek cur ok
+write to read-only EBADF ok
+close ok
+read closed EBADF ok
+stat path ok
+open missing ENOENT ok
+tcgetattr on file ENOTTY ok
+isatty on file ok
+files write ok

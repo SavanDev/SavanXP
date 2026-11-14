@@ -1,0 +1,7 @@
+execve("/fixtures/args", ["/fixtures/args", "x", "y z"], ADDR /* 2 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+writev(1, [{iov_base="argc=3", iov_len=6}, {iov_base="\n", iov_len=1}], 2) = 7
+writev(1, [{iov_base="argv[0]=/fixtures/args\nargv[1]=x\nargv[2]=y z\nenv"..., iov_len=84}, {iov_base=NULL, iov_len=0}], 2) = 84
+exit_group(3) = ?

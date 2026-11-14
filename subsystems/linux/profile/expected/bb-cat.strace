@@ -1,0 +1,9 @@
+execve("/bin/busybox.static", ["/bin/busybox.static", "cat", "/work/tree/a/f.txt"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+getuid() = 0
+open("/work/tree/a/f.txt", O_RDONLY|O_LARGEFILE) = 3
+sendfile(1, 3, NULL, 16777216) = 14
+sendfile(1, 3, NULL, 16777216) = 0
+close(3) = 0
+exit_group(0) = ?

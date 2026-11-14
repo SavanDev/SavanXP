@@ -1,0 +1,7 @@
+execve("/fixtures/clock", ["/fixtures/clock"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+nanosleep({tv_sec=N, tv_nsec=N}, NULL) = 0
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+writev(1, [{iov_base="clock ok", iov_len=8}, {iov_base="\n", iov_len=1}], 2) = 9
+exit_group(0) = ?

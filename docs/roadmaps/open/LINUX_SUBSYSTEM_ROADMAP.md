@@ -1,13 +1,16 @@
-# Linux subsystem — binary compatibility on Sx
+# SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: design settled, implementation not started (2026-11-10).** The
-> first application goal is unchanged: an unmodified Linux x86-64 **Xeyes**
-> whose eyes follow the pointer on the SavanXP desktop. This revision replaces
-> the plan of 2026-11-08. It keeps that plan's direction (a translation layer
-> in the kernel, over Sx), makes the decisions it left open, shrinks the first
-> kernel step, and orders the phases by what Xeyes needs. Nothing under
-> `subsystems/linux/` exists yet, and the installed runtime root
-> `/system/linux` is not created by any build.
+> **Status: L0 closed (2026-11-14); no subsystem code yet.** The subsystem is
+> named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
+> measured first profile is
+> [LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md). The first
+> application goal is unchanged: an unmodified Linux x86-64 **Xeyes** whose
+> eyes follow the pointer on the SavanXP desktop. The design was settled on
+> 2026-11-10, replacing the plan of 2026-11-08. It keeps that plan's direction
+> (a translation layer in the kernel, over Sx), makes the decisions it left
+> open, shrinks the first kernel step, and orders the phases by what Xeyes
+> needs. `subsystems/linux/` holds only the L0 fixtures and profile tooling,
+> and the installed runtime root `/system/linux` is not created by any build.
 
 ## Objective
 
@@ -339,7 +342,7 @@ past its first application
 | Slice | Scope for Linux | Size | First needed |
 | --- | --- | --- | --- |
 | S1 — launch selection | An explicit ABI selector and an environment block in the native spawn request; inheritance across Linux `fork` and `execve`; the Linux start-up stack; the lower address floor | M | L1 |
-| S2a — anonymous regions | The region list, map and unmap of page ranges, first-touch zeroed pages, the program break | M | L2 |
+| S2a — anonymous regions | The region list, map and unmap of page ranges, `mremap` with move, first-touch zeroed pages, the program break | M | L2 |
 | S2b — protection and files | Access changes on ranges, fixed mappings that replace, private file mappings, the interpreter load | M | L4 |
 | S3 — user exceptions | Fault information and saved registers delivered to a user handler, and a validated return | L | L7 |
 
@@ -380,7 +383,8 @@ no kernel change and can start now.
 
 ### L0 — profiles and inventory
 
-Size S. Nothing is committed except hashes, lists and reference outputs.
+Size S. Nothing of the distribution is committed: only the fixtures'
+sources, the tooling that traces them, hashes, lists and reference outputs.
 
 - Pin the distribution: an Alpine Linux release, by version and by the hash
   of every package taken from it. It supplies `xeyes` and its closure, the
@@ -404,6 +408,14 @@ system call and request matrices marked as required at start-up, required in
 use, or reachable only from a feature declared out of scope, and the
 reference outputs are kept.
 
+**Closed on 2026-11-14** in
+[LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md), reproducible
+with `subsystems/linux/profile/profile.sh`. No musl toolchain was needed. What
+it added to the plan: `mremap` in S2a, `clock_gettime` in L2 (hidden behind
+the vDSO on the host), `sendfile`, `getdents64`, `umask` and the working
+directory in L3, and a kernel random source for `getrandom` in L4. No run
+used threads, signals or process creation.
+
 ### L1 — entry, launch and the first executable
 
 Size M. E1, S1, the dispatcher, and `write`, `exit` and `exit_group`.
@@ -420,9 +432,9 @@ registered smoke scenario.
 
 ### L2 — static C programs
 
-Size M to L. S2a, thread-local storage through `arch_prctl`, clocks, and the
-file calls of the inventory: open, read, write, vectored write, seek, status,
-close, terminal queries.
+Size M to L. S2a, thread-local storage through `arch_prctl`, clocks
+(`clock_gettime`, `nanosleep`), and the file calls of the inventory: open,
+read, write, vectored write, seek, status, close, unlink, terminal queries.
 
 **Done when:** pinned static musl fixtures check arguments and environment,
 thread-local data, heap use from small to several megabytes with memory
@@ -447,7 +459,8 @@ denied access are covered. The executables and their data survive
 
 ### L4 — dynamic programs
 
-Size L. S2b, the interpreter load, and guest library lookup.
+Size L. S2b, the interpreter load, guest library lookup, and `getrandom`
+over a kernel random source, a neutral slice that does not exist yet.
 
 **Done when:** a pinned dynamically linked program with no display, using
 several shared libraries from the pinned distribution, runs unchanged with

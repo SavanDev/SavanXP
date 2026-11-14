@@ -1,0 +1,10 @@
+size 1 sum 00000000
+size 16 sum 10f83138
+size 100 sum f22ff7de
+size 4000 sum bfa486b0
+size 65536 sum 29a08000
+size 300000 sum 1d500b90
+size 1048576 sum 2e080000
+size 6291456 sum d9d00000
+realloc to 4194304 sum c0200000
+heap ok

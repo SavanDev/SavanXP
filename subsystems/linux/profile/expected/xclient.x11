@@ -1,0 +1,235 @@
+1 open
+1 C setup LSB protocol=11 auth-name-len=0 auth-data-len=0
+1 S setup success screen=640x480
+1 C seq=1 QueryExtension len=20 name=BIG-REQUESTS
+1 S reply seq=1 QueryExtension BIG-REQUESTS answered absent (server: present)
+1 C seq=2 CreateGC len=20 gc=r+0x0
+1 C seq=3 GetProperty len=24 window=root property=RESOURCE_MANAGER type=STRING
+1 S reply seq=3 len=32
+1 C seq=4 QueryExtension len=20 name=XKEYBOARD
+1 S reply seq=4 QueryExtension XKEYBOARD answered absent (server: present)
+1 C seq=5 CreateWindow len=40 wid=r+0x1 parent=root 200x150+0+0 mask=0xa
+1 C seq=6 ChangeProperty len=32 window=r+0x1 property=WM_NAME type=STRING format=8 mode=0
+1 C seq=7 InternAtom len=24 only-if-exists=0 name=WM_DELETE_WINDOW
+1 S reply seq=7 len=32
+1 C seq=8 InternAtom len=20 only-if-exists=0 name=WM_PROTOCOLS
+1 S reply seq=8 len=32
+1 C seq=9 ChangeProperty len=28 window=r+0x1 property=atom236 type=ATOM format=32 mode=0
+1 C seq=10 ChangeWindowAttributes len=16 window=r+0x1
+1 C seq=11 CreateGC len=16 gc=r+0x2
+1 C seq=12 MapWindow len=8 window=r+0x1
+1 S event MapNotify
+1 S event Expose
+1 C seq=13 PolyFillRectangle len=20 drawable=r+0x1 bytes=8
+1 C seq=14 PolyFillArc len=24 drawable=r+0x1 bytes=12
+1 C seq=15 QueryPointer len=8 window=r+0x1
+1 S reply seq=15 len=32
+1 C seq=16 QueryPointer len=8 window=r+0x1
+1 S reply seq=16 len=32
+1 C seq=17 QueryPointer len=8 window=r+0x1
+1 S reply seq=17 len=32
+1 C seq=18 QueryPointer len=8 window=r+0x1
+1 S reply seq=18 len=32
+1 C seq=19 QueryPointer len=8 window=r+0x1
+1 S reply seq=19 len=32
+1 C seq=20 QueryPointer len=8 window=r+0x1
+1 S reply seq=20 len=32
+1 C seq=21 QueryPointer len=8 window=r+0x1
+1 S reply seq=21 len=32
+1 C seq=22 QueryPointer len=8 window=r+0x1
+1 S reply seq=22 len=32
+1 C seq=23 QueryPointer len=8 window=r+0x1
+1 S reply seq=23 len=32
+1 C seq=24 QueryPointer len=8 window=r+0x1
+1 S reply seq=24 len=32
+1 C seq=25 QueryPointer len=8 window=r+0x1
+1 S reply seq=25 len=32
+1 C seq=26 QueryPointer len=8 window=r+0x1
+1 S reply seq=26 len=32
+1 C seq=27 QueryPointer len=8 window=r+0x1
+1 S reply seq=27 len=32
+1 C seq=28 QueryPointer len=8 window=r+0x1
+1 S reply seq=28 len=32
+1 C seq=29 QueryPointer len=8 window=r+0x1
+1 S reply seq=29 len=32
+1 C seq=30 QueryPointer len=8 window=r+0x1
+1 S reply seq=30 len=32
+1 C seq=31 QueryPointer len=8 window=r+0x1
+1 S reply seq=31 len=32
+1 C seq=32 QueryPointer len=8 window=r+0x1
+1 S reply seq=32 len=32
+1 C seq=33 QueryPointer len=8 window=r+0x1
+1 S reply seq=33 len=32
+1 C seq=34 QueryPointer len=8 window=r+0x1
+1 S reply seq=34 len=32
+1 C seq=35 QueryPointer len=8 window=r+0x1
+1 S reply seq=35 len=32
+1 C seq=36 QueryPointer len=8 window=r+0x1
+1 S reply seq=36 len=32
+1 C seq=37 QueryPointer len=8 window=r+0x1
+1 S reply seq=37 len=32
+1 C seq=38 QueryPointer len=8 window=r+0x1
+1 S reply seq=38 len=32
+1 C seq=39 QueryPointer len=8 window=r+0x1
+1 S reply seq=39 len=32
+1 C seq=40 QueryPointer len=8 window=r+0x1
+1 S reply seq=40 len=32
+1 C seq=41 QueryPointer len=8 window=r+0x1
+1 S reply seq=41 len=32
+1 C seq=42 QueryPointer len=8 window=r+0x1
+1 S reply seq=42 len=32
+1 C seq=43 QueryPointer len=8 window=r+0x1
+1 S reply seq=43 len=32
+1 C seq=44 QueryPointer len=8 window=r+0x1
+1 S reply seq=44 len=32
+1 C seq=45 QueryPointer len=8 window=r+0x1
+1 S reply seq=45 len=32
+1 C seq=46 QueryPointer len=8 window=r+0x1
+1 S reply seq=46 len=32
+1 C seq=47 QueryPointer len=8 window=r+0x1
+1 S reply seq=47 len=32
+1 C seq=48 QueryPointer len=8 window=r+0x1
+1 S reply seq=48 len=32
+1 C seq=49 QueryPointer len=8 window=r+0x1
+1 S reply seq=49 len=32
+1 C seq=50 QueryPointer len=8 window=r+0x1
+1 S reply seq=50 len=32
+1 C seq=51 QueryPointer len=8 window=r+0x1
+1 S reply seq=51 len=32
+1 C seq=52 QueryPointer len=8 window=r+0x1
+1 S reply seq=52 len=32
+1 C seq=53 QueryPointer len=8 window=r+0x1
+1 S reply seq=53 len=32
+1 C seq=54 QueryPointer len=8 window=r+0x1
+1 S reply seq=54 len=32
+1 C seq=55 QueryPointer len=8 window=r+0x1
+1 S reply seq=55 len=32
+1 C seq=56 QueryPointer len=8 window=r+0x1
+1 S reply seq=56 len=32
+1 C seq=57 QueryPointer len=8 window=r+0x1
+1 S reply seq=57 len=32
+1 C seq=58 QueryPointer len=8 window=r+0x1
+1 S reply seq=58 len=32
+1 C seq=59 QueryPointer len=8 window=r+0x1
+1 S reply seq=59 len=32
+1 C seq=60 QueryPointer len=8 window=r+0x1
+1 S reply seq=60 len=32
+1 C seq=61 QueryPointer len=8 window=r+0x1
+1 S reply seq=61 len=32
+1 C seq=62 QueryPointer len=8 window=r+0x1
+1 S reply seq=62 len=32
+1 C seq=63 QueryPointer len=8 window=r+0x1
+1 S reply seq=63 len=32
+1 C seq=64 QueryPointer len=8 window=r+0x1
+1 S reply seq=64 len=32
+1 C seq=65 QueryPointer len=8 window=r+0x1
+1 S reply seq=65 len=32
+1 C seq=66 QueryPointer len=8 window=r+0x1
+1 S reply seq=66 len=32
+1 C seq=67 QueryPointer len=8 window=r+0x1
+1 S reply seq=67 len=32
+1 C seq=68 QueryPointer len=8 window=r+0x1
+1 S reply seq=68 len=32
+1 C seq=69 QueryPointer len=8 window=r+0x1
+1 S reply seq=69 len=32
+1 C seq=70 QueryPointer len=8 window=r+0x1
+1 S reply seq=70 len=32
+1 C seq=71 QueryPointer len=8 window=r+0x1
+1 S reply seq=71 len=32
+1 C seq=72 QueryPointer len=8 window=r+0x1
+1 S reply seq=72 len=32
+1 C seq=73 QueryPointer len=8 window=r+0x1
+1 S reply seq=73 len=32
+1 C seq=74 QueryPointer len=8 window=r+0x1
+1 S reply seq=74 len=32
+1 C seq=75 QueryPointer len=8 window=r+0x1
+1 S reply seq=75 len=32
+1 C seq=76 QueryPointer len=8 window=r+0x1
+1 S reply seq=76 len=32
+1 C seq=77 QueryPointer len=8 window=r+0x1
+1 S reply seq=77 len=32
+1 C seq=78 QueryPointer len=8 window=r+0x1
+1 S reply seq=78 len=32
+1 C seq=79 QueryPointer len=8 window=r+0x1
+1 S reply seq=79 len=32
+1 C seq=80 QueryPointer len=8 window=r+0x1
+1 S reply seq=80 len=32
+1 C seq=81 QueryPointer len=8 window=r+0x1
+1 S reply seq=81 len=32
+1 C seq=82 QueryPointer len=8 window=r+0x1
+1 S reply seq=82 len=32
+1 C seq=83 QueryPointer len=8 window=r+0x1
+1 S reply seq=83 len=32
+1 C seq=84 QueryPointer len=8 window=r+0x1
+1 S reply seq=84 len=32
+1 C seq=85 QueryPointer len=8 window=r+0x1
+1 S reply seq=85 len=32
+1 C seq=86 QueryPointer len=8 window=r+0x1
+1 S reply seq=86 len=32
+1 C seq=87 QueryPointer len=8 window=r+0x1
+1 S reply seq=87 len=32
+1 C seq=88 QueryPointer len=8 window=r+0x1
+1 S reply seq=88 len=32
+1 C seq=89 QueryPointer len=8 window=r+0x1
+1 S reply seq=89 len=32
+1 C seq=90 QueryPointer len=8 window=r+0x1
+1 S reply seq=90 len=32
+1 C seq=91 QueryPointer len=8 window=r+0x1
+1 S reply seq=91 len=32
+1 C seq=92 QueryPointer len=8 window=r+0x1
+1 S reply seq=92 len=32
+1 C seq=93 QueryPointer len=8 window=r+0x1
+1 S reply seq=93 len=32
+1 C seq=94 QueryPointer len=8 window=r+0x1
+1 S reply seq=94 len=32
+1 C seq=95 QueryPointer len=8 window=r+0x1
+1 S reply seq=95 len=32
+1 C seq=96 QueryPointer len=8 window=r+0x1
+1 S reply seq=96 len=32
+1 C seq=97 QueryPointer len=8 window=r+0x1
+1 S reply seq=97 len=32
+1 C seq=98 QueryPointer len=8 window=r+0x1
+1 S reply seq=98 len=32
+1 C seq=99 QueryPointer len=8 window=r+0x1
+1 S reply seq=99 len=32
+1 C seq=100 QueryPointer len=8 window=r+0x1
+1 S reply seq=100 len=32
+1 C seq=101 QueryPointer len=8 window=r+0x1
+1 S reply seq=101 len=32
+1 C seq=102 QueryPointer len=8 window=r+0x1
+1 S reply seq=102 len=32
+1 C seq=103 QueryPointer len=8 window=r+0x1
+1 S reply seq=103 len=32
+1 C seq=104 QueryPointer len=8 window=r+0x1
+1 S reply seq=104 len=32
+1 C seq=105 QueryPointer len=8 window=r+0x1
+1 S reply seq=105 len=32
+1 C seq=106 QueryPointer len=8 window=r+0x1
+1 S reply seq=106 len=32
+1 C seq=107 QueryPointer len=8 window=r+0x1
+1 S reply seq=107 len=32
+1 C seq=108 QueryPointer len=8 window=r+0x1
+1 S reply seq=108 len=32
+1 C seq=109 QueryPointer len=8 window=r+0x1
+1 S reply seq=109 len=32
+1 C seq=110 QueryPointer len=8 window=r+0x1
+1 S reply seq=110 len=32
+1 C seq=111 QueryPointer len=8 window=r+0x1
+1 S reply seq=111 len=32
+1 C seq=112 QueryPointer len=8 window=r+0x1
+1 S reply seq=112 len=32
+1 C seq=113 QueryPointer len=8 window=r+0x1
+1 S reply seq=113 len=32
+1 C seq=114 QueryPointer len=8 window=r+0x1
+1 S reply seq=114 len=32
+1 C seq=115 QueryPointer len=8 window=r+0x1
+1 S reply seq=115 len=32
+1 S event ClientMessage sent
+1 C seq=116 FreeGC len=8
+1 C seq=117 DestroyWindow len=8 window=r+0x1
+1 C seq=118 FreeGC len=8
+1 C seq=119 GetInputFocus len=4
+1 S event UnmapNotify
+1 S event DestroyNotify
+1 S reply seq=119 len=32
+1 close by client

@@ -1,0 +1,28 @@
+execve("/fixtures/files", ["/fixtures/files", "write", "/work"], ADDR /* 5 vars */) = 0
+arch_prctl(ARCH_SET_FS, ADDR) = 0
+set_tid_address(ADDR) = P1
+open("/work/l2-files.dat", O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0644) = 3
+ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+writev(1, [{iov_base="create ok", iov_len=9}, {iov_base="\n", iov_len=1}], 2) = 10
+write(3, "\5\22\37,9FS`mz\207\224\241\256\273\310\325\342\357\374\t\26#0=JWdq~\213\230\245\262\277\314\331\346\363\0\r\32'4AN[h"..., 4000) = 4000
+writev(3, [{iov_base="%2?LYfs\200\215\232\247\264\301\316\333\350\365\2\17\34)6CP]jw\204\221\236\253\270\305\322\337\354\371\6\23 -:GTan{\210"..., iov_len=3000}, {iov_base="}\212\227\244\261\276\313\330\345\362\377\f\31&3@MZgt\201\216\233\250\265\302\317\334\351\366\3\20\35*7DQ^kx\205\222\237\254\271\306\323\340"..., iov_len=3000}], 2) = 6000
+close(3) = 0
+open("/work/l2-files.dat", O_RDONLY|O_LARGEFILE) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=10000, ...}) = 0
+lseek(3, 5000, SEEK_SET) = 5000
+read(3, "\355\372\7\24!.;HUbo|\211\226\243\260\275\312\327\344\361\376\v\30%2?LYfs\200\215\232\247\264\301\316\333\350\365\2\17\34)6CP"..., 100) = 100
+lseek(3, -10, SEEK_END) = 9990
+read(3, "S`mz\207\224\241\256\273\310", 200) = 10
+read(3, "", 200) = 0
+lseek(3, 0, SEEK_CUR) = 10000
+write(3, "S", 1) = -1 EBADF (Bad file descriptor)
+close(3) = 0
+read(3, ADDR, 1) = -1 EBADF (Bad file descriptor)
+stat("/work/l2-files.dat", {st_mode=S_IFREG|0644, st_size=10000, ...}) = 0
+open("/work/no-such-file", O_RDONLY|O_LARGEFILE) = -1 ENOENT (No such file or directory)
+open("/work/l2-files.dat", O_RDONLY|O_LARGEFILE) = 3
+ioctl(3, TCGETS, ADDR) = -1 ENOTTY (Not a tty)
+ioctl(3, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
+close(3) = 0
+writev(1, [{iov_base="write ok\nwritev ok\nclose after write ok\nopen for"..., iov_len=327}, {iov_base=NULL, iov_len=0}], 2) = 327
+exit_group(0) = ?

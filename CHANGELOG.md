@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL (Savan Subsystem for Linux) L0: `subsystems/linux/profile/profile.sh` rebuilds the pinned Alpine 3.24 profile
+  unprivileged, builds the L1-L5 fixtures with the host clang against musl only, and traces them and Xeyes on Linux.**
+  Reference outputs are under `subsystems/linux/profile/expected/`; see [LINUX_XEYES_PROFILE.md](docs/userland/LINUX_XEYES_PROFILE.md).
+
 - **NVMe storage driver `nvme`, adapted from OpenBSD `nvme(4)`: every 512-byte namespace registers as `nvmeN`, and the
   drive gets a shutdown notification before power-off or reboot (`block::shutdown_all`).** NVMe disks are read-only
   unless the boot entry carries `nvme-rw`; `SAVANXP_DISK_BUS=nvme` puts QEMU's disk on NVMe. Not yet run on metal. See
