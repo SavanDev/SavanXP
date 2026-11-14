@@ -1367,6 +1367,14 @@ static long gfx_window_request(
     }
 }
 
+long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled) {
+    if (context == 0 || context->header == 0 || context->window_id != 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return gfx_window_request(context, SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN,
+                              0, enabled != 0, 0, 0, 0, 2000);
+}
+
 static long gfx_window_open_with(
     const struct savanxp_gfx_context* owner,
     struct savanxp_gfx_context* window,

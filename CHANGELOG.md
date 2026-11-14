@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Media Player supports fullscreen with a Fullscreen button and F11; Esc or F11 restores the window.**
+  Video keeps its aspect ratio, playback continues, and controls and desktop chrome are hidden.
+  SUN and POSIX windows can request fullscreen at desktop resolution.
+
 - **When a library version a program names is missing and the loader falls back to the newest minor, the system log
   records it (`loader: libfoo.so.0.4 is not in /lib; falling back to the newest, libfoo.so.0.6`), from SUN and POSIX
   alike, whatever standard error is.** Scenario `posix-loader-log`; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#dt_soname-resolution).

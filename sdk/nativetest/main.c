@@ -2894,6 +2894,8 @@ int main(int argc, char** argv) {
     /* Fullscreen launch policy rejects bad arguments before contacting windowd. */
     {
         struct sxnwm_client window = {0};
+        check(sxnwm_set_fullscreen(0, 1) == -SAVANXP_EINVAL);
+        check(sxnwm_set_fullscreen(&window, 1) == -SAVANXP_EINVAL);
         check(sxnwm_connect_with_launch_flags(0, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
         check(sxnwm_connect_with_launch_flags(&window, ~SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
     }

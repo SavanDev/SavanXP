@@ -1047,6 +1047,7 @@ enum savanxp_input_event_type {
 /* Pedido de cierre del WM al cliente (bit de savanxp_gpu_client_surface_header
  * .flags). El WM lo prende y despues senala el evento de wake. */
 #define SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN 0x00000001u
+#define SAVANXP_GPU_CLIENT_SURFACE_FLAG_FULLSCREEN 0x00000002u
 
 /*
  * Client requests to the WM, inside the surface header (since v4). They used
@@ -1109,6 +1110,8 @@ enum savanxp_wm_window_action {
      * Only from a main window. window_id is unused. Not persisted: whoever
      * asks saves it (docs/desktop/DISPLAY_PROPERTIES.md). */
     SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE = 6,
+    /* Main window fullscreen at desktop resolution; width is 0/1 (off/on). */
+    SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN = 7,
 };
 
 /*

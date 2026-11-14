@@ -36,7 +36,7 @@
  * esto; y nunca mas angosta que lo que piden los controles. */
 #define MP_MAX_VIDEO_WIDTH 960
 #define MP_MAX_VIDEO_HEIGHT 540
-#define MP_MIN_WIDTH 480
+#define MP_MIN_WIDTH 600
 #define MP_AUDIO_VIDEO_HEIGHT 160
 #define MP_UI_REFRESH_NS 250000000ULL
 #define MP_SEEK_STEP_US 5000000LL
@@ -55,6 +55,7 @@ enum {
     W_TIME,
     W_VOLUME_ICON,
     W_VOLUME,
+    W_FULLSCREEN,
     W_COUNT
 };
 
@@ -73,6 +74,7 @@ struct mp_state {
     int64_t drag_us;
     uint32_t last_buttons;
 
+    int fullscreen;
     int size_requested;    /* el WM atiende un solo pedido de tamano */
     int needs_full;
     int needs_controls;
@@ -143,7 +145,7 @@ static void layout_frame(void) {
 static void layout(void) {
     const int width = (int)g.app.gfx.info.width;
     const int height = (int)g.app.gfx.info.height;
-    int video_h = height - MP_CONTROLS_HEIGHT;
+    int video_h = g.fullscreen ? height : height - MP_CONTROLS_HEIGHT;
     int row_y = 0;
     int x = SXGUI_MARGIN;
     int right = 0;
@@ -166,6 +168,7 @@ static void layout(void) {
     g.widgets[W_TIME].rect = sx_rect_make(x, row_y + (SXGUI_BUTTON_HEIGHT - SXGUI_FIELD_HEIGHT) / 2, MP_TIME_WIDTH,
                                           SXGUI_FIELD_HEIGHT);
 
+    g.widgets[W_FULLSCREEN].rect = sx_rect_make(x + MP_TIME_WIDTH + SXGUI_GAP, row_y, 112, SXGUI_BUTTON_HEIGHT);
     right = width - SXGUI_MARGIN;
     g.widgets[W_VOLUME].rect =
         sx_rect_make(right - MP_VOLUME_WIDTH, row_y + (SXGUI_BUTTON_HEIGHT - SXGUI_SCROLLBAR_THICKNESS) / 2,
@@ -422,9 +425,13 @@ static void paint_control_icons(void) {
 static void compose(void) {
     update_controls_text();
     sxgui_paint_content(&g.app.ui);
-    paint_control_icons();
+    if (!g.fullscreen) {
+        paint_control_icons();
+    }
     paint_video_area();
-    paint_seek_bar();
+    if (!g.fullscreen) {
+        paint_seek_bar();
+    }
     sxgui_paint_overlay(&g.app.ui);
 }
 
@@ -446,6 +453,11 @@ static void present_controls(void) {
     const int top = g.video_rect.height;
     const int height = (int)g.app.gfx.info.height - top;
 
+    if (g.fullscreen && !sxgui_dialog_active(&g.app.ui)) {
+        g.needs_controls = 0;
+        g.last_ui_ns = playback_now_ns();
+        return;
+    }
     if (height <= 0 || sxgui_dialog_active(&g.app.ui)) {
         present_full();
         return;
@@ -553,6 +565,10 @@ static void show_open_dialog(void) {
     g.needs_full = 1;
 }
 
+static void toggle_fullscreen(void) {
+    (void)gfx_set_fullscreen(&g.app.gfx, !g.fullscreen);
+}
+
 static void on_button(struct sxgui_widget* widget, void* user) {
     (void)user;
     if (widget == &g.widgets[W_OPEN]) {
@@ -563,6 +579,8 @@ static void on_button(struct sxgui_widget* widget, void* user) {
         seek_relative(MP_SEEK_STEP_US);
     } else if (widget == &g.widgets[W_PLAY]) {
         playback_toggle(&g.playback);
+    } else if (widget == &g.widgets[W_FULLSCREEN]) {
+        toggle_fullscreen();
     } else if (widget == &g.widgets[W_STOP]) {
         playback_stop(&g.playback);
     }
@@ -581,6 +599,15 @@ static int handle_key(const struct savanxp_input_event* event) {
         return 0;
     }
     switch (event->key) {
+        case SAVANXP_KEY_F11:
+            toggle_fullscreen();
+            return 1;
+        case SAVANXP_KEY_ESC:
+            if (g.fullscreen) {
+                (void)gfx_set_fullscreen(&g.app.gfx, 0);
+                return 1;
+            }
+            break;
         case SAVANXP_KEY_LEFT:
             seek_relative(-MP_SEEK_STEP_US);
             return 1;
@@ -650,7 +677,7 @@ static int handle_pointer(const struct savanxp_gui_pointer_event* event) {
 
     seek_hit.y -= 4;
     seek_hit.height += 8;
-    if (g.dragging) {
+    if (!g.fullscreen && g.dragging) {
         g.drag_us = seek_position_at(event->x);
         g.needs_controls = 1;
         if (released) {
@@ -660,7 +687,7 @@ static int handle_pointer(const struct savanxp_gui_pointer_event* event) {
         }
         return 1;
     }
-    if (pressed && point_in(seek_hit, event->x, event->y) && has_file() && g.playback.media.seekable) {
+    if (!g.fullscreen && pressed && point_in(seek_hit, event->x, event->y) && has_file() && g.playback.media.seekable) {
         g.dragging = 1;
         g.drag_us = seek_position_at(event->x);
         g.needs_controls = 1;
@@ -671,13 +698,27 @@ static int handle_pointer(const struct savanxp_gui_pointer_event* event) {
         g.needs_full = 1;
         return 1;
     }
-    return consumed;
+    return consumed || g.fullscreen;
 }
 
 static void pump_input(void) {
     struct savanxp_input_event event;
     struct savanxp_gui_pointer_event pointer;
 
+    const int fullscreen = (g.app.gfx.header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_FULLSCREEN) != 0;
+    if (fullscreen != g.fullscreen) {
+        g.fullscreen = fullscreen;
+        g.dragging = 0;
+        for (int index = 0; index < W_COUNT; ++index) {
+            if (fullscreen) {
+                g.widgets[index].flags &= ~SXGUI_FLAG_VISIBLE;
+            } else {
+                g.widgets[index].flags |= SXGUI_FLAG_VISIBLE;
+            }
+        }
+        layout();
+        g.needs_full = 1;
+    }
     while (gfx_poll_event(&g.app.gfx, &event) > 0) {
         if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
             (void)gfx_apply_resize_event(&g.app.gfx, &event);
@@ -721,6 +762,7 @@ static void build_widgets(void) {
     g.widgets[W_PLAY] = sxgui_button(zero, "", on_button, NULL);
     g.widgets[W_STOP] = sxgui_button(zero, "", on_button, NULL);
     g.widgets[W_FORWARD] = sxgui_button(zero, "", on_button, NULL);
+    g.widgets[W_FULLSCREEN] = sxgui_button(zero, "Fullscreen (F11)", on_button, NULL);
     g.widgets[W_TIME] = sxgui_label(zero, g.time_text);
     g.widgets[W_TIME].flags |= SXGUI_FLAG_SUNKEN;
     g.widgets[W_VOLUME_ICON] = sxgui_label(zero, "");

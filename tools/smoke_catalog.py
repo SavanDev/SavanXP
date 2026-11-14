@@ -836,6 +836,15 @@ SCENARIOS: dict[str, Scenario] = {
         remove_paths=("lib/libneeded.so.0.4",),
     ),
 
+    "mediaplayer-fullscreen": _qemu_scenario(
+        "", "SXGUI SMOKE PASS", "SXGUI SMOKE FAIL",
+        "Media Player fullscreen controls, window restoration and video aspect ratio",
+        300.0, "handoff: starting /bin/init", "taskbar",
+        completion="host", ready_wait=45.0, host_action="visual",
+        visual_scenario="mediaplayer_fullscreen",
+        prepare=("./ports/ffmpeg/install.sh --with-test-media",),
+    ),
+
     # El reproductor sin su motor: tiene que DECIR que falta, no desaparecer. La
     # exit 2 es correcta y el exito del escenario es el mensaje, no el codigo.
     "mediaplayer-nolib": _qemu_scenario(

@@ -843,3 +843,16 @@ accumulated darkening. Toggling effects invalidates the screen once.
 The settings protocol and persistence are documented in
 [Display Properties](DISPLAY_PROPERTIES.md#effects). Window and pointer settings
 do not change client pixel formats or the GPU protocol.
+
+## Fullscreen at desktop resolution
+
+Main windows can request `SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN` with `width`
+set to 1 (enter) or 0 (leave), through `gfx_set_fullscreen` (POSIX) or
+`sxnwm_set_fullscreen` (SUN). Ordinary windows keep the desktop display mode:
+their surface resizes to the display, chrome and panels are hidden, and leaving
+restores their surface size, position and maximized state. Requests fail if
+another fullscreen window is active or surface capacity cannot cover the display.
+The WM publishes `SAVANXP_GPU_CLIENT_SURFACE_FLAG_FULLSCREEN` in the surface
+header, so applications follow exits caused by shell shortcuts too. Resize
+notifications retain their usual semantics. F11 is delivered to ordinary apps;
+low-resolution games retain the WM's F11 shortcut and display-mode policy.

@@ -797,22 +797,30 @@ static int enter_overlay_fullscreen(struct windowd_session *session, struct wind
     {
         return -1;
     }
-    if (!client->fullscreen_capable || client->fullscreen || client->minimized || session->fullscreen_slot >= 0)
+    if (client->owner_slot >= 0 || client->fullscreen || client->minimized || session->fullscreen_slot >= 0)
     {
         return -1;
     }
 
+    if (!client->fullscreen_capable &&
+        (client_surface_capacity_width(client) < session->gfx.info.width ||
+         client_surface_capacity_height(client) < session->gfx.info.height))
+    {
+        return -1;
+    }
+    client->fs_restore_surface_width = (int)client->surface_info.width;
+    client->fs_restore_surface_height = (int)client->surface_info.height;
     client->fs_restore_window_x = client->window_x;
     client->fs_restore_window_y = client->window_y;
     client->fs_restore_frame_visible = client->frame_visible;
     client->fs_restore_maximized = client->maximized;
 
-    /* Modo de video bajo: si el adaptador sabe cambiarlo, el scanout pasa a la
-     * resolucion de la superficie del cliente y sus pixeles van 1:1 al
-     * framebuffer, sin la pasada de escalado por software. Va antes de fijar la
-     * geometria de abajo, que se calcula desde gfx.info. Si el cambio no se
-     * puede, se sigue componiendo escalado: es degradacion, no error. */
-    (void)apply_display_mode(session, client->surface_info.width, client->surface_info.height);
+    /* Low-resolution games keep their fixed surface and mode switch.
+     * Ordinary windows resize to the desktop without changing the scanout. */
+    if (client->fullscreen_capable)
+    {
+        (void)apply_display_mode(session, client->surface_info.width, client->surface_info.height);
+    }
 
     client->fullscreen = 1;
     client->frame_visible = 0;
@@ -822,6 +830,11 @@ static int enter_overlay_fullscreen(struct windowd_session *session, struct wind
     client->window_width = (int)session->gfx.info.width;
     client->window_height = (int)session->gfx.info.height;
     session->fullscreen_slot = slot;
+    if (!client->fullscreen_capable)
+    {
+        resize_overlay_client_surface(session, dirty, slot, (int)session->gfx.info.width, (int)session->gfx.info.height);
+    }
+    client->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_FULLSCREEN;
     raise_overlay(session, slot);
     windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     return 0;
@@ -844,10 +857,14 @@ static void exit_overlay_fullscreen(struct windowd_session *session, struct wind
 
     session->fullscreen_slot = -1;
     client->fullscreen = 0;
+    client->header->flags &= ~SAVANXP_GPU_CLIENT_SURFACE_FLAG_FULLSCREEN;
+    if (!client->fullscreen_capable)
+    {
+        resize_overlay_client_surface(session, dirty, slot,
+            client->fs_restore_surface_width, client->fs_restore_surface_height);
+    }
 
-    /* Volver al modo nativo antes de restaurar y repintar: las posiciones
-     * guardadas de las ventanas estan en coordenadas nativas, y el dirty rect
-     * del final tiene que cubrir la pantalla entera, no la chica. */
+    /* Restore the native mode before restoring geometry in native coordinates. */
     (void)apply_display_mode(
         session,
         session->compositor.requested_info.width,
@@ -3869,7 +3886,19 @@ static void service_client_window_requests(
     client->window_request_consumed_sequence = sequence;
     request.title[SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u] = '\0';
 
-    if (request.action == SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE &&
+    if (request.action == SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN &&
+        overlay_slot_valid(slot) && client->owner_slot < 0 && request.width <= 1u)
+    {
+        if (request.width != 0u && !client->fullscreen)
+        {
+            status = enter_overlay_fullscreen(session, dirty, slot) == 0 ? 0 : -SAVANXP_EBUSY;
+        }
+        else if (request.width == 0u && client->fullscreen)
+        {
+            exit_overlay_fullscreen(session, dirty);
+        }
+    }
+    else if (request.action == SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE &&
         (client == &session->desktop_windows[0] || (overlay_slot_valid(slot) && client->owner_slot < 0)))
     {
         status = set_display_mode(session, dirty, request.width, request.height);
@@ -6698,6 +6727,13 @@ static int wm_handle_key(
     }
 
     if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || key_event->key != SAVANXP_KEY_F11)
+    {
+        return 0;
+    }
+
+    if (session->active_client_kind == WINDOWD_CLIENT_APP &&
+        overlay_slot_valid(session->active_overlay_slot) &&
+        !session->overlay_clients[session->active_overlay_slot].fullscreen_capable)
     {
         return 0;
     }

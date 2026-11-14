@@ -2765,6 +2765,86 @@ def scenario_ccleste(s):
     s.shot("ccleste-dash")
 
 
+def scenario_mediaplayer_fullscreen(s):
+    """Fullscreen hides chrome and controls, then restores window geometry."""
+    from PIL import Image, ImageFilter
+
+    def control_label(image):
+        # Black text alone also matches the solid black video area. Require
+        # the surrounding button face before accepting a glyph match.
+        mask = Image.new("L", image.size)
+        mask.putdata([255 if pixel == FACE else 0 for pixel in image.getdata()])
+        mask = mask.filter(ImageFilter.MaxFilter(7))
+        filtered = Image.composite(image, Image.new("RGB", image.size, (255, 0, 255)), mask)
+        return find_text(filtered, (0, 0, *image.size), "Fullscreen (F11)", TEXT, FACE)[0]
+
+    s.open_mediaplayer()
+    image = s.shot("player-window")
+    area = (0, 0, image.width, image.height)
+    origin = control_label(image)
+    if origin is None:
+        raise Failure("Media Player has no Fullscreen button")
+
+    def fullscreen(label):
+        time.sleep(2)
+        image = s.shot(label)
+        if control_label(image) is not None:
+            raise Failure("fullscreen still shows playback controls")
+        for x, y in ((0, 0), (image.width - 1, 0),
+                     (0, image.height - 1), (image.width - 1, image.height - 1)):
+            expect_pixel(image, x, y, (0, 0, 0), "fullscreen covers desktop and frame")
+
+    def restored(label):
+        time.sleep(2)
+        image = s.shot(label)
+        if control_label(image) != origin:
+            raise Failure("fullscreen did not restore window geometry and controls")
+        expect_taskbar_present(image, "taskbar restored after fullscreen")
+
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.click()
+    # Keep the cursor off the label that must be compared after restoration.
+    s.qmp.move_to(image.width // 2, image.height // 2)
+    fullscreen("player-button-fullscreen")
+    s.qmp.tap("esc")
+    restored("player-escape-restored")
+    s.qmp.tap("f11")
+    fullscreen("player-f11-fullscreen")
+    s.qmp.tap("f11")
+    restored("player-f11-restored")
+    s.qmp.tap("f11")
+    fullscreen("player-before-dialog")
+    s.qmp.tap("o")
+    time.sleep(1)
+    s.qmp.tap("esc")
+    fullscreen("player-dialog-cancelled")
+    s.qmp.tap("esc")
+    restored("player-dialog-restored")
+
+    # The port supplies this 4:3 clip; verify actual scaled pixels and bars.
+    s.qmp.tap("o")
+    time.sleep(1)
+    s.qmp.chord("ctrl", "a")
+    s.qmp.type_line("/media/clip.mjpeg")
+    s.qmp.tap("ret")
+    time.sleep(4)
+    s.qmp.tap("f11")
+    fullscreen("player-video-fullscreen")
+    image = s.shot("player-video-aspect")
+    expected_width = image.height * 4 // 3
+    left = (image.width - expected_width) // 2
+    y = image.height // 2
+    expect_pixel(image, left - 4, y, (0, 0, 0), "left pillarbox")
+    expect_pixel(image, left + expected_width + 4, y, (0, 0, 0), "right pillarbox")
+    if image.getpixel((left + 12, y)) == (0, 0, 0):
+        raise Failure("decoded video does not fill its fullscreen aspect rectangle")
+    s.qmp.tap("esc")
+    time.sleep(2)
+    image = s.shot("player-video-restored")
+    if control_label(image) is None:
+        raise Failure("video controls did not return")
+
+
 def scenario_mediaplayer_unavailable(s):
     """El reproductor sin su motor: tiene que abrir una ventana y explicar.
 
@@ -3406,6 +3486,7 @@ SCENARIOS = {
     "audio_ports_offline": scenario_audio_ports_offline,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,
+    "mediaplayer_fullscreen": scenario_mediaplayer_fullscreen,
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
     "calc": scenario_calc,

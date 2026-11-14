@@ -612,6 +612,15 @@ static inline long sxnwm_window_request_ex(struct sxnwm_client* owner, uint32_t 
     }
 }
 
+/* Fullscreen at desktop resolution, without changing the display mode. */
+static inline long sxnwm_set_fullscreen(struct sxnwm_client* owner, int enabled) {
+    if (owner == 0 || owner->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxnwm_window_request_ex(owner, SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN,
+        0, enabled != 0, 0, 0, SAVANXP_WM_WINDOW_ROLE_NORMAL, 0, 0, 0, 2000);
+}
+
 /* A dialog's request: no role, no position. */
 static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
                                         uint32_t width, uint32_t height, const char* title, long timeout_ms) {

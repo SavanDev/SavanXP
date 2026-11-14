@@ -48,8 +48,7 @@ selftest.c      --probe, --selftest, --gpu-hold: the same engine without a windo
 
 `media.c` knows nothing about screens, speakers or time of day; `playback.c`
 knows nothing about windows. The split is what lets the headless selftest drive
-exactly the engine the window uses, and what a second front end (a fullscreen
-mode, a command-line player) would reuse.
+exactly the engine the window uses, and what a command-line front end would reuse.
 
 Everything is **one thread**: the player was written before the kernel had
 threads and has not been moved to them. The loop is:
@@ -170,6 +169,20 @@ pump, so a decoder slower than the video catches up with the audio instead of
 drifting. If the screen has not changed for 250 ms a late frame is shown anyway:
 dropping everything would freeze the picture while the sound goes on.
 
+## Fullscreen
+
+Click **Fullscreen (F11)** or press **F11** to fill the desktop with video.
+The title bar, taskbar and playback controls are hidden; the picture keeps its
+aspect ratio with black bars. **Esc** or **F11** restores the previous window
+position and size, including maximized windows, without restarting playback.
+Space, arrow keys, the mouse wheel and O keep their playback functions.
+Esc cancels an open dialog first. Outside fullscreen, Esc closes the player.
+The desktop's Start shortcut leaves fullscreen; the player follows that state.
+
+`build.sh smoke mediaplayer-fullscreen` asserts the button, F11, Esc, dialog
+cancellation, restored geometry and a decoded 4:3 picture with pillarboxing.
+`tools/shoot.sh --scenario mediaplayer_fullscreen` captures the same checks.
+
 ## Control icons
 
 The transport buttons, Open and the volume speaker are icon buttons with **our
@@ -224,7 +237,7 @@ In the order they unblock each other.
    the other large throughput factor. Needs `nasm` pinned in the toolchain.
 4. **File dialog.** The Open dialog is a path field. A real one belongs in
    SXGUI, shared with Notepad.
-5. **Fullscreen**, **playlists**, **subtitles** (`libavcodec`'s text and bitmap
+5. **Playlists**, **subtitles** (`libavcodec`'s text and bitmap
    subtitle decoders, drawn over the frame), **album art** (the attached-picture
    stream is skipped today).
 6. **Test vectors for the real codecs.** The smoke clips only exercise MJPEG,
