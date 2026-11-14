@@ -408,7 +408,9 @@ static void refresh_info(void)
  *
  * Only the selected component is loaded. Its notice and texts are word
  * wrapped here to the text view's width, since the view draws one line per
- * row and clips the rest. */
+ * row and clips the rest. That, the copied row height and inner width, and
+ * the tab expansion are workarounds for toolkit gaps listed in
+ * docs/desktop/PLATFORM_GRAPHICS.md (Known gaps in SXGUI-C). */
 
 #define LICENSE_DIR "/system/licenses"
 #define LICENSE_MAX 64

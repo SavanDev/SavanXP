@@ -105,3 +105,16 @@ FFmpeg ports) take the runtime's units from one manifest,
 paths ([BUILD_CMAKE.md](../build/BUILD_CMAKE.md#the-runtimes-units-one-manifest)).
 Moving a unit between `system/gfx` and the POSIX runtime changes that file and
 the matching `SAVANXP_LIBRARY_REPLACES_*` entry, nothing else.
+
+## Known gaps in SXGUI-C
+
+What the toolkit does not yet do, and the workaround each program carries
+until it does. When a gap is closed, the workarounds listed for it go too.
+
+| Gap | Workaround today | Fix |
+| --- | --- | --- |
+| `sxgui_textview` draws one item per row and clips the rest: no word wrap and no horizontal scroll | System Properties' Licenses tab wraps every line itself, measuring with `gfx_text_width` (`license_wrap` in `aboutapp.c`) and storing the result in a static 160 KiB / 4096-line buffer | A wrap flag on the text view, wrapping at paint time against its own inner width, so the caller passes the text unwrapped |
+| The text view's usable width is private (`sxgui_listbox_inner` in `sxgui.c`) | `aboutapp.c` recomputes it as `width - SXGUI_BORDER_SUNKEN * 2 - SXGUI_SCROLLBAR_THICKNESS - SXGUI_TEXT_PAD * 2`, and assumes the scrollbar is always there | A public `sxgui_listbox_text_width()`, or no need for it once the view wraps |
+| The listbox row height is private (`sxgui_row_height`, `gfx_text_height() + 4`) | `aboutapp.c` copies the formula to size its list to whole rows (`ABOUT_LICENSE_LIST_HEIGHT`) | A public `sxgui_row_height()`, or a constructor that takes a row count |
+| `sx_painter_draw_text` does not expand `\t` | `license_wrap` turns tabs into spaces to the next multiple of eight before drawing | Tab stops in the text drawing, or in the text view at least |
+| No widget hierarchy: a tab page's controls are siblings of the tab control | Each tabbed program hides the other pages' controls with `SXGUI_FLAG_VISIBLE` in its own `show_page` (`sound.c`, `display.c`, `taskmgr.c`, `aboutapp.c`) | A page index on each widget that the tab control honours, so painting, hit testing and focus skip the other pages without per-program code |

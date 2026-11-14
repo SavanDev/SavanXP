@@ -149,7 +149,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   other windows created by an application.
 - [`PLATFORM_GRAPHICS.md`](desktop/PLATFORM_GRAPHICS.md) — SXGFX, SXCHROME and
   SXGUI-C as platform code: the no-system-call rule, what stays in each
-  subsystem (the window client, the application frame), and the toolkit's host.
+  subsystem (the window client, the application frame), the toolkit's host, and
+  the toolkit's known gaps with the workarounds programs carry for them.
 - [`SXGL.md`](desktop/SXGL.md) — SxGL, the 3D rasterizer: the GL 1.1 subset call by
   call, who presents, and every deliberate difference from the specification.
 - [`SXGL_DIAG.md`](desktop/SXGL_DIAG.md) — SxGL Diagnostic Tool (`sxgldiag`):
