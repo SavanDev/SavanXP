@@ -42,6 +42,10 @@ class contracts are `include/kernel/block.hpp`, `audio.hpp`, `display.hpp`,
 `nic.hpp` and `input.hpp`. Existing recovery such as HDA's verified DMA stop is
 useful groundwork, but it is not yet a lifecycle common to every class.
 
+Drivers outside the kernel, the single API a driver is written against, and
+the IOMMU work they need are a separate plan:
+[DRIVER_FRAMEWORK_ROADMAP.md](DRIVER_FRAMEWORK_ROADMAP.md).
+
 ## Plug and Play already present and its limits
 
 Boot-time discovery and initialization of supported devices is automatic.
@@ -305,9 +309,10 @@ preserve boot, rescue, all existing classes and external installations. Run
 the required native/graphics smokes for exposed API/UI slices. Record tested
 capabilities, remaining bus/class limits and diagnostic evidence.
 
-Runtime modules, stable external driver packaging/ABI, user-mode driver hosts,
-IOMMU isolation and foreign Linux/Windows kernel-driver compatibility are
-separate future projects. Driver update/rollback UI waits for a real packaging
+User-mode driver hosts and IOMMU isolation are planned in
+[DRIVER_FRAMEWORK_ROADMAP.md](DRIVER_FRAMEWORK_ROADMAP.md), which builds on D1,
+D3 and D4. Runtime modules, stable external driver packaging/ABI and foreign
+Linux/Windows kernel-driver compatibility are separate future projects. Driver update/rollback UI waits for a real packaging
 and recovery mechanism; existing kernel/system updates are not an independent
 driver installer. Initial Device Manager and general Plug and Play do not wait
 for those projects.

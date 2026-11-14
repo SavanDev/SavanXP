@@ -412,7 +412,9 @@ One driver per family, taken on when a target has it: Intel `em(4)` (82566,
 82567, 8257x), NVIDIA `nfe(4)`, Broadcom `bge(4)`, Marvell `msk(4)`, VIA
 `vr(4)`, SiS `sis(4)`, Atheros `alc(4)`. The FX-4100 has the first of these
 seen on a target: an Atheros AR8151 (`1969:1083`), for `alc(4)`. Wireless is out of scope: it needs an
-802.11 stack and vendor firmware.
+802.11 stack and vendor firmware. The plan that would bring it in, as an
+isolated userland driver, is
+[DRIVER_FRAMEWORK_ROADMAP.md](../roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md#wi-fi-the-rtl8188ce).
 
 ## Order of work
 

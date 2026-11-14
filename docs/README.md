@@ -250,6 +250,10 @@ all its phases have landed; the links to it move with it.
 - [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.
+- [`DRIVER_FRAMEWORK_ROADMAP.md`](roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md) — two kinds
+  of driver over one API: TKD in the kernel and IUD as an isolated process, what
+  an IUD does and does not contain, the IOMMU phases that come first (M1-M5), the
+  framework phases (F1-F5), what the common API must provide, and Wi-Fi last.
 - [`LINUX_SUBSYSTEM_ROADMAP.md`](roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md) — Linux
   binary compatibility on Sx under `/system/linux`, for the first application
   goal, Xeyes: a translation layer in the kernel entered by trapping
