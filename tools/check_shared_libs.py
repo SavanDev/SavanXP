@@ -128,6 +128,32 @@ def loader_violations(root: Path) -> list[str]:
     return found
 
 
+def run_path_violations(diskfs: Path) -> list[str]:
+    """Every ELF on the disk that carries an RPATH or RUNPATH.
+
+    The loader looks for libraries in /lib only and never reads either tag, so
+    one does nothing on SavanXP -- but CMake fills it with the build directory,
+    and the binaries are copied onto the disk as they were built, so a host path
+    (a user's home directory) would ship inside the system's binaries."""
+    found = []
+    for directory in ("bin", "system", "lib"):
+        root = diskfs / directory
+        if not root.is_dir():
+            continue
+        for path in sorted(root.iterdir()):
+            if not path.is_file():
+                continue
+            with open(path, "rb") as handle:
+                if handle.read(4) != b"\x7fELF":
+                    continue
+            out = subprocess.run(["readelf", "-d", str(path)], capture_output=True, text=True,
+                                 check=False, env={"LC_ALL": "C"}).stdout
+            for line in out.splitlines():
+                if "(RPATH)" in line or "(RUNPATH)" in line:
+                    found.append(f"{directory}/{path.name}: {line.split(':', 1)[-1].strip()}")
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_dir", nargs="?", default="build/linux")
@@ -187,6 +213,16 @@ def main() -> int:
             "the program's DEPENDS.",
             file=sys.stderr,
         )
+        return 1
+
+    run_paths = run_path_violations(root.parent / "diskfs")
+    if run_paths:
+        print("check_shared_libs: a binary on the disk carries a run path", file=sys.stderr)
+        for line in run_paths:
+            print(f"  {line}", file=sys.stderr)
+        print("\nThe loader never reads it, and it is a host path shipped inside the system. "
+              "Set\nSKIP_BUILD_RPATH on the target (savanxp_program and savanxp_library do).",
+              file=sys.stderr)
         return 1
 
     loader = loader_violations(root)

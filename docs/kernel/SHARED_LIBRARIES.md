@@ -159,6 +159,7 @@ are a single subsystem's.
 | guarantee | enforced by |
 | --- | --- |
 | No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
+| No binary on the disk carries an `RPATH` or `RUNPATH` | `tools/check_shared_libs.py`; `SKIP_BUILD_RPATH` in `savanxp_program` and `savanxp_library` |
 | The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `system/loader/ldso.c` imports only the canary, `sx_image_base` and `sx_loader_report` |
 | A SUN program maps a library through the same loader | `sun-libtest`: `sunlibtest.sxe` maps `libmath` and asserts `sqrt` came from it |
 | A missing library resolves to its highest newer minor, never an older one, and the exact file wins; a name without a full version gets the latest | `sonametest`, `sonametest-newer` and `dltest` |
@@ -201,6 +202,12 @@ and `diskmgmt` visual scenarios.
   it has nothing to declare a `DT_NEEDED` with. This is a property of the link
   model, not of the loader; a STATIC program that links the loader is told so at
   startup (step `-11`).
+- **No run path.** The loader looks in `/lib` only and ignores `RPATH` and
+  `RUNPATH`. The system's binaries carry neither: CMake gave every target that
+  links a library the build directory as its run path, and since binaries are
+  copied onto the disk as built, 38 of them shipped a path inside the
+  developer's home directory. `SKIP_BUILD_RPATH` stops it, and
+  `check_shared_libs` fails the build if one reappears.
 - **A `DT_NEEDED` is resolved by name, not by `DT_SONAME`**: the exact file under
   `/lib`, else the highest newer minor of the same ABI
   ([DT_SONAME resolution](#dt_soname-resolution)). A library's own `DT_SONAME`

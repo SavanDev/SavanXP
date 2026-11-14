@@ -373,6 +373,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **The system's programs and libraries no longer carry the build machine's directory as a `RUNPATH`**; 38 did, and
+  `check_shared_libs` now fails the build if one does. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md).
+
 - **The loader resolves a weak reference nothing defines to zero instead of failing the load, and says in words why
   a non-PIE program cannot use libraries (step 11) or why its own image was not registered (step 10).**
   `ldfailtest`, `ldstatictest` and `ldimagetest` cover every failure step; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#the-loaders-failure-paths).

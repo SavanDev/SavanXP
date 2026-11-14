@@ -149,6 +149,11 @@ function(savanxp_program)
     else()
         set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
     endif()
+    # No RUNPATH: CMake gives a target that links a shared library the build
+    # directory as its run path, and the binary is copied onto the disk as it
+    # was built, so that host path would ship inside it. The loader looks only
+    # in /lib and never reads it.
+    set_target_properties(${P_NAME} PROPERTIES SKIP_BUILD_RPATH ON)
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_TARGETS ${P_NAME})
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_PROGRAM_NAMES ${P_NAME})
 endfunction()
@@ -206,10 +211,13 @@ function(savanxp_library)
     if(P_ALLOW_UNDEFINED)
         target_link_options(${P_NAME} PRIVATE "-Wl,--allow-shlib-undefined")
     endif()
+    # SKIP_BUILD_RPATH: no host build path in a library that ships, as for
+    # programs (savanxp_program).
     set_target_properties(${P_NAME} PROPERTIES
         PREFIX ""
         OUTPUT_NAME "${P_SONAME}"
-        SUFFIX "")
+        SUFFIX ""
+        SKIP_BUILD_RPATH ON)
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_LIBRARY_TARGETS ${P_NAME})
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_LIBRARY_NAMES ${P_SONAME})
 endfunction()
