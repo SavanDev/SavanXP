@@ -297,8 +297,8 @@ all its phases have landed; the links to it move with it.
   the planned stable v3 format, subsystem boundaries, migration and production
   acceptance gates, with historical performance measurements.
 - [`XASH3D_ROADMAP.md`](roadmaps/open/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
-  engine needs from the platform, and the order that makes it pay for `dlopen` and
-  SxGL without pulling in threads or SDL.
+  engine needs from the platform, why it is a native port rather than the Linux
+  build under SSL, and the order that makes it pay for `dlopen` and SxGL.
 - [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.
