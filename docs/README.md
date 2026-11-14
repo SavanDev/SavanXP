@@ -280,6 +280,9 @@ all its phases have landed; the links to it move with it.
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.
 
+- [`TIMEZONE_ROADMAP.md`](roadmaps/open/TIMEZONE_ROADMAP.md) — local time: a POSIX `TZ`
+  string owned by the kernel in `/system/time.cfg`, the RTC as `utc` or `local`
+  (`RealTimeIsUniversal`), FAT in local time, and phases T1-T7.
 - [`AZALIA_ROADMAP.md`](roadmaps/open/AZALIA_ROADMAP.md) — OpenBSD HDA port for
   the Ryzen/ALC892 host, six-stage completion contract, software evidence, the
   2026-11-11 audit with the remaining physical checks and software backlog;

@@ -117,7 +117,8 @@ is a separate clock with a separate source: the CMOS RTC, read through ports
 `0x70`/`0x71` (`kernel/rtc.cpp`, `include/kernel/rtc.hpp`).
 
 Everything about the date is UTC. There are no time zones in the tree:
-`localtime` is `gmtime`.
+`localtime` is `gmtime`. The plan for local time and for an RTC kept in local
+time is [`TIMEZONE_ROADMAP.md`](../roadmaps/open/TIMEZONE_ROADMAP.md).
 
 The read path distrusts the chip. It waits out the update cycle, reads twice,
 and only believes the value when both reads agree, so a date never mixes two
