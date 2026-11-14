@@ -38,7 +38,8 @@ port 1234. `--headless` disables the QEMU window. SMP and virtio are not ported.
 - Multiboot2 boot, COM1 logging, EGA fallback and a framebuffer text console.
 - PIC/PIT interrupts, PS/2 keyboard and mouse.
 - ATA PIO, partition discovery and persistent SxFS mounted at `/disk`.
-- Static ELF32 programs in ring 3, private memory and kernel stacks.
+- Static ELF32 programs in ring 3, allocator-backed private pages and kernel stacks.
+- Local user-fault termination, ELF write protection and an unmapped stack guard.
 - PIT preemption with x87/SSE state, `spawn`, `waitpid`, `exit`, sleep and yield.
 - `init32`, the interactive `sh32` shell, `sysinfo`, and a minimal `desktop32`.
 - External static SDK applications built with `tools/build-user.sh`.

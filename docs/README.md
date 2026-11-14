@@ -43,7 +43,7 @@ i386 support; retained code is not necessarily part of the active build.
   minimal graphical desktop in QEMU, its verification commands, and the
   remaining hardware gaps for a Compaq Evo N1020v.
 - [`I386_PROCESSES.md`](I386_PROCESSES.md) — private i386 process contexts, PIT
-  preemption, spawn/wait/exit semantics and the end-to-end regression.
+  preemption, allocator-backed pages, fault containment, spawn/wait/exit and regressions.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
 - [`SECTIONS.md`](SECTIONS.md) — section objects and views: the grant model,

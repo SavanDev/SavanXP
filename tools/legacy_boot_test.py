@@ -243,6 +243,9 @@ def check_shell_processes(qmp_socket: Path, serial: Path) -> None:
     type_shell(qmp_socket, ("run /disk/bin/multitest32 short",))
     wait_for(r"child status 23.*?sh32> ", offset)
     offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("run /disk/bin/multitest32 fault",))
+    wait_for(r"user: exception #6 killed pid=.*?child status 134.*?sh32> ", offset)
+    offset = len(serial.read_text(errors="replace"))
     type_shell(qmp_socket, ("exit",))
     wait_for(r"sh32: listo.*?sh32> ", offset)
 
@@ -250,9 +253,19 @@ def check_shell_processes(qmp_socket: Path, serial: Path) -> None:
 def check_processes(text: str) -> None:
     """Require overlapping CPU-bound execution and actual PIT preemptions."""
     for token in ("MULTITASK contexts and waits PASS", "MULTITASK arguments PASS",
-                  "MULTITASK sleep and reclamation PASS", "MULTITASK GPU ownership PASS"):
+                  "MULTITASK sleep and reclamation PASS", "MULTITASK GPU ownership PASS",
+                  "MEMORY faults and protection PASS", "MEMORY fragmented copy PASS", "MEMORY reclamation PASS"):
         if token not in text:
             raise RuntimeError(f"missing process regression: {token}")
+    # Prove the hardware denied each forbidden access for the expected reason.
+    for address, error in ((0, 5), (0x08800000, 4), (0x00100000, 5),
+                           (0x40000000, 5), (0x08000000, 7), (0x08fef000, 6)):
+        if not re.search(rf"exception vector 14, error 0x{error:08x}, eip 0x[0-9a-f]+, "
+                         rf"cs 0x00000023, cr2 0x{address:08x}", text):
+            raise RuntimeError(f"missing page protection fault for {address:#x}, error {error}")
+    for vector in (0, 6, 13):
+        if f"user: exception #{vector} killed pid=" not in text:
+            raise RuntimeError(f"missing contained user exception {vector}")
     workers = re.findall(r"CPU worker ([12]) pid (\d+) start (\d+) end (\d+) result (\d+)", text)
     if len(workers) != 2 or {w[0] for w in workers} != {"1", "2"}:
         raise RuntimeError(f"missing independent workers: {workers}")
@@ -316,6 +329,8 @@ def run_boot(
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
+            if "kernel: fatal exception" in text:
+                raise RuntimeError("kernel exception; inspect serial log")
             if "MULTITASK FAIL" in text:
                 raise RuntimeError(text[text.index("MULTITASK FAIL"):].splitlines()[0])
             if FAILURE_TOKEN in text:
@@ -447,8 +462,12 @@ def main() -> int:
                         help="launch desktop from sh32 and verify desktop glyphs and PS/2 cursor against ELF32")
     parser.add_argument("--artifacts", type=Path,
                         help="retain serial log and desktop screenshots in this directory")
+    parser.add_argument("--memory-mib", type=int, default=1024,
+                        help="guest RAM; 32 exercises ELF partial-allocation failure")
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
+    if args.memory_mib < 16 or args.memory_mib > 1024:
+        parser.error("--memory-mib must be between 16 and 1024")
     iso = args.iso.resolve()
     if not iso.is_file():
         raise SystemExit(f"ISO does not exist: {iso}")
@@ -484,7 +503,7 @@ def main() -> int:
             "-accel",
             args.accel,
             "-m",
-            "1024M",
+            f"{args.memory_mib}M",
             "-cpu",
             "qemu32",
             "-display",
@@ -501,7 +520,9 @@ def main() -> int:
         if disk_image is not None:
             # snapshot=on: el arranque nunca escribe en la imagen persistente.
             command += ["-drive", f"file={disk_image},format=raw,if=ide,snapshot=on"]
-        require = (PROCESS_TOKEN, SCHEDULER_TOKEN)
+        require = (PROCESS_TOKEN, SCHEDULER_TOKEN, "memory: reference allocator ready")
+        if args.expect_processes and args.memory_mib == 32:
+            require += ("MEMORY ENOMEM rollback PASS",)
         if disk_image is not None:
             require += (SXFS_TOKEN,)
         detail = " (SxFS root mounted)" if disk_image is not None else ""

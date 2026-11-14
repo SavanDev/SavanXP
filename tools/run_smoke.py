@@ -8,7 +8,7 @@ import sys
 
 import legacy_boot_test
 
-SCENARIOS = ("smoke", "boot", "processes", "desktop")
+SCENARIOS = ("smoke", "boot", "processes", "memory", "desktop")
 
 
 def main() -> int:
@@ -24,8 +24,10 @@ def main() -> int:
     command = ["--iso", str(args.iso), "--disk-image", str(args.disk_image),
                "--expect-user", "--accel", args.accel, "--timeout", str(args.timeout),
                "--artifacts", str(args.artifacts)]
-    if args.scenario in ("smoke", "processes"):
+    if args.scenario in ("smoke", "processes", "memory"):
         command += ["--expect-processes"]
+    if args.scenario == "memory":
+        command += ["--memory-mib", "32"]
     if args.scenario in ("smoke", "desktop"):
         if args.desktop_elf is None:
             parser.error("--desktop-elf is required for desktop checks")

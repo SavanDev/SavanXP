@@ -49,11 +49,12 @@ constexpr uint16_t kTypeExecutable = 2;
 constexpr uint16_t kMachineIntel386 = 3;
 constexpr uint32_t kSegmentLoad = 1;
 constexpr uint32_t kSegmentExecute = 1;
+constexpr uint32_t kSegmentWrite = 2;
 
 
 bool in_image(uint32_t address, uint32_t size) {
-    return address >= paging::kUserWindowBase && address < kStackTop - kStackSize &&
-        static_cast<uint64_t>(address) + size <= kStackTop - kStackSize;
+    return address >= paging::kUserWindowBase && address < kStackTop - kStackSize - paging::kPageBytes &&
+        static_cast<uint64_t>(address) + size <= kStackTop - kStackSize - paging::kPageBytes;
 }
 
 bool read_at(vfs::Vnode& node, uint32_t offset, void* buffer, uint32_t count) {
@@ -62,7 +63,7 @@ bool read_at(vfs::Vnode& node, uint32_t offset, void* buffer, uint32_t count) {
 
 } // namespace
 
-int load(const char* path, uint8_t* memory, ContextFrame& frame, uint32_t argc,
+int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t argc,
          const char* const* argv) {
     vfs::Vnode* node = vfs::open(path, SAVANXP_OPEN_READ);
     if (node == nullptr) {
@@ -107,15 +108,25 @@ int load(const char* path, uint8_t* memory, ContextFrame& frame, uint32_t argc,
     if (!executable_entry || argc > SAVANXP_MAX_ARGC) {
         return SAVANXP_ENOEXEC;
     }
-    memset(memory, 0, paging::kUserWindowEnd - paging::kUserWindowBase);
+    // Reference VM design: allocate zeroed physical pages and union PT_LOAD
+    // permissions when segments share a page; holes and the stack guard stay absent.
     for (uint32_t index = 0; index < header.program_count; ++index) {
         const auto& segment = segments[index];
-        if (segment.type == kSegmentLoad && segment.file_size != 0 &&
-            !read_at(*node, segment.offset, memory + segment.virtual_address - paging::kUserWindowBase,
-                     segment.file_size)) {
-            return SAVANXP_EIO;
+        if (segment.type != kSegmentLoad || segment.memory_size == 0) continue;
+        if (!paging::map_user_range(directory, segment.virtual_address, segment.memory_size,
+                                    (segment.flags & kSegmentWrite) != 0)) return SAVANXP_ENOMEM;
+        uint32_t copied = 0;
+        while (copied < segment.file_size) {
+            const uint32_t address = segment.virtual_address + copied;
+            uint32_t chunk = paging::kPageBytes - (address & (paging::kPageBytes - 1));
+            if (chunk > segment.file_size - copied) chunk = segment.file_size - copied;
+            if (!read_at(*node, segment.offset + copied, paging::user_pointer(directory, address),
+                         chunk)) return SAVANXP_EIO;
+            copied += chunk;
         }
     }
+    if (!paging::map_user_range(directory, kStackTop - kStackSize, kStackSize, true))
+        return SAVANXP_ENOMEM;
     uint32_t pointers[SAVANXP_MAX_ARGC + 1] = {};
     uint32_t stack = kStackTop;
     for (uint32_t index = 0; index < argc; ++index) {
@@ -125,10 +136,10 @@ int load(const char* path, uint8_t* memory, ContextFrame& frame, uint32_t argc,
         }
         stack = (stack - length) & ~3u;
         pointers[index] = stack;
-        memcpy(memory + stack - paging::kUserWindowBase, argv[index], length);
+        paging::copy_to_user(directory, stack, argv[index], length);
     }
     stack = (stack - (argc + 1) * sizeof(uint32_t)) & ~15u;
-    memcpy(memory + stack - paging::kUserWindowBase, pointers, (argc + 1) * sizeof(uint32_t));
+    paging::copy_to_user(directory, stack, pointers, (argc + 1) * sizeof(uint32_t));
     initialize_user_frame(frame, header.entry, stack, image_base, argc, stack);
     serial::write("user: ");
     serial::write(path);

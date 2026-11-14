@@ -12,6 +12,8 @@
 #include "egatext.hpp"
 #include "fb32.hpp"
 #include "multiboot2.hpp"
+#include "memory.hpp"
+#include "kernel/physical_memory.hpp"
 #include "paging.hpp"
 #include "pit.hpp"
 #include "ps2_32.hpp"
@@ -114,6 +116,9 @@ void store_bootloader(const uint8_t* tag) {
 
 void report_memory_map(const uint8_t* tag) {
     const auto* map = reinterpret_cast<const MemoryMapTag*>(tag);
+    if (map->size < 16 || map->entry_size < sizeof(MemoryMapEntry)) {
+        halt_with("memory: invalid Multiboot2 memory map");
+    }
     const uint8_t* entries = tag + 16;
     const uint8_t* end = tag + map->size;
     uint32_t count = 0;
@@ -339,6 +344,10 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
      * usable como puntero. */
     const auto* info = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(info_address));
     const uint32_t total_size = *reinterpret_cast<const uint32_t*>(info);
+    if (total_size < 16 || total_size > 0x40000000u ||
+        info_address >= 0x40000000u - total_size) {
+        halt_with("memory: Multiboot2 information is outside the bootstrap map");
+    }
 
     uint32_t offset = 8;
     while (offset + 8 <= total_size) {
@@ -349,8 +358,8 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
         if (type == static_cast<uint32_t>(TagType::end)) {
             break;
         }
-        if (size < 8 || offset + size > total_size) {
-            halt_with("savanxp/i386: etiqueta multiboot2 invalida");
+        if (size < 8 || size > total_size - offset) {
+            halt_with("savanxp/i386: invalid Multiboot2 tag");
         }
 
         switch (static_cast<TagType>(type)) {
@@ -386,6 +395,12 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     }
     paging::enable_identity_1gib();
     serial::write("paginacion: identidad 0..1 GiB, 4 MiB por pagina, sin NX\n");
+    if (!initialize_memory(info_address)) {
+        halt_with("memory: cannot initialize physical allocator");
+    }
+    serial::write("memory: reference allocator ready, free pages ");
+    serial::write_dec(static_cast<uint32_t>(memory::free_page_count()));
+    serial::write("\n");
 
     /* Map video before mounting SxFS so subsequent boot output is visible. */
     initialize_video();

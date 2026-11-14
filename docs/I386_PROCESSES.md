@@ -23,19 +23,35 @@ tags, control word `0x037f`, MXCSR `0x1f80` and zeroed register storage. FS/GS a
 EFLAGS are independent too. Kernel C++ is compiled without SSE; the explicit
 context helpers are the only kernel users of these registers.
 
-ELF32 programs retain the virtual range `0x08000000..0x09000000`, with a 64 KiB
-initial stack at its top. Each process has a private CR3 directory mapping that
-range to different physical backing memory. Kernel, framebuffer and physical
-backing aliases remain supervisor-only. Loading copies into the new process's
-physical alias without replacing the caller's active mapping. Image segments
-must leave room for the stack; BSS, unused memory and the stack are zeroed on
-reuse. The linker rejects a kernel whose static storage reaches the user range.
+ELF32 programs retain the virtual range `0x08000000..0x09000000`, with an eager
+64 KiB stack at its top and an absent 4 KiB guard immediately below it. Private
+CR3 directories use two-level non-PAE paging for user mappings. Only PT_LOAD
+pages and the stack exist: holes remain absent, text/rodata are read-only unless
+an ELF segment sharing their page requires writes, and data/BSS/stack are writable.
+There is no NX on this CPU; readable user pages are also executable.
 
-Until there is an i386 physical allocator, six slots reserve 96 MiB of static
-image backing in total. Exhaustion returns `EAGAIN`; it does not evict another
-process. Each kernel stack has a bottom canary; the context, loader, process and
-syscall sources also reject compiler frames larger than 4096 bytes. These checks
-help catch Debug aggregate temporaries exceeding the stack budget.
+The v0.4.0 physical allocator (`kernel/physical_memory.cpp`) supplies zeroed
+4 KiB image pages and page tables on demand during loading, replacing the old
+96 MiB static image reservation. The architecture adapter consumes Multiboot2
+usable RAM below 1 GiB and excludes the kernel, boot information, modules and
+framebuffer. Physical RAM has supervisor-only aliases at
+`0x40000000..0x80000000`; kernel low identity mappings also remain supervisor-only.
+Loading and blocked-task result copies use those aliases without activating the
+destination CR3. Copies split at page boundaries because adjacent virtual pages
+can have unrelated physical addresses. Kernel video identity mappings cannot
+replace the RAM alias window; a framebuffer overlapping it is unsupported.
+
+The six-slot process table, private directories and 16 KiB kernel stacks remain
+bounded static metadata. A full table returns `EAGAIN`; physical exhaustion
+returns `ENOMEM` and reclaims all pages from the partial load. Exit or fault
+releases the user pages/tables after switching CR3; a zombie retains only its
+slot and wait status. Fresh allocations are zeroed before reuse. `system_info`
+reports allocator-managed total pages and current `memory_free_bytes`.
+
+Each kernel stack has a bottom canary; the context, loader, process and syscall
+sources also reject compiler frames larger than 4096 bytes. The linker rejects
+a kernel whose static storage reaches the user range. These checks help catch
+Debug aggregate temporaries exceeding the stack budget.
 
 ## 2. Scheduler
 
@@ -82,9 +98,27 @@ than being reused with slots, and stop allocating before the signed PID range
 would overflow.
 
 The GPU stays a single-client device. Its descriptor belongs to its opener PID;
-children do not inherit it. Exit releases video ownership only for the owning
+children do not inherit it. Normal exit and fault termination release video ownership only for the owning
 process. Standard input/output remain shared console channels. This is not a
 general descriptor table, process-group model or terminal job-control layer.
+
+## 4. Fault containment
+
+The exception stubs preserve registers before loading kernel selectors, clear DF
+and normalize an error word for both classes of CPU exception. Their frame has
+an extra error word compared with the IRQ/syscall frame; it is never resumed.
+The handler checks the saved CS privilege level, reports vector/error/EIP/CS
+and CR2 for page faults, then terminates a faulting user task with status
+`128 + vector`, matching v0.4.0's `terminate_current_from_exception`. Waiters,
+orphans, GPU ownership and memory follow the normal exit path. The scheduler
+returns another task's valid IRQ/syscall frame to assembly.
+
+Kernel exceptions remain fatal, as do NMI, double fault and machine check even
+when they interrupt user code. Invalid syscall buffers return `EFAULT` before
+the kernel touches them: validation walks every user page and requires write
+permission for read/input, wait status, system-info and GPU-info destinations.
+The single-CPU kernel does not schedule within a syscall, and user mappings
+cannot currently change while a blocked operation retains a pointer.
 
 ## Verification
 
@@ -93,6 +127,7 @@ Build both the disk image and the ISO before checking the running guest:
 ```sh
 ./build.sh build
 ./build.sh smoke
+./build.sh smoke memory  # 32 MiB RAM: mandatory ENOMEM rollback
 # Or invoke the underlying harness after ./build.sh iso:
 python3 tools/legacy_boot_test.py --iso build/SavanXP.iso \
   --disk-image build/disk.img --expect-processes \
@@ -110,17 +145,28 @@ PIT preemptions per worker, as well as successful pattern checks. A serial
 The same run checks specific/any-child waits, argument boundaries and bad
 pointers, capacity exhaustion, sleeping wakeups, repeated slot reuse, null
 status pointers, orphan cleanup, process counts and GPU ownership on exit.
+It also checks #UD, divide error, privileged-instruction #GP and #PF from null,
+absent, kernel, RAM-alias, read-only text and stack-guard accesses. A fault with
+null data selectors and DF set exercises the exception entry. The host requires
+the page-fault error bits and CR2 values, surviving siblings, successful waits,
+GPU reacquisition and identical free-page counts after teardown. A `memhog32`
+helper tests zeroed large BSS and wait-result copies crossing noncontiguous
+physical pages at a page-table boundary. Repeated loads fill the table on the
+normal machine or exhaust physical RAM on the 32 MiB machine; failed loads and
+reaped children must return the exact baseline free-page count.
+
 The host also types `start`, `wait`, `run` and `exit`, checking background
-collection, foreground status and shell restart by init32. The desktop check then proves that shell blocking, console clearing, graphics,
+collection, fault status 134 followed by a working shell prompt, foreground
+status and shell restart by init32. The desktop check then proves that shell blocking, console clearing, graphics,
 mouse movement/buttons and cursor restoration still work. The harness uses a
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
 ## Remaining boundaries
 
 There is no fork, exec replacement, signal delivery, SMP, dynamic image loading,
-ASLR, per-page permission policy or recoverable user-fault teardown. Exceptions
-still report and halt the guest. PSE maps each user image in writable 4 MiB pages,
-without NX on the legacy CPU. Private address spaces prevent processes from
-sharing their images/stacks accidentally, but do not constitute the x86_64
-security model. Allocator-backed memory, finer page protection and fault-local
-termination are follow-up work; physical laptop validation is still outstanding.
+ASLR, section-object integration, heap growth or demand-grown reference stack.
+The virtual window remains 16 MiB and the stack 64 KiB; RAM above the mapped first
+GiB is not allocated. User read-only pages and supervisor mappings are protected,
+but absence of NX prevents execute-disable and full W^X enforcement. These are
+explicit parity gaps; the memory/fault milestone does not claim the complete
+v0.4.0 memory model. Physical laptop validation is still outstanding.

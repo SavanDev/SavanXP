@@ -6,6 +6,7 @@ SCENARIOS = {
     "smoke": "boot, keyboard, process lifecycle/preemption and desktop graphics",
     "boot": "kernel, persistent root and init/shell startup",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",
+    "memory": "32 MiB RAM, user fault isolation, page protection and ENOMEM rollback",
     "desktop": "desktop glyphs, mouse motion/buttons and cursor restoration",
     "legacy-cpu": "QMP assertion that qemu32 exposes no long mode or NX",
 }

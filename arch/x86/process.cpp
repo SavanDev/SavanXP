@@ -8,13 +8,12 @@
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 #include "user32.hpp"
+#include "syscall.hpp"
 
 namespace i386::process {
 namespace {
-constexpr uint32_t kImageBytes = paging::kUserWindowEnd - paging::kUserWindowBase;
 constexpr uint32_t kQuantumTicks = 2;
 constexpr uint32_t kStackCanary = 0x51a7c0de;
-alignas(4194304) uint8_t g_images[kCapacity][kImageBytes];
 Process g_processes[kCapacity];
 Process* g_current = nullptr;
 uint32_t g_next_pid = 1;
@@ -42,7 +41,7 @@ void wake_tasks() {
         if (task.state == State::reading) {
             savanxp_input_event event = {};
             if (ps2_32::pop_event(event)) {
-                memcpy(user_pointer(task, task.input_buffer), &event, sizeof(event));
+                paging::copy_to_user(task.directory, task.input_buffer, &event, sizeof(event));
                 task.frame->eax = sizeof(event);
                 task.state = State::runnable;
             }
@@ -87,6 +86,11 @@ ContextFrame* schedule(ContextFrame* frame) {
             paging::activate_kernel();
         }
     }
+    // The exiting process keeps its kernel stack, but no user pages survive
+    // exit (even while its small wait status remains a zombie). CR3 is safe now.
+    if (previous != nullptr && (previous->state == State::unused || previous->state == State::zombie)) {
+        paging::destroy_process_directory(previous->directory);
+    }
     g_current = next;
     g_slice_tick = pit::ticks();
     if (next == nullptr) {
@@ -105,11 +109,6 @@ bool matches(const Process& child, const Process& parent, int pid) {
 } // namespace
 
 void initialize() {
-    const uintptr_t end = reinterpret_cast<uintptr_t>(g_images) + sizeof(g_images);
-    if (end > paging::kUserWindowBase) {
-        serial::write("process: image storage overlaps the user window\n");
-        cpu::halt_forever();
-    }
     cpu::enable_fpu();
     g_idle_frame = reinterpret_cast<ContextFrame*>(g_idle_stack + sizeof(g_idle_stack) -
                                                   sizeof(ContextFrame));
@@ -122,14 +121,8 @@ void initialize() {
     serial::write("process: private stacks, address spaces and FXSAVE ready\n");
 }
 
-void* user_pointer(Process& task, uint32_t address) {
-    return g_images[slot(task)] + (address - paging::kUserWindowBase);
-}
-
-bool user_range(uint32_t address, uint32_t size) {
-    return g_current != nullptr && address >= paging::kUserWindowBase &&
-        address < paging::kUserWindowEnd &&
-        static_cast<uint64_t>(address) + size <= paging::kUserWindowEnd;
+bool user_range(uint32_t address, uint32_t size, bool writable) {
+    return g_current != nullptr && paging::user_range(g_current->directory, address, size, writable);
 }
 
 long spawn(const char* path, const char* const* argv, uint32_t argc) {
@@ -144,12 +137,12 @@ long spawn(const char* path, const char* const* argv, uint32_t argc) {
         *reinterpret_cast<uint32_t*>(task.kernel_stack) = kStackCanary;
         task.frame = reinterpret_cast<ContextFrame*>(task.kernel_stack + sizeof(task.kernel_stack) -
                                                      sizeof(ContextFrame));
-        const int error = user32::load(path, g_images[slot(task)], *task.frame, argc, argv);
+        paging::initialize_process_directory(task.directory);
+        const int error = user32::load(path, task.directory, *task.frame, argc, argv);
         if (error != 0) {
+            paging::destroy_process_directory(task.directory);
             return -error;
         }
-        paging::initialize_process_directory(task.directory,
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_images[slot(task)])));
         initialize_fpu_state(task.fpu);
         task.pid = g_next_pid++;
         task.parent = current_pid();
@@ -229,7 +222,7 @@ long wait(int pid, uint32_t status) {
         child_exists = true;
         if (child.state == State::zombie) {
             if (status != 0) {
-                memcpy(user_pointer(*g_current, status), &child.exit_status, sizeof(int));
+                paging::copy_to_user(g_current->directory, status, &child.exit_status, sizeof(int));
             }
             const uint32_t result = child.pid;
             child.state = State::unused;
@@ -247,6 +240,7 @@ long wait(int pid, uint32_t status) {
 
 void exit(int status) {
     Process& child = *g_current;
+    syscall::release_process_resources(child.pid);
     serial::write("process: pid ");
     serial::write_dec(child.pid);
     serial::write(" preemptions ");
@@ -257,7 +251,7 @@ void exit(int status) {
     for (auto& parent : g_processes) {
         if (parent.state == State::waiting && matches(child, parent, parent.wait_pid)) {
             if (parent.wait_status != 0) {
-                memcpy(user_pointer(parent, parent.wait_status), &status, sizeof(status));
+                paging::copy_to_user(parent.directory, parent.wait_status, &status, sizeof(status));
             }
             parent.frame->eax = child.pid;
             parent.state = State::runnable;
@@ -275,6 +269,12 @@ void exit(int status) {
             }
         }
     }
+}
+
+ContextFrame* fault(uint32_t vector) {
+    // Match v0.4.0's terminate_current_from_exception status convention.
+    exit(128 + static_cast<int>(vector));
+    return schedule(g_current->frame);
 }
 
 } // namespace i386::process

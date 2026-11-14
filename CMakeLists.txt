@@ -132,6 +132,7 @@ set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/user32.cpp
     arch/x86/ps2_32.cpp
     arch/x86/main32.cpp
+    arch/x86/memory.cpp
 )
 # These paths execute on a bounded per-process kernel stack. Reject large
 # Debug aggregate temporaries before they can corrupt another task.
@@ -142,7 +143,7 @@ set_source_files_properties(
 # Reused storage modules; other subsystems enter the graph as they are ported.
 set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
-    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp)
+    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
 target_include_directories(savanxp_kernel_objects PRIVATE
@@ -368,8 +369,14 @@ add_executable(savanxp-div64-test
 target_compile_options(savanxp-div64-test PRIVATE -UNDEBUG)
 add_test(NAME div64-test COMMAND savanxp-div64-test)
 
+add_executable(savanxp-physical-memory-test
+    kernel/physical_memory.cpp tests/host/physical_memory_test.cpp)
+target_include_directories(savanxp-physical-memory-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-physical-memory-test PRIVATE -UNDEBUG)
+add_test(NAME physical-memory-test COMMAND savanxp-physical-memory-test)
+
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-div64-test savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
+    DEPENDS savanxp-physical-memory-test savanxp-div64-test savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)

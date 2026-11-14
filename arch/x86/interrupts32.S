@@ -49,16 +49,17 @@ restore_context:
     iret
 .size i386_resume, . - i386_resume
 
-/* Excepciones de CPU. El processor no apila el numero de vector, asi que hay
- * una entrada por vector que lo empuja y salta al marco comun. Un kernel sin
- * excepciones installadas que continuam es peor que uno que se para y lo
- * dice. */
+/* Exceptions normalize the hardware error word separately from the common
+ * IRQ/syscall ContextFrame. Fatal user exceptions never resume their frame. */
 .altmacro
 .macro i386_exception_stub number
     .global i386_exception_\number
     .type i386_exception_\number, @function
 i386_exception_\number:
     cld
+    .if (\number != 8) && (\number != 10) && (\number != 11) && (\number != 12) && (\number != 13) && (\number != 14) && (\number != 17) && (\number != 21) && (\number != 29) && (\number != 30)
+    pushl $0
+    .endif
     pushl $\number
     jmp i386_exception_common
 .size i386_exception_\number, . - i386_exception_\number
@@ -209,21 +210,12 @@ i386_irq_common:
     movl %eax, %esp
     jmp restore_context
 
-/* Marco comun: el vector esta en la cima; se copia a eax antes de pusha
- * (pusha lo sobrescribiria) y se pasa como segundo argumento. Detras del
- * puntero al marco queda lo que apilo el processor: codigo de error si lo hay,
- * y despues eflags, cs y eip (mas esp y ss si hubo cambio de privilegio), de
- * menor a mayor direccion. */
+/* Prefix: four segment registers, pusha, vector, normalized error word,
+ * then the hardware EIP/CS/EFLAGS (and ESP/SS only on a privilege change). */
 i386_exception_common:
-    movl (%esp), %eax       /* el vector */
-    pusha
-    push %ds
-    push %es
-    movl %esp, %edx         /* puntero al marco */
-    subl $8, %esp           /* relleno de alineacion: va antes de los argumentos */
-    pushl %eax              /* segundo argumento: se apila primero */
-    pushl %edx              /* primer argumento */
+    save_context
     call i386_report_exception
-2:
-    hlt
-    jmp 2b
+    movl %eax, %esp
+    jmp restore_context
+
+.section .note.GNU-stack,"",@progbits

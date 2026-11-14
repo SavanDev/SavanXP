@@ -89,18 +89,6 @@ static_assert(sizeof(IdtEntry) == 8, "las puertas de IDT de 32 bits ocupan 8 byt
 constexpr uint8_t kTypeInterruptGate = 0x8E; /* presente, DPL 0 */
 constexpr uint8_t kTypeUserInterruptGate = 0xEE; /* presente, DPL 3 */
 
-/* Vectores de excepcion de CPU que empujan un codigo de error: sin esta tabla
- * el marco que sigue al vector no se puede leer. */
-constexpr bool kErrorCodeVectors[32] = {
-    /* 0-7 */ false, false, false, false, false, false, false, false,
-    /* 8 */ true, /* 9 */ false, /* 10 */ true, /* 11 */ true,
-    /* 12 */ true, /* 13 */ true, /* 14 */ true, /* 15 */ false,
-    /* 16 */ false, /* 17 */ true, /* 18 */ false, /* 19 */ false,
-    /* 20 */ false, /* 21 */ true, /* 22 */ false, /* 23 */ false,
-    /* 24 */ false, /* 25 */ false, /* 26 */ false, /* 27 */ false,
-    /* 28 */ false, /* 29 */ true, /* 30 */ true, /* 31 */ false,
-};
-
 /* Los stubs y la tabla de direcciones por vector viven en interrupts32.S. */
 extern "C" void i386_syscall_entry();
 extern "C" const uint32_t i386_exception_table[32];
@@ -186,26 +174,18 @@ void write_idt_gate(uint32_t vector, uint32_t handler, uint8_t attributes) {
 
 }
 
-extern "C" [[noreturn]] void i386_report_exception(const uint32_t* frame, uint32_t vector) {
-    /* Lo que apilo el processor, de menor a mayor direccion: codigo de error
-     * (si el vector lo genera), eip, cs y eflags, mas esp y ss si hubo cambio
-     * de privilegio. El codigo de error va el primero, medido contra QEMU con
-     * -d int en los dos casos que aparecieron (#SS al cargar el selector de
-     * datos y #GP con un cs basura). */
-    const uint32_t* saved = frame + 11;
-    const bool has_error = vector < 32u && kErrorCodeVectors[vector];
-
-    serial::write("i386: excepcion vector ");
+extern "C" ContextFrame* i386_report_exception(const uint32_t* frame) {
+    // ContextFrame's register/vector prefix is followed by the normalized
+    // error word, then hardware EIP/CS/EFLAGS. This frame is never resumed.
+    const uint32_t vector = frame[12];
+    serial::write("i386: exception vector ");
     serial::write_dec(vector);
-    if (has_error) {
-        serial::write(", codigo de error ");
-        serial::write_hex(saved[0]);
-    }
-    const uint32_t shift = has_error ? 1u : 0u;
+    serial::write(", error ");
+    serial::write_hex(frame[13]);
     serial::write(", eip ");
-    serial::write_hex(saved[shift]);
+    serial::write_hex(frame[14]);
     serial::write(", cs ");
-    serial::write_hex(saved[shift + 1u]);
+    serial::write_hex(frame[15]);
     if (vector == 14u) {
         uint32_t fault_address;
         asm volatile("mov %%cr2, %0" : "=r"(fault_address));
@@ -213,6 +193,18 @@ extern "C" [[noreturn]] void i386_report_exception(const uint32_t* frame, uint32
         serial::write_hex(fault_address);
     }
     serial::write("\n");
+    // NMI, double fault and machine check indicate system-wide conditions,
+    // even if they interrupted ring 3. Kernel faults always remain fatal.
+    if ((frame[15] & 3u) == 3u && process::current_pid() != 0 &&
+        vector != 2 && vector != 8 && vector != 18) {
+        serial::write("user: exception #");
+        serial::write_dec(vector);
+        serial::write(" killed pid=");
+        serial::write_dec(process::current_pid());
+        serial::write("\n");
+        return process::fault(vector);
+    }
+    serial::write("kernel: fatal exception\n");
     cpu::halt_forever();
 }
 

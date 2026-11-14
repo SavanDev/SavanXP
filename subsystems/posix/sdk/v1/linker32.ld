@@ -1,7 +1,7 @@
-/* Igual que linker.ld, pero el destino i386 se enlaza dentro de la ventana de
- * usuario (0x08000000..0x09000000) que arch/x86/paging.cpp marca con el bit de
- * usuario en los PDEs. La base no es 0x400000 porque el kernel ya vive en el
- * mapa de identidad del primer GiB. */
+/* Static ELF32 images occupy the private user window (0x08000000..0x09000000).
+ * The loader maps PT_LOAD pages with their ELF write permissions, leaving
+ * unused addresses and a guard below the 64 KiB stack absent. The base stays
+ * above the kernel's low identity mappings. */
 ENTRY(_start)
 
 SECTIONS

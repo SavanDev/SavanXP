@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Faulting i386 user programs terminate without stopping the shell or siblings.**
+  Allocator-backed pages replace fixed images, enforce ELF write permissions and
+  guards, and recover from `ENOMEM`; `smoke memory` verifies this on 32 MiB RAM.
+
 - **A 32-bit legacy QEMU machine profile.** `--legacy` in `build.sh`, `tools/run_qemu.py`
   and `tools/run_smoke.py` boots `qemu-system-i386` with i440FX/SeaBIOS and a fixed
   `qemu32` CPU without long mode or NX, mirroring the base emulated devices so ATA

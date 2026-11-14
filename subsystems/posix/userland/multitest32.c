@@ -2,6 +2,7 @@
 
 extern int context_probe32(unsigned int marker, unsigned int deadline);
 static volatile unsigned int g_private_marker;
+static unsigned char g_pages[8192] __attribute__((aligned(4096)));
 static const char* const kPath = "/disk/bin/multitest32";
 
 static void number(char* text, unsigned int value) {
@@ -78,6 +79,31 @@ static int worker(int argc, char** argv) {
         sleep_ms(50);
         return 25;
     }
+    if (strcmp(argv[1], "fault-ud") == 0 || strcmp(argv[1], "fault") == 0) __asm__ volatile("ud2");
+    if (strcmp(argv[1], "fault-div") == 0)
+        __asm__ volatile("xorl %%edx, %%edx; movl $1, %%eax; xorl %%ecx, %%ecx; divl %%ecx"
+                         : : : "eax", "ecx", "edx", "cc");
+    if (strcmp(argv[1], "fault-null") == 0)
+        __asm__ volatile("movl 0, %%eax" : : : "eax");
+    if (strcmp(argv[1], "fault-hole") == 0)
+        __asm__ volatile("movl 0x08800000, %%eax" : : : "eax");
+    if (strcmp(argv[1], "fault-kernel") == 0)
+        __asm__ volatile("movl 0x00100000, %%eax" : : : "eax");
+    if (strcmp(argv[1], "fault-alias") == 0)
+        __asm__ volatile("movl 0x40000000, %%eax" : : : "eax");
+    if (strcmp(argv[1], "fault-text") == 0)
+        __asm__ volatile("movb $0, 0x08000000" : : : "memory");
+    if (strcmp(argv[1], "fault-guard") == 0)
+        __asm__ volatile("movb $0, 0x08fef000" : : : "memory");
+    if (strcmp(argv[1], "fault-gp") == 0) __asm__ volatile("cli");
+    if (strcmp(argv[1], "fault-segments") == 0)
+        __asm__ volatile("xorw %%ax, %%ax; movw %%ax, %%ds; movw %%ax, %%es; "
+                         "movw %%ax, %%fs; movw %%ax, %%gs; std; ud2" : : : "eax", "cc");
+    if (strcmp(argv[1], "fault-gpu") == 0) {
+        long fd = gpu_open();
+        if (fd != 3 || gpu_acquire((int)fd) != 0) return 88;
+        __asm__ volatile("ud2");
+    }
     if (strcmp(argv[1], "short") == 0) return 23;
     if (strcmp(argv[1], "args") == 0) {
         if (argc != SAVANXP_MAX_ARGC) return 90;
@@ -98,6 +124,84 @@ static int worker(int argc, char** argv) {
         return fd == 3 && gpu_acquire((int)fd) == 0 ? 0 : 94;
     }
     return 95;
+}
+
+static int memory_checks(void) {
+    struct savanxp_system_info before, after;
+    if (system_info(&before) < 0 || before.memory_free_bytes == 0) return fail("memory accounting");
+    // Kernel destinations must be writable; bad pointers must return EFAULT,
+    // including present read-only text and ranges crossing into an absent page.
+    const char* readonly = "read only";
+    if (system_info((struct savanxp_system_info*)readonly) != -SAVANXP_EFAULT ||
+        savanxp_waitpid(-1, (int*)readonly) != -SAVANXP_EFAULT ||
+        savanxp_read(0, (void*)readonly, sizeof(struct savanxp_input_event)) != -SAVANXP_EFAULT ||
+        savanxp_write(1, (void*)0x08800000, 1) != -SAVANXP_EFAULT ||
+        savanxp_write(1, (void*)0x08fffffe, 4) != -SAVANXP_EFAULT ||
+        savanxp_write(1, (void*)0xfffffffe, 4) != -SAVANXP_EFAULT ||
+        spawn((const char*)0x08800000, 0, 0) != -SAVANXP_EFAULT)
+        return fail("page-aware syscall validation");
+    long fd = gpu_open();
+    if (fd != 3 || gpu_get_info((int)fd, (struct savanxp_gpu_info*)readonly) != -SAVANXP_EFAULT ||
+        savanxp_close((int)fd) != 0) return fail("read-only ioctl buffer");
+    // Both immediate and blocking wait results straddle distinct physical pages.
+    int* status = (int*)(g_pages + 4094);
+    long pid = child("short");
+    sleep_ms(50);
+    if (pid < 0 || savanxp_waitpid((int)pid, status) != pid || *status != 23)
+        return fail("cross-page zombie status");
+    pid = child("sleep");
+    if (pid < 0 || savanxp_waitpid((int)pid, status) != pid || *status != 42)
+        return fail("cross-page blocked status");
+    const char* modes[] = {"fault-ud", "fault-div", "fault-null", "fault-hole", "fault-kernel",
+                          "fault-alias", "fault-text", "fault-guard", "fault-gp", "fault-segments",
+                          "fault-gpu"};
+    const int vectors[] = {6, 0, 14, 14, 14, 14, 14, 14, 13, 6, 6};
+    long sibling = child("sleep");
+    if (sibling < 0) return fail("fault sibling");
+    for (unsigned int index = 0; index < sizeof(vectors) / sizeof(vectors[0]); ++index) {
+        if (!collect(child(modes[index]), 128 + vectors[index])) return fail(modes[index]);
+    }
+    if (!collect(sibling, 42) || g_private_marker != 0xabcdef01) return fail("fault sibling isolation");
+    if (!collect(child("gpu-exit"), 0)) return fail("GPU cleanup after fault");
+    if (system_info(&after) < 0 || after.memory_free_bytes != before.memory_free_bytes)
+        return fail("fault page leak");
+    puts_out("MEMORY faults and protection PASS\n");
+
+    const char* cross_args[] = {"/disk/bin/memhog32", "crosspage"};
+    if (!collect(spawn(cross_args[0], cross_args, 2), 43)) return fail("fragmented result copying");
+    if (system_info(&after) < 0 || after.memory_free_bytes != before.memory_free_bytes)
+        return fail("fragmented result page leak");
+    puts_out("MEMORY fragmented copy PASS\n");
+
+    // Keep successfully loaded children blocked while retrying a failed load.
+    // Low RAM forces failure in a partially populated image, not just a full PID table.
+    const char* hog = "/disk/bin/memhog32";
+    const char* args[] = {hog};
+    for (int round = 0; round < 2; ++round) {
+        long children[6];
+        int count = 0;
+        long error = 0;
+        for (; count < 6; ++count) {
+            long result = spawn(hog, args, 1);
+            if (result < 0) { error = result; break; }
+            children[count] = result;
+        }
+        if (count == 0 || (error != -SAVANXP_ENOMEM && error != -SAVANXP_EAGAIN))
+            return fail("memory capacity");
+        if (system_info(&after) < 0) return fail("memory sample");
+        unsigned long long remaining = after.memory_free_bytes;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (spawn(hog, args, 1) != error || system_info(&after) < 0 ||
+                after.memory_free_bytes != remaining) return fail("failed load rollback");
+        }
+        if (error == -SAVANXP_ENOMEM) puts_out("MEMORY ENOMEM rollback PASS\n");
+        for (int index = 0; index < count; ++index)
+            if (!collect(children[index], 43)) return fail("memory pressure survivor");
+        if (system_info(&after) < 0 || after.memory_free_bytes != before.memory_free_bytes)
+            return fail("memory pressure leak");
+    }
+    puts_out("MEMORY reclamation PASS\n");
+    return 0;
 }
 
 int main(int argc, char** argv) {
@@ -181,6 +285,7 @@ int main(int argc, char** argv) {
     if (fd != 3 || !collect(child("gpu-busy"), 0) || savanxp_close((int)fd) < 0 ||
         !collect(child("gpu-exit"), 0) || !collect(child("gpu-exit"), 0)) return fail("GPU ownership on exit");
     puts_out("MULTITASK GPU ownership PASS\n");
+    if (memory_checks() != 0) return 1;
     puts_out("MULTITASK PASS\n");
     return 0;
 }

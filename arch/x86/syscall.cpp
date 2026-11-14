@@ -6,6 +6,7 @@
 #include "cpu.hpp"
 #include "fb32.hpp"
 #include "kernel/sxfs.hpp"
+#include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 #include "pit.hpp"
 #include "ps2_32.hpp"
@@ -23,8 +24,8 @@ namespace {
 // The GPU is global; only its owning process may operate the descriptor.
 uint32_t g_gpu_owner = 0;
 
-bool is_user_range(uint32_t address, uint32_t size) {
-    return process::user_range(address, size);
+bool is_user_range(uint32_t address, uint32_t size, bool writable = false) {
+    return process::user_range(address, size, writable);
 }
 
 /* Validate every user byte before comparing the device path. */
@@ -72,6 +73,13 @@ void copy_text(char* destination, size_t capacity, const char* source) {
 
 }
 
+void release_process_resources(uint32_t pid) {
+    if (g_gpu_owner == pid) {
+        g_gpu_owner = 0;
+        fb32::console_set_enabled(true);
+    }
+}
+
 void handle(ContextFrame& frame) {
     /* Los argumentos se leen de edi/esi/edx y no de ebx/ecx/edx: las
      * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
@@ -84,7 +92,7 @@ void handle(ContextFrame& frame) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
             }
-            if (!is_user_range(frame.esi, frame.edx)) {
+            if (!is_user_range(frame.esi, frame.edx, true)) {
                 frame.eax = failure(SAVANXP_EFAULT);
                 return;
             }
@@ -133,7 +141,7 @@ void handle(ContextFrame& frame) {
             return;
         }
         case kSysWaitPid: {
-            if (frame.esi != 0 && !is_user_range(frame.esi, sizeof(int))) {
+            if (frame.esi != 0 && !is_user_range(frame.esi, sizeof(int), true)) {
                 frame.eax = failure(SAVANXP_EFAULT);
                 return;
             }
@@ -182,7 +190,7 @@ void handle(ContextFrame& frame) {
             }
             switch (frame.esi) {
                 case GPU_IOC_GET_INFO: {
-                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_info))) {
+                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_info), true)) {
                         frame.eax = failure(SAVANXP_EFAULT);
                         return;
                     }
@@ -319,7 +327,8 @@ void handle(ContextFrame& frame) {
             info.sxfs_mounted = boot.sxfs_mounted;
             info.memory_usable_bytes = boot.memory_usable_bytes;
             info.memory_reclaimable_bytes = boot.memory_reclaimable_bytes;
-            info.memory_total_pages = boot.memory_usable_bytes / 4096ull;
+            info.memory_total_pages = memory::total_page_count();
+            info.memory_free_bytes = memory::free_page_count() * memory::kPageSize;
             info.timer_backend = SAVANXP_TIMER_PIT;
             info.timer_frequency_hz = pit::kFrequencyHz;
             info.uptime_ms = pit::uptime_ms();
@@ -331,7 +340,7 @@ void handle(ContextFrame& frame) {
             info.cpu_count = 1;
             info.cpu_online = 1;
 
-            if (!is_user_range(frame.edi, static_cast<uint32_t>(sizeof(info)))) {
+            if (!is_user_range(frame.edi, static_cast<uint32_t>(sizeof(info)), true)) {
                 frame.eax = failure(SAVANXP_EFAULT);
                 return;
             }
@@ -348,10 +357,6 @@ void handle(ContextFrame& frame) {
             serial::write(", uptime ");
             serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
             serial::write(" ms\n");
-            if (g_gpu_owner == process::current_pid()) {
-                g_gpu_owner = 0;
-                fb32::console_set_enabled(true);
-            }
             process::exit(static_cast<int>(frame.edi));
             return;
         }

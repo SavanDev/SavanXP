@@ -100,6 +100,17 @@ target_link_libraries(savanxp-i386-multitest32 PRIVATE savanxp_i386_user_runtime
 target_link_options(savanxp-i386-multitest32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-multitest32 PROPERTIES OUTPUT_NAME multitest32 SUFFIX "")
 
+add_executable(savanxp-i386-memhog32 subsystems/posix/userland/memhog32.c)
+target_include_directories(savanxp-i386-memhog32 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}")
+target_compile_options(savanxp-i386-memhog32 PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-memhog32 PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-memhog32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-memhog32 PROPERTIES OUTPUT_NAME memhog32 SUFFIX "")
+
 endif()
 
 add_custom_target(savanxp_i386_userland
@@ -139,9 +150,10 @@ add_custom_target(savanxp_diskfs DEPENDS savanxp_i386_diskfs)
 add_custom_target(savanxp_disk DEPENDS savanxp_i386_disk)
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    add_dependencies(savanxp_i386_userland savanxp-i386-keyecho savanxp-i386-multitest32)
+    add_dependencies(savanxp_i386_userland savanxp-i386-keyecho savanxp-i386-multitest32 savanxp-i386-memhog32)
     add_custom_command(TARGET savanxp_i386_diskfs POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_DISKFS_ROOT}/bin/keyecho"
         COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-multitest32>" "${SAVANXP_DISKFS_ROOT}/bin/multitest32"
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:savanxp-i386-memhog32>" "${SAVANXP_DISKFS_ROOT}/bin/memhog32"
         VERBATIM)
 endif()

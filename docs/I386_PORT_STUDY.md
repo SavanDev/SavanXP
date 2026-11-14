@@ -182,16 +182,147 @@ is being adapted, what architectural constraint requires a difference and what
 evidence shows that the difference has been contained. The present branch still
 has substantial parity gaps; no chapter here claims that v0.4.0 is complete.
 
+## 7. Fault containment and allocator-backed user pages
+
+The first ordered parity milestone exposed two related limits of the earlier
+bring-up: one #UD or #PF stopped the entire guest, and the process table occupied
+96 MiB before any user program ran. The v0.4.0 reference already supplied the
+physical free-region allocator in
+[`kernel/physical_memory.cpp`](../kernel/physical_memory.cpp), page ownership and
+teardown in [`kernel/vmm.cpp`](../kernel/vmm.cpp), and the
+`terminate_current_from_exception` convention in
+[`kernel/process.cpp`](../kernel/process.cpp). The adaptation reuses that allocator
+and those lifecycle rules. It does not import the reference's four-level paging
+instructions or 64-bit virtual addresses, which cannot run in protected mode.
+
+### Giving GRUB memory the reference allocator's contract
+
+Keeping the static images and merely catching exceptions would leave the memory
+half of the milestone unresolved. Allocating another contiguous 16 MiB block for
+each process would remove BSS reservations but retain unnecessary consumption
+and a fragmentation dependency. The selected path follows the reference VM:
+allocate individual 4 KiB physical pages for ELF load segments, the stack and
+page tables, then return them through the same allocator on teardown.
+
+The reference boot adapter received a map that distinguished executable/modules
+from usable memory. GRUB's E820 usable ranges still contain the loaded kernel,
+Multiboot information and modules. Passing them unchanged would eventually
+allocate over live kernel state. The new architecture adapter first clips usable
+RAM to the mapped first GiB and splits out those objects and the framebuffer.
+The shared allocator retains its free-region/first-fit/coalescing algorithm;
+additional checks reject wrapped address/count arithmetic, unrepresentable
+aliases, overlapping usable ranges and duplicate frees. Allocation failure clears
+the output rather than exposing an earlier allocation.
+
+A zero direct-map offset was considered, but a process replaces the identity
+mapping at `0x08000000..0x09000000`. A kernel pointer into physical RAM in that
+range would then address the caller's user memory. Reserving those physical
+16 MiB forever would avoid the collision at the cost of usable RAM. Instead,
+the kernel installs supervisor-only aliases of physical 0..1 GiB at
+`0x40000000..0x80000000`. The allocator can keep its nonzero direct-map contract,
+and loading a child never replaces the parent's CR3. Device identity mappings
+are rejected if they would overwrite this alias window; supporting such a
+framebuffer requires a later device-mapping adaptation. RAM above 1 GiB remains
+unallocated rather than producing inaccessible pointers.
+
+### Permissions and the meaning of a user pointer
+
+PSE remains appropriate for shared kernel identity/direct mappings. User pages
+now use ordinary two-level, 4 KiB non-PAE tables: PT_LOAD determines write access,
+page-sharing segments union their permissions, fresh pages start zeroed, and
+unused addresses remain absent. The eager 64 KiB stack has an unmapped guard
+below it. The loader validates all segment bounds before allocating, and failed
+loads destroy even partially populated page tables. The table still has six
+process slots; that metadata bound is independent of physical exhaustion.
+
+An address inside the old virtual window no longer proves that it is safe to
+access. Syscall validation walks the mapped pages and checks write permissions
+for destination buffers. Bad or read-only buffers return `EFAULT` before the
+kernel touches them. This is essential because CR0.WP applies to supervisor
+writes too: failing to validate a destination would turn a user error into a
+fatal kernel page fault. The low kernel map, RAM aliases and framebuffer aliases
+remain supervisor-only. NX is unavailable, so this milestone cannot make data
+non-executable or claim the reference's complete W^X policy.
+
+The old physical-alias `memcpy` also assumed adjacent user addresses implied
+adjacent physical addresses. That assumption ends with page allocation. Loader,
+blocked input and wait-result writes split at page boundaries. The regression
+uses a large BSS helper and a wait status straddling a 4 MiB page-table boundary:
+a page-table allocation can separate the backing frames even when loading an
+otherwise contiguous image. Both blocked and already-zombie waits must preserve
+the mappings and return the expected result.
+
+### An exception is a process exit only when it came from user mode
+
+The exception entry previously overwrote EAX to obtain the vector, retained user
+data selectors and halted unconditionally. It now saves all registers, installs
+kernel data selectors, clears DF and supplies an error word for exceptions whose
+hardware frame has none. This dedicated frame includes an extra error word;
+it is deliberately not treated as a resumable IRQ/syscall frame. The saved CS
+establishes whether the failure occurred at ring 3.
+
+A user exception reports its vector, error, EIP and CS, plus CR2 for #PF, and
+uses exit status `128 + vector`, as in v0.4.0. Normal exit and exceptional exit
+share waiter notification, orphan handling and GPU ownership release. The
+scheduler activates another CR3 before freeing the dead task's image/tables;
+the fixed kernel stack remains valid until assembly restores the selected task's
+frame. Zombies retain their status and slot, not their user pages. A kernel
+exception remains fatal; NMI, double fault and machine check also stay fatal
+even if they interrupted user code.
+
+### Evidence and remaining parity limits
+
+`./build.sh smoke` passed the existing CPU/FPU context checks, shell lifecycle,
+and desktop glyph/mouse/cursor assertions with the new memory implementation.
+Its process regression also verifies #UD, divide error, #GP from `cli`, and #PF
+for a null pointer, an absent user hole, low kernel memory, RAM aliases, text
+writes and the stack guard. A child faults with null data selectors and DF set;
+another faults while owning the GPU. Wait statuses, surviving siblings, GPU
+reacquisition and exact free-page restoration are required, and the host types
+a faulting foreground command and verifies that the shell returns to its prompt.
+
+The initial host assertion expected a null read to have #PF error 4 (absent user
+page). The actual error was 5: address zero is present in the supervisor-only
+bootstrap identity map. The test was corrected to verify the permission fault,
+not to change the mapping. Error 5 is also required for kernel/RAM aliases,
+7 for a text write, and 6 for a write into the absent guard.
+
+`./build.sh smoke memory` passed on 32 MiB RAM. A 12 MiB BSS helper forces an
+`ENOMEM` partway through loading another image while a sibling remains alive.
+The regression retries failed loads without changing the free-page count,
+collects successful children, and repeats the cycle with exact baseline page
+restoration. On the normal 1 GiB machine the same workload instead reaches the
+six-slot `EAGAIN` limit. `./build.sh test` passed all 18 host tests, including
+allocator exhaustion, fragmentation/coalescing, reuse and arithmetic boundaries.
+`./tools/verify_doom_persistence.sh --jobs 4` passed the external executable,
+WAD/config/save preservation check after a normal isolated rebuild.
+
+A separate debugger experiment checked the opposite boundary without modifying
+the disk: boot the same ISO without a disk using QEMU `-S -s`, break at
+`i386::process::start()`, replace its first instruction in guest memory with
+`ud2`, then continue to a breakpoint at `i386::cpu::halt_forever()`. Serial reports
+vector 6, CS `0x08` and `kernel: fatal exception`. Repeating with a load from
+unmapped `0x80000000` reports vector 14 and the same fatal path. These are
+observations of injected kernel failures, not automatic coverage of every
+possible kernel exception.
+
+This completes the roadmap's fault-containment/memory-foundations milestone.
+It does not close v0.4.0 parity: the six-slot table, fixed 16 MiB virtual window,
+eager small stack and 1 GiB physical ceiling remain explicit temporary bounds.
+Section objects, heap growth and reference stack-demand behavior still need
+porting. The next ordered dependency is the reference descriptor/POSIX base;
+SxGUI, the original shell and the full desktop remain later consumers.
+
 ## Continuing the study
 
-The next planned area is fault containment and the memory foundations needed
-to replace static process backing. This is planned work, not an implemented
-result. Its account should establish what happens to the shell, sibling tasks,
-memory and owned resources when one user process faults, and compare the
-adaptation with the reference implementation.
+The next planned area is per-process descriptors and the POSIX base. Its account
+should compare ownership, inheritance, blocking I/O and cleanup with v0.4.0,
+then record how the reference shell becomes usable as its dependencies arrive.
+This is planned work, not an implemented result.
 
-Current repeatable entry points are `./build.sh smoke`, `./build.sh test` and
-`./tools/verify_doom_persistence.sh`; [BUILD_CMAKE.md](BUILD_CMAKE.md) describes
-their scope. Extend the study when a problem is investigated, a path is chosen,
-or later evidence forces a correction. Keep unresolved questions and temporary
-differences visible until the corresponding parity gap is closed.
+Current repeatable entry points are `./build.sh smoke`, `./build.sh smoke memory`,
+`./build.sh test` and `./tools/verify_doom_persistence.sh`;
+[BUILD_CMAKE.md](BUILD_CMAKE.md) describes their scope. Extend the study when a
+problem is investigated, a path is chosen, or later evidence forces a correction.
+Keep unresolved questions and temporary differences visible until the
+corresponding parity gap is closed.

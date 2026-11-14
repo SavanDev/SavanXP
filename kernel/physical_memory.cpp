@@ -118,6 +118,12 @@ void initialize(const boot::BootInfo& boot_info) {
             continue;
         }
 
+        // Reject wrapped firmware ranges before alignment or pointer arithmetic.
+        if (entry.base > UINT64_MAX - (kPageSize - 1) ||
+            entry.length > UINT64_MAX - entry.base) {
+            reset_state();
+            return;
+        }
         uint64_t start = align_up(entry.base, kPageSize);
         uint64_t end = align_down(entry.base + entry.length, kPageSize);
         if (start < kMinimumPhysicalAddress) {
@@ -125,6 +131,17 @@ void initialize(const boot::BootInfo& boot_info) {
         }
         if (start >= end) {
             continue;
+        }
+        if (end - 1 > UINTPTR_MAX - g_hhdm_offset) {
+            reset_state();
+            return;
+        }
+        // A usable page must appear only once in the allocator's ownership.
+        for (size_t region = 0; region < g_region_count; ++region) {
+            if (start < g_regions[region].end && end > g_regions[region].base) {
+                reset_state();
+                return;
+            }
         }
         if (!add_free_region(start, end)) {
             reset_state();
@@ -145,7 +162,8 @@ bool allocate_page(PageAllocation& allocation) {
 }
 
 bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation) {
-    if (!g_ready || page_count == 0) {
+    allocation = {};
+    if (!g_ready || page_count == 0 || page_count > UINT64_MAX / kPageSize) {
         return false;
     }
 
@@ -170,15 +188,22 @@ bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation) 
 }
 
 bool free_pages(uint64_t physical_address, uint64_t page_count) {
-    if (!g_ready || page_count == 0 || (physical_address & (kPageSize - 1)) != 0) {
+    if (!g_ready || page_count == 0 || page_count > UINT64_MAX / kPageSize ||
+        (physical_address & (kPageSize - 1)) != 0) {
         return false;
     }
 
     const uint64_t byte_count = page_count * kPageSize;
-    if (byte_count == 0) {
+    if (physical_address > UINT64_MAX - byte_count) {
         return false;
     }
-    return add_free_region(physical_address, physical_address + byte_count);
+    const uint64_t end = physical_address + byte_count;
+    for (size_t index = 0; index < g_region_count; ++index) {
+        if (physical_address < g_regions[index].end && end > g_regions[index].base) {
+            return false; // Reject duplicate/overlapping frees rather than merge ownership.
+        }
+    }
+    return add_free_region(physical_address, end);
 }
 
 bool free_allocation(const PageAllocation& allocation) {

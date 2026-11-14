@@ -33,6 +33,7 @@ constexpr const char* kGpuPath = "/dev/gpu0";
 
 /* Set the result or block the process; the trap wrapper selects a return frame. */
 void handle(ContextFrame& frame);
+void release_process_resources(uint32_t pid);
 
 }
 

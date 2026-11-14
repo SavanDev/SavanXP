@@ -8,8 +8,8 @@ namespace i386::process {
 constexpr uint32_t kCapacity = 6;
 enum class State { unused, runnable, running, sleeping, reading, waiting, zombie };
 
-// Storage is bounded until the i386 physical allocator is introduced. Every
-// process has its own user image, return frame, kernel stack and eager FPU state.
+// The process table is bounded; user images and page tables use the reference
+// physical allocator. Kernel stacks and saved CPU/FPU contexts stay per slot.
 struct alignas(4096) Process {
     State state;
     uint32_t pid, parent;
@@ -32,8 +32,8 @@ ContextFrame* timer(ContextFrame* frame);
 ContextFrame* finish_syscall(ContextFrame* frame, bool reschedule = false);
 uint32_t current_pid();
 uint32_t count();
-bool user_range(uint32_t address, uint32_t size);
-void* user_pointer(Process& process, uint32_t address);
+bool user_range(uint32_t address, uint32_t size, bool writable = false);
+ContextFrame* fault(uint32_t vector);
 void read_input(uint32_t buffer);
 void sleep(uint32_t milliseconds);
 void yield();

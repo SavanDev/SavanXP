@@ -18,6 +18,7 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke
 ./build.sh smoke boot
 ./build.sh smoke processes
+./build.sh smoke memory
 ./build.sh smoke desktop
 ./build.sh smoke legacy-cpu
 ./build.sh test
@@ -64,11 +65,18 @@ SMP values other than one and virtio are rejected until those features are porte
 
 `./build.sh smoke` invokes `tools/run_smoke.py` and `tools/legacy_boot_test.py` against the freshly built
 ISO and a snapshot of the normal disk. It checks boot, shell, keyboard,
-concurrent CPU workers, spawn/wait/exit, shell restart, desktop glyphs, PS/2
+concurrent CPU workers, spawn/wait/exit, contained user faults, page protection,
+shell restart, desktop glyphs, PS/2
 buttons and cursor restoration. Logs/screenshots stay in a unique directory
 under `build/smoke-logs`. `smoke --list` lists supported cases. Former x86_64
 scenarios such as `sxgui-smoke` and `windowd-smoke` are unavailable until their
 subsystems have been ported; the minimal desktop check does not prove SxGUI.
+
+`./build.sh smoke memory` runs the process/fault regression with 32 MiB of RAM.
+It requires partial ELF allocation to fail with `ENOMEM`, retries it without page
+leaks, and verifies surviving children, page reclamation and slot reuse. The
+normal 1 GiB smoke exercises table exhaustion instead. `multitest32` and its
+12 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
 
 `./build.sh test` runs hosted regressions for reused modules, external ELF32
 construction, and the normal build/run routing. Host audio or network tests do

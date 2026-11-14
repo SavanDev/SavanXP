@@ -70,13 +70,15 @@ must be accounted for in that review rather than silently dropping features.
 The graph links the i386 boot/CPU, paging, process, console, input and syscall
 implementation with the shared ATA, block, partition, filesystem, SxFS, VFS and
 runtime modules. `cmake/userland-i386.cmake` builds the SDK runtime and static
-`init32`, `sysinfo`, `sh32`, `desktop32`, plus optional `keyecho`/`multitest32`.
+`init32`, `sysinfo`, `sh32`, `desktop32`, plus optional `keyecho`/`multitest32`/`memhog32`.
 The default disk is `build/disk.img`, the ISO is `build/SavanXP.iso`, and the
 CMake cache is `build/linux-i386`. See [BUILD_CMAKE.md](BUILD_CMAKE.md).
 
 Private process maps/stacks, eager x87/SSE state, PIT preemption and spawn/wait/
-exit are implemented. There are six static slots with 16 MiB of image space
-each; user faults still halt the whole guest. [I386_PROCESSES.md](I386_PROCESSES.md)
+exit are implemented. Six process slots use allocator-backed 4 KiB user pages
+inside a 16 MiB virtual window per process; user faults terminate only their
+process. ELF write permissions, unmapped holes and a stack guard are enforced;
+supervisor mappings remain protected without NX. [I386_PROCESSES.md](I386_PROCESSES.md)
 defines the exact current guarantees. The full window manager and dynamic
 library loader are not linked into this kernel.
 
@@ -88,11 +90,16 @@ Keep each milestone bootable and add an end-to-end regression before adding
 the next dependency. Adapt the corresponding v0.4.0 implementation with minimal
 changes, and record implementation/verification evidence as work lands.
 
-1. **Fault containment and memory foundations.** Terminate a faulting user
-   process and reap it without killing the shell or siblings. Port the reference
-   allocator, allocation failure handling and user-page protection to replace
-   static image reservations. Keep supervisor mappings protected on CPUs without NX.
-2. **File descriptors and the POSIX base.** Port per-process descriptor tables,
+1. **Fault containment and memory foundations — completed.** User exceptions
+   terminate and reap their process without killing the shell or siblings.
+   The reference physical allocator backs ELF32 pages and page tables; failed
+   loads roll back, exit reclaims pages, and 4 KiB permissions/guards protect
+   user and supervisor memory without NX. `./build.sh smoke memory` exercises
+   partial-load `ENOMEM` on 32 MiB. [Mechanism and evidence](I386_PORT_STUDY.md#7-fault-containment-and-allocator-backed-user-pages).
+   The six-slot table, fixed virtual window and eager 64 KiB stack remain bounds;
+   section objects, heap growth and reference stack-demand behavior belong to
+   later memory work. This closes the milestone, not v0.4.0 parity.
+2. **File descriptors and the POSIX base — next.** Port per-process descriptor tables,
    regular-file read/write/seek/stat/readdir, console ownership, pipes and
    descriptor inheritance. Bring up the reference shell/BusyBox incrementally,
    then restore its v0.4.0 behavior with process cleanup and persistence tests.
@@ -125,7 +132,8 @@ libraries, games, configs and saves. Retained ELF64 files fail ELF32 validation;
 rebuild individual apps rather than erasing the image. Earlier experimental
 `build/i386/disk-i386.img` stays untouched and is not imported automatically.
 
-Run `./build.sh build`, `./build.sh smoke`, `./build.sh test`, and
+Run `./build.sh build`, `./build.sh smoke`, `./build.sh smoke memory`,
+`./build.sh test`, and
 `./tools/verify_doom_persistence.sh` for build/persistence changes. The default
 smoke checks the current i386 shell, preemption, lifecycle and minimal desktop
 against the new binaries. Unsupported x86_64 smoke scenarios fail explicitly;

@@ -1,137 +1,142 @@
 #include "paging.hpp"
+#include "kernel/physical_memory.hpp"
+#include "kernel/string.hpp"
 
-#include <stdint.h>
-
-namespace i386 {
-
+namespace i386::paging {
 namespace {
-
-/* 256 x 4 MiB = 1 GiB. Alineado a pagina porque CR3 lo exige. */
 alignas(4096) uint32_t g_page_directory[1024];
+constexpr uint32_t kPresent = 1, kWrite = 2, kUser = 4, kLarge = 128;
+constexpr uint32_t kMask = 0xfffff000u;
+constexpr uint32_t kFirst = kUserWindowBase >> 22;
+constexpr uint32_t kEnd = kUserWindowEnd >> 22;
+bool g_enabled;
 
-constexpr uint32_t kPageTableEntries = 256;
-constexpr uint32_t kPageSize4Mib = 0x00400000;
-
-constexpr uint32_t kPdePresent = 1u << 0;
-constexpr uint32_t kPdeWritable = 1u << 1;
-constexpr uint32_t kPdeUser = 1u << 2;
-constexpr uint32_t kPdePageSize = 1u << 7;
-
-inline uint32_t read_cr0() {
-    uint32_t value;
-    asm volatile("mov %%cr0, %0" : "=r"(value));
-    return value;
+uint32_t* table(uint32_t entry) {
+    return reinterpret_cast<uint32_t*>((entry & kMask) + kDirectMapBase);
 }
 
-inline void write_cr0(uint32_t value) {
-    asm volatile("mov %0, %%cr0" : : "r"(value) : "memory");
+bool inside(uint32_t address, uint32_t bytes) {
+    return address >= kUserWindowBase && address < kUserWindowEnd &&
+        static_cast<uint64_t>(address) + bytes <= kUserWindowEnd;
 }
+} // namespace
 
-inline void write_cr3(uint32_t value) {
-    asm volatile("mov %0, %%cr3" : : "r"(value) : "memory");
-}
-
-inline uint32_t read_cr4() {
-    uint32_t value;
-    asm volatile("mov %%cr4, %0" : "=r"(value));
-    return value;
-}
-
-inline void write_cr4(uint32_t value) {
-    asm volatile("mov %0, %%cr4" : : "r"(value) : "memory");
-}
-
-}
-
-namespace {
-
-bool g_enabled = false;
-
-constexpr uint64_t kAddressSpaceLimit = 0x100000000ull;
-
-/* Reload CR3 so newly mapped framebuffer pages are visible immediately. */
-void flush_tlb(uint32_t directory) {
-    write_cr3(directory);
-}
-
-}  // namespace
-
-bool paging::cpu_has_pse() {
-    uint32_t eax = 0;
-    uint32_t ebx = 0;
-    uint32_t ecx = 0;
-    uint32_t edx = 0;
+bool cpu_has_pse() {
+    uint32_t eax, ebx, ecx, edx;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1u), "c"(0u));
-    (void)eax;
-    (void)ebx;
-    (void)ecx;
     return (edx & (1u << 3)) != 0;
 }
 
-void paging::enable_identity_1gib() {
-    for (uint32_t i = 0; i < kPageTableEntries; ++i) {
-        g_page_directory[i] = (i * kPageSize4Mib) | kPdePresent | kPdeWritable | kPdePageSize;
+void enable_identity_1gib() {
+    for (uint32_t index = 0; index < 256; ++index) {
+        const uint32_t entry = (index << 22) | kPresent | kWrite | kLarge;
+        g_page_directory[index] = entry;
+        g_page_directory[(kDirectMapBase >> 22) + index] = entry;
     }
-
-    // The idle/kernel directory stays supervisor-only. Each process installs
-    // private user mappings in its own directory after its image is loaded.
-
-    /* Sin paginacion encendida la direccion del directorio es tambien su
-     * direccion fisica, que es lo que CR3 quiere. */
-    const uint32_t directory = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_page_directory));
-
-    uint32_t cr4 = read_cr4();
-    cr4 |= (1u << 4); /* PSE */
-    write_cr4(cr4);
-
-    write_cr3(directory);
-
-    uint32_t cr0 = read_cr0();
-    cr0 |= (1u << 31) | (1u << 16); /* PG | WP */
-    write_cr0(cr0);
+    uint32_t cr4, cr0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= 1u << 4;
+    asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+    activate_kernel();
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 |= (1u << 31) | (1u << 16); // PG | WP, including kernel writes to user text.
+    asm volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
     g_enabled = true;
 }
 
-bool paging::map_identity(uint64_t address, uint32_t bytes) {
-    if (bytes == 0 || address >= kAddressSpaceLimit ||
-        address + bytes > kAddressSpaceLimit) {
+bool map_identity(uint64_t address, uint32_t bytes) {
+    if (bytes == 0 || address >= 0x100000000ull || address + bytes > 0x100000000ull)
         return false;
+    // A device identity mapping must not replace the RAM direct map.
+    if (address < static_cast<uint64_t>(kDirectMapBase) + kDirectMapBytes &&
+        address + bytes > kDirectMapBase) return false;
+    const uint32_t first = static_cast<uint32_t>(address >> 22);
+    const uint32_t last = static_cast<uint32_t>((address + bytes - 1) >> 22);
+    for (uint32_t index = first; index <= last; ++index)
+        g_page_directory[index] = (index << 22) | kPresent | kWrite | kLarge;
+    if (g_enabled) activate_kernel();
+    return true;
+}
+
+void initialize_process_directory(uint32_t* directory) {
+    memcpy(directory, g_page_directory, sizeof(g_page_directory));
+    // The user window starts completely absent, including its unused holes.
+    for (uint32_t index = kFirst; index < kEnd; ++index) directory[index] = 0;
+}
+
+void destroy_process_directory(uint32_t* directory) {
+    // Call only after leaving this CR3. Kernel/device mappings are shared.
+    for (uint32_t index = kFirst; index < kEnd; ++index) {
+        const uint32_t entry = directory[index];
+        if ((entry & kPresent) == 0) continue;
+        uint32_t* pages = table(entry);
+        for (uint32_t page = 0; page < 1024; ++page) {
+            if (pages[page] & kPresent) memory::free_pages(pages[page] & kMask, 1);
+        }
+        memory::free_pages(entry & kMask, 1);
+        directory[index] = 0;
     }
-    /* Identity-map the entire 4 MiB pages covering the physical range. */
-    const uint32_t first = static_cast<uint32_t>(address) / kPageSize4Mib;
-    const uint32_t last = static_cast<uint32_t>(address + bytes - 1u) / kPageSize4Mib;
-    if (last >= 1024) {
-        return false;
-    }
-    for (uint32_t index = first; index <= last; ++index) {
-        const uint32_t entry = (index * kPageSize4Mib) | kPdePresent | kPdeWritable | kPdePageSize;
-        /* Preserve user access on any previously mapped page. */
-        g_page_directory[index] = entry | (g_page_directory[index] & kPdeUser);
-    }
-    if (g_enabled) {
-        flush_tlb(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_page_directory)));
+}
+
+bool map_user_range(uint32_t* directory, uint32_t address, uint32_t bytes, bool writable) {
+    if (!inside(address, bytes)) return false;
+    if (bytes == 0) return true;
+    const uint32_t end = address + bytes;
+    for (uint32_t page = address & kMask; page < end; page += kPageBytes) {
+        uint32_t& entry = directory[page >> 22];
+        memory::PageAllocation allocation = {};
+        if ((entry & kPresent) == 0) {
+            if (!memory::allocate_page(allocation)) return false;
+            memset(allocation.virtual_address, 0, kPageBytes);
+            entry = static_cast<uint32_t>(allocation.physical_address) | kPresent | kWrite | kUser;
+        }
+        uint32_t& leaf = table(entry)[(page >> 12) & 1023];
+        if ((leaf & kPresent) == 0) {
+            if (!memory::allocate_page(allocation)) return false;
+            memset(allocation.virtual_address, 0, kPageBytes);
+            leaf = static_cast<uint32_t>(allocation.physical_address) | kPresent | kUser;
+        }
+        if (writable) leaf |= kWrite; // Union permissions for PT_LOAD page sharing.
     }
     return true;
 }
 
+void* user_pointer(const uint32_t* directory, uint32_t address) {
+    if (!inside(address, 1)) return nullptr;
+    const uint32_t entry = directory[address >> 22];
+    if ((entry & (kPresent | kUser | kLarge)) != (kPresent | kUser)) return nullptr;
+    const uint32_t leaf = table(entry)[(address >> 12) & 1023];
+    if ((leaf & (kPresent | kUser)) != (kPresent | kUser)) return nullptr;
+    return reinterpret_cast<void*>(kDirectMapBase + (leaf & kMask) + (address & 4095));
 }
 
-void i386::paging::initialize_process_directory(uint32_t* directory, uint32_t physical_base) {
-    for (uint32_t index = 0; index < 1024; ++index) {
-        directory[index] = g_page_directory[index] & ~kPdeUser;
+bool user_range(const uint32_t* directory, uint32_t address, uint32_t bytes, bool writable) {
+    if (!inside(address, bytes)) return false;
+    const uint32_t end = address + bytes;
+    for (uint32_t page = address & kMask; page < end; page += kPageBytes) {
+        if (!user_pointer(directory, page)) return false;
+        const uint32_t entry = directory[page >> 22];
+        const uint32_t leaf = table(entry)[(page >> 12) & 1023];
+        if (writable && ((entry & kWrite) == 0 || (leaf & kWrite) == 0)) return false;
     }
-    const uint32_t first = kUserWindowBase / kPageSize4Mib;
-    const uint32_t pages = (kUserWindowEnd - kUserWindowBase) / kPageSize4Mib;
-    for (uint32_t index = 0; index < pages; ++index) {
-        directory[first + index] = (physical_base + index * kPageSize4Mib) |
-            kPdePresent | kPdeWritable | kPdeUser | kPdePageSize;
+    return true;
+}
+
+bool copy_to_user(uint32_t* directory, uint32_t address, const void* source, uint32_t bytes) {
+    // Also used by the ELF loader to initialize read-only text through its alias.
+    if (!user_range(directory, address, bytes, false)) return false;
+    const auto* data = static_cast<const uint8_t*>(source);
+    while (bytes != 0) {
+        uint32_t chunk = kPageBytes - (address & 4095);
+        if (chunk > bytes) chunk = bytes;
+        memcpy(user_pointer(directory, address), data, chunk);
+        address += chunk; data += chunk; bytes -= chunk;
     }
+    return true;
 }
 
-void i386::paging::activate(const uint32_t* directory) {
-    write_cr3(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory)));
+void activate(const uint32_t* directory) {
+    asm volatile("mov %0, %%cr3" : : "r"(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory))) : "memory");
 }
-
-void i386::paging::activate_kernel() {
-    activate(g_page_directory);
-}
+void activate_kernel() { activate(g_page_directory); }
+} // namespace i386::paging
