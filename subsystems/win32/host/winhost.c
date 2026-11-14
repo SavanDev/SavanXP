@@ -978,7 +978,7 @@ int main(int argc, char **argv) {
     }
     sxw_platform platform = {
         .context = 0,
-        .guest_low = 0x400000u, /* kUserBase: the user half starts there */
+        .guest_low = 0x400000u, /* kUserBase: where the SDK puts an image */
         .map = platform_map,
         .protect = platform_protect,
         .unmap = platform_unmap,

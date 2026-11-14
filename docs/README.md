@@ -27,7 +27,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   one everyday account, NT-style elevation through a broker and a prompt `windowd`
   owns, owner/group/mode in the SxFS inode, and the phases to build it.
 - [`USER_ADDRESS_SPACE.md`](kernel/USER_ADDRESS_SPACE.md) — the user half's layout
-  (image, views, stack, kernel boundary) and why programs load at `0x400000`.
+  (floor, image, views, stack, kernel boundary): why the floor is `0x10000`
+  and why SDK programs load at `0x400000`.
 - [`SECTIONS.md`](kernel/SECTIONS.md) — section objects and views: the grant model,
   execution as a view permission, W^X, the view and section budgets, and where
   shared library images belong.

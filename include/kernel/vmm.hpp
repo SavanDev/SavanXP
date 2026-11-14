@@ -11,6 +11,14 @@ struct SectionObject;
 
 namespace vm {
 
+// The lowest user address the kernel accepts, for every subsystem: pointers,
+// PT_LOAD segments and caller-placed views. 64 KiB, so null and small
+// offsets from it still fault, and a Linux ET_EXEC linked below 4 MiB (lld
+// puts one at 0x200000) loads (docs/kernel/USER_ADDRESS_SPACE.md).
+constexpr uint64_t kUserFloor = 0x0000000000010000ULL;
+// Where a position-independent (ET_DYN) image is placed, and where the SDK's
+// linker script puts an ET_EXEC: the x86-64 and PE32 default. No longer the
+// floor: that is kUserFloor.
 constexpr uint64_t kUserBase = 0x0000000000400000ULL;
 constexpr uint64_t kUserStackTop = 0x0000007000000000ULL;
 

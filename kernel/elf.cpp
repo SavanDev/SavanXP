@@ -331,14 +331,12 @@ bool load_user_image(
     uint64_t segment_starts[kMaxLoadSegments] = {};
     uint64_t segment_ends[kMaxLoadSegments] = {};
     uint64_t interpreter_offset = 0;
-    /* Desplazamiento de carga. Un ET_EXEC tiene direcciones absolutas y se carga
-     * donde dice: sesgo cero, exactamente igual que antes. Un ET_DYN (PIE) las
-     * tiene relativas y hay que(sumarlas) a una base.
+    /* The load bias. An ET_EXEC has absolute addresses and loads where it
+     * says: a bias of zero. An ET_DYN (PIE) has relative ones, added to a base.
      *
-     * La base arranca en kUserBase, que es la misma que usa el linker script, de
-     * modo que una imagen PIE ocupa el mismo lugar que una ET_EXEC. Eso es lo
-     * unico que cambia aca: elegir una base por proceso con entropia es el
-     * trabajo siguiente, y es tambien lo que le da ASLR al ejecutable. */
+     * The base is kUserBase, the address the SDK linker script uses, so a PIE
+     * image sits where an ET_EXEC would. Choosing a base per process with
+     * entropy is the next step, and is what would give the executable ASLR. */
     const uint64_t load_bias = header.type == kElfTypeShared ? vm::kUserBase : 0;
     uint64_t interpreter_path_length = 0;
     size_t segment_count = 0;
@@ -403,7 +401,7 @@ bool load_user_image(
         // than the bias (KERNEL_SECURITY.md, E7).
         const bool address_range_valid = program.memory_size != 0 &&
             vaddr >= program.virtual_address && image_end >= vaddr &&
-            vaddr >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
+            vaddr >= vm::kUserFloor && image_end <= vm::kUserStackGuardBottom;
         const bool mapped_range_valid = address_range_valid &&
             align_up(image_end, memory::kPageSize) >= image_end;
         const bool file_range_valid = program.file_size <= program.memory_size &&

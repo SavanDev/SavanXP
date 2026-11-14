@@ -84,7 +84,7 @@ uint64_t pml4_base(uint64_t index) {
 }
 
 bool canonical_user_address(uint64_t virtual_address) {
-    return virtual_address >= vm::kUserBase && virtual_address < kKernelPml4Start * (1ULL << 39);
+    return virtual_address >= vm::kUserFloor && virtual_address < kKernelPml4Start * (1ULL << 39);
 }
 
 bool canonical_user_range(uint64_t virtual_address, uint64_t size) {

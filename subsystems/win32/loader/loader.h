@@ -31,8 +31,9 @@ extern "C" {
 #define SXW_DIAGNOSTIC 256u
 
 /* Guest addresses the loader places regions in: from the platform's
- * guest_low (0x10000 in the harness; on SavanXP the user half starts at
- * 0x400000) up to 2 GiB. A relocated image goes at 0x10000000 or above. */
+ * guest_low (0x10000 in the harness; 0x400000 under winhost, which keeps
+ * clear of what lies below although the user floor is 0x10000) up to 2 GiB.
+ * A relocated image goes at 0x10000000 or above. */
 #define SXW_GUEST_HIGH 0x80000000u
 #define SXW_RELOCATED_LOW 0x10000000u
 

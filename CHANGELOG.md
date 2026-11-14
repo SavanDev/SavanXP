@@ -198,6 +198,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The lowest user address is `0x10000` (`kUserFloor`) for every subsystem, down from `0x400000`.** SDK programs still
+  load at `0x400000` (`kUserBase`); a Linux `ET_EXEC` linked lower now loads. See
+  [USER_ADDRESS_SPACE.md](docs/kernel/USER_ADDRESS_SPACE.md).
+
 - **A process may hold 128 section views (was 64) and the system 512 sections (was 256)**, so a Win32 program fits:
   `winhost` maps one section per protection run of each image. See [SECTIONS.md](docs/kernel/SECTIONS.md#the-budget).
 

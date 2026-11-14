@@ -261,8 +261,15 @@ static void test_view_at(void) {
         }
     }
     check(sxn_map_view_at(section, base + 8u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
-    /* Below the user half (kUserBase), and the process's own image at it. */
-    check(sxn_map_view_at(section, 0x10000u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    /* Below the user floor (kUserFloor, 64 KiB), at it, and the process's
+     * own image at 0x400000. */
+    check(sxn_map_view_at(section, 0xf000u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    view = sxn_map_view_at(section, 0x10000u, SXN_SECTION_READ);
+    check(view == 0x10000);
+    if (view == 0x10000) {
+        check(((volatile const uint32_t *)0x10000u)[0] == 0x5EC71011u);
+        check(sxn_unmap_view(0x10000u) == 0);
+    }
     check(sxn_map_view_at(section, 0x400000u, SXN_SECTION_READ) == -SAVANXP_EEXIST);
 
     view = sxn_map_view_at(section, 0, SXN_SECTION_READ);
