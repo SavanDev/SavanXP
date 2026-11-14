@@ -930,6 +930,15 @@ SCENARIOS: dict[str, Scenario] = {
         180.0,
         remove_paths=("lib/libsoname.so.0.4", "lib/libsonamelow.so.0.4"),
     ),
+    # syslog(3) from a POSIX program with stdout and stderr closed: the token
+    # can only arrive through the system log, under the "posix[pid]" prefix.
+    "posix-syslog": _qemu_scenario(
+        "syslogtest",
+        "]: syslogtest: warning: SYSLOG TEST PASS",
+        "SYSLOG TEST FAIL",
+        "syslog(3) writes to the system log from POSIX",
+        180.0,
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

@@ -1055,6 +1055,7 @@ void initialize_native_subsystem() {
  * own terms, nor INFO/LOG/GFX, which are a standalone native program's. */
 bool native_call_open_to_all_subsystems(uint64_t number) {
     switch (number) {
+        case SXN_SYS_LOG:
         case SXN_SYS_EVENT_CREATE:
         case SXN_SYS_EVENT_SET:
         case SXN_SYS_EVENT_RESET:
@@ -1154,8 +1155,16 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 return context;
             }
 
+            /* The prefix names the subsystem: the line of a POSIX process
+             * through syslog must not read as a native program's. */
+            const char* subsystem = "native";
+            if (caller->subsystem_id == subsystem::Id::posix) {
+                subsystem = "posix";
+            } else if (caller->subsystem_id == subsystem::Id::linux) {
+                subsystem = "linux";
+            }
             klog::ScopedSource source(caller->pid, caller->credentials.uid, caller->name);
-            console::printf("native[%u]: %s\n", static_cast<unsigned>(caller->pid), message);
+            console::printf("%s[%u]: %s\n", subsystem, static_cast<unsigned>(caller->pid), message);
             context->rax = 0;
             return context;
         }

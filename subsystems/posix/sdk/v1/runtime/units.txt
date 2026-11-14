@@ -18,6 +18,7 @@
 core    subsystems/posix/sdk/v1/runtime/crt0.S
 core    subsystems/posix/sdk/v1/runtime/libc.c
 core    subsystems/posix/sdk/v1/runtime/posix.c
+core    subsystems/posix/sdk/v1/runtime/syslog.c
 core    subsystems/posix/sdk/v1/runtime/pthread.c
 core    subsystems/posix/sdk/v1/runtime/gfx.c
 core    system/gfx/pixels.c

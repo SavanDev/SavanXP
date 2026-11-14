@@ -16,6 +16,13 @@ Every character that leaves through the console's serial path, as lines:
 | a program writing to the text console (stdout/stderr on the tty) | POSIX `write` on a tty handle | the program |
 | a program writing to `/dev/serial` (`windowd`, `compositord` stats) | `serial_dev` | the program |
 | a native program's `sxn_log` | `SXN_SYS_LOG` | the program |
+| a POSIX program's `syslog(3)` (`<syslog.h>`) | `SXN_SYS_LOG`, open to every subsystem | the program |
+
+`SXN_SYS_LOG` prefixes its line with the caller's subsystem and pid:
+`native[4]: ...`, `posix[7]: ...`. `syslog` adds the `openlog` ident and, for a
+warning or worse, the priority as a word; the log keeps no facility or priority
+of its own. The `posix-syslog` scenario closes standard output and error and
+reads its line back from the serial port.
 
 Not logged: the text console's echo of what is typed (`klog::ScopedMute` in
 `tty.cpp`). It is input, not a message.

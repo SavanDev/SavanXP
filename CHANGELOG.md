@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **POSIX programs can write to the system log: `syslog(3)` (`<syslog.h>`), over `SXN_SYS_LOG`, now open to every
+  subsystem; its lines read `posix[pid]: ...`.** Scenario `posix-syslog`; see [SYSTEM_LOG.md](docs/kernel/SYSTEM_LOG.md).
+
 - **A needed library resolves to the exact `/lib` file, else its highest newer minor (`0.6` for `libfoo.so.0.4`), never an
   older one; a name without a full version (`libfoo.so`, `libfoo.so.0`) gets the latest, in `DT_NEEDED` or a bare
   `dlopen`.** Scenarios `sonametest`, `sonametest-newer`; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#dt_soname-resolution).

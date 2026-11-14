@@ -1173,7 +1173,9 @@ What is missing, in order of weight:
    A closed handle is -1, not 0: a native process with no standard input gets
    handle 0 from its first open.
 4. **The runtime ends the process, not the loader.** `SXN_SYS_EXIT` and
-   `SXN_SYS_LOG` are native-only, and that stays. The loader returns a status
+   `SXN_SYS_LOG` are native-only, and that stays. (`SXN_SYS_LOG` did not: it
+   opened to every subsystem on 2026-11-14, under POSIX's `syslog(3)`, so the
+   loader's notes reach the system log from a POSIX process too.) The loader returns a status
    and a message; each subsystem's `crt0` reports it and exits in its own
    terms. `dlopen` and `dlfcn.h` are a thin POSIX layer over the common core;
    SUN names its own. **Done (2026-11-14):** the loader never ended the

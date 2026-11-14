@@ -601,10 +601,10 @@ are refused.
 - **POSIX processes reach the native object calls.** The POSIX dispatcher
   forwards every number in `native_call_open_to_all_subsystems` (handles,
   events, sections, waits, pipe and device I/O, `OPEN_FILE` for reading,
-  `OPEN_DIRECTORY` and `READ_DIRECTORY`, ports,
-  the clock) to the native
+  `OPEN_DIRECTORY` and `READ_DIRECTORY`, ports, the clock, and `LOG`, which
+  POSIX's `syslog(3)` is built on) to the native
   dispatcher, as a Win32 process calls ntdll. The lifecycle calls (EXIT, SPAWN,
-  WAITPID) and the standalone ones (INFO, LOG, GFX) stay native-only: a
+  WAITPID) and the standalone ones (INFO, GFX) stay native-only: a
   subsystem defines those in its own terms. This is what lets an ordinary
   application find windowd by port. The isolation is unchanged: the kernel
   still knows nothing of POSIX.

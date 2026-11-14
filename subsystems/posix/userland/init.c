@@ -171,6 +171,7 @@ static int run_automation_spec(const char* spec) {
     const char* clocktest_argv[] = {"/bin/clocktest", 0};
     const char* datetest_argv[] = {"/bin/datetest", 0};
     const char* needstest_argv[] = {"/bin/needstest", 0};
+    const char* syslogtest_argv[] = {"/bin/syslogtest", 0};
     /* Los cuatro diagnósticos del cargador. Cada uno afirmaba en error y nada más,
      * así que ninguno podía tener escenario: ahora cada uno imprime su token de
      * éxito y hay uno que lo ejecuta. */
@@ -305,6 +306,11 @@ static int run_automation_spec(const char* spec) {
              * con ella en su sitio el mismo programa resuelve y se va. */
             path = "/bin/needstest";
             argv = needstest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "syslogtest") == 0) {
+            /* A POSIX line in the system log, with stdout and stderr closed. */
+            path = "/bin/syslogtest";
+            argv = syslogtest_argv;
             argc = 1;
         } else if (strcmp(spec, "clocktest") == 0) {
             path = "/bin/clocktest";

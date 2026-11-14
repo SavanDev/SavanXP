@@ -33,8 +33,11 @@
 enum sxn_syscall_number {
     /* rdi = puntero a struct sxn_native_info (escritura). Devuelve 0. */
     SXN_SYS_INFO = 0x1000,
-    /* rdi = puntero a string NUL-terminado (lectura, se trunca a 255 bytes).
-     * El kernel lo emite en su log con el pid como prefijo. Devuelve 0. */
+    /* rdi = NUL-terminated string (read, cut to 255 bytes). The kernel writes
+     * it to the system log as one line, prefixed by the caller's subsystem and
+     * pid ("native[4]: ...", "posix[7]: ..."). Returns 0. Open to every
+     * subsystem: POSIX's syslog(3) is built on it, and the shared-library
+     * loader records through it what a program should know it got. */
     SXN_SYS_LOG = 0x1001,
     /* rdi = codigo de salida. Termina el proceso actual; no retorna. Es el
      * ciclo de vida minimo standalone: con INFO/LOG/GFX mas EXIT un proceso
