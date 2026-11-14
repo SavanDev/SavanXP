@@ -912,6 +912,24 @@ SCENARIOS: dict[str, Scenario] = {
         "A SUN program maps libmath.so through the shared loader",
         180.0,
     ),
+    # How a DT_NEEDED resolves (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME
+    # resolution"): with every file present the exact 0.4 wins; with the 0.4s
+    # removed the highest newer minor stands in, and an older one never does.
+    "sonametest": _qemu_scenario(
+        "sonametest",
+        "SONAME TEST PASS",
+        "SONAME TEST FAIL",
+        "A DT_NEEDED loads its exact library when it is there",
+        180.0,
+    ),
+    "sonametest-newer": _qemu_scenario(
+        "sonametest",
+        "SONAME TEST PASS",
+        "SONAME TEST FAIL",
+        "A missing library resolves to its highest newer minor, never an older one",
+        180.0,
+        remove_paths=("lib/libsoname.so.0.4", "lib/libsonamelow.so.0.4"),
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

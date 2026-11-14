@@ -129,6 +129,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "sunlibtest")) {
         return "SUN LIBRARY TEST";
     }
+    if (spec != 0 && text_contains(spec, "sonametest")) {
+        return "SONAME TEST";
+    }
     if (spec != 0 && text_contains(spec, "linuxrestart")) {
         return "LINUX RESTART";
     }
@@ -196,6 +199,7 @@ static int run_automation_spec(const char* spec) {
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
     const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
     const char* sunlibtest_argv[] = {"/system/sunlibtest.sxe", 0};
+    const char* sonametest_argv[] = {"/system/sonametest.sxe", 0};
     const char* linuxrestart_argv[] = {"/system/linuxtest.sxe", "--restart", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
@@ -386,6 +390,11 @@ static int run_automation_spec(const char* spec) {
              * (docs/kernel/SHARED_LIBRARIES.md). */
             path = "/system/sunlibtest.sxe";
             argv = sunlibtest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "sonametest") == 0) {
+            /* How a DT_NEEDED resolves when the exact library is missing. */
+            path = "/system/sonametest.sxe";
+            argv = sonametest_argv;
             argc = 1;
         } else if (strcmp(spec, "linuxrestart") == 0) {
             /* A Linux program's file read back after a restart: the host

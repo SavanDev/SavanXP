@@ -63,6 +63,10 @@ which reproduces the static-link problem one level down. The better scheme is
 `libfoo.so.0.*`, which reimplements the symlink Linux uses at load time. It waits
 for an install path, because until there is one there is nothing to upgrade.
 
+(b) arrived before the install path, on 2026-11-14, because the persistent image
+already is one: external binaries in `/bin` outlive the system that built them.
+See [DT_SONAME resolution](#dt_soname-resolution) for the rule that was chosen.
+
 Note that a major version in the SONAME is a promise, not a fact: today SXGFX's
 headers *are* the SDK's public surface and nobody verifies what may change. The
 `VERSION` tag in `.sxmeta` is the honest one.
@@ -95,6 +99,7 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 | `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
 | `<dlfcn.h>`: `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, per-handle scopes | done, [see below](#dlopen) |
 | One loader for SUN and POSIX, `system/loader/ldso.c`; a SUN program maps a library | done, [see below](#one-loader-over-sxn) |
+| `DT_NEEDED` resolution: the exact file, else the highest newer minor | done, [see below](#dt_soname-resolution) |
 | 32 library slots, 24 program headers per image | done |
 
 ### The libraries
@@ -160,6 +165,7 @@ its drawing code.
 | No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
 | The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `system/loader/ldso.c` imports only the canary, `sx_image_base` and `sx_loader_report` |
 | A SUN program maps a library through the same loader | `sun-libtest`: `sunlibtest.sxe` maps `libmath` and asserts `sqrt` came from it |
+| A missing library resolves to its highest newer minor, never an older one, and the exact file wins | `sonametest` and `sonametest-newer` |
 | The stack canary is in the executable, seeded by `crt0`, with two distinct halves | `ldtest`, on every run |
 | The interpreter path reaches the loader | `interptest`, including that a library actually loaded |
 | The toolkit draws the right glyphs in the right colour | `expect_text()` in `shoot_session`, from the font tables inside the built `libsxgfx` |
@@ -190,8 +196,10 @@ at 0 of 228 and 0 of 284 glyph pixels.
 - **A non-PIE program cannot use a library.** An `ET_EXEC` has no `PT_DYNAMIC`, so
   it has nothing to declare a `DT_NEEDED` with. This is a property of the link
   model, not of the loader.
-- **`DT_SONAME` is read and ignored**; a `DT_NEEDED` is looked up verbatim under
-  `/lib`.
+- **A `DT_NEEDED` is resolved by name, not by `DT_SONAME`**: the exact file under
+  `/lib`, else the highest newer minor of the same ABI
+  ([DT_SONAME resolution](#dt_soname-resolution)). A library's own `DT_SONAME`
+  is still not read; its file name is its identity.
 - **Global visibility only.** No `STV_HIDDEN`, `STV_PROTECTED`, or `.symver`.
 - **No unload.** `dlclose` drops a reference and leaves the image mapped; see
   [`dlopen`](#dlopen).
@@ -721,8 +729,9 @@ acceptance condition is a wish.
 So one phase is open. But the phase list is not the same as the list of things that
 are missing, and the two should not be confused. What no phase covers:
 
-- **`DT_SONAME` and visibility.** A `DT_NEEDED` is looked up verbatim by filename,
-  and only global visibility exists: no `STV_HIDDEN`, `STV_PROTECTED`, `.symver`.
+- **Visibility.** Only global visibility exists: no `STV_HIDDEN`,
+  `STV_PROTECTED`, `.symver`. (`DT_NEEDED` resolution, listed here before, has
+  its section: [DT_SONAME resolution](#dt_soname-resolution).)
   Nothing in this tree needs them, and nothing that runs on it needs them either.
 - **Half the loader's failure paths are untested.** Eleven return codes; four have a
   self-test. `-3` (a section that will not open), `-4`, `-5` (a file that is not a
@@ -961,6 +970,40 @@ namespace, and a library installed by a third party can shadow a system's. There
 no SONAME matching to keep them apart, which is the same limitation already recorded
 above and now has a practical consequence rather than only a theoretical one.
 
+## DT_SONAME resolution
+
+A program linked against `libfoo.so.0.4` carries that name in `DT_NEEDED`. The
+name is the library's version contract: the major (`0`) is the ABI, and the
+minor (`4`) is the system's version, which a newer system raises without
+breaking the ABI. The loader resolves it in this order:
+
+1. **The exact file**, `/lib/libfoo.so.0.4`, when it is there. This is the
+   startup path of every program, and it is unchanged: one open, no listing.
+2. **Otherwise the highest newer minor** of the same major: `libfoo.so.0.6` over
+   `libfoo.so.0.5`. Found by listing `/lib` (`SXN_SYS_OPEN_DIRECTORY`, open to
+   every subsystem for this), only when the exact open failed with "not there".
+3. **Never an older minor.** `libfoo.so.0.3` may lack a symbol a 0.4 program
+   calls; the program starts without the library, as with any missing one, and
+   `ldso_missing()` names `libfoo.so.0.4`, the name the program asked for.
+
+Exact first, and not "always the highest", was a choice: nothing a program
+already runs with changes because a newer file appears, and the cost of the
+rule is paid only by a program whose library is missing. The consequence is
+that an update which leaves the old minor in `/lib` keeps old programs on it;
+taking a library away is how an update moves them on.
+
+A library that stands in for another keeps its own name in the slot table, so a
+second image needing `libfoo.so.0.4` finds it there after the same listing and
+maps nothing twice. The rule applies to a `DT_NEEDED` given as a basename -- the
+only kind this tree produces -- and not to an explicit path: `ldso_load` and
+`dlopen` with a `/` load exactly what they are given. A bare-name `dlopen` is not
+resolved either; nothing needs it yet.
+
+`sonametest.sxe` covers both halves with libraries built at 0.3, 0.4, 0.5 and
+0.6: the `sonametest` scenario, where the exact 0.4 wins over 0.5 and 0.6, and
+`sonametest-newer`, which removes the 0.4 files so that 0.6 stands in -- once,
+for two images that need it -- and the 0.3 of another library is refused.
+
 ## Deliberately out of scope for the first implementation
 
 Three things were designed, cost real time, and have been taken back out. Recording
@@ -1061,7 +1104,8 @@ declares, and nothing is installed under that name: the interpreter is
 2. **`DT_SONAME` resolution.** Lookup of the highest `libfoo.so.0.*`
    ([Decisions taken](#decisions-taken)). Until it exists, a shared library ties
    every external binary in `/bin` to one OS version, which is exactly what the
-   persistent image must not do.
+   persistent image must not do. **Done (2026-11-14)**, ahead of step 1's last
+   item: [DT_SONAME resolution](#dt_soname-resolution).
 3. **Then, a POSIX client library.** With 1 and 2 in place POSIX becomes what a
    subsystem is in NT: a dispatcher in the kernel plus a client library the
    system loader maps, as SSW maps `kernel32`. Ideally `libc` and `posix`

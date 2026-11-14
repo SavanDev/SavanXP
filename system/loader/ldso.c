@@ -234,6 +234,10 @@ static int g_load_global = 1;
  * instead of being skipped: the tolerant mode exists so a program can start and
  * report a missing dependency, and a run-time caller gets an error for that. */
 static int g_strict = 0;
+/* Set while load_needed_chain tries the exact name a DT_NEEDED gives: a file
+ * that is not there is then not reported, because a newer minor may stand in
+ * for it (resolve_newer). The chain reports the miss itself if none does. */
+static int g_quiet_missing = 0;
 /* The dependency whose DT_NEEDED could not be brought in. See ldso_missing(). */
 static const char* g_missing_library = 0;
 /* The DISTINCT dependencies that could not be brought in, by name.
@@ -965,7 +969,9 @@ int ldso_load(const char* path) {
         /* The commonest case of all and the hardest to guess: a dependency
          * that is not on the volume. The name goes in the message because the
          * one printed above is only a step number. */
-        report("loader: cannot open %s (step 2)\n", path);
+        if (!g_quiet_missing) {
+            report("loader: cannot open %s (step 2)\n", path);
+        }
         end_load(0);
         return -2;
     }
@@ -1137,6 +1143,98 @@ static int loaded_slot_named(const char* soname) {
     return -1;
 }
 
+/* The highest newer minor of a library, when the one a DT_NEEDED names is
+ * not in /lib (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution").
+ *
+ * A library is named libfoo.so.MAJOR.MINOR. The major is the ABI and the minor
+ * the system's version, so a program linked against libfoo.so.0.4 runs with
+ * libfoo.so.0.6 -- a newer system kept the ABI -- and not with libfoo.so.0.3,
+ * which may lack what it calls. The exact file always wins when it is there;
+ * this runs only when it is not, so a program's startup lists no directory
+ * unless something is missing.
+ *
+ * Writes the chosen basename to `out` and returns 1, or returns 0: the name is
+ * not of that form, /lib cannot be listed, or no newer minor is there. */
+static int resolve_newer(const char* need, char* out, unsigned long size) {
+    /* Split "libfoo.so.0.4" into the prefix "libfoo.so.0." and the minor 4. */
+    unsigned long length = 0;
+    while (need[length] != '\0') {
+        length++;
+    }
+    unsigned long minor_at = length;
+    while (minor_at > 0 && need[minor_at - 1] >= '0' && need[minor_at - 1] <= '9') {
+        minor_at--;
+    }
+    if (minor_at == length || minor_at < 2 || need[minor_at - 1] != '.') {
+        return 0;
+    }
+    unsigned long major_at = minor_at - 1;
+    while (major_at > 0 && need[major_at - 1] >= '0' && need[major_at - 1] <= '9') {
+        major_at--;
+    }
+    if (major_at == minor_at - 1 || major_at < 4 || need[major_at - 1] != '.' ||
+        need[major_at - 2] != 'o' || need[major_at - 3] != 's' || need[major_at - 4] != '.') {
+        return 0;
+    }
+    unsigned long wanted = 0;
+    for (unsigned long index = minor_at; index < length; ++index) {
+        wanted = wanted * 10 + (unsigned long)(need[index] - '0');
+    }
+
+    const long directory = sxn_open_directory("/lib");
+    if (directory < 0) {
+        return 0;
+    }
+    struct sxn_directory_entry entry;
+    unsigned long best = wanted;
+    int found = 0;
+    while (sxn_read_directory(directory, &entry) == 1) {
+        if (entry.info.type != SXN_FILE_TYPE_FILE) {
+            continue;
+        }
+        unsigned long index = 0;
+        while (index < minor_at && entry.name[index] == need[index]) {
+            index++;
+        }
+        if (index != minor_at || entry.name[index] == '\0') {
+            continue;
+        }
+        unsigned long minor = 0;
+        int digits = 1;
+        unsigned long end = index;
+        for (; entry.name[end] != '\0'; ++end) {
+            if (entry.name[end] < '0' || entry.name[end] > '9' || end - index > 6) {
+                digits = 0;
+                break;
+            }
+            minor = minor * 10 + (unsigned long)(entry.name[end] - '0');
+        }
+        if (!digits || minor <= best || end + 1 > size) {
+            continue;
+        }
+        best = minor;
+        found = 1;
+        for (unsigned long copy = 0; copy <= end; ++copy) {
+            out[copy] = entry.name[copy];
+        }
+    }
+    (void)sxn_close(directory);
+    return found;
+}
+
+/* "/lib/" + name, cut to the buffer. */
+static void lib_path(const char* name, char* full, unsigned long size) {
+    const char* prefix = "/lib/";
+    unsigned long i = 0;
+    while (*prefix != '\0' && i + 1 < size) {
+        full[i++] = *prefix++;
+    }
+    while (*name != '\0' && i + 1 < size) {
+        full[i++] = *name++;
+    }
+    full[i] = '\0';
+}
+
 /* Walks a library's DT_NEEDED chain. Loads whatever is missing from /lib/ and
  * advances the cursor of the library being processed, so it never loads the
  * same thing twice.
@@ -1164,6 +1262,7 @@ static int load_needed_chain(int parent_slot) {
             /* A DT_NEEDED name is a basename, not a path: it is looked up in
              * /lib/. A path that already starts with / is used as it is. */
             char full[128];
+            int loaded_ok = 0;
             if (need[0] == '/') {
                 unsigned i = 0;
                 while (need[i] != '\0' && i < sizeof(full) - 1) {
@@ -1172,21 +1271,35 @@ static int load_needed_chain(int parent_slot) {
                 }
                 full[i] = '\0';
             } else {
-                const char* prefix = "/lib/";
-                unsigned i = 0;
-                while (*prefix != '\0' && i < sizeof(full) - 1) {
-                    full[i++] = *prefix++;
-                }
-                unsigned j = 0;
-                while (need[j] != '\0' && i < sizeof(full) - 1) {
-                    full[i++] = need[j++];
-                }
-                full[i] = '\0';
+                lib_path(need, full, sizeof(full));
             }
             /* begin_load takes the next free slot, so this is where the
              * dependency will land if it loads. */
-            const int dep_slot = g_lib_count;
-            if (ldso_load(full) == 0) {
+            int dep_slot = g_lib_count;
+            g_quiet_missing = need[0] != '/';
+            int step = ldso_load(full);
+            g_quiet_missing = 0;
+            if (step == -2 && need[0] != '/') {
+                /* The exact file is not there: a newer minor of the same ABI
+                 * stands in for it, and may be loaded already under its own
+                 * name -- another library may have needed it first. */
+                char newer[96];
+                if (resolve_newer(need, newer, sizeof(newer))) {
+                    const int already = loaded_slot_named(newer);
+                    if (already >= 0) {
+                        dep_slot = already;
+                        step = 0;
+                    } else {
+                        lib_path(newer, full, sizeof(full));
+                        dep_slot = g_lib_count;
+                        step = ldso_load(full);
+                    }
+                } else {
+                    report("loader: cannot open %s, and /lib has no newer minor of it (step 2)\n", full);
+                }
+            }
+            loaded_ok = step == 0;
+            if (loaded_ok) {
                 lib->deps |= (uint64_t)1 << dep_slot;
             } else {
                 /* The NAME is kept, not only the step code. The code says where

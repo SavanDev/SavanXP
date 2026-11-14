@@ -213,6 +213,35 @@ savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsy
 # loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN").
 savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath LINK_PROFILE PIE
     SOURCES system/loader/sunlibtest.c)
+# How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
+# same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One
+# source, one library per version; the program links against the 0.4s, and
+# the sonametest-newer scenario removes them from the image.
+foreach(version 3 4 5 6)
+    if(version EQUAL 4)
+        set(suffix "")
+    else()
+        set(suffix "_${version}")
+    endif()
+    savanxp_library(NAME libsoname${suffix} TEST SONAME libsoname.so.0.${version}
+        DEFINES SONAME_FUNCTION=soname_version SONAME_VERSION=${version}
+        SOURCES system/loader/tests/sonamelib.c)
+endforeach()
+foreach(version 3 4)
+    if(version EQUAL 4)
+        set(suffix "")
+    else()
+        set(suffix "_${version}")
+    endif()
+    savanxp_library(NAME libsonamelow${suffix} TEST SONAME libsonamelow.so.0.${version}
+        DEFINES SONAME_FUNCTION=soname_low_version SONAME_VERSION=${version}
+        SOURCES system/loader/tests/sonamelib.c)
+endforeach()
+savanxp_library(NAME libsonameuser TEST SONAME libsonameuser.so.0.4 DEPENDS libsoname
+    SOURCES system/loader/tests/sonameuser.c)
+savanxp_program(NAME sonametest TEST NATIVE LINK_PROFILE PIE
+    DEPENDS libsoname libsonameuser libsonamelow
+    SOURCES system/loader/tests/sonametest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
