@@ -3058,6 +3058,9 @@ SavedContext* handle_invalid_opcode(SavedContext* context) {
             context->rip += sizeof(opcode);
             context->rcx = context->rip;
             context->r11 = context->rflags;
+            // It came in by the fault door; for the lock's report it is a
+            // system call, tagged like one.
+            smp::reclassify_lock_hold(smp::Door::syscall);
             smp::tag_lock_hold(static_cast<uint32_t>(proc.subsystem_id), static_cast<uint32_t>(context->rax));
             vfs::trim_if_low();
             return finish_user_call(caller, trap(context));

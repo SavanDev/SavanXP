@@ -182,8 +182,14 @@ bool kernel_locked_here();
 void report_lock_stats();
 
 // Names what the current holder is doing, for the longest hold in the report:
-// handle_syscall() tags each syscall with its subsystem and number.
+// handle_syscall() and handle_invalid_opcode() tag each system call with its
+// subsystem and number.
 void tag_lock_hold(uint32_t subsystem, uint32_t number);
+
+// Counts the current hold against `door` instead of the one it came in by,
+// with its wait. A Linux system call enters through the invalid-opcode trap,
+// the fault door; once the kernel knows it is a call, it is one.
+void reclassify_lock_hold(Door door);
 
 // Esperar la proxima interrupcion desde adentro del kernel: suelta el lock si
 // este core lo tiene, `sti; hlt`, `cli`, y lo vuelve a tomar. Vuelve siempre con

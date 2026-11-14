@@ -7,6 +7,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/spinlock.hpp"
+#include "kernel/subsystem.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/vmm.hpp"
 
@@ -79,6 +80,8 @@ DoorStats g_door_stats[kDoorCount] = {};
 // The current holder's door and when it took the lock.
 uint32_t g_hold_door = 0;
 uint64_t g_hold_start = 0;
+// What the current holder waited for the lock, 0 when it did not.
+uint64_t g_hold_wait = 0;
 // What the holder tagged itself with (tag_lock_hold), and the same for the
 // longest hold of the window. kNoTag when it did not say.
 constexpr uint32_t kNoTag = 0xffffffffu;
@@ -96,8 +99,16 @@ struct TagStats {
     uint64_t hold_max;
 };
 
-constexpr uint32_t kTagSubsystems = 2;
-constexpr uint32_t kTagSlots = 128;
+// One row per subsystem, named below. Linux numbers reach about 470, so the
+// slots cover 512 of them; POSIX numbers and native ones (0x1000 plus a
+// small one) fit as well.
+constexpr uint32_t kTagSubsystems = static_cast<uint32_t>(subsystem::Id::count);
+constexpr const char* kTagSubsystemNames[kTagSubsystems] = {"posix", "native", "linux"};
+static_assert(static_cast<uint32_t>(subsystem::Id::posix) == 0 &&
+              static_cast<uint32_t>(subsystem::Id::native) == 1 &&
+              static_cast<uint32_t>(subsystem::Id::linux) == 2 && kTagSubsystems == 3,
+              "kTagSubsystemNames names every subsystem, in Id order");
+constexpr uint32_t kTagSlots = 512;
 constexpr uint32_t kTopHolders = 4;
 TagStats g_tag_stats[kTagSubsystems][kTagSlots] = {};
 // How long the previous report took to print, lock held: the next one says it.
@@ -697,6 +708,7 @@ void lock_kernel(Door door) {
     }
     g_hold_door = index;
     g_hold_start = now;
+    g_hold_wait = waited ? now - before : 0;
     g_hold_tag = kNoTag;
 
     // Before touching anything: pages another core unmapped while this one
@@ -735,6 +747,29 @@ void unlock_kernel() {
 
 void tag_lock_hold(uint32_t subsystem, uint32_t number) {
     g_hold_tag = (subsystem << 16) | (number & 0xffffu);
+}
+
+void reclassify_lock_hold(Door door) {
+    const uint32_t index = static_cast<uint32_t>(door);
+    if (index >= kDoorCount || index == g_hold_door) {
+        return;
+    }
+    // The acquisition and its wait move; a maximum cannot be taken back, so
+    // the old door may keep a wait_max this hold set.
+    DoorStats& from = g_door_stats[g_hold_door];
+    DoorStats& to = g_door_stats[index];
+    --from.acquisitions;
+    ++to.acquisitions;
+    if (g_hold_wait != 0) {
+        --from.contended;
+        from.wait_cycles -= g_hold_wait;
+        ++to.contended;
+        to.wait_cycles += g_hold_wait;
+        if (g_hold_wait > to.wait_max) {
+            to.wait_max = g_hold_wait;
+        }
+    }
+    g_hold_door = index;
 }
 
 void report_lock_stats() {
@@ -801,9 +836,10 @@ void report_lock_stats() {
     // console is serialized by the lock this core holds, so the line is not
     // interleaved with anyone else's.
     if (g_hold_max_tag != kNoTag) {
+        const uint32_t tag_subsystem = g_hold_max_tag >> 16;
         console::printf(" #%u %s",
             static_cast<unsigned>(g_hold_max_tag & 0xffffu),
-            (g_hold_max_tag >> 16) == 0 ? "posix" : "native");
+            tag_subsystem < kTagSubsystems ? kTagSubsystemNames[tag_subsystem] : "?");
     }
     console::printf(")\n");
     g_hold_max_tag = kNoTag;
@@ -847,9 +883,12 @@ void report_lock_stats() {
         if (best == nullptr) {
             break;
         }
+        // The slot is the number modulo kTagSlots: a native number gets its
+        // 0x1000 back.
+        const bool native = best_subsystem == static_cast<uint32_t>(subsystem::Id::native);
         console::printf(" %s#%u=%llu/%llu/%llu",
-            best_subsystem == 0 ? "posix" : "native",
-            static_cast<unsigned>(best_subsystem == 0 ? best_slot : 0x1000u + best_slot),
+            kTagSubsystemNames[best_subsystem],
+            static_cast<unsigned>(native ? 0x1000u + best_slot : best_slot),
             (unsigned long long)(to_us(best->hold_cycles) / 1000ull),
             (unsigned long long)to_us(best->hold_max),
             (unsigned long long)best->holds);

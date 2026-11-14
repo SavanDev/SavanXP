@@ -188,6 +188,13 @@ the files the references came from. The damaged images are made from `hello`
 by `subsystems/linux/profile/damage.py`. Test images get all of them, with
 the references, under `/system/linux/fixtures`.
 
+**In `smp-stats`.** A trapped call is tagged `linux#N` and counted at the
+`syscall` door, not at the fault door it came in by
+([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#reading-smp-stats)). That is
+what the trap-cost measurement of L3 reads. Under TCG, `startup`'s loop
+already shows about 465,000 `write` calls per 2-second window holding the
+lock 1.1 s of it; TCG is not the measurement, KVM is.
+
 **Executable in the image.** A Linux executable has no suffix to tell it
 by. `tools/sxfs_sync.py` gives mode 0755 to every file under `system/linux/`
 that is executable on the build host, which is how the build leaves the

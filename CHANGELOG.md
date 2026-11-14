@@ -203,6 +203,10 @@ Cut-off notes:
 
 ### Changed
 
+- **`smp-stats` names Linux system calls (`linux#N`) and counts them at the `syscall` door, not the fault door they
+  trap through; `top held` has a row per subsystem.** Before, Linux holds were left out of `top held` and the longest
+  hold called them `native`.
+
 - **The lowest user address is `0x10000` (`kUserFloor`) for every subsystem, down from `0x400000`.** SDK programs still
   load at `0x400000` (`kUserBase`); a Linux `ET_EXEC` linked lower now loads. See
   [USER_ADDRESS_SPACE.md](docs/kernel/USER_ADDRESS_SPACE.md).

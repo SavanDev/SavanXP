@@ -511,6 +511,12 @@ smp-stats: top held ms/max us/calls: native#4117=702/4156/48324 posix#39=391/577
   (`0x1015`), `posix#39` is `SAVANXP_SYS_POLL`. This is the line that says
   which subsystem a split would relieve; the longest hold only says who froze
   the others once.
+- Linux system calls (SSL) appear as `linux#N`, with Linux's own numbers
+  (`linux#1` is `write`). They enter through the invalid-opcode trap, the
+  fault door, and are counted as `syscall` once the kernel recognizes the
+  instruction (`smp::reclassify_lock_hold`). The `top held` table has a row
+  per subsystem, sized from `subsystem::Id`, so a new subsystem cannot be
+  left out of it.
 - `report=` is what the previous report cost: the tick that printed it,
   `timer-stats:` included, with the lock held. It is kept out of the window it
   opens — before, it was the "longest hold" of every quiet window, 25-40 ms
