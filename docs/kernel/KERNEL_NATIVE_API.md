@@ -600,7 +600,8 @@ are refused.
   handle queue as the POSIX `pipe_send_handle`, for native processes.
 - **POSIX processes reach the native object calls.** The POSIX dispatcher
   forwards every number in `native_call_open_to_all_subsystems` (handles,
-  events, sections, waits, pipe and device I/O, `OPEN_FILE` for reading, ports,
+  events, sections, waits, pipe and device I/O, `OPEN_FILE` for reading,
+  `OPEN_DIRECTORY` and `READ_DIRECTORY`, ports,
   the clock) to the native
   dispatcher, as a Win32 process calls ntdll. The lifecycle calls (EXIT, SPAWN,
   WAITPID) and the standalone ones (INFO, LOG, GFX) stay native-only: a

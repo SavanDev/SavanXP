@@ -1071,6 +1071,8 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_READ:
         case SXN_SYS_WRITE:
         case SXN_SYS_OPEN_FILE:
+        case SXN_SYS_OPEN_DIRECTORY:
+        case SXN_SYS_READ_DIRECTORY:
         case SXN_SYS_OPEN_DEVICE:
         case SXN_SYS_DEVICE_CONTROL:
         case SXN_SYS_CLOCK:

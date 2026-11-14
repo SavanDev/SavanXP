@@ -355,7 +355,10 @@ enum sxn_syscall_number {
     SXN_SYS_QUERY_PATH = 0x103d,
     /* rdi = absolute path. Opens a directory for listing with
      * READ_DIRECTORY; needs read permission on it. A handle, -ENOTDIR for
-     * anything else, -ENOENT, -EACCES, -EINVAL. FindFirstFile's open half. */
+     * anything else, -ENOENT, -EACCES, -EINVAL. FindFirstFile's open half.
+     * Open to every subsystem, with READ_DIRECTORY: the shared-library loader
+     * lists /lib with them to find a newer library than the one a program
+     * names, in a POSIX process as in a native one. */
     SXN_SYS_OPEN_DIRECTORY = 0x103e,
     /* rdi = directory handle, rsi = struct sxn_directory_entry (written),
      * rdx = its size. The next entry, in no particular order and without

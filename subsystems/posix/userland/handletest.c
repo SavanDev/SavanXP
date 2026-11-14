@@ -346,9 +346,43 @@ static int test_open_file_from_posix(void) {
     return 1;
 }
 
+/* SXN_SYS_OPEN_DIRECTORY and READ_DIRECTORY from POSIX: how the loader lists
+ * /lib for a newer library than the one a program names. The handle is a
+ * descriptor, closed with the POSIX call. */
+static int test_list_directory_from_posix(void) {
+    struct sxn_directory_entry entry;
+    long directory;
+    long result;
+    int found = 0;
+
+    if (!expect_success(directory = sxn_open_directory("/system"), "native open directory")) {
+        return 0;
+    }
+    while ((result = sxn_read_directory(directory, &entry)) == 1) {
+        if (strcmp(entry.name, "native-file-test.txt") == 0 && entry.info.type == SXN_FILE_TYPE_FILE) {
+            found = 1;
+        }
+    }
+    if (!expect_success(result, "native read directory") ||
+        !expect_success(savanxp_close((int)directory), "close native directory")) {
+        return 0;
+    }
+    if (!found) {
+        eprintf("handletest: the native listing of /system did not include its fixture\n");
+        return 0;
+    }
+    if (!expect_error(sxn_open_directory("system"), SAVANXP_EINVAL, "native open of a relative directory") ||
+        !expect_error(sxn_open_directory("/system/native-file-test.txt"), SAVANXP_ENOTDIR,
+                      "native open of a file as a directory")) {
+        return 0;
+    }
+    return 1;
+}
+
 int main(void) {
     if (!test_section_round_trip() ||
         !test_open_file_from_posix() ||
+        !test_list_directory_from_posix() ||
         !test_rejections() ||
         !test_across_fork() ||
         !test_queue_released_with_pipe() ||

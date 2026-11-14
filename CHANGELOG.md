@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **POSIX programs can list a directory through the native calls, `sxn_open_directory` and `sxn_read_directory`
+  (`SXN_SYS_OPEN_DIRECTORY`, `SXN_SYS_READ_DIRECTORY`); the handle is a descriptor.** `handletest` asserts it.
+
 - **SUN programs can map shared libraries: `savanxp_program(NATIVE)` takes `LINK_PROFILE PIE` and `DEPENDS`, through the
   loader POSIX uses, now `system/loader/ldso.c`; `<dlfcn.h>` is POSIX's layer over it (`include/loader/loader.h`).**
   The `sun-libtest` scenario maps `libmath` from SUN. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).
