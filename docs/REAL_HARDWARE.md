@@ -1,7 +1,7 @@
 # Real hardware: the Compaq Evo N1020v case
 
 > **Status: Route A has a working i386 prototype in QEMU, through the minimal
-> graphical desktop and PS/2 mouse step. Physical hardware is not validated.**
+> graphical desktop and preemptive process lifecycle. Physical hardware is not validated.**
 > This document records the porting route and the remaining hardware gaps.
 >
 > The reference machine is a **Compaq Evo N1020v** (2002): a 32-bit Pentium 4
@@ -150,9 +150,9 @@ from the MADT instead of Limine's `goto_address`), and paging itself (bootstrapp
 | Package | Size | Notes |
 | --- | --- | --- |
 | Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed.** `SAVANXP_ARCH` (`x86_64` default, `i386`) picks the triple, the flags of each compile profile, the kernel script (`linker.ld`/`linker32.ld`) and the link emulation; [`tools/arch-env.sh`](../tools/arch-env.sh) carries the same mapping to the scripts outside CMake |
-| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Landed:** Multiboot2 entry, flat GDT/TSS, IDT with exceptions and IRQs, PIC+PIT, PS/2, COM1 and the EGA text console, ATA/SxFS mount, ELF32 ring 3 and syscalls live in [`arch/x86`](../arch/x86); `fxsave` context and the AP trampolines are not there yet |
+| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Landed:** Multiboot2 entry, flat GDT/TSS, IDT with exceptions and IRQs, PIC+PIT, PS/2, COM1 and the EGA text console, ATA/SxFS mount, ELF32 ring 3 and syscalls live in [`arch/x86`](../arch/x86); `fxsave` context and per-process stacks have landed; AP trampolines remain future work |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | **Landed.** The bootstrap maps the first 1 GiB identity with 4 MiB PSE pages and reports over serial; `EFER` does not exist in 32-bit mode |
-| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
+| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. **Partial:** private per-process CR3 maps with a common ELF32 virtual window and supervisor kernel aliases; bounded static backing, no section views or ASLR. See [i386 processes](I386_PROCESSES.md) |
 | `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
 | Heap off HHDM pointers | S | [`heap.cpp:224-244`](../kernel/heap.cpp) builds arenas straight on the direct map |
 | Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
@@ -174,7 +174,8 @@ Order of work, with each step independently bootable and testable:
 `ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) ->
 `PS/2 and the desktop` (landed: keyboard delivery, graphical console,
 PS/2 cursor and a minimal ring 3 desktop) ->
-`isolation features, if ever`.
+`private contexts + PIT scheduler + spawn/wait/exit` (landed;
+[I386_PROCESSES.md](I386_PROCESSES.md)) -> `finer memory/fault isolation`.
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
 `partition` and `sxfs` compiled for `i386` untouched, `runtime.cpp` only needed the
@@ -191,14 +192,14 @@ target is the same SDK with the 32-bit branches of `crt0.S` and `libc.c`, a
 `cmake/userland-i386.cmake` into `disk-i386.img`. The implemented syscall subset
 includes stdin keyboard
 events, output, timing, system information and `/dev/gpu0` open/close/ioctl.
-It supports the fixed `sysinfo -> sh32 -> desktop32` launch chain; general
-process spawning, scheduling and the rest of POSIX remain future work.
+PID 1 (`init32`) owns startup/restart policy. `spawn`, `waitpid`, `exit` and
+PIT-driven scheduling run independent ELF32 processes; the broader POSIX surface
+remains future work. See [the process design and regression](I386_PROCESSES.md).
 
-Two things measured while getting there, worth keeping: the frame pointer the
-stub hands to the syscall handler arrives one word high, so the handler reads the
-frame from `esp0` instead of trusting it; and `mov %ax, %ds` has no 32-bit form,
-so clang's inline assembler turns it into a form that does not exist in 32-bit
-mode — the user data segments are loaded from an assembly routine.
+IRQ and syscall entry now share an explicit saved-frame layout, including data
+segments and FPU/SSE state per process. The handlers receive that frame directly
+and return the frame selected by the scheduler; no stack-offset workaround is
+used. The earlier single-process bootstrap has been replaced by this path.
 
 The keyboard landed next. `cpu::initialize()` now remaps the legacy PIC to
 vectors 0x20..0x2F and installs all sixteen gates (a IRQ without a driver just
@@ -234,10 +235,11 @@ static backing store. Both PS/2 IRQs drain the shared 8042 port using its AUX
 status bit; IRQ12 unmasks the master PIC cascade, and IRQ entry preserves all
 interrupted registers before reading the IRQ number.
 
-After `exit` in `sh32`, `desktop32` opens `/dev/gpu0`, reads the geometry and
+The `desktop` command in `sh32` launches a child `desktop32`, which opens `/dev/gpu0`, reads the geometry and
 acquires video. Acquisition keeps serial diagnostics from painting over the
 client's pixels; release, close and process exit restore console output. One
-fixed GPU descriptor is supported; duplicate opens return `EBUSY`. Presentation
+fixed GPU descriptor is supported; it belongs to its opener PID and duplicate
+opens return `EBUSY`. Presentation
 validates user ranges and supports full frames or clipped regions. The desktop
 uses a 256 KiB buffer to present 64-row strips and redraws every 250 ms.
 
@@ -246,7 +248,8 @@ rendered text and a PS/2 cursor with movement/button decoding. The window's clos
 box and taskbar are decorative; there is no window manager or mouse-event device
 for applications yet. Wheel input, 24-bit video, larger resolutions, scheduling,
 per-process address spaces and physical-hardware validation remain outside this
-step. Isolation is the next roadmap decision, not an implemented guarantee.
+step. The subsequent [process milestone](I386_PROCESSES.md) adds private maps,
+preemptive scheduling and spawn/wait/exit; finer fault isolation remains future work.
 
 The landed packages are exercised with:
 
@@ -272,7 +275,8 @@ run does the same with `disk-i386.img` and asserts that the 32-bit `sysinfo`
 ran in ring 3, printed its report and exited. `--expect-key` types those keys
 over QMP once the keyboard is up and asserts the whole delivery path: the raw
 scancode and the framebuffer console token. `--expect-sh` checks command echo
-and answers from stdin through `READ`. `--expect-desktop ELF32` exits the shell,
+and answers from stdin through `READ`. `--expect-desktop ELF32` launches the
+desktop from the shell,
 checks that `clear` erases all graphical console rows, then checks desktop
 geometry and the title/subtitle/taskbar glyphs against the font
 tables in the supplied binary, injects mouse motion/buttons alongside keyboard

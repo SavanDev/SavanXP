@@ -19,12 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qmp_client import QmpClient
 
 SUCCESS_TOKEN = "I386 BOOT OK"
+PROCESS_TOKEN = "process: private stacks, address spaces and FXSAVE ready"
+SCHEDULER_TOKEN = "scheduler: PIT round-robin, 20 ms quantum"
 FAILURE_TOKEN = "I386 BOOT FAIL"
 PAGING_TOKEN = "paginacion: identidad 0..1 GiB"
 SXFS_TOKEN = "SXFS ROOT OK"
-USER_LOADED_TOKEN = "user: /disk/bin/sysinfo cargado"
+USER_LOADED_TOKEN = "user: /disk/bin/sysinfo loaded"
 USER_OUTPUT_TOKEN = "sxfs_files:"
-USER_EXIT_TOKEN = "proceso salio con codigo 0"
+USER_EXIT_TOKEN = "process exited with status 0"
 PS2_TOKEN = "ps2: teclado listo"
 # El PIT se programa en cada arranque (sin disco ni programa de por medio),
 # asi que su token se exige junto al de la paginacion.
@@ -65,7 +67,15 @@ KEY_SCANCODES = {
     "x": 0x2D,
     "y": 0x15,
     "0": 0x0B,
+    "1": 0x02,
+    "2": 0x03,
+    "3": 0x04,
+    "4": 0x05,
     "5": 0x06,
+    "6": 0x07,
+    "7": 0x08,
+    "8": 0x09,
+    "9": 0x0A,
     "enter": 0x1C,
     "space": 0x39,
 }
@@ -110,6 +120,7 @@ KEY_QMP_NAMES = {
 SH32_COMMAND_ANSWERS = {
     "uptime": r"uptime \d+ ms",
     "echo hi": r"hi\r?\n",
+    "multitest": r"MULTITASK PASS\r?\n.*?child status 0",
     "sysinfo": r"sh32: system_info ok, archivos \d+, uptime \d+ ms",
 }
 
@@ -150,6 +161,10 @@ def command_to_keys(command: str) -> tuple[tuple[str, int], ...]:
     otra cosa es un error de programacion del propio test."""
     out: list[tuple[str, int]] = []
     for character in command:
+        if character == "/":
+            # The default Spanish layout places slash on Shift+7.
+            out.append(("/", 0x08))
+            continue
         if character == " ":
             name = "space"
         else:
@@ -196,11 +211,58 @@ def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
     with QmpClient(str(qmp_socket), timeout=10.0) as client:
         for command in commands:
             for name, _scancode in command_to_keys(command):
-                client.tap(KEY_QMP_NAMES.get(name, name))
+                if name == "/":
+                    client.chord("shift", "7")
+                else:
+                    client.tap(KEY_QMP_NAMES.get(name, name))
                 time.sleep(0.2)
             # El comando ya entro: el proceso tardo un par de ticks en leerlo
             # y responder, y el siguiente no se teclea encima de esa respuesta.
             time.sleep(1.0)
+
+
+def check_shell_processes(qmp_socket: Path, serial: Path) -> None:
+    """Exercise start/wait/run and restart policy through actual shell input."""
+    def wait_for(pattern: str, offset: int) -> re.Match[str]:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            text = shell_transcript(serial.read_text(errors="replace")[offset:])
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                return match
+            time.sleep(0.1)
+        raise RuntimeError(f"shell process command did not produce {pattern!r}")
+
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("start /disk/bin/multitest32 short",))
+    pid = int(wait_for(r"started pid (\d+)", offset)[1])
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, (f"wait {pid}",))
+    wait_for(r"child status 23.*?sh32> ", offset)
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("run /disk/bin/multitest32 short",))
+    wait_for(r"child status 23.*?sh32> ", offset)
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("exit",))
+    wait_for(r"sh32: listo.*?sh32> ", offset)
+
+
+def check_processes(text: str) -> None:
+    """Require overlapping CPU-bound execution and actual PIT preemptions."""
+    for token in ("MULTITASK contexts and waits PASS", "MULTITASK arguments PASS",
+                  "MULTITASK sleep and reclamation PASS", "MULTITASK GPU ownership PASS"):
+        if token not in text:
+            raise RuntimeError(f"missing process regression: {token}")
+    workers = re.findall(r"CPU worker ([12]) pid (\d+) start (\d+) end (\d+) result (\d+)", text)
+    if len(workers) != 2 or {w[0] for w in workers} != {"1", "2"}:
+        raise RuntimeError(f"missing independent workers: {workers}")
+    overlap = min(int(w[3]) for w in workers) - max(int(w[2]) for w in workers)
+    if overlap < 200:
+        raise RuntimeError(f"CPU workers did not overlap for 200 ms: {workers}")
+    for _, pid, start, end, result in workers:
+        count = re.search(rf"process: pid {pid} preemptions (\d+)", text)
+        if result != "0" or int(end) <= int(start) or count is None or int(count[1]) < 3:
+            raise RuntimeError(f"worker {pid} did not preserve context over multiple PIT preemptions")
 
 
 def run_boot(
@@ -216,6 +278,7 @@ def run_boot(
     patterns: tuple[re.Pattern[str], ...] = (),
     desktop_binary: Path | None = None,
     artifacts: Path | None = None,
+    expect_processes: bool = False,
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -230,11 +293,9 @@ def run_boot(
     "I386 BOOT OK", so returning on the bootstrap token alone would report a
     program that is still running.
 
-    The keyboard comes in two phases because there are two consumers.
-    --expect-key taps scancodes as soon as the kernel reports the keyboard up,
-    which is before any program runs. Later, once the shell is up
-    (SH32_TOKEN), --expect-sh types shell commands: the shell only exists
-    then, and the program that ran before it left its stdin empty.
+    Interactive keyboard probes wait for the shell. stdin is a shared stream,
+    so the raw-key probe is erased before typing command sessions; spawning a
+    process no longer resets the keyboard queue.
     """
     serial.unlink(missing_ok=True)
     qemu_log = serial.with_suffix(".qemu.log")
@@ -251,21 +312,30 @@ def run_boot(
     typed = False
     shell_typed = False
     desktop_requested = False
+    process_shell_checked = False
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
+            if "MULTITASK FAIL" in text:
+                raise RuntimeError(text[text.index("MULTITASK FAIL"):].splitlines()[0])
             if FAILURE_TOKEN in text:
                 lines = [line for line in text.splitlines() if line.startswith("savanxp/i386")]
                 reported = lines[-1] if lines else "no reason reported"
                 raise RuntimeError(f"bootstrap halted: {reported}")
-            if keys and not typed and PS2_TOKEN in text:
-                # El teclado se teclea en cuanto el kernel dice que esta listo,
-                # que es antes de que arranque cualquier programa: las teclas
-                # caen en la cola y el primer programa las descarta al entrar
-                # (stdin es estado por proceso). Teclearlas despues dejaria
-                # una ventana en la que el shell hereda una tecla de la fase
-                # anterior y la teclea como parte de su primera linea.
+            input_ready = SH32_TOKEN in text if (shell_commands or desktop_binary) else PS2_TOKEN in text
+            if keys and not typed and input_ready:
+                # Without an interactive session, raw scancodes can be tested
+                # as soon as the controller is ready, even without a root disk.
                 type_keys(qmp_socket, keys)
+                if shell_commands or desktop_binary:
+                    # stdin is now shared rather than reset at every spawn.
+                    # Erase the raw-key probe and enter an empty command so the
+                    # following session starts at a fresh prompt.
+                    with QmpClient(qmp_socket, timeout=10) as client:
+                        for _ in keys:
+                            client.tap("backspace")
+                        client.tap("ret")
+                    time.sleep(0.3)
                 typed = True
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
@@ -280,6 +350,13 @@ def run_boot(
                         continue
                     type_shell(qmp_socket, shell_commands)
                     shell_typed = True
+                if expect_processes and not process_shell_checked and all(
+                    pattern.search(shell_transcript(text)) for pattern in patterns
+                ):
+                    check_processes(text)
+                    check_shell_processes(qmp_socket, serial)
+                    process_shell_checked = True
+                    continue
                 if desktop_binary is not None and not desktop_requested:
                     if SH32_TOKEN not in text or (shell_commands and not all(
                         pattern.search(shell_transcript(text)) for pattern in patterns
@@ -289,11 +366,13 @@ def run_boot(
                     from legacy_desktop_check import check_console_clear
                     type_shell(qmp_socket, ("clear",))
                     check_console_clear(qmp_socket, artifacts)
-                    type_shell(qmp_socket, ("exit",))
+                    type_shell(qmp_socket, ("desktop",))
                     desktop_requested = True
                 if all(token in text for token in require) and all(
                     pattern.search(shell_transcript(text)) for pattern in patterns
                 ):
+                    if expect_processes:
+                        check_processes(text)
                     if desktop_binary is not None:
                         from legacy_desktop_check import check_desktop
                         check_desktop(qmp_socket, desktop_binary, serial, artifacts)
@@ -362,8 +441,10 @@ def main() -> int:
             "its echo plus its answer (repeatable): " + ", ".join(sorted(SH32_COMMAND_ANSWERS))
         ),
     )
+    parser.add_argument("--expect-processes", action="store_true",
+                        help="run multitest32 and prove PIT preemption, FPU preservation and process lifecycle")
     parser.add_argument("--expect-desktop", type=Path, metavar="ELF32",
-                        help="exit sh32 and verify desktop glyphs and PS/2 cursor against ELF32")
+                        help="launch desktop from sh32 and verify desktop glyphs and PS/2 cursor against ELF32")
     parser.add_argument("--artifacts", type=Path,
                         help="retain serial log and desktop screenshots in this directory")
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
@@ -380,6 +461,12 @@ def main() -> int:
     if args.artifacts is not None:
         args.artifacts = args.artifacts.resolve()
         args.artifacts.mkdir(parents=True, exist_ok=True)
+    if args.expect_processes:
+        if disk_image is None:
+            parser.error("--expect-processes requires --disk-image")
+        args.expect_user = True
+        if "multitest" not in args.expect_sh:
+            args.expect_sh.append("multitest")
     qemu_override = os.environ.get("SAVANXP_QEMU")
     qemu = shutil.which(qemu_override or "qemu-system-i386")
     if qemu_override and not qemu:
@@ -414,7 +501,9 @@ def main() -> int:
         if disk_image is not None:
             # snapshot=on: el arranque nunca escribe en la imagen persistente.
             command += ["-drive", f"file={disk_image},format=raw,if=ide,snapshot=on"]
-        require = (SXFS_TOKEN,) if disk_image is not None else ()
+        require = (PROCESS_TOKEN, SCHEDULER_TOKEN)
+        if disk_image is not None:
+            require += (SXFS_TOKEN,)
         detail = " (SxFS root mounted)" if disk_image is not None else ""
         if args.expect_user:
             # El programa del MVP imprime su informe y sale; el kernel informa
@@ -466,7 +555,7 @@ def main() -> int:
             detail = " (desktop glyphs, PS/2 motion, buttons and cursor restoration)"
         run_boot(
             qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
-            shell_commands, patterns, args.expect_desktop, args.artifacts,
+            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes,
         )
     return 0
 

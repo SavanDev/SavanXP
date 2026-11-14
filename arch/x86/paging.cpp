@@ -73,15 +73,8 @@ void paging::enable_identity_1gib() {
         g_page_directory[i] = (i * kPageSize4Mib) | kPdePresent | kPdeWritable | kPdePageSize;
     }
 
-    /* La ventana de usuario es el mismo mapa de identidad con el bit de
-     * usuario en los PDEs que la cubren: el proceso y el kernel comparten
-     * pagina, asi que entrar en ring 3 no invalida TLB ni obliga a mapear
-     * paginas nuevas antes de que el proceso exista. */
-    const uint32_t first_user_pde = paging::kUserWindowBase / kPageSize4Mib;
-    const uint32_t last_user_pde = (paging::kUserWindowEnd - 1u) / kPageSize4Mib;
-    for (uint32_t i = first_user_pde; i <= last_user_pde; ++i) {
-        g_page_directory[i] |= kPdeUser;
-    }
+    // The idle/kernel directory stays supervisor-only. Each process installs
+    // private user mappings in its own directory after its image is loaded.
 
     /* Sin paginacion encendida la direccion del directorio es tambien su
      * direccion fisica, que es lo que CR3 quiere. */
@@ -121,4 +114,24 @@ bool paging::map_identity(uint64_t address, uint32_t bytes) {
     return true;
 }
 
+}
+
+void i386::paging::initialize_process_directory(uint32_t* directory, uint32_t physical_base) {
+    for (uint32_t index = 0; index < 1024; ++index) {
+        directory[index] = g_page_directory[index] & ~kPdeUser;
+    }
+    const uint32_t first = kUserWindowBase / kPageSize4Mib;
+    const uint32_t pages = (kUserWindowEnd - kUserWindowBase) / kPageSize4Mib;
+    for (uint32_t index = 0; index < pages; ++index) {
+        directory[first + index] = (physical_base + index * kPageSize4Mib) |
+            kPdePresent | kPdeWritable | kPdeUser | kPdePageSize;
+    }
+}
+
+void i386::paging::activate(const uint32_t* directory) {
+    write_cr3(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory)));
+}
+
+void i386::paging::activate_kernel() {
+    activate(g_page_directory);
 }

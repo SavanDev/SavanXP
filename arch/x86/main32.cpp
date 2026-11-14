@@ -306,7 +306,7 @@ namespace {
 
 /* Programa del MVP: es el primero que el kernel i386 ejecuta en ring 3, asi
  * que tiene que ser uno que solo use syscalls de escritura y de consulta. */
-constexpr const char* kUserProgramPath = "/disk/bin/sysinfo";
+constexpr const char* kUserProgramPath = "/disk/bin/init32";
 
 }
 
@@ -394,9 +394,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
 
     serial::write("I386 BOOT OK\n");
 
-    /* Primer salto a ring 3 del objetivo: el proceso vive hasta que llama a
-     * exit, y el kernel se para entonces. El token de arranque ya esta
-     * escrito, asi que un fallo al cargar el programa no lo oculta. */
+    // Userland init owns boot policy; the kernel only starts its first process.
     user32::run(kUserProgramPath);
 
     for (;;) {

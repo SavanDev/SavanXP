@@ -1,4 +1,6 @@
 #include "cpu.hpp"
+#include "context.hpp"
+#include "process.hpp"
 
 #include <stdint.h>
 
@@ -116,11 +118,13 @@ constexpr uint32_t kPicVectorOffset = 0x20;
 
 /* Marco comun de los IRQ: el stub apilo el numero, el handler corre y luego
  * se acusa al PIC. El llamador es interrupts32.S. */
-extern "C" void i386_handle_irq(uint32_t irq) {
+extern "C" ContextFrame* i386_handle_irq(ContextFrame* frame) {
+    const uint32_t irq = frame->vector;
     if (irq < kIrqCount && g_irq_handlers[irq] != nullptr) {
         g_irq_handlers[irq]();
     }
     cpu::acknowledge_irq(static_cast<uint8_t>(irq));
+    return irq == 0 ? process::timer(frame) : frame;
 }
 
 inline void outb(uint16_t port, uint8_t value) {
@@ -182,13 +186,13 @@ void write_idt_gate(uint32_t vector, uint32_t handler, uint8_t attributes) {
 
 }
 
-extern "C" [[noreturn]] void i386_report_exception(SyscallFrame* frame, uint32_t vector) {
+extern "C" [[noreturn]] void i386_report_exception(const uint32_t* frame, uint32_t vector) {
     /* Lo que apilo el processor, de menor a mayor direccion: codigo de error
      * (si el vector lo genera), eip, cs y eflags, mas esp y ss si hubo cambio
      * de privilegio. El codigo de error va el primero, medido contra QEMU con
      * -d int en los dos casos que aparecieron (#SS al cargar el selector de
      * datos y #GP con un cs basura). */
-    const uint32_t* saved = reinterpret_cast<const uint32_t*>(frame) + kSyscallFrameWords;
+    const uint32_t* saved = frame + 11;
     const bool has_error = vector < 32u && kErrorCodeVectors[vector];
 
     serial::write("i386: excepcion vector ");
@@ -332,12 +336,12 @@ void cpu::load_user_segments() {
 
 void cpu::enable_fpu() {
     uint32_t cr0 = read_cr0();
-    cr0 &= ~(1u << 2); /* EM: sin emulacion, el FPU es real */
+    cr0 &= ~((1u << 2) | (1u << 3)); // Clear EM and TS for eager FPU switching.
     cr0 |= (1u << 1);  /* MP: el FPU real, sin emulacion */ 
     write_cr0(cr0);
 
     uint32_t cr4 = read_cr4();
-    cr4 |= (1u << 9); /* OSFXSR: el CR0 ya no ignora los errores de SSE */
+    cr4 |= (1u << 9) | (1u << 10); // OSFXSR | OSXMMEXCPT.
     write_cr4(cr4);
 }
 

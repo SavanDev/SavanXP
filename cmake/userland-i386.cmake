@@ -23,8 +23,8 @@ target_include_directories(savanxp_i386_user_runtime PRIVATE
 )
 target_compile_options(savanxp_i386_user_runtime PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
 
-# Fixed boot chain: sysinfo -> sh32 -> desktop32. keyecho is a standalone
-# keyboard diagnostic. All four use the SDK runtime and the i386 linker script.
+# Userland init owns startup. The shell launches independent programs through
+# the same SDK runtime and ELF32 linker script as the diagnostic clients.
 add_executable(savanxp-i386-sysinfo subsystems/posix/userland/sysinfo.c)
 target_include_directories(savanxp-i386-sysinfo PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -51,7 +51,7 @@ target_link_libraries(savanxp-i386-keyecho PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-keyecho PROPERTIES OUTPUT_NAME keyecho SUFFIX "")
 
-# La shell minima: el segundo programa que el kernel lanza (sysinfo -> sh32).
+# Interactive shell, launched and restarted by init32.
 add_executable(savanxp-i386-sh32 subsystems/posix/userland/sh32.c)
 target_include_directories(savanxp-i386-sh32 PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -64,7 +64,7 @@ target_link_libraries(savanxp-i386-sh32 PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sh32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sh32 PROPERTIES OUTPUT_NAME sh32 SUFFIX "")
 
-# Fullscreen desktop, launched after sh32 exits; renders 64-row strips
+# Fullscreen desktop, launched as a shell child; renders 64-row strips
 # through /dev/gpu0 to keep its working buffer small.
 add_executable(savanxp-i386-desktop32 subsystems/posix/userland/desktop32.c)
 target_include_directories(savanxp-i386-desktop32 PRIVATE
@@ -78,8 +78,37 @@ target_link_libraries(savanxp-i386-desktop32 PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-desktop32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-desktop32 PROPERTIES OUTPUT_NAME desktop32 SUFFIX "")
 
+# PID 1 owns process startup and restart policy.
+add_executable(savanxp-i386-init32 subsystems/posix/userland/init32.c)
+target_include_directories(savanxp-i386-init32 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_options(savanxp-i386-init32 PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-init32 PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-init32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-init32 PROPERTIES OUTPUT_NAME init32 SUFFIX "")
+
+# Runtime regression: two CPU-bound workers plus process-lifecycle checks.
+add_executable(savanxp-i386-multitest32
+    subsystems/posix/userland/multitest32.c
+    subsystems/posix/userland/context_probe32.S
+)
+target_include_directories(savanxp-i386-multitest32 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_options(savanxp-i386-multitest32 PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-multitest32 PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-multitest32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-multitest32 PROPERTIES OUTPUT_NAME multitest32 SUFFIX "")
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32 savanxp-i386-desktop32
+    DEPENDS savanxp-i386-multitest32 savanxp-i386-init32 savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32 savanxp-i386-desktop32
     COMMENT "Linking the i386 userland"
 )
 
@@ -96,6 +125,10 @@ add_custom_target(savanxp_i386_diskfs
             "$<TARGET_FILE:savanxp-i386-sh32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sh32"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "$<TARGET_FILE:savanxp-i386-desktop32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/desktop32"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:savanxp-i386-init32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/init32"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:savanxp-i386-multitest32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/multitest32"
     DEPENDS savanxp_i386_userland
     COMMENT "Staging the i386 disk tree"
     VERBATIM

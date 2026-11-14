@@ -175,6 +175,28 @@ static void command_echo(int argc, char* argv[]) {
     putchar_fd(1, '\n');
 }
 
+static void command_launch(const char* path, const char* const* argv, int argc, int background) {
+    long pid = spawn(path, argv, argc);
+    if (pid < 0) {
+        puts_out("sh32: spawn failed\n");
+        return;
+    }
+    if (background) {
+        puts_out("started pid ");
+        print_u64((uint64_t)pid);
+        puts_out("\n");
+    } else {
+        int status = 0;
+        if (savanxp_waitpid((int)pid, &status) != pid) {
+            puts_out("sh32: wait failed\n");
+        } else {
+            puts_out("child status ");
+            print_u64((unsigned int)status);
+            puts_out("\n");
+        }
+    }
+}
+
 static int run_command(int argc, char* argv[]) {
     if (argc == 0) {
         return 1;
@@ -183,7 +205,37 @@ static int run_command(int argc, char* argv[]) {
         return 0;
     }
     if (strcmp(argv[0], "help") == 0) {
-        puts_out("comandos: help sysinfo uptime sleep echo clear exit\n");
+        puts_out("commands: help sysinfo uptime sleep echo clear run start wait desktop multitest exit\n");
+        return 1;
+    }
+    if (strcmp(argv[0], "run") == 0 || strcmp(argv[0], "start") == 0) {
+        if (argc < 2) {
+            puts_out("usage: run|start PATH [ARGS]\n");
+        } else {
+            command_launch(argv[1], (const char* const*)&argv[1], argc - 1,
+                           strcmp(argv[0], "start") == 0);
+        }
+        return 1;
+    }
+    if (strcmp(argv[0], "wait") == 0) {
+        int ok = 0;
+        unsigned long pid = parse_ulong(argc > 1 ? argv[1] : 0, &ok);
+        int status = 0;
+        if (!ok || pid == 0 || pid >= 0x80000000u ||
+            savanxp_waitpid((int)pid, &status) < 0) {
+            puts_out("sh32: wait failed\n");
+        } else {
+            puts_out("child status ");
+            print_u64((unsigned int)status);
+            puts_out("\n");
+        }
+        return 1;
+    }
+    if (strcmp(argv[0], "desktop") == 0 || strcmp(argv[0], "multitest") == 0) {
+        const char* path = strcmp(argv[0], "desktop") == 0 ?
+                           "/disk/bin/desktop32" : "/disk/bin/multitest32";
+        const char* arguments[] = {path};
+        command_launch(path, arguments, 1, 0);
         return 1;
     }
     if (strcmp(argv[0], "sysinfo") == 0) {

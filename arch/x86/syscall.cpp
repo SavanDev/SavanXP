@@ -9,6 +9,7 @@
 #include "kernel/string.hpp"
 #include "pit.hpp"
 #include "ps2_32.hpp"
+#include "process.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 #include "user32.hpp"
@@ -19,25 +20,11 @@ namespace syscall {
 
 namespace {
 
-/* Ventana de usuario: los mismos cuatro PDEs de 4 MiB que paging.cpp marca
- * con el bit de usuario. Todo puntero que venga de un proceso tiene que caer
- * aqui antes de tocarlo. */
-constexpr uint32_t kUserWindowBase = 0x08000000u;
-constexpr uint32_t kUserWindowEnd = 0x09000000u;
-
-/* Fixed launch chain: sysinfo -> sh32 -> desktop32. keyecho remains a
- * standalone keyboard diagnostic in the i386 volume. */
-constexpr const char* kShellPath = "/disk/bin/sh32";
-/* The desktop runs after sh32 exits: there is no scheduler yet. */
-constexpr const char* kDesktopPath = "/disk/bin/desktop32";
-
-bool g_gpu_open = false;
+// The GPU is global; only its owning process may operate the descriptor.
+uint32_t g_gpu_owner = 0;
 
 bool is_user_range(uint32_t address, uint32_t size) {
-    if (address < kUserWindowBase || address >= kUserWindowEnd) {
-        return false;
-    }
-    return static_cast<uint64_t>(address) + size <= kUserWindowEnd;
+    return process::user_range(address, size);
 }
 
 /* Validate every user byte before comparing the device path. */
@@ -57,6 +44,19 @@ bool user_path_equals(uint32_t address, const char* text) {
     return false;
 }
 
+int copy_user_string(uint32_t address, char* output, uint32_t capacity) {
+    for (uint32_t index = 0; index < capacity; ++index) {
+        if (!is_user_range(address + index, 1)) {
+            return SAVANXP_EFAULT;
+        }
+        output[index] = *reinterpret_cast<const char*>(address + index);
+        if (output[index] == '\0') {
+            return 0;
+        }
+    }
+    return SAVANXP_E2BIG;
+}
+
 uint32_t failure(int error) {
     return static_cast<uint32_t>(-static_cast<int32_t>(error));
 }
@@ -72,15 +72,14 @@ void copy_text(char* destination, size_t capacity, const char* source) {
 
 }
 
-void handle(SyscallFrame& frame) {
+void handle(ContextFrame& frame) {
     /* Los argumentos se leen de edi/esi/edx y no de ebx/ecx/edx: las
      * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
      * ABI, y el usuario pone el numero en eax. */
     switch (frame.eax) {
         case kSysRead: {
-            /* stdin del objetivo i386 es la cola del teclado: un evento
-             * savanxp_input_event por lectura, sin flags O_NONBLOCK todavia.
-             * Solo existe el fd 0 (ningun archivo esta abierto por proceso). */
+            // stdin is the shared keyboard stream, one event per read.
+            // A blocked read yields its frame to the scheduler.
             if (frame.edi != kStdinFd) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
@@ -93,19 +92,57 @@ void handle(SyscallFrame& frame) {
                 frame.eax = failure(SAVANXP_EINVAL);
                 return;
             }
-            /* Espera bloqueante con sti;hlt: el gate de int $0x80 llega con
-             * IF=0, asi que el chequeo y la espera son atomicos contra la
-             * IRQ1; y un IRQ pendiente en el sti despierta el hlt de
-             * inmediato (la sombra de sti lo entrega antes de dormir), asi
-             * que una tecla que llegue entre las dos instrucciones no se
-             * pierde. pop_event restaura el IF previo (0). */
             savanxp_input_event event = {};
-            while (!ps2_32::pop_event(event)) {
-                asm volatile("sti\n\thlt");
+            if (ps2_32::pop_event(event)) {
+                memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.esi)), &event,
+                       sizeof(event));
+                frame.eax = sizeof(event);
+            } else {
+                process::read_input(frame.esi);
             }
-            memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.esi)), &event,
-                   sizeof(event));
-            frame.eax = static_cast<uint32_t>(sizeof(event));
+            return;
+        }
+        case kSysSpawn: {
+            char path[256];
+            int error = copy_user_string(frame.edi, path, sizeof(path));
+            if (error != 0) {
+                frame.eax = failure(error);
+                return;
+            }
+            if (frame.edx > SAVANXP_MAX_ARGC) {
+                frame.eax = failure(SAVANXP_E2BIG);
+                return;
+            }
+            if (frame.edx != 0 && !is_user_range(frame.esi, frame.edx * sizeof(uint32_t))) {
+                frame.eax = failure(SAVANXP_EFAULT);
+                return;
+            }
+            char strings[SAVANXP_MAX_ARGC][SAVANXP_MAX_ARG_LENGTH + 1];
+            const char* arguments[SAVANXP_MAX_ARGC];
+            for (uint32_t index = 0; index < frame.edx; ++index) {
+                uint32_t address;
+                memcpy(&address, reinterpret_cast<const void*>(frame.esi + index * 4), 4);
+                error = copy_user_string(address, strings[index], sizeof(strings[index]));
+                if (error != 0) {
+                    frame.eax = failure(error);
+                    return;
+                }
+                arguments[index] = strings[index];
+            }
+            frame.eax = static_cast<uint32_t>(process::spawn(path, arguments, frame.edx));
+            return;
+        }
+        case kSysWaitPid: {
+            if (frame.esi != 0 && !is_user_range(frame.esi, sizeof(int))) {
+                frame.eax = failure(SAVANXP_EFAULT);
+                return;
+            }
+            frame.eax = static_cast<uint32_t>(process::wait(static_cast<int>(frame.edi), frame.esi));
+            return;
+        }
+        case kSysYield: {
+            process::yield();
+            frame.eax = 0;
             return;
         }
         case kSysOpen: {
@@ -118,18 +155,18 @@ void handle(SyscallFrame& frame) {
                 frame.eax = failure(SAVANXP_ENODEV);
                 return;
             }
-            if (g_gpu_open) {
+            if (g_gpu_owner != 0) {
                 frame.eax = failure(SAVANXP_EBUSY);
                 return;
             }
-            g_gpu_open = true;
+            g_gpu_owner = process::current_pid();
             frame.eax = kGpuFd;
             serial::write("gpu0: opened by userland\n");
             return;
         }
         case kSysClose: {
-            if (frame.edi == kGpuFd && g_gpu_open) {
-                g_gpu_open = false;
+            if (frame.edi == kGpuFd && g_gpu_owner == process::current_pid()) {
+                g_gpu_owner = 0;
                 fb32::console_set_enabled(true);
                 frame.eax = 0;
                 return;
@@ -139,7 +176,7 @@ void handle(SyscallFrame& frame) {
             return;
         }
         case kSysIoctl: {
-            if (frame.edi != kGpuFd || !g_gpu_open) {
+            if (frame.edi != kGpuFd || g_gpu_owner != process::current_pid()) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
             }
@@ -236,10 +273,9 @@ void handle(SyscallFrame& frame) {
             return;
         }
         case kSysSleepMs: {
-            /* frame.edi trae los ms como unsigned long del SDK. La espera la
-             * hace pit::sleep_ms con sti;hlt, que deja el IF previo (0) al
-             * volver; la read bloqueante de arriba usa el mismo patron. */
-            pit::sleep_ms(frame.edi);
+            // Record a deadline; the timer wakes this process without keeping
+            // a suspended kernel continuation on its stack.
+            process::sleep(frame.edi);
             frame.eax = 0;
             return;
         }
@@ -260,7 +296,7 @@ void handle(SyscallFrame& frame) {
             return;
         }
         case kSysGetPid: {
-            frame.eax = kInitPid;
+            frame.eax = process::current_pid();
             return;
         }
         case kSysSystemInfo: {
@@ -291,7 +327,7 @@ void handle(SyscallFrame& frame) {
             info.sxfs_total_bytes = sxfs::total_bytes(volume);
             info.sxfs_used_bytes = sxfs::used_bytes(volume);
             info.sxfs_free_bytes = sxfs::free_bytes(volume);
-            info.process_count = 1;
+            info.process_count = process::count();
             info.cpu_count = 1;
             info.cpu_online = 1;
 
@@ -304,7 +340,7 @@ void handle(SyscallFrame& frame) {
             return;
         }
         case kSysExit: {
-            serial::write("i386: proceso salio con codigo ");
+            serial::write("i386: process exited with status ");
             serial::write_dec(frame.edi);
             /* El uptime en la misma linea: es la prueba mas directa de que el
              * PIT corre (sysinfo sale con IF=1 desde ring 3, asi que ya hay
@@ -312,20 +348,14 @@ void handle(SyscallFrame& frame) {
             serial::write(", uptime ");
             serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
             serial::write(" ms\n");
-            /* Launch each stage once; keep IRQs live if the desktop exits. */
-            g_gpu_open = false;
-            fb32::console_set_enabled(true);
-            static uint32_t stage = 0;
-            if (stage == 0) {
-                stage = 1;
-                user32::run(kShellPath);
+            if (g_gpu_owner == process::current_pid()) {
+                g_gpu_owner = 0;
+                fb32::console_set_enabled(true);
             }
-            if (stage == 1) {
-                stage = 2;
-                user32::run(kDesktopPath);
-            }
-            cpu::idle_with_interrupts();
+            process::exit(static_cast<int>(frame.edi));
+            return;
         }
+
         default: {
             serial::write("i386: syscall ");
             serial::write_dec(frame.eax);
@@ -338,23 +368,10 @@ void handle(SyscallFrame& frame) {
 
 }  // namespace syscall
 
-/* El stub de interrupts32.S apila, por debajo de esp0 y en este orden: el
- * puntero al marco (4), %es (4), %ds (4), los ocho registros de pusha (32) y
- * el marco del processor (20). Son 64 bytes fijos, asi que el marco se lee
- * desde esp0 en vez de fiarse del puntero que empuja el stub: ese puntero
- * llega desplazado una palabra y hacia que el manejader lea el eip del
- * proceso donde deberia estar eax. */
-constexpr uint32_t kSyscallFrameOffset = 64;
-
-SyscallFrame* current_frame() {
-    return reinterpret_cast<SyscallFrame*>(
-        static_cast<uintptr_t>(cpu::ring0_stack_top()) - kSyscallFrameOffset);
-}
-
-/* El stub de interrupts32.S llama a este simbolo plano: el ensamblador no
- * puede escribir un nombre con espacio de nombres. */
-extern "C" void i386_handle_syscall() {
-    syscall::handle(*current_frame());
+// The assembly passes the actual saved frame and restores the returned one.
+extern "C" ContextFrame* i386_handle_syscall(ContextFrame* frame) {
+    syscall::handle(*frame);
+    return process::finish_syscall(frame);
 }
 
 } // namespace i386

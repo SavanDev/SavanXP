@@ -29,8 +29,8 @@ void initialize();
  * usuario ejecuta int $0x80. */
 void set_ring0_stack(uint32_t stack_top);
 
-/* Tope de esa pila. El manejador de syscall lee el marco del proceso desde
- * ahi en vez de fiarse del puntero que empuja el stub (ver syscall.cpp). */
+/* Current TSS.esp0, available for diagnostics. Trap handlers receive their
+ * actual saved frame directly from assembly. */
 uint32_t ring0_stack_top();
 
 /* Carga ds/es/fs/gs con el selector de datos de usuario (0x1b). Tiene que
@@ -38,18 +38,16 @@ uint32_t ring0_stack_top();
  * "mov %ax, %ds" en la forma de 32 bits, que no existe en modo 32. */
 void load_user_segments();
 
-/* CR0.EM=0, CR0.MP=1 y CR4.OSFXSR: el userland se compila con SSE/SSE2, asi
- * que sin esto la primera instruccion xmm de un proceso aborta. El kernel se
- * compila con -mno-sse y no toca el estado del FPU. */
+/* Enable x87/SSE for eager FXSAVE/FXRSTOR context switching. Kernel C++ is
+ * compiled without SSE; only the context helpers touch user FPU state. */
 void enable_fpu();
 
 /* Bucle de parada del kernel con las interrupciones apagadas. Lo usan las
  * excepciones y los fallos: la maquina se para y lo dice. */
 [[noreturn]] void halt_forever();
 
-/* Espera ociosa con las interrupciones vivas. Todavia no hay planificador,
- * pero cuando el proceso unico termina el teclado (IRQ1) tiene que seguir
- * llegando: parar la maquina con cli lo apagaria. */
+/* Bootstrap fallback wait with interrupts enabled. The process scheduler
+ * uses its own saved idle frame and stack. */
 [[noreturn]] void idle_with_interrupts();
 
 /* Tipo de los manejadores de IRQ: void(void), como en kernel/cpu.hpp. Los IRQ

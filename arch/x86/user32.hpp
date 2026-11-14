@@ -1,18 +1,11 @@
 #pragma once
+#include <stdint.h>
+#include "context.hpp"
 
-namespace i386 {
-
-/* Carga una imagen ELF32 del volumen montado y entra en ella como ring 3.
- * La ventana de usuario (paging.hpp) y los descriptores con DPL 3 (cpu.hpp)
- * son lo que hace posible el salto; aqui solo se copia el programa, se arma
- * la pila inicial y se hace el iret. */
-namespace user32 {
-
-/* Lee la imagen de `path`, la carga en la ventana de usuario con el registro
- * inicial que crt0 espera (edi = argc, esi = argv) y no vuelve: el proceso
- * corre hasta que llama a exit, y entonces el kernel se para. */
+namespace i386::user32 {
+// Load an ELF32 into private physical backing memory without changing CR3.
+int load(const char* path, uint8_t* memory, ContextFrame& frame, uint32_t argc,
+         const char* const* argv);
+// Start the initial user process, or the idle task when no root is mounted.
 [[noreturn]] void run(const char* path);
-
-} // namespace user32
-
-} // namespace i386
+}

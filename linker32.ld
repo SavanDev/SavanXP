@@ -36,6 +36,11 @@ SECTIONS
         *(COMMON)
     }
 
+    /* Private process mappings replace this virtual range on every CR3 switch.
+     * Kernel code, static backing stores and stacks must stay below it. */
+    __kernel_end = .;
+    ASSERT(__kernel_end <= 0x08000000, "i386 kernel overlaps the user virtual window")
+
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)

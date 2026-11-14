@@ -58,6 +58,12 @@ Cut-off notes:
   Exit `sh32` to launch `desktop32` through `/dev/gpu0`; `legacy_boot_test.py
   --expect-desktop ELF32` verifies desktop text, mouse buttons and cursor restoration.
 
+- **The i386 target runs independent, preemptively scheduled ELF32 processes.**
+  Private stacks/maps and x87/SSE contexts support PIT scheduling, `spawn`, `waitpid`
+  and `exit`; `init32` owns startup and `sh32` adds `run`, `start`, `wait` and `desktop`.
+  `legacy_boot_test.py --expect-processes` checks concurrent workers and lifecycle
+  behavior. [Scope and limits](docs/I386_PROCESSES.md).
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

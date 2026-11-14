@@ -13,10 +13,8 @@ namespace i386 {
 
 namespace paging {
 
-/* Ventana de usuario del MVP: cuatro PDEs de 4 MiB (32..35) con el bit de
- * usuario puesto, donde se enlacean las imagenes ELF32 y donde vive la pila
- * del proceso. Comparte paginas con la identidad del kernel, asi que entrar en
- * ring 3 no invalida TLB. */
+/* ELF32 virtual window. Each process maps different physical memory here;
+ * the kernel and idle directory never grant user access to the identity map. */
 constexpr uint32_t kUserWindowBase = 0x08000000u;
 constexpr uint32_t kUserWindowEnd = 0x09000000u;
 
@@ -34,4 +32,11 @@ bool map_identity(uint64_t address, uint32_t bytes);
 
 }
 
+}
+
+namespace i386::paging {
+// Each private directory inherits supervisor-only kernel/video mappings.
+void initialize_process_directory(uint32_t* directory, uint32_t physical_base);
+void activate(const uint32_t* directory);
+void activate_kernel();
 }

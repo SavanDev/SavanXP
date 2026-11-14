@@ -238,6 +238,8 @@ if(SAVANXP_ARCH STREQUAL "x86_64")
 elseif(SAVANXP_ARCH STREQUAL "i386")
     set(SAVANXP_KERNEL_ARCH_SOURCES
         arch/x86/entry32.S
+        arch/x86/process.cpp
+        arch/x86/context.cpp
         arch/x86/interrupts32.S
         arch/x86/serial.cpp
         arch/x86/egatext.cpp
@@ -250,10 +252,16 @@ elseif(SAVANXP_ARCH STREQUAL "i386")
         arch/x86/ps2_32.cpp
         arch/x86/main32.cpp
     )
+    # These paths execute on a bounded per-process kernel stack. Reject large
+    # Debug aggregate temporaries before they can corrupt another task.
+    set_source_files_properties(
+        arch/x86/context.cpp arch/x86/process.cpp arch/x86/user32.cpp arch/x86/syscall.cpp
+        PROPERTIES COMPILE_OPTIONS "-Wframe-larger-than=4096;-Werror=frame-larger-than"
+    )
 endif()
 
-# El kernel completo (drivers, VFS, procesos) es x86_64. En i386 hoy solo
-# existe el arranque de arch/x86, asi que esta lista se suma al kernel alli.
+# The full x86_64 subsystem sources remain separate from the i386
+# implementation in arch/x86, including its own process scheduler.
 set(SAVANXP_X86_64_KERNEL_SOURCES
     kernel/kernel_main.cpp
     kernel/boot_screen.cpp

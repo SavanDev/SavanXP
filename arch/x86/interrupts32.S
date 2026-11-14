@@ -5,37 +5,49 @@
 
 .section .text
 
-/* int $0x80 desde ring 3: el processor empuja ss, esp, eflags, cs y eip y
- * cambia a la pila de ring 0 (TSS.esp0). Encima el stub apila pusha, los dos
- * segmentos de datos (que el processor no salva) y un puntero al marco, y lo
- * pasa a i386_handle_syscall, que escribe el resultado en eax. Volver es
- * deshacer exactamente eso y ejecutar iret de vuelta al proceso.
- *
- * Ojo con el orden del marco: pusha empuja eax, ecx, edx, ebx, esp, ebp, esi
- * y edi, asi que de menor a mayor direccion quedan edi primero; el puntero que
- * pasa el stub es la palabra del propio "push %esp". Lo que apilo el processor
- * viene detras de los registros, y a partir de ahi el eje de esta lista de
- * palabras ya no es el del marco de SyscallFrame. */
+/* Save all user registers before loading kernel selectors. Align a separate
+ * call stack without assuming the interrupted kernel stack's alignment. */
+.macro save_context
+    pusha
+    push %ds
+    push %es
+    push %fs
+    push %gs
+    movw $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %fs
+    mov %ax, %gs
+    movl %esp, %ebx
+    andl $-16, %esp
+    subl $12, %esp
+    pushl %ebx
+.endm
+
 .global i386_syscall_entry
 .type i386_syscall_entry, @function
 i386_syscall_entry:
     cld
-    pusha
-    push %ds
-    push %es
-    push %esp
+    pushl $0x80
+    save_context
     call i386_handle_syscall
-    /* La palabra del puntero quedo por debajo de los segmentos (se empuja
-     * despues), asi que se descarta antes de los pops: sin esto el primer
-     * pop %es carga ese puntero como selector y el processor responde #GP. */
-    add $4, %esp
+    movl %eax, %esp
+    jmp restore_context
+.size i386_syscall_entry, . - i386_syscall_entry
+
+.global i386_resume
+.type i386_resume, @function
+i386_resume:
+    movl 4(%esp), %esp
+restore_context:
+    pop %gs
+    pop %fs
     pop %es
     pop %ds
     popa
-    /* Sin suma antes del iret: esas 20 palabras (ss, esp, eflags, cs y eip)
-     * las saca el propio iret, igual que iretq en x86_64. */
+    addl $4, %esp
     iret
-.size i386_syscall_entry, . - i386_syscall_entry
+.size i386_resume, . - i386_resume
 
 /* Excepciones de CPU. El processor no apila el numero de vector, asi que hay
  * una entrada por vector que lo empuja y salta al marco comun. Un kernel sin
@@ -192,27 +204,10 @@ i386_irq_table:
     .long i386_irq_15
 
 i386_irq_common:
-    pusha
-    push %ds
-    push %es
-    /* Save every register before extracting the IRQ: the interrupted code
-     * may still be using eax, including a syscall result in ring 3. */
-    movl 40(%esp), %eax
-    /* El manejador solo necesita el numero de IRQ. El marco se deshace con los
-     * pops y los dos add siguientes: dejar una palabra de mas hacia que el
-     * pop %es lea un valor de pila como selector y acabe en #GP. */
-    subl $4, %esp           /* relleno: elabi de 32 bits pide 16 en la llamada */
-    pushl %eax              /* unico argumento: el numero de IRQ */
+    save_context
     call i386_handle_irq
-    addl $8, %esp           /* relleno y argumento */
-    pop %es
-    pop %ds
-    popa
-    addl $4, %esp           /* el numero de IRQ apilado por la entrada */
-    /* Sin suma antes del iret: el marco del processor (eflags, cs y eip, mas
-     * ss y esp si hubo cambio de privilegio) lo saca el propio iret, igual que
-     * iretq en x86_64 y que el iret del marco de excepcion de arriba. */
-    iret
+    movl %eax, %esp
+    jmp restore_context
 
 /* Marco comun: el vector esta en la cima; se copia a eax antes de pusha
  * (pusha lo sobrescribiria) y se pasa como segundo argumento. Detras del

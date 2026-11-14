@@ -31,6 +31,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`REAL_HARDWARE.md`](REAL_HARDWARE.md) — the i386 porting route through a
   minimal graphical desktop in QEMU, its verification commands, and the
   remaining hardware gaps for a Compaq Evo N1020v.
+- [`I386_PROCESSES.md`](I386_PROCESSES.md) — private i386 process contexts, PIT
+  preemption, spawn/wait/exit semantics and the end-to-end regression.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
 - [`SECTIONS.md`](SECTIONS.md) — section objects and views: the grant model,
