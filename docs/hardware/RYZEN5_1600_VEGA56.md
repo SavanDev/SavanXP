@@ -13,7 +13,7 @@ shared contract and the numbered work packages (HW-n) are in
 | **Verified**, 2026-11-08 | Sound recognizes the microphone, records it and replays it. Doom and Celeste audio, once the ISO carried the rebuilt ports (`22ae69e`) |
 | **Verified**, 2026-11-12 | One boot log captured, v0.4.3 (Build 701) under UEFI: all 12 processors online, the wall clock on the 32-bit PM timer, 1920x1080 from GOP, four SATA disks found and their partition tables read, a USB stick as `usb0` with a partition mounted through Disk Management's elevation prompt. See [The boot log](#the-boot-log-2026-11-12) |
 | **Verified**, 2026-11-13 | A second, 35-minute run of the same build under UEFI: Celeste, Nightwood, the media player and `sxgldiag` (241 fps). Audio played throughout, but the **media player had audible micro-cuts** now and then, and nothing else did. See [The second run](#the-second-run-2026-11-13) |
-| Not working | Ethernet, NVMe, Wi-Fi, HDMI and DisplayPort audio, anything of the Vega beyond the framebuffer the firmware set |
+| Not working | Ethernet, Wi-Fi, HDMI and DisplayPort audio, anything of the Vega beyond the framebuffer the firmware set |
 | Never exercised on the machine | Writing the SATA disks, USB hubs and hot plug |
 
 The tested application, jack, input pin, gain and firmware settings of the
@@ -35,7 +35,7 @@ the right-hand column is what SavanXP does with each device.
 | Displays | DisplayPort at 1920x1080 and HDMI at 1280x1024, on 2026-11-10 | One output, whichever the firmware lights, at the mode Limine picked |
 | Analog audio | AMD HDA `1022:1457` at `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | Playback and capture verified |
 | Display audio | Vega HDA `1002:aaf8` at `09:00.1`; codec `1002:aa01` | Attached as a controller; not an output. Must not displace the analog codec |
-| NVMe | Kingston NV1, `2646:500e` | No driver (HW-5) |
+| NVMe | Kingston NV1, `2646:500e` | Driver written (HW-5), not yet run here: read-only unless booted with `nvme-rw` |
 | SATA | AMD 400-series AHCI `1022:43c8` at `02:00.1`; AMD FCH AHCI `1022:7901` at `0b:00.2` | All four disks are on the 400-series controller (`02:00.1`), read from Linux on 2026-11-12; the FCH controller has none. SavanXP drives the first HBA, up to four disks, so it sees all of them. A fifth disk, or one on the FCH controller, would be invisible (HW-4) |
 | USB | AMD 400-series xHCI `1022:43d5`; Zeppelin xHCI `1022:145f` | Both verified with HID devices |
 | Ethernet | Realtek RTL8111/8168, `10ec:8168` | No driver (HW-1) |
@@ -114,7 +114,9 @@ In the order that makes the machine more useful soonest:
    had to stop depending on a network card. Until it lands nothing that uses
    the network can be checked here.
 2. **NVMe (HW-5)**, then setup (HW-12): the path to an installed system on
-   this machine's main disk.
+   this machine's main disk. The driver is written; what is owed is a boot
+   that reads the NV1 read-only, then a write test with `nvme-rw`
+   ([NVME.md](../kernel/NVME.md)).
 3. **The physical audio checks** still owed to the follow-up software, below.
 
 Not planned: the native Vega driver, HDMI and DisplayPort audio, Wi-Fi.

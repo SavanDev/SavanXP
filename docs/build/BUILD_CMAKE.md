@@ -178,8 +178,9 @@ stamp, About and the console banner. `sysinfo` prints them as two lines,
 - `tools/stamp_osabi.py` marks a `NATIVE` program's ELF as native, and refuses
   one whose name on disk lacks `.sxe` or whose ELF lacks `.sxmeta`.
 - `tools/run_qemu.py` launches the staged image with OVMF and optional virtio.
-  Without virtio the disk goes on the q35 AHCI controller, or on `isa-ide` with
-  `--disk-bus ide` / `SAVANXP_DISK_BUS=ide`, which every launcher honours.
+  Without virtio the disk goes on the q35 AHCI controller, on `isa-ide` with
+  `--disk-bus ide` / `SAVANXP_DISK_BUS=ide`, or on an NVMe controller with
+  `nvme`; every launcher honours the variable.
 - `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
 - `ports/doomgeneric/build.sh` builds the official Doom port independently.
 - `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and

@@ -19,7 +19,7 @@ interchangeable:
 
 | Target | Document | Branch | Status |
 | --- | --- | --- | --- |
-| AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop at 1920x1080 on the firmware framebuffer, all 12 processors, USB keyboard and mouse, four SATA disks read, analog audio in and out. No Ethernet, NVMe or native Vega driver |
+| AMD Ryzen 5 1600 + Radeon RX Vega 56 (ASRock B450M Pro4-F R2.0) | [RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md) | `master` | **Verified:** boots from USB under UEFI, desktop at 1920x1080 on the firmware framebuffer, all 12 processors, USB keyboard and mouse, four SATA disks read, analog audio in and out. No Ethernet or native Vega driver; NVMe written, not yet run |
 | Intel Pentium 4, Compaq Evo N1020v | [PENTIUM4_EVO_N1020V.md](PENTIUM4_EVO_N1020V.md) | `legacy` (i386) | Cannot run `master`: no long mode, no NX. The i386 port on `legacy` boots, mounts SxFS and runs one ring 3 program in QEMU |
 | AMD Athlon II + chipset graphics | [ATHLON_II.md](ATHLON_II.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and OHCI, run only in QEMU; no network |
 | Intel Core 2 Duo + chipset graphics | [CORE2_DUO.md](CORE2_DUO.md) | `master` | Not run. **Expected** to reach the desktop; USB through EHCI and UHCI, run only in QEMU; no network |
@@ -90,7 +90,7 @@ boot; a machine that fails a soft one boots with something missing.
 | Clocks | A CMOS RTC: the LAPIC timer is calibrated across two RTC second edges. PIT channel 2: the TSC is calibrated against it. The wall clock is the ACPI PM timer when it is 32 bits wide and the **TSC otherwise** | [TIME.md](../kernel/TIME.md) |
 | Video | A linear 32 bpp framebuffer from the firmware (VBE or GOP). The ISO's boot entries let Limine take the monitor's preferred mode from EDID, and a **SavanXP (1024x768)** entry forces the VESA mode every video BIOS offers; the development configuration keeps `1280x800x32`, which the QEMU scenarios click against. No mode setting after boot outside QEMU's adapters; all drawing is software | `kernel/fb_gpu.cpp`, `kernel/console.cpp` |
 | Memory | The LiveCD root is a 256 MiB SxFS volume Limine loads into RAM as a module, next to the kernel and the initramfs. The floor has not been measured; 1 GiB is the least worth trying | `SAVANXP_ISO_SECTORS` in `CMakeLists.txt` |
-| Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. No NVMe, no ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/usb/umass.cpp` |
+| Storage | AHCI: the first HBA only, four disks. ATA: the two legacy channels at `0x1F0`/`0x170`, PIO, 28-bit LBA commands. USB mass storage behind xHCI. NVMe: two controllers, 512-byte namespaces, read-only without the `nvme-rw` boot option ([NVME.md](../kernel/NVME.md)), written but not yet run on metal. No ATAPI | `kernel/ahci.cpp`, `kernel/ata.cpp`, `kernel/nvme.cpp`, `kernel/usb/umass.cpp` |
 | USB | xHCI, EHCI, UHCI and OHCI. Low speed and split transactions have not been run: QEMU cannot show them | [USB_HOST_CONTROLLERS.md](../kernel/USB_HOST_CONTROLLERS.md) |
 | Input | PS/2 (8042) keyboard and mouse, or USB HID behind xHCI | `kernel/ps2.cpp`, [INPUT.md](../kernel/INPUT.md) |
 | Network | Realtek RTL8139 (`10ec:8139`). The RTL8111/8168 family (`10ec:8168`, `8161`, `8136`, `8169`, `8167`), written but not yet run on metal (HW-1). Static QEMU addressing only: no DHCP | `kernel/rtl8139.cpp`, `kernel/rtl8168.cpp` |
@@ -147,7 +147,7 @@ as `azalia` and the xHCI quirks were.
 | HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | done in QEMU; run it | done in QEMU; run it | done in QEMU; run it | `legacy` has none |
 | HW-3 | PCI IDE: native-mode BARs, bus-master DMA, 48-bit LBA | M | — | unless AHCI is selected | **needed** on ICH7 | **needed** | **needed** |
 | HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | at the limit | useful | useful | on SB600 | — |
-| HW-5 | NVMe | M | **needed** to install | — | — | — | — |
+| HW-5 | NVMe | M | written; run it | — | — | — | — |
 | HW-6 | HD Audio: the other controllers' PCI quirks, more codecs | S + per codec | done for this board | **needed** | **needed** | on late boards | — |
 | HW-7 | AC'97: bind by controller, not by class; non-Intel controllers | S–M | — | — | on 945 boards | **needed** | **needed** |
 | HW-8 | PS/2 pointer on real pads | S | — | — | laptops | — | **needed** |
@@ -268,8 +268,11 @@ ATI SB600 advertises 64-bit DMA and does not honour it.
 ### HW-5 — NVMe
 
 Only the development host has one, and it is the disk the system would be
-installed to. Reference: OpenBSD `nvme(4)`, which is polled at attach and
-small. One `block::Driver` like the others.
+installed to. Written as a selective port of OpenBSD `nvme(4)` and run in
+QEMU, with the root on QEMU's controller; see [NVME.md](../kernel/NVME.md).
+Owed: a boot on the Ryzen that reads the Kingston NV1's partition table with
+the disk read-only, then a write test with `nvme-rw` on a partition that can
+be lost. Until both pass, NVMe disks stay read-only by default.
 
 ### HW-6 — HD Audio beyond the development host
 

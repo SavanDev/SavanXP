@@ -104,6 +104,24 @@ which is why both go into the registry.
 - Distributed in: the kernel binary as the `rtl8168` NIC driver (HW-1 in
   [REAL_HARDWARE.md](../hardware/REAL_HARDWARE.md))
 
+### OpenBSD nvme(4) NVMe driver
+
+- Origin: OpenBSD `sys/dev/ic/nvme.c`, `sys/dev/ic/nvmereg.h` and
+  `sys/dev/pci/nvme_pci.c`, https://github.com/openbsd/src
+- Pinned version: commit `287e5b695b75cb0c9c794575ed99e90305f680e8`
+  (`nvme.c` rev 1.132, `nvmereg.h` rev 1.16)
+- Versioned: adapted in `kernel/nvme.cpp`; no pristine copy is kept
+- License reviewed: ISC, Copyright (c) 2014 David Gwynne. The notice is at the
+  top of `kernel/nvme.cpp`.
+- Decision: `Selective port`. Taken: the PCI match, the register offsets and
+  bits, the submission and completion entry layouts, the Identify field
+  offsets, the disable/enable order with `CAP.TO`, queue creation, the
+  phase-bit completion loop, the namespace size rule and the shutdown
+  sequence. Not taken: the SCSI emulation layer, `bus_dma`, ccbs, interrupts,
+  sensors, `bioctl`, passthrough, hibernation and the Apple quirks.
+- Distributed in: the kernel binary as the `nvme` storage driver (HW-5 in
+  [REAL_HARDWARE.md](../hardware/REAL_HARDWARE.md); [NVME.md](../kernel/NVME.md))
+
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit
@@ -333,7 +351,7 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
   implements its own variant in C over its own ABI, with no dependency on `AK`
 - OpenBSD (mostly ISC and BSD-2): candidates evaluated and categorized in the
   adoption document. The pieces that were incorporated (the HID parser, Azalia,
-  re(4)) have their own entries above
+  re(4), nvme(4)) have their own entries above
 
 ### Retrosmart cursor pack
 

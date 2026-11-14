@@ -29,12 +29,13 @@ int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access
         return -static_cast<int>(SX_EACCES);
     }
     switch (request) {
-        // Writes still in the block writeback queue would die with the power.
+        // Writes still in the block writeback queue would die with the power,
+        // and an NVMe drive wants to be told before it loses it.
         case POWER_IOC_SHUTDOWN:
-            (void)block::sync_all();
+            block::shutdown_all();
             acpi::shutdown(); // does not return
         case POWER_IOC_REBOOT:
-            (void)block::sync_all();
+            block::shutdown_all();
             acpi::reboot(); // does not return
         case POWER_IOC_PANIC: {
             const process::Process* caller = process::current();

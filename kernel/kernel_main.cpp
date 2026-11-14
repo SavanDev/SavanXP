@@ -25,6 +25,7 @@
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/net.hpp"
+#include "kernel/nvme.hpp"
 #include "kernel/nic.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/partition.hpp"
@@ -294,12 +295,16 @@ namespace
     // Storage: the same driver registry as display and audio, except that the
     // devices of every driver COEXIST, so probe_all runs every enumerate
     // instead of stopping at the first. Priority fixes the device order:
-    // virtio-blk, AHCI and ATA come before the ramdisk (QEMU attaches disk.img
-    // through exactly one of them: virtio-blk-pci with --virtio, otherwise the
-    // q35 AHCI controller, or isa-ide with SAVANXP_DISK_BUS=ide), so a
+    // virtio-blk, NVMe, AHCI and ATA come before the ramdisk (QEMU attaches
+    // disk.img through exactly one of them: virtio-blk-pci with --virtio,
+    // otherwise the q35 AHCI controller, or the one SAVANXP_DISK_BUS names), so a
     // persistent disk wins and a pure ISO boot mounts the ramdisk. Which device
     // becomes the root is decided by fs::mount_any below, in this same order.
     block::register_driver(virtio_blk::driver());
+    // NVMe disks are read-only unless the boot entry says `nvme-rw`
+    // (docs/kernel/NVME.md).
+    nvme::set_writable(boot::has_option(boot_info.cmdline, "nvme-rw"));
+    block::register_driver(nvme::driver());
     block::register_driver(ahci::driver());
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());

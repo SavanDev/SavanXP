@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **NVMe storage driver `nvme`, adapted from OpenBSD `nvme(4)`: every 512-byte namespace registers as `nvmeN`, and the
+  drive gets a shutdown notification before power-off or reboot (`block::shutdown_all`).** NVMe disks are read-only
+  unless the boot entry carries `nvme-rw`; `SAVANXP_DISK_BUS=nvme` puts QEMU's disk on NVMe. Not yet run on metal. See
+  [NVME.md](docs/kernel/NVME.md).
+
 - **System Properties has a Licenses tab: every component under `/system/licenses`, SavanXP first, with its notice
   and full license text.** An installed port appears on its own; F5 rescans.
 

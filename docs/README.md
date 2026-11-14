@@ -51,6 +51,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   EHCI's companion routing, each one's schedule, and what QEMU cannot test.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
+- [`NVME.md`](kernel/NVME.md) — the NVMe disk driver ported from OpenBSD: why disks
+  are read-only without `nvme-rw`, the polled bring-up, the shutdown notification
+  and the limits (512-byte blocks, 2 TiB).
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.

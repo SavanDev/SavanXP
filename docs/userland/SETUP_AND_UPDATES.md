@@ -237,8 +237,9 @@ Legacy BIOS boot for an installed disk fits anywhere after phase 1.
 ## Limits accepted
 
 - One root of at most 1 GiB and 4096 files, until the SxFS format moves.
-- Targets on AHCI, IDE and virtio-blk only. No USB or NVMe driver, so in
-  practice virtual machines and older SATA or IDE machines
+- Targets on AHCI, IDE, virtio-blk and NVMe only, and NVMe only when booted
+  with `nvme-rw` ([NVME.md](../kernel/NVME.md)). No USB, so in practice
+  virtual machines and SATA, IDE or NVMe machines
   ([REAL_HARDWARE.md](../hardware/REAL_HARDWARE.md), HW-3 to HW-5).
 - The whole disk, no dual boot.
 - One user, `user`.

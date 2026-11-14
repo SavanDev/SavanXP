@@ -213,6 +213,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/display.cpp
     kernel/ahci.cpp
     kernel/ata.cpp
+    kernel/nvme.cpp
     kernel/usb/hid.cpp
     kernel/usb/hid_report.cpp
     kernel/usb/hub.cpp

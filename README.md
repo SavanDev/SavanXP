@@ -67,7 +67,8 @@ built independently with `./ports/doomgeneric/build.sh`,
   out while running ([docs/roadmaps/done/USB_ROADMAP.md](docs/roadmaps/done/USB_ROADMAP.md)).
 - Drivers for network (rtl8139, virtio-net), audio (AC'97, virtio-sound),
   display (the firmware framebuffer, virtio-gpu) and storage (AHCI, IDE,
-  virtio-blk, USB). NVMe is not supported yet.
+  virtio-blk, USB, NVMe). NVMe disks are read-only unless the boot entry
+  carries `nvme-rw` ([docs/kernel/NVME.md](docs/kernel/NVME.md)).
 
 ## Requirements
 
@@ -147,7 +148,7 @@ splash, the only way to see where a boot stops on a machine without a serial
 port, and **no USB** leaves the USB controllers to the firmware.
 
 The live system runs from memory and keeps nothing across reboots. It does
-see the machine's SATA disks and USB disks (not NVMe ones). At boot it only
+see the machine's SATA, NVMe and USB disks (NVMe ones read-only). At boot it only
 reads them, with one exception: a disk holding an SxFS volume is mounted as
 `/` instead of the live system, and mounting replays its journal. After that,
 only Disk Management writes to a disk, and only when asked to. What a
@@ -167,7 +168,8 @@ The QEMU machine is assembled with "base" hardware by default: standard VGA,
 PS/2 mouse and keyboard, AC'97 audio, an AHCI (SATA) disk and an rtl8139 NIC —
 the same set VirtualBox emulates. This way the kernel exercises the fallback
 backends (`fb_gpu`, `ps2`, `ac97`, `ahci`, `rtl8139`) without leaving QEMU.
-`SAVANXP_DISK_BUS=ide` puts the disk on legacy IDE instead, for the `ata` driver. Bringing the
+`SAVANXP_DISK_BUS=ide` puts the disk on legacy IDE instead, for the `ata` driver, and
+`SAVANXP_DISK_BUS=nvme` on an NVMe controller, for the `nvme` driver. Bringing the
 machine up with paravirtualized devices (virtio-vga, virtio-tablet,
 virtio-keyboard, virtio-sound, virtio-blk, virtio-net) has to be asked for
 explicitly:

@@ -91,6 +91,10 @@ permissive than for SerenityOS: small, self-contained pieces can go straight to
   **BSD-4-Clause** files, the exception to the ISC/BSD-2 rule above: the
   advertising clause is accepted, and the derived file keeps that license and
   notice instead of MIT
+- `sys/dev/ic/nvme.c`, `nvmereg.h` and `sys/dev/pci/nvme_pci.c`: the NVMe
+  controller bring-up, queues and shutdown, adapted into `kernel/nvme.cpp`
+  without the SCSI layer, `bus_dma` or interrupts
+  ([NVME.md](../kernel/NVME.md))
 
 `Reference`:
 

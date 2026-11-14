@@ -8,9 +8,9 @@
 
 namespace {
 
-// Four ATA slots, four AHCI ports, virtio-blk and the LiveCD's ramdisk, plus
-// the partitions partition:: cuts out of them (up to 16), with room left for
-// new drivers without touching the core.
+// Four ATA slots, four AHCI ports, four NVMe namespaces, virtio-blk and the
+// LiveCD's ramdisk, plus the partitions partition:: cuts out of them (up to
+// 16), with room left for new drivers without touching the core.
 constexpr size_t kMaxBlockDevices = 32;
 
 struct Device {
@@ -619,6 +619,16 @@ void report_health(bool failed) {
 bool sync_all() {
     return drain_all();
 }
+
+void shutdown_all() {
+    (void)drain_all();
+    for (size_t i = 0; i < g_driver_count; ++i) {
+        if (g_drivers[i]->shutdown != nullptr) {
+            g_drivers[i]->shutdown();
+        }
+    }
+}
+
 bool writeback_checkpoint(uint64_t& ticket) {
     for (size_t i = 0; i < g_device_count; ++i) {
         const Device& device = g_devices[i];

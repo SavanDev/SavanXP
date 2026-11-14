@@ -1,0 +1,8 @@
+name=OpenBSD nvme(4) NVMe driver
+license=ISC
+copyright=Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
+origin=https://github.com/openbsd/src (sys/dev/ic/nvme.c)
+version=commit 287e5b695b75cb0c9c794575ed99e90305f680e8
+used-in=the kernel (nvme storage driver)
+provenance=OpenBSD nvme(4) NVMe driver
+text=assets/licenses/openbsd-nvme.txt

@@ -70,6 +70,11 @@ struct Driver {
     // about its devices (ATA's polling margins) prints it, at most once per
     // condition.
     void (*report_health)(bool failed);
+    // Optional. Called once by block::shutdown_all() right before power-off or
+    // reboot, after the writeback queue has drained: tells the hardware the
+    // power is going away (NVMe's shutdown notification). Nothing is read or
+    // written through the driver afterwards.
+    void (*shutdown)() = nullptr;
 };
 
 constexpr size_t kMaxDrivers = 8;
@@ -130,6 +135,9 @@ bool flush(size_t index);
 // writeback queue, whatever device `index` is.
 bool sync(size_t index);
 bool sync_all();
+// Drains the writeback queue, then runs every driver's shutdown hook. For
+// /dev/power, right before S5 or a reboot.
+void shutdown_all();
 // A nonblocking durability frontier. Later writes do not delay this ticket;
 // the caller may park while background steps reach its device flushes.
 enum class WritebackCompletion { pending, complete, failed, invalid };

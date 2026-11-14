@@ -37,7 +37,7 @@ def find_ovmf(name: str) -> Path | None:
     return None
 
 
-DISK_BUSES = ("ahci", "ide")
+DISK_BUSES = ("ahci", "ide", "nvme")
 
 # A tablet is what a QEMU window wants (the host pointer maps straight onto
 # it). Next to the PS/2 mouse it is wrong for relative scenarios: QEMU sends
@@ -137,8 +137,9 @@ def build_qemu_args(
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
-    Without --virtio the disk image goes on the q35 AHCI controller (DMA), or
-    on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide". With no disk
+    Without --virtio the disk image goes on the q35 AHCI controller (DMA), on
+    isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide", or on an NVMe
+    controller when it is "nvme" (docs/kernel/NVME.md). With no disk
     image the machine has no disk at all, which is how the rescue system boots.
 
     gl implies virtio and swaps virtio-vga for virtio-vga-gl, which offers
@@ -237,6 +238,11 @@ def build_qemu_args(
                 "-device",
                 "ide-hd,drive=svdisk,bus=svide.0",
             ]
+        elif disk_bus == "nvme":
+            disk_devices = [
+                "-device",
+                "nvme,drive=svdisk,serial=SXNVME0",
+            ]
         else:
             # Port 1 of the board's AHCI controller; port 0 holds the FAT boot
             # drive (`-drive file=fat:...` defaults to the first AHCI port).
@@ -248,7 +254,7 @@ def build_qemu_args(
             disk_devices = []
         else:
             disk_devices = ["-drive", drive, *disk_devices]
-        if extra_disks and disk_bus != "ahci":
+        if extra_disks and disk_bus == "ide":
             raise SystemExit("extra disks go on the AHCI controller: run without SAVANXP_DISK_BUS=ide")
         for index, (path, serial) in enumerate(extra_disks):
             disk_devices += [
