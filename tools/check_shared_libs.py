@@ -90,6 +90,44 @@ def defined_symbols(path: Path) -> set[str]:
     return found
 
 
+# What the loader (subsystems/posix/userland/ldso.c) may take from the program.
+# It speaks SXN through inline traps and calls no C library, so the same object
+# serves a POSIX program and a native one; anything else here is a call into one
+# subsystem's runtime that the other may not have. savanxp_getcwd is the dlopen
+# layer's, which is POSIX: a relative path is the POSIX working directory's.
+LOADER_IMPORTS = {"__stack_chk_fail", "__stack_chk_guard", "sx_image_base",
+                  "sx_loader_report", "savanxp_getcwd"}
+
+
+def loader_violations(root: Path) -> list[str]:
+    """Every compiled copy of the loader that imports something it should not.
+
+    The loader is compiled into each program that links it, so there is one
+    object per program; they are the same source, but a -D can change what a
+    copy compiles to, and checking all of them costs nothing. The objects are
+    the ones build.ninja still produces: a program that stopped linking the
+    loader leaves its old object behind, and that one is history, not a fault."""
+    found = []
+    ninja = root / "build.ninja"
+    if ninja.is_file():
+        objects = sorted({root / match for match in re.findall(
+            r"^build (CMakeFiles/[^ :]+/subsystems/posix/userland/ldso\.c\.o):",
+            ninja.read_text(), re.MULTILINE)})
+    else:
+        objects = sorted(root.glob("CMakeFiles/*/subsystems/posix/userland/ldso.c.o"))
+    for path in objects:
+        if not path.is_file():
+            continue
+        out = subprocess.run(
+            ["nm", "--undefined-only", "--format=posix", str(path)],
+            capture_output=True, text=True, check=False,
+        ).stdout
+        extra = sorted({line.split()[0] for line in out.splitlines() if line.strip()} - LOADER_IMPORTS)
+        if extra:
+            found.append(f"{path.relative_to(root).parts[1]}: {', '.join(extra)}")
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_dir", nargs="?", default="build/linux")
@@ -147,6 +185,22 @@ def main() -> int:
             "own copy\nsatisfies the references and nothing is shared. Add the unit to "
             "SAVANXP_LIBRARY_REPLACES_<lib>\nin CMakeLists.txt and declare the library in "
             "the program's DEPENDS.",
+            file=sys.stderr,
+        )
+        return 1
+
+    loader = loader_violations(root)
+    if loader:
+        print(
+            "check_shared_libs: the loader imports something other than "
+            f"{', '.join(sorted(LOADER_IMPORTS))}",
+            file=sys.stderr,
+        )
+        for line in loader:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            "\nldso.c is shared by SUN and POSIX programs, so it speaks SXN and calls "
+            "no C library\n(docs/kernel/SHARED_LIBRARIES.md, \"One loader over SXN\").",
             file=sys.stderr,
         )
         return 1

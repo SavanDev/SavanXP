@@ -157,7 +157,7 @@ its drawing code.
 | guarantee | enforced by |
 | --- | --- |
 | No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
-| The loader never calls the C library | `ldso.c`'s undefined list: zero `libc` entries |
+| The loader speaks SXN and calls no C library | `tools/check_shared_libs.py`: each compiled `ldso.c` imports only the canary, `sx_image_base`, `sx_loader_report` and (for `dlopen`) `savanxp_getcwd` |
 | The stack canary is in the executable, seeded by `crt0`, with two distinct halves | `ldtest`, on every run |
 | The interpreter path reaches the loader | `interptest`, including that a library actually loaded |
 | The toolkit draws the right glyphs in the right colour | `expect_text()` in `shoot_session`, from the font tables inside the built `libsxgfx` |
@@ -989,7 +989,8 @@ What was reverted along with them, and why it is not coming back:
 - `sxboot.c`, a file holding exactly what `crt0` touches. Its whole justification
   was "this cannot become a library", which stops being true.
 - The loader no longer calling the C library. True and harmless, but nothing in this
-  scope consumes it.
+  scope consumes it. (Since done, with SUN as the consumer: see
+  [One loader over SXN](#one-loader-over-sxn).)
 
 One thing from that work was kept, because it was never about libc: the runtime for
 external applications is now derived from the runtime for the system's own programs
@@ -1062,10 +1063,11 @@ declares, and nothing is installed under that name: the interpreter is
 
 ### One loader over SXN
 
-What `ldso.c` calls today: `savanxp_open`, `savanxp_read` and `savanxp_close`
-for the file; `section_open` and `section_open_range` for a section **backed by
-the file**, plus `section_create`, `map_view_at` and `unmap_view`; and from
-the C library, `eprintf` and `strcmp`.
+What `ldso.c` called before this work: `savanxp_open`, `savanxp_read` and
+`savanxp_close` for the file; `section_open` and `section_open_range` for a
+section **backed by the file**, plus `section_create`, `map_view_at` and
+`unmap_view`; and from the C library, `eprintf` and `strcmp`. Items 1 to 4
+below replaced every one of them.
 
 What is already there. A POSIX process reaches the native object calls:
 `native_call_open_to_all_subsystems` (`kernel/native_dispatch.cpp`) forwards
@@ -1093,12 +1095,30 @@ What is missing, in order of weight:
 3. **No C library in the loader.** `eprintf` and `strcmp` become the loader's
    own. This is the work that was reverted for lack of a consumer
    ([out of scope](#deliberately-out-of-scope-for-the-first-implementation));
-   SUN is the consumer.
+   SUN is the consumer. **Done (2026-11-14):** `ldso.c` opens, reads and maps
+   with `sxn_open_file`, `sxn_read`, `sxn_section_open_range`,
+   `sxn_section_create`, `sxn_map_view_at`, `sxn_unmap_view` and `sxn_close`,
+   all inline traps; it compares names and formats its messages itself, and
+   copies structures with its own loop (`no_builtin`, or the compiler calls
+   `memcpy`). `check_shared_libs` fails the build if a compiled copy imports
+   anything else ([the guarantees](#the-guarantees-and-what-enforces-each)).
+   A closed handle is -1, not 0: a native process with no standard input gets
+   handle 0 from its first open.
 4. **The runtime ends the process, not the loader.** `SXN_SYS_EXIT` and
    `SXN_SYS_LOG` are native-only, and that stays. The loader returns a status
    and a message; each subsystem's `crt0` reports it and exits in its own
    terms. `dlopen` and `dlfcn.h` are a thin POSIX layer over the common core;
-   SUN names its own.
+   SUN names its own. **Done (2026-11-14):** the loader never ended the
+   process, and still does not; what it had was `eprintf`, a POSIX write a
+   native process would not have. Every line now goes to
+   `sx_loader_report(text, length)`, a runtime hook like `sx_process_exit`:
+   weak and POSIX in `libc.c` (standard error), strong in
+   `system/runtime/sxn_runtime.c` (handle 2 through `SXN_SYS_WRITE`).
+   `sx_start_dynamic` reports the failed step through it too. `dlopen` is the
+   POSIX layer in two ways: `<dlfcn.h>`, and the working directory, since the
+   core opens absolute paths only and `dlopen` joins a relative one with
+   `getcwd` first. It still lives at the end of `ldso.c`; it moves to a file
+   of its own with the loader's move to `system/`.
 5. **Libraries split into neutral and host.** `libsxgfx` carries `gfx.c`, the
    POSIX window client, and `libsxgui` carries `sxgui_app.c`, the POSIX
    application frame. The neutral parts (`gfx2d`, `sxchrome`, the `sxgui`

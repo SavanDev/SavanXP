@@ -1,10 +1,28 @@
-/* Ver ldso.h. Todo el trabajo es aritmetica de punteros sobre una imagen ya
- * mapeada, mas la copia de los segmentos escribibles. */
+/* See ldso.h. All the work is pointer arithmetic over an image already mapped,
+ * plus copying the writable segments.
+ *
+ * The loader speaks SXN, not POSIX (docs/kernel/SHARED_LIBRARIES.md, "One
+ * loader over SXN"): it opens, reads and maps files with the native object
+ * calls, which every subsystem reaches, and calls no C library. What it needs
+ * from the program's runtime is two things: sx_image_base, which crt0 stores,
+ * and sx_loader_report, through which each runtime says in its own terms why a
+ * library did not load. The loader never ends the process; it returns a step
+ * and the program goes on. <dlfcn.h>, at the end, is the POSIX layer over it. */
+
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <savanxp/ldso.h>
 #include <dlfcn.h>
 
-#include "libc.h"
+#include "sxn/sxn.h"
+
+/* From the runtime (savanxp/libc.h). Declared here rather than by including
+ * the C library's header, so a call into it cannot slip back in unnoticed. */
+extern unsigned long sx_image_base;
+void sx_loader_report(const char* text, unsigned long length);
+long savanxp_getcwd(char* buffer, size_t count);
 
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
@@ -130,10 +148,12 @@ typedef struct {
  * libreria y un puntero a la que esta en curso. */
 typedef struct {
     int loaded;
-    int file_section;
-    int file_fd;
-    /* Los dos de arriba solo viven durante la carga. Este dice si siguen
-     * abiertos, para que el cierre no los repita. */
+    /* The file's handle and its whole-file section, or -1. They live only
+     * while the image is being loaded; 0 is a handle like any other -- a
+     * native process may have no standard input, so its first open gets 0. */
+    long file_section;
+    long file_fd;
+    /* Whether the two above are still open, so closing does not repeat. */
     int handles_open;
     /* Desplazamiento de carga. Un ET_DYN tiene p_vaddr cerca de cero, y cero no
      * es una direccion de usuario valida: el kernel no mapea por debajo de
@@ -313,12 +333,91 @@ static int read_header(const unsigned char* bytes, Elf64_Ehdr* out) {
     return 1;
 }
 
-static void copy_bytes(const void* from, void* to, size_t count) {
+/* no_builtin: the compiler recognises this loop as memcpy and would call the C
+ * library's, which the loader does not use. */
+__attribute__((no_builtin("memcpy"))) static void copy_bytes(const void* from, void* to, size_t count) {
     const unsigned char* src = (const unsigned char*)from;
     unsigned char* dst = (unsigned char*)to;
     for (size_t index = 0; index < count; ++index) {
         dst[index] = src[index];
     }
+}
+
+/* strcmp's answer to "are these equal", the only question the loader asks. */
+static int same_string(const char* a, const char* b) {
+    while (*a != '\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+/* One diagnostic line, handed to the runtime's sx_loader_report. The format
+ * knows what the messages use and nothing else: %s, %d, %u and %lx. A line
+ * longer than the buffer is cut, and keeps its line break. */
+static void report(const char* format, ...) {
+    char line[256];
+    const size_t room = sizeof(line) - 1;
+    size_t used = 0;
+    va_list args;
+    va_start(args, format);
+    for (const char* ch = format; *ch != '\0' && used < room; ++ch) {
+        if (*ch != '%') {
+            line[used++] = *ch;
+            continue;
+        }
+        ++ch;
+        char digits[20];
+        int count = 0;
+        if (*ch == 's') {
+            const char* text = va_arg(args, const char*);
+            if (text == 0) {
+                text = "(null)";
+            }
+            while (*text != '\0' && used < room) {
+                line[used++] = *text++;
+            }
+            continue;
+        }
+        if (*ch == 'd' || *ch == 'u') {
+            unsigned long value;
+            if (*ch == 'd') {
+                const int signed_value = va_arg(args, int);
+                if (signed_value < 0 && used < room) {
+                    line[used++] = '-';
+                }
+                value = signed_value < 0 ? (unsigned long)(-(long)signed_value) : (unsigned long)signed_value;
+            } else {
+                value = va_arg(args, unsigned int);
+            }
+            do {
+                digits[count++] = (char)('0' + value % 10);
+                value /= 10;
+            } while (value != 0);
+        } else if (ch[0] == 'l' && ch[1] == 'x') {
+            ++ch;
+            unsigned long value = va_arg(args, unsigned long);
+            do {
+                digits[count++] = "0123456789abcdef"[value & 0xf];
+                value >>= 4;
+            } while (value != 0);
+        } else {
+            /* Not a conversion this formatter knows: say so in the line rather
+             * than read an argument of the wrong size. */
+            if (*ch == '\0') {
+                break;
+            }
+            digits[count++] = '?';
+        }
+        while (count > 0 && used < room) {
+            line[used++] = digits[--count];
+        }
+    }
+    va_end(args);
+    if (used == room && line[used - 1] != '\n') {
+        line[used - 1] = '\n';
+    }
+    sx_loader_report(line, (unsigned long)used);
 }
 
 /* Registra el ejecutable en g_libs para que sus simbolos entren en el ambito.
@@ -374,7 +473,7 @@ static int adopt_executable(void) {
     exe->refcount = 0;
     exe->deps = 0;
     exe->symbol_count = 0;
-    exe->header = header;
+    copy_bytes(&header, &exe->header, sizeof(header));
     exe->header_count = header.e_phnum;
     exe->dynsym = 0;
     exe->dynstr = 0;
@@ -463,12 +562,12 @@ static Library* begin_load(void) {
     for (int index = 0; index < kMaxProgramHeaders; ++index) {
         g_lib->placed[index] = 0;
     }
-    /* Los handles del archivo tambien se ponen a cero. Este slot pudo ser el de
-     * una libreria cargada antes --cargarla ocupa el hueco y lo deja--, asi que
-     * un savanxp_open fallido dejaba los handles de la anterior puestos aca, y un
-     * cierre de los propios habria cerrado los de aquella. */
-    g_lib->file_section = 0;
-    g_lib->file_fd = 0;
+    /* The file's handles are reset too. This slot may have held a library
+     * loaded earlier -- loading one takes the slot and leaves it -- so a failed
+     * open left that library's handles here, and closing our own would have
+     * closed those. */
+    g_lib->file_section = -1;
+    g_lib->file_fd = -1;
     g_lib->handles_open = 0;
     return g_lib;
 }
@@ -482,7 +581,7 @@ static void close_file_handles(void);
 static void unmap_placed(Library* library) {
     for (int index = 0; index < kMaxProgramHeaders; ++index) {
         if (library->placed[index] != 0) {
-            (void)unmap_view(library->placed[index]);
+            (void)sxn_unmap_view((uint64_t)(uintptr_t)library->placed[index]);
             library->placed[index] = 0;
         }
     }
@@ -518,48 +617,45 @@ static void publish(void) {
  * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
  * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
  * objetivo. */
-/* Los tres por que una reubicacion con simbolo puede fallar, en palabras.
+/* The three reasons a relocation with a symbol can fail, in words.
  *
- * La funcion que las llama devuelve cero y quien lo ve solo tiene un numero de
- * paso. El numero dice DONDE, no QUE: "paso 5" son todas las reubicaciones de la
- * tabla, con toda la tabla de simbolos por delante. Un numero de paso ahorra
- * trabajo; un nombre ahorra la tarde.
+ * The function that calls these returns zero, and whoever sees it only has a
+ * step number. The number says WHERE, not WHAT: "step 5" is every relocation in
+ * the table, with the whole symbol table ahead. A step number saves work; a name
+ * saves the afternoon.
  *
- * Se imprimen desde aca y no desde arriba porque aca esta el nombre, y quien llama
- * ya lo solto: el retorno es un int. */
+ * They are reported from here and not from above because the name is here, and
+ * the caller has already let it go: its return is an int. */
 static void report_unresolved(const char* library, const char* symbol)
 {
-    /* Se guarda ademas de imprimirse. Imprimir es lo que ayuda a una persona; el
-     * global es lo que permite a una PRUEBA afirmar el nombre, porque una prueba
-     * no puede leer la salida estandar. */
+    /* Kept as well as reported. The report is what helps a person; the global
+     * is what lets a TEST assert the name, since a test cannot read standard
+     * error. */
     g_lib_fail_library = library;
     g_lib_fail_symbol = symbol;
-    eprintf("loader: %s necesita \"%s\" y no esta en ninguna imagen cargada\n",
-            library, symbol);
+    report("loader: %s needs \"%s\" and no loaded image defines it\n", library, symbol);
 }
 
 static void report_unplaced(const char* symbol, int owner)
 {
-    eprintf("loader: \"%s\" se encontro en %s, pero su direccion no cae en ningun "
-            "segmento mapeado\n",
-            symbol, g_libs[owner].soname);
+    report("loader: \"%s\" was found in %s, but its address falls in no mapped segment\n",
+           symbol, g_libs[owner].soname);
 }
 
 static void report_unmapped(const char* library, const char* symbol, Elf64_Addr offset)
 {
-    eprintf("loader: %s escribe en 0x%lx para \"%s\", que no esta en ningun segmento "
-            "mapeado de la imagen\n",
-            library, (unsigned long)offset, symbol);
+    report("loader: %s writes at 0x%lx for \"%s\", which is in no mapped segment of the image\n",
+           library, (unsigned long)offset, symbol);
 }
 
-/* Como se llama una imagen en los mensajes.
+/* What an image is called in the messages.
  *
- * El ejecutable no tiene DT_SONAME --ese campo es solo para .so--, asi que su
- * nombre queda vacio y el mensaje sale como "39 entradas de  se quedaron". El
- * nombre de la imagen es lo primero que se lee de un diagnostico, y que este en
- * blanco lo hace inutil. */
+ * The executable has no DT_SONAME -- that field is for shared objects only -- so
+ * its name is empty and the message would read "39 entries of  were left". The
+ * image's name is the first thing read in a diagnostic, and a blank one makes
+ * it useless. */
 static const char* image_name(int slot) {
-    return g_libs[slot].soname[0] != '\0' ? g_libs[slot].soname : "el ejecutable";
+    return g_libs[slot].soname[0] != '\0' ? g_libs[slot].soname : "the executable";
 }
 
 static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_size) {
@@ -607,18 +703,16 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         }
         if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT &&
             type != R_X86_64_64) {
-            /* El cargador no implementa este tipo. Fallar es lo correcto --seguir y
-             * dejar la casilla como estaba seria una referencia rota que no se
-             * manifestaria hasta la llamada-- pero sin decir cual es el tipo, el
-             "paso 5" no lleva a ninguna parte.
+            /* The loader does not implement this type. Failing is right --
+             * going on and leaving the slot as it was would be a broken
+             * reference that shows only at the call -- but without naming the
+             * type, "step 5" leads nowhere.
              *
-             * No se puede provocar con este enlazador: lld solo emite estos tres
-             * para un .so bien construido. Queda puesto por si aparece uno de un
-             * enlace hecho a mano, que es de donde viene el resto de estas
-             * librerias. */
-            eprintf("loader: %s tiene una reubicacion de tipo %u, y solo se "
-                    "implementan JUMP_SLOT, GLOB_DAT, R_X86_64_64 y RELATIVE\n",
-                    image_name(slot), type);
+             * This linker cannot produce it: lld emits only these for a
+             * well-built shared object. It stays for one linked by hand. */
+            report("loader: %s has a relocation of type %u; only JUMP_SLOT, GLOB_DAT, "
+                   "R_X86_64_64 and RELATIVE are implemented\n",
+                   image_name(slot), type);
             return 0;
         }
         const unsigned name_index = (unsigned)(rela.r_info >> 32);
@@ -668,10 +762,10 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         *where = value;
     }
     if (skipped != 0) {
-        /* Una linea, no una por simbolo: el nombre de la libreria ya lo enseanyo
-         * el mensaje de la carga, y lo que aporta aqui es el RECUENTO. */
-        eprintf("loader: %u entradas de %s se quedaron sin reubicar porque %s no cargo\n",
-                skipped, image_name(slot), g_missing_library);
+        /* One line, not one per symbol: the load's message already named the
+         * library, and what this adds is the COUNT. */
+        report("loader: %u entries of %s were left unrelocated because %s did not load\n",
+               skipped, image_name(slot), g_missing_library);
     }
     return 1;
 }
@@ -841,32 +935,34 @@ int ldso_load(const char* path) {
      * -1 opaco: los pasos van en orden y el ultimo que se alcanzo a hacer es el
      * que importa. */
     if (begin_load() == 0) {
-        /* No es "no se pudo cargar": es que ya hay 32 y no cabe una mas. El
-         * numero de paso no distingue los dos, y la accion es distinta: una
-         * son 32 es una cadena demasiado larga, la otra es que el archivo no
-         * esta. */
-        eprintf("loader: no cabe una libreria mas, el limite es %d y ya hay %d\n",
-                kMaxLibraries, g_lib_count);
+        /* Not "could not load": there are already 32 and one more does not fit.
+         * The step number does not tell the two apart, and the cure differs:
+         * one is a chain too long, the other a file that is not there. */
+        report("loader: no room for another library, the limit is %d and there are %d\n",
+               kMaxLibraries, g_lib_count);
         return -1;
     }
-    const long fd = savanxp_open(path);
+    /* The path is absolute: the native call knows no working directory, and
+     * every path the loader builds starts at /lib. dlopen makes a relative
+     * one absolute before it gets here. */
+    const long fd = sxn_open_file(path, SXN_FILE_READ);
     if (fd < 0) {
-        /* El caso mas comun de todos y el que mas cuesta adivinar: una
-         * dependencia que no esta en el volumen. El nombre va en el mensaje
-         * porque el que se imprime arriba es solo un numero de paso. */
-        eprintf("loader: no se pudo abrir %s (paso 2)\n", path);
+        /* The commonest case of all and the hardest to guess: a dependency
+         * that is not on the volume. The name goes in the message because the
+         * one printed above is only a step number. */
+        report("loader: cannot open %s (step 2)\n", path);
         end_load(0);
         return -2;
     }
-    const long section = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
+    const long section = sxn_section_open_range(fd, 0, 0, SXN_SECTION_READ | SXN_SECTION_EXEC);
     if (section < 0) {
-        eprintf("loader: no se pudo mapear %s como seccion ejecutable (paso 3)\n", path);
-        savanxp_close((int)fd);
+        report("loader: cannot map %s as an executable section (step 3)\n", path);
+        (void)sxn_close(fd);
         end_load(0);
         return -3;
     }
-    g_lib->file_section = (int)section;
-    g_lib->file_fd = (int)fd;
+    g_lib->file_section = section;
+    g_lib->file_fd = fd;
     g_lib->handles_open = 1;
     g_lib->bias = 0;
     g_lib->bias_ready = 0;
@@ -890,18 +986,16 @@ int ldso_load(const char* path) {
     }
     g_lib->path[i] = '\0';
 
-    /* Mapa de trabajo: el archivo entero en una direccion que eligio el kernel,
-     * solo para leerle la cabecera y los program headers. */
-    /* La cabecera se lee por el descriptor, no mapeando el archivo entero: son
-     * 64 bytes de Elf64_Ehdr mas 56 por program header, y mapear 40 KiB para
-     * leer 3.6 KiB deja una vista viva justo en el rango donde despues se
-     * colocan los segmentos. */
+    /* The header is read through the handle, not by mapping the whole file:
+     * it is 64 bytes of Elf64_Ehdr plus 56 per program header, and mapping
+     * 40 KiB to read 3.6 KiB leaves a live view right in the range where the
+     * segments are placed next. */
     unsigned char probe[sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * kMaxProgramHeaders)];
     unsigned long filled = 0;
     const unsigned long want_bytes =
         sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * kMaxProgramHeaders);
     while (filled < want_bytes) {
-        const long got = savanxp_read((int)fd, probe + filled, want_bytes - filled);
+        const long got = sxn_read(fd, probe + filled, want_bytes - filled);
         if (got <= 0) {
             break;
         }
@@ -913,24 +1007,24 @@ int ldso_load(const char* path) {
     }
     Elf64_Ehdr header;
     if (!read_header(probe, &header)) {
-        /* read_header no dice cual de sus seis condiciones fallo, y aqui hay un
-         * solo mensaje para las seis. Se distingue el caso comun --no es una
-         * imagen ELF-- del resto, porque un archivo que no es una imagen y una
-         * imagen con un e_phnum imposible se rompen distinto. */
+        /* read_header does not say which of its six conditions failed, and
+         * here there is one message for all six. The common case -- not an ELF
+         * image -- is told apart from the rest, because a file that is not an
+         * image and an image with an impossible e_phnum break differently. */
         if (probe[0] != 0x7f || probe[1] != 'E' || probe[2] != 'L' || probe[3] != 'F')
         {
-            eprintf("loader: %s no empieza con la magia de ELF\n", path);
+            report("loader: %s does not start with the ELF magic\n", path);
         }
         else
         {
-            eprintf("loader: %s es un ELF que no sirve de libreria (clase, tipo, "
-                    "maquina o numero de program headers)\n",
-                    path);
+            report("loader: %s is an ELF that cannot be a library (class, type, "
+                   "machine or number of program headers)\n",
+                   path);
         }
         end_load(0);
         return -5;
     }
-    g_lib->header = header;
+    copy_bytes(&header, &g_lib->header, sizeof(header));
     g_lib->header_count = header.e_phnum;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
         copy_bytes(probe + header.e_phoff + (index * header.e_phentsize), &g_lib->headers[index], sizeof(Elf64_Phdr));
@@ -985,29 +1079,28 @@ int ldso_load(const char* path) {
     return 0;
 }
 
-/* Cierra el descriptor y la seccion del archivo de la libreria en curso.
+/* Closes the file handle and the file's section of the library in progress.
  *
- * Los dos handles solo hacen falta mientras se leen los program headers y se
- * mapean los segmentos, que ya termino. Dejarlos abiertos costaba DOS
- * descriptores por libreria para siempre, y se nota: windowd lanza sus clientes y
- * les hereda la tabla, asi que cargar una tercera libreria --libgfx2d-- empujó la
- * sesion de 20 a 21 descriptores y windowd-smoke fallo por eso. Con tres
- * libreras eran seis descriptores quemados en cada proceso, sin usar.
+ * Both handles are needed only while the program headers are read and the
+ * segments mapped, which is over. Leaving them open cost TWO descriptors per
+ * library for good, and it showed: windowd launches its clients and they
+ * inherit its table, so loading a third library -- libgfx2d -- pushed the
+ * session from 20 to 21 descriptors and windowd-smoke failed on it. With three
+ * libraries that was six descriptors burnt in every process, unused.
  *
- * Antes el codigo decia, en el comentario del struct, que el descriptor "sigue
- * abierto pero no se vuelve a leer el archivo": o sea, un handle guardado para no
- * hacer nada. */
+ * The struct's comment used to say the descriptor "stays open but the file is
+ * not read again": a handle kept to do nothing. */
 static void close_file_handles(void) {
     if (g_lib == 0 || !g_lib->handles_open) {
         return;
     }
-    if (g_lib->file_section != 0) {
-        (void)savanxp_close(g_lib->file_section);
-        g_lib->file_section = 0;
+    if (g_lib->file_section >= 0) {
+        (void)sxn_close(g_lib->file_section);
+        g_lib->file_section = -1;
     }
-    if (g_lib->file_fd != 0) {
-        (void)savanxp_close(g_lib->file_fd);
-        g_lib->file_fd = 0;
+    if (g_lib->file_fd >= 0) {
+        (void)sxn_close(g_lib->file_fd);
+        g_lib->file_fd = -1;
     }
     g_lib->handles_open = 0;
 }
@@ -1107,7 +1200,7 @@ static int load_needed_chain(int parent_slot) {
                  * faltan tres en vez de insinuar que falta una. */
                 unsigned seen;
                 for (seen = 0; seen < g_missing_count; ++seen) {
-                    if (strcmp(g_missing_names[seen], need) == 0) {
+                    if (same_string(g_missing_names[seen], need)) {
                         break;
                     }
                 }
@@ -1139,33 +1232,32 @@ static int load_needed_chain(int parent_slot) {
     return failed;
 }
 
-/* Mapea un segmento en la direccion que pide el ELF.
+/* Maps a segment at the address the ELF asks for.
  *
- * Un segmento escribible no puede salir de la seccion del archivo: el respaldo
- * es de solo lectura justamente para que dos procesos que cargan la misma
- * libreria no se pisen, y el GOT de un .so vive en un segmento escribible. Asi
- * que se crea una seccion anonima en esa direccion y se copia el contenido del
- * archivo. Cada proceso paga su copia, que es lo mismo que paga cualquier
- * biblioteca con datos reubicados. */
+ * A writable segment cannot come from the file's section: the backing is
+ * read-only precisely so that two processes loading the same library do not
+ * step on each other, and a shared object's GOT lives in a writable segment. So
+ * an anonymous section is created at that address and the file's bytes are
+ * copied in. Each process pays for its copy, which is what any library with
+ * relocated data pays. */
 static void* place_segment(const Elf64_Phdr* ph) {
     const int wants_exec = (ph->p_flags & PF_X) != 0;
-    const unsigned long flags =
-        wants_exec ? (SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC) : (SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    const unsigned flags =
+        wants_exec ? (SXN_SECTION_READ | SXN_SECTION_EXEC) : (SXN_SECTION_READ | SXN_SECTION_WRITE);
     const unsigned long at = (unsigned long)(ph->p_vaddr & ~(Elf64_Addr)4095);
-    /* Los bytes del segmento empiezan a offset p_vaddr - at dentro de la pagina,
-     * NO al principio del mapping.
+    /* The segment's bytes start at offset p_vaddr - at inside the page, NOT at
+     * the start of the mapping.
      *
-     * map_view_at exige una direccion alineada a pagina y pega el primer byte de
-     * la seccion en esa direccion. Por eso el rango se pide desde el principio
-     * de la pagina del segmento y no desde p_offset: asi el primer byte caiga
-     * donde tiene que caer y TODA la imagen comparta un solo bias. Sin eso cada
-     * segmento tiene un ancla distinta, y las referencias entre segmentos -- un
-     * PLT en el codigo saltando a un GOT en los datos -- apuntan a la imagen
-     * equivocada sin dar ningun error visible.
+     * map_view_at wants a page-aligned address and puts the section's first
+     * byte there. So the range is asked from the start of the segment's page,
+     * not from p_offset: that way the first byte lands where it must and the
+     * WHOLE image shares one bias. Without it each segment has its own anchor,
+     * and references between segments -- a PLT in the code jumping to a GOT in
+     * the data -- point into the wrong image without any visible error.
      *
-     * El rango arranca en p_offset - off_in_page, que es el comienzo de esa
-     * pagina en el archivo: los ELF guardan p_offset y p_vaddr con el mismo
-     * resto modulo la pagina, asi que nunca es negativo. */
+     * The range starts at p_offset - off_in_page, the start of that page in the
+     * file: ELF keeps p_offset and p_vaddr congruent modulo the page, so it is
+     * never negative. */
     const unsigned long off_in_page = (unsigned long)(ph->p_vaddr - at);
     const unsigned long start_off = (unsigned long)ph->p_offset - off_in_page;
     const unsigned long span = off_in_page + (unsigned long)ph->p_filesz;
@@ -1176,64 +1268,66 @@ static void* place_segment(const Elf64_Phdr* ph) {
 
     long segment_section;
     if (wants_exec) {
-        /* Solo el tramo del archivo que corresponde a ESTE segmento. Mapear la
-         * seccion del archivo entero pondria el resto del ELF en direcciones que
-         * no le tocan: el primer LOAD pide p_vaddr 0 para el offset 0 y el
-         * siguiente pide 0x2560 para el offset 0x1560. */
-        segment_section = section_open_range(g_lib->file_fd, start_off, span, flags);
+        /* Only the stretch of the file that belongs to THIS segment. Mapping the
+         * whole file's section would put the rest of the ELF at addresses that
+         * are not its own: the first LOAD asks p_vaddr 0 for offset 0 and the
+         * next asks 0x2560 for offset 0x1560. */
+        segment_section = sxn_section_open_range(g_lib->file_fd, start_off, span, flags);
     } else {
-        /* La region privada tiene queoze el hueco de la pagina antes del
-         * segmento, o los bytes copiados no entran. */
-        segment_section = section_create(off_in_page + (unsigned long)ph->p_memsz, flags);
+        /* The private region has to include the gap of the page before the
+         * segment, or the copied bytes do not fit. */
+        segment_section = sxn_section_create(off_in_page + (unsigned long)ph->p_memsz, flags);
     }
     if (segment_section < 0) {
         g_lib_fail_errno = segment_section;
         return 0;
     }
 
-    void* view = map_view_at((int)segment_section, want, flags);
-    if (view == 0 || result_is_error((long)view)) {
-        g_lib_fail_errno = (long)view;
-        (void)savanxp_close((int)segment_section);
+    /* A base, or -errno: no user address is that high. */
+    const long view = sxn_map_view_at(segment_section, want, flags);
+    if (view <= 0) {
+        g_lib_fail_errno = view;
+        (void)sxn_close(segment_section);
         return 0;
     }
     if (wants_exec) {
         /* The view holds its own reference to the section (SECTIONS.md, "The
          * budget"), so the handle is done. It used to stay open: one descriptor
          * per library for the life of the process, out of 64. */
-        (void)savanxp_close((int)segment_section);
+        (void)sxn_close(segment_section);
     }
     if (!g_lib->bias_ready) {
-        /* El kernel eligio; ese es el bias. Los segmentos siguientes se piden
-         * explicitamente para que no puedan caer en otra parte. */
+        /* The kernel chose; that is the bias. The following segments are asked
+         * for explicitly so they cannot land anywhere else. */
         g_lib->bias = (unsigned long)view - at;
         g_lib->bias_ready = 1;
         g_lib_bias = g_lib->bias;
     }
     if (!wants_exec) {
-        /* Los bytes salen de una seccion del rango EXACTO del archivo, mapeada un
-         * momento y liberada. No se puede savanxp_read: no hay seek en la API, el
-         * descriptor sigue leyendo desde donde quedo la vez anterior, y el
-         * segmento recibiria bytes del offset equivocado. */
-        const long source = section_open_range(g_lib->file_fd, start_off, span, SAVANXP_SECTION_READ);
+        /* The bytes come from a section over the EXACT range of the file, mapped
+         * for a moment and released. Reading the handle would not do: there is
+         * no seek, the handle reads on from where it stopped, and the segment
+         * would get the bytes of the wrong offset. */
+        const long source = sxn_section_open_range(g_lib->file_fd, start_off, span, SXN_SECTION_READ);
         if (source < 0) {
-            (void)savanxp_close((int)segment_section);
+            (void)sxn_close(segment_section);
+            (void)sxn_unmap_view((uint64_t)view);
             return 0;
         }
-        const unsigned char* bytes = (const unsigned char*)map_view_at((int)source, 0, SAVANXP_SECTION_READ);
-        if (bytes == 0 || result_is_error((long)bytes)) {
-            (void)savanxp_close((int)source);
-            (void)savanxp_close((int)segment_section);
+        const long bytes = sxn_map_view_at(source, 0, SXN_SECTION_READ);
+        if (bytes <= 0) {
+            (void)sxn_close(source);
+            (void)sxn_close(segment_section);
+            (void)sxn_unmap_view((uint64_t)view);
             return 0;
         }
-        copy_bytes(bytes, view, (size_t)span);
-        (void)unmap_view((void*)bytes);
-        (void)savanxp_close((int)source);
-        /* Los bytes mas alla de p_filesz son .bss: section_create ya entrego la
-         * pagina en cero. */
-        (void)savanxp_close((int)segment_section);
+        copy_bytes((const void*)(uintptr_t)bytes, (void*)(uintptr_t)view, (size_t)span);
+        (void)sxn_unmap_view((uint64_t)bytes);
+        (void)sxn_close(source);
+        /* The bytes past p_filesz are .bss: the section came zeroed. */
+        (void)sxn_close(segment_section);
     }
-    return view;
+    return (void*)(uintptr_t)view;
 }
 
 
@@ -1396,7 +1490,7 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
         if (symbol.st_shndx == SHN_UNDEF) {
             continue;
         }
-        if (strcmp(library->dynstr + symbol.st_name, name) == 0) {
+        if (same_string(library->dynstr + symbol.st_name, name)) {
             *value_out = symbol.st_value;
             return slot;
         }
@@ -1527,7 +1621,7 @@ static int slot_of_handle(void* handle) {
 
 static int loaded_slot_at(const char* path) {
     for (int slot = 1; slot < g_lib_count; ++slot) {
-        if (strcmp(g_libs[slot].path, path) == 0) {
+        if (same_string(g_libs[slot].path, path)) {
             return slot;
         }
     }
@@ -1623,8 +1717,11 @@ void* dlopen(const char* path, int mode) {
     }
 
     /* A bare name is looked up where DT_NEEDED is; anything with a '/' is a
-     * path, relative ones included. */
+     * path, relative ones included. The loader opens absolute paths only (the
+     * native call knows no working directory), so a relative one is made
+     * absolute here against the POSIX one: this is the POSIX layer. */
     char full[sizeof(g_libs[0].path)];
+    char cwd[sizeof(g_libs[0].path)];
     size_t used = 0;
     int has_slash = 0;
     for (const char* ch = path; *ch != '\0'; ++ch) {
@@ -1633,8 +1730,20 @@ void* dlopen(const char* path, int mode) {
             break;
         }
     }
-    const char* parts[2] = {has_slash ? "" : "/lib/", path};
-    for (int part = 0; part < 2; ++part) {
+    const char* parts[3] = {has_slash ? "" : "/lib/", "", path};
+    if (has_slash && path[0] != '/') {
+        if (savanxp_getcwd(cwd, sizeof(cwd)) < 0 || cwd[0] != '/') {
+            dl_fail("dlopen: no working directory for ", path, 0);
+            return 0;
+        }
+        size_t length = 0;
+        while (cwd[length] != '\0') {
+            length++;
+        }
+        parts[0] = cwd;
+        parts[1] = cwd[length - 1] == '/' ? "" : "/";
+    }
+    for (int part = 0; part < 3; ++part) {
         for (const char* ch = parts[part]; *ch != '\0'; ++ch) {
             if (used >= sizeof(full) - 1) {
                 dl_fail("dlopen: path too long: ", path, 0);

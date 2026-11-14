@@ -60,7 +60,10 @@ int main(void)
     }
 
     void* base = dlopen("libdlmod_base.so.0.4", RTLD_NOW);
-    void* one = dlopen("/lib/libdlmod_one.so.0.4", RTLD_NOW);
+    /* A relative path is the working directory's: the loader opens absolute
+     * paths only, so dlopen joins them. The later "same path twice" check
+     * proves the join gives /lib/libdlmod_one.so.0.4 exactly. */
+    void* one = savanxp_chdir("/") == 0 ? dlopen("lib/libdlmod_one.so.0.4", RTLD_NOW) : 0;
     if (base == 0 || one == 0) {
         eprintf("dltest: %s\n", dlerror());
         return fail("base or one did not open");

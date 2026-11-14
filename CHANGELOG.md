@@ -222,6 +222,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The shared-library loader speaks SXN and calls no C library; its messages are in English and go through the runtime
+  hook `sx_loader_report`.** `dlopen` joins a relative path with the working directory itself; `check_shared_libs`
+  now fails the build if the loader imports anything else. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#one-loader-over-sxn).
+
 - **`smp-stats` names Linux system calls (`linux#N`) and counts them at the `syscall` door, not the fault door they
   trap through; `top held` has a row per subsystem.** Before, Linux holds were left out of `top held` and the longest
   hold called them `native`.

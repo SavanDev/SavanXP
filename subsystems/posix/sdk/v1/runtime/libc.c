@@ -319,15 +319,35 @@ const char* sx_program_path(void) {
 
 void sx_tls_init(void);
 
+/* The loader's diagnostics, POSIX side: standard error. Weak: the native
+ * runtime (system/runtime/sxn_runtime.c) writes the same line through SXN. */
+__attribute__((weak)) void sx_loader_report(const char* text, unsigned long length) {
+    (void)savanxp_write(SAVANXP_STDERR_FILENO, text, length);
+}
+
 void sx_start_dynamic(void) {
     if (sx_run_interpreter != 0) {
         const int result = sx_run_interpreter();
-        if (result != 0) {
-            /* Un programa que no queda operativo no puede decir nada util con
-             * printf todavia, y el sintoma de no haberse reubicado --punteros a
-             * cero, secciones que no abren-- no dice nada de la causa. El paso
-             * que fallo va numerado igual que en ldso_load. */
-            eprintf("sx_start_dynamic: el interprete fallo (paso %d)\n", -result);
+        if (result < 0 && result > -100) {
+            /* A program left unrelocated cannot say anything useful with printf
+             * yet, and the symptom -- null pointers, sections that do not open --
+             * says nothing of the cause. The failed step is numbered as in
+             * ldso_load. Through the report hook rather than eprintf, so a
+             * native program says it too: it has no POSIX write. */
+            char line[] = "sx_start_dynamic: the interpreter failed (step 00)\n";
+            unsigned long length = sizeof(line) - 1;
+            const int step = -result;
+            if (step < 10) {
+                /* One digit: drop the first and close the line again. */
+                line[length - 4] = (char)('0' + step);
+                line[length - 3] = ')';
+                line[length - 2] = '\n';
+                length--;
+            } else {
+                line[length - 4] = (char)('0' + step / 10);
+                line[length - 3] = (char)('0' + step % 10);
+            }
+            sx_loader_report(line, length);
         }
     }
     /* Thread-local storage after the loader: the executable's TLS image may

@@ -103,6 +103,12 @@ void sx_heap_pages_unmap(void* base, size_t bytes);
 /* How exit() ends the process, the same way: weak and POSIX in the runtime,
  * SXN_SYS_EXIT in the native one. Never returns. */
 void sx_process_exit(int code) __attribute__((noreturn));
+/* Where the shared-library loader's diagnostics go: one line, `length` bytes,
+ * line break included. The loader calls no C library and no subsystem's calls
+ * of its own to say why a library did not load; the runtime does it in its
+ * terms. Weak and POSIX (standard error) in the runtime, handle 2 through
+ * SXN_SYS_WRITE in the native one. */
+void sx_loader_report(const char* text, unsigned long length);
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
  * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */
 long pipe_send_handle(int pipe_fd, int handle);
