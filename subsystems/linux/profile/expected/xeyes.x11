@@ -146,12 +146,12 @@
 1 S reply seq=91 len=32
 1 C seq=92 QueryPointer len=8 window=r+0x8
 1 S reply seq=92 len=32
-1 C seq=93 QueryPointer len=8 window=r+0x8
-1 S reply seq=93 len=32
-1 C seq=94 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
-1 C seq=95 PolyFillArc len=24 drawable=r+0x8 bytes=12
-1 C seq=96 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
-1 C seq=97 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=93 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=94 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=95 PolyFillRectangle len=20 drawable=r+0x8 bytes=8
+1 C seq=96 PolyFillArc len=24 drawable=r+0x8 bytes=12
+1 C seq=97 QueryPointer len=8 window=r+0x8
+1 S reply seq=97 len=32
 1 C seq=98 QueryPointer len=8 window=r+0x8
 1 S reply seq=98 len=32
 1 C seq=99 QueryPointer len=8 window=r+0x8

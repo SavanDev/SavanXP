@@ -46,7 +46,7 @@ traces. Those differ only in how many times their event loops turned
 | Linux kernel | 7.2.15 (Arch Linux), x86-64 |
 | strace | 6.19 (Alpine `strace-6.19-r1`) |
 | X server | Xvfb 21.1.26 (Alpine `xvfb-21.1.26-r0`), 640x480x24 |
-| clang and lld | 23.1.4, the project's host toolchain |
+| clang and lld | 23.1.5, the project's host toolchain (the references were retaken when it moved from 23.1.4) |
 | FreeBSD Linuxulator studied | `f429c4a6ee50c99fbff672a3eaa7e5cdaa198a16` (2026-11-14): `sys/amd64/linux/syscalls.master`, `linux_sysvec.c` |
 
 ## The distribution
@@ -133,15 +133,15 @@ different bytes, so each output below belongs to the hash it was taken from
 
 | Fixture | Gate | Source | SHA-256 |
 | --- | --- | --- | --- |
-| `hello` | L1 | `fixtures/hello/hello.S`, libc-free | `9130a5d55763a9968c8d0474c1c6f7876ffa396fd5dab1b243cc4c5a6f7d2c20` |
-| `startup` | L1 | `fixtures/startup/`, libc-free | `0358a1a33984d5e7e2839188367808075cc9501a8a02599c1d6f51a8952a3400` |
-| `errors` | L1 | `fixtures/errors/errors.c`, libc-free, added at L1 | `ed5c314ca1f558b6f43170f04faf2c2649104716d1e54a639e669b2c59efa2fe` |
-| `args` | L2 | `fixtures/static/args.c`, static musl | `0a32f755b540fb1f60855edc7d746c5b2f0103b029a5d929b99e38485dfffbfa` |
-| `tls` | L2 | `fixtures/static/tls.c` | `2560af35461ed027456a838768762943237cb4f0843398a975881c2f0dc91871` |
-| `heap` | L2 | `fixtures/static/heap.c` | `406042fa539ef686864c6f28093229502ef581e15f6b1f2f4210180d6d978b01` |
-| `clock` | L2 | `fixtures/static/clock.c` | `06ade467f92f35356bd539153936443ab7b8af59ac9a6be45da422bfe4f058cf` |
-| `files` | L2 | `fixtures/static/files.c` | `73a9f19420036b49e8504b20af2ebf9b0b34ecc0fc22a36410edf07e35235249` |
-| `xclient` | L5 | `fixtures/xclient/xclient.c`, dynamic, Alpine's Xlib | `36e0ef7c6116acd290ad837f17d166591ea356756fad045653b3b10d8dca500c` |
+| `hello` | L1 | `fixtures/hello/hello.S`, libc-free | `c2ce81d483393b87157d3b6dc7a32831939fd43773eb9fdd44a1202b676bb28d` |
+| `startup` | L1 | `fixtures/startup/`, libc-free | `83a592b9845b0c28dd44399c7234e0886a20c987f902b5586346e3040e55c363` |
+| `errors` | L1 | `fixtures/errors/errors.c`, libc-free, added at L1 | `0537105d6352e4bbb65273bc1fd029400fff33986239bcc54886a49f1a3bdcbd` |
+| `args` | L2 | `fixtures/static/args.c`, static musl | `46383c68f2514a4fc135a78a8f607ff7798fe64f70a507d49176122f0f6655da` |
+| `tls` | L2 | `fixtures/static/tls.c` | `82f7cb63a08006160472ab1c77c3bb2306c5e183a4db58a9977f2ac0ac89f80e` |
+| `heap` | L2 | `fixtures/static/heap.c` | `67ac5b36bba61500ae2dfd6881e2bd7d8527e0bbc3df20cfc8afb5c58940b1f1` |
+| `clock` | L2 | `fixtures/static/clock.c` | `37e3924c62549c1ef6da8e64cfe1ca6e5c603b42c8a28e5a464ebe10157a685d` |
+| `files` | L2 | `fixtures/static/files.c` | `01d045cdc704fba616dc5ca9e55bb7852b70a033cc491b8cda18afe58a164c2b` |
+| `xclient` | L5 | `fixtures/xclient/xclient.c`, dynamic, Alpine's Xlib | `37fa1659c4ae26d05874e1ee5fa0b5805cece69bac98de49f944ed9592c9d5b8` |
 
 Sources are under `subsystems/linux/fixtures/`.
 
@@ -205,9 +205,9 @@ except in the two `chroot` runs, where BusyBox's `chroot` executes `jq`.
 
 | Call | L1 | L2 | L3 | L4 | L5 start | L5 loop | L6 start | L6 loop |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `write` | 2000069 | 3 | 2 | 1 |  |  |  |  |
+| `write` | 2000082 | 3 | 2 | 1 |  |  |  |  |
 | `exit` | 1 |  |  |  |  |  |  |  |
-| `exit_group` | 1 | 7 | 7 | 3 |  | 1 |  | 1 |
+| `exit_group` | 2 | 7 | 7 | 3 |  | 1 |  | 1 |
 | `arch_prctl` |  | 7 | 7 | 2 | 1 |  | 1 |  |
 | `set_tid_address` |  | 7 | 7 | 2 | 1 |  | 1 |  |
 | `brk` |  | 3 | 8 | 7 | 2 |  | 3 |  |
@@ -241,8 +241,8 @@ except in the two `chroot` runs, where BusyBox's `chroot` executes `jq`.
 | `getsockopt` |  |  |  |  | 1 |  | 1 |  |
 | `getpeername` |  |  |  |  | 1 |  | 1 |  |
 | `uname` |  |  |  |  | 1 |  | 3 |  |
-| `poll` |  |  |  |  |  | 320 | 32 | 255 |
-| `recvmsg` |  |  |  |  |  | 528 | 43 | 765 |
+| `poll` |  |  |  |  |  | 319 | 32 | 250 |
+| `recvmsg` |  |  |  |  |  | 526 | 43 | 743 |
 | `recvfrom` |  |  |  |  |  | 3 | 3 |  |
 | `shutdown` |  |  |  |  |  | 1 |  |  |
 

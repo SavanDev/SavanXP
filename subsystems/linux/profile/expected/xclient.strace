@@ -81,7 +81,7 @@ close(3) = 0
 socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 3
 getsockopt(3, SOL_SOCKET, SO_SNDBUF, [212992], [4]) = 0
 connect(3, {sa_family=AF_UNIX, sun_path="/tmp/.X11-unix/X1"}, 110) = 0
-getpeername(3, {sa_family=AF_UNIX, sun_path="/tmp/.X11-unix/X1"}, [124 => 54]) = 0
+getpeername(3, {sa_family=AF_UNIX, sun_path="/tmp/.X11-unix/X1"}, [124 => 20]) = 0
 uname({sysname="Linux", nodename="savanxp", ...}) = 0
 access("/root/.Xauthority", R_OK) = -1 ENOENT (No such file or directory)
 mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = ADDR
@@ -122,12 +122,11 @@ recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\0\10\0\0\0\0\0\
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
 writev(3, [{iov_base="\22\0\7\0\1\0 \0\354\0\0\0\4\0\0\0 OLS\1\0\0\0\353\0\0\0\2\0\4\0\1\0 \0\0\10\0\0\0\200\2\0007\0\4\0"..., iov_len=68}, {iov_base=NULL, iov_len=0}, {iov_base="", iov_len=0}], 3) = 68
-recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
+recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)
+recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\23\0\f\0\1\0 \0\1\0 \0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
+recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)
 ioctl(1, TIOCGWINSZ, ADDR) = -1 ENOTTY (Not a tty)
 writev(1, [{iov_base="window mapped", iov_len=13}, {iov_base="\n", iov_len=1}], 2) = 14
-recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
-poll([{fd=3, events=POLLIN}], 1, 50) = 1 ([{fd=3, revents=POLLIN}])
-recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\23\0\f\0\1\0 \0\1\0 \0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\f\0\f\0\1\0 \0\0\0\0\0\310\0\226\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)
 writev(1, [{iov_base="expose 200x150\n", iov_len=15}, {iov_base=NULL, iov_len=0}], 2) = 15
@@ -370,8 +369,9 @@ recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  #
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
 writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {iov_base="", iov_len=0}], 3) = 8
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
-recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\0010\0\0\0\0\0B\0\0\0\0\0\0\0K\0002\0K\0002\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
+recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\0010\0\0\0\0\0B\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
+writev(1, [{iov_base="pointer 0 0 window 0 0\n", iov_len=23}, {iov_base=NULL, iov_len=0}], 2) = 23
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
@@ -379,7 +379,6 @@ writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
 recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\0011\0\0\0\0\0B\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
-writev(1, [{iov_base="pointer 0 0 window 0 0\n", iov_len=23}, {iov_base=NULL, iov_len=0}], 2) = 23
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
@@ -533,9 +532,8 @@ recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  #
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
 writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {iov_base="", iov_len=0}], 3) = 8
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
-recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1G\0\0\0\0\0B\0\0\0\0\0\0\0d\0\24\0d\0\24\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
+recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1G\0\0\0\0\0B\0\0\0\0\0\0\0\225\0c\0\225\0c\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
-writev(1, [{iov_base="pointer 100 20 window 100 20\n", iov_len=29}, {iov_base=NULL, iov_len=0}], 2) = 29
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
@@ -543,6 +541,7 @@ writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
 recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1H\0\0\0\0\0B\0\0\0\0\0\0\0d\0\24\0d\0\24\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
+writev(1, [{iov_base="pointer 100 20 window 100 20\n", iov_len=29}, {iov_base=NULL, iov_len=0}], 2) = 29
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
@@ -611,9 +610,8 @@ recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  #
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
 writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {iov_base="", iov_len=0}], 3) = 8
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
-recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1R\0\0\0\0\0B\0\0\0\0\0\0\0\220\1,\1\220\1,\1\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
+recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1R\0\0\0\0\0B\0\0\0\0\0\0\0d\0\24\0d\0\24\0\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
-writev(1, [{iov_base="pointer 400 300 window 400 300\n", iov_len=31}, {iov_base=NULL, iov_len=0}], 2) = 31
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])
@@ -621,6 +619,7 @@ writev(3, [{iov_base="&\0\2\0\1\0 \0", iov_len=8}, {iov_base=NULL, iov_len=0}, {
 poll([{fd=3, events=POLLIN}], 1, -1) = 1 ([{fd=3, revents=POLLIN}])
 recvmsg(3, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\1\1S\0\0\0\0\0B\0\0\0\0\0\0\0\220\1,\1\220\1,\1\0\0\0\0\0\0\0\0", iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
+writev(1, [{iov_base="pointer 400 300 window 400 300\n", iov_len=31}, {iov_base=NULL, iov_len=0}], 2) = 31
 poll([{fd=3, events=POLLIN}], 1, 50) = 0 (Timeout)
 recvmsg(3, {msg_namelen=0}, 0) = -1 EAGAIN (Resource temporarily unavailable)  # x2
 poll([{fd=3, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=3, revents=POLLOUT}])

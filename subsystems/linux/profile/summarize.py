@@ -40,6 +40,15 @@ CALL = re.compile(r"^([a-z_0-9]+)\(")
 RESUMED = re.compile(r"^<\.\.\. ([a-z_0-9]+) resumed>")
 
 
+HOST_PEER = re.compile(r'sun_path="([^"]*/xsock/(X\d+))"\}, \[(\d+) => (\d+)\]')
+
+
+def guest_peer_length(m):
+    guest = "/tmp/.X11-unix/" + m.group(2)
+    length = int(m.group(4)) - len(m.group(1)) + len(guest)
+    return f'sun_path="{m.group(1)}"}}, [{m.group(3)} => {length}]'
+
+
 def normalize_strace(path):
     lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
     start = 0
@@ -60,6 +69,10 @@ def normalize_strace(path):
         line = re.sub(r'getrandom\("[^"]*"', 'getrandom("RANDOM"', line)
         # The proxy binds the display socket from the host side, so the peer
         # name carries the host's path; the guest named /tmp/.X11-unix/X1.
+        # The address length getpeername returns grows with that path too:
+        # it is recomputed for the guest's name, or the reference would
+        # depend on where the checkout lives.
+        line = HOST_PEER.sub(guest_peer_length, line)
         line = re.sub(r'sun_path="[^"]*/xsock/(X\d+)"', r'sun_path="/tmp/.X11-unix/\1"', line)
         for pid, name in pids.items():
             line = re.sub(rf"\b{pid}\b", name, line)
