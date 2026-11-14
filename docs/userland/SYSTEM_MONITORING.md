@@ -9,8 +9,10 @@ The split is deliberate:
   costs, how full the machine is. Everything it shows changes while you look at
   it.
 - **System Properties** (`/bin/aboutapp`) shows *identity*: which system this
-  is, where it is installed, what hardware it found. Nothing it shows changes
-  while the machine is on.
+  is, where it is installed, what hardware it found, and the licenses of the
+  third-party components installed (its Licenses tab reads `/system/licenses`,
+  see [LICENSE_NOTICES.md](../third-party/LICENSE_NOTICES.md)). Nothing it
+  shows changes while the machine is on.
 
 Having one number in both windows means having two versions of it, so each
 number lives in exactly one of them.

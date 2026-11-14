@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **System Properties has a Licenses tab: every component under `/system/licenses`, SavanXP first, with its notice
+  and full license text.** An installed port appears on its own; F5 rescans.
+
 - **License notices in the image: `/system/licenses/<id>/` holds a `NOTICE` and the full license texts of every
   third-party component, staged from `assets/licenses/*.notice` by the build and from `ports/<name>/licenses/` when a
   port is installed.** `license-notices-test` fails if a shipped registry entry has no notice. See

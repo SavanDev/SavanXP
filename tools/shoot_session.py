@@ -1107,7 +1107,7 @@ def scenario_console(s):
 
 
 def scenario_system(s):
-    """System Properties and Task Manager, two pages of each.
+    """System Properties (all three pages) and Task Manager.
 
     Both are opened by name through the console. The pages are walked by
     keyboard, the only way that does not depend on where the WM put the
@@ -1123,6 +1123,13 @@ def scenario_system(s):
     s.shot("system-general")
     s.qmp.tap("right", pause=2.5)
     s.shot("system-hardware")
+    s.qmp.tap("right", pause=2.5)
+    s.shot("system-licenses")
+    # TAB goes from the tabs to the component list, DOWN selects the second
+    # component and loads its notice into the text view.
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.tap("down", pause=2.5)
+    s.shot("system-licenses-second")
     s.qmp.tap("esc", pause=6.0)
 
     s.open_task_manager()

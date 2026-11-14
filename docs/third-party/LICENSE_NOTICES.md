@@ -19,6 +19,10 @@ repository.
 Whatever lists the licenses has to scan the directory, so an installed port
 shows up and one that was never installed does not.
 
+System Properties' **Licenses** tab (`aboutapp`) is that reader: it lists the
+components by `name` (SavanXP first), and shows the selected one's fields
+followed by each `text=` file, word wrapped to the view. F5 rescans.
+
 ## Where the notices come from
 
 | Source | Staged by | When |
