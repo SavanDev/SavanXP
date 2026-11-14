@@ -1357,6 +1357,15 @@ static int load_needed_chain(int parent_slot) {
                         dep_slot = already;
                         step = 0;
                     } else {
+                        /* A program that named a version and gets another is
+                         * told, and so is whoever reads the system log: it is
+                         * the line that explains a behaviour change after an
+                         * update. A name without a full version asked for the
+                         * latest and got it, which needs no note. */
+                        if (given == 2) {
+                            report("loader: %s is not in /lib; falling back to the newest, %s\n",
+                                   need, chosen);
+                        }
                         lib_path(chosen, full, sizeof(full));
                         dep_slot = g_lib_count;
                         step = ldso_load(full);
@@ -1868,6 +1877,9 @@ int sx_loader_resolve(const char* name, char* path, unsigned long size) {
             (void)sxn_close(exact);
         } else if (pick_version(name, chosen, sizeof(chosen))) {
             lib_path(chosen, path, size);
+            if (sx_loader_find(path) == 0) {
+                report("loader: %s is not in /lib; falling back to the newest, %s\n", name, chosen);
+            }
             return 1;
         }
     }

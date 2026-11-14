@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **When a library version a program names is missing and the loader falls back to the newest minor, the system log
+  records it (`loader: libfoo.so.0.4 is not in /lib; falling back to the newest, libfoo.so.0.6`), from SUN and POSIX
+  alike, whatever standard error is.** Scenario `posix-loader-log`; see [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md#dt_soname-resolution).
+
 - **POSIX programs can write to the system log: `syslog(3)` (`<syslog.h>`), over `SXN_SYS_LOG`, now open to every
   subsystem; its lines read `posix[pid]: ...`.** Scenario `posix-syslog`; see [SYSTEM_LOG.md](docs/kernel/SYSTEM_LOG.md).
 

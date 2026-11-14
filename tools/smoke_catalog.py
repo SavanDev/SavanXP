@@ -939,6 +939,16 @@ SCENARIOS: dict[str, Scenario] = {
         "syslog(3) writes to the system log from POSIX",
         180.0,
     ),
+    # The loader's fallback notice from a POSIX program whose standard error is
+    # closed: "]: loader:" is the system log's prefix, which a line written to
+    # the console would not carry.
+    "posix-loader-log": _qemu_scenario(
+        "loaderlog",
+        "]: loader: libsonamelatest.so.0.1 is not in /lib; falling back to the newest, libsonamelatest.so.0.7",
+        "SYSLOG TEST FAIL",
+        "A POSIX program's loader notice reaches the system log without stderr",
+        180.0,
+    ),
     "dltest": _qemu_scenario(
         "dltest",
         "DLTEST RESOLVED",

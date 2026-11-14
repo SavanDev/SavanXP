@@ -319,10 +319,28 @@ const char* sx_program_path(void) {
 
 void sx_tls_init(void);
 
-/* The loader's diagnostics, POSIX side: standard error. Weak: the native
- * runtime (system/runtime/sxn_runtime.c) writes the same line through SXN. */
+/* The loader's lines, POSIX side: they always reach the system log. Standard
+ * error gets them as before; when it is a character device -- the console --
+ * that write is already in the system log, and when it is a pipe or a file it
+ * is not, so the line goes to the log as well (SXN_SYS_LOG, the call under
+ * syslog). The raw fstat and not isatty: this runs before main and before
+ * thread-local storage, so errno does not exist yet. Weak: the native runtime
+ * (system/runtime/sxn_runtime.c) defines its own. */
 __attribute__((weak)) void sx_loader_report(const char* text, unsigned long length) {
+    struct savanxp_stat info = {0, 0};
     (void)savanxp_write(SAVANXP_STDERR_FILENO, text, length);
+    if (savanxp_fstat(SAVANXP_STDERR_FILENO, &info) == 0 &&
+        (info.st_mode & SAVANXP_S_IFMT) == SAVANXP_S_IFCHR) {
+        return;
+    }
+    char line[SXN_LOG_TEXT_MAX];
+    unsigned long used = 0;
+    while (used < length && used + 1 < sizeof(line) && text[used] != '\n') {
+        line[used] = text[used];
+        used++;
+    }
+    line[used] = '\0';
+    (void)sxn_log(line);
 }
 
 void sx_start_dynamic(void) {

@@ -124,15 +124,19 @@ int main(void)
     }
     (void)dlerror();
 
-    /* A bare name resolves as a DT_NEEDED does: without a version, the latest
-     * /lib has (1.3 of libsonamelatest, over 0.7, 0.2 and the unversioned
-     * file); with the major only, the latest of that ABI (0.7); with a full
+    /* A bare name resolves as a DT_NEEDED does: a full version that is not
+     * there, the newest minor (0.7); without a version, the latest /lib has
+     * (1.3 of libsonamelatest, over 0.7, 0.2 and the unversioned file); with
+     * the major only, the latest of that ABI (0.7, the same image); with a full
      * version that is there, that very file (0.2). */
     {
         static const struct {
             const char* name;
             int version;
         } cases[] = {
+            /* 0.1 is not there: the newest minor, 0.7, stands in, and the
+             * loader writes that to the log. */
+            {"libsonamelatest.so.0.1", 7},
             {"libsonamelatest.so", 13},
             {"libsonamelatest.so.0", 7},
             {"libsonamelatest.so.0.2", 2},

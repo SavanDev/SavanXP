@@ -49,19 +49,16 @@ void sx_heap_pages_unmap(void* base, size_t bytes)
     (void)sxn_unmap_view((uint64_t)(uintptr_t)base);
 }
 
-/* The loader's diagnostics (savanxp/libc.h), in a native program's terms:
- * standard error when it has one -- handle 2, as for a POSIX program -- and the
- * system log otherwise. A program the system starts has no handle 2, and a
- * library that did not load must not go unsaid because of that. */
+/* The loader's lines (savanxp/libc.h), in a native program's terms: the
+ * system log, always. A program the system starts has no handle 2, and what
+ * the loader says -- a library that did not load, or a newer one standing in
+ * for the version asked -- must be on record either way; started from a
+ * console, the log's line shows there too. */
 void sx_loader_report(const char* text, unsigned long length)
 {
     char line[SXN_LOG_TEXT_MAX];
     unsigned long used = 0;
 
-    if (sxn_write(2, text, length) == (long)length)
-    {
-        return;
-    }
     while (used < length && used + 1 < sizeof(line) && text[used] != '\n')
     {
         line[used] = text[used];

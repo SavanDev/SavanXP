@@ -172,6 +172,7 @@ static int run_automation_spec(const char* spec) {
     const char* datetest_argv[] = {"/bin/datetest", 0};
     const char* needstest_argv[] = {"/bin/needstest", 0};
     const char* syslogtest_argv[] = {"/bin/syslogtest", 0};
+    const char* loaderlog_argv[] = {"/bin/syslogtest", "--loader", 0};
     /* Los cuatro diagnósticos del cargador. Cada uno afirmaba en error y nada más,
      * así que ninguno podía tener escenario: ahora cada uno imprime su token de
      * éxito y hay uno que lo ejecuta. */
@@ -312,6 +313,11 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/syslogtest";
             argv = syslogtest_argv;
             argc = 1;
+        } else if (strcmp(spec, "loaderlog") == 0) {
+            /* The loader's fallback notice from POSIX with stderr closed. */
+            path = "/bin/syslogtest";
+            argv = loaderlog_argv;
+            argc = 2;
         } else if (strcmp(spec, "clocktest") == 0) {
             path = "/bin/clocktest";
             argv = clocktest_argv;

@@ -311,8 +311,9 @@ savanxp_program(NAME missingtest TEST LINK_PROFILE PIE
 # borra y el programa tiene que seguir vivo y decir cual falta.
 savanxp_library(NAME libneeded TEST SONAME libneeded.so.0.4
     SOURCES subsystems/posix/userland/neededlib.c)
-# syslog(3) from POSIX: a line in the system log with stdout and stderr closed.
-savanxp_program(NAME syslogtest TEST SOURCES subsystems/posix/userland/syslogtest.c)
+# The system log from POSIX with stdout and stderr closed: syslog(3), and the
+# loader's fallback notice (PIE, for dlopen).
+savanxp_program(NAME syslogtest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/syslogtest.c)
 savanxp_program(NAME needstest TEST LINK_PROFILE PIE DEPENDS libneeded
     SOURCES subsystems/posix/userland/needstest.c)
 

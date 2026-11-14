@@ -986,8 +986,25 @@ breaking the ABI. The loader resolves it in this order:
    calls; the program starts without the library, as with any missing one, and
    `ldso_missing()` names `libfoo.so.0.4`, the name the program asked for.
 
+A fallback is on record. When a full version is missing and a newer minor
+stands in, the loader says so, once, and the line always reaches the system
+log, whichever subsystem the program is and wherever its standard error goes:
+
+```
+loader: libfoo.so.0.4 is not in /lib; falling back to the newest, libfoo.so.0.6
+```
+
+It is the line that explains a change in behaviour after an update. The
+runtime's `sx_loader_report` is what guarantees the log: the native one writes
+there always (`SXN_SYS_LOG`); the POSIX one writes to standard error, which the
+log records when it is the console, and also to the log when it is not
+(`SXN_SYS_LOG`, opened to every subsystem for this and for `syslog(3)`).
+`sonametest` reads the log back and finds the line exactly once with two images
+needing the same missing 0.4; the `posix-loader-log` scenario closes a POSIX
+program's standard error and finds it under the log's `posix[pid]` prefix.
+
 A name that does not give the full version asks for the latest one, chosen
-before anything is opened:
+before anything is opened; that is what was asked, so it is not noted:
 
 - **`libfoo.so`, no version:** the highest `libfoo.so.M.N` of any major --
   `1.3` over `0.7`.
