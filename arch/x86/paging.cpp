@@ -43,6 +43,19 @@ inline void write_cr4(uint32_t value) {
 
 }
 
+namespace {
+
+bool g_enabled = false;
+
+constexpr uint64_t kAddressSpaceLimit = 0x100000000ull;
+
+/* Reload CR3 so newly mapped framebuffer pages are visible immediately. */
+void flush_tlb(uint32_t directory) {
+    write_cr3(directory);
+}
+
+}  // namespace
+
 bool paging::cpu_has_pse() {
     uint32_t eax = 0;
     uint32_t ebx = 0;
@@ -83,6 +96,29 @@ void paging::enable_identity_1gib() {
     uint32_t cr0 = read_cr0();
     cr0 |= (1u << 31) | (1u << 16); /* PG | WP */
     write_cr0(cr0);
+    g_enabled = true;
+}
+
+bool paging::map_identity(uint64_t address, uint32_t bytes) {
+    if (bytes == 0 || address >= kAddressSpaceLimit ||
+        address + bytes > kAddressSpaceLimit) {
+        return false;
+    }
+    /* Identity-map the entire 4 MiB pages covering the physical range. */
+    const uint32_t first = static_cast<uint32_t>(address) / kPageSize4Mib;
+    const uint32_t last = static_cast<uint32_t>(address + bytes - 1u) / kPageSize4Mib;
+    if (last >= 1024) {
+        return false;
+    }
+    for (uint32_t index = first; index <= last; ++index) {
+        const uint32_t entry = (index * kPageSize4Mib) | kPdePresent | kPdeWritable | kPdePageSize;
+        /* Preserve user access on any previously mapped page. */
+        g_page_directory[index] = entry | (g_page_directory[index] & kPdeUser);
+    }
+    if (g_enabled) {
+        flush_tlb(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_page_directory)));
+    }
+    return true;
 }
 
 }

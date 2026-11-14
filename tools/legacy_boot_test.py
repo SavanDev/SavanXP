@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the i386 GRUB2 ISO on the legacy machine and wait for its serial tokens."""
+"""Verify i386 boot, shell and optional desktop graphics on the legacy machine."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ PS2_TOKEN = "ps2: teclado listo"
 # El PIT se programa en cada arranque (sin disco ni programa de por medio),
 # asi que su token se exige junto al de la paginacion.
 PIT_TOKEN = "pit: canal 0 a 100 Hz"
-# Consola de texto sobre el framebuffer EGA: se exige con --expect-key.
-EGA_TOKEN = "consola: texto EGA 80x25 en 0x000b8000"
+# The normal GRUB request supplies the graphical console, required with --expect-key.
+VIDEO_TOKEN = "console: framebuffer 8x16 at "
 # El shell anuncia su arranque: es la senal para la segunda fase de tecleado
 # (--expect-sh), porque el shell solo existe cuando llego a ring 3.
 SH32_TOKEN = "sh32: listo"
@@ -62,6 +62,7 @@ KEY_SCANCODES = {
     "u": 0x16,
     "v": 0x2F,
     "w": 0x11,
+    "x": 0x2D,
     "y": 0x15,
     "0": 0x0B,
     "5": 0x06,
@@ -90,6 +91,7 @@ KEY_ASCII = {
     "u": 117,
     "v": 118,
     "w": 119,
+    "x": 120,
     "y": 121,
     "0": 48,
     "5": 53,
@@ -212,6 +214,8 @@ def run_boot(
     keys: tuple[tuple[str, int], ...] = (),
     shell_commands: tuple[str, ...] = (),
     patterns: tuple[re.Pattern[str], ...] = (),
+    desktop_binary: Path | None = None,
+    artifacts: Path | None = None,
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -233,17 +237,20 @@ def run_boot(
     then, and the program that ran before it left its stdin empty.
     """
     serial.unlink(missing_ok=True)
+    qemu_log = serial.with_suffix(".qemu.log")
+    qemu_stderr = qemu_log.open("wb")
     process = subprocess.Popen(
         args,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=qemu_stderr,
         start_new_session=True,
     )
     deadline = time.monotonic() + timeout
     text = ""
     typed = False
     shell_typed = False
+    desktop_requested = False
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
@@ -273,13 +280,27 @@ def run_boot(
                         continue
                     type_shell(qmp_socket, shell_commands)
                     shell_typed = True
+                if desktop_binary is not None and not desktop_requested:
+                    if SH32_TOKEN not in text or (shell_commands and not all(
+                        pattern.search(shell_transcript(text)) for pattern in patterns
+                    )):
+                        time.sleep(0.2)
+                        continue
+                    from legacy_desktop_check import check_console_clear
+                    type_shell(qmp_socket, ("clear",))
+                    check_console_clear(qmp_socket, artifacts)
+                    type_shell(qmp_socket, ("exit",))
+                    desktop_requested = True
                 if all(token in text for token in require) and all(
                     pattern.search(shell_transcript(text)) for pattern in patterns
                 ):
+                    if desktop_binary is not None:
+                        from legacy_desktop_check import check_desktop
+                        check_desktop(qmp_socket, desktop_binary, serial, artifacts)
                     print(f"i386 bootstrap: PASS{detail}")
                     return
             if process.poll() is not None:
-                raise RuntimeError(f"QEMU exited with {process.returncode} before the bootstrap token")
+                raise RuntimeError(f"QEMU exited with {process.returncode}: {qemu_log.read_text(errors='replace')}")
             time.sleep(0.2)
         missing = [token for token in (SUCCESS_TOKEN, *require) if token not in text]
         if missing:
@@ -303,6 +324,7 @@ def run_boot(
         )
     finally:
         terminate(process)
+        qemu_stderr.close()
 
 
 def main() -> int:
@@ -340,6 +362,10 @@ def main() -> int:
             "its echo plus its answer (repeatable): " + ", ".join(sorted(SH32_COMMAND_ANSWERS))
         ),
     )
+    parser.add_argument("--expect-desktop", type=Path, metavar="ELF32",
+                        help="exit sh32 and verify desktop glyphs and PS/2 cursor against ELF32")
+    parser.add_argument("--artifacts", type=Path,
+                        help="retain serial log and desktop screenshots in this directory")
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
     iso = args.iso.resolve()
@@ -348,6 +374,12 @@ def main() -> int:
     disk_image = args.disk_image.resolve() if args.disk_image is not None else None
     if disk_image is not None and not disk_image.is_file():
         raise SystemExit(f"disk image does not exist: {disk_image}")
+    if args.expect_desktop is not None:
+        if disk_image is None or not args.expect_desktop.is_file():
+            parser.error("--expect-desktop needs --disk-image and an existing desktop32 ELF")
+    if args.artifacts is not None:
+        args.artifacts = args.artifacts.resolve()
+        args.artifacts.mkdir(parents=True, exist_ok=True)
     qemu_override = os.environ.get("SAVANXP_QEMU")
     qemu = shutil.which(qemu_override or "qemu-system-i386")
     if qemu_override and not qemu:
@@ -357,7 +389,7 @@ def main() -> int:
     if not qemu:
         raise SystemExit("qemu-system-i386 was not found in PATH or SAVANXP_QEMU")
     with tempfile.TemporaryDirectory(prefix="savanxp-i386-boot.") as temporary:
-        serial = Path(temporary) / "serial.log"
+        serial = (args.artifacts or Path(temporary)) / "serial.log"
         command = [
             qemu,
             "-machine",
@@ -403,7 +435,7 @@ def main() -> int:
             keys = tuple((key, KEY_SCANCODES[key]) for key in args.expect_key)
             # El kernel imprime el scancode crudo en hexadecimal de ocho digitos.
             require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
-            require += (EGA_TOKEN,)
+            require += (VIDEO_TOKEN,)
             detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
             qmp_socket = Path(temporary) / "qmp.sock"
             command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
@@ -426,9 +458,15 @@ def main() -> int:
             # orden. La respuesta de un comando no puede valer para otro.
             patterns = (re.compile(shell_session_pattern(shell_commands), re.DOTALL),)
             detail = f" (shell: {', '.join(shell_commands)})"
+        if args.expect_desktop is not None:
+            if qmp_socket is None:
+                qmp_socket = Path(temporary) / "qmp.sock"
+                command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
+            require += (SH32_TOKEN, VIDEO_TOKEN, "desktop: ready")
+            detail = " (desktop glyphs, PS/2 motion, buttons and cursor restoration)"
         run_boot(
             qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
-            shell_commands, patterns,
+            shell_commands, patterns, args.expect_desktop, args.artifacts,
         )
     return 0
 

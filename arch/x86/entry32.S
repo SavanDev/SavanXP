@@ -18,7 +18,21 @@ multiboot2_header:
     .long 0xE85250D6                       /* firma */
     .long 0                                /* arquitectura: i386, modo protegido */
     .long multiboot2_header_end - multiboot2_header
-    .long 0x17ADAF12                       /* -(firma + longitud 24), precalculado */
+    /* Derive the checksum from the header length so added tags stay valid. */
+    .long -(0xE85250D6 + (multiboot2_header_end - multiboot2_header))
+
+    /* Optional framebuffer request: GRUB sets the mode and reports its address
+     * in information tag 8. If unavailable, boot continues with text/serial. */
+    .word 5                                /* type 5: framebuffer */
+    .word 1                                /* optional */
+    .long 20                               /* tag size */
+    .long 1024                             /* width */
+    .long 768                              /* height */
+    .long 32                               /* bits per pixel */
+
+    /* Tags are 8-byte aligned; include padding after the 20-byte request. */
+    .align 8
+
     /* Etiqueta de fin: tipo 0, tamano 8. */
     .word 0
     .word 0

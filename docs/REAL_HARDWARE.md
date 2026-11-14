@@ -1,30 +1,23 @@
 # Real hardware: the Compaq Evo N1020v case
 
-> **Status: analysis only, nothing implemented.** This document is the
-> measurement: what stops SavanXP from booting a real 2003 laptop, which parts
-> of that answer are architecture and which are driver bugs that QEMU and
-> VirtualBox have been hiding, and in what order the work should be done.
+> **Status: Route A has a working i386 prototype in QEMU, through the minimal
+> graphical desktop and PS/2 mouse step. Physical hardware is not validated.**
+> This document records the porting route and the remaining hardware gaps.
 >
-> The reference machine is a **Compaq Evo N1020v** (2002), chosen because it is
-> the least forgiving machine a hobby OS is likely to meet: a 32-bit Pentium 4
+> The reference machine is a **Compaq Evo N1020v** (2002): a 32-bit Pentium 4
 > with no long mode, a legacy BIOS, PATA storage, AC'97 audio, a PS/2 trackpad
-> and an LCD panel that may only exist in 24-bit video modes.
->
-> Nothing here is implemented and nothing here is scheduled. The two sections
-> that matter for any other machine are
-> [Hardware work that is not about the CPU](#hardware-work-that-is-not-about-the-cpu)
-> (driver defects worth fixing regardless of architecture) and
-> [Settling the open questions](#settling-the-open-questions-before-writing-code)
-> (five minutes of work that decides the whole plan).
+> and an LCD panel that may only offer 24-bit video modes. The current i386
+> graphical backend accepts BGRX 32-bit modes up to 1024x768; other modes retain
+> serial diagnostics and, where supplied by the loader, the EGA text console.
 
 ## The short version
 
-SavanXP does not boot on that machine today, and the reason is not a missing
-driver: **the machine has no 64-bit mode and the system is 64-bit only.** The
+The original x86_64 system cannot boot on that machine:
+**the machine has no 64-bit mode.** The i386 target below addresses that
+architecture barrier, but has not been tested on the laptop. The
 CPU is a socket 478 Northwood Pentium 4, which predates EM64T, NX and x2APIC.
 
-Three things stand between that CPU and the kernel, and not one of them is a
-driver:
+Three things prevent running the original x86_64 target on that CPU:
 
 1. the kernel, the userland, the SDK and every port are built for
    `x86_64-unknown-none-elf` ([`CMakeLists.txt:69`](../CMakeLists.txt:69)) and
@@ -179,8 +172,8 @@ array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
 `ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) ->
-`PS/2 and the desktop` (keyboard decode, userland delivery and the EGA text
-console landed) ->
+`PS/2 and the desktop` (landed: keyboard delivery, graphical console,
+PS/2 cursor and a minimal ring 3 desktop) ->
 `isolation features, if ever`.
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
@@ -195,9 +188,11 @@ so each stub does), and `arch/x86/user32.cpp` reads an ELF32 image straight from
 the SxFS root into the `0x08000000` window and enters it. The userland for that
 target is the same SDK with the 32-bit branches of `crt0.S` and `libc.c`, a
 `linker32.ld` at that window's base, `__udivdi3`/`__umoddi3`, and it is staged by
-`cmake/userland-i386.cmake` into `disk-i386.img`. Only `write`, `exit`, `getpid`
-and `system_info` answer so far, which is exactly what the demo needs; the shell
-and the rest of the POSIX surface come with the next steps.
+`cmake/userland-i386.cmake` into `disk-i386.img`. The implemented syscall subset
+includes stdin keyboard
+events, output, timing, system information and `/dev/gpu0` open/close/ioctl.
+It supports the fixed `sysinfo -> sh32 -> desktop32` launch chain; general
+process spawning, scheduling and the rest of POSIX remain future work.
 
 Two things measured while getting there, worth keeping: the frame pointer the
 stub hands to the syscall handler arrives one word high, so the handler reads the
@@ -215,8 +210,9 @@ so nothing arrives while SxFS is being mounted. `tools/legacy_boot_test.py
 --expect-key` types over QMP and asserts the scancode. The desktop half landed
 on top of that: `ps2_32` decodes set 1 into `savanxp_input_event` with the layout
 tables of `kernel/ps2.cpp` (ES by default, `set_layout` switches to EN), the `READ`
-syscall serves the queue on stdin with a blocking `sti;hlt` wait, and `keyecho` —
-launched by `EXIT` after `sysinfo` leaves — echoes each event back over serial.
+syscall serves the queue on stdin with a blocking `sti;hlt` wait. `sh32`, launched
+after `sysinfo`, consumes those events for line editing
+and built-in commands. `keyecho` remains available as a standalone diagnostic.
 `serial::` mirrors every kernel and program write to the text console the
 bootloader reported (80x25 type 2 at `0xB8000`, `consola: texto EGA` on boot),
 which is the console half of the step.
@@ -229,17 +225,45 @@ so ticks are only counted from the first delivery: `uptime_ms` measures ring 3 a
 idle time, not the boot itself (counting the boot would mean polling the channel 0
 counter on every bootstrap pass).
 
+### Step 5: graphical console, PS/2 mouse and minimal desktop
+
+The kernel requests an optional 1024x768x32 framebuffer through Multiboot2 and
+maps its physical range beyond the initial 1 GiB identity map. It validates the
+BGRX channel layout, draws an 8x16 console and composes an 11x18 cursor over a
+static backing store. Both PS/2 IRQs drain the shared 8042 port using its AUX
+status bit; IRQ12 unmasks the master PIC cascade, and IRQ entry preserves all
+interrupted registers before reading the IRQ number.
+
+After `exit` in `sh32`, `desktop32` opens `/dev/gpu0`, reads the geometry and
+acquires video. Acquisition keeps serial diagnostics from painting over the
+client's pixels; release, close and process exit restore console output. One
+fixed GPU descriptor is supported; duplicate opens return `EBUSY`. Presentation
+validates user ranges and supports full frames or clipped regions. The desktop
+uses a 256 KiB buffer to present 64-row strips and redraws every 250 ms.
+
+This completes the minimal step: a background, panels, informational window,
+rendered text and a PS/2 cursor with movement/button decoding. The window's close
+box and taskbar are decorative; there is no window manager or mouse-event device
+for applications yet. Wheel input, 24-bit video, larger resolutions, scheduling,
+per-process address spaces and physical-hardware validation remain outside this
+step. Isolation is the next roadmap decision, not an implemented guarantee.
+
 The landed packages are exercised with:
 
 ```sh
 SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
-  ./build.sh
+  ./build.sh build
+SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
+  ./build.sh iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user --expect-key a --expect-key b
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user --expect-sh uptime \
+  --expect-desktop build/i386-linux/desktop32 --artifacts /tmp/savanxp-i386-desktop
 ```
 
 The `--disk-image` run attaches `build/disk.img` as IDE with `snapshot=on` (writes
@@ -247,8 +271,14 @@ never reach the file) and asserts the mounted root listing. The `--expect-user`
 run does the same with `disk-i386.img` and asserts that the 32-bit `sysinfo`
 ran in ring 3, printed its report and exited. `--expect-key` types those keys
 over QMP once the keyboard is up and asserts the whole delivery path: the raw
-scancode, the EGA console token, `keyecho` started, and the decoded ascii that
-`keyecho` read from stdin through the `READ` syscall.
+scancode and the framebuffer console token. `--expect-sh` checks command echo
+and answers from stdin through `READ`. `--expect-desktop ELF32` exits the shell,
+checks that `clear` erases all graphical console rows, then checks desktop
+geometry and the title/subtitle/taskbar glyphs against the font
+tables in the supplied binary, injects mouse motion/buttons alongside keyboard
+input, and verifies cursor restoration and screen-edge clamping. `--artifacts`
+retains the serial/QEMU logs and before/after screenshots. Run both `build` and
+`iso`: rebuilding only the ISO leaves older user binaries in the disk image.
 
 ## Route B: target 64-bit hardware
 

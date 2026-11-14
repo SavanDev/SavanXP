@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "egatext.hpp"
+#include "fb32.hpp"
 
 namespace i386 {
 
@@ -49,10 +50,9 @@ void serial::write_char(char character) {
         }
     }
     outb(kData, static_cast<uint8_t>(character));
-    /* Espejo en la consola de texto: serial:: es el unico canal de escritura
-     * del kernel i386 (syscalls incluidas), asi que reflejar aqui pone el log
-     * y la salida del proceso en pantalla sin tocar a cada llamador. */
+    /* Mirror serial output to the active EGA or framebuffer console. */
     egatext::write_char(character);
+    fb32::console_write_char(character);
 }
 
 void serial::write(const char* text) {

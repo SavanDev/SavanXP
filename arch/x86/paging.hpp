@@ -27,6 +27,11 @@ bool cpu_has_pse();
  * nunca con paginacion ya encendida. */
 void enable_identity_1gib();
 
+/* Extend the identity map over a physical range, using 4 MiB pages.
+ * Framebuffers above the initial 1 GiB map need this. Reject ranges outside
+ * the 32-bit address space. */
+bool map_identity(uint64_t address, uint32_t bytes);
+
 }
 
 }

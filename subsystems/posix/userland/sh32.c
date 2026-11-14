@@ -203,9 +203,16 @@ static int run_command(int argc, char* argv[]) {
         return 1;
     }
     if (strcmp(argv[0], "clear") == 0) {
-        /* Pantalla EGA de 25 lineas: 25 saltos la dejan en blanco por
-         * desplazamiento, que es lo que este back-end puede hacer. */
-        for (int line = 0; line < 25; ++line) {
+        /* Clear by scrolling the actual console height: graphics has more
+         * rows than the 25-row EGA fallback. Glyphs are 8x16 in this backend. */
+        struct savanxp_system_info info;
+        unsigned int rows = 25;
+        memset(&info, 0, sizeof(info));
+        if (system_info(&info) == 0 && info.framebuffer_bpp == 32 &&
+            info.framebuffer_height >= 16 && info.framebuffer_height <= 768) {
+            rows = info.framebuffer_height / 16;
+        }
+        for (unsigned int line = 0; line < rows; ++line) {
             putchar_fd(1, '\n');
         }
         return 1;

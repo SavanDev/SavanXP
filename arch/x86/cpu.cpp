@@ -291,6 +291,10 @@ void cpu::enable_irq(uint8_t irq) {
     const uint8_t mask_register = irq < 8u ? 0x21u : 0xA1u;
     const uint8_t bit = static_cast<uint8_t>(1u << (irq & 7u));
     outb(mask_register, static_cast<uint8_t>(inb(mask_register) & ~bit));
+    /* Slave IRQs reach the CPU through master IRQ2; unmask the cascade too. */
+    if (irq >= 8u) {
+        outb(0x21, static_cast<uint8_t>(inb(0x21) & ~0x04u));
+    }
 }
 
 void cpu::acknowledge_irq(uint8_t irq) {

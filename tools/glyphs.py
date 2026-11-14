@@ -86,21 +86,29 @@ class Font:
 
 
 class SharedObject:
-    """Just enough ELF64 to turn a symbol's address into bytes in the file."""
+    """Read load segments and symbols from ELF32 or ELF64 artifacts."""
 
     def __init__(self, path: Path):
         self.path = path
         self.data = path.read_bytes()
-        if self.data[:4] != b"\x7fELF" or self.data[4] != 2:
-            raise FontError(f"{path}: not a 64-bit ELF object")
-        (self.phoff,) = struct.unpack_from("<Q", self.data, 0x20)
-        (self.phentsize, self.phnum) = struct.unpack_from("<HH", self.data, 0x36)
+        if self.data[:4] != b"\x7fELF" or self.data[4] not in (1, 2) or self.data[5] != 1:
+            raise FontError(f"{path}: not a little-endian ELF object")
+        elf32 = self.data[4] == 1
+        (self.phoff,) = struct.unpack_from("<I" if elf32 else "<Q", self.data,
+                                            0x1c if elf32 else 0x20)
+        (self.phentsize, self.phnum) = struct.unpack_from("<HH", self.data,
+                                                        0x2a if elf32 else 0x36)
         self.loads = []
         for index in range(self.phnum):
             base = self.phoff + index * self.phentsize
-            p_type, _flags, p_offset, p_vaddr, _paddr, p_filesz, p_memsz, _align = (
-                struct.unpack_from("<IIQQQQQQ", self.data, base)
-            )
+            if elf32:
+                p_type, p_offset, p_vaddr, _paddr, p_filesz, p_memsz, _flags, _align = (
+                    struct.unpack_from("<IIIIIIII", self.data, base)
+                )
+            else:
+                p_type, _flags, p_offset, p_vaddr, _paddr, p_filesz, p_memsz, _align = (
+                    struct.unpack_from("<IIQQQQQQ", self.data, base)
+                )
             if p_type == PT_LOAD and p_filesz:
                 self.loads.append((p_vaddr, p_memsz, p_offset, p_filesz))
 
@@ -233,7 +241,7 @@ def render(font: Font, x: int, y: int, text: str, colour: tuple, background: tup
                     continue
                 alpha = font.coverage[glyph.offset + row * glyph.width + column]
                 if alpha != 0:
-                    expected[(px, py)] = blend(background, colour, alpha)
+                    expected[(px, py)] = blend(expected.get((px, py), background), colour, alpha)
         pen_x += glyph.advance
     return expected
 

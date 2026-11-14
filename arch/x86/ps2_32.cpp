@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "cpu.hpp"
+#include "fb32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 
@@ -17,6 +18,8 @@ constexpr uint16_t kStatusPort = 0x64;
 constexpr uint16_t kCommandPort = 0x64;
 
 constexpr uint8_t kStatusOutputFull = 1u << 0;
+/* Status bit 5 identifies auxiliary (mouse) bytes in the shared data port. */
+constexpr uint8_t kStatusAuxData = 1u << 5;
 
 constexpr uint8_t kCommandReadConfig = 0x20;
 constexpr uint8_t kCommandWriteConfig = 0x60;
@@ -28,6 +31,25 @@ constexpr uint8_t kCommandResetEnable = 0xAE;
 
 constexpr uint8_t kConfigKeyboardIrq = 1u << 0;
 constexpr uint8_t kConfigMouseIrq = 1u << 1;
+/* Clear bit 5 to keep the auxiliary port clock running. */
+constexpr uint8_t kConfigMouseClockOff = 1u << 5;
+constexpr uint8_t kCommandEnableAux = 0xA8;
+constexpr uint8_t kCommandAuxWrite = 0xD4;
+constexpr uint8_t kAck = 0xFA;
+
+/* PS/2 commands sent through the auxiliary port. */
+constexpr uint8_t kMouseSetDefaults = 0xF6;
+constexpr uint8_t kMouseEnableReporting = 0xF4;
+
+/* Three-byte packets carry buttons/signs first; bit 3 is always set. */
+constexpr uint8_t kMousePacketFlagAlways1 = 1u << 3;
+constexpr uint8_t kMousePacketLeftButton = 1u << 0;
+constexpr uint8_t kMousePacketRightButton = 1u << 1;
+constexpr uint8_t kMousePacketMiddleButton = 1u << 2;
+constexpr uint8_t kMousePacketXSign = 1u << 4;
+constexpr uint8_t kMousePacketYSign = 1u << 5;
+constexpr uint8_t kMousePacketXOverflow = 1u << 6;
+constexpr uint8_t kMousePacketYOverflow = 1u << 7;
 
 constexpr uint8_t kScancodeExtendedPrefix = 0xE0;
 constexpr uint8_t kKeyboardIrq = 1;
@@ -88,6 +110,11 @@ bool g_right_shift = false;
 bool g_ctrl = false;
 bool g_alt = false;
 bool g_extended = false;
+
+/* Assemble three-byte mouse packets; bit 3 resynchronizes the first byte. */
+uint8_t g_mouse_packet[3] = {};
+uint32_t g_mouse_packet_index = 0;
+uint32_t g_mouse_buttons = 0;
 
 /* Ultimo evento decodificado, para el log y la consola. */
 char g_last_ascii = 0;
@@ -303,20 +330,132 @@ void handle_code(uint8_t code) {
     serial::write("\n");
 }
 
-void keyboard_irq() {
-    uint8_t code = 0;
-    while (read_data(code)) {
-        handle_code(code);
+void write_int(int32_t value) {
+    if (value < 0) {
+        serial::write_char('-');
+        value = -value;
+    }
+    serial::write_dec(static_cast<uint32_t>(value));
+}
+
+/* Apply a complete packet; PS/2 Y grows upwards, unlike screen Y. */
+void handle_mouse_byte(uint8_t byte) {
+    if (g_mouse_packet_index == 0 && (byte & kMousePacketFlagAlways1) == 0) {
+        return;
+    }
+    g_mouse_packet[g_mouse_packet_index++] = byte;
+    if (g_mouse_packet_index < 3) {
+        return;
+    }
+    g_mouse_packet_index = 0;
+
+    const uint8_t flags = g_mouse_packet[0];
+    if ((flags & (kMousePacketXOverflow | kMousePacketYOverflow)) != 0) {
+        return;
+    }
+    int32_t delta_x = g_mouse_packet[1];
+    int32_t delta_y = g_mouse_packet[2];
+    if ((flags & kMousePacketXSign) != 0) {
+        delta_x -= 256;
+    }
+    if ((flags & kMousePacketYSign) != 0) {
+        delta_y -= 256;
+    }
+
+    uint32_t buttons = 0;
+    if ((flags & kMousePacketLeftButton) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_LEFT;
+    }
+    if ((flags & kMousePacketRightButton) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_RIGHT;
+    }
+    if ((flags & kMousePacketMiddleButton) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_MIDDLE;
+    }
+    const bool changed = delta_x != 0 || delta_y != 0 || buttons != g_mouse_buttons;
+    g_mouse_buttons = buttons;
+    fb32::pointer_move(delta_x, -delta_y);
+    fb32::pointer_set_buttons(buttons);
+
+    if (!changed) {
+        return;
+    }
+    int32_t pointer_x = 0;
+    int32_t pointer_y = 0;
+    fb32::pointer_position(pointer_x, pointer_y);
+    serial::write("ps2: mouse dx ");
+    write_int(delta_x);
+    serial::write(" dy ");
+    write_int(delta_y);
+    serial::write(" buttons ");
+    serial::write_dec(buttons);
+    serial::write(" at ");
+    serial::write_dec(static_cast<uint32_t>(pointer_x));
+    serial::write(",");
+    serial::write_dec(static_cast<uint32_t>(pointer_y));
+    serial::write("\n");
+}
+
+void input_irq() {
+    for (;;) {
+        const uint8_t status = inb(kStatusPort);
+        if ((status & kStatusOutputFull) == 0) {
+            return;
+        }
+        const uint8_t byte = inb(kDataPort);
+        if ((status & kStatusAuxData) != 0) {
+            handle_mouse_byte(byte);
+        } else {
+            handle_code(byte);
+        }
     }
 }
 
-void mouse_irq() {
-    uint8_t code = 0;
-    while (read_data(code)) {
-        serial::write("ps2: raton ");
-        serial::write_hex(code);
-        serial::write("\n");
+/* Bounded controller waits keep absent hardware from hanging the boot. */
+bool wait_input_empty() {
+    for (uint32_t spin = 0; spin < 100000; ++spin) {
+        if ((inb(kStatusPort) & 2u) == 0) {
+            return true;
+        }
     }
+    return false;
+}
+
+bool controller_command(uint8_t command) {
+    if (!wait_input_empty()) {
+        return false;
+    }
+    outb(kCommandPort, command);
+    return true;
+}
+
+bool controller_data(uint8_t data) {
+    if (!wait_input_empty()) {
+        return false;
+    }
+    outb(kDataPort, data);
+    return true;
+}
+
+bool wait_reply(uint8_t& reply, bool auxiliary = false) {
+    for (uint32_t spin = 0; spin < 1000000; ++spin) {
+        const uint8_t status = inb(kStatusPort);
+        if ((status & kStatusOutputFull) != 0) {
+            const uint8_t byte = inb(kDataPort);
+            if (((status & kStatusAuxData) != 0) == auxiliary) {
+                reply = byte;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* 0xD4 routes the next data byte to the mouse; only its ACK counts. */
+bool mouse_command(uint8_t command) {
+    uint8_t reply = 0;
+    return controller_command(kCommandAuxWrite) && controller_data(command) &&
+           wait_reply(reply, true) && reply == kAck;
 }
 
 }  // namespace
@@ -398,33 +537,43 @@ int get_layout() {
 }
 
 void initialize() {
-    /* Secuencia estandar de un 8042: autoself-test, lectura de la
-     * configuracion, puertos deshabilitados mientras se trabaja, vaciado del
-     * buffer de salida y reactivacion solo del teclado con su IRQ. */
-    outb(kCommandPort, kCommandDisableKeyboard);
-    outb(kCommandPort, kCommandDisableMouse);
-
-    outb(kCommandPort, kCommandSelfTest);
+    /* Wait for controller responses: real hardware is slower than QEMU.
+     * Self-test may reset the configuration, so disable ports again after it. */
+    controller_command(kCommandDisableKeyboard);
+    controller_command(kCommandDisableMouse);
+    discard_data();
+    uint8_t reply = 0;
+    controller_command(kCommandSelfTest);
+    wait_reply(reply);
+    controller_command(kCommandDisableKeyboard);
+    controller_command(kCommandDisableMouse);
     discard_data();
 
-    outb(kCommandPort, kCommandReadConfig);
     uint8_t config = 0;
-    if (read_data(config)) {
-        config = static_cast<uint8_t>((config & ~kConfigMouseIrq) | kConfigKeyboardIrq);
-        outb(kCommandPort, kCommandWriteConfig);
-        outb(kDataPort, config);
+    if (controller_command(kCommandReadConfig) && wait_reply(config)) {
+        config = static_cast<uint8_t>((config | kConfigKeyboardIrq | kConfigMouseIrq) &
+                                      ~kConfigMouseClockOff);
+        controller_command(kCommandWriteConfig);
+        controller_data(config);
+    }
+    controller_command(kCommandEnableKeyboard);
+    controller_command(kCommandResetEnable);
+    controller_command(kCommandEnableAux);
+    const bool mouse_ready = mouse_command(kMouseSetDefaults) &&
+                             mouse_command(kMouseEnableReporting);
+    discard_data();
+    g_mouse_packet_index = 0;
+
+    cpu::register_irq_handler(kKeyboardIrq, input_irq);
+    cpu::register_irq_handler(kMouseIrq, input_irq);
+    cpu::enable_irq(kKeyboardIrq);
+    if (mouse_ready) {
+        cpu::enable_irq(kMouseIrq);
     }
 
-    discard_data();
-
-    outb(kCommandPort, kCommandEnableKeyboard);
-    outb(kCommandPort, kCommandResetEnable);
-
-    cpu::register_irq_handler(kKeyboardIrq, keyboard_irq);
-    cpu::register_irq_handler(kMouseIrq, mouse_irq);
-    cpu::enable_irq(kKeyboardIrq);
-
     serial::write("ps2: teclado listo (irq 1, scancodes set 1)\n");
+    serial::write(mouse_ready ? "ps2: mouse ready (irq 12, 3-byte packets)\n"
+                              : "ps2: mouse unavailable\n");
 }
 
 }  // namespace ps2_32

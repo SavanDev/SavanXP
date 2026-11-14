@@ -192,10 +192,12 @@ i386_irq_table:
     .long i386_irq_15
 
 i386_irq_common:
-    movl (%esp), %eax       /* el numero de IRQ */
     pusha
     push %ds
     push %es
+    /* Save every register before extracting the IRQ: the interrupted code
+     * may still be using eax, including a syscall result in ring 3. */
+    movl 40(%esp), %eax
     /* El manejador solo necesita el numero de IRQ. El marco se deshace con los
      * pops y los dos add siguientes: dejar una palabra de mas hacia que el
      * pop %es lea un valor de pila como selector y acabe en #GP. */

@@ -23,11 +23,8 @@ target_include_directories(savanxp_i386_user_runtime PRIVATE
 )
 target_compile_options(savanxp_i386_user_runtime PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
 
-# El userland del objetivo i386: sysinfo (el primero en correr), sh32 (el
-# segundo, que el kernel lanza al salir el primero: la shell minima) y keyecho
-# (diagnostico manual de la entrega de eventos por la syscall READ). Mismo
-# runtime del SDK, enlazado dentro de la ventana de usuario (linker32.ld);
-# int $0x80 es igual en los dos ABI.
+# Fixed boot chain: sysinfo -> sh32 -> desktop32. keyecho is a standalone
+# keyboard diagnostic. All four use the SDK runtime and the i386 linker script.
 add_executable(savanxp-i386-sysinfo subsystems/posix/userland/sysinfo.c)
 target_include_directories(savanxp-i386-sysinfo PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -67,8 +64,22 @@ target_link_libraries(savanxp-i386-sh32 PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sh32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sh32 PROPERTIES OUTPUT_NAME sh32 SUFFIX "")
 
+# Fullscreen desktop, launched after sh32 exits; renders 64-row strips
+# through /dev/gpu0 to keep its working buffer small.
+add_executable(savanxp-i386-desktop32 subsystems/posix/userland/desktop32.c)
+target_include_directories(savanxp-i386-desktop32 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_options(savanxp-i386-desktop32 PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-desktop32 PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-desktop32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-desktop32 PROPERTIES OUTPUT_NAME desktop32 SUFFIX "")
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32
+    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32 savanxp-i386-desktop32
     COMMENT "Linking the i386 userland"
 )
 
@@ -83,6 +94,8 @@ add_custom_target(savanxp_i386_diskfs
             "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_I386_DISKFS_ROOT}/bin/keyecho"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "$<TARGET_FILE:savanxp-i386-sh32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sh32"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:savanxp-i386-desktop32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/desktop32"
     DEPENDS savanxp_i386_userland
     COMMENT "Staging the i386 disk tree"
     VERBATIM

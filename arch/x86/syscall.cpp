@@ -4,6 +4,7 @@
 
 #include "boot_state.hpp"
 #include "cpu.hpp"
+#include "fb32.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/string.hpp"
 #include "pit.hpp"
@@ -24,17 +25,36 @@ namespace {
 constexpr uint32_t kUserWindowBase = 0x08000000u;
 constexpr uint32_t kUserWindowEnd = 0x09000000u;
 
-/* Segundo programa del objetivo: sh32. keyecho queda en el volumen como
- * diagnostico manual de la entrega de eventos, pero fuera de la cadena: hace
- * bucle infinito y delante del shell este nunca llegaria. La cadena es
- * sysinfo -> sh32. Vive en el disk-i386 (cmake/userland-i386.cmake). */
+/* Fixed launch chain: sysinfo -> sh32 -> desktop32. keyecho remains a
+ * standalone keyboard diagnostic in the i386 volume. */
 constexpr const char* kShellPath = "/disk/bin/sh32";
+/* The desktop runs after sh32 exits: there is no scheduler yet. */
+constexpr const char* kDesktopPath = "/disk/bin/desktop32";
+
+bool g_gpu_open = false;
 
 bool is_user_range(uint32_t address, uint32_t size) {
     if (address < kUserWindowBase || address >= kUserWindowEnd) {
         return false;
     }
     return static_cast<uint64_t>(address) + size <= kUserWindowEnd;
+}
+
+/* Validate every user byte before comparing the device path. */
+bool user_path_equals(uint32_t address, const char* text) {
+    for (uint32_t index = 0; index <= 64; ++index) {
+        if (!is_user_range(address + index, 1)) {
+            return false;
+        }
+        const char value = reinterpret_cast<const char*>(static_cast<uintptr_t>(address))[index];
+        if (value != text[index]) {
+            return false;
+        }
+        if (value == '\0') {
+            return true;
+        }
+    }
+    return false;
 }
 
 uint32_t failure(int error) {
@@ -87,6 +107,127 @@ void handle(SyscallFrame& frame) {
                    sizeof(event));
             frame.eax = static_cast<uint32_t>(sizeof(event));
             return;
+        }
+        case kSysOpen: {
+            /* A single GPU client gets a fixed descriptor; repeated opens return EBUSY. */
+            if (!user_path_equals(frame.edi, kGpuPath)) {
+                frame.eax = failure(SAVANXP_ENOENT);
+                return;
+            }
+            if (!fb32::ready()) {
+                frame.eax = failure(SAVANXP_ENODEV);
+                return;
+            }
+            if (g_gpu_open) {
+                frame.eax = failure(SAVANXP_EBUSY);
+                return;
+            }
+            g_gpu_open = true;
+            frame.eax = kGpuFd;
+            serial::write("gpu0: opened by userland\n");
+            return;
+        }
+        case kSysClose: {
+            if (frame.edi == kGpuFd && g_gpu_open) {
+                g_gpu_open = false;
+                fb32::console_set_enabled(true);
+                frame.eax = 0;
+                return;
+            }
+            /* Standard streams are permanent kernel channels. */
+            frame.eax = failure(SAVANXP_EBADF);
+            return;
+        }
+        case kSysIoctl: {
+            if (frame.edi != kGpuFd || !g_gpu_open) {
+                frame.eax = failure(SAVANXP_EBADF);
+                return;
+            }
+            switch (frame.esi) {
+                case GPU_IOC_GET_INFO: {
+                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_info))) {
+                        frame.eax = failure(SAVANXP_EFAULT);
+                        return;
+                    }
+                    const savanxp_fb_info& fb = fb32::info();
+                    savanxp_gpu_info info = {};
+                    info.width = fb.width;
+                    info.height = fb.height;
+                    info.pitch = fb.pitch;
+                    info.bpp = fb.bpp;
+                    info.buffer_size = fb.buffer_size;
+                    info.backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER;
+                    info.flags = 0;
+                    memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.edx)), &info,
+                           sizeof(info));
+                    frame.eax = 0;
+                    return;
+                }
+                case GPU_IOC_ACQUIRE:
+                case GPU_IOC_RELEASE: {
+                    // Keep serial diagnostics from painting over the desktop.
+                    fb32::console_set_enabled(frame.esi == GPU_IOC_RELEASE);
+                    frame.eax = 0;
+                    return;
+                }
+                case GPU_IOC_PRESENT: {
+                    /* Validate the full client buffer before copying a complete frame. */
+                    const uint32_t bytes = fb32::info().buffer_size;
+                    if (!is_user_range(frame.edx, bytes)) {
+                        frame.eax = failure(SAVANXP_EFAULT);
+                        return;
+                    }
+                    const uint32_t pitch_pixels = fb32::info().pitch / 4u;
+                    if (!fb32::present(reinterpret_cast<const uint32_t*>(
+                                           static_cast<uintptr_t>(frame.edx)),
+                                       pitch_pixels, 0, 0, fb32::info().width,
+                                       fb32::info().height)) {
+                        frame.eax = failure(SAVANXP_EINVAL);
+                        return;
+                    }
+                    frame.eax = 0;
+                    return;
+                }
+                case GPU_IOC_PRESENT_REGION: {
+                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_present_region))) {
+                        frame.eax = failure(SAVANXP_EFAULT);
+                        return;
+                    }
+                    savanxp_gpu_present_region region = {};
+                    memcpy(&region, reinterpret_cast<const void*>(static_cast<uintptr_t>(frame.edx)),
+                           sizeof(region));
+                    if (region.pixels == 0 || region.width == 0 || region.height == 0 ||
+                        region.source_pitch < region.width) {
+                        frame.eax = failure(SAVANXP_EINVAL);
+                        return;
+                    }
+                    const uint64_t pixel_count = static_cast<uint64_t>(region.source_pitch) *
+                                                 region.height;
+                    if (pixel_count > 0xFFFFFFFFull / sizeof(uint32_t)) {
+                        frame.eax = failure(SAVANXP_EFAULT);
+                        return;
+                    }
+                    const uint32_t bytes = static_cast<uint32_t>(pixel_count * sizeof(uint32_t));
+                    if (region.pixels > 0xFFFFFFFFull ||
+                        !is_user_range(static_cast<uint32_t>(region.pixels), static_cast<uint32_t>(bytes))) {
+                        frame.eax = failure(SAVANXP_EFAULT);
+                        return;
+                    }
+                    if (!fb32::present(reinterpret_cast<const uint32_t*>(
+                                           static_cast<uintptr_t>(region.pixels)),
+                                       region.source_pitch, region.x, region.y, region.width,
+                                       region.height)) {
+                        frame.eax = failure(SAVANXP_EINVAL);
+                        return;
+                    }
+                    frame.eax = 0;
+                    return;
+                }
+                default: {
+                    frame.eax = failure(SAVANXP_ENOTTY);
+                    return;
+                }
+            }
         }
         case kSysUptimeMs: {
             /* El SDK devuelve unsigned long: en i386 caben los primeros 49
@@ -171,13 +312,17 @@ void handle(SyscallFrame& frame) {
             serial::write(", uptime ");
             serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
             serial::write(" ms\n");
-            /* Sin planificador: tras el primer programa el kernel lanza el shell
-             * (una sola vez) y si este sale se queda ocioso con las IRQ vivas
-             * -- con cli el teclado dejaria de llegar. */
-            static bool shell_launched = false;
-            if (!shell_launched) {
-                shell_launched = true;
+            /* Launch each stage once; keep IRQs live if the desktop exits. */
+            g_gpu_open = false;
+            fb32::console_set_enabled(true);
+            static uint32_t stage = 0;
+            if (stage == 0) {
+                stage = 1;
                 user32::run(kShellPath);
+            }
+            if (stage == 1) {
+                stage = 2;
+                user32::run(kDesktopPath);
             }
             cpu::idle_with_interrupts();
         }

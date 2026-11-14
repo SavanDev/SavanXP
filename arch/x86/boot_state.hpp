@@ -18,6 +18,10 @@ struct State {
     uint32_t framebuffer_width;
     uint32_t framebuffer_height;
     uint32_t framebuffer_bpp;
+    uint32_t framebuffer_pitch;
+    uint64_t framebuffer_address;
+    uint8_t framebuffer_color_type;
+    uint8_t framebuffer_bgrx;
     uint8_t framebuffer_ready;
     uint8_t block_ready;
     uint8_t sxfs_mounted;

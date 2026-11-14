@@ -10,6 +10,7 @@
 #include "boot_state.hpp"
 #include "cpu.hpp"
 #include "egatext.hpp"
+#include "fb32.hpp"
 #include "multiboot2.hpp"
 #include "paging.hpp"
 #include "pit.hpp"
@@ -160,6 +161,13 @@ void report_framebuffer(const uint8_t* tag) {
     boot_state::state().framebuffer_width = framebuffer->width;
     boot_state::state().framebuffer_height = framebuffer->height;
     boot_state::state().framebuffer_bpp = framebuffer->bpp;
+    boot_state::state().framebuffer_pitch = framebuffer->pitch;
+    boot_state::state().framebuffer_address = framebuffer->address;
+    boot_state::state().framebuffer_color_type = framebuffer->color_type;
+    // Multiboot2 RGB fields: position and mask size for red, green and blue.
+    boot_state::state().framebuffer_bgrx = framebuffer->size >= 38 &&
+        framebuffer->color_type == 1 && tag[32] == 16 && tag[33] == 8 &&
+        tag[34] == 8 && tag[35] == 8 && tag[36] == 0 && tag[37] == 8;
 
     /* Consola de texto: solo si el cargador dejo el modo texto EGA que este
      * kernel sabe pintar (80x25 tipo 2 sobre 0xB8000). El token se emite
@@ -169,6 +177,27 @@ void report_framebuffer(const uint8_t* tag) {
     if (egatext::ready()) {
         serial::write("consola: texto EGA 80x25 en 0x000b8000\n");
     }
+}
+
+/* Enable the graphical console when GRUB provides a supported BGRX mode.
+ * EGA was handled in report_framebuffer; serial remains available otherwise. */
+void initialize_video() {
+    const boot_state::State& boot = boot_state::state();
+    if (boot.framebuffer_ready == 0 || boot.framebuffer_bgrx == 0 ||
+        !fb32::initialize(boot.framebuffer_address, boot.framebuffer_pitch, boot.framebuffer_width,
+                          boot.framebuffer_height, static_cast<uint8_t>(boot.framebuffer_bpp),
+                          boot.framebuffer_color_type)) {
+        return;
+    }
+    serial::write("console: framebuffer 8x16 at ");
+    serial::write_hex64(fb32::address());
+    serial::write(", ");
+    serial::write_dec(fb32::info().width);
+    serial::write("x");
+    serial::write_dec(fb32::info().height);
+    serial::write(", ");
+    serial::write_dec(fb32::info().pitch);
+    serial::write(" bytes per row\n");
 }
 
 void report_block_devices() {
@@ -357,6 +386,9 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     }
     paging::enable_identity_1gib();
     serial::write("paginacion: identidad 0..1 GiB, 4 MiB por pagina, sin NX\n");
+
+    /* Map video before mounting SxFS so subsequent boot output is visible. */
+    initialize_video();
 
     mount_root_filesystem();
 

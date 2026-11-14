@@ -54,6 +54,10 @@ Cut-off notes:
   starts with an empty stdin, and `tools/legacy_boot_test.py --expect-sh` types
   commands into the shell over QMP and asserts their echo and their answer.
 
+- **The i386 target has a graphical console, PS/2 cursor and minimal desktop.**
+  Exit `sh32` to launch `desktop32` through `/dev/gpu0`; `legacy_boot_test.py
+  --expect-desktop ELF32` verifies desktop text, mouse buttons and cursor restoration.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`
