@@ -413,8 +413,8 @@ reference outputs are kept.
 with `subsystems/linux/profile/profile.sh`. No musl toolchain was needed. What
 it added to the plan: `mremap` in S2a, `clock_gettime` in L2 (hidden behind
 the vDSO on the host), `sendfile`, `getdents64`, `umask` and the working
-directory in L3, and a kernel random source for `getrandom` in L4. No run
-used threads, signals or process creation.
+directory in L3, and `getrandom` in L4. No run used threads, signals or
+process creation.
 
 ### L1 — entry, launch and the first executable
 
@@ -460,7 +460,7 @@ denied access are covered. The executables and their data survive
 ### L4 — dynamic programs
 
 Size L. S2b, the interpreter load, guest library lookup, and `getrandom`
-over a kernel random source, a neutral slice that does not exist yet.
+over `arch::random_u64` (RDRAND, or a TSC mix without it).
 
 **Done when:** a pinned dynamically linked program with no display, using
 several shared libraries from the pinned distribution, runs unchanged with

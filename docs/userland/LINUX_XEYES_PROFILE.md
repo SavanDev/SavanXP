@@ -313,7 +313,7 @@ in its own private state.
 | `fcntl(F_SETFD, F_GETFL, F_SETFL)` | `SXN_SYS_SET_NONBLOCKING` for `O_NONBLOCK` | L3, L5 | close-on-exec as a descriptor flag (subsystem state) |
 | private file `mmap`, `MAP_FIXED` replacement, `mprotect` | the loader's segment mapping, W^X | L4 | **S2b**; the kernel loading `PT_INTERP` itself |
 | `readlink` | — | L4 | `EINVAL` for any existing path, `ENOENT` otherwise; `/proc/self/exe` when a fixture asks |
-| `getrandom` | **none: the kernel has no random source a caller can read** | L4 | a kernel entropy source, a neutral slice with its own consumer check |
+| `getrandom` | `arch::random_u64`: RDRAND when the processor has it, otherwise a TSC mix that is not cryptographic. No call exposes it, but the layer runs in the kernel and can use it directly | L4 | filling the buffer; a better source without RDRAND is a separate question |
 | `access` | `vfs::may_access` | L5 | — |
 | `uname` | `SXN_SYS_SYSTEM_INFO` | L5 | the `utsname` layout; `sysname` is `Linux` |
 | `socket(AF_UNIX)`, `connect`, `getpeername`, `getsockopt`, `shutdown` | named ports, two pipes per connection | L5 | the subsystem's address table and socket descriptors; abstract names are refused |
@@ -385,9 +385,8 @@ the first `MapWindow`.
 - **S2a gains `mremap`** with `MREMAP_MAYMOVE`, which musl's `realloc` uses
   for large blocks.
 - **L2 gains `clock_gettime`**, which the host trace hides behind the vDSO.
-- **L4 needs a random source**: `jq` calls `getrandom`. The kernel has none a
-  caller can read, so it is a neutral slice, not something to invent in the
-  Linux layer.
+- **L4 needs `getrandom`**, for `jq`. The kernel's `arch::random_u64` serves
+  it: RDRAND where the processor has it, a TSC mix otherwise.
 - **L3 needs `sendfile`, `getdents64`, `umask` and the working directory**,
   all of which are small. BusyBox's `cat` never calls `read` on the file.
 - **The guest tree needs three locale files** besides the executable and
