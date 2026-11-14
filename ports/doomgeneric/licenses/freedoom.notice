@@ -1,0 +1,8 @@
+# Staged by ports/doomgeneric/build.sh when the port is installed.
+name=Freedoom
+license=BSD-3-Clause
+copyright=Copyright (C) 2001-2024 Contributors to the Freedoom project
+origin=https://freedoom.github.io
+used-in=/games/doom/freedoom1.wad
+provenance=Freedoom
+text=ports/doomgeneric/licenses/FREEDOOM-COPYING.txt

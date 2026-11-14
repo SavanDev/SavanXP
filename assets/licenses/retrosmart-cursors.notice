@@ -1,0 +1,9 @@
+name=Retrosmart cursors (Win-ish Classic)
+license=GPL-3.0
+copyright=Copyright 2019 Manuel Domínguez López; fork by useless-anvil
+origin=https://github.com/useless-anvil/retrosmart-cursor
+version=v2.0.3
+used-in=/system/cursors/retrosmart
+source=/system/cursors/retrosmart/source.tar.gz
+provenance=Retrosmart cursor pack
+text=assets/desktop/cursors/retrosmart/LICENSE

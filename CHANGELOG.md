@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **License notices in the image: `/system/licenses/<id>/` holds a `NOTICE` and the full license texts of every
+  third-party component, staged from `assets/licenses/*.notice` by the build and from `ports/<name>/licenses/` when a
+  port is installed.** `license-notices-test` fails if a shipped registry entry has no notice. See
+  [LICENSE_NOTICES.md](docs/third-party/LICENSE_NOTICES.md).
+
 - **Ethernet driver `rtl8168` for the Realtek RTL8111/8168 family (`10ec:8168`, `8161`, `8136`, `8169`, `8167`),
   adapted from OpenBSD `re(4)` under its BSD-4 license; boot logs `rtl8168:` with the chip revision and MAC.** Not yet
   run on metal (QEMU has no model). See [REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md#hw-1--realtek-rtl811181688101).

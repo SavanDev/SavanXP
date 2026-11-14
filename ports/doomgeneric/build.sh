@@ -265,13 +265,20 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/games/doom"
 cp "$OUTPUT" "$STAGE/bin/doomgeneric"
 
+LICENSE_NOTICES=("$ROOT/ports/doomgeneric/licenses/doomgeneric.notice")
 if [[ -f "$WAD_PATH" ]]; then
     cp "$WAD_PATH" "$STAGE/games/doom/$(basename -- "$WAD_PATH")"
     echo "doomgeneric: WAD selected: $WAD_PATH"
+    if [[ "$(basename -- "$WAD_PATH")" == freedoom* ]]; then
+        LICENSE_NOTICES+=("$ROOT/ports/doomgeneric/licenses/freedoom.notice")
+    fi
 else
     echo "doomgeneric: WAD not found: $WAD_PATH" >&2
     echo "doomgeneric: Freedoom download: https://freedoom.github.io/download.html" >&2
 fi
+
+"$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" \
+    --out "$STAGE/system/licenses" "${LICENSE_NOTICES[@]}"
 
 SYNC_ARGS=(
     --image "$IMAGE"

@@ -1060,6 +1060,10 @@ target_compile_options(savanxp-cursor-cur-test PRIVATE -idirafter "${CMAKE_SOURC
 # Assertions must remain active in release host builds.
 target_compile_options(savanxp-cursor-cur-test PRIVATE -UNDEBUG)
 add_test(NAME cursor-cur-test COMMAND savanxp-cursor-cur-test "${CMAKE_SOURCE_DIR}")
+# Every component the provenance registry says ships has a license notice
+# (docs/third-party/LICENSE_NOTICES.md).
+add_test(NAME license-notices-test COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tools/stage_licenses.py" check --root "${CMAKE_SOURCE_DIR}")
 
 add_executable(savanxp-compositor-effects-test
     tests/host/compositor_effects_test.c system/compositord/shadow.c
@@ -1317,6 +1321,10 @@ add_custom_target(savanxp_diskfs
     ${SAVANXP_WIN32_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_SYSTEM_PROGRAMS}" "${SAVANXP_DISKFS_ROOT}/system/programs.txt"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stage_licenses.py" stage
+            --root "${CMAKE_SOURCE_DIR}"
+            --out "${SAVANXP_DISKFS_ROOT}/system/licenses"
+            --all-base
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
             --project-root "${CMAKE_SOURCE_DIR}"
             --output-dir "${SAVANXP_DISKFS_ROOT}/icons"

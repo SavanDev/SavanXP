@@ -15,7 +15,14 @@ assets/
       mime/                     file-type catalog (Tango 0.8.90)
         16x16/
         32x32/
+  licenses/                     *.notice and extracted license texts,
+                                staged into /system/licenses
 ```
+
+`licenses/` holds one `.notice` per third-party component of the base system,
+plus the license texts that exist nowhere else as a file (notices cut from
+source headers). The format and its check are in
+[`docs/third-party/LICENSE_NOTICES.md`](../docs/third-party/LICENSE_NOTICES.md).
 
 The art in `icons/16x16` and `icons/32x32` belongs to this repository. It is
 checked in as editable source and does not depend on external icons. The whole

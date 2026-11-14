@@ -276,6 +276,9 @@ if ((WITH_ASSETS)); then
     echo "ccleste: staged /games/celeste ($installed files)"
 fi
 
+"$PYTHON" "$REPO/tools/stage_licenses.py" stage --root "$REPO" \
+    --out "$STAGE/system/licenses" "$REPO/ports/ccleste/licenses/ccleste.notice"
+
 SYNC_ARGS=(
     --image "$IMAGE"
     --source "$STAGE"

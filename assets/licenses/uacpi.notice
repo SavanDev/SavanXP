@@ -1,0 +1,8 @@
+name=uACPI
+license=MIT
+copyright=Copyright (c) 2022-2026 Daniil Tatianin
+origin=https://github.com/uACPI/uACPI
+version=v6.0.0, commit 9c9b26d6291a1cdd9014cc5bb6b03e596697cbfd
+used-in=the kernel
+provenance=uACPI
+text=vendor/uacpi/LICENSE

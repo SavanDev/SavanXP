@@ -53,6 +53,7 @@ tools/*
 !tools/source_tree_digest.py
 !tools/iso_boot_test.py
 !tools/iso_volume.py
+!tools/stage_licenses.py
 !tools/write_smoke_spec.py
 !tools/smoke_profile.py
 !tools/check_shared_libs.py

@@ -1,0 +1,8 @@
+name=Limine
+license=BSD-2-Clause
+copyright=Copyright (C) 2019-2026 Mintsuki and contributors
+origin=https://github.com/limine-bootloader/limine
+version=v10.x-binary
+used-in=the boot loader of the ISO
+provenance=Limine
+text=tools/limine/LICENSE

@@ -1,0 +1,8 @@
+name=OpenBSD HID report parser
+license=BSD-2-Clause
+copyright=Copyright (c) 1998 The NetBSD Foundation, Inc.
+origin=https://github.com/openbsd/src (sys/dev/hid/hid.c)
+version=commit 4112720b9484adea19b5d2c5525b08be6066bf95
+used-in=the kernel
+provenance=OpenBSD HID report parser
+text=assets/licenses/openbsd-hid.txt

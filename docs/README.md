@@ -298,5 +298,7 @@ all its phases have landed; the links to it move with it.
   external code.
 - [`THIRD_PARTY_PROVENANCE.md`](third-party/THIRD_PARTY_PROVENANCE.md) — origin, pinned
   version, and verified license for distributed third-party components.
+- [`LICENSE_NOTICES.md`](third-party/LICENSE_NOTICES.md) — `/system/licenses`: how base
+  and port license notices are staged into the image, the `.notice` format and its check.
 
 - [Desktop cursors](desktop/CURSORS.md): Mouse Properties, selectable CUR packs, licensing and rendering fallbacks.

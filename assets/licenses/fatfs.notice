@@ -1,0 +1,8 @@
+name=FatFs
+license=FatFs license (one-clause BSD style)
+copyright=Copyright (C) 2025 ChaN
+origin=http://elm-chan.org/fsw/ff/
+version=R0.16
+used-in=the kernel
+provenance=FatFs
+text=vendor/fatfs/LICENSE.txt

@@ -1,0 +1,8 @@
+name=Hackneyed cursors
+license=MIT
+copyright=Copyright (C) Richard Ferreira
+origin=https://gitlab.com/Enthymeme/hackneyed-x11-cursors
+version=0.9.3
+used-in=/system/cursors/hackneyed
+provenance=Hackneyed cursor pack
+text=assets/desktop/cursors/hackneyed/LICENSE

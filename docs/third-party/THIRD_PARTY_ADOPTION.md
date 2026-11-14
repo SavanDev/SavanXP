@@ -166,6 +166,11 @@ It is verified by listing `vendor/` and `sdk/` against the registry. That is a
 manual review, and the moment to do it is the change that adds or updates the
 component, not afterwards.
 
+Every entry that ships also has a license notice staged into
+`/system/licenses`, from `assets/licenses/` for the base system or from the
+port's `licenses/` directory; `license-notices-test` enforces it. See
+[LICENSE_NOTICES.md](LICENSE_NOTICES.md).
+
 File-level rules:
 
 - with `Selective port`, the file keeps its original header or an equivalent

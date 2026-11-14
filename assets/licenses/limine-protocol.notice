@@ -1,0 +1,6 @@
+name=Limine protocol header
+license=0BSD
+origin=https://github.com/limine-bootloader/limine-protocol
+used-in=the kernel
+note=A minimal header written for SavanXP from the protocol; 0BSD asks for no notice.
+provenance=Limine protocol header

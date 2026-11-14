@@ -1,0 +1,8 @@
+name=Noto Sans
+license=OFL-1.1
+copyright=Copyright 2012 Google Inc.
+origin=https://fonts.google.com/noto
+version=1.06
+used-in=the kernel (boot screen wordmark)
+provenance=Noto Sans (boot screen wordmark)
+text=assets/desktop/fonts/LICENSE-OFL-1.1.txt

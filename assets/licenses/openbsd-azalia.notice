@@ -1,0 +1,8 @@
+name=OpenBSD Azalia HD Audio driver
+license=BSD-2-Clause
+copyright=Copyright (c) 2005 The NetBSD Foundation, Inc.
+origin=https://github.com/openbsd/src (sys/dev/pci/azalia.c)
+version=commit 3f02b625e68a509b55a83343a6be40565e836cea
+used-in=the kernel
+provenance=OpenBSD Azalia HDA driver
+text=vendor/openbsd/azalia/LICENSE

@@ -1,0 +1,11 @@
+# Staged by ports/doomgeneric/build.sh when the port is installed.
+name=Doom (DoomGeneric)
+license=GPL-2.0
+copyright=Copyright (C) 1993-1996 Id Software, Inc.
+copyright=Copyright (C) 2005-2014 Simon Howard
+origin=https://github.com/ozkl/doomgeneric
+version=commit fc601639494e089702a1ada082eb51aaafc03722
+used-in=/bin/doomgeneric
+source=ports/doomgeneric in https://github.com/SavanDev/SavanXP (pinned source, patches and overlay)
+provenance=Doom (DoomGeneric)
+text=ports/doomgeneric/source/LICENSE

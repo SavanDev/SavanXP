@@ -26,6 +26,7 @@ ports/<name>/
   patches/          # focused upstream patches (when source is vendored)
   overlay/          # SavanXP adapter files
   build.sh          # standalone host build/install entry point
+  licenses/         # *.notice staged into /system/licenses on install
   README.md         # behavior, provenance, and test instructions
 ```
 
@@ -38,4 +39,6 @@ Keep local experiments outside the official port directories.
 - Keep upstream changes small and reviewable in `patches/`.
 - Keep OS integration in `overlay/`, not mixed into upstream files.
 - Use `tools/sxfs_sync.py`/the `disk.img.lock` contract for installation.
+- Install a license notice for everything the port puts in the image
+  ([LICENSE_NOTICES.md](../docs/third-party/LICENSE_NOTICES.md)).
 - Run the normal Linux build after installing the port and verify persistence.

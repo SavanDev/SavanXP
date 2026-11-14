@@ -1,0 +1,12 @@
+# Staged by ports/ffmpeg/install.sh when the port is installed.
+name=FFmpeg
+license=LGPL-2.1-or-later
+copyright=The FFmpeg developers
+origin=https://github.com/FFmpeg/FFmpeg
+version=n7.1.1, commit db69d06eeeab4f46da15030a80d539efb4503ca8
+used-in=/lib/libffmpeg.so.0.4
+source=ports/ffmpeg in https://github.com/SavanDev/SavanXP; see SOURCE.md
+provenance=FFmpeg / Media Player
+text=ports/ffmpeg/COPYING.LGPLv2.1
+text=ports/ffmpeg/LICENSE.md
+text=ports/ffmpeg/SOURCE.md

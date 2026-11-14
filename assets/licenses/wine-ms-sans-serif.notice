@@ -1,0 +1,9 @@
+name=Wine MS Sans Serif
+license=LGPL-2.1-or-later
+copyright=Copyright (C) 2004 Huw D M Davies, Dmitry Timoshkov
+origin=https://gitlab.winehq.org/wine/wine (fonts/ms_sans_serif.sfd)
+version=wine-11.20
+used-in=libsxgfx.so.0.4 and statically linked programs (desktop body text)
+source=assets/desktop/fonts/ms_sans_serif.sfd and tools/font/genfont.py in the SavanXP repository
+provenance=Wine MS Sans Serif (desktop body text)
+text=assets/desktop/fonts/LICENSE-LGPL-2.1.txt

@@ -1,0 +1,9 @@
+name=GNU Unifont
+license=OFL-1.1 (or GPL-2.0-or-later with the GNU Font Embedding Exception)
+copyright=Roman Czyborra, Paul Hardy and the GNU Unifont contributors
+origin=https://unifoundry.com/unifont/
+version=17.0.04
+used-in=the console and terminal font
+source=assets/desktop/fonts/unifont.hex in the SavanXP repository
+provenance=GNU UniFont (console and terminal)
+text=assets/desktop/fonts/LICENSE-OFL-1.1.txt

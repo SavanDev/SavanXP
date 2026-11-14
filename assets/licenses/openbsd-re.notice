@@ -1,0 +1,9 @@
+name=OpenBSD re(4) Realtek gigabit driver
+license=BSD-4-Clause
+copyright=Copyright (c) 1997, 1998-2003 Bill Paul
+origin=https://github.com/openbsd/src (sys/dev/ic/re.c)
+version=commit 287e5b695b75cb0c9c794575ed99e90305f680e8
+used-in=the kernel (rtl8168 network driver)
+note=This product includes software developed by Bill Paul.
+provenance=OpenBSD re(4) Realtek gigabit driver
+text=assets/licenses/openbsd-re.txt
