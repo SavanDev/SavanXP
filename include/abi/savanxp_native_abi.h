@@ -389,6 +389,18 @@ enum sxn_syscall_number {
      * TIME.md). The same clock as POSIX realtime() and file times.
      * GetSystemTimeAsFileTime. */
     SXN_SYS_SYSTEM_TIME = 0x1043,
+    /* rdi = handle of a regular file open for reading, rsi = offset,
+     * rdx = length (0 = to the end of the file), r10 = flags (enum
+     * sxn_section_flags; READ and EXEC, never WRITE). A section backed by
+     * that range of the file, read whole when created. A range of a file on
+     * a volume is one section system-wide: a second open of the same file,
+     * offset and length, from any process, gets the section already alive,
+     * which is how a loader shares a library's text. Returns the section
+     * handle, or -EBADF (not a file handle, or not open for reading),
+     * -EINVAL (not a regular file, WRITE asked, or a range that is empty
+     * or falls outside the file), -ENOMEM. Same call as the POSIX
+     * section_open_range. CreateFileMapping over a file. */
+    SXN_SYS_SECTION_OPEN_RANGE = 0x1044,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

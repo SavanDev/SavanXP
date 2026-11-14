@@ -84,6 +84,14 @@ static inline long sxn_section_create(uint64_t size_bytes, unsigned flags) {
     return sxn_trap(SXN_SYS_SECTION_CREATE, (unsigned long)size_bytes, (unsigned long)flags, 0);
 }
 
+/* A section over a range of an open file (SXN_SYS_SECTION_OPEN_RANGE); length 0
+ * is the rest of the file. Read-only: shared by every process that opens the
+ * same range. */
+static inline long sxn_section_open_range(long file, uint64_t offset, uint64_t length, unsigned flags) {
+    return sxn_trap4(SXN_SYS_SECTION_OPEN_RANGE, (unsigned long)file, (unsigned long)offset,
+                     (unsigned long)length, (unsigned long)flags);
+}
+
 static inline long sxn_map_view(long handle, unsigned flags) {
     return sxn_trap(SXN_SYS_MAP_VIEW, (unsigned long)handle, (unsigned long)flags, 0);
 }

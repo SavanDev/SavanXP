@@ -69,6 +69,19 @@ while the child still holds its handle — hence the event handshake, because a
 child that closed first would make the count return to its old value and the
 check would pass whether or not the pages were shared.
 
+Native programs reach the same section as `SXN_SYS_SECTION_OPEN_RANGE`
+(`sxn_section_open_range(file, offset, length, flags)`, over a handle from
+`sxn_open_file`), and so does a POSIX process, since it is one of the native
+object calls open to every subsystem. Both calls are one kernel function, so
+the cache does not know which subsystem asked: a SUN process and a POSIX one
+opening the same range of a library share its pages. It exists for the loader
+that SUN and POSIX are to share
+([SHARED_LIBRARIES.md](SHARED_LIBRARIES.md#one-loader-over-sxn)). A range that
+is empty or falls outside the file is `EINVAL` in both, not `ENOMEM`.
+`nativetest` asserts the identity by count — the whole file asked for with
+length 0 and with its size is one section, a slice of it another — the bytes,
+the zeroed tail, a view at a chosen base, and each refusal.
+
 ## `map_view_at`, and why a loader needs it
 
 `map_view` lets the kernel choose the address. `map_view_at(handle, base, flags)`

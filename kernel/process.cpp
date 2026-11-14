@@ -2288,6 +2288,13 @@ int open_range_section_handle(process::Process& proc, uint64_t fd, uint64_t offs
     if ((flags & SAVANXP_SECTION_WRITE) != 0) {
         return negative_error(SX_EINVAL);
     }
+    /* A range outside the file is the caller's mistake, not a lack of memory:
+     * say so before acquire_file_range_section folds it into its nullptr. */
+    const uint64_t file_size = file->node->size;
+    const uint64_t range_length = length != 0 ? length : (offset <= file_size ? file_size - offset : 0);
+    if (offset > file_size || range_length == 0 || range_length > file_size - offset) {
+        return negative_error(SX_EINVAL);
+    }
     uint32_t section_access = object_access_for_section_flags(flags, object::access_read);
     section_access |= object::access_read;
 

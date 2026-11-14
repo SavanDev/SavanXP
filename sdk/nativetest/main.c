@@ -2363,6 +2363,86 @@ static void test_file_listing(void) {
     check(sxn_create_file("/no-such-native-parent/file", SXN_CREATE_NEW) == -SAVANXP_ENOENT);
 }
 
+/* SXN_SYS_SECTION_OPEN_RANGE (docs/kernel/SECTIONS.md): a section over a range
+ * of a file, which is what a loader maps a library's text from. The fixture is
+ * on the volume and nothing else maps it, so file_sections_live moves only
+ * with what this test does. Sharing is the point and is asserted by count:
+ * the whole file, asked for twice and spelled two ways, is one section; a
+ * slice of it is another, because the range is part of the identity. */
+static void test_file_sections(void) {
+    static const char fixture[] = "SUN file read fixture\n";
+    const uint64_t base = 0x10000000ull;
+    struct savanxp_system_info before;
+    struct savanxp_system_info info;
+    long file = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
+    long query = sxn_open_file("/system/native-file-test.txt", 0);
+    long directory = sxn_open_directory("/system");
+    long whole = -1;
+    long spelled = -1;
+    long slice = -1;
+    long view;
+
+    check(file >= 0 && query >= 0 && directory >= 0);
+    check(sxn_system_info(&before) == 0);
+    if (file >= 0) {
+        whole = sxn_section_open_range(file, 0, 0, SXN_SECTION_READ | SXN_SECTION_EXEC);
+        check(whole >= 0);
+        check(sxn_system_info(&info) == 0 && info.file_sections_live == before.file_sections_live + 1u);
+        spelled = sxn_section_open_range(file, 0, sizeof(fixture) - 1u, SXN_SECTION_READ);
+        check(spelled >= 0);
+        check(sxn_system_info(&info) == 0 && info.file_sections_live == before.file_sections_live + 1u);
+        slice = sxn_section_open_range(file, 4, 4, SXN_SECTION_READ);
+        check(slice >= 0);
+        check(sxn_system_info(&info) == 0 && info.file_sections_live == before.file_sections_live + 2u);
+
+        if (whole >= 0) {
+            view = sxn_map_view(whole, SXN_SECTION_READ | SXN_SECTION_EXEC);
+            check(view > 0);
+            if (view > 0) {
+                const char* bytes = (const char*)(uintptr_t)view;
+                /* The file's bytes, then zeros to the end of the page. */
+                check(file_bytes_equal(bytes, fixture, sizeof(fixture) - 1u) && bytes[sizeof(fixture) - 1u] == 0
+                      && bytes[4095] == 0);
+                check(sxn_unmap_view((uint64_t)view) == 0);
+            }
+        }
+        if (slice >= 0) {
+            /* Where a loader puts a segment: at the base its headers ask for. */
+            view = sxn_map_view_at(slice, base, SXN_SECTION_READ);
+            check(view == (long)base);
+            if (view == (long)base) {
+                check(file_bytes_equal((const char*)(uintptr_t)base, "file", 4));
+                check(sxn_unmap_view(base) == 0);
+            }
+            /* A read-only backing never grants a writable view. */
+            check(sxn_map_view(slice, SXN_SECTION_READ | SXN_SECTION_WRITE) == -SAVANXP_EACCES);
+        }
+
+        check(sxn_section_open_range(file, 0, 0, SXN_SECTION_READ | SXN_SECTION_WRITE) == -SAVANXP_EINVAL);
+        check(sxn_section_open_range(file, sizeof(fixture), 0, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+        check(sxn_section_open_range(file, sizeof(fixture) - 1u, 0, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+        check(sxn_section_open_range(file, 20, 4, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    }
+    if (query >= 0) {
+        check(sxn_section_open_range(query, 0, 0, SXN_SECTION_READ) == -SAVANXP_EBADF);
+    }
+    if (whole >= 0) {
+        check(sxn_section_open_range(whole, 0, 0, SXN_SECTION_READ) == -SAVANXP_EBADF);
+    }
+    if (directory >= 0) {
+        check(sxn_section_open_range(directory, 0, 0, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    }
+
+    if (whole >= 0) check(sxn_close(whole) == 0);
+    if (spelled >= 0) check(sxn_close(spelled) == 0);
+    if (slice >= 0) check(sxn_close(slice) == 0);
+    check(sxn_system_info(&info) == 0 && info.file_sections_live == before.file_sections_live);
+    if (directory >= 0) (void)sxn_close(directory);
+    if (query >= 0) (void)sxn_close(query);
+    if (file >= 0) (void)sxn_close(file);
+    check(sxn_log("nativetest: file sections done") == 0);
+}
+
 static void test_files(void) {
     char bytes[64];
     long handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
@@ -3487,6 +3567,7 @@ int main(int argc, char** argv) {
 
     test_files();
     test_view_at();
+    test_file_sections();
     test_system_time();
     test_code32();
     test_syscall_trap();

@@ -1082,7 +1082,9 @@ What is missing, in order of weight:
    identity cache (`inode_id` + offset + length) is only reachable through the
    POSIX call. `SXN_SYS_SECTION_OPEN_RANGE` (file handle to section), open to
    all subsystems, is the slice; the loader is its consumer and `nativetest`
-   its assertion.
+   its assertion. **Done (2026-11-14):** `sxn_section_open_range`, the same
+   kernel function and cache as the POSIX call
+   ([SECTIONS.md](SECTIONS.md#section_open-and-what-it-does-not-do-yet)).
 2. **`SXN_SYS_OPEN_FILE` open to POSIX.** It is not in the forwarded list. One
    line, plus its `handletest` check.
 3. **No C library in the loader.** `eprintf` and `strcmp` become the loader's
