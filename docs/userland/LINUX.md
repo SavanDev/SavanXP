@@ -10,7 +10,9 @@ Linux executable runs unchanged, started by the `linux` launcher; L2
 with S2a: a static musl program runs unchanged, with its thread-local data,
 its heap, files under the guest root and the clocks; L3 adds the bounded
 static BusyBox tools below; L4 runs the pinned dynamic musl `jq` with its
-original libraries.** Every call not below answers `-ENOSYS`.
+original libraries; L5 displays the unchanged pinned Xlib client through the
+SUN `x11d` service, with P1 desktop pointer queries.** Every call not below
+answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -148,8 +150,8 @@ registers, for `subsystem::Id::linux`:
 | Trap dispatcher, `dispatch_linux_syscall` | The calls below. Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
 | Ordinary dispatcher, `dispatch_linux_int80` | `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: always `-ENOSYS` |
 | Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break; the descriptor table; the working directory and creation mask |
-| Per-thread state | `set_tid_address`'s pointer and a pending `sendfile` pipe wait |
-| Wait-recheck hook | Retries a `sendfile` syscall when its blocking output pipe can accept the pending chunk, or its last reader closed |
+| Per-thread state | `set_tid_address`'s pointer, copied poll entries and pending `sendfile` or vector-receive waits |
+| Wait-recheck hook | Evaluates poll readiness and deadlines, and retries parked `sendfile` or vector receives when their pipes become ready or close |
 
 A call SSL has, asked for a variant it does not offer (a shared mapping, an explicit `sendfile` offset, an `arch_prctl` code other than
 `ARCH_SET_FS`), fails with its Linux error and is logged once per call per process:
@@ -161,8 +163,8 @@ ABI, under `ssl::abi`. Nothing there comes from the POSIX SDK.
 ### Descriptors and paths
 
 A Linux descriptor is an entry of the subsystem's own table (256 of them),
-naming one kernel handle and carrying its Linux flags; the kernel's handle
-table is not renumbered. So numbering follows Linux's rule, the lowest free
+naming one kernel handle for a file, two for a connected local socket, and
+carrying its Linux flags; the kernel's handle table is not renumbered. So numbering follows Linux's rule, the lowest free
 descriptor, and `O_CLOEXEC` is kept for the exec of L7. Descriptors 0, 1 and
 2 are entered on first use from the handles of the same numbers the spawn
 gave.
@@ -182,7 +184,7 @@ permission checks apply underneath. The test image has `/system/linux/work`,
 | `read` (0) | On an open descriptor, through the native read (`process::native_read_handle`): a pipe with nothing in it parks the thread. An unwritable buffer is `-EFAULT`; a descriptor open for writing only is `-EBADF` |
 | `write` (1) | On an open descriptor, `-EBADF` otherwise. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
 | `open` (2) | A regular file or read-only directory, with the access mode, `O_CREAT` (with the process umask applied) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, directories open read-only, and `O_DIRECTORY` requires one. The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
-| `close` (3) | Frees the descriptor and closes its handle |
+| `close` (3) | Frees the descriptor and closes its handle, or both handles for a socket |
 | `stat` (4), `fstat` (5) | Linux's `struct stat`: the type, the permission bits and owner SavanXP records, the size, 512-byte blocks, the modification time for all three times, and a node number (`vfs::node_number`) for `st_ino`. A pipe, socket or device handed to the process gives its type alone |
 | `lseek` (8) | `SEEK_SET`, `SEEK_CUR` and `SEEK_END` on a file; `-ESPIPE` on a pipe, socket or device; before 0 is `-EINVAL` |
 | `lstat` (6) | As `stat`: the VFS has no symbolic links |
@@ -190,7 +192,7 @@ permission checks apply underneath. The test image has `/system/linux/work`,
 | `getcwd` (79), `chdir` (80) | The guest working directory, confined to the guest root; changing it requires a searchable directory. `getcwd` returns the byte count including NUL; too small is `-ERANGE` |
 | `mkdir` (83), `umask` (95) | Directory creation through the VFS, with the per-process creation mask; `umask` returns the old mask |
 | `getuid` (102) | The real uid in the process credentials |
-| `fcntl` (72) | `F_GETFD` and `F_SETFD`, with `FD_CLOEXEC` kept in the Linux descriptor table. Other commands fail with `-EINVAL` |
+| `fcntl` (72) | Descriptor-local `F_GETFD`/`F_SETFD` for `FD_CLOEXEC`, plus `F_GETFL`/`F_SETFL` for nonblocking streams (L5 below). Other commands fail with `-EINVAL` |
 | `sendfile` (40) | A regular readable file to a writable handle, one page per call (a permitted short transfer). A full blocking pipe parks before transferring and retries when room is available; the file offset advances only by bytes written. The measured profile uses a null offset; explicit offsets are refused with `-EINVAL` and logged |
 | `unlink` (87) | Removes a file; a directory is `-EISDIR`, as on Linux |
 | `writev` (20) | On an open descriptor. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
@@ -336,7 +338,7 @@ coherence and EOF contract.
 
 ## L5: local streams and the X11 service
 
-The L5 implementation is present; its final regression verification is pending.
+**L5 and P1 closed on 2026-11-15.**
 The unchanged `xclient` fixture has SHA-256
 `37fa1659c4ae26d05874e1ee5fa0b5805cece69bac98de49f944ed9592c9d5b8`.
 It uses the pinned Alpine musl and six original libraries: X11, xcb, Xau,
@@ -438,3 +440,14 @@ does. The SUN parent checks exit status, the expected output, disappearance
 of the listener, the original process, section and desktop-handle counts, and reclaimed
 memory. Captures and logs stay under `build/smoke-logs/`. `tools/shoot.sh`
 also exercises the client in the normal desktop session.
+
+Verification on 2026-11-15: the normal build completed with
+`check_shared_libs: OK`; 50 host tests passed, with only the three external
+Win32-fixture tests skipped. `linux-xclient` passed with TCG and KVM on two
+CPUs, and with KVM on four CPUs, including exact section-count recovery.
+ASan/UBSan found no error in the protocol suite. The ordinary desktop's
+`shoot.sh --scenario linux-xclient` showed matching content and caption close,
+and `verify_doom_persistence.sh` printed `Doom persistence: PASS` using its
+deterministic persistence fixture. The missing-Alpine-root configure also
+passed. The implementation and follow-up fixes were committed before these
+final checks; full command results are recorded in the verification commit.

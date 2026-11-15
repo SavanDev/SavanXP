@@ -1,8 +1,8 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1 and L1-L4 closed, with S1, S2a and S2b (2026-11-15): static
-> and dynamic musl programs run unchanged, including the pinned Alpine `jq`
-> and its libraries.** What is
+> **Status: L0, E1 and L1-L5 closed, with S1, S2a, S2b and P1 (2026-11-15):
+> static and dynamic musl programs run unchanged, including the pinned Alpine
+> `jq` and the Xlib client in a desktop window.** What is
 > built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
@@ -14,8 +14,9 @@
 > (a translation layer in the kernel, over Sx), makes the decisions it left
 > open, shrinks the first kernel step, and orders the phases by what Xeyes
 > needs. `subsystems/linux/` holds the L0 fixtures and profile tooling and
-> the kernel half's entry points, and the installed runtime root
-> `/system/linux` is not created by any build.
+> the kernel half's entry points. CMake stages the pinned runtime under
+> `/system/linux` only for test images; a production guest runtime is installed
+> separately.
 
 ## Objective
 
@@ -391,6 +392,13 @@ the pointer position in desktop coordinates while the pointer is elsewhere.
 `x11d` is the consumer and `nativetest` asserts it. Whether this is a query
 or a subscription is decided there, together with who may use it.
 
+**Closed on 2026-11-15:** `windowd` publishes a bounded seqlock snapshot for
+all admitted session clients, with desktop position, buttons, screen size
+and the client's origin. SUN and POSIX query the same snapshot; no key state
+is exposed. `nativetest` covers the API contract, and `linux-xclient` covers
+actual publication outside the window. See
+[WM_SUBSYSTEM.md](../../desktop/WM_SUBSYSTEM.md#desktop-pointer-query-p1).
+
 ## Phases
 
 ```text
@@ -541,7 +549,7 @@ interpreter check compares the error description after removing the different
 launcher/chroot prefix; musl diagnostics are compared unchanged. See
 [LINUX.md](../../userland/LINUX.md).
 
-### L5 — a window from a Linux client
+### L5 — a window from a Linux client (closed, 2026-11-15)
 
 Size L. Local stream sockets over ports, `poll`, P1, and `x11d` with the
 requests of a first, small X client: one written here against the pinned
@@ -555,12 +563,15 @@ connection, port or surface. The protocol engine passes its host tests,
 including malformed and truncated requests. Native and POSIX windows and the
 taskbar behave as before. `linux-xclient` is a smoke scenario.
 
-**Implementation under final verification:** the unchanged pinned `xclient`
-has run through the SUN `x11d` adapter. Host protocol and real-Xlib tests,
-plus `linux-xclient`, cover pixels, the recorded pointer path, resize,
-caption close and cleanup. The implementation and its bounded first profile
-are described in [LINUX.md](../../userland/LINUX.md#l5-local-streams-and-the-x11-service).
-L5 is not marked closed until the final regression suite passes.
+**Closed on 2026-11-15:** the unchanged pinned client passes `linux-xclient`
+with TCG, KVM and four virtual CPUs: exact Linux content, the recorded pointer
+path, resize, caption close and recovery of processes, ports, sections and
+desktop handles. The portable engine's protocol and real-Xlib host tests,
+its sanitizer run, the Linux/SUN transport fixture and normal-desktop visual
+check pass. Native/POSIX window and taskbar regressions pass, and the
+persistent-image check preserves the external Doom binary and assets. The
+bounded first profile and verification are recorded in
+[LINUX.md](../../userland/LINUX.md#l5-local-streams-and-the-x11-service).
 
 ### L6 — Xeyes
 
