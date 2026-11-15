@@ -38,6 +38,7 @@ def main():
             destination = stage / 'system/linux' / item['path']
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(args.root / item['source'], destination)
+            destination.chmod(item['mode'])
         # Install into the user's current menu too: /system/start seeds only
         # fresh profiles and must not resurrect other shortcuts a user removed.
         shortcut = 'target=/system/linux/usr/bin/xeyes\n'

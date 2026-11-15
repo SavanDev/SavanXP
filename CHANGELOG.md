@@ -425,6 +425,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Xeyes installation preserves executable permissions, and its visual checks locate the eye outline independently of pupil position.**
+  `linux-xeyes` also checks the installed runtime's file modes.
+
 - **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
   Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,
   retained setup/ARP errors and bounded timeouts; POSIX keeps the shared network core.

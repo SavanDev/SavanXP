@@ -34,7 +34,7 @@ def verify_image(image: Path, cli: Path) -> bool:
             return False
         for item in json.loads((ROOT / 'subsystems/linux/profile/xeyes-runtime.json').read_text())['files']:
             path = root / item['path']
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256'] or path.stat().st_mode & 0o777 != item['mode']:
                 raise AssertionError(f'installed Xeyes runtime mismatch: {item["path"]}')
     print('linux-xeyes: installed ELF, interpreter, 18 libraries and locale hashes PASS', flush=True)
     return True
@@ -72,10 +72,10 @@ def main() -> int:
                 # Unique 2-white-eye signature in the first 30 rows of content.
                 for y in range(20, height - 100):
                     row = rgb[y * width * 3:(y + 1) * width * 3]
-                    target = reference(0).crop((0, 20, 150, 21)).tobytes()
+                    target = reference(0).crop((0, 12, 150, 13)).tobytes()
                     at = row.find(target)
                     if at >= 0 and at % 3 == 0:
-                        return at // 3, y - 20
+                        return at // 3, y - 12
                 time.sleep(.1)
             raise AssertionError('Xeyes did not draw both eyes')
 

@@ -3620,12 +3620,12 @@ def scenario_linux_xeyes(s):
     from linux_xeyes_smoke import reference
 
     def locate(image):
-        target = reference(0).crop((0, 20, 150, 21)).tobytes()
+        target = reference(0).crop((0, 12, 150, 13)).tobytes()
         rgb = image.tobytes()
         for y in range(20, image.height - 100):
             at = rgb[y * image.width * 3:(y + 1) * image.width * 3].find(target)
             if at >= 0 and at % 3 == 0:
-                return at // 3, y - 20
+                return at // 3, y - 12
         raise Failure("Xeyes did not draw both eyes")
 
     def check(name, x, y):
