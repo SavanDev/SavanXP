@@ -219,19 +219,37 @@ struct savanxp_gfx_context {
 int power_shutdown(void);
 int power_reboot(void);
 
-/* Portapapeles del sistema (`/dev/clipboard`, ver savanxp/syscall.h).
+/* The system clipboard (`/dev/clipboard`, docs/desktop/CLIPBOARD.md).
  *
- * Abren y cierran el device en cada llamada a proposito: copiar y pegar son
- * gestos aislados y cachear el fd le costaria un descriptor permanente a cada
- * app por algo que se usa de a ratos.
+ * Each call opens and closes the device on purpose: copy and paste are
+ * isolated gestures, and caching the fd would cost every app a permanent
+ * descriptor for something used now and then.
  *
- * `clipboard_get_text` devuelve el largo REAL del portapapeles, no el copiado,
- * asi que un resultado >= capacity significa que hubo truncamiento. Lo copiado
- * siempre queda terminado en NUL. */
+ * The text calls work on the SAVANXP_CLIPBOARD_TEXT format (UTF-8, LF).
+ * `clipboard_set_text` replaces every format with that one. `clipboard_get_text`
+ * returns the REAL length of the text, not the bytes copied, so a result >=
+ * capacity means it was truncated; what was copied is always NUL-terminated. */
 int clipboard_set_text(const char *text);
 int clipboard_get_text(char *buffer, int capacity);
 int clipboard_get_info(struct savanxp_clipboard_info *info);
 int clipboard_clear(void);
+
+/* Several formats of the same content at once, a file list that also offers
+ * its paths as text for instance. They replace the whole clipboard, or fail
+ * and leave it as it was. */
+struct clipboard_format {
+    const char *name; /* a media type, e.g. SAVANXP_CLIPBOARD_URI_LIST */
+    const void *data;
+    unsigned int length;
+};
+int clipboard_set_formats(const struct clipboard_format *formats, int count);
+/* Copies up to `capacity` bytes of the format `name` and returns its full
+ * length (no NUL is added: the data need not be text); -ENOENT when the
+ * clipboard does not hold it. */
+int clipboard_get_format(const char *name, void *buffer, int capacity);
+/* The name of the format at `index` (0 first, in the order the writer gave
+ * them) and its length; -ENOENT past the last one. */
+int clipboard_enum_format(int index, char *name, int name_capacity);
 
 /* argv[0] as the program was started (0 if unknown), kept by crt0. */
 const char* sx_program_path(void);

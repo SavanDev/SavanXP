@@ -638,6 +638,94 @@ int clipboard_clear(void) {
     return (int)result;
 }
 
+static int clipboard_copy_name(char *field, const char *name) {
+    int length = 0;
+    while (name[length] != '\0') {
+        if (length + 1 >= (int)SAVANXP_CLIPBOARD_NAME_CAPACITY) {
+            return 0;
+        }
+        field[length] = name[length];
+        length += 1;
+    }
+    field[length] = '\0';
+    return length != 0;
+}
+
+int clipboard_set_formats(const struct clipboard_format* formats, int count) {
+    if (formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    struct savanxp_clipboard_entry entries[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    memset(entries, 0, sizeof(entries));
+    for (int index = 0; index < count; ++index) {
+        if (formats[index].name == 0 || (formats[index].data == 0 && formats[index].length != 0) ||
+            !clipboard_copy_name(entries[index].name, formats[index].name)) {
+            return -(int)SAVANXP_EINVAL;
+        }
+        entries[index].data = (uint64_t)(uintptr_t)formats[index].data;
+        entries[index].length = formats[index].length;
+    }
+    struct savanxp_clipboard_set request;
+    memset(&request, 0, sizeof(request));
+    request.entries = (uint64_t)(uintptr_t)entries;
+    request.count = (uint32_t)count;
+
+    long fd = clipboard_open(SAVANXP_OPEN_WRITE);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_SET_FORMATS, (unsigned long)&request);
+    savanxp_close((int)fd);
+    return (int)result;
+}
+
+int clipboard_get_format(const char* name, void* buffer, int capacity) {
+    if (name == 0 || capacity < 0 || (buffer == 0 && capacity != 0)) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    struct savanxp_clipboard_get request;
+    memset(&request, 0, sizeof(request));
+    if (!clipboard_copy_name(request.name, name)) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    request.buffer = (uint64_t)(uintptr_t)buffer;
+    request.capacity = (uint32_t)capacity;
+
+    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_GET_FORMAT, (unsigned long)&request);
+    savanxp_close((int)fd);
+    return result < 0 ? (int)result : (int)request.length;
+}
+
+int clipboard_enum_format(int index, char* name, int name_capacity) {
+    if (index < 0 || name == 0 || name_capacity <= 0) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    struct savanxp_clipboard_format_info request;
+    memset(&request, 0, sizeof(request));
+    request.index = (uint32_t)index;
+
+    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_ENUM_FORMAT, (unsigned long)&request);
+    savanxp_close((int)fd);
+    if (result < 0) {
+        return (int)result;
+    }
+    int length = 0;
+    while (request.name[length] != '\0' && length + 1 < name_capacity) {
+        name[length] = request.name[length];
+        length += 1;
+    }
+    name[length] = '\0';
+    return (int)request.length;
+}
+
 long gpu_open(void) {
     return savanxp_open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }

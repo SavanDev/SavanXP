@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **The clipboard holds several formats of one content, named by media type, and its capacity rises from 8 KiB to
+  1 MiB.** `CLIP_IOC_SET_FORMATS` replaces the whole set or leaves it intact, `CLIP_IOC_GET_FORMAT` and
+  `CLIP_IOC_ENUM_FORMAT` read it; POSIX `clipboard_set_formats`, `_get_format`, `_enum_format`. Plain text is
+  `text/plain;charset=utf-8` and keeps working through `read`/`write`. See [CLIPBOARD.md](docs/desktop/CLIPBOARD.md).
+
 - **Media Player supports fullscreen with a Fullscreen button and F11; Esc or F11 restores the window.**
   Video keeps its aspect ratio, playback continues, and controls and desktop chrome are hidden.
   SUN and POSIX windows can request fullscreen at desktop resolution.

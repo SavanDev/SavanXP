@@ -233,20 +233,14 @@ is out of scope for now.
 
 Not started. In the order they depend on each other:
 
-3. **A clipboard with formats.** The clipboard is `/dev/clipboard`
-   ([`WM_SUBSYSTEM.md`](WM_SUBSYSTEM.md)), one blob of text read and written
-   through the toolkit's host (`clipboard_get_text`/`clipboard_set_text`).
-   Copying files needs a second kind of content, a list of paths, that a
-   program can tell apart from text, as Windows' `CF_HDROP` sits next to
-   `CF_TEXT`. Two ways:
-   - **A tagged text payload** (a marker line, then one path per line).
-     Nothing changes outside Files, but any other program pastes the tag as
-     text, and nothing stops a text that happens to start with it.
-   - **Formats in the clipboard itself**: the device keeps one entry per
-     format, a writer replaces them all at once, a reader asks for the one it
-     wants. A file list also offers its paths as text, so Notepad pastes
-     them. This is the one to build; it touches the device, the host
-     interface and the SUN host ([`SUN.md`](../userland/SUN.md)).
+3. **A clipboard with formats.** The device side is done
+   ([`CLIPBOARD.md`](CLIPBOARD.md)): `/dev/clipboard` holds a set of named
+   formats replaced whole, and copying files offers `text/uri-list` next to
+   the paths as plain text, so Notepad pastes them. Chosen over a tagged text
+   payload (a marker line, then one path per line), which any other program
+   would paste as text with the tag, and which a text starting with the tag
+   would fake. Left: the toolkit's host interface (`struct sxgui_host` is
+   text only) and the SUN host.
 4. **Cut / Copy / Paste.** On the clipboard above. Paste copies into the
    folder shown; copying a folder is a recursive copy, a name already taken
    becomes "Copy of ..." (and "Copy (2) of ..."), and a failure halfway

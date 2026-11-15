@@ -1,5 +1,8 @@
 #include "libc.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 /*
  * Portapapeles del sistema (/dev/clipboard, ver savanxp/syscall.h).
  *
@@ -58,6 +61,140 @@ static int expect_text(const char* expected, const char* label) {
         return 0;
     }
     return 1;
+}
+
+static int expect_format(const char* name, const char* expected, const char* label) {
+    char buffer[64];
+    int length = clipboard_get_format(name, buffer, (int)sizeof(buffer));
+    int wanted = (int)strlen(expected);
+    if (length != wanted || memcmp(buffer, expected, (size_t)wanted) != 0) {
+        eprintf("cliptest: %s: format '%s' gave length %d, expected '%s'\n", label, name, length, expected);
+        return 0;
+    }
+    return 1;
+}
+
+static int expect_formats(unsigned int count, unsigned int text_length, unsigned int format, const char* label) {
+    struct savanxp_clipboard_info info;
+    if (clipboard_get_info(&info) < 0 || info.format_count != count || info.length != text_length ||
+        info.format != format) {
+        eprintf("cliptest: %s: expected %u formats, text length %u, format %u\n", label, count, text_length, format);
+        return 0;
+    }
+    return 1;
+}
+
+/* Several formats of one content (docs/desktop/CLIPBOARD.md): the set is
+ * replaced whole or not at all, each format is read by name, and plain text
+ * stays the SAVANXP_CLIPBOARD_TEXT entry. */
+static int test_formats(void) {
+    static const char text[] = "/home/a.txt\n";
+    static const char uris[] = "file:///home/a.txt\r\n";
+    struct clipboard_format both[2] = {
+        {SAVANXP_CLIPBOARD_URI_LIST, uris, sizeof(uris) - 1},
+        {SAVANXP_CLIPBOARD_TEXT, text, sizeof(text) - 1},
+    };
+    if (clipboard_set_formats(both, 2) < 0) {
+        return fail("set_formats with two formats failed");
+    }
+    if (!expect_formats(2, sizeof(text) - 1, SAVANXP_CLIPBOARD_FORMAT_TEXT, "two formats") ||
+        !expect_text(text, "text of a two-format set") ||
+        !expect_format(SAVANXP_CLIPBOARD_URI_LIST, uris, "uri list") ||
+        !expect_format(SAVANXP_CLIPBOARD_TEXT, text, "text by name")) {
+        return 0;
+    }
+
+    /* Enumeration keeps the writer's order, and ends with ENOENT. */
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
+    if (clipboard_enum_format(0, name, (int)sizeof(name)) != (int)sizeof(uris) - 1 ||
+        strcmp(name, SAVANXP_CLIPBOARD_URI_LIST) != 0 ||
+        clipboard_enum_format(1, name, (int)sizeof(name)) != (int)sizeof(text) - 1 ||
+        strcmp(name, SAVANXP_CLIPBOARD_TEXT) != 0) {
+        return fail("enumeration does not follow the writer's order");
+    }
+    int past = clipboard_enum_format(2, name, (int)sizeof(name));
+    if (past >= 0 || result_error_code(past) != SAVANXP_ENOENT) {
+        return fail("enumeration past the last format should be ENOENT");
+    }
+
+    /* A short buffer gets the prefix and the full length. */
+    char small[4];
+    if (clipboard_get_format(SAVANXP_CLIPBOARD_URI_LIST, small, (int)sizeof(small)) != (int)sizeof(uris) - 1 ||
+        memcmp(small, "file", 4) != 0) {
+        return fail("a short get_format should copy the prefix and report the full length");
+    }
+    int missing = clipboard_get_format("image/bmp", small, (int)sizeof(small));
+    if (missing >= 0 || result_error_code(missing) != SAVANXP_ENOENT) {
+        return fail("a format the clipboard does not hold should be ENOENT");
+    }
+
+    /* Refused sets leave the previous one whole: a repeated name, a name
+     * with a control character, and a total over the capacity. */
+    struct clipboard_format twice[2] = {
+        {SAVANXP_CLIPBOARD_TEXT, "x", 1},
+        {SAVANXP_CLIPBOARD_TEXT, "y", 1},
+    };
+    int duplicate = clipboard_set_formats(twice, 2);
+    struct clipboard_format control = {"text/\tplain", "x", 1};
+    int bad_name = clipboard_set_formats(&control, 1);
+    char* half = (char*)malloc(SAVANXP_CLIPBOARD_CAPACITY / 2 + 1);
+    if (half == 0) {
+        return fail("could not allocate half the capacity");
+    }
+    memset(half, 'h', SAVANXP_CLIPBOARD_CAPACITY / 2 + 1);
+    struct clipboard_format large[2] = {
+        {SAVANXP_CLIPBOARD_TEXT, half, SAVANXP_CLIPBOARD_CAPACITY / 2 + 1},
+        {"application/octet-stream", half, SAVANXP_CLIPBOARD_CAPACITY / 2 + 1},
+    };
+    int too_large = clipboard_set_formats(large, 2);
+    free(half);
+    if (result_error_code(duplicate) != SAVANXP_EINVAL || result_error_code(bad_name) != SAVANXP_EINVAL ||
+        result_error_code(too_large) != SAVANXP_ENOSPC) {
+        eprintf("cliptest: refused sets gave %d %d %d\n", duplicate, bad_name, too_large);
+        return 0;
+    }
+    if (!expect_formats(2, sizeof(text) - 1, SAVANXP_CLIPBOARD_FORMAT_TEXT, "after refused sets") ||
+        !expect_format(SAVANXP_CLIPBOARD_URI_LIST, uris, "uri list after refused sets")) {
+        return 0;
+    }
+
+    /* A set without text: plain read finds nothing to paste. */
+    if (clipboard_set_formats(both, 1) < 0) {
+        return fail("set_formats with one non-text format failed");
+    }
+    char buffer[16];
+    if (!expect_formats(1, 0, SAVANXP_CLIPBOARD_FORMAT_OTHER, "no text") ||
+        clipboard_get_text(buffer, (int)sizeof(buffer)) != 0 || buffer[0] != '\0') {
+        return fail("a set without text should paste as nothing");
+    }
+
+    /* Plain text replaces every format. */
+    if (clipboard_set_text("plain") < 0 || !expect_formats(1, 5, SAVANXP_CLIPBOARD_FORMAT_TEXT, "plain text") ||
+        !expect_format(SAVANXP_CLIPBOARD_TEXT, "plain", "plain text by name")) {
+        return 0;
+    }
+
+    /* Writing formats needs write access, like CLEAR. */
+    int read_only = savanxp_open_mode("/dev/clipboard", SAVANXP_OPEN_READ);
+    if (read_only < 0) {
+        return fail("could not open the clipboard read-only");
+    }
+    struct savanxp_clipboard_entry entry;
+    memset(&entry, 0, sizeof(entry));
+    memcpy(entry.name, SAVANXP_CLIPBOARD_TEXT, sizeof(SAVANXP_CLIPBOARD_TEXT));
+    entry.data = (uint64_t)(uintptr_t)"denied";
+    entry.length = 6;
+    struct savanxp_clipboard_set request;
+    memset(&request, 0, sizeof(request));
+    request.entries = (uint64_t)(uintptr_t)&entry;
+    request.count = 1;
+    long denied = savanxp_ioctl(read_only, CLIP_IOC_SET_FORMATS, (unsigned long)&request);
+    savanxp_close(read_only);
+    if (denied >= 0 || result_error_code(denied) != SAVANXP_EACCES) {
+        eprintf("cliptest: SET_FORMATS read-only was not refused (%ld)\n", denied);
+        return 0;
+    }
+    return clipboard_clear() >= 0;
 }
 
 int main(void) {
@@ -128,32 +265,34 @@ int main(void) {
         return 1;
     }
 
-    /* Pasarse de capacidad falla en vez de truncar en silencio. */
-    static char oversized[SAVANXP_CLIPBOARD_CAPACITY + 64];
-    for (unsigned int index = 0; index < sizeof(oversized) - 1; ++index) {
-        oversized[index] = 'a';
+    /* Going over the capacity fails instead of truncating silently. The
+     * buffers come from the heap: the capacity is a megabyte. */
+    char* oversized = (char*)malloc(SAVANXP_CLIPBOARD_CAPACITY + 64);
+    char* exact = (char*)malloc(SAVANXP_CLIPBOARD_CAPACITY + 1);
+    if (oversized == 0 || exact == 0) {
+        return fail("could not allocate the capacity buffers");
     }
-    oversized[sizeof(oversized) - 1] = '\0';
+    memset(oversized, 'a', SAVANXP_CLIPBOARD_CAPACITY + 63);
+    oversized[SAVANXP_CLIPBOARD_CAPACITY + 63] = '\0';
     int overflow = clipboard_set_text(oversized);
     if (overflow >= 0) {
-        return fail("un set_text mas grande que la capacidad tendria que fallar");
+        return fail("a set_text larger than the capacity should fail");
     }
-    if (!expect_text("0123456789", "el contenido sobrevive al set fallido")) {
+    if (!expect_text("0123456789", "the content survives the failed set")) {
         return 1;
     }
 
-    /* Justo la capacidad entra. */
-    static char exact[SAVANXP_CLIPBOARD_CAPACITY + 1];
-    for (unsigned int index = 0; index < SAVANXP_CLIPBOARD_CAPACITY; ++index) {
-        exact[index] = 'b';
-    }
+    /* Exactly the capacity fits. */
+    memset(exact, 'b', SAVANXP_CLIPBOARD_CAPACITY);
     exact[SAVANXP_CLIPBOARD_CAPACITY] = '\0';
     if (clipboard_set_text(exact) < 0) {
-        return fail("set_text de exactamente la capacidad tendria que entrar");
+        return fail("a set_text of exactly the capacity should fit");
     }
-    if (!expect_info(SAVANXP_CLIPBOARD_CAPACITY, SAVANXP_CLIPBOARD_FORMAT_TEXT, "capacidad exacta")) {
+    if (!expect_info(SAVANXP_CLIPBOARD_CAPACITY, SAVANXP_CLIPBOARD_FORMAT_TEXT, "exact capacity")) {
         return 1;
     }
+    free(oversized);
+    free(exact);
 
     /* Lo que importa de verdad: que cruce procesos. El hijo copia y el padre,
      * que nunca vio ese buffer, lo pega. */
@@ -197,6 +336,10 @@ int main(void) {
     savanxp_close(read_only);
     if (denied >= 0 || result_error_code(denied) != SAVANXP_EACCES) {
         eprintf("cliptest: CLEAR read-only no fue rechazado (%ld)\n", denied);
+        return 1;
+    }
+
+    if (!test_formats()) {
         return 1;
     }
 

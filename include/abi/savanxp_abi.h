@@ -519,42 +519,94 @@ enum savanxp_power_ioctl {
     POWER_IOC_PANIC = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 3),
 };
 
-/* Portapapeles del sistema, expuesto como `/dev/clipboard`.
+/* The system clipboard, exposed as `/dev/clipboard`
+ * (docs/desktop/CLIPBOARD.md).
  *
- * Vive en el kernel y no en el window manager por una razon concreta: cada
- * canal del WM se paga con descriptores POR CLIENTE contra un limite de 64 por
- * proceso (process::kMaxFileHandles), asi que un par de canales mas por cliente
- * le bajaria el techo de ventanas simultaneas. Como device node el cliente lo
- * abre cuando copia o pega y lo cierra enseguida, no cuesta un fd permanente,
- * y ademas lo pueden usar procesos sin ventana.
+ * It lives in the kernel rather than in the window manager for one concrete
+ * reason: every WM channel costs descriptors PER CLIENT against a limit of 64
+ * per process (process::kMaxFileHandles), so another channel or two per client
+ * would lower the ceiling on simultaneous windows. As a device node a client
+ * opens it to copy or paste and closes it at once, it costs no permanent fd,
+ * and processes without a window can use it too.
  *
- * Semantica de VALOR, no de stream: cada `write` reemplaza el contenido
- * entero, y cada `read` lo devuelve desde el principio, sin cursor -- leer dos
- * veces da lo mismo. Un `write` mas grande que la capacidad se rechaza con
- * ENOSPC en vez de truncarse: pegar medio texto en silencio es peor que no
- * pegar nada. */
-#define SAVANXP_CLIPBOARD_CAPACITY 8192u
+ * The content is a SET of formats, each a name and its bytes, replaced as a
+ * whole: CLIP_IOC_SET_FORMATS installs a new set or fails leaving the old one
+ * intact, and a reader asks for the format it wants by name. Plain `write` and
+ * `read` are the text format alone: `write` replaces the whole set with one
+ * SAVANXP_CLIPBOARD_TEXT entry and `read` returns that entry from the start,
+ * with no cursor (reading twice gives the same bytes), or nothing when the set
+ * has no text. A set larger than the capacity is refused with ENOSPC rather
+ * than truncated: pasting half a text without a word is worse than not
+ * pasting. */
+#define SAVANXP_CLIPBOARD_CAPACITY (1024u * 1024u) /* bytes, all formats together */
+#define SAVANXP_CLIPBOARD_MAX_FORMATS 8u
+#define SAVANXP_CLIPBOARD_NAME_CAPACITY 64u /* a format name, NUL included */
 
+/* Format names are media types, lowercase. The text format is UTF-8 with LF
+ * line ends; a subsystem whose programs expect another encoding or CRLF
+ * converts in its own layer, the kernel stores bytes. */
+#define SAVANXP_CLIPBOARD_TEXT "text/plain;charset=utf-8"
+#define SAVANXP_CLIPBOARD_URI_LIST "text/uri-list"
+
+/* What savanxp_clipboard_info.format says about the set as a whole. */
 enum savanxp_clipboard_format {
     SAVANXP_CLIPBOARD_FORMAT_EMPTY = 0,
-    SAVANXP_CLIPBOARD_FORMAT_TEXT = 1,
+    SAVANXP_CLIPBOARD_FORMAT_TEXT = 1,  /* the set has a SAVANXP_CLIPBOARD_TEXT entry */
+    SAVANXP_CLIPBOARD_FORMAT_OTHER = 2, /* formats, none of them text */
 };
 
 enum savanxp_clipboard_ioctl {
     CLIP_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 1),
     CLIP_IOC_CLEAR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 2),
+    /* struct savanxp_clipboard_set: replaces the whole set. Needs write
+     * access. */
+    CLIP_IOC_SET_FORMATS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 3),
+    /* struct savanxp_clipboard_get: one format by name. Returns the bytes
+     * copied; ENOENT when the set does not have it. */
+    CLIP_IOC_GET_FORMAT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 4),
+    /* struct savanxp_clipboard_format_info: the format at `index`, in the
+     * order the writer gave them (its preference). ENOENT past the last. */
+    CLIP_IOC_ENUM_FORMAT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 5),
 };
 
 struct savanxp_clipboard_info {
-    uint32_t length;
+    uint32_t length; /* bytes of the text entry, 0 without one */
     uint32_t capacity;
     uint32_t format; /* enum savanxp_clipboard_format */
-    uint32_t reserved0;
-    /* Arranca en 0 ("nunca se escribio") y sube con cada cambio, incluido el
-     * CLIP_IOC_CLEAR. Un cliente que la cachea sabe si el portapapeles cambio
-     * sin releer el contenido -- por ejemplo para habilitar o deshabilitar
-     * Pegar en un menu sin copiar 8 KiB en cada repintado. */
+    uint32_t format_count;
+    /* Starts at 0 ("never written") and rises with every change, CLEAR
+     * included. A client that caches it knows whether the clipboard changed
+     * without reading the content again -- for instance to enable or disable
+     * Paste in a menu without copying the content on every repaint. */
     uint64_t sequence;
+};
+
+/* One format of a set being written. Names are printable ASCII, unique within
+ * the set. An entry may be empty (length 0). */
+struct savanxp_clipboard_entry {
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
+    uint64_t data; /* user pointer to `length` bytes */
+    uint32_t length;
+    uint32_t reserved0;
+};
+
+struct savanxp_clipboard_set {
+    uint64_t entries; /* user pointer to `count` struct savanxp_clipboard_entry */
+    uint32_t count;   /* 1..SAVANXP_CLIPBOARD_MAX_FORMATS; emptying is CLEAR */
+    uint32_t reserved0;
+};
+
+struct savanxp_clipboard_get {
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY]; /* in */
+    uint64_t buffer;   /* in: user pointer */
+    uint32_t capacity; /* in: bytes at `buffer`; a smaller buffer gets the prefix */
+    uint32_t length;   /* out: the entry's full length */
+};
+
+struct savanxp_clipboard_format_info {
+    uint32_t index;  /* in */
+    uint32_t length; /* out */
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY]; /* out */
 };
 
 

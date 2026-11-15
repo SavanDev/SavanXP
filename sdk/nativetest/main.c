@@ -2443,6 +2443,75 @@ static void test_file_sections(void) {
     check(sxn_log("nativetest: file sections done") == 0);
 }
 
+/* The clipboard's formats through SUN (docs/desktop/CLIPBOARD.md): a set of
+ * two formats written with one control call, each read back by name and
+ * listed in the writer's order, plain read giving the text one, and a
+ * read-only handle refused the write. */
+static void test_clipboard(void) {
+    static const char text[] = "native text";
+    static const char uris[] = "file:///system/console.sxe\r\n";
+    struct savanxp_clipboard_entry entries[2];
+    struct savanxp_clipboard_set request = {0};
+    struct savanxp_clipboard_get get = {0};
+    struct savanxp_clipboard_format_info format = {0};
+    struct savanxp_clipboard_info info = {0};
+    char buffer[64];
+    long device = sxn_open_device("clipboard", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    long read_only;
+    unsigned index;
+
+    check(device >= 0);
+    if (device < 0) {
+        return;
+    }
+    for (index = 0; index < sizeof(entries); ++index) {
+        ((char*)entries)[index] = 0;
+    }
+    for (index = 0; index < sizeof(SAVANXP_CLIPBOARD_URI_LIST); ++index) {
+        entries[0].name[index] = SAVANXP_CLIPBOARD_URI_LIST[index];
+    }
+    entries[0].data = (uint64_t)(uintptr_t)uris;
+    entries[0].length = sizeof(uris) - 1;
+    for (index = 0; index < sizeof(SAVANXP_CLIPBOARD_TEXT); ++index) {
+        entries[1].name[index] = SAVANXP_CLIPBOARD_TEXT[index];
+    }
+    entries[1].data = (uint64_t)(uintptr_t)text;
+    entries[1].length = sizeof(text) - 1;
+    request.entries = (uint64_t)(uintptr_t)entries;
+    request.count = 2;
+    check(sxn_device_control(device, CLIP_IOC_SET_FORMATS, (unsigned long)&request) == 0);
+
+    check(sxn_device_control(device, CLIP_IOC_GET_INFO, (unsigned long)&info) == 0);
+    check(info.format == SAVANXP_CLIPBOARD_FORMAT_TEXT && info.format_count == 2u &&
+          info.length == sizeof(text) - 1 && info.capacity == SAVANXP_CLIPBOARD_CAPACITY);
+
+    for (index = 0; index < sizeof(SAVANXP_CLIPBOARD_URI_LIST); ++index) {
+        get.name[index] = SAVANXP_CLIPBOARD_URI_LIST[index];
+    }
+    get.buffer = (uint64_t)(uintptr_t)buffer;
+    get.capacity = sizeof(buffer);
+    check(sxn_device_control(device, CLIP_IOC_GET_FORMAT, (unsigned long)&get) == (long)sizeof(uris) - 1);
+    check(get.length == sizeof(uris) - 1 && buffer[0] == 'f' && buffer[sizeof(uris) - 2] == '\n');
+
+    format.index = 1;
+    check(sxn_device_control(device, CLIP_IOC_ENUM_FORMAT, (unsigned long)&format) == 0);
+    check(format.length == sizeof(text) - 1 && format.name[0] == 't' && format.name[4] == '/');
+    format.index = 2;
+    check(sxn_device_control(device, CLIP_IOC_ENUM_FORMAT, (unsigned long)&format) == -SAVANXP_ENOENT);
+
+    check(sxn_read(device, buffer, sizeof(buffer)) == (long)sizeof(text) - 1 && buffer[0] == 'n');
+
+    read_only = sxn_open_device("clipboard", SXN_DEVICE_READ);
+    check(read_only >= 0);
+    if (read_only >= 0) {
+        check(sxn_device_control(read_only, CLIP_IOC_SET_FORMATS, (unsigned long)&request) == -SAVANXP_EACCES);
+        (void)sxn_close(read_only);
+    }
+    check(sxn_device_control(device, CLIP_IOC_CLEAR, 0) == 0);
+    (void)sxn_close(device);
+    check(sxn_log("nativetest: clipboard done") == 0);
+}
+
 static void test_files(void) {
     char bytes[64];
     long handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
@@ -3568,6 +3637,7 @@ int main(int argc, char** argv) {
     }
 
     test_files();
+    test_clipboard();
     test_view_at();
     test_file_sections();
     test_system_time();
