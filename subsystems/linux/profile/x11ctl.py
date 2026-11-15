@@ -3,6 +3,8 @@
 
     x11ctl.py SOCKET warp X Y       move the pointer to root coordinates
     x11ctl.py SOCKET pointer        print the pointer's root coordinates
+    x11ctl.py SOCKET children WID
+    x11ctl.py SOCKET background WID PIXEL  set a diagnostic background and expose
     x11ctl.py SOCKET resize WID WIDTH HEIGHT
     x11ctl.py SOCKET delete WID     send WM_DELETE_WINDOW to a top-level window
 
@@ -64,6 +66,17 @@ def main():
     if cmd == "warp":
         px, py = int(sys.argv[3]), int(sys.argv[4])
         x.s.sendall(struct.pack("<BxHIIhhHHhh", 41, 6, 0, x.root, 0, 0, 0, 0, px, py))
+        x.sync()
+    elif cmd == "children":
+        wid = int(sys.argv[3], 0)
+        x.s.sendall(struct.pack("<BxHI", 15, 2, wid))
+        reply = x.reply()
+        count = struct.unpack_from("<H", reply, 16)[0]
+        print(*(hex(wid) for wid in struct.unpack_from(f"<{count}I", reply, 32)))
+    elif cmd == "background":
+        wid, pixel = (int(value, 0) for value in sys.argv[3:5])
+        x.s.sendall(struct.pack("<BxHIII", 2, 4, wid, 2, pixel))
+        x.s.sendall(struct.pack("<BBHIhhHH", 61, 1, 4, wid, 0, 0, 0, 0))
         x.sync()
     elif cmd == "resize":
         wid, width, height = (int(value, 0) for value in sys.argv[3:6])

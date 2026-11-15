@@ -239,6 +239,14 @@ trace_x11() {
         sleep 0.5
         guest /bin/sh -c 'xwd -root -silent -display :0 >/out/shot.xwd'
         magick "$out/shot.xwd" -crop 210x130+1+1 +repage -strip -define png:exclude-chunks=date,time "$out/xeyes-resized-400x300.png"
+        # Measure the region Xeyes repaints independently of x11d. Pixels
+        # still magenta after Expose have no content defined by this client.
+        local child
+        child=$(python3 "$here/x11ctl.py" "$xsock/X0" children "$(cat "$out/$name.toplevel")")
+        python3 "$here/x11ctl.py" "$xsock/X0" background "$child" 0xff00ff
+        sleep 0.5
+        guest /bin/sh -c 'xwd -root -silent -display :0 >/out/shot.xwd'
+        magick "$out/shot.xwd" -crop 210x130+1+1 +repage -strip -define png:exclude-chunks=date,time "$out/xeyes-resized-painted-domain.png"
         rm -f "$out/shot.xwd"
     fi
     python3 "$here/x11ctl.py" "$xsock/X0" delete "$(cat "$out/$name.toplevel")"

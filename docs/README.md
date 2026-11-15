@@ -132,7 +132,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the SUN `x11d` server, local streams, global pointer snapshots, installed Xeyes
   with Start/Files launch and the Linux smoke gates.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
-  measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
+  measured scope of SSL's first profile: Alpine's Xeyes and its 20-file musl
   closure by hash, the L1-L5 fixtures and how they are built, the system call
   and X request matrices traced on Linux with every extension absent, what
   each call meets in the kernel today, and the reference outputs.

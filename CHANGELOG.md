@@ -433,7 +433,7 @@ Cut-off notes:
   Windows opened with a smaller size hint, including Xeyes, now grow smoothly from their starting size.
 
 - **Xeyes installation preserves executable permissions, and its visual checks include the desktop cursor and shadow.**
-  `linux-xeyes` checks actual inode modes and compares every content pixel, including both pupils.
+  `linux-xeyes` checks actual inode modes and every defined content pixel, including both pupils.
 
 - **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
   Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,

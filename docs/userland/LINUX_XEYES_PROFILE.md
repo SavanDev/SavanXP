@@ -64,7 +64,7 @@ Alpine's stable branch replaces a package when it bumps its release, and the
 mirror then drops the old file. When a pinned `.apk` disappears, the lock is
 regenerated and the profile retraced. Old hashes are never edited in place.
 
-### Xeyes: 19 files
+### Xeyes: 20 ELF files
 
 `xeyes` 1.3.1-r0 is a position-independent executable (`ET_DYN`) whose
 interpreter is `/lib/ld-musl-x86_64.so.1`. Its closure, followed through
@@ -413,3 +413,14 @@ regenerates `screens/xeyes-resized-400x300.png` from the pinned Xvfb. It is
 cropped to client coordinates (1,1 on the X root), unlike the earlier root
 captures. Input order matters: the `None` background preserves pixels Xeyes
 does not redraw after resizing. No extension or new Linux syscall is required.
+
+
+`xeyes-resized-painted-domain.png` measures the complete repaint domain on
+that same Xvfb: the controller queries the top-level's child, sets only the
+child's diagnostic background to magenta (`0xff00ff`) and requests a full
+Expose. The unchanged Xeyes paints both eye outlines and pupils over it.
+Every non-magenta pixel is asserted by the guest resize test; magenta marks
+pixels the client does not paint. This deliberate acceptance decision avoids
+requiring a particular previous value in areas with X11 background `None`
+after a sequence of intermediate drag sizes. The seven initial references
+and the deterministic host resize retain full-image comparisons.

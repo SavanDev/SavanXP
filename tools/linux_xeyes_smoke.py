@@ -81,7 +81,7 @@ def main() -> int:
                 time.sleep(.1)
             raise AssertionError('Xeyes did not draw both eyes')
 
-        def capture(name: str, x: int, y: int, expected: Image.Image, cursor=None) -> None:
+        def capture(name: str, x: int, y: int, expected: Image.Image, cursor=None, painted=None) -> None:
             if cursor:
                 helper = Path(os.environ.get('SAVANXP_BUILD_DIR', ROOT / 'build/linux')) / 'savanxp-linux-cursor-reference'
                 result = subprocess.run([str(helper), str(ROOT / f'assets/desktop/cursors/classic/{cursor[2]}.cur'),
@@ -93,9 +93,18 @@ def main() -> int:
                 width, height, rgb = screen.grab()
                 image = Image.frombytes('RGB', (width, height), rgb)
                 crop = image.crop((x, y, x + expected.width, y + expected.height))
-                if crop.tobytes() == expected.tobytes():
+                if painted is None:
+                    matches = crop.tobytes() == expected.tobytes()
+                else:
+                    actual = list(crop.get_flattened_data())
+                    defined = list(painted.get_flattened_data())
+                    count = sum(pixel != (255, 0, 255) for pixel in defined)
+                    assert count > expected.width * expected.height // 2
+                    matches = all(actual[i] == pixel for i, pixel in enumerate(defined) if pixel != (255, 0, 255))
+                if matches:
                     image.save(args.out_dir / f'{name}.png')
-                    print(f'linux-xeyes: {name} matches Linux pixel for pixel', flush=True)
+                    detail = 'pixel for pixel' if painted is None else f'on all {count} repainted pixels (both eyes and pupils)'
+                    print(f'linux-xeyes: {name} matches Linux {detail}', flush=True)
                     return
                 image.save(args.out_dir / f'{name}-failed.png')
                 time.sleep(.1)
@@ -127,7 +136,8 @@ def main() -> int:
                 qmp.send_input([{'type': 'btn', 'data': {'button': 'left', 'down': False}}])
                 move(x + 399, y + 299)
                 expected = Image.open(ROOT / 'subsystems/linux/profile/expected/screens/xeyes-resized-400x300.png').convert('RGB')
-                capture(f'boot{boot}-run{cycle}-resized', x, y, expected)
+                painted = Image.open(ROOT / 'subsystems/linux/profile/expected/screens/xeyes-resized-painted-domain.png').convert('RGB')
+                capture(f'boot{boot}-run{cycle}-resized', x, y, expected, painted=painted)
                 start = log.stat().st_size
                 next_start = start
                 click(x + 202, y - 12)

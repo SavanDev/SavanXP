@@ -530,7 +530,17 @@ cycles, resets the guest and repeats both cycles. Each run checks the known
 pointer path (including outside the window), caption movement, resize and
 caption close. Guest captures compare every pixel, composing the real classic cursor and
 its shadow over the Linux golden with the compositor's portable routines;
-the host test separately checks all pupil pixels without an overlay. After each close the
+the host test separately checks all pupil pixels without an overlay. Interactive
+resize can deliver intermediate sizes, so pixels outside the two freshly
+painted eye outlines have no portable value with background `None`. By the
+explicit L6 acceptance decision, the guest resize check compares every
+repainted pixel, including the entire black outlines, both white eyes and
+both pupils, against a separate Linux reference. That reference sets a
+magenta diagnostic background on the real Xvfb child and generates Expose;
+only pixels the original client leaves magenta are excluded. The seven
+pre-resize captures remain complete pixel comparisons. This follows the
+[X11 background-None contract](https://xorg.freedesktop.org/releases/current/doc/xproto/x11protocol.html#requests:CreateWindow),
+not an image tolerance or a change to the client/server drawing behavior. After each close the
 SUN parent checks process/section/desktop-handle counts, listener removal,
 exit status and recovered memory. Runtime hashes are checked again after the
 restart. An absent installed Xeyes makes the scenario skip with exit 77; a
