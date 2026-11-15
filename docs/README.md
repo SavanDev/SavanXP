@@ -316,6 +316,10 @@ all its phases have landed; the links to it move with it.
   the Ryzen/ALC892 host, six-stage completion contract, software evidence, the
   2026-11-11 audit with the remaining physical checks and software backlog;
   HDMI is a separate future objective.
+- [`IMAGE_VIEWER_ROADMAP.md`](roadmaps/open/IMAGE_VIEWER_ROADMAP.md) — an image viewer
+  for BMP, PNG and JPEG and the decoders under it in `libsximg`: what exists, the
+  decisions (memory-only decoders, caller-owned pixels, JPEG written from T.81,
+  size limits, who opens an image by default) and phases I1-I7.
 
 ## Third-party code — `third-party/`
 
