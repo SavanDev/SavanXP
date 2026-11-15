@@ -21,10 +21,9 @@ static int output(void* opaque, const void* bytes, size_t count) {
 static int map(void* opaque, struct sx11_window* w) { (void)opaque; printf("MAP %u %s\n", w->id, w->title); fflush(stdout); return 0; }
 static void destroy(void* opaque, struct sx11_window* w) { (void)opaque; printf("DESTROY %u\n", w->id); fflush(stdout); }
 static int pointer(void* opaque, struct sx11_window* w, int* rx, int* ry, int* wx, int* wy, unsigned* mask) {
-    struct host* h = opaque; *rx = h->x; *ry = h->y; *wx = h->x - (w ? w->x : 0); *wy = h->y - (w ? w->y : 0); *mask = 0;
+    struct host* h = opaque; *rx = h->x; *ry = h->y; *wx = h->x; *wy = h->y; *mask = 0;
     for (struct sx11_window* a = w; a;) {
-        *wx -= a->border; *wy -= a->border;
-        if (a == w && a->parent != SX11_ROOT) { *wx -= a->x; *wy -= a->y; }
+        *wx -= a->x + a->border; *wy -= a->y + a->border;
         if (a->parent == SX11_ROOT) break;
         struct sx11_window* parent = 0;
         for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].id == a->parent) parent = &h->client.windows[i];

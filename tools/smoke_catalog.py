@@ -771,7 +771,7 @@ SCENARIOS: dict[str, Scenario] = {
         "linuxxeyes", "LINUX XEYES PASS", "LINUX XEYES FAIL",
         "Pinned Xeyes: Linux pixels, pointer path, resize, relaunch, restart and resource recovery (requires installed runtime)", 300.0,
         ready="LINUX XEYES READY", qmp_callback="tools/linux_xeyes_smoke.py",
-        remove_paths=("/system/linux/work/l6-restart",),
+        remove_paths=("/system/linux/work/l6-restart", "/users/user/Settings/cursors.cfg"),
         usb=True, no_ps2=True, usb_pointer="tablet",
     ),
     "linux-xclient": _qemu_scenario(

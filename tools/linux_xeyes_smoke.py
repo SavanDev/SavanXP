@@ -28,13 +28,15 @@ def reference(i: int) -> Image.Image:
 
 def verify_image(image: Path, cli: Path) -> bool:
     with tempfile.TemporaryDirectory(prefix='ssl-xeyes-verify-') as temp:
-        subprocess.run([str(cli), 'extract', str(image), temp], check=True, stdout=subprocess.DEVNULL)
+        owners = Path(temp) / 'ownership.tsv'
+        subprocess.run([str(cli), 'extract', str(image), temp, str(owners)], check=True, stdout=subprocess.DEVNULL)
+        modes = {parts[1]: int(parts[4], 8) & 0o777 for line in owners.read_text().splitlines() if len(parts := line.split('\t')) == 5 and parts[0] == 'owner'}
         root = Path(temp) / 'system/linux'
         if not (root / 'usr/bin/xeyes').is_file():
             return False
         for item in json.loads((ROOT / 'subsystems/linux/profile/xeyes-runtime.json').read_text())['files']:
             path = root / item['path']
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256'] or path.stat().st_mode & 0o777 != item['mode']:
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256'] or modes.get('system/linux/' + item['path']) != item['mode']:
                 raise AssertionError(f'installed Xeyes runtime mismatch: {item["path"]}')
     print('linux-xeyes: installed ELF, interpreter, 18 libraries and locale hashes PASS', flush=True)
     return True
@@ -80,17 +82,17 @@ def main() -> int:
             raise AssertionError('Xeyes did not draw both eyes')
 
         def capture(name: str, x: int, y: int, expected: Image.Image, cursor=None) -> None:
+            if cursor:
+                helper = Path(os.environ.get('SAVANXP_BUILD_DIR', ROOT / 'build/linux')) / 'savanxp-linux-cursor-reference'
+                result = subprocess.run([str(helper), str(ROOT / 'assets/desktop/cursors/classic/arrow.cur'),
+                    str(expected.width), str(expected.height), str(cursor[0] - x), str(cursor[1] - y)],
+                    input=expected.tobytes(), capture_output=True, check=True)
+                expected = Image.frombytes('RGB', expected.size, result.stdout)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 width, height, rgb = screen.grab()
                 image = Image.frombytes('RGB', (width, height), rgb)
                 crop = image.crop((x, y, x + expected.width, y + expected.height))
-                # The desktop cursor is an overlay absent from Xvfb xwd.
-                # Mask only its small rectangle, retaining both pupil regions.
-                if cursor:
-                    cx, cy = cursor
-                    rect = (cx - x, cy - y, cx - x + 16, cy - y + 24)
-                    crop.paste(expected.crop(rect), rect[:2])
                 if crop.tobytes() == expected.tobytes():
                     image.save(args.out_dir / f'{name}.png')
                     print(f'linux-xeyes: {name} matches Linux pixel for pixel', flush=True)

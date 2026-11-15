@@ -528,8 +528,9 @@ absent. L0 captures include a one-pixel outer X border; comparisons crop the
 `linux-xeyes` verifies every installed runtime hash, runs two launch/close
 cycles, resets the guest and repeats both cycles. Each run checks the known
 pointer path (including outside the window), caption movement, resize and
-caption close. Guest captures exclude only the desktop cursor overlay; the
-host test checks all pupil pixels without an overlay. After each close the
+caption close. Guest captures compare every pixel, composing the real classic cursor and
+its shadow over the Linux golden with the compositor's portable routines;
+the host test separately checks all pupil pixels without an overlay. After each close the
 SUN parent checks process/section/desktop-handle counts, listener removal,
 exit status and recovered memory. Runtime hashes are checked again after the
 restart. An absent installed Xeyes makes the scenario skip with exit 77; a

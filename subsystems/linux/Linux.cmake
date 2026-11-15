@@ -247,3 +247,14 @@ add_test(NAME linux-x11-xeyes-test
         --server "$<TARGET_FILE:savanxp-linux-x11-server>" --root "${SAVANXP_LINUX_MUSL_ROOT}"
         --fixture "${SAVANXP_LINUX_MUSL_ROOT}/usr/bin/xeyes")
 set_tests_properties(linux-x11-xeyes-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
+
+# Exact guest comparisons include the compositor's cursor and shadow over the
+# Linux golden; no content rectangle is masked, including either pupil.
+add_executable(savanxp-linux-cursor-reference
+    "${CMAKE_SOURCE_DIR}/tests/host/linux_cursor_reference.c"
+    "${CMAKE_SOURCE_DIR}/system/compositord/cursor_cur.c"
+    "${CMAKE_SOURCE_DIR}/system/compositord/shadow.c")
+target_link_libraries(savanxp-linux-cursor-reference PRIVATE savanxp_x11_host_engine)
+add_dependencies(savanxp_linux_fixtures savanxp-linux-cursor-reference)
+target_sources(savanxp-linux-cursor-reference PRIVATE "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime/sximg.c")
+target_compile_options(savanxp-linux-cursor-reference PRIVATE -idirafter "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")

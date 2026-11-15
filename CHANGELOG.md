@@ -429,8 +429,8 @@ Cut-off notes:
 
 ### Fixed
 
-- **Xeyes installation preserves executable permissions, and its visual checks locate the eye outline independently of pupil position.**
-  `linux-xeyes` also checks the installed runtime's file modes.
+- **Xeyes installation preserves executable permissions, and its visual checks include the desktop cursor and shadow.**
+  `linux-xeyes` checks actual inode modes and compares every content pixel, including both pupils.
 
 - **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
   Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,
