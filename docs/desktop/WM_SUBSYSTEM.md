@@ -502,3 +502,13 @@ snapshot. A bounded read returns `EAGAIN` if publication is in progress.
 converts desktop coordinates through the supplied origin. `nativetest`
 asserts the snapshot and refusal contract, and `linux-xclient` proves the
 actual windowd publication along a recorded pointer path.
+
+
+### Resizing a small hinted window
+
+A size hint may start a client below the ordinary 200x140 interactive frame
+minimum (Xeyes is one consumer). An edge drag uses the smaller of that
+minimum and the frame size at the start of the drag on each axis. Taking an
+edge with zero motion never enlarges the window; growing it is continuous,
+and shrinking still anchors the opposite edge. Ordinary windows keep the
+existing interactive minimum. `windowd-smoke` asserts both cases.

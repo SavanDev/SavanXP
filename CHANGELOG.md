@@ -429,6 +429,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Dragging the border of a small application window no longer makes it jump to the ordinary minimum size.**
+  Windows opened with a smaller size hint, including Xeyes, now grow smoothly from their starting size.
+
 - **Xeyes installation preserves executable permissions, and its visual checks include the desktop cursor and shadow.**
   `linux-xeyes` checks actual inode modes and compares every content pixel, including both pupils.
 

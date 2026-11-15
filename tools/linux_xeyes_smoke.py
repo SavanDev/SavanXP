@@ -84,7 +84,7 @@ def main() -> int:
         def capture(name: str, x: int, y: int, expected: Image.Image, cursor=None) -> None:
             if cursor:
                 helper = Path(os.environ.get('SAVANXP_BUILD_DIR', ROOT / 'build/linux')) / 'savanxp-linux-cursor-reference'
-                result = subprocess.run([str(helper), str(ROOT / 'assets/desktop/cursors/classic/arrow.cur'),
+                result = subprocess.run([str(helper), str(ROOT / f'assets/desktop/cursors/classic/{cursor[2]}.cur'),
                     str(expected.width), str(expected.height), str(cursor[0] - x), str(cursor[1] - y)],
                     input=expected.tobytes(), capture_output=True, check=True)
                 expected = Image.frombytes('RGB', expected.size, result.stdout)
@@ -119,7 +119,8 @@ def main() -> int:
                     px, py = x + rx - 1, y + ry - 1
                     move(px, py)
                     time.sleep(.1)
-                    capture(f'boot{boot}-run{cycle}-pointer{i}', x, y, reference(i), (px, py))
+                    role = 'resize_h' if i == 1 else 'arrow'
+                    capture(f'boot{boot}-run{cycle}-pointer{i}', x, y, reference(i), (px, py, role))
                 move(x + 151, y + 101)
                 qmp.send_input([{'type': 'btn', 'data': {'button': 'left', 'down': True}}])
                 time.sleep(.1); move(x + 211, y + 131); time.sleep(.1)

@@ -716,23 +716,27 @@ static struct sx_rect resize_frame_for_drag(
     int delta_y)
 {
     struct sx_rect frame = origin;
+    // A size hint may legitimately start below the interactive minimum.
+    // Taking its edge must not enlarge it before the pointer has moved.
+    const int minimum_width = origin.width < WINDOWD_WINDOW_MIN_WIDTH ? origin.width : WINDOWD_WINDOW_MIN_WIDTH;
+    const int minimum_height = origin.height < WINDOWD_WINDOW_MIN_HEIGHT ? origin.height : WINDOWD_WINDOW_MIN_HEIGHT;
 
     if ((edges & WINDOWD_RESIZE_EDGE_LEFT) != 0)
     {
         int right = sx_rect_right(origin);
         frame.x = origin.x + delta_x;
-        if (frame.x > right - WINDOWD_WINDOW_MIN_WIDTH)
+        if (frame.x > right - minimum_width)
         {
-            frame.x = right - WINDOWD_WINDOW_MIN_WIDTH;
+            frame.x = right - minimum_width;
         }
         frame.width = right - frame.x;
     }
     else if ((edges & WINDOWD_RESIZE_EDGE_RIGHT) != 0)
     {
         frame.width = origin.width + delta_x;
-        if (frame.width < WINDOWD_WINDOW_MIN_WIDTH)
+        if (frame.width < minimum_width)
         {
-            frame.width = WINDOWD_WINDOW_MIN_WIDTH;
+            frame.width = minimum_width;
         }
     }
 
@@ -740,18 +744,18 @@ static struct sx_rect resize_frame_for_drag(
     {
         int bottom = sx_rect_bottom(origin);
         frame.y = origin.y + delta_y;
-        if (frame.y > bottom - WINDOWD_WINDOW_MIN_HEIGHT)
+        if (frame.y > bottom - minimum_height)
         {
-            frame.y = bottom - WINDOWD_WINDOW_MIN_HEIGHT;
+            frame.y = bottom - minimum_height;
         }
         frame.height = bottom - frame.y;
     }
     else if ((edges & WINDOWD_RESIZE_EDGE_BOTTOM) != 0)
     {
         frame.height = origin.height + delta_y;
-        if (frame.height < WINDOWD_WINDOW_MIN_HEIGHT)
+        if (frame.height < minimum_height)
         {
-            frame.height = WINDOWD_WINDOW_MIN_HEIGHT;
+            frame.height = minimum_height;
         }
     }
 
@@ -6307,6 +6311,28 @@ static int windowd_selftest(void)
         if (!failed && (r.width != origin.width + 25 || r.height != origin.height + 35))
         {
             puts_fd(2, "DESKTOP SMOKE FAIL resize: esquina no aplico ambos ejes\n");
+            failed = 1;
+        }
+
+        // Small size-hint windows keep their current size on a zero-delta
+        // grab, can grow smoothly, and anchor the opposite edge on shrink.
+        const struct sx_rect small = sx_rect_make(60, 40, 158, 128);
+        r = resize_frame_for_drag(small, WINDOWD_RESIZE_EDGE_RIGHT | WINDOWD_RESIZE_EDGE_BOTTOM, 0, 0);
+        if (!failed && (r.width != small.width || r.height != small.height))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: small window jumped on grab\n");
+            failed = 1;
+        }
+        r = resize_frame_for_drag(small, WINDOWD_RESIZE_EDGE_RIGHT | WINDOWD_RESIZE_EDGE_BOTTOM, 60, 30);
+        if (!failed && (r.width != small.width + 60 || r.height != small.height + 30))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: small window did not grow smoothly\n");
+            failed = 1;
+        }
+        r = resize_frame_for_drag(small, WINDOWD_RESIZE_EDGE_LEFT | WINDOWD_RESIZE_EDGE_TOP, 10000, 10000);
+        if (!failed && (r.width != small.width || r.height != small.height || r.x != small.x || r.y != small.y))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: small window lost its anchored edge\n");
             failed = 1;
         }
 
