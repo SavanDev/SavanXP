@@ -59,7 +59,7 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/libc.a" AND EXISTS "${SAVANXP_LINU
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
         OUTPUT_VARIABLE SSL_CLANG_RESOURCES OUTPUT_STRIP_TRAILING_WHITESPACE)
     set(SSL_MUSL "${SAVANXP_LINUX_MUSL_ROOT}")
-    foreach(fixture IN ITEMS args tls heap clock files)
+    foreach(fixture IN ITEMS args tls heap clock files tools)
         add_custom_command(OUTPUT "${SSL_OUT}/${fixture}"
             COMMAND "${CMAKE_C_COMPILER}" --target=x86_64-linux-musl -nostdinc
                     -isystem "${SSL_MUSL}/usr/include" -isystem "${SSL_CLANG_RESOURCES}/include"
@@ -106,8 +106,30 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SSL_EXPECTED}/tls.stdout" "${SSL_EXPECTED}/tls.status"
                 "${SSL_EXPECTED}/heap.stdout" "${SSL_EXPECTED}/heap.status"
                 "${SSL_EXPECTED}/clock.stdout" "${SSL_EXPECTED}/clock.status"
+                "${SSL_EXPECTED}/tools-denied.stdout" "${SSL_EXPECTED}/tools-denied.status"
+                "${SSL_EXPECTED}/tools.stdout" "${SSL_EXPECTED}/tools.status"
                 "${SSL_EXPECTED}/files-write.stdout" "${SSL_EXPECTED}/files-write.status"
                 "${SSL_EXPECTED}/files-check.stdout" "${SSL_EXPECTED}/files-check.status"
                 "${SSL_EXPECTED}/files-remove.stdout" "${SSL_EXPECTED}/files-remove.status"
                 "${SSL_GUEST_FIXTURES}/expected/")
+endif()
+
+# L3 uses the pinned distribution binary, unchanged.
+if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/bin/busybox.static")
+    file(SHA256 "${SAVANXP_LINUX_MUSL_ROOT}/bin/busybox.static" SSL_BUSYBOX_HASH)
+    if(NOT SSL_BUSYBOX_HASH STREQUAL "1690ed6db71fa35621537580135deb8de4f55f30a50d9d591050256e334cd8b9")
+        message(FATAL_ERROR "Linux BusyBox does not match the pinned L0 profile")
+    endif()
+    if(SAVANXP_INCLUDE_TEST_APPS)
+        list(APPEND SAVANXP_LINUX_COPY_COMMANDS
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/bin"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SAVANXP_LINUX_MUSL_ROOT}/bin/busybox.static" "${SAVANXP_DISKFS_ROOT}/system/linux/bin/")
+        foreach(case IN ITEMS echo cat ls pwd-root wc mkdir cat-missing)
+            list(APPEND SAVANXP_LINUX_COPY_COMMANDS
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SSL_EXPECTED}/bb-${case}.stdout" "${SSL_EXPECTED}/bb-${case}.stderr" "${SSL_EXPECTED}/bb-${case}.status"
+                "${SSL_GUEST_FIXTURES}/expected/")
+        endforeach()
+    endif()
 endif()

@@ -1,6 +1,6 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1, L1 and L2 closed, with S1 and S2a (2026-11-14): a static
+> **Status: L0, E1, L1, L2 and L3 closed, with S1 and S2a (2026-11-15): a static
 > musl program runs unchanged, with its heap, files and clocks.** What is
 > built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
@@ -495,7 +495,7 @@ What the plan did not say:
   fixture's bytes; the references were retaken, unchanged but for their
   hashes.
 
-### L3 — a bounded static tool set
+### L3 — a bounded static tool set (closed, 2026-11-15)
 
 Size M. The distribution's static BusyBox, with a stated list of applets such
 as `echo`, `cat`, `ls`, `pwd`, `wc` and `mkdir`: directory reading, the
@@ -506,6 +506,16 @@ is not in the list.
 match Linux after documented normalization of unstable fields. Bad paths and
 denied access are covered. The executables and their data survive
 `./build.sh build`. `linux-tools` is a smoke scenario.
+
+**Closed:** the pinned Alpine BusyBox runs `echo`, `cat`, `ls -1`, `pwd`,
+`wc` and `mkdir -p` unchanged. `linux-tools` compares Linux reference output,
+status and missing-path errors on a prepared tree. A static musl fixture
+checks directory cursors, relative paths, descriptor flags, creation masks,
+permission denial as uid 1000 and a transfer larger than a pipe. The normal
+build preserves the installed tool and persistent data. See
+[LINUX.md](../../userland/LINUX.md) for the supported call variants.
+The KVM trap-cost observation is recorded there too; the two-million-call
+register gate and `linux-tools` pass with both TCG and KVM.
 
 **This closes the static checkpoint.**
 

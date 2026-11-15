@@ -214,6 +214,7 @@ static int run_automation_spec(const char* spec) {
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
     const char* ldimagetest_argv[] = {"/system/ldimagetest.sxe", 0};
+    const char* linuxtools_argv[] = {"/system/linuxtest.sxe", "--tools", 0};
     const char* linuxrestart_argv[] = {"/system/linuxtest.sxe", "--restart", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
@@ -435,6 +436,10 @@ static int run_automation_spec(const char* spec) {
             path = "/system/sonametest.sxe";
             argv = sonametest_argv;
             argc = 1;
+        } else if (strcmp(spec, "linuxtools") == 0) {
+            path = "/system/linuxtest.sxe";
+            argv = linuxtools_argv;
+            argc = 2;
         } else if (strcmp(spec, "linuxrestart") == 0) {
             /* A Linux program's file read back after a restart: the host
              * resets the machine between the two runs. */

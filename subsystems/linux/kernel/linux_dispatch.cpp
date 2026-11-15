@@ -12,7 +12,8 @@
  * regions of S2a (mmap, munmap, mremap, brk), the thread pointer
  * (arch_prctl), set_tid_address, the descriptor table and the file calls on
  * it (open, read, write, writev, lseek, fstat, stat, close, unlink, ioctl),
- * and the clocks (clock_gettime, nanosleep) (L2).
+ * and the clocks (clock_gettime, nanosleep) (L2); directory enumeration,
+ * working directories, creation masks, descriptor flags and sendfile (L3).
  * Every other number returns -ENOSYS and is logged once per process, so a
  * fixture's first run lists what it needs; a variant of a call the layer
  * does not offer fails with its Linux error and is logged once the same way.
@@ -25,6 +26,7 @@
 #include "abi/savanxp_native_abi.h"
 #include "kernel/console.hpp"
 #include "kernel/process.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/region_list.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
@@ -68,6 +70,9 @@ struct ProcessState {
     // The descriptor table, its own and not the kernel's handle table:
     // numbering and close-on-exec follow Linux's rules. The standard three
     // are the handles the spawn gave, entered on first use.
+    bool paths_ready;
+    uint16_t mask;
+    char cwd[vfs::kMaxPathLength];
     bool descriptors_ready;
     Descriptor descriptors[kMaxDescriptors];
 };
@@ -77,6 +82,9 @@ struct ThreadState {
     // set_tid_address's pointer. Kept; clearing it when the thread ends
     // matters once a Linux process can have more than one (clone, L7).
     uint64_t clear_child_tid;
+    uint64_t transfer_output;
+    size_t transfer_count;
+    bool transfer_wait;
 };
 
 ProcessState* state_of(process::Process& proc) {
@@ -182,33 +190,37 @@ int64_t allocate_descriptor(ProcessState& state, uint64_t handle, uint32_t flags
     return -1;
 }
 
-// A guest path from user memory, as the host path under /system/linux. A
-// relative path is taken from the guest root: the working directory is L3's,
-// and until then it is "/".
+// Path state belongs to SSL, not to the neutral process.
+ProcessState* paths_of(process::Process& proc) {
+    ProcessState* state = state_of(proc);
+    if (state != nullptr && !state->paths_ready) {
+        strcpy(state->cwd, "/");
+        state->mask = 0022;
+        state->paths_ready = true;
+    }
+    return state;
+}
+
 int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::PathBuffer& host) {
     vfs::PathBuffer guest;
-    if (guest == nullptr || host == nullptr) {
-        return -abi::kENOMEM;
+    vfs::PathBuffer joined;
+    ProcessState* state = paths_of(proc);
+    if (guest == nullptr || host == nullptr || joined == nullptr || state == nullptr) return -abi::kENOMEM;
+    const sx_status copied = sx::copy_user_path_from(proc, user_path, guest, guest.capacity());
+    if (copied == SX_ENAMETOOLONG) return -abi::kENAMETOOLONG;
+    if (copied != sx::kStatusOk) return -abi::kEFAULT;
+    const char* text = guest;
+    if (text[0] == '\0') return -abi::kENOENT;
+    if (text[0] != '/') {
+        const size_t base = strlen(state->cwd);
+        if (base + 1 + strlen(text) + 1 > joined.capacity()) return -abi::kENAMETOOLONG;
+        strcpy(joined, state->cwd);
+        char* out = joined;
+        out[base] = '/';
+        strcpy(out + base + 1, text);
+        text = joined;
     }
-    char* const text = guest;
-    text[0] = '/';
-    const sx_status copied = sx::copy_user_path_from(proc, user_path, text + 1, guest.capacity() - 1);
-    if (copied == SX_ENAMETOOLONG) {
-        return -abi::kENAMETOOLONG;
-    }
-    if (copied != sx::kStatusOk) {
-        return -abi::kEFAULT;
-    }
-    if (text[1] == '\0') {
-        // An empty path names nothing, on Linux too.
-        return -abi::kENOENT;
-    }
-    // "/" + an absolute path is the same path with one more slash, which
-    // linux_guest_path drops.
-    if (!process::linux_guest_path(text, host, host.capacity())) {
-        return -abi::kENAMETOOLONG;
-    }
-    return 0;
+    return process::linux_guest_path(text, host, host.capacity()) ? 0 : -abi::kENAMETOOLONG;
 }
 
 // write(fd, buffer, count).
@@ -339,11 +351,13 @@ process::SavedContext* linux_read(process::Thread& self, process::SavedContext* 
     return context;
 }
 
+int64_t vfs_failure();
+
 // open(path, flags, mode): a regular file under the guest root. The access
-// mode, O_CREAT, O_TRUNC and O_CLOEXEC (kept for exec, L7) are honoured;
+// mode, O_DIRECTORY, O_CREAT, O_TRUNC and O_CLOEXEC (kept for exec, L7) are honoured;
 // O_LARGEFILE is always true here and O_NOCTTY has no terminal to refuse.
 // Any other flag is refused rather than half done: O_APPEND needs every
-// write at the end, not only the first; a directory is L3's.
+// write at the end, not only the first.
 int64_t linux_open(process::Process& proc, const process::SavedContext* context) {
     ProcessState* const state = descriptors_of(proc);
     if (state == nullptr) {
@@ -351,7 +365,7 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
     }
     const uint64_t flags = context->rsi;
     const uint64_t honoured = abi::kOpenAccessMode | abi::kOpenCreate | abi::kOpenTruncate |
-                              abi::kOpenLargeFile | abi::kOpenNoCtty | abi::kOpenCloseOnExec;
+                              abi::kOpenLargeFile | abi::kOpenNoCtty | abi::kOpenCloseOnExec | abi::kOpenDirectory;
     if ((flags & ~honoured) != 0) {
         report_unsupported(proc, abi::kSysOpen, "open flag");
         return -abi::kEINVAL;
@@ -382,11 +396,15 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
     if (resolved != 0) {
         return resolved;
     }
-    // The mode as given: the umask is L3's.
+    if ((flags & abi::kOpenDirectory) != 0) {
+        const vfs::Vnode* node = vfs::open(proc.credentials, host, 0, 0);
+        if (node == nullptr) return vfs_failure();
+        if (node->type != vfs::NodeType::directory) return -abi::kENOTDIR;
+    }
     object::IoObject* file = nullptr;
     const sx_status opened = sx::open_file(proc.credentials, host, open_flags,
-                                           static_cast<uint16_t>(context->rdx & vfs::kModePermissions),
-                                           sx::open_accept_file, file);
+                                           static_cast<uint16_t>(context->rdx & vfs::kModePermissions & ~paths_of(proc)->mask),
+                                           sx::open_accept_directory, file);
     if (opened != sx::kStatusOk) {
         return -static_cast<int64_t>(opened);
     }
@@ -524,7 +542,7 @@ int64_t linux_fstat(process::Process& proc, const process::SavedContext* context
     return copy_stat_out(context->rsi, value);
 }
 
-// stat(path, statbuf). lstat would be the same: the file system has no links.
+// stat(path, statbuf) and lstat: the file system has no links.
 int64_t linux_stat(process::Process& proc, const process::SavedContext* context) {
     vfs::PathBuffer host;
     const int64_t resolved = guest_path_from_user(proc, context->rdi, host);
@@ -559,6 +577,146 @@ int64_t linux_unlink(process::Process& proc, const process::SavedContext* contex
         return vfs_failure();
     }
     return 0;
+}
+
+// getdents64 uses the VFS cursor; an undersized buffer must not consume an entry.
+int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
+    uint64_t handle;
+    if (!handle_of(proc, c->rdi, handle)) return -abi::kEBADF;
+    auto* file = process::io_object_of(proc, handle);
+    if (file == nullptr || file->node == nullptr || file->node->type != vfs::NodeType::directory)
+        return -abi::kENOTDIR;
+    const size_t capacity = c->rdx < abi::kMaxRwCount ? c->rdx : abi::kMaxRwCount;
+    if (!sx::validate_user_range(c->rsi, capacity, true)) return -abi::kEFAULT;
+    size_t total = 0;
+    for (;;) {
+        const int saved = file->cursor.next;
+        const auto* node = vfs::next_entry(file->cursor);
+        if (node == nullptr) return total ? static_cast<int64_t>(total) : (vfs::last_error() ? vfs_failure() : 0);
+        const size_t length = strlen(node->name);
+        const size_t record = (19 + length + 1 + 7) & ~size_t(7);
+        if (record > capacity - total) {
+            file->cursor.next = saved;
+            return total ? static_cast<int64_t>(total) : -abi::kEINVAL;
+        }
+        char bytes[512]{};
+        if (record > sizeof(bytes)) { file->cursor.next = saved; return -abi::kENAMETOOLONG; }
+        uint64_t ino = vfs::node_number(*node);
+        int64_t offset = static_cast<int64_t>(file->offset + record);
+        uint16_t size = static_cast<uint16_t>(record);
+        memcpy(bytes, &ino, 8);
+        memcpy(bytes + 8, &offset, 8);
+        memcpy(bytes + 16, &size, 2);
+        bytes[18] = node->type == vfs::NodeType::directory ? 4 : 8;
+        memcpy(bytes + 19, node->name, length + 1);
+        if (!sx::copy_to_user(c->rsi + total, bytes, record)) {
+            file->cursor.next = saved;
+            return total ? static_cast<int64_t>(total) : -abi::kEFAULT;
+        }
+        file->offset += record;
+        total += record;
+    }
+}
+
+int64_t linux_chdir(process::Process& proc, const process::SavedContext* c) {
+    vfs::PathBuffer host;
+    int64_t result = guest_path_from_user(proc, c->rdi, host);
+    if (result) return result;
+    const auto* node = vfs::open(proc.credentials, host, 0, 0);
+    if (!node) return vfs_failure();
+    if (node->type != vfs::NodeType::directory) return -abi::kENOTDIR;
+    if (!vfs::permits(proc.credentials, *node, vfs::kAccessExecute)) return -abi::kEACCES;
+    const char* guest = static_cast<const char*>(host) + strlen("/system/linux");
+    strcpy(paths_of(proc)->cwd, *guest ? guest : "/");
+    return 0;
+}
+
+int64_t linux_getcwd(process::Process& proc, const process::SavedContext* c) {
+    const char* cwd = paths_of(proc)->cwd;
+    size_t length = strlen(cwd) + 1;
+    if (c->rsi < length) return -abi::kERANGE;
+    return sx::copy_to_user(c->rdi, cwd, length) ? static_cast<int64_t>(length) : -abi::kEFAULT;
+}
+
+int64_t linux_mkdir(process::Process& proc, const process::SavedContext* c) {
+    vfs::PathBuffer host;
+    int64_t result = guest_path_from_user(proc, c->rdi, host);
+    if (result) return result;
+    if (vfs::open(proc.credentials, host, 0, 0)) return -abi::kEEXIST;
+    if (vfs::last_error() != SX_ENOENT) return vfs_failure();
+    return vfs::mkdir(proc.credentials, host, c->rsi & 0777 & ~paths_of(proc)->mask) ? 0 : vfs_failure();
+}
+
+int64_t linux_fcntl(process::Process& proc, const process::SavedContext* c) {
+    uint64_t handle;
+    if (!handle_of(proc, c->rdi, handle)) return -abi::kEBADF;
+    auto& descriptor = descriptors_of(proc)->descriptors[c->rdi];
+    if (c->rsi == 1) return descriptor.flags & kDescriptorCloseOnExec ? 1 : 0; // F_GETFD
+    if (c->rsi == 2) { // F_SETFD
+        descriptor.flags = c->rdx & 1 ? kDescriptorCloseOnExec : 0;
+        return 0;
+    }
+    report_unsupported(proc, abi::kSysFcntl, "fcntl command");
+    return -abi::kEINVAL;
+}
+
+// Transfer one page per call (short transfers are permitted). A full blocking
+// pipe parks before any byte moves; the wait hook retries the instruction.
+void recheck_transfer(process::Thread& thread, uint64_t, bool) {
+    auto* state = thread_state_of(thread);
+    if (!state || !state->transfer_wait) return;
+    auto* out = process::io_object_of(*thread.process, state->transfer_output);
+    if (out && out->pipe && out->pipe->reader_refs &&
+        process::detail::kPipeCapacity - out->pipe->size < state->transfer_count) return;
+    state->transfer_wait = false;
+    thread.context->rip -= 2;
+    process::detail::complete_blocked_wait(thread, abi::kSysSendfile);
+}
+process::SavedContext* linux_sendfile(process::Thread& self, process::SavedContext* c) {
+    auto* transfer = thread_state_of(self);
+    if (transfer == nullptr) {
+        set_result(c, -abi::kENOMEM);
+        return c;
+    }
+    auto& proc = *self.process;
+    uint64_t input, output;
+    if (!handle_of(proc, c->rsi, input) || !handle_of(proc, c->rdi, output)) {
+        set_result(c, -abi::kEBADF); return c;
+    }
+    auto* file = process::io_object_of(proc, input);
+    if (!file || !(file->open_flags & SAVANXP_OPEN_READ)) { set_result(c, -abi::kEBADF); return c; }
+    if (!file->node || file->node->type != vfs::NodeType::file) { set_result(c, -abi::kEINVAL); return c; }
+    // The measured profile uses the open file offset. Explicit offsets arrive
+    // with a consumer, rather than being silently ignored.
+    if (c->rdx) { report_unsupported(proc, abi::kSysSendfile, "explicit offset"); set_result(c, -abi::kEINVAL); return c; }
+    if (!c->r10) { set_result(c, 0); return c; }
+    char bytes[kPage];
+    size_t count = vfs::read(*file->node, file->offset, bytes, c->r10 < kPage ? c->r10 : kPage);
+    if (!count) { set_result(c, vfs::last_error() ? vfs_failure() : 0); return c; }
+    uint64_t page = 0;
+    if (vm::map_region(proc.address_space, page, kPage, 3, vm::RegionPlacement::anywhere) != vm::RegionStatus::ok) {
+        set_result(c, -abi::kENOMEM); return c;
+    }
+    if (!sx::copy_to_user(page, bytes, count)) {
+        (void)vm::unmap_regions(proc.address_space, page, kPage);
+        set_result(c, -abi::kEFAULT); return c;
+    }
+    const int result = process::native_write_handle(self, output, page, count, false);
+    (void)vm::unmap_regions(proc.address_space, page, kPage);
+    auto* out = process::io_object_of(proc, output);
+    if (result == -SX_EAGAIN && out && out->kind == process::HandleKind::pipe &&
+        !(out->open_flags & process::open_nonblock)) {
+        transfer->transfer_output = output;
+        transfer->transfer_count = count;
+        transfer->transfer_wait = true;
+        self.wake_deadline_ms = 0;
+        self.wait_reason = process::WaitReason::none;
+        self.state = process::State::blocked_wait;
+        return process::choose_next_context(c);
+    }
+    if (result > 0) file->offset += result;
+    set_result(c, result);
+    return c;
 }
 
 // clock_gettime(clock, timespec): what musl calls with no vDSO, for
@@ -823,6 +981,27 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
         case abi::kSysClose:
             set_result(context, linux_close(proc, context));
             return context;
+        case abi::kSysSendfile:
+            return linux_sendfile(*self, context);
+        case abi::kSysGetdents64:
+            set_result(context, linux_getdents(proc, context)); return context;
+        case abi::kSysChdir:
+            set_result(context, linux_chdir(proc, context)); return context;
+        case abi::kSysGetcwd:
+            set_result(context, linux_getcwd(proc, context)); return context;
+        case abi::kSysMkdir:
+            set_result(context, linux_mkdir(proc, context)); return context;
+        case abi::kSysFcntl:
+            set_result(context, linux_fcntl(proc, context)); return context;
+        case abi::kSysGetuid:
+            set_result(context, proc.credentials.uid); return context;
+        case abi::kSysUmask: {
+            auto* state = paths_of(proc);
+            set_result(context, state->mask);
+            state->mask = context->rdi & 0777;
+            return context;
+        }
+        case abi::kSysLstat:
         case abi::kSysStat:
             set_result(context, linux_stat(proc, context));
             return context;
@@ -932,6 +1111,7 @@ bool linux_guest_path(const char* guest, char* host, size_t capacity) {
 }
 
 void initialize_linux_subsystem() {
+    subsystem::register_wait_recheck(subsystem::Id::linux, &ssl::recheck_transfer);
     subsystem::register_process_state_size(subsystem::Id::linux, sizeof(ssl::ProcessState));
     subsystem::register_thread_state_size(subsystem::Id::linux, sizeof(ssl::ThreadState));
     subsystem::register_dispatcher(subsystem::Id::linux, &ssl::dispatch_linux_int80);

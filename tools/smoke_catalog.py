@@ -761,6 +761,11 @@ SCENARIOS: dict[str, Scenario] = {
     # SSL's L2 gate for a file kept across a restart: the first boot writes it
     # with the files fixture and syncs, the host resets the machine at the
     # ready token, and the second boot reads it back and removes it.
+    "linux-tools": _qemu_scenario(
+        "linuxtools", "LINUX TOOLS PASS", "LINUX TOOLS FAIL",
+        "Pinned static BusyBox applets match Linux output and errors", 120.0,
+        remove_paths=("/system/linux/work/l3-private", "/system/linux/work/l3-mode"),
+    ),
     "linux-restart": _qemu_scenario(
         "linuxrestart",
         "LINUX RESTART PASS",

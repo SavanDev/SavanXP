@@ -6,10 +6,10 @@ rejected and the phases still ahead are in the
 the first profile is in [LINUX_XEYES_PROFILE.md](LINUX_XEYES_PROFILE.md).
 
 **Built so far: E1, the `syscall` trap; L1 with S1, a static, libc-free
-Linux executable runs unchanged, started by the `linux` launcher; and L2
+Linux executable runs unchanged, started by the `linux` launcher; L2
 with S2a: a static musl program runs unchanged, with its thread-local data,
-its heap, files under the guest root and the clocks.** Every call not below
-answers `-ENOSYS`.
+its heap, files under the guest root and the clocks; L3 adds the bounded
+static BusyBox tools below.** Every call not below answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -139,12 +139,13 @@ registers, for `subsystem::Id::linux`:
 | --- | --- |
 | Trap dispatcher, `dispatch_linux_syscall` | The calls below. Every other number returns `-ENOSYS` (Linux's 38) and is logged once per process: `linux: pid=N unimplemented syscall M` |
 | Ordinary dispatcher, `dispatch_linux_int80` | `int 0x80` is the 32-bit Linux ABI, which SSL does not offer: always `-ENOSYS` |
-| Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break; the descriptor table |
-| Per-thread state | `set_tid_address`'s pointer |
+| Per-process state | Two bitmaps of the numbers already reported, as unimplemented and as asked for something unsupported (512 bits each); the program break; the descriptor table; the working directory and creation mask |
+| Per-thread state | `set_tid_address`'s pointer and a pending `sendfile` pipe wait |
+| Wait-recheck hook | Retries a `sendfile` syscall when its blocking output pipe can accept the pending chunk, or its last reader closed |
 
 A call SSL has, asked for a variant it does not offer (a shared mapping, a
-file mapping, an `arch_prctl` code other than `ARCH_SET_FS`), fails with its
-Linux error and is logged once per call per process:
+file mapping, an explicit `sendfile` offset, an `arch_prctl` code other than
+`ARCH_SET_FS`), fails with its Linux error and is logged once per call per process:
 `linux: pid=N syscall M: unsupported WHAT`.
 
 Linux numbers and error values are written in `linux_abi.hpp` from the Linux
@@ -160,8 +161,9 @@ descriptor, and `O_CLOEXEC` is kept for the exec of L7. Descriptors 0, 1 and
 gave.
 
 Every path resolves under `/system/linux` through `process::linux_guest_path`,
-`..` never above it. There is no working directory until L3: a relative
-path is taken from the guest root. Files are the VFS's (`sx::open_file`,
+`..` never above it. The working directory starts at `/`; `chdir` changes it
+in SSL state and relative paths resolve from it. The creation mask starts at
+0022. Files are the VFS's (`sx::open_file`,
 `vfs::open`, `vfs::unlink`) with the process's credentials, so SavanXP's
 permission checks apply underneath. The test image has `/system/linux/work`,
 `/work` to a guest, for the files fixture.
@@ -172,10 +174,17 @@ permission checks apply underneath. The test image has `/system/linux/work`,
 | --- | --- |
 | `read` (0) | On an open descriptor, through the native read (`process::native_read_handle`): a pipe with nothing in it parks the thread. An unwritable buffer is `-EFAULT`; a descriptor open for writing only is `-EBADF` |
 | `write` (1) | On an open descriptor, `-EBADF` otherwise. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
-| `open` (2) | A regular file, with the access mode, `O_CREAT` (the mode as given: the umask is L3's) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, and a directory is L3's (`-EISDIR` until then). The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
+| `open` (2) | A regular file, with the access mode, `O_CREAT` (with the process umask applied) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, directories open read-only, and `O_DIRECTORY` requires one. The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
 | `close` (3) | Frees the descriptor and closes its handle |
 | `stat` (4), `fstat` (5) | Linux's `struct stat`: the type, the permission bits and owner SavanXP records, the size, 512-byte blocks, the modification time for all three times, and a node number (`vfs::node_number`) for `st_ino`. A pipe, socket or device handed to the process gives its type alone |
 | `lseek` (8) | `SEEK_SET`, `SEEK_CUR` and `SEEK_END` on a file; `-ESPIPE` on a pipe, socket or device; before 0 is `-EINVAL` |
+| `lstat` (6) | As `stat`: the VFS has no symbolic links |
+| `getdents64` (217) | A directory cursor encoded as aligned Linux records, with node numbers, types and names. A record that does not fit remains for the next call; a buffer too small for one record is `-EINVAL` |
+| `getcwd` (79), `chdir` (80) | The guest working directory, confined to the guest root; changing it requires a searchable directory. `getcwd` returns the byte count including NUL; too small is `-ERANGE` |
+| `mkdir` (83), `umask` (95) | Directory creation through the VFS, with the per-process creation mask; `umask` returns the old mask |
+| `getuid` (102) | The real uid in the process credentials |
+| `fcntl` (72) | `F_GETFD` and `F_SETFD`, with `FD_CLOEXEC` kept in the Linux descriptor table. Other commands fail with `-EINVAL` |
+| `sendfile` (40) | A regular readable file to a writable handle, one page per call (a permitted short transfer). A full blocking pipe parks before transferring and retries when room is available; the file offset advances only by bytes written. The measured profile uses a null offset; explicit offsets are refused with `-EINVAL` and logged |
 | `unlink` (87) | Removes a file; a directory is `-EISDIR`, as on Linux |
 | `writev` (20) | On an open descriptor. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
 | `ioctl` (16) | `-ENOTTY` on an open descriptor, whatever the request: no descriptor is a terminal yet. That is Linux's answer for a file or a pipe to `TCGETS` and `TIOCGWINSZ`, the two musl asks. `-EBADF` otherwise |
@@ -255,3 +264,31 @@ lock 1.1 s of it; TCG is not the measurement, KVM is.
 by. `tools/sxfs_sync.py` gives mode 0755 to every file under `system/linux/`
 that is executable on the build host, which is how the build leaves the
 fixtures. The references next to them stay 0644.
+
+**L3, `linux-tools`.** The unmodified Alpine BusyBox static executable from
+L0 is checked by SHA-256 before staging, and `linuxtest --tools` compares
+`echo`, `cat`, `ls -1`, `pwd`, `wc` and `mkdir -p` against Linux's bytes and
+exit codes. Standard error is captured too, including `cat` on a missing
+path. No shell is part of this profile. The prepared tree and listing flags
+avoid unstable inode, timestamp, owner and ordering fields; no output is
+normalized. `pwd` has its own Linux reference taken at `/`, SSL's initial
+working directory, rather than L0's `/work`.
+
+The static musl `tools` fixture checks relative paths, root confinement,
+`getcwd` with an undersized buffer, descriptor flags, a non-directory,
+`getdents64` with a short buffer followed by retry and EOF, the creation mask
+and directory search denied by permissions. The denial runs through a launcher
+spawned as uid 1000; the system identity is tested separately, with Linux's
+`CAP_DAC_OVERRIDE` as its reference. A 20,000-byte `sendfile` transfer exceeds
+the pipe capacity and compares the payload and final byte count. References
+are produced by `profile.sh trace`. Missing BusyBox makes `linux-tools` fail explicitly.
+
+**KVM measurement (2026-11-15).** `./build.sh smoke linux-hello --accel kvm`
+on the Ryzen 5 1600, with two virtual CPUs and QEMU's host CPU model, passed
+the two-million-call register check. In a 2,000 ms statistics window,
+`smp-stats` reported `linux#1=203/18/803083`: 803,083 zero-byte writes,
+203 ms holding the kernel lock (about 0.253 microseconds per call), maximum
+18 microseconds. The observed window rate was about 402,000 calls/second.
+The held time excludes entry, lock waiting and return; neither figure is a
+round-trip latency guarantee. The fast entry remains deferred until a named
+workload needs it. The `linux-tools` gate also passes with `--accel kvm`.

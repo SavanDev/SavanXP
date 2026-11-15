@@ -10,6 +10,9 @@
  * Alpine root exists (subsystems/linux/Linux.cmake); without them each is
  * reported as skipped, not passed and not failed.
  *
+ * With --tools it runs the L3 BusyBox profile and the directory, path,
+ * permission and transfer edge cases.
+ *
  * With --restart it is the linux-restart scenario instead: the first boot
  * runs `files write`, makes the volume durable and logs
  * "LINUX RESTART READY", the host resets the machine, and the second boot,
@@ -156,6 +159,12 @@ static void run(const char *name, char **arguments, int count) {
         return;
     }
     int expected_status = parse_status(status_text, status_size);
+    if (name[0] == 'b' && name[1] == 'b') {
+        expected_path(stdout_path, sizeof(stdout_path), name, ".stderr");
+        long errors = read_file(stdout_path, expected + expected_size, sizeof(expected) - expected_size);
+        if (errors < 0) { g_failures++; return; }
+        expected_size += errors;
+    }
 
     int32_t pipe[2] = {-1, -1};
     if (sxn_pipe_create(pipe) != 0) {
@@ -172,7 +181,9 @@ static void run(const char *name, char **arguments, int count) {
     struct sxn_spawn_request request;
     sxn_spawn_request_init(&request, LAUNCHER, argv, argc);
     request.std_handles[1] = pipe[1];
-    long child = sxn_spawn_ex(&request);
+    if (name[0] == 'b' && name[1] == 'b') request.std_handles[2] = pipe[1];
+    struct sxn_identity user = {.uid = 1000, .euid = 1000, .gid = 1000};
+    long child = same(name, "tools-denied") ? sxn_spawn_ex_as(&request, &user) : sxn_spawn_ex(&request);
     (void)sxn_close(pipe[1]);
     if (child <= 0) {
         (void)sxn_close(pipe[0]);
@@ -319,7 +330,35 @@ static int restart(void) {
     return g_failures == 0 ? 0 : 1;
 }
 
+static int tools(void) {
+    struct sxn_file_info info;
+    if (sxn_query_path(GUEST "/bin/busybox.static", &info) != 0) {
+        say("LINUX TOOLS FAIL: pinned BusyBox missing", "", ""); return 1;
+    }
+    char *prepare[] = {"/bin/busybox.static", "mkdir", "-p", "/work/tree/a/b"};
+    run("bb-mkdir", prepare, 4);
+    const char *paths[] = {GUEST "/work/tree/a/f.txt", GUEST "/work/tree/z"};
+    const char *data[] = {"one\ntwo three\n", "x\n"};
+    for (int i = 0; i < 2; ++i) {
+        long h = sxn_create_file(paths[i], SXN_CREATE_ALWAYS);
+        if (h < 0 || sxn_write(h, data[i], length_of(data[i])) != (long)length_of(data[i])) g_failures++;
+        if (h >= 0) (void)sxn_close(h);
+    }
+    char *echo[] = {"/bin/busybox.static", "echo", "hello", "world"}; run("bb-echo", echo, 4);
+    char *cat[] = {"/bin/busybox.static", "cat", "/work/tree/a/f.txt"}; run("bb-cat", cat, 3);
+    char *ls[] = {"/bin/busybox.static", "ls", "-1", "/work/tree", "/work/tree/a"}; run("bb-ls", ls, 5);
+    char *pwd[] = {"/bin/busybox.static", "pwd"}; run("bb-pwd-root", pwd, 2);
+    char *wc[] = {"/bin/busybox.static", "wc", "/work/tree/a/f.txt"}; run("bb-wc", wc, 3);
+    char *mkdir[] = {"/bin/busybox.static", "mkdir", "-p", "/work/tree/new/deeper"}; run("bb-mkdir", mkdir, 4);
+    char *missing[] = {"/bin/busybox.static", "cat", "/work/tree/missing"}; run("bb-cat-missing", missing, 3);
+    char *edges[] = {"/fixtures/tools"}; run("tools", edges, 1);
+    char *denied[] = {"/fixtures/tools", "denied"}; run("tools-denied", denied, 2);
+    say(g_failures == 0 ? "LINUX TOOLS PASS" : "LINUX TOOLS FAIL", "", "");
+    return g_failures != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && same(argv[1], "--tools")) return tools();
     if (argc > 1 && same(argv[1], "--restart")) {
         return restart();
     }

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL runs Alpine's unchanged static BusyBox `echo`, `cat`, `ls`, `pwd`, `wc` and `mkdir`.**
+  `linux-tools` checks Linux reference output, directory enumeration, working directories, creation masks and errors.
+  See [LINUX.md](docs/userland/LINUX.md).
+
 - **PNG wallpapers: Display Properties lists the `.png` files in `/wallpapers` and Browse accepts a PNG; the desktop
   reads 8-bit RGB and RGBA PNGs, told from BMPs by their contents.** `libsximg` adds `sx_png_info` and
   `sx_png_decode_into`. See [DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md#the-configuration).

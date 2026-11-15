@@ -41,10 +41,12 @@ need() {
 # with the host, where the recording proxy runs.
 guest() {
     mkdir -p "$xsock" "$out"
+    local caps=(--cap-add CAP_SYS_CHROOT)
+    if [[ ${SSL_PROFILE_DAC:-0} == 1 ]]; then caps+=(--cap-add CAP_DAC_OVERRIDE); fi
     bwrap --bind "$root" / --proc /proc --dev /dev --tmpfs /tmp \
         --bind "$xsock" /tmp/.X11-unix --bind "$out" /out \
-        --unshare-user --uid 0 --gid 0 --unshare-net --unshare-uts --hostname savanxp \
-        --cap-add CAP_SYS_CHROOT \
+        --unshare-user --uid "${SSL_PROFILE_UID:-0}" --gid "${SSL_PROFILE_UID:-0}" --unshare-net --unshare-uts --hostname savanxp \
+        "${caps[@]}" \
         --clearenv --setenv PATH /usr/sbin:/usr/bin:/sbin:/bin --setenv HOME /root \
         "$@"
 }
@@ -110,7 +112,7 @@ cmd_fixtures() {
     clang $target -nostdlib -static -ffreestanding -fno-builtin -fno-stack-protector -O1 \
         -fuse-ld=lld -s -Wl,--build-id=none \
         -o "$f/regions" "$fixsrc/regions/regions.c"
-    for n in args tls heap clock files; do
+    for n in args tls heap clock files tools; do
         musl_static "$fixsrc/static/$n.c" "$f/$n"
     done
     clang --target=x86_64-linux-musl -nostdinc -isystem "$root/usr/include" \
@@ -119,7 +121,7 @@ cmd_fixtures() {
         -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now \
         -o "$f/xclient" "$root/usr/lib/crt1.o" "$root/usr/lib/crti.o" \
         "$fixsrc/xclient/xclient.c" -L"$root/usr/lib" -lX11 -lc "$root/usr/lib/crtn.o"
-    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files xclient)
+    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files tools xclient)
 }
 
 # strace of one command; stdout and the exit status are kept beside it.
@@ -160,6 +162,10 @@ cmd_trace() {
     trace_one bb-pwd /bin/busybox.static pwd
     trace_one bb-wc /bin/busybox.static wc /work/tree/a/f.txt
     trace_one bb-mkdir /bin/busybox.static mkdir -p /work/tree/new/deeper
+    guest /bin/sh -c 'cd /; /bin/busybox.static pwd >/out/bb-pwd-root.stdout 2>/out/bb-pwd-root.stderr; echo $? >/out/bb-pwd-root.status'
+    SSL_PROFILE_DAC=1 guest /bin/sh -c 'rm -rf /work/l3-private /work/l3-mode /work/l3-transfer'
+    SSL_PROFILE_DAC=1 trace_one tools /fixtures/tools
+    SSL_PROFILE_UID=1000 trace_one tools-denied /fixtures/tools denied
     trace_one bb-cat-missing /bin/busybox.static cat /work/tree/missing
 
     # L4: a dynamic program with no display, using two libraries besides libc.
