@@ -425,6 +425,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Disks can now expose 32 partitions in total instead of 16, with room for 64 block devices instead of 32.**
+  Storage detection and Disk Management cover the increased capacity, including partitions on later USB disks.
+
 - **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
   Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,
   retained setup/ARP errors and bounded timeouts; POSIX keeps the shared network core.

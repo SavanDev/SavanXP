@@ -15,13 +15,12 @@ namespace {
 // every disk's table.
 constexpr int kDriverPriority = -1000;
 
-// Across every disk. Four primaries per disk cover the installer's disk (ESP +
-// root) and the typical USB stick, and Disk Management may add more. When it
-// fills up the rest stay unregistered and the system keeps working.
-constexpr size_t kMaxSlices = 16;
+// Shared across every disk, including SATA, NVMe and USB. When it fills up
+// the remaining partitions stay unregistered and the system keeps working.
+constexpr size_t kMaxSlices = 32;
 
 // Disk records are indexed by block device index.
-constexpr size_t kMaxDisks = 32;
+constexpr size_t kMaxDisks = 64;
 
 constexpr size_t kMbrTableOffset = 446;
 constexpr size_t kMbrEntrySize = 16;

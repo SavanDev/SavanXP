@@ -461,6 +461,16 @@ int main() {
         check(block::sync_all(),"retain and drain failed-frontier writes after device recovery");
     }
 
+    // Exercise the real block registry beyond its former 32-device limit.
+    reset();
+    for (size_t index = block::device_count(); index < 40; ++index) {
+        check(block::register_device(kMemoryOps, &g_memory, kSectors, true, "extra") == index,
+              "register a device beyond the former table capacity");
+    }
+    uint8_t sector[kSectorSize] = {};
+    check(block::device_count() == 40 && block::read(39, 0, 1, sector),
+          "the last of 40 registered devices can be read");
+
     printf("%s (%d checks, %d failures)\n",
            g_failures == 0 ? "BLOCK WRITEBACK TEST PASS" : "BLOCK WRITEBACK TEST FAIL",
            g_checks, g_failures);
