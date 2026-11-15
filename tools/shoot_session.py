@@ -1249,6 +1249,44 @@ def scenario_display(s):
     s.qmp.tap("esc", pause=2.0)
 
 
+def scenario_wallpaperpng(s):
+    """A PNG as the desktop wallpaper (docs/desktop/DISPLAY_PROPERTIES.md).
+
+    Display Properties' Browse takes /paint-test.png, the 16x16 RGB fixture
+    Paint's selftest reads. An image that small switches the position to
+    Tile, OK writes desktop.cfg, and the desktop picks it up within
+    DESKTOP_WALLPAPER_CHECK_MS. The tiles start at the screen's corner, so
+    every 16th pixel repeats the fixture's corners: black at (0, 0),
+    (147, 179, 165) at (15, 0) and (43, 221, 27) at (0, 15). They are read
+    away from the icons and the taskbar.
+    """
+    s.run("display")
+    image = s.shot("display-desktop")
+    origin = find_text(image, (0, 0, image.size[0], image.size[1]), "Browse...", TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("Display Properties shows no Browse... button")
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("browse-prompt")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Path of a BMP or PNG image:", TEXT, FACE,
+                "Browse asks for a BMP or PNG")
+    for _ in range(64):
+        s.qmp.tap("backspace", pause=0.04)
+    s.qmp.type_line("/paint-test.png")
+    s.qmp.tap("ret", pause=2.0)
+    s.shot("browse-accepted")
+    s.qmp.tap("ret", pause=4.0)  # OK: writes desktop.cfg and closes
+    image = s.shot("png-wallpaper")
+    expected = {(0, 0): (0, 0, 0), (15, 0): (147, 179, 165), (0, 15): (43, 221, 27)}
+    for tile_x, tile_y in ((640, 320), (800, 480), (1024, 160)):
+        for (dx, dy), colour in expected.items():
+            got = image.getpixel((tile_x + dx, tile_y + dy))
+            if got != colour:
+                raise Failure("PNG wallpaper pixel (%d, %d) is %r, expected %r" %
+                              (tile_x + dx, tile_y + dy, got, colour))
+
+
 def scenario_effects(s):
     """Apply/Cancel, independent flags and a real restart of saved effects."""
     labels = ("Show shadows under windows", "Show shadow under mouse pointer")
@@ -3576,6 +3614,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,
+    "wallpaperpng": scenario_wallpaperpng,
     "effects": scenario_effects,
     "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,

@@ -122,7 +122,7 @@ static int g_preview_height = 0;
 
 /* ---- the background list -------------------------------------------------
  *
- * "(None)" first, then every BMP in /wallpapers by name, then whatever the
+ * "(None)" first, then every BMP and PNG in /wallpapers by name, then whatever the
  * user picked with Browse. The list shows names; the paths are kept beside
  * them. */
 #define DISPLAY_MAX_BACKGROUNDS 64
@@ -153,14 +153,18 @@ static int compare_names(const char *left, const char *right)
     return (int)(unsigned char)lower_char(*left) - (int)(unsigned char)lower_char(*right);
 }
 
-static int has_bmp_extension(const char *name)
+/* The extensions listed from /wallpapers. What decides whether the desktop
+ * can draw a file is its contents (desktop_wallpaper_image_load); the
+ * extension only keeps other files out of the list. */
+static int has_image_extension(const char *name)
 {
     size_t length = strlen(name);
 
-    return length > 4 && compare_names(name + length - 4, ".bmp") == 0;
+    return length > 4 && (compare_names(name + length - 4, ".bmp") == 0 ||
+                          compare_names(name + length - 4, ".png") == 0);
 }
 
-/* The name a path shows in the list: its file name without ".bmp". */
+/* The name a path shows in the list: its file name without the extension. */
 static void name_from_path(const char *path, char *name, size_t capacity)
 {
     const char *start = strrchr(path, '/');
@@ -168,7 +172,7 @@ static void name_from_path(const char *path, char *name, size_t capacity)
 
     start = start != 0 ? start + 1 : path;
     length = strlen(start);
-    if (has_bmp_extension(start))
+    if (has_image_extension(start))
     {
         length -= 4;
     }
@@ -253,7 +257,7 @@ static void scan_backgrounds(void)
         {
             char path[DESKTOP_WALLPAPER_PATH_MAX];
 
-            if (item->d_type == DT_DIR || !has_bmp_extension(item->d_name))
+            if (item->d_type == DT_DIR || !has_image_extension(item->d_name))
             {
                 continue;
             }
@@ -841,7 +845,7 @@ static void accept_browse(void)
     }
     if (desktop_wallpaper_image_load(&probe, g_dialog_text) < 0)
     {
-        g_dialog_widgets[D_PROMPT].text = "That file is not a BMP image this system can show.";
+        g_dialog_widgets[D_PROMPT].text = "That file is not an image this system can show.";
         sxgui_app_request_repaint(&g_app);
         return;
     }
@@ -1193,7 +1197,7 @@ static void on_browse(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    open_prompt("Browse", "Path of a BMP image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
+    open_prompt("Browse", "Path of a BMP or PNG image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
 }
 
 static void on_position_changed(struct sxgui_widget *widget, void *user)

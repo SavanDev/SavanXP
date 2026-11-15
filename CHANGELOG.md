@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **PNG wallpapers: Display Properties lists the `.png` files in `/wallpapers` and Browse accepts a PNG; the desktop
+  reads 8-bit RGB and RGBA PNGs, told from BMPs by their contents.** `libsximg` adds `sx_png_info` and
+  `sx_png_decode_into`. See [DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md#the-configuration).
+
 - **Files has Cut, Copy and Paste (Edit menu, toolbar, context menus, Ctrl+X/C/V) for one file or folder at a time.**
   A copy into a taken name becomes "Copy of ...", a move across volumes copies then removes, a cut item is drawn faded,
   and a paste longer than half a second shows a progress dialog with Cancel. See

@@ -323,6 +323,19 @@ static void unmap_private_section(void *view, int section_fd)
     }
 }
 
+/* The decoders the wallpaper reads, told apart by the file's first bytes
+ * (each info call checks its own signature), never by the extension. */
+struct image_decoder
+{
+    int (*info)(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height);
+    int (*decode_into)(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
+};
+
+static const struct image_decoder k_decoders[] = {
+    {sx_bmp_info, sx_bmp_decode_into},
+    {sx_png_info, sx_png_decode_into},
+};
+
 void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image)
 {
     if (image == 0)
@@ -345,9 +358,9 @@ void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image)
 
 /*
  * Decodes the image with libsximg (savanxp/img.h) into BGRX pixels ready for
- * the painter: an uncompressed BMP of 24 or 32 bpp, bottom-up or top-down.
- * Anything outside that profile is refused, and the caller falls back to the
- * plain colour.
+ * the painter: an uncompressed BMP of 24 or 32 bpp, or a PNG of 8-bit RGB or
+ * RGBA (transparent pixels come out white). Anything outside those profiles
+ * is refused, and the caller falls back to the plain colour.
  *
  * The file is read into a section that is dropped once decoded, and the
  * pixels live in a section of their own, not on the heap: an image is up to
@@ -360,6 +373,8 @@ int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const ch
     int data_fd = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    const struct image_decoder *decoder = 0;
+    size_t index;
     int fd;
     int loaded = 0;
 
@@ -379,16 +394,25 @@ int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const ch
         return -1;
     }
     data = (unsigned char *)map_private_section((unsigned long)info.st_size, &data_fd);
-    if (data != 0 && read_exact(fd, data, (unsigned long)info.st_size) == 0 &&
-        sx_bmp_info(data, (size_t)info.st_size, &width, &height) == 0 &&
-        width <= DESKTOP_WALLPAPER_MAX_DIMENSION && height <= DESKTOP_WALLPAPER_MAX_DIMENSION)
+    if (data != 0 && read_exact(fd, data, (unsigned long)info.st_size) == 0)
+    {
+        for (index = 0; index < sizeof(k_decoders) / sizeof(k_decoders[0]); ++index)
+        {
+            if (k_decoders[index].info(data, (size_t)info.st_size, &width, &height) == 0)
+            {
+                decoder = &k_decoders[index];
+                break;
+            }
+        }
+    }
+    if (decoder != 0 && width <= DESKTOP_WALLPAPER_MAX_DIMENSION && height <= DESKTOP_WALLPAPER_MAX_DIMENSION)
     {
         size_t count = (size_t)width * (size_t)height;
 
         image->pixels = (uint32_t *)map_private_section((unsigned long)(count * sizeof(uint32_t)),
                                                         &image->section_fd);
         loaded = image->pixels != 0 &&
-                 sx_bmp_decode_into(data, (size_t)info.st_size, image->pixels, count) == 0;
+                 decoder->decode_into(data, (size_t)info.st_size, image->pixels, count) == 0;
     }
     savanxp_close(fd);
     unmap_private_section(data, data_fd);

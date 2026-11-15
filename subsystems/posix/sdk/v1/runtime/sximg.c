@@ -657,7 +657,10 @@ static int paeth_predictor(int a, int b, int c)
     return c;
 }
 
-static int png_decode(const unsigned char *data, size_t size, struct sx_png_image *out, int keep_alpha)
+/* Decodes into `dest` (dest_count entries) when it is given, or into pixels
+ * of its own handed back through `out` when it is not. */
+static int png_decode(const unsigned char *data, size_t size, struct sx_png_image *out, int keep_alpha,
+                      uint32_t *dest, size_t dest_count)
 {
     static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
     size_t pos;
@@ -676,13 +679,16 @@ static int png_decode(const unsigned char *data, size_t size, struct sx_png_imag
     uint32_t y;
     int ok = 0;
 
-    if (out == 0)
+    if (out == 0 && dest == 0)
     {
         return -1;
     }
-    out->pixels = 0;
-    out->width = 0u;
-    out->height = 0u;
+    if (out != 0)
+    {
+        out->pixels = 0;
+        out->width = 0u;
+        out->height = 0u;
+    }
     if (data == 0 || size < 8u || memcmp(data, k_signature, 8) != 0)
     {
         return -1;
@@ -774,10 +780,21 @@ static int png_decode(const unsigned char *data, size_t size, struct sx_png_imag
     {
         goto done;
     }
-    pixels = (uint32_t *)malloc((size_t)width * (size_t)height * 4u);
-    if (pixels == 0)
+    if (dest != 0)
     {
-        goto done;
+        if (dest_count < (size_t)width * (size_t)height)
+        {
+            goto done;
+        }
+        pixels = dest;
+    }
+    else
+    {
+        pixels = (uint32_t *)malloc((size_t)width * (size_t)height * 4u);
+        if (pixels == 0)
+        {
+            goto done;
+        }
     }
     /* Unfilter in place: cada fila ya reconstruida sirve de previa, y dentro
      * de la fila los bytes a la izquierda ya estan reconstruidos. */
@@ -840,16 +857,22 @@ static int png_decode(const unsigned char *data, size_t size, struct sx_png_imag
                 (keep_alpha ? (channels == 4 ? (uint32_t)current[i * 4u + 3u] << 24 : 0xff000000u) : 0);
         }
     }
-    out->pixels = pixels;
-    out->width = width;
-    out->height = height;
+    if (dest == 0)
+    {
+        out->pixels = pixels;
+        out->width = width;
+        out->height = height;
+    }
     pixels = 0;
     ok = 1;
 
 done:
     free(packed);
     free(raw);
-    free(pixels);
+    if (pixels != dest)
+    {
+        free(pixels);
+    }
     return ok ? 0 : -1;
 }
 
@@ -867,12 +890,53 @@ void sx_png_free(struct sx_png_image *image)
 
 int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *out)
 {
-    return png_decode(data, size, out, 0);
+    return png_decode(data, size, out, 0, 0, 0u);
 }
 
 int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_image *out)
 {
-    return png_decode(data, size, out, 1);
+    return png_decode(data, size, out, 1, 0, 0u);
+}
+
+int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height)
+{
+    static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    const unsigned char *ihdr = data + 16;
+    uint32_t w;
+    uint32_t h;
+
+    /* The signature, then IHDR: 13 bytes of body after its length and type. */
+    if (data == 0 || size < 8u + 8u + 13u + 4u || memcmp(data, k_signature, 8) != 0 ||
+        read_u32be(data + 8) != 13u || read_u32be(data + 12) != 0x49484452u)
+    {
+        return -1;
+    }
+    w = read_u32be(ihdr);
+    h = read_u32be(ihdr + 4u);
+    if (w == 0u || h == 0u || w > SX_PNG_MAX_DIMENSION || h > SX_PNG_MAX_DIMENSION ||
+        ihdr[8] != 8u || (ihdr[9] != 2u && ihdr[9] != 6u) || ihdr[10] != 0u || ihdr[11] != 0u ||
+        ihdr[12] != 0u)
+    {
+        return -1;
+    }
+    if (width != 0)
+    {
+        *width = w;
+    }
+    if (height != 0)
+    {
+        *height = h;
+    }
+    return 0;
+}
+
+int sx_png_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
+{
+    if (pixels == 0)
+    {
+        return -1;
+    }
+    return png_decode(data, size, 0, 0, pixels, pixel_count);
 }
 
 /* --- BMP ------------------------------------------------------------------ */

@@ -31,6 +31,16 @@ int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_ima
 /* Free the pixels and reset the structure. An empty image is accepted. */
 void sx_png_free(struct sx_png_image *image);
 
+/* Reads the size from IHDR and checks that the header is within the subset.
+ * The rest of the file is not looked at, so a decode may still fail.
+ * Returns 0 or a negative error. */
+int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height);
+
+/* As sx_png_decode (onto white, 0x00RRGGBB), into `pixels`, which the caller
+ * owns and which holds at least width*height entries. Returns 0 or a
+ * negative error; on error the buffer may hold part of the image. */
+int sx_png_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
+
 /* System BMP decoder: BI_RGB at 24 or 32 bpp with a BITMAPINFOHEADER or a
  * larger header, rows bottom-up or top-down (negative height). The fourth
  * byte of a 32 bpp pixel is ignored. Palettes, 16 bpp, BI_BITFIELDS and RLE

@@ -1,6 +1,7 @@
 # Image Viewer and the image formats
 
-Status: **phase I1 landed** (BMP in `libsximg`). Everything else is planned.
+Status: **phases I1 and I2 landed** (BMP in `libsximg`, PNG wallpapers).
+Everything else is planned.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -29,7 +30,7 @@ same formats it reads.
 
 | Piece | Where | What it gives the viewer |
 |---|---|---|
-| PNG decoder | `sx_png_decode`, `sx_png_decode_argb` | 8-bit RGB/RGBA, non-interlaced, all filters, full inflate. Up to 4096 on a side. Refuses palette, grey, `tRNS`, Adam7, other depths |
+| PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I2) | 8-bit RGB/RGBA, non-interlaced, all filters, full inflate. Up to 4096 on a side. Refuses palette, grey, `tRNS`, Adam7, other depths |
 | BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into` (I1) | `BI_RGB` 24 and 32 bpp, bottom-up or top-down. Up to 4096 on a side |
 | JPEG decoder | — | nothing |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
@@ -60,7 +61,8 @@ bitmap; neither should pay for a copy. Pixels are top-down `0x00RRGGBB`,
 the layout of `SX_PIXEL_FORMAT_BGRX8888`. Formats with alpha add an ARGB
 variant, as PNG does (`sx_png_decode_argb`, straight alpha).
 
-The PNG calls that allocate (`sx_png_decode`) stay: the cursors and Paint
+PNG gained the pair in I2 (`sx_png_info`, `sx_png_decode_into`). The PNG
+calls that allocate (`sx_png_decode`, `_argb`) stay: the cursors and Paint
 use them, and nothing gains from changing them.
 
 ### One entry point by content, with JPEG
@@ -124,14 +126,17 @@ before. Host test: both depths, both row orders, row padding, and every
 refusal (other depths, compression, planes, sizes, truncated rows, a small
 buffer).
 
-### I2 — PNG wallpapers
+### I2 — PNG wallpapers (done)
 
-The wallpaper decodes whatever `libsximg` reads; Display Properties lists
-`.bmp` and `.png` in `/wallpapers`, and Browse accepts both. The check that
-keeps the list from showing something the desktop cannot draw stays as it
-is. JPEG joins the same list when I5 lands, with no further change here.
-Verification: `windowd-smoke`, `taskbar-smoke`, a PNG wallpaper on screen
-with `tools/shoot.sh`.
+The wallpaper tries each decoder's `info` call on the file's bytes and
+decodes with the first that accepts it; Display Properties lists `.bmp` and
+`.png` in `/wallpapers`, and Browse accepts both. The check that keeps the
+list from showing something the desktop cannot draw is unchanged.
+Transparent pixels come out white (see
+[DISPLAY_PROPERTIES.md](../../desktop/DISPLAY_PROPERTIES.md)). JPEG joins
+the decoder table when I5 lands. Verification: `tools/shoot.sh --scenario
+wallpaperpng` picks `/paint-test.png` with Browse and reads the tiled pixels
+off the desktop.
 
 ### I3 — The rest of BMP
 

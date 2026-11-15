@@ -3,7 +3,7 @@
 #include "libc.h"
 
 /*
- * The desktop background: a solid colour with an optional BMP on top of it,
+ * The desktop background: a solid colour with an optional image on top of it,
  * placed centred, tiled or stretched. The choice lives in the user's profile
  * (desktop.cfg) and is restored on the next boot. The format and the rules
  * are in docs/desktop/DISPLAY_PROPERTIES.md.
@@ -16,7 +16,7 @@
  * file is what keeps the two in step: the desktop re-reads it periodically.
  */
 
-/* The shipped wallpapers. Display Properties lists every .bmp in it. */
+/* The shipped wallpapers. Display Properties lists every .bmp and .png in it. */
 #define DESKTOP_WALLPAPER_DIRECTORY "/wallpapers"
 /* What a fresh profile shows. */
 #define DESKTOP_WALLPAPER_DEFAULT_IMAGE DESKTOP_WALLPAPER_DIRECTORY "/Clouds.bmp"
@@ -35,13 +35,13 @@ enum desktop_wallpaper_position
 
 struct desktop_wallpaper_config
 {
-    /* Absolute path of the BMP; empty means no image, only the colour. */
+    /* Absolute path of the image; empty means no image, only the colour. */
     char path[DESKTOP_WALLPAPER_PATH_MAX];
     int position;   /* enum desktop_wallpaper_position */
     uint32_t color; /* 0xRRGGBB, under the image or alone */
 };
 
-/* A decoded BMP, BGRX pixels in a section of their own. Zero-initialise it;
+/* A decoded image, BGRX pixels in a section of their own. Zero-initialise it;
  * pixels == 0 means nothing is loaded. */
 struct desktop_wallpaper_image
 {
@@ -67,8 +67,9 @@ const char *desktop_wallpaper_position_name(int position);
 
 /* ---- images -------------------------------------------------------------- */
 
-/* Decodes an uncompressed 24 or 32 bpp BMP. Returns 0 on success; on failure
- * the image is left empty. Whatever the image held before is released. */
+/* Decodes an uncompressed 24 or 32 bpp BMP, or an 8-bit RGB or RGBA PNG.
+ * Returns 0 on success; on failure the image is left empty. Whatever the
+ * image held before is released. */
 int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const char *path);
 void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image);
 

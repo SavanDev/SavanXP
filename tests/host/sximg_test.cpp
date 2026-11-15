@@ -435,6 +435,57 @@ void bmp_tests() {
     }
 }
 
+/* sx_png_info and sx_png_decode_into against the allocating decoder. */
+void png_into_tests() {
+    const struct {
+        const unsigned char* data;
+        size_t size;
+        const char* name;
+    } fixtures[] = {
+        {k_png_rgb_dynamic, sizeof(k_png_rgb_dynamic), "png into matches decode (rgb dynamic)"},
+        {k_png_rgb_fixed, sizeof(k_png_rgb_fixed), "png into matches decode (rgb fixed)"},
+        {k_png_rgba_dynamic, sizeof(k_png_rgba_dynamic), "png into matches decode (rgba, onto white)"},
+    };
+    for (const auto& fixture : fixtures) {
+        struct sx_png_image img = {0, 0, 0};
+        uint32_t w = 0, h = 0;
+        bool ok = sx_png_decode(fixture.data, fixture.size, &img) == 0 &&
+                  sx_png_info(fixture.data, fixture.size, &w, &h) == 0 && w == img.width && h == img.height;
+        if (ok) {
+            std::vector<uint32_t> pixels((size_t)w * h, 0xDEADBEEFu);
+            ok = sx_png_decode_into(fixture.data, fixture.size, pixels.data(), pixels.size()) == 0 &&
+                 memcmp(pixels.data(), img.pixels, pixels.size() * 4u) == 0;
+            std::vector<uint32_t> small((size_t)w * h - 1u);
+            ok = ok && sx_png_decode_into(fixture.data, fixture.size, small.data(), small.size()) != 0 &&
+                 sx_png_decode_into(fixture.data, fixture.size, 0, pixels.size()) != 0;
+        }
+        check(ok, fixture.name);
+        sx_png_free(&img);
+    }
+    {
+        Png palette;
+        palette.header(4, 4, 3);
+        Png grey16;
+        grey16.header(4, 4, 0, 16);
+        Png interlaced;
+        interlaced.header(4, 4, 2, 8, 1);
+        Png rgb;
+        rgb.header(5, 3, 2);
+        uint32_t w = 0, h = 0;
+        check(sx_png_info(palette.bytes.data(), palette.bytes.size(), &w, &h) != 0 &&
+                  sx_png_info(grey16.bytes.data(), grey16.bytes.size(), &w, &h) != 0 &&
+                  sx_png_info(interlaced.bytes.data(), interlaced.bytes.size(), &w, &h) != 0,
+              "png info rejects palette, 16-bit grey and Adam7");
+        check(sx_png_info(rgb.bytes.data(), rgb.bytes.size(), &w, &h) == 0 && w == 5 && h == 3 &&
+                  sx_png_info(rgb.bytes.data(), rgb.bytes.size() - 1u, &w, &h) != 0,
+              "png info reads IHDR alone and rejects a short one");
+        Bmp bmp(4, 4, 24);
+        check(sx_png_info(bmp.bytes.data(), bmp.bytes.size(), &w, &h) != 0 &&
+                  sx_bmp_info(k_png_rgb_dynamic, sizeof(k_png_rgb_dynamic), &w, &h) != 0,
+              "png and bmp info each refuse the other's file");
+    }
+}
+
 }  // namespace
 
 static int decode(const unsigned char* data, size_t size, struct sx_png_image* out) {
@@ -627,6 +678,7 @@ int main() {
         }
     }
     bmp_tests();
+    png_into_tests();
 
     /* free tolera vacia y nula */
     {
