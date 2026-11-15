@@ -767,6 +767,13 @@ SCENARIOS: dict[str, Scenario] = {
     # SSL's L2 gate for a file kept across a restart: the first boot writes it
     # with the files fixture and syncs, the host resets the machine at the
     # ready token, and the second boot reads it back and removes it.
+    "linux-xeyes": _qemu_scenario(
+        "linuxxeyes", "LINUX XEYES PASS", "LINUX XEYES FAIL",
+        "Pinned Xeyes: Linux pixels, pointer path, resize, relaunch, restart and resource recovery (requires installed runtime)", 300.0,
+        ready="LINUX XEYES READY", qmp_callback="tools/linux_xeyes_smoke.py",
+        remove_paths=("/system/linux/work/l6-restart",),
+        usb=True, no_ps2=True, usb_pointer="tablet",
+    ),
     "linux-xclient": _qemu_scenario(
         "linuxxclient", "LINUX XCLIENT PASS", "LINUX XCLIENT FAIL",
         "Unchanged Xlib client: Linux pixels, global pointer, resize and caption close without leaks", 120.0,

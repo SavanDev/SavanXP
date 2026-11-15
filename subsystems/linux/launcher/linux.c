@@ -14,6 +14,7 @@
  * SXN_SPAWN_FLAG_SUBSYSTEM. Nothing is guessed from the file.
  */
 #include <stdint.h>
+#include <string.h>
 
 #include "abi/savanxp_abi.h"
 #include "abi/savanxp_native_abi.h"
@@ -93,7 +94,7 @@ static long start_display(char** environment, int count) {
 }
 
 int main(int argc, char **argv) {
-    char *environment[MAX_ENVIRONMENT];
+    char *environment[MAX_ENVIRONMENT + 2];
     int envc = 0;
     int first = 1;
 
@@ -108,6 +109,20 @@ int main(int argc, char **argv) {
     if (first >= argc || argv[first][0] != '/') {
         put("usage: linux [-e NAME=VALUE]... GUEST_PATH [ARGUMENT]...\n");
         sxn_exit(127);
+    }
+
+    // Files and Start explicitly select SSL for files inside its guest tree.
+    // This spelling is a physical desktop path; the CLI's /usr/... spelling
+    // remains a guest path with only the environment supplied by -e.
+    if (!strncmp(argv[first], "/system/linux/", 14)) {
+        argv[first] += 13;
+        int have_display = 0, have_home = 0;
+        for (int i = 0; i < envc; ++i) {
+            if (!strncmp(environment[i], "DISPLAY=", 8)) have_display = 1;
+            if (!strncmp(environment[i], "HOME=", 5)) have_home = 1;
+        }
+        if (!have_display) environment[envc++] = "DISPLAY=:0";
+        if (!have_home) environment[envc++] = "HOME=/root";
     }
 
     const long display = start_display(environment, envc);

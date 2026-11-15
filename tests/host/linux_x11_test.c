@@ -20,7 +20,7 @@ static void start(struct sx11_client* c) {
     sx11_init(c, &ops, 0, 640, 480); used = 0;
     unsigned char setup[12] = {'l', 0, 11};
     for (unsigned i = 0; i < 12; ++i) CHECK(!sx11_feed(c, setup + i, 1));
-    CHECK(used == 128 && output[0] == 1 && !sx11_finish(c)); used = 0;
+    CHECK(used == 136 && output[0] == 1 && !sx11_finish(c)); used = 0;
 }
 static void create(unsigned char p[40], unsigned id) {
     memset(p, 0, 40); p[0] = 1; w16(p + 2, 10); w32(p + 4, id); w32(p + 8, SX11_ROOT);
@@ -94,5 +94,39 @@ int main(void) {
         sx11_init(c, &ops, 0, 640, 480); CHECK(!sx11_feed(c, prefix, i)); CHECK(sx11_finish(c) == -1);
         sx11_destroy(c);
     }
-    free(c); puts("X11 PROTOCOL PASS: fragments, truncation, lengths, IDs, resources, resize and teardown"); return 0;
+    // L6: depth-1 icon storage, clipping, malformed image payloads and a
+    // shared resource namespace. Errors must not consume/replace the pixmap.
+    start(c);
+    unsigned char pm[16] = {53, 1, 4}; w32(pm + 4, 0x200010); w32(pm + 8, SX11_ROOT);
+    w16(pm + 12, 5); w16(pm + 14, 2); CHECK(!sx11_feed(c, pm, sizeof(pm)));
+    CHECK(c->pixmaps[0].id == 0x200010 && !used);
+    unsigned char cg[16] = {55, 0, 4}; w32(cg + 4, 0x200011); w32(cg + 8, 0x200010);
+    CHECK(!sx11_feed(c, cg, sizeof(cg)));
+    unsigned char put[32] = {72, 1, 8}; w32(put + 4, 0x200010); w32(put + 8, 0x200011);
+    w16(put + 12, 5); w16(put + 14, 2); w16(put + 16, 0xffff); put[21] = 1; put[24] = 10; put[28] = 31;
+    CHECK(!sx11_feed(c, put, sizeof(put)));
+    CHECK(c->pixmaps[0].bitmap.pixels[0] == 1 && c->pixmaps[0].bitmap.pixels[1] == 0);
+    used = 0; w16(put + 2, 7); CHECK(!sx11_feed(c, put, 28)); CHECK(output[1] == 16);
+    CHECK(c->pixmaps[0].bitmap.pixels[0] == 1);
+    used = 0; w16(put + 2, 8); put[1] = 2; CHECK(!sx11_feed(c, put, 32)); CHECK(output[1] == 8);
+    used = 0; create(p, 0x200010); CHECK(!sx11_feed(c, p, 40)); CHECK(output[1] == 14);
+    unsigned char fp[8] = {54, 0, 2}; w32(fp + 4, 0x200010); CHECK(!sx11_feed(c, fp, 8));
+    CHECK(!c->pixmaps[0].id); used = 0; CHECK(!sx11_feed(c, fp, 8)); CHECK(output[1] == 4);
+    sx11_destroy(c);
+    CHECK(!c->gcs[0].id && !c->pixmaps[0].bitmap.pixels);
+
+    // A mapped child is not viewable until its parent maps. It paints into
+    // the top-level client area and is clipped by every ancestor.
+    start(c); create(p, 0x200001); w16(p + 16, 20); w16(p + 18, 20); CHECK(!sx11_feed(c, p, 40));
+    create(p, 0x200002); w32(p + 8, 0x200001); w16(p + 12, 15); w16(p + 14, 15);
+    w16(p + 16, 10); w16(p + 18, 10); w32(p + 32, 0); CHECK(!sx11_feed(c, p, 40));
+    unsigned char sub[8] = {9, 0, 2}; w32(sub + 4, 0x200001);
+    CHECK(!sx11_feed(c, sub, 8)); CHECK(used == 32 && output[0] == 19);
+    sub[0] = 8; CHECK(!sx11_feed(c, sub, 8)); CHECK(used == 128 && output[96] == 12);
+    uint32_t frame[22 * 22]; for (unsigned i = 0; i < 22 * 22; ++i) frame[i] = 0xdeadbeef;
+    sx11_composite(c, 0x200001, frame, 22, 20, 20);
+    CHECK(frame[14 * 22 + 14] == 0xffffff && frame[15 * 22 + 15] == 0);
+    CHECK(frame[19 * 22 + 19] == 0 && frame[20 * 22] == 0xdeadbeef && frame[19 * 22 + 20] == 0xdeadbeef);
+    sx11_destroy(c); CHECK(!c->windows[0].id && !c->windows[1].id);
+    free(c); puts("X11 PROTOCOL PASS: fragments, truncation, lengths, IDs, pixmaps, child clipping, resize and teardown"); return 0;
 }

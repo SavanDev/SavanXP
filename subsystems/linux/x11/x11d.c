@@ -62,6 +62,12 @@ static int pointer(void* opaque, struct sx11_window* w, int* rx, int* ry, int* w
     if (result) return -1;
     *rx = p.x; *ry = p.y;
     *wx = w ? p.x - p.origin_x : p.x; *wy = w ? p.y - p.origin_y : p.y;
+    for (struct sx11_window* ancestor = w; ancestor && ancestor->parent != SX11_ROOT;) {
+        *wx -= ancestor->x; *wy -= ancestor->y;
+        struct sx11_window* parent = 0;
+        for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (d->protocol.windows[i].id == ancestor->parent) { parent = &d->protocol.windows[i]; break; }
+        ancestor = parent;
+    }
     *mask = (p.buttons & SAVANXP_MOUSE_BUTTON_LEFT ? 1u << 8 : 0) |
         (p.buttons & SAVANXP_MOUSE_BUTTON_MIDDLE ? 1u << 9 : 0) |
         (p.buttons & SAVANXP_MOUSE_BUTTON_RIGHT ? 1u << 10 : 0);
@@ -72,10 +78,7 @@ static void paint(struct desktop* d) {
     struct sx11_window* w = 0;
     for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (d->protocol.windows[i].id == d->mapped) { w = &d->protocol.windows[i]; break; }
     if (!w) return;
-    const unsigned width = w->width < d->wm.width ? w->width : d->wm.width;
-    const unsigned height = w->height < d->wm.height ? w->height : d->wm.height;
-    for (unsigned y = 0; y < height; ++y)
-        memcpy(d->wm.pixels + y * d->wm.stride, w->bitmap.pixels + y * (w->bitmap.info.pitch / 4), width * 4);
+    sx11_composite(&d->protocol, w->id, d->wm.pixels, d->wm.stride, d->wm.width, d->wm.height);
     long sequence = sxnwm_submit_full(&d->wm);
     if (sequence > 0) d->dirty = 0;
 }

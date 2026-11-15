@@ -1,6 +1,7 @@
 # Linux profile: Xeyes on musl
 
-> **Status: inventory recorded (2026-11-14); nothing implemented.** This is
+> **Status: reference inventory recorded (2026-11-14), with the L6 resize
+> reference added on 2026-11-15.** This is
 > L0 of [SSL](../roadmaps/open/LINUX_SUBSYSTEM_ROADMAP.md), the Savan
 > Subsystem for Linux: the measured scope of its first profile. A system call
 > or an X request that is not in this document is not written.
@@ -400,3 +401,15 @@ the first `MapWindow`.
 - **L5 needs no request beyond what L6 uses, plus `GetInputFocus`,
   `ChangeWindowAttributes` and `DestroyWindow`.** Xeyes adds `CreatePixmap`,
   `PutImage`, `QueryColors`, `ClearArea` and `MapSubwindows` at L6.
+
+
+## L6 resize reference
+
+After the seven recorded pointer positions, the reference controller resizes
+Xeyes to 210x130 and warps the pointer to root position 400,300. Xt sends
+`ConfigureWindow` for its child with the width/height mask `0xc`, then draws
+and queries the pointer with the existing requests. `profile.sh trace`
+regenerates `screens/xeyes-resized-400x300.png` from the pinned Xvfb. It is
+cropped to client coordinates (1,1 on the X root), unlike the earlier root
+captures. Input order matters: the `None` background preserves pixels Xeyes
+does not redraw after resizing. No extension or new Linux syscall is required.

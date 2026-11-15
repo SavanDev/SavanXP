@@ -77,6 +77,9 @@ menu and opens the shortcut as the desktop does (`shortcut_open_path`), so a
 `.exe` goes to `winhost` through its association. Resting on a row closes an
 open cascade.
 
+The Xeyes installer adds a pin targeting its original Linux ELF, opened
+through `linux.sxe`; see [LINUX.md](../userland/LINUX.md#l6-the-original-xeyes-on-the-desktop).
+
 The build's one default is `Solitaire.sxlnk`, whose target is the user's own
 `sol.exe` ([WIN32.md](../userland/WIN32.md#solitaire)): it shows only once
 that file is in place.

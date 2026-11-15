@@ -13,6 +13,8 @@ glyphs are drawn by `system/gfx/toolbar_glyphs/gen_icons.py`, shared with the fi
 
 This document pins how its window, views and commands work and why, and
 what is planned next.
+Linux ELF files inside `/system/linux/` open through the SUN Linux launcher;
+see [LINUX.md](../userland/LINUX.md#l6-the-original-xeyes-on-the-desktop).
 Opening files and the context menu are covered in
 [`DESKTOP_ICONS.md`](DESKTOP_ICONS.md#phase-4-context-menus-in-applications)
 and [`../userland/SXE_FORMAT.md`](../userland/SXE_FORMAT.md) (phase 5).

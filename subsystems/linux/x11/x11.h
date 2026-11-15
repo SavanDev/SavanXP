@@ -9,19 +9,21 @@
 #define SX11_MAX_REQUEST 65536u
 #define SX11_MAX_WINDOWS 16
 #define SX11_MAX_GCS 32
+#define SX11_MAX_PIXMAPS 8
 #define SX11_MAX_ATOMS 32
 #define SX11_ROOT 0x100u
 
 struct sx11_window {
     uint32_t id, parent, event_mask, background;
     int16_t x, y;
-    uint16_t width, height;
-    int mapped, delete_protocol, close_sent;
+    uint16_t width, height, border;
+    int mapped, delete_protocol, close_sent, background_defined;
     char title[128];
     struct sx_bitmap bitmap;
     void* host;
 };
-struct sx11_gc { uint32_t id, foreground, background; };
+struct sx11_gc { uint32_t id, foreground, background, depth; };
+struct sx11_pixmap { uint32_t id; uint16_t width, height, border; struct sx_bitmap bitmap; };
 struct sx11_atom { char name[128]; uint32_t id; };
 struct sx11_ops {
     /* send must preserve all bytes in order or fail the connection. */
@@ -40,6 +42,7 @@ struct sx11_client {
     unsigned char input[SX11_MAX_REQUEST];
     struct sx11_window windows[SX11_MAX_WINDOWS];
     struct sx11_gc gcs[SX11_MAX_GCS];
+    struct sx11_pixmap pixmaps[SX11_MAX_PIXMAPS];
     struct sx11_atom atoms[SX11_MAX_ATOMS];
 };
 void sx11_init(struct sx11_client*, const struct sx11_ops*, void*, uint16_t, uint16_t);
@@ -50,3 +53,6 @@ int sx11_finish(struct sx11_client*);
 void sx11_destroy(struct sx11_client*);
 int sx11_resize(struct sx11_client*, uint32_t, uint16_t, uint16_t);
 int sx11_close_window(struct sx11_client*, uint32_t);
+
+/* Composite mapped descendants onto a top-level bitmap supplied by the host. */
+void sx11_composite(struct sx11_client*, uint32_t, uint32_t*, unsigned, unsigned, unsigned);

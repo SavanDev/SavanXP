@@ -573,7 +573,7 @@ persistent-image check preserves the external Doom binary and assets. The
 bounded first profile and verification are recorded in
 [LINUX.md](../../userland/LINUX.md#l5-local-streams-and-the-x11-service).
 
-### L6 — Xeyes
+### L6 — Xeyes (implementation in verification)
 
 Size M, if the earlier gates were honest.
 

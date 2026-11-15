@@ -233,6 +233,14 @@ trace_x11() {
         i=$((i + 1))
     done
 
+    if [[ "$name" == xeyes ]]; then
+        python3 "$here/x11ctl.py" "$xsock/X0" resize "$(cat "$out/$name.toplevel")" 210 130
+        python3 "$here/x11ctl.py" "$xsock/X0" warp 400 300
+        sleep 0.5
+        guest /bin/sh -c 'xwd -root -silent -display :0 >/out/shot.xwd'
+        magick "$out/shot.xwd" -crop 210x130+1+1 +repage -strip -define png:exclude-chunks=date,time "$out/xeyes-resized-400x300.png"
+        rm -f "$out/shot.xwd"
+    fi
     python3 "$here/x11ctl.py" "$xsock/X0" delete "$(cat "$out/$name.toplevel")"
     for _ in $(seq 50); do kill -0 "$client_pid" 2>/dev/null || break; sleep 0.1; done
     if kill -0 "$client_pid" 2>/dev/null; then

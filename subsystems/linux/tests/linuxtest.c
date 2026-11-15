@@ -463,8 +463,8 @@ static int transport(void) {
     return ok;
 }
 
-static int xclient(void) {
-    if (!transport()) { say("LINUX XCLIENT FAIL transport", "", ""); return 1; }
+static int xclient(int eyes) {
+    if (!eyes && !transport()) { say("LINUX XCLIENT FAIL transport", "", ""); return 1; }
     const long pause = sxn_event_create(0);
     long compositor = start_service("/system/compositord.sxe");
     long wm = 0;
@@ -491,12 +491,14 @@ static int xclient(void) {
     if (sxn_process_query(wm, &wm_before) || sxn_process_query(compositor, &compositor_before)) ++g_failures;
     int32_t output[2];
     if (sxn_pipe_create(output)) { say("LINUX XCLIENT FAIL capture pipe", "", ""); return 1; }
-    char* args[] = {LAUNCHER, "-e", "DISPLAY=:0", "/fixtures/xclient"};
+    char* args[] = {LAUNCHER, "-e", "DISPLAY=:0", eyes ? "/usr/bin/xeyes" : "/fixtures/xclient"};
     struct sxn_spawn_request request; sxn_spawn_request_init(&request, LAUNCHER, args, 4);
     request.std_handles[1] = output[1]; request.std_handles[2] = output[1];
     const long child = sxn_spawn_ex(&request); (void)sxn_close(output[1]);
     if (child <= 0) { say("LINUX XCLIENT FAIL spawn", "", ""); return 1; }
     (void)sxn_set_nonblocking(output[0], 1);
+    static int cycle;
+    if (eyes) { ++cycle; say("LINUX XEYES READY ", cycle == 1 ? "1" : "2", ""); }
     char line[256]; unsigned used = 0;
     int mapped = 0, exposed = 0, resized = 0, redrawn = 0, deleted = 0, closed = 0;
     const uint64_t deadline = sxn_clock_ns() + 90000000000ull;
@@ -526,7 +528,7 @@ static int xclient(void) {
     if (sxn_process_query(child, &child_query) == 0 && child_query.state != SXN_PROCESS_ENDED && g_failures)
         (void)sxn_terminate(child, 1);
     int status = -1; (void)sxn_waitpid(child, &status);
-    if (used || status || mapped != 1 || !exposed || resized != 1 || !redrawn || deleted != 1 || closed != 1) ++g_failures;
+    if (used || status || (!eyes && (mapped != 1 || !exposed || resized != 1 || !redrawn || deleted != 1 || closed != 1))) ++g_failures;
     // The worker releases its window on exit, the service reaps it, and the
     // idle service exits. Check the listener name, process count, desktop
     // handles and reclaimed memory after that asynchronous cleanup.
@@ -549,12 +551,28 @@ static int xclient(void) {
     say(clean ? "linux-xclient: process, port, sections and desktop handles returned" : "linux-xclient: FAIL leaked resources", "", "");
     (void)sxn_terminate(wm, 0); (void)sxn_terminate(compositor, 0);
     (void)sxn_waitpid(wm, &status); (void)sxn_waitpid(compositor, &status); (void)sxn_close(pause);
-    say(g_failures ? "LINUX XCLIENT FAIL" : "LINUX XCLIENT PASS", "", "");
+    if (!eyes) say(g_failures ? "LINUX XCLIENT FAIL" : "LINUX XCLIENT PASS", "", "");
+    else say(g_failures ? "LINUX XEYES FAIL resources or exit status" : "linux-xeyes: cycle clean", "", "");
     return g_failures != 0;
 }
 
+static int xeyes(void) {
+    const char* marker = GUEST "/work/l6-restart";
+    struct sxn_file_info info;
+    const int restarted = sxn_query_path(marker, &info) == 0;
+    if (xclient(1) || xclient(1)) return 1;
+    if (!restarted) {
+        if (sxn_write_file(marker, "restart", 7) != 0) { say("LINUX XEYES FAIL restart marker", "", ""); return 1; }
+        say("LINUX XEYES RESTART READY", "", "");
+        long pause = sxn_event_create(0);
+        for (;;) (void)sxn_wait_one(pause, 1000);
+    }
+    say("LINUX XEYES PASS", "", ""); return 0;
+}
+
 int main(int argc, char **argv) {
-    if (argc > 1 && same(argv[1], "--xclient")) return xclient();
+    if (argc > 1 && same(argv[1], "--xeyes")) return xeyes();
+    if (argc > 1 && same(argv[1], "--xclient")) return xclient(0);
     if (argc > 1 && same(argv[1], "--dynamic")) return dynamic(argc > 2 ? argv[2] : "normal");
     if (argc > 1 && same(argv[1], "--tools")) return tools();
     if (argc > 1 && same(argv[1], "--restart")) {

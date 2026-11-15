@@ -1,0 +1,119 @@
+{
+  "files": [
+    {
+      "source": "usr/bin/xeyes",
+      "path": "usr/bin/xeyes",
+      "sha256": "c2c0ba389108f921f760e9ff668e0374eff247c31aef8207ce411acc66d5830a"
+    },
+    {
+      "source": "lib/ld-musl-x86_64.so.1",
+      "path": "lib/ld-musl-x86_64.so.1",
+      "sha256": "095b047c631447e4fa50401fa7ffce01f678587040d65ba18c574981dc630de5"
+    },
+    {
+      "source": "usr/lib/libXi.so.6.1.0",
+      "path": "usr/lib/libXi.so.6",
+      "sha256": "b2280de9ea01dc90de961c2974830acae28232b67cfd6feb41d36266f20aae5d"
+    },
+    {
+      "source": "usr/lib/libXmu.so.6.2.0",
+      "path": "usr/lib/libXmu.so.6",
+      "sha256": "9a9e893c24f40db28f6dadd6682d5429d6275186948a7dd1bd0e3884dab34c28"
+    },
+    {
+      "source": "usr/lib/libXt.so.6.0.0",
+      "path": "usr/lib/libXt.so.6",
+      "sha256": "8fbe437a8282161ac7fe3d6fdcf18c08c8aaa2656f88337156714611dc409d6d"
+    },
+    {
+      "source": "usr/lib/libXext.so.6.4.0",
+      "path": "usr/lib/libXext.so.6",
+      "sha256": "a25b874bdaeed2ebea69eedd5be32f91bc868d714a584eed357ced0399694f54"
+    },
+    {
+      "source": "usr/lib/libX11.so.6.4.0",
+      "path": "usr/lib/libX11.so.6",
+      "sha256": "5a7c2df00148b914e9d66b7455680bd2a1b29a0eaef68b115a0133ce441d2a76"
+    },
+    {
+      "source": "usr/lib/libXrender.so.1.3.0",
+      "path": "usr/lib/libXrender.so.1",
+      "sha256": "92f49cdff11f38b0c8d46ba388787da305e29dad40ea8c3d9089c25bf81376dd"
+    },
+    {
+      "source": "usr/lib/libX11-xcb.so.1.0.0",
+      "path": "usr/lib/libX11-xcb.so.1",
+      "sha256": "f7a9e0281693f41309192880f242249e29afab9329eac458eed3f79dfb8f00c2"
+    },
+    {
+      "source": "usr/lib/libxcb-present.so.0.0.0",
+      "path": "usr/lib/libxcb-present.so.0",
+      "sha256": "83e090bf1e523f120694c7676e168ed3068b8ae0164c86d7f02d8b09df3342f4"
+    },
+    {
+      "source": "usr/lib/libxcb-damage.so.0.0.0",
+      "path": "usr/lib/libxcb-damage.so.0",
+      "sha256": "d920e5600492125b4051bd17e617a29b362697548d8fd437ad18f21788c89967"
+    },
+    {
+      "source": "usr/lib/libxcb-xfixes.so.0.0.0",
+      "path": "usr/lib/libxcb-xfixes.so.0",
+      "sha256": "2e98e1a986a53e0651da324cbe79dbfb75857a6c24728282931498c3f150eeb5"
+    },
+    {
+      "source": "usr/lib/libxcb.so.1.1.0",
+      "path": "usr/lib/libxcb.so.1",
+      "sha256": "fd7bc55e8680c183fe038b22d5cc7407c323e3b1e1bd6ee488b57137124b0292"
+    },
+    {
+      "source": "usr/lib/libSM.so.6.0.1",
+      "path": "usr/lib/libSM.so.6",
+      "sha256": "906834d613d149db5b5a118da66fcf42bb669ec0c4942ed754e5a45191f7bc1d"
+    },
+    {
+      "source": "usr/lib/libICE.so.6.3.0",
+      "path": "usr/lib/libICE.so.6",
+      "sha256": "07d3be6e4b18fb20d86fe1b5b6494ec6fbbcedffd95e0aafd668242d65e1e8a2"
+    },
+    {
+      "source": "usr/lib/libXau.so.6.0.0",
+      "path": "usr/lib/libXau.so.6",
+      "sha256": "0fd15be141dc06c149f2f2b92408dc91f4429d1f872a3fb9a655490e8c994578"
+    },
+    {
+      "source": "usr/lib/libXdmcp.so.6.0.0",
+      "path": "usr/lib/libXdmcp.so.6",
+      "sha256": "cb4e243ca95695d59f1de5abc8cb0092d5ac1066811302c0f874a9341778b7eb"
+    },
+    {
+      "source": "usr/lib/libuuid.so.1.3.0",
+      "path": "usr/lib/libuuid.so.1",
+      "sha256": "69f5feff165ce0adf2f9db2d9e745338bdcbf43e1c965a49b01e8f485328dea4"
+    },
+    {
+      "source": "usr/lib/libbsd.so.0.12.2",
+      "path": "usr/lib/libbsd.so.0",
+      "sha256": "a5b321623fe7274c695805b7f46bb2ed8ac4e970413a4930f09701a17c44ed21"
+    },
+    {
+      "source": "usr/lib/libmd.so.0.2.0",
+      "path": "usr/lib/libmd.so.0",
+      "sha256": "4fd22b05b1297facf99c57988915345ff0ba033fbb2c6f07e4e3bb41fdedfeea"
+    },
+    {
+      "source": "usr/share/X11/locale/locale.alias",
+      "path": "usr/share/X11/locale/locale.alias",
+      "sha256": "0a38697633b994e98d9c60d4669b3b22009c60516b91a4c702c00777e8991613"
+    },
+    {
+      "source": "usr/share/X11/locale/locale.dir",
+      "path": "usr/share/X11/locale/locale.dir",
+      "sha256": "41b4866f8d5520778de26e9eea137f783bb9f067e8379eae7c592ccb9135c37a"
+    },
+    {
+      "source": "usr/share/X11/locale/en_US.UTF-8/XLC_LOCALE",
+      "path": "usr/share/X11/locale/en_US.UTF-8/XLC_LOCALE",
+      "sha256": "0067217168fa6507dde39089676e65e16a44f8f28d1cdf0aa65ddfe6cfd06cac"
+    }
+  ]
+}

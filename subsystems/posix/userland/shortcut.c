@@ -57,10 +57,33 @@ int shortcut_is_shortcut_name(const char *name)
     return ends_with_nocase(name, SHORTCUT_EXTENSION);
 }
 
+/* A desktop file in the explicit Linux guest tree selects SSL. ELF alone
+ * cannot distinguish Linux from POSIX, so files elsewhere keep their normal
+ * association. Reject path traversal before selecting this subsystem. */
+static int linux_program(const char *path)
+{
+    if (!path || strncmp(path, "/system/linux/", 14) != 0) return 0;
+    const char *part = path + 14;
+    while (*part) {
+        const char *end = part;
+        while (*end && *end != '/') ++end;
+        const size_t count = (size_t)(end - part);
+        if (!count || (count == 1 && part[0] == '.') ||
+            (count == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        part = *end ? end + 1 : end;
+    }
+    unsigned char header[64];
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    const size_t count = fread(header, 1, sizeof(header), file); fclose(file);
+    return count == sizeof(header) && !memcmp(header, "\177ELF\2\1\1", 7) &&
+        (header[16] == 2 || header[16] == 3) && !header[17] && header[18] == 62 && !header[19];
+}
+
 int shortcut_is_program_path(const char *path)
 {
     return path != 0 &&
-        (strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0 || ends_with_nocase(path, ".sxe"));
+        (linux_program(path) || strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0 || ends_with_nocase(path, ".sxe"));
 }
 
 int shortcut_parse(const char *text, size_t length, struct shortcut *out)
@@ -332,6 +355,12 @@ static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *cont
     if (is_directory(path))
     {
         return launch(context, SHORTCUT_FILES_PATH, path) >= 0 ? SHORTCUT_OPEN_FOLDER : SHORTCUT_OPEN_FAILED;
+    }
+    if (linux_program(path))
+    {
+        /* The desktop API passes one argument. The physical guest path is
+         * the launcher's desktop mode; Linux sees the stripped guest path. */
+        return launch(context, "/system/linux.sxe", path) >= 0 ? SHORTCUT_OPEN_PROGRAM : SHORTCUT_OPEN_FAILED;
     }
     if (shortcut_is_program_path(path))
     {

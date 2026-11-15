@@ -185,3 +185,13 @@ it), Pin to Start Menu ([START_MENU.md](./START_MENU.md#shortcuts)),
 Rename... and Delete; on `..` or the empty part of the list, Up One
 Level and Refresh. Shift+F10 and the Menu key open the selected row's menu,
 and Delete asks before deleting.
+
+
+### Linux executables
+
+Files and the desktop's shared open path explicitly select `linux.sxe` for
+ELF64 x86-64 executables inside `/system/linux/`, the reserved Linux guest
+tree. Dot path components are refused. The launcher receives the physical
+path as its single desktop argument and supplies the local display; it does
+not modify the ELF. The installed Xeyes Start shortcut points to that original
+file too. See [LINUX.md](../userland/LINUX.md#l6-the-original-xeyes-on-the-desktop).

@@ -241,3 +241,9 @@ set_tests_properties(linux-x11-xlib-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 
 add_test(NAME linux-transport-reference-test
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/linux_transport_test.py" "${SSL_OUT}/transport")
 set_tests_properties(linux-transport-reference-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+add_test(NAME linux-x11-xeyes-test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/linux_xeyes_test.py"
+        --server "$<TARGET_FILE:savanxp-linux-x11-server>" --root "${SAVANXP_LINUX_MUSL_ROOT}"
+        --fixture "${SAVANXP_LINUX_MUSL_ROOT}/usr/bin/xeyes")
+set_tests_properties(linux-x11-xeyes-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)

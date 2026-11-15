@@ -208,7 +208,8 @@ which is why both go into the registry.
   all applicable license texts; these are not relicensed as SavanXP MIT.
 - Decision: `Adopt` as unchanged compatibility-profile binaries, not code
   linked into the kernel or SUN server.
-- Distributed in: optional test-image `/system/linux/usr/lib/` only.
+- Distributed in: optional test-image and installed Xeyes runtime
+  `/system/linux/usr/lib/`.
   `linux-x11.notice` stages the notices under `/system/licenses`.
 
 The reviewed source releases and SHA-256 hashes (all `.tar.xz`):
@@ -221,6 +222,44 @@ The reviewed source releases and SHA-256 hashes (all `.tar.xz`):
 | libXdmcp 1.1.5 | `d8a5222828c3adab70adf69a5583f1d32eb5ece04304f7f8392b6a353aa2228c` |
 | libbsd 0.12.2 | `b88cc9163d0c652aaf39a99991d974ddba1c3a9711db8f1b5838af2a14731014` |
 | libmd 1.2.0 | `ac15ffb8430502fbaccdec66c5a82ee0eab0b0f36220df56710feadfeb13d0a0` |
+
+### Alpine Xeyes compatibility runtime
+
+- Origin: original Alpine Linux 3.24.4 packages pinned in
+  `subsystems/linux/profile/alpine.lock`. Exact installed paths and SHA-256
+  hashes (Xeyes, musl, 18 shared libraries and three locale files) are in
+  `subsystems/linux/profile/xeyes-runtime.json`.
+- Versioned: no binaries or source archives. Complete upstream notices are
+  preserved in `assets/licenses/linux-xeyes/`; the six libraries shared with
+  L5 retain the `linux-x11` notice above.
+- License reviewed: MIT/X11 for Xeyes, libXi, libXmu, libXt, libXext,
+  libXrender, libICE and libSM; musl's complete COPYRIGHT preserves its MIT
+  and per-file exceptions; libuuid is Modified BSD (BSD-3-Clause), with
+  original source headers preserved alongside the license text.
+- Decision: `Adopt` as unchanged compatibility-profile binaries, never linked
+  into the kernel, SUN launcher or X11 engine.
+- Distributed in: `/system/linux/`, explicitly installed by
+  `subsystems/linux/install_xeyes.py`. All notices accompany the runtime
+  under `/system/licenses`.
+
+Reviewed official source archives and SHA-256 hashes:
+
+| Release | SHA-256 |
+| --- | --- |
+| libICE-1.1.2.tar.xz | `974e4ed414225eb3c716985df9709f4da8d22a67a2890066bc6dfc89ad298625` |
+| libSM-1.2.6.tar.xz | `be7c0abdb15cbfd29ac62573c1c82e877f9d4047ad15321e7ea97d1e43d835be` |
+| libXext-1.3.7.tar.xz | `6c643c7035cdacf67afd68f25d01b90ef889d546c9fcd7c0adf7c2cf91e3a32d` |
+| libXi-1.8.4.tar.xz | `ddd6057b89a91903bc2f884d55c8467440906945e482c36547260dff28661afc` |
+| libXmu-1.3.1.tar.xz | `81a99e94c4501e81c427cbaa4a11748b584933e94b7a156830c3621256857bc4` |
+| libXrender-0.9.13.tar.xz | `3fe88c609df6782e1e7af2e4de36b2563d70cd70ff7dcb1cda561ad64912bb64` |
+| libXt-1.3.1.tar.xz | `e0a774b33324f4d4c05b199ea45050f87206586d81655f8bef4dba434d931288` |
+| musl-1.2.6.tar.gz | `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a` |
+| util-linux-2.42.3.tar.xz | `66ac7c0e725278eb2b039e3104f2c91119341d941b41bac7a285c695f940bd57` |
+| xeyes-1.3.1.tar.xz | `5608d76b7b1aac5ed7f22f1b6b5ad74ef98c8693220f32b4b87dccee4a956eaa` |
+
+X.Org releases come from `https://www.x.org/releases/individual/{app,lib}/`,
+musl from `https://musl.libc.org/releases/`, and util-linux (libuuid) from
+`https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v2.42/`.
 
 ## Bootloader
 

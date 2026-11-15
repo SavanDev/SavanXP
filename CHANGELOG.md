@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL runs the original Alpine Xeyes from Start and by double-clicking its ELF in Files.**
+  `install_xeyes.py` installs its pinned runtime persistently; `x11d` adds child windows and icon pixmaps.
+  `linux-xeyes` checks Linux reference pixels, pointer tracking, resize, relaunch and restart; see [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL displays the unchanged Alpine Xlib `xclient` in a desktop window through the SUN `x11d` service.**
   Local stream sockets, `poll`, pointer queries, drawing, resize and caption close are covered by `linux-xclient`.
   SUN `sxnwm_query_pointer` and POSIX `gfx_query_pointer` expose desktop pointer snapshots; see [LINUX.md](docs/userland/LINUX.md).

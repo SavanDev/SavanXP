@@ -11,7 +11,8 @@ with S2a: a static musl program runs unchanged, with its thread-local data,
 its heap, files under the guest root and the clocks; L3 adds the bounded
 static BusyBox tools below; L4 runs the pinned dynamic musl `jq` with its
 original libraries; L5 displays the unchanged pinned Xlib client through the
-SUN `x11d` service, with P1 desktop pointer queries.** Every call not below
+SUN `x11d` service, with P1 desktop pointer queries; L6 adds the original
+Alpine Xeyes, child-window rendering and desktop launch integration.** Every call not below
 answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
@@ -408,12 +409,11 @@ ellipse primitive has a different convention and is unchanged. Resize sends
 The caption's close request sends `WM_DELETE_WINDOW`; without that protocol
 the connection ends. Disconnect frees the connection's windows and bitmaps.
 
-The first desktop adapter supports one mapped top-level window per X client,
-with up to eight workers including launch leases. A second top-level or a
-child mapping is refused with `BadAlloc`, never drawn into the wrong surface.
-The portable engine keeps the tree, but the extra child-window and pixmap
-rendering needed by Xeyes is L6. This avoids changing windowd's one-main-window
-per-process policy before a measured consumer requires it.
+The desktop adapter supports one mapped top-level window per X client,
+with up to eight workers including launch leases. A second top-level is
+refused with `BadAlloc`. Mapped descendants are composed and clipped within
+the top-level client area. This keeps windowd's one-main-window-per-process
+policy; each X connection is one SUN worker.
 
 ### Verification gates
 
@@ -451,3 +451,91 @@ and `verify_doom_persistence.sh` printed `Doom persistence: PASS` using its
 deterministic persistence fixture. The missing-Alpine-root configure also
 passed. The implementation and follow-up fixes were committed before these
 final checks; full command results are recorded in the verification commit.
+
+
+## L6: the original Xeyes on the desktop
+
+The pinned Alpine `xeyes` 1.3.1-r0 is unchanged (SHA-256
+`c2c0ba389108f921f760e9ff668e0374eff247c31aef8207ce411acc66d5830a`).
+It uses musl, its 18 shared libraries and three Xlib locale files, pinned by
+installed path and SHA-256 in `subsystems/linux/profile/xeyes-runtime.json`.
+No Linux syscall was added for L6; the L5 transport and memory ABI suffice.
+
+### Installation and launch
+
+After making the pinned Alpine root (`profile.sh setup`) and a normal build:
+
+```sh
+python3 subsystems/linux/install_xeyes.py
+```
+
+`--root`, `--image`, `--cli` and `--user` select a different profile root,
+existing image, host SxFS tool or destination user. Every source hash must
+match before the installer writes anything. It uses the persistent-image
+synchronizer without reset and installs only profile-owned paths. A normal
+build, including `--no-test-apps`, retains the installed runtime and resources.
+The full third-party notices are installed alongside it under `/system/licenses`.
+
+The Start shortcut points to `/system/linux/usr/bin/xeyes` itself; Files
+opens that same ELF on a double click. The shell deliberately selects SSL
+for ELF64 x86-64 executables within the reserved `/system/linux/` tree and
+rejects dot components. An ELF elsewhere keeps its normal association: an
+ELF header cannot distinguish Linux from POSIX. SUN's `linux.sxe` receives
+the physical path as one argument, strips the guest prefix and supplies
+`DISPLAY=:0` and `HOME=/root` unless explicitly supplied. Its ordinary
+`linux -e DISPLAY=:0 /usr/bin/xeyes` command keeps the original CLI contract.
+No Xeyes wrapper or recompiled native/POSIX imitation is installed.
+
+### X11 additions and limits
+
+L6 adds `MapSubwindows`, `ConfigureWindow` (position and size), `ClearArea`,
+`CreatePixmap`, `FreePixmap`, `PutImage` (depth-1 `XYPixmap`, 32-bit scanline
+pad), and `QueryColors` (default TrueColor colormap). Pixmaps share the X
+resource namespace and are bounded to eight 512x512 depth-1 images per
+connection; their pixels are retained and freed on disconnect. Icon pixmaps
+in `WM_HINTS` are accepted as hints and are not presented as desktop icons.
+The server advertises the depth-1 and depth-24 pixmap formats. The original
+client may probe unsupported pixmap depths and handle the resulting errors.
+
+Xeyes has a top-level shell and one drawable child. The child can map before
+its parent; it is exposed only once the whole ancestor chain is mapped.
+Composition clips every descendant to every ancestor. Pointer coordinates
+are relative to the queried child while root coordinates stay global.
+Xt handles the shell's `ConfigureNotify` by resizing the child. A pixel
+background is repainted on resize; `None` preserves overlapping pixels,
+matching the Linux reference (including any old pixels Xeyes does not redraw).
+Full circles accept any starting angle and either full-turn direction.
+
+The server accepts the measured `WM_ICON_NAME`, `WM_COMMAND`,
+`WM_CLIENT_MACHINE`, `WM_NORMAL_HINTS`, `WM_HINTS`, `WM_CLASS`,
+`WM_LOCALE_NAME` and `WM_CLIENT_LEADER` properties as hints; `WM_NAME` and
+`WM_PROTOCOLS` also drive the desktop. Arbitrary property storage/readback,
+partial arcs, additional drawing operations and X extensions remain outside
+this measured profile. The rectangular core-protocol fallback is intentional.
+On `WM_DELETE_WINDOW`, Xeyes exits without sending `DestroyWindow`; connection
+teardown releases the whole tree, pixmaps, ports and SUN surfaces.
+
+### L6 verification
+
+`linux-x11-xeyes-test` runs the exact ELF and original libraries over TCP
+into the same engine used by SUN. It checks all pixels at the seven recorded
+pointer positions, the 210x130 resized reference and a clean protocol close.
+The resize reference follows those same seven moves before resizing:
+`profile.sh trace` regenerates it through the pinned Xvfb with extensions
+absent. L0 captures include a one-pixel outer X border; comparisons crop the
+150x100 client area at 1,1. The new resize golden already crops that border.
+
+`linux-xeyes` verifies every installed runtime hash, runs two launch/close
+cycles, resets the guest and repeats both cycles. Each run checks the known
+pointer path (including outside the window), caption movement, resize and
+caption close. Guest captures exclude only the desktop cursor overlay; the
+host test checks all pupil pixels without an overlay. After each close the
+SUN parent checks process/section/desktop-handle counts, listener removal,
+exit status and recovered memory. Runtime hashes are checked again after the
+restart. An absent installed Xeyes makes the scenario skip with exit 77; a
+partial or changed installed runtime fails. Logs and captures stay under
+`build/smoke-logs`.
+
+`tools/shoot.sh --scenario linux-xeyes` opens the original ELF through the
+Start pin and by double click in Files, moves its caption, occludes it with
+Calculator, restores the image, closes it and checks the normal taskbar.

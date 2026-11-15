@@ -21,19 +21,30 @@ static int output(void* opaque, const void* bytes, size_t count) {
 static int map(void* opaque, struct sx11_window* w) { (void)opaque; printf("MAP %u %s\n", w->id, w->title); fflush(stdout); return 0; }
 static void destroy(void* opaque, struct sx11_window* w) { (void)opaque; printf("DESTROY %u\n", w->id); fflush(stdout); }
 static int pointer(void* opaque, struct sx11_window* w, int* rx, int* ry, int* wx, int* wy, unsigned* mask) {
-    struct host* h = opaque; *rx = h->x; *ry = h->y; *wx = h->x - (w ? w->x : 0); *wy = h->y - (w ? w->y : 0); *mask = 0; return 0;
+    struct host* h = opaque; *rx = h->x; *ry = h->y; *wx = h->x - (w ? w->x : 0); *wy = h->y - (w ? w->y : 0); *mask = 0;
+    for (struct sx11_window* a = w; a;) {
+        *wx -= a->border; *wy -= a->border;
+        if (a == w && a->parent != SX11_ROOT) { *wx -= a->x; *wy -= a->y; }
+        if (a->parent == SX11_ROOT) break;
+        struct sx11_window* parent = 0;
+        for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].id == a->parent) parent = &h->client.windows[i];
+        a = parent;
+    }
+    return 0;
 }
 static void screenshot(struct host* h, const char* path) {
     struct sx11_window* w = 0;
-    for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped) { w = &h->client.windows[i]; break; }
+    for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped && h->client.windows[i].parent == SX11_ROOT) { w = &h->client.windows[i]; break; }
     if (!w) { puts("ERROR no mapped window"); fflush(stdout); return; }
+    uint32_t* pixels = calloc(w->width * w->height, 4); if (!pixels) exit(2);
+    sx11_composite(&h->client, w->id, pixels, w->width, w->width, w->height);
     FILE* file = fopen(path, "wb"); if (!file) exit(2);
     fprintf(file, "P6\n%u %u\n255\n", w->width, w->height);
     for (unsigned y = 0; y < w->height; ++y) for (unsigned x = 0; x < w->width; ++x) {
-        uint32_t pixel = w->bitmap.pixels[y * (w->bitmap.info.pitch / 4) + x];
+        uint32_t pixel = pixels[y * w->width + x];
         unsigned char rgb[3] = {pixel >> 16, pixel >> 8, pixel}; fwrite(rgb, 1, 3, file);
     }
-    fclose(file); puts("SHOT"); fflush(stdout);
+    free(pixels); fclose(file); puts("SHOT"); fflush(stdout);
 }
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
@@ -60,11 +71,11 @@ int main(void) {
             int x, y; char path[900];
             if (sscanf(line, "pointer %d %d", &x, &y) == 2) { h->x = x; h->y = y; puts("POINTER"); fflush(stdout); }
             else if (sscanf(line, "resize %d %d", &x, &y) == 2) {
-                for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped)
+                for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped && h->client.windows[i].parent == SX11_ROOT)
                     if (sx11_resize(&h->client, h->client.windows[i].id, x, y)) result = 1;
             } else if (sscanf(line, "shot %899s", path) == 1) screenshot(h, path);
             else if (!strcmp(line, "close\n")) {
-                for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped)
+                for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) if (h->client.windows[i].mapped && h->client.windows[i].parent == SX11_ROOT)
                     if (sx11_close_window(&h->client, h->client.windows[i].id)) result = 1;
             }
         }

@@ -281,6 +281,11 @@ def main() -> int:
         raise SystemExit("qemu-system-x86_64 was not found in PATH or SAVANXP_QEMU")
     image_root = args.image_root.resolve()
     source_disk = args.disk_image.resolve()
+    if args.scenario == "linux-xeyes":
+        from linux_xeyes_smoke import verify_image
+        if not verify_image(source_disk, args.sxfs_cli.resolve()):
+            print("smoke: linux-xeyes: skipped: pinned guest tree is not installed", flush=True)
+            return 77
     # Smoke guests are allowed to create and remove files. Never let their
     # writes reach the persistent image; use a validated disposable sibling.
     log_dir = (args.log_dir or (image_root.parent / "smoke-logs")).resolve()
@@ -574,6 +579,11 @@ def main() -> int:
             if host_thread is not None and host_thread.is_alive():
                 host_thread.join(timeout=2.0)
 
+    if status == 0 and args.scenario == "linux-xeyes":
+        from linux_xeyes_smoke import verify_image
+        if not verify_image(run_disk, args.sxfs_cli.resolve()):
+            status = 1
+            reason = "Xeyes runtime disappeared after guest restart"
     run_disk.unlink(missing_ok=True)
     blank_disk.unlink(missing_ok=True)
     if usb_stick is not None:

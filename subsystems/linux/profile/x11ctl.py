@@ -3,6 +3,7 @@
 
     x11ctl.py SOCKET warp X Y       move the pointer to root coordinates
     x11ctl.py SOCKET pointer        print the pointer's root coordinates
+    x11ctl.py SOCKET resize WID WIDTH HEIGHT
     x11ctl.py SOCKET delete WID     send WM_DELETE_WINDOW to a top-level window
 
 It speaks the core protocol directly on the server's Unix socket, so the
@@ -63,6 +64,10 @@ def main():
     if cmd == "warp":
         px, py = int(sys.argv[3]), int(sys.argv[4])
         x.s.sendall(struct.pack("<BxHIIhhHHhh", 41, 6, 0, x.root, 0, 0, 0, 0, px, py))
+        x.sync()
+    elif cmd == "resize":
+        wid, width, height = (int(value, 0) for value in sys.argv[3:6])
+        x.s.sendall(struct.pack("<BxHIHxxII", 12, 5, wid, 12, width, height))
         x.sync()
     elif cmd == "pointer":
         x.s.sendall(struct.pack("<BxHI", 38, 2, x.root))

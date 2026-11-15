@@ -214,6 +214,7 @@ static int run_automation_spec(const char* spec) {
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
     const char* ldimagetest_argv[] = {"/system/ldimagetest.sxe", 0};
+    const char* linuxxeyes_argv[] = {"/system/linuxtest.sxe", "--xeyes", 0};
     const char* linuxxclient_argv[] = {"/system/linuxtest.sxe", "--xclient", 0};
     const char* linuxdynamic_argv[] = {"/system/linuxtest.sxe", "--dynamic", 0};
     const char* linuxnolib_argv[] = {"/system/linuxtest.sxe", "--dynamic", "nolib", 0};
@@ -440,6 +441,10 @@ static int run_automation_spec(const char* spec) {
             path = "/system/sonametest.sxe";
             argv = sonametest_argv;
             argc = 1;
+        } else if (strcmp(spec, "linuxxeyes") == 0) {
+            path = "/system/linuxtest.sxe";
+            argv = linuxxeyes_argv;
+            argc = 2;
         } else if (strcmp(spec, "linuxxclient") == 0) {
             path = "/system/linuxtest.sxe";
             argv = linuxxclient_argv;

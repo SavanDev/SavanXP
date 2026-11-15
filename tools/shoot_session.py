@@ -3615,7 +3615,83 @@ def scenario_linux_xclient(s):
     expect_taskbar_present(closed, "after Linux Xlib close")
 
 
+def scenario_linux_xeyes(s):
+    """Open the original ELF through Start and Files in the normal desktop."""
+    from linux_xeyes_smoke import reference
+
+    def locate(image):
+        target = reference(0).crop((0, 20, 150, 21)).tobytes()
+        rgb = image.tobytes()
+        for y in range(20, image.height - 100):
+            at = rgb[y * image.width * 3:(y + 1) * image.width * 3].find(target)
+            if at >= 0 and at % 3 == 0:
+                return at // 3, y - 20
+        raise Failure("Xeyes did not draw both eyes")
+
+    def check(name, x, y):
+        s.qmp.move_to(x + 399, y + 299)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            image = s.shot(name)
+            if image.crop((x, y, x + 150, y + 100)).tobytes() == reference(4).tobytes():
+                expect_taskbar_present(image, name)
+                return image
+            time.sleep(.2)
+        raise Failure("Xeyes differs from Linux after " + name)
+
+    # Start's installed pin targets the original Linux ELF, through the
+    # shell's shared open path. No wrapper executable imitates the client.
+    image = s.shot("before-xeyes")
+    s.qmp.move_to(*start_button_center(image)); s.qmp.click()
+    image = wait_menu_open(s)
+    pin = find_text(image, (0, 0, 400, image.height - 28), "Xeyes", TEXT, FACE)[0]
+    if pin is None:
+        raise Failure("the installed Xeyes Start shortcut is missing")
+    s.qmp.move_to(pin[0] + 10, pin[1] + 5); s.qmp.click(); time.sleep(8)
+    x, y = locate(s.shot("xeyes-from-start"))
+    # Move the real caption; the eyes must keep following global coordinates.
+    s.qmp.move_to(x + 40, y - 12)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    s.qmp.move_to(104, 52); time.sleep(.3)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(1)
+    x, y = locate(s.shot("xeyes-moved")); check("xeyes-moved-linux-pixels", x, y)
+    s.run("calc", wait=5)
+    # Bring Calculator over the eye window by dragging its real title bar.
+    image = s.shot("cover-open")
+    caption = find_text(image, (0, 0, image.width, image.height - 28), "Calculator", SELECT_TEXT, SELECT, which="title", solid_only=True)[0]
+    if caption is None:
+        raise Failure("the native/POSIX cover window did not open")
+    s.qmp.move_to(caption[0] + 30, caption[1] + 5)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    s.qmp.move_to(x + 30, y + 5); time.sleep(.3)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(1)
+    image = s.shot("xeyes-occluded")
+    if image.crop((x, y, x + 150, y + 100)).tobytes() == reference(4).tobytes():
+        raise Failure("the occlusion check did not cover Xeyes")
+    s.qmp.chord("alt", "f4"); time.sleep(2)
+    check("xeyes-restored-after-occlusion", x, y)
+    s.qmp.move_to(x + 142, y - 12); s.qmp.click(); time.sleep(2)
+
+    s.run("filesapp /system/linux/usr/bin", wait=6)
+    image = s.shot("files-original-linux-elf")
+    label = find_text(image, (0, 0, image.width, image.height - 28), "xeyes", TEXT, FIELD)[0]
+    if label is None:
+        raise Failure("Files does not list the original xeyes ELF")
+    s.qmp.move_to(label[0] + 10, label[1] + 4)
+    s.qmp.click(); time.sleep(.15); s.qmp.click(); time.sleep(8)
+    x, y = locate(s.shot("xeyes-from-files"))
+    check("xeyes-from-files-linux-pixels", x, y)
+    s.qmp.move_to(x + 142, y - 12); s.qmp.click(); time.sleep(2)
+    image = s.shot("xeyes-closed-files-remains")
+    expect_taskbar_present(image, "Xeyes closed")
+    if image.crop((x, y, x + 150, y + 100)).tobytes() == reference(4).tobytes():
+        raise Failure("the caption close left Xeyes on screen")
+
+
 SCENARIOS = {
+    "linux-xeyes": scenario_linux_xeyes,
     "linux-xclient": scenario_linux_xclient,
     "cursor_settings": scenario_cursor_settings,
     "sound": scenario_sound,

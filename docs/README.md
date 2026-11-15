@@ -129,7 +129,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   (`subsystem::register_trap_dispatcher`), the `linux` launcher and
   `SXN_SPAWN_FLAG_SUBSYSTEM`, the guest tree, the Linux start-up stack, the
   descriptor table, static BusyBox and dynamic musl profiles, the calls implemented,
-  the SUN `x11d` server, local streams, global pointer snapshots and the Linux smoke gates.
+  the SUN `x11d` server, local streams, global pointer snapshots, installed Xeyes
+  with Start/Files launch and the Linux smoke gates.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
   measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
   closure by hash, the L1-L5 fixtures and how they are built, the system call
