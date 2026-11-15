@@ -212,8 +212,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`PAINT.md`](desktop/PAINT.md) — Paint, the Accessories sketchbook: toolbox
   layout without widgets, the 8 tools, 8-deep undo, BMP/PNG files, and the
   selftest plus visual scenario.
-- [`WEBVIEWER.md`](desktop/WEBVIEWER.md) — Web Viewer, the in-tree browser prototype:
-  its rendering contract, the CSS subset, and what each milestone leaves out.
+- [`WEBVIEWER.md`](desktop/WEBVIEWER.md) — Web Viewer, the native SUN browser prototype:
+  its frontend/I/O and rendering contracts, CSS subset, and remaining limits.
 
 ## Media — `media/`
 

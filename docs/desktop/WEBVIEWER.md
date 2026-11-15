@@ -1,19 +1,34 @@
 # Web Viewer: the rendering contract
 
-> This documents the current POSIX prototype, whose remote loads still block
-> the UI. The first SUN socket foundation exists, but Web Viewer does not use
-> it yet. Complete SUN migration and asynchronous HTTP/validated HTTPS before
-> replacing the renderer with the pinned Ladybird engine. The plan and the
-> implementation checkpoint are in
-> [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#implementation-checkpoint--2026-11-09).
+> Web Viewer runs on SUN as `/system/webview.sxe` (N1). Remote loads still
+> block the UI: the worker and shared DNS/HTTP/validated HTTPS are later network
+> stages, before replacing this renderer with the pinned Ladybird engine.
+> See the [roadmap checkpoint](../roadmaps/open/WEBVIEWER_ROADMAP.md#implementation-checkpoint--2026-11-15).
 
-`/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
-of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and
-HTTP fetching by name or IP, and the rendering pipeline
-`parse → cascade → wrap → paint` in `subsystems/posix/userland/webview.c`.
+`/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
+browser prototype, in the spirit of IE 1.1: chrome (address bar, Back/Forward
+history, menus), local files and HTTP fetching by name or IP, and the rendering
+pipeline `parse → cascade → wrap → paint` in `system/webview/webview.c`.
 
 This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
+
+## Native frontend and I/O
+
+The frontend uses SUN's `sxngui_app` frame and compiled presentation resources;
+its title, icon, menus and renderer stay the same. Local files use
+`sxn_query_path`, `sxn_open_file` and partial `sxn_read` operations. TCP/UDP
+handles use `sxn_socket_*`, `sxn_read`/`sxn_write` and `sxn_wait_io`; a pending
+connection is checked with `sxn_socket_status` after readiness. These paths
+make no POSIX calls.
+
+The migration retains the optional initial path/URL, `--dns HOST:PORT`, the
+`dns://` override, `file://`, history, links, redirects, Reload and View Source.
+Socket retries use monotonic budgets (route setup six seconds, DNS replies two
+seconds per attempt, TCP connect and writes five seconds, reads ten seconds idle). This is still synchronous
+loading on the UI thread; cancellation/Stop and worker ownership belong to N3.
+The build installs only `/system/webview.sxe` and retires its old `/bin` copies,
+while preserving external applications and game assets.
 
 ## Selectors and origins
 
@@ -68,6 +83,12 @@ documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
 `./tools/shoot.sh --scenario webview` boots the system, opens local files,
 fetches from `tools/webview_http_server.py` over slirp, clicks a link, toggles
 source, follows a 302, and asserts glyphs of `tools/webview-test-www/` against
-the `libsxgfx` tables. Glyph asserts use `solid_only` where anti-aliased edges
+the platform font tables. Glyph asserts use `solid_only` where anti-aliased edges
 of neighbouring glyphs overlap: the harness blends against the background
 while the painter blends in sequence (see the scenario comments).
+
+The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
+launches `/system/webview.sxe /welcome.html`, and opens a `file://` URL.
+The SUN socket contract is checked by `smoke native-network` and
+`smoke native-network-offline`, including pending ARP, cancellation,
+initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

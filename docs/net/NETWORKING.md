@@ -233,7 +233,7 @@ against an adversary. No cache, no search domains, no AAAA, no TCP fallback
 on truncation, 512-byte cap, 2 s timeout with 2 attempts: each gap says so in
 the caller's status line.
 
-The only consumer today is the Web Viewer (`subsystems/posix/userland/webview.c`,
+The only consumer today is the Web Viewer (`system/webview/webview.c`,
 see [`WEBVIEWER.md`](../desktop/WEBVIEWER.md#names)): numeric addresses stay a
 local fast path, everything else resolves through this client. Two overrides
 exist for tests: `webview --dns 10.0.2.2:5353` at launch, and `dns://10.0.2.2:5353`

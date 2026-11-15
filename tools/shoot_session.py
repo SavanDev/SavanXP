@@ -2680,12 +2680,8 @@ def scenario_webview_http(s):
                     "el color de font", solid_only=True)
         expect_text(styled, (0, 0, width, height), "underline", (51, 51, 51), CREAM,
                     "el subrayado propio", solid_only=True)
-        # DNS: el resolver apunta al fixture con una URL dns:// (override
-        # tipeable en la instancia ya abierta) y luego la pagina por nombre.
-        # No por shell: lanzar con argumentos (ni pelado ni absoluto) abre
-        # ventana alguna y deja un "webview" rojo en stderr — pendiente del
-        # milestone del shell, no de este. Cada Enter saca el foco de la
-        # barra, asi que cada tipeo arranca con tab (de -1 va al campo).
+        # Change the resolver in the open window, then load by name. Enter
+        # leaves address focus, so Tab returns to it before each new location.
         def type_dns_url(url):
             s.qmp.type_text("dns")
             s.qmp.chord("shift", "dot")
@@ -2725,6 +2721,30 @@ def scenario_webview_http(s):
         width, height = nxdomain.size
         expect_text(nxdomain, (0, 0, width, height), "No such host", TEXT, FACE,
                     "el aviso de NXDOMAIN", solid_only=True)
+        # N1 also preserves launch arguments, DNS overrides and reload on SUN.
+        s.qmp.chord("alt", "f4")
+        time.sleep(2.0)
+        s.run("webview --dns 10.0.2.2:%s http://test.savanxp:%s/index.html" %
+              (dnsport, ready[1]))
+        launched = s.shot("webview-sun-dns-argv")
+        expect_text(launched, (0, 0, *launched.size), "It works over HTTP", TEXT, FIELD,
+                    "SUN DNS override and initial URL arguments", which="title", solid_only=True)
+        s.qmp.tap("f5", pause=6.0)
+        reloaded = s.shot("webview-sun-reload")
+        expect_text(reloaded, (0, 0, *reloaded.size), "It works over HTTP", TEXT, FIELD,
+                    "SUN reload", which="title", solid_only=True)
+        s.qmp.chord("alt", "f4")
+        time.sleep(2.0)
+        s.run("/system/webview.sxe /welcome.html")
+        local = s.shot("webview-sun-file-argv")
+        expect_text(local, (0, 0, *local.size), "Welcome to SavanXP", TEXT, FIELD,
+                    "SUN absolute executable and local-file argument", which="title")
+        s.qmp.chord("ctrl", "a")
+        s.qmp.type_line("file:///about.html")
+        s.qmp.tap("ret", pause=4.0)
+        file_url = s.shot("webview-sun-file-url")
+        expect_text(file_url, (0, 0, *file_url.size), "Going further", TEXT, FIELD,
+                    "SUN file URL", which="title")
     finally:
         server.terminate()
         server.wait()

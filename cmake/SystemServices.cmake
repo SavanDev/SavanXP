@@ -152,3 +152,6 @@ savanxp_program(NAME linuxtest TEST NATIVE SOURCES subsystems/linux/tests/linuxt
 # The win32-hello smoke scenario's runner: a SUN parent that runs the W1
 # fixtures through winhost and compares their output with Windows XP's.
 savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32test.c)
+
+# Web Viewer retains its renderer while moving to the native application frame.
+savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES webview.c)

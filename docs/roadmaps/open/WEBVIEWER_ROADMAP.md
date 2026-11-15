@@ -1,29 +1,29 @@
 # Web Viewer with Ladybird
 
-> **Status as of 2026-11-09: network foundation partially implemented; pending-connect contract tested.**
-> Web Viewer is still POSIX and its remote loads still block the UI.
-> Ladybird feasibility remains unproven on SavanXP; no Ladybird code has been
-> imported or built. The network delivery below precedes engine replacement.
+> **Status as of 2026-11-15: N1 complete — native socket contracts and SUN frontend.**
+> Web Viewer runs as `/system/webview.sxe`; remote loads still block the UI.
+> N2 (independent transport progress and correctness) is next. N3–N5 and all
+> Ladybird stages remain pending; no Ladybird code has been imported or built.
 
 ## Direction
 
 Develop Web Viewer as a native SUN browser using Ladybird's engine and a
 SavanXP frontend. Retire the NetSurf plan in full: no NetSurf library adoption,
 reference-browser port, or separate in-house CSS layout engine is planned.
-The current `/bin/webview` prototype remains available with the capabilities
+The current `/system/webview.sxe` prototype remains available with the capabilities
 recorded in [WEBVIEWER.md](../../desktop/WEBVIEWER.md).
 
-The intended native application is `/system/webview.sxe`, with SUN helpers.
-Migrating the existing POSIX application to SUN is a separate change with its
-own changelog entry and behavior checks. New platform gaps are delivered as
+The native application is `/system/webview.sxe`, with SUN helpers.
+The existing POSIX application was migrated to SUN in a separate change with
+its own changelog entry and behavior checks. New platform gaps are delivered as
 SUN slices with `nativetest` assertions, following [SUN.md](../../userland/SUN.md).
 Running the upstream browser through a compatibility subsystem is not the
 native browser milestone.
 
 ## Target architecture
 
-Keep Web Viewer's current chrome, history, local-file support and renderer while
-migrating the application to SUN. A reusable SUN loading library separates URL
+The SUN frontend retains Web Viewer's chrome, history, local-file support and
+renderer. A reusable SUN loading library separates URL
 resolution, DNS, transport and HTTP from rendering. Its result contract must
 carry the final URL, HTTP status, content type and body, or a structured error.
 
@@ -105,7 +105,66 @@ The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
 
-## Implementation checkpoint — 2026-11-09
+## Implementation checkpoint — 2026-11-15
+
+**N1 is complete.** The remaining setup/route contract and the application
+migration were delivered as separate changes. The historical checkpoints below
+record earlier partial states; this checkpoint supersedes their next-step lists.
+
+| Stage | Current state | Remaining work |
+|---|---|---|
+| N1 | Complete: cancelable native setup/ARP waits, retained transport errors, and `/system/webview.sxe` with its existing workflows. | None for this gate. |
+| N2 | Pending; progress still depends on consumers or parked waiters. | Independent bounded and synchronized servicing, complete asynchronous error handling, FIN retransmission and TIME_WAIT. |
+| N3 | Pending; native DNS and loading still run synchronously in Web Viewer. | Shared resolver/cache/validation/TCP fallback, worker, cancellation, Stop and stale-result handling. |
+| N4 | Pending; URL/HTTP handling remains in the application. | Reusable result contract, strict framing, redirects, limits, deadlines and protocol tests. |
+| N5 | Pending; HTTPS is not enabled. | Entropy and valid civil clock, audited shared OpenSSL, CA store, certificate validation and TLS fixtures. |
+
+### Delivered for N1
+
+- Native sockets advance NIC reset/link negotiation and ARP without sleeping
+  inside socket operations. Write/error readiness carries route completion;
+  events cancel waits and last close releases pending route state. The shared
+  TCP pump also avoids blocking on a POSIX socket's ARP. The six-second route
+  budget and UDP retry contract are maintained in
+  [SUN.md](../../userland/SUN.md#ipv4-socket-foundation).
+- `native-network` checks pending setup/ARP, cancellation, route timeout,
+  pending read/write, invalid user buffers, TCP success/refusal/reset/retry
+  timeout, partial reads, EOF and handle lifetime. `native-network-offline`
+  checks retained `ENODEV` through native status, readiness and I/O.
+- Web Viewer uses SUN files, sockets, waits, clock and the `sxngui_app` frame,
+  with compiled resources and no POSIX calls in its application paths. Its
+  interface, arguments, local files/URLs, DNS overrides, HTTP, history, links,
+  redirects, Reload, CSS and View Source remain covered by the visual scenario.
+  Only the old Web Viewer executables are retired by this migration.
+
+### Acceptance evidence
+
+| Command | Observed result |
+|---|---|
+| `./build.sh build` | Passed; `check_shared_libs: OK`, valid persistent image synced. |
+| `./build.sh test` | `100% tests passed out of 53`; three Win32 fixture tests skipped because `SAVANXP_WIN32_FIXTURES` is unset. |
+| `./build.sh smoke native-network` (RTL8139 and `--virtio`) | `NATIVE NETWORK PASS`. |
+| `./build.sh smoke native-network-offline` | `NATIVE NETWORK OFFLINE PASS`. |
+| `./build.sh smoke native-test`, `net-smoke`, `tcp-smoke`, `smoke` | Their respective `PASS` tokens. |
+| `./build.sh smoke windowd-smoke`, `taskbar-smoke`, `sxgui-smoke` | Their respective `PASS` tokens, including editor glyph/scroll and taskbar checks. |
+| `./tools/shoot.sh --scenario webview` | `webview: OK`; existing flows plus native argument/DNS, Reload and file-URL checks. |
+| `./tools/verify_doom_persistence.sh --jobs 8` | `Doom persistence: PASS`, with the deterministic WAD fixture. |
+
+The visual check's extracted executable matches the built SUN image by SHA-256
+and carries `EI_OSABI=0x53`, with both old `/bin` copies absent. Network tests
+also run with `native-network --virtio`; no physical RTL8168 hardware was
+available for verification.
+
+### Next implementation step — N2
+
+Give the shared TCP core bounded independent and synchronized servicing, so
+pending traffic progresses even without a consumer calling or waiting in the
+stack. Extend `tcp-smoke` for progress without consumer polling, simultaneous
+connections, close during operations and lost FIN; implement FIN retransmission
+and TIME_WAIT. Keep POSIX on that same core and initially retain one outstanding
+segment. Do not mark N2 complete from N1's waiter-driven network checks.
+
+## Historical checkpoint — 2026-11-09
 
 **Only the socket foundation portion of N1 is implemented. No network stage is
 complete, and Web Viewer itself has not been migrated or changed by this slice.**
