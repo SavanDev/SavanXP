@@ -142,6 +142,7 @@ different bytes, so each output below belongs to the hash it was taken from
 | `heap` | L2 | `fixtures/static/heap.c` | `67ac5b36bba61500ae2dfd6881e2bd7d8527e0bbc3df20cfc8afb5c58940b1f1` |
 | `clock` | L2 | `fixtures/static/clock.c` | `37e3924c62549c1ef6da8e64cfe1ca6e5c603b42c8a28e5a464ebe10157a685d` |
 | `files` | L2 | `fixtures/static/files.c` | `01d045cdc704fba616dc5ca9e55bb7852b70a033cc491b8cda18afe58a164c2b` |
+| `transport` | L5 | `fixtures/static/transport.c`, static musl | `5915b24a2fe1e59937f51e24c93f3f7d05e468f56cd1aeaffb8a37be25962a7e` |
 | `xclient` | L5 | `fixtures/xclient/xclient.c`, dynamic, Alpine's Xlib | `37fa1659c4ae26d05874e1ee5fa0b5805cece69bac98de49f944ed9592c9d5b8` |
 
 Sources are under `subsystems/linux/fixtures/`.

@@ -1,0 +1,13 @@
+name=Alpine Xlib profile libraries
+license=MIT/X11, BSD variants, ISC, Beerware and public-domain notices (see full texts)
+origin=https://www.x.org/
+version=Alpine 3.24.4 L0 pinned packages: X11 1.8.14, xcb 1.17.0, Xau 1.0.12, Xdmcp 1.1.5, bsd 0.12.2, md 1.2.0
+used-in=optional Linux L5 test runtime under /system/linux/usr/lib
+provenance=Alpine Xlib profile libraries
+note=Original Linux binaries, not linked into SavanXP programs; full copyright and license texts follow.
+text=assets/licenses/linux-x11/libX11-1.8.14-COPYING.txt
+text=assets/licenses/linux-x11/libXau-1.0.12-COPYING.txt
+text=assets/licenses/linux-x11/libXdmcp-1.1.5-COPYING.txt
+text=assets/licenses/linux-x11/libxcb-1.17.0-COPYING.txt
+text=assets/licenses/linux-x11/libbsd-0.12.2-COPYING.txt
+text=assets/licenses/linux-x11/libmd-1.2.0-COPYING.txt

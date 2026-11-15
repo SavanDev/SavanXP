@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL displays the unchanged Alpine Xlib `xclient` in a desktop window through the SUN `x11d` service.**
+  Local stream sockets, `poll`, pointer queries, drawing, resize and caption close are covered by `linux-xclient`.
+  SUN `sxnwm_query_pointer` and POSIX `gfx_query_pointer` expose desktop pointer snapshots; see [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL runs the unchanged dynamic Alpine `jq` and its musl libraries, including shared-library TLS.**
   `linux-dynamic` covers private file maps, `mprotect`, 320 simultaneous mappings and missing runtime files.
   Linux launches now report a missing interpreter as `ENOENT`; see [LINUX.md](docs/userland/LINUX.md).

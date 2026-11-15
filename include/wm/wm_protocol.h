@@ -62,3 +62,22 @@
 
 /* How long a client waits for the welcome before giving up. */
 #define SAVANXP_WM_CONNECT_TIMEOUT_MS 5000
+
+/* Bounded snapshot read: retry on a later event-loop pass if publication is
+ * in progress. Older servers have no tail and return ENOSYS. */
+static inline long savanxp_wm_query_pointer(
+    const struct savanxp_gpu_client_surface_header* header,
+    struct savanxp_wm_desktop_pointer* out) {
+    if (!header || !out) return -SAVANXP_EINVAL;
+    if (header->reserved1 != SAVANXP_WM_DESKTOP_POINTER_MAGIC) return -SAVANXP_ENOSYS;
+    const volatile struct savanxp_wm_desktop_pointer* source = &header->desktop_pointer;
+    for (int retry = 0; retry < 8; ++retry) {
+        const uint32_t sequence = source->sequence;
+        if (sequence & 1u) continue;
+        __asm__ volatile("" ::: "memory");
+        *out = *source;
+        __asm__ volatile("" ::: "memory");
+        if (sequence == source->sequence) return 0;
+    }
+    return -SAVANXP_EAGAIN;
+}

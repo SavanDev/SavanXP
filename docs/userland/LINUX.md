@@ -333,3 +333,108 @@ aligned and do not change the descriptor offset; shared maps and growing a
 file snapshot with `mremap` remain unsupported. See
 [MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md) for the eager snapshot's
 coherence and EOF contract.
+
+## L5: local streams and the X11 service
+
+The L5 implementation is present; its final regression verification is pending.
+The unchanged `xclient` fixture has SHA-256
+`37fa1659c4ae26d05874e1ee5fa0b5805cece69bac98de49f944ed9592c9d5b8`.
+It uses the pinned Alpine musl and six original libraries: X11, xcb, Xau,
+Xdmcp, bsd and md. Only test images stage this closure. The normal build
+preserves externally installed Linux programs and resources.
+
+### Stream ABI
+
+A socket is an SSL descriptor with a write handle and a read handle from
+`process::connect_port`, the neutral mechanism also used by SUN. Ordinary
+file descriptors still name one handle. The descriptor reserves its number
+before connection and closes both handles on close or process exit. SSL does
+not call the native or POSIX dispatchers.
+
+| Call | L5 forms |
+| --- | --- |
+| `socket` (41) | `AF_UNIX`, `SOCK_STREAM`, protocol 0, optional `SOCK_CLOEXEC` and `SOCK_NONBLOCK`; other families/protocols are refused |
+| `connect` (42) | `/tmp/.X11-unix/X0` and `X1` map to native ports `x11d.0` and `x11d.1`; abstract addresses return `ECONNREFUSED`, so libxcb retries the pathname |
+| `getpeername` (52) | The connected Unix address, with Linux's truncated-output and actual-length convention |
+| `getsockopt` (55) | `SOL_SOCKET`: `SO_SNDBUF` reports the actual 8192-byte output pipe, `SO_TYPE` is stream, `SO_ERROR` is 0 for this synchronous connection; other options are refused |
+| `fcntl` (72) | Adds `F_GETFL` and `F_SETFL` for `O_NONBLOCK`, keeping descriptor-local `FD_CLOEXEC` separate; both socket pipes follow nonblocking mode |
+| `poll` (7) | Up to 256 copied `pollfd` entries, read/write readiness, hangup, errors, invalid and negative descriptors, and finite/infinite waits; parked calls are rechecked by SSL's wait hook |
+| `recvmsg` (47), `recvfrom` (45) | Stream bytes with flags 0 or `MSG_DONTWAIT`, short reads, EOF and `EAGAIN`; vectors are validated before consuming input. No ancillary messages are supplied. A blocking vector read retries after the input pipe wakes |
+| `shutdown` (48) | Read, write or both halves; closing the write pipe supplies EOF to the server |
+| `access` (21) | Guest-root paths with the VFS's search and requested permission checks |
+| `uname` (63) | Linux `utsname` layout: `Linux`, host `savanxp`, the SavanXP version with `-ssl`, and machine `x86_64` |
+
+`read`, `write` and `writev` use the corresponding socket pipe. The send
+buffer is bounded, so libxcb may try `setsockopt` (54) to enlarge it; that
+call remains explicitly unimplemented (`ENOSYS`, logged once), and this
+profile continues with the actual buffer. Listening, descriptor passing,
+other address families and abstract-name listeners are outside L5.
+
+### Service lifetime and trust
+
+For `DISPLAY=:0`, `:0.0`, `:1` or `:1.0`, the SUN launcher starts
+`/system/x11d.sxe` on demand. There is no X service on the boot path. A
+readiness pipe and an acknowledged SUN lease keep the listener alive between
+startup and the Linux client's connection. Racing launchers share the named
+listener. Each lease or X connection has a SUN worker; an X worker acquires
+its own `windowd` connection after receiving its first setup bytes. A probe
+that supplies no setup creates no surface. The service reaps its workers
+and releases its port 500 ms after the last worker exits; its initial idle
+grace is five seconds. A launcher never terminates another client's service.
+
+The ports are ordinary user ports because a SUN launcher must also work as
+an ordinary user. SSL accepts a listener owned by the same effective uid or
+by the system; another user's listener is `EACCES`. X authorization data is
+not supported. This is a local desktop profile, not a network X server.
+
+### Protocol and drawing
+
+`subsystems/linux/x11/x11.c` is portable C, shared by the SUN adapter and the
+host TCP adapter. It accepts little-endian X11 protocol 11 clients, bounded
+64 KiB requests and fragmented streams. Invalid lengths, resource IDs,
+capacity and unsupported requests produce core X errors; an unresynchronizable
+or truncated stream fails the connection. There are 16 window slots, 32 GCs
+and 32 dynamic atoms per connection. Every extension is reported absent.
+
+L5 implements `CreateWindow`, `ChangeWindowAttributes`, `MapWindow`,
+`DestroyWindow`, `InternAtom`, the root's absent `RESOURCE_MANAGER` query,
+`WM_NAME` and `WM_PROTOCOLS`, `CreateGC`, `FreeGC`, filled rectangles and full
+ellipses, `QueryPointer`, `GetInputFocus` and `NoOperation`. The platform
+painter fills X11 ellipse spans using X11's edge convention; its ordinary
+ellipse primitive has a different convention and is unchanged. Resize sends
+`ConfigureNotify` followed by `Expose`; the fixture repaints at its new size.
+The caption's close request sends `WM_DELETE_WINDOW`; without that protocol
+the connection ends. Disconnect frees the connection's windows and bitmaps.
+
+The first desktop adapter supports one mapped top-level window per X client,
+with up to eight workers including launch leases. A second top-level or a
+child mapping is refused with `BadAlloc`, never drawn into the wrong surface.
+The portable engine keeps the tree, but the extra child-window and pixmap
+rendering needed by Xeyes is L6. This avoids changing windowd's one-main-window
+per-process policy before a measured consumer requires it.
+
+### Verification gates
+
+`linux-x11-protocol-test` feeds the real engine with split headers and bodies,
+truncated setup and requests, bad lengths and masks, duplicate IDs, exhausted
+resources, sequence wrap, resize and disconnect. `linux-x11-xlib-test` runs
+the unchanged pinned ELF through its original interpreter on Linux against
+the engine's TCP adapter. It compares the window pixels with L0's Linux
+capture, follows the recorded pointer path, resizes and closes cleanly.
+Without the pinned Alpine root it is reported as skipped.
+
+`linux-transport-reference-test` runs the static musl `transport` fixture on
+Linux against a real Unix listener. Before starting the desktop, `linux-xclient`
+runs the same fixture over a SUN port: descriptor flags, socket status and
+peer address, invalid buffers without consumed input, vector receives,
+nonblocking reads, poll timeout and invalid entries, half-close and EOF.
+
+`linux-xclient` runs the Xlib ELF through the SUN launcher inside QEMU. Its host
+callback compares every content pixel with the Linux capture, verifies root
+and local pointer coordinates along seven positions, drags the frame to
+260x180, verifies the repaint and clicks the caption's close button. The
+resized reference relocates the same Linux-rasterized shapes as the fixture
+does. The SUN parent checks exit status, the expected output, disappearance
+of the listener, the original process and desktop-handle counts, and reclaimed
+memory. Captures and logs stay under `build/smoke-logs/`. `tools/shoot.sh`
+also exercises the client in the normal desktop session.

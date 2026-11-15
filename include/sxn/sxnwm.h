@@ -837,3 +837,10 @@ static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) 
     out->sequence = sequence + 1u;
     return sxnwm_notify(ctx);
 }
+
+/* P1: every connected desktop client may query the pointer, including when
+ * another window has focus or the pointer is outside this client's area. */
+static inline long sxnwm_query_pointer(const struct sxnwm_client* ctx,
+    struct savanxp_wm_desktop_pointer* out) {
+    return ctx ? savanxp_wm_query_pointer(ctx->header, out) : -SAVANXP_EINVAL;
+}

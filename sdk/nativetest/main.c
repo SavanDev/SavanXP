@@ -3009,6 +3009,27 @@ int main(int argc, char** argv) {
         run_storage_user_child(argc, argv);
     }
 
+    /* P1's snapshot contract also works while the pointer is outside the
+     * client. Real windowd publication is exercised by linux-xclient. */
+    {
+        static struct savanxp_gpu_client_surface_header header;
+        struct savanxp_wm_desktop_pointer pointer;
+        struct sxnwm_client window = {0};
+        check(sxnwm_query_pointer(0, &pointer) == -SAVANXP_EINVAL);
+        check(sxnwm_query_pointer(&window, &pointer) == -SAVANXP_EINVAL);
+        window.header = &header;
+        check(sxnwm_query_pointer(&window, &pointer) == -SAVANXP_ENOSYS);
+        header.reserved1 = SAVANXP_WM_DESKTOP_POINTER_MAGIC;
+        header.desktop_pointer.sequence = 1;
+        check(sxnwm_query_pointer(&window, &pointer) == -SAVANXP_EAGAIN);
+        header.desktop_pointer.x = 900; header.desktop_pointer.y = 600;
+        header.desktop_pointer.origin_x = 20; header.desktop_pointer.origin_y = 30;
+        header.desktop_pointer.width = 1280; header.desktop_pointer.height = 800;
+        header.desktop_pointer.sequence = 2;
+        check(sxnwm_query_pointer(&window, &pointer) == 0 && pointer.x == 900 && pointer.y == 600 &&
+            pointer.origin_x == 20 && pointer.origin_y == 30 && pointer.width == 1280 && pointer.height == 800);
+    }
+
     /* Fullscreen launch policy rejects bad arguments before contacting windowd. */
     {
         struct sxnwm_client window = {0};

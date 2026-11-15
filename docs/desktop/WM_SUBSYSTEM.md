@@ -478,3 +478,27 @@ instead of staying at the old size with the new board centred inside it.
 Repeat hints resize in place: only the first one re-centres the window on its
 cascade slot, because after that the user has moved it and re-centring would
 teleport the window out from under the cursor.
+
+## Desktop pointer query (P1)
+
+Every client admitted to the desktop session can query the pointer's desktop
+position and buttons, the display size and its own client-area origin,
+independently of focus and hit-testing. No key state is exposed. This is a
+snapshot, not a subscription: clients that need motion events still use the
+normal event ring or pipe. During pointer capture the snapshot keeps the
+stationary desktop cursor position, as the cursor itself does.
+
+`windowd` publishes a seqlocked `savanxp_wm_desktop_pointer` tail in each
+client's surface header on every event-loop pass, including after display,
+window position and size changes. `reserved1 == SAVANXP_WM_DESKTOP_POINTER_MAGIC`
+identifies the optional v5 tail. Existing header field offsets are unchanged;
+command and pixel offsets already locate the data after the header. Old
+clients continue to work; a new client talking to an older server receives
+`ENOSYS` instead of reading beyond its header.
+
+SUN's `sxnwm_query_pointer` and POSIX's `gfx_query_pointer` return the same
+snapshot. A bounded read returns `EAGAIN` if publication is in progress.
+`x11d` is the first consumer: `QueryPointer` works outside its window and
+converts desktop coordinates through the supplied origin. `nativetest`
+asserts the snapshot and refusal contract, and `linux-xclient` proves the
+actual windowd publication along a recorded pointer path.

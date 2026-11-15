@@ -48,6 +48,34 @@ constexpr uint64_t kSysSetTidAddress = 218;
 constexpr uint64_t kSysClockGettime = 228;
 constexpr uint64_t kSysExitGroup = 231;
 
+// L5 local stream transport and its supporting calls.
+constexpr uint64_t kSysPoll = 7;
+constexpr uint64_t kSysAccess = 21;
+constexpr uint64_t kSysSocket = 41;
+constexpr uint64_t kSysConnect = 42;
+constexpr uint64_t kSysRecvfrom = 45;
+constexpr uint64_t kSysRecvmsg = 47;
+constexpr uint64_t kSysShutdown = 48;
+constexpr uint64_t kSysGetpeername = 52;
+constexpr uint64_t kSysGetsockopt = 55;
+constexpr uint64_t kSysUname = 63;
+constexpr uint32_t kOpenNonblock = 04000;
+struct Pollfd { int32_t fd; int16_t events; int16_t revents; };
+static_assert(sizeof(Pollfd) == 8);
+constexpr int16_t kPollIn = 1, kPollOut = 4, kPollErr = 8, kPollHup = 16, kPollNval = 32;
+struct Message {
+    uint64_t name;
+    uint32_t name_length;
+    uint32_t pad0;
+    uint64_t iov;
+    uint64_t iov_count;
+    uint64_t control;
+    uint64_t control_length;
+    int32_t flags;
+    uint32_t pad1;
+};
+static_assert(sizeof(Message) == 56);
+
 // Errors, returned negated in RAX.
 constexpr int64_t kEPERM = 1;
 constexpr int64_t kENOENT = 2;

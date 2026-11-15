@@ -21,6 +21,8 @@
 
 #define MAX_ENVIRONMENT 64
 
+static int32_t display_lease[2] = {-1, -1};
+
 static uint32_t length_of(const char *text) {
     uint32_t n = 0;
     while (text[n] != 0) {
@@ -45,6 +47,51 @@ static const char *reason(long error) {
     }
 }
 
+/* Start the display service only for a requested local display. A readiness
+ * pipe distinguishes a usable listener from merely having spawned a process.
+ * Racing launchers are safe: the port name has one creator. */
+static long start_display(char** environment, int count) {
+    int display = -1;
+    for (int i = 0; i < count; ++i) {
+        const char* value = environment[i];
+        if (value[0] == 'D' && value[1] == 'I' && value[2] == 'S' && value[3] == 'P' &&
+            value[4] == 'L' && value[5] == 'A' && value[6] == 'Y' && value[7] == '=') {
+            value += 8;
+            if (value[0] == ':' && (value[1] == '0' || value[1] == '1') &&
+                (!value[2] || (value[2] == '.' && value[3] == '0' && !value[4]))) display = value[1] - '0';
+            break;
+        }
+    }
+    if (display < 0) return 0;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        int32_t ready[2];
+        if (sxn_pipe_create(ready)) return -1;
+        char* args[] = {"/system/x11d.sxe", display ? ":1" : ":0"};
+        struct sxn_spawn_request request; sxn_spawn_request_init(&request, args[0], args, 2);
+        request.std_handles[1] = ready[1];
+        const long service = sxn_spawn_ex(&request);
+        (void)sxn_close(ready[1]);
+        unsigned char byte = 0;
+        int ok = service > 0 && sxn_wait_one(ready[0], 5000) >= 0 && sxn_read(ready[0], &byte, 1) == 1 && byte == 1;
+        (void)sxn_close(ready[0]);
+        if (ok && sxn_port_connect(display ? "x11d.1" : "x11d.0", display_lease) == 0) {
+            const unsigned char lease = 'L';
+            ok = sxn_write(display_lease[0], &lease, 1) == 1 && sxn_wait_one(display_lease[1], 5000) >= 0 &&
+                sxn_read(display_lease[1], &byte, 1) == 1 && byte == 1;
+            if (ok) return service;
+            (void)sxn_close(display_lease[0]); (void)sxn_close(display_lease[1]);
+            display_lease[0] = display_lease[1] = -1;
+        }
+        if (service > 0) {
+            struct sxn_process_query query;
+            if (sxn_process_query(service, &query) == 0 && query.state == SXN_PROCESS_ENDED) {
+                int status; (void)sxn_waitpid(service, &status);
+            }
+        }
+    }
+    return -1;
+}
+
 int main(int argc, char **argv) {
     char *environment[MAX_ENVIRONMENT];
     int envc = 0;
@@ -62,6 +109,9 @@ int main(int argc, char **argv) {
         put("usage: linux [-e NAME=VALUE]... GUEST_PATH [ARGUMENT]...\n");
         sxn_exit(127);
     }
+
+    const long display = start_display(environment, envc);
+    if (display < 0) { put("linux: cannot start the local X11 display\n"); return 127; }
 
     struct sxn_spawn_request request;
     sxn_spawn_request_init(&request, argv[first], argv + first, argc - first);
@@ -83,6 +133,14 @@ int main(int argc, char **argv) {
     if (sxn_waitpid(child, &status) != child) {
         put("linux: lost the program\n");
         sxn_exit(127);
+    }
+    if (display_lease[0] >= 0) (void)sxn_close(display_lease[0]);
+    if (display_lease[1] >= 0) (void)sxn_close(display_lease[1]);
+    // Reap an already ended readiness peer. A shared live display is never
+    // terminated just because this particular client ended.
+    struct sxn_process_query query;
+    if (display > 0 && sxn_process_query(display, &query) == 0 && query.state == SXN_PROCESS_ENDED) {
+        int service_status; (void)sxn_waitpid(display, &service_status);
     }
     return status;
 }

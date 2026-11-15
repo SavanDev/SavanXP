@@ -60,7 +60,7 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/libc.a" AND EXISTS "${SAVANXP_LINU
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
         OUTPUT_VARIABLE SSL_CLANG_RESOURCES OUTPUT_STRIP_TRAILING_WHITESPACE)
     set(SSL_MUSL "${SAVANXP_LINUX_MUSL_ROOT}")
-    foreach(fixture IN ITEMS args tls heap clock files tools)
+    foreach(fixture IN ITEMS args tls heap clock files tools transport)
         add_custom_command(OUTPUT "${SSL_OUT}/${fixture}"
             COMMAND "${CMAKE_C_COMPILER}" --target=x86_64-linux-musl -nostdinc
                     -isystem "${SSL_MUSL}/usr/include" -isystem "${SSL_CLANG_RESOURCES}/include"
@@ -93,6 +93,15 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/libc.a" AND EXISTS "${SAVANXP_LINU
         COMMAND "${Python3_EXECUTABLE}" "${SSL_ROOT}/profile/damage.py" "${SSL_OUT}/dynamic" "${SSL_OUT}" --dynamic
         DEPENDS "${SSL_OUT}/dynamic" "${SSL_ROOT}/profile/damage.py" VERBATIM)
     list(APPEND SSL_MUSL_FIXTURES dynamic libl4tls.so)
+    if(EXISTS "${SSL_MUSL}/usr/lib/libX11.so")
+        add_custom_command(OUTPUT "${SSL_OUT}/xclient"
+            COMMAND "${CMAKE_C_COMPILER}" ${SSL_DYNAMIC_FLAGS}
+                -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now
+                -o "${SSL_OUT}/xclient" "${SSL_MUSL}/usr/lib/crt1.o" "${SSL_MUSL}/usr/lib/crti.o"
+                "${SSL_ROOT}/fixtures/xclient/xclient.c" "-L${SSL_MUSL}/usr/lib" -lX11 -lc "${SSL_MUSL}/usr/lib/crtn.o"
+            DEPENDS "${SSL_ROOT}/fixtures/xclient/xclient.c" "${SSL_MUSL}/usr/lib/libX11.so" VERBATIM)
+        list(APPEND SSL_MUSL_FIXTURES xclient)
+    endif()
 else()
     message(STATUS "Linux musl fixtures: no Alpine root at ${SAVANXP_LINUX_MUSL_ROOT} "
         "(subsystems/linux/profile/profile.sh setup); linuxtest skips them")
@@ -189,3 +198,46 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/bin/jq" AND SAVANXP_INCLUDE_TEST_APPS)
             "${SSL_GUEST_FIXTURES}/expected/")
     endforeach()
 endif()
+
+# The same portable engine is tested through bytes and through a real Xlib
+# connection on the host. It uses the platform painter in both environments.
+add_library(savanxp_x11_host_engine STATIC
+    "${SSL_ROOT}/x11/x11.c" "${CMAKE_SOURCE_DIR}/system/gfx/gfx2d.c" "${CMAKE_SOURCE_DIR}/system/gfx/pixels.c")
+target_include_directories(savanxp_x11_host_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
+add_executable(savanxp-linux-x11-test "${CMAKE_SOURCE_DIR}/tests/host/linux_x11_test.c")
+target_link_libraries(savanxp-linux-x11-test PRIVATE savanxp_x11_host_engine)
+add_test(NAME linux-x11-protocol-test COMMAND savanxp-linux-x11-test)
+add_dependencies(savanxp_tests savanxp-linux-x11-test)
+add_executable(savanxp-linux-x11-server "${CMAKE_SOURCE_DIR}/tests/host/linux_x11_server.c")
+target_link_libraries(savanxp-linux-x11-server PRIVATE savanxp_x11_host_engine)
+add_dependencies(savanxp_tests savanxp-linux-x11-server)
+
+if(EXISTS "${SSL_MUSL}/usr/lib/libX11.so" AND SAVANXP_INCLUDE_TEST_APPS)
+    foreach(item IN ITEMS
+        "libX11.so.6.4.0|libX11.so.6|5a7c2df00148b914e9d66b7455680bd2a1b29a0eaef68b115a0133ce441d2a76"
+        "libxcb.so.1.1.0|libxcb.so.1|fd7bc55e8680c183fe038b22d5cc7407c323e3b1e1bd6ee488b57137124b0292"
+        "libXau.so.6.0.0|libXau.so.6|0fd15be141dc06c149f2f2b92408dc91f4429d1f872a3fb9a655490e8c994578"
+        "libXdmcp.so.6.0.0|libXdmcp.so.6|cb4e243ca95695d59f1de5abc8cb0092d5ac1066811302c0f874a9341778b7eb"
+        "libbsd.so.0.12.2|libbsd.so.0|a5b321623fe7274c695805b7f46bb2ed8ac4e970413a4930f09701a17c44ed21"
+        "libmd.so.0.2.0|libmd.so.0|4fd22b05b1297facf99c57988915345ff0ba033fbb2c6f07e4e3bb41fdedfeea")
+        string(REPLACE "|" ";" fields "${item}")
+        list(GET fields 0 source)
+        list(GET fields 1 destination)
+        list(GET fields 2 expected_hash)
+        file(SHA256 "${SSL_MUSL}/usr/lib/${source}" actual_hash)
+        if(NOT actual_hash STREQUAL expected_hash)
+            message(FATAL_ERROR "Linux L5 profile hash mismatch: ${source}")
+        endif()
+        list(APPEND SAVANXP_LINUX_COPY_COMMANDS
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/usr/lib"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SSL_MUSL}/usr/lib/${source}"
+                "${SAVANXP_DISKFS_ROOT}/system/linux/usr/lib/${destination}")
+    endforeach()
+endif()
+add_test(NAME linux-x11-xlib-test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/linux_xclient_test.py"
+        --server "$<TARGET_FILE:savanxp-linux-x11-server>" --root "${SAVANXP_LINUX_MUSL_ROOT}" --fixture "${SSL_OUT}/xclient")
+set_tests_properties(linux-x11-xlib-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_test(NAME linux-transport-reference-test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/linux_transport_test.py" "${SSL_OUT}/transport")
+set_tests_properties(linux-transport-reference-test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

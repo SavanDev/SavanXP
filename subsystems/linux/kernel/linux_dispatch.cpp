@@ -39,6 +39,7 @@
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "linux_abi.hpp"
+#include "shared/version.h"
 
 namespace ssl {
 namespace {
@@ -49,12 +50,18 @@ constexpr uint64_t kPage = 4096;
 // kernel's handle table is the smaller bound anyway.
 constexpr uint32_t kMaxDescriptors = 256;
 constexpr uint32_t kDescriptorCloseOnExec = 1u << 0;
+constexpr uint32_t kDescriptorSocket = 1u << 1;
+constexpr uint32_t kDescriptorNonblock = 1u << 2;
+constexpr uint32_t kNoSocketHandle = 0xffffffffu;
 
 // One descriptor: the kernel handle it names, plus one (0 is a free slot,
 // so zeroed state is an empty table), and its Linux flags.
 struct Descriptor {
     uint32_t handle_plus_one;
     uint32_t flags;
+    uint32_t read_handle_plus_one;
+    uint8_t display;
+    uint8_t shutdown;
 };
 
 // The per-process state the kernel reserves for SSL and never reads.
@@ -87,6 +94,13 @@ struct ThreadState {
     uint64_t transfer_output;
     size_t transfer_count;
     bool transfer_wait;
+    bool receive_wait;
+    uint64_t receive_handle;
+    uint64_t receive_syscall;
+    bool poll_active;
+    uint64_t poll_address;
+    uint32_t poll_count;
+    abi::Pollfd poll_entries[kMaxDescriptors];
 };
 
 ProcessState* state_of(process::Process& proc) {
@@ -172,10 +186,26 @@ ProcessState* descriptors_of(process::Process& proc) {
 bool handle_of(process::Process& proc, uint64_t descriptor, uint64_t& handle) {
     ProcessState* const state = descriptors_of(proc);
     if (state == nullptr || descriptor >= kMaxDescriptors ||
-        state->descriptors[descriptor].handle_plus_one == 0) {
+        state->descriptors[descriptor].handle_plus_one == 0 ||
+        state->descriptors[descriptor].handle_plus_one == kNoSocketHandle) {
         return false;
     }
     handle = state->descriptors[descriptor].handle_plus_one - 1;
+    return true;
+}
+
+Descriptor* descriptor_of(process::Process& proc, uint64_t number) {
+    auto* state = descriptors_of(proc);
+    if (!state || number >= kMaxDescriptors || !state->descriptors[number].handle_plus_one) return nullptr;
+    return &state->descriptors[number];
+}
+
+bool read_handle_of(process::Process& proc, uint64_t number, uint64_t& handle) {
+    auto* d = descriptor_of(proc, number);
+    if (!d) return false;
+    if (!(d->flags & kDescriptorSocket)) return handle_of(proc, number, handle);
+    if (!d->read_handle_plus_one || d->read_handle_plus_one == kNoSocketHandle) return false;
+    handle = d->read_handle_plus_one - 1;
     return true;
 }
 
@@ -227,6 +257,10 @@ int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::Pa
 
 // write(fd, buffer, count).
 process::SavedContext* linux_write(process::Thread& self, process::SavedContext* context) {
+    if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
+        if (d->shutdown & 2) { set_result(context, -SX_EPIPE); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+    }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
     uint64_t descriptor = 0;
@@ -255,6 +289,10 @@ process::SavedContext* linux_write(process::Thread& self, process::SavedContext*
 // the whole count. A later segment that would block ends the call short, and
 // the caller writes the rest, as musl's stdio does.
 process::SavedContext* linux_writev(process::Thread& self, process::SavedContext* context) {
+    if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
+        if (d->shutdown & 2) { set_result(context, -SX_EPIPE); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+    }
     const uint64_t vector = context->rsi;
     const uint64_t count = context->rdx;
     uint64_t descriptor = 0;
@@ -325,16 +363,19 @@ process::SavedContext* linux_writev(process::Thread& self, process::SavedContext
 // -ENOTTY, which is what Linux says of a file or a pipe for TCGETS and
 // TIOCGWINSZ, the two requests musl's stdio and isatty make.
 int64_t linux_ioctl(process::Process& proc, const process::SavedContext* context) {
-    uint64_t handle = 0;
-    return handle_of(proc, context->rdi, handle) ? -abi::kENOTTY : -abi::kEBADF;
+    return descriptor_of(proc, context->rdi) ? -abi::kENOTTY : -abi::kEBADF;
 }
 
 // read(fd, buffer, count).
 process::SavedContext* linux_read(process::Thread& self, process::SavedContext* context) {
+    if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
+        if (d->shutdown & 1) { set_result(context, 0); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+    }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
     uint64_t handle = 0;
-    if (!handle_of(*self.process, context->rdi, handle)) {
+    if (!read_handle_of(*self.process, context->rdi, handle)) {
         set_result(context, -abi::kEBADF);
         return context;
     }
@@ -428,17 +469,19 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
 
 // close(fd).
 int64_t linux_close(process::Process& proc, const process::SavedContext* context) {
-    uint64_t handle = 0;
-    if (!handle_of(proc, context->rdi, handle)) {
-        return -abi::kEBADF;
-    }
-    state_of(proc)->descriptors[context->rdi] = Descriptor{0, 0};
-    (void)sx::close_handle(proc, handle);
+    auto* d = descriptor_of(proc, context->rdi);
+    if (!d) return -abi::kEBADF;
+    const Descriptor old = *d;
+    *d = {};
+    if (old.handle_plus_one != kNoSocketHandle) (void)sx::close_handle(proc, old.handle_plus_one - 1);
+    if ((old.flags & kDescriptorSocket) && old.read_handle_plus_one && old.read_handle_plus_one != kNoSocketHandle)
+        (void)sx::close_handle(proc, old.read_handle_plus_one - 1);
     return 0;
 }
 
 // lseek(fd, offset, whence). A pipe, a socket or a device has no offset.
 int64_t linux_lseek(process::Process& proc, const process::SavedContext* context) {
+    if (auto* d = descriptor_of(proc, context->rdi); d && (d->flags & kDescriptorSocket)) return -abi::kESPIPE;
     uint64_t handle = 0;
     if (!handle_of(proc, context->rdi, handle)) {
         return -abi::kEBADF;
@@ -519,6 +562,12 @@ int64_t copy_stat_out(uint64_t user_out, const abi::Stat& value) {
 
 // fstat(fd, statbuf).
 int64_t linux_fstat(process::Process& proc, const process::SavedContext* context) {
+    if (auto* d = descriptor_of(proc, context->rdi); d && (d->flags & kDescriptorSocket)) {
+        abi::Stat value = {};
+        value.nlink = 1; value.dev = 1; value.blksize = kPage;
+        value.mode = abi::kModeSocket | 0777u;
+        return copy_stat_out(context->rsi, value);
+    }
     uint64_t handle = 0;
     if (!handle_of(proc, context->rdi, handle)) {
         return -abi::kEBADF;
@@ -650,12 +699,30 @@ int64_t linux_mkdir(process::Process& proc, const process::SavedContext* c) {
 }
 
 int64_t linux_fcntl(process::Process& proc, const process::SavedContext* c) {
-    uint64_t handle;
-    if (!handle_of(proc, c->rdi, handle)) return -abi::kEBADF;
-    auto& descriptor = descriptors_of(proc)->descriptors[c->rdi];
-    if (c->rsi == 1) return descriptor.flags & kDescriptorCloseOnExec ? 1 : 0; // F_GETFD
+    auto* d = descriptor_of(proc, c->rdi);
+    if (!d) return -abi::kEBADF;
+    if (c->rsi == 1) return d->flags & kDescriptorCloseOnExec ? 1 : 0; // F_GETFD
     if (c->rsi == 2) { // F_SETFD
-        descriptor.flags = c->rdx & 1 ? kDescriptorCloseOnExec : 0;
+        d->flags = (d->flags & ~kDescriptorCloseOnExec) | (c->rdx & 1 ? kDescriptorCloseOnExec : 0);
+        return 0;
+    }
+    if (c->rsi == 3) { // F_GETFL
+        if (d->flags & kDescriptorSocket) return 2 | (d->flags & kDescriptorNonblock ? abi::kOpenNonblock : 0);
+        auto* file = process::io_object_of(proc, d->handle_plus_one - 1);
+        if (!file) return -abi::kEBADF;
+        return (file->open_flags & process::open_write ? (file->open_flags & process::open_read ? 2 : 1) : 0) |
+            (file->open_flags & process::open_nonblock ? abi::kOpenNonblock : 0) | abi::kOpenLargeFile;
+    }
+    if (c->rsi == 4) { // F_SETFL
+        if (c->rdx & ~(3ull | abi::kOpenNonblock | abi::kOpenLargeFile)) return -abi::kEINVAL;
+        d->flags = (d->flags & ~kDescriptorNonblock) | (c->rdx & abi::kOpenNonblock ? kDescriptorNonblock : 0);
+        const uint32_t handles[] = {d->handle_plus_one, d->read_handle_plus_one};
+        for (uint32_t handle : handles) {
+            if (!handle || handle == kNoSocketHandle) continue;
+            auto* file = process::io_object_of(proc, handle - 1);
+            if (file) file->open_flags = (file->open_flags & ~process::open_nonblock) |
+                (c->rdx & abi::kOpenNonblock ? process::open_nonblock : 0);
+        }
         return 0;
     }
     report_unsupported(proc, abi::kSysFcntl, "fcntl command");
@@ -1006,6 +1073,284 @@ int64_t linux_set_tid_address(process::Thread& self, const process::SavedContext
     return static_cast<int64_t>(self.process->pid);
 }
 
+// AF_UNIX streams are subsystem descriptors over a neutral port's two pipes.
+// Only the measured X display paths are registered. Abstract names deliberately
+// return ECONNREFUSED, so libxcb retries the pathname as in the Linux profile.
+int64_t linux_socket(process::Process& proc, const process::SavedContext* c) {
+    if (c->rdi != 1) { report_unsupported(proc, abi::kSysSocket, "socket family"); return -97; }
+    if ((c->rsi & ~(02000000ull | 04000ull)) != 1 || c->rdx) return -93;
+    auto* state = descriptors_of(proc);
+    if (!state) return -abi::kENOMEM;
+    const int64_t fd = allocate_descriptor(*state, kNoSocketHandle - 1,
+        kDescriptorSocket | (c->rsi & 02000000 ? kDescriptorCloseOnExec : 0) |
+        (c->rsi & 04000 ? kDescriptorNonblock : 0));
+    return fd < 0 ? -abi::kEMFILE : fd;
+}
+
+Descriptor* socket_of(process::Process& proc, uint64_t fd, int64_t& error) {
+    auto* d = descriptor_of(proc, fd);
+    error = d ? -88 : -abi::kEBADF; // ENOTSOCK
+    return d && (d->flags & kDescriptorSocket) ? d : nullptr;
+}
+
+int64_t linux_connect(process::Process& proc, const process::SavedContext* c) {
+    int64_t error;
+    auto* d = socket_of(proc, c->rdi, error);
+    if (!d) return error;
+    if (d->handle_plus_one != kNoSocketHandle || d->shutdown) return -106; // EISCONN
+    if (c->rdx < 3 || c->rdx > 110) return -abi::kEINVAL;
+    unsigned char address[110] = {};
+    if (!sx::copy_from_user(address, c->rsi, c->rdx)) return -abi::kEFAULT;
+    if (address[0] != 1 || address[1]) return -97;
+    if (!address[2]) return -111;
+    const char* path = reinterpret_cast<const char*>(address + 2);
+    const char prefix[] = "/tmp/.X11-unix/X";
+    if (c->rdx < 19 || strncmp(path, prefix, sizeof(prefix) - 1) || (path[16] != '0' && path[16] != '1') ||
+        (c->rdx > 19 && path[17])) return -abi::kENOENT;
+    const uint8_t display = path[16] - '0';
+    int32_t handles[2];
+    // A desktop service may run as the caller's user, or as the system.
+    auto* service = object::find_port(display ? "x11d.1" : "x11d.0");
+    if (service && !cred::acts_as_system(service->creator) && service->creator.euid != proc.credentials.euid) return -abi::kEACCES;
+    const int result = process::connect_port(proc, display ? "x11d.1" : "x11d.0", handles);
+    if (result) return result == -SX_ENOENT ? -111 : result;
+    d->handle_plus_one = handles[0] + 1;
+    d->read_handle_plus_one = handles[1] + 1;
+    d->display = display;
+    if (d->flags & kDescriptorNonblock) {
+        process::io_object_of(proc, handles[0])->open_flags |= process::open_nonblock;
+        process::io_object_of(proc, handles[1])->open_flags |= process::open_nonblock;
+    }
+    return 0;
+}
+
+int64_t linux_getpeername(process::Process& proc, const process::SavedContext* c) {
+    int64_t error;
+    auto* d = socket_of(proc, c->rdi, error);
+    if (!d) return error;
+    if (!d->read_handle_plus_one) return -107;
+    uint32_t capacity;
+    if (!sx::copy_from_user(&capacity, c->rdx, sizeof(capacity)) ||
+        !sx::validate_user_range(c->rdx, sizeof(capacity), true)) return -abi::kEFAULT;
+    unsigned char address[20] = {1, 0};
+    memcpy(address + 2, "/tmp/.X11-unix/X0", 17);
+    address[18] += d->display;
+    const uint32_t length = 20;
+    const uint32_t copied = capacity < length ? capacity : length;
+    if ((copied && !sx::copy_to_user(c->rsi, address, copied)) ||
+        !sx::copy_to_user(c->rdx, &length, sizeof(length))) return -abi::kEFAULT;
+    return 0;
+}
+
+int64_t linux_getsockopt(process::Process& proc, const process::SavedContext* c) {
+    int64_t error;
+    if (!socket_of(proc, c->rdi, error)) return error;
+    if (c->rsi != 1 || (c->rdx != 7 && c->rdx != 3 && c->rdx != 4)) {
+        report_unsupported(proc, abi::kSysGetsockopt, "socket option"); return -92;
+    }
+    uint32_t capacity;
+    if (!sx::copy_from_user(&capacity, c->r8, sizeof(capacity)) ||
+        !sx::validate_user_range(c->r8, sizeof(capacity), true)) return -abi::kEFAULT;
+    const uint32_t length = capacity < 4 ? capacity : 4;
+    const int value = c->rdx == 7 ? process::detail::kPipeCapacity : (c->rdx == 3 ? 1 : 0);
+    if ((length && !sx::copy_to_user(c->r10, &value, length)) ||
+        !sx::copy_to_user(c->r8, &length, sizeof(length))) return -abi::kEFAULT;
+    return 0;
+}
+
+int64_t linux_shutdown(process::Process& proc, const process::SavedContext* c) {
+    int64_t error;
+    auto* d = socket_of(proc, c->rdi, error);
+    if (!d) return error;
+    if (c->rsi > 2) return -abi::kEINVAL;
+    if (!d->read_handle_plus_one) return -107;
+    // Publish the new state before releasing: pipe closure may recheck polls.
+    const uint32_t old_read = d->read_handle_plus_one;
+    const uint32_t old_write = d->handle_plus_one;
+    if (c->rsi != 1) { d->shutdown |= 1; d->read_handle_plus_one = kNoSocketHandle; }
+    if (c->rsi != 0) { d->shutdown |= 2; d->handle_plus_one = kNoSocketHandle; }
+    if (c->rsi != 1 && old_read != kNoSocketHandle) (void)sx::close_handle(proc, old_read - 1);
+    if (c->rsi != 0 && old_write != kNoSocketHandle) (void)sx::close_handle(proc, old_write - 1);
+    return 0;
+}
+
+int64_t linux_access(process::Process& proc, const process::SavedContext* c) {
+    if (c->rsi & ~7ull) return -abi::kEINVAL;
+    vfs::PathBuffer host;
+    const int64_t result = guest_path_from_user(proc, c->rdi, host);
+    if (result) return result;
+    if (!vfs::open(proc.credentials, host, 0, 0)) return vfs_failure();
+    return vfs::may_access(proc.credentials, host, c->rsi) ? 0 : -abi::kEACCES;
+}
+
+int64_t linux_uname(const process::SavedContext* c) {
+    char names[6][65] = {};
+    strcpy(names[0], "Linux");
+    strcpy(names[1], "savanxp");
+    strcpy(names[2], SAVANXP_VERSION_STRING "-ssl");
+    strcpy(names[3], "Savan Subsystem for Linux");
+    strcpy(names[4], "x86_64");
+    strcpy(names[5], "(none)");
+    return sx::copy_to_user(c->rdi, names, sizeof(names)) ? 0 : -abi::kEFAULT;
+}
+
+int evaluate_poll(process::Thread& self, ThreadState& state) {
+    int ready = 0;
+    for (uint32_t i = 0; i < state.poll_count; ++i) {
+        auto& p = state.poll_entries[i];
+        p.revents = 0;
+        if (p.fd < 0) continue;
+        auto* d = descriptor_of(*self.process, p.fd);
+        if (!d) p.revents = abi::kPollNval;
+        else if (d->flags & kDescriptorSocket) {
+            auto* input = d->read_handle_plus_one && d->read_handle_plus_one != kNoSocketHandle
+                ? process::io_object_of(*self.process, d->read_handle_plus_one - 1) : nullptr;
+            auto* output = d->handle_plus_one != kNoSocketHandle
+                ? process::io_object_of(*self.process, d->handle_plus_one - 1) : nullptr;
+            // POLLHUP on the input means the peer will never write again.
+            // A missing output reader is POLLERR, not a read hangup.
+            if (input) p.revents |= process::detail::poll_open_file(input, p.events & abi::kPollIn);
+            if (output) {
+                p.revents |= process::detail::poll_open_file(output, p.events & abi::kPollOut) & abi::kPollOut;
+                if (!output->pipe->reader_refs) p.revents |= abi::kPollErr;
+            }
+            if (d->shutdown & 1) p.revents |= (p.events & abi::kPollIn);
+            if (d->shutdown & 2) p.revents |= (p.events & abi::kPollOut);
+            if (d->shutdown == 3) p.revents |= abi::kPollHup;
+            if (!d->read_handle_plus_one) p.revents |= abi::kPollHup;
+        } else {
+            p.revents = process::detail::poll_open_file(
+                process::io_object_of(*self.process, d->handle_plus_one - 1), p.events);
+        }
+        if (p.revents) ++ready;
+    }
+    return ready;
+}
+
+bool commit_poll(process::Thread& self, ThreadState& state) {
+    return !state.poll_count || process::write_to_process_memory(*self.process, state.poll_address,
+        state.poll_entries, state.poll_count * sizeof(abi::Pollfd));
+}
+
+process::SavedContext* linux_poll(process::Thread& self, process::SavedContext* c) {
+    auto* state = thread_state_of(self);
+    if (!state) { set_result(c, -abi::kENOMEM); return c; }
+    if (c->rsi > kMaxDescriptors) { set_result(c, -abi::kEINVAL); return c; }
+    state->poll_count = c->rsi;
+    state->poll_address = c->rdi;
+    const size_t bytes = state->poll_count * sizeof(abi::Pollfd);
+    if (bytes && (!sx::validate_user_range(c->rdi, bytes, true) ||
+        !sx::copy_from_user(state->poll_entries, c->rdi, bytes))) {
+        set_result(c, -abi::kEFAULT); return c;
+    }
+    const int ready = evaluate_poll(self, *state);
+    const int32_t timeout = c->rdx;
+    if (ready || !timeout) { set_result(c, commit_poll(self, *state) ? ready : -abi::kEFAULT); return c; }
+    process::clear_wait_state(self);
+    state->poll_active = true;
+    self.wake_deadline_ms = timeout > 0 ? process::current_uptime_ms() + timeout : 0;
+    self.state = process::State::blocked_wait;
+    return process::choose_next_context(c);
+}
+
+// Receive into a validated vector without passing Linux metadata to the kernel.
+// A blocking receive parks before reading, then retries its instruction; a
+// partial vector is returned immediately, without waiting for another segment.
+process::SavedContext* linux_receive(process::Thread& self, process::SavedContext* c, bool message) {
+    auto& proc = *self.process;
+    int64_t error;
+    auto* d = socket_of(proc, c->rdi, error);
+    if (!d) { set_result(c, error); return c; }
+    const uint64_t flags = message ? c->rdx : c->r10;
+    if (flags & ~0x40ull) { report_unsupported(proc, c->rax, "receive flags"); set_result(c, -abi::kEINVAL); return c; }
+    if (!d->read_handle_plus_one) { set_result(c, -107); return c; }
+    if (d->shutdown & 1) { set_result(c, 0); return c; }
+    abi::Message header = {};
+    abi::Iovec single = {c->rsi, c->rdx};
+    uint64_t count = 1;
+    if (message) {
+        if (!sx::copy_from_user(&header, c->rsi, sizeof(header)) ||
+            !sx::validate_user_range(c->rsi, sizeof(header), true)) { set_result(c, -abi::kEFAULT); return c; }
+        count = header.iov_count;
+        if (count > abi::kIovMax) { set_result(c, -abi::kEINVAL); return c; }
+    } else if (c->r8) {
+        uint32_t length;
+        if (!sx::copy_from_user(&length, c->r9, 4) || !sx::validate_user_range(c->r9, 4, true) ||
+            (length && !sx::validate_user_range(c->r8, length, true))) { set_result(c, -abi::kEFAULT); return c; }
+    }
+    uint64_t length = 0;
+    for (uint64_t i = 0; i < count; ++i) {
+        abi::Iovec v = single;
+        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) { set_result(c, -abi::kEFAULT); return c; }
+        if (v.length > 0x7fffffffffffffffull - length) { set_result(c, -abi::kEINVAL); return c; }
+        length += v.length;
+        if (v.length && !sx::validate_user_range(v.base, v.length, true)) { set_result(c, -abi::kEFAULT); return c; }
+    }
+    if (!length) { set_result(c, 0); return c; }
+    const uint64_t handle = d->read_handle_plus_one - 1;
+    auto* input = process::io_object_of(proc, handle);
+    if (!input) { set_result(c, -abi::kEBADF); return c; }
+    if (!process::detail::poll_open_file(input, abi::kPollIn) &&
+        !(flags & 0x40) && !(d->flags & kDescriptorNonblock)) {
+        auto* state = thread_state_of(self);
+        if (!state) { set_result(c, -abi::kENOMEM); return c; }
+        process::clear_wait_state(self);
+        state->receive_handle = handle;
+        state->receive_syscall = c->rax;
+        state->receive_wait = true;
+        self.state = process::State::blocked_wait;
+        return process::choose_next_context(c);
+    }
+    // The neutral read uses user buffers, and its nonblocking bit also
+    // prevents parking after a short vector segment.
+    const uint32_t old_flags = input->open_flags;
+    input->open_flags |= process::open_nonblock;
+    int64_t total = 0;
+    for (uint64_t i = 0; i < count && total < static_cast<int64_t>(abi::kMaxRwCount); ++i) {
+        abi::Iovec v = single;
+        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) { if (!total) total = -abi::kEFAULT; break; }
+        if (!v.length) continue;
+        const uint64_t n = v.length < abi::kMaxRwCount - total ? v.length : abi::kMaxRwCount - total;
+        const int result = process::native_read_handle(self, handle, v.base, n);
+        if (result < 0) { if (!total) total = result; break; }
+        total += result;
+        if (static_cast<uint64_t>(result) < n) break;
+    }
+    input->open_flags = old_flags;
+    if (total >= 0) {
+        if (message) {
+            header.name_length = 0;
+            header.control_length = 0;
+            header.flags = 0;
+            if (!sx::copy_to_user(c->rsi, &header, sizeof(header))) total = -abi::kEFAULT;
+        } else if (c->r8) {
+            const uint32_t zero = 0;
+            if (!sx::copy_to_user(c->r9, &zero, 4)) total = -abi::kEFAULT;
+        }
+    }
+    set_result(c, total);
+    return c;
+}
+
+void recheck_transport(process::Thread& thread, uint64_t now, bool deadlines) {
+    auto* state = thread_state_of(thread);
+    if (!state) return;
+    if (state->poll_active) {
+        const int ready = evaluate_poll(thread, *state);
+        if (!ready && !(deadlines && thread.wake_deadline_ms && thread.wake_deadline_ms <= now)) return;
+        state->poll_active = false;
+        process::detail::complete_blocked_wait(thread, commit_poll(thread, *state) ? ready : -abi::kEFAULT);
+    } else if (state->receive_wait) {
+        auto* input = process::io_object_of(*thread.process, state->receive_handle);
+        if (input && !process::detail::poll_open_file(input, abi::kPollIn)) return;
+        state->receive_wait = false;
+        thread.context->rip -= 2;
+        process::detail::complete_blocked_wait(thread, state->receive_syscall);
+    } else {
+        recheck_transfer(thread, now, deadlines);
+    }
+}
+
 process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
     process::Thread* const self = smp::this_cpu().current;
     if (self == nullptr) {
@@ -1016,6 +1361,16 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
     process::Process& proc = *self->process;
 
     switch (context->rax) {
+        case abi::kSysSocket: set_result(context, linux_socket(proc, context)); return context;
+        case abi::kSysConnect: set_result(context, linux_connect(proc, context)); return context;
+        case abi::kSysGetpeername: set_result(context, linux_getpeername(proc, context)); return context;
+        case abi::kSysGetsockopt: set_result(context, linux_getsockopt(proc, context)); return context;
+        case abi::kSysShutdown: set_result(context, linux_shutdown(proc, context)); return context;
+        case abi::kSysAccess: set_result(context, linux_access(proc, context)); return context;
+        case abi::kSysUname: set_result(context, linux_uname(context)); return context;
+        case abi::kSysPoll: return linux_poll(*self, context);
+        case abi::kSysRecvfrom: return linux_receive(*self, context, false);
+        case abi::kSysRecvmsg: return linux_receive(*self, context, true);
         case abi::kSysRead:
             return linux_read(*self, context);
         case abi::kSysWrite:
@@ -1187,7 +1542,7 @@ bool linux_interpreter_source(void* credentials, const char* guest,
 }
 
 void initialize_linux_subsystem() {
-    subsystem::register_wait_recheck(subsystem::Id::linux, &ssl::recheck_transfer);
+    subsystem::register_wait_recheck(subsystem::Id::linux, &ssl::recheck_transport);
     subsystem::register_process_state_size(subsystem::Id::linux, sizeof(ssl::ProcessState));
     subsystem::register_thread_state_size(subsystem::Id::linux, sizeof(ssl::ThreadState));
     subsystem::register_dispatcher(subsystem::Id::linux, &ssl::dispatch_linux_int80);

@@ -355,3 +355,14 @@ and drops every outgoing SYN through `NET_IOC_SET_TCP_FAULT` to exercise the
 normal retransmission timeout. The injector is reset before the test exits.
 These tests service networking through parked waits; they do not prove progress
 without consumer polling or waiting.
+
+## Desktop pointer snapshot (P1)
+
+`sxnwm_query_pointer` reports the desktop pointer, buttons, screen dimensions
+and the client's content origin even outside its window or while another
+window has focus. It reads a bounded seqlock snapshot: `EAGAIN` while a write
+is in progress, `ENOSYS` on an older window server, `EINVAL` without a window
+or output. All admitted session clients may use it; it exposes no key state.
+`x11d` consumes it for X11 `QueryPointer`; `nativetest` and `linux-xclient`
+assert it. POSIX has the equivalent `gfx_query_pointer`. See
+[WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md#desktop-pointer-query-p1).

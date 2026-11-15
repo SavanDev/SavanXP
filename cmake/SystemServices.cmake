@@ -142,6 +142,8 @@ target_include_directories(winhost PRIVATE
 # SSL's launcher (docs/userland/LINUX.md#the-launcher): `linux GUEST_PATH`
 # starts a Linux program from the guest tree under /system/linux.
 savanxp_program(NAME linux NATIVE SOURCES subsystems/linux/launcher/linux.c)
+# The X11 server is a SUN program; its portable engine is shared by host tests.
+savanxp_program(NAME x11d NATIVE SOURCES subsystems/linux/x11/x11d.c subsystems/linux/x11/x11.c)
 
 # The linux-hello smoke scenario's runner: a SUN parent that runs the L1
 # fixtures through the launcher and compares their output with Linux's.

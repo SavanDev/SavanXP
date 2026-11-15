@@ -418,7 +418,139 @@ static int dynamic(const char *mode) {
     return g_failures != 0;
 }
 
+static long start_service(const char* path) {
+    char* args[] = {(char*)path};
+    struct sxn_spawn_request request; sxn_spawn_request_init(&request, path, args, 1);
+    return sxn_spawn_ex(&request);
+}
+
+static int transport(void) {
+    long port = sxn_port_create("x11d.1");
+    int32_t output[2];
+    if (port < 0 || sxn_pipe_create(output)) return 0;
+    char* args[] = {LAUNCHER, "/fixtures/transport"};
+    struct sxn_spawn_request request; sxn_spawn_request_init(&request, LAUNCHER, args, 2);
+    request.std_handles[1] = output[1]; request.std_handles[2] = output[1];
+    long child = sxn_spawn_ex(&request); (void)sxn_close(output[1]);
+    int ok = child > 0 && sxn_wait_one(port, 3000) >= 0;
+    struct sxn_port_connection connection;
+    if (ok) ok = sxn_port_accept(port, &connection) == 0;
+    if (ok) {
+        char byte;
+        int exchange = sxn_wait_one(connection.read_handle, 3000) >= 0 &&
+            sxn_read(connection.read_handle, &byte, 1) == 1 && byte == 'N';
+        if (exchange) exchange = sxn_write(connection.write_handle, "abcdEFGH", 8) == 8;
+        if (exchange) exchange = sxn_wait_one(connection.read_handle, 3000) >= 0 &&
+            sxn_read(connection.read_handle, &byte, 1) == 0;
+        if (exchange) exchange = sxn_write(connection.write_handle, "Z", 1) == 1;
+        (void)sxn_close(connection.read_handle); (void)sxn_close(connection.write_handle);
+        ok = exchange;
+    }
+    (void)sxn_close(port);
+    char result[128]; unsigned count = 0;
+    while (count + 1 < sizeof(result) && sxn_wait_one(output[0], 3000) >= 0) {
+        long n = sxn_read(output[0], result + count, sizeof(result) - count - 1);
+        if (n <= 0) break;
+        count += n;
+    }
+    result[count] = 0; (void)sxn_close(output[0]);
+    if (child > 0) {
+        if (!ok) (void)sxn_terminate(child, 1);
+        int status = -1; (void)sxn_waitpid(child, &status); if (status) ok = 0;
+    }
+    if (!same(result, "transport ok\n")) { say("linux transport: ", result, ""); ok = 0; }
+    say(ok ? "linux transport: nonblocking, vectors, poll, errors and half-close PASS" : "linux transport: FAIL", "", "");
+    return ok;
+}
+
+static int xclient(void) {
+    if (!transport()) { say("LINUX XCLIENT FAIL transport", "", ""); return 1; }
+    const long pause = sxn_event_create(0);
+    long compositor = start_service("/system/compositord.sxe");
+    long wm = 0;
+    int started = 0;
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        struct sxn_process_query query;
+        if (wm > 0 && sxn_process_query(wm, &query) == 0 && query.state == SXN_PROCESS_ENDED) {
+            int status; (void)sxn_waitpid(wm, &status); wm = 0;
+        }
+        if (wm <= 0) wm = start_service("/system/windowd.sxe");
+        int32_t handles[2];
+        if (sxn_port_connect("windowd", handles) == 0) {
+            (void)sxn_close(handles[0]); (void)sxn_close(handles[1]); started = 1; break;
+        }
+        (void)sxn_wait_one(pause, 100);
+    }
+    if (!started || compositor <= 0) { say("LINUX XCLIENT FAIL desktop startup", "", ""); return 1; }
+    (void)sxn_wait_one(pause, 500);
+    const int before = live_processes();
+    const uint64_t memory = settled_free_memory();
+    struct sxn_process_query wm_before, compositor_before;
+    if (sxn_process_query(wm, &wm_before) || sxn_process_query(compositor, &compositor_before)) ++g_failures;
+    int32_t output[2];
+    if (sxn_pipe_create(output)) { say("LINUX XCLIENT FAIL capture pipe", "", ""); return 1; }
+    char* args[] = {LAUNCHER, "-e", "DISPLAY=:0", "/fixtures/xclient"};
+    struct sxn_spawn_request request; sxn_spawn_request_init(&request, LAUNCHER, args, 4);
+    request.std_handles[1] = output[1]; request.std_handles[2] = output[1];
+    const long child = sxn_spawn_ex(&request); (void)sxn_close(output[1]);
+    if (child <= 0) { say("LINUX XCLIENT FAIL spawn", "", ""); return 1; }
+    (void)sxn_set_nonblocking(output[0], 1);
+    char line[256]; unsigned used = 0;
+    int mapped = 0, exposed = 0, resized = 0, redrawn = 0, deleted = 0, closed = 0;
+    const uint64_t deadline = sxn_clock_ns() + 90000000000ull;
+    for (;;) {
+        char byte;
+        const long n = sxn_read(output[0], &byte, 1);
+        if (!n) break;
+        if (n < 0) {
+            if (n != -SAVANXP_EAGAIN || sxn_clock_ns() >= deadline) { ++g_failures; break; }
+            (void)sxn_wait_one(output[0], 100); continue;
+        }
+        if (byte != '\n') { if (used + 1 < sizeof(line)) line[used++] = byte; else ++g_failures; continue; }
+        line[used] = 0; used = 0;
+        say("linux-xclient: ", line, "");
+        if (same(line, "window mapped")) ++mapped;
+        if (same(line, "expose 200x150")) {
+            if (!exposed) (void)sxn_log("LINUX XCLIENT READY");
+            ++exposed;
+        }
+        if (same(line, "resize 260x180")) ++resized;
+        if (same(line, "expose 260x180")) ++redrawn;
+        if (same(line, "delete requested")) ++deleted;
+        if (same(line, "closed")) ++closed;
+    }
+    (void)sxn_close(output[0]);
+    struct sxn_process_query child_query;
+    if (sxn_process_query(child, &child_query) == 0 && child_query.state != SXN_PROCESS_ENDED && g_failures)
+        (void)sxn_terminate(child, 1);
+    int status = -1; (void)sxn_waitpid(child, &status);
+    if (used || status || mapped != 1 || !exposed || resized != 1 || !redrawn || deleted != 1 || closed != 1) ++g_failures;
+    // The worker releases its window on exit, the service reaps it, and the
+    // idle service exits. Check the listener name, process count, desktop
+    // handles and reclaimed memory after that asynchronous cleanup.
+    int clean = 0;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        struct sxn_process_query wm_after, compositor_after;
+        if (live_processes() == before && sxn_process_query(wm, &wm_after) == 0 &&
+            sxn_process_query(compositor, &compositor_after) == 0 &&
+            wm_after.handle_count == wm_before.handle_count && compositor_after.handle_count == compositor_before.handle_count) {
+            int32_t handles[2];
+            long found = sxn_port_connect("x11d.0", handles);
+            if (found == -SAVANXP_ENOENT) { clean = 1; break; }
+            if (!found) { (void)sxn_close(handles[0]); (void)sxn_close(handles[1]); }
+        }
+        (void)sxn_wait_one(pause, 50);
+    }
+    if (!clean || settled_free_memory() + (1u << 20) < memory) ++g_failures;
+    say(clean ? "linux-xclient: process, port and desktop handles returned" : "linux-xclient: FAIL leaked resources", "", "");
+    (void)sxn_terminate(wm, 0); (void)sxn_terminate(compositor, 0);
+    (void)sxn_waitpid(wm, &status); (void)sxn_waitpid(compositor, &status); (void)sxn_close(pause);
+    say(g_failures ? "LINUX XCLIENT FAIL" : "LINUX XCLIENT PASS", "", "");
+    return g_failures != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && same(argv[1], "--xclient")) return xclient();
     if (argc > 1 && same(argv[1], "--dynamic")) return dynamic(argc > 2 ? argv[2] : "normal");
     if (argc > 1 && same(argv[1], "--tools")) return tools();
     if (argc > 1 && same(argv[1], "--restart")) {

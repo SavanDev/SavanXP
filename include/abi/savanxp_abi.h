@@ -1281,6 +1281,18 @@ struct savanxp_wm_client_requests {
     uint32_t pointer_reserved;
 };
 
+/* A window client's desktop pointer snapshot, published by windowd even
+ * outside the window. Coordinates are desktop pixels; origin is the client
+ * area's top-left. No keyboard state is exposed. sequence is a seqlock. */
+#define SAVANXP_WM_DESKTOP_POINTER_MAGIC 0x31525450u /* PTR1 */
+struct savanxp_wm_desktop_pointer {
+    uint32_t sequence;
+    int32_t x, y;
+    int32_t origin_x, origin_y;
+    uint32_t buttons;
+    uint32_t width, height;
+};
+
 struct savanxp_gpu_client_surface_header {
     uint32_t magic;
     uint32_t pixels_offset;
@@ -1297,6 +1309,9 @@ struct savanxp_gpu_client_surface_header {
     uint64_t retired_sequence;
     uint64_t composed_sequence;
     struct savanxp_wm_client_requests requests;
+    /* Optional v5 tail, identified by reserved1 == DESKTOP_POINTER_MAGIC.
+     * Existing field offsets and the pixel/command offsets stay valid. */
+    struct savanxp_wm_desktop_pointer desktop_pointer;
 };
 
 enum savanxp_mouse_button {

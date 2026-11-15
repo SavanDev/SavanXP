@@ -395,6 +395,12 @@ int readdir_node(Process& proc, uint64_t fd, uint64_t user_buffer, size_t capaci
 int ioctl_handle(Process& proc, uint64_t fd, uint64_t request, uint64_t argument);
 int read_handle(Thread& self, uint64_t fd, uint64_t user_buffer, size_t count);
 int write_handle(Thread& self, uint64_t fd, uint64_t user_buffer, size_t count);
+// Two unidirectional pipe handles, write then read, or a negative error.
+// Kernel buffers only; callers translate their own user layouts.
+// An optional publisher can validate/copy a caller's result before enqueue;
+// failure rolls back the connection and both handles, without a pending peer.
+int connect_port(Process& proc, const char* name, int32_t handles[2], cred::Credentials* creator = nullptr,
+    bool (*publish)(void*, const int32_t*, const cred::Credentials&) = nullptr, void* context = nullptr);
 int create_pipe(Process& proc, uint64_t user_fd_array);
 int pipe_send_handle(Process& proc, uint64_t pipe_fd, uint64_t handle_fd);
 int pipe_receive_handle(Process& proc, uint64_t pipe_fd);

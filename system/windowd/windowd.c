@@ -6773,6 +6773,32 @@ static void refresh_cursor_after_move(
     session->cursor_moved = 1;
 }
 
+/* Publish independently of focus and hit-testing. The snapshot contains no
+ * key state and is available to every client admitted to this session. */
+static void publish_client_pointer(struct windowd_client* client,
+    int x, int y, uint32_t buttons, uint32_t width, uint32_t height) {
+    if (!client->header || client->pid <= 0) return;
+    struct savanxp_wm_desktop_pointer* out = &client->header->desktop_pointer;
+    const struct sx_rect area = windowd_client_surface_rect(client);
+    uint32_t sequence = out->sequence | 1u;
+    out->sequence = sequence;
+    __asm__ volatile("" ::: "memory");
+    out->x = x; out->y = y;
+    out->origin_x = area.x; out->origin_y = area.y;
+    out->buttons = buttons;
+    out->width = width; out->height = height;
+    __asm__ volatile("" ::: "memory");
+    out->sequence = sequence + 1u;
+    client->header->reserved1 = SAVANXP_WM_DESKTOP_POINTER_MAGIC;
+}
+
+static void publish_desktop_pointer(struct windowd_session* session, int x, int y, uint32_t buttons) {
+    for (int i = 0; i < WINDOWD_MAX_OVERLAY_CLIENTS; ++i)
+        publish_client_pointer(&session->overlay_clients[i], x, y, buttons, session->gfx.info.width, session->gfx.info.height);
+    for (int i = 0; i < WINDOWD_DESKTOP_WINDOW_COUNT; ++i)
+        publish_client_pointer(&session->desktop_windows[i], x, y, buttons, session->gfx.info.width, session->gfx.info.height);
+}
+
 static void handle_pointer_event(
     struct windowd_session *session,
     const struct savanxp_mouse_event *event,
@@ -7315,6 +7341,7 @@ int main(int argc, char **argv)
             service_client_cursor_hints(&session.overlay_clients[slot]);
         }
         service_client_starts(&session, &dirty);
+        publish_desktop_pointer(&session, cursor_x, cursor_y, last_buttons);
 
         if (!session.cursor_moved && !windowd_dirty_rect_valid(&dirty))
         {

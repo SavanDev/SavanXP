@@ -192,6 +192,36 @@ which is why both go into the registry.
 - Credit for the original game: Maddy Thorson and Noel Berry, per upstream's
   README
 
+### Alpine Xlib profile libraries
+
+- Origin: X.Org's [individual library releases](https://www.x.org/releases/individual/lib/)
+  and [libbsd/libmd releases](https://libbsd.freedesktop.org/releases/), as
+  original Alpine 3.24.4 Linux x86-64 binaries. Package versions and archive
+  hashes are pinned in `subsystems/linux/profile/alpine.lock`; installed
+  binary hashes are in [LINUX_XEYES_PROFILE.md](../userland/LINUX_XEYES_PROFILE.md)
+  and checked by CMake before staging.
+- Versioned: no binaries or source archives. The full upstream `COPYING`
+  files are versioned in `assets/licenses/linux-x11/`.
+- License reviewed: X11/MIT for X11, xcb, Xau and Xdmcp; libbsd and libmd
+  contain BSD variants, ISC, Beerware and public-domain components. Their
+  complete copyright-format documents preserve the per-file notices and
+  all applicable license texts; these are not relicensed as SavanXP MIT.
+- Decision: `Adopt` as unchanged compatibility-profile binaries, not code
+  linked into the kernel or SUN server.
+- Distributed in: optional test-image `/system/linux/usr/lib/` only.
+  `linux-x11.notice` stages the notices under `/system/licenses`.
+
+The reviewed source releases and SHA-256 hashes (all `.tar.xz`):
+
+| Release | SHA-256 |
+| --- | --- |
+| libX11 1.8.14 | `bbc78c46217174655c2b32b138ad119f3ac15f50808b4d0b3a2677a4b1afc950` |
+| libxcb 1.17.0 | `599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55` |
+| libXau 1.0.12 | `74d0e4dfa3d39ad8939e99bda37f5967aba528211076828464d2777d477fc0fb` |
+| libXdmcp 1.1.5 | `d8a5222828c3adab70adf69a5583f1d32eb5ece04304f7f8392b6a353aa2228c` |
+| libbsd 0.12.2 | `b88cc9163d0c652aaf39a99991d974ddba1c3a9711db8f1b5838af2a14731014` |
+| libmd 1.2.0 | `ac15ffb8430502fbaccdec66c5a82ee0eab0b0f36220df56710feadfeb13d0a0` |
+
 ## Bootloader
 
 ### Limine
@@ -344,6 +374,10 @@ These adoptions are of design, not of code: no lines are copied, so there is
 nothing to license or redistribute. The decision and the reason for each live
 in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 
+- X Consortium's [X11R7.7 core protocol](https://www.x.org/releases/X11R7.7/doc/xproto/x11protocol.html):
+  the wire encoding, resource errors, events and ellipse edge convention of
+  SSL's portable X11 engine. `Reference`: implemented here, with no X server
+  code copied and no third-party engine linked into `x11d`.
 - SerenityOS (BSD-2-Clause): `WindowServer` and `Compositor` for the
   compositor architecture, the dirty regions and the occlusion; `LibGfx`
   (`Bitmap`, `Painter`, `DisjointRectSet`) for the toolkit and rect handling;

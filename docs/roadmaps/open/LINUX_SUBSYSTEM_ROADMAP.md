@@ -303,8 +303,9 @@ L6, and no fixture before L7 may rely on them.
 
 `connect` on an `AF_UNIX` stream socket looks its address up in a table the
 subsystem owns and opens the native port bound to it. The first entry maps
-display 0, in both the abstract and the path form libxcb tries, to the port
-`x11d` creates. The socket descriptor wraps the connection's two pipes;
+displays 0 and 1 in pathname form to the ports `x11d` creates. The
+abstract attempt is refused, as in the measured L0 profile, and libxcb retries
+the pathname. The socket descriptor wraps the connection's two pipes;
 `poll`, `writev`, `recvmsg` and the rest act on them. Listening sockets, file
 descriptor passing and other address families are not in the profile.
 
@@ -553,6 +554,13 @@ pointer path and closes from the caption without leaving a process,
 connection, port or surface. The protocol engine passes its host tests,
 including malformed and truncated requests. Native and POSIX windows and the
 taskbar behave as before. `linux-xclient` is a smoke scenario.
+
+**Implementation under final verification:** the unchanged pinned `xclient`
+has run through the SUN `x11d` adapter. Host protocol and real-Xlib tests,
+plus `linux-xclient`, cover pixels, the recorded pointer path, resize,
+caption close and cleanup. The implementation and its bounded first profile
+are described in [LINUX.md](../../userland/LINUX.md#l5-local-streams-and-the-x11-service).
+L5 is not marked closed until the final regression suite passes.
 
 ### L6 — Xeyes
 

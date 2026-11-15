@@ -543,68 +543,22 @@ sxn_identity identity_of(const cred::Credentials& who) {
 /* `user_creator`, when not 0, receives who created the port (CONNECT_EX). */
 int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles, uint64_t user_creator) {
     char name[object::kPortNameCapacity] = {};
-    object::IoObject* request_reader = nullptr;
-    object::IoObject* request_writer = nullptr;
-    object::IoObject* reply_reader = nullptr;
-    object::IoObject* reply_writer = nullptr;
+
 
     if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0' ||
         !sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true) ||
         (user_creator != 0 && !sx::validate_user_range(user_creator, sizeof(sxn_identity), true))) {
         return sx::negative_error(SX_EINVAL);
     }
-    object::PortObject* port = object::find_port(name);
-    if (port == nullptr) {
-        return sx::negative_error(SX_ENOENT);
-    }
-    if (port->pending_count >= object::kPortPendingCapacity) {
-        return sx::negative_error(SX_EAGAIN);
-    }
-    if (!detail::create_pipe_pair(request_reader, request_writer)) {
-        return sx::negative_error(SX_ENOMEM);
-    }
-    if (!detail::create_pipe_pair(reply_reader, reply_writer)) {
-        object::Header* a = &request_reader->header;
-        object::Header* b = &request_writer->header;
-        object::release(a);
-        object::release(b);
-        return sx::negative_error(SX_ENOMEM);
-    }
-
-    const int write_handle = detail::allocate_fd(
-        proc, &request_writer->header, detail::object_access_for_open_flags(open_write), object::handle_none);
-    const int read_handle = write_handle < 0 ? write_handle : detail::allocate_fd(
-        proc, &reply_reader->header, detail::object_access_for_open_flags(open_read), object::handle_none);
-    // The handle table took its own references; the creation ones go.
-    object::Header* owned_request_writer = &request_writer->header;
-    object::Header* owned_reply_reader = &reply_reader->header;
-    object::release(owned_request_writer);
-    object::release(owned_reply_reader);
-
-    object::PortConnection connection = {};
-    connection.client_pid = proc.pid;
-    connection.client = proc.credentials;
-    connection.server_read = &request_reader->header;
-    connection.server_write = &reply_writer->header;
-    const int32_t values[2] = {write_handle, read_handle};
-    const sxn_identity creator = identity_of(port->creator);
-
-    if (write_handle < 0 || read_handle < 0 ||
-        !sx::copy_to_user(user_handles, values, sizeof(values)) ||
-        (user_creator != 0 && !sx::copy_to_user(user_creator, &creator, sizeof(creator))) ||
-        !object::port_enqueue(port, connection)) {
-        if (write_handle >= 0) {
-            (void)native_close(proc, static_cast<uint64_t>(write_handle));
-        }
-        if (read_handle >= 0) {
-            (void)native_close(proc, static_cast<uint64_t>(read_handle));
-        }
-        object::release(connection.server_read);
-        object::release(connection.server_write);
-        return write_handle < 0 ? write_handle : (read_handle < 0 ? read_handle : sx::negative_error(SX_EAGAIN));
-    }
-    detail::wake_waiters_for_object(&port->header);
-    return 0;
+    struct Output { uint64_t handles, creator; } output = {user_handles, user_creator};
+    int32_t handles[2];
+    return connect_port(proc, name, handles, nullptr,
+        [](void* opaque, const int32_t* values, const cred::Credentials& who) {
+            const auto& out = *static_cast<Output*>(opaque);
+            const sxn_identity identity = identity_of(who);
+            return sx::copy_to_user(out.handles, values, sizeof(int32_t) * 2) &&
+                (!out.creator || sx::copy_to_user(out.creator, &identity, sizeof(identity)));
+        }, &output);
 }
 
 // The handles of a WAIT_MANY: objects as WAIT_ONE takes them, or streams opened

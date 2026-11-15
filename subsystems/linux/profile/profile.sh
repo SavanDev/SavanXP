@@ -112,7 +112,7 @@ cmd_fixtures() {
     clang $target -nostdlib -static -ffreestanding -fno-builtin -fno-stack-protector -O1 \
         -fuse-ld=lld -s -Wl,--build-id=none \
         -o "$f/regions" "$fixsrc/regions/regions.c"
-    for n in args tls heap clock files tools; do
+    for n in args tls heap clock files tools transport; do
         musl_static "$fixsrc/static/$n.c" "$f/$n"
     done
     local dynflags=(--target=x86_64-linux-musl -nostdinc -isystem "$root/usr/include"
@@ -128,7 +128,7 @@ cmd_fixtures() {
         -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now \
         -o "$f/xclient" "$root/usr/lib/crt1.o" "$root/usr/lib/crti.o" \
         "$fixsrc/xclient/xclient.c" -L"$root/usr/lib" -lX11 -lc "$root/usr/lib/crtn.o"
-    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files tools dynamic libl4tls.so xclient)
+    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files tools transport dynamic libl4tls.so xclient)
 }
 
 # strace of one command; stdout and the exit status are kept beside it.

@@ -1704,6 +1704,69 @@ void copy_subsystem_state(Process& child, const process::Process& parent) {
     }
 }
 
+// Connect a named service using kernel buffers. Each subsystem owns its ABI.
+int connect_port(Process& proc, const char* name, int32_t handles[2], cred::Credentials* creator,
+    bool (*publish)(void*, const int32_t*, const cred::Credentials&), void* context) {
+    object::IoObject* request_reader = nullptr;
+    object::IoObject* request_writer = nullptr;
+    object::IoObject* reply_reader = nullptr;
+    object::IoObject* reply_writer = nullptr;
+    object::PortObject* port = object::find_port(name);
+    if (port == nullptr) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    if (port->pending_count >= object::kPortPendingCapacity) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    if (!detail::create_pipe_pair(request_reader, request_writer)) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    if (!detail::create_pipe_pair(reply_reader, reply_writer)) {
+        object::Header* a = &request_reader->header;
+        object::Header* b = &request_writer->header;
+        object::release(a);
+        object::release(b);
+        return sx::negative_error(SX_ENOMEM);
+    }
+
+    const int write_handle = detail::allocate_fd(
+        proc, &request_writer->header, detail::object_access_for_open_flags(open_write), object::handle_none);
+    const int read_handle = write_handle < 0 ? write_handle : detail::allocate_fd(
+        proc, &reply_reader->header, detail::object_access_for_open_flags(open_read), object::handle_none);
+    // The handle table took its own references; the creation ones go.
+    object::Header* owned_request_writer = &request_writer->header;
+    object::Header* owned_reply_reader = &reply_reader->header;
+    object::release(owned_request_writer);
+    object::release(owned_reply_reader);
+
+    object::PortConnection connection = {};
+    connection.client_pid = proc.pid;
+    connection.client = proc.credentials;
+    connection.server_read = &request_reader->header;
+    connection.server_write = &reply_writer->header;
+
+    const int32_t values[2] = {write_handle, read_handle};
+    const bool publish_failed = write_handle >= 0 && read_handle >= 0 && publish &&
+        !publish(context, values, port->creator);
+    if (write_handle < 0 || read_handle < 0 || publish_failed ||
+        !object::port_enqueue(port, connection)) {
+        if (write_handle >= 0) {
+            (void)sx::close_handle(proc, static_cast<uint64_t>(write_handle));
+        }
+        if (read_handle >= 0) {
+            (void)sx::close_handle(proc, static_cast<uint64_t>(read_handle));
+        }
+        object::release(connection.server_read);
+        object::release(connection.server_write);
+        return write_handle < 0 ? write_handle : (read_handle < 0 ? read_handle : sx::negative_error(publish_failed ? SX_EINVAL : SX_EAGAIN));
+    }
+    handles[0] = write_handle;
+    handles[1] = read_handle;
+    if (creator != nullptr) *creator = port->creator;
+    detail::wake_waiters_for_object(&port->header);
+    return 0;
+}
+
 void clear_wait_state(process::Thread& thread) {
     // Detach first: releasing a pipe can wake and recheck other waiters.
     object::Header* retained[process::kMaxWaitHandles] = {};

@@ -303,6 +303,7 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
  * sxnwm_set_title. 0, -EINVAL or -EIO. */
 /* Fullscreen at desktop resolution; restores window geometry when disabled. */
 long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled);
+long gfx_query_pointer(const struct savanxp_gfx_context* context, struct savanxp_wm_desktop_pointer* out);
 long gfx_set_title(const struct savanxp_gfx_context* context, const char* title);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
  * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en

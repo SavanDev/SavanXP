@@ -1503,3 +1503,7 @@ long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gf
     window->window_id = 0;
     return 0;
 }
+
+long gfx_query_pointer(const struct savanxp_gfx_context* context, struct savanxp_wm_desktop_pointer* out) {
+    return context ? savanxp_wm_query_pointer(context->header, out) : -SAVANXP_EINVAL;
+}

@@ -3592,7 +3592,31 @@ def scenario_cursor_settings(s):
     click(x+300,y+489)
 
 
+def scenario_linux_xclient(s):
+    """The unchanged Linux client in the ordinary desktop session."""
+    from win32_input import find_run
+    from linux_xclient_smoke import reference
+    s.run("linux -e DISPLAY=:0 /fixtures/xclient", wait=10)
+    s.qmp.move_to(10, 460)
+    image = s.shot("linux-xclient-open")
+    found = find_run(image.width, image.height, image.tobytes(), (255, 255, 255), 200)
+    if found is None:
+        raise Failure("the Linux Xlib window did not appear")
+    x, y = found
+    if image.crop((x, y, x + 200, y + 150)).tobytes() != reference().tobytes():
+        raise Failure("the desktop Xlib window differs from the Linux reference")
+    expect_taskbar_present(image, "Linux Xlib window")
+    s.qmp.move_to(x + 192, y - 12)
+    s.qmp.click()
+    time.sleep(2)
+    closed = s.shot("linux-xclient-closed")
+    if closed.crop((x, y, x + 200, y + 150)).tobytes() == reference().tobytes():
+        raise Failure("the caption close left the Linux window on screen")
+    expect_taskbar_present(closed, "after Linux Xlib close")
+
+
 SCENARIOS = {
+    "linux-xclient": scenario_linux_xclient,
     "cursor_settings": scenario_cursor_settings,
     "sound": scenario_sound,
     "volume_popup": scenario_volume_popup,
