@@ -58,12 +58,8 @@ static void sh_copy_path(char* path, size_t capacity, const char* prefix, const 
 }
 
 static int sh_path_exists(const char* path) {
-    long fd = savanxp_open(path);
-    if (fd < 0) {
-        return 0;
-    }
-    savanxp_close((int)fd);
-    return 1;
+    struct savanxp_stat info;
+    return savanxp_stat(path, &info) == 0 && (info.st_mode & SAVANXP_S_IFMT) == SAVANXP_S_IFREG;
 }
 
 /* The command as typed, then with .sxe: a SUN program is <name>.sxe on disk

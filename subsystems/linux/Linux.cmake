@@ -212,7 +212,7 @@ add_executable(savanxp-linux-x11-server "${CMAKE_SOURCE_DIR}/tests/host/linux_x1
 target_link_libraries(savanxp-linux-x11-server PRIVATE savanxp_x11_host_engine)
 add_dependencies(savanxp_tests savanxp-linux-x11-server)
 
-if(EXISTS "${SSL_MUSL}/usr/lib/libX11.so" AND SAVANXP_INCLUDE_TEST_APPS)
+if(SSL_MUSL AND EXISTS "${SSL_MUSL}/usr/lib/libX11.so" AND SAVANXP_INCLUDE_TEST_APPS)
     foreach(item IN ITEMS
         "libX11.so.6.4.0|libX11.so.6|5a7c2df00148b914e9d66b7455680bd2a1b29a0eaef68b115a0133ce441d2a76"
         "libxcb.so.1.1.0|libxcb.so.1|fd7bc55e8680c183fe038b22d5cc7407c323e3b1e1bd6ee488b57137124b0292"

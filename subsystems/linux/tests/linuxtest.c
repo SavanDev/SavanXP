@@ -485,7 +485,9 @@ static int xclient(void) {
     (void)sxn_wait_one(pause, 500);
     const int before = live_processes();
     const uint64_t memory = settled_free_memory();
-    struct sxn_process_query wm_before, compositor_before;
+    struct savanxp_system_info resources_before = {0};
+    if (sxn_system_info(&resources_before)) ++g_failures;
+    struct sxn_process_query wm_before = {0}, compositor_before = {0};
     if (sxn_process_query(wm, &wm_before) || sxn_process_query(compositor, &compositor_before)) ++g_failures;
     int32_t output[2];
     if (sxn_pipe_create(output)) { say("LINUX XCLIENT FAIL capture pipe", "", ""); return 1; }
@@ -531,7 +533,9 @@ static int xclient(void) {
     int clean = 0;
     for (int attempt = 0; attempt < 100; ++attempt) {
         struct sxn_process_query wm_after, compositor_after;
-        if (live_processes() == before && sxn_process_query(wm, &wm_after) == 0 &&
+        struct savanxp_system_info resources_after;
+        if (sxn_system_info(&resources_after) == 0 && resources_after.sections_live == resources_before.sections_live &&
+            resources_after.file_sections_live == resources_before.file_sections_live && live_processes() == before && sxn_process_query(wm, &wm_after) == 0 &&
             sxn_process_query(compositor, &compositor_after) == 0 &&
             wm_after.handle_count == wm_before.handle_count && compositor_after.handle_count == compositor_before.handle_count) {
             int32_t handles[2];
@@ -542,7 +546,7 @@ static int xclient(void) {
         (void)sxn_wait_one(pause, 50);
     }
     if (!clean || settled_free_memory() + (1u << 20) < memory) ++g_failures;
-    say(clean ? "linux-xclient: process, port and desktop handles returned" : "linux-xclient: FAIL leaked resources", "", "");
+    say(clean ? "linux-xclient: process, port, sections and desktop handles returned" : "linux-xclient: FAIL leaked resources", "", "");
     (void)sxn_terminate(wm, 0); (void)sxn_terminate(compositor, 0);
     (void)sxn_waitpid(wm, &status); (void)sxn_waitpid(compositor, &status); (void)sxn_close(pause);
     say(g_failures ? "LINUX XCLIENT FAIL" : "LINUX XCLIENT PASS", "", "");

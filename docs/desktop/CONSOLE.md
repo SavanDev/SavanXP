@@ -172,3 +172,10 @@ only concerns the shell role).
 
 `progman-smoke` still exercises Program Manager itself; it is no longer the
 path every other scenario walks through.
+
+Command lookup considers only regular files. It tries the typed name and then
+its `.sxe` form in `/bin`, `/system` and `/rescue/bin`; a directory or device
+with the same basename does not hide the executable. This matters for
+`linux`: `/system/linux` is its guest tree and `/system/linux.sxe` is its SUN
+launcher. The normal-desktop `linux-xclient` visual scenario asserts that
+this unqualified command starts the real Linux client.

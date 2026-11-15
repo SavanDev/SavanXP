@@ -13,6 +13,7 @@ struct desktop {
     struct sxnwm_client wm;
     struct sx11_client protocol;
     uint32_t mapped;
+    char title[128];
     int dirty;
 };
 static int send_reply(void* opaque, const void* bytes, size_t count) {
@@ -36,13 +37,22 @@ static int map_window(void* opaque, struct sx11_window* w) {
         if (sxn_clock_ns() >= deadline || sxnwm_close_requested(&d->wm)) return -1;
         (void)sxn_wait_one(d->wm.wake_fd, 10);
     }
+    strcpy(d->title, w->title);
     d->mapped = w->id; w->host = d; d->dirty = 1; return 0;
 }
 static void destroy_window(void* opaque, struct sx11_window* w) {
     struct desktop* d = opaque; if (d->mapped == w->id) { d->mapped = 0; d->dirty = 0; }
 }
 static void present(void* opaque, struct sx11_window* w) {
-    struct desktop* d = opaque; if (d->mapped == w->id) d->dirty = 1;
+    struct desktop* d = opaque;
+    if (d->mapped == w->id) {
+        if (strcmp(d->title, w->title)) {
+            struct sxnwm_presentation_source presentation = {0}; presentation.title = w->title;
+            if (sxnwm_set_presentation(&d->wm, &presentation)) d->protocol.failed = 1;
+            strcpy(d->title, w->title);
+        }
+        d->dirty = 1;
+    }
 }
 static int pointer(void* opaque, struct sx11_window* w, int* rx, int* ry, int* wx, int* wy, unsigned* mask) {
     struct desktop* d = opaque;

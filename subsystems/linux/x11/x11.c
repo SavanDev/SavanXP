@@ -9,6 +9,7 @@ static uint32_t u32(const unsigned char* p) { return (uint32_t)u16(p) | (uint32_
 static void w16(unsigned char* p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
 static void w32(unsigned char* p, uint32_t v) { w16(p, v); w16(p + 2, v >> 16); }
 static size_t padded(size_t n) { return (n + 3) & ~(size_t)3; }
+static const uint32_t supported_events = (1u << 15) | (1u << 17) | (1u << 22);
 static unsigned bits(uint32_t value) { return __builtin_popcount(value); }
 static int send_bytes(struct sx11_client* c, const void* p, size_t n) {
     if (!c->ops.send || c->ops.send(c->host, p, n)) { c->failed = 1; return -1; }
@@ -28,6 +29,11 @@ static struct sx11_window* window(struct sx11_client* c, uint32_t id) {
 }
 static struct sx11_gc* gc(struct sx11_client* c, uint32_t id) {
     for (unsigned i = 0; i < SX11_MAX_GCS; ++i) if (id && c->gcs[i].id == id) return &c->gcs[i];
+    return 0;
+}
+static int valid_atom(struct sx11_client* c, uint32_t id) {
+    if (id && id <= 68) return 1;
+    for (unsigned i = 0; i < SX11_MAX_ATOMS; ++i) if (id && c->atoms[i].id == id) return 1;
     return 0;
 }
 static int valid_id(struct sx11_client* c, uint32_t id) {
@@ -160,6 +166,9 @@ static int request(struct sx11_client* c, const unsigned char* p, size_t n) {
             if (bit == 11) w->event_mask = u32(p + offset);
             offset += 4;
         }
+        if (w->event_mask & ~supported_events) {
+            const uint32_t bad = w->event_mask; memset(w, 0, sizeof(*w)); return error(c, 2, bad, op);
+        }
         if (!sx_bitmap_create(&w->bitmap, w->width, w->height, SX_PIXEL_FORMAT_BGRA8888)) {
             memset(w, 0, sizeof(*w)); return error(c, 11, 0, op);
         }
@@ -168,6 +177,7 @@ static int request(struct sx11_client* c, const unsigned char* p, size_t n) {
     case 2: { // ChangeWindowAttributes
         MINIMUM(12); WINDOW(); const uint32_t mask = u32(p + 8); LENGTH(12 + 4 * bits(mask));
         if (mask & ~(1u << 11)) return error(c, 2, mask, op);
+        if (mask && (u32(p + 12) & ~supported_events)) return error(c, 2, u32(p + 12), op);
         if (mask) w->event_mask = u32(p + 12);
         break;
     }
@@ -180,9 +190,12 @@ static int request(struct sx11_client* c, const unsigned char* p, size_t n) {
         LENGTH(24 + padded(bytes));
         if (p[1]) return error(c, 2, p[1], op); // Replace only in the profile.
         const uint32_t property = u32(p + 8);
+        if (!valid_atom(c, property)) return error(c, 5, property, op);
+        if (!valid_atom(c, u32(p + 12))) return error(c, 5, u32(p + 12), op);
         if (property == 39 && format == 8 && u32(p + 12) == 31) {
             size_t len = bytes < sizeof(w->title) - 1 ? bytes : sizeof(w->title) - 1;
             memcpy(w->title, p + 24, len); w->title[len] = 0;
+            if (w->mapped && c->ops.present) c->ops.present(c->host, w);
         } else if (property == atom(c, (const unsigned char*)"WM_PROTOCOLS", 12, 0) &&
             format == 32 && u32(p + 12) == 4) {
             w->delete_protocol = 0;

@@ -435,6 +435,6 @@ and local pointer coordinates along seven positions, drags the frame to
 260x180, verifies the repaint and clicks the caption's close button. The
 resized reference relocates the same Linux-rasterized shapes as the fixture
 does. The SUN parent checks exit status, the expected output, disappearance
-of the listener, the original process and desktop-handle counts, and reclaimed
+of the listener, the original process, section and desktop-handle counts, and reclaimed
 memory. Captures and logs stay under `build/smoke-logs/`. `tools/shoot.sh`
 also exercises the client in the normal desktop session.

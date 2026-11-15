@@ -421,6 +421,12 @@ Cut-off notes:
 
 ### Fixed
 
+- **Command Prompt finds `linux.sxe` when `/system/linux` is a directory.**
+  Command lookup skips directories and devices before trying the `.sxe` suffix.
+
+- **The optional Xlib profile stays optional on hosts without an Alpine root, and X11 titles follow later `WM_NAME` changes.**
+  Unsupported event selections and invalid property atoms now fail with core X errors.
+
 - **Desktop pointer queries also compile in C++ SDK consumers.**
   The P1 snapshot helper reads volatile fields individually while retaining the same seqlock checks.
 

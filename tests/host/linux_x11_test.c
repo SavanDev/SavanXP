@@ -69,6 +69,18 @@ int main(void) {
     create(p, 0x200100); CHECK(!sx11_feed(c, p, 40)); CHECK(used == 32 && output[1] == 11);
     sx11_destroy(c);
     for (unsigned i = 0; i < SX11_MAX_WINDOWS; ++i) CHECK(!c->windows[i].id);
+    start(c); create(p, 0x200001); CHECK(!sx11_feed(c, p, 40));
+    unsigned char mapped[8] = {8, 0, 2}; w32(mapped + 4, 0x200001); CHECK(!sx11_feed(c, mapped, 8));
+    const int before_title = presents;
+    unsigned char title[32] = {18, 0, 8}; w32(title + 4, 0x200001); w32(title + 8, 39);
+    w32(title + 12, 31); title[16] = 8; w32(title + 20, 8); memcpy(title + 24, "new name", 8);
+    CHECK(!sx11_feed(c, title, 32));
+    CHECK(!strcmp(c->windows[0].title, "new name") && presents == before_title + 1);
+    used = 0; w32(title + 8, 0); CHECK(!sx11_feed(c, title, 32)); CHECK(output[1] == 5);
+    used = 0; w32(title + 8, 0xdeadbeef); CHECK(!sx11_feed(c, title, 32)); CHECK(output[1] == 5);
+    sx11_destroy(c);
+    start(c); create(p, 0x200001); w32(p + 36, 1); CHECK(!sx11_feed(c, p, 40));
+    CHECK(used == 32 && output[1] == 2 && !c->windows[0].id); sx11_destroy(c);
     // Sequence numbers on the wire wrap at 16 bits.
     start(c);
     unsigned char noop[4] = {127, 0, 1, 0};
