@@ -19,7 +19,9 @@ explicitly during `kernel/kernel_main.cpp`, and selected/enumerated through
 interfaces of function pointers. There is no runtime driver-module loader,
 external driver ABI or general device graph. `device::Device` is the small
 read/write/ioctl/close interface used to publish `/dev` nodes, not a global
-hardware manager. Not every hardware instance has a `/dev` node, and a class
+hardware manager. A device whose answers depend on the descriptor gets one
+word of per-descriptor state through its `ioctl_state` and `can_read_state`
+hooks ([CLIPBOARD.md](../../desktop/CLIPBOARD.md#following-changes)). Not every hardware instance has a `/dev` node, and a class
 node can aggregate several hardware instances.
 
 | Layer / class | What exists |

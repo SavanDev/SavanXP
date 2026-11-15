@@ -111,6 +111,8 @@ void install(const Entry* entries, uint32_t count, uint8_t* data) {
     }
     g_count = count;
     g_sequence += 1;
+    // Every descriptor that has not asked since is readable now.
+    process::notify_device_readable();
 }
 
 int clipboard_read(uint64_t user_buffer, size_t count) {
@@ -277,7 +279,13 @@ int enum_format(uint64_t argument) {
     return 0;
 }
 
-int clipboard_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+// A descriptor's state is the sequence it last got from CLIP_IOC_GET_INFO,
+// plus one, so that zero -- a descriptor just opened -- has seen nothing.
+uint64_t seen_state(uint64_t sequence) {
+    return sequence + 1;
+}
+
+int clipboard_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
     switch (request) {
         case CLIP_IOC_GET_INFO: {
             const Entry* text = text_entry();
@@ -293,6 +301,7 @@ int clipboard_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access
                 !process::copy_to_user(argument, &info, sizeof(info))) {
                 return negative_error(SX_EINVAL);
             }
+            state = seen_state(info.sequence);
             return 0;
         }
         case CLIP_IOC_CLEAR:
@@ -315,19 +324,23 @@ int clipboard_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access
     }
 }
 
-bool clipboard_can_read() {
-    // Always readable: reading an empty clipboard returns zero bytes, it does
-    // not block. Without this a poll() on the device would hang.
-    return true;
+// Readable means "changed since this descriptor last asked": a poll or an
+// object wait on it sleeps until someone copies. A read never blocks either
+// way; it returns the text, or zero bytes.
+bool clipboard_can_read(uint64_t state) {
+    return state != seen_state(g_sequence);
 }
 
 device::Device g_device = {
     .name = "clipboard",
     .read = clipboard_read,
     .write = clipboard_write,
-    .ioctl = clipboard_ioctl,
+    .ioctl = nullptr,
     .close = nullptr,
-    .can_read = clipboard_can_read,
+    .can_read = nullptr,
+    .close_access = nullptr,
+    .ioctl_state = clipboard_ioctl,
+    .can_read_state = clipboard_can_read,
 };
 
 bool g_ready = false;

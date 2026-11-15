@@ -537,7 +537,12 @@ enum savanxp_power_ioctl {
  * with no cursor (reading twice gives the same bytes), or nothing when the set
  * has no text. A set larger than the capacity is refused with ENOSPC rather
  * than truncated: pasting half a text without a word is worse than not
- * pasting. */
+ * pasting.
+ *
+ * A descriptor is READABLE (poll's POLLIN, an object wait) while the content
+ * has changed since that descriptor last called CLIP_IOC_GET_INFO; one just
+ * opened has seen nothing and is readable at once. A program that follows the
+ * clipboard keeps one descriptor open, asks GET_INFO and waits on it. */
 #define SAVANXP_CLIPBOARD_CAPACITY (1024u * 1024u) /* bytes, all formats together */
 #define SAVANXP_CLIPBOARD_MAX_FORMATS 8u
 #define SAVANXP_CLIPBOARD_NAME_CAPACITY 64u /* a format name, NUL included */

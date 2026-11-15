@@ -17,6 +17,10 @@ Cut-off notes:
   `CLIP_IOC_ENUM_FORMAT` read it; POSIX `clipboard_set_formats`, `_get_format`, `_enum_format`. Plain text is
   `text/plain;charset=utf-8` and keeps working through `read`/`write`. See [CLIPBOARD.md](docs/desktop/CLIPBOARD.md).
 
+- **A program can wait for the clipboard to change: a `/dev/clipboard` descriptor is readable (`poll` `POLLIN`,
+  `sxn_wait_io`) while the content changed since it last called `CLIP_IOC_GET_INFO`.** See
+  [CLIPBOARD.md](docs/desktop/CLIPBOARD.md#following-changes).
+
 - **Media Player supports fullscreen with a Fullscreen button and F11; Esc or F11 restores the window.**
   Video keeps its aspect ratio, playback continues, and controls and desktop chrome are hidden.
   SUN and POSIX windows can request fullscreen at desktop resolution.

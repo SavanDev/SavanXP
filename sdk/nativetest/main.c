@@ -2512,6 +2512,52 @@ static void test_clipboard(void) {
     check(sxn_log("nativetest: clipboard done") == 0);
 }
 
+/* The child of test_clipboard_changes: copies after a pause, so the parent is
+ * already asleep on its descriptor. */
+static void clipboard_copy_child(void) {
+    static const char text[] = "copied by the child";
+    long pause = sxn_event_create(0);
+    long device = sxn_open_device("clipboard", SXN_DEVICE_WRITE);
+    if (pause >= 0) {
+        (void)sxn_wait_one(pause, 50);
+    }
+    sxn_exit(device >= 0 && sxn_write(device, text, sizeof(text) - 1) == (long)sizeof(text) - 1 ? 0 : 1);
+}
+
+/* Following the clipboard through SUN: a descriptor waited on with
+ * SXN_IO_READ sleeps until another process copies, and asking GET_INFO
+ * clears the change. */
+static void test_clipboard_changes(void) {
+    struct savanxp_clipboard_info info = {0};
+    struct sxn_io_interest interest;
+    char* child_argv[2] = {"/bin/nativetest.sxe", "clipboard-copy"};
+    long device = sxn_open_device("clipboard", SXN_DEVICE_READ);
+    long child;
+    int status = -1;
+
+    check(device >= 0);
+    if (device < 0) {
+        return;
+    }
+    interest.handle = (int32_t)device;
+    interest.interests = SXN_IO_READ;
+    check(sxn_wait_io(&interest, 1, 0) == 0);
+    check(sxn_device_control(device, CLIP_IOC_GET_INFO, (unsigned long)&info) == 0);
+    check(sxn_wait_io(&interest, 1, 0) == -SAVANXP_ETIMEDOUT);
+
+    child = sxn_spawn("/bin/nativetest.sxe", child_argv, 2);
+    check(child > 0);
+    if (child > 0) {
+        check(sxn_wait_io(&interest, 1, 5000) == 0);
+        check(sxn_waitpid(child, &status) == child && status == 0);
+        check(sxn_device_control(device, CLIP_IOC_GET_INFO, (unsigned long)&info) == 0);
+        check(info.format == SAVANXP_CLIPBOARD_FORMAT_TEXT && info.length == 19u);
+        check(sxn_wait_io(&interest, 1, 0) == -SAVANXP_ETIMEDOUT);
+    }
+    (void)sxn_close(device);
+    check(sxn_log("nativetest: clipboard changes done") == 0);
+}
+
 static void test_files(void) {
     char bytes[64];
     long handle = sxn_open_file("/system/native-file-test.txt", SXN_FILE_READ);
@@ -2892,6 +2938,9 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "log-other")) {
         log_other_child();
+    }
+    if (argc > 1 && streq(argv[1], "clipboard-copy")) {
+        clipboard_copy_child();
     }
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
@@ -3638,6 +3687,7 @@ int main(int argc, char** argv) {
 
     test_files();
     test_clipboard();
+    test_clipboard_changes();
     test_view_at();
     test_file_sections();
     test_system_time();

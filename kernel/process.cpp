@@ -840,7 +840,7 @@ bool open_file_can_read(const object::IoObject& file) {
         case process::HandleKind::pipe:
             return file.pipe != nullptr && (file.pipe->size != 0 || file.pipe->writer_refs == 0);
         case process::HandleKind::device:
-            return device::can_read(file.device);
+            return device::can_read(file.device, file.device_state);
         case process::HandleKind::socket:
             return net::socket_can_read(file.socket);
         default:
@@ -2683,6 +2683,10 @@ int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags
 
 void notify_object_signal(object::Header* handle_object) {
     process::detail::wake_waiters_for_object(handle_object);
+}
+
+void notify_device_readable() {
+    recheck_parked_threads(0, false);
 }
 
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid) {

@@ -1,5 +1,6 @@
 #include "libc.h"
 
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -197,6 +198,79 @@ static int test_formats(void) {
     return clipboard_clear() >= 0;
 }
 
+static int clipboard_readable(int fd, int timeout_ms) {
+    struct pollfd entry = {fd, POLLIN, 0};
+    int result = poll(&entry, 1, timeout_ms);
+    return result == 1 && (entry.revents & POLLIN) != 0;
+}
+
+/* Following the clipboard (docs/desktop/CLIPBOARD.md): a descriptor is
+ * readable while the content changed since it last asked GET_INFO, so a
+ * blocked poll wakes when another process copies. */
+static int test_changes(void) {
+    int fd = savanxp_open_mode("/dev/clipboard", SAVANXP_OPEN_READ);
+    if (fd < 0) {
+        return fail("could not open the clipboard to follow it");
+    }
+    struct savanxp_clipboard_info info;
+    int ok = clipboard_readable(fd, 0);
+    if (!ok) {
+        eprintf("cliptest: a descriptor just opened should be readable\n");
+    }
+    if (ok && (savanxp_ioctl(fd, CLIP_IOC_GET_INFO, (unsigned long)&info) < 0 || clipboard_readable(fd, 0))) {
+        eprintf("cliptest: after GET_INFO the descriptor should not be readable\n");
+        ok = 0;
+    }
+    /* Reading the content is not asking: it stays not readable. */
+    char buffer[8];
+    if (ok && (savanxp_read(fd, buffer, sizeof(buffer)) < 0 || clipboard_readable(fd, 0))) {
+        eprintf("cliptest: a read should leave the descriptor not readable\n");
+        ok = 0;
+    }
+
+    /* Another process copies while this one sleeps in poll. */
+    long child = ok ? savanxp_fork() : -1;
+    if (ok && child < 0) {
+        eprintf("cliptest: fork for the change test failed\n");
+        ok = 0;
+    }
+    if (child == 0) {
+        sleep_ms(50);
+        exit(clipboard_set_text("changed elsewhere") < 0 ? 1 : 0);
+    }
+    if (ok && !clipboard_readable(fd, 5000)) {
+        eprintf("cliptest: a copy by another process did not wake the poll\n");
+        ok = 0;
+    }
+    int status = -1;
+    if (child > 0 && (savanxp_waitpid((int)child, &status) < 0 || status != 0)) {
+        eprintf("cliptest: the child could not copy\n");
+        ok = 0;
+    }
+    unsigned long long before = 0;
+    if (ok) {
+        (void)savanxp_ioctl(fd, CLIP_IOC_GET_INFO, (unsigned long)&info);
+        before = (unsigned long long)info.sequence;
+        if (clipboard_readable(fd, 0)) {
+            eprintf("cliptest: asking again should clear the change\n");
+            ok = 0;
+        }
+    }
+
+    /* CLEAR is a change too. */
+    if (ok && (clipboard_clear() < 0 || !clipboard_readable(fd, 0))) {
+        eprintf("cliptest: CLEAR should make the descriptor readable\n");
+        ok = 0;
+    }
+    if (ok && (savanxp_ioctl(fd, CLIP_IOC_GET_INFO, (unsigned long)&info) < 0 ||
+               (unsigned long long)info.sequence <= before)) {
+        eprintf("cliptest: the sequence did not rise with CLEAR\n");
+        ok = 0;
+    }
+    savanxp_close(fd);
+    return ok;
+}
+
 int main(void) {
     if (clipboard_clear() < 0) {
         return fail("clear inicial fallo");
@@ -340,6 +414,10 @@ int main(void) {
     }
 
     if (!test_formats()) {
+        return 1;
+    }
+
+    if (!test_changes()) {
         return 1;
     }
 

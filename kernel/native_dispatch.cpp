@@ -493,7 +493,7 @@ int native_device_control(Process& proc, uint64_t handle, uint64_t code, uint64_
     if (file == nullptr || file->kind != HandleKind::device || file->device == nullptr) {
         return sx::negative_error(SX_EBADF);
     }
-    return device::ioctl(file->device, code, argument, proc.handles[handle].granted_access);
+    return device::ioctl(file->device, file->device_state, code, argument, proc.handles[handle].granted_access);
 }
 
 /* --- Ports -------------------------------------------------------------- */

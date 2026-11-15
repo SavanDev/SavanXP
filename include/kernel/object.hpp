@@ -110,6 +110,9 @@ struct IoObject {
     size_t offset;
     // A directory's listing position (readdir), open while the handle is.
     vfs::DirCursor cursor;
+    // A device's word of per-descriptor state (device::Device's *_state
+    // hooks), zero when the handle is opened.
+    uint64_t device_state;
 };
 
 struct EventObject {

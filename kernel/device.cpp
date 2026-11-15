@@ -60,9 +60,12 @@ int write(Device* device, uint64_t user_buffer, size_t count) {
     return device->write(user_buffer, count);
 }
 
-int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access) {
+int ioctl(Device* device, uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (device == nullptr) {
         return negative_error(SX_ENODEV);
+    }
+    if (device->ioctl_state != nullptr) {
+        return device->ioctl_state(state, request, argument, granted_access);
     }
     if (device->ioctl == nullptr) {
         return negative_error(SX_ENOSYS);
@@ -79,9 +82,12 @@ void close(Device* device, uint32_t access) {
     }
 }
 
-bool can_read(Device* device) {
+bool can_read(Device* device, uint64_t state) {
     if (device == nullptr || device->read == nullptr) {
         return false;
+    }
+    if (device->can_read_state != nullptr) {
+        return device->can_read_state(state);
     }
     if (device->can_read != nullptr) {
         return device->can_read();

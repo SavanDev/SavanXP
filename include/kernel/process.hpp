@@ -517,5 +517,8 @@ void set_boot_system_info(const savanxp_system_info& info);
 bool snapshot_system_info(savanxp_system_info& info);
 int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags);
 void notify_object_signal(object::Header* handle_object);
+// A device became readable for some descriptor (device::can_read changed):
+// parked poll and object waits look again now instead of at the next tick.
+void notify_device_readable();
 
 } // namespace process

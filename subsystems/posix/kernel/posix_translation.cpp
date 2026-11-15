@@ -788,7 +788,7 @@ int ioctl_handle(process::Process& proc, uint64_t fd, uint64_t request, uint64_t
     if (file == nullptr || file->kind != process::HandleKind::device || file->device == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
-    return device::ioctl(file->device, request, argument, proc.handles[fd].granted_access);
+    return device::ioctl(file->device, file->device_state, request, argument, proc.handles[fd].granted_access);
 }
 
 int read_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t count) {

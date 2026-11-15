@@ -45,6 +45,38 @@ understands best.
 - **Writing needs write access.** `CLEAR` and `SET_FORMATS` refuse a
   read-only descriptor with `EACCES`.
 
+### Following changes
+
+A descriptor is **readable** while the content has changed since that
+descriptor last called `CLIP_IOC_GET_INFO`. A program that follows the
+clipboard keeps one descriptor open (read access is enough), asks `GET_INFO`,
+and waits on the descriptor with the rest of its loop: `poll` with `POLLIN` in
+POSIX, `sxn_wait_io` with `SXN_IO_READ` or `sxn_wait_many` in SUN. When it
+wakes it asks `GET_INFO` again, which both tells it what changed and clears
+the change, and goes back to waiting.
+
+- **A descriptor just opened is readable at once.** It has seen nothing, so a
+  change between opening and the first `GET_INFO` cannot be lost.
+- **Only `GET_INFO` clears it.** Reading the content (`read`, `GET_FORMAT`,
+  `ENUM_FORMAT`) does not, so a change that lands while a reader is halfway
+  through the formats still shows up.
+- **Every change counts**, the program's own copies and `CLEAR` included, as
+  in Windows' `WM_CLIPBOARDUPDATE`. Changes are not queued: three copies
+  while a program was busy wake it once, and `sequence` says how far it moved.
+- **A change wakes the waiters at once**, not at the next tick: the device
+  calls `process::notify_device_readable`, which looks at the parked waits
+  again the way an object signal does.
+- **`read` still never blocks.** Readable means "changed", not "has data":
+  an empty clipboard reads zero bytes whatever `poll` says.
+
+The kernel keeps what each descriptor has seen in the open handle
+(`object::IoObject::device_state`, the sequence plus one so that zero is
+"nothing"). A device opts in through the `ioctl_state` and `can_read_state`
+hooks of `device::Device`, which see that word; the clipboard is the first.
+Keeping a descriptor open for this costs one of the process's 64 handles,
+which is the trade the device node made in the first place: only a program
+that follows the clipboard pays it.
+
 ### Capacity
 
 `SAVANXP_CLIPBOARD_CAPACITY` is 1 MiB for **all formats together**. The bytes
@@ -114,12 +146,9 @@ before the formats working unchanged:
 In the order they depend on each other:
 
 1. **Formats** — done: the set, the names, UTF-8 text, 1 MiB.
-2. **Change notification.** `sequence` tells a client that the content
-   changed, but only if it asks: `can_read` is always true, so `poll` on the
-   device never waits. A waitable change (readable when `sequence` moved past
-   what that descriptor last read) is what Win32's
-   `AddClipboardFormatListener` and an X11 selection bridge need, and lets a
-   menu enable Paste without polling.
+2. **Change notification** — done ([above](#following-changes)): what
+   Win32's `AddClipboardFormatListener` and an X11 selection bridge stand on,
+   and what lets a menu enable Paste without asking on every repaint.
 3. **Per-session content.** There is one set for the whole machine, readable
    by every process of every user. It should belong to the session
    ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md)).

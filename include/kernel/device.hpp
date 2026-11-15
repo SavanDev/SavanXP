@@ -13,6 +13,12 @@ struct Device {
     void (*close)();
     bool (*can_read)();
     void (*close_access)(uint32_t access) = nullptr;
+    // Optional variants that see the descriptor's word of state
+    // (object::IoObject::device_state, zero at open); when set they are used
+    // instead of `ioctl` and `can_read`. For a device whose readiness depends
+    // on what this descriptor has already seen (the clipboard's changes).
+    int (*ioctl_state)(uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) = nullptr;
+    bool (*can_read_state)(uint64_t state) = nullptr;
 };
 
 void initialize();
@@ -25,9 +31,9 @@ bool ready();
 bool register_node(const char* path, Device* device, bool writable, uint16_t permissions = 0);
 int read(Device* device, uint64_t user_buffer, size_t count);
 int write(Device* device, uint64_t user_buffer, size_t count);
-int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access);
+int ioctl(Device* device, uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access);
 void close(Device* device, uint32_t access);
-bool can_read(Device* device);
+bool can_read(Device* device, uint64_t state);
 void service_background();
 
 } // namespace device
