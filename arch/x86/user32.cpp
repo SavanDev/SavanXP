@@ -11,8 +11,8 @@
 
 namespace i386::user32 {
 namespace {
-constexpr uint32_t kStackTop = paging::kUserWindowEnd;
-constexpr uint32_t kStackSize = 64u * 1024u;
+constexpr uint32_t kStackTop = paging::kUserStackTop;
+constexpr uint32_t kStackSize = kStackTop - paging::kUserStackBottom;
 constexpr uint32_t kMaxSegments = 16;
 struct Elf32Header {
     uint8_t identification[16];
@@ -72,8 +72,9 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
     Elf32Header header = {};
     if (!read_at(*node, 0, &header, sizeof(header)) ||
         memcmp(header.identification, "\x7f" "ELF", 4) != 0 ||
-        header.identification[4] != kClass32 || header.identification[5] != kDataLittleEndian ||
-        header.type != kTypeExecutable || header.machine != kMachineIntel386 ||
+        header.identification[4] != kClass32 || header.identification[5] != kDataLittleEndian || header.identification[6] != 1 ||
+        header.version != 1 || header.header_size != sizeof(Elf32Header) ||
+        (header.type != kTypeExecutable && header.type != 3) || header.machine != kMachineIntel386 ||
         header.program_entry_size != sizeof(Elf32Segment) || header.program_count == 0 ||
         header.program_count > kMaxSegments) {
         return SAVANXP_ENOEXEC;
@@ -83,7 +84,25 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
                  header.program_count * sizeof(Elf32Segment))) {
         return SAVANXP_ENOEXEC;
     }
-    uint32_t image_base = 0;
+    const uint32_t bias = header.type == 3 ? paging::kUserWindowBase : 0;
+    if (header.entry > UINT32_MAX - bias) return SAVANXP_ENOEXEC;
+    header.entry += bias;
+    uint32_t interpreter_offset = 0, interpreter_size = 0;
+    for (uint32_t index = 0; index < header.program_count; ++index) {
+        auto& segment = segments[index];
+        if (segment.type == 3) {
+            char path[256];
+            if (segment.file_size < 2 || segment.file_size > sizeof(path) ||
+                static_cast<uint64_t>(segment.offset) + segment.file_size > node->size ||
+                !read_at(*node, segment.offset, path, segment.file_size) ||
+                path[0] != '/' || path[segment.file_size - 1] != 0) return SAVANXP_ENOEXEC;
+            interpreter_offset = segment.offset; interpreter_size = segment.file_size;
+        }
+        if (segment.type != kSegmentLoad) continue;
+        if (segment.virtual_address > UINT32_MAX - bias) return SAVANXP_ENOEXEC;
+        segment.virtual_address += bias;
+    }
+    uint32_t image_base = 0, lowest_base = UINT32_MAX;
     bool executable_entry = false;
     // Validate the whole image before modifying its private backing memory.
     for (uint32_t index = 0; index < header.program_count; ++index) {
@@ -91,20 +110,32 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
         if (segment.type != kSegmentLoad) {
             continue;
         }
+        if (!segment.memory_size) continue;
         if (segment.file_size > segment.memory_size ||
             !in_image(segment.virtual_address, segment.memory_size) ||
-            segment.alignment == 0 || (segment.alignment & (segment.alignment - 1)) != 0 ||
+            (segment.alignment > 1 && ((segment.alignment & (segment.alignment - 1)) != 0 ||
+                segment.offset % segment.alignment != segment.virtual_address % segment.alignment)) ||
+            (segment.flags & (kSegmentWrite | kSegmentExecute)) == (kSegmentWrite | kSegmentExecute) ||
             static_cast<uint64_t>(segment.offset) + segment.file_size > node->size) {
             return SAVANXP_ENOEXEC;
         }
-        if (image_base == 0 || segment.virtual_address < image_base) {
-            image_base = segment.virtual_address;
+        if (segment.virtual_address < lowest_base) lowest_base = segment.virtual_address & ~4095u;
+        if (segment.offset == 0) image_base = segment.virtual_address & ~4095u;
+        for (uint32_t previous = 0; previous < index; ++previous) {
+            const auto& other = segments[previous];
+            if (other.type != kSegmentLoad || !other.memory_size) continue;
+            const uint64_t end = (static_cast<uint64_t>(segment.virtual_address) + segment.memory_size + 4095) & ~4095ull;
+            const uint64_t other_end = (static_cast<uint64_t>(other.virtual_address) + other.memory_size + 4095) & ~4095ull;
+            if ((segment.virtual_address & ~4095u) < other_end && (other.virtual_address & ~4095u) < end &&
+                ((segment.flags | other.flags) & 3) == 3) return SAVANXP_ENOEXEC;
         }
         if ((segment.flags & kSegmentExecute) != 0 && header.entry >= segment.virtual_address &&
-            header.entry < static_cast<uint64_t>(segment.virtual_address) + segment.memory_size) {
+            header.entry < static_cast<uint64_t>(segment.virtual_address) + segment.file_size) {
             executable_entry = true;
         }
     }
+    if (header.type == 3 && !image_base) return SAVANXP_ENOEXEC;
+    if (!image_base) image_base = lowest_base;
     if (!executable_entry || argc > SAVANXP_MAX_ARGC) {
         return SAVANXP_ENOEXEC;
     }
@@ -125,7 +156,7 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
             copied += chunk;
         }
     }
-    if (!paging::map_user_range(directory, kStackTop - kStackSize, kStackSize, true))
+    if (!paging::map_user_range(directory, kStackTop - 8 * paging::kPageBytes, 8 * paging::kPageBytes, true))
         return SAVANXP_ENOMEM;
     uint32_t pointers[SAVANXP_MAX_ARGC + 1] = {};
     uint32_t stack = kStackTop;
@@ -138,9 +169,18 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
         pointers[index] = stack;
         paging::copy_to_user(directory, stack, argv[index], length);
     }
+    uint32_t interpreter_address = 0;
+    if (interpreter_size) {
+        stack = (stack - interpreter_size) & ~3u;
+        interpreter_address = stack;
+        char interpreter[256];
+        if (!read_at(*node, interpreter_offset, interpreter, interpreter_size) ||
+            !paging::copy_to_user(directory, stack, interpreter, interpreter_size)) return SAVANXP_EIO;
+    }
     stack = (stack - (argc + 1) * sizeof(uint32_t)) & ~15u;
     paging::copy_to_user(directory, stack, pointers, (argc + 1) * sizeof(uint32_t));
     initialize_user_frame(frame, header.entry, stack, image_base, argc, stack);
+    frame.ecx = interpreter_address;
     serial::write("user: ");
     serial::write(path);
     serial::write(" loaded at ");

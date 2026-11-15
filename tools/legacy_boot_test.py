@@ -247,6 +247,39 @@ def wait_serial(serial: Path, pattern: str, offset: int = 0, timeout: float = 30
     raise RuntimeError(f"guest did not produce {pattern!r}; tail: {text[-1200:]}")
 
 
+def check_shared(qmp_socket: Path, serial: Path) -> None:
+    """Exercise section ownership and real ELF32 calls through the reference shell."""
+    wait_serial(serial, re.escape(REFERENCE_PROMPT))
+    commands = (
+        ("vmtest32", "VM32 PASS"),
+        ("heaptest", "heaptest ok"),
+        ("mmaptest", "mmaptest: ok"),
+        ("pietest", None),
+        ("interptest", None),
+        ("libtest", None),
+        ("ldtest", None),
+        ("dyntest32", "DYN32 relocations, shared text and private data PASS"),
+        ("diamondtest", "DIAMONDTEST ONCED"),
+        ("slottest", "SLOTTEST CAPPED"),
+        ("missingtest", "MISSINGTEST DIAGNOSED"),
+        ("brokentest", "BROKENTEST DIAGNOSED"),
+        ("needstest", None),
+        ("rm /disk/lib/libneeded.so.0.4", None),
+        ("needstest", "NEEDSTEST SURVIVED"),
+    )
+    for command, token in commands:
+        offset = len(serial.read_text(errors="replace"))
+        type_shell(qmp_socket, (command,))
+        wait_serial(serial, r"savanxp:/\$ ", offset, timeout=90)
+        output = serial.read_text(errors="replace")[offset:]
+        if token and token not in output:
+            raise RuntimeError(f"{command}: missing success token {token!r}")
+        # A returned prompt alone also occurs after a contained crash.
+        if "exception vector" in output or not re.search(r"process exited with status 0,", output):
+            raise RuntimeError(f"{command}: guest did not exit successfully")
+    print("i386 memory objects and ELF32 shared libraries: PASS", flush=True)
+
+
 def check_posix(qmp_socket: Path, serial: Path) -> None:
     """Run the reference shell and multicall apps, not the bring-up shell."""
     wait_serial(serial, re.escape(REFERENCE_PROMPT))
@@ -335,7 +368,7 @@ def check_processes(text: str) -> None:
             raise RuntimeError(f"missing process regression: {token}")
     # Prove the hardware denied each forbidden access for the expected reason.
     for address, error in ((0, 5), (0x08800000, 4), (0x00100000, 5),
-                           (0x40000000, 5), (0x08000000, 7), (0x08fef000, 6)):
+                           (0x40000000, 5), (0x08000000, 7), (0x08eff000, 6)):
         if not re.search(rf"exception vector 14, error 0x{error:08x}, eip 0x[0-9a-f]+, "
                          rf"cs 0x00000023, cr2 0x{address:08x}", text):
             raise RuntimeError(f"missing page protection fault for {address:#x}, error {error}")
@@ -370,6 +403,7 @@ def run_boot(
     expect_processes: bool = False,
     expect_posix: bool = False,
     persistence: str | None = None,
+    expect_shared: bool = False,
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -406,6 +440,7 @@ def run_boot(
     process_shell_checked = False
     legacy_shell_requested = False
     posix_checked = False
+    shared_checked = False
     persistence_checked = False
     try:
         while time.monotonic() < deadline:
@@ -424,11 +459,15 @@ def run_boot(
                 check_persistence(qmp_socket, serial, persistence)
                 persistence_checked = True
                 continue
+            if expect_shared and not shared_checked and REFERENCE_PROMPT in shell_transcript(text):
+                check_shared(qmp_socket, serial)
+                shared_checked = True
+                text = serial.read_text(errors="replace")
             if expect_posix and not posix_checked and REFERENCE_PROMPT in shell_transcript(text):
                 check_posix(qmp_socket, serial)
                 posix_checked = True
                 continue
-            if (not expect_posix or posix_checked) and (shell_commands or desktop_binary) and not legacy_shell_requested and REFERENCE_PROMPT in shell_transcript(text):
+            if (not expect_shared or shared_checked) and (not expect_posix or posix_checked) and (shell_commands or desktop_binary) and not legacy_shell_requested and REFERENCE_PROMPT in shell_transcript(text):
                 type_shell(qmp_socket, ("sh32",))
                 legacy_shell_requested = True
                 continue
@@ -478,7 +517,7 @@ def run_boot(
                     check_console_clear(qmp_socket, artifacts)
                     type_shell(qmp_socket, ("desktop",))
                     desktop_requested = True
-                if (not persistence or persistence_checked) and (not expect_posix or posix_checked) and all(token in text for token in require) and all(
+                if (not expect_shared or shared_checked) and (not persistence or persistence_checked) and (not expect_posix or posix_checked) and all(token in text for token in require) and all(
                     pattern.search(shell_transcript(text)) for pattern in patterns
                 ):
                     if expect_processes:
@@ -554,6 +593,7 @@ def main() -> int:
     )
     parser.add_argument("--expect-persistence", choices=("write", "read"), help="isolated cold-boot persistence phase")
     parser.add_argument("--writable-disk", action="store_true", help="write to a disposable persistence-test image")
+    parser.add_argument("--expect-shared", action="store_true", help="verify memory objects, heap and ELF32 libraries")
     parser.add_argument("--expect-posix", action="store_true", help="verify the reference shell, BusyBox and descriptor lifecycle")
     parser.add_argument("--expect-processes", action="store_true",
                         help="run multitest32 and prove PIT preemption, FPU preservation and process lifecycle")
@@ -626,6 +666,8 @@ def main() -> int:
         require = (PROCESS_TOKEN, SCHEDULER_TOKEN, "memory: reference allocator ready")
         if args.expect_processes and args.memory_mib == 32:
             require += ("MEMORY ENOMEM rollback PASS",)
+        if args.expect_shared and args.memory_mib == 32:
+            require += ("VM32 ENOMEM rollback PASS",)
         if disk_image is not None:
             require += (SXFS_TOKEN,)
         detail = " (SxFS root mounted)" if disk_image is not None else ""
@@ -639,7 +681,7 @@ def main() -> int:
             detail = " (userland program ran)"
         keys: tuple[tuple[str, int], ...] = ()
         qmp_socket: Path | None = None
-        if args.expect_posix or args.expect_persistence:
+        if args.expect_shared or args.expect_posix or args.expect_persistence:
             qmp_socket = Path(temporary) / "qmp.sock"
             command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
         if args.expect_key:
@@ -683,7 +725,7 @@ def main() -> int:
             detail = " (desktop glyphs, PS/2 motion, buttons and cursor restoration)"
         run_boot(
             qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
-            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes, args.expect_posix, args.expect_persistence,
+            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes, args.expect_posix, args.expect_persistence, args.expect_shared,
         )
     return 0
 

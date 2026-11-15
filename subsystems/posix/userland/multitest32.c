@@ -94,7 +94,7 @@ static int worker(int argc, char** argv) {
     if (strcmp(argv[1], "fault-text") == 0)
         __asm__ volatile("movb $0, 0x08000000" : : : "memory");
     if (strcmp(argv[1], "fault-guard") == 0)
-        __asm__ volatile("movb $0, 0x08fef000" : : : "memory");
+        __asm__ volatile("movb $0, 0x08eff000" : : : "memory");
     if (strcmp(argv[1], "fault-gp") == 0) __asm__ volatile("cli");
     if (strcmp(argv[1], "fault-segments") == 0)
         __asm__ volatile("xorw %%ax, %%ax; movw %%ax, %%ds; movw %%ax, %%es; "

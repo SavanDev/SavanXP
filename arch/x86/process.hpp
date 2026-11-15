@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include "context.hpp"
+#include "kernel/object.hpp"
 #include "kernel/io_types.hpp"
 #include "savanxp/syscall.h"
 
@@ -25,6 +26,13 @@ struct alignas(4096) Process {
     uint32_t poll_buffer, poll_count;
     savanxp_pollfd poll_entries[64];
     ::process::HandleEntry handles[64];
+    struct SectionView {
+        uint32_t base, size, access;
+        object::SectionObject* section;
+        bool share_on_fork;
+    };
+    SectionView views[64];
+    uint32_t next_view_base;
     char cwd[256], name[32];
     uint32_t preemptions;
     alignas(4096) uint32_t directory[1024];
@@ -33,6 +41,7 @@ struct alignas(4096) Process {
 
 void initialize();
 long spawn(const char* path, const char* const* argv, uint32_t argc, int stdin_fd = 0, int stdout_fd = 1);
+long fork(const ContextFrame& frame);
 [[noreturn]] void start();
 ContextFrame* timer(ContextFrame* frame);
 ContextFrame* finish_syscall(ContextFrame* frame, bool reschedule = false);

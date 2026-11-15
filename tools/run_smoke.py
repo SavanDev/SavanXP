@@ -8,7 +8,7 @@ import sys
 
 import legacy_boot_test
 
-SCENARIOS = ("smoke", "boot", "processes", "memory", "desktop", "posix")
+SCENARIOS = ("smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory")
 
 
 def main() -> int:
@@ -18,17 +18,19 @@ def main() -> int:
     parser.add_argument("--disk-image", required=True, type=Path)
     parser.add_argument("--desktop-elf", type=Path)
     parser.add_argument("--artifacts", required=True, type=Path)
-    parser.add_argument("--timeout", type=float, default=240)
+    parser.add_argument("--timeout", type=float, default=360)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
     command = ["--iso", str(args.iso), "--disk-image", str(args.disk_image),
                "--expect-user", "--accel", args.accel, "--timeout", str(args.timeout),
                "--artifacts", str(args.artifacts)]
+    if args.scenario in ("smoke", "shared", "shared-memory"):
+        command += ["--expect-shared"]
     if args.scenario in ("smoke", "posix"):
         command += ["--expect-posix"]
     if args.scenario in ("smoke", "processes", "memory"):
         command += ["--expect-processes"]
-    if args.scenario == "memory":
+    if args.scenario in ("memory", "shared-memory"):
         command += ["--memory-mib", "32"]
     if args.scenario in ("smoke", "desktop"):
         if args.desktop_elf is None:

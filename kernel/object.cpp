@@ -1,11 +1,6 @@
 #include "kernel/object.hpp"
 
-#include "kernel/heap.hpp"
-#include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
-#include "kernel/sxfs.hpp"
-#include "kernel/vfs.hpp"
-#include "kernel/vmm.hpp"
 
 namespace object {
 
@@ -13,14 +8,7 @@ namespace {
 
 EventObject g_event_objects[kMaxEventObjects] = {};
 TimerObject g_timer_objects[kMaxTimerObjects] = {};
-SectionObject g_section_objects[kMaxSectionObjects] = {};
 SemaphoreObject g_semaphore_objects[kMaxSemaphoreObjects] = {};
-constexpr uint64_t kMaxSectionBytes = 64ULL << 20;
-
-uint64_t align_up(uint64_t value, uint64_t alignment) {
-    const uint64_t mask = alignment - 1;
-    return (value + mask) & ~mask;
-}
 
 void destroy_event(Header* header) {
     EventObject* event_object = as_event(header);
@@ -36,24 +24,6 @@ void destroy_timer(Header* header) {
         return;
     }
     memset(timer_object, 0, sizeof(*timer_object));
-}
-
-void destroy_section(Header* header) {
-    SectionObject* section_object = as_section(header);
-    if (section_object == nullptr) {
-        return;
-    }
-
-    if (section_object->physical_pages != nullptr) {
-        for (uint64_t page_index = 0; page_index < section_object->page_count; ++page_index) {
-            if (section_object->physical_pages[page_index] != 0) {
-                (void)memory::free_pages(section_object->physical_pages[page_index], 1);
-            }
-        }
-        heap::free(section_object->physical_pages);
-    }
-
-    memset(section_object, 0, sizeof(*section_object));
 }
 
 void destroy_semaphore(Header* header) {
@@ -92,20 +62,6 @@ const TimerObject* as_timer(const Header* object) {
         return nullptr;
     }
     return reinterpret_cast<const TimerObject*>(object);
-}
-
-SectionObject* as_section(Header* object) {
-    if (object == nullptr || object->type != Type::section) {
-        return nullptr;
-    }
-    return reinterpret_cast<SectionObject*>(object);
-}
-
-const SectionObject* as_section(const Header* object) {
-    if (object == nullptr || object->type != Type::section) {
-        return nullptr;
-    }
-    return reinterpret_cast<const SectionObject*>(object);
 }
 
 SemaphoreObject* as_semaphore(Header* object) {
@@ -153,216 +109,6 @@ TimerObject* create_timer(bool manual_reset) {
         return &timer_object;
     }
     return nullptr;
-}
-
-/* Reserva una ranura de seccion y sus paginas fisicas, con el grant pedido.
- * No borra las paginas: el que llama decide si las deja en cero (una seccion
- * anonima) o si las llena desde otro lado (una respaldada por archivo). */
-static SectionObject* allocate_section(uint64_t aligned_size, uint64_t page_count, uint32_t access_mask) {
-    for (SectionObject& section_object : g_section_objects) {
-        if (section_object.in_use) {
-            continue;
-        }
-
-        memset(&section_object, 0, sizeof(section_object));
-        section_object.physical_pages = static_cast<uint64_t*>(
-            heap::allocate(static_cast<size_t>(page_count * sizeof(uint64_t)), alignof(uint64_t)));
-        if (section_object.physical_pages == nullptr) {
-            return nullptr;
-        }
-        memset(section_object.physical_pages, 0, static_cast<size_t>(page_count * sizeof(uint64_t)));
-
-        for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
-            memory::PageAllocation page = {};
-            if (!memory::allocate_page(page)) {
-                for (uint64_t rollback = 0; rollback < page_index; ++rollback) {
-                    if (section_object.physical_pages[rollback] != 0) {
-                        (void)memory::free_pages(section_object.physical_pages[rollback], 1);
-                    }
-                }
-                heap::free(section_object.physical_pages);
-                memset(&section_object, 0, sizeof(section_object));
-                return nullptr;
-            }
-
-            memset(page.virtual_address, 0, memory::kPageSize);
-            section_object.physical_pages[page_index] = page.physical_address;
-        }
-
-        section_object.header.type = Type::section;
-        section_object.header.destroy = destroy_section;
-        section_object.in_use = true;
-        section_object.access_mask = access_mask;
-        section_object.size_bytes = aligned_size;
-        section_object.page_count = page_count;
-        section_object.allocation = {
-            .physical_address = 0,
-            .virtual_address = nullptr,
-            .page_count = page_count,
-        };
-        return &section_object;
-    }
-
-    return nullptr;
-}
-
-SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
-    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
-        return nullptr;
-    }
-
-    const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
-    if (aligned_size < size_bytes) {
-        return nullptr;
-    }
-    const uint64_t page_count = aligned_size / memory::kPageSize;
-    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
-        return nullptr;
-    }
-    if (page_count == 0) {
-        return nullptr;
-    }
-
-    return allocate_section(aligned_size, page_count, access_mask);
-}
-
-/* Devuelve la seccion ya cargada para este inode, o nullptr. Solo hay una por * inode: la tabla tiene 256 lugares y el punto de este cache es no multiplicar
- * las paginas fisicas de una libreria entre procesos. */
-void section_live_counts(uint32_t& live, uint32_t& file_backed) {
-    live = 0;
-    file_backed = 0;
-    for (const SectionObject& section_object : g_section_objects) {
-        if (!section_object.in_use) {
-            continue;
-        }
-        live++;
-        if (section_object.file_backed != 0) {
-            file_backed++;
-        }
-    }
-}
-
-static SectionObject* find_file_section(uint32_t inode_id, uint64_t offset, uint64_t length) {
-    if (inode_id == 0) {
-        return nullptr;
-    }
-    for (SectionObject& section_object : g_section_objects) {
-        if (!section_object.in_use || section_object.file_backed == 0) {
-            continue;
-        }
-        /* La clave incluye el rango. Con solo inode_id, pedir un tramo devolvia
-         * la seccion del archivo entero y el segmento terminaba mapeado con la
-         * imagen completa en lugar de la suya. */
-        if (section_object.source_inode_id != inode_id ||
-            section_object.source_offset != offset ||
-            section_object.source_length != length) {
-            continue;
-        }
-        return &section_object;
-    }
-    return nullptr;
-}
-
-SectionObject* acquire_file_range_section(
-    vfs::Vnode& node,
-    uint64_t offset,
-    uint64_t length,
-    uint32_t access_mask) {
-    uint64_t size_bytes = length != 0 ? length : node.size;
-    if (offset > node.size || size_bytes > node.size - offset) {
-        return nullptr;
-    }
-    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
-        return nullptr;
-    }
-
-    const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
-    if (aligned_size < size_bytes) {
-        return nullptr;
-    }
-    const uint64_t page_count = aligned_size / memory::kPageSize;
-    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
-        return nullptr;
-    }
-
-    /* La clave de identidad es el inode de SxFS. Para un archivo del initramfs
-     * no hay inode: se lee igual, pero sin cache, porque no hay nada estable
-     * contra que comparar entre procesos. */
-    uint32_t inode_id = 0;
-    if (node.backend == vfs::Backend::sxfs) {
-        sxfs::FileRecord* record = sxfs::file_from_vnode(node);
-        if (record == nullptr) {
-            return nullptr;
-        }
-        inode_id = record->inode_id;
-        if (inode_id == 0) {
-            return nullptr;
-        }
-        if (SectionObject* existing = find_file_section(inode_id, offset, size_bytes)) {
-            /* NO se retiene aca. create_section tampoco deja referencia puesta:
-             * la establish el llamador al instalar el handle (install_handle
-             * hace retain). Retener aqui y dejar que install_handle retenga
-             * otra vez deja una referencia de mas y la seccion no muere nunca. */
-            return existing;
-        }
-    }
-
-    SectionObject* section_object = allocate_section(aligned_size, page_count, access_mask);
-    if (section_object == nullptr) {
-        return nullptr;
-    }
-
-    section_object->file_backed = 1;
-    section_object->source_inode_id = inode_id;
-    section_object->source_offset = offset;
-    section_object->source_length = size_bytes;
-
-    /* Se lee el archivo entero adentro de las paginas que se acaba de reservar.
-     * Si a mitad de camino el archivo resulta mas corto que lo que prometia
-     * vnode.size, la seccion queda con ceros en la cola y se devuelve igual: un
-     * binario truncado a medio leer no es un motivo para tumbar al proceso que
-     * lo pide, y el cargador va a fallar al validar el ELF. Lo que NO se tolera
-     * es un error de lectura real, que si se reporta. */
-    uint64_t filled = 0;
-    while (filled < size_bytes) {
-        const uint64_t chunk = (size_bytes - filled) > memory::kPageSize
-            ? static_cast<uint64_t>(memory::kPageSize)
-            : (size_bytes - filled);
-        void* buffer = vm::physical_to_virtual(section_object->physical_pages[filled / memory::kPageSize]);
-        const size_t got = vfs::read(node, static_cast<size_t>(offset + filled), buffer, static_cast<size_t>(chunk));
-        if (got == 0) {
-            /* Fin de archivo antes de lo prometido: el resto queda en cero. */
-            break;
-        }
-        filled += got;
-    }
-
-    return section_object;
-}
-
-SectionObject* clone_section(const SectionObject& source) {
-    if (!source.in_use) {
-        return nullptr;
-    }
-
-    SectionObject* section_object = create_section(source.size_bytes, source.access_mask);
-    if (section_object == nullptr) {
-        return nullptr;
-    }
-
-    uint64_t remaining = source.size_bytes;
-    for (uint64_t page_index = 0; page_index < source.page_count; ++page_index) {
-        const size_t page_bytes = static_cast<size_t>(remaining > memory::kPageSize ? memory::kPageSize : remaining);
-        memcpy(
-            vm::physical_to_virtual(section_object->physical_pages[page_index]),
-            vm::physical_to_virtual(source.physical_pages[page_index]),
-            page_bytes);
-        if (remaining <= memory::kPageSize) {
-            break;
-        }
-        remaining -= memory::kPageSize;
-    }
-    return section_object;
 }
 
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count) {

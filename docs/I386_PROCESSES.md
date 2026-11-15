@@ -1,7 +1,7 @@
 # i386 processes and preemptive scheduling
 
 The i386 target supports independent ELF32 processes, PIT-driven preemption,
-`spawn`, `waitpid`, `exit`, static `exec`, `kill`, `yield`, blocking I/O and sleeping. This
+`spawn`, `fork`, `waitpid`, `exit`, `exec`, `kill`, `yield`, blocking I/O and sleeping. This
 extends the [real-hardware route](REAL_HARDWARE.md) after its minimal desktop
 milestone. It does not reuse the x86_64 scheduler or promise that target's full
 POSIX/process feature set.
@@ -23,12 +23,14 @@ tags, control word `0x037f`, MXCSR `0x1f80` and zeroed register storage. FS/GS a
 EFLAGS are independent too. Kernel C++ is compiled without SSE; the explicit
 context helpers are the only kernel users of these registers.
 
-ELF32 programs retain the virtual range `0x08000000..0x09000000`, with an eager
-64 KiB stack at its top and an absent 4 KiB guard immediately below it. Private
-CR3 directories use two-level non-PAE paging for user mappings. Only PT_LOAD
-pages and the stack exist: holes remain absent, text/rodata are read-only unless
-an ELF segment sharing their page requires writes, and data/BSS/stack are writable.
-There is no NX on this CPU; readable user pages are also executable.
+ELF32 programs retain the image base `0x08000000` and stack top `0x09000000`.
+The user range now extends to `0x40000000` for section views. The stack reserves
+1 MiB with eight initial pages and grows on user not-present faults; its
+permanent guard is `0x08eff000`. Private CR3 directories use two-level non-PAE
+paging. Holes remain absent; text/rodata are read-only and data/BSS/stack writable.
+Borrowed section pages have independent object/view references and are not freed
+as private image pages. [I386_MEMORY.md](I386_MEMORY.md) defines ownership, fork,
+heap growth and ELF32 loading. There is no NX: readable user pages are executable.
 
 The v0.4.0 physical allocator (`kernel/physical_memory.cpp`) supplies zeroed
 4 KiB image pages and page tables on demand during loading, replacing the old
@@ -89,7 +91,7 @@ next binary. `sh32` is a diagnostic child; its commands remain:
 The SDK limit is 15 arguments of up to 63 characters each; the initial argv table
 uses 4-byte pointers and a null terminator. Invalid user ranges return `EFAULT`,
 excess arguments or strings return `E2BIG`, and a missing or invalid image returns
-`ENOENT` or `ENOEXEC`. The supported image format remains static i386 ET_EXEC.
+`ENOENT` or `ENOEXEC`. The supported formats are i386 ET_EXEC and PIE ET_DYN with the embedded ELF32 loader.
 
 `waitpid` accepts a specific child or `SAVANXP_WAIT_ANY` (`-1`). It returns the
 child's PID and its plain integer exit status, including when the child exited
@@ -114,7 +116,8 @@ remaining terminal limitations.
 
 The exception stubs preserve registers before loading kernel selectors, clear DF
 and normalize an error word for both classes of CPU exception. Their frame has
-an extra error word compared with the IRQ/syscall frame; it is never resumed.
+an extra error word compared with the IRQ/syscall frame. A recovered stack fault
+removes that word and resumes the original context; other faults terminate.
 The handler checks the saved CS privilege level, reports vector/error/EIP/CS
 and CR2 for page faults, then terminates a faulting user task with status
 `128 + vector`, matching v0.4.0's `terminate_current_from_exception`. Waiters,
@@ -172,10 +175,8 @@ snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
 ## Remaining boundaries
 
-There is no fork, user-installed signal handlers, SMP, dynamic image loading,
-ASLR, section-object integration, heap growth or demand-grown reference stack.
-The virtual window remains 16 MiB and the stack 64 KiB; RAM above the mapped first
+User-installed signal handlers, the remaining waitable object APIs, SMP and ASLR
+remain unported. The six-process capacity remains; RAM above the mapped first
 GiB is not allocated. User read-only pages and supervisor mappings are protected,
-but absence of NX prevents execute-disable and full W^X enforcement. These are
-explicit parity gaps; the memory/fault milestone does not claim the complete
-v0.4.0 memory model. Physical laptop validation is still outstanding.
+but absence of NX prevents execute-disable and full W^X enforcement. The full
+graphics session and physical laptop validation are still outstanding.

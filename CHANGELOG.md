@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **i386 supports memory sections, growing heaps and ELF32 shared libraries.**
+  PIE startup, `fork`, shared/private views and pipe handle transfer are usable;
+  `smoke shared`/`shared-memory` check loading and 32 MiB cleanup; full smoke allows 360 s.
+
 - **The reference shell and BusyBox subset run on i386 with files and pipes.**
   CPIO `/bin`, per-process descriptors, redirection, polling and `exec` are usable;
   `smoke posix` and `verify_posix_persistence.py` check behavior and persistence.
@@ -87,6 +91,9 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **New file-section opens observe guest writes and reused inodes.**
+  Existing mappings retain their immutable bytes while later opens use fresh backing.
 
 - **`renametest` now performs the file rename that its checks require.**
   It verifies directory and child-file moves separately.

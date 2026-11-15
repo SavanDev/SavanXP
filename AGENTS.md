@@ -134,9 +134,10 @@
 
 ## Minimum verification for the shared library work
 
-- SxGUI and shared-library loading are not ported to i386 yet. Restore
-  `sxgui-smoke` with that port. Until then `./build.sh smoke desktop` checks
-  `desktop32`; it must not be reported as evidence that SxGUI works.
+- The ELF32 loader is covered by `./build.sh smoke shared` and
+  `./build.sh smoke shared-memory`. SxGUI is not ported to i386 yet; restore
+  `sxgui-smoke` with the graphics port. Until then `./build.sh smoke desktop`
+  checks `desktop32`; it must not be reported as evidence that SxGUI works.
 
 - Once ported, run `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
   program that draws is touched. It is the only check that looks at what SxGUI

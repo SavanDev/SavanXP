@@ -35,6 +35,14 @@ void destroy(object::Header* header) {
         auto& pipe = *file->pipe;
         if (file->open_flags & SAVANXP_OPEN_READ) --pipe.reader_refs;
         if (file->open_flags & SAVANXP_OPEN_WRITE) --pipe.writer_refs;
+        if (!pipe.reader_refs) {
+            while (pipe.handle_count) {
+                object::release(pipe.handles[pipe.handle_head]);
+                pipe.handle_access[pipe.handle_head] = 0;
+                pipe.handle_head = (pipe.handle_head + 1) % ::process::kPipeHandleQueueCapacity;
+                --pipe.handle_count;
+            }
+        }
         if (!pipe.reader_refs && !pipe.writer_refs) memset(&pipe, 0, sizeof(pipe));
     }
     if (file == g_gpu) {
@@ -65,15 +73,7 @@ uint32_t access_for(uint32_t flags) {
 }
 
 int install(process::Process& task, object::IoObject* file, int fd = -1) {
-    if (fd < 0) {
-        for (uint32_t index = 0; index < kMaxHandles; ++index)
-            if (!task.handles[index].object) { fd = static_cast<int>(index); break; }
-    }
-    if (fd < 0 || fd >= static_cast<int>(kMaxHandles)) return -SAVANXP_EBADF;
-    object::retain(&file->header);
-    object::release(task.handles[fd].object);
-    task.handles[fd] = {&file->header, access_for(file->open_flags), object::handle_none};
-    return fd;
+    return install_object(task, &file->header, access_for(file->open_flags), fd);
 }
 
 bool valid(process::Process& task, uint32_t buffer, uint32_t count, bool writable) {
@@ -216,6 +216,19 @@ void fill_stat(const vfs::Vnode& node, savanxp_stat& stat) {
 
 } // namespace
 
+int install_object(process::Process& task, object::Header* header, uint32_t access, int fd) {
+    if (!header) return -SAVANXP_EBADF;
+    if (fd < 0) {
+        for (uint32_t index = 0; index < kMaxHandles; ++index)
+            if (!task.handles[index].object) { fd = static_cast<int>(index); break; }
+    }
+    if (fd < 0 || fd >= static_cast<int>(kMaxHandles)) return -SAVANXP_EBADF;
+    object::retain(header);
+    object::release(task.handles[fd].object);
+    task.handles[fd] = {header, access, object::handle_none};
+    return fd;
+}
+
 void initialize() {
     g_input_node = vfs::install_external_file("/dev/input0", vfs::Backend::device, nullptr, 0, true);
     g_gpu_node = vfs::install_external_file("/dev/gpu0", vfs::Backend::device, nullptr, 0, true);
@@ -237,18 +250,47 @@ void release_handles(process::Process& task) {
     }
 }
 
+int send_handle(process::Process& task, uint32_t pipe_fd, uint32_t fd) {
+    auto* file = lookup(task, pipe_fd, object::access_write);
+    if (!file || file->kind != HandleKind::pipe || fd >= kMaxHandles || !task.handles[fd].object)
+        return -SAVANXP_EBADF;
+    if (task.handles[fd].object->type == object::Type::io) return -SAVANXP_EINVAL;
+    auto& pipe = *file->pipe;
+    if (!pipe.reader_refs) return -SAVANXP_EPIPE;
+    if (pipe.handle_count == ::process::kPipeHandleQueueCapacity) return -SAVANXP_EAGAIN;
+    const uint32_t tail = (pipe.handle_head + pipe.handle_count) % ::process::kPipeHandleQueueCapacity;
+    object::retain(task.handles[fd].object);
+    pipe.handles[tail] = task.handles[fd].object;
+    pipe.handle_access[tail] = task.handles[fd].granted_access;
+    ++pipe.handle_count;
+    return 0;
+}
+int receive_handle(process::Process& task, uint32_t pipe_fd) {
+    auto* file = lookup(task, pipe_fd, object::access_read);
+    if (!file || file->kind != HandleKind::pipe) return -SAVANXP_EBADF;
+    auto& pipe = *file->pipe;
+    if (!pipe.handle_count) return -SAVANXP_EAGAIN;
+    const int fd = install_object(task, pipe.handles[pipe.handle_head], pipe.handle_access[pipe.handle_head]);
+    if (fd < 0) return fd;
+    object::release(pipe.handles[pipe.handle_head]);
+    pipe.handle_access[pipe.handle_head] = 0;
+    pipe.handle_head = (pipe.handle_head + 1) % ::process::kPipeHandleQueueCapacity;
+    --pipe.handle_count;
+    return fd;
+}
+
 int close(process::Process& task, uint32_t fd) {
-    if (!lookup(task, fd)) return -SAVANXP_EBADF;
+    if (fd >= kMaxHandles || !task.handles[fd].object) return -SAVANXP_EBADF;
     object::release(task.handles[fd].object);
     task.handles[fd].granted_access = task.handles[fd].flags = 0;
     return 0;
 }
 
 int duplicate(process::Process& task, uint32_t oldfd, int newfd) {
-    auto* file = lookup(task, oldfd);
-    if (!file || newfd < -1 || newfd >= static_cast<int>(kMaxHandles)) return -SAVANXP_EBADF;
+    if (oldfd >= kMaxHandles || !task.handles[oldfd].object || newfd < -1 ||
+        newfd >= static_cast<int>(kMaxHandles)) return -SAVANXP_EBADF;
     if (newfd == static_cast<int>(oldfd)) return newfd;
-    return install(task, file, newfd);
+    return install_object(task, task.handles[oldfd].object, task.handles[oldfd].granted_access, newfd);
 }
 
 int open(process::Process& task, const char* path, uint32_t flags) {

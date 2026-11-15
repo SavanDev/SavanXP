@@ -8,14 +8,32 @@ _start:
     # la depende.
     cld
 #if defined(__i386__)
-    # El kernel entrega argc en edi, argv en esi, el canary en edx, la ruta del
-    # interprete en ecx y la cabecera ELF en ebp (no hay r8 en 32 bits). Los tres
-    # ultimos no sobreviven a una llamada, asi que se instalan antes de la
-    # primera, igual que en la rama de 64 bits.
+    # The kernel supplies argc/argv in EDI/ESI, the guard in EDX,
+    # PT_INTERP in ECX and the image header in EBP. Establish the GOT without
+    # reading any unrelocated pointer before entering the embedded loader.
     andl $-16, %esp
+#if defined(__PIC__)
+    call 2f
+2:  popl %ebx
+    addl $_GLOBAL_OFFSET_TABLE_+(.-2b), %ebx
+    movl %edx, __stack_chk_guard@GOTOFF(%ebx)
+    movl %ecx, sx_interpreter_path@GOTOFF(%ebx)
+    movl %ebp, sx_image_base@GOTOFF(%ebx)
+    subl $12, %esp
+    pushl %ebp
+    call sx_bootstrap_relative
+    addl $16, %esp
+    testl %eax, %eax
+    jz 3f
+    movl $126, %edi
+    movl $7, %eax
+    int $0x80
+3:
+#else
     movl %edx, __stack_chk_guard
     movl %ecx, sx_interpreter_path
     movl %ebp, sx_image_base
+#endif
     # ABI System V de 32 bits: los argumentos van en el stack, de derecha a
     # izquierda, y el stack debe estar alineado a 16 en cada call. Los dos
     # push de 4 bytes no reponen los 16, asi que hay un relleno de 8 delante y

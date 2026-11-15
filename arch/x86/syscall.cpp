@@ -15,6 +15,7 @@
 #include "serial.hpp"
 #include "user32.hpp"
 #include "io.hpp"
+#include "sections.hpp"
 #include "paging.hpp"
 #include "kernel/vfs.hpp"
 
@@ -61,6 +62,24 @@ void handle(ContextFrame& frame) {
      * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
      * ABI, y el usuario pone el numero en eax. */
     switch (frame.eax) {
+        case SAVANXP_SYS_FORK:
+            frame.eax = process::fork(frame); return;
+        case SAVANXP_SYS_PIPE_SEND_HANDLE:
+            frame.eax = io::send_handle(*process::current(), frame.edi, frame.esi); return;
+        case SAVANXP_SYS_PIPE_RECEIVE_HANDLE:
+            frame.eax = io::receive_handle(*process::current(), frame.edi); return;
+        case SAVANXP_SYS_SECTION_CREATE:
+            frame.eax = sections::create(*process::current(), frame.edi, frame.esi); return;
+        case SAVANXP_SYS_SECTION_OPEN:
+            frame.eax = sections::open(*process::current(), frame.edi, 0, 0, frame.esi); return;
+        case SAVANXP_SYS_SECTION_OPEN_RANGE:
+            frame.eax = sections::open(*process::current(), frame.edi, frame.esi, frame.edx, frame.ecx); return;
+        case SAVANXP_SYS_MAP_VIEW:
+            frame.eax = sections::map(*process::current(), frame.edi, 0, frame.esi); return;
+        case SAVANXP_SYS_MAP_VIEW_AT:
+            frame.eax = sections::map(*process::current(), frame.edi, frame.esi, frame.edx); return;
+        case SAVANXP_SYS_UNMAP_VIEW:
+            frame.eax = sections::unmap(*process::current(), frame.edi); return;
         case kSysRead:
             frame.eax = io::read(*process::current(), frame.edi, frame.esi, frame.edx);
             return;
@@ -367,6 +386,8 @@ void handle(ContextFrame& frame) {
             info.sxfs_used_bytes = sxfs::used_bytes(volume);
             info.sxfs_free_bytes = sxfs::free_bytes(volume);
             info.process_count = process::count();
+            object::section_live_counts(info.sections_live, info.file_sections_live);
+            info.last_view_failure = sections::last_failure();
             info.cpu_count = 1;
             info.cpu_online = 1;
 

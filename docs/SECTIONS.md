@@ -1,5 +1,9 @@
 # Section objects and section views
 
+This retained document records the reference design and its development history.
+For the active i386 implementation, verification and remaining limits, see
+[I386_MEMORY.md](I386_MEMORY.md); the build counts below are not i386 measurements.
+
 A **section object** is a refcounted, contiguous run of physical pages with a
 capability grant. A **view** is one process's mapping of a section at an address
 it chose. This document explains the model, the rules it enforces, and — because

@@ -44,6 +44,8 @@ i386 support; retained code is not necessarily part of the active build.
   remaining hardware gaps for a Compaq Evo N1020v.
 - [`I386_POSIX.md`](I386_POSIX.md) — shared descriptors, files, pipes, canonical TTY,
   reference shell/BusyBox, exec/cleanup and guest persistence verification.
+- [`I386_MEMORY.md`](I386_MEMORY.md) — section/view ownership, heap growth,
+  stack demand, fork and the embedded ELF32 shared-library loader.
 - [`I386_PROCESSES.md`](I386_PROCESSES.md) — private i386 process contexts, PIT
   preemption, allocator-backed pages, fault containment, spawn/wait/exit and regressions.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and

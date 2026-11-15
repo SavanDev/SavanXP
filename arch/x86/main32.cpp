@@ -15,6 +15,7 @@
 #include "memory.hpp"
 #include "io.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/heap.hpp"
 #include "paging.hpp"
 #include "pit.hpp"
 #include "ps2_32.hpp"
@@ -318,6 +319,8 @@ constexpr const char* kUserProgramPath = "/disk/bin/init32";
 
 }
 
+[[noreturn]] void panic(const char* message) { halt_with(message); }
+
 extern "C" uintptr_t __stack_chk_guard = 0;
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
@@ -415,6 +418,8 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::write("\n");
 
     /* Map video before mounting SxFS so subsequent boot output is visible. */
+    heap::initialize();
+    if (!heap::ready()) halt_with("memory: cannot initialize kernel heap");
     initialize_video();
 
     mount_root_filesystem();

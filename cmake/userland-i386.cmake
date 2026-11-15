@@ -2,6 +2,7 @@
 set(SAVANXP_I386_USER_RUNTIME_SOURCES
     ${SAVANXP_USER_RUNTIME_SOURCES}
     subsystems/posix/sdk/v1/runtime/div64.c
+    subsystems/posix/sdk/v1/runtime/bootstrap32.c
 )
 
 add_library(savanxp_i386_user_runtime OBJECT ${SAVANXP_I386_USER_RUNTIME_SOURCES})
@@ -137,7 +138,7 @@ foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
 endforeach()
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    set(SAVANXP_I386_POSIX_TESTS posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
+    set(SAVANXP_I386_POSIX_TESTS vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
     foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
         savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
     endforeach()
@@ -178,10 +179,12 @@ foreach(name IN ITEMS sh ${SAVANXP_I386_CORE_APPS} ${SAVANXP_I386_POSIX_TESTS})
         VERBATIM)
 endforeach()
 
+include("${CMAKE_SOURCE_DIR}/cmake/elf32-libraries.cmake")
+
 # Restore the reference read-only /bin and /README through its existing CPIO
 # format. The persistent /disk/bin remains the first command search location.
 set(SAVANXP_I386_ROOT_PROGRAMS ${SAVANXP_I386_APPLETS} ${SAVANXP_I386_CORE_APPS}
-    init32 sysinfo sh32 desktop32 sh)
+    init32 sysinfo sh32 desktop32 sh ${SAVANXP_I386_DYNAMIC_PROGRAMS})
 if(SAVANXP_INCLUDE_TEST_APPS)
     list(APPEND SAVANXP_I386_ROOT_PROGRAMS keyecho multitest32 memhog32 ${SAVANXP_I386_POSIX_TESTS})
 endif()
@@ -189,6 +192,10 @@ set(SAVANXP_I386_ROOT_STRIP_COMMANDS)
 foreach(name IN LISTS SAVANXP_I386_ROOT_PROGRAMS)
     list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
         COMMAND "${SAVANXP_OBJCOPY}" --strip-debug "${SAVANXP_ROOTFS_ROOT}/bin/${name}")
+endforeach()
+foreach(name IN LISTS SAVANXP_I386_LIBRARIES)
+    list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
+        COMMAND "${SAVANXP_OBJCOPY}" --strip-debug "${SAVANXP_ROOTFS_ROOT}/lib/${name}")
 endforeach()
 add_custom_target(savanxp_i386_initramfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"

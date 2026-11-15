@@ -109,12 +109,13 @@ This also handles capacity failure after some stages have started. The small
 process table can still reject a pipeline requiring more live tasks than fit;
 recovery does not claim increased process capacity.
 
-Static `exec` first loads a replacement into a separate directory. Failure
+`exec` first loads a replacement into a separate directory. Failure
 releases that staging image and leaves the original intact. Success switches
 through the supervisor directory, frees the old image, commits the new mappings
 and user frame, and starts with fresh FPU/BSS state. PID, parent, CWD and open
 descriptors survive. Supported kill dispositions terminate with `128 + signal`;
-SIGCHLD is non-terminating. User-installed signal handlers and fork remain gaps.
+SIGCHLD is non-terminating. User-installed signal handlers remain a gap; [I386_MEMORY.md](I386_MEMORY.md)
+describes the subsequently restored fork/view model.
 
 ## Read-only root and persistent disk
 
@@ -157,8 +158,8 @@ source image hash too. Its writable-disk harness flag is for this isolated check
 it is never enabled by normal smoke commands.
 
 Process-info CPU counters and an explicit idle-process entry still need the
-reference accounting integration. The six-process table, 16 MiB user window,
-64 KiB eager stack, 1 GiB managed RAM limit and lack of NX remain. Fork, full signals/job control, section objects,
-shared libraries, the reference full desktop and the later device services are
-not established by these tests. The next milestone is memory objects and ELF32
-shared-library semantics.
+reference accounting integration. The six-process table, 1 GiB managed RAM limit
+and lack of NX remain. Full signals/job control, the reference full desktop and
+later device services are still parity gaps. Memory sections, growing heaps,
+fork and ELF32 shared libraries were restored in the following milestone; see
+[I386_MEMORY.md](I386_MEMORY.md) for the current memory contract and regressions.

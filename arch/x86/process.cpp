@@ -10,6 +10,7 @@
 #include "user32.hpp"
 #include "syscall.hpp"
 #include "io.hpp"
+#include "sections.hpp"
 #include "kernel/physical_memory.hpp"
 
 namespace i386::process {
@@ -158,6 +159,38 @@ long spawn(const char* path, const char* const* argv, uint32_t argc, int stdin_f
     return -SAVANXP_EAGAIN;
 }
 
+long fork(const ContextFrame& frame) {
+    for (auto& child : g_processes) {
+        if (child.state != State::unused) continue;
+        if (g_next_pid >= 0x80000000u) return -SAVANXP_EAGAIN;
+        memset(&child, 0, sizeof(child));
+        *reinterpret_cast<uint32_t*>(child.kernel_stack) = kStackCanary;
+        child.frame = reinterpret_cast<ContextFrame*>(child.kernel_stack + sizeof(child.kernel_stack) - sizeof(ContextFrame));
+        paging::initialize_process_directory(child.directory);
+        if (!paging::clone_private_pages(g_current->directory, child.directory) ||
+            !sections::clone_views(*g_current, child)) {
+            sections::release_views(child);
+            paging::destroy_process_directory(child.directory);
+            return -SAVANXP_ENOMEM;
+        }
+        for (uint32_t fd = 0; fd < io::kMaxHandles; ++fd) {
+            child.handles[fd] = g_current->handles[fd];
+            object::retain(child.handles[fd].object);
+        }
+        strcpy(child.cwd, g_current->cwd);
+        strcpy(child.name, g_current->name);
+        *child.frame = frame;
+        child.frame->eax = 0;
+        save_fpu_state(g_current->fpu);
+        memcpy(&child.fpu, &g_current->fpu, sizeof(child.fpu));
+        child.pid = g_next_pid++;
+        child.parent = current_pid();
+        child.state = State::runnable;
+        return child.pid;
+    }
+    return -SAVANXP_EAGAIN;
+}
+
 [[noreturn]] void start() {
     ps2_32::clear_queue();
     serial::write("scheduler: PIT round-robin, 20 ms quantum\n");
@@ -218,6 +251,7 @@ int replace_image(const char* path, const char* const* argv, uint32_t argc, Cont
     // Commit only after the new image is complete; failures preserve the old
     // program, descriptors and CWD. Kernel stacks do not depend on user CR3.
     paging::activate_kernel();
+    sections::release_views(*g_current);
     paging::destroy_process_directory(g_current->directory);
     memcpy(g_current->directory, directory, 4096);
     memory::free_allocation(staging);
@@ -274,6 +308,7 @@ long wait(int pid, uint32_t status) {
 }
 
 static void terminate(Process& child, int status) {
+    sections::release_views(child);
     io::release_handles(child);
     serial::write("process: pid ");
     serial::write_dec(child.pid);

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "kernel/sxfs.hpp"
+#include "kernel/object.hpp"
 #include "kernel/string.hpp"
 #include "savanxp/syscall.h"
 
@@ -618,6 +619,7 @@ Vnode* open(const char* path, uint32_t flags) {
                     g_last_error = SAVANXP_EINVAL;
                     return nullptr;
                 }
+                object::invalidate_file_sections(node);
                 node.size = file->size;
             }
         }
@@ -845,6 +847,9 @@ bool unlink(const char* path) {
             return true;
         case Backend::sxfs: {
             sxfs::FileRecord* file = sxfs::file_from_vnode(node);
+            // Remove the immutable snapshot's cache key before unlink releases
+            // the file record. Existing views keep their bytes and references.
+            object::invalidate_file_sections(node);
             if (file == nullptr || !sxfs::unlink_file(*file)) {
                 g_last_error = SAVANXP_EINVAL;
                 return false;
@@ -950,6 +955,7 @@ bool truncate(const char* path, size_t size) {
                 g_last_error = size > node.size ? SAVANXP_ENOSPC : SAVANXP_EINVAL;
                 return false;
             }
+            object::invalidate_file_sections(node);
             node.size = file->size;
             return true;
         }
@@ -1107,6 +1113,7 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
                 g_last_error = SAVANXP_ENOSPC;
                 return 0;
             }
+            object::invalidate_file_sections(node);
             node.size = file->size;
             return written;
         }

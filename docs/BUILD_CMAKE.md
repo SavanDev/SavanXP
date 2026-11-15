@@ -20,6 +20,8 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke processes
 ./build.sh smoke memory
 ./build.sh smoke posix
+./build.sh smoke shared
+./build.sh smoke shared-memory
 ./build.sh smoke desktop
 ./build.sh smoke legacy-cpu
 ./build.sh test
@@ -50,7 +52,7 @@ configure a separate directory rather than mixing architectures.
 
 ## Tools and overrides
 
-Install Clang, LLD, LLVM tools, CMake 3.25+, Ninja, Python 3.10+ with Pillow,
+Install Clang, LLD, LLVM tools (including `llvm-nm`, or host `nm`), CMake 3.25+, Ninja, Python 3.10+ with Pillow,
 Git, QEMU, `xorriso`, and GRUB2's `grub-mkrescue` and `i386-pc` platform files.
 Tools are discovered from `PATH`, with CMake cache overrides such as
 `SAVANXP_LD`, `SAVANXP_GRUB_MKRESCUE` and `SAVANXP_GRUB_I386_PC`.
@@ -70,7 +72,7 @@ ISO and a snapshot of the normal disk. It checks the reference shell/BusyBox and
 POSIX base, then runs the diagnostic shell for keyboard,
 concurrent CPU workers, spawn/wait/exit, contained user faults, page protection,
 shell restart, desktop glyphs, PS/2
-buttons and cursor restoration. The default timeout is 240 seconds. Logs/screenshots stay in a unique directory
+buttons and cursor restoration. The default timeout is 360 seconds. Logs/screenshots stay in a unique directory
 under `build/smoke-logs`. `smoke --list` lists supported cases. Former x86_64
 scenarios such as `sxgui-smoke` and `windowd-smoke` are unavailable until their
 subsystems have been ported; the minimal desktop check does not prove SxGUI.
@@ -80,6 +82,13 @@ It requires partial ELF allocation to fail with `ENOMEM`, retries it without pag
 leaks, and verifies surviving children, page reclamation and slot reuse. The
 normal 1 GiB smoke exercises table exhaustion instead. `multitest32` and its
 12 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
+
+`./build.sh smoke shared` checks memory sections, heap growth, private/shared
+fork and real ELF32 dependency calls. `shared-memory` repeats this with 32 MiB,
+requiring exact cleanup after section/fork `ENOMEM`. The full smoke includes
+these checks. [I386_MEMORY.md](I386_MEMORY.md) defines coverage and limits.
+The native tool discovery also requires LLVM `nm` or host `nm` for the
+shared-library duplication check; `SAVANXP_NM` can override discovery.
 
 `./build.sh smoke posix` checks all eleven BusyBox applets, shared file offsets,
 stdio inheritance, directories, pipes larger than the ring, nonblocking I/O,

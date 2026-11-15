@@ -11,14 +11,14 @@ constexpr uint32_t kBlockMagic = 0x4b484541u;
 
 struct BlockHeader;
 
-struct Arena {
+struct alignas(16) Arena {
     memory::PageAllocation allocation;
     Arena* next;
     Arena* previous;
     BlockHeader* first_block;
 };
 
-struct BlockHeader {
+struct alignas(16) BlockHeader {
     uint64_t size;
     Arena* arena;
     BlockHeader* next;

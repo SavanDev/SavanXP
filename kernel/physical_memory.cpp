@@ -153,6 +153,10 @@ void initialize(const boot::BootInfo& boot_info) {
     g_ready = g_region_count != 0 && g_total_pages != 0;
 }
 
+void* physical_to_virtual(uint64_t physical_address) {
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(physical_address + g_hhdm_offset));
+}
+
 bool ready() {
     return g_ready;
 }

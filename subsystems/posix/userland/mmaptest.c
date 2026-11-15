@@ -131,5 +131,6 @@ int main(void) {
         (void)munmap(executable_data, 4096);
         return 1;
     }
+    puts_fd(1, "mmaptest: ok\n");
     return 0;
 }

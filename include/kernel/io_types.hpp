@@ -21,7 +21,7 @@ enum OpenFlags : uint32_t {
 };
 
 // Reference handle-transfer queue, separate from the byte stream. Each entry
-// retains its object until received. The i386 POSIX base uses byte pipes only.
+// retains its object until received. The i386 port uses the same queue ownership.
 constexpr size_t kPipeHandleQueueCapacity = 4;
 
 struct Pipe {

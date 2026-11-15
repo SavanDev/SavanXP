@@ -63,7 +63,9 @@ sh32
 `sh32` remains a diagnostic child for `multitest`, `start`, `wait` and `desktop`.
 The reference shell launches external programs by name or full path and supports
 pipes and redirection. See the [i386 POSIX contract](docs/I386_POSIX.md).
-The full window manager, shared libraries, networking and audio remain unported.
+Memory sections, heap growth, fork and ELF32 shared libraries are supported;
+see [the memory contract](docs/I386_MEMORY.md). The full window manager, SxGUI,
+networking and audio remain unported.
 Retained source and older design documents are porting material until verified.
 See the [ordered porting roadmap](docs/I386_PORT.md) and
 [process implementation and limits](docs/I386_PROCESSES.md).

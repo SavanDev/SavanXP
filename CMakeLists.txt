@@ -43,6 +43,7 @@ find_program(SAVANXP_HOST_CC NAMES clang cc REQUIRED)
 find_program(SAVANXP_LD NAMES ld.lld REQUIRED)
 find_program(SAVANXP_OBJCOPY NAMES llvm-objcopy REQUIRED)
 find_program(SAVANXP_READELF NAMES llvm-readelf REQUIRED)
+find_program(SAVANXP_NM NAMES llvm-nm nm REQUIRED)
 find_program(SAVANXP_XORRISO NAMES xorriso)
 if(NOT SAVANXP_XORRISO)
     set(SAVANXP_XORRISO xorriso)
@@ -136,6 +137,7 @@ set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/main32.cpp
     arch/x86/memory.cpp
     arch/x86/io.cpp
+    arch/x86/sections.cpp
 )
 # These paths execute on a bounded per-process kernel stack. Reject large
 # Debug aggregate temporaries before they can corrupt another task.
@@ -146,7 +148,7 @@ set_source_files_properties(
 # Reused storage, memory and object-lifetime modules; other subsystems are ported progressively.
 set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
-    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp)
+    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp kernel/section.cpp kernel/heap.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
 target_include_directories(savanxp_kernel_objects PRIVATE

@@ -5,7 +5,7 @@
 namespace i386::paging {
 namespace {
 alignas(4096) uint32_t g_page_directory[1024];
-constexpr uint32_t kPresent = 1, kWrite = 2, kUser = 4, kLarge = 128;
+constexpr uint32_t kPresent = 1, kWrite = 2, kUser = 4, kLarge = 128, kBorrowed = 512;
 constexpr uint32_t kMask = 0xfffff000u;
 constexpr uint32_t kFirst = kUserWindowBase >> 22;
 constexpr uint32_t kEnd = kUserWindowEnd >> 22;
@@ -47,7 +47,8 @@ void enable_identity_1gib() {
 bool map_identity(uint64_t address, uint32_t bytes) {
     if (bytes == 0 || address >= 0x100000000ull || address + bytes > 0x100000000ull)
         return false;
-    // A device identity mapping must not replace the RAM direct map.
+    // Device identity mappings must not overlap the user window or RAM aliases.
+    if (address < kUserWindowEnd && address + bytes > kUserWindowBase) return false;
     if (address < static_cast<uint64_t>(kDirectMapBase) + kDirectMapBytes &&
         address + bytes > kDirectMapBase) return false;
     const uint32_t first = static_cast<uint32_t>(address >> 22);
@@ -71,7 +72,8 @@ void destroy_process_directory(uint32_t* directory) {
         if ((entry & kPresent) == 0) continue;
         uint32_t* pages = table(entry);
         for (uint32_t page = 0; page < 1024; ++page) {
-            if (pages[page] & kPresent) memory::free_pages(pages[page] & kMask, 1);
+            if ((pages[page] & (kPresent | kBorrowed)) == kPresent)
+                memory::free_pages(pages[page] & kMask, 1);
         }
         memory::free_pages(entry & kMask, 1);
         directory[index] = 0;
@@ -155,6 +157,61 @@ uint32_t resident_bytes(const uint32_t* directory) {
             if (table(directory[index])[page] & kPresent) ++pages;
     }
     return pages * kPageBytes;
+}
+
+bool clone_private_pages(const uint32_t* source, uint32_t* destination) {
+    for (uint32_t index = kFirst; index < kEnd; ++index) {
+        if (!(source[index] & kPresent)) continue;
+        const auto* leaves = table(source[index]);
+        for (uint32_t page = 0; page < 1024; ++page) {
+            if ((leaves[page] & (kPresent | kBorrowed)) != kPresent) continue;
+            const uint32_t address = (index << 22) | (page << 12);
+            if (!map_user_range(destination, address, kPageBytes, (leaves[page] & kWrite) != 0))
+                return false;
+            memcpy(user_pointer(destination, address), user_pointer(source, address), kPageBytes);
+        }
+    }
+    return true;
+}
+
+bool range_free(const uint32_t* directory, uint32_t address, uint32_t bytes) {
+    if (!bytes || (address & 4095) || (bytes & 4095) || !inside(address, bytes)) return false;
+    // Keep the entire reserved stack and its permanent guard out of views.
+    if (address < kUserStackTop && address + bytes > kUserStackGuard) return false;
+    for (uint32_t page = address; page < address + bytes; page += kPageBytes)
+        if (user_pointer(directory, page)) return false;
+    return true;
+}
+
+bool map_borrowed_page(uint32_t* directory, uint32_t address, uint32_t physical, bool writable) {
+    if (!range_free(directory, address, kPageBytes) || (physical & 4095)) return false;
+    uint32_t& entry = directory[address >> 22];
+    if (!(entry & kPresent)) {
+        memory::PageAllocation allocation = {};
+        if (!memory::allocate_page(allocation)) return false;
+        memset(allocation.virtual_address, 0, kPageBytes);
+        entry = static_cast<uint32_t>(allocation.physical_address) | kPresent | kWrite | kUser;
+    }
+    table(entry)[(address >> 12) & 1023] = physical | kPresent | kUser | kBorrowed |
+        (writable ? kWrite : 0);
+    return true;
+}
+
+void unmap_borrowed_range(uint32_t* directory, uint32_t address, uint32_t bytes) {
+    for (uint32_t page = address; page < address + bytes; page += kPageBytes) {
+        uint32_t& entry = directory[page >> 22];
+        if (!(entry & kPresent)) continue;
+        auto* leaves = table(entry);
+        uint32_t& leaf = leaves[(page >> 12) & 1023];
+        if (leaf & kBorrowed) {
+            leaf = 0;
+            asm volatile("invlpg (%0)" : : "r"(page) : "memory");
+        }
+        bool empty = true;
+        for (uint32_t index = 0; index < 1024; ++index)
+            if (leaves[index] & kPresent) { empty = false; break; }
+        if (empty) { memory::free_pages(entry & kMask, 1); entry = 0; }
+    }
 }
 
 void activate(const uint32_t* directory) {

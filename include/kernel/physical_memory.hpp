@@ -16,6 +16,7 @@ struct PageAllocation {
 
 void initialize(const boot::BootInfo& boot_info);
 bool ready();
+void* physical_to_virtual(uint64_t physical_address);
 bool allocate_page(PageAllocation& allocation);
 bool allocate_contiguous_pages(uint64_t page_count, PageAllocation& allocation);
 bool free_pages(uint64_t physical_address, uint64_t page_count);

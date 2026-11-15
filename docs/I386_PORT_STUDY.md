@@ -449,19 +449,156 @@ retained the shell/BusyBox and omitted the test programs from staging.
 
 The milestone restores the reference console and descriptor base within the
 branch's stated bring-up bounds. The six-process capacity still limits pipeline
-depth, and fork, complete signals, memory objects, shared libraries and the full
-desktop remain parity gaps. The next ordered dependency is section objects,
-views, heap growth and ELF32 shared-library semantics; v0.4.0 parity remains open.
+depth. At that milestone, fork, complete signals, memory objects, shared libraries
+and the full desktop remained parity gaps. The next dependency at that point was section objects,
+views, heap growth and ELF32 shared-library semantics; v0.4.0 parity remained open.
+
+## 9. Restoring the memory-object and shared-library model
+
+The POSIX milestone left a deliberate ownership mismatch: every present user
+page belonged to its process directory. That was sufficient for static images,
+but a shared library needs a section to outlive any one mapping. Freeing its
+pages when the first process exited would corrupt the second process; avoiding
+all frees would leak them. The frozen reference already solves this through
+independent handle and view references. The port therefore extracts the section
+implementation from `v0.4.0:kernel/object.cpp` into a shared `kernel/section.cpp`,
+rather than adding an architecture-specific section allocator. The physical-page
+list, global budget, zeroing and rollback stay recognizable. The reference kernel
+heap supplies metadata; explicit metadata alignment accommodates 32-bit pointers.
+
+The architecture boundary is the page-table leaf. An i386 software PTE bit marks
+pages borrowed from a section. Unmapping removes those leaves and then releases
+the view reference; directory destruction frees only owned private image pages.
+Empty borrowed-page tables are reclaimed too, including a table allocated just
+before a mapping fails. A closed handle need not kill its view, and a dead process
+need not kill another process's backing. `vmtest32` checks aliases, close-before-
+unmap, global/per-process exhaustion and abandoned handles/views, while the
+32 MiB scenario measures exact physical-page recovery after partial allocation.
+
+Keeping the original 16 MiB user window was considered as a small first step.
+It would make the reference allocator's geometric arenas and multiple libraries
+compete with images and the stack for a prototype-sized hole. Instead, the image
+base and stack top stay stable while section space extends below the existing
+1 GiB supervisor alias boundary. This changes address capacity without changing
+the physical allocator or persistent image. A fixed view below the automatic
+arena must not lower the subsequent allocation cursor; the regression places
+one there before requesting an automatic view. It remains a constrained 32-bit layout,
+not the reference's 64-bit virtual geometry or ASLR. Device identity mappings may
+not overlap that user space; different hardware framebuffer placements still need
+an explicit kernel mapping.
+
+The reference stack reserve also replaces the eager 64 KiB prototype. Eight
+initial pages serve normal startup; user not-present faults inside the 1 MiB
+reserve allocate a page. The exception frame contains an extra normalized error
+word. Earlier containment never resumed this frame, so resuming it unchanged
+would restore the error code as EIP. Recovery shifts only the register/vector
+prefix past that word and returns a normal saved frame. A 256 KiB stack probe
+checks resumed values; the ordinary fault regression still requires the new guard
+address and its exact hardware error bits. Non-PAE paging cannot supply NX, and
+this work does not disguise the API's W^X check as hardware execute protection.
+
+Heap growth alone would have passed simple allocations while missing reference
+ownership behavior. Both the retained `heaptest` and `mmaptest` exercise fork:
+shared views must see the child's writes, private arenas must not. Fork therefore
+lands with this milestone, copying private leaves and FPU/CPU state and applying
+the reference shared/private view rules. Copying private section contents before
+publishing the child preserves rollback on exhaustion. The six-task bound stays
+explicit. Three children plus the parent can still prove global section exhaustion
+by holding views and bare handles, without raising capacity merely to fit a test.
+The reference pipe handle queue supplies the other transfer boundary: queue,
+handle and view references are each released by their respective owners.
+
+### The first PIE failed before ordinary relocation
+
+The first native ELF32 build loaded all six initial PIE probes, but every one
+faulted before main. For `libtest`, the observed CR2 was a link-time guard address
+near `0x00050ff8`, while EIP was in the correctly biased image near `0x0804d44c`.
+Disassembling the startup/adoption path showed that protected C loaded its canary
+through a GOT pointer whose word had not yet gained the image bias. A relative
+function call was correct; the data pointer it used was not.
+
+Disabling stack protection for the loader would only move this dependency into
+its libc calls and error paths. Moving all dynamic linking into the kernel would
+replace the reference design. The smaller adaptation is the interpreter's usual
+self-relocation step: a call/pop establishes the i386 GOT, entry values are stored
+through local offsets, and a bounded helper without stack protection applies the
+main image's RELATIVE entries before any protected C. The ordinary embedded
+loader then brings dependencies and resolves imported symbols. It skips those
+already-applied main-image entries, because i386 REL reads the addend from the
+word it overwrites and applying the bias twice corrupts the pointer.
+
+The loader remains the retained `ldso.c`, using native layouts for ELF headers,
+program headers, symbols and dynamic entries. ELF32 relocation records have two
+32-bit words, not an explicit RELA addend. The new fixture forces a nonzero
+`R_386_32` addend and `R_386_PC32` in data, an unresolved weak symbol, GOT and PLT
+entries, and an executable callback. These are checked through actual calls and
+pointer equality rather than just inspecting `readelf`. The reference PIE,
+interpreter, math, chain, diamond and reduced-slot tests also execute. SysV hash
+counts and mapped segment bounds replace unbounded symbol-table probing on the
+native build. Temporary range handles close once a view owns its reference;
+repeated rejection after a valid first segment verifies rollback, including fd 0.
+
+### File identity after the POSIX port
+
+The retained section documents assumed a running guest could not overwrite a
+library and therefore deferred generation tracking. That premise stopped being
+true with the preceding file-write milestone. An inode/range lookup could serve
+old bytes after an equal-size write, or after unlink and inode reuse. Rewriting
+the SxFS journal or adding a persistent generation was unnecessary: live sections
+are immutable snapshots, so VFS mutation can remove the old snapshot's lookup key
+while its existing references retain its bytes. New opens then read fresh backing.
+The identity also includes the mounted volume. The mutation test holds old views
+while overwriting and recreating the file and compares both generations' bytes.
+Unlink invalidation must happen before SxFS releases the file record; doing it
+afterward loses the identity needed to find the snapshot. Rename changes neither
+bytes nor identity and keeps sharing.
+
+### Evidence and remaining scope
+
+The focused `shared` and `shared-memory` scenarios run through the reference
+shell against rebuilt disk binaries. The latter uses 32 MiB and requires exact
+rollback of partially allocated 64 MiB sections and a fork whose private clone
+cannot fit. `dyntest32` keeps parent and spawned child alive simultaneously and
+asserts that file-backed section counts do not increase, while their counters
+remain private. A forked child also gets independent writable library data. The
+loader must leave all 61 nonstandard descriptor slots available. The retained
+build-time duplication check confirms that real `DT_NEEDED` programs do not carry
+private implementations of the libraries they map. An isolated diagnostics-off
+build exposed its old assumption that CMake and staging directories are adjacent;
+passing the configured library directory explicitly restores independent build/output
+overrides. The same build retains the shell and libmath and excludes diagnostics.
+Fresh builds also expose a pre-existing SDK boundary: `posix.c` aliases
+`intmax_t` functions onto `long` helpers, while `long` is only 32 bits here, and
+`inttypes.h` still assumes LP64 format modifiers. This does not change section or
+loader ownership, but it prevents claiming complete SDK/application parity. The
+later application port must audit these helpers and their 64-bit parsers/formatters.
+
+[I386_MEMORY.md](I386_MEMORY.md) records interfaces, supported relocations,
+commands and limits. The expanded workload reached its memory, POSIX and process assertions but
+exhausted the old 240-second deadline before the desktop phase. The default is
+now 360 seconds; individual command deadlines still detect stalled guests.
+The full regression additionally covers the existing
+POSIX/shell, process/FPU/fault and minimal desktop behavior, with the persistence
+checks guarding external binaries and assets. The 18 host tests, the full smoke,
+the original 32 MiB memory smoke, the expanded 32 MiB shared-library smoke and
+both POSIX cold-boot and Doom rebuild-persistence checks passed. Built/staged
+binaries and libraries were extracted from the real image and compared byte for
+byte, preventing a stale image from standing in for the rebuilt programs.
+Those results establish the memory
+and loader dependency. They do not establish SxGUI painting: GPU surfaces,
+window protocols, the compositor and the reference desktop remain milestone 4,
+with `sxgui-smoke` to return alongside that port. The SDK's ordinary external
+application path remains static, and full signals, other waitable object APIs,
+ASLR, TLS and hardware/capacity parity remain open.
 
 ## Continuing the study
 
-The next planned area is memory objects and ELF32 shared libraries. Its account
-should compare section/view ownership, heap growth, relocation rules and cleanup
-with v0.4.0, then record how dynamic application dependencies become usable.
-This is planned work, not an implemented result.
+The next account should follow the reference GPU/surface ownership and client
+protocols through the SxGUI/compositor port, then verify the original session's
+layout, glyphs and interactions. This is planned work; the existing `desktop32`
+screenshot only verifies its own temporary implementation.
 
-Current repeatable entry points include `./build.sh smoke`, `./build.sh smoke memory`,
-`./build.sh smoke posix`, `./build.sh test`, `python3 tools/verify_posix_persistence.py`
-and `./tools/verify_doom_persistence.sh`; [BUILD_CMAKE.md](BUILD_CMAKE.md) describes
-their scope. Keep unresolved questions and temporary differences visible until
-the corresponding parity gap is closed.
+Repeatable memory entry points are `./build.sh smoke shared`,
+`./build.sh smoke shared-memory`, the full `./build.sh smoke` and the existing
+memory/POSIX/persistence checks. Keep observed evidence separate from planned
+subsystem work and preserve the pinned v0.4.0 target until the full parity review.

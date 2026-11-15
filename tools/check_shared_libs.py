@@ -35,7 +35,7 @@ LINKER_SYMBOLS = {"_DYNAMIC", "_GLOBAL_OFFSET_TABLE_", "_PROCEDURE_LINKAGE_TABLE
                   "__dso_handle", "__GNU_EH_FRAME_HDR", "__TMC_END__"}
 
 
-def library_symbols(library_dir):
+def library_symbols(library_dir, nm="nm"):
     """The exported symbols of each built library, keyed by its DT_NEEDED name.
 
     Read from the artifacts rather than from a list of prefixes here. A prefix list
@@ -55,7 +55,7 @@ def library_symbols(library_dir):
         if path.is_symlink() or not path.is_file():
             continue
         out = subprocess.run(
-            ["nm", "--defined-only", "--format=posix", str(path)],
+            [nm, "--defined-only", "--format=posix", str(path)],
             capture_output=True, text=True, check=False,
         ).stdout
         symbols = set()
@@ -68,16 +68,16 @@ def library_symbols(library_dir):
     return found
 
 
-def readelf_dynamic(path: Path) -> list[str]:
+def readelf_dynamic(path: Path, readelf="readelf") -> list[str]:
     out = subprocess.run(
-        ["readelf", "-dW", str(path)], capture_output=True, text=True, check=False
+        [readelf, "-dW", str(path)], capture_output=True, text=True, check=False
     ).stdout
     return re.findall(r"\[(lib[a-z0-9_.]+)\]", out)
 
 
-def defined_symbols(path: Path) -> set[str]:
+def defined_symbols(path: Path, nm="nm") -> set[str]:
     out = subprocess.run(
-        ["nm", str(path)], capture_output=True, text=True, check=False
+        [nm, str(path)], capture_output=True, text=True, check=False
     ).stdout
     found = set()
     for line in out.splitlines():
@@ -89,8 +89,11 @@ def defined_symbols(path: Path) -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("build_dir", nargs="?", default="build/linux")
+    parser.add_argument("build_dir", nargs="?", default="build/linux-i386")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--library-dir", type=Path)
+    parser.add_argument("--nm", default="nm")
+    parser.add_argument("--readelf", default="readelf")
     args = parser.parse_args()
 
     root = Path(args.build_dir)
@@ -98,8 +101,8 @@ def main() -> int:
         print(f"check_shared_libs: {root} is not a directory", file=sys.stderr)
         return 2
 
-    library_dir = root.parent / "diskfs" / "lib"
-    libraries = library_symbols(library_dir)
+    library_dir = args.library_dir or root.parent / "diskfs" / "lib"
+    libraries = library_symbols(library_dir, args.nm)
     if not libraries:
         print(
             f"check_shared_libs: no built libraries under {library_dir}, so there is "
@@ -113,7 +116,7 @@ def main() -> int:
     for path in sorted(root.iterdir()):
         if not path.is_file():
             continue
-        needed = readelf_dynamic(path)
+        needed = readelf_dynamic(path, args.readelf)
         mapped = [lib for lib in needed if lib in libraries]
         if not mapped:
             continue
@@ -121,7 +124,7 @@ def main() -> int:
         if ".so." in path.name:
             continue
         checked += 1
-        symbols = defined_symbols(path)
+        symbols = defined_symbols(path, args.nm)
         for lib in mapped:
             owned = symbols & libraries[lib]
             if owned:

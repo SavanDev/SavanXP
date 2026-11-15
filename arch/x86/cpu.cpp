@@ -1,6 +1,8 @@
 #include "cpu.hpp"
 #include "context.hpp"
 #include "process.hpp"
+#include "paging.hpp"
+#include "kernel/string.hpp"
 
 #include <stdint.h>
 
@@ -175,9 +177,21 @@ void write_idt_gate(uint32_t vector, uint32_t handler, uint8_t attributes) {
 }
 
 extern "C" ContextFrame* i386_report_exception(const uint32_t* frame) {
-    // ContextFrame's register/vector prefix is followed by the normalized
-    // error word, then hardware EIP/CS/EFLAGS. This frame is never resumed.
+    // Exception frames have an extra error word before the hardware frame.
     const uint32_t vector = frame[12];
+    if (vector == 14 && (frame[15] & 3u) == 3u && !(frame[13] & 1u)) {
+        uint32_t address;
+        asm volatile("mov %%cr2, %0" : "=r"(address));
+        if (address >= paging::kUserStackBottom && address < paging::kUserStackTop &&
+            process::current() && paging::map_user_range(process::current()->directory,
+                address & ~4095u, paging::kPageBytes, true)) {
+            // Drop only the normalized error word, retaining the saved user CPU
+            // context. The common assembly restores the normal ContextFrame.
+            auto* resumed = const_cast<uint32_t*>(frame) + 1;
+            memmove(resumed, frame, 13 * sizeof(uint32_t));
+            return reinterpret_cast<ContextFrame*>(resumed);
+        }
+    }
     serial::write("i386: exception vector ");
     serial::write_dec(vector);
     serial::write(", error ");

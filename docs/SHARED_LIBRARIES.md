@@ -1,5 +1,9 @@
 # Shared libraries: where this is going
 
+This retained document records the reference design and its development history.
+For the active i386 implementation, verification and remaining limits, see
+[I386_MEMORY.md](I386_MEMORY.md); the build counts below are not i386 measurements.
+
 The goal is a loader that maps `libSxGFX`, `libSxGUI` and `libFFmpeg` once,
 instead of the 70 of 82 programs in `/bin` carrying their own copy. The engine
 is described in [`SECTIONS.md`](SECTIONS.md); this file records the decisions and

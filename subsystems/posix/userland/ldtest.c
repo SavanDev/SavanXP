@@ -27,18 +27,8 @@ static int check(const char* name, math_fn1 fn, double input, double expected) {
     return 1;
 }
 
-/* El canario esta vivo de verdad, no solo resuelto.
- *
- * libmath se compila con -fstack-protector-strong, asi que referencia
- * __stack_chk_guard, que vive en el ejecutable y lo inicializa crt0. Que la
- * reubicacion encuentre la variable no dice que tenga un valor: si la
- * reubicacion apuntara a cualquier lado y las dos mitades de la comparacion
- * coincidieran por casualidad, la proteccion no detectaria nada.
- *
- * Se comprueba el VALOR a traves de la direccion que devolvio la resolucion, y
- * ademas que las dos mitades sean distintas: crt0 siembra el canario con dos
- * registros distintos justamente para que un smashed stack de 8 bytes no lo
- * alcance. */
+// Resolve the native-word guard exported by the executable and check its value,
+// not only its address. Its two half-words must differ without reading beyond it.
 static int check_canary(void) {
     const unsigned long* guard = (const unsigned long*)ldso_lookup("__stack_chk_guard");
     if (guard == 0) {
@@ -49,8 +39,11 @@ static int check_canary(void) {
         eprintf("ldtest: el canario es cero, crt0 no lo inicializo\n");
         return 0;
     }
-    if (guard[0] == guard[1]) {
-        eprintf("ldtest: las dos mitades del canario son iguales\n");
+    // Compare the two halves of the native guard without reading past it.
+    const unsigned long half_bits = sizeof(unsigned long) * 4;
+    const unsigned long half_mask = ((unsigned long)1 << half_bits) - 1;
+    if ((guard[0] & half_mask) == (guard[0] >> half_bits)) {
+        eprintf("ldtest: the stack guard halves are equal\n");
         return 0;
     }
     return 1;

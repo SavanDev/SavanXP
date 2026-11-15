@@ -113,19 +113,13 @@ struct TimerObject {
 struct SectionObject {
     Header header;
     bool in_use;
-    // La seccion nace de un archivo (section_open) y no de section_create. Las
-    // respaldadas se comparten por inode_id entre procesos; las anonimas nunca.
+    // File sections are immutable snapshots shared by volume, inode and range.
+    // Anonymous sections never enter the identity cache. Invalidating a cached
+    // snapshot clears its inode key without changing existing views or bytes.
     uint8_t file_backed;
-    uint16_t reserved1;
+    uint16_t source_volume;
     uint32_t access_mask;
-    // Solo valido con file_backed. Es la clave del cache: dos peticiones del
-    // mismo archivo encuentran la misma seccion y por lo tanto las mismas
-    // paginas fisicas. Ver docs/SECTIONS.md para que NO alcanza como clave.
     uint32_t source_inode_id;
-    /* Offset y largo de la parte del archivo que respaldo la seccion. Forman
-     * parte de la clave del cache junto con inode_id: pedir el archivo entero y
-     * pedir un tramo son secciones distintas, y confundirlas devuelve una
-     * seccion mas grande de la que se pidio. */
     uint64_t source_offset;
     uint64_t source_length;
     uint64_t size_bytes;
@@ -169,6 +163,7 @@ SectionObject* acquire_file_range_section(
     uint64_t offset,
     uint64_t length,
     uint32_t access_mask);
+void invalidate_file_sections(vfs::Vnode& node);
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 void set_event(EventObject* event_object);

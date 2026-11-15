@@ -77,14 +77,15 @@ CMake cache is `build/linux-i386`. See [BUILD_CMAKE.md](BUILD_CMAKE.md).
 
 Private process maps/stacks, eager x87/SSE state, PIT preemption and spawn/wait/
 exit are implemented. Six process slots use allocator-backed 4 KiB user pages
-inside a 16 MiB virtual window per process; user faults terminate only their
+below the supervisor direct map; user faults terminate only their
 process. ELF write permissions, unmapped holes and a stack guard are enforced;
 supervisor mappings remain protected without NX. The reference descriptor model,
-regular-file/directory operations, byte pipes, canonical TTY, polling and static
+regular-file/directory operations, byte pipes, canonical TTY, polling and
 `exec` are implemented; [I386_POSIX.md](I386_POSIX.md) defines their scope.
 [I386_PROCESSES.md](I386_PROCESSES.md)
-defines the exact current guarantees. The full window manager and dynamic
-library loader are not linked into this kernel.
+defines the exact current guarantees. Section views, growing heaps, demand-grown stacks and the embedded ELF32
+library loader are usable; [I386_MEMORY.md](I386_MEMORY.md) defines their scope.
+The full window manager and SxGUI are not linked into this kernel.
 
 ## Ordered next milestones
 
@@ -100,9 +101,8 @@ changes, and record implementation/verification evidence as work lands.
    loads roll back, exit reclaims pages, and 4 KiB permissions/guards protect
    user and supervisor memory without NX. `./build.sh smoke memory` exercises
    partial-load `ENOMEM` on 32 MiB. [Mechanism and evidence](I386_PORT_STUDY.md#7-fault-containment-and-allocator-backed-user-pages).
-   The six-slot table, fixed virtual window and eager 64 KiB stack remain bounds;
-   section objects, heap growth and reference stack-demand behavior belong to
-   later memory work. This closes the milestone, not v0.4.0 parity.
+   The six-slot table remains a bound. Milestone 3 extends the original virtual
+   window and restores section objects, heap growth and stack-demand behavior. This closes the milestone, not v0.4.0 parity.
 2. **File descriptors and the POSIX base — completed.** Per-process descriptor
    tables and shared I/O objects support files/directories, canonical console
    input, byte pipes, standard-channel inheritance, polling, `exec` and process
@@ -110,18 +110,20 @@ changes, and record implementation/verification evidence as work lands.
    as static ELF32, including pipelines and redirection. `smoke posix` checks
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
-   The existing six-slot limit still bounds pipeline capacity; fork and complete
-   signal/object APIs remain parity gaps. [Contracts and limits](I386_POSIX.md).
-3. **Memory objects and ELF32 shared libraries — next.** Port section objects and
-   views, heap growth and ELF32 relocations/loader semantics. Check 32-bit
-   layouts, overflow, ownership and failure cleanup. Adapt the existing loader
-   design to ELF32 structures and relocations.
-4. **Graphics stack and full desktop.** Port the GPU/surface APIs, SxGUI,
+   The existing six-slot limit still bounds pipeline capacity; complete signal/object APIs remain parity gaps. [Contracts and limits](I386_POSIX.md).
+3. **Memory objects and ELF32 shared libraries — completed.**
+   Reference section objects/views, growing heaps, private/shared fork and
+   demand-grown stacks support ELF32 PIE and the embedded dependency loader.
+   `smoke shared` and `smoke shared-memory` check native layouts/relocations,
+   ownership, budgets and partial-load/ENOMEM cleanup. Full smoke, host tests and
+   POSIX/Doom persistence checks passed. [Mechanism and limits](I386_MEMORY.md).
+4. **Graphics stack and full desktop — next.** Port the GPU/surface APIs, SxGUI,
    compositor/window manager and client protocols; then restore taskbar,
    Program Manager and applications. Keep the minimal desktop as a regression
    until the full session passes glyph/input/ownership checks.
 5. **Device services and applications.** Port audio, networking, ACPI/power
-   and remaining storage/input backends with guest regressions. Restore Doom,
+   and remaining storage/input backends with guest regressions. Audit remaining
+   LP64 assumptions in SDK integer parsers, aliases and format macros. Restore Doom,
    Ccleste, FFmpeg and the other applications as their dependencies become ready.
    The static Doom build currently verifies installation/persistence only.
 6. **Physical hardware and capacity.** Validate BIOS/E820, ATA and framebuffer
@@ -142,7 +144,7 @@ rebuild individual apps rather than erasing the image. Earlier experimental
 `build/i386/disk-i386.img` stays untouched and is not imported automatically.
 
 Run `./build.sh build`, `./build.sh smoke`, `./build.sh smoke memory`,
-`./build.sh test`, and
+`./build.sh smoke shared-memory`, `./build.sh test`, and
 `./tools/verify_doom_persistence.sh` for build/persistence changes. Run
 `python3 tools/verify_posix_persistence.py` for changes to guest file I/O,
 descriptor ownership or the POSIX base. The default
