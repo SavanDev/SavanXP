@@ -1,7 +1,8 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1, L1, L2 and L3 closed, with S1 and S2a (2026-11-15): a static
-> musl program runs unchanged, with its heap, files and clocks.** What is
+> **Status: L0, E1 and L1-L4 closed, with S1, S2a and S2b (2026-11-15): static
+> and dynamic musl programs run unchanged, including the pinned Alpine `jq`
+> and its libraries.** What is
 > built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
@@ -519,7 +520,7 @@ register gate and `linux-tools` pass with both TCG and KVM.
 
 **This closes the static checkpoint.**
 
-### L4 — dynamic programs
+### L4 — dynamic programs (closed, 2026-11-15)
 
 Size L. S2b, the interpreter load, guest library lookup, and `getrandom`
 over `arch::random_u64` (RDRAND, or a TSC mix without it).
@@ -531,6 +532,13 @@ library and a missing interpreter are covered, each failing with the
 reference's message. Mapping counts well beyond the old view budget are
 exercised. SavanXP's own dynamic loader and libraries are never used for a
 Linux image.
+
+**Closed:** `linux-dynamic`, `linux-dynamic-missing-lib` and
+`linux-dynamic-missing-interp` cover the pinned runtime, shared-library TLS,
+320 private file maps, protection and failure diagnostics. The missing
+interpreter check compares the error description after removing the different
+launcher/chroot prefix; musl diagnostics are compared unchanged. See
+[LINUX.md](../../userland/LINUX.md).
 
 ### L5 — a window from a Linux client
 
