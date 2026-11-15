@@ -251,6 +251,8 @@ def check_shared(qmp_socket: Path, serial: Path) -> None:
     """Exercise section ownership and real ELF32 calls through the reference shell."""
     wait_serial(serial, re.escape(REFERENCE_PROMPT))
     commands = (
+        ("sdkint32", "SDK32 static integer ABI PASS"),
+        ("sdkintpie", "SDK32 shared integer ABI PASS"),
         ("vmtest32", "VM32 PASS"),
         ("heaptest", "heaptest ok"),
         ("mmaptest", "mmaptest: ok"),

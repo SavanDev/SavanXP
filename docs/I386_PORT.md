@@ -117,13 +117,17 @@ changes, and record implementation/verification evidence as work lands.
    `smoke shared` and `smoke shared-memory` check native layouts/relocations,
    ownership, budgets and partial-load/ENOMEM cleanup. Full smoke, host tests and
    POSIX/Doom persistence checks passed. [Mechanism and limits](I386_MEMORY.md).
+
+   **SDK prerequisite 3.1 — completed.** Native limits,
+   64-bit conversions and integer formatted I/O now follow the i386 data model.
+   `sdkint32`/`sdkintpie` exercise static and shared runtime calls in the shared
+   smokes. [SDK contract and tests](I386_SDK.md).
 4. **Graphics stack and full desktop — next.** Port the GPU/surface APIs, SxGUI,
    compositor/window manager and client protocols; then restore taskbar,
    Program Manager and applications. Keep the minimal desktop as a regression
    until the full session passes glyph/input/ownership checks.
 5. **Device services and applications.** Port audio, networking, ACPI/power
-   and remaining storage/input backends with guest regressions. Audit remaining
-   LP64 assumptions in SDK integer parsers, aliases and format macros. Restore Doom,
+   and remaining storage/input backends with guest regressions. Restore Doom,
    Ccleste, FFmpeg and the other applications as their dependencies become ready.
    The static Doom build currently verifies installation/persistence only.
 6. **Physical hardware and capacity.** Validate BIOS/E820, ATA and framebuffer

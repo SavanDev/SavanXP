@@ -149,8 +149,8 @@ The full smoke includes this workload plus POSIX/shell, CPU/FPU/fault and minima
 desktop glyph/input checks. It does not exercise SxGUI; that requires the GPU,
 window protocol and compositor port and restoration of `sxgui-smoke` in milestone
 4. The 64-process reference capacity, complete signal/object APIs and hardware
-coverage remain later parity work. Clean builds also expose existing LP64
-assumptions in the SDK's `intmax_t` aliases/parsers and `<inttypes.h>` format
-macros; a full SDK integer-width audit is still required for application parity.
-The memory/loader tests do not certify every libc function. Passing memory and loader tests does not
+coverage remain later parity work. The subsequent [SDK prerequisite](I386_SDK.md)
+corrects the inherited integer limits, parsers, aliases and format macros and
+adds static/shared integer-ABI checks to these scenarios. These tests do not
+certify every libc function. Passing memory and loader tests does not
 establish that the full desktop or external Doom runtime works.

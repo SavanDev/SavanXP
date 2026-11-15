@@ -138,7 +138,7 @@ foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
 endforeach()
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    set(SAVANXP_I386_POSIX_TESTS vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
+    set(SAVANXP_I386_POSIX_TESTS sdkint32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
     foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
         savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
     endforeach()

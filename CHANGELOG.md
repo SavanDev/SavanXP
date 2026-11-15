@@ -92,6 +92,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **The i386 SDK preserves native and 64-bit integer values across conversions and stdio.**
+  `limits.h`, `intmax_t`, `PRI*`/`SCN*`, `printf` and `sscanf` agree on widths;
+  `sdkint32`/`sdkintpie` cover static and ELF32 library calls in `smoke shared`.
+
 - **New file-section opens observe guest writes and reused inodes.**
   Existing mappings retain their immutable bytes while later opens use fresh backing.
 

@@ -84,7 +84,9 @@ normal 1 GiB smoke exercises table exhaustion instead. `multitest32` and its
 12 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
 
 `./build.sh smoke shared` checks memory sections, heap growth, private/shared
-fork and real ELF32 dependency calls. `shared-memory` repeats this with 32 MiB,
+fork, the SDK's native/64-bit integer ABI and real ELF32 dependency calls.
+`sdkint32`/`sdkintpie` exercise limits, parsers and stdio through static and shared
+runtime calls; see [I386_SDK.md](I386_SDK.md). `shared-memory` repeats this with 32 MiB,
 requiring exact cleanup after section/fork `ENOMEM`. The full smoke includes
 these checks. [I386_MEMORY.md](I386_MEMORY.md) defines coverage and limits.
 The native tool discovery also requires LLVM `nm` or host `nm` for the

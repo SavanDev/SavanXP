@@ -1,6 +1,8 @@
 #include "savanxp/libc.h"
 
 #include <errno.h>
+#include <limits.h>
+#include <inttypes.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -138,7 +140,6 @@ struct tm {
 };
 
 typedef struct { int quot; int rem; } div_t;
-typedef struct { long quot; long rem; } imaxdiv_t;
 typedef struct { long quot; long rem; } ldiv_t;
 typedef struct { long long quot; long long rem; } lldiv_t;
 
@@ -1256,137 +1257,111 @@ void sx_free(void* pointer) {
     sx_arena_release(sx_arena_for_address(header));
 }
 
-static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base, int* success) {
+// One wide accumulator serves all integer conversions. Each caller supplies
+// its own positive/negative magnitude limits; overflow consumes remaining digits
+// while saturating and reporting ERANGE, so endptr still identifies the suffix.
+static int sx_integer_digit(unsigned char character) {
+    if (character >= '0' && character <= '9') return character - '0';
+    if (character >= 'a' && character <= 'z') return character - 'a' + 10;
+    if (character >= 'A' && character <= 'Z') return character - 'A' + 10;
+    return -1;
+}
+
+static uintmax_t sx_parse_integer(const char* text, char** endptr, int base,
+                                 uintmax_t positive_limit, uintmax_t negative_limit,
+                                 int* negative, int* overflow) {
     const char* cursor = text;
-    unsigned long value = 0;
-    int digits = 0;
-    int overflow = 0;
-    *success = 0;
-    while (*cursor != '\0' && sx_isspace((unsigned char)*cursor)) {
+    *negative = *overflow = 0;
+    if (endptr) *endptr = (char*)text;
+    if (base != 0 && (base < 2 || base > 36)) {
+        g_errno = EINVAL;
+        return 0;
+    }
+    while (sx_isspace((unsigned char)*cursor)) ++cursor;
+    if (*cursor == '+' || *cursor == '-') {
+        *negative = *cursor == '-';
         ++cursor;
     }
-    if (base == 0) {
-        if (cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X')) {
-            base = 16;
-            cursor += 2;
-        } else if (cursor[0] == '0') {
-            base = 8;
-            ++cursor;
-        } else {
-            base = 10;
-        }
-    } else if (base == 16 && cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X')) {
+    // A prefix requires a following hexadecimal digit; "0x" still converts 0.
+    if ((base == 0 || base == 16) && cursor[0] == '0' &&
+        (cursor[1] == 'x' || cursor[1] == 'X') &&
+        sx_integer_digit((unsigned char)cursor[2]) >= 0 &&
+        sx_integer_digit((unsigned char)cursor[2]) < 16) {
+        base = 16;
         cursor += 2;
+    } else if (base == 0) {
+        base = *cursor == '0' ? 8 : 10;
     }
-    while (*cursor != '\0') {
-        int digit = -1;
-        if (*cursor >= '0' && *cursor <= '9') {
-            digit = *cursor - '0';
-        } else if (*cursor >= 'a' && *cursor <= 'f') {
-            digit = *cursor - 'a' + 10;
-        } else if (*cursor >= 'A' && *cursor <= 'F') {
-            digit = *cursor - 'A' + 10;
-        } else {
-            break;
+    const uintmax_t limit = *negative ? negative_limit : positive_limit;
+    const uintmax_t cutoff = limit / (unsigned)base;
+    const unsigned cutlim = (unsigned)(limit % (unsigned)base);
+    const char* digits = cursor;
+    uintmax_t value = 0;
+    for (;;) {
+        const int digit = sx_integer_digit((unsigned char)*cursor);
+        if (digit < 0 || digit >= base) break;
+        if (value > cutoff || (value == cutoff && (unsigned)digit > cutlim)) {
+            *overflow = 1;
+            value = limit;
+        } else if (!*overflow) {
+            value = value * (unsigned)base + (unsigned)digit;
         }
-        if (digit >= base) {
-            break;
-        }
-        if (value > (~0ul - (unsigned long)digit) / (unsigned long)base) {
-            overflow = 1;
-        } else {
-            value = (value * (unsigned long)base) + (unsigned long)digit;
-        }
-        ++digits;
         ++cursor;
     }
-    if (endptr != 0) {
-        *endptr = (char*)(digits == 0 ? text : cursor);
+    if (cursor == digits) {
+        // Retain the SDK's EINVAL policy for no conversion.
+        g_errno = EINVAL;
+        return 0;
     }
-    *success = digits != 0;
-    if (overflow) {
-        /* El estandar pide saturar y avisar por ERANGE, no envolver. */
-        g_errno = ERANGE;
-        return ~0ul;
-    }
+    if (endptr) *endptr = (char*)cursor;
+    if (*overflow) g_errno = ERANGE;
     return value;
+}
+
+static intmax_t sx_parse_signed(const char* text, char** endptr, int base, intmax_t maximum) {
+    int negative, overflow;
+    const uintmax_t minimum_magnitude = (uintmax_t)maximum + 1;
+    const uintmax_t value = sx_parse_integer(text, endptr, base, (uintmax_t)maximum,
+                                            minimum_magnitude, &negative, &overflow);
+    (void)overflow;
+    // Avoid negating or casting an unrepresentable positive signed magnitude.
+    if (negative && value == minimum_magnitude) return -maximum - 1;
+    return negative ? -(intmax_t)value : (intmax_t)value;
+}
+
+static uintmax_t sx_parse_unsigned(const char* text, char** endptr, int base, uintmax_t maximum) {
+    int negative, overflow;
+    const uintmax_t value = sx_parse_integer(text, endptr, base, maximum, maximum, &negative, &overflow);
+    return negative && !overflow ? (0 - value) & maximum : value;
 }
 
 long sx_strtol(const char* text, char** endptr, int base) {
-    const char* cursor = text;
-    int negative = 0;
-    int success = 0;
-    unsigned long value = 0;
-    while (*cursor != '\0' && sx_isspace((unsigned char)*cursor)) {
-        ++cursor;
-    }
-    if (*cursor == '-') {
-        negative = 1;
-        ++cursor;
-    } else if (*cursor == '+') {
-        ++cursor;
-    }
-    value = sx_parse_unsigned(cursor, endptr, base, &success);
-    if (!success) {
-        g_errno = SAVANXP_EINVAL;
-        if (endptr != 0) {
-            *endptr = (char*)text;
-        }
-        return 0;
-    }
-    return negative ? -(long)value : (long)value;
+    return (long)sx_parse_signed(text, endptr, base, LONG_MAX);
 }
-
 unsigned long sx_strtoul(const char* text, char** endptr, int base) {
-    int success = 0;
-    unsigned long value = sx_parse_unsigned(text, endptr, base, &success);
-    if (!success) {
-        g_errno = SAVANXP_EINVAL;
-        if (endptr != 0) {
-            *endptr = (char*)text;
-        }
-        return 0;
-    }
-    return value;
+    return (unsigned long)sx_parse_unsigned(text, endptr, base, ULONG_MAX);
 }
-
-/* Sobre LP64, long y long long son ambos de 64 bits, asi que estas comparten
- * parser con strtol/strtoul; existen igual porque un port las nombra. */
 long long sx_strtoll(const char* text, char** endptr, int base) {
-    return (long long)sx_strtol(text, endptr, base);
+    return (long long)sx_parse_signed(text, endptr, base, LLONG_MAX);
 }
-
 unsigned long long sx_strtoull(const char* text, char** endptr, int base) {
-    return (unsigned long long)sx_strtoul(text, endptr, base);
+    return (unsigned long long)sx_parse_unsigned(text, endptr, base, ULLONG_MAX);
 }
+long sx_atol(const char* text) { return sx_strtol(text, 0, 10); }
+long long sx_atoll(const char* text) { return sx_strtoll(text, 0, 10); }
 
-long sx_atol(const char* text) {
-    return sx_strtol(text, 0, 10);
-}
-
-/* <inttypes.h>: intmax_t es long, asi que son las mismas de arriba con otro
- * nombre. Existen porque un port las nombra. */
-long sx_imaxabs(long value) {
-    return value < 0 ? -value : value;
-}
-
-imaxdiv_t sx_imaxdiv(long numerator, long denominator) {
+intmax_t sx_imaxabs(intmax_t value) { return value < 0 ? -value : value; }
+imaxdiv_t sx_imaxdiv(intmax_t numerator, intmax_t denominator) {
     imaxdiv_t result;
     result.quot = numerator / denominator;
     result.rem = numerator % denominator;
     return result;
 }
-
-long sx_strtoimax(const char* text, char** endptr, int base) {
-    return sx_strtol(text, endptr, base);
+intmax_t sx_strtoimax(const char* text, char** endptr, int base) {
+    return sx_parse_signed(text, endptr, base, INTMAX_MAX);
 }
-
-unsigned long sx_strtoumax(const char* text, char** endptr, int base) {
-    return sx_strtoul(text, endptr, base);
-}
-
-long long sx_atoll(const char* text) {
-    return (long long)sx_strtol(text, 0, 10);
+uintmax_t sx_strtoumax(const char* text, char** endptr, int base) {
+    return sx_parse_unsigned(text, endptr, base, UINTMAX_MAX);
 }
 
 long sx_labs(long value) {
@@ -2613,6 +2588,37 @@ static int sx_write_padded(int (*emit)(char, void*), void* context, const char* 
     return count;
 }
 
+enum sx_scan_length {
+    SX_SCAN_INT = 0,
+    SX_SCAN_CHAR,
+    SX_SCAN_SHORT,
+    SX_SCAN_LONG,
+    SX_SCAN_LONG_LONG,
+    SX_SCAN_SIZE,
+    SX_SCAN_INTMAX,
+    SX_SCAN_PTRDIFF
+};
+
+// size_t and ptrdiff_t follow the target pointer width, not the width of long.
+typedef __PTRDIFF_TYPE__ sx_signed_size_t;
+static void sx_store_signed(void* target, enum sx_scan_length length, long long value);
+
+static enum sx_scan_length sx_format_length(const char** cursor) {
+    const char* at = *cursor;
+    enum sx_scan_length length = SX_SCAN_INT;
+    if (*at == 'h') {
+        length = SX_SCAN_SHORT; ++at;
+        if (*at == 'h') { length = SX_SCAN_CHAR; ++at; }
+    } else if (*at == 'l') {
+        length = SX_SCAN_LONG; ++at;
+        if (*at == 'l') { length = SX_SCAN_LONG_LONG; ++at; }
+    } else if (*at == 'j') { length = SX_SCAN_INTMAX; ++at;
+    } else if (*at == 'z') { length = SX_SCAN_SIZE; ++at;
+    } else if (*at == 't') { length = SX_SCAN_PTRDIFF; ++at; }
+    *cursor = at;
+    return length;
+}
+
 static size_t sx_unsigned_to_string(unsigned long long value, unsigned base, int uppercase, char* buffer) {
     static const char kDigitsLower[] = "0123456789abcdef";
     static const char kDigitsUpper[] = "0123456789ABCDEF";
@@ -2705,8 +2711,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
             int left_align = 0;
             int width = 0;
             int precision = -1;
-            int long_count = 0;
-            int use_size_t = 0;
+            enum sx_scan_length integer_length;
             char buffer[128];
             size_t length = 0;
 
@@ -2750,14 +2755,8 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                 }
             }
 
-            while (*cursor == 'l') {
-                ++long_count;
-                ++cursor;
-            }
-            if (*cursor == 'z') {
-                use_size_t = 1;
-                ++cursor;
-            }
+            integer_length = sx_format_length(&cursor);
+            if (!*cursor) break;
 
             switch (*cursor) {
                 case '%':
@@ -2788,33 +2787,46 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                     break;
                 }
                 case 'd':
-                case 'i':
-                    if (use_size_t || long_count > 0) {
-                        length = sx_signed_to_string((long long)va_arg(args, long), buffer);
-                    } else {
-                        length = sx_signed_to_string((long long)va_arg(args, int), buffer);
+                case 'i': {
+                    intmax_t value;
+                    switch (integer_length) {
+                        case SX_SCAN_LONG: value = va_arg(args, long); break;
+                        case SX_SCAN_LONG_LONG: value = va_arg(args, long long); break;
+                        case SX_SCAN_INTMAX: value = va_arg(args, intmax_t); break;
+                        case SX_SCAN_SIZE: value = va_arg(args, sx_signed_size_t); break;
+                        case SX_SCAN_PTRDIFF: value = va_arg(args, ptrdiff_t); break;
+                        case SX_SCAN_CHAR: value = (signed char)va_arg(args, int); break;
+                        case SX_SCAN_SHORT: value = (short)va_arg(args, int); break;
+                        default: value = va_arg(args, int); break;
                     }
+                    length = sx_signed_to_string(value, buffer);
                     length = sx_apply_numeric_precision(buffer, length, precision);
                     written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
+                }
                 case 'u':
-                    if (use_size_t || long_count > 0) {
-                        length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned long), 10u, 0, buffer);
-                    } else {
-                        length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned int), 10u, 0, buffer);
+                case 'o':
+                case 'x':
+                case 'X': {
+                    uintmax_t value;
+                    switch (integer_length) {
+                        case SX_SCAN_LONG: value = va_arg(args, unsigned long); break;
+                        case SX_SCAN_LONG_LONG: value = va_arg(args, unsigned long long); break;
+                        case SX_SCAN_INTMAX: value = va_arg(args, uintmax_t); break;
+                        case SX_SCAN_SIZE: value = va_arg(args, size_t); break;
+                        case SX_SCAN_PTRDIFF: value = va_arg(args, uintptr_t); break;
+                        case SX_SCAN_CHAR: value = (unsigned char)va_arg(args, unsigned int); break;
+                        case SX_SCAN_SHORT: value = (unsigned short)va_arg(args, unsigned int); break;
+                        default: value = va_arg(args, unsigned int); break;
                     }
+                    const unsigned base = *cursor == 'u' ? 10 : (*cursor == 'o' ? 8 : 16);
+                    length = sx_unsigned_to_string(value, base, *cursor == 'X', buffer);
                     length = sx_apply_numeric_precision(buffer, length, precision);
                     written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
-                case 'x':
-                case 'X':
-                    if (use_size_t || long_count > 0) {
-                        length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned long), 16u, *cursor == 'X', buffer);
-                    } else {
-                        length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned int), 16u, *cursor == 'X', buffer);
-                    }
-                    length = sx_apply_numeric_precision(buffer, length, precision);
-                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
+                }
+                case 'n':
+                    sx_store_signed(va_arg(args, void*), integer_length, written);
                     break;
                 case 'p': {
                     uintptr_t value = (uintptr_t)va_arg(args, void*);
@@ -3270,22 +3282,15 @@ __attribute__((weak, alias("sx_putchar"))) int putchar(int character);
  * garantiza ungetc.
  */
 
-enum sx_scan_length {
-    SX_SCAN_INT = 0,
-    SX_SCAN_CHAR,
-    SX_SCAN_SHORT,
-    SX_SCAN_LONG,
-    SX_SCAN_LONG_LONG,
-    SX_SCAN_SIZE
-};
-
 static void sx_store_signed(void* target, enum sx_scan_length length, long long value) {
     switch (length) {
         case SX_SCAN_CHAR: *(signed char*)target = (signed char)value; break;
         case SX_SCAN_SHORT: *(short*)target = (short)value; break;
         case SX_SCAN_LONG: *(long*)target = (long)value; break;
         case SX_SCAN_LONG_LONG: *(long long*)target = value; break;
-        case SX_SCAN_SIZE: *(size_t*)target = (size_t)value; break;
+        case SX_SCAN_SIZE: *(sx_signed_size_t*)target = (sx_signed_size_t)value; break;
+        case SX_SCAN_INTMAX: *(intmax_t*)target = (intmax_t)value; break;
+        case SX_SCAN_PTRDIFF: *(ptrdiff_t*)target = (ptrdiff_t)value; break;
         default: *(int*)target = (int)value; break;
     }
 }
@@ -3297,6 +3302,8 @@ static void sx_store_unsigned(void* target, enum sx_scan_length length, unsigned
         case SX_SCAN_LONG: *(unsigned long*)target = (unsigned long)value; break;
         case SX_SCAN_LONG_LONG: *(unsigned long long*)target = value; break;
         case SX_SCAN_SIZE: *(size_t*)target = (size_t)value; break;
+        case SX_SCAN_INTMAX: *(uintmax_t*)target = (uintmax_t)value; break;
+        case SX_SCAN_PTRDIFF: *(uintptr_t*)target = (uintptr_t)value; break;
         default: *(unsigned int*)target = (unsigned int)value; break;
     }
 }
@@ -3397,8 +3404,9 @@ int sx_vsscanf(const char* input, const char* format, va_list args) {
                     length = SX_SCAN_LONG_LONG;
                 }
             } else if (*format == 'z' || *format == 'j' || *format == 't') {
+                length = *format == 'z' ? SX_SCAN_SIZE :
+                    (*format == 'j' ? SX_SCAN_INTMAX : SX_SCAN_PTRDIFF);
                 ++format;
-                length = SX_SCAN_SIZE;
             } else if (*format == 'L') {
                 ++format;
                 length = SX_SCAN_LONG_LONG;
@@ -3460,7 +3468,7 @@ int sx_vsscanf(const char* input, const char* format, va_list args) {
                     }
 
                     if (is_signed) {
-                        const long value = sx_strtol(source, &end, base);
+                        const intmax_t value = sx_strtoimax(source, &end, base);
                         if (end == source) {
                             return assigned;
                         }
@@ -3468,12 +3476,13 @@ int sx_vsscanf(const char* input, const char* format, va_list args) {
                             sx_store_signed(target, length, (long long)value);
                         }
                     } else {
-                        const unsigned long value = sx_strtoul(source, &end, base);
+                        const uintmax_t value = sx_strtoumax(source, &end, base);
                         if (end == source) {
                             return assigned;
                         }
                         if (!suppress) {
-                            sx_store_unsigned(target, length, (unsigned long long)value);
+                            if (*format == 'p') *(void**)target = (void*)(uintptr_t)value;
+                            else sx_store_unsigned(target, length, value);
                         }
                     }
                     cursor += (size_t)(end - source);

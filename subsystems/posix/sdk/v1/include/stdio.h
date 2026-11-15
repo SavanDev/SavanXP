@@ -60,9 +60,8 @@ void rewind(FILE* stream);
 int vsprintf(char* buffer, const char* format, va_list args);
 void perror(const char* prefix);
 
-/* off_t es de 64 bits, asi que fseeko/ftello no agregan alcance sobre
- * fseek/ftell; existen porque un port las nombra. El tope real de tamano de
- * archivo lo pone el st_size de 32 bits del kernel. */
+// off_t follows native long (32 bits on i386). These wrappers share the
+// seek ABI and do not imply large-file support; kernel st_size is 32 bits.
 int fseeko(FILE* stream, off_t offset, int whence);
 off_t ftello(FILE* stream);
 int sscanf(const char* input, const char* format, ...);

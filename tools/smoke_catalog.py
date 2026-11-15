@@ -6,7 +6,7 @@ SCENARIOS = {
     "smoke": "memory/ELF32 libraries, reference POSIX/shell, CPU/FPU and desktop graphics",
     "boot": "kernel, persistent root and init/shell startup",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",
-    "shared": "memory objects, heap, fork and real ELF32 shared-library calls",
+    "shared": "memory objects, heap, fork, SDK integer ABI and ELF32 library calls",
     "shared-memory": "memory objects and ELF32 libraries with 32 MiB RAM",
     "posix": "reference shell, BusyBox, file descriptors, pipes, inheritance and cleanup",
     "memory": "32 MiB RAM, user fault isolation, page protection and ENOMEM rollback",

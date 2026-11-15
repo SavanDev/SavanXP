@@ -591,6 +591,94 @@ with `sxgui-smoke` to return alongside that port. The SDK's ordinary external
 application path remains static, and full signals, other waitable object APIs,
 ASLR, TLS and hardware/capacity parity remain open.
 
+## 10. Removing the SDK's LP64 integer assumptions before graphics
+
+Milestone 3's clean builds exposed alias warnings that incremental builds could
+hide: the public `intmax_t` was 64 bits, but its implementation used 32-bit
+`long`. This was not only a compiler diagnostic. The private `imaxdiv_t` had two
+32-bit fields, while the public struct had two 64-bit fields. An ELF32 library
+could resolve the right symbol and still pass the wrong arguments or receive
+an incompatible struct. The user moved this prerequisite ahead of milestone 4
+so these failures would not be mistaken for graphics-port failures.
+
+The same assumption appeared in three other places. `limits.h` advertised a
+64-bit `long`; `strtoll` and `atoll` cast the result of an already-narrowed
+`strtol`; and `<inttypes.h>` used `l` for every 64-bit format. Inspection then
+found that the formatter treated one or two `l` characters identically and that
+the scanner parsed through `long` even for an eight-byte destination. Changing
+only the macros would leave those paths broken. A mixed format could also shift
+the next vararg by four bytes, corrupting later output rather than merely
+truncating one number.
+
+### Preserve the target types, repair the operations
+
+The adaptation keeps the compiler's i386 model: native integers/pointers remain
+32 bits, and explicitly wide integers remain 64 bits. Bounds come from the
+target's compiler definitions. Format strings follow the compiler's actual
+fixed/least/fast/max/pointer integer types, rather than a second manually
+maintained type model. The runtime now consumes the public `imaxdiv_t` definition
+and uses `intmax_t` at both ends of its aliases. Casting between the old private
+and public structs would hide the symptom while retaining an ABI mismatch.
+
+Separate 32-bit and 64-bit parser implementations would duplicate sign, prefix
+and overflow rules. Instead, one wide magnitude parser accepts a caller-supplied
+limit. This is the distinction the old cast missed: `long` still needs its
+32-bit saturation bound, while a wide result needs all 64 bits before conversion.
+Cutoff arithmetic detects overflow without wrapping; the parser consumes the
+remaining digits and leaves an exact suffix pointer. Signed minimum values are
+formed without first creating or negating an unrepresentable positive signed
+value. Unsigned negative values wrap only if the magnitude itself fitted.
+
+This also repairs two exposed lexical defects in the existing parser: leading
+octal zero remains a digit, and hexadecimal prefixes are recognized only with
+a following hex digit. Invalid bases are rejected before arithmetic. The SDK's
+existing no-conversion `EINVAL` policy remains explicit; this is not a general
+locale or C23 parser replacement.
+
+The formatter retains its callbacks and entry points. Its integer dispatch now
+reads the requested promoted/native/wide type, including `hh`, `h`, `l`, `ll`,
+`j`, `z` and `t`. Integer octal and `%n` complete the corresponding macro surface.
+The scanner parses wide before storing at the requested width, and distinguishes
+`intmax_t` from `size_t`. Size/difference counters remain native-width objects.
+These are type-boundary corrections; the kernel syscall layout, disk format,
+allocator model and graphics protocol do not change. Native `off_t` and time
+interfaces do not gain a new 64-bit ABI through this change.
+
+### Prove both sides of the shared-library call
+
+A static test alone would not detect a public/private ABI disagreement across
+an ELF32 call. `sdkint32` therefore runs the matrix against the static SDK, and
+`sdkintpie` imports a fixture library that runs it against the executable's PIC
+runtime. The library also returns `imaxdiv_t` and 64-bit values through real PLT
+calls. The initial test layout put the full matrix in both the PIE and library;
+the existing no-duplicate-library check rejected it. The correction keeps the
+PIE caller as an importer, rather than weakening that check or renaming copies
+to evade it.
+
+The matrix compares extrema, overflow, errno and exact end pointers against
+explicit expected results, and exercises every base from 2 through 36 above the
+32-bit range. Mixed varargs place a native integer between wide arguments.
+Formatting/scanning round-trips compare with the original value and place guard
+bytes immediately after each typed destination, so a matching pair of truncation
+bugs or a store wider than the destination cannot pass. Native sizes, long limits
+and struct offsets are also compile-time assertions. The same matrix runs with
+32 MiB alongside memory/loader exhaustion and cleanup regressions.
+
+The normal build, both shared smokes (including 32 MiB), the full POSIX/process/
+desktop smoke and all 18 host tests passed. An isolated diagnostics-disabled
+build kept production programs and excluded the SDK test clients/library. Fresh
+static and PIC builds no longer emitted integer alias-signature warnings.
+Installed artifacts matched the staged binaries byte for byte. POSIX guest-write/
+rebuild/cold-boot and canonical Doom executable/WAD/config/save persistence checks
+also passed with the rebuilt SDK.
+
+[I386_SDK.md](I386_SDK.md) defines the contract, commands and remaining limits.
+These checks establish the integer-width prerequisite, not universal libc,
+formatted-I/O, large-file or graphical-session conformance. Already-installed
+static external programs retain their bytes and receive the fixes when rebuilt.
+The ordinary build and canonical persistence checks continue to protect those
+binaries and their assets.
+
 ## Continuing the study
 
 The next account should follow the reference GPU/surface ownership and client
