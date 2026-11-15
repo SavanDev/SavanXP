@@ -29,8 +29,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`USER_ADDRESS_SPACE.md`](kernel/USER_ADDRESS_SPACE.md) — the user half's layout
   (floor, image, views, stack, kernel boundary): why the floor is `0x10000`
   and why SDK programs load at `0x400000`.
-- [`MEMORY_REGIONS.md`](kernel/MEMORY_REGIONS.md) — anonymous memory regions (S2a): the
-  region list, first-touch pages, map, unmap, remap and the program break,
+- [`MEMORY_REGIONS.md`](kernel/MEMORY_REGIONS.md) — memory regions (S2a/S2b): the
+  region list, first-touch pages, private file snapshots, protection, map, unmap, remap and the program break,
   and freeing pages another core may still reach.
 - [`SECTIONS.md`](kernel/SECTIONS.md) — section objects and views: the grant model,
   execution as a view permission, W^X, the view and section budgets, and where
@@ -128,8 +128,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   EFER.SCE clear, the #UD entry stub, trap dispatchers
   (`subsystem::register_trap_dispatcher`), the `linux` launcher and
   `SXN_SPAWN_FLAG_SUBSYSTEM`, the guest tree, the Linux start-up stack, the
-  descriptor table, the static BusyBox profile, the calls implemented, and the
-  `linux-hello`, `linux-restart` and `linux-tools` gates.
+  descriptor table, static BusyBox and dynamic musl profiles, the calls implemented,
+  and the `linux-hello`, `linux-restart`, `linux-tools` and `linux-dynamic` gates.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
   measured scope of SSL's first profile: Alpine's Xeyes and its 19-file musl
   closure by hash, the L1-L5 fixtures and how they are built, the system call

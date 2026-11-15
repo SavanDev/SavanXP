@@ -55,6 +55,7 @@ add_custom_command(OUTPUT ${SSL_DAMAGED}
 set(SAVANXP_LINUX_MUSL_ROOT "${CMAKE_SOURCE_DIR}/build/linux-profile/root" CACHE PATH
     "Alpine root made by subsystems/linux/profile/profile.sh setup, for the static musl fixtures")
 set(SSL_MUSL_FIXTURES "")
+set(SSL_DYNAMIC_DAMAGED "")
 if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/libc.a" AND EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/crt1.o")
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
         OUTPUT_VARIABLE SSL_CLANG_RESOURCES OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -72,6 +73,26 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/lib/libc.a" AND EXISTS "${SAVANXP_LINU
             VERBATIM)
         list(APPEND SSL_MUSL_FIXTURES "${fixture}")
     endforeach()
+    set(SSL_DYNAMIC_FLAGS --target=x86_64-linux-musl -nostdinc
+        -isystem "${SSL_MUSL}/usr/include" -isystem "${SSL_CLANG_RESOURCES}/include"
+        -nostdlib -fuse-ld=lld -O2 -Wall -s -Wl,--build-id=none)
+    add_custom_command(OUTPUT "${SSL_OUT}/libl4tls.so"
+        COMMAND "${CMAKE_C_COMPILER}" ${SSL_DYNAMIC_FLAGS} -fPIC -shared -Wl,-soname,libl4tls.so
+                -o "${SSL_OUT}/libl4tls.so" "${SSL_ROOT}/fixtures/dynamic/tlslib.c"
+                "${SSL_MUSL}/usr/lib/libc.so"
+        DEPENDS "${SSL_ROOT}/fixtures/dynamic/tlslib.c" "${SSL_MUSL}/usr/lib/libc.so" VERBATIM)
+    add_custom_command(OUTPUT "${SSL_OUT}/dynamic"
+        COMMAND "${CMAKE_C_COMPILER}" ${SSL_DYNAMIC_FLAGS} -fPIE -pie
+                -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now -Wl,-rpath,/fixtures
+                -o "${SSL_OUT}/dynamic" "${SSL_MUSL}/usr/lib/crt1.o" "${SSL_MUSL}/usr/lib/crti.o"
+                "${SSL_ROOT}/fixtures/dynamic/dynamic.c" "${SSL_OUT}/libl4tls.so"
+                "${SSL_MUSL}/usr/lib/libc.so" "${SSL_MUSL}/usr/lib/crtn.o"
+        DEPENDS "${SSL_ROOT}/fixtures/dynamic/dynamic.c" "${SSL_OUT}/libl4tls.so" VERBATIM)
+    set(SSL_DYNAMIC_DAMAGED "${SSL_OUT}/interp-duplicate" "${SSL_OUT}/interp-nested" "${SSL_OUT}/interp-unterminated")
+    add_custom_command(OUTPUT ${SSL_DYNAMIC_DAMAGED}
+        COMMAND "${Python3_EXECUTABLE}" "${SSL_ROOT}/profile/damage.py" "${SSL_OUT}/dynamic" "${SSL_OUT}" --dynamic
+        DEPENDS "${SSL_OUT}/dynamic" "${SSL_ROOT}/profile/damage.py" VERBATIM)
+    list(APPEND SSL_MUSL_FIXTURES dynamic libl4tls.so)
 else()
     message(STATUS "Linux musl fixtures: no Alpine root at ${SAVANXP_LINUX_MUSL_ROOT} "
         "(subsystems/linux/profile/profile.sh setup); linuxtest skips them")
@@ -80,7 +101,7 @@ list(TRANSFORM SSL_MUSL_FIXTURES PREPEND "${SSL_OUT}/" OUTPUT_VARIABLE SSL_MUSL_
 
 add_custom_target(savanxp_linux_fixtures
     DEPENDS "${SSL_OUT}/hello" "${SSL_OUT}/startup" "${SSL_OUT}/errors" "${SSL_OUT}/regions" ${SSL_DAMAGED}
-            ${SSL_MUSL_FILES})
+            ${SSL_MUSL_FILES} ${SSL_DYNAMIC_DAMAGED})
 
 add_test(NAME linux-fixture-hash-test
     COMMAND "${Python3_EXECUTABLE}" "${SSL_ROOT}/profile/check_hashes.py"
@@ -95,7 +116,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/work"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SSL_OUT}/hello" "${SSL_OUT}/startup" "${SSL_OUT}/errors" "${SSL_OUT}/regions" ${SSL_DAMAGED}
-                ${SSL_MUSL_FILES}
+                ${SSL_MUSL_FILES} ${SSL_DYNAMIC_DAMAGED}
                 "${SSL_GUEST_FIXTURES}/"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SSL_EXPECTED}/hello.stdout" "${SSL_EXPECTED}/hello.status"
@@ -132,4 +153,39 @@ if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/bin/busybox.static")
                 "${SSL_GUEST_FIXTURES}/expected/")
         endforeach()
     endif()
+endif()
+
+# L4: stage the distribution's original executable and resolved library names.
+if(EXISTS "${SAVANXP_LINUX_MUSL_ROOT}/usr/bin/jq" AND SAVANXP_INCLUDE_TEST_APPS)
+    foreach(item IN ITEMS
+        "usr/bin/jq|usr/bin/jq|08eee682e6f041c89a61b7b95bdfcdac182d4ced3c342f57884e603ace4430ed"
+        "usr/lib/libjq.so.1.0.4|usr/lib/libjq.so.1|59d38cbad1e15be199449f7ebc1b1d74194d9bd50fe1ea3320257264577ee4ce"
+        "usr/lib/libonig.so.5.5.0|usr/lib/libonig.so.5|5c2f25ea34db8ab4408ad220f8760fb037346c20f683bd16787963ac7308524f")
+        string(REPLACE "|" ";" fields "${item}")
+        list(GET fields 0 source)
+        list(GET fields 1 destination)
+        list(GET fields 2 expected_hash)
+        file(SHA256 "${SAVANXP_LINUX_MUSL_ROOT}/${source}" actual_hash)
+        if(NOT actual_hash STREQUAL expected_hash)
+            message(FATAL_ERROR "Linux L4 profile hash mismatch: ${source}")
+        endif()
+        get_filename_component(directory "${destination}" DIRECTORY)
+        list(APPEND SAVANXP_LINUX_COPY_COMMANDS
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/${directory}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SAVANXP_LINUX_MUSL_ROOT}/${source}"
+                    "${SAVANXP_DISKFS_ROOT}/system/linux/${destination}")
+    endforeach()
+    file(SHA256 "${SAVANXP_LINUX_MUSL_ROOT}/lib/ld-musl-x86_64.so.1" SSL_INTERPRETER_HASH)
+    if(NOT SSL_INTERPRETER_HASH STREQUAL "095b047c631447e4fa50401fa7ffce01f678587040d65ba18c574981dc630de5")
+        message(FATAL_ERROR "Linux L4 profile hash mismatch: musl interpreter")
+    endif()
+    list(APPEND SAVANXP_LINUX_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/linux/lib"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SAVANXP_LINUX_MUSL_ROOT}/lib/ld-musl-x86_64.so.1"
+                "${SAVANXP_DISKFS_ROOT}/system/linux/lib/ld-musl-x86_64.so.1")
+    foreach(case IN ITEMS jq jq-missing-lib jq-missing-interp dynamic)
+        list(APPEND SAVANXP_LINUX_COPY_COMMANDS COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${SSL_EXPECTED}/${case}.stdout" "${SSL_EXPECTED}/${case}.stderr" "${SSL_EXPECTED}/${case}.status"
+            "${SSL_GUEST_FIXTURES}/expected/")
+    endforeach()
 endif()

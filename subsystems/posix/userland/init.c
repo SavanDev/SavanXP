@@ -214,6 +214,9 @@ static int run_automation_spec(const char* spec) {
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
     const char* ldimagetest_argv[] = {"/system/ldimagetest.sxe", 0};
+    const char* linuxdynamic_argv[] = {"/system/linuxtest.sxe", "--dynamic", 0};
+    const char* linuxnolib_argv[] = {"/system/linuxtest.sxe", "--dynamic", "nolib", 0};
+    const char* linuxnointerp_argv[] = {"/system/linuxtest.sxe", "--dynamic", "nointerp", 0};
     const char* linuxtools_argv[] = {"/system/linuxtest.sxe", "--tools", 0};
     const char* linuxrestart_argv[] = {"/system/linuxtest.sxe", "--restart", 0};
     const char* win32window_argv[] = {"/system/win32test.sxe", "--window", 0};
@@ -436,6 +439,11 @@ static int run_automation_spec(const char* spec) {
             path = "/system/sonametest.sxe";
             argv = sonametest_argv;
             argc = 1;
+        } else if (strcmp(spec, "linuxdynamic") == 0 || strcmp(spec, "linuxnolib") == 0 || strcmp(spec, "linuxnointerp") == 0) {
+            path = "/system/linuxtest.sxe";
+            argv = strcmp(spec, "linuxnolib") == 0 ? linuxnolib_argv :
+                   strcmp(spec, "linuxnointerp") == 0 ? linuxnointerp_argv : linuxdynamic_argv;
+            argc = strcmp(spec, "linuxdynamic") == 0 ? 2 : 3;
         } else if (strcmp(spec, "linuxtools") == 0) {
             path = "/system/linuxtest.sxe";
             argv = linuxtools_argv;

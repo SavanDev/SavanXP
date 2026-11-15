@@ -115,13 +115,20 @@ cmd_fixtures() {
     for n in args tls heap clock files tools; do
         musl_static "$fixsrc/static/$n.c" "$f/$n"
     done
+    local dynflags=(--target=x86_64-linux-musl -nostdinc -isystem "$root/usr/include"
+        -isystem "$(clang -print-resource-dir)/include" -nostdlib -fuse-ld=lld -O2 -Wall -s -Wl,--build-id=none)
+    clang "${dynflags[@]}" -fPIC -shared -Wl,-soname,libl4tls.so -o "$f/libl4tls.so" \
+        "$fixsrc/dynamic/tlslib.c" "$root/usr/lib/libc.so"
+    clang "${dynflags[@]}" -fPIE -pie -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now -Wl,-rpath,/fixtures \
+        -o "$f/dynamic" "$root/usr/lib/crt1.o" "$root/usr/lib/crti.o" "$fixsrc/dynamic/dynamic.c" \
+        "$f/libl4tls.so" "$root/usr/lib/libc.so" "$root/usr/lib/crtn.o"
     clang --target=x86_64-linux-musl -nostdinc -isystem "$root/usr/include" \
         -isystem "$(clang -print-resource-dir)/include" \
         -nostdlib -fuse-ld=lld -O2 -Wall -s -Wl,--build-id=none \
         -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 -Wl,-z,now \
         -o "$f/xclient" "$root/usr/lib/crt1.o" "$root/usr/lib/crti.o" \
         "$fixsrc/xclient/xclient.c" -L"$root/usr/lib" -lX11 -lc "$root/usr/lib/crtn.o"
-    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files tools xclient)
+    (cd "$f" && sha256sum hello startup errors regions args tls heap clock files tools dynamic libl4tls.so xclient)
 }
 
 # strace of one command; stdout and the exit status are kept beside it.
@@ -167,6 +174,8 @@ cmd_trace() {
     SSL_PROFILE_DAC=1 trace_one tools /fixtures/tools
     SSL_PROFILE_UID=1000 trace_one tools-denied /fixtures/tools denied
     trace_one bb-cat-missing /bin/busybox.static cat /work/tree/missing
+
+    trace_one dynamic /fixtures/dynamic
 
     # L4: a dynamic program with no display, using two libraries besides libc.
     guest /bin/sh -c 'printf "{\"a\":[1,2,3],\"s\":\"abbbc\"}\n" >/work/in.json'

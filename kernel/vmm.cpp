@@ -104,7 +104,9 @@ bool canonical_user_range(uint64_t virtual_address, uint64_t size) {
         last < vm::kUserStackGuardBottom;
 }
 
-uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, bool require_write) {
+constexpr uint64_t kRegionHidden = 1ULL << 9;
+
+uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, bool require_write, bool hidden = false) {
     if (!canonical_user_address(virtual_address)) {
         return nullptr;
     }
@@ -128,7 +130,7 @@ uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, boo
 
     uint64_t* pt = vm::physical_to_virtual(pde & kPageMask);
     const uint64_t pte = pt[pt_index(virtual_address)];
-    if ((pte & vm::kPagePresent) == 0 || (pte & vm::kPageUser) == 0) {
+    if ((pte & vm::kPagePresent) == 0 || ((pte & vm::kPageUser) == 0 && !(hidden && (pte & kRegionHidden)))) {
         return nullptr;
     }
     if (require_write && (pte & vm::kPageWrite) == 0) {
@@ -740,7 +742,7 @@ uint64_t region_page_flags(uint8_t access) {
 // Moves the entry of `from`, which is mapped, to `to`, whose table exists:
 // the page changes address and keeps its contents and its access.
 void move_page(vm::VmSpace& space, uint64_t from, uint64_t to) {
-    uint64_t* from_table = page_table_for(space, from, false);
+    uint64_t* from_table = page_table_for(space, from, false, true);
     uint64_t* to_table = leaf_table(space, to);
     const uint64_t entry = from_table[pt_index(from)];
     from_table[pt_index(from)] = 0;
@@ -903,7 +905,7 @@ uint64_t resident_user_bytes(const VmSpace& space) {
                 }
                 for (uint64_t pt_slot = 0; pt_slot < 512; ++pt_slot) {
                     const uint64_t pte = pt[pt_slot];
-                    if ((pte & kPagePresent) != 0 && (pte & kPageUser) != 0) {
+                    if ((pte & kPagePresent) != 0 && ((pte & kPageUser) != 0 || (pte & kRegionHidden) != 0)) {
                         pages += 1;
                     }
                 }
@@ -926,7 +928,7 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
     // NX is enforced at the leaf. Do not copy it into upper-level entries:
     // an upper-level NX bit would constrain every executable page in that
     // subtree when a later mapping needs different permissions.
-    const uint64_t table_flags = flags & ~vm::kPageNoExecute;
+    const uint64_t table_flags = (flags & ~(vm::kPageNoExecute | kRegionHidden)) | vm::kPageUser;
     uint64_t* pdpt = next_table(space.pml4_virtual, pml4_index(virtual_address), table_flags);
     if (pdpt == nullptr) {
         return false;
@@ -959,7 +961,7 @@ bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_add
         return false;
     }
 
-    uint64_t* pt = page_table_for(space, virtual_address, false);
+    uint64_t* pt = page_table_for(space, virtual_address, false, true);
     if (pt == nullptr) {
         return false;
     }
@@ -1038,7 +1040,7 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
 
                 for (uint64_t pt_slot = 0; pt_slot < 512; ++pt_slot) {
                     const uint64_t pte = pt[pt_slot];
-                    if ((pte & kPagePresent) == 0 || (pte & kPageUser) == 0) {
+                    if ((pte & kPagePresent) == 0 || ((pte & kPageUser) == 0 && (pte & kRegionHidden) == 0)) {
                         continue;
                     }
 
@@ -1057,7 +1059,7 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
                     }
 
                     const uint64_t source_physical = pte & kPageMask;
-                    uint64_t flags = kPageUser;
+                    uint64_t flags = pte & (kPageUser | kRegionHidden);
                     if ((pte & kPageWrite) != 0) {
                         flags |= kPageWrite;
                     }
@@ -1610,6 +1612,92 @@ RegionStatus map_region(VmSpace& space, uint64_t& address, uint64_t size, uint8_
     return RegionStatus::ok;
 }
 
+RegionStatus protect_regions(VmSpace& space, uint64_t address, uint64_t size, uint8_t access) {
+    if (!g_ready || !region_range(address, size) || !valid_region_access(access)) return RegionStatus::invalid;
+    const uint64_t end = address + size;
+    if (!region::covers(regions_of(space), address, end)) return RegionStatus::not_mapped;
+    // No permission transition may race another CPU still using old access.
+    // SSL is single-threaded today; a future threaded consumer needs a
+    // synchronous protection shootdown before this restriction can be lifted.
+    if (loaded_on_another_core(space)) return RegionStatus::no_memory;
+    if (!reserve_regions(space, 2) || !region::protect(*space.regions, address, end, access))
+        return RegionStatus::no_memory;
+    for (uint64_t page = next_mapped_page(space, address, end); page < end;
+         page = next_mapped_page(space, page + memory::kPageSize, end)) {
+        uint64_t* table = leaf_table(space, page);
+        uint64_t& entry = table[pt_index(page)];
+        const uint64_t flags = access ? region_page_flags(access) : kRegionHidden | kPageNoExecute;
+        entry = (entry & kPageMask) | flags | kPagePresent;
+        note_user_unmap(space, page);
+    }
+    uint32_t cpus = 0;
+    (void)finish_shootdown(cpus);
+    return RegionStatus::ok;
+}
+
+RegionStatus map_private_file(VmSpace& space, uint64_t& address, uint64_t size, uint8_t access,
+                              RegionPlacement placement, RegionReader reader, void* context,
+                              uint64_t file_size, uint64_t offset) {
+    if (!reader || !valid_region_access(access) || !size || (size & (memory::kPageSize - 1)) ||
+        (offset & (memory::kPageSize - 1))) return RegionStatus::invalid;
+    uint64_t target = address;
+    if (placement == RegionPlacement::anywhere) {
+        const bool free_hint = region_range(target, size) &&
+            !region_overlaps(space, target, target + size) && other_mapping(&space, target, target + size) == 0;
+        if (!free_hint && !region::find_gap(regions_of(space), size, kRegionBase, kUserStackGuardBottom,
+                                           other_mapping, &space, target)) return RegionStatus::no_memory;
+    } else if (!region_range(target, size)) return RegionStatus::invalid;
+    if (placement == RegionPlacement::exact &&
+        (region_overlaps(space, target, target + size) || other_mapping(&space, target, target + size)))
+        return RegionStatus::occupied;
+    if (placement == RegionPlacement::replace && other_mapping(&space, target, target + size))
+        return RegionStatus::foreign;
+    if (!reserve_regions(space, 4)) return RegionStatus::no_memory;
+    const uint64_t available = offset < file_size ? file_size - offset : 0;
+    const uint64_t bytes = available < size ? available : size;
+    const size_t pages = (bytes + memory::kPageSize - 1) / memory::kPageSize;
+    auto* backing = pages ? static_cast<uint64_t*>(heap::allocate(pages * sizeof(uint64_t))) : nullptr;
+    if (pages && !backing) return RegionStatus::no_memory;
+    size_t allocated = 0;
+    RegionStatus status = RegionStatus::ok;
+    // Stage physical pages without a user-visible writable alias. All reads,
+    // allocations and destination tables precede a fixed replacement.
+    for (size_t index = 0; index < pages; ++index) {
+        memory::PageAllocation page{};
+        if (!memory::allocate_page(page)) { status = RegionStatus::no_memory; break; }
+        backing[allocated++] = page.physical_address;
+        memset(page.virtual_address, 0, memory::kPageSize);
+        const uint64_t done = index * memory::kPageSize;
+        const size_t chunk = bytes - done < memory::kPageSize ? bytes - done : memory::kPageSize;
+        if (!reader(context, offset + done, page.virtual_address, chunk)) {
+            status = RegionStatus::io_error; break;
+        }
+        if (!leaf_table(space, target + done)) { status = RegionStatus::no_memory; break; }
+    }
+    if (status == RegionStatus::ok)
+        status = map_region(space, target, size, access,
+                            placement == RegionPlacement::replace ? placement : RegionPlacement::exact);
+    if (status == RegionStatus::ok) {
+        // Tables already exist and replacement left these leaf entries empty.
+        for (size_t index = 0; index < pages; ++index) {
+            const uint64_t page = target + index * memory::kPageSize;
+            uint64_t* table = leaf_table(space, page);
+            table[pt_index(page)] = backing[index] | kPagePresent |
+                (access ? region_page_flags(access) : kRegionHidden | kPageNoExecute);
+            note_user_unmap(space, page);
+        }
+        uint32_t cpus = 0;
+        (void)finish_shootdown(cpus);
+        (void)region::remove(*space.regions, target, target + size);
+        (void)region::insert(*space.regions, target, target + size, access, false);
+        address = target;
+    } else {
+        for (size_t index = 0; index < allocated; ++index) (void)memory::free_pages(backing[index], 1);
+    }
+    if (backing) heap::free(backing);
+    return status;
+}
+
 RegionStatus unmap_regions(VmSpace& space, uint64_t address, uint64_t size) {
     if (!g_ready || !region_range(address, size)) {
         return RegionStatus::invalid;
@@ -1640,6 +1728,7 @@ RegionStatus remap_region(VmSpace& space, uint64_t address, uint64_t old_size, u
         return RegionStatus::not_mapped;
     }
     const uint8_t access = space.regions->entries[index].access;
+    if (!space.regions->entries[index].anonymous && new_size > old_size) return RegionStatus::invalid;
 
     if (new_size == old_size) {
         new_address = address;
@@ -1715,8 +1804,9 @@ bool fault_in_region(VmSpace& space, uint64_t address, bool write, bool execute)
     const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
     // Mapped already, with the region's own access: asked twice.
     if (page_table_for(space, page, false) != nullptr) {
-        return true;
+        return !write || (access & region::kWrite) != 0;
     }
+    if (!space.regions->entries[index].anonymous) return false;
     memory::PageAllocation allocation = {};
     if (!memory::allocate_page(allocation)) {
         return false;

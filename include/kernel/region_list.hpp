@@ -23,6 +23,7 @@ struct Region {
     uint64_t start;  // page aligned
     uint64_t end;    // page aligned, one past the last byte; start < end
     uint8_t access;
+    bool anonymous = true; // false: private file pages were populated eagerly
 };
 
 // Sorted by start, never overlapping, and never two that touch with the same
@@ -53,7 +54,12 @@ bool overlaps(const List& list, uint64_t start, uint64_t end);
 // Adds [start, end) with `access`. The range must be valid and free of
 // regions; a neighbour it touches with the same access absorbs it. False,
 // with the list unchanged, otherwise or when a new entry finds no room.
-bool insert(List& list, uint64_t start, uint64_t end, uint8_t access);
+bool insert(List& list, uint64_t start, uint64_t end, uint8_t access, bool anonymous = true);
+
+// Full coverage, without holes; protect preserves each region's backing kind.
+bool covers(const List& list, uint64_t start, uint64_t end);
+// At most two extra entries. A refusal leaves the list unchanged.
+bool protect(List& list, uint64_t start, uint64_t end, uint8_t access);
 
 // Takes [start, end) out of every region it overlaps, splitting one that
 // straddles it. Nothing there is not an error. False, with the list

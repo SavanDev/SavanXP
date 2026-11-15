@@ -15,6 +15,7 @@ constexpr uint8_t kOsAbiNative = SXN_ELF_OSABI_NATIVE;
 
 struct LoadResult {
     uint64_t entry_point;
+    uint64_t load_bias; // ET_DYN relocation base, distinct from the first PT_LOAD
     uint64_t stack_pointer;
     uint8_t os_abi; // e_ident[EI_OSABI] de la imagen cargada
     // Argumentos que de verdad entraron en el stack inicial. Puede ser menor
@@ -48,6 +49,8 @@ enum class LoadFailure : uint8_t {
     bad_segment,   // a PT_LOAD inconsistent, overlapping, outside user space or not W^X
     truncated,     // a PT_LOAD points past the end of the image
     out_of_memory, // a page of a segment or of the stack could not be allocated or mapped
+    missing_interpreter,
+    interpreter_denied,
     unsupported    // valid, but asks for what this ABI does not offer yet
 };
 
@@ -67,11 +70,18 @@ const char* load_failure_string(LoadFailure failure);
 // fragmentada.
 using ImageReader = bool (*)(void* context, uint64_t offset, void* destination, size_t size);
 
+struct InterpreterSource {
+    ImageReader read;
+    void* context;
+    size_t size;
+};
+using InterpreterProvider = bool (*)(void*, const char*, InterpreterSource&, LoadFailure&);
+
 // The Linux start-up (SSL, docs/userland/LINUX.md). With it the image must
 // be a Linux x86-64 executable (EI_OSABI System V or GNU), and the process
 // starts as Linux's do: RSP at argc, then argv, envp and the auxiliary
-// vector, every other register zero. An image that names an interpreter is
-// refused (unsupported) until the kernel loads one (L4).
+// vector, every other register zero. PT_INTERP is opened by the subsystem
+// provider, mapped independently, and entered with AT_BASE naming its bias.
 struct LinuxStartup {
     const char* const* envp;
     int envc;
@@ -81,6 +91,8 @@ struct LinuxStartup {
     uint32_t euid;
     uint32_t gid;
     uint32_t egid;
+    InterpreterProvider interpreter_provider;
+    void* interpreter_context;
 };
 
 bool load_user_image(

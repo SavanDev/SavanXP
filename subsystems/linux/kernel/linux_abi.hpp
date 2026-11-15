@@ -32,6 +32,9 @@ constexpr uint64_t kSysGetuid = 102;
 constexpr uint64_t kSysGetdents64 = 217;
 constexpr uint64_t kSysLseek = 8;
 constexpr uint64_t kSysMmap = 9;
+constexpr uint64_t kSysMprotect = 10;
+constexpr uint64_t kSysReadlink = 89;
+constexpr uint64_t kSysGetrandom = 318;
 constexpr uint64_t kSysMunmap = 11;
 constexpr uint64_t kSysBrk = 12;
 constexpr uint64_t kSysIoctl = 16;
@@ -48,6 +51,7 @@ constexpr uint64_t kSysExitGroup = 231;
 // Errors, returned negated in RAX.
 constexpr int64_t kEPERM = 1;
 constexpr int64_t kENOENT = 2;
+constexpr int64_t kEIO = 5;
 constexpr int64_t kEBADF = 9;
 constexpr int64_t kENOMEM = 12;
 constexpr int64_t kEACCES = 13;

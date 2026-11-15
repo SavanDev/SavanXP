@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SSL runs the unchanged dynamic Alpine `jq` and its musl libraries, including shared-library TLS.**
+  `linux-dynamic` covers private file maps, `mprotect`, 320 simultaneous mappings and missing runtime files.
+  Linux launches now report a missing interpreter as `ENOENT`; see [LINUX.md](docs/userland/LINUX.md).
+
 - **SSL runs Alpine's unchanged static BusyBox `echo`, `cat`, `ls`, `pwd`, `wc` and `mkdir`.**
   `linux-tools` checks Linux reference output, directory enumeration, working directories, creation masks and errors.
   See [LINUX.md](docs/userland/LINUX.md).

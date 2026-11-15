@@ -761,6 +761,20 @@ SCENARIOS: dict[str, Scenario] = {
     # SSL's L2 gate for a file kept across a restart: the first boot writes it
     # with the files fixture and syncs, the host resets the machine at the
     # ready token, and the second boot reads it back and removes it.
+    "linux-dynamic": _qemu_scenario(
+        "linuxdynamic", "LINUX DYNAMIC PASS", "LINUX DYNAMIC FAIL",
+        "Unmodified musl jq, shared TLS and more than 128 private file maps", 180.0,
+    ),
+    "linux-dynamic-missing-lib": _qemu_scenario(
+        "linuxnolib", "LINUX DYNAMIC PASS", "LINUX DYNAMIC FAIL",
+        "Musl's missing-library messages match Linux byte for byte", 120.0,
+        remove_paths=("/system/linux/usr/lib/libonig.so.5",),
+    ),
+    "linux-dynamic-missing-interp": _qemu_scenario(
+        "linuxnointerp", "LINUX DYNAMIC PASS", "LINUX DYNAMIC FAIL",
+        "Linux spawn refuses a missing interpreter with ENOENT and no leaked process", 120.0,
+        remove_paths=("/system/linux/lib/ld-musl-x86_64.so.1",),
+    ),
     "linux-tools": _qemu_scenario(
         "linuxtools", "LINUX TOOLS PASS", "LINUX TOOLS FAIL",
         "Pinned static BusyBox applets match Linux output and errors", 120.0,

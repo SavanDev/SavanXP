@@ -70,16 +70,16 @@ bool overlaps(const List& list, uint64_t start, uint64_t end) {
     return index < list.count && list.entries[index].start < end;
 }
 
-bool insert(List& list, uint64_t start, uint64_t end, uint8_t access) {
+bool insert(List& list, uint64_t start, uint64_t end, uint8_t access, bool anonymous) {
     if (!valid_range(start, end) || overlaps(list, start, end)) {
         return false;
     }
     // Where it goes: after every region that ends at or before its start.
     const uint32_t at = first_ending_after(list, start);
     const bool joins_left = at > 0 && list.entries[at - 1].end == start &&
-                            list.entries[at - 1].access == access;
+                            list.entries[at - 1].access == access && list.entries[at - 1].anonymous == anonymous;
     const bool joins_right = at < list.count && list.entries[at].start == end &&
-                             list.entries[at].access == access;
+                             list.entries[at].access == access && list.entries[at].anonymous == anonymous;
     if (joins_left && joins_right) {
         list.entries[at - 1].end = list.entries[at].end;
         erase(list, at);
@@ -97,7 +97,7 @@ bool insert(List& list, uint64_t start, uint64_t end, uint8_t access) {
         return false;
     }
     shift_right(list, at);
-    list.entries[at] = Region{start, end, access};
+    list.entries[at] = Region{start, end, access, anonymous};
     return true;
 }
 
@@ -116,7 +116,7 @@ bool remove(List& list, uint64_t start, uint64_t end) {
         if (list.count >= list.capacity) {
             return false;
         }
-        const Region tail{end, around.end, around.access};
+        const Region tail{end, around.end, around.access, around.anonymous};
         around.end = start;
         shift_right(list, first + 1);
         list.entries[first + 1] = tail;
@@ -137,6 +137,53 @@ bool remove(List& list, uint64_t start, uint64_t end) {
             }
         }
         list.entries[kept++] = current;
+    }
+    list.count = kept;
+    return true;
+}
+
+bool covers(const List& list, uint64_t start, uint64_t end) {
+    if (!valid_range(start, end)) return false;
+    uint32_t index = first_ending_after(list, start);
+    uint64_t cursor = start;
+    while (cursor < end && index < list.count) {
+        const Region& entry = list.entries[index++];
+        if (entry.start > cursor) return false;
+        cursor = entry.end;
+    }
+    return cursor >= end;
+}
+
+bool protect(List& list, uint64_t start, uint64_t end, uint8_t access) {
+    if (!covers(list, start, end)) return false;
+    const int32_t first = find(list, start);
+    const int32_t last = find(list, end - 1);
+    const uint32_t extra = (list.entries[first].start < start ? 1u : 0u) +
+                           (list.entries[last].end > end ? 1u : 0u);
+    if (list.capacity - list.count < extra) return false;
+    // Split both edges before changing any access, preserving the backing.
+    const uint64_t edges[2] = {start, end};
+    for (const uint64_t edge : edges) {
+        const int32_t index = find(list, edge);
+        if (index < 0 || list.entries[index].start == edge) continue;
+        Region tail = list.entries[index];
+        tail.start = edge;
+        list.entries[index].end = edge;
+        shift_right(list, static_cast<uint32_t>(index + 1));
+        list.entries[index + 1] = tail;
+    }
+    for (uint32_t index = 0; index < list.count; ++index) {
+        Region& entry = list.entries[index];
+        if (entry.start >= start && entry.end <= end) entry.access = access;
+    }
+    uint32_t kept = 0;
+    for (uint32_t index = 0; index < list.count; ++index) {
+        const Region entry = list.entries[index];
+        if (kept && list.entries[kept - 1].end == entry.start &&
+            list.entries[kept - 1].access == entry.access &&
+            list.entries[kept - 1].anonymous == entry.anonymous) {
+            list.entries[kept - 1].end = entry.end;
+        } else list.entries[kept++] = entry;
     }
     list.count = kept;
     return true;

@@ -35,7 +35,7 @@ static void put(const char *text) {
 
 static const char *reason(long error) {
     switch (-error) {
-        case SAVANXP_ENOENT: return "no such file in the guest tree";
+        case SAVANXP_ENOENT: return "No such file or directory";
         case SAVANXP_EACCES: return "permission denied";
         case SAVANXP_ENOEXEC: return "not a Linux x86-64 executable this subsystem can run";
         case SAVANXP_ENOMEM: return "out of memory";

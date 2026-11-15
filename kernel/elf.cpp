@@ -2,6 +2,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/region_list.hpp"
 #include "kernel/string.hpp"
 
 namespace {
@@ -321,6 +322,7 @@ bool build_linux_stack(
     uint64_t program_headers,
     uint64_t program_header_count,
     uint64_t entry,
+    uint64_t interpreter_base,
     uint64_t& stack_pointer
 ) {
     uint8_t* backing[kInitialStackPages] = {};
@@ -406,7 +408,7 @@ bool build_linux_stack(
         {kAtPhent, sizeof(ProgramHeader)},
         {kAtPhnum, program_header_count},
         {kAtPagesz, memory::kPageSize},
-        {kAtBase, 0},
+        {kAtBase, interpreter_base},
         {kAtEntry, entry},
         {kAtUid, startup.uid},
         {kAtEuid, startup.euid},
@@ -442,13 +444,15 @@ const char* load_failure_string(LoadFailure failure) {
             return "truncated segment";
         case LoadFailure::out_of_memory:
             return "out of memory";
+        case LoadFailure::missing_interpreter: return "missing interpreter";
+        case LoadFailure::interpreter_denied: return "interpreter permission denied";
         case LoadFailure::unsupported:
             return "not supported by this ABI yet";
     }
     return "unknown";
 }
 
-bool load_user_image(
+static bool load_image(
     ImageReader read_image,
     void* context,
     size_t size,
@@ -457,7 +461,8 @@ bool load_user_image(
     const char* const* argv,
     LoadResult& result,
     LoadFailure& failure,
-    const LinuxStartup* linux_startup
+    const LinuxStartup* linux_startup,
+    bool interpreter = false
 ) {
     ElfHeader header = {};
 
@@ -490,7 +495,9 @@ bool load_user_image(
      * The base is kUserBase, the address the SDK linker script uses, so a PIE
      * image sits where an ET_EXEC would. Choosing a base per process with
      * entropy is the next step, and is what would give the executable ASLR. */
-    const uint64_t load_bias = header.type == kElfTypeShared ? vm::kUserBase : 0;
+    const uint64_t load_bias = header.type == kElfTypeShared ? (interpreter ? 0x40000000ULL : vm::kUserBase) : 0;
+    if (interpreter && header.type != kElfTypeShared) { failure = LoadFailure::bad_header; return false; }
+    result.load_bias = load_bias;
     uint64_t interpreter_path_length = 0;
     size_t segment_count = 0;
     bool entry_is_executable = false;
@@ -514,17 +521,15 @@ bool load_user_image(
             has_program_header_entry = true;
             continue;
         }
-        if (program.type == kProgramInterp && linux_startup != nullptr) {
-            failure = LoadFailure::unsupported;
-            result.fail_index = index;
-            return false;
-        }
         if (program.type == kProgramInterp) {
-            /* La ruta del intérprete no se mapea: es una cadena, y copiarla al
-             * stack inicial alcanza. Solo se acepta si es una cadena NUL
-             * terminada dentro del archivo y de largo sensato; el resto de
-             * entradas PT_INTERP se ignoran y la imagen arranca como estatica,
-             * que es lo que hacen las imagenes que no declaran uno. */
+            // The interpreter is an absolute, NUL-terminated path within the
+            // image. Linux rejects duplicate, malformed or nested PT_INTERP;
+            // the native/POSIX path keeps its historical optional handling.
+            if (linux_startup && (interpreter || interpreter_path_length ||
+                program.file_size < 2 || program.file_size > kMaxInterpreterPath ||
+                !range_within(program.offset, program.file_size, size))) {
+                failure = LoadFailure::bad_header; result.fail_index = index; return false;
+            }
             if (interpreter_path_length == 0 && program.file_size > 0 &&
                 program.file_size <= kMaxInterpreterPath &&
                 program.offset + program.file_size <= size) {
@@ -543,6 +548,9 @@ bool load_user_image(
                         interpreter_offset = program.offset;
                     }
                 }
+            }
+            if (linux_startup && !interpreter_path_length) {
+                failure = LoadFailure::bad_header; result.fail_index = index; return false;
             }
             continue;
         }
@@ -593,6 +601,10 @@ bool load_user_image(
 
         const uint64_t mapped_start = align_down(vaddr, memory::kPageSize);
         const uint64_t mapped_end = align_up(image_end, memory::kPageSize);
+        if (interpreter && address_space.regions &&
+            region::overlaps(*address_space.regions, mapped_start, mapped_end)) {
+            failure = LoadFailure::bad_segment; result.fail_index = index; return false;
+        }
         for (size_t previous = 0; previous < segment_count; ++previous) {
             if (!page_ranges_overlap(mapped_start, mapped_end, segment_starts[previous], segment_ends[previous])) {
                 continue;
@@ -651,7 +663,7 @@ bool load_user_image(
             highest_end = segment_ends[index];
         }
     }
-    address_space.image_end = highest_end;
+    if (!interpreter) address_space.image_end = highest_end;
 
     for (size_t index = 0; index < segment_count; ++index) {
         const ProgramHeader& program = segments[index];
@@ -674,6 +686,15 @@ bool load_user_image(
 
             memory::PageAllocation page_allocation = {};
             if (!vm::add_user_page_flags(address_space, page, page_flags)) {
+                if (linux_startup != nullptr) {
+                    uint64_t where = page;
+                    const uint8_t access = ((union_program_flags & kProgramWritable) ? 2 : 0) |
+                                           ((union_program_flags & kProgramExecutable) ? 4 : 0) | 1;
+                    if (vm::map_region(address_space, where, memory::kPageSize, access,
+                                       vm::RegionPlacement::exact) != vm::RegionStatus::ok) {
+                        failure = LoadFailure::out_of_memory; return false;
+                    }
+                }
                 if (!memory::allocate_page(page_allocation)) {
                     failure = LoadFailure::out_of_memory;
                     return false;
@@ -715,9 +736,34 @@ bool load_user_image(
         }
     }
 
+    uint64_t interpreter_base = 0;
+    uint64_t interpreter_entry = 0;
+    if (linux_startup && !interpreter && interpreter_path_length) {
+        char path[kMaxInterpreterPath]{};
+        if (!read_image(context, interpreter_offset, path, interpreter_path_length)) {
+            failure = LoadFailure::truncated; return false;
+        }
+        InterpreterSource source{};
+        if (!linux_startup->interpreter_provider ||
+            !linux_startup->interpreter_provider(linux_startup->interpreter_context, path, source, failure)) {
+            if (failure == LoadFailure::none) failure = LoadFailure::missing_interpreter;
+            return false;
+        }
+        LoadResult loaded{};
+        if (!load_image(source.read, source.context, source.size, address_space, 0, nullptr,
+                        loaded, failure, linux_startup, true)) return false;
+        interpreter_base = loaded.load_bias;
+        interpreter_entry = loaded.entry_point;
+    }
+    if (interpreter) {
+        result.entry_point = header.entry + load_bias;
+        result.os_abi = header.os_abi;
+        return true;
+    }
+
     if (linux_startup != nullptr) {
         if (!build_linux_stack(address_space, argc, argv, *linux_startup, program_headers_address,
-                               header.program_header_count, header.entry + load_bias, result.stack_pointer)) {
+                               header.program_header_count, header.entry + load_bias, interpreter_base, result.stack_pointer)) {
             failure = LoadFailure::out_of_memory;
             return false;
         }
@@ -730,9 +776,15 @@ bool load_user_image(
         return false;
     }
 
-    result.entry_point = header.entry + load_bias;
+    result.entry_point = interpreter_entry ? interpreter_entry : header.entry + load_bias;
     result.os_abi = header.os_abi;
     return true;
+}
+
+bool load_user_image(ImageReader reader, void* context, size_t size, vm::VmSpace& space,
+                     int argc, const char* const* argv, LoadResult& result, LoadFailure& failure,
+                     const LinuxStartup* startup) {
+    return load_image(reader, context, size, space, argc, argv, result, failure, startup);
 }
 
 } // namespace elf

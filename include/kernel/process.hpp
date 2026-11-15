@@ -18,6 +18,8 @@ namespace net {
 struct Socket;
 }
 
+namespace elf { struct InterpreterSource; enum class LoadFailure : uint8_t; }
+
 namespace process {
 
 constexpr size_t kMaxProcesses = 64;
@@ -443,6 +445,8 @@ int install_io_object(Process& proc, object::IoObject* file);
 // SSL's guest tree: `guest`, an absolute path a Linux program names, as the
 // path of the file under /system/linux. `..` never climbs above the guest
 // root. False for a relative or too long path.
+bool linux_interpreter_source(void* credentials, const char* guest,
+                              elf::InterpreterSource& source, elf::LoadFailure& failure);
 bool linux_guest_path(const char* guest, char* host, size_t capacity);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);

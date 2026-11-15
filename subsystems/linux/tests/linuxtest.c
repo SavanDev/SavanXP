@@ -159,7 +159,7 @@ static void run(const char *name, char **arguments, int count) {
         return;
     }
     int expected_status = parse_status(status_text, status_size);
-    if (name[0] == 'b' && name[1] == 'b') {
+    if ((name[0] == 'b' && name[1] == 'b') || same(name, "jq-missing-lib") || same(name, "jq-missing-interp")) {
         expected_path(stdout_path, sizeof(stdout_path), name, ".stderr");
         long errors = read_file(stdout_path, expected + expected_size, sizeof(expected) - expected_size);
         if (errors < 0) { g_failures++; return; }
@@ -181,7 +181,7 @@ static void run(const char *name, char **arguments, int count) {
     struct sxn_spawn_request request;
     sxn_spawn_request_init(&request, LAUNCHER, argv, argc);
     request.std_handles[1] = pipe[1];
-    if (name[0] == 'b' && name[1] == 'b') request.std_handles[2] = pipe[1];
+    if ((name[0] == 'b' && name[1] == 'b') || same(name, "jq-missing-lib") || same(name, "jq-missing-interp")) request.std_handles[2] = pipe[1];
     struct sxn_identity user = {.uid = 1000, .euid = 1000, .gid = 1000};
     long child = same(name, "tools-denied") ? sxn_spawn_ex_as(&request, &user) : sxn_spawn_ex(&request);
     (void)sxn_close(pipe[1]);
@@ -203,9 +203,19 @@ static void run(const char *name, char **arguments, int count) {
     int status = -1;
     long reaped = sxn_waitpid(child, &status);
 
-    int same = (long)total == expected_size;
-    for (uint32_t i = 0; same && i < total; ++i) {
-        same = output[i] == expected[i];
+    uint32_t output_start = 0;
+    uint32_t expected_start = 0;
+    if (same(name, "jq-missing-interp")) {
+        /* chroot on Linux and the SUN launcher have different prefixes;
+         * compare the complete error description and the 127 exit status. */
+        for (uint32_t i = 0; i + 1 < total; ++i)
+            if (output[i] == ':' && output[i + 1] == ' ') output_start = i + 2;
+        for (uint32_t i = 0; (long)(i + 1) < expected_size; ++i)
+            if (expected[i] == ':' && expected[i + 1] == ' ') expected_start = i + 2;
+    }
+    int same = (long)(total - output_start) == expected_size - expected_start;
+    for (uint32_t i = 0; same && i < total - output_start; ++i) {
+        same = output[output_start + i] == expected[expected_start + i];
     }
     if (!same) {
         uint32_t at = 0;
@@ -357,7 +367,59 @@ static int tools(void) {
     return g_failures != 0;
 }
 
+/* Platform policy assertions, separate from the byte-for-byte Linux cases.
+ * SSL has no signal delivery yet: a protection #PF exits with 128 + 14. */
+static void dynamic_policy(const char *mode, int wanted) {
+    char *argv[] = {LAUNCHER, "/fixtures/dynamic", (char *)mode};
+    struct sxn_spawn_request request;
+    sxn_spawn_request_init(&request, LAUNCHER, argv, 3);
+    long child = sxn_spawn_ex(&request);
+    int status = -1;
+    int ok = child > 0 && sxn_waitpid(child, &status) == child && status == wanted;
+    say(ok ? "linuxtest: ok   dynamic policy " : "linuxtest: FAIL dynamic policy ", mode, "");
+    if (!ok) g_failures++;
+}
+
+static int dynamic(const char *mode) {
+    struct sxn_spawn_subsystem linux_abi = {.subsystem = SXN_SUBSYSTEM_LINUX, .envc = 0, .envp = 0};
+    if (same(mode, "nointerp")) {
+        /* Linux execve refuses the original jq with ENOENT when PT_INTERP
+         * cannot be opened. There is no guest chroot wrapper in SSL. */
+        refuse("a missing interpreter", "/usr/bin/jq", &linux_abi, -1, -SAVANXP_ENOENT);
+        char *jq[] = {"/usr/bin/jq", "--version"};
+        run("jq-missing-interp", jq, 2);
+    } else if (same(mode, "nolib")) {
+        char *jq[] = {"/usr/bin/jq", "--version"};
+        run("jq-missing-lib", jq, 2);
+    } else {
+        refuse("duplicate PT_INTERP", "/fixtures/interp-duplicate", &linux_abi, -1, -SAVANXP_ENOEXEC);
+        refuse("nested PT_INTERP", "/fixtures/interp-nested", &linux_abi, -1, -SAVANXP_ENOEXEC);
+        refuse("unterminated PT_INTERP", "/fixtures/interp-unterminated", &linux_abi, -1, -SAVANXP_ENOEXEC);
+        const uint64_t before = settled_free_memory();
+        char *edges[] = {"/fixtures/dynamic"};
+        run("dynamic", edges, 1);
+        dynamic_policy("wx", 0);
+        dynamic_policy("write", 128 + 14);
+        dynamic_policy("execute", 128 + 14);
+        const uint64_t after = settled_free_memory();
+        if (before == 0 || after + (1u << 20) < before) {
+            say("linuxtest: FAIL dynamic memory was not returned", "", "");
+            g_failures++;
+        }
+        long file = sxn_create_file(GUEST "/work/in.json", SXN_CREATE_ALWAYS);
+        const char input[] = "{\"a\":[1,2,3],\"s\":\"abbbc\"}\n";
+        if (file < 0 || sxn_write(file, input, sizeof(input) - 1) != sizeof(input) - 1) g_failures++;
+        if (file >= 0) (void)sxn_close(file);
+        char *jq[] = {"-e", "HOME=/root", "/usr/bin/jq", "-c",
+            "{d: (.a | map(. * 2)), m: (.s | test(\"ab+c\"))}", "/work/in.json"};
+        run("jq", jq, 6);
+    }
+    say(g_failures == 0 ? "LINUX DYNAMIC PASS" : "LINUX DYNAMIC FAIL", "", "");
+    return g_failures != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && same(argv[1], "--dynamic")) return dynamic(argc > 2 ? argv[2] : "normal");
     if (argc > 1 && same(argv[1], "--tools")) return tools();
     if (argc > 1 && same(argv[1], "--restart")) {
         return restart();

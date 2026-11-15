@@ -24,6 +24,8 @@
 #include <stdint.h>
 
 #include "abi/savanxp_native_abi.h"
+#include "arch/cpu.hpp"
+#include "kernel/elf.hpp"
 #include "kernel/console.hpp"
 #include "kernel/process.hpp"
 #include "kernel/process_detail.hpp"
@@ -785,6 +787,8 @@ int64_t region_error(process::Process& proc, uint64_t number, vm::RegionStatus s
             return -abi::kENOMEM;
         case vm::RegionStatus::occupied:
             return -abi::kEEXIST;
+        case vm::RegionStatus::io_error:
+            return -abi::kEIO;
         case vm::RegionStatus::not_mapped:
             return -abi::kEFAULT;
         case vm::RegionStatus::foreign:
@@ -821,12 +825,6 @@ int64_t linux_mmap(process::Process& proc, const process::SavedContext* context)
     if (type != abi::kMapPrivate) {
         return -abi::kEINVAL;
     }
-    if ((flags & abi::kMapAnonymous) == 0) {
-        // A file mapping is S2b's (L4): the file system cannot map one yet,
-        // which is what ENODEV says.
-        report_unsupported(proc, abi::kSysMmap, "file mapping");
-        return -abi::kENODEV;
-    }
     // Flags Linux itself ignores or that change nothing here (no memory is
     // reserved ahead) pass; any other is refused rather than half done.
     const uint64_t known = abi::kMapType | abi::kMapFixed | abi::kMapAnonymous | abi::kMapFixedNoReplace |
@@ -859,13 +857,60 @@ int64_t linux_mmap(process::Process& proc, const process::SavedContext* context)
     } else if (!round_to_pages(where, where)) {
         where = 0;
     }
-    const vm::RegionStatus status =
-        vm::map_region(proc.address_space, where, size,
-                       static_cast<uint8_t>(prot & (abi::kProtRead | abi::kProtWrite | abi::kProtExec)), placement);
+    const uint8_t access = prot & (abi::kProtRead | abi::kProtWrite | abi::kProtExec);
+    vm::RegionStatus status;
+    if (flags & abi::kMapAnonymous) {
+        status = vm::map_region(proc.address_space, where, size, access, placement);
+    } else {
+        uint64_t handle;
+        if (!handle_of(proc, context->r8, handle)) return -abi::kEBADF;
+        auto* file = process::io_object_of(proc, handle);
+        if (!file || !(file->open_flags & process::open_read)) return -abi::kEACCES;
+        if (!file->node || file->node->type != vfs::NodeType::file) return -abi::kENODEV;
+        auto read = [](void* node, uint64_t position, void* buffer, size_t count) {
+            return vfs::read(*static_cast<vfs::Vnode*>(node), position, buffer, count) == count;
+        };
+        status = vm::map_private_file(proc.address_space, where, size, access, placement,
+                                      read, file->node, file->node->size, offset);
+    }
     if (status != vm::RegionStatus::ok) {
         return region_error(proc, abi::kSysMmap, status);
     }
     return static_cast<int64_t>(where);
+}
+
+int64_t linux_mprotect(process::Process& proc, const process::SavedContext* c) {
+    if ((c->rdi & (kPage - 1)) || (c->rdx & ~(abi::kProtRead | abi::kProtWrite | abi::kProtExec | abi::kProtSem)))
+        return -abi::kEINVAL;
+    if ((c->rdx & abi::kProtWrite) && (c->rdx & abi::kProtExec)) return -abi::kEACCES;
+    uint64_t size;
+    if (!round_to_pages(c->rsi, size)) return -abi::kENOMEM;
+    if (!size) return 0;
+    auto result = vm::protect_regions(proc.address_space, c->rdi, size, c->rdx & 7);
+    if (result == vm::RegionStatus::not_mapped || result == vm::RegionStatus::foreign) return -abi::kENOMEM;
+    return region_error(proc, abi::kSysMprotect, result);
+}
+
+int64_t linux_readlink(process::Process& proc, const process::SavedContext* c) {
+    if (!c->rdx) return -abi::kEINVAL;
+    vfs::PathBuffer host;
+    int64_t result = guest_path_from_user(proc, c->rdi, host);
+    if (result) return result;
+    // The VFS has no links: existing paths are EINVAL, missing ones retain
+    // their lookup error. Never pretend a resolved regular file is a link.
+    return vfs::open(proc.credentials, host, 0, 0) ? -abi::kEINVAL : vfs_failure();
+}
+
+int64_t linux_getrandom(process::Process& proc, const process::SavedContext* c) {
+    if (c->rdx != 0) {
+        report_unsupported(proc, abi::kSysGetrandom, "getrandom flags");
+        return -abi::kEINVAL;
+    }
+    const size_t count = c->rsi < 256 ? c->rsi : 256;
+    if (!count) return 0;
+    uint64_t bytes[32];
+    for (uint64_t& word : bytes) word = arch::random_u64();
+    return sx::copy_to_user(c->rdi, bytes, count) ? static_cast<int64_t>(count) : -abi::kEFAULT;
 }
 
 // munmap(address, length).
@@ -1024,6 +1069,12 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
         case abi::kSysIoctl:
             set_result(context, linux_ioctl(proc, context));
             return context;
+        case abi::kSysMprotect:
+            set_result(context, linux_mprotect(proc, context)); return context;
+        case abi::kSysReadlink:
+            set_result(context, linux_readlink(proc, context)); return context;
+        case abi::kSysGetrandom:
+            set_result(context, linux_getrandom(proc, context)); return context;
         case abi::kSysMmap:
             set_result(context, linux_mmap(proc, context));
             return context;
@@ -1107,6 +1158,31 @@ bool linux_guest_path(const char* guest, char* host, size_t capacity) {
         written += length;
         host[written] = '\0';
     }
+    return true;
+}
+
+bool linux_interpreter_source(void* credentials, const char* guest,
+                              elf::InterpreterSource& source, elf::LoadFailure& failure) {
+    vfs::PathBuffer host;
+    if (host == nullptr) { failure = elf::LoadFailure::out_of_memory; return false; }
+    if (!linux_guest_path(guest, host, host.capacity())) { failure = elf::LoadFailure::bad_header; return false; }
+    const auto& who = *static_cast<const cred::Credentials*>(credentials);
+    if (!vfs::may_execute(who, host)) {
+        failure = vfs::last_error() == SX_EACCES ? elf::LoadFailure::interpreter_denied
+                                               : elf::LoadFailure::missing_interpreter;
+        return false;
+    }
+    auto* node = vfs::open(who, host, SAVANXP_OPEN_READ, 0);
+    if (!node || node->type != vfs::NodeType::file) {
+        failure = node ? elf::LoadFailure::bad_header : elf::LoadFailure::interpreter_denied;
+        return false;
+    }
+    source.context = node;
+    source.size = node->size;
+    source.read = [](void* context, uint64_t offset, void* buffer, size_t count) {
+        auto& file = *static_cast<vfs::Vnode*>(context);
+        return offset <= file.size && count <= file.size - offset && vfs::read(file, offset, buffer, count) == count;
+    };
     return true;
 }
 

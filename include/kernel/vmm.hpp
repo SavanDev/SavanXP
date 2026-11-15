@@ -203,6 +203,7 @@ enum class RegionStatus : uint8_t {
     foreign,
     // A remap of a range that is not inside one region.
     not_mapped,
+    io_error, // an eager backing read failed
 };
 
 // A new region of `size` bytes. `address` is the hint or the place, and the
@@ -212,6 +213,13 @@ RegionStatus map_region(VmSpace& space, uint64_t& address, uint64_t size, uint8_
 // Takes [address, address + size) out of every region it overlaps and frees
 // the pages that were there. A range that holds no region is not an error; one
 // that holds a mapping that is not a region is `foreign`, and nothing changes.
+// Changes access on a fully mapped region range, preserving resident pages.
+RegionStatus protect_regions(VmSpace& space, uint64_t address, uint64_t size, uint8_t access);
+// Eager private snapshot. Missing whole pages beyond EOF stay inaccessible.
+using RegionReader = bool (*)(void*, uint64_t, void*, size_t);
+RegionStatus map_private_file(VmSpace& space, uint64_t& address, uint64_t size, uint8_t access,
+                              RegionPlacement placement, RegionReader reader, void* context,
+                              uint64_t file_size, uint64_t offset);
 RegionStatus unmap_regions(VmSpace& space, uint64_t address, uint64_t size);
 // Resizes [address, address + old_size), which must lie inside one region. A
 // shrink frees the tail; a growth takes the range after it when that is free,

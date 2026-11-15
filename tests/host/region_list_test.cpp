@@ -153,6 +153,32 @@ void test_capacity() {
     check(f.storage[2].start == 0xa5a5a5a5a5a5a5a5ull, "nothing past the capacity was touched");
 }
 
+void test_protect() {
+    Fixture f;
+    check(region::insert(f.list, 10 * P, 20 * P, RW), "protect setup");
+    check(region::protect(f.list, 12 * P, 18 * P, region::kRead), "protect middle");
+    check(is(f.list, {{10, 12, RW}, {12, 18, region::kRead}, {18, 20, RW}}), "both edges split");
+    check(region::protect(f.list, 10 * P, 20 * P, RW), "protect across pieces");
+    check(is(f.list, {{10, 20, RW}}), "protection merges neighbours");
+    check(!region::protect(f.list, 9 * P, 20 * P, RW), "protect a missing start refuses");
+    check(region::remove(f.list, 14 * P, 15 * P), "protect hole setup");
+    check(!region::protect(f.list, 10 * P, 20 * P, region::kRead), "protect never crosses a hole");
+    check(is(f.list, {{10, 14, RW}, {15, 20, RW}}), "failed protection is atomic");
+    Fixture full(1);
+    check(region::insert(full.list, 10 * P, 20 * P, RW), "full setup");
+    check(!region::protect(full.list, 12 * P, 18 * P, region::kRead), "protect with no split storage refuses");
+    check(is(full.list, {{10, 20, RW}}), "capacity refusal is atomic");
+    Fixture backing;
+    check(region::insert(backing.list, 10 * P, 12 * P, RW, false), "file snapshot setup");
+    check(region::insert(backing.list, 12 * P, 14 * P, RW), "anonymous neighbour setup");
+    check(backing.list.count == 2, "different backing kinds stay distinct");
+    check(region::protect(backing.list, 11 * P, 13 * P, region::kRead), "protect across backing kinds");
+    check(backing.list.count == 4 && !backing.list.entries[1].anonymous && backing.list.entries[2].anonymous,
+          "protection preserves backing at both split edges");
+    check(region::remove(backing.list, 10 * P, 11 * P), "trim a file region");
+    check(!backing.list.entries[0].anonymous, "trim preserves file backing");
+}
+
 struct Wall {
     uint64_t start;
     uint64_t end;
@@ -209,6 +235,7 @@ int main() {
     test_remove_many();
     test_capacity();
     test_gap();
+    test_protect();
     std::printf("region-list-test: PASS (%d checks: ranges, merging, overlap, splitting, capacity, gaps)\n",
                 g_checks);
     return 0;

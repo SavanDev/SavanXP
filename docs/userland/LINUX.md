@@ -9,7 +9,8 @@ the first profile is in [LINUX_XEYES_PROFILE.md](LINUX_XEYES_PROFILE.md).
 Linux executable runs unchanged, started by the `linux` launcher; L2
 with S2a: a static musl program runs unchanged, with its thread-local data,
 its heap, files under the guest root and the clocks; L3 adds the bounded
-static BusyBox tools below.** Every call not below answers `-ENOSYS`.
+static BusyBox tools below; L4 runs the pinned dynamic musl `jq` with its
+original libraries.** Every call not below answers `-ENOSYS`.
 
 ## The `syscall` instruction raises #UD
 
@@ -87,9 +88,10 @@ in RDX, a `struct sxn_spawn_subsystem`: `SXN_SUBSYSTEM_LINUX`, `envc` and
   truncated. An unreadable block or environment, or another subsystem, is
   `-EINVAL`.
 - The image must be a Linux x86-64 executable: `EI_OSABI` System V (0) or GNU
-  (3). Anything else, including a SavanXP image, is `-ENOEXEC`, and so is an
-  image that names an interpreter (`PT_INTERP`) until the kernel loads one
-  (L4). The selector is the only thing that makes a process Linux. Nothing is
+  (3). Anything else, including a SavanXP image, is `-ENOEXEC`. A `PT_INTERP`
+  path is opened in the guest tree with the process's credentials. A missing
+  interpreter is `-ENOENT`, a denied one `-EACCES`; malformed, duplicate or
+  nested interpreter headers are `-ENOEXEC`. The selector is the only thing that makes a process Linux. Nothing is
   guessed from the file.
 
 Without the flag, nothing changes: `EI_OSABI` chooses between native and
@@ -108,7 +110,7 @@ strings and the argument strings. Above a 16-byte aligned RSP sit `argc`,
 | --- | --- |
 | `AT_PHDR`, `AT_PHENT`, `AT_PHNUM` | The program header table in memory (from `PT_PHDR`, or the `PT_LOAD` that holds it), 56, its count |
 | `AT_PAGESZ` | 4096 |
-| `AT_BASE` | 0: no interpreter yet |
+| `AT_BASE` | The interpreter load bias, or 0 for a static executable |
 | `AT_ENTRY` | The image's entry point |
 | `AT_UID`, `AT_EUID`, `AT_GID`, `AT_EGID` | The process's credentials. The effective group is the group: the kernel keeps no separate one |
 | `AT_SECURE` | 0 |
@@ -121,7 +123,13 @@ entry point.
 
 A Linux `ET_EXEC` may be linked anywhere above the user floor, `0x10000`
 ([USER_ADDRESS_SPACE.md](../kernel/USER_ADDRESS_SPACE.md)); lld puts a static
-one at `0x200000`. A static PIE (`ET_DYN`) goes at `0x400000`, as any other.
+one at `0x200000`. A PIE (`ET_DYN`) goes at `0x400000`, as any other. The Linux interpreter must
+be `ET_DYN`; it is mapped separately at bias `0x40000000`, with its own ELF
+validation and W^X checks. Overlap with the main image is refused. The kernel
+enters the interpreter while `AT_ENTRY` and `AT_PHDR` still name the main
+executable. All those pages are regions, so the interpreter can protect RELRO.
+The subsystem supplies an interpreter provider to the ELF loader; the loader
+itself never resolves guest paths. SavanXP's user-mode loader is not involved.
 
 ### What is inherited
 
@@ -143,8 +151,7 @@ registers, for `subsystem::Id::linux`:
 | Per-thread state | `set_tid_address`'s pointer and a pending `sendfile` pipe wait |
 | Wait-recheck hook | Retries a `sendfile` syscall when its blocking output pipe can accept the pending chunk, or its last reader closed |
 
-A call SSL has, asked for a variant it does not offer (a shared mapping, a
-file mapping, an explicit `sendfile` offset, an `arch_prctl` code other than
+A call SSL has, asked for a variant it does not offer (a shared mapping, an explicit `sendfile` offset, an `arch_prctl` code other than
 `ARCH_SET_FS`), fails with its Linux error and is logged once per call per process:
 `linux: pid=N syscall M: unsupported WHAT`.
 
@@ -174,7 +181,7 @@ permission checks apply underneath. The test image has `/system/linux/work`,
 | --- | --- |
 | `read` (0) | On an open descriptor, through the native read (`process::native_read_handle`): a pipe with nothing in it parks the thread. An unwritable buffer is `-EFAULT`; a descriptor open for writing only is `-EBADF` |
 | `write` (1) | On an open descriptor, `-EBADF` otherwise. An unreadable buffer is `-EFAULT`; zero bytes is 0 whatever the buffer. The write is the native one (`process::native_write_handle`), so a full pipe parks the thread and the reader's progress finishes the call |
-| `open` (2) | A regular file, with the access mode, `O_CREAT` (with the process umask applied) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, directories open read-only, and `O_DIRECTORY` requires one. The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
+| `open` (2) | A regular file or read-only directory, with the access mode, `O_CREAT` (with the process umask applied) and `O_TRUNC`; `O_CLOEXEC` is kept, `O_LARGEFILE` is always true and `O_NOCTTY` has no terminal to refuse. Any other flag is refused: `O_APPEND` needs every write at the end, not only the first, directories open read-only, and `O_DIRECTORY` requires one. The lowest free descriptor; `-EMFILE` when the table or the kernel's is full |
 | `close` (3) | Frees the descriptor and closes its handle |
 | `stat` (4), `fstat` (5) | Linux's `struct stat`: the type, the permission bits and owner SavanXP records, the size, 512-byte blocks, the modification time for all three times, and a node number (`vfs::node_number`) for `st_ino`. A pipe, socket or device handed to the process gives its type alone |
 | `lseek` (8) | `SEEK_SET`, `SEEK_CUR` and `SEEK_END` on a file; `-ESPIPE` on a pipe, socket or device; before 0 is `-EINVAL` |
@@ -188,7 +195,10 @@ permission checks apply underneath. The test image has `/system/linux/work`,
 | `unlink` (87) | Removes a file; a directory is `-EISDIR`, as on Linux |
 | `writev` (20) | On an open descriptor. The vector is read twice: every length first (`-EINVAL` past `SSIZE_MAX`, more than 1024 entries), then each segment is written. Only the first segment with bytes may block, since the waker completes the call with that segment's count; a later one that would block ends the call short, and the caller writes the rest, as musl's stdio does. A count is capped at `MAX_RW_COUNT`, as is `write`'s |
 | `ioctl` (16) | `-ENOTTY` on an open descriptor, whatever the request: no descriptor is a terminal yet. That is Linux's answer for a file or a pipe to `TCGETS` and `TIOCGWINSZ`, the two musl asks. `-EBADF` otherwise |
-| `mmap` (9) | Private anonymous memory, an anonymous region of S2a ([MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md)). `MAP_FIXED` replaces the regions in the range; `MAP_FIXED_NOREPLACE` is `-EEXIST` over anything. A hint is taken when free. `MAP_DENYWRITE`, `MAP_EXECUTABLE`, `MAP_NORESERVE` and `MAP_STACK` change nothing here, as on Linux; another flag is refused. A shared mapping is `-EINVAL`, a file mapping `-ENODEV` (S2b, L4), writable and executable memory `-EACCES` (W^X, a recorded difference from Linux), and a fixed mapping over memory that is not a region `-EINVAL` |
+| `mmap` (9) | Private anonymous memory and eager private file snapshots, through regions ([MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md)). `MAP_FIXED` replaces the regions in the range; `MAP_FIXED_NOREPLACE` is `-EEXIST` over anything. A hint is taken when free. `MAP_DENYWRITE`, `MAP_EXECUTABLE`, `MAP_NORESERVE` and `MAP_STACK` change nothing here, as on Linux; another flag is refused. A shared mapping is `-EINVAL`, writable and executable memory `-EACCES` (W^X, a recorded difference from Linux), and a fixed mapping over memory that is not a region `-EINVAL` |
+| `mprotect` (10) | Changes access on whole pages, splitting and merging regions; `-ENOMEM` for a hole, `-EINVAL` for unaligned addresses or unknown protection bits, `-EACCES` for W+X. Resident data survives `PROT_NONE` and restoration. The neutral protection mechanism currently refuses while another CPU holds the space; see [MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md) |
+| `getrandom` (318) | Flags 0, up to 256 bytes per call (a permitted short result), from `arch::random_u64`: RDRAND or its TSC-mix fallback. This is the existing platform entropy source, not a new cryptographic entropy service. An invalid destination is `-EFAULT`; other flag variants are refused and logged |
+| `readlink` (89) | The VFS has no links: `-EINVAL` for an existing path, the lookup error for a missing one |
 | `munmap` (11) | Takes the range out of the regions and frees its pages. A range with no region is 0; one with memory that is not a region is `-EINVAL` |
 | `mremap` (25) | Inside one region: shrinks in place, grows in place when the pages after it are free, otherwise moves with `MREMAP_MAYMOVE` (`-ENOMEM` without). Outside one region `-EFAULT`. `MREMAP_FIXED` and `MREMAP_DONTUNMAP` are refused |
 | `brk` (12) | The break starts at the end of the image (`VmSpace::image_end`); growing maps a region exactly after it, shrinking unmaps. It answers where the break is, the old place when it could not move, as Linux's does |
@@ -292,3 +302,34 @@ the two-million-call register check. In a 2,000 ms statistics window,
 The held time excludes entry, lock waiting and return; neither figure is a
 round-trip latency guarantee. The fast entry remains deferred until a named
 workload needs it. The `linux-tools` gate also passes with `--accel kvm`.
+
+**L4, dynamic programs.** `linux-dynamic` runs the pinned, unchanged Alpine
+`jq` against `libjq.so.1`, `libonig.so.5` and musl, checks its JSON/regex result
+against Linux, and runs the dynamic `dynamic`/`libl4tls.so` fixture. It covers
+initialized, zeroed and aligned TLS in a shared library, private writes,
+fixed file replacement, partial-page zero fill, inaccessible pages beyond
+EOF, protection changes retaining data, executable file pages, close/unlink
+lifetime, `getrandom`, `readlink`, and 320 simultaneous private file maps with
+separate anonymous guards. After exit, free memory must return within 1 MiB.
+The fixture is built and hashed with the same commands as `profile.sh`.
+
+Platform-policy checks separately assert that `mprotect` refuses W+X and that
+CPU writes to read-only pages and execution of NX pages kill the process.
+Until L7 provides signals, a protection page fault exits with 128 + 14 rather
+than Linux's SIGSEGV status. Damaged dynamic fixtures test duplicate, nested
+and unterminated `PT_INTERP`, including the absence of leaked processes.
+
+`linux-dynamic-missing-lib` removes `libonig` from a disposable image and
+compares musl's entire output and status with Linux's pinned failure reference.
+`linux-dynamic-missing-interp` removes the interpreter and asserts spawn's
+`ENOENT`, no leaked process, the launcher's 127 exit status, and the same
+`No such file or directory` error description as Linux. Only that case removes
+the diagnostic wrapper prefix: the Linux reference uses BusyBox `chroot`,
+whereas SSL uses the SUN launcher. No musl diagnostic is normalized.
+
+All guest runtime files are test-app staging inputs, validated by SHA-256.
+They are not SavanXP shared libraries. Explicit file-map offsets are page
+aligned and do not change the descriptor offset; shared maps and growing a
+file snapshot with `mremap` remain unsupported. See
+[MEMORY_REGIONS.md](../kernel/MEMORY_REGIONS.md) for the eager snapshot's
+coherence and EOF contract.

@@ -1870,8 +1870,9 @@ bool prepare_exec_image(
     elf::LoadFailure load_failure = elf::LoadFailure::none;
     if (!elf::load_user_image(image_reader, &image_source, image_source.size, new_space, argc, argv, load_result, load_failure)) {
         vm::destroy_address_space(new_space);
-        failure = load_failure == elf::LoadFailure::out_of_memory
-            ? process::ImageFailure::no_load_memory
+        failure = load_failure == elf::LoadFailure::out_of_memory ? process::ImageFailure::no_load_memory
+            : load_failure == elf::LoadFailure::missing_interpreter ? process::ImageFailure::not_found
+            : load_failure == elf::LoadFailure::interpreter_denied ? process::ImageFailure::permission_denied
             : process::ImageFailure::bad_image;
         console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("exec", path, failure, reported_size);
@@ -2030,14 +2031,17 @@ process::Process* create_process_internal(
         linux_startup.euid = proc->credentials.euid;
         linux_startup.gid = proc->credentials.gid;
         linux_startup.egid = proc->credentials.gid;
+        linux_startup.interpreter_provider = &process::linux_interpreter_source;
+        linux_startup.interpreter_context = &proc->credentials;
     }
     if (!elf::load_user_image(image_reader, &image_source, image_source.size, proc->address_space, argc, argv,
                               load_result, load_failure, linux_launch != nullptr ? &linux_startup : nullptr)) {
         release_all_handles(*proc);
         process::detail::release_process_resources(*proc);
         process::detail::reset_process_slot(*proc);
-        failure = load_failure == elf::LoadFailure::out_of_memory
-            ? process::ImageFailure::no_load_memory
+        failure = load_failure == elf::LoadFailure::out_of_memory ? process::ImageFailure::no_load_memory
+            : load_failure == elf::LoadFailure::missing_interpreter ? process::ImageFailure::not_found
+            : load_failure == elf::LoadFailure::interpreter_denied ? process::ImageFailure::permission_denied
             : process::ImageFailure::bad_image;
         console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("spawn", path, failure, reported_size);
