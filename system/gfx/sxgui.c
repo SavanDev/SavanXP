@@ -47,6 +47,55 @@ static int sxgui_clipboard_set(const char *text)
     return host != 0 && host->clipboard_set_text != 0 ? host->clipboard_set_text(text) : -1;
 }
 
+/* The formats' table, found the same way as the host and weak for the same
+ * reason: a program built before it defines none, and keeps a toolkit with
+ * text only. */
+extern const struct sxgui_host_clipboard *sxgui_default_host_clipboard(void) __attribute__((weak));
+
+static const struct sxgui_host_clipboard *g_sxgui_host_clipboard;
+static int g_sxgui_host_clipboard_set;
+
+void sxgui_set_host_clipboard(const struct sxgui_host_clipboard *host)
+{
+    g_sxgui_host_clipboard = host;
+    g_sxgui_host_clipboard_set = host != 0;
+}
+
+static const struct sxgui_host_clipboard *sxgui_host_clipboard(void)
+{
+    if (!g_sxgui_host_clipboard_set)
+    {
+        g_sxgui_host_clipboard = sxgui_default_host_clipboard != 0 ? sxgui_default_host_clipboard() : 0;
+        g_sxgui_host_clipboard_set = 1;
+    }
+    return g_sxgui_host_clipboard;
+}
+
+int sxgui_clipboard_set_formats(const struct sxgui_clipboard_format *formats, int count)
+{
+    const struct sxgui_host_clipboard *host = sxgui_host_clipboard();
+    return host != 0 && host->set_formats != 0 ? host->set_formats(formats, count) : -1;
+}
+
+int sxgui_clipboard_get_format(const char *name, void *buffer, int capacity)
+{
+    const struct sxgui_host_clipboard *host = sxgui_host_clipboard();
+    return host != 0 && host->get_format != 0 ? host->get_format(name, buffer, capacity) : -1;
+}
+
+int sxgui_clipboard_enum_format(int index, char *name, int name_capacity)
+{
+    const struct sxgui_host_clipboard *host = sxgui_host_clipboard();
+    return host != 0 && host->enum_format != 0 ? host->enum_format(index, name, name_capacity) : -1;
+}
+
+int sxgui_clipboard_has_format(const char *name)
+{
+    /* A zero-capacity read copies nothing and still says whether it is
+     * there. */
+    return sxgui_clipboard_get_format(name, 0, 0) >= 0;
+}
+
 /* ---- low level chrome helpers ------------------------------------------- */
 
 /* THE BEVEL DRAWING IS NOT HERE: it lives in sxgfx/sxchrome.h, because the

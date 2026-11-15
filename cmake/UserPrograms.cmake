@@ -230,6 +230,10 @@ savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsy
 # loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN").
 savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath LINK_PROFILE PIE
     SOURCES system/loader/sunlibtest.c)
+# The toolkit's clipboard formats from SUN, through the shared libsxgui
+# (docs/desktop/CLIPBOARD.md); the core smoke runs it.
+savanxp_program(NAME guicliptest TEST NATIVE DEPENDS libsxgui libgfx2d LINK_PROFILE PIE
+    SOURCES system/runtime/guicliptest.c)
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One
 # source, one library per version; the program links against the 0.4s, and

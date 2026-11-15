@@ -1,6 +1,8 @@
 #include "libc.h"
 #include "savanxp/sxgui.h"
 
+#include <string.h>
+
 /*
  * Seleccion de texto y portapapeles en sxgui, headless.
  *
@@ -228,6 +230,63 @@ static void test_listbox_header(void)
     {
         fail("header: the column outlived its action");
     }
+}
+
+/* Clipboard formats through the toolkit's host (docs/desktop/CLIPBOARD.md):
+ * a set written with sxgui_clipboard_set_formats reads back by name through
+ * the toolkit and through libc alike, and a text field pastes the text
+ * format of a set that also holds a file list. */
+static void test_clipboard_formats(void)
+{
+    static const char uris[] = "file:///users/user/notes.txt\r\n";
+    static const char text[] = "/users/user/notes.txt";
+    const struct sxgui_clipboard_format formats[2] = {
+        {SAVANXP_CLIPBOARD_URI_LIST, uris, sizeof(uris) - 1},
+        {SAVANXP_CLIPBOARD_TEXT, text, sizeof(text) - 1},
+    };
+    char buffer[64];
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
+
+    if (sxgui_clipboard_set_formats(formats, 2) < 0)
+    {
+        fail("formats: set_formats through the host");
+        return;
+    }
+    if (sxgui_clipboard_get_format(SAVANXP_CLIPBOARD_URI_LIST, buffer, (int)sizeof(buffer)) != (int)sizeof(uris) - 1 ||
+        memcmp(buffer, uris, sizeof(uris) - 1) != 0)
+    {
+        fail("formats: the uri list does not read back through the host");
+    }
+    if (clipboard_get_format(SAVANXP_CLIPBOARD_URI_LIST, buffer, (int)sizeof(buffer)) != (int)sizeof(uris) - 1)
+    {
+        fail("formats: libc does not see what the host wrote");
+    }
+    if (!sxgui_clipboard_has_format(SAVANXP_CLIPBOARD_URI_LIST) || sxgui_clipboard_has_format("image/bmp"))
+    {
+        fail("formats: has_format");
+    }
+    if (sxgui_clipboard_enum_format(1, name, (int)sizeof(name)) != (int)sizeof(text) - 1 ||
+        strcmp(name, SAVANXP_CLIPBOARD_TEXT) != 0 || sxgui_clipboard_enum_format(2, name, (int)sizeof(name)) >= 0)
+    {
+        fail("formats: enumeration through the host");
+    }
+
+    reset_field("");
+    key((uint32_t)'v', 'v', SAVANXP_KEY_MOD_CTRL);
+    expect_text(text, "formats: a field pastes the text format");
+
+    /* Without a host the calls fail instead of reaching anything. */
+    {
+        static const struct sxgui_host_clipboard none = {0, 0, 0};
+        sxgui_set_host_clipboard(&none);
+        if (sxgui_clipboard_get_format(SAVANXP_CLIPBOARD_TEXT, buffer, (int)sizeof(buffer)) >= 0 ||
+            sxgui_clipboard_has_format(SAVANXP_CLIPBOARD_TEXT))
+        {
+            fail("formats: a host without formats should answer < 0");
+        }
+        sxgui_set_host_clipboard(0);
+    }
+    (void)clipboard_clear();
 }
 
 int main(void)
@@ -463,6 +522,7 @@ int main(void)
     sxgui_paint(&g_ctx);
 
     test_listbox_header();
+    test_clipboard_formats();
 
     if (g_failures != 0)
     {

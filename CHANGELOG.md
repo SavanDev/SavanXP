@@ -21,6 +21,11 @@ Cut-off notes:
   `sxn_wait_io`) while the content changed since it last called `CLIP_IOC_GET_INFO`.** See
   [CLIPBOARD.md](docs/desktop/CLIPBOARD.md#following-changes).
 
+- **The SxGUI toolkit reaches the clipboard's formats from POSIX and SUN programs alike:
+  `sxgui_clipboard_set_formats`, `_get_format`, `_enum_format`, `_has_format`, over a new host table
+  (`struct sxgui_host_clipboard`).** Programs built before it keep text only. See
+  [PLATFORM_GRAPHICS.md](docs/desktop/PLATFORM_GRAPHICS.md#the-clipboards-formats).
+
 - **Media Player supports fullscreen with a Fullscreen button and F11; Esc or F11 restores the window.**
   Video keeps its aspect ratio, playback continues, and controls and desktop chrome are hidden.
   SUN and POSIX windows can request fullscreen at desktop resolution.

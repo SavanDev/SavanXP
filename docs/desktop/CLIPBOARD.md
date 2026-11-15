@@ -136,7 +136,7 @@ before the formats working unchanged:
 |---|---|---|
 | POSIX | `savanxp/libc.h`: `clipboard_set_text`, `clipboard_get_text`, `clipboard_get_info`, `clipboard_clear`; `clipboard_set_formats`, `clipboard_get_format`, `clipboard_enum_format` | done; `cliptest` in `smoke` |
 | SUN | `sxn_open_device("clipboard")` and `sxn_device_control` with the ioctls above; the toolkit's SUN host (`system/runtime/sxngui.c`) for text | done at the device level; typed `sxn_` calls wait for their first consumer ([`SUN.md`](../userland/SUN.md), rule 1); `nativetest` |
-| SXGUI-C toolkit | `struct sxgui_host` (`clipboard_get_text`/`clipboard_set_text`), text only ([`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-toolkits-host)) | done for text |
+| SXGUI-C toolkit | text through `struct sxgui_host`; formats through `struct sxgui_host_clipboard` and `sxgui_clipboard_set_formats`, `_get_format`, `_enum_format`, `_has_format`, for platform code and programs of either subsystem ([`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)) | done; `seltest` (POSIX) and `guicliptest` (SUN) in `smoke` |
 | Win32 | `user32` has no clipboard calls yet | missing |
 | Linux | guest paths are rooted at `/system/linux`, so `/dev/clipboard` does not exist for a guest | missing |
 | Console | no mark, copy or paste | missing |
@@ -149,15 +149,23 @@ In the order they depend on each other:
 2. **Change notification** — done ([above](#following-changes)): what
    Win32's `AddClipboardFormatListener` and an X11 selection bridge stand on,
    and what lets a menu enable Paste without asking on every repaint.
-3. **Per-session content.** There is one set for the whole machine, readable
-   by every process of every user. It should belong to the session
-   ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md)).
-4. **The subsystems' layers.** Win32's `OpenClipboard`, `EmptyClipboard`,
+3. **Per-session content — deferred until there is a second user.** There is
+   one set for the whole machine, readable by every process. Today that
+   separates nothing: there is one user, and the only other processes are the
+   system's, which may read anything anyway. The kernel has no session either,
+   only the token's `{uid, euid, gid}`, and more than one user is out of scope
+   ([`USERS_AND_PERMISSIONS.md`](../kernel/USERS_AND_PERMISSIONS.md#deliberately-out-of-scope)).
+   It comes with that work: one set per session, the session inherited on
+   `spawn` and `fork` and given by `sessiond`. Not one per uid, which would
+   give the system's services and the smokes a clipboard apart from the
+   user's while an elevated program (uid 1000, euid 0) shared the user's.
+4. **The subsystems' layers.** Toolkit formats — done
+   ([above](#how-each-subsystem-reaches-it)). Left: Win32's `OpenClipboard`, `EmptyClipboard`,
    `SetClipboardData`, `GetClipboardData`, `CloseClipboard`,
    `IsClipboardFormatAvailable`, `EnumClipboardFormats`,
    `RegisterClipboardFormat` and `GetClipboardSequenceNumber` (which is
    `sequence`), then OLE's clipboard for WordPad
    ([`WIN32_WORDPAD_PROFILE.md`](../userland/WIN32_WORDPAD_PROFILE.md)); the
-   device visible to Linux guests; copy and paste in the console; and
-   the toolkit's host growing formats, which Files needs for Cut, Copy and
-   Paste of files ([`FILES.md`](FILES.md#pending)).
+   device visible to Linux guests; and copy and paste in the console. Files'
+   Cut, Copy and Paste of files stand on the toolkit's formats
+   ([`FILES.md`](FILES.md#pending)).

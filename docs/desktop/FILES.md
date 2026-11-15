@@ -239,8 +239,9 @@ Not started. In the order they depend on each other:
    the paths as plain text, so Notepad pastes them. Chosen over a tagged text
    payload (a marker line, then one path per line), which any other program
    would paste as text with the tag, and which a text starting with the tag
-   would fake. Left: the toolkit's host interface (`struct sxgui_host` is
-   text only) and the SUN host.
+   would fake. The toolkit reaches the formats from either subsystem
+   (`sxgui_clipboard_set_formats` and the rest,
+   [`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)).
 4. **Cut / Copy / Paste.** On the clipboard above. Paste copies into the
    folder shown; copying a folder is a recursive copy, a name already taken
    becomes "Copy of ..." (and "Copy (2) of ..."), and a failure halfway

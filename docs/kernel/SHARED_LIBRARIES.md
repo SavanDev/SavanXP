@@ -1045,7 +1045,10 @@ A program built against the old layout still loads. Its `libsxgfx.so.0.4` now
 needs `libgfx2d.so.0.4`, which defines the primitives it used to, and the lookup
 finds them there. Its `libsxgui.so.0.4` asks it for `sxgui_default_host`, which it
 does not define; the reference is weak, so that program's toolkit runs without a
-clock or a clipboard instead of failing to load. Neither case has a test with a
+clock or a clipboard instead of failing to load. The clipboard's formats came
+later as a table of their own behind a second weak symbol,
+`sxgui_default_host_clipboard`, for the same reason
+([PLATFORM_GRAPHICS.md](../desktop/PLATFORM_GRAPHICS.md#the-clipboards-formats)). Neither case has a test with a
 binary actually built before the split: no external binary in this tree maps the
 toolkit, and the weak half is asserted by `libweakref` in `ldfailtest`.
 

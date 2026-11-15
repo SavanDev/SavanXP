@@ -92,6 +92,141 @@ const struct sxgui_host *sxgui_default_host(void)
     return &k_sun_host;
 }
 
+/* ---- the clipboard's formats (docs/desktop/CLIPBOARD.md) ------------------- */
+
+static int sxngui_copy_format_name(char *field, const char *name)
+{
+    int length = 0;
+
+    if (name == 0)
+    {
+        return 0;
+    }
+    while (name[length] != '\0')
+    {
+        if (length + 1 >= (int)SAVANXP_CLIPBOARD_NAME_CAPACITY)
+        {
+            return 0;
+        }
+        field[length] = name[length];
+        ++length;
+    }
+    field[length] = '\0';
+    return length != 0;
+}
+
+static int sxngui_clipboard_set_formats(const struct sxgui_clipboard_format *formats, int count)
+{
+    struct savanxp_clipboard_entry entries[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    struct savanxp_clipboard_set request;
+    long device;
+    long result;
+    int index;
+
+    if (formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(entries, 0, sizeof(entries));
+    for (index = 0; index < count; ++index)
+    {
+        if ((formats[index].data == 0 && formats[index].length != 0) ||
+            !sxngui_copy_format_name(entries[index].name, formats[index].name))
+        {
+            return -SAVANXP_EINVAL;
+        }
+        entries[index].data = (uint64_t)(uintptr_t)formats[index].data;
+        entries[index].length = formats[index].length;
+    }
+    memset(&request, 0, sizeof(request));
+    request.entries = (uint64_t)(uintptr_t)entries;
+    request.count = (uint32_t)count;
+
+    device = sxn_open_device("clipboard", SXN_DEVICE_WRITE);
+    if (device < 0)
+    {
+        return (int)device;
+    }
+    result = sxn_device_control(device, CLIP_IOC_SET_FORMATS, (unsigned long)&request);
+    (void)sxn_close(device);
+    return (int)result;
+}
+
+static int sxngui_clipboard_get_format(const char *name, void *buffer, int capacity)
+{
+    struct savanxp_clipboard_get request;
+    long device;
+    long result;
+
+    if (capacity < 0 || (buffer == 0 && capacity != 0))
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(&request, 0, sizeof(request));
+    if (!sxngui_copy_format_name(request.name, name))
+    {
+        return -SAVANXP_EINVAL;
+    }
+    request.buffer = (uint64_t)(uintptr_t)buffer;
+    request.capacity = (uint32_t)capacity;
+
+    device = sxn_open_device("clipboard", SXN_DEVICE_READ);
+    if (device < 0)
+    {
+        return (int)device;
+    }
+    result = sxn_device_control(device, CLIP_IOC_GET_FORMAT, (unsigned long)&request);
+    (void)sxn_close(device);
+    return result < 0 ? (int)result : (int)request.length;
+}
+
+static int sxngui_clipboard_enum_format(int index, char *name, int name_capacity)
+{
+    struct savanxp_clipboard_format_info request;
+    long device;
+    long result;
+    int length = 0;
+
+    if (index < 0 || name == 0 || name_capacity <= 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(&request, 0, sizeof(request));
+    request.index = (uint32_t)index;
+
+    device = sxn_open_device("clipboard", SXN_DEVICE_READ);
+    if (device < 0)
+    {
+        return (int)device;
+    }
+    result = sxn_device_control(device, CLIP_IOC_ENUM_FORMAT, (unsigned long)&request);
+    (void)sxn_close(device);
+    if (result < 0)
+    {
+        return (int)result;
+    }
+    while (request.name[length] != '\0' && length + 1 < name_capacity)
+    {
+        name[length] = request.name[length];
+        ++length;
+    }
+    name[length] = '\0';
+    return (int)request.length;
+}
+
+static const struct sxgui_host_clipboard k_sun_host_clipboard = {
+    sxngui_clipboard_set_formats,
+    sxngui_clipboard_get_format,
+    sxngui_clipboard_enum_format,
+};
+
+/* Strong, over POSIX's weak one, which the runtime links into every program
+ * too (subsystems/posix/sdk/v1/runtime/sxgui_app.c). */
+const struct sxgui_host_clipboard *sxgui_default_host_clipboard(void)
+{
+    return &k_sun_host_clipboard;
+}
+
 /* ---- the window ---------------------------------------------------------------- */
 
 static void sxngui_fill_info(struct savanxp_fb_info *info, const struct sxnwm_client *window)
@@ -142,6 +277,7 @@ int sxngui_app_init(struct sxngui_app *app, const struct sxnwm_presentation_sour
     }
     memset(app, 0, sizeof(*app));
     sxgui_set_host(&k_sun_host);
+    sxgui_set_host_clipboard(&k_sun_host_clipboard);
     result = sxnwm_connect(&app->wm);
     if (result < 0)
     {

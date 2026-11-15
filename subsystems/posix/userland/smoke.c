@@ -271,6 +271,7 @@ int main(void) {
     const char* semaphoretest_argv[] = {"/bin/semaphoretest", 0};
     const char* cliptest_argv[] = {"/bin/cliptest", 0};
     const char* seltest_argv[] = {"/bin/seltest", 0};
+    const char* guicliptest_argv[] = {"/system/guicliptest.sxe", 0};
     const char* mmaptest_argv[] = {"/bin/mmaptest", 0};
     const char* heaptest_argv[] = {"/bin/heaptest", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo shell-redirect > /smoke/sh.txt", 0};
@@ -336,6 +337,7 @@ int main(void) {
         !file_exists("/bin/semaphoretest") ||
         !file_exists("/bin/cliptest") ||
         !file_exists("/bin/seltest") ||
+        !file_exists("/system/guicliptest.sxe") ||
         !file_exists("/bin/mmaptest") ||
         !file_exists("/bin/heaptest") ||
         !file_exists("/bin/idtest") ||
@@ -386,6 +388,7 @@ int main(void) {
         !run_and_expect("/bin/semaphoretest", semaphoretest_argv, 1, 0) ||
         !run_and_expect("/bin/cliptest", cliptest_argv, 1, 0) ||
         !run_and_expect("/bin/seltest", seltest_argv, 1, 0) ||
+        !run_and_expect("/system/guicliptest.sxe", guicliptest_argv, 1, 0) ||
         !run_and_expect("/bin/mmaptest", mmaptest_argv, 1, 0) ||
         !run_and_expect("/bin/heaptest", heaptest_argv, 1, 0) ||
         !validate_boot_volume() ||

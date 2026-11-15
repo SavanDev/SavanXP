@@ -18,6 +18,38 @@ __attribute__((weak)) const struct sxgui_host *sxgui_default_host(void)
     return &k_posix_host;
 }
 
+/* The toolkit's format table and libc's calls take the same three fields;
+ * the copy keeps either free to grow without the other noticing. */
+static int sxgui_posix_set_formats(const struct sxgui_clipboard_format *formats, int count)
+{
+    struct clipboard_format copied[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    int index;
+
+    if (formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS)
+    {
+        return -(int)SAVANXP_EINVAL;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        copied[index].name = formats[index].name;
+        copied[index].data = formats[index].data;
+        copied[index].length = formats[index].length;
+    }
+    return clipboard_set_formats(copied, count);
+}
+
+static const struct sxgui_host_clipboard k_posix_host_clipboard = {
+    sxgui_posix_set_formats,
+    clipboard_get_format,
+    clipboard_enum_format,
+};
+
+/* Weak for the same reason as sxgui_default_host. */
+__attribute__((weak)) const struct sxgui_host_clipboard *sxgui_default_host_clipboard(void)
+{
+    return &k_posix_host_clipboard;
+}
+
 static void sxgui_app_report(const char *name, const char *what)
 {
     puts_fd(2, name != 0 ? name : "sxgui");

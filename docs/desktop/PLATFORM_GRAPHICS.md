@@ -86,6 +86,39 @@ window does not wake up.
 Dialogs work the same way: `struct sxgui_dialog_host` gives them a window of
 their own, and each frame is the host that provides it.
 
+### The clipboard's formats
+
+The host above carries the clipboard's text only. Its formats
+([`CLIPBOARD.md`](CLIPBOARD.md)) come from a second table, so that platform
+code and a program of either subsystem reach them with the same calls:
+
+```c
+struct sxgui_host_clipboard {
+    int (*set_formats)(const struct sxgui_clipboard_format *formats, int count);
+    int (*get_format)(const char *name, void *buffer, int capacity);
+    int (*enum_format)(int index, char *name, int name_capacity);
+};
+int sxgui_clipboard_set_formats(const struct sxgui_clipboard_format *formats, int count);
+int sxgui_clipboard_get_format(const char *name, void *buffer, int capacity);
+int sxgui_clipboard_enum_format(int index, char *name, int name_capacity);
+int sxgui_clipboard_has_format(const char *name);
+```
+
+**A table of its own, not three more fields in `struct sxgui_host`.** The
+program defines the host and `libsxgui.so` reads it: a library that read a
+field an installed program was built without would read past the end of that
+program's struct and call whatever it found there. The table is found the
+way the host is, through a weak `sxgui_default_host_clipboard`, so a program
+built before it defines none and its toolkit keeps text only (the calls
+answer < 0). POSIX's (`sxgui_app.c`, over libc's `clipboard_set_formats` and
+the rest) is weak; SUN's (`sxngui.c`, over `sxn_device_control`) is strong
+and is also installed by `sxngui_app_init`. A later service for the host
+gets a table of its own for the same reason.
+
+`seltest` checks the POSIX table, a text field pasting the text of a set that
+also holds a file list, and a host without formats; `guicliptest`, run by the
+core smoke, checks the SUN table through the shared `libsxgui`.
+
 ## The window protocol
 
 The same reasoning moved the WM protocol out of the POSIX SDK:

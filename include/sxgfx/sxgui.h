@@ -597,7 +597,8 @@ struct sxgui_widget sxgui_trackbar(struct sx_rect rect, int range_min, int range
 /* ---- host services ---------------------------------------------------------
  *
  * The three things the toolkit needs from the system it runs on: the clock
- * (double clicks) and the clipboard (cut, copy, paste). Each subsystem
+ * (double clicks) and the clipboard's text (cut, copy, paste); the
+ * clipboard's formats are a table of their own, below. Each subsystem
  * provides them: a POSIX program gets the POSIX host without asking, a SUN
  * program passes its own to sxgui_set_host. A missing service degrades the
  * toolkit (no double click, nothing to paste) instead of failing.
@@ -617,6 +618,47 @@ void sxgui_set_host(const struct sxgui_host *host);
  * system/runtime/sxngui.c for SUN. The toolkit core defines none, so that in
  * libsxgui.so the program's is the one found. */
 const struct sxgui_host *sxgui_default_host(void);
+
+/* ---- clipboard formats -------------------------------------------------------
+ *
+ * The same content offered in several formats at once, named by media type
+ * (docs/desktop/CLIPBOARD.md): a file list as "text/uri-list" and as plain
+ * text, so a program that only knows text still pastes the paths. A second
+ * table rather than more fields in struct sxgui_host: the program defines the
+ * host and libsxgui.so reads it, so a field the program was built without
+ * would be read past the end of its struct. A program built before this
+ * table defines no sxgui_default_host_clipboard, and its toolkit has text
+ * only.
+ */
+struct sxgui_clipboard_format {
+    const char *name; /* a media type, e.g. "text/uri-list" */
+    const void *data;
+    unsigned int length;
+};
+
+struct sxgui_host_clipboard {
+    /* Replaces the whole clipboard with these formats (at most 8), or fails
+     * and leaves it as it was. >= 0 on success. */
+    int (*set_formats)(const struct sxgui_clipboard_format *formats, int count);
+    /* Copies up to `capacity` bytes of format `name` (no NUL added) and
+     * returns its full length; < 0 when the clipboard does not hold it. */
+    int (*get_format)(const char *name, void *buffer, int capacity);
+    /* The name of the format at `index`, in the writer's order, and its
+     * length; < 0 past the last one. */
+    int (*enum_format)(int index, char *name, int name_capacity);
+};
+
+/* NULL goes back to the subsystem's default. */
+void sxgui_set_host_clipboard(const struct sxgui_host_clipboard *host);
+/* Defined by the program's runtime, like sxgui_default_host. */
+const struct sxgui_host_clipboard *sxgui_default_host_clipboard(void);
+
+/* What a program or platform code calls; each answers < 0 when the host has no
+ * formats. sxgui_clipboard_has_format is 1 when the clipboard offers `name`. */
+int sxgui_clipboard_set_formats(const struct sxgui_clipboard_format *formats, int count);
+int sxgui_clipboard_get_format(const char *name, void *buffer, int capacity);
+int sxgui_clipboard_enum_format(int index, char *name, int name_capacity);
+int sxgui_clipboard_has_format(const char *name);
 
 #ifdef __cplusplus
 }
