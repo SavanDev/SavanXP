@@ -421,6 +421,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Desktop pointer queries also compile in C++ SDK consumers.**
+  The P1 snapshot helper reads volatile fields individually while retaining the same seqlock checks.
+
 - **The system's programs and libraries no longer carry the build machine's directory as a `RUNPATH`**; 38 did, and
   `check_shared_libs` now fails the build if one does. See [SHARED_LIBRARIES.md](docs/kernel/SHARED_LIBRARIES.md).
 

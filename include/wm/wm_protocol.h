@@ -75,7 +75,11 @@ static inline long savanxp_wm_query_pointer(
         const uint32_t sequence = source->sequence;
         if (sequence & 1u) continue;
         __asm__ volatile("" ::: "memory");
-        *out = *source;
+        out->sequence = sequence;
+        out->x = source->x; out->y = source->y;
+        out->origin_x = source->origin_x; out->origin_y = source->origin_y;
+        out->buttons = source->buttons;
+        out->width = source->width; out->height = source->height;
         __asm__ volatile("" ::: "memory");
         if (sequence == source->sequence) return 0;
     }
