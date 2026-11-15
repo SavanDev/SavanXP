@@ -1,97 +1,62 @@
-#include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "coreutils.h"
+#include "../file_copy.h"
 
-static int g_recursive = 0;
+/* The copy itself is Files' engine (file_copy.h), run to the end in one go:
+ * a folder is filled when it exists, a file overwritten, and a failure on one
+ * entry is reported and skipped, as cp always did. */
 
-static int copy_path(const char* from, const char* to);
+static struct file_copy g_copy;
 
-static int copy_file(const char* from, const char* to) {
-    const int in_fd = open(from, O_RDONLY);
-    if (in_fd < 0) {
-        cu_fail("cp", "can't open", from);
-        return 1;
-    }
-    const int out_fd = open(to, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (out_fd < 0) {
-        cu_fail("cp", "can't create", to);
-        close(in_fd);
-        return 1;
-    }
-    int status = 0;
-    if (cu_copy_fd(in_fd, out_fd) != 0) {
-        cu_fail("cp", "error copying to", to);
-        status = 1;
-    }
-    close(in_fd);
-    if (close(out_fd) != 0 && status == 0) {
-        cu_fail("cp", "error closing", to);
-        status = 1;
-    }
-    return status;
+static void cp_report(const char* path, const char* what, int error, void* user) {
+    char action[32];
+
+    (void)user;
+    snprintf(action, sizeof(action), "can't %s", what);
+    errno = error;
+    cu_fail("cp", action, path);
 }
 
-static int copy_directory(const char* from, const char* to) {
-    if (!cu_is_directory(to) && mkdir(to, 0755) != 0 && errno != EEXIST) {
-        cu_fail("cp", "can't create directory", to);
-        return 1;
-    }
-    DIR* directory = opendir(from);
-    if (directory == NULL) {
-        cu_fail("cp", "can't open", from);
-        return 1;
-    }
-    int status = 0;
-    struct dirent* entry;
-    while ((entry = readdir(directory)) != NULL) {
-        char child_from[256];
-        char child_to[256];
-
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        if (cu_join(child_from, sizeof(child_from), from, entry->d_name) != 0 ||
-            cu_join(child_to, sizeof(child_to), to, entry->d_name) != 0) {
-            cu_fail("cp", "can't copy", entry->d_name);
-            status = 1;
-            continue;
-        }
-        status |= copy_path(child_from, child_to);
-    }
-    closedir(directory);
-    return status;
-}
-
-static int copy_path(const char* from, const char* to) {
+static int copy_path(const char* from, const char* to, int recursive) {
     struct stat info;
+    int result;
 
     if (stat(from, &info) != 0) {
         cu_fail("cp", "can't stat", from);
         return 1;
     }
-    if (S_ISDIR(info.st_mode)) {
-        if (!g_recursive) {
-            fprintf(stderr, "cp: '%s' is a directory (use -r)\n", from);
-            return 1;
-        }
-        return copy_directory(from, to);
+    if (S_ISDIR(info.st_mode) && !recursive) {
+        fprintf(stderr, "cp: '%s' is a directory (use -r)\n", from);
+        return 1;
     }
-    return copy_file(from, to);
+    g_copy.report = cp_report;
+    result = file_copy_begin(&g_copy, from, to, FILE_COPY_MERGE | FILE_COPY_NO_COUNT | FILE_COPY_KEEP_GOING);
+    if (result == -EINVAL) {
+        fprintf(stderr, "cp: can't copy '%s' onto or into itself\n", from);
+        return 1;
+    }
+    if (result < 0) {
+        errno = -result;
+        cu_fail("cp", "can't copy", from);
+        return 1;
+    }
+    while ((result = file_copy_step(&g_copy)) > 0) {
+    }
+    return result < 0 || g_copy.failures != 0 ? 1 : 0;
 }
 
 /* cp [-r] source... dest: into dest when it is a directory. */
 int main(int argc, char** argv) {
     int status = 0;
+    int recursive = 0;
     int index = 1;
 
     if (index < argc && (strcmp(argv[index], "-r") == 0 || strcmp(argv[index], "-R") == 0)) {
-        g_recursive = 1;
+        recursive = 1;
         ++index;
     }
     if (argc - index < 2) {
@@ -106,7 +71,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     for (; index < argc - 1; ++index) {
-        char target[256];
+        char target[FILE_COPY_PATH_CAPACITY];
         const char* to = dest;
 
         if (into_directory) {
@@ -117,7 +82,7 @@ int main(int argc, char** argv) {
             }
             to = target;
         }
-        status |= copy_path(argv[index], to);
+        status |= copy_path(argv[index], to, recursive);
     }
     return status;
 }

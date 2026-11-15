@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Files has Cut, Copy and Paste (Edit menu, toolbar, context menus, Ctrl+X/C/V) for one file or folder at a time.**
+  A copy into a taken name becomes "Copy of ...", a move across volumes copies then removes, a cut item is drawn faded,
+  and a paste longer than half a second shows a progress dialog with Cancel. See
+  [FILES.md](docs/desktop/FILES.md#cut-copy-and-paste).
+
 - **The clipboard holds several formats of one content, named by media type, and its capacity rises from 8 KiB to
   1 MiB.** `CLIP_IOC_SET_FORMATS` replaces the whole set or leaves it intact, `CLIP_IOC_GET_FORMAT` and
   `CLIP_IOC_ENUM_FORMAT` read it; POSIX `clipboard_set_formats`, `_get_format`, `_enum_format`. Plain text is
@@ -257,6 +262,9 @@ Cut-off notes:
 - **`SAVANXP_QEMU_STDERR=PATH`** keeps QEMU's stderr during a smoke (virglrenderer's errors).
 
 ### Changed
+
+- **`cp` runs Files' copy engine: copies keep the source's permission bits, and copying a file or folder onto or into
+  itself is refused instead of emptying the file (`cp a a`) or recursing.**
 
 - **Media Player's fullscreen button is now a matching black 16x16 icon to the right of the volume control.**
 

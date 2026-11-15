@@ -1005,6 +1005,69 @@ def scenario_filestoolbar(s):
     expect_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE, "Views > Details shows the column headers")
 
 
+def scenario_filesclipboard(s):
+    """Files' Cut, Copy and Paste (docs/desktop/FILES.md).
+
+    Copy /bin, paste it into the profile: 66 MB take long enough under TCG
+    for the progress dialog to come up, and Esc cancels it, leaving what was
+    copied. Then Cut on an entry draws it faded, and pasting it back into its
+    own folder is refused.
+    """
+    s.run("filesapp /")
+    image = s.shot("clip-root")
+    entry = find_text(image, (0, 120, 1280, 770), "bin", TEXT, FIELD)[0]
+    if entry is None:
+        raise Failure("Files at the root does not show bin")
+    s.qmp.move_to(entry[0] + 6, entry[1] + 4)
+    s.qmp.click()
+    time.sleep(0.8)
+    s.qmp.chord("ctrl", "c")
+    time.sleep(1.0)
+    image = s.shot("clip-copied")
+    expect_text(image, (0, 0, 1280, 770), "Copied to the clipboard.", TEXT, FACE,
+                "Ctrl+C puts the selected folder on the clipboard")
+
+    field = find_text(image, (0, 0, 1280, 770), "Address", TEXT, FACE)[0]
+    if field is None:
+        raise Failure("Files has no address bar")
+    s.qmp.move_to(field[0] + 300, field[1] + 4)
+    s.qmp.click()
+    time.sleep(0.6)
+    s.qmp.tap("backspace", pause=0.1)
+    s.qmp.type_line("/users/user")
+    s.qmp.tap("ret", pause=1.5)
+    s.shot("clip-profile")
+    s.qmp.chord("ctrl", "v")
+    time.sleep(2.0)
+    image = s.shot("clip-progress")
+    expect_text(image, (0, 0, 1280, 770), "From '/' to 'user'", TEXT, FACE,
+                "a long paste shows the progress dialog")
+    expect_text(image, (0, 0, 1280, 770), "Cancel", TEXT, FACE, "the progress dialog has Cancel")
+    time.sleep(3.0)
+    s.shot("clip-progress-later")
+    s.qmp.tap("esc", pause=2.0)
+    image = s.shot("clip-cancelled")
+    expect_text(image, (0, 0, 1280, 770), "Cancelled.", TEXT, FACE,
+                "Esc cancels the paste and says what was copied")
+
+    entry = find_text(image, (0, 120, 1280, 770), "Desktop", TEXT, FIELD)[0]
+    if entry is None:
+        raise Failure("the profile does not show Desktop")
+    s.qmp.move_to(entry[0] + 6, entry[1] + 4)
+    s.qmp.click()
+    time.sleep(0.8)
+    s.qmp.chord("ctrl", "x")
+    time.sleep(1.0)
+    image = s.shot("clip-cut")
+    expect_text(image, (0, 0, 1280, 770), "Cut. Paste it where it should go.", TEXT, FACE,
+                "Ctrl+X cuts the selected folder")
+    s.qmp.chord("ctrl", "v")
+    time.sleep(1.0)
+    image = s.shot("clip-same-folder")
+    expect_text(image, (0, 0, 1280, 770), "It is already in this folder.", TEXT, FACE,
+                "pasting a cut entry into its own folder does nothing")
+
+
 def scenario_taskmgrmenu(s):
     """A SUN program's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
 
@@ -3525,6 +3588,7 @@ SCENARIOS = {
     "desktopicons": scenario_desktopicons,
     "filesmenu": scenario_filesmenu,
     "filestoolbar": scenario_filestoolbar,
+    "filesclipboard": scenario_filesclipboard,
     "taskmgrmenu": scenario_taskmgrmenu,
     "diskmgmt": scenario_diskmgmt,
     "bench": scenario_bench,

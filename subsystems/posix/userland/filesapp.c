@@ -2,12 +2,15 @@
 #include "savanxp/sxgui.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 #include "shared/version.h"
 
 #include "file_assoc.h"
+#include "file_copy.h"
 #include "sxgfx/mime_icon.h"
 #include "shortcut.h"
 #include "start_pins.h"
@@ -17,7 +20,8 @@
 
 /*
  * File browser, shaped like the Windows 98 Explorer: menu bar, a toolbar
- * (Back, Forward, Up, Delete, Properties, Views), an editable address bar,
+ * (Back, Forward, Up, Cut, Copy, Paste, Delete, Properties, Views), an
+ * editable address bar,
  * the folder as Large Icons or as a details list (Name / Size / Type) with
  * column headers -- View picks one and filesapp.cfg in the profile remembers
  * it -- and a two-pane status bar (docs/desktop/FILES.md).
@@ -27,8 +31,10 @@
  * document goes to the program ASSOCIATED with its extension (file_assoc,
  * docs/userland/SXE_FORMAT.md phase 5) or to /bin/notepad, and a shortcut opens
  * its target. A right click on an item opens its context menu: Open, Send To
- * Desktop (a shortcut in the Desktop folder), Rename, Delete and Properties
- * (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications).
+ * Desktop (a shortcut in the Desktop folder), Cut, Copy, Rename, Delete and
+ * Properties (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications).
+ * Cut, Copy and Paste go through the system clipboard, and a paste runs a
+ * piece at a time behind a progress dialog (docs/desktop/FILES.md).
  */
 
 /* ---- toolbar glyphs ----------------------------------------------------------
@@ -36,11 +42,14 @@
  * for why). */
 #include "../../../system/gfx/toolbar_glyphs/icons.inc"
 
-static struct sx_bitmap g_glyph_bitmaps[6];
+static struct sx_bitmap g_glyph_bitmaps[9];
 /* One-element arrays: a toolbar button reads its glyph from item_icons[0]. */
 static const struct sx_bitmap *k_glyph_back[1];
 static const struct sx_bitmap *k_glyph_forward[1];
 static const struct sx_bitmap *k_glyph_up[1];
+static const struct sx_bitmap *k_glyph_cut[1];
+static const struct sx_bitmap *k_glyph_copy[1];
+static const struct sx_bitmap *k_glyph_paste[1];
 static const struct sx_bitmap *k_glyph_delete[1];
 static const struct sx_bitmap *k_glyph_properties[1];
 static const struct sx_bitmap *k_glyph_views[1];
@@ -67,6 +76,9 @@ static void filesapp_build_toolbar_glyphs(void)
     k_glyph_delete[0] = filesapp_glyph(3, toolbar_glyph_edit_delete);
     k_glyph_properties[0] = filesapp_glyph(4, toolbar_glyph_document_properties);
     k_glyph_views[0] = filesapp_glyph(5, toolbar_glyph_view_choose);
+    k_glyph_cut[0] = filesapp_glyph(6, toolbar_glyph_edit_cut);
+    k_glyph_copy[0] = filesapp_glyph(7, toolbar_glyph_edit_copy);
+    k_glyph_paste[0] = filesapp_glyph(8, toolbar_glyph_edit_paste);
 }
 
 #define FILESAPP_PATH_CAPACITY 256
@@ -85,6 +97,9 @@ static void filesapp_build_toolbar_glyphs(void)
 #define FILESAPP_MENU_DELETE 12
 #define FILESAPP_MENU_RENAME 13
 #define FILESAPP_MENU_PROPERTIES 14
+#define FILESAPP_MENU_CUT 15
+#define FILESAPP_MENU_COPY 16
+#define FILESAPP_MENU_PASTE 17
 
 /* Back and Forward each remember this many folders; the oldest goes first. */
 #define FILESAPP_HISTORY_DEPTH 16
@@ -106,6 +121,10 @@ enum filesapp_widget
     W_SEP_HISTORY,
     W_UP,
     W_SEP_UP,
+    W_CUT,
+    W_COPY,
+    W_PASTE,
+    W_SEP_CLIPBOARD,
     W_DELETE,
     W_PROPERTIES,
     W_SEP_EDIT,
@@ -157,6 +176,11 @@ static void filesapp_update_commands(void);
 static void filesapp_ask_delete(void);
 static void filesapp_ask_rename(void);
 static void filesapp_show_properties(void);
+static void filesapp_cut_selected(void);
+static void filesapp_copy_selected(void);
+static void filesapp_paste(void);
+static int filesapp_can_paste(void);
+static void filesapp_apply_cut_fade(void);
 
 /* Anchos fijos; la columna Name se lleva el resto y se recalcula en el layout,
  * que es lo que hace que la lista se estire con la ventana. */
@@ -456,6 +480,7 @@ static void filesapp_rebuild_labels(void)
         g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
         g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
     }
+    filesapp_apply_cut_fade();
     /* A folder opens with nothing selected, as Explorer opens one. */
     filesapp_bind_list(-1);
 }
@@ -753,6 +778,12 @@ static struct sxgui_menu_item k_file_items[] = {
     {"Close", FILESAPP_MENU_CLOSE, 0},
 };
 
+static struct sxgui_menu_item k_edit_items[] = {
+    {"Cut", FILESAPP_MENU_CUT, 0},
+    {"Copy", FILESAPP_MENU_COPY, 0},
+    {"Paste", FILESAPP_MENU_PASTE, 0},
+};
+
 static struct sxgui_menu_item k_go_items[] = {
     {"Back", FILESAPP_MENU_BACK, 0},
     {"Forward", FILESAPP_MENU_FORWARD, 0},
@@ -800,7 +831,15 @@ static void filesapp_update_commands(void)
     filesapp_enable(&g_widgets[W_BACK], g_back_count > 0);
     filesapp_enable(&g_widgets[W_FORWARD], g_forward_count > 0);
     filesapp_enable(&g_widgets[W_UP], can_go_up);
+    int can_paste = filesapp_can_paste();
+
+    filesapp_enable(&g_widgets[W_CUT], has_selection);
+    filesapp_enable(&g_widgets[W_COPY], has_selection);
+    filesapp_enable(&g_widgets[W_PASTE], can_paste);
     filesapp_enable(&g_widgets[W_DELETE], has_selection);
+    filesapp_enable_item(&k_edit_items[0], has_selection);
+    filesapp_enable_item(&k_edit_items[1], has_selection);
+    filesapp_enable_item(&k_edit_items[2], can_paste);
     filesapp_enable_item(&k_file_items[0], FILESAPP_LIST->value >= 0);
     filesapp_enable_item(&k_file_items[2], has_selection);
     filesapp_enable_item(&k_file_items[3], has_selection);
@@ -857,6 +896,27 @@ static void on_delete_clicked(struct sxgui_widget *widget, void *user)
     (void)widget;
     (void)user;
     filesapp_delete_selected();
+}
+
+static void on_cut_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_cut_selected();
+}
+
+static void on_copy_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_copy_selected();
+}
+
+static void on_paste_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_paste();
 }
 
 static void on_properties_clicked(struct sxgui_widget *widget, void *user)
@@ -1003,6 +1063,15 @@ static void on_menu_command(int id, void *user)
     case FILESAPP_MENU_PROPERTIES:
         filesapp_show_properties();
         break;
+    case FILESAPP_MENU_CUT:
+        filesapp_cut_selected();
+        break;
+    case FILESAPP_MENU_COPY:
+        filesapp_copy_selected();
+        break;
+    case FILESAPP_MENU_PASTE:
+        filesapp_paste();
+        break;
     case FILESAPP_MENU_REFRESH:
         (void)filesapp_load_directory(g_current_path);
         break;
@@ -1034,6 +1103,9 @@ static void on_menu_command(int id, void *user)
 #define FILESAPP_CMD_REFRESH 25
 #define FILESAPP_CMD_PROPERTIES 26
 #define FILESAPP_CMD_PIN_TO_START 27
+#define FILESAPP_CMD_CUT 28
+#define FILESAPP_CMD_COPY 29
+#define FILESAPP_CMD_PASTE 30
 
 #define FILESAPP_QUESTION_WIDTH 340
 #define FILESAPP_QUESTION_HEIGHT 96
@@ -1045,6 +1117,9 @@ static struct sxgui_menu_item k_entry_items[] = {
     {0, 0, 0},
     {"Send To Desktop", FILESAPP_CMD_SEND_TO_DESKTOP, 0},
     {"Pin to Start Menu", FILESAPP_CMD_PIN_TO_START, 0},
+    {0, 0, 0},
+    {"Cut", FILESAPP_CMD_CUT, 0},
+    {"Copy", FILESAPP_CMD_COPY, 0},
     {0, 0, 0},
     {"Rename...", FILESAPP_CMD_RENAME, 0},
     {"Delete", FILESAPP_CMD_DELETE, 0},
@@ -1058,9 +1133,12 @@ static const struct sxgui_menu k_entry_menu = {
     (int)(sizeof(k_entry_items) / sizeof(k_entry_items[0])),
 };
 
-static const struct sxgui_menu_item k_folder_items[] = {
+/* Not const: Paste is enabled only while the clipboard holds a file. */
+static struct sxgui_menu_item k_folder_items[] = {
     {"Up One Level", FILESAPP_CMD_UP, 0},
     {"Refresh", FILESAPP_CMD_REFRESH, 0},
+    {0, 0, 0},
+    {"Paste", FILESAPP_CMD_PASTE, 0},
     {0, 0, 0},
     {"Properties", FILESAPP_CMD_PROPERTIES, 0},
 };
@@ -1397,6 +1475,701 @@ static void filesapp_build_properties_dialog(void)
     g_properties_dialog.default_button = FILESAPP_PROPERTIES_ROWS * 2;
 }
 
+/* ---- cut, copy and paste ------------------------------------------------------
+ *
+ * (docs/desktop/FILES.md, "Cut, Copy and Paste".) Copy and Cut put the
+ * selected entry on the system clipboard as a file:// URI (text/uri-list), as
+ * its path in plain text, so a text editor pastes the path, and with a drop
+ * effect saying "copy" or "move". Paste takes the one URI there and copies or
+ * moves it into the folder shown, through the shared engine (file_copy.h).
+ *
+ * The cut entry is drawn faded until it is pasted or something else is
+ * copied: the clipboard's sequence says which, read on a slow tick.
+ */
+
+#define FILESAPP_DROP_EFFECT "application/x-savanxp-drop-effect"
+#define FILESAPP_URI_CAPACITY (FILESAPP_PATH_CAPACITY * 3 + 16)
+/* The tick while nothing runs: how soon Paste follows another program's
+ * copy. While a paste runs it is the frame's 16 ms. */
+#define FILESAPP_IDLE_TICK_MS 500
+#define FILESAPP_BUSY_TICK_MS 16
+/* A paste runs in the click until this long has passed, so a small one
+ * never flashes a dialog; then it goes on behind the progress dialog. */
+#define FILESAPP_DIALOG_DELAY_MS 500
+/* How long each tick may copy before it lets the window paint. */
+#define FILESAPP_WORK_SLICE_MS 40
+
+static char g_cut_path[FILESAPP_PATH_CAPACITY];
+static unsigned long long g_cut_sequence;
+static unsigned long long g_seen_sequence = ~0ull;
+static int g_paste_available;
+
+/* RFC 3986: the unreserved characters and '/' stay, every other byte is
+ * %XX. A path with a space or a non-ASCII name survives the trip. */
+static int filesapp_uri_from_path(const char *path, char *uri, size_t capacity)
+{
+    static const char k_hex[] = "0123456789ABCDEF";
+    size_t used = 0;
+    const unsigned char *cursor = (const unsigned char *)path;
+
+    if (snprintf(uri, capacity, "file://") >= (int)capacity)
+    {
+        return -1;
+    }
+    used = 7;
+    for (; *cursor != '\0'; ++cursor)
+    {
+        unsigned char c = *cursor;
+        int plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+                    c == '.' || c == '_' || c == '~' || c == '/';
+
+        if (used + (plain ? 1u : 3u) >= capacity)
+        {
+            return -1;
+        }
+        if (plain)
+        {
+            uri[used++] = (char)c;
+        }
+        else
+        {
+            uri[used++] = '%';
+            uri[used++] = k_hex[c >> 4];
+            uri[used++] = k_hex[c & 15u];
+        }
+    }
+    uri[used] = '\0';
+    return 0;
+}
+
+static int filesapp_hex_value(char c)
+{
+    if (c >= '0' && c <= '9')
+    {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f')
+    {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F')
+    {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+/* The path of a file:// URI of `length` bytes: an empty host or
+ * "localhost", %XX decoded. Anything else, a NUL included, is refused. */
+static int filesapp_path_from_uri(const char *uri, size_t length, char *path, size_t capacity)
+{
+    size_t index = 7;
+    size_t used = 0;
+
+    if (length < 8 || strncmp(uri, "file://", 7) != 0)
+    {
+        return -1;
+    }
+    if (uri[index] != '/')
+    {
+        if (length - index < 10 || strncmp(uri + index, "localhost/", 10) != 0)
+        {
+            return -1;
+        }
+        index += 9;
+    }
+    for (; index < length; ++index)
+    {
+        char c = uri[index];
+
+        if (c == '%')
+        {
+            int high = index + 2 < length ? filesapp_hex_value(uri[index + 1]) : -1;
+            int low = index + 2 < length ? filesapp_hex_value(uri[index + 2]) : -1;
+
+            if (high < 0 || low < 0 || (high == 0 && low == 0))
+            {
+                return -1;
+            }
+            c = (char)(high * 16 + low);
+            index += 2;
+        }
+        if (used + 1 >= capacity)
+        {
+            return -1;
+        }
+        path[used++] = c;
+    }
+    path[used] = '\0';
+    return path[0] == '/' ? 0 : -1;
+}
+
+/* The one path a text/uri-list names, skipping comment lines. 1 with a
+ * path, 0 when it names none, -1 when it names several or a URI this
+ * cannot read. */
+static int filesapp_path_from_list(const char *list, int length, char *path, size_t capacity)
+{
+    int found = 0;
+    int start = 0;
+
+    while (start < length)
+    {
+        int end = start;
+        int stop;
+
+        while (end < length && list[end] != '\n')
+        {
+            ++end;
+        }
+        stop = end > start && list[end - 1] == '\r' ? end - 1 : end;
+        if (stop > start && list[start] != '#')
+        {
+            if (found || filesapp_path_from_uri(list + start, (size_t)(stop - start), path, capacity) != 0)
+            {
+                return -1;
+            }
+            found = 1;
+        }
+        start = end + 1;
+    }
+    return found;
+}
+
+/* What the clipboard offers to paste: a path and whether it was cut. 1 with
+ * one, 0 with none, -1 with several items (not taken yet). */
+static int filesapp_clipboard_source(char *path, size_t capacity, int *move)
+{
+    char list[FILESAPP_URI_CAPACITY * 2];
+    char effect[16];
+    int length = sxgui_clipboard_get_format(SAVANXP_CLIPBOARD_URI_LIST, list, (int)sizeof(list));
+    int result;
+    int effect_length;
+
+    if (length <= 0)
+    {
+        return 0;
+    }
+    if (length > (int)sizeof(list))
+    {
+        return -1;
+    }
+    result = filesapp_path_from_list(list, length, path, capacity);
+    if (result <= 0)
+    {
+        return result;
+    }
+    effect_length = sxgui_clipboard_get_format(FILESAPP_DROP_EFFECT, effect, (int)sizeof(effect) - 1);
+    *move = effect_length == 4 && strncmp(effect, "move", 4) == 0;
+    return 1;
+}
+
+static unsigned long long filesapp_clipboard_sequence(void)
+{
+    struct savanxp_clipboard_info info;
+
+    return clipboard_get_info(&info) == 0 ? (unsigned long long)info.sequence : 0;
+}
+
+static int filesapp_can_paste(void)
+{
+    return g_paste_available;
+}
+
+/* ---- the cut entry, faded ----------------------------------------------------- */
+
+static uint32_t g_faded_small[SXGUI_LISTBOX_ICON_SIZE * SXGUI_LISTBOX_ICON_SIZE];
+static uint32_t g_faded_large[SXGUI_ICONVIEW_ICON_SIZE * SXGUI_ICONVIEW_ICON_SIZE];
+static struct sx_bitmap g_faded_small_bitmap;
+static struct sx_bitmap g_faded_large_bitmap;
+
+/* `icon` at half its opacity, as the Explorer ghosts an item that is cut. */
+static const struct sx_bitmap *filesapp_faded(
+    const struct sx_bitmap *icon, uint32_t *pixels, int size, struct sx_bitmap *bitmap)
+{
+    struct savanxp_fb_info info;
+    int width;
+    int height;
+    int row;
+
+    if (icon == 0 || icon->pixels == 0 || icon->format != SX_PIXEL_FORMAT_BGRA8888)
+    {
+        return icon;
+    }
+    width = (int)icon->info.width < size ? (int)icon->info.width : size;
+    height = (int)icon->info.height < size ? (int)icon->info.height : size;
+    memset(&info, 0, sizeof(info));
+    info.width = (uint32_t)width;
+    info.height = (uint32_t)height;
+    info.pitch = (uint32_t)size * (uint32_t)sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * (uint32_t)size;
+    for (row = 0; row < height; ++row)
+    {
+        const uint32_t *source = (const uint32_t *)((const uint8_t *)icon->pixels + (size_t)row * icon->info.pitch);
+        int column;
+
+        for (column = 0; column < width; ++column)
+        {
+            uint32_t pixel = source[column];
+            pixels[row * size + column] = (pixel & 0x00ffffffu) | (((pixel >> 24) / 2u) << 24);
+        }
+    }
+    sx_bitmap_wrap(bitmap, pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    return bitmap;
+}
+
+static void filesapp_apply_cut_fade(void)
+{
+    char full_path[FILESAPP_PATH_CAPACITY];
+    int index;
+
+    if (g_cut_path[0] == '\0')
+    {
+        return;
+    }
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        if (filesapp_join_path(g_current_path, g_entries[index].name, full_path, sizeof(full_path)) &&
+            strcmp(full_path, g_cut_path) == 0)
+        {
+            g_item_icons[index] =
+                filesapp_faded(g_item_icons[index], g_faded_small, SXGUI_LISTBOX_ICON_SIZE, &g_faded_small_bitmap);
+            g_item_large_icons[index] = filesapp_faded(
+                g_item_large_icons[index], g_faded_large, SXGUI_ICONVIEW_ICON_SIZE, &g_faded_large_bitmap);
+            return;
+        }
+    }
+}
+
+/* The icons again, without touching the selection or the scroll. */
+static void filesapp_refresh_icons(void)
+{
+    char full_path[FILESAPP_PATH_CAPACITY];
+    int index;
+
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        const struct filesapp_entry *entry = &g_entries[index];
+        int launchable = !entry->is_dir &&
+            filesapp_join_path(g_current_path, entry->name, full_path, sizeof(full_path)) &&
+            filesapp_path_is_launchable(full_path);
+
+        g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
+        g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
+    }
+    filesapp_apply_cut_fade();
+}
+
+/* Notices another program's copy: Paste follows it, and a cut entry that
+ * is no longer on the clipboard stops being faded. */
+static void filesapp_check_clipboard(void)
+{
+    unsigned long long sequence = filesapp_clipboard_sequence();
+    char path[FILESAPP_PATH_CAPACITY];
+    int move = 0;
+
+    if (sequence == g_seen_sequence)
+    {
+        return;
+    }
+    g_seen_sequence = sequence;
+    g_paste_available = filesapp_clipboard_source(path, sizeof(path), &move) > 0;
+    if (g_cut_path[0] != '\0' && sequence != g_cut_sequence)
+    {
+        g_cut_path[0] = '\0';
+        filesapp_refresh_icons();
+    }
+    filesapp_update_commands();
+    sxgui_app_request_repaint(&g_app);
+}
+
+static void filesapp_put_selected(int cut)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    char uri[FILESAPP_URI_CAPACITY];
+    char list[FILESAPP_URI_CAPACITY + 2];
+    struct sxgui_clipboard_format formats[3];
+    const char *effect = cut ? "move" : "copy";
+
+    if (!filesapp_take_subject() || !filesapp_subject_path(path, sizeof(path)) ||
+        filesapp_uri_from_path(path, uri, sizeof(uri)) != 0)
+    {
+        return;
+    }
+    snprintf(list, sizeof(list), "%s\r\n", uri);
+    formats[0].name = SAVANXP_CLIPBOARD_URI_LIST;
+    formats[0].data = list;
+    formats[0].length = (unsigned int)strlen(list);
+    formats[1].name = SAVANXP_CLIPBOARD_TEXT;
+    formats[1].data = path;
+    formats[1].length = (unsigned int)strlen(path);
+    formats[2].name = FILESAPP_DROP_EFFECT;
+    formats[2].data = effect;
+    formats[2].length = 4;
+    if (sxgui_clipboard_set_formats(formats, 3) < 0)
+    {
+        filesapp_set_status("Cannot put it on the clipboard.");
+        return;
+    }
+    g_cut_path[0] = '\0';
+    if (cut)
+    {
+        snprintf(g_cut_path, sizeof(g_cut_path), "%s", path);
+        g_cut_sequence = filesapp_clipboard_sequence();
+    }
+    filesapp_refresh_icons();
+    filesapp_check_clipboard();
+    filesapp_set_status(cut ? "Cut. Paste it where it should go." : "Copied to the clipboard.");
+}
+
+static void filesapp_cut_selected(void)
+{
+    filesapp_put_selected(1);
+}
+
+static void filesapp_copy_selected(void)
+{
+    filesapp_put_selected(0);
+}
+
+/* ---- the paste and its progress dialog ---------------------------------------- */
+
+#define FILESAPP_PROGRESS_WIDTH 380
+#define FILESAPP_PROGRESS_HEIGHT \
+    (SXGUI_DIALOG_MARGIN * 3 + FILESAPP_DLG_ROW * 3 + SXGUI_BUTTON_HEIGHT)
+#define FILESAPP_PROGRESS_SCALE 1000
+
+static struct file_copy g_op;
+static int g_op_move;
+static int g_op_dialog_open;
+static unsigned long g_op_started_ms;
+static char g_op_name[256];      /* the name the pasted entry gets */
+static char g_op_source_name[256];
+static char g_op_title[32];
+static char g_op_current_text[FILESAPP_PATH_CAPACITY];
+static char g_op_route_text[FILESAPP_PATH_CAPACITY * 2];
+static char g_op_time_text[64];
+static struct sxgui_dialog g_op_dialog;
+static struct sxgui_widget g_op_widgets[5];
+static struct sxgui_dialog g_message_dialog;
+static struct sxgui_widget g_message_widgets[3];
+static char g_message_text[2][FILESAPP_PATH_CAPACITY + 64];
+
+/* The last component of `path`, "/" for the root. */
+static const char *filesapp_base_name(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+
+    return slash == 0 ? path : slash[1] == '\0' ? "/" : slash + 1;
+}
+
+static void filesapp_show_message(const char *title, const char *first, const char *second)
+{
+    snprintf(g_message_text[0], sizeof(g_message_text[0]), "%s", first);
+    snprintf(g_message_text[1], sizeof(g_message_text[1]), "%s", second != 0 ? second : "");
+    g_message_dialog.title = title;
+    sxgui_dialog_begin(&g_app.ui, &g_message_dialog, FILESAPP_PROGRESS_WIDTH, FILESAPP_QUESTION_HEIGHT + 20);
+}
+
+/* Work done and to do, in one unit: bytes, plus a little for every entry,
+ * so a tree of empty files still moves the bar. */
+static unsigned long long filesapp_op_units(unsigned long long bytes, unsigned int items)
+{
+    return bytes + (unsigned long long)items * 4096ull;
+}
+
+static void filesapp_update_progress(void)
+{
+    unsigned long long total = filesapp_op_units(g_op.total_bytes, g_op.total_items);
+    unsigned long long done = filesapp_op_units(g_op.done_bytes, g_op.done_items);
+    unsigned long elapsed = uptime_ms() - g_op_started_ms;
+
+    if (g_op.state == FILE_COPY_COUNTING)
+    {
+        snprintf(g_op_current_text, sizeof(g_op_current_text), "Preparing to %s...", g_op_move ? "move" : "copy");
+        g_op_time_text[0] = '\0';
+        g_op_widgets[2].value = 0;
+        return;
+    }
+    if (g_op.state == FILE_COPY_REMOVING)
+    {
+        snprintf(g_op_current_text, sizeof(g_op_current_text), "Removing the originals...");
+    }
+    else
+    {
+        snprintf(g_op_current_text, sizeof(g_op_current_text), "%s", filesapp_base_name(g_op.current));
+    }
+    if (done > total)
+    {
+        done = total;
+    }
+    g_op_widgets[2].value = total == 0 ? 0 : (int)(done * FILESAPP_PROGRESS_SCALE / total);
+    /* An estimate needs something to go on: a second of work and some of it
+     * done. */
+    if (elapsed >= 1000u && done > 0 && done < total)
+    {
+        unsigned long long remaining_ms = (unsigned long long)elapsed * (total - done) / done;
+        unsigned long seconds = (unsigned long)(remaining_ms / 1000ull) + 1u;
+
+        if (seconds < 60u)
+        {
+            snprintf(g_op_time_text, sizeof(g_op_time_text), "%lu Second%s Remaining", seconds,
+                     seconds == 1u ? "" : "s");
+        }
+        else
+        {
+            snprintf(g_op_time_text, sizeof(g_op_time_text), "%lu Minute%s Remaining", (seconds + 59u) / 60u,
+                     (seconds + 59u) / 60u == 1u ? "" : "s");
+        }
+    }
+}
+
+/* Runs the paste until it ends or `budget_ms` has passed. */
+static void filesapp_run_op(unsigned long budget_ms)
+{
+    unsigned long started = uptime_ms();
+
+    while (file_copy_running(&g_op) && uptime_ms() - started < budget_ms)
+    {
+        (void)file_copy_step(&g_op);
+    }
+}
+
+/* The folder again with the pasted entry selected, and what happened. */
+static void filesapp_finish_op(void)
+{
+    char line[FILESAPP_PATH_CAPACITY + 64];
+    char left[96];
+    const char *verb = g_op_move ? "moved" : "copied";
+    int index;
+
+    g_app.tick_interval_ms = FILESAPP_IDLE_TICK_MS;
+    if (g_op_dialog_open)
+    {
+        g_op_dialog_open = 0;
+        if (sxgui_dialog_active(&g_app.ui))
+        {
+            sxgui_dialog_end(&g_app.ui, 1);
+        }
+    }
+    (void)filesapp_load_directory(g_current_path);
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        if (strcmp(g_entries[index].name, g_op_name) == 0)
+        {
+            filesapp_bind_list(index);
+            break;
+        }
+    }
+    snprintf(left, sizeof(left), "%u of %u item(s) were %s.", g_op.done_items, g_op.total_items, verb);
+    switch (g_op.state)
+    {
+    case FILE_COPY_DONE:
+        if (g_op_move)
+        {
+            /* What was cut is where it belongs now: the clipboard no
+             * longer offers it, as in Windows. */
+            g_cut_path[0] = '\0';
+            (void)clipboard_clear();
+        }
+        snprintf(line, sizeof(line), g_op_move ? "Moved '%s'." : "Copied '%s'.", g_op_name);
+        filesapp_set_status(line);
+        break;
+    case FILE_COPY_CANCELLED:
+        if (g_op_move && g_op.done_items >= g_op.total_items)
+        {
+            /* Cancelled while the originals were being removed: the copy is
+             * whole, some originals stay. */
+            filesapp_set_status("Cancelled. The copy is complete; some originals are still in place.");
+            break;
+        }
+        snprintf(line, sizeof(line), "Cancelled. %s", left);
+        filesapp_set_status(line);
+        break;
+    case FILE_COPY_FAILED:
+        snprintf(line, sizeof(line), "Cannot %s '%s': %s.", g_op_move ? "move" : "copy",
+                 filesapp_base_name(g_op.failed_path), strerror(g_op.error));
+        if (g_op_move && g_op.done_items >= g_op.total_items)
+        {
+            /* The copy is whole; only the originals could not all go. */
+            snprintf(left, sizeof(left), "The copy is complete; some originals are still in place.");
+        }
+        filesapp_set_status("The paste did not finish.");
+        filesapp_show_message(g_op_move ? "Error Moving File" : "Error Copying File", line, left);
+        break;
+    default:
+        break;
+    }
+    filesapp_check_clipboard();
+    filesapp_update_commands();
+    sxgui_app_request_repaint(&g_app);
+}
+
+static void on_op_cancel(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    /* The tick sees the dialog gone and cancels, as for its X. */
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+static void filesapp_paste(void)
+{
+    char source[FILESAPP_PATH_CAPACITY];
+    char source_parent[FILESAPP_PATH_CAPACITY];
+    char target[FILESAPP_PATH_CAPACITY];
+    char message[FILESAPP_PATH_CAPACITY + 64];
+    int move = 0;
+    int found;
+    int result;
+
+    if (file_copy_running(&g_op) || sxgui_dialog_active(&g_app.ui))
+    {
+        return;
+    }
+    found = filesapp_clipboard_source(source, sizeof(source), &move);
+    if (found < 0)
+    {
+        filesapp_set_status("Paste takes one item at a time.");
+        return;
+    }
+    if (found == 0)
+    {
+        return;
+    }
+    snprintf(g_op_source_name, sizeof(g_op_source_name), "%s", filesapp_base_name(source));
+    filesapp_parent_path(source, source_parent, sizeof(source_parent));
+    if (move && strcmp(source_parent, g_current_path) == 0)
+    {
+        /* Cut and pasted in the same folder: it is already here. */
+        g_cut_path[0] = '\0';
+        filesapp_refresh_icons();
+        filesapp_set_status("It is already in this folder.");
+        return;
+    }
+    if (move)
+    {
+        snprintf(g_op_name, sizeof(g_op_name), "%s", g_op_source_name);
+    }
+    else if (file_copy_free_name(g_current_path, g_op_source_name, g_op_name, sizeof(g_op_name)) != 0)
+    {
+        filesapp_set_status("Cannot find a free name for the copy.");
+        return;
+    }
+    if (file_copy_join(target, sizeof(target), g_current_path, g_op_name) != 0)
+    {
+        filesapp_set_status("Path too long.");
+        return;
+    }
+
+    g_op_move = move;
+    g_op.report = 0;
+    result = file_copy_begin(&g_op, source, target, move ? FILE_COPY_MOVE : 0);
+    if (result < 0)
+    {
+        if (result == -EINVAL)
+        {
+            snprintf(message, sizeof(message), "Cannot %s '%s' into itself.", move ? "move" : "copy",
+                     g_op_source_name);
+        }
+        else if (result == -EEXIST)
+        {
+            snprintf(message, sizeof(message), "There is already an item named '%s' here.", g_op_name);
+        }
+        else
+        {
+            snprintf(message, sizeof(message), "Cannot paste '%s': %s.", g_op_source_name, strerror(-result));
+        }
+        filesapp_set_status(message);
+        return;
+    }
+
+    g_op_started_ms = uptime_ms();
+    filesapp_run_op(FILESAPP_DIALOG_DELAY_MS);
+    if (!file_copy_running(&g_op))
+    {
+        filesapp_finish_op();
+        return;
+    }
+    snprintf(g_op_title, sizeof(g_op_title), move ? "Moving..." : "Copying...");
+    snprintf(g_op_route_text, sizeof(g_op_route_text), "From '%s' to '%s'", filesapp_base_name(source_parent),
+             filesapp_base_name(g_current_path));
+    g_op_time_text[0] = '\0';
+    filesapp_update_progress();
+    g_op_dialog.title = g_op_title;
+    g_op_dialog_open = 1;
+    sxgui_dialog_begin(&g_app.ui, &g_op_dialog, FILESAPP_PROGRESS_WIDTH, FILESAPP_PROGRESS_HEIGHT);
+    g_app.tick_interval_ms = FILESAPP_BUSY_TICK_MS;
+}
+
+static void on_tick(struct sxgui_app *app)
+{
+    (void)app;
+    if (!file_copy_running(&g_op))
+    {
+        if (!sxgui_dialog_active(&g_app.ui))
+        {
+            filesapp_check_clipboard();
+        }
+        return;
+    }
+    /* Cancel, or the dialog's X: either one ended the dialog. */
+    if (g_op_dialog_open && !sxgui_dialog_active(&g_app.ui))
+    {
+        g_op_dialog_open = 0;
+        file_copy_cancel(&g_op);
+        filesapp_finish_op();
+        return;
+    }
+    filesapp_run_op(FILESAPP_WORK_SLICE_MS);
+    if (!file_copy_running(&g_op))
+    {
+        filesapp_finish_op();
+        return;
+    }
+    filesapp_update_progress();
+    sxgui_app_request_repaint(&g_app);
+}
+
+static void filesapp_build_op_dialogs(void)
+{
+    int inner = FILESAPP_PROGRESS_WIDTH - SXGUI_DIALOG_MARGIN * 2;
+    int button_y = FILESAPP_PROGRESS_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT;
+
+    g_op_widgets[0] = sxgui_label(sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN, inner, 18), g_op_current_text);
+    g_op_widgets[1] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW, inner, 18), g_op_route_text);
+    g_op_widgets[2] = sxgui_progress(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW * 2, inner, 18), 0,
+        FILESAPP_PROGRESS_SCALE, 0);
+    g_op_widgets[3] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, button_y + (SXGUI_BUTTON_HEIGHT - 18) / 2,
+                     inner - SXGUI_BUTTON_WIDTH - SXGUI_GAP, 18),
+        g_op_time_text);
+    g_op_widgets[4] = sxgui_button(
+        sx_rect_make(FILESAPP_PROGRESS_WIDTH - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH, button_y,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_op_cancel, 0);
+    g_op_dialog.widgets = g_op_widgets;
+    g_op_dialog.widget_count = 5;
+    g_op_dialog.initial_focus = 4;
+    g_op_dialog.default_button = 0;
+
+    g_message_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN, inner, 18), g_message_text[0]);
+    g_message_widgets[1] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW, inner, 18), g_message_text[1]);
+    g_message_widgets[2] = sxgui_button(
+        sx_rect_make((FILESAPP_PROGRESS_WIDTH - SXGUI_BUTTON_WIDTH) / 2,
+                     FILESAPP_QUESTION_HEIGHT + 20 - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_dialog_ok, 0);
+    g_message_dialog.widgets = g_message_widgets;
+    g_message_dialog.widget_count = 3;
+    g_message_dialog.initial_focus = 2;
+    g_message_dialog.default_button = 2;
+}
+
 static void on_context_command(int id, void *user)
 {
     (void)user;
@@ -1426,6 +2199,15 @@ static void on_context_command(int id, void *user)
     case FILESAPP_CMD_PROPERTIES:
         filesapp_show_properties();
         break;
+    case FILESAPP_CMD_CUT:
+        filesapp_cut_selected();
+        break;
+    case FILESAPP_CMD_COPY:
+        filesapp_copy_selected();
+        break;
+    case FILESAPP_CMD_PASTE:
+        filesapp_paste();
+        break;
     default:
         break;
     }
@@ -1454,6 +2236,7 @@ static void filesapp_show_menu(int item, int x, int y)
         FILESAPP_LIST->value = -1;
         filesapp_update_commands();
     }
+    filesapp_enable_item(&k_folder_items[3], filesapp_can_paste());
     sxgui_context_menu_open(&g_app.ui, &k_folder_menu, x, y, on_context_command, 0);
 }
 
@@ -1548,6 +2331,26 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
         filesapp_show_menu(FILESAPP_LIST->value, x, y);
         return 1;
     }
+    if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0)
+    {
+        int letter = event->ascii >= 'A' && event->ascii <= 'Z' ? event->ascii - 'A' + 'a' : event->ascii;
+
+        if (letter == 'x')
+        {
+            filesapp_cut_selected();
+            return 1;
+        }
+        if (letter == 'c')
+        {
+            filesapp_copy_selected();
+            return 1;
+        }
+        if (letter == 'v')
+        {
+            filesapp_paste();
+            return 1;
+        }
+    }
     if (event->key == SAVANXP_KEY_DELETE)
     {
         filesapp_delete_selected();
@@ -1585,7 +2388,8 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 #define FILESAPP_STATUS_GAP 2
 
 static const int k_toolbar_order[] = {
-    W_BACK, W_FORWARD, W_SEP_HISTORY, W_UP, W_SEP_UP, W_DELETE, W_PROPERTIES, W_SEP_EDIT, W_VIEWS,
+    W_BACK, W_FORWARD, W_SEP_HISTORY, W_UP, W_SEP_UP, W_CUT, W_COPY, W_PASTE, W_SEP_CLIPBOARD,
+    W_DELETE, W_PROPERTIES, W_SEP_EDIT, W_VIEWS,
 };
 
 static int filesapp_toolbar_button_width(void)
@@ -1605,6 +2409,21 @@ static int filesapp_toolbar_button_width(void)
     }
     /* Room for the Views button's arrow. */
     return widest + 8;
+}
+
+/* Wide enough for the whole toolbar, or the comfortable width if that is
+ * wider: a narrower window hides the buttons that do not fit. */
+static int filesapp_content_width(void)
+{
+    int width = SXGUI_MARGIN * 2;
+    int index;
+
+    for (index = 0; index < (int)(sizeof(k_toolbar_order) / sizeof(k_toolbar_order[0])); ++index)
+    {
+        width += g_widgets[k_toolbar_order[index]].kind == SXGUI_BUTTON ? filesapp_toolbar_button_width()
+                                                                          : FILESAPP_SEPARATOR_WIDTH;
+    }
+    return width > FILESAPP_CONTENT_WIDTH ? width : FILESAPP_CONTENT_WIDTH;
 }
 
 static void filesapp_layout(struct sxgui_app *app)
@@ -1708,6 +2527,7 @@ static const struct sxgui_menu_item k_help_items[] = {
 
 static const struct sxgui_menu k_menus[] = {
     {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"Edit", k_edit_items, (int)(sizeof(k_edit_items) / sizeof(k_edit_items[0]))},
     {"View", k_view_items, (int)(sizeof(k_view_items) / sizeof(k_view_items[0]))},
     {"Go", k_go_items, (int)(sizeof(k_go_items) / sizeof(k_go_items[0]))},
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
@@ -1728,6 +2548,238 @@ static struct sxgui_menubar g_menubar = {
 static void filesapp_report_mime_failure(const char *label)
 {
     printf("FILESAPP SMOKE FAIL %s\n", label);
+}
+
+/* ---- selftest: cut, copy and paste ---------------------------------------------
+ *
+ * The copy engine and the clipboard's URIs, on a scratch tree in /tmp. Each
+ * failed check is its own FILESAPP SMOKE FAIL line. */
+
+#define FILESAPP_TEST_ROOT "/tmp/filesapp-copytest"
+
+static int g_copy_failures;
+
+static void filesapp_copy_check(int ok, const char *label)
+{
+    if (!ok)
+    {
+        printf("FILESAPP SMOKE FAIL copy: %s\n", label);
+        g_copy_failures += 1;
+    }
+}
+
+static void filesapp_test_remove(const char *path)
+{
+    const char *argv[] = {"/bin/rm", "-rf", path, 0};
+    int status = -1;
+    long pid = spawn("/bin/rm", argv, 3);
+
+    if (pid > 0)
+    {
+        (void)savanxp_waitpid((int)pid, &status);
+    }
+}
+
+/* A file of `size` bytes whose every byte depends on its offset and `seed`. */
+static int filesapp_test_write(const char *path, unsigned int size, unsigned int seed)
+{
+    unsigned char block[512];
+    unsigned int written = 0;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+    while (written < size)
+    {
+        unsigned int count = size - written < sizeof(block) ? size - written : (unsigned int)sizeof(block);
+        unsigned int index;
+
+        for (index = 0; index < count; ++index)
+        {
+            block[index] = (unsigned char)((written + index) * 7u + seed);
+        }
+        if (write(fd, block, count) != (long)count)
+        {
+            close(fd);
+            return -1;
+        }
+        written += count;
+    }
+    return close(fd);
+}
+
+static int filesapp_test_matches(const char *path, unsigned int size, unsigned int seed)
+{
+    unsigned char block[512];
+    unsigned int offset = 0;
+    int fd = open(path, O_RDONLY);
+    long count;
+
+    if (fd < 0)
+    {
+        return 0;
+    }
+    while ((count = read(fd, block, sizeof(block))) > 0)
+    {
+        long index;
+
+        for (index = 0; index < count; ++index)
+        {
+            if (block[index] != (unsigned char)((offset + (unsigned int)index) * 7u + seed))
+            {
+                close(fd);
+                return 0;
+            }
+        }
+        offset += (unsigned int)count;
+    }
+    close(fd);
+    return count == 0 && offset == size;
+}
+
+static int filesapp_test_exists(const char *path)
+{
+    struct stat info;
+
+    return lstat(path, &info) == 0;
+}
+
+static int filesapp_test_run(struct file_copy *op)
+{
+    int result;
+    int steps = 0;
+
+    while ((result = file_copy_step(op)) > 0 && steps < 1000000)
+    {
+        ++steps;
+    }
+    return result;
+}
+
+static void filesapp_copy_engine_selftest(void)
+{
+    static struct file_copy op;
+    char name[128];
+    int result;
+
+    filesapp_test_remove(FILESAPP_TEST_ROOT);
+    filesapp_copy_check(mkdir(FILESAPP_TEST_ROOT, 0755) == 0 && mkdir(FILESAPP_TEST_ROOT "/src", 0755) == 0 &&
+                            mkdir(FILESAPP_TEST_ROOT "/src/sub", 0755) == 0 &&
+                            mkdir(FILESAPP_TEST_ROOT "/src/empty", 0755) == 0 &&
+                            mkdir(FILESAPP_TEST_ROOT "/dst", 0755) == 0 &&
+                            filesapp_test_write(FILESAPP_TEST_ROOT "/src/a.txt", 5000, 1) == 0 &&
+                            filesapp_test_write(FILESAPP_TEST_ROOT "/src/sub/b.bin", 40000, 2) == 0,
+                        "build the scratch tree");
+
+    /* A tree: counted first, then copied whole. */
+    op.report = 0;
+    result = file_copy_begin(&op, FILESAPP_TEST_ROOT "/src", FILESAPP_TEST_ROOT "/dst/src", 0);
+    filesapp_copy_check(result == 0 && op.state == FILE_COPY_COUNTING, "begin a copy");
+    result = filesapp_test_run(&op);
+    filesapp_copy_check(result == 0 && op.state == FILE_COPY_DONE, "the copy ends DONE");
+    filesapp_copy_check(op.total_items == 5 && op.done_items == 5, "five items counted and copied");
+    filesapp_copy_check(op.total_bytes == 45000ull && op.done_bytes == 45000ull, "45000 bytes counted and copied");
+    filesapp_copy_check(filesapp_test_matches(FILESAPP_TEST_ROOT "/dst/src/a.txt", 5000, 1) &&
+                            filesapp_test_matches(FILESAPP_TEST_ROOT "/dst/src/sub/b.bin", 40000, 2) &&
+                            filesapp_test_exists(FILESAPP_TEST_ROOT "/dst/src/empty"),
+                        "the copy holds the same bytes and the empty folder");
+
+    /* Names Explorer gives a second and a third copy. */
+    filesapp_copy_check(file_copy_free_name(FILESAPP_TEST_ROOT "/dst", "src", name, sizeof(name)) == 0 &&
+                            strcmp(name, "Copy of src") == 0,
+                        "a taken name becomes 'Copy of'");
+    (void)mkdir(FILESAPP_TEST_ROOT "/dst/Copy of src", 0755);
+    filesapp_copy_check(file_copy_free_name(FILESAPP_TEST_ROOT "/dst", "src", name, sizeof(name)) == 0 &&
+                            strcmp(name, "Copy (2) of src") == 0,
+                        "then 'Copy (2) of'");
+    filesapp_copy_check(file_copy_free_name(FILESAPP_TEST_ROOT "/dst", "new.txt", name, sizeof(name)) == 0 &&
+                            strcmp(name, "new.txt") == 0,
+                        "a free name stays");
+
+    /* Refused before anything is touched. */
+    filesapp_copy_check(file_copy_begin(&op, FILESAPP_TEST_ROOT "/src", FILESAPP_TEST_ROOT "/src/sub/x", 0) == -EINVAL,
+                        "a folder into itself is EINVAL");
+    filesapp_copy_check(file_copy_begin(&op, FILESAPP_TEST_ROOT "/src", FILESAPP_TEST_ROOT "/src", 0) == -EINVAL,
+                        "a folder onto itself is EINVAL");
+    filesapp_copy_check(file_copy_begin(&op, FILESAPP_TEST_ROOT "/src", FILESAPP_TEST_ROOT "/dst/src", 0) == -EEXIST,
+                        "an existing target is EEXIST");
+
+    /* A cancel in the middle of a file leaves no half file. */
+    result = file_copy_begin(&op, FILESAPP_TEST_ROOT "/src/sub/b.bin", FILESAPP_TEST_ROOT "/dst/half.bin",
+                             FILE_COPY_NO_COUNT);
+    while (result >= 0 && file_copy_running(&op) && op.done_bytes == 0)
+    {
+        result = file_copy_step(&op);
+    }
+    filesapp_copy_check(file_copy_running(&op) && op.done_bytes > 0 && op.done_bytes < 40000ull,
+                        "a copy stopped halfway through a file");
+    file_copy_cancel(&op);
+    filesapp_copy_check(op.state == FILE_COPY_CANCELLED && !filesapp_test_exists(FILESAPP_TEST_ROOT "/dst/half.bin"),
+                        "cancel removes the half-written file");
+
+    /* A move on one volume is a rename. */
+    result = file_copy_begin(&op, FILESAPP_TEST_ROOT "/dst/src", FILESAPP_TEST_ROOT "/dst/moved", FILE_COPY_MOVE);
+    filesapp_copy_check(result == 0 && op.state == FILE_COPY_DONE && op.renamed, "a move on one volume renames");
+    filesapp_copy_check(!filesapp_test_exists(FILESAPP_TEST_ROOT "/dst/src") &&
+                            filesapp_test_matches(FILESAPP_TEST_ROOT "/dst/moved/sub/b.bin", 40000, 2),
+                        "the renamed tree is whole");
+
+    /* Across volumes (the disk to the in-memory tree) a move copies, then
+     * removes the source. */
+    filesapp_copy_check(filesapp_test_write(FILESAPP_TEST_ROOT "/far.txt", 3000, 3) == 0, "write the file to move");
+    (void)unlink("/rescue/filesapp-far.txt");
+    result = file_copy_begin(&op, FILESAPP_TEST_ROOT "/far.txt", "/rescue/filesapp-far.txt", FILE_COPY_MOVE);
+    if (result == 0)
+    {
+        filesapp_copy_check(!op.renamed, "a move across volumes is not a rename");
+        result = filesapp_test_run(&op);
+    }
+    filesapp_copy_check(result == 0 && op.state == FILE_COPY_DONE, "a move across volumes ends DONE");
+    filesapp_copy_check(!filesapp_test_exists(FILESAPP_TEST_ROOT "/far.txt") &&
+                            filesapp_test_matches("/rescue/filesapp-far.txt", 3000, 3),
+                        "the moved file is there and the source is gone");
+    (void)unlink("/rescue/filesapp-far.txt");
+
+    filesapp_test_remove(FILESAPP_TEST_ROOT);
+    filesapp_copy_check(!filesapp_test_exists(FILESAPP_TEST_ROOT), "remove the scratch tree");
+}
+
+static void filesapp_uri_selftest(void)
+{
+    char uri[FILESAPP_URI_CAPACITY];
+    char path[FILESAPP_PATH_CAPACITY];
+    static const char k_list[] = "# a comment\r\nfile:///users/user/My%20notes.txt\r\n";
+    static const char k_two[] = "file:///a\r\nfile:///b\r\n";
+
+    filesapp_copy_check(filesapp_uri_from_path("/users/user/My notes \xc3\xbc.txt", uri, sizeof(uri)) == 0 &&
+                            strcmp(uri, "file:///users/user/My%20notes%20%C3%BC.txt") == 0,
+                        "a path becomes a percent-encoded URI");
+    filesapp_copy_check(filesapp_path_from_uri(uri, strlen(uri), path, sizeof(path)) == 0 &&
+                            strcmp(path, "/users/user/My notes \xc3\xbc.txt") == 0,
+                        "the URI decodes back to the path");
+    filesapp_copy_check(filesapp_path_from_uri("file://localhost/tmp/a", 22, path, sizeof(path)) == 0 &&
+                            strcmp(path, "/tmp/a") == 0,
+                        "a localhost URI is read");
+    filesapp_copy_check(filesapp_path_from_uri("http://host/a", 13, path, sizeof(path)) != 0 &&
+                            filesapp_path_from_uri("file:///a%00b", 13, path, sizeof(path)) != 0 &&
+                            filesapp_path_from_uri("file://other/a", 14, path, sizeof(path)) != 0,
+                        "another scheme, another host and a NUL are refused");
+    filesapp_copy_check(filesapp_path_from_list(k_list, (int)sizeof(k_list) - 1, path, sizeof(path)) == 1 &&
+                            strcmp(path, "/users/user/My notes.txt") == 0,
+                        "a list skips its comments");
+    filesapp_copy_check(filesapp_path_from_list(k_two, (int)sizeof(k_two) - 1, path, sizeof(path)) == -1,
+                        "a list of two is not taken yet");
+}
+
+static int filesapp_copy_selftest(void)
+{
+    g_copy_failures = 0;
+    filesapp_uri_selftest();
+    filesapp_copy_engine_selftest();
+    printf("FILESAPP SMOKE copy checks done, %d failed\n", g_copy_failures);
+    return g_copy_failures;
 }
 
 static int filesapp_selftest(void)
@@ -1802,6 +2854,7 @@ static int filesapp_selftest(void)
     failures = file_assoc_selftest();
     failures += mime_icon_selftest(filesapp_report_mime_failure);
     failures += shortcut_selftest();
+    failures += filesapp_copy_selftest();
 
     if (failures != 0)
     {
@@ -1842,6 +2895,10 @@ int main(int argc, char **argv)
         g_widgets[W_SEP_HISTORY] = sxgui_separator(none);
         g_widgets[W_UP] = sxgui_toolbar_button(none, "Up", k_glyph_up, on_up_clicked, 0);
         g_widgets[W_SEP_UP] = sxgui_separator(none);
+        g_widgets[W_CUT] = sxgui_toolbar_button(none, "Cut", k_glyph_cut, on_cut_clicked, 0);
+        g_widgets[W_COPY] = sxgui_toolbar_button(none, "Copy", k_glyph_copy, on_copy_clicked, 0);
+        g_widgets[W_PASTE] = sxgui_toolbar_button(none, "Paste", k_glyph_paste, on_paste_clicked, 0);
+        g_widgets[W_SEP_CLIPBOARD] = sxgui_separator(none);
         g_widgets[W_DELETE] = sxgui_toolbar_button(none, "Delete", k_glyph_delete, on_delete_clicked, 0);
         g_widgets[W_PROPERTIES] = sxgui_toolbar_button(
             none, "Properties", k_glyph_properties, on_properties_clicked, 0);
@@ -1862,6 +2919,7 @@ int main(int argc, char **argv)
         g_widgets[W_STATUS_SIZE].flags |= SXGUI_FLAG_SUNKEN;
     }
     filesapp_build_properties_dialog();
+    filesapp_build_op_dialogs();
 
     g_about_widgets[0] = sxgui_label(
         sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
@@ -1936,9 +2994,11 @@ int main(int argc, char **argv)
     g_app.on_key = on_key;
     g_app.on_pointer = on_pointer;
     g_app.on_resize = on_resize;
+    g_app.on_tick = on_tick;
+    g_app.tick_interval_ms = FILESAPP_IDLE_TICK_MS;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     filesapp_set_view(filesapp_load_view());
-    (void)sxgui_app_set_content_size(&g_app, FILESAPP_CONTENT_WIDTH, FILESAPP_CONTENT_HEIGHT);
+    (void)sxgui_app_set_content_size(&g_app, filesapp_content_width(), FILESAPP_CONTENT_HEIGHT);
     filesapp_layout(&g_app);
 
     /* The folder it was asked to show (a folder opened from the desktop);
@@ -1952,5 +3012,12 @@ int main(int argc, char **argv)
     /* El contenido de Files ES la lista: sin esto el foco arranca en ninguna
      * parte y las flechas no mueven la seleccion hasta que alguien tabula. */
     sxgui_focus(&g_app.ui, FILESAPP_LIST_INDEX);
-    return sxgui_app_run(&g_app);
+    filesapp_check_clipboard();
+    {
+        int status = sxgui_app_run(&g_app);
+
+        /* Closed in the middle of a paste: no half file is left behind. */
+        file_copy_cancel(&g_op);
+        return status;
+    }
 }

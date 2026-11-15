@@ -115,7 +115,8 @@ the rest) is weak; SUN's (`sxngui.c`, over `sxn_device_control`) is strong
 and is also installed by `sxngui_app_init`. A later service for the host
 gets a table of its own for the same reason.
 
-`seltest` checks the POSIX table, a text field pasting the text of a set that
+Files' Cut, Copy and Paste is its first program
+([`FILES.md`](FILES.md#cut-copy-and-paste)). `seltest` checks the POSIX table, a text field pasting the text of a set that
 also holds a file list, and a host without formats; `guicliptest`, run by the
 core smoke, checks the SUN table through the shared `libsxgui`.
 

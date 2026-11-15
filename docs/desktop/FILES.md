@@ -7,7 +7,8 @@ Windows 98/2000 Explorer without its web-view side panel. Source in
 `system/gfx/mime_icon.c` and `mime_icon_large.c` (which icon a file gets,
 shared with the SUN file dialog, with `mime_icon_posix.c` as their POSIX
 file reader) and
-`shortcut.c` (what "open" means, shared with the desktop). The toolbar
+`shortcut.c` (what "open" means, shared with the desktop) and `file_copy.c`
+(the copy engine Paste runs, shared with `cp`). The toolbar
 glyphs are drawn by `system/gfx/toolbar_glyphs/gen_icons.py`, shared with the file dialog.
 
 This document pins how its window, views and commands work and why, and
@@ -18,10 +19,11 @@ and [`../userland/SXE_FORMAT.md`](../userland/SXE_FORMAT.md) (phase 5).
 
 ## The window
 
-Under the menu bar (File, View, Go, Help) come three bands, each ruled off
-by an etched line as in the Explorer:
+Under the menu bar (File, Edit, View, Go, Help) come three bands, each ruled
+off by an etched line as in the Explorer:
 
-1. **Toolbar** — Back, Forward | Up | Delete, Properties | Views.
+1. **Toolbar** — Back, Forward | Up | Cut, Copy, Paste | Delete, Properties |
+   Views. The window opens wide enough for all of it.
 2. **Address bar** — the folder's path, editable.
 3. **The folder** — as Large Icons or Details, down to the two-pane status
    bar (object count and total size).
@@ -38,6 +40,9 @@ disagree.
 | Back | Back | Go | Alt+Left | there is a folder to go back to |
 | Forward | Forward | Go | Alt+Right | after Back |
 | Up One Level | Up | Go, folder's context menu | Backspace | not at the root |
+| Cut | Cut | Edit, item's context menu | Ctrl+X | an item is selected (not "..") |
+| Copy | Copy | Edit, item's context menu | Ctrl+C | an item is selected (not "..") |
+| Paste | Paste | Edit, folder's context menu | Ctrl+V | the clipboard holds one file or folder |
 | Delete | Delete | File, item's context menu | Delete | an item is selected (not "..") |
 | Rename... | — | File, item's context menu | — | an item is selected (not "..") |
 | Properties | Properties | File, both context menus | Alt+Enter | always |
@@ -88,7 +93,74 @@ in the Explorer. Buttons that do not fit a narrow window are hidden, not
 squeezed.
 
 The glyphs are embedded rather than shipped as `.sxicon` files, like the
-media player's: six 20x20 images are about 9 KiB, and nothing else uses them.
+media player's: nine 20x20 images are about 14 KiB, shared only with the
+file dialog.
+
+## Cut, Copy and Paste
+
+**What goes on the clipboard** ([`CLIPBOARD.md`](CLIPBOARD.md)). Copy and
+Cut write three formats at once through the toolkit
+(`sxgui_clipboard_set_formats`): `text/uri-list` with the entry's
+`file://` URI (percent-encoded, CRLF-ended, RFC 2483), its path as plain
+text so a text editor pastes the path, and
+`application/x-savanxp-drop-effect` holding `copy` or `move`, which is
+Windows' `Preferred DropEffect`. Paste reads the URI list; a list naming
+more than one item is refused for now (Files selects one item at a time),
+and a URI with another host, another scheme or a `%00` is not taken.
+
+**Paste** goes into the folder shown:
+
+- A **copy** takes a free name: the item's own, else "Copy of ...", then
+  "Copy (2) of ..." and on, as the Explorer names a copy in the same folder.
+  The Explorer asks before replacing in another folder; Files never
+  replaces.
+- A **move** (what was cut) keeps the name, and a name already taken in the
+  folder is refused. Pasting into the folder it came from does nothing. On
+  one volume it is a `rename`; across volumes (`EXDEV`) it is a copy, and the
+  originals are removed only once all of it has been copied, so nothing is
+  ever in neither place. A finished move empties the clipboard, as Windows
+  does: what was cut is no longer where the clipboard says.
+- A folder copied or moved into itself is refused before anything is
+  touched.
+
+**The cut entry is drawn faded**: its icon at half opacity in both views.
+It stays faded while the clipboard's `sequence` is the one Cut left; a slow
+tick (`FILESAPP_IDLE_TICK_MS`, 500 ms) reads the sequence, so the fade goes
+away when anything else is copied, by any program, and Paste is enabled or
+disabled the same way. The fade is two pre-faded bitmaps handed to the
+widget through `item_icons`, not a toolkit feature: a per-item flag would
+have changed `struct sxgui_widget`.
+
+### The copy engine and the progress dialog
+
+`file_copy.c` copies a piece at a time: `file_copy_step` does one directory
+entry or one 16 KiB buffer and returns. A copy walks the source twice, once
+to count its items and bytes so the bar has a total, once to copy. The
+same engine runs `cp`, which calls it to the end with `FILE_COPY_MERGE`
+(fill an existing folder, overwrite files) and `FILE_COPY_KEEP_GOING` (report
+a failed entry and go on).
+
+Paste runs the operation inside the click for up to
+`FILESAPP_DIALOG_DELAY_MS` (500 ms), so a small one never flashes a dialog.
+If it is not done by then, the **progress dialog** opens, Windows 2000's
+shape without its animation: the title "Copying..." or "Moving...", the
+file being copied, "From '<folder>' to '<folder>'", the bar, and
+"N Seconds Remaining" once a second of work gives something to estimate from,
+next to Cancel. From then on the frame's tick drives it, 40 ms of copying per
+16 ms tick (`FILESAPP_WORK_SLICE_MS`), so the dialog repaints and Cancel
+answers while it runs.
+
+**The dialog is modal**: the toolkit has no other kind, so the Files window
+waits for the paste, where the Explorer copies on a thread of its own and
+stays usable. **Cancel**, Esc or the dialog's X stop the copy, remove the
+file being written (half a file is not a copy) and keep what was already
+copied; the status bar says how many of how many items were. **A failure**
+does the same and opens a message with what failed and why; for a move whose
+copy completed but whose originals could not all be removed, it says so.
+Closing the window in the middle of a paste cancels it the same way.
+
+The animation (pages flying between two folders) waits for an image widget
+in the toolkit and art of our own; Windows' is a Microsoft resource.
 
 ## Views
 
@@ -214,6 +286,15 @@ programs that draw large icons list `mime_icon_large.c` in their sources.
 - `./tools/shoot.sh --scenario filesmenu` right-clicks an icon's name for its
   context menu, then switches to Details to measure the folder menu against
   the Type column.
+- `filesapp --selftest` also runs the copy engine on a scratch tree in
+  `/tmp`: counting and copying a tree byte for byte, the free names, a
+  folder into itself, an existing target, a cancel that leaves no half file,
+  a move that is a rename, and a move across volumes (into the in-memory
+  tree) that copies and then removes; and the URIs: encoding, decoding,
+  `localhost`, refused schemes and hosts, and lists.
+- `./tools/shoot.sh --scenario filesclipboard` copies `/bin` with Ctrl+C,
+  pastes it into the profile, asserts the progress dialog, cancels it with
+  Esc, then cuts an entry and pastes it into its own folder.
 
 The visual scenarios assume a 1280x800 session: their pointer mapping and
 text search are sized for it. A disk image whose profile saved another
@@ -229,11 +310,7 @@ is out of scope for now.
    drop-down lists of recent folders on Back and Forward, and the address
    bar's drop-down of parent folders.
 
-### Pending
-
-Not started. In the order they depend on each other:
-
-3. **A clipboard with formats.** The device side is done
+3. **A clipboard with formats** — done. The device side
    ([`CLIPBOARD.md`](CLIPBOARD.md)): `/dev/clipboard` holds a set of named
    formats replaced whole, and copying files offers `text/uri-list` next to
    the paths as plain text, so Notepad pastes them. Chosen over a tagged text
@@ -242,13 +319,12 @@ Not started. In the order they depend on each other:
    would fake. The toolkit reaches the formats from either subsystem
    (`sxgui_clipboard_set_formats` and the rest,
    [`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)).
-4. **Cut / Copy / Paste.** On the clipboard above. Paste copies into the
-   folder shown; copying a folder is a recursive copy, a name already taken
-   becomes "Copy of ..." (and "Copy (2) of ..."), and a failure halfway
-   reports what was left behind instead of rolling back silently. Cut moves:
-   `rename` within one volume, copy-then-delete across volumes. A cut item
-   is drawn faded until it is pasted, as in the Explorer. The toolbar gets
-   Cut, Copy and Paste between Up and Delete, and the Edit menu returns.
+4. **Cut / Copy / Paste** — done ([above](#cut-copy-and-paste)), one item
+   at a time. Not yet: selecting and pasting several items, the progress
+   dialog's animation, and a copy that leaves the window usable.
+
+### Pending
+
 5. **Recycle Bin.** Delete moves to a per-user bin instead of removing:
    the item goes into a folder in the profile together with a record of its
    original path and the time, so it can be put back. The bin needs a view

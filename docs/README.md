@@ -192,8 +192,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   (the session's largest mode, the layout after a change, `display.cfg`).
 - [`FILES.md`](desktop/FILES.md) — Files, the file browser: the toolbar,
   address bar, history and Properties, the toolbar widgets
-  (`SXGUI_FLAG_TOOLBAR`), the Large Icons and Details views over one widget
-  (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM, and what is next.
+  (`SXGUI_FLAG_TOOLBAR`), Cut, Copy and Paste with the shared copy engine
+  (`file_copy.c`) and the progress dialog, the Large Icons and Details views
+  over one widget (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM,
+  and what is next.
 - [`CLIPBOARD.md`](desktop/CLIPBOARD.md) — the system clipboard (`/dev/clipboard`):
   a set of named formats replaced whole, the media-type names and the UTF-8
   text format every subsystem converts to, the capacity, how each subsystem

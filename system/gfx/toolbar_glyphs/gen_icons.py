@@ -9,7 +9,7 @@ silhouette embossed, so each one must read by its shape alone.
 Writes icons/<name>.png (to look at) and icons.inc: one 0xAARRGGBB array per
 glyph, the SX_PIXEL_FORMAT_BGRA8888 layout, converted as
 gen_sxe_resources.py does. They are embedded rather than shipped as .sxicon:
-six glyphs are ~9 KiB, used by Files' toolbar and the file dialog
+nine glyphs are ~14 KiB, used by Files' toolbar and the file dialog
 (system/runtime/sxnfiledlg.c), as the media player embeds its own
 (subsystems/posix/userland/mediaplayer/gen_icons.py). A program includes
 icons.inc and keeps the glyphs it names; the compiler drops the rest. Both
@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "tools"))
 
 from gen_sxe_resources import read_icon_png  # noqa: E402
 from icon_art import (  # noqa: E402
-    BLACK, FOLDER, GREEN, Icon, NAVY, PAPER, RED, SILVER, TEAL, YELLOW, rgb, side_face, top_face,
+    BLACK, FOLDER, GREEN, Icon, NAVY, PAPER, RED, SILVER, TEAL, WOOD, YELLOW, rgb, side_face, top_face,
 )
 
 SIZE = 20
@@ -71,6 +71,47 @@ def edit_delete():
     return ic.image
 
 
+def sheet(ic, x0, y0, x1, y1, lines=True):
+    """A sheet of paper with a folded corner and, optionally, lines of text."""
+    ic.part(ic.poly([(x0, y0), (x1 - 3, y0), (x1, y0 + 3), (x1, y1), (x0, y1)]), PAPER)
+    ic.part(ic.poly([(x1 - 3, y0), (x1, y0 + 3), (x1 - 3, y0 + 3)]), SILVER)
+    if lines:
+        for y in range(y0 + 5, y1 - 1, 3):
+            for x in range(x0 + 2, x1 - 1):
+                ic.put(x, y, rgb(96, 96, 96))
+
+
+def edit_cut():
+    """Cut: open scissors, two steel blades crossing above two red handles."""
+    ic = Icon(SIZE)
+    # Each blade runs from its handle, through the pivot, to the far tip.
+    ic.part(ic.poly([(6, 12), (8, 13), (15, 1), (14, 0), (12, 2)]), SILVER)
+    ic.part(ic.poly([(13, 12), (11, 13), (4, 1), (5, 0), (7, 2)]), SILVER)
+    ic.put(9, 8, BLACK)
+    ic.put(10, 8, BLACK)
+    for cx in (5, 14):
+        ring = ic.disc(cx, 15.5, 4.5) - ic.disc(cx, 15.5, 2.0)
+        ic.part(ring, RED, bevel=False)
+    return ic.image
+
+
+def edit_copy():
+    """Copy: two sheets, the copy lying over the original."""
+    ic = Icon(SIZE)
+    sheet(ic, 1, 0, 12, 13)
+    sheet(ic, 7, 6, 18, 19)
+    return ic.image
+
+
+def edit_paste():
+    """Paste: a clipboard with its steel clip and a sheet on it."""
+    ic = Icon(SIZE)
+    ic.part(ic.rect(2, 2, 15, 19), WOOD)
+    sheet(ic, 7, 6, 18, 19)
+    ic.part(ic.rect(5, 0, 12, 4), SILVER)
+    return ic.image
+
+
 def document_properties():
     """Properties: a sheet with lines of text and a tick in its corner."""
     ic = Icon(SIZE)
@@ -101,6 +142,9 @@ ICONS = [
     ("go-previous", go_previous),
     ("go-next", go_next),
     ("go-up", go_up),
+    ("edit-cut", edit_cut),
+    ("edit-copy", edit_copy),
+    ("edit-paste", edit_paste),
     ("edit-delete", edit_delete),
     ("document-properties", document_properties),
     ("view-choose", view_choose),

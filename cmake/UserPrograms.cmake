@@ -433,11 +433,16 @@ savanxp_program(NAME elevtest TEST SOURCES subsystems/posix/userland/elevtest.c)
 savanxp_program(NAME badptr TEST SOURCES subsystems/posix/userland/badptr.c)
 # The basic file utilities. They replaced the BusyBox port: one small program
 # each, with the shared helpers compiled into every one that needs them.
-foreach(tool cat cp echo ls mkdir mv rm)
+foreach(tool cat echo ls mkdir mv rm)
     savanxp_program(NAME ${tool} SOURCES
         subsystems/posix/userland/coreutils/${tool}.c
         subsystems/posix/userland/coreutils/coreutils.c)
 endforeach()
+# cp runs Files' copy engine (docs/desktop/FILES.md, "Cut, Copy and Paste").
+savanxp_program(NAME cp SOURCES
+    subsystems/posix/userland/coreutils/cp.c
+    subsystems/posix/userland/coreutils/coreutils.c
+    subsystems/posix/userland/file_copy.c)
 foreach(tool false ps sleep true)
     savanxp_program(NAME ${tool} SOURCES subsystems/posix/userland/coreutils/${tool}.c)
 endforeach()
@@ -507,6 +512,7 @@ savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
     subsystems/posix/userland/aboutapp.c)
 savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/filesapp.c
+    subsystems/posix/userland/file_copy.c
     subsystems/posix/userland/file_assoc.c
     system/gfx/mime_icon.c
     system/gfx/mime_icon_large.c

@@ -101,14 +101,16 @@ A subsystem maps its own identifiers to these names in its own layer:
 |---|---|---|---|
 | `text/plain;charset=utf-8` (`SAVANXP_CLIPBOARD_TEXT`) | UTF-8 text, LF line ends, no NUL | `CF_UNICODETEXT`, `CF_TEXT`, `CF_OEMTEXT` (converted) | `UTF8_STRING`, `STRING`, `TEXT` |
 | `text/uri-list` (`SAVANXP_CLIPBOARD_URI_LIST`) | `file://` URIs, one per CRLF-ended line (RFC 2483) | `CF_HDROP` | `text/uri-list` |
+| `application/x-savanxp-drop-effect` | `copy` or `move`: whether a pasted file list is copied or moved ([`FILES.md`](FILES.md#cut-copy-and-paste)) | registered `Preferred DropEffect` (a `DWORD`) | — |
 | `text/rtf` | RTF | registered `Rich Text Format` | `text/rtf` |
 | `image/bmp` | a BMP file | `CF_DIB` (converted) | `image/bmp` |
 
 A format only one subsystem knows keeps a name of that subsystem's own,
 prefixed so it cannot collide with a media type (for a Win32 registered
 format, `application/x-win32-` followed by its name, for instance). Only the
-text and URI-list names are in the ABI today; the rest of the table is the
-naming to follow when their first consumer arrives.
+text and URI-list names are in the ABI today; Files writes the drop effect,
+and the rest of the table is the naming to follow when their first consumer
+arrives.
 
 ### The text format
 
@@ -136,7 +138,7 @@ before the formats working unchanged:
 |---|---|---|
 | POSIX | `savanxp/libc.h`: `clipboard_set_text`, `clipboard_get_text`, `clipboard_get_info`, `clipboard_clear`; `clipboard_set_formats`, `clipboard_get_format`, `clipboard_enum_format` | done; `cliptest` in `smoke` |
 | SUN | `sxn_open_device("clipboard")` and `sxn_device_control` with the ioctls above; the toolkit's SUN host (`system/runtime/sxngui.c`) for text | done at the device level; typed `sxn_` calls wait for their first consumer ([`SUN.md`](../userland/SUN.md), rule 1); `nativetest` |
-| SXGUI-C toolkit | text through `struct sxgui_host`; formats through `struct sxgui_host_clipboard` and `sxgui_clipboard_set_formats`, `_get_format`, `_enum_format`, `_has_format`, for platform code and programs of either subsystem ([`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)) | done; `seltest` (POSIX) and `guicliptest` (SUN) in `smoke` |
+| SXGUI-C toolkit | text through `struct sxgui_host`; formats through `struct sxgui_host_clipboard` and `sxgui_clipboard_set_formats`, `_get_format`, `_enum_format`, `_has_format`, for platform code and programs of either subsystem ([`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)) | done; `seltest` (POSIX) and `guicliptest` (SUN) in `smoke`; Files' Cut, Copy and Paste is the first program on it |
 | Win32 | `user32` has no clipboard calls yet | missing |
 | Linux | guest paths are rooted at `/system/linux`, so `/dev/clipboard` does not exist for a guest | missing |
 | Console | no mark, copy or paste | missing |
@@ -168,4 +170,4 @@ In the order they depend on each other:
    ([`WIN32_WORDPAD_PROFILE.md`](../userland/WIN32_WORDPAD_PROFILE.md)); the
    device visible to Linux guests; and copy and paste in the console. Files'
    Cut, Copy and Paste of files stand on the toolkit's formats
-   ([`FILES.md`](FILES.md#pending)).
+   ([`FILES.md`](FILES.md#cut-copy-and-paste)).

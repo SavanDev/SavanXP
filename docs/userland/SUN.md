@@ -201,7 +201,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `waveOutOpen`/`waveOutWrite`, XAudio2 | `sxnaudio_open`, `sxnaudio_frames_due`, `sxnaudio_write` | done (Nightwood); mixed by `audiod` when it runs ([AUDIO_DAEMON.md](../media/AUDIO_DAEMON.md#sun-clients)) |
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
-| Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, no program copies them yet |
+| Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, used by Files (POSIX), no SUN program yet |
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
 | `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, no New Folder |
