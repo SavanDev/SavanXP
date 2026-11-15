@@ -3,10 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* System PNG decoder: 8-bit RGB/RGBA with noninterlaced rows. Inflate
+/* System image decoders. PNG: 8-bit RGB/RGBA with noninterlaced rows. Inflate
  * implements RFC 1951 (stored, fixed and dynamic Huffman blocks); PNG handles
- * concatenated IDAT chunks and all five filters. Only memory allocation and
- * string functions are needed, so the same decoder also works in SUN. */
+ * concatenated IDAT chunks and all five filters. BMP: uncompressed 24 and
+ * 32 bpp, at the end of the file. Only memory allocation and string
+ * functions are needed, so the same decoders also work in SUN. */
 
 /* --- inflate -------------------------------------------------------------- */
 
@@ -872,4 +873,128 @@ int sx_png_decode(const unsigned char *data, size_t size, struct sx_png_image *o
 int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_image *out)
 {
     return png_decode(data, size, out, 1);
+}
+
+/* --- BMP ------------------------------------------------------------------ */
+
+/* The file header is 14 bytes; BITMAPINFOHEADER, the smallest header this
+ * decoder takes, is 40. */
+#define BMP_FILE_HEADER_BYTES 14u
+#define BMP_INFO_HEADER_BYTES 40u
+
+struct bmp_layout
+{
+    uint32_t width;
+    uint32_t height;
+    uint32_t bytes_per_pixel;
+    size_t stride;
+    size_t pixel_offset;
+    int top_down;
+};
+
+static uint32_t read_u16le(const unsigned char *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+}
+
+static uint32_t read_u32le(const unsigned char *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/* Validates the headers and that every row lies inside the buffer. */
+static int bmp_parse(const unsigned char *data, size_t size, struct bmp_layout *layout)
+{
+    uint32_t header_bytes;
+    uint32_t bits;
+    int64_t width;
+    int64_t height;
+    size_t offset;
+
+    if (data == 0 || size < BMP_FILE_HEADER_BYTES + BMP_INFO_HEADER_BYTES || data[0] != 'B' ||
+        data[1] != 'M')
+    {
+        return -1;
+    }
+    header_bytes = read_u32le(data + 14);
+    bits = read_u16le(data + 28);
+    if (header_bytes < BMP_INFO_HEADER_BYTES || header_bytes > size - BMP_FILE_HEADER_BYTES ||
+        read_u16le(data + 26) != 1u ||  /* planes */
+        (bits != 24u && bits != 32u) ||
+        read_u32le(data + 30) != 0u)    /* BI_RGB */
+    {
+        return -1;
+    }
+    /* Both are signed; a negative height means the rows are stored top-down. */
+    width = (int32_t)read_u32le(data + 18);
+    height = (int32_t)read_u32le(data + 22);
+    layout->top_down = height < 0;
+    if (height < 0)
+    {
+        height = -height;
+    }
+    if (width <= 0 || height <= 0 || width > (int64_t)SX_BMP_MAX_DIMENSION ||
+        height > (int64_t)SX_BMP_MAX_DIMENSION)
+    {
+        return -1;
+    }
+    layout->width = (uint32_t)width;
+    layout->height = (uint32_t)height;
+    layout->bytes_per_pixel = bits / 8u;
+    /* Rows are padded to four bytes. */
+    layout->stride = ((size_t)layout->width * layout->bytes_per_pixel + 3u) & ~(size_t)3u;
+    offset = read_u32le(data + 10);
+    if (offset < BMP_FILE_HEADER_BYTES + (size_t)header_bytes || offset > size ||
+        layout->stride * (size_t)layout->height > size - offset)
+    {
+        return -1;
+    }
+    layout->pixel_offset = offset;
+    return 0;
+}
+
+int sx_bmp_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height)
+{
+    struct bmp_layout layout;
+
+    if (bmp_parse(data, size, &layout) != 0)
+    {
+        return -1;
+    }
+    if (width != 0)
+    {
+        *width = layout.width;
+    }
+    if (height != 0)
+    {
+        *height = layout.height;
+    }
+    return 0;
+}
+
+int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
+{
+    struct bmp_layout layout;
+    uint32_t y;
+
+    if (pixels == 0 || bmp_parse(data, size, &layout) != 0 ||
+        pixel_count < (size_t)layout.width * (size_t)layout.height)
+    {
+        return -1;
+    }
+    for (y = 0u; y < layout.height; ++y)
+    {
+        uint32_t source_row = layout.top_down ? y : layout.height - 1u - y;
+        const unsigned char *source = data + layout.pixel_offset + (size_t)source_row * layout.stride;
+        uint32_t *target = pixels + (size_t)y * (size_t)layout.width;
+        uint32_t x;
+
+        for (x = 0u; x < layout.width; ++x)
+        {
+            const unsigned char *pixel = source + (size_t)x * layout.bytes_per_pixel;
+
+            target[x] = ((uint32_t)pixel[2] << 16) | ((uint32_t)pixel[1] << 8) | (uint32_t)pixel[0];
+        }
+    }
+    return 0;
 }

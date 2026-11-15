@@ -263,6 +263,10 @@ Cut-off notes:
 
 ### Changed
 
+- **BMP decoding moves into `libsximg` (`sx_bmp_info`, `sx_bmp_decode_into`), shared by Paint and the desktop
+  wallpaper; Paint now also opens 32 bpp BMPs.** See
+  [IMAGE_VIEWER_ROADMAP.md](docs/roadmaps/open/IMAGE_VIEWER_ROADMAP.md#i1--bmp-moves-into-libsximg-done).
+
 - **`cp` runs Files' copy engine: copies keep the source's permission bits, and copying a file or folder onto or into
   itself is refused instead of emptying the file (`cp a a`) or recursing.**
 

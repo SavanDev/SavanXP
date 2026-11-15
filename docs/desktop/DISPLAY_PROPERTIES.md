@@ -65,6 +65,9 @@ Rules:
   applies a change.
 - **An image that cannot be decoded leaves the colour.** Only uncompressed
   (`BI_RGB`) BMPs of 24 or 32 bits, up to 2048 pixels on a side, are read.
+  The decoder is `libsximg`'s (`sx_bmp_info`, `sx_bmp_decode_into`); the
+  file is read into a section dropped once decoded, and the pixels stay in a
+  section of their own, off the heap.
 
 ## The shipped wallpapers
 

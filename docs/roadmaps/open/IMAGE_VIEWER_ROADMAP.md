@@ -1,6 +1,6 @@
 # Image Viewer and the image formats
 
-Status: **planned, no phase landed.**
+Status: **phase I1 landed** (BMP in `libsximg`). Everything else is planned.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -30,7 +30,7 @@ same formats it reads.
 | Piece | Where | What it gives the viewer |
 |---|---|---|
 | PNG decoder | `sx_png_decode`, `sx_png_decode_argb` | 8-bit RGB/RGBA, non-interlaced, all filters, full inflate. Up to 4096 on a side. Refuses palette, grey, `tRNS`, Adam7, other depths |
-| BMP decoder | two private copies: `paint.c` (24 bpp) and `desktop_wallpaper.c` (24 and 32 bpp), both `BI_RGB` | nothing a third program can call |
+| BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into` (I1) | `BI_RGB` 24 and 32 bpp, bottom-up or top-down. Up to 4096 on a side |
 | JPEG decoder | — | nothing |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
 | Scaling | `sx_painter_draw_scaled_bitmap` (`gfx2d.h`), `SX_SCALE_NEAREST` / `BILINEAR` | zoom and fit-to-window |
@@ -114,13 +114,13 @@ viewer.
 
 ## Phases
 
-### I1 — BMP moves into `libsximg`
+### I1 — BMP moves into `libsximg` (done)
 
 `sx_bmp_info` and `sx_bmp_decode_into` replace the two readers that Paint
-and the desktop wallpaper each carry. The subset is the union of what they
+and the desktop wallpaper each carried. The subset is the union of what they
 read: `BI_RGB`, 24 or 32 bpp, `BITMAPINFOHEADER` or larger, bottom-up or
-top-down, so Paint also opens 32 bpp BMPs, which only the wallpaper reads
-today. Host test: both depths, both row orders, row padding, and every
+top-down. Paint now also opens 32 bpp BMPs, which only the wallpaper read
+before. Host test: both depths, both row orders, row padding, and every
 refusal (other depths, compression, planes, sizes, truncated rows, a small
 buffer).
 

@@ -263,6 +263,178 @@ static const unsigned char k_png_rgba_dynamic[] = {
     0x00, 0x00, 0x00, 0x00,
 };
 
+/* --- BMP builder ---------------------------------------------------------- */
+
+/* A BMP with a BITMAPINFOHEADER. Pixel (x, y), counted from the top, gets
+ * the bytes B = x * 16 + y, G = 0x80 + y, R = 0xF0 - x, so every pixel is
+ * distinct and a row read in the wrong order shows. */
+struct Bmp {
+    std::vector<unsigned char> bytes;
+
+    void le16(size_t at, uint32_t v) {
+        bytes[at] = (unsigned char)v;
+        bytes[at + 1] = (unsigned char)(v >> 8);
+    }
+
+    void le32(size_t at, uint32_t v) {
+        for (int i = 0; i < 4; ++i) {
+            bytes[at + (size_t)i] = (unsigned char)(v >> (8 * i));
+        }
+    }
+
+    Bmp(int32_t width, int32_t height, unsigned bits, bool top_down = false) {
+        const uint32_t w = (uint32_t)width;
+        const uint32_t h = (uint32_t)(height < 0 ? -height : height);
+        const uint32_t bpp = bits / 8u;
+        const uint32_t stride = (w * bpp + 3u) & ~3u;
+        bytes.assign(54u + (size_t)stride * h, 0);
+        bytes[0] = 'B';
+        bytes[1] = 'M';
+        le32(2, (uint32_t)bytes.size());
+        le32(10, 54);
+        le32(14, 40);
+        le32(18, (uint32_t)width);
+        le32(22, (uint32_t)(top_down ? -(int32_t)h : (int32_t)h));
+        le16(26, 1);
+        le16(28, bits);
+        for (uint32_t y = 0; y < h; ++y) {
+            uint32_t file_row = top_down ? y : h - 1u - y;
+            unsigned char* row = bytes.data() + 54u + (size_t)file_row * stride;
+            for (uint32_t x = 0; x < w; ++x) {
+                row[x * bpp] = (unsigned char)(x * 16u + y);
+                row[x * bpp + 1] = (unsigned char)(0x80u + y);
+                row[x * bpp + 2] = (unsigned char)(0xF0u - x);
+                if (bpp == 4u) {
+                    row[x * bpp + 3] = 0x5A; /* ignored by BI_RGB */
+                }
+            }
+            /* Padding bytes are not pixels: fill them so a decoder that reads
+             * them shows. */
+            for (uint32_t pad = w * bpp; pad < stride; ++pad) {
+                row[pad] = 0xEE;
+            }
+        }
+    }
+
+    static uint32_t expected(uint32_t x, uint32_t y) {
+        return ((0xF0u - x) << 16) | ((0x80u + y) << 8) | ((x * 16u + y) & 0xFFu);
+    }
+};
+
+/* Decodes and compares every pixel against Bmp::expected. */
+bool bmp_matches(const Bmp& bmp, uint32_t width, uint32_t height) {
+    uint32_t w = 0, h = 0;
+    if (sx_bmp_info(bmp.bytes.data(), bmp.bytes.size(), &w, &h) != 0 || w != width || h != height) {
+        return false;
+    }
+    std::vector<uint32_t> pixels((size_t)w * h, 0xDEADBEEFu);
+    if (sx_bmp_decode_into(bmp.bytes.data(), bmp.bytes.size(), pixels.data(), pixels.size()) != 0) {
+        return false;
+    }
+    for (uint32_t y = 0; y < h; ++y) {
+        for (uint32_t x = 0; x < w; ++x) {
+            if (pixels[(size_t)y * w + x] != Bmp::expected(x, y)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool bmp_refused(const Bmp& bmp) {
+    uint32_t pixel = 0;
+    std::vector<uint32_t> pixels(64u * 64u);
+    return sx_bmp_info(bmp.bytes.data(), bmp.bytes.size(), &pixel, &pixel) != 0 &&
+           sx_bmp_decode_into(bmp.bytes.data(), bmp.bytes.size(), pixels.data(), pixels.size()) != 0;
+}
+
+void bmp_tests() {
+    /* 3 pixels wide at 24 bpp is 9 bytes a row, padded to 12. */
+    check(bmp_matches(Bmp(3, 2, 24), 3, 2), "bmp 24 bpp bottom-up with padding");
+    check(bmp_matches(Bmp(3, 2, 24, true), 3, 2), "bmp 24 bpp top-down");
+    check(bmp_matches(Bmp(5, 4, 32), 5, 4), "bmp 32 bpp bottom-up, fourth byte ignored");
+    check(bmp_matches(Bmp(5, 4, 32, true), 5, 4), "bmp 32 bpp top-down");
+    {
+        /* A larger header (BITMAPV5HEADER, 124 bytes) with the pixels after it. */
+        Bmp bmp(2, 2, 24);
+        std::vector<unsigned char> v5(14u + 124u + (bmp.bytes.size() - 54u), 0);
+        memcpy(v5.data(), bmp.bytes.data(), 54u);
+        memcpy(v5.data() + 14u + 124u, bmp.bytes.data() + 54u, bmp.bytes.size() - 54u);
+        bmp.bytes = v5;
+        bmp.le32(10, 14u + 124u);
+        bmp.le32(14, 124);
+        check(bmp_matches(bmp, 2, 2), "bmp with a V5 header");
+    }
+    {
+        Bmp bmp(2, 2, 24);
+        bmp.le32(10, 54u + 4u); /* the pixels start 4 bytes later than a valid file's */
+        check(bmp_refused(bmp), "bmp rejects rows past the end");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        bmp.bytes.resize(bmp.bytes.size() - 1u);
+        check(bmp_refused(bmp), "bmp rejects a truncated last row");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        bmp.le32(10, 40); /* inside the headers */
+        check(bmp_refused(bmp), "bmp rejects pixels inside the headers");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        bmp.bytes[1] = 'A';
+        check(bmp_refused(bmp), "bmp rejects a bad signature");
+    }
+    for (unsigned bits : {1u, 4u, 8u, 16u}) {
+        Bmp bmp(4, 4, 24);
+        bmp.le16(28, bits);
+        check(bmp_refused(bmp), "bmp rejects depths other than 24 and 32");
+    }
+    for (uint32_t compression : {1u, 2u, 3u}) {
+        Bmp bmp(4, 4, 32);
+        bmp.le32(30, compression);
+        check(bmp_refused(bmp), "bmp rejects RLE8, RLE4 and BI_BITFIELDS");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        bmp.le16(26, 2);
+        check(bmp_refused(bmp), "bmp rejects planes other than 1");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        bmp.le32(14, 12); /* BITMAPCOREHEADER */
+        check(bmp_refused(bmp), "bmp rejects the OS/2 core header");
+    }
+    {
+        Bmp zero_width(4, 4, 24);
+        zero_width.le32(18, 0);
+        Bmp negative_width(4, 4, 24);
+        negative_width.le32(18, (uint32_t)-4);
+        Bmp zero_height(4, 4, 24);
+        zero_height.le32(22, 0);
+        Bmp huge(4, 4, 24);
+        huge.le32(18, SX_BMP_MAX_DIMENSION + 1u);
+        Bmp most_negative(4, 4, 24);
+        most_negative.le32(22, 0x80000000u);
+        check(bmp_refused(zero_width) && bmp_refused(negative_width) && bmp_refused(zero_height) &&
+                  bmp_refused(huge) && bmp_refused(most_negative),
+              "bmp rejects empty, negative and oversized dimensions");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        std::vector<uint32_t> small(15);
+        check(sx_bmp_decode_into(bmp.bytes.data(), bmp.bytes.size(), small.data(), small.size()) != 0 &&
+                  sx_bmp_decode_into(bmp.bytes.data(), bmp.bytes.size(), 0, 16) != 0,
+              "bmp rejects a buffer that is too small or missing");
+    }
+    {
+        Bmp bmp(4, 4, 24);
+        check(sx_bmp_info(bmp.bytes.data(), 53, 0, 0) != 0 && sx_bmp_info(0, 0, 0, 0) != 0 &&
+                  sx_bmp_info(bmp.bytes.data(), bmp.bytes.size(), 0, 0) == 0,
+              "bmp info tolerates null outputs and rejects short input");
+    }
+}
+
 }  // namespace
 
 static int decode(const unsigned char* data, size_t size, struct sx_png_image* out) {
@@ -454,6 +626,8 @@ int main() {
             sx_png_free(&img);
         }
     }
+    bmp_tests();
+
     /* free tolera vacia y nula */
     {
         struct sx_png_image img = {0, 0, 0};

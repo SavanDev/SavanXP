@@ -471,7 +471,7 @@ savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.
 # The desktop: background, taskbar, Start menu and the taskbar's popups, as
 # windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
 # it as the shell. No .sxres, so it stays out of the launcher.
-savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/desktop/desktop.c
     subsystems/posix/userland/desktop/desktop_taskbar.c
     subsystems/posix/userland/desktop/desktop_startmenu.c
@@ -504,7 +504,7 @@ savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
 savanxp_program(NAME appwiz DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME display DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME display DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/display.c
     subsystems/posix/userland/display_settings.c
     subsystems/posix/userland/desktop_wallpaper.c)

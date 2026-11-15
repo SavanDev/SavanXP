@@ -62,7 +62,7 @@ is another colour; the picker never does. Ring of document-sized buffers; the
 oldest is reused when full, and all of them are dropped when the document
 changes size. The selftest below proves push, pop, and empty-pop.
 
-## Files: BMP in, BMP out, PNG through `libsximg`
+## Files: BMP in, BMP out, PNG in, read through `libsximg`
 
 - **Save:** 24-bit `BI_RGB` BMP at the document's size — a 54-byte header
   plus padded rows, bottom-up.
@@ -71,8 +71,10 @@ changes size. The selftest below proves push, pop, and empty-pop.
   document opened from a PNG opens Save As with the same name as `.bmp`;
   Save As refuses a `.png` name and keeps the dialog open. A failed Save As
   leaves the document's name unchanged.
-- **Load BMP:** same subset back, bottom-up or top-down (negative height);
-  anything else is a rejection, not a guess.
+- **Load BMP:** through `libsximg` (`sx_bmp_info`, `sx_bmp_decode_into`),
+  decoded straight into the new document: uncompressed 24 or 32 bpp,
+  bottom-up or top-down (negative height); anything else is a rejection, not
+  a guess. Images larger than 512x384 are refused.
 - **Load PNG:** through `libsximg.so.0.4` (`savanxp/img.h`), composited over
   white; images larger than 512x384 are refused.
 

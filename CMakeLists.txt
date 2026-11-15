@@ -812,11 +812,12 @@ target_include_directories(savanxp-sxmidi-fm-test PRIVATE
 target_compile_options(savanxp-sxmidi-fm-test PRIVATE -O1 -Wall -Wextra)
 add_test(NAME sxmidi-fm-test COMMAND savanxp-sxmidi-fm-test)
 
-# El decodificador PNG se compila con el compilador de host y se ejerce de
-# verdad: PNG armados a mano (stored) y salidos de zlib real (fijo y dinamico),
-# los cinco filtros, RGB y RGBA, mas el rechazo de lo que esta fuera del
-# subconjunto. Es la unica verificacion del motor; el smoke en el invitado
-# solo prueba que la libreria carga y que Paint lee un archivo.
+# libsximg's decoders built with the host compiler and exercised for real:
+# PNGs made by hand (stored) and by real zlib (fixed and dynamic), the five
+# filters, RGB and RGBA; BMPs at 24 and 32 bpp in both row orders; and the
+# rejection of whatever is outside each subset. It is the only check of the
+# decoders; the guest smoke only proves that the library loads and that Paint
+# reads a file.
 add_executable(savanxp-sximg-test
     subsystems/posix/sdk/v1/runtime/sximg.c
     tests/host/sximg_test.cpp)

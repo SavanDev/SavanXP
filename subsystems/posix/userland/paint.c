@@ -24,7 +24,7 @@
  * without a backing store there is no Expose, so the app owns the original
  * and blits it in on_paint). It takes the size of the image it opened, up to
  * PAINT_DOC_W x PAINT_DOC_H. It saves only 24 bpp BI_RGB BMP (a 54-byte
- * header plus padded rows) and opens BMP or PNG, the latter through
+ * header plus padded rows) and opens BMP (24 or 32 bpp) or PNG, both through
  * libsximg. There is no PNG encoder, so a .png name never receives BMP bytes.
  *
  * Everything is 1 px and opaque: there is no sx_pen, no alpha and no flood
@@ -204,16 +204,6 @@ static struct sxgui_widget g_about_widgets[4];
 static struct sxgui_dialog g_about_dialog;
 
 /* --- utilidades ----------------------------------------------------------- */
-
-static uint32_t read_le16(const unsigned char *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
-}
-
-static uint32_t read_le32(const unsigned char *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
 
 static void write_le16(unsigned char *p, uint32_t value)
 {
@@ -455,21 +445,16 @@ static int paint_load_image(const char *path)
     struct sx_bitmap next;
     long fd = -1;
     unsigned char *data = 0;
-    uint32_t pixel_offset;
-    uint32_t header_size;
-    long width;
-    long height;
-    int top_down = 0;
-    uint32_t stride;
-    long y;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
     int result;
 
     if (path == 0 || path[0] == '\0')
     {
         return -1;
     }
-    /* 4 MB alcanza para cualquier PNG que quepa en el lienzo; el BMP se
-     * valida por dentro igual que antes. */
+    /* 4 MB is enough for any PNG or BMP that fits on the canvas; libsximg
+     * validates the contents. */
     if (savanxp_stat(path, &info) != 0 || info.st_size < 8u ||
         info.st_size > 4u * 1024u * 1024u)
     {
@@ -498,55 +483,20 @@ static int paint_load_image(const char *path)
         free(data);
         return result;
     }
-    if (info.st_size < 54u)
-    {
-        free(data);
-        return -1;
-    }
-    pixel_offset = read_le32(data + 10);
-    header_size = read_le32(data + 14);
-    /* Both fields are signed in the format: a negative height means the rows
-     * are stored top-down. Read straight into a 64-bit long they would never
-     * come out negative. */
-    width = (long)(int32_t)read_le32(data + 18);
-    height = (long)(int32_t)read_le32(data + 22);
-    if (header_size < 40u || read_le16(data + 26) != 1u || read_le16(data + 28) != 24u ||
-        read_le32(data + 30) != 0u)
-    {
-        /* Solo 24 bpp sin comprimir: lo demas (paletas, RLE, bitfields) no
-         * existe en este esqueleto. */
-        free(data);
-        return -1;
-    }
-    if (height < 0)
-    {
-        top_down = 1;
-        height = -height;
-    }
-    if (width <= 0 || height <= 0 || width > PAINT_DOC_W || height > PAINT_DOC_H)
-    {
-        free(data);
-        return -1;
-    }
-    stride = (((uint32_t)width * 3u + 3u) & ~3u);
-    if (pixel_offset > info.st_size || stride * (uint32_t)height > info.st_size - pixel_offset ||
+    /* The BMP subset is libsximg's (savanxp/img.h); Paint adds its canvas
+     * limit and decodes straight into the new document. */
+    if (sx_bmp_info(data, info.st_size, &width, &height) != 0 || width > (uint32_t)PAINT_DOC_W ||
+        height > (uint32_t)PAINT_DOC_H ||
         !sx_bitmap_create(&next, (int)width, (int)height, SX_PIXEL_FORMAT_BGRX8888))
     {
         free(data);
         return -1;
     }
-
-    for (y = 0; y < height; ++y)
+    if (sx_bmp_decode_into(data, info.st_size, next.pixels, (size_t)width * (size_t)height) != 0)
     {
-        long source_row = top_down ? y : (height - 1 - y);
-        const unsigned char *source = data + pixel_offset + ((uint32_t)source_row * stride);
-        uint32_t *target = next.pixels + ((size_t)y * (size_t)width);
-        long x;
-
-        for (x = 0; x < width; ++x)
-        {
-            target[x] = SXGUI_RGB(source[x * 3 + 2], source[x * 3 + 1], source[x * 3]);
-        }
+        sx_bitmap_destroy(&next);
+        free(data);
+        return -1;
     }
     free(data);
     paint_adopt_doc(&next);
