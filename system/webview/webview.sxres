@@ -1,0 +1,11 @@
+# Web Viewer presentation and supported file associations.
+# Capabilities do not select the user's default HTML application.
+name=Web Viewer
+description=Browse local and HTTP pages
+version=system
+vendor=SavanXP
+accent=1f4e79
+icon=app-webview
+mime_open=text/html
+ext_open=.html,.htm
+category=Accessories

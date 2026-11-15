@@ -673,6 +673,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/mouse"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/logview"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxgldiag"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/webview"
             # The Win32 subsystem's host, whose sources live with the subsystem.
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/win32/host"
             ${SAVANXP_SXE_ARGUMENTS}

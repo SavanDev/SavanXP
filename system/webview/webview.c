@@ -11,13 +11,14 @@
  * scroll-to-fragment. Fetches block the UI: there is no background loading yet.
  */
 
-#include "libc.h"
-#include "savanxp/gfx2d.h"
-#include "savanxp/sxgui.h"
+#include "sxgfx/gfx2d.h"
+#include "sxgfx/sxgui.h"
+#include "sxn/sxn.h"
+#include "sxn/sxngui.h"
+#include "webview.sunres.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "shared/version.h"
 
@@ -160,7 +161,7 @@ struct webview_line_geo {
     (((width) - (count) * SXGUI_BUTTON_WIDTH - ((count) - 1) * SXGUI_GAP) / 2 + \
      (index) * (SXGUI_BUTTON_WIDTH + SXGUI_GAP))
 
-static struct sxgui_app g_app;
+static struct sxngui_app g_app;
 static struct sxgui_widget g_widgets[WEBVIEW_WIDGET_COUNT];
 
 static char g_raw[WEBVIEW_RAW_CAPACITY];
@@ -1930,7 +1931,7 @@ static void webview_invalidate_layout(void)
 {
     g_measured_width = -1;
     WEBVIEW_SCROLL->value = 0;
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static int webview_load_file(const char *path);
@@ -1967,27 +1968,35 @@ static void webview_show_welcome(void)
 
 static int webview_load_file(const char *path)
 {
-    FILE *stream = 0;
-    struct stat info = {0};
+    long stream;
+    struct sxn_file_info info = {0};
     size_t read_bytes = 0;
 
-    if (path == 0 || path[0] == '\0')
-    {
-        return -1;
-    }
-    if (stat(path, &info) == 0 && S_ISDIR(info.st_mode))
+    if (path == 0 || path[0] == '\0') return -1;
+    if (sxn_query_path(path, &info) == 0 && info.type == SXN_FILE_TYPE_DIRECTORY)
     {
         snprintf(g_status, sizeof(g_status), "That path is a directory.");
         return -1;
     }
-    stream = fopen(path, "r");
-    if (stream == 0)
+    stream = sxn_open_file(path, SXN_FILE_READ);
+    if (stream < 0)
     {
         snprintf(g_status, sizeof(g_status), "Cannot open that file.");
         return -1;
     }
-    read_bytes = fread(g_raw, 1, sizeof(g_raw) - 1, stream);
-    fclose(stream);
+    while (read_bytes < sizeof(g_raw) - 1)
+    {
+        long got = sxn_read(stream, g_raw + read_bytes, sizeof(g_raw) - 1 - read_bytes);
+        if (got < 0)
+        {
+            sxn_close(stream);
+            snprintf(g_status, sizeof(g_status), "Cannot read that file.");
+            return -1;
+        }
+        if (got == 0) break;
+        read_bytes += (size_t)got;
+    }
+    sxn_close(stream);
     g_raw[read_bytes] = '\0';
 
     g_truncated = read_bytes == sizeof(g_raw) - 1;
@@ -2366,6 +2375,37 @@ static int webview_dns_parse(const unsigned char *msg, size_t length, uint16_t t
     return have_cname ? 2 : -1;
 }
 
+/* Retry native operations through readiness, with a monotonic deadline.
+ * Loading remains synchronous until the shared DNS/worker milestone N3. */
+static int webview_wait_socket(long socket, unsigned interests, uint64_t deadline)
+{
+    struct sxn_io_interest wait = {(int32_t)socket, interests | SXN_IO_ERROR};
+    uint64_t now = sxn_clock_ns();
+    if (now >= deadline) return -1;
+    return sxn_wait_io(&wait, 1, (long)((deadline - now + 999999u) / 1000000u)) < 0 ? -1 : 0;
+}
+
+static long webview_read_socket(long socket, void *buffer, size_t count)
+{
+    uint64_t deadline = sxn_clock_ns() + 10000000000ull;
+    long result;
+    while ((result = sxn_read(socket, buffer, count)) == -SAVANXP_EAGAIN)
+        if (webview_wait_socket(socket, SXN_IO_READ, deadline) < 0) return -SAVANXP_ETIMEDOUT;
+    return result;
+}
+
+static int webview_connect_socket(long socket, const struct sxn_ipv4_endpoint *peer)
+{
+    uint64_t deadline = sxn_clock_ns() + 5000000000ull;
+    long result = sxn_socket_connect(socket, peer);
+    while (result == -SAVANXP_EAGAIN)
+    {
+        if (webview_wait_socket(socket, SXN_IO_WRITE, deadline) < 0) return -1;
+        result = sxn_socket_status(socket);
+    }
+    return result < 0 ? -1 : 0;
+}
+
 /* One A/IN question, one transaction. Returns 0 with the address, 1 on
  * NXDOMAIN, 2 with a CNAME to chase, -2 on a malformed name, -1 otherwise. */
 static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size_t cname_cap)
@@ -2374,8 +2414,8 @@ static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size
     unsigned char response[WEBVIEW_DNS_MSG_CAP];
     size_t qname_length = 0;
     size_t question_length = 0;
-    struct savanxp_sockaddr_in server;
-    struct savanxp_sockaddr_in local;
+    struct sxn_ipv4_endpoint server;
+    struct sxn_ipv4_endpoint local;
     long fd = -1;
     int attempt = 0;
     int result = -1;
@@ -2385,15 +2425,15 @@ static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size
         return -2;
     }
     question_length = qname_length + 4;
-    fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
+    fd = sxn_socket_create(SXN_SOCKET_UDP);
     if (fd < 0)
     {
         return -1;
     }
     memset(&local, 0, sizeof(local));
-    if (savanxp_bind((int)fd, &local) < 0)
+    if (sxn_socket_bind((int)fd, &local) < 0)
     {
-        savanxp_close((int)fd);
+        sxn_close((int)fd);
         return -1;
     }
     memset(&server, 0, sizeof(server));
@@ -2401,7 +2441,7 @@ static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size
     server.port = (uint16_t)g_dns_port;
     for (attempt = 0; attempt < WEBVIEW_DNS_ATTEMPTS; ++attempt)
     {
-        uint16_t txid = (uint16_t)(uptime_ms() + (unsigned long)g_dns_seq * 0x9E37ul);
+        uint16_t txid = (uint16_t)(sxngui_uptime_ms() + (unsigned long)g_dns_seq * 0x9E37ul);
         long sent;
         long got;
 
@@ -2417,12 +2457,16 @@ static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size
         query[12 + qname_length + 1] = 0x01;
         query[12 + qname_length + 2] = 0x00;
         query[12 + qname_length + 3] = 0x01;
-        sent = savanxp_sendto((int)fd, query, 12 + question_length, &server);
+        uint64_t deadline = sxn_clock_ns() + 6000000000ull;
+        while ((sent = sxn_socket_sendto(fd, query, 12 + question_length, &server)) == -SAVANXP_EAGAIN)
+            if (webview_wait_socket(fd, SXN_IO_WRITE, deadline) < 0) break;
         if (sent < 0)
         {
             continue;
         }
-        got = savanxp_recvfrom((int)fd, response, sizeof(response), 0, WEBVIEW_DNS_TIMEOUT_MS);
+        deadline = sxn_clock_ns() + WEBVIEW_DNS_TIMEOUT_MS * 1000000ull;
+        while ((got = sxn_socket_recvfrom(fd, response, sizeof(response), 0)) == -SAVANXP_EAGAIN)
+            if (webview_wait_socket(fd, SXN_IO_READ, deadline) < 0) break;
         if (got <= 0)
         {
             continue;
@@ -2435,7 +2479,7 @@ static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size
             break;
         }
     }
-    savanxp_close((int)fd);
+    sxn_close((int)fd);
     return result;
 }
 
@@ -2732,10 +2776,16 @@ static int webview_resolve_against(const char *base, const char *ref, char *out,
 static int webview_fetch_write_all(int fd, const char *buffer, size_t length)
 {
     size_t sent = 0;
+    uint64_t deadline = sxn_clock_ns() + 5000000000ull;
 
     while (sent < length)
     {
-        long written = savanxp_write(fd, buffer + sent, length - sent);
+        long written = sxn_write(fd, buffer + sent, length - sent);
+        if (written == -SAVANXP_EAGAIN)
+        {
+            if (webview_wait_socket(fd, SXN_IO_WRITE, deadline) < 0) return -1;
+            continue;
+        }
 
         if (written <= 0)
         {
@@ -2760,7 +2810,7 @@ static int webview_fetch_http(const char *url)
         char path[WEBVIEW_URL_PATH_CAP];
         unsigned port = 0;
         uint32_t ipv4 = 0;
-        struct savanxp_sockaddr_in address;
+        struct sxn_ipv4_endpoint address;
         long fd;
         char request[1024];
         size_t total = 0;
@@ -2797,7 +2847,7 @@ static int webview_fetch_http(const char *url)
                 return -1;
             }
         }
-        fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP);
+        fd = sxn_socket_create(SXN_SOCKET_TCP);
         if (fd < 0)
         {
             snprintf(g_status, sizeof(g_status), "No network.");
@@ -2806,10 +2856,10 @@ static int webview_fetch_http(const char *url)
         memset(&address, 0, sizeof(address));
         address.ipv4 = ipv4;
         address.port = (uint16_t)port;
-        if (savanxp_connect((int)fd, &address, 5000) < 0)
+        if (webview_connect_socket(fd, &address) < 0)
         {
             snprintf(g_status, sizeof(g_status), "Cannot connect to %s.", host);
-            savanxp_close((int)fd);
+            sxn_close((int)fd);
             return -1;
         }
         snprintf(request, sizeof(request), "GET %s HTTP/1.0\r\nHost: %s\r\n"
@@ -2818,7 +2868,7 @@ static int webview_fetch_http(const char *url)
         if (webview_fetch_write_all((int)fd, request, strlen(request)) != 0)
         {
             snprintf(g_status, sizeof(g_status), "The request failed.");
-            savanxp_close((int)fd);
+            sxn_close((int)fd);
             return -1;
         }
         for (;;)
@@ -2829,7 +2879,7 @@ static int webview_fetch_http(const char *url)
             {
                 break;
             }
-            got = savanxp_read((int)fd, g_raw + total, sizeof(g_raw) - 1 - total);
+            got = webview_read_socket(fd, g_raw + total, sizeof(g_raw) - 1 - total);
             if (got == 0)
             {
                 break;
@@ -2841,7 +2891,7 @@ static int webview_fetch_http(const char *url)
             }
             total += (size_t)got;
         }
-        savanxp_close((int)fd);
+        sxn_close((int)fd);
         g_raw[total] = '\0';
 
         headers_end = strstr(g_raw, "\r\n\r\n");
@@ -3314,7 +3364,7 @@ static void webview_set_scroll(int value)
     if (value != WEBVIEW_SCROLL->value)
     {
         WEBVIEW_SCROLL->value = value;
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
     }
 }
 
@@ -3538,7 +3588,7 @@ static int webview_link_at(int x, int y, char *target, size_t capacity)
     return 0;
 }
 
-static void on_paint(struct sxgui_app *app)
+static void on_paint(struct sxngui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
     struct sx_rect interior;
@@ -3568,7 +3618,7 @@ static void on_paint(struct sxgui_app *app)
         webview_measure(painter, avail);
         if (WEBVIEW_SCROLL->value != before)
         {
-            sxgui_app_request_repaint(&g_app);
+            sxngui_app_request_repaint(&g_app);
         }
     }
     if (!sx_painter_push_clip(painter, interior))
@@ -3660,10 +3710,10 @@ static void on_paint(struct sxgui_app *app)
 
 /* ---- layout ----------------------------------------------------------------- */
 
-static void webview_layout(struct sxgui_app *app)
+static void webview_layout(struct sxngui_app *app)
 {
-    int width = (int)app->gfx.info.width;
-    int height = (int)app->gfx.info.height;
+    int width = (int)app->info.width;
+    int height = (int)app->info.height;
     int bar_y = sxgui_menubar_height() + SXGUI_MARGIN;
     int field_x = SXGUI_MARGIN;
     int go_x = width - SXGUI_MARGIN - WEBVIEW_GO_WIDTH;
@@ -3698,7 +3748,7 @@ static void webview_layout(struct sxgui_app *app)
     WEBVIEW_STATUS->rect = sx_rect_make(SXGUI_MARGIN, status_y, content_width, SXGUI_STATUS_HEIGHT);
 }
 
-static void on_resize(struct sxgui_app *app)
+static void on_resize(struct sxngui_app *app)
 {
     webview_layout(app);
     g_measured_width = -1;
@@ -3710,7 +3760,7 @@ static void on_scroll_changed(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static void on_back(struct sxgui_widget *widget, void *user)
@@ -3789,7 +3839,7 @@ static void on_menu_command(int id, void *user)
         webview_history_go(1);
         break;
     case WEBVIEW_MENU_EXIT:
-        sxgui_app_quit(&g_app, 0);
+        sxngui_app_quit(&g_app, 0);
         break;
     case WEBVIEW_MENU_TOP:
         webview_set_scroll(0);
@@ -3817,7 +3867,7 @@ static void on_menu_command(int id, void *user)
 static int g_prev_left = 0;
 static int g_press_in_text = 0;
 
-static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
+static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event)
 {
     int left;
 
@@ -3864,7 +3914,7 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
     return 0;
 }
 
-static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
+static int on_key(struct sxngui_app *app, const struct savanxp_input_event *event)
 {
     if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
     {
@@ -4051,7 +4101,7 @@ int main(int argc, char **argv)
     g_about_dialog.widget_count = 5;
     g_about_dialog.default_button = 4;
 
-    if (sxgui_app_init(&g_app, "webview", g_widgets, WEBVIEW_WIDGET_COUNT) < 0)
+    if (sxngui_app_init(&g_app, &sun_resources, g_widgets, WEBVIEW_WIDGET_COUNT) < 0)
     {
         return 1;
     }
@@ -4060,7 +4110,7 @@ int main(int argc, char **argv)
     g_app.on_paint = on_paint;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
-    (void)sxgui_app_set_content_size(&g_app, WEBVIEW_CONTENT_WIDTH, WEBVIEW_CONTENT_HEIGHT);
+    (void)sxngui_app_set_content_size(&g_app, WEBVIEW_CONTENT_WIDTH, WEBVIEW_CONTENT_HEIGHT);
     webview_layout(&g_app);
 
     webview_show_welcome();
@@ -4105,5 +4155,5 @@ int main(int argc, char **argv)
     }
     webview_refresh_nav();
     sxgui_focus(&g_app.ui, WEBVIEW_ADDR_INDEX);
-    return sxgui_app_run(&g_app);
+    return sxngui_app_run(&g_app);
 }

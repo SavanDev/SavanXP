@@ -531,8 +531,6 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
 # self-test reaches the drawing path.
 savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME webview DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/webview.c)
 savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)
