@@ -2637,6 +2637,67 @@ static void socket_cancel_worker(void* argument) {
     sxn_thread_exit(0);
 }
 
+/* An unanswered on-link ARP must not turn SUN calls into one-second sleeps.
+ * Cancellation wins over transport readiness and a last close removes work. */
+static void test_native_routes(void) {
+    struct sxn_ipv4_endpoint missing = {0x0a0002feu, 80, 0};
+    long socket = sxn_socket_create(SXN_SOCKET_TCP);
+    long udp = sxn_socket_create(SXN_SOCKET_UDP);
+    long cancel = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    struct sxn_io_interest waits[2] = {{(int32_t)cancel, 0}, {(int32_t)socket, SXN_IO_WRITE | SXN_IO_ERROR}};
+    uint64_t started = sxn_clock_ns();
+    char byte;
+    check(socket >= 0 && udp >= 0 && cancel >= 0);
+    check(sxn_socket_connect(socket, &missing) == -SAVANXP_EAGAIN);
+    check(sxn_clock_ns() - started < 200000000ull);
+    check(sxn_socket_status(socket) == -SAVANXP_EAGAIN);
+    check(sxn_read(socket, &byte, 1) == -SAVANXP_EAGAIN);
+    check(sxn_write(socket, "x", 1) == -SAVANXP_EAGAIN);
+    check(sxn_wait_io(waits, 2, 20) == -SAVANXP_ETIMEDOUT);
+    check(sxn_event_set(cancel) == 0);
+    check(sxn_wait_io(waits, 2, 1000) == 0);
+    check(sxn_socket_status(socket) == -SAVANXP_EAGAIN);
+    check(sxn_close(socket) == 0);
+    started = sxn_clock_ns();
+    check(sxn_socket_sendto(udp, "x", 1, &missing) == -SAVANXP_EAGAIN);
+    check(sxn_clock_ns() - started < 200000000ull);
+    waits[1].handle = (int32_t)udp;
+    check(sxn_event_reset(cancel) == 0);
+    check(sxn_wait_io(waits, 2, 0) == -SAVANXP_ETIMEDOUT);
+    waits[1].interests = SXN_IO_ERROR;
+    check(sxn_wait_io(waits, 2, 7000) == 1);
+    check(sxn_socket_sendto(udp, "x", 1, &missing) == -SAVANXP_ETIMEDOUT);
+    check(sxn_socket_status(udp) == -SAVANXP_ETIMEDOUT);
+    check(sxn_socket_recvfrom(udp, &byte, 1, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_close(udp) == 0 && sxn_close(cancel) == 0);
+    socket = sxn_socket_create(SXN_SOCKET_TCP);
+    check(sxn_socket_connect(socket, &missing) == -SAVANXP_EAGAIN);
+    waits[1].handle = (int32_t)socket;
+    check(sxn_wait_io(waits + 1, 1, 7000) == 0);
+    check(sxn_socket_status(socket) == -SAVANXP_ETIMEDOUT);
+    check(sxn_read(socket, &byte, 1) == -SAVANXP_ETIMEDOUT);
+    check(sxn_write(socket, "x", 1) == -SAVANXP_ETIMEDOUT);
+    check(sxn_close(socket) == 0);
+    check(sxn_log("nativetest: asynchronous setup/ARP, cancellation and route timeout") == 0);
+}
+
+static void test_native_network_offline(void) {
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, 80, 0};
+    long tcp = sxn_socket_create(SXN_SOCKET_TCP);
+    long udp = sxn_socket_create(SXN_SOCKET_UDP);
+    struct sxn_io_interest interest = {(int32_t)tcp, SXN_IO_ERROR};
+    char byte;
+    check(tcp >= 0 && udp >= 0);
+    check(sxn_socket_connect(tcp, &peer) == -SAVANXP_ENODEV);
+    check(sxn_socket_status(tcp) == -SAVANXP_ENODEV);
+    check(sxn_wait_io(&interest, 1, 0) == 0);
+    check(sxn_read(tcp, &byte, 1) == -SAVANXP_ENODEV);
+    check(sxn_write(tcp, "x", 1) == -SAVANXP_ENODEV);
+    check(sxn_socket_sendto(udp, "x", 1, &peer) == -SAVANXP_ENODEV);
+    check(sxn_socket_recvfrom(udp, &byte, 1, 0) == -SAVANXP_ENODEV);
+    check(sxn_close(tcp) == 0 && sxn_close(udp) == 0);
+}
+
 /* Socket checks use SUN traps exclusively, including cancellation waits. */
 static void test_sockets(void) {
     long rx = sxn_socket_create(SXN_SOCKET_UDP);
@@ -2746,6 +2807,17 @@ static void test_native_connect_failures(unsigned port) {
     check(result == -SAVANXP_EAGAIN || result == -SAVANXP_ECONNREFUSED);
     check_connect_failure(refused, -SAVANXP_ECONNREFUSED);
     sxn_log("nativetest: pending connect: refusal retained after readiness");
+    interest.handle = (int32_t)control;
+    interest.interests = SXN_IO_WRITE;
+    check(sxn_wait_io(&interest, 1, 5000) == 0);
+    check(sxn_write(control, "RESET\n", 6) == 6);
+    interest.interests = SXN_IO_READ | SXN_IO_ERROR;
+    check(sxn_wait_io(&interest, 1, 5000) == 0);
+    check(sxn_socket_status(control) == -SAVANXP_ECONNRESET);
+    check(sxn_read(control, &byte, 1) == -SAVANXP_ECONNRESET);
+    check(sxn_write(control, "x", 1) == -SAVANXP_ECONNRESET);
+    sxn_log("nativetest: established reset retained in status and I/O");
+
 
     // Drop every outgoing SYN using the existing fault injector. No remote
     // blackhole or host firewall is needed, and the normal retry budget runs.
@@ -2804,6 +2876,9 @@ static void test_native_tcp(unsigned port) {
     check(sxn_socket_status(socket) == 0);
     check(sxn_socket_status(socket) == 0);
     check(sxn_socket_connect(socket, &peer) == -SAVANXP_EBUSY);
+    check(sxn_read(socket, bytes, sizeof(bytes)) == -SAVANXP_EAGAIN);
+    check(sxn_read(socket, (void*)1, 1) == -SAVANXP_EINVAL);
+    check(sxn_write(socket, (const void*)1, 1) == -SAVANXP_EINVAL);
     interest.interests = SXN_IO_ERROR;
     check(sxn_wait_io(&interest, 1, 0) == -SAVANXP_ETIMEDOUT);
     check(sxn_write(socket, request, sizeof(request) - 1) == sizeof(request) - 1);
@@ -2899,7 +2974,13 @@ int main(int argc, char** argv) {
     long section_handle;
     long base;
 
+    if (argc > 2 && streq(argv[1], "network") && streq(argv[2], "offline")) {
+        test_native_network_offline();
+        sxn_log(g_failures ? "NATIVE NETWORK OFFLINE FAIL" : "NATIVE NETWORK OFFLINE PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
     if (argc > 1 && streq(argv[1], "network")) {
+        test_native_routes();
         test_sockets();
         if (argc > 2) {
             unsigned port = 0;

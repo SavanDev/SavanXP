@@ -1,4 +1,5 @@
 #include "kernel/nic.hpp"
+#include "abi/savanxp_abi.h"
 
 namespace nic {
 
@@ -63,6 +64,7 @@ void attach(const Events& events) {
 }
 
 bool bring_up() { return g_nic != nullptr && g_nic->bring_up(); }
+int prepare() { return g_nic != nullptr ? g_nic->prepare() : -SX_ENODEV; }
 bool is_up() { return g_nic != nullptr && g_nic->is_up(); }
 const uint8_t* mac_address() { return g_nic != nullptr ? g_nic->mac_address() : g_no_mac; }
 

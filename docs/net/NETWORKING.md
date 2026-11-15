@@ -159,6 +159,20 @@ its bytes in kernel memory and the caller places them —
 fail loudly; it silently writes one process's data into another's buffer, and
 the symptom is a stream that arrives with foreign bytes in the middle of it.
 
+## Native setup and route waits
+
+SUN sockets use the same core with asynchronous initialization and per-socket
+route state. RTL8139 reset and RTL8168 reset, PHY reset and link negotiation
+advance across calls; virtio-net queue setup completes in one bounded step.
+Small bounded register transactions remain synchronous. POSIX's explicit
+`NET_IOC_UP` retains the blocking driver entry over the same initialization
+steps. TCP route preparation is shared: the pump never waits for ARP on behalf
+of a POSIX socket while servicing a SUN waiter. SUN never waits for ARP inside a connect, send, status or close call.
+Its six-second setup/ARP deadline, retry and cancellation contract is documented
+in [SUN.md](../userland/SUN.md#ipv4-socket-foundation).
+Route progress is serviced by `net_pump`, including parked native waiters;
+this does not introduce the independent or synchronized servicing of N2.
+
 ## Testing what only a bad network exercises
 
 None of the above is exercised by a network that works. QEMU's slirp does not

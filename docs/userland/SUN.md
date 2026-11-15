@@ -342,14 +342,23 @@ cancel through the event rather than closing a socket in another thread.
 `sxn_wait_many` keeps its existing readable-stream semantics.
 
 Handles support `sxn_duplicate` and `sxn_close`; the last reference releases the
-socket. Data I/O does not wait for TCP data or acknowledgement, but the current
-network core may still wait during NIC initialization or ARP resolution.
-Retransmission progress still depends on network servicing (including parked
-waiters). This is a foundation slice, not the completed asynchronous transport:
-independent bounded servicing, FIN retransmission/TIME_WAIT, DNS, the Web Viewer
-SUN migration and TLS remain outstanding. `./build.sh smoke native-network`
-exercises native UDP loopback, source addresses, handle lifetime, cancellation,
-TCP establishment, partial reads and EOF against the local TCP fixture. It also
+socket. SUN connect/send operations perform bounded NIC setup steps and return
+`-EAGAIN` during reset/link negotiation or ARP resolution; no socket operation
+sleeps waiting for either. A route has a six-second monotonic budget (including
+initialization), with ARP requests at most once per 250 ms. TCP queues its SYN
+until the route is ready; UDP returns `-EAGAIN` without accepting the datagram,
+so the caller retries after write/error readiness. Failed routes retain
+`-ETIMEDOUT`, `-EIO` or `-ENODEV`; a new TCP connect starts a new route attempt.
+Closing the last socket reference cancels its route state. Cancellation events
+can interrupt `sxn_wait_io` throughout initialization and ARP. Device setup is
+shared: canceling a socket does not reset the NIC used by other sockets.
+
+Retransmission and route progress still depend on network servicing (including
+parked waiters). Independent bounded servicing and FIN retransmission/TIME_WAIT
+belong to N2. Shared DNS and TLS remain later browser milestones.
+`./build.sh smoke native-network` exercises native UDP loopback, source
+addresses, handle lifetime, cancellation, pending ARP, route timeout, TCP
+establishment, partial reads and EOF against the local TCP fixture. It also
 holds a host port bound without listening to provoke a deterministic refusal,
 and drops every outgoing SYN through `NET_IOC_SET_TCP_FAULT` to exercise the
 normal retransmission timeout. The injector is reset before the test exits.

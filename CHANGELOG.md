@@ -421,6 +421,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
+  Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,
+  retained setup/ARP errors and bounded timeouts; POSIX keeps the shared network core.
+
 - **Command Prompt finds `linux.sxe` when `/system/linux` is a directory.**
   Command lookup skips directories and devices before trying the `.sxe` suffix.
 

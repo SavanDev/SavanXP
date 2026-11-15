@@ -361,22 +361,6 @@ void phy_write(int reg, uint16_t value) {
     console::printf("rtl8168: PHY write of register %u timed out\n", static_cast<unsigned>(reg));
 }
 
-bool reset_chip() {
-    write8(kRegCommand, kCommandReset);
-    bool done = false;
-    for (int attempt = 0; attempt < 1000; ++attempt) {
-        delay_us(10);
-        if ((read8(kRegCommand) & kCommandReset) == 0) {
-            done = true;
-            break;
-        }
-    }
-    if ((g_flags & kFlagMacReset) != 0) {
-        write8(kRegLinkDownPowerSaving, 1);
-    }
-    return done;
-}
-
 void wake_phy() {
     if ((g_flags & kFlagPhyWakePm) != 0) {
         write8(kRegPowerManagement, static_cast<uint8_t>(read8(kRegPowerManagement) | 0x80u));
@@ -388,22 +372,6 @@ void wake_phy() {
         phy_write(kMiiPage, 0);
         phy_write(kMiiPowerSaving, 0);
     }
-}
-
-// Reset the PHY and restart autonegotiation advertising everything it can do.
-void start_autonegotiation() {
-    phy_write(kMiiControl, kMiiControlReset);
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        delay_us(100);
-        if ((phy_read(kMiiControl) & kMiiControlReset) == 0) {
-            break;
-        }
-    }
-    phy_write(kMiiAdvertise, kMiiAdvertiseAll);
-    if ((g_flags & kFlagFastEthernet) == 0) {
-        phy_write(kMiiGigabitControl, kMiiAdvertiseGigabit);
-    }
-    phy_write(kMiiControl, kMiiControlAutoNeg | kMiiControlRestartAutoNeg);
 }
 
 void log_link(uint8_t status) {
@@ -591,89 +559,117 @@ void get_stats(nic::Stats& stats) {
     stats.rx_errors = g_rx_errors;
 }
 
-bool bring_up() {
+int prepare() {
+    static unsigned phase;
+    static uint64_t deadline;
     if (!g_present) {
-        return false;
+        return -SX_EIO;
     }
-    if (g_up) {
-        return true;
+    if (phase == 4) {
+        return 0;
     }
-    if (!allocate_dma()) {
-        console::write("rtl8168: no memory below 4 GiB for the rings\n");
-        report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-
-    write16(kRegInterruptMask, 0);
-    if (!reset_chip()) {
-        console::write("rtl8168: reset never completed\n");
-        report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-
-    // C+ mode has to be configured before anything else.
-    uint16_t cplus = kCPlusTxEnable | kCPlusPciMultiRw;
-    cplus |= (g_flags & kFlagMacStat) != 0 ? kCPlusMacStatDisable : kCPlusRxEnable;
-    write16(kRegCPlusCommand, cplus);
-
-    init_rings();
-    const uint64_t rx_ring = g_ring_allocation.physical_address;
-    const uint64_t tx_ring = g_ring_allocation.physical_address + memory::kPageSize;
-    write32(kRegRxRingHigh, static_cast<uint32_t>(rx_ring >> 32));
-    write32(kRegRxRingLow, static_cast<uint32_t>(rx_ring));
-    write32(kRegTxRingHigh, static_cast<uint32_t>(tx_ring >> 32));
-    write32(kRegTxRingLow, static_cast<uint32_t>(tx_ring));
-
-    if ((g_flags & kFlagRxdvGated) != 0) {
-        write32(kRegMisc, read32(kRegMisc) & ~kMiscRxdvGate);
-    }
-
-    write32(kRegTxConfig, kTxConfigDefault);
-    write8(kRegEarlyTxThreshold, 16);
-    uint32_t rx_config = kRxConfigDefault;
-    if ((g_flags & kFlagEarlyOff) != 0) {
-        rx_config |= kRxConfigEarlyOff;
-    } else if ((g_flags & kFlagEarlyOffV2) != 0) {
-        rx_config |= kRxConfigEarlyOffV2;
-    }
-    write32(kRegRxConfig, rx_config);
-
-    write8(kRegCommand, kCommandTxEnable | kCommandRxEnable);
-
-    // Our address, broadcast and every multicast group: the stack filters.
-    write32(kRegMulticast0, 0xffffffffu);
-    write32(kRegMulticast4, 0xffffffffu);
-    write32(kRegRxConfig, rx_config | kRxAcceptPhysical | kRxAcceptBroadcast | kRxAcceptMulticast);
-
-    write16(kRegInterruptStatus, 0xffff);
-    write32(kRegMissedPackets, 0);
-    write16(kRegMaxRxPacket, static_cast<uint16_t>(kBufferBytes));
-    write8(kRegEepromCommand, kEepromWriteConfig);
-    write8(kRegConfig1, static_cast<uint8_t>(read8(kRegConfig1) | kConfig1DriverLoaded));
-    write8(kRegEepromCommand, kEepromOff);
-
-    wake_phy();
-    start_autonegotiation();
-
-    g_link_reported = false;
-    g_up = true;
-    if (g_irq_routed) {
-        write16(kRegInterruptMask, kInterruptMask);
-    }
-
-    // Autonegotiation takes about two seconds. Wait for it once so the first
-    // ARP does not go out on a dead link; poll_receive reports a late link.
-    const uint64_t deadline = timer::monotonic_ns() + 4000000000ull;
-    while (timer::monotonic_ns() < deadline) {
-        if ((read8(kRegPhyStatus) & kPhyStatusLink) != 0) {
-            break;
+    if (phase == 0) {
+        if (!allocate_dma()) {
+            console::write("rtl8168: no memory below 4 GiB for the rings\n");
+            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+            return -SX_EIO;
         }
-        delay_us(10000);
+
+        write16(kRegInterruptMask, 0);
+        write8(kRegCommand, kCommandReset);
+        deadline = timer::monotonic_ns() + 100000000ull;
+        phase = 1;
+        return -SX_EAGAIN;
     }
+    if (phase == 1) {
+        if ((read8(kRegCommand) & kCommandReset) != 0) {
+            if (timer::monotonic_ns() < deadline) return -SX_EAGAIN;
+            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+            return -SX_EIO;
+        }
+        if ((g_flags & kFlagMacReset) != 0) write8(kRegLinkDownPowerSaving, 1);
+
+        // C+ mode has to be configured before anything else.
+        uint16_t cplus = kCPlusTxEnable | kCPlusPciMultiRw;
+        cplus |= (g_flags & kFlagMacStat) != 0 ? kCPlusMacStatDisable : kCPlusRxEnable;
+        write16(kRegCPlusCommand, cplus);
+
+        init_rings();
+        const uint64_t rx_ring = g_ring_allocation.physical_address;
+        const uint64_t tx_ring = g_ring_allocation.physical_address + memory::kPageSize;
+        write32(kRegRxRingHigh, static_cast<uint32_t>(rx_ring >> 32));
+        write32(kRegRxRingLow, static_cast<uint32_t>(rx_ring));
+        write32(kRegTxRingHigh, static_cast<uint32_t>(tx_ring >> 32));
+        write32(kRegTxRingLow, static_cast<uint32_t>(tx_ring));
+
+        if ((g_flags & kFlagRxdvGated) != 0) {
+            write32(kRegMisc, read32(kRegMisc) & ~kMiscRxdvGate);
+        }
+
+        write32(kRegTxConfig, kTxConfigDefault);
+        write8(kRegEarlyTxThreshold, 16);
+        uint32_t rx_config = kRxConfigDefault;
+        if ((g_flags & kFlagEarlyOff) != 0) {
+            rx_config |= kRxConfigEarlyOff;
+        } else if ((g_flags & kFlagEarlyOffV2) != 0) {
+            rx_config |= kRxConfigEarlyOffV2;
+        }
+        write32(kRegRxConfig, rx_config);
+
+        write8(kRegCommand, kCommandTxEnable | kCommandRxEnable);
+
+        // Our address, broadcast and every multicast group: the stack filters.
+        write32(kRegMulticast0, 0xffffffffu);
+        write32(kRegMulticast4, 0xffffffffu);
+        write32(kRegRxConfig, rx_config | kRxAcceptPhysical | kRxAcceptBroadcast | kRxAcceptMulticast);
+
+        write16(kRegInterruptStatus, 0xffff);
+        write32(kRegMissedPackets, 0);
+        write16(kRegMaxRxPacket, static_cast<uint16_t>(kBufferBytes));
+        write8(kRegEepromCommand, kEepromWriteConfig);
+        write8(kRegConfig1, static_cast<uint8_t>(read8(kRegConfig1) | kConfig1DriverLoaded));
+        write8(kRegEepromCommand, kEepromOff);
+
+        wake_phy();
+        phy_write(kMiiControl, kMiiControlReset);
+        deadline = timer::monotonic_ns() + 100000000ull;
+        phase = 2;
+        return -SX_EAGAIN;
+    }
+    if (phase == 2) {
+        if ((phy_read(kMiiControl) & kMiiControlReset) != 0) {
+            if (timer::monotonic_ns() < deadline) return -SX_EAGAIN;
+            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+            return -SX_EIO;
+        }
+        phy_write(kMiiAdvertise, kMiiAdvertiseAll);
+        if ((g_flags & kFlagFastEthernet) == 0) phy_write(kMiiGigabitControl, kMiiAdvertiseGigabit);
+        phy_write(kMiiControl, kMiiControlAutoNeg | kMiiControlRestartAutoNeg);
+
+        g_link_reported = false;
+        g_up = true;
+        if (g_irq_routed) {
+            write16(kRegInterruptMask, kInterruptMask);
+        }
+
+        deadline = timer::monotonic_ns() + 4000000000ull;
+        phase = 3;
+        return -SX_EAGAIN;
+    }
+    // Link negotiation continues between calls; callers may cancel their wait.
+    if ((read8(kRegPhyStatus) & kPhyStatusLink) == 0 && timer::monotonic_ns() < deadline)
+        return -SX_EAGAIN;
+    phase = 4;
     const uint8_t link = read8(kRegPhyStatus);
     log_link(link);
     g_link_reported = (link & kPhyStatusLink) != 0;
-    return true;
+    return 0;
+}
+
+bool bring_up() {
+    int result;
+    do { result = prepare(); asm volatile("pause"); } while (result == -SX_EAGAIN);
+    return result == 0;
 }
 
 bool supported_device(uint16_t device_id) {
@@ -824,6 +820,7 @@ const nic::Nic kNic = {
     &transmit,
     &poll_receive,
     &get_stats,
+    &prepare,
 };
 
 const nic::Nic& nic_of() { return kNic; }

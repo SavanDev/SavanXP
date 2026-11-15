@@ -277,9 +277,8 @@ bool bring_up() {
     return true;
 }
 
-// Sondea el bus, negocia features y deja la MAC leida, SIN levantar las colas:
-// la subida real es bring_up(), cuando alguien pide NET_IOC_UP sobre
-// /dev/net0 -- mismo contrato que rtl8139::probe().
+// Probe, negotiate features and read the MAC without starting queues.
+// NET_IOC_UP or a native socket's prepare step initializes them later.
 bool probe() {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_rx_queue, 0, sizeof(g_rx_queue));
@@ -323,6 +322,8 @@ bool probe() {
     return true;
 }
 
+int prepare() { return bring_up() ? 0 : -SX_EIO; }
+
 const nic::Nic kNic = {
     &attach,
     &bring_up,
@@ -331,6 +332,7 @@ const nic::Nic kNic = {
     &transmit,
     &poll_receive,
     &get_stats,
+    &prepare,
 };
 
 const nic::Nic& nic_of() { return kNic; }

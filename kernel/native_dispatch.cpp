@@ -151,7 +151,7 @@ int native_socket_create(Process& proc, uint64_t type) {
     if (type != SXN_SOCKET_TCP && type != SXN_SOCKET_UDP) return -SX_EINVAL;
     net::Socket* socket = nullptr;
     int result = net::create_socket(SAVANXP_AF_INET,
-        type == SXN_SOCKET_TCP ? SAVANXP_SOCK_STREAM : SAVANXP_SOCK_DGRAM, 0, socket);
+        type == SXN_SOCKET_TCP ? SAVANXP_SOCK_STREAM : SAVANXP_SOCK_DGRAM, 0, socket, true);
     if (result < 0) return result;
     object::IoObject* file = detail::allocate_io_object();
     if (!file) { net::close_socket(socket); return -SX_ENOMEM; }
@@ -170,8 +170,7 @@ int native_socket_call(Process& proc, uint64_t call, uint64_t handle, uint64_t a
         (call == SXN_SYS_SOCKET_STATUS ? object::access_query : object::access_write);
     object::IoObject* file = detail::fd_to_io_object(proc, handle, access);
     if (!file || file->kind != HandleKind::socket) return -SX_EBADF;
-    // ARP resolution may sleep inside the network core; a sibling close must
-    // not free the socket during that operation.
+    // Hold the socket across core operations and a concurrent sibling close.
     NativeIoReference held(file);
     int result = -SX_EINVAL;
     static_assert(sizeof(sxn_ipv4_endpoint) == sizeof(savanxp_sockaddr_in));

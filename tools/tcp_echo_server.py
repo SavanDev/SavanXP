@@ -7,6 +7,7 @@ import argparse
 import os
 import signal
 import socket
+import struct
 import time
 from pathlib import Path
 
@@ -45,7 +46,10 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
             continue
         command = parts[0].upper()
         try:
-            if command == "REFUSE" and len(parts) == 1:
+            if command == "RESET" and len(parts) == 1:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                return
+            elif command == "REFUSE" and len(parts) == 1:
                 sock.sendall(f"{refused_port}\n".encode("ascii"))
             elif command == "BULK" and len(parts) == 2:
                 count = int(parts[1])

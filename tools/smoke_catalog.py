@@ -730,9 +730,15 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="hda", no_network=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "native-network-offline": _qemu_scenario(
+        "nativenetwork offline", "NATIVE NETWORK OFFLINE PASS", "NATIVE NETWORK OFFLINE FAIL",
+        "SUN socket initialization errors without a network card",
+        no_network=True,
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "native-network": _qemu_scenario(
         "nativenetwork {port}", "NATIVE NETWORK PASS", "NATIVE NETWORK FAIL",
-        "SUN IPv4 sockets and cancellable readiness",
+        "SUN IPv4 setup/ARP cancellation, route errors, TCP refusal/reset/timeout and I/O",
         host_server="tcp",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),

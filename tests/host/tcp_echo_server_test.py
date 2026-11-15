@@ -76,6 +76,13 @@ def main() -> int:
                         delayed += client.recv(300 - len(delayed))
                     if delayed != pattern(300):
                         raise AssertionError("DELAY pattern mismatch")
+                    client.sendall(b"RESET\n")
+                    try:
+                        client.recv(1)
+                    except ConnectionResetError:
+                        pass
+                    else:
+                        raise AssertionError("RESET did not reset the established connection")
             finally:
                 process.terminate()
                 process.wait(timeout=5.0)

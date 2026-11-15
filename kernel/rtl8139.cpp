@@ -11,6 +11,7 @@
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
+#include "kernel/timer.hpp"
 #include "kernel/uacpi_glue.hpp"
 
 namespace {
@@ -100,15 +101,6 @@ void report(uint32_t net_status) {
     if (g_events.status != nullptr) {
         g_events.status(net_status);
     }
-}
-
-bool wait_for_clear_reset() {
-    for (uint32_t spin = 0; spin < 100000; ++spin) {
-        if ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandReset) == 0) {
-            return true;
-        }
-    }
-    return false;
 }
 
 void clear_interrupt_status() {
@@ -246,46 +238,54 @@ void get_stats(nic::Stats& stats) {
     stats.rx_errors = g_rx_errors;
 }
 
-bool bring_up() {
+int prepare() {
+    static unsigned phase;
+    static uint64_t deadline;
     if (!g_present) {
-        return false;
+        return -SX_EIO;
     }
     if (g_up) {
-        return true;
+        return 0;
     }
 
-    if (g_io_base == 0) {
-        g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-    }
-    if (g_io_base == 0) {
-        report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-
-    uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
-    command = static_cast<uint16_t>(command | kPciCommandIo | kPciCommandBusMaster);
-    pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset, command);
-
-    if (g_rx_allocation.physical_address == 0 &&
-        !memory::allocate_contiguous_pages((kRxBufferBytes + memory::kPageSize - 1) / memory::kPageSize, g_rx_allocation)) {
-        report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-    memset(g_rx_allocation.virtual_address, 0, g_rx_allocation.page_count * memory::kPageSize);
-
-    for (size_t index = 0; index < 4; ++index) {
-        if (g_tx_allocation[index].physical_address == 0 && !memory::allocate_page(g_tx_allocation[index])) {
-            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-            return false;
+    if (phase == 0) {
+        if (g_io_base == 0) {
+            g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
         }
-        memset(g_tx_allocation[index].virtual_address, 0, memory::kPageSize);
-    }
+        if (g_io_base == 0) {
+            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+            return -SX_EIO;
+        }
 
-    out8(static_cast<uint16_t>(g_io_base + kRegConfig1), 0x00);
-    out8(static_cast<uint16_t>(g_io_base + kRegCommand), kCommandReset);
-    if (!wait_for_clear_reset()) {
+        uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
+        command = static_cast<uint16_t>(command | kPciCommandIo | kPciCommandBusMaster);
+        pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset, command);
+
+        if (g_rx_allocation.physical_address == 0 &&
+            !memory::allocate_contiguous_pages((kRxBufferBytes + memory::kPageSize - 1) / memory::kPageSize, g_rx_allocation)) {
+            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+            return -SX_EIO;
+        }
+        memset(g_rx_allocation.virtual_address, 0, g_rx_allocation.page_count * memory::kPageSize);
+
+        for (size_t index = 0; index < 4; ++index) {
+            if (g_tx_allocation[index].physical_address == 0 && !memory::allocate_page(g_tx_allocation[index])) {
+                report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+                return -SX_EIO;
+            }
+            memset(g_tx_allocation[index].virtual_address, 0, memory::kPageSize);
+        }
+
+        out8(static_cast<uint16_t>(g_io_base + kRegConfig1), 0x00);
+        out8(static_cast<uint16_t>(g_io_base + kRegCommand), kCommandReset);
+        deadline = timer::monotonic_ns() + 100000000ull;
+        phase = 1;
+        return -SX_EAGAIN;
+    }
+    if ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandReset) != 0) {
+        if (timer::monotonic_ns() < deadline) return -SX_EAGAIN;
         report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
+        return -SX_EIO;
     }
 
     for (uint8_t index = 0; index < 6; ++index) {
@@ -306,9 +306,8 @@ bool bring_up() {
     g_cur_rx = 0;
     g_up = true;
 
-    // Si la INTx quedo ruteada (en probe), habilitar las interrupciones del
-    // rtl8139 (ROK|TOK|RER|TER) => interrupt-driven. Si no, IMR=0 y seguimos en
-    // polling (fallback). El IMR ya se puso en 0 arriba (linea kRegImr).
+    // Enable ROK/TOK/RER/TER when probe routed INTx; otherwise retain polling.
+    // The interrupt mask was cleared above before resetting the device.
     if (g_irq_routed) {
         out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x000F);
     }
@@ -324,11 +323,17 @@ bool bring_up() {
         (unsigned)g_mac[4],
         (unsigned)g_mac[5]
     );
-    return true;
+    return 0;
 }
 
-// Sondea el bus y deja el device reconocido, sin levantarlo: la subida real es
-// bring_up(), cuando alguien pide NET_IOC_UP sobre /dev/net0.
+bool bring_up() {
+    int result;
+    do { result = prepare(); asm volatile("pause"); } while (result == -SX_EAGAIN);
+    return result == 0;
+}
+
+// Recognize hardware without starting it. NET_IOC_UP runs bring_up; native
+// socket calls advance reset and setup through prepare.
 bool probe() {
     g_present = pci::find_device(kVendorRealtek, kDeviceRtl8139, g_pci_device);
     if (!g_present) {
@@ -336,9 +341,8 @@ bool probe() {
     }
 
     g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-    // Rutear la INTx del NIC via _PRT/IOAPIC (una vez, al detectarlo). El
-    // handler queda registrado; el device recien asertara INTx cuando bring_up
-    // habilite el IMR. Si falla, g_irq_routed=false y se usa polling.
+    // Route INTx through _PRT/IOAPIC once at probe. The device asserts it
+    // only after prepare enables IMR; failed routing retains polling.
     const uint8_t vec = uacpi_glue::route_pci_intx(
         g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler);
     g_irq_routed = (vec != 0);
@@ -353,6 +357,7 @@ const nic::Nic kNic = {
     &transmit,
     &poll_receive,
     &get_stats,
+    &prepare,
 };
 
 const nic::Nic& nic_of() { return kNic; }

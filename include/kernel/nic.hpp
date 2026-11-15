@@ -26,12 +26,12 @@ struct Stats {
 // Vtable del NIC: es TODO lo que el stack sabe del hardware. Del otro lado no
 // se filtran registros, puertos de I/O ni el layout del ring de ningun chip.
 struct Nic {
-    // Instala los callbacks hacia el stack. Se llama una vez, antes de bring_up.
+    // Install stack callbacks once, before either initialization entry.
     void (*attach)(const Events& events);
-    // Deja el device operativo (reset, buffers, RX/TX enable). Idempotente.
+    // Blocking, idempotent setup over the same steps as prepare.
     bool (*bring_up)();
     bool (*is_up)();
-    // MAC propia. Valida recien despues de un bring_up() exitoso.
+    // Local MAC, valid after either setup entry reports readiness.
     const uint8_t* (*mac_address)();
     // Envia un frame Ethernet ya armado por el stack.
     bool (*transmit)(const void* frame, size_t length);
@@ -40,6 +40,8 @@ struct Nic {
     // stack, asi que tiene que ser reentrante respecto de su propia IRQ.
     void (*poll_receive)();
     void (*get_stats)(Stats& stats);
+    // One initialization step: 0 ready, -EAGAIN pending, other negative failure.
+    int (*prepare)();
 };
 
 // Driver candidato, mismo patron que display::Driver / audio::Driver.
@@ -47,8 +49,8 @@ struct Driver {
     const char* name;
     // Mayor gana. El orden de registro no importa.
     int priority;
-    // Sondea el bus y deja el device reconocido, SIN levantarlo: la subida real
-    // ocurre en bring_up(), cuando alguien abre /dev/net0 y pide NET_IOC_UP.
+    // Probe and recognize hardware without starting it. NET_IOC_UP uses the
+    // blocking bring_up entry; native sockets advance it through prepare.
     bool (*probe)();
     // Solo valido despues de un probe() que devolvio true.
     const Nic& (*nic)();
@@ -66,6 +68,7 @@ const Driver* bound_driver();
 bool present();
 void attach(const Events& events);
 bool bring_up();
+int prepare();
 bool is_up();
 const uint8_t* mac_address();
 bool transmit(const void* frame, size_t length);
