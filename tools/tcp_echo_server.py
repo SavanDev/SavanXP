@@ -9,8 +9,12 @@ import signal
 import socket
 import struct
 import time
+import threading
 from pathlib import Path
 
+
+SAVED: dict[str, bytes] = {}
+SAVED_LOCK = threading.Lock()
 
 PATTERN_BASE = 7
 PATTERN_STEP = 31
@@ -49,6 +53,13 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
             if command == "RESET" and len(parts) == 1:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
                 return
+            elif command == "HOLD" and len(parts) == 2:
+                delay_ms = int(parts[1])
+                if not 0 <= delay_ms <= 120000:
+                    return
+                sock.sendall(b"READY\n")
+                time.sleep(delay_ms / 1000.0)
+                return
             elif command == "REFUSE" and len(parts) == 1:
                 sock.sendall(f"{refused_port}\n".encode("ascii"))
             elif command == "BULK" and len(parts) == 2:
@@ -58,8 +69,13 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
                     chunk = pattern_bytes(sent, min(4096, count - sent))
                     sock.sendall(chunk)
                     sent += len(chunk)
-            elif command == "ECHO" and len(parts) == 2:
-                count = int(parts[1])
+            elif command == "SAVED" and len(parts) == 2:
+                with SAVED_LOCK:
+                    saved = SAVED.pop(parts[1], b"MISSING")
+                sock.sendall(saved)
+            elif (command == "ECHO" and len(parts) == 2) or (command == "SAVE" and len(parts) == 3):
+                count = int(parts[-1])
+                saved_bytes = bytearray()
                 received = 0
                 while received < count:
                     take = min(4096, count - received)
@@ -70,8 +86,18 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
                         chunk = sock.recv(take)
                     if not chunk:
                         return
-                    sock.sendall(chunk)
+                    if command == "SAVE":
+                        if len(saved_bytes) + len(chunk) > 1024:
+                            return
+                        saved_bytes.extend(chunk)
+                    else:
+                        sock.sendall(chunk)
                     received += len(chunk)
+                if command == "SAVE":
+                    with SAVED_LOCK:
+                        if len(SAVED) >= 32:
+                            return
+                        SAVED[parts[1]] = bytes(saved_bytes)
             elif command == "DELAY" and len(parts) == 3:
                 delay_ms = int(parts[1])
                 count = int(parts[2])
@@ -114,7 +140,8 @@ def main() -> int:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", args.port))
-    server.listen(1)
+    server.listen(32)
+    slots = threading.BoundedSemaphore(32)
     server.settimeout(1.0)
     port = server.getsockname()[1]
     if args.port_file:
@@ -133,12 +160,20 @@ def main() -> int:
                 client, _address = server.accept()
             except socket.timeout:
                 continue
-            with client:
-                client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if not slots.acquire(blocking=False):
+                client.close()
+                continue
+            def serve(connection: socket.socket) -> None:
                 try:
-                    handle_client(client)
-                except (OSError, ConnectionError):
-                    pass
+                    with connection:
+                        connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        try:
+                            handle_client(connection)
+                        except (OSError, ConnectionError):
+                            pass
+                finally:
+                    slots.release()
+            threading.Thread(target=serve, args=(client,), daemon=True).start()
             started = time.monotonic()
     finally:
         server.close()

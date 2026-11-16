@@ -37,13 +37,10 @@ constexpr size_t kRxBufferBytes = kNetHeaderBytes + kMaxFrameBytes;
 constexpr uint16_t kRxSlots = 32;
 constexpr uint16_t kRxQueueLimit = 64;
 
-// TX queda sincronico (un solo frame en vuelo, transmit() espera su
-// confirmacion antes de volver) igual que rtl8139 -- que tambien bloquea
-// hasta ver TX_OK/TX_ERR --, asi que alcanza con un solo buffer/descriptor;
-// no hace falta un pool de slots como en la cola RX.
+// One DMA descriptor stays owned until completion. The dispatcher queues
+// subsequent frames instead of waiting here or overwriting that buffer.
 constexpr uint16_t kTxQueueLimit = 4;
 constexpr size_t kTxBufferBytes = kNetHeaderBytes + kMaxFrameBytes;
-constexpr uint32_t kCommandTimeoutSpins = 10000000u;
 
 struct [[gnu::packed]] VirtioNetConfig {
     uint8_t mac[6];
@@ -101,27 +98,7 @@ void prime_rx_slots() {
     virtio_pci::notify_queue(g_device, g_rx_queue);
 }
 
-bool wait_for_used_element(virtio_pci::Queue& queue, virtio_pci::UsedElement& element) {
-    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(queue);
-    const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(queue);
-
-    for (uint32_t spin = 0; spin < kCommandTimeoutSpins; ++spin) {
-        virtio_pci::memory_barrier();
-        if (queue.last_used_index == used->idx) {
-            continue;
-        }
-
-        element = ring[queue.last_used_index % queue.size];
-        queue.last_used_index = static_cast<uint16_t>(queue.last_used_index + 1);
-        return true;
-    }
-    return false;
-}
-
-// La llaman tanto el handler de IRQ (si algun dia se suma interrupt-driven,
-// mismo patron que virtio_gpu/virtio_input) como los loops de espera de
-// net:: -- por ahora este driver es polling-only, como rtl8139 cuando no
-// logra rutear su INTx, asi que es el unico camino de recepcion.
+// Receive a bounded batch even when the device continuously refills the ring.
 void poll_receive() {
     if (!g_up || !g_rx_queue.enabled) {
         return;
@@ -131,7 +108,7 @@ void poll_receive() {
     const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(g_rx_queue);
     bool notified = false;
 
-    while (g_rx_queue.last_used_index != used->idx) {
+    for (size_t budget = 0; budget < 16 && g_rx_queue.last_used_index != used->idx; ++budget) {
         virtio_pci::memory_barrier();
         const virtio_pci::UsedElement element = ring[g_rx_queue.last_used_index % g_rx_queue.size];
         g_rx_queue.last_used_index = static_cast<uint16_t>(g_rx_queue.last_used_index + 1);
@@ -173,10 +150,8 @@ void poll_receive() {
     }
 }
 
-// Sincronico, como rtl8139::transmit: arma el unico buffer de TX, notifica y
-// espera (polling acotado) la confirmacion del device antes de volver. QEMU
-// despacha virtio-net practicamente al instante, asi que esto no bloquea de
-// verdad en la practica.
+// Keep the DMA buffer intact until the device returns its descriptor.
+bool g_tx_busy = false;
 bool transmit(const void* frame, size_t length) {
     if (!g_up || frame == nullptr || length == 0 || length > kMaxFrameBytes) {
         ++g_tx_errors;
@@ -184,6 +159,13 @@ bool transmit(const void* frame, size_t length) {
         return false;
     }
 
+    if (g_tx_busy) {
+        virtio_pci::memory_barrier();
+        const volatile auto* used = virtio_pci::queue_used_header(g_tx_queue);
+        if (g_tx_queue.last_used_index == used->idx) return false;
+        g_tx_queue.last_used_index = static_cast<uint16_t>(g_tx_queue.last_used_index + 1);
+        g_tx_busy = false;
+    }
     uint8_t* buffer = virtio_pci::queue_extra(g_tx_queue, 0);
     memset(buffer, 0, kNetHeaderBytes);
     memcpy(buffer + kNetHeaderBytes, frame, length);
@@ -204,13 +186,7 @@ bool transmit(const void* frame, size_t length) {
     virtio_pci::memory_barrier();
     virtio_pci::notify_queue(g_device, g_tx_queue);
 
-    virtio_pci::UsedElement element = {};
-    if (!wait_for_used_element(g_tx_queue, element)) {
-        ++g_tx_errors;
-        report(SAVANXP_NET_STATUS_TX_TIMEOUT);
-        return false;
-    }
-
+    g_tx_busy = true;
     ++g_tx_frames;
     return true;
 }

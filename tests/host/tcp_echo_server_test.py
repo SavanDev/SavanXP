@@ -83,6 +83,22 @@ def main() -> int:
                         pass
                     else:
                         raise AssertionError("RESET did not reset the established connection")
+                # One idle client must not prevent another connection's work.
+                with socket.create_connection(("127.0.0.1", port), timeout=5.0) as idle:
+                    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as writer:
+                        writer.sendall(b"SAVE host 64\n" + pattern(64))
+                        writer.shutdown(socket.SHUT_WR)
+                        if writer.recv(1) != b"":
+                            raise AssertionError("SAVE did not finish at orderly EOF")
+                    idle.sendall(b"SAVED host\n")
+                    received = bytearray()
+                    while len(received) < 64:
+                        chunk = idle.recv(64 - len(received))
+                        if not chunk:
+                            raise AssertionError("SAVED truncated")
+                        received.extend(chunk)
+                    if received != pattern(64):
+                        raise AssertionError("SAVE lost data before EOF")
             finally:
                 process.terminate()
                 process.wait(timeout=5.0)

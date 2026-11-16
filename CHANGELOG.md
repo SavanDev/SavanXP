@@ -429,6 +429,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **TCP progresses independently of socket consumers and closes reliably after packet loss.**
+  SUN/POSIX retain errors (`POLLERR` for `poll`), drain accepted data before FIN and keep TIME_WAIT for 60 seconds.
+  `NET_IOC_GET_TCP_LIFETIMES` reports retained close state; see [NETWORKING.md](docs/net/NETWORKING.md).
+
 - **Dragging the border of a small application window no longer makes it jump to the ordinary minimum size.**
   Windows opened with a smaller size hint, including Xeyes, now grow smoothly from their starting size.
 

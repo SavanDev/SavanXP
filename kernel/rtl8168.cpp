@@ -447,12 +447,14 @@ bool transmit(const void* frame, size_t length) {
     const uint32_t index = g_tx_next;
     Descriptor& descriptor = g_tx_ring[index];
     if ((descriptor.command_status & kDescOwn) != 0) {
-        // The previous frame on this slot never completed.
-        ++g_tx_errors;
-        report(SAVANXP_NET_STATUS_TX_TIMEOUT);
+        // DMA still owns the slot. The dispatcher retains the new frame.
         return false;
     }
 
+    if (descriptor.command_status & kTxStatusErrorSummary) {
+        ++g_tx_errors;
+        report(SAVANXP_NET_STATUS_TX_FAILED);
+    }
     // Pad short frames by hand: not every revision pads on its own.
     auto* buffer = static_cast<uint8_t*>(g_tx_buffers.virtual_address) + static_cast<size_t>(index) * kBufferBytes;
     const size_t wire_length = length < kMinFrameBytes ? kMinFrameBytes : length;
@@ -472,23 +474,8 @@ bool transmit(const void* frame, size_t length) {
     write8(kRegTxPoll, kTxPollStart);
     g_tx_next = (index + 1) % kRingSize;
 
-    const uint64_t deadline = timer::monotonic_ns() + 50000000u;  // 50 ms
-    while (timer::monotonic_ns() < deadline) {
-        const uint32_t status = descriptor.command_status;
-        if ((status & kDescOwn) == 0) {
-            if ((status & kTxStatusErrorSummary) != 0) {
-                ++g_tx_errors;
-                report(SAVANXP_NET_STATUS_TX_FAILED);
-                return false;
-            }
-            ++g_tx_frames;
-            return true;
-        }
-        asm volatile("pause");
-    }
-    ++g_tx_errors;
-    report(SAVANXP_NET_STATUS_TX_TIMEOUT);
-    return false;
+    ++g_tx_frames;
+    return true;
 }
 
 void poll_receive() {
@@ -508,7 +495,7 @@ void poll_receive() {
         log_link(read8(kRegPhyStatus));
     }
 
-    for (uint32_t budget = 0; budget < kRingSize; ++budget) {
+    for (uint32_t budget = 0; budget < 16; ++budget) {
         const uint32_t index = g_rx_next;
         const uint32_t status = g_rx_ring[index].command_status;
         if ((status & kDescOwn) != 0) {

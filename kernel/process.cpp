@@ -949,23 +949,11 @@ void wake_parked_waiters(uint64_t current_tick) {
         return;
     }
 
-    net::poll();
     recheck_parked_threads(current_tick, true);
 }
 
-/*
- * Re-intenta los read() estacionados sobre sockets. Es el gemelo de
- * wake_parked_waiters() y tiene el mismo motivo para llamar a net::poll(): el
- * pump de red no tiene latido propio, y el que espera datos no puede ser el que
- * los va a buscar si esta dormido.
- *
- * Que este despertador exista es ademas lo que hace honesto el plazo por
- * defecto de SO_RCVTIMEO. POSIX dice que 0 es esperar indefinidamente; con el
- * bucle viejo, un programa parado para siempre en un read se veia al 100% de
- * CPU para siempre.
- */
-// Igual que el tope por segmento de net::, y por el mismo motivo: es lo que
-// entra en un scratch del stack del kernel.
+// Retry parked socket reads after the independent network heartbeat. Bytes
+// stay in kernel scratch until copied into the blocked reader's address space.
 constexpr size_t kSocketReadChunk = 1024;
 
 void wake_blocked_socket_readers(uint64_t current_tick) {
@@ -984,8 +972,6 @@ void wake_blocked_socket_readers(uint64_t current_tick) {
     if (!any_waiting) {
         return;
     }
-
-    net::poll();
 
     for (process::Thread& thread : used_thread_slots()) {
         if (thread.state != process::State::blocked_read || thread.blocked_io_fd >= process::kMaxFileHandles) {
@@ -1570,6 +1556,10 @@ short poll_open_file(const object::IoObject* file, short events) {
     }
     if (open_file_has_hangup(*file)) {
         revents = static_cast<short>(revents | SAVANXP_POLLHUP);
+    }
+    // Errors are reported even with no requested interests, as poll requires.
+    if (file->kind == process::HandleKind::socket && net::socket_has_error(file->socket)) {
+        revents = static_cast<short>(revents | SAVANXP_POLLERR);
     }
     return revents;
 }
@@ -3280,6 +3270,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     if (this_cpu().index == 0) {
         const uint64_t current_tick = process::detail::now_ms();
         object::poll_timers(current_tick, process::detail::wake_waiters_for_object);
+        net::poll();
         wake_sleepers(current_tick);
         wake_wait_timeouts(current_tick);
         wake_parked_waiters(current_tick);

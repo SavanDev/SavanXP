@@ -17,10 +17,10 @@ app  ──►  socket syscalls  ──►  net::  ──►  nic::  ──►  
                                  └─ TCP  (client only — see below)
 ```
 
-Everything is polled. The stack has no heartbeat of its own: frames are pulled
-from the NIC by whoever is inside the stack at that moment. This has a direct
-consequence for TCP, spelled out under
-[the retransmission clock](#the-retransmission-clock-is-the-poll-path).
+The BSP's timer services the stack independently of socket consumers. NIC
+interrupts may also receive frames, and blocking calls can request a pass.
+Every entry uses the kernel's existing global lock; the network core is shared
+by SUN and POSIX rather than duplicated behind their syscall surfaces.
 
 ## What TCP guarantees
 
@@ -31,7 +31,7 @@ It gets there over a network that loses and reorders segments. Concretely:
 - **A lost segment is resent.** Every segment that consumes sequence space —
   data, `SYN`, `FIN` — is kept until the peer acknowledges it. On timeout it
   goes out again with exponential backoff: 300 ms initial RTO, doubling to a
-  4 s ceiling, 6 attempts, ~12 s total before the connection is declared dead.
+  4 s ceiling, 6 retransmissions, ~17 s total before the connection is declared dead.
 - **Segments that arrive out of order are reassembled.** Data that lands past
   the expected sequence number is stored at its correct position and held until
   the gap is filled, at which point everything contiguous becomes readable at
@@ -90,28 +90,68 @@ because the ring position is derived from the sequence number: a byte can only
 ever be written at the one place its sequence maps to, so a retransmission
 overwrites identical bytes.
 
-### The retransmission clock is the poll path
+### Independent, bounded and synchronized progress
 
-`net_pump()` — poll the NIC, then service every socket's retransmission timer —
-is called from the blocking `connect`/`read`/`write` loops and from `net::poll()`.
+The BSP timer calls `net::poll()` before waking readers and readiness waiters,
+regardless of whether any thread is waiting on a socket. A nonblocking caller
+can sleep or compute after accepting a write; SYN, data, routes and close
+continue to progress. Deadlines use the monotonic clock. POSIX blocking calls
+can still ask for a pass to reduce latency.
 
-`net::poll()` used to be called by `poll_fds()`, which spun in the caller's
-context. Now that `poll()` parks its callers instead
-([`SYSTEM_MONITORING.md`](../userland/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found)),
-`wake_poll_waiters()` calls it from the timer tick — but **only while at least
-one process is waiting in `poll`**, which is the same cadence as before: with
-nobody polling, nobody called it either. `wake_blocked_socket_readers()` does
-the same for processes parked in a blocking socket `read()`, for the same
-reason: whoever is waiting for the data cannot be the one who goes and gets it
-while asleep. Neither is a heartbeat — together they cover every case where
-somebody is actually waiting on the network.
+Each pass receives at most 16 frames, drains at most 16 TX frames before and
+after RX, releases at most one fault-injection stash and scans 32 socket slots.
+No receive/transmit callback waits for hardware completion. The NIC dispatcher
+copies accepted frames into a 64-entry queue (1600 bytes each); a busy driver
+keeps the head queued, with a 100 ms deadline rather than a wait under the
+kernel lock. A full queue rejects a new transmission. Lost frames or hardware
+completion failures are recovered by TCP's retained segment and retry budget;
+UDP acceptance does not promise delivery. TX frame counters count submissions.
+RTL8139 uses its four DMA slots, RTL8168 its descriptor ring and virtio-net one
+outstanding DMA buffer, always retaining ownership until hardware returns it.
 
-The consequence to keep in mind is unchanged: **a socket with unacknowledged
-data does not retransmit while no thread is inside the stack.** Blocking calls
-are inside it by construction, and non-blocking callers get there through
-`poll()`. A program that writes non-blocking and then never polls will stall
-until it comes back. If that ever becomes a real pattern, the fix is an
-unconditional periodic callback in the kernel, not more pump call sites.
+Syscalls, the timer and external IRQs already hold the big kernel lock (see
+[SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md)). Network callbacks never sleep
+or drop it. This serializes socket slots, ARP, fault injection, RX and TX across
+cores and prevents IRQ reentry. Blocking wrappers release that lock only while
+waiting for an interrupt, retain their I/O objects across the wait and recheck
+transport state afterwards. A per-pump recursion guard only prevents duplicate
+work; it is not the lock. Splitting the global lock in the future must preserve
+these ownership rules. Boot initialization runs before competing entries exist.
+Queued TCP frames carry a socket owner token: failure or cancellation removes
+frames not yet submitted to hardware before the slot can be reused. An already
+submitted frame cannot be recalled.
+
+### Closing keeps protocol state alive
+
+The last handle/reference release cancels an unestablished connection or UDP
+route immediately. For an established stream, it detaches the TCP state from
+the application. Accepted data retains the single retransmission slot until
+acknowledged; only then does FIN use that same slot and retry budget. Incoming
+contiguous bytes are discarded after detachment to keep the window open for
+the peer's FIN. Closing never waits in the caller.
+
+Active close advances through `FIN_WAIT_1`, `FIN_WAIT_2`, and (for crossed FINs)
+`CLOSING` into `TIME_WAIT`. Passive close uses `LAST_ACK` and releases state
+after its FIN is acknowledged. `TIME_WAIT` retains the local port and tuple
+for 60 seconds (twice the chosen 30-second MSL); duplicate FINs are acknowledged
+and restart the interval. Old data and resets cannot tear it down. Unfinished
+orphan closes, including `FIN_WAIT_2`, expire after 60 seconds; retransmission
+exhaustion can end them earlier. The heartbeat reclaims every expired slot.
+
+Attached and detached sockets share the existing 32-slot budget. Rapid closes
+can therefore temporarily exhaust it (`ENOMEM`), and an explicitly bound port
+stays busy until its protocol state expires. This is bounded retention, not a
+handle leak. The read-only `NET_IOC_GET_TCP_LIFETIMES` diagnostic reports
+attached streams, closing streams, `TIME_WAIT` streams, FIN retransmissions and
+orphan close timeouts, without servicing the stack. Existing TCP statistics
+and fault-injection structures keep their ABI sizes.
+
+Asynchronous route or transmit failures are retained on both initial sends and
+retransmissions. An ACK outside sent sequence space cannot clear a pending
+segment. Blocking writes check failure even if the pump has already disarmed
+the transmit slot, and buffered receive bytes precede a retained error. Failed
+sockets are immediately readable/writable because I/O returns the retained
+error; POSIX `poll` also reports `POLLERR` with no requested interests.
 
 ## The socket contract
 
@@ -170,8 +210,8 @@ steps. TCP route preparation is shared: the pump never waits for ARP on behalf
 of a POSIX socket while servicing a SUN waiter. SUN never waits for ARP inside a connect, send, status or close call.
 Its six-second setup/ARP deadline, retry and cancellation contract is documented
 in [SUN.md](../userland/SUN.md#ipv4-socket-foundation).
-Route progress is serviced by `net_pump`, including parked native waiters;
-this does not introduce the independent or synchronized servicing of N2.
+Route progress is serviced by the independent `net_pump` heartbeat as well as
+explicit consumer calls.
 
 ## Testing what only a bad network exercises
 
@@ -216,7 +256,19 @@ the host's loopback, the guest reaches it at `10.0.2.2` (how QEMU's user-mode
 networking presents the host — no real network, no firewall rule), and
 `tcptest` connects through 50% loss on the handshake, verifies 32 KiB streamed
 in and 8 KiB echoed out byte for byte, and requires the counters to prove the
-failures happened. It is deterministic: the same counts on every run.
+failures happened. The exact counters depend on packet timing.
+
+The expanded test accepts two writes while dropping their transmissions, then
+sleeps without socket polling and checks that both retried. It closes with
+unacknowledged data and asks a second connection to retrieve the exact bytes
+saved by the peer, then drops FIN and proves its retransmission through the
+lifetime diagnostic. It checks that active close enters `TIME_WAIT`, prevents
+rebinding and releases all closing state and the bound port after the real
+60-second interval. A peer that keeps its write half open and a FIN whose
+entire retry budget is lost also exercise orphan expiry without leaks.
+`native-network` additionally runs concurrent SUN threads
+with distinct byte patterns under loss, cancels a pending connect and closes a
+live stream during a retained readiness wait.
 
 `./build.sh smoke net-smoke` is the other half and covers the layer below — the NIC
 driver, ARP and ICMP against the slirp gateway.
@@ -256,8 +308,6 @@ Not defects — scope. In rough order of when each would start to hurt:
   `ENOSYS`. `getsockopt` reads back a userland copy, not the kernel's.
 - **No congestion control.** With one segment in flight there is nothing to
   control; a real send window needs slow start and congestion avoidance with it.
-- **No `FIN` retransmission and no `TIME_WAIT`.** `close()` sends `FIN` once and
-  releases the socket. If it is lost, the peer waits out its own timeout.
 - **No MSS option, no path MTU discovery.** We send at most 1 KiB per segment
   and accept whatever the peer sends.
 - **No SACK, no timestamps, no window scaling.** Recovery is one hole at a time,

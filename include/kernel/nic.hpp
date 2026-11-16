@@ -33,11 +33,11 @@ struct Nic {
     bool (*is_up)();
     // Local MAC, valid after either setup entry reports readiness.
     const uint8_t* (*mac_address)();
-    // Envia un frame Ethernet ya armado por el stack.
+    // Try to submit a frame without waiting for DMA. False leaves ownership
+    // with the dispatcher, which retries its bounded queue on the next pass.
     bool (*transmit)(const void* frame, size_t length);
-    // Drena el ring de recepcion, invocando Events::frame por cada frame. La
-    // llaman tanto el handler de IRQ del driver como los loops de espera del
-    // stack, asi que tiene que ser reentrante respecto de su propia IRQ.
+    // Deliver at most one fixed RX budget. Kernel entries serialize callbacks
+    // with socket operations through the big kernel lock.
     void (*poll_receive)();
     void (*get_stats)(Stats& stats);
     // One initialization step: 0 ready, -EAGAIN pending, other negative failure.
@@ -71,7 +71,10 @@ bool bring_up();
 int prepare();
 bool is_up();
 const uint8_t* mac_address();
-bool transmit(const void* frame, size_t length);
+// Acceptance copies the frame into a bounded queue. An optional owner token
+// allows the protocol to cancel queued frames before releasing its state.
+bool transmit(const void* frame, size_t length, const void* owner = nullptr);
+void cancel_transmit(const void* owner);
 void poll_receive();
 void get_stats(Stats& stats);
 

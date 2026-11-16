@@ -671,7 +671,7 @@ SCENARIOS: dict[str, Scenario] = {
         "tcptest {port}",
         "TCP SMOKE PASS",
         "TCP SMOKE FAIL",
-        "TCP loss and reordering smoke test",
+        "TCP loss, independent progress, concurrent close, FIN retries and TIME_WAIT",
         300.0,
         host_server="tcp",
     ),
@@ -738,7 +738,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "native-network": _qemu_scenario(
         "nativenetwork {port}", "NATIVE NETWORK PASS", "NATIVE NETWORK FAIL",
-        "SUN IPv4 setup/ARP cancellation, route errors, TCP refusal/reset/timeout and I/O",
+        "SUN IPv4 routes/errors, independent retries, concurrent streams and close cancellation",
         host_server="tcp",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),

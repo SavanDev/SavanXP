@@ -23,6 +23,11 @@ enum class TcpState : uint8_t {
     syn_sent = 1,
     established = 2,
     close_wait = 3,
+    fin_wait_1,
+    fin_wait_2,
+    closing,
+    last_ack,
+    time_wait,
 };
 
 struct UdpPacket {
@@ -49,6 +54,9 @@ struct TcpRange {
 struct Socket {
     bool in_use;
     bool bound;
+    bool detached;
+    uint64_t close_deadline_ms;
+    bool ack_pending;
     bool asynchronous;
     bool route_pending;
     bool tx_route_wait;
@@ -124,12 +132,15 @@ constexpr uint16_t kPingIdentifier = 0x5358;
 constexpr size_t kMaxSockets = 32;
 constexpr uint16_t kEphemeralPortStart = 49152;
 constexpr uint16_t kEphemeralPortEnd = 65535;
-// Retransmision: el RTO inicial esta pensado para LAN y para slirp, con
-// backoff exponencial y un tope de reintentos. La suma da ~12 s antes de dar
-// la conexion por muerta.
+// LAN/slirp retransmission: exponential backoff and six retries give about
+// 17 seconds before declaring an unanswered connection dead.
 constexpr uint32_t kTcpInitialRtoMs = 300;
 constexpr uint32_t kTcpMaxRtoMs = 4000;
 constexpr uint32_t kTcpMaxRetries = 6;
+// MSL is 30 seconds on this static IPv4 client stack. Keep the tuple for
+// twice that after active close; FIN_WAIT_2 also has a bounded orphan lifetime.
+constexpr uint64_t kTcpTimeWaitMs = 60000;
+constexpr uint64_t kTcpCloseTimeoutMs = 60000;
 // Cuanto retiene el inyector de fallas un segmento antes de soltarlo si no
 // llega otro atras. Sin este tope, invertir un par de segmentos traba una
 // conversacion de ida y vuelta: el segundo segmento nunca llega porque el
@@ -246,6 +257,7 @@ bool g_ready = false;
 net::Socket g_sockets[kMaxSockets] = {};
 uint16_t g_next_ephemeral_port = kEphemeralPortStart;
 savanxp_net_tcp_stats g_tcp_stats = {};
+uint32_t g_fin_retransmits = 0, g_close_timeouts = 0;
 savanxp_net_tcp_fault g_tcp_fault = {};
 // The copy the injector damages; the frame itself belongs to the driver.
 uint8_t g_tcp_corrupt_segment[1600];
@@ -428,12 +440,10 @@ bool wait_for_tick() {
     return process::current_thread_must_stop();
 }
 
-// Los loops de espera de este archivo ya calculaban esto a mano; la cache ARP
-// lo necesita tambien, y varios de esos loops tienen una local llamada now_ms,
-// asi que el helper lleva otro nombre para no quedar tapado por ellas.
+// Deadlines follow elapsed monotonic time even when interrupt delivery is
+// delayed. The heartbeat is the service trigger, never the clock itself.
 uint64_t monotonic_ms() {
-    const uint32_t frequency = timer::frequency_hz();
-    return (timer::ticks() * 1000ULL) / (frequency != 0 ? frequency : 1);
+    return timer::monotonic_ns() / 1000000ull;
 }
 
 
@@ -948,7 +958,7 @@ bool send_tcp_segment(
         // perdio en el cable.
         return true;
     }
-    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + payload_length);
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + payload_length, &socket);
 }
 
 // Manda el segmento y lo deja guardado para poder repetirlo. seq_length es
@@ -988,13 +998,14 @@ bool tcp_arm_segment(
     return sent || socket.tx_route_wait;
 }
 
-// Un ACK que cubra todo el segmento en vuelo lo da por entregado y libera la
-// ranura de retransmision.
+// Only an ACK covering the outstanding segment, within sent sequence space,
+// releases the retransmission slot.
 void tcp_complete_send(net::Socket& socket, uint32_t acknowledgement) {
     if (!socket.tx_pending) {
         return;
     }
-    if (seq_geq(acknowledgement, socket.tx_sequence + socket.tx_seq_length)) {
+    if (seq_geq(acknowledgement, socket.tx_sequence + socket.tx_seq_length) &&
+        seq_leq(acknowledgement, socket.send_next)) {
         socket.tx_pending = false;
         socket.tx_length = 0;
         socket.tx_seq_length = 0;
@@ -1004,6 +1015,10 @@ void tcp_complete_send(net::Socket& socket, uint32_t acknowledgement) {
 }
 
 void tcp_abort(net::Socket& socket, uint32_t status) {
+    nic::cancel_transmit(&socket);
+    socket.ack_pending = false;
+    socket.tx_route_wait = false;
+    socket.route_pending = false;
     socket.abort_error = status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SX_ETIMEDOUT :
         (socket.tcp_state == net::TcpState::syn_sent ? SX_ECONNREFUSED : SX_ECONNRESET);
     socket.connected = false;
@@ -1022,12 +1037,49 @@ int tcp_abort_error(const net::Socket& socket) {
     return negative_error(socket.abort_error);
 }
 
-void tcp_service_socket(net::Socket& socket) {
-    if (!socket.in_use || socket.type != SAVANXP_SOCK_STREAM || !socket.tx_pending) {
-        return;
-    }
+void tcp_time_wait(net::Socket& socket) {
+    socket.tcp_state = net::TcpState::time_wait;
+    socket.tx_pending = false;
+    socket.close_deadline_ms = monotonic_ms() + kTcpTimeWaitMs;
+}
 
+void tcp_send_ack(net::Socket& socket) {
+    socket.ack_pending = !send_tcp_segment(socket, kTcpFlagAck, nullptr, 0,
+                                         socket.send_next, socket.recv_next);
+    if (socket.ack_pending && !socket.route_pending) {
+        tcp_abort(socket, SAVANXP_NET_STATUS_TCP_RESET);
+        socket.abort_error = static_cast<sx_status>(socket.route_error ? -socket.route_error : SX_EIO);
+        socket.ack_pending = false;
+    }
+}
+
+void tcp_service_socket(net::Socket& socket) {
+    if (!socket.in_use || socket.type != SAVANXP_SOCK_STREAM) return;
     const uint64_t now_ms = monotonic_ms();
+    // A retained failure is quiescent until an explicit new connect attempt.
+    if (socket.aborted && !socket.detached) return;
+    if (socket.detached) {
+        if (socket.aborted || now_ms >= socket.close_deadline_ms) {
+            if (socket.tcp_state != net::TcpState::time_wait &&
+                (!socket.aborted || socket.abort_error == SX_ETIMEDOUT)) ++g_close_timeouts;
+            nic::cancel_transmit(&socket);
+            memset(&socket, 0, sizeof(socket));
+            return;
+        }
+        if (socket.tcp_state == net::TcpState::time_wait) {
+            if (socket.ack_pending) tcp_send_ack(socket);
+            return;
+        }
+        if (!socket.tx_pending && (socket.tcp_state == net::TcpState::established ||
+                                   socket.tcp_state == net::TcpState::close_wait)) {
+            socket.tcp_state = socket.fin_received ? net::TcpState::last_ack : net::TcpState::fin_wait_1;
+            const uint32_t sequence = socket.send_next++;
+            (void)tcp_arm_segment(socket, kTcpFlagFin | kTcpFlagAck, nullptr, 0, sequence, 1);
+        }
+    }
+    if (socket.ack_pending) tcp_send_ack(socket);
+    if (!socket.tx_pending) return;
+
     if (socket.tx_route_wait) {
         if (send_tcp_segment(socket, socket.tx_flags, socket.tx_buffer, socket.tx_length,
                              socket.tx_sequence, socket.recv_next)) {
@@ -1052,12 +1104,19 @@ void tcp_service_socket(net::Socket& socket) {
 
     ++socket.tx_retries;
     ++g_tcp_stats.retransmits;
+    if (socket.tx_flags & kTcpFlagFin) ++g_fin_retransmits;
     const uint32_t next_rto = socket.tx_rto_ms * 2u;
     socket.tx_rto_ms = next_rto > kTcpMaxRtoMs ? kTcpMaxRtoMs : next_rto;
     socket.tx_deadline_ms = now_ms + socket.tx_rto_ms;
-    // El ACK viaja actualizado: la retransmision aprovecha para confirmar todo
-    // lo que se recibio mientras tanto.
-    (void)send_tcp_segment(socket, socket.tx_flags, socket.tx_buffer, socket.tx_length, socket.tx_sequence, socket.recv_next);
+    // Retain failure from retransmissions as well as from the initial send.
+    if (!send_tcp_segment(socket, socket.tx_flags, socket.tx_buffer, socket.tx_length,
+                          socket.tx_sequence, socket.recv_next)) {
+        if (socket.route_pending) socket.tx_route_wait = true;
+        else {
+            tcp_abort(socket, SAVANXP_NET_STATUS_TCP_RESET);
+            socket.abort_error = static_cast<sx_status>(socket.route_error ? -socket.route_error : SX_EIO);
+        }
+    }
 }
 
 bool send_udp_datagram(
@@ -1233,52 +1292,78 @@ void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
             socket->connected = true;
             socket->tcp_state = net::TcpState::established;
             set_status(SAVANXP_NET_STATUS_TCP_ESTABLISHED);
-            (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
+            tcp_send_ack(*socket);
         }
         return;
     }
 
-    // Accept only ACKs for bytes already sent, and advance monotonically.
-    if ((flags & kTcpFlagAck) != 0 &&
-        seq_gt(acknowledgement_number, socket->send_unacked) &&
-        seq_leq(acknowledgement_number, socket->send_next)) {
-        socket->send_unacked = acknowledgement_number;
+    if (socket->tcp_state == net::TcpState::time_wait) {
+        // Ignore resets and old data. A retransmitted FIN means our last ACK
+        // was lost: acknowledge it and restart the full quiet interval.
+        if ((flags & kTcpFlagFin) && sequence_number + tcp_payload_length + 1 == socket->recv_next) {
+            socket->close_deadline_ms = monotonic_ms() + kTcpTimeWaitMs;
+            tcp_send_ack(*socket);
+        }
+        return;
     }
-    if ((flags & kTcpFlagAck) != 0) tcp_complete_send(*socket, acknowledgement_number);
     if ((flags & kTcpFlagRst) != 0) {
-        tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
+        // Only an in-sequence reset is allowed to tear down a live stream.
+        if (sequence_number == socket->recv_next) tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
+        else tcp_send_ack(*socket);
         return;
     }
-
-    if (!socket->connected) {
+    if (!socket->connected) return;
+    if ((flags & kTcpFlagAck) && seq_gt(acknowledgement_number, socket->send_next)) {
+        tcp_send_ack(*socket);
         return;
     }
+    if ((flags & kTcpFlagAck) && seq_geq(acknowledgement_number, socket->send_unacked)) {
+        socket->send_unacked = acknowledgement_number;
+        tcp_complete_send(*socket, acknowledgement_number);
+        if (!socket->tx_pending) {
+            if (socket->tcp_state == net::TcpState::last_ack) {
+                nic::cancel_transmit(socket);
+                memset(socket, 0, sizeof(*socket));
+                return;
+            }
+            if (socket->tcp_state == net::TcpState::closing) tcp_time_wait(*socket);
+            else if (socket->tcp_state == net::TcpState::fin_wait_1)
+                socket->tcp_state = net::TcpState::fin_wait_2;
+        }
+    }
+    // The peer may repeat its SYN-ACK when the final handshake ACK was lost.
+    if (flags & kTcpFlagSyn) { tcp_send_ack(*socket); return; }
 
     bool needs_ack = false;
-    if (tcp_payload_length != 0) {
+    if (tcp_payload_length != 0 && !socket->fin_received) {
         tcp_receive_data(*socket, sequence_number, tcp_payload, tcp_payload_length);
-        // Se contesta siempre, incluso cuando el segmento vino fuera de orden o
-        // repetido: ese ACK duplicado es justo lo que dispara el fast
-        // retransmit del otro lado en vez de hacerlo esperar su propio RTO.
+        if (socket->detached) {
+            // No reader remains. Drain contiguous bytes to keep the receive
+            // window open until the peer can send FIN, including large replies.
+            socket->rx_head = (socket->rx_head + socket->rx_size) % sizeof(socket->rx_buffer);
+            socket->rx_size = 0;
+        }
+        // Duplicate ACKs also help the peer recover holes before its RTO.
         needs_ack = true;
     }
 
     if ((flags & kTcpFlagFin) != 0) {
-        // El FIN ocupa el lugar del byte que sigue al payload del segmento. Si
-        // todavia falta algo antes, no se acepta: cerrar con un agujero sin
-        // rellenar perderia datos en silencio.
+        // FIN is accepted only after every preceding byte is contiguous.
         const uint32_t fin_sequence = sequence_number + static_cast<uint32_t>(tcp_payload_length);
-        if (fin_sequence == socket->recv_next) {
+        if (!socket->fin_received && fin_sequence == socket->recv_next) {
             socket->recv_next += 1;
             socket->fin_received = true;
-            socket->tcp_state = net::TcpState::close_wait;
+            if (socket->tcp_state == net::TcpState::fin_wait_2) tcp_time_wait(*socket);
+            else if (socket->tcp_state == net::TcpState::fin_wait_1)
+                socket->tcp_state = net::TcpState::closing;
+            else socket->tcp_state = net::TcpState::close_wait;
             set_status(SAVANXP_NET_STATUS_TCP_FIN);
         }
         needs_ack = true;
     }
 
     if (needs_ack) {
-        (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
+        tcp_send_ack(*socket);
     }
 }
 
@@ -1430,15 +1515,13 @@ void tcp_release_stash() {
     g_tcp_reorder.releasing = false;
 }
 
-// Consumers and parked waiters drive retransmission and route deadlines.
-// There is no independent TCP heartbeat yet; N2 adds that servicing contract.
+// The BSP heartbeat services this scan even when every consumer is running
+// elsewhere or asleep without a socket wait. All kernel entries hold the BKL;
+// callbacks never sleep. A guard prevents nested service from duplicating work.
 bool g_in_pump = false;
 
 void net_pump() {
     if (g_in_pump) {
-        // A nested receive callback only drains the NIC; the outer pump
-        // already owns the socket scan.
-        nic::poll_receive();
         return;
     }
     g_in_pump = true;
@@ -1577,7 +1660,7 @@ int prepare_route(net::Socket& socket, uint32_t destination_ip, uint8_t out_mac[
 
 
 int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
-    if (request != NET_IOC_GET_INFO && request != NET_IOC_GET_TCP_STATS &&
+    if (request != NET_IOC_GET_INFO && request != NET_IOC_GET_TCP_STATS && request != NET_IOC_GET_TCP_LIFETIMES &&
         (granted_access & object::access_write) == 0) {
         return negative_error(SX_EACCES);
     }
@@ -1613,6 +1696,18 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 return negative_error(SX_EINVAL);
             }
             return process::copy_to_user(argument, &g_tcp_stats, sizeof(g_tcp_stats)) ? 0 : negative_error(SX_EINVAL);
+        }
+        case NET_IOC_GET_TCP_LIFETIMES: {
+            savanxp_net_tcp_lifetimes info = {};
+            for (const auto& socket : g_sockets) {
+                if (!socket.in_use || socket.type != SAVANXP_SOCK_STREAM) continue;
+                if (!socket.detached) ++info.attached;
+                else if (socket.tcp_state == net::TcpState::time_wait) ++info.time_wait;
+                else ++info.closing;
+            }
+            info.fin_retransmits = g_fin_retransmits;
+            info.close_timeouts = g_close_timeouts;
+            return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SX_EINVAL);
         }
         case NET_IOC_SET_TCP_FAULT: {
             // /dev/net0 is everyone's to bring up and query; damaging every
@@ -1678,19 +1773,19 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                 return negative_error(SX_EIO);
             }
 
-            const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+            const uint64_t start_ms = monotonic_ms();
             const uint32_t timeout_ms = request_data.timeout_ms != 0 ? request_data.timeout_ms : 1000u;
             while (true) {
                 nic::poll_receive();
                 if (g_ping_complete) {
-                    const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+                    const uint64_t now_ms = monotonic_ms();
                     g_pending_ping_result.elapsed_ms = static_cast<uint32_t>(now_ms - start_ms);
                     return process::copy_to_user(request_data.result_ptr, &g_pending_ping_result, sizeof(g_pending_ping_result))
                         ? 0
                         : negative_error(SX_EINVAL);
                 }
 
-                const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+                const uint64_t now_ms = monotonic_ms();
                 if (now_ms - start_ms >= timeout_ms) {
                     ++g_ping_timeouts;
                     set_status(SAVANXP_NET_STATUS_ICMP_TIMEOUT);
@@ -1731,6 +1826,7 @@ int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& ou
 
     for (auto& socket : g_sockets) {
         if (!socket.in_use) {
+            nic::cancel_transmit(&socket);
             memset(&socket, 0, sizeof(socket));
             socket.in_use = true;
             socket.asynchronous = asynchronous;
@@ -1749,10 +1845,17 @@ void close_socket(Socket* socket) {
     if (socket == nullptr || !socket->in_use) {
         return;
     }
-    if (socket->type == SAVANXP_SOCK_STREAM && socket->connected) {
-        (void)send_tcp_segment(*socket, kTcpFlagFin | kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
-        socket->send_next += 1;
+    if (socket->type == SAVANXP_SOCK_STREAM && socket->connected && !socket->aborted) {
+        // Final handle release detaches the protocol state. Preserve accepted
+        // data until acknowledged before putting FIN in its single send slot.
+        socket->detached = true;
+        socket->rx_head = (socket->rx_head + socket->rx_size) % sizeof(socket->rx_buffer);
+        socket->rx_size = 0;
+        socket->close_deadline_ms = monotonic_ms() + kTcpCloseTimeoutMs;
+        tcp_service_socket(*socket);
+        return;
     }
+    nic::cancel_transmit(socket);
     memset(socket, 0, sizeof(*socket));
 }
 
@@ -1801,11 +1904,14 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms, b
         return bind_result;
     }
 
+    nic::cancel_transmit(socket);
+    socket->ack_pending = false;
+    socket->tx_route_wait = false;
     socket->route_pending = false;
     socket->route_error = 0;
     socket->remote_ip = address.ipv4;
     socket->remote_port = address.port;
-    socket->initial_sequence = 0x53580000u + socket->local_port;
+    socket->initial_sequence = 0x53580000u + socket->local_port + static_cast<uint32_t>(monotonic_ms() * 250u);
     socket->send_unacked = socket->initial_sequence;
     socket->send_next = socket->initial_sequence + 1;
     socket->recv_next = 0;
@@ -1958,7 +2064,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
         return bind_result;
     }
 
-    const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+    const uint64_t start_ms = monotonic_ms();
     while (true) {
         net_pump();
 
@@ -1984,7 +2090,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
         }
 
         if (timeout_ms != 0) {
-            const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+            const uint64_t now_ms = monotonic_ms();
             if (now_ms - start_ms >= timeout_ms) {
                 return negative_error(SX_ETIMEDOUT);
             }
@@ -2008,8 +2114,8 @@ int wait_for_send_window(Socket& socket) {
         if (socket.aborted) {
             return tcp_abort_error(socket);
         }
-        // Sin plazo de la app no hace falta uno propio: el que corta es el
-        // abort del RTO, a los ~12 s, y ese sabe por que murio la conexion.
+        // Without an application deadline, the retransmission budget aborts
+        // after about 17 seconds and preserves the transport error.
         if (socket.send_timeout_ms != 0 && monotonic_ms() - start_ms >= socket.send_timeout_ms) {
             return negative_error(SX_ETIMEDOUT);
         }
@@ -2017,7 +2123,7 @@ int wait_for_send_window(Socket& socket) {
             return negative_error(SX_EINTR);
         }
     }
-    return 0;
+    return socket.aborted ? tcp_abort_error(socket) : 0;
 }
 
 /*
@@ -2085,7 +2191,7 @@ int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblo
         free_after >= kTcpMinUsefulWindow &&
         free_after > window_before) {
         ++g_tcp_stats.window_updates;
-        (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
+        tcp_send_ack(*socket);
     }
     return static_cast<int>(copied);
 }
@@ -2141,6 +2247,9 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
         }
     }
 
+    // A blocking writer releases the kernel lock while sleeping. Another
+    // operation may have reset the stream before this writer reacquires it.
+    if (socket->aborted) return tcp_abort_error(*socket);
     uint8_t payload[net::kTcpSegmentMax] = {};
     if (!process::copy_from_user(payload, user_buffer, count)) {
         return negative_error(SX_EINVAL);
@@ -2192,6 +2301,7 @@ bool socket_can_read(const Socket* socket) {
     if (socket == nullptr || !socket->in_use) {
         return false;
     }
+    if (socket->aborted || socket->route_error) return true;
     if (socket->type == SAVANXP_SOCK_DGRAM) {
         return socket->packet_queue_size != 0;
     }
@@ -2205,12 +2315,13 @@ bool socket_can_write(const Socket* socket) {
     if (socket == nullptr || !socket->in_use) {
         return false;
     }
+    if (socket->aborted || socket->route_error) return true;
     if (socket->type == SAVANXP_SOCK_DGRAM) {
         return !socket->route_pending;
     }
     if (socket->type == SAVANXP_SOCK_STREAM) {
-        // Sin ranura libre no se puede aceptar otra escritura, asi que POLLOUT
-        // tiene que esperar al ACK del segmento anterior.
+        // A healthy stream needs its single retransmission slot free before
+        // another write can accept bytes.
         return socket->connected && !socket->fin_received && !socket->tx_pending;
     }
     return false;

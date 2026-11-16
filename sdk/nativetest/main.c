@@ -2861,6 +2861,140 @@ cleanup:
     if (control >= 0) check(sxn_close(control) == 0);
 }
 
+static unsigned char g_tcp_worker_stacks[2][32768] __attribute__((aligned(16)));
+struct tcp_worker_test { unsigned port, seed; };
+static int native_tcp_wait(long socket, unsigned interests) {
+    struct sxn_io_interest interest = {(int32_t)socket, interests | SXN_IO_ERROR};
+    return sxn_wait_io(&interest, 1, 10000) == 0;
+}
+static void native_tcp_worker(void* argument) {
+    struct tcp_worker_test* test = argument;
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)test->port, 0};
+    long socket = sxn_socket_create(SXN_SOCKET_TCP);
+    long result;
+    unsigned round, i;
+    int ok = 0;
+    unsigned char sent[64], received[64];
+    if (socket < 0) goto done;
+    result = sxn_socket_connect(socket, &peer);
+    if ((result != 0 && result != -SAVANXP_EAGAIN) ||
+        !native_tcp_wait(socket, SXN_IO_WRITE) || sxn_socket_status(socket) != 0) goto done;
+    for (round = 0; round < 8; ++round) {
+        unsigned total = 0;
+        if (!native_tcp_wait(socket, SXN_IO_WRITE) || sxn_write(socket, "ECHO 64\n", 8) != 8) goto done;
+        for (i = 0; i < 64; ++i) sent[i] = (unsigned char)(test->seed + round * 17u + i);
+        if (!native_tcp_wait(socket, SXN_IO_WRITE) || sxn_write(socket, sent, 64) != 64) goto done;
+        while (total < 64) {
+            if (!native_tcp_wait(socket, SXN_IO_READ)) goto done;
+            result = sxn_read(socket, received + total, 64 - total);
+            if (result == -SAVANXP_EAGAIN) continue;
+            if (result <= 0) goto done;
+            total += (unsigned)result;
+        }
+        for (i = 0; i < 64; ++i) if (sent[i] != received[i]) goto done;
+    }
+    ok = 1;
+done:
+    if (socket >= 0) sxn_close(socket);
+    sxn_thread_exit(ok ? 0 : 1);
+}
+
+static void test_native_tcp_progress(unsigned port) {
+    long socket = sxn_socket_create(SXN_SOCKET_TCP);
+    long pause = sxn_event_create(0);
+    long device = sxn_open_device("net0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
+    struct savanxp_net_tcp_fault fault = {0};
+    struct savanxp_net_tcp_stats before = {0}, after = {0};
+    struct tcp_worker_test tests[2] = {{port, 19}, {port, 137}};
+    long threads[2] = {-1, -1};
+    unsigned i;
+    check(socket >= 0 && pause >= 0 && device >= 0);
+    if (socket < 0 || pause < 0 || device < 0) goto cleanup;
+    fault.drop_tx_every = 1;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+    check(sxn_socket_connect(socket, &peer) == -SAVANXP_EAGAIN);
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&before) == 0);
+    check(sxn_wait_one(pause, 500) == -SAVANXP_ETIMEDOUT);
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&after) == 0);
+    check(after.retransmits > before.retransmits);
+    check(sxn_close(socket) == 0);
+    socket = -1;
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&before) == 0);
+    check(sxn_wait_one(pause, 1000) == -SAVANXP_ETIMEDOUT);
+    check(sxn_device_control(device, NET_IOC_GET_TCP_STATS, (unsigned long)&after) == 0);
+    check(after.retransmits == before.retransmits);
+    sxn_log("nativetest: independent SYN progress; last close cancels pending connect");
+    fault.drop_tx_every = 3;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+    for (i = 0; i < 2; ++i) {
+        threads[i] = sxn_thread_create(native_tcp_worker, &tests[i],
+                    g_tcp_worker_stacks[i] + sizeof(g_tcp_worker_stacks[i]), 0);
+        check(threads[i] >= 0);
+    }
+    for (i = 0; i < 2; ++i) if (threads[i] >= 0) {
+        int32_t status = -1;
+        check(sxn_wait_one(threads[i], 60000) == 0);
+        check(sxn_thread_exit_code(threads[i], &status) == 0 && status == 0);
+        check(sxn_close(threads[i]) == 0);
+    }
+    sxn_log("nativetest: concurrent native TCP workers preserve distinct streams under loss");
+    fault.drop_tx_every = 0;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+    socket = sxn_socket_create(SXN_SOCKET_TCP);
+    {
+        long result = sxn_socket_connect(socket, &peer);
+        check(result == 0 || result == -SAVANXP_EAGAIN);
+    }
+    check(native_tcp_wait(socket, SXN_IO_WRITE) && sxn_socket_status(socket) == 0);
+    fault.drop_tx_every = 1;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+    check(sxn_write(socket, "z", 1) == 1);
+    check(sxn_wait_one(pause, 18000) == -SAVANXP_ETIMEDOUT);
+    check(sxn_socket_status(socket) == -SAVANXP_ETIMEDOUT);
+    {
+        char byte;
+        check(sxn_read(socket, &byte, 1) == -SAVANXP_ETIMEDOUT);
+        check(sxn_write(socket, "z", 1) == -SAVANXP_ETIMEDOUT);
+    }
+    check(sxn_close(socket) == 0);
+    fault.drop_tx_every = 0;
+    check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+    sxn_log("nativetest: accepted data timeout retained without consumer polling");
+    socket = sxn_socket_create(SXN_SOCKET_TCP);
+    {
+        long result = sxn_socket_connect(socket, &peer);
+        check(result == 0 || result == -SAVANXP_EAGAIN);
+    }
+    check(native_tcp_wait(socket, SXN_IO_WRITE) && sxn_socket_status(socket) == 0);
+    // Cancel a live stream wait while another thread releases its handle.
+    {
+        struct socket_cancel_test test = {socket, sxn_event_create(0), pause};
+        struct sxn_io_interest waits[2] = {{(int32_t)socket, SXN_IO_READ}, {(int32_t)test.cancel, 0}};
+        long worker = sxn_thread_create(socket_cancel_worker, &test,
+                g_socket_cancel_stack + sizeof(g_socket_cancel_stack), 0);
+        int32_t status = -1;
+        check(worker >= 0);
+        if (worker >= 0) {
+            check(sxn_wait_io(waits, 2, 5000) == 1);
+            check(sxn_wait_one(worker, 5000) == 0);
+            check(sxn_thread_exit_code(worker, &status) == 0 && status == 0);
+            check(sxn_close(worker) == 0);
+            socket = -1;
+        }
+        check(sxn_close(test.cancel) == 0);
+    }
+    sxn_log("nativetest: close during TCP wait retains lifetime until cancellation");
+cleanup:
+    if (device >= 0) {
+        fault.drop_tx_every = 0;
+        check(sxn_device_control(device, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) == 0);
+        check(sxn_close(device) == 0);
+    }
+    if (socket >= 0) check(sxn_close(socket) == 0);
+    if (pause >= 0) check(sxn_close(pause) == 0);
+}
+
 static void test_native_tcp(unsigned port) {
     long socket = sxn_socket_create(SXN_SOCKET_TCP);
     struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
@@ -2989,6 +3123,7 @@ int main(int argc, char** argv) {
             check(port > 0 && port <= 65535 && *digit == 0);
             if (port && port <= 65535 && *digit == 0) {
                 test_native_tcp(port);
+                test_native_tcp_progress(port);
                 test_native_connect_failures(port);
             }
         }

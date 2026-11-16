@@ -357,6 +357,14 @@ static int check_connect_timeout(const struct savanxp_sockaddr_in* peer) {
     if (savanxp_ioctl((int)net_fd, NET_IOC_GET_TCP_STATS, (unsigned long)&after) < 0) goto cleanup;
     if (after.retransmits != before.retransmits || after.segments_sent != before.segments_sent) goto cleanup;
     if (savanxp_read((int)fd, &byte, 1) != -SAVANXP_ETIMEDOUT) goto cleanup;
+    {
+        struct savanxp_pollfd ready = {(int)fd, 0, 0};
+        if (savanxp_poll(&ready, 1, 0) != 1 || !(ready.revents & SAVANXP_POLLERR)) goto cleanup;
+        ready.events = SAVANXP_POLLIN | SAVANXP_POLLOUT;
+        if (savanxp_poll(&ready, 1, 0) != 1 ||
+            (ready.revents & (SAVANXP_POLLIN | SAVANXP_POLLOUT | SAVANXP_POLLERR)) !=
+                (SAVANXP_POLLIN | SAVANXP_POLLOUT | SAVANXP_POLLERR)) goto cleanup;
+    }
     ok = 1;
 cleanup:
     if (net_fd >= 0) {
@@ -365,6 +373,103 @@ cleanup:
     }
     if (fd >= 0) savanxp_close((int)fd);
     if (ok) puts_out("tcptest: connect timeout stops SYN retransmission\n");
+    return ok;
+}
+
+/* Nothing below polls a socket during sleep. The read-only diagnostics do
+ * not service the stack either: retransmission must come from the heartbeat. */
+static int check_independent_close(const struct savanxp_sockaddr_in* peer) {
+    long device = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    long a = -1, b = -1, probe = -1, held = -1, lost = -1;
+    struct savanxp_sockaddr_in local = {0};
+    struct savanxp_net_tcp_stats before = {0}, after = {0};
+    struct savanxp_net_tcp_lifetimes life = {0}, baseline = {0};
+    unsigned char bytes[64];
+    unsigned i;
+    int ok = 0;
+    local.port = 41001;
+    if (device < 0) goto cleanup;
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&baseline) < 0) goto cleanup;
+    a = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+    b = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+    if (a < 0 || b < 0 || savanxp_bind((int)a, &local) < 0) goto cleanup;
+    if (savanxp_connect((int)a, peer, 5000) < 0 || savanxp_connect((int)b, peer, 5000) < 0) goto cleanup;
+    if (!write_all((int)a, (const unsigned char*)"SAVE close 64\n", 14) || !send_command((int)b, "ECHO", 64)) goto cleanup;
+    if (savanxp_fcntl((int)a, SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        savanxp_fcntl((int)b, SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0) goto cleanup;
+    for (i = 0; i < sizeof(bytes); ++i) bytes[i] = pattern_byte(i);
+    if (!set_fault((int)device, 1, 0, 0)) goto cleanup;
+    if (savanxp_write((int)a, bytes, sizeof(bytes)) != sizeof(bytes) ||
+        savanxp_write((int)b, bytes, sizeof(bytes)) != sizeof(bytes)) goto cleanup;
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_STATS, (unsigned long)&before) < 0) goto cleanup;
+    sleep_ms(500);
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_STATS, (unsigned long)&after) < 0 ||
+        after.retransmits < before.retransmits + 2) goto cleanup;
+    puts_out("tcptest: simultaneous transmissions retried without consumer polling\n");
+    if (savanxp_close((int)a) < 0) goto cleanup;
+    a = -1;
+    if (!set_fault((int)device, 0, 0, 0)) goto cleanup;
+    sleep_ms(2000);
+    if (savanxp_fcntl((int)b, SAVANXP_F_SETFL, 0) < 0 || !read_and_verify((int)b, 0, 64)) goto cleanup;
+    if (!write_all((int)b, (const unsigned char*)"SAVED close\n", 12) || !read_and_verify((int)b, 0, 64)) goto cleanup;
+    puts_out("tcptest: close drains accepted data before FIN\n");
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0) goto cleanup;
+    {
+        const unsigned fin_before = life.fin_retransmits;
+        if (!set_fault((int)device, 1, 0, 0)) goto cleanup;
+        if (savanxp_close((int)b) < 0) goto cleanup;
+        b = -1;
+        sleep_ms(500);
+        if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0 ||
+            life.fin_retransmits <= fin_before) goto cleanup;
+    }
+    if (!set_fault((int)device, 0, 0, 0)) goto cleanup;
+    sleep_ms(2000);
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0 ||
+        life.time_wait < 2 || life.closing != 0 || life.close_timeouts != baseline.close_timeouts) goto cleanup;
+    probe = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+    if (probe < 0 || savanxp_bind((int)probe, &local) != -SAVANXP_EBUSY) goto cleanup;
+    puts_out("tcptest: lost FIN retried; TIME_WAIT reserves the tuple\n");
+    // One peer ACKs FIN but keeps its write half open; another never sees
+    // FIN at all. Both orphan paths must release their slots independently.
+    held = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+    lost = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+    if (held < 0 || lost < 0 || savanxp_connect((int)held, peer, 5000) < 0 ||
+        savanxp_connect((int)lost, peer, 5000) < 0) goto cleanup;
+    if (!send_command((int)held, "HOLD", 120000)) goto cleanup;
+    {
+        unsigned got = 0;
+        while (got < 6) {
+            long n = savanxp_read((int)held, bytes + got, 6 - got);
+            if (n <= 0) goto cleanup;
+            got += (unsigned)n;
+        }
+        for (got = 0; got < 6; ++got) if (bytes[got] != (unsigned char)"READY\n"[got]) goto cleanup;
+    }
+    if (savanxp_close((int)held) < 0) goto cleanup;
+    held = -1;
+    sleep_ms(500);
+    if (!set_fault((int)device, 1, 0, 0) || savanxp_close((int)lost) < 0) goto cleanup;
+    lost = -1;
+    sleep_ms(18000);
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0 ||
+        life.closing != 1 || life.close_timeouts != baseline.close_timeouts + 1) goto cleanup;
+    if (!set_fault((int)device, 0, 0, 0)) goto cleanup;
+    puts_out("tcptest: exhausted FIN retries reclaimed; half-closed peer remains bounded\n");
+    sleep_ms(61000);
+    if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0 ||
+        life.closing != 0 || life.time_wait != 0 || life.attached != 1 ||
+        life.close_timeouts != baseline.close_timeouts + 2 || savanxp_bind((int)probe, &local) != 0) goto cleanup;
+    puts_out("tcptest: TIME_WAIT expired and protocol slots reclaimed\n");
+    ok = 1;
+cleanup:
+    if (device >= 0) (void)set_fault((int)device, 0, 0, 0);
+    if (a >= 0) savanxp_close((int)a);
+    if (b >= 0) savanxp_close((int)b);
+    if (probe >= 0) savanxp_close((int)probe);
+    if (held >= 0) savanxp_close((int)held);
+    if (lost >= 0) savanxp_close((int)lost);
+    if (device >= 0) savanxp_close((int)device);
     return ok;
 }
 
@@ -521,6 +626,8 @@ int main(int argc, char** argv) {
     }
 
     if (!check_connect_timeout(&address)) return fail("connect timeout cleanup");
+
+    if (!check_independent_close(&address)) return fail("independent progress and close lifetime");
 
     puts_out("TCP SMOKE PASS\n");
     return 0;

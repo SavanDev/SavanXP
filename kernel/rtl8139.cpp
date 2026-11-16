@@ -110,6 +110,8 @@ void clear_interrupt_status() {
     }
 }
 
+bool g_tx_busy[4] = {};
+
 bool transmit(const void* frame, size_t length) {
     if (!g_up || frame == nullptr || length == 0 || length > kTxBufferBytes) {
         ++g_tx_errors;
@@ -118,6 +120,12 @@ bool transmit(const void* frame, size_t length) {
     }
 
     const size_t tx_slot = g_tx_index % 4;
+    if (g_tx_busy[tx_slot]) {
+        const uint32_t status = in32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4));
+        if ((status & (kTxOk | kTxErr)) == 0) return false;
+        if (status & kTxErr) { ++g_tx_errors; report(SAVANXP_NET_STATUS_TX_FAILED); }
+        g_tx_busy[tx_slot] = false;
+    }
     auto* tx_buffer = static_cast<uint8_t*>(g_tx_allocation[tx_slot].virtual_address);
     const size_t wire_length = length < 60 ? 60 : length;
     memset(tx_buffer, 0, wire_length);
@@ -126,25 +134,10 @@ bool transmit(const void* frame, size_t length) {
     out32(static_cast<uint16_t>(g_io_base + kRegTxAddress0 + tx_slot * 4), static_cast<uint32_t>(g_tx_allocation[tx_slot].physical_address));
     out32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4), static_cast<uint32_t>(wire_length));
 
-    for (uint32_t spin = 0; spin < 200000; ++spin) {
-        const uint32_t status = in32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4));
-        if ((status & kTxOk) != 0) {
-            rtl_log("rtl8139: tx ok slot=%u len=%u status=%x\n", (unsigned)tx_slot, (unsigned)wire_length, (unsigned)status);
-            ++g_tx_frames;
-            g_tx_index = static_cast<uint8_t>((g_tx_index + 1) % 4);
-            return true;
-        }
-        if ((status & kTxErr) != 0) {
-            rtl_log("rtl8139: tx err slot=%u status=%x\n", (unsigned)tx_slot, (unsigned)status);
-            ++g_tx_errors;
-            report(SAVANXP_NET_STATUS_TX_FAILED);
-            return false;
-        }
-    }
-    rtl_log("rtl8139: tx timeout slot=%u\n", (unsigned)tx_slot);
-    ++g_tx_errors;
-    report(SAVANXP_NET_STATUS_TX_TIMEOUT);
-    return false;
+    g_tx_busy[tx_slot] = true;
+    ++g_tx_frames;
+    g_tx_index = static_cast<uint8_t>((g_tx_index + 1) % 4);
+    return true;
 }
 
 void poll_receive() {
@@ -152,14 +145,13 @@ void poll_receive() {
         return;
     }
 
-    // poll_receive runs both from the INTx handler (IRQ context) and from the
-    // main loop (polling/service). Clearing IF around the section makes it
-    // atomic on one core: while the main loop drains the ring, the NIC's IRQ
-    // cannot preempt it and corrupt g_cur_rx.
+    // Kernel entry serialization protects this ring across CPUs and IRQs.
+    // A fixed budget also bounds a pass while the device keeps receiving.
     const uint64_t flags = arch::save_and_disable_interrupts();
     clear_interrupt_status();
     auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
-    while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
+    for (size_t budget = 0; budget < 16 &&
+         (in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0; ++budget) {
         uint8_t* packet = rx + g_cur_rx;
         const uint16_t status = *reinterpret_cast<uint16_t*>(packet + 0);
         const uint16_t length = *reinterpret_cast<uint16_t*>(packet + 2);

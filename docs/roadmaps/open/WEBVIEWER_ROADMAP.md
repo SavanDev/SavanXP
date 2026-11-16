@@ -1,9 +1,9 @@
 # Web Viewer with Ladybird
 
-> **Status as of 2026-11-15: N1 complete — native socket contracts and SUN frontend.**
+> **Status as of 2026-11-16: N1–N2 complete — SUN frontend and independent transport.**
 > Web Viewer runs as `/system/webview.sxe`; remote loads still block the UI.
-> N2 (independent transport progress and correctness) is next. N3–N5 and all
-> Ladybird stages remain pending; no Ladybird code has been imported or built.
+> N3 (shared DNS and cancelable loading worker) is next. N3–N5 and all Ladybird
+> stages remain pending; no Ladybird code has been imported or built.
 
 ## Direction
 
@@ -105,9 +105,63 @@ The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
 
-## Implementation checkpoint — 2026-11-15
+## N2 implementation checkpoint — 2026-11-16
 
-**N1 is complete.** The remaining setup/route contract and the application
+**N2 is complete.** The shared TCP core has independent progress, bounded NIC
+servicing, retained asynchronous errors and detached close state. N1 remains
+complete; N3–N5 and Ladybird remain pending. The next implementation stage is N3.
+
+- The BSP heartbeat services routes, RX, queued TX, retransmissions and close
+  before waking readers/waiters, even when no consumer reenters the stack.
+  Monotonic elapsed time supplies deadlines. The existing big kernel lock
+  serializes SUN/POSIX calls, timer entries and NIC IRQs; callbacks do not sleep.
+- RX handles at most 16 frames per pass; TX drains at most 16 before and after
+  RX through a bounded 64-frame queue. Drivers submit DMA without waiting for
+  completion. Queued TCP frames carry an owner token for cancellation before
+  socket reuse. The single outstanding 1 KiB TCP segment is retained.
+- Final release drains accepted stream data before queuing FIN. FIN retries,
+  active/passive/crossed close, 60-second TIME_WAIT with duplicate-FIN replies,
+  and bounded orphan expiry retain protocol state independently of handles.
+  Attached and detached sockets share the 32-slot budget. The read-only
+  `NET_IOC_GET_TCP_LIFETIMES` query observes reclamation without driving it.
+- Retry/ACK failures remain available through status, readiness and I/O. ACKs
+  beyond sent sequence space cannot clear pending TX; blocking writes check
+  transport failure after the pending slot is disarmed. Failed I/O remains
+  ready; POSIX `poll` reports `POLLERR` even without requested interests.
+
+The maintained contracts and limits are in
+[NETWORKING.md](../../net/NETWORKING.md#independent-bounded-and-synchronized-progress)
+and [SUN.md](../../userland/SUN.md#ipv4-socket-foundation).
+
+### N2 acceptance evidence
+
+| Gate | Evidence |
+|---|---|
+| Build and host tests | Build succeeded with `check_shared_libs: OK`; `100% tests passed out of 54`, with three Win32 fixture tests skipped because `SAVANXP_WIN32_FIXTURES` is unset. |
+| Independent progress and close | `tcp-smoke`: simultaneous unpolled writes retry; closing preserves the exact bytes saved by the peer; dropped FIN retries; exhausted FIN and a half-open peer reclaim state; TIME_WAIT reserves the port and expires after its real interval. |
+| Native concurrency and errors | `native-network`: distinct threaded streams under loss, independent SYN retries and accepted-data timeout, cancellation/close during setup and a retained stream wait; existing refusal/reset/route/EOF assertions pass. |
+| General regression | `native-network-offline`, `native-test`, `net-smoke`, `smoke` and `sxgui-smoke` passed. |
+| Additional driver | `native-network`, `tcp-smoke` and `net-smoke` also passed with `--virtio`. |
+| Visual regression | `webview: OK`, with 25 captures; local files, history, links, CSS, DNS/HTTP, redirects, source, arguments and Reload. |
+| Persistence | `./tools/verify_doom_persistence.sh --jobs 8`: `Doom persistence: PASS`, using the deterministic WAD fixture. |
+
+The tests run under QEMU/TCG with two CPUs. The visual check's extracted SUN
+executable matches the staged binary by SHA-256 and has `EI_OSABI=0x53`; both
+retired POSIX Web Viewer copies are absent. Physical RTL8168 hardware was not
+available for verification.
+
+### Next implementation step — N3
+
+Extract the shared SUN resolver and move remote loading to one worker per
+window. Preserve DNS overrides, use synchronized queues/events and navigation
+IDs, and make Stop, navigation and close cancel work while the UI remains
+responsive. Loading still runs synchronously in Web Viewer; N2 does not claim
+background loading, shared DNS/HTTP, HTTPS or a new renderer.
+
+## N1 implementation checkpoint — 2026-11-15
+
+**N1 is complete.** This records N1's acceptance; the N2 checkpoint above
+supersedes its next-step list. The remaining setup/route contract and the application
 migration were delivered as separate changes. The historical checkpoints below
 record earlier partial states; this checkpoint supersedes their next-step lists.
 

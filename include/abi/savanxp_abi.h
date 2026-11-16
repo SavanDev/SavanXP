@@ -417,6 +417,7 @@ enum savanxp_net_ioctl {
     NET_IOC_PING = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 3),
     NET_IOC_GET_TCP_STATS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 4),
     NET_IOC_SET_TCP_FAULT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 5),
+    NET_IOC_GET_TCP_LIFETIMES = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 6),
 };
 
 enum savanxp_net_status {
@@ -1600,6 +1601,16 @@ struct savanxp_net_tcp_stats {
     uint32_t rx_out_of_window;
     uint32_t window_updates;
     uint32_t aborts;
+};
+
+/* Read-only lifetime diagnostics. Counts include both native and POSIX sockets;
+ * detached state belongs to the protocol, not to a live application handle. */
+struct savanxp_net_tcp_lifetimes {
+    uint32_t attached;
+    uint32_t closing;
+    uint32_t time_wait;
+    uint32_t fin_retransmits;
+    uint32_t close_timeouts;
 };
 
 /* Fault injection on the TCP path, for the tests; setting it requires the

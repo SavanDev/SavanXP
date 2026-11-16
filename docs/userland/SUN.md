@@ -341,29 +341,41 @@ budgets for repeated waits. Waiting retains the objects until completion;
 cancel through the event rather than closing a socket in another thread.
 `sxn_wait_many` keeps its existing readable-stream semantics.
 
-Handles support `sxn_duplicate` and `sxn_close`; the last reference releases the
-socket. SUN connect/send operations perform bounded NIC setup steps and return
+Handles support `sxn_duplicate` and `sxn_close`; the last reference detaches an
+established TCP stream for asynchronous graceful close, or cancels pending setup.
+SUN connect/send operations perform bounded NIC setup steps and return
 `-EAGAIN` during reset/link negotiation or ARP resolution; no socket operation
 sleeps waiting for either. A route has a six-second monotonic budget (including
 initialization), with ARP requests at most once per 250 ms. TCP queues its SYN
 until the route is ready; UDP returns `-EAGAIN` without accepting the datagram,
 so the caller retries after write/error readiness. Failed routes retain
 `-ETIMEDOUT`, `-EIO` or `-ENODEV`; a new TCP connect starts a new route attempt.
-Closing the last socket reference cancels its route state. Cancellation events
-can interrupt `sxn_wait_io` throughout initialization and ARP. Device setup is
+Closing the last reference to an unestablished socket cancels its route state.
+Cancellation events can interrupt `sxn_wait_io` throughout initialization and ARP. Device setup is
 shared: canceling a socket does not reset the NIC used by other sockets.
 
-Retransmission and route progress still depend on network servicing (including
-parked waiters). Independent bounded servicing and FIN retransmission/TIME_WAIT
-belong to N2. Shared DNS and TLS remain later browser milestones.
+The BSP heartbeat advances routes, retransmissions and asynchronous close even
+without consumer calls or waits. Driver RX/TX work is bounded and serialized
+with both SUN and POSIX socket operations by the kernel's global lock. FIN uses
+the same retained single segment as data; close waits for accepted data to be
+acknowledged before queuing FIN. Active close retains `TIME_WAIT` for 60 seconds;
+unfinished orphan closes expire within 60 seconds. The 32-slot socket budget
+includes detached close state, so rapid closes can temporarily return `ENOMEM`.
+See [NETWORKING.md](../net/NETWORKING.md#closing-keeps-protocol-state-alive).
+Shared DNS and TLS remain later browser milestones.
+
 `./build.sh smoke native-network` exercises native UDP loopback, source
 addresses, handle lifetime, cancellation, pending ARP, route timeout, TCP
 establishment, partial reads and EOF against the local TCP fixture. It also
 holds a host port bound without listening to provoke a deterministic refusal,
 and drops every outgoing SYN through `NET_IOC_SET_TCP_FAULT` to exercise the
-normal retransmission timeout. The injector is reset before the test exits.
-These tests service networking through parked waits; they do not prove progress
-without consumer polling or waiting.
+normal retransmission timeout. Independent SYN retries are checked during a
+plain event timeout, and close cancels the retry. Two native threads verify
+distinct concurrent streams under loss; another closes a connected handle while
+readiness retains the object, then signals cancellation. `tcp-smoke` proves
+independent data/FIN retransmission and actual TIME_WAIT expiry; the read-only
+`NET_IOC_GET_TCP_LIFETIMES` query observes state without driving network progress.
+The injector is reset before each test exits.
 
 ## Desktop pointer snapshot (P1)
 
