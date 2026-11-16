@@ -4,7 +4,8 @@
 #include <math.h>
 #include <stdlib.h>
 static unsigned allocations, releases, fail_allocation;
-static void *test_alloc(size_t size) { ++allocations; return fail_allocation ? NULL : malloc(size); }
+static size_t last_allocation_size;
+static void *test_alloc(size_t size) { ++allocations; last_allocation_size=size; return fail_allocation ? NULL : malloc(size); }
 static void test_free(void *ptr) { if(ptr) ++releases; free(ptr); }
 #define malloc test_alloc
 #define free test_free
@@ -13,6 +14,7 @@ static void test_free(void *ptr) { if(ptr) ++releases; free(ptr); }
 #undef free
 #include "sxjpeg_fixtures.h"
 #include "sxjpeg_color_fixtures.h"
+#include "sxjpeg_reduced_fixtures.h"
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { printf("FAIL: %s (line %d)\n",msg,__LINE__); ++failures; } } while (0)
@@ -155,15 +157,16 @@ static size_t find_marker(unsigned marker) {
     CHECK(0,"fixture marker exists"); return 0;
 }
 static void error_expected(int expected, int header_error) {
+    const struct sx_image_options full={0,0,0,1}; // Keep these error assertions at full resolution.
     uint32_t pixels[258]; for(unsigned i=0;i<258;++i) pixels[i]=0xdeadbeef;
     struct sx_image_metadata info={9,9,9,9,9,9}, zero={0};
-    int result=sx_jpeg_info(fixture,used,NULL,&info);
+    int result=sx_jpeg_info(fixture,used,&full,&info);
     CHECK(result==(header_error?expected:SX_IMAGE_OK),"specific info result");
     if(header_error) CHECK(metadata_equal(&info,&zero),"info cleared on error");
-    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,256,&info)==expected && metadata_equal(&info,&zero),"specific failure and cleared decode metadata");
+    CHECK(sx_jpeg_decode_into(fixture,used,&full,pixels+1,256,&info)==expected && metadata_equal(&info,&zero),"specific failure and cleared decode metadata");
     CHECK(pixels[0]==0xdeadbeef && pixels[257]==0xdeadbeef,"error destination guards");
-    CHECK(sx_image_info(fixture,used,NULL,&info)==(header_error?expected:SX_IMAGE_OK),"common info forwards JPEG error");
-    CHECK(sx_image_decode_into(fixture,used,NULL,pixels+1,256,&info)==expected && metadata_equal(&info,&zero),"common decode forwards JPEG error");
+    CHECK(sx_image_info(fixture,used,&full,&info)==(header_error?expected:SX_IMAGE_OK),"common info forwards JPEG error");
+    CHECK(sx_image_decode_into(fixture,used,&full,pixels+1,256,&info)==expected && metadata_equal(&info,&zero),"common decode forwards JPEG error");
     if(header_error) for(unsigned i=0;i<258;++i) CHECK(pixels[i]==0xdeadbeef,"header rejection precedes writes");
 }
 
@@ -203,10 +206,11 @@ static void fixtures(void) {
         struct sx_image_options exact={w,h,w*h,1};
         CHECK(sx_jpeg_decode_into(data,size,&exact,common,w*h,&decoded)==0,"exact limits accepted");
         for(unsigned denom=2;denom<=8;denom*=2) { exact.scale_denom=denom;
-            CHECK(sx_jpeg_info(data,size,&exact,&decoded)==SX_IMAGE_ERROR_SCALE &&
-                  sx_image_info(data,size,&exact,&decoded)==SX_IMAGE_ERROR_SCALE,"reduction explicitly remains pending"); }
+            CHECK(sx_jpeg_info(data,size,&exact,&decoded)==0 && decoded.width==(w+denom-1)/denom &&
+                  decoded.height==(h+denom-1)/denom && decoded.scale_denom==denom &&
+                  sx_image_info(data,size,&exact,&decoded)==0,"explicit reduction plan"); }
         exact=(struct sx_image_options){w-1,h,w*h,0};
-        CHECK(sx_jpeg_decode_into(data,size,&exact,common,w*h,&decoded)==SX_IMAGE_ERROR_LIMIT,"auto currently refuses oversized output");
+        CHECK(sx_jpeg_decode_into(data,size,&exact,common,w*h,&decoded)==0 && decoded.scale_denom==2,"auto reduces oversized output");
     }
 }
 
@@ -254,7 +258,8 @@ static void color_fixtures(void) {
         CHECK(sx_jpeg_decode_into(data,size,&options,common,count,NULL)==SX_IMAGE_ERROR_LIMIT,"colour output budget");
         for(unsigned scale=2;scale<=8;scale*=2) {
             options=(struct sx_image_options){0,0,0,scale};
-            CHECK(sx_jpeg_decode_into(data,size,&options,common,count,NULL)==SX_IMAGE_ERROR_SCALE,"colour reduction deferred");
+            CHECK(sx_jpeg_decode_into(data,size,&options,common,count,&decoded)==0 && decoded.width==(w+scale-1)/scale &&
+                  decoded.height==(h+scale-1)/scale && decoded.scale_denom==scale,"colour reduction");
         }
         for(size_t length=0;length<size;++length) {
             pixels[0]=pixels[count+1]=0xdeadbeef; decoded=info; before=allocations; freed=releases;
@@ -345,17 +350,21 @@ static void color_scans(void) {
                 CHECK(sx_jpeg_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_JPEG_SAMPLING,"interleaved MCU ten-block ceiling");
                 continue;
             }
-            CHECK(sx_image_decode_into(fixture,used,NULL,pixels+1,323,&info)==0,"synthetic colour scan decoded");
-            unsigned hmax=1,vmax=1;
-            for(unsigned c=0;c<3;++c) {if((factors[c]>>4)>hmax) hmax=factors[c]>>4;
-                if((factors[c]&15)>vmax) vmax=factors[c]&15;}
-            for(unsigned y=0;y<19;++y) for(unsigned x=0;x<17;++x) {
-                unsigned value[3];
-                for(unsigned c=0;c<3;++c) value[c]=128+8*c+8*((x*(factors[c]>>4)/hmax)/8+(y*(factors[c]&15)/vmax)/8);
-                uint32_t expected=(app==0 || app==3)?(value[0]<<16)|(value[1]<<8)|value[2]:jpeg_ycbcr(value[0],value[1],value[2]);
-                CHECK(pixels[1+y*17+x]==expected,"exact component placement, predictor resets, table snapshots and replication");
+            for(unsigned d=1;d<=8;d*=2) {
+                unsigned w=(17+d-1)/d,h=(19+d-1)/d,block_size=8/d;
+                struct sx_image_options options={0,0,0,d}; pixels[0]=pixels[w*h+1]=0xdeadbeef;
+                CHECK(sx_image_decode_into(fixture,used,&options,pixels+1,w*h,&info)==0,"synthetic colour scan at every scale");
+                unsigned hmax=1,vmax=1;
+                for(unsigned c=0;c<3;++c) {if((factors[c]>>4)>hmax) hmax=factors[c]>>4;
+                    if((factors[c]&15)>vmax) vmax=factors[c]&15;}
+                for(unsigned y=0;y<h;++y) for(unsigned x=0;x<w;++x) {
+                    unsigned value[3];
+                    for(unsigned c=0;c<3;++c) value[c]=128+8*c+8*((x*(factors[c]>>4)/hmax)/block_size+(y*(factors[c]&15)/vmax)/block_size);
+                    uint32_t expected=(app==0 || app==3)?(value[0]<<16)|(value[1]<<8)|value[2]:jpeg_ycbcr(value[0],value[1],value[2]);
+                    CHECK(pixels[1+y*w+x]==expected,"exact scaled component placement, predictor resets, table snapshots and replication");
+                }
+                CHECK(pixels[0]==0xdeadbeef && pixels[w*h+1]==0xdeadbeef,"synthetic colour guards at reduced extent");
             }
-            CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"synthetic colour guards");
         }
     }
 }
@@ -408,6 +417,14 @@ static void color_malformed(void) {
               metadata_equal(&info,&zero),"invalid later scan is decode failure");
         CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"late colour error guards");
         CHECK(allocations-before==releases-freed,"late colour error workspace released");
+        for(unsigned d=2;d<=8;d*=2) {
+            struct sx_image_options options={0,0,0,d}; unsigned count=((17+d-1)/d)*((19+d-1)/d);
+            pixels[0]=pixels[count+1]=0xdeadbeef; before=allocations; freed=releases;
+            CHECK(sx_image_decode_into(fixture,used,&options,pixels+1,count,&info)==SX_IMAGE_ERROR_DECODE &&
+                  metadata_equal(&info,&zero),"reduced decode still validates every later scan");
+            CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef &&
+                  allocations-before==releases-freed,"reduced late error guards and release");
+        }
     }
     // SOF1 supports the same full colour path without changing SOF0 output.
     memcpy(fixture,jpeg_color_separate,sizeof(jpeg_color_separate)); used=sizeof(jpeg_color_separate);
@@ -425,11 +442,196 @@ static void color_malformed(void) {
         fixture[at_mutation]^=(unsigned char)(1u<<(seed%8));
         pixels[0]=pixels[324]=0xdeadbeef;
         unsigned before=allocations,freed=releases;
-        int result=sx_image_decode_into(fixture,used,NULL,pixels+1,323,&info);
+        const struct sx_image_options full={0,0,0,1};
+        int result=sx_image_decode_into(fixture,used,&full,pixels+1,323,&info);
         CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"mutated colour guards");
         CHECK(allocations-before==releases-freed,"mutated colour workspace released");
         if(result) CHECK(metadata_equal(&info,&zero),"mutated colour failure metadata cleared");
         else CHECK(info.width*info.height<=323 && info.scale_denom==1,"mutated colour success dimensions bounded");
+    }
+}
+
+static void reduced_stages(void) {
+    const double pi=3.14159265358979323846;
+    int32_t block[64]={0}; unsigned char pixels[66];
+    for(unsigned d=2;d<=8;d*=2) {
+        unsigned n=8/d;
+        for(int dc=-1024;dc<=1023;++dc) {
+            block[0]=dc; memset(pixels,0xa5,sizeof(pixels)); jpeg_idct_scaled(block,pixels+1,d);
+            int expected=(int)round(dc/8.0)+128; if(expected<0) expected=0; if(expected>255) expected=255;
+            for(unsigned i=0;i<n*n;++i) CHECK(pixels[i+1]==expected,"reduced constant block rounds and clamps exactly");
+            CHECK(pixels[0]==0xa5 && pixels[n*n+1]==0xa5,"scaled IDCT writes only N*N samples");
+        }
+        double basis[8][8]={0};
+        for(unsigned x=0;x<n;++x) for(unsigned u=0;u<8;++u)
+            for(unsigned i=0;i<d;++i) basis[x][u]+=(u?1:sqrt(.5))*cos((2*(x*d+i)+1)*u*pi/16)/d;
+        for(unsigned test=0;test<128;++test) {
+            for(unsigned i=0;i<64;++i) block[i]=(int32_t)((test*31+i*17+i*i)%401)-200;
+            memset(pixels,0xa5,sizeof(pixels)); jpeg_idct_scaled(block,pixels+1,d);
+            for(unsigned y=0;y<n;++y) for(unsigned x=0;x<n;++x) {
+                double sum=0;
+                for(unsigned v=0;v<8;++v) for(unsigned u=0;u<8;++u) sum+=block[v*8+u]*basis[x][u]*basis[y][v]/4;
+                int expected=(int)round(sum)+128; if(expected<0) expected=0; if(expected>255) expected=255;
+                CHECK(abs((int)pixels[1+y*n+x]-expected)<=1,"reduced IDCT matches unclipped spatial averages within one level");
+            }
+            CHECK(pixels[0]==0xa5 && pixels[n*n+1]==0xa5,"nonconstant reduced IDCT guards");
+        }
+        memset(block,0,sizeof(block));
+        // Averaging annihilates these frequencies; skipping arbitrary AC terms does not.
+        block[4]=1000; block[32]=-1000; jpeg_idct_scaled(block,pixels,d);
+        for(unsigned i=0;i<n*n;++i) CHECK(pixels[i]==128,"cancelled high frequency terms");
+        for(unsigned i=0;i<64;++i) block[i]=((i&1)?1023:-1024)*65535;
+        jpeg_idct_scaled(block,pixels,d); // UBSan checks wide products/sums at every reduced scale.
+        memset(block,0,sizeof(block));
+    }
+}
+
+static void reduced_fixtures(void) {
+    const struct {const unsigned char *jpeg; size_t size; unsigned w,h; const uint32_t *expected[3];} refs[]={
+#define REF(name,w,h) {jpeg_##name,sizeof(jpeg_##name),w,h,{expected_reduced_##name##_2,expected_reduced_##name##_4,expected_reduced_##name##_8}}
+        REF(black,8,8),REF(white,8,8),REF(tiny,3,5),REF(gradient,9,9),REF(grain,17,13),REF(restart,17,13),
+        REF(color_y444,9,13),REF(color_y422,17,9),REF(color_y420,17,19),REF(color_y440,9,17),
+        REF(color_separate,17,19),REF(color_mixed,17,19),REF(color_pair,17,9),REF(color_rgb,13,9),
+        REF(color_rgb_separate,17,13),REF(color_rgb_ids,9,9),REF(color_no_marker,9,9),
+        REF(color_adobe_ycc,9,13),REF(color_both,9,9),REF(color_rgb422,17,9)
+#undef REF
+    };
+    unsigned max_gray=0,max_color=0;
+    for(unsigned r=0;r<sizeof(refs)/sizeof(refs[0]);++r) for(unsigned d=2,index=0;d<=8;d*=2,++index) {
+        unsigned w=(refs[r].w+d-1)/d,h=(refs[r].h+d-1)/d,count=w*h;
+        uint32_t pixels[325],common[323]; for(unsigned i=0;i<325;++i) pixels[i]=0xdeadbeef;
+        struct sx_image_options options={0,0,0,d};
+        struct sx_image_metadata info={0},decoded={0},wanted={SX_IMAGE_FORMAT_JPEG,refs[r].w,refs[r].h,w,h,d},zero={0};
+        unsigned before=allocations,freed=releases;
+        CHECK(sx_jpeg_info(refs[r].jpeg,refs[r].size,&options,&info)==0 && metadata_equal(&info,&wanted) &&
+              allocations==before,"reduced info exact metadata, no allocation");
+        CHECK(sx_jpeg_decode_into(refs[r].jpeg,refs[r].size,&options,pixels+1,count,&decoded)==0 &&
+              metadata_equal(&decoded,&info),"reduced reference decoded");
+        CHECK(allocations-before==releases-freed,"reduced workspace released");
+        if(r<6) CHECK(allocations==before,"reduced greyscale has no allocation");
+        else CHECK(allocations==before+1 && last_allocation_size<=3*count,"colour workspace bounded by reduced output");
+        for(unsigned i=0;i<count;++i) {
+            CHECK((pixels[i+1]>>24)==0,"reduced opaque packing");
+            for(unsigned shift=0;shift<=16;shift+=8) {
+                unsigned delta=(unsigned)abs((int)((pixels[i+1]>>shift)&255)-(int)((refs[r].expected[index][i]>>shift)&255));
+                CHECK(delta<=(r<6?1u:3u),"matched scaled reference tolerance: greyscale one, RGB three");
+                if(r<6) {if(delta>max_gray) max_gray=delta;} else if(delta>max_color) max_color=delta;
+            }
+        }
+        CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef,"reduced exact buffer guards");
+        CHECK(sx_image_info(refs[r].jpeg,refs[r].size,&options,&decoded)==0 && metadata_equal(&decoded,&wanted) &&
+              sx_image_decode_into(refs[r].jpeg,refs[r].size,&options,common,count,NULL)==0 &&
+              !memcmp(common,pixels+1,count*4),"common reduced metadata and pixels");
+        before=allocations;
+        CHECK(sx_jpeg_decode_into(refs[r].jpeg,refs[r].size,&options,pixels+1,count-1,&decoded)==SX_IMAGE_ERROR_BUFFER &&
+              metadata_equal(&decoded,&zero) && allocations==before,"reduced short buffer precedes allocation");
+        if(r>=6) {
+            for(unsigned i=0;i<325;++i) pixels[i]=0xdeadbeef;
+            fail_allocation=1;
+            CHECK(sx_image_decode_into(refs[r].jpeg,refs[r].size,&options,pixels+1,count,&decoded)==SX_IMAGE_ERROR_DECODE &&
+                  metadata_equal(&decoded,&zero),"reduced allocation failure resets metadata");
+            fail_allocation=0;
+            for(unsigned i=0;i<325;++i) CHECK(pixels[i]==0xdeadbeef,"reduced allocation failure precedes writes");
+        }
+        for(size_t length=0;length<refs[r].size;++length) {
+            pixels[0]=pixels[count+1]=0xdeadbeef; before=allocations; freed=releases;
+            CHECK(sx_jpeg_decode_into(refs[r].jpeg,length,&options,pixels+1,count,&decoded)<0 &&
+                  metadata_equal(&decoded,&zero),"all reduced truncated prefixes fail even at DC-only scale");
+            CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef &&
+                  allocations-before==releases-freed,"reduced truncation guards and release");
+        }
+    }
+    printf("60 reduced references: maximum difference greyscale %u, colour %u\n",max_gray,max_color);
+}
+
+static void scale_plans(void) {
+    const struct {struct sx_image_options options; unsigned d;} plans[]={
+        {{0,0,0,0},1},{{16,0,0,0},2},{{0,18,0,0},2},{{0,0,322,0},2},
+        {{8,0,0,0},4},{{0,9,0,0},4},{{0,0,89,0},4},{{4,0,0,0},8},{{0,4,0,0},8},{{0,0,24,0},8},
+        {{2,0,0,0},0},{{0,2,0,0},0},{{0,0,8,0},0},{{8,0,0,2},0},{{4,0,0,4},0},{{0,0,8,8},0},
+        {{9,10,90,2},2},{{5,5,25,4},4},{{3,3,9,8},8},{{9,9,90,0},4},{{9,10,25,0},4},
+        {{UINT32_MAX,UINT32_MAX,UINT32_MAX,0},1}
+    };
+    for(unsigned i=0;i<sizeof(plans)/sizeof(plans[0]);++i) {
+        uint32_t pixels[325],explicit_pixels[323]; for(unsigned j=0;j<325;++j) pixels[j]=0xdeadbeef;
+        struct sx_image_metadata info={0},decoded={0},zero={0};
+        int expected=plans[i].d?SX_IMAGE_OK:SX_IMAGE_ERROR_LIMIT;
+        unsigned before=allocations;
+        CHECK(sx_image_info(jpeg_color_y420,sizeof(jpeg_color_y420),&plans[i].options,&info)==expected &&
+              allocations==before,"automatic scale considers all three limits without allocation");
+        if(!plans[i].d) {
+            CHECK(metadata_equal(&info,&zero) && sx_image_decode_into(jpeg_color_y420,sizeof(jpeg_color_y420),
+                  &plans[i].options,pixels+1,323,&decoded)==expected && metadata_equal(&decoded,&zero) && allocations==before,
+                  "unfitting exact/automatic scale fails before allocation");
+            for(unsigned j=0;j<325;++j) CHECK(pixels[j]==0xdeadbeef,"limit failure has no pixel writes");
+            continue;
+        }
+        unsigned d=plans[i].d,w=(17+d-1)/d,h=(19+d-1)/d;
+        struct sx_image_metadata wanted={SX_IMAGE_FORMAT_JPEG,17,19,w,h,d};
+        CHECK(metadata_equal(&info,&wanted),"automatic chooses smallest fitting scale");
+        CHECK(sx_image_decode_into(jpeg_color_y420,sizeof(jpeg_color_y420),&plans[i].options,pixels+1,w*h,&decoded)==0 &&
+              metadata_equal(&info,&decoded),"automatic info and decode agree");
+        struct sx_image_options exact={0,0,0,d};
+        CHECK(sx_jpeg_decode_into(jpeg_color_y420,sizeof(jpeg_color_y420),&exact,explicit_pixels,w*h,NULL)==0 &&
+              !memcmp(explicit_pixels,pixels+1,w*h*4),"automatic pixels equal explicit scale");
+        const size_t expected_bytes=d==1?503:d==2?140:d==4?43:17;
+        CHECK(last_allocation_size==expected_bytes,"known reduced planes allocation, no full-sized workspace");
+        CHECK(pixels[0]==0xdeadbeef && pixels[w*h+1]==0xdeadbeef,"automatic output guards");
+    }
+    struct sx_image_metadata info,zero={0}; uint32_t pixels[4098];
+    for(unsigned dimension=1;dimension<=32768;dimension=dimension==1?4097:32768) {
+        minimal(dimension,1,7); unsigned d=dimension==1?1:dimension==4097?2:8;
+        CHECK(sx_jpeg_info(fixture,used,NULL,&info)==0 && info.source_width==dimension &&
+              info.width==(dimension+d-1)/d && info.height==1 && info.scale_denom==d,"large sources reduce below global output ceiling");
+        unsigned count=(dimension+d-1)/d; pixels[0]=pixels[count+1]=0xdeadbeef;
+        CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,count,NULL)==0,"large source entropy and restarts decoded at reduced scale");
+        for(unsigned x=0;x<count;++x) CHECK(pixels[x+1]==0x808080,"large reduced constant pixels");
+        CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef,"large source reduced guards");
+        if(dimension==32768) break;
+    }
+    minimal(32769,1,0);
+    CHECK(sx_jpeg_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_LIMIT && metadata_equal(&info,&zero),"no scale fits global width ceiling");
+    minimal(1,65535,0);
+    CHECK(sx_jpeg_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_LIMIT,"large height cannot fit even at 1/8");
+    minimal(8,8,0); size_t at=find_marker(0xc0); fixture[at+5]=fixture[at+7]=0x80; fixture[at+6]=fixture[at+8]=0;
+    CHECK(sx_jpeg_info(fixture,used,NULL,&info)==0 && info.width==4096 && info.height==4096 &&
+          info.scale_denom==8,"largest output area planned from 32768-square source without allocation");
+}
+
+static void reduced_errors(void) {
+    uint32_t pixels[18]; struct sx_image_metadata info,zero={0};
+    // Even the 1x1 IDCT must read and validate AC entropy, stuffing, padding and EOI.
+    for(unsigned fault=0;fault<4;++fault) for(unsigned d=2;d<=8;d*=2) {
+        minimal(8,8,0); size_t start=find_marker(0xda)+10;
+        if(fault==0) fixture[start]|=0x40; // Invalid AC code after valid DC.
+        if(fault==1) fixture[start]=0xff; // Unstuffed FF.
+        if(fault==2) fixture[start]&=0xfe; // Zero padding bit.
+        if(fault==3) used-=2; // No EOI.
+        struct sx_image_options options={0,0,0,d}; unsigned count=(8/d)*(8/d);
+        for(unsigned i=0;i<18;++i) pixels[i]=0xdeadbeef;
+        CHECK(sx_jpeg_decode_into(fixture,used,&options,pixels+1,count,&info)==SX_IMAGE_ERROR_DECODE &&
+              metadata_equal(&info,&zero),"reduction does not hide corrupt discarded AC or scan termination");
+        CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef,"corrupt reduced greyscale guards");
+    }
+    minimal(1,1,0); struct sx_image_options exact={1,1,1,8};
+    CHECK(sx_jpeg_decode_into(fixture,used,&exact,pixels,1,&info)==0 && info.width==1 && info.height==1 &&
+          info.scale_denom==8 && pixels[0]==0x808080,"explicit 1/8 remains exact even for a one-pixel source");
+    uint32_t seed=0x5754;
+    for(unsigned i=0;i<1500;++i) {
+        const unsigned char *data=i%2?jpeg_color_separate:jpeg_grain;
+        size_t size=i%2?sizeof(jpeg_color_separate):sizeof(jpeg_grain); memcpy(fixture,data,size); used=size;
+        seed=seed*1664525u+1013904223u; size_t at=seed%size;
+        seed=seed*1664525u+1013904223u; fixture[at]^=(unsigned char)(1u<<(seed%8));
+        struct sx_image_options options={4,4,16,i%4==3?0:2u<<(i%4)};
+        pixels[0]=pixels[17]=0xdeadbeef; unsigned before=allocations,freed=releases;
+        int result=sx_image_decode_into(fixture,used,&options,pixels+1,16,&info);
+        CHECK(pixels[0]==0xdeadbeef && pixels[17]==0xdeadbeef && allocations-before==releases-freed,"mutated reduced guards and release");
+        if(result) CHECK(metadata_equal(&info,&zero),"mutated reduced error metadata");
+        else CHECK(info.width<=4 && info.height<=4 && info.width*info.height<=16 &&
+                   (info.scale_denom==1 || info.scale_denom==2 || info.scale_denom==4 || info.scale_denom==8) &&
+                   info.width==(info.source_width+info.scale_denom-1)/info.scale_denom &&
+                   info.height==(info.source_height+info.scale_denom-1)/info.scale_denom &&
+                   (!options.scale_denom || info.scale_denom==options.scale_denom),"mutated reduced success honours dimensions, limits and exact denominator");
     }
 }
 
@@ -439,9 +641,9 @@ static void malformed(void) {
     CHECK(sx_jpeg_info(NULL,0,NULL,&info)==SX_IMAGE_ERROR_ARGUMENT && sx_jpeg_decode_into(fixture,used,NULL,NULL,64,&info)==SX_IMAGE_ERROR_ARGUMENT,"null data and pixels");
     struct sx_image_options options={0,0,0,3};
     CHECK(sx_jpeg_info(fixture,used,&options,&info)==SX_IMAGE_ERROR_ARGUMENT,"invalid denominator");
-    options=(struct sx_image_options){0,0,63,0};
+    options=(struct sx_image_options){0,0,63,1};
     CHECK(sx_jpeg_info(fixture,used,&options,&info)==SX_IMAGE_ERROR_LIMIT,"pixel budget");
-    options=(struct sx_image_options){0,7,0,0};
+    options=(struct sx_image_options){0,7,0,1};
     CHECK(sx_jpeg_info(fixture,used,&options,&info)==SX_IMAGE_ERROR_LIMIT,"height limit");
     const struct {unsigned marker; int error;} unsupported[]={
         {0xc2,SX_IMAGE_ERROR_JPEG_PROGRESSIVE},{0xc6,SX_IMAGE_ERROR_JPEG_PROGRESSIVE},
@@ -541,7 +743,8 @@ static void malformed(void) {
         memcpy(fixture,original,size); used=size; seed=seed*1664525u+1013904223u;
         size_t at=seed%size; seed=seed*1664525u+1013904223u; fixture[at]^=(unsigned char)(1u<<(seed%8));
         for(unsigned k=0;k<258;++k) pixels[k]=0xdeadbeef;
-        int result=sx_image_decode_into(fixture,size,NULL,pixels+1,256,&info);
+        const struct sx_image_options full={0,0,0,1};
+        int result=sx_image_decode_into(fixture,size,&full,pixels+1,256,&info);
         CHECK(pixels[0]==0xdeadbeef && pixels[257]==0xdeadbeef,"mutated input output guards");
         struct sx_image_metadata zero={0};
         if(result) CHECK(metadata_equal(&info,&zero),"mutated failure metadata cleared");
@@ -553,7 +756,8 @@ static void malformed(void) {
 }
 
 int main(void) {
-    stages(); fixtures(); color_fixtures(); color_scans(); color_malformed(); malformed();
+    stages(); reduced_stages(); fixtures(); color_fixtures(); color_scans(); color_malformed(); malformed();
+    reduced_fixtures(); scale_plans(); reduced_errors();
     if(failures) { printf("SXJPEG TEST FAIL %d\n",failures); return 1; }
     puts("SXJPEG TEST PASS"); return 0;
 }

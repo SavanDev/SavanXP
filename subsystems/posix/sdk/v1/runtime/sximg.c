@@ -1391,7 +1391,7 @@ struct jpeg_huffman
 struct jpeg_component
 {
     unsigned id, h, v, quant_id, dc_id, ac_id;
-    uint32_t width, height;
+    uint32_t width, height, sample_width, sample_height;
     unsigned char *samples;
 };
 
@@ -1399,8 +1399,8 @@ struct jpeg_state
 {
     const unsigned char *data;
     size_t size, entropy;
-    uint32_t width, height;
-    unsigned frame, components, hmax, vmax;
+    uint32_t width, height, output_width, output_height;
+    unsigned scale_denom, frame, components, hmax, vmax;
     struct jpeg_component component[3];
     unsigned scan_count, scan[3], decoded;
     unsigned restart_interval, jfif, adobe, transform;
@@ -1653,8 +1653,6 @@ static int jpeg_headers(struct jpeg_state *state, size_t pos)
             int result = jpeg_scan_header(state, body, length);
             if (result != SX_IMAGE_OK) return result;
             state->entropy = pos;
-            if (state->width > SX_IMAGE_MAX_DIMENSION || state->height > SX_IMAGE_MAX_DIMENSION)
-                return SX_IMAGE_ERROR_LIMIT;
             return SX_IMAGE_OK;
         }
         else if ((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu)
@@ -1817,6 +1815,55 @@ static void jpeg_idct(const int32_t block[64], unsigned char pixels[64])
     }
 }
 
+/* Average the T.81 spatial basis over each group of 2 or 4 samples.
+ * Q14 constants are rounded from the cosine definition, not from a full
+ * reconstructed block. The final division remains 4*2^28 as at scale 1. */
+static const int16_t jpeg_basis_half[4][8] = {
+    {11585,14846,10703,5213,0,-3483,-4433,-2953},
+    {11585,6149,-10703,-12586,0,8410,4433,-1223},
+    {11585,-6149,-10703,12586,0,-8410,4433,1223},
+    {11585,-14846,10703,-5213,0,3483,-4433,2953},
+};
+
+static const int16_t jpeg_basis_quarter[2][8] = {
+    {11585,10498,0,-3686,0,2463,0,-2088},
+    {11585,-10498,0,3686,0,-2463,0,2088},
+};
+
+static void jpeg_idct_scaled(const int32_t block[64], unsigned char *pixels, unsigned denom)
+{
+    int64_t temp[32];
+    unsigned x, y, u, v, n = 8u / denom;
+    const int16_t (*basis)[8] = denom == 2u ? jpeg_basis_half : jpeg_basis_quarter;
+    if (denom == 1u) { jpeg_idct(block, pixels); return; }
+    if (denom == 8u)
+    {
+        pixels[0] = jpeg_clamp(jpeg_round(block[0], 8) + 128);
+        return;
+    }
+    {
+        int dc_only = 1;
+        for (u = 1u; u < 64u; ++u) if (block[u] != 0) dc_only = 0;
+        if (dc_only)
+        {
+            memset(pixels, jpeg_clamp(jpeg_round(block[0], 8) + 128), n * n);
+            return;
+        }
+    }
+    for (v = 0u; v < 8u; ++v) for (x = 0u; x < n; ++x)
+    {
+        int64_t sum = 0;
+        for (u = 0u; u < 8u; ++u) sum += (int64_t)block[v * 8u + u] * basis[x][u];
+        temp[v * n + x] = sum;
+    }
+    for (y = 0u; y < n; ++y) for (x = 0u; x < n; ++x)
+    {
+        int64_t sum = 0;
+        for (v = 0u; v < 8u; ++v) sum += temp[v * n + x] * basis[y][v];
+        pixels[y * n + x] = jpeg_clamp(jpeg_round(sum, INT64_C(1) << 30) + 128);
+    }
+}
+
 static int jpeg_align(struct jpeg_reader *reader)
 {
     unsigned mask = (1u << reader->remaining) - 1u;
@@ -1831,7 +1878,7 @@ static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *
 {
     struct jpeg_reader reader = {state->data, state->size, state->entropy, 0u, 0u};
     struct jpeg_component *first = &state->component[state->scan[0]];
-    unsigned interleaved = state->scan_count > 1u;
+    unsigned interleaved = state->scan_count > 1u, n = 8u / state->scale_denom;
     uint32_t across = interleaved ? (state->width + 8u * state->hmax - 1u) / (8u * state->hmax) :
                                    (first->width + 7u) / 8u;
     uint32_t down = interleaved ? (state->height + 8u * state->vmax - 1u) / (8u * state->vmax) :
@@ -1859,18 +1906,18 @@ static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *
             {
                 int32_t block[64];
                 unsigned char samples[64];
-                uint32_t x, y, bx = ((index % across) * h + dx) * 8u;
-                uint32_t by = ((index / across) * v + dy) * 8u;
+                uint32_t x, y, bx = ((index % across) * h + dx) * n;
+                uint32_t by = ((index / across) * v + dy) * n;
                 if (!jpeg_block(&reader, &state->huff[0][component->dc_id], &state->huff[1][component->ac_id],
                                 &predictor[c], block)) return 0;
                 jpeg_dequantize(block, state->quant[component->quant_id]);
-                jpeg_idct(block, samples);
-                for (y = 0u; y < 8u && by + y < component->height; ++y)
-                    for (x = 0u; x < 8u && bx + x < component->width; ++x)
+                jpeg_idct_scaled(block, samples, state->scale_denom);
+                for (y = 0u; y < n && by + y < component->sample_height; ++y)
+                    for (x = 0u; x < n && bx + x < component->sample_width; ++x)
                     {
-                        size_t at = (size_t)(by + y) * component->width + bx + x;
-                        if (state->components == 1u) pixels[at] = (uint32_t)samples[y * 8u + x] * 0x010101u;
-                        else component->samples[at] = samples[y * 8u + x];
+                        size_t at = (size_t)(by + y) * component->sample_width + bx + x;
+                        if (state->components == 1u) pixels[at] = (uint32_t)samples[y * n + x] * 0x010101u;
+                        else component->samples[at] = samples[y * n + x];
                     }
             }
         }
@@ -1900,15 +1947,15 @@ static int jpeg_decode(struct jpeg_state *state, uint32_t *pixels)
     int result;
     if (state->components == 3u)
     {
-        /* Each byte plane is at most the output area: <= 3*4096*4096 bytes.
+        /* Each reduced byte plane is at most the output area: <= 3*4096*4096 bytes.
          * Dequantize immediately so later table redefinitions are harmless. */
-        for (c = 0u; c < 3u; ++c) size += (size_t)state->component[c].width * state->component[c].height;
+        for (c = 0u; c < 3u; ++c) size += (size_t)state->component[c].sample_width * state->component[c].sample_height;
         workspace = (unsigned char *)malloc(size);
         if (workspace == 0) return 0;
         for (c = 0u; c < 3u; ++c)
         {
             state->component[c].samples = workspace + offset;
-            offset += (size_t)state->component[c].width * state->component[c].height;
+            offset += (size_t)state->component[c].sample_width * state->component[c].sample_height;
         }
     }
     do
@@ -1920,16 +1967,16 @@ static int jpeg_decode(struct jpeg_state *state, uint32_t *pixels)
     {
         uint32_t x, y;
         int rgb = jpeg_rgb(state);
-        for (y = 0u; y < state->height; ++y) for (x = 0u; x < state->width; ++x)
+        for (y = 0u; y < state->output_height; ++y) for (x = 0u; x < state->output_width; ++x)
         {
             unsigned sample[3];
             for (c = 0u; c < 3u; ++c)
             {
                 const struct jpeg_component *component = &state->component[c];
-                sample[c] = component->samples[(size_t)(y * component->v / state->vmax) * component->width +
+                sample[c] = component->samples[(size_t)(y * component->v / state->vmax) * component->sample_width +
                                                x * component->h / state->hmax];
             }
-            pixels[(size_t)y * state->width + x] = rgb ? (sample[0] << 16) | (sample[1] << 8) | sample[2] :
+            pixels[(size_t)y * state->output_width + x] = rgb ? (sample[0] << 16) | (sample[1] << 8) | sample[2] :
                                                        jpeg_ycbcr(sample[0], sample[1], sample[2]);
         }
     }
@@ -2019,15 +2066,33 @@ static int jpeg_plan(const unsigned char *data, size_t size, const struct sx_ima
         options->scale_denom != 4u && options->scale_denom != 8u) return SX_IMAGE_ERROR_ARGUMENT;
     result = jpeg_prepare(data, size, state);
     if (result != SX_IMAGE_OK) return result;
-    if (options->scale_denom > 1u) return SX_IMAGE_ERROR_SCALE;
-    if (state->width > image_limit(options->max_width, SX_IMAGE_MAX_DIMENSION) ||
-        state->height > image_limit(options->max_height, SX_IMAGE_MAX_DIMENSION) ||
-        (uint64_t)state->width * state->height > image_limit(options->max_pixels, SX_IMAGE_MAX_PIXELS))
-        return SX_IMAGE_ERROR_LIMIT;
+    state->scale_denom = options->scale_denom ? options->scale_denom : 1u;
+    for (;;)
+    {
+        state->output_width = (state->width + state->scale_denom - 1u) / state->scale_denom;
+        state->output_height = (state->height + state->scale_denom - 1u) / state->scale_denom;
+        if (state->output_width <= image_limit(options->max_width, SX_IMAGE_MAX_DIMENSION) &&
+            state->output_height <= image_limit(options->max_height, SX_IMAGE_MAX_DIMENSION) &&
+            (uint64_t)state->output_width * state->output_height <= image_limit(options->max_pixels, SX_IMAGE_MAX_PIXELS))
+            break;
+        if (options->scale_denom != 0u || state->scale_denom == 8u) return SX_IMAGE_ERROR_LIMIT;
+        state->scale_denom *= 2u;
+    }
+    {
+        unsigned c;
+        for (c = 0u; c < state->components; ++c)
+        {
+            struct jpeg_component *component = &state->component[c];
+            component->sample_width = (component->width + state->scale_denom - 1u) / state->scale_denom;
+            component->sample_height = (component->height + state->scale_denom - 1u) / state->scale_denom;
+        }
+    }
     metadata.format = SX_IMAGE_FORMAT_JPEG;
-    metadata.source_width = metadata.width = state->width;
-    metadata.source_height = metadata.height = state->height;
-    metadata.scale_denom = 1u;
+    metadata.source_width = state->width;
+    metadata.source_height = state->height;
+    metadata.width = state->output_width;
+    metadata.height = state->output_height;
+    metadata.scale_denom = state->scale_denom;
     *out = metadata;
     return SX_IMAGE_OK;
 }

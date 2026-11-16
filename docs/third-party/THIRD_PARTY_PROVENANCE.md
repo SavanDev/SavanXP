@@ -417,7 +417,8 @@ in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
   [JFIF 1.02](https://www.w3.org/Graphics/JPEG/jfif3.pdf): sequential JPEG
   framing, entropy coding, reconstruction and YCbCr conversion in `libsximg`.
   [libjpeg-turbo 3.2.1 colour conventions](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.1/src/jdapimin.c)
-  inform JFIF/Adobe/markerless interpretation; its encoder/decoder produced
+  inform JFIF/Adobe/markerless interpretation; its [reduced-output design](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.1/src/jidctred.c)
+  confirms spatial averaging for scaled IDCT references. Its encoder/decoder produced
   host fixtures from our own samples. `Reference`: implemented here to share
   the memory-only SUN/POSIX API, with no upstream decoder code copied or
   linked. Specifications and upstream code are not redistributed. See

@@ -12,9 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **`libsximg` decodes JPEG at 1/2, 1/4 or 1/8 resolution without a full-size bitmap.**
+  Automatic scale selection fits output limits; exact scales and source/output dimensions agree across both image APIs.
+  Larger JPEG sources can fit at a reduced scale; see [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#limits-and-scaling).
+
 - **`libsximg` decodes RGB/YCbCr JPEG with JFIF and Adobe colour transforms.**
   Sampling factors 1/2, interleaved and separate scans, and restart intervals are supported at full resolution.
-  See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-jpeg); reduced decoding remains pending.
+  See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-jpeg) for the supported subset.
 
 - **`libsximg` decodes sequential 8-bit greyscale JPEG through `sx_jpeg_info`, `sx_jpeg_decode_into` and the common image API.**
   SOF0/SOF1, restart markers and full-resolution output are supported, with named rejection errors;

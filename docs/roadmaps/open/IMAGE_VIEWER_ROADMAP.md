@@ -1,7 +1,7 @@
 # Image Viewer and the image formats
 
 Status: **phases I1–I4 landed** (shared BMP decoding, PNG wallpapers, extended BMP and PNG formats).
-I5 has landed its common interface and full-resolution greyscale/colour JPEG; reduction and consumer integration are pending.
+I5 has landed its common interface, greyscale/colour JPEG and reduced decoding; consumer integration is pending.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -32,7 +32,7 @@ same formats it reads.
 |---|---|---|
 | PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I4) | All base colour types and their legal 1/2/4/8/16-bit depths, `tRNS`, Adam7, all filters, full inflate. Up to 4096 on a side |
 | BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into`, `sx_bmp_decode_argb_into` (I3) | `BI_RGB` 1/4/8/16/24/32 bpp, 16/32-bit masks and alpha, RLE4/RLE8. Up to 4096 on a side |
-| JPEG decoder | `sx_jpeg_info`, `sx_jpeg_decode_into` (I5 colour/scan delivery) | SOF0/SOF1, 8-bit greyscale/RGB/YCbCr, sampling factors 1/2, interleaved/separate scans, restart markers and JFIF/Adobe transforms. Full resolution; reduction pending |
+| JPEG decoder | `sx_jpeg_info`, `sx_jpeg_decode_into` (I5 colour/scan delivery) | SOF0/SOF1, 8-bit greyscale/RGB/YCbCr, sampling factors 1/2, interleaved/separate scans, restart markers and JFIF/Adobe transforms. Full resolution and reduced 1/2/4/8 output with automatic fitting |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
 | Scaling | `sx_painter_draw_scaled_bitmap` (`gfx2d.h`), `SX_SCALE_NEAREST` / `BILINEAR` | zoom and fit-to-window |
 | Scrolling, toolbar, status bar | `SXGUI_SCROLLBAR`, `SXGUI_FLAG_TOOLBAR`, the status label | the frame around the image |
@@ -94,8 +94,9 @@ grows in up to eight arenas, and an arena is a section the kernel zeroes
 when it is created ([NATIVE_HEAP.md](../../userland/NATIVE_HEAP.md)), so a
 picture that size costs its full size at once. The limits are therefore:
 
-- **4096 pixels on a side** for every decoder (`SX_PNG_MAX_DIMENSION`,
-  `SX_BMP_MAX_DIMENSION`). Callers keep their own smaller limits (Paint
+- **4096 output pixels on a side** for every decoder (`SX_IMAGE_MAX_DIMENSION`).
+  BMP/PNG also cap source dimensions; JPEG accepts larger sources when reduced
+  output fits. Callers keep their own smaller limits (Paint
   512x384, the wallpaper 2048).
 - **JPEG decodes at a reduced scale instead of refusing.** The IDCT can
   produce 1/2, 1/4 or 1/8 of the size almost for free, so a larger photo is
@@ -210,8 +211,10 @@ Adam7 fixtures also pass through CUR selection and retain exact alpha.
    one or three components, legal sampling factors of 1 or 2 (4:4:4, 4:2:2,
    4:2:0, 4:4:0), interleaved/separate scans, restart markers, JFIF and
    Adobe (`APP14`) colour transforms.
-4. **Reduced decode:** denominators 1/2/4/8, planning and decode in agreement,
-   without first building a full-resolution bitmap.
+4. **Reduced decode (done):** denominators 1/2/4/8, planning and decode in agreement,
+   without first building a full-resolution bitmap. Automatic fitting honours
+   every output limit; explicit scales are exact. Larger JPEG sources may fit
+   at a reduced scale. See [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md).
 5. **Consumer integration and closure:** wallpaper uses the common API;
    Display Properties accepts `.jpg`/`.jpeg`, with visual and persistence
    verification. Paint keeps its current formats unless extended separately.

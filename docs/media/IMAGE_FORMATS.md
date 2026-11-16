@@ -11,7 +11,8 @@ support and the remaining JPEG work are tracked in
 - `sx_image_format(data, size)` identifies BMP (`BM`), PNG (its eight-byte
   signature) or JPEG (`FF D8`). It returns `SX_IMAGE_FORMAT_UNKNOWN` for
   unknown or insufficient input, including a null pointer. Detection does
-  not validate the file. Sequential greyscale/RGB/YCbCr JPEG is decoded at full resolution.
+  not validate the file. Sequential greyscale/RGB/YCbCr JPEG supports full
+  resolution and decoder-level reduction by 2, 4 or 8.
 - `sx_image_info(data, size, options, out)` validates supported metadata and
   plans the output. It allocates nothing. `out` is required and zeroed on
   error; on success it contains the format, original `source_width` and
@@ -41,19 +42,24 @@ workspace or input bytes. Callers remain responsible for their own input
 and memory budgets.
 
 `scale_denom` is zero for automatic selection, or exactly 1, 2, 4 or 8 for
-an explicit denominator. Other values are argument errors. BMP, PNG and the
-current JPEG decoder support only 1: automatic selection returns 1,
-an explicit 2/4/8 returns
-`SX_IMAGE_ERROR_SCALE`, and an image that does not fit is refused. There is
-no implicit resampling, upscaling or fallback to a different exact scale.
+an explicit denominator. Other values are argument errors. BMP and PNG
+support only 1: automatic selection returns 1, an explicit 2/4/8 returns
+`SX_IMAGE_ERROR_SCALE`, and an image that does not fit is refused.
 
-The contract for the pending reduced JPEG decoder is: auto chooses the smallest
-supported denominator in 1/2/4/8 that fits **all three** output limits;
-explicit selection uses precisely that denominator. Output dimensions are
-`ceil(source_width / scale_denom)` by `ceil(source_height / scale_denom)`.
-If no permitted scale fits, the result is `SX_IMAGE_ERROR_LIMIT`. Currently
-JPEG auto selects 1 and refuses output exceeding the limits; explicit 2/4/8
-returns `SX_IMAGE_ERROR_SCALE`.
+JPEG auto chooses the smallest denominator in 1/2/4/8 that fits **all three**
+output limits. Explicit selection uses precisely that denominator: there is
+no fallback to another scale, resampling after decode or upscaling. Output
+is `ceil(source_width / scale_denom)` by `ceil(source_height / scale_denom)`.
+If no permitted scale fits, the result is `SX_IMAGE_ERROR_LIMIT`. A null or
+all-zero options structure can therefore return a reduced JPEG with its
+actual denominator in the metadata.
+
+The 4096-side and 16,777,216-pixel ceilings apply to decoded output. JPEG SOF
+source dimensions may exceed 4096 (up to the format's 16-bit fields) if an
+allowed scale fits. For example, a 4097x1 JPEG auto selects 2 and produces
+2049x1; exact scale 1 returns `SX_IMAGE_ERROR_LIMIT`. A 32768x32768 source
+can be planned at scale 8 with global defaults; 32769 on either side cannot
+fit even at scale 8. BMP/PNG retain their original source limits.
 
 ## Results and failures
 
@@ -155,12 +161,31 @@ coefficients and 16-bit quantizers. Final values are rounded to nearest
 (ties away from zero), shifted by 128 and clamped to 0..255. Partial blocks
 are clipped to each component's true dimensions; interleaved padding blocks
 are still consumed. Greyscale writes directly and needs no heap allocation.
-Colour decode allocates one byte per actual sample in three component planes,
-at most `3*source_width*source_height` bytes (48 MiB at the global ceiling),
+Colour decode allocates one byte per reduced sample in three component planes,
+at most `3*width*height` bytes using decoded dimensions (48 MiB at the global ceiling),
 plus fixed tables and block storage. No image-sized coefficient buffer is
 kept. Workspace is freed on every exit; allocation failure returns
 `SX_IMAGE_ERROR_DECODE`. Info allocates nothing. Output budgets do not include
-workspace. Reduced decoding remains the next I5 delivery.
+workspace. Source-size pixel/coefficient buffers are never allocated.
+
+At scale 2 or 4, the separable IDCT basis averages each group of 2 or 4
+adjacent spatial samples directly from the coefficients. It emits only 4x4
+or 2x2 values per original 8x8 block, rounding and clamping **after** averaging.
+At scale 8 only the DC coefficient contributes, divided by 8 with level shift
+and clamping. This differs from reducing an already rounded/clipped bitmap
+or simply discarding all high-frequency coefficients. Scale 1 retains its
+existing transform and pixels. All components use the same denominator;
+subsampled components retain the same replication ratios at reduced size.
+Partial bins at the image edge use the full encoded block's reconstruction
+and are clipped to the reduced component dimensions.
+
+Reduction does not skip entropy validation: every original MCU, AC run,
+stuffed byte, restart, scan boundary, padding and EOI is still checked, even
+when only DC contributes to output. Work therefore also depends on source
+size and input bytes, not just output size. Each component's plane measures
+`ceil(component_source_width / scale_denom)` by
+`ceil(component_source_height / scale_denom)`. For a 17x19 4:2:0 image the
+three planes require 503/140/43/17 bytes at denominators 1/2/4/8 respectively.
 
 `sxjpeg-test` checks Huffman construction, sign extension, coefficient runs,
 zig-zag placement, dequantization and the integer IDCT against an independent
@@ -180,3 +205,21 @@ truncated reference prefix, buffer guards, allocation failures and release,
 named unsupported modes, SOF1, restart wraparound, malformed/duplicate/missing
 scans and deterministic mutations. JPEG integration into applications remains
 a later delivery.
+
+The same twenty JPEG fixtures also have sixty reduced references at 2/4/8,
+with the same one-level greyscale and three-level RGB tolerances. For the
+reference only, libjpeg-turbo losslessly transcodes each component into a
+one-component JPEG with unchanged coefficients and quantizers, then decodes
+it using `JDCT_ISLOW` at the requested denominator. This avoids libjpeg's
+adaptive chroma IDCT sizes; all reference components use the same reduction.
+A double-precision JFIF matrix combines the planes with sample replication.
+Only the expected pixels are stored; no new runtime or build dependency is
+introduced. Reduced stages also compare directly with averaged floating-point
+cosine bases, including AC cancellation, clipping and wide intermediate sums.
+
+Tests assert the smallest automatic fit for each output limit and their
+intersection, exact scale failures without fallback, rounded odd dimensions,
+large source metadata and decode, reduced buffer bounds, memory allocation
+sizes and failure, every truncated prefix at every scale, malformed discarded
+AC data, later scan errors, and mutations with explicit/automatic scales.
+All 64 sampling combinations and scan/table/restart cases run at 1/2/4/8.
