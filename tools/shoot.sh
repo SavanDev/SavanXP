@@ -162,6 +162,8 @@ qemu_args=(
     --vars-copy "$vars_copy"
 )
 if ((VIRTIO)); then qemu_args+=(--virtio); fi
+# Xeyes asserts exact global pointer positions, so use the absolute USB tablet.
+if [[ "$SCENARIO" == linux-xeyes ]]; then qemu_args+=(--usb --usb-pointer tablet); fi
 # Disk Management's scenario writes to a blank disk of its own, never to the
 # system's (docs/userland/DISK_MANAGEMENT.md).
 if [[ "$SCENARIO" == diskmgmt ]]; then
@@ -190,7 +192,7 @@ session_args=(
     --scenario "$SCENARIO"
     --boot-wait "$BOOT_WAIT"
 )
-if ((VIRTIO)); then session_args+=(--abs-pointer); fi
+if ((VIRTIO)) || [[ "$SCENARIO" == linux-xeyes ]]; then session_args+=(--abs-pointer); fi
 "${session_args[@]}"
 if ((KEEP_RUNNING)); then
     trap - EXIT

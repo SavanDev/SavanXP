@@ -3638,6 +3638,19 @@ def scenario_linux_xclient(s):
 def scenario_linux_xeyes(s):
     """Open the original ELF through Start and Files in the normal desktop."""
     from linux_xeyes_smoke import reference
+    import math
+
+    if not s.qmp.abs_pointer:
+        raise Failure("the Xeyes visual scenario requires the absolute tablet supplied by shoot.sh")
+
+    def exact_move(x, y):
+        width, height = s.qmp.screen
+        s.qmp.cmd("input-send-event", events=[
+            {"type": "abs", "data": {"axis": "x", "value": math.ceil(x * 32767 / (width - 1))}},
+            {"type": "abs", "data": {"axis": "y", "value": math.ceil(y * 32767 / (height - 1))}}])
+        time.sleep(.2)
+
+    s.qmp.move_to = exact_move
 
     def locate(image):
         target = reference(0).crop((0, 12, 150, 13)).tobytes()
@@ -3672,10 +3685,14 @@ def scenario_linux_xeyes(s):
     # Move the real caption; the eyes must keep following global coordinates.
     s.qmp.move_to(x + 40, y - 12)
     s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(.15)
     s.qmp.move_to(104, 52); time.sleep(.3)
     s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
     time.sleep(1)
-    x, y = locate(s.shot("xeyes-moved")); check("xeyes-moved-linux-pixels", x, y)
+    x, y = locate(s.shot("xeyes-moved"))
+    if (x, y) != (64, 64):
+        raise Failure(f"the caption drag did not place Xeyes at 64,64: got {x},{y}")
+    check("xeyes-moved-linux-pixels", x, y)
     s.run("calc", wait=5)
     # Bring Calculator over the eye window by dragging its real title bar.
     image = s.shot("cover-open")
@@ -3684,6 +3701,7 @@ def scenario_linux_xeyes(s):
         raise Failure("the native/POSIX cover window did not open")
     s.qmp.move_to(caption[0] + 30, caption[1] + 5)
     s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(.15)
     s.qmp.move_to(x + 30, y + 5); time.sleep(.3)
     s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
     time.sleep(1)

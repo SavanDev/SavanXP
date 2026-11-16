@@ -547,6 +547,7 @@ restart. An absent installed Xeyes makes the scenario skip with exit 77; a
 partial or changed installed runtime fails. Logs and captures stay under
 `build/smoke-logs`.
 
-`tools/shoot.sh --scenario linux-xeyes` opens the original ELF through the
+`tools/shoot.sh --scenario linux-xeyes` uses an absolute USB tablet for exact
+pointer coordinates and opens the original ELF through the
 Start pin and by double click in Files, moves its caption, occludes it with
 Calculator, restores the image, closes it and checks the normal taskbar.
