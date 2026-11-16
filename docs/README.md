@@ -274,6 +274,9 @@ all its phases have landed; the links to it move with it.
 - [`SMP_ROADMAP.md`](roadmaps/open/SMP_ROADMAP.md) — more than one core: startup, the big
   kernel lock, TLB shootdown and the lock's counters, all done; and phase 5,
   taking the lock apart, planned with the measurement that says when.
+- [`FRAMEBUFFER_ROADMAP.md`](roadmaps/open/FRAMEBUFFER_ROADMAP.md) — firmware framebuffer
+  validation, cache attributes, presentation semantics, emergency output, pixel
+  formats, measured performance and the gates for a native display driver.
 - [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.

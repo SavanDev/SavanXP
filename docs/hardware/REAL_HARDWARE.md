@@ -382,9 +382,14 @@ Pentium 4) still panics: that is a missing feature, not a setting.
 
 ### HW-11 — Video on firmware framebuffers
 
-Limine maps the framebuffer write-combining through the PAT on every CPU
-here, so the old concern about uncached video memory does not apply. What is
-left:
+The implementation plan and acceptance gates are in
+[FRAMEBUFFER_ROADMAP.md](../roadmaps/open/FRAMEBUFFER_ROADMAP.md).
+The earlier assumption that Limine maps every framebuffer write-combining needs
+an audit: the current log does not identify the inherited mapping's actual type,
+and the VM code describes a write-through case. FB2 will establish the mapping
+attributes and relevant PAT/MTRR rules on each tested target before changing
+them. This does not establish that existing physical runs used uncached memory.
+Other remaining work:
 
 - **The mode is chosen once, by Limine, before the kernel starts.** The
   ISO's entries carry no `resolution:` line, so Limine asks the monitor for
