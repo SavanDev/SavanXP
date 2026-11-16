@@ -455,6 +455,8 @@ final checks; full command results are recorded in the verification commit.
 
 ## L6: the original Xeyes on the desktop
 
+**L6 closed on 2026-11-15.**
+
 The pinned Alpine `xeyes` 1.3.1-r0 is unchanged (SHA-256
 `c2c0ba389108f921f760e9ff668e0374eff247c31aef8207ce411acc66d5830a`).
 It uses musl, its 18 shared libraries and three Xlib locale files, pinned by
@@ -551,3 +553,20 @@ partial or changed installed runtime fails. Logs and captures stay under
 pointer coordinates and opens the original ELF through the
 Start pin and by double click in Files, moves its caption, occludes it with
 Calculator, restores the image, closes it and checks the normal taskbar.
+
+
+L6 verification on 2026-11-15: the implementation checkpoint was committed
+before the final suite. The final integration includes codex's concurrent
+Web Viewer and storage work. The normal build prints `check_shared_libs: OK`;
+51 host tests pass out of 54, with only the three unavailable external
+Win32-fixture tests skipped. `linux-xeyes` passes on KVM with two and four
+CPUs and on TCG, with four clean cycles per run and unchanged installed
+hashes/modes after restart. The final desktop visual check passes Start,
+exact caption placement, Calculator occlusion, original-ELF double click
+and close. Captures were also inspected manually. The SUN/POSIX, Linux
+hello/restart/tools/dynamic/Xlib, windowd, taskbar, SxGUI and loader regression
+gates pass. The protocol engine passes ASan/UBSan/LeakSanitizer outside the
+sandbox; missing-runtime skip (77), missing-Alpine configure/helper build and
+the isolated deterministic Doom persistence check also pass. Exact commands,
+exit codes, corrections and retained log locations are in the verification
+commit. General Linux profiles remain L7 work, outside this closed Xeyes goal.

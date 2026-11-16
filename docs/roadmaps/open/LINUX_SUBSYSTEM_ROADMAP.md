@@ -1,8 +1,9 @@
 # SSL, the Savan Subsystem for Linux — binary compatibility on Sx
 
-> **Status: L0, E1 and L1-L5 closed, with S1, S2a, S2b and P1 (2026-11-15):
+> **Status: L0, E1 and L1-L6 closed, with S1, S2a, S2b and P1 (2026-11-15):
 > static and dynamic musl programs run unchanged, including the pinned Alpine
-> `jq` and the Xlib client in a desktop window.** What is
+> `jq`, the Xlib fixture and the original Xeyes opened from Start and Files.**
+> The first application profile is closed; L7 lists separate future profiles. What is
 > built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
@@ -573,7 +574,7 @@ persistent-image check preserves the external Doom binary and assets. The
 bounded first profile and verification are recorded in
 [LINUX.md](../../userland/LINUX.md#l5-local-streams-and-the-x11-service).
 
-### L6 — Xeyes (implementation in verification)
+### L6 — Xeyes (closed, 2026-11-15)
 
 Size M, if the earlier gates were honest.
 
@@ -590,6 +591,21 @@ log or one screenshot does not close the goal. Native and POSIX desktop
 behaviour still passes, and the executable, its libraries and resources
 survive a normal build and a guest restart. `linux-xeyes` is a smoke
 scenario, skipped when the guest tree is not installed.
+
+**Closed on 2026-11-15:** the original pinned Alpine ELF and complete runtime
+pass `linux-xeyes` with KVM (two and four CPUs) and TCG. Each run exercises
+two launches before and two after a guest restart, seven full reference
+frames, the complete Linux-measured repaint region after resizing, caption
+close, exact section/desktop-handle/process recovery and reclaimed memory.
+The approved repaint-domain criterion excludes only undefined `None`
+background pixels; both eyes and every pupil pixel remain asserted.
+Start and direct ELF double-click in Files, movement and occlusion pass the
+ordinary-desktop visual scenario. All 51 available host tests and the native,
+POSIX, window/taskbar/SxGUI and loader regressions pass; three external Win32
+fixture tests are skipped. The normal build preserves all 23 pinned runtime
+files and modes, and the external Doom persistence check passes. Full
+results and the first profile's bounds are recorded in
+[LINUX.md](../../userland/LINUX.md#l6-the-original-xeyes-on-the-desktop).
 
 ### L7 — later profiles
 

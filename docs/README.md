@@ -133,7 +133,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   with Start/Files launch and the Linux smoke gates.
 - [`LINUX_XEYES_PROFILE.md`](userland/LINUX_XEYES_PROFILE.md) — the
   measured scope of SSL's first profile: Alpine's Xeyes and its 20-file musl
-  closure by hash, the L1-L5 fixtures and how they are built, the system call
+  closure by hash, the L1-L5 fixtures and how they are built, the L6 resize
+  repaint reference, the system call
   and X request matrices traced on Linux with every extension absent, what
   each call meets in the kernel today, and the reference outputs.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
