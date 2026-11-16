@@ -434,6 +434,7 @@ Cut-off notes:
 
 - **Xeyes installation preserves executable permissions, and its visual checks include the desktop cursor and shadow.**
   `linux-xeyes` checks actual inode modes and every defined content pixel, including both pupils.
+  The desktop scenario sends both Files clicks within the activation interval.
 
 - **SUN sockets no longer sleep waiting for NIC initialization or ARP resolution.**
   Connect and datagram sends expose pending routes through `sxn_wait_io`, with cancellation,

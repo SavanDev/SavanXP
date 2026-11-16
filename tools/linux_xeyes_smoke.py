@@ -96,11 +96,12 @@ def main() -> int:
                 if painted is None:
                     matches = crop.tobytes() == expected.tobytes()
                 else:
-                    actual = list(crop.get_flattened_data())
-                    defined = list(painted.get_flattened_data())
-                    count = sum(pixel != (255, 0, 255) for pixel in defined)
+                    actual = crop.tobytes()
+                    defined = painted.tobytes()
+                    domain = [i for i in range(0, len(defined), 3) if defined[i:i + 3] != b'\xff\x00\xff']
+                    count = len(domain)
                     assert count > expected.width * expected.height // 2
-                    matches = all(actual[i] == pixel for i, pixel in enumerate(defined) if pixel != (255, 0, 255))
+                    matches = all(actual[i:i + 3] == defined[i:i + 3] for i in domain)
                 if matches:
                     image.save(args.out_dir / f'{name}.png')
                     detail = 'pixel for pixel' if painted is None else f'on all {count} repainted pixels (both eyes and pupils)'

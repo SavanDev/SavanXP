@@ -3700,7 +3700,14 @@ def scenario_linux_xeyes(s):
     if label is None:
         raise Failure("Files does not list the original xeyes ELF")
     s.qmp.move_to(label[0] + 10, label[1] + 4)
-    s.qmp.click(); time.sleep(.15); s.qmp.click(); time.sleep(8)
+    # Qmp.click deliberately waits 0.6 s after release for ordinary UI
+    # actions. Emit two actual clicks within the toolkit's double-click time.
+    for _ in range(2):
+        s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(.05)
+        s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(.1)
+    time.sleep(8)
     x, y = locate(s.shot("xeyes-from-files"))
     check("xeyes-from-files-linux-pixels", x, y)
     s.qmp.move_to(x + 142, y - 12); s.qmp.click(); time.sleep(2)
