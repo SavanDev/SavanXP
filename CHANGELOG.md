@@ -15,7 +15,6 @@ Cut-off notes:
 - **Paint, desktop wallpapers and PNG cursors now read indexed and greyscale PNGs, all legal sample depths, `tRNS` and Adam7.**
   `libsximg` retains straight alpha for cursors, composites documents onto white, and rescales 16-bit samples to 8 bits.
   Incomplete PNGs and unsupported critical chunks are rejected.
-  Image Viewer roadmap phase I4 is complete.
 
 - **Paint and desktop wallpapers now read paletted, 16-bit, masked and RLE4/RLE8 BMPs, including V4/V5 alpha.**
   `libsximg` composites alpha onto white; `sx_bmp_decode_argb_into` preserves it for callers.
