@@ -1,6 +1,7 @@
 /* Host tests for libsximg: construct images in memory and compare exact
  * pixels without QEMU. PNG covers stored/fixed/dynamic deflate, every row
- * filter and RGB/RGBA; BMP covers palettes, bitfields, alpha and RLE.
+ * filter, all colour types/depths, tRNS and Adam7; BMP covers palettes,
+ * bitfields, alpha and RLE.
  * Guest scenarios prove that consumers load the library and read files. */
 #include <stdint.h>
 
@@ -11,6 +12,7 @@ extern "C" {
 }
 
 #include <vector>
+#include <utility>
 
 #include "savanxp/img.h"
 
@@ -632,6 +634,327 @@ void bmp_extended_tests() {
 
 }
 
+/* Build PNG image data independently of the decoder's pass geometry: this
+ * tile labels the pass of each coordinate, as in the PNG specification. */
+static const unsigned char png_pass_tile[8][8] = {
+    {1,6,4,6,2,6,4,6}, {7,7,7,7,7,7,7,7},
+    {5,6,5,6,5,6,5,6}, {7,7,7,7,7,7,7,7},
+    {3,6,4,6,3,6,4,6}, {7,7,7,7,7,7,7,7},
+    {5,6,5,6,5,6,5,6}, {7,7,7,7,7,7,7,7}
+};
+
+std::vector<unsigned char> png_stored_stream(const std::vector<unsigned char>& raw) {
+    std::vector<unsigned char> stream = {0x78,0x01};
+    size_t at = 0;
+    do {
+        size_t n = raw.size() - at;
+        if (n > 65535u) n = 65535u;
+        stream.push_back(at + n == raw.size() ? 1 : 0);
+        stream.push_back((unsigned char)n); stream.push_back((unsigned char)(n >> 8));
+        stream.push_back((unsigned char)~n); stream.push_back((unsigned char)(~n >> 8));
+        stream.insert(stream.end(), raw.begin() + at, raw.begin() + at + n);
+        at += n;
+    } while (at < raw.size());
+    uint32_t sum = adler(raw);
+    for (int shift = 24; shift >= 0; shift -= 8) stream.push_back((unsigned char)(sum >> shift));
+    return stream;
+}
+
+Png png_raw(uint32_t w, uint32_t h, unsigned type, unsigned depth, unsigned interlace,
+            const std::vector<unsigned char>& raw, const std::vector<unsigned char>& palette = {},
+            const std::vector<unsigned char>* transparency = nullptr) {
+    Png png;
+    png.header(w, h, (unsigned char)type, (unsigned char)depth, (unsigned char)interlace);
+    if (!palette.empty()) png.chunk("PLTE", palette);
+    if (transparency) png.chunk("tRNS", *transparency);
+    png.chunk("IDAT", png_stored_stream(raw));
+    png.end();
+    return png;
+}
+
+std::vector<unsigned char> png_sample_rows(uint32_t w, uint32_t h, unsigned channels, unsigned depth,
+                                          bool interlaced, unsigned filter,
+                                          const std::vector<uint32_t>& samples) {
+    std::vector<unsigned char> raw;
+    for (unsigned pass = interlaced ? 1u : 0u; pass <= (interlaced ? 7u : 0u); ++pass) {
+        std::vector<unsigned char> previous;
+        for (uint32_t y = 0; y < h; ++y) {
+            std::vector<uint32_t> row_samples;
+            for (uint32_t x = 0; x < w; ++x) {
+                if (interlaced && png_pass_tile[y % 8][x % 8] != pass) continue;
+                for (unsigned c = 0; c < channels; ++c) row_samples.push_back(samples[((size_t)y * w + x)*channels + c]);
+            }
+            if (row_samples.empty()) continue;
+            std::vector<unsigned char> row((row_samples.size() * depth + 7u) / 8u, 0);
+            for (size_t i = 0; i < row_samples.size(); ++i) {
+                uint32_t v = row_samples[i];
+                if (depth == 16) { row[2*i] = (unsigned char)(v >> 8); row[2*i+1] = (unsigned char)v; }
+                else if (depth == 8) row[i] = (unsigned char)v;
+                else row[i * depth / 8] |= (unsigned char)(v << (8 - depth - (i * depth % 8)));
+            }
+            unsigned bpp = (channels * depth + 7u) / 8u;
+            raw.push_back((unsigned char)filter);
+            for (size_t i = 0; i < row.size(); ++i) {
+                int left = i >= bpp ? row[i-bpp] : 0;
+                int above = previous.empty() ? 0 : previous[i];
+                int corner = !previous.empty() && i >= bpp ? previous[i-bpp] : 0;
+                int prediction = filter == 1 ? left : filter == 2 ? above : filter == 3 ? (left+above)/2 :
+                                 filter == 4 ? Png::paeth(left,above,corner) : 0;
+                raw.push_back((unsigned char)(row[i] - prediction));
+            }
+            previous = row;
+        }
+    }
+    return raw;
+}
+
+uint32_t png_white(uint32_t argb) {
+    uint32_t a = argb >> 24, result = 0;
+    for (unsigned shift : {0u,8u,16u}) {
+        uint32_t colour = (argb >> shift) & 255;
+        result |= ((colour*a + 255*(255-a) + 127)/255) << shift;
+    }
+    return result;
+}
+
+bool png_pixels(const Png& png, uint32_t width, uint32_t height, const std::vector<uint32_t>& argb) {
+    uint32_t w = 0, h = 0;
+    if (sx_png_info(png.bytes.data(), png.bytes.size(), &w, &h) != 0 || w != width || h != height ||
+        argb.size() != (size_t)w*h) return false;
+    sx_png_image rgb = {}, alpha = {};
+    bool ok = sx_png_decode(png.bytes.data(), png.bytes.size(), &rgb) == 0 &&
+              sx_png_decode_argb(png.bytes.data(), png.bytes.size(), &alpha) == 0;
+    std::vector<uint32_t> into(argb.size()+2, 0xdeadbeef);
+    ok = ok && rgb.width == w && rgb.height == h && alpha.width == w && alpha.height == h &&
+         sx_png_decode_into(png.bytes.data(), png.bytes.size(), into.data()+1, argb.size()) == 0 &&
+         into.front() == 0xdeadbeef && into.back() == 0xdeadbeef;
+    for (size_t i = 0; ok && i < argb.size(); ++i) {
+        ok = alpha.pixels[i] == argb[i] && rgb.pixels[i] == png_white(argb[i]) && into[i+1] == rgb.pixels[i];
+    }
+    sx_png_free(&rgb); sx_png_free(&alpha);
+    return ok;
+}
+
+bool png_refused(const Png& png) {
+    sx_png_image rgb = {}, alpha = {};
+    uint32_t into[258];
+    for (auto& v : into) v = 0xdeadbeef;
+    bool ok = sx_png_decode(png.bytes.data(), png.bytes.size(), &rgb) < 0 && !rgb.pixels && !rgb.width && !rgb.height;
+    ok = (sx_png_decode_argb(png.bytes.data(), png.bytes.size(), &alpha) < 0 &&
+          !alpha.pixels && !alpha.width && !alpha.height) && ok;
+    ok = sx_png_decode_into(png.bytes.data(), png.bytes.size(), into+1, 256) < 0 &&
+         into[0] == 0xdeadbeef && into[257] == 0xdeadbeef && ok;
+    sx_png_free(&rgb); sx_png_free(&alpha);
+    return ok;
+}
+
+void png_format_case(unsigned type, unsigned depth, bool interlaced, unsigned filter, uint32_t w, uint32_t h) {
+    unsigned channels = type == 2 ? 3 : type == 4 ? 2 : type == 6 ? 4 : 1;
+    uint32_t max = (1u << depth)-1;
+    std::vector<unsigned char> palette, trns;
+    unsigned count = type == 3 ? 1u << depth : 0;
+    for (unsigned i = 0; i < count; ++i) {
+        palette.push_back((unsigned char)(i*31)); palette.push_back((unsigned char)(i*71));
+        palette.push_back((unsigned char)(i*113));
+        if (i+1 < count) trns.push_back(i % 3 == 0 ? 0 : i % 3 == 1 ? 128 : 255);
+    }
+    std::vector<uint32_t> samples((size_t)w*h*channels), expected((size_t)w*h);
+    for (size_t i = 0; i < samples.size(); ++i) samples[i] = (uint32_t)((i*12347u + (i*i/2u)*173u) & max);
+    if (type == 0 || type == 2) trns.assign(channels*2, 0); // first pixel's samples are the key
+    for (unsigned c = 0; (type == 0 || type == 2) && c < channels; ++c) {
+        trns[2*c] = (unsigned char)(samples[c] >> 8); trns[2*c+1] = (unsigned char)samples[c];
+    }
+    for (size_t i = 0; i < expected.size(); ++i) {
+        uint32_t r, g, b, a = 255;
+        const uint32_t* v = samples.data() + i*channels;
+        auto scale = [max](uint32_t x) { return (x*255u + max/2u)/max; };
+        if (type == 3) {
+            r = palette[v[0]*3]; g = palette[v[0]*3+1]; b = palette[v[0]*3+2];
+            if (v[0] < trns.size()) a = trns[v[0]];
+        } else {
+            r = scale(v[0]); g = b = r;
+            if (type == 2 || type == 6) { g = scale(v[1]); b = scale(v[2]); }
+            if (type == 4 || type == 6) a = scale(v[channels-1]);
+            if ((type == 0 || type == 2) && v[0] == samples[0] &&
+                (type == 0 || (v[1] == samples[1] && v[2] == samples[2]))) a = 0;
+        }
+        expected[i] = (a << 24) | (r << 16) | (g << 8) | b;
+    }
+    auto raw = png_sample_rows(w,h,channels,depth,interlaced,filter,samples);
+    auto png = png_raw(w,h,type,depth,interlaced,raw,palette,
+                       type == 0 || type == 2 || type == 3 ? &trns : nullptr);
+    char label[128];
+    snprintf(label,sizeof(label),"png type %u depth %u interlace %u filter %u %ux%u exact RGB/ARGB/into",
+             type,depth,(unsigned)interlaced,filter,w,h);
+    check(png_pixels(png,w,h,expected), label);
+}
+
+void png_extended_tests() {
+    for (unsigned type : {0u,2u,3u,4u,6u}) for (unsigned depth : {1u,2u,4u,8u,16u}) {
+        if ((type == 3 && depth == 16) || (type != 0 && type != 3 && depth < 8)) continue;
+        for (bool interlaced : {false,true}) for (unsigned filter = 0; filter < 5; ++filter)
+            png_format_case(type,depth,interlaced,filter,17,13);
+        // Narrow/short images leave several Adam7 passes empty, including their filter bytes.
+        for (const auto& size : {std::pair<unsigned,unsigned>{1,1},{1,9},{9,1},{2,3},{3,2},{5,5},{8,8}})
+            png_format_case(type,depth,true,4,size.first,size.second);
+    }
+    {
+        std::vector<unsigned char> key = {0x12,0x34};
+        auto grey = png_raw(3,1,0,16,0,{0,0x12,0x34,0x12,0x35,0xff,0xff},{},&key);
+        check(png_pixels(grey,3,1,{0x00121212,0xff121212,0xffffffff}), "png grey16 tRNS compares full precision before scaling");
+        key = {0x12,0x34,0x56,0x78,0x9a,0xbc};
+        auto rgb = png_raw(2,1,2,16,0,{0,0x12,0x34,0x56,0x78,0x9a,0xbc,0x12,0x35,0x56,0x78,0x9a,0xbc},{},&key);
+        check(png_pixels(rgb,2,1,{0x0012569a,0xff12569a}), "png RGB16 tRNS compares low bytes too");
+        auto ga = png_raw(3,1,4,16,0,{0,0x80,0x00,0x80,0x00,0xff,0xff,0,0,0,0,0xff,0xff});
+        check(png_pixels(ga,3,1,{0x80808080,0x00ffffff,0xff000000}), "png grey-alpha16 endpoints and half alpha");
+        auto rgba = png_raw(2,1,6,16,0,{0,0,0x80,0,0x81,0xff,0x7f,0x80,0, 0xff,0xff,0,0,0,0,0xff,0xff});
+        check(png_pixels(rgba,2,1,{0x800001ff,0xffff0000}), "png RGBA16 uses both bytes and nearest sample rounding");
+    }
+    check(png_pixels(png_raw(7,1,0,1,0,{0,0xa5}),7,1,
+                     {0xffffffff,0xff000000,0xffffffff,0xff000000,0xff000000,0xffffffff,0xff000000}),
+          "png grey1 reads MSB first and ignores padding bits");
+    check(png_pixels(png_raw(4,1,0,2,0,{0,0x1b}),4,1,
+                     {0xff000000,0xff555555,0xffaaaaaa,0xffffffff}), "png grey2 expands all four levels");
+    check(png_pixels(png_raw(5,1,0,4,0,{0,0x01,0x78,0xff}),5,1,
+                     {0xff000000,0xff111111,0xff777777,0xff888888,0xffffffff}),
+          "png grey4 expands nibbles and ignores the unused nibble");
+    for (unsigned depth : {1u,2u,4u,8u}) {
+        std::vector<unsigned char> key = {0xff,0xfe};
+        uint32_t value = ((1u << depth)-1u) & 0xfe;
+        auto raw = png_sample_rows(1,1,1,depth,false,0,{value});
+        auto grey = png_raw(1,1,0,depth,0,raw,{},&key);
+        uint32_t channel = value * 255u / ((1u << depth)-1u);
+        check(png_pixels(grey,1,1,{channel*0x010101u}), "png tRNS ignores bits above the declared sample depth");
+    }
+    {
+        const std::vector<unsigned char> palette = {12,34,56,78,90,123};
+        auto rgb = png_raw(1,1,2,8,0,{0,11,22,33},palette);
+        check(png_pixels(rgb,1,1,{0xff0b1621}), "png accepts optional truecolour PLTE without changing pixels");
+        auto rgba = png_raw(1,1,6,8,0,{0,11,22,33,128},palette);
+        check(png_pixels(rgba,1,1,{0x800b1621}), "png accepts optional RGBA PLTE");
+        auto indexed = png_raw(1,1,3,2,0,{0,0x40},palette);
+        check(png_pixels(indexed,1,1,{0xff4e5a7b}), "png indexed without tRNS defaults to opaque");
+        std::vector<unsigned char> empty;
+        indexed = png_raw(1,1,3,2,0,{0,0x40},palette,&empty);
+        check(png_pixels(indexed,1,1,{0xff4e5a7b}), "png empty palette tRNS keeps entries opaque");
+    }
+    for (unsigned type : {0u,2u,3u,4u,6u}) for (unsigned depth : {0u,1u,2u,3u,4u,8u,12u,16u,32u}) {
+        bool valid = (depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16) &&
+                     (type != 3 || depth != 16) && (type == 0 || type == 3 || depth >= 8);
+        if (valid) continue;
+        Png png; png.header(1,1,(unsigned char)type,(unsigned char)depth);
+        check(sx_png_info(png.bytes.data(),png.bytes.size(),nullptr,nullptr) < 0 && png_refused(png),
+              "png rejects invalid colour type/depth pairs in info and decode");
+    }
+    for (unsigned type : {1u,5u,7u,255u}) {
+        Png png; png.header(1,1,(unsigned char)type);
+        check(sx_png_info(png.bytes.data(),png.bytes.size(),nullptr,nullptr) < 0 && png_refused(png),
+              "png rejects unknown colour types");
+    }
+    auto base = png_raw(1,1,2,8,0,{0,12,34,56});
+    for (size_t at : {size_t{26},size_t{27},size_t{28}}) {
+        auto bad = base; bad.bytes[at] = 2;
+        check(sx_png_info(bad.bytes.data(),bad.bytes.size(),nullptr,nullptr) < 0 && png_refused(bad),
+              "png rejects unsupported compression/filter/interlace methods");
+    }
+    for (uint32_t dimension : {0u,4097u,0xffffffffu}) for (size_t at : {size_t{16},size_t{20}}) {
+        auto bad = base;
+        for (int i = 0; i < 4; ++i) bad.bytes[at+i] = (unsigned char)(dimension >> (24-8*i));
+        check(sx_png_info(bad.bytes.data(),bad.bytes.size(),nullptr,nullptr) < 0 && png_refused(bad),
+              "png rejects invalid and oversized dimensions");
+    }
+    for (unsigned type : {0u,2u,3u,4u,6u}) {
+        unsigned channels = type == 2 ? 3 : type == 4 ? 2 : type == 6 ? 4 : 1;
+        std::vector<unsigned char> raw(1+channels,0);
+        raw[0] = 9;
+        auto bad = png_raw(1,1,type,8,0,raw,type == 3 ? std::vector<unsigned char>{0,0,0} :
+                                                                   std::vector<unsigned char>{});
+        check(png_refused(bad), "png rejects invalid filter with otherwise valid data for every colour type");
+    }
+    const std::vector<unsigned char> palette = {0,0,0,255,0,0};
+    for (auto bad_palette : {std::vector<unsigned char>{}, {0,0}, {0,0,0,0}, std::vector<unsigned char>(771,0),
+                             std::vector<unsigned char>(9,0)}) {
+        Png png; png.header(1,1,3,1); png.chunk("PLTE",bad_palette);
+        png.chunk("IDAT",png_stored_stream({0,0})); png.end();
+        check(png_refused(png), "png rejects empty, malformed or excessive palettes");
+    }
+    for (unsigned type : {0u,4u}) {
+        auto png = png_raw(1,1,type,8,0,type == 0 ? std::vector<unsigned char>{0,0} : std::vector<unsigned char>{0,0,255},palette);
+        check(png_refused(png), "png rejects a palette on greyscale images");
+    }
+    for (unsigned type : {0u,2u,3u,4u,6u}) for (size_t length : {0u,1u,2u,3u,6u,7u}) {
+        bool valid = type == 0 ? length == 2 : type == 2 ? length == 6 : type == 3 ? length <= 2 : false;
+        if (valid) continue;
+        std::vector<unsigned char> trns(length,0);
+        unsigned channels = type == 2 ? 3 : type == 4 ? 2 : type == 6 ? 4 : 1;
+        auto png = png_raw(1,1,type,8,0,std::vector<unsigned char>(1+channels,0),
+                           type == 3 ? palette : std::vector<unsigned char>{},&trns);
+        check(png_refused(png), "png rejects invalid tRNS size or tRNS on an alpha colour type");
+    }
+    for (unsigned depth : {1u,2u,4u,8u}) for (bool interlaced : {false,true}) {
+        auto raw = png_sample_rows(3,2,1,depth,interlaced,0,std::vector<uint32_t>(6,1));
+        auto png = png_raw(3,2,3,depth,interlaced,raw,{1,2,3});
+        check(png_refused(png), "png rejects indices outside PLTE, including packed/Adam7 pixels");
+    }
+    for (auto raw : {std::vector<unsigned char>{0,0,0}, {0,0,0,0,0}, {9,0,0,0}}) {
+        check(png_refused(png_raw(1,1,2,8,0,raw)), "png rejects short/long scanlines and invalid row filters");
+    }
+    {
+        // Split the zlib stream inside its header, blocks and Adler checksum.
+        auto stream = png_stored_stream({0,12,34,56});
+        Png png; png.header(1,1,2);
+        for (auto byte : stream) png.chunk("IDAT",{byte});
+        png.chunk("IDAT",{}); png.chunk("tEXt",{'x',0,'y'}); png.end();
+        check(png_pixels(png,1,1,{0xff0c2238}), "png accepts consecutive split/empty IDAT and ignored ancillary chunks");
+        png = {}; png.header(1,1,2); png.chunk("IDAT",{stream[0]}); png.chunk("tEXt",{});
+        png.chunk("IDAT",std::vector<unsigned char>(stream.begin()+1,stream.end())); png.end();
+        check(png_refused(png), "png rejects nonconsecutive IDAT chunks");
+        png = {}; png.header(1,1,2); png.chunk("ABCD",{}); png.chunk("IDAT",stream); png.end();
+        check(png_refused(png), "png rejects unknown critical chunks");
+    }
+    {
+        Png png; png.header(1,1,3); png.chunk("IDAT",png_stored_stream({0,0})); png.end();
+        check(png_refused(png), "png indexed data requires an earlier PLTE");
+        png = {}; png.header(1,1,3); png.chunk("tRNS",{0}); png.chunk("PLTE",palette);
+        png.chunk("IDAT",png_stored_stream({0,0})); png.end();
+        check(png_refused(png), "png tRNS requires an earlier PLTE for indexed images");
+        for (const char* type : {"PLTE","tRNS"}) {
+            auto body = type[0] == 'P' ? palette : std::vector<unsigned char>{0};
+            png = {}; png.header(1,1,3); png.chunk("PLTE",palette);
+            if (type[0] == 't') png.chunk("tRNS",body);
+            png.chunk(type,body); png.chunk("IDAT",png_stored_stream({0,0})); png.end();
+            check(png_refused(png), "png rejects duplicate PLTE/tRNS");
+            png = {}; png.header(1,1,3); png.chunk("PLTE",palette);
+            png.chunk("IDAT",png_stored_stream({0,0})); png.chunk(type,body); png.end();
+            check(png_refused(png), "png rejects PLTE/tRNS after image data");
+        }
+        png = {}; png.header(1,1,2); png.header(1,1,2); png.chunk("IDAT",png_stored_stream({0,0,0,0})); png.end();
+        check(png_refused(png), "png rejects a duplicate IHDR");
+        png = {}; png.chunk("IDAT",png_stored_stream({0,0,0,0})); png.end();
+        check(png_refused(png), "png requires IHDR first");
+    }
+    std::vector<Png> complete = {
+        base, png_raw(1,1,3,1,0,{0,0},palette),
+        png_raw(1,1,4,16,1,{0,0xff,0xff,0x80,0}),
+        png_raw(1,1,6,16,1,{0,0,0,0,0,0,0,0,0})
+    };
+    for (const auto& png : complete) {
+        bool ok = true;
+        for (size_t length = 0; length < png.bytes.size(); ++length) {
+            auto short_png = png; short_png.bytes.resize(length);
+            ok = png_refused(short_png) && ok;
+        }
+        check(ok,"png rejects every truncated prefix, including a missing IEND");
+        std::vector<uint32_t> into(2,0xdeadbeef);
+        check(sx_png_decode_into(png.bytes.data(),png.bytes.size(),nullptr,1) < 0 &&
+              sx_png_decode_into(png.bytes.data(),png.bytes.size(),into.data()+1,0) < 0 &&
+              into[0] == 0xdeadbeef && into[1] == 0xdeadbeef,
+              "png new formats preserve destination bounds on null/short buffers");
+    }
+    check(sx_png_info(nullptr,0,nullptr,nullptr) < 0 && sx_png_decode(nullptr,0,nullptr) < 0,
+          "png null inputs and output are rejected");
+}
+
 /* sx_png_info and sx_png_decode_into against the allocating decoder. */
 void png_into_tests() {
     const struct {
@@ -669,10 +992,10 @@ void png_into_tests() {
         Png rgb;
         rgb.header(5, 3, 2);
         uint32_t w = 0, h = 0;
-        check(sx_png_info(palette.bytes.data(), palette.bytes.size(), &w, &h) != 0 &&
-                  sx_png_info(grey16.bytes.data(), grey16.bytes.size(), &w, &h) != 0 &&
-                  sx_png_info(interlaced.bytes.data(), interlaced.bytes.size(), &w, &h) != 0,
-              "png info rejects palette, 16-bit grey and Adam7");
+        check(sx_png_info(palette.bytes.data(), palette.bytes.size(), &w, &h) == 0 &&
+                  sx_png_info(grey16.bytes.data(), grey16.bytes.size(), &w, &h) == 0 &&
+                  sx_png_info(interlaced.bytes.data(), interlaced.bytes.size(), &w, &h) == 0 && w == 4 && h == 4,
+              "png info accepts palette, 16-bit grey and Adam7 headers without image data");
         check(sx_png_info(rgb.bytes.data(), rgb.bytes.size(), &w, &h) == 0 && w == 5 && h == 3 &&
                   sx_png_info(rgb.bytes.data(), rgb.bytes.size() - 1u, &w, &h) != 0,
               "png info reads IHDR alone and rejects a short one");
@@ -776,34 +1099,34 @@ int main() {
         /* truncado */
         check(decode(k_png_rgb_dynamic, 40, &img) != 0, "rechaza truncado");
         sx_png_free(&img);
-        /* entrelazado */
+        /* An Adam7 header with ordinary noninterlaced rows is malformed. */
         {
             Png png;
             png.header(4, 4, 2, 8, 1);
             png.idat_stored_rows(4, 4, 3);
             png.end();
-            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rechaza Adam7");
+            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rejects noninterlaced data under an Adam7 header");
             sx_png_free(&img);
         }
-        /* paleta */
+        /* Indexed PNG without its required PLTE. */
         {
             Png png;
             png.header(4, 4, 3);
             png.idat_stored_rows(4, 4, 1);
             png.end();
-            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rechaza paleta");
+            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rejects indexed PNG without PLTE");
             sx_png_free(&img);
         }
-        /* 16 bpp */
+        /* RGB16 requires twice as many sample bytes as RGB8. */
         {
             Png png;
             png.header(4, 4, 2, 16);
             png.idat_stored_rows(4, 4, 3);
             png.end();
-            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rechaza 16 bpp");
+            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rejects truncated RGB16 samples");
             sx_png_free(&img);
         }
-        /* tRNS */
+        /* RGB colour-key transparency is supported. */
         {
             Png png;
             png.header(4, 4, 2);
@@ -811,7 +1134,7 @@ int main() {
             png.chunk("tRNS", trns);
             png.idat_stored_rows(4, 4, 3);
             png.end();
-            check(decode(png.bytes.data(), png.bytes.size(), &img) != 0, "rechaza tRNS");
+            check(decode(png.bytes.data(), png.bytes.size(), &img) == 0, "accepts RGB tRNS");
             sx_png_free(&img);
         }
         /* adler corrupto: ultimo byte de datos del IDAT (el CRC del chunk no
@@ -877,6 +1200,7 @@ int main() {
     bmp_tests();
     bmp_extended_tests();
     png_into_tests();
+    png_extended_tests();
 
     /* free tolera vacia y nula */
     {

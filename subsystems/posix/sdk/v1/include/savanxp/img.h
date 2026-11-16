@@ -3,9 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* System PNG decoder: noninterlaced 8-bit RGB/RGBA, all PNG row filters
- * and deflate block types. Zlib headers and Adler-32 are checked; chunk CRCs
- * are not. Palette, grayscale, tRNS, Adam7 and other depths are rejected.
+/* System PNG decoder: greyscale, RGB, indexed, greyscale-alpha and RGBA at
+ * every PNG-defined depth (1/2/4/8/16 as applicable), tRNS, Adam7, all row
+ * filters and deflate block types. Zlib headers and Adler-32 are checked;
+ * chunk CRCs are not. Samples are rescaled to 8 bits with nearest rounding,
+ * after full-depth tRNS comparison. No gamma/profile conversion is applied.
  * Uses only malloc/free/memcpy/memset, with no system calls or global state.
  * The complete input is decoded in memory; there is no encoder. */
 
@@ -31,7 +33,7 @@ int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_ima
 /* Free the pixels and reset the structure. An empty image is accepted. */
 void sx_png_free(struct sx_png_image *image);
 
-/* Reads the size from IHDR and checks that the header is within the subset.
+/* Reads the size from IHDR and checks the colour type, depth and methods.
  * The rest of the file is not looked at, so a decode may still fail.
  * Returns 0 or a negative error. */
 int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height);

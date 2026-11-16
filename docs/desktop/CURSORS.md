@@ -87,11 +87,13 @@ BI_RGB, 1/4/8/24/32-bit pixels and an AND mask. Palette indices, strides,
 hotspots and ranges are validated. Nonzero 32-bit alpha uses straight alpha;
 otherwise `(background AND mask) XOR color` is retained, including inversion.
 
-Embedded PNG uses the system PNG decoder's noninterlaced 8-bit RGB/RGBA
-subset, with straight alpha retained by `sx_png_decode_argb`. Dimensions are
-bounded and checked against the CUR directory before allocation. Zlib headers
-and Adler-32 are checked; PNG chunk CRCs are not. Palette/grayscale PNG,
-compression in DIBs, other DIB headers and ANI playback are unsupported.
+Embedded PNG uses the system PNG decoder: indexed colour, greyscale,
+greyscale-alpha, RGB and RGBA at all legal PNG depths, `tRNS` and Adam7.
+`sx_png_decode_argb` retains straight alpha and rescales samples to 8 bits
+with nearest rounding. `sx_png_info` checks the bounded dimensions against
+the CUR directory before allocation. Zlib headers and Adler-32 are checked;
+PNG chunk CRCs are not. Compression in DIBs, other DIB headers and ANI
+playback are unsupported.
 Malformed candidates fail validation; a corrupted selected PNG fails the file.
 
 ## Session control and rendering
@@ -120,7 +122,8 @@ The diagonal roles are appended to the public enum, preserving prior values.
 ## Verification
 
 - `./build.sh test`: all 30 bundled images, size selection, hotspots, palette
-  depths, alpha, classic mask operations, malformed DIB/PNG and PNG alpha API.
+  depths, alpha, classic mask operations, malformed DIB/PNG, the PNG alpha API,
+  and indexed/16-bit greyscale-alpha Adam7 PNGs with exact alpha and hotspots.
 - `./build.sh smoke cursor-smoke` (also `--virtio`): exact scanout comparison
   for all three packs on white/black, original Classic PNG pixel equivalence,
   clipping, inversion and hardware upload/fallback. Captures are saved under

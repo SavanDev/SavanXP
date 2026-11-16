@@ -65,8 +65,9 @@ Rules:
   applies a change.
 - **An image that cannot be decoded leaves the colour.** Two formats are
   read, up to 2048 pixels on a side: BMPs with 1/4/8-bit palettes, RGB555,
-  24/32-bit RGB, 16/32-bit masks and RLE4/RLE8; and PNGs of 8-bit RGB or
-  RGBA. The format is told by the file's first bytes, not its extension.
+  24/32-bit RGB, 16/32-bit masks and RLE4/RLE8; and PNGs with indexed colour,
+  greyscale, greyscale-alpha, RGB or RGBA at their legal 1/2/4/8/16-bit depths,
+  including `tRNS` and Adam7. The format is told by content, not extension.
 - **Transparent PNG and BMP pixels come out white**, not the background colour:
   the decoders composite onto white (`sx_png_decode_into` /
   `sx_bmp_decode_into`), as they do for Paint. Showing the colour through
@@ -74,8 +75,9 @@ Rules:
 - The decoders are `libsximg`'s (`sx_bmp_info`/`sx_bmp_decode_into`,
   `sx_png_info`/`sx_png_decode_into`). The file is read into a section
   dropped once decoded, and the pixels stay in a section of their own, off
-  the heap. PNGs with a palette, grey levels or interlacing are not read yet
-  ([IMAGE_VIEWER_ROADMAP.md](../roadmaps/open/IMAGE_VIEWER_ROADMAP.md), I4).
+  the heap. PNG samples are rescaled to 8 bits with nearest rounding;
+  colour keys are compared before rescaling. See
+  [IMAGE_VIEWER_ROADMAP.md](../roadmaps/open/IMAGE_VIEWER_ROADMAP.md), I4.
 
 ## The shipped wallpapers
 

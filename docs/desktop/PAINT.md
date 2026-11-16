@@ -76,8 +76,10 @@ changes size. The selftest below proves push, pop, and empty-pop.
   24/32-bit RGB, 16/32-bit masks (including alpha composited onto white),
   and RLE4/RLE8. Uncompressed rows may be bottom-up or top-down; RLE is
   bottom-up only. Images larger than 512x384 are refused.
-- **Load PNG:** through `libsximg.so.0.4` (`savanxp/img.h`), composited over
-  white; images larger than 512x384 are refused.
+- **Load PNG:** through `libsximg.so.0.4` (`savanxp/img.h`): indexed colour,
+  greyscale, greyscale-alpha, RGB and RGBA at every legal PNG depth, including
+  `tRNS` and Adam7. Samples are rescaled to 8 bits with nearest rounding and
+  composited over white; images larger than 512x384 are refused.
 
 ## Verification
 

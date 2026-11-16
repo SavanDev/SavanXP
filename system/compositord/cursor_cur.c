@@ -27,10 +27,11 @@ static int candidate_read(const unsigned char *bytes, size_t size, size_t direct
     p = bytes + offset;
     memset(c, 0, sizeof(*c));
     if (length >= 33 && !memcmp(p, "\x89PNG\r\n\x1a\n", 8)) {
-        /* Bound allocation before passing an embedded PNG to the shared decoder. */
-        if (memcmp(p + 8, "\0\0\0\15IHDR", 8) || p[16] || p[17] || p[18] || p[19] != width ||
-            p[20] || p[21] || p[22] || p[23] != height || p[24] != 8 ||
-            (p[25] != 2 && p[25] != 6) || p[26] || p[27] || p[28]) return 0;
+        uint32_t png_width, png_height;
+        /* Bound allocation before decoding; the shared library defines the
+         * accepted PNG formats, including palette, greyscale and Adam7. */
+        if (sx_png_info(p, length, &png_width, &png_height) != 0 ||
+            png_width != width || png_height != height) return 0;
         c->data = p; c->width = width; c->height = height; c->bits = 32;
         c->hotspot_x = u16(entry + 4); c->hotspot_y = u16(entry + 6);
         c->png_size = length;

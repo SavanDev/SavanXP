@@ -3,11 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* System image decoders. PNG: 8-bit RGB/RGBA with noninterlaced rows. Inflate
- * implements RFC 1951 (stored, fixed and dynamic Huffman blocks); PNG handles
- * concatenated IDAT chunks and all five filters. BMP: uncompressed 24 and
- * 32 bpp, at the end of the file. Only memory allocation and string
- * functions are needed, so the same decoders also work in SUN. */
+/* System image decoders. PNG handles all base colour types and sample depths,
+ * Adam7, concatenated IDAT chunks and all five filters. Inflate implements
+ * RFC 1951 (stored, fixed and dynamic Huffman blocks). BMP follows below.
+ * Only memory allocation and string functions are needed, so the same
+ * decoders also work in SUN. */
 
 /* --- inflate -------------------------------------------------------------- */
 
@@ -657,211 +657,316 @@ static int paeth_predictor(int a, int b, int c)
     return c;
 }
 
-/* Decodes into `dest` (dest_count entries) when it is given, or into pixels
- * of its own handed back through `out` when it is not. */
+struct png_layout
+{
+    uint32_t width;
+    uint32_t height;
+    unsigned depth;
+    unsigned type;
+    unsigned channels;
+    unsigned interlace;
+};
+
+struct png_colours
+{
+    uint32_t palette[256]; /* straight-alpha ARGB; unspecified alpha is opaque */
+    uint32_t palette_count;
+    uint32_t key[3];       /* tRNS samples at the original depth */
+    int have_key;
+};
+
+struct png_pass
+{
+    uint32_t x, y, dx, dy;
+    uint32_t width, height;
+};
+
+static uint32_t read_u16be(const unsigned char *p)
+{
+    return ((uint32_t)p[0] << 8) | p[1];
+}
+
+static int png_header(const unsigned char *body, struct png_layout *layout)
+{
+    unsigned depth = body[8];
+    unsigned type = body[9];
+    unsigned channels;
+
+    switch (type)
+    {
+        case 0u: channels = 1u; break;
+        case 2u: channels = 3u; break;
+        case 3u: channels = 1u; break;
+        case 4u: channels = 2u; break;
+        case 6u: channels = 4u; break;
+        default: return 0;
+    }
+    if ((depth != 1u && depth != 2u && depth != 4u && depth != 8u && depth != 16u) ||
+        (type == 3u && depth == 16u) || (type != 0u && type != 3u && depth < 8u) ||
+        body[10] != 0u || body[11] != 0u || body[12] > 1u)
+    {
+        return 0;
+    }
+    layout->width = read_u32be(body);
+    layout->height = read_u32be(body + 4u);
+    layout->depth = depth;
+    layout->type = type;
+    layout->channels = channels;
+    layout->interlace = body[12];
+    return layout->width != 0u && layout->height != 0u &&
+           layout->width <= SX_PNG_MAX_DIMENSION && layout->height <= SX_PNG_MAX_DIMENSION;
+}
+
+static void png_pass_layout(const struct png_layout *layout, unsigned index, struct png_pass *pass)
+{
+    static const unsigned char adam7[7][4] = {
+        {0, 0, 8, 8}, {4, 0, 8, 8}, {0, 4, 4, 8}, {2, 0, 4, 4},
+        {0, 2, 2, 4}, {1, 0, 2, 2}, {0, 1, 1, 2}
+    };
+    pass->x = layout->interlace ? adam7[index][0] : 0u;
+    pass->y = layout->interlace ? adam7[index][1] : 0u;
+    pass->dx = layout->interlace ? adam7[index][2] : 1u;
+    pass->dy = layout->interlace ? adam7[index][3] : 1u;
+    pass->width = layout->width > pass->x ? (layout->width - pass->x + pass->dx - 1u) / pass->dx : 0u;
+    pass->height = layout->height > pass->y ? (layout->height - pass->y + pass->dy - 1u) / pass->dy : 0u;
+}
+
+static int png_unfilter(unsigned char *current, const unsigned char *previous,
+                        size_t row_bytes, size_t bpp, unsigned filter)
+{
+    size_t i;
+    if (filter > 4u)
+    {
+        return 0;
+    }
+    /* Reconstruct in place: left-hand bytes and the preceding row are already
+     * unfiltered. bpp rounds up to one byte for packed low-depth samples. */
+    for (i = 0u; i < row_bytes; ++i)
+    {
+        int a = i >= bpp ? current[i - bpp] : 0;
+        int b = previous != 0 ? previous[i] : 0;
+        int c = previous != 0 && i >= bpp ? previous[i - bpp] : 0;
+        int prediction = 0;
+        if (filter == 1u) prediction = a;
+        else if (filter == 2u) prediction = b;
+        else if (filter == 3u) prediction = (a + b) / 2;
+        else if (filter == 4u) prediction = paeth_predictor(a, b, c);
+        current[i] = (unsigned char)(current[i] + prediction);
+    }
+    return 1;
+}
+
+static uint32_t png_sample(const unsigned char *row, size_t index, unsigned depth)
+{
+    if (depth == 16u)
+    {
+        return read_u16be(row + index * 2u);
+    }
+    if (depth == 8u)
+    {
+        return row[index];
+    }
+    index *= depth;
+    return (row[index / 8u] >> (8u - depth - index % 8u)) & ((1u << depth) - 1u);
+}
+
+static int png_pixel(const struct png_layout *layout, const struct png_colours *colours,
+                     const unsigned char *row, uint32_t x, int keep_alpha, uint32_t *pixel)
+{
+    uint32_t maximum = (1u << layout->depth) - 1u;
+    uint32_t samples[4] = {0u, 0u, 0u, maximum};
+    uint32_t red, green, blue, alpha;
+    unsigned c;
+    for (c = 0u; c < layout->channels; ++c)
+    {
+        samples[c] = png_sample(row, (size_t)x * layout->channels + c, layout->depth);
+    }
+    if (layout->type == 3u)
+    {
+        uint32_t entry;
+        if (samples[0] >= colours->palette_count) return 0;
+        entry = colours->palette[samples[0]];
+        red = (entry >> 16) & 255u;
+        green = (entry >> 8) & 255u;
+        blue = entry & 255u;
+        alpha = entry >> 24;
+    }
+    else
+    {
+        uint32_t r = samples[0];
+        uint32_t g = layout->type == 0u || layout->type == 4u ? r : samples[1];
+        uint32_t b = layout->type == 0u || layout->type == 4u ? r : samples[2];
+        uint32_t a = layout->type == 4u ? samples[1] : samples[3];
+        /* Compare the complete key before rescaling, especially at 16 bits. */
+        if (colours->have_key && r == colours->key[0] &&
+            (layout->type == 0u || (g == colours->key[1] && b == colours->key[2])))
+        {
+            a = 0u;
+        }
+        red = (r * 255u + maximum / 2u) / maximum;
+        green = (g * 255u + maximum / 2u) / maximum;
+        blue = (b * 255u + maximum / 2u) / maximum;
+        alpha = (a * 255u + maximum / 2u) / maximum;
+    }
+    if (!keep_alpha)
+    {
+        red = (red * alpha + 255u * (255u - alpha) + 127u) / 255u;
+        green = (green * alpha + 255u * (255u - alpha) + 127u) / 255u;
+        blue = (blue * alpha + 255u * (255u - alpha) + 127u) / 255u;
+    }
+    *pixel = (red << 16) | (green << 8) | blue | (keep_alpha ? alpha << 24 : 0u);
+    return 1;
+}
+
+/* Decodes into caller-owned `dest`, or returns allocated pixels through `out`. */
 static int png_decode(const unsigned char *data, size_t size, struct sx_png_image *out, int keep_alpha,
                       uint32_t *dest, size_t dest_count)
 {
     static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    struct png_layout layout;
+    struct png_colours colours;
     size_t pos;
-    uint32_t width = 0u;
-    uint32_t height = 0u;
-    int channels = 0;
-    int have_header = 0;
+    int have_header = 0, have_palette = 0, have_trns = 0;
+    int have_data = 0, data_finished = 0, have_end = 0;
     unsigned char *packed = 0;
-    size_t packed_size = 0;
-    size_t packed_capacity = 0;
+    size_t packed_size = 0, packed_capacity = 0;
     unsigned char *raw = 0;
     uint32_t *pixels = 0;
-    size_t stride;
-    size_t raw_size;
-    size_t produced = 0;
-    uint32_t y;
+    size_t raw_size = 0u, raw_pos = 0u, produced = 0u;
+    unsigned pass_count, pass_index;
     int ok = 0;
 
-    if (out == 0 && dest == 0)
-    {
-        return -1;
-    }
+    if (out == 0 && dest == 0) return -1;
     if (out != 0)
     {
         out->pixels = 0;
         out->width = 0u;
         out->height = 0u;
     }
-    if (data == 0 || size < 8u || memcmp(data, k_signature, 8) != 0)
-    {
-        return -1;
-    }
-    pos = 8;
-    while (pos + 8u <= size)
+    if (data == 0 || size < 8u || memcmp(data, k_signature, 8) != 0) return -1;
+    memset(&colours, 0, sizeof(colours));
+    pos = 8u;
+    while (size - pos >= 12u)
     {
         uint32_t length = read_u32be(data + pos);
         uint32_t type = read_u32be(data + pos + 4u);
-        const unsigned char *body;
-
-        if (length > size - pos - 8u || 4u > size - pos - 8u - length)
-        {
-            goto done;
-        }
-        body = data + pos + 8u;
+        const unsigned char *body = data + pos + 8u;
+        if (length > size - pos - 12u) goto done;
+        if (have_data && type != 0x49444154u) data_finished = 1;
         if (type == 0x49484452u) /* IHDR */
         {
-            if (have_header || pos != 8u || length != 13u)
-            {
-                goto done;
-            }
-            width = read_u32be(body);
-            height = read_u32be(body + 4u);
-            if (width == 0u || height == 0u || width > SX_PNG_MAX_DIMENSION ||
-                height > SX_PNG_MAX_DIMENSION)
-            {
-                goto done;
-            }
-            if (body[8] != 8u || body[10] != 0u || body[11] != 0u || body[12] != 0u)
-            {
-                /* Solo 8 bpp, sin compresion ni filtro raros, sin Adam7. */
-                goto done;
-            }
-            if (body[9] == 2u)
-            {
-                channels = 3;
-            }
-            else if (body[9] == 6u)
-            {
-                channels = 4;
-            }
-            else
-            {
-                /* Sin paleta, sin grises, sin alfa puro: fuera del subconjunto. */
-                goto done;
-            }
+            if (have_header || pos != 8u || length != 13u || !png_header(body, &layout)) goto done;
+            if (dest != 0 && dest_count < (size_t)layout.width * layout.height) goto done;
             have_header = 1;
         }
-        else if (have_header == 0)
+        else if (!have_header)
         {
-            /* El primer chunk tiene que ser IHDR. */
             goto done;
         }
-        else if (type == 0x504C5445u || type == 0x74524E53u) /* PLTE, tRNS */
+        else if (type == 0x504c5445u) /* PLTE */
         {
-            goto done;
+            uint32_t i;
+            if (have_palette || have_trns || have_data || layout.type == 0u || layout.type == 4u ||
+                length == 0u || length % 3u != 0u || length > 768u ||
+                (layout.type == 3u && length / 3u > (1u << layout.depth))) goto done;
+            colours.palette_count = length / 3u;
+            for (i = 0u; i < colours.palette_count; ++i)
+            {
+                colours.palette[i] = 0xff000000u | ((uint32_t)body[i * 3u] << 16) |
+                                     ((uint32_t)body[i * 3u + 1u] << 8) | body[i * 3u + 2u];
+            }
+            have_palette = 1;
+        }
+        else if (type == 0x74524e53u) /* tRNS */
+        {
+            uint32_t i;
+            uint32_t mask = (1u << layout.depth) - 1u;
+            if (have_trns || have_data) goto done;
+            if (layout.type == 3u)
+            {
+                if (!have_palette || length > colours.palette_count) goto done;
+                for (i = 0u; i < length; ++i)
+                {
+                    colours.palette[i] = (colours.palette[i] & 0xffffffu) | ((uint32_t)body[i] << 24);
+                }
+            }
+            else if (layout.type == 0u || layout.type == 2u)
+            {
+                unsigned count = layout.type == 0u ? 1u : 3u;
+                if (length != count * 2u) goto done;
+                for (i = 0u; i < count; ++i) colours.key[i] = read_u16be(body + i * 2u) & mask;
+                colours.have_key = 1;
+            }
+            else goto done;
+            have_trns = 1;
         }
         else if (type == 0x49444154u) /* IDAT */
         {
-            if (!append_bytes(&packed, &packed_size, &packed_capacity, body, length))
-            {
-                goto done;
-            }
+            if (data_finished || (layout.type == 3u && !have_palette) ||
+                !append_bytes(&packed, &packed_size, &packed_capacity, body, length)) goto done;
+            have_data = 1;
         }
-        else if (type == 0x49454E44u) /* IEND */
+        else if (type == 0x49454e44u) /* IEND */
         {
-            if (length != 0u)
-            {
-                goto done;
-            }
-            pos += 12u;
+            if (length != 0u || !have_data) goto done;
+            have_end = 1;
             break;
         }
-        pos += 12u + length;
+        else if ((type & 0x20000000u) == 0u) /* unknown critical chunk */
+        {
+            goto done;
+        }
+        pos += 12u + (size_t)length;
     }
-    if (have_header == 0 || packed_size == 0u)
+    if (!have_end || packed_size == 0u) goto done;
+    pass_count = layout.interlace ? 7u : 1u;
+    for (pass_index = 0u; pass_index < pass_count; ++pass_index)
     {
-        goto done;
+        struct png_pass pass;
+        png_pass_layout(&layout, pass_index, &pass);
+        if (pass.width != 0u && pass.height != 0u)
+        {
+            size_t stride = 1u + ((size_t)pass.width * layout.channels * layout.depth + 7u) / 8u;
+            raw_size += stride * pass.height;
+        }
     }
-    stride = 1u + (size_t)width * (size_t)channels;
-    raw_size = (size_t)height * stride;
+    /* The 4096-per-side bound keeps every raw/output size below SIZE_MAX,
+     * even for RGBA16 and the extra filter bytes of the seven passes. */
     raw = (unsigned char *)malloc(raw_size);
-    if (raw == 0)
+    if (raw == 0 || !sx_zlib_decompress(packed, packed_size, raw, raw_size, &produced) ||
+        produced != raw_size) goto done;
+    pixels = dest != 0 ? dest : (uint32_t *)malloc((size_t)layout.width * layout.height * 4u);
+    if (pixels == 0) goto done;
+    for (pass_index = 0u; pass_index < pass_count; ++pass_index)
     {
-        goto done;
-    }
-    if (!sx_zlib_decompress(packed, packed_size, raw, raw_size, &produced) || produced != raw_size)
-    {
-        goto done;
-    }
-    if (dest != 0)
-    {
-        if (dest_count < (size_t)width * (size_t)height)
+        struct png_pass pass;
+        unsigned char *previous = 0;
+        size_t row_bytes, bpp;
+        uint32_t y;
+        png_pass_layout(&layout, pass_index, &pass);
+        if (pass.width == 0u || pass.height == 0u) continue;
+        row_bytes = ((size_t)pass.width * layout.channels * layout.depth + 7u) / 8u;
+        bpp = ((size_t)layout.channels * layout.depth + 7u) / 8u;
+        for (y = 0u; y < pass.height; ++y)
         {
-            goto done;
-        }
-        pixels = dest;
-    }
-    else
-    {
-        pixels = (uint32_t *)malloc((size_t)width * (size_t)height * 4u);
-        if (pixels == 0)
-        {
-            goto done;
-        }
-    }
-    /* Unfilter in place: cada fila ya reconstruida sirve de previa, y dentro
-     * de la fila los bytes a la izquierda ya estan reconstruidos. */
-    for (y = 0u; y < height; ++y)
-    {
-        unsigned char *row = raw + (size_t)y * stride;
-        unsigned char *previous = y != 0u ? raw + (size_t)(y - 1u) * stride + 1u : 0;
-        unsigned char *current = row + 1u;
-        size_t row_bytes = (size_t)width * (size_t)channels;
-        size_t i;
-        int filter = (int)row[0];
-
-        if (filter < 0 || filter > 4)
-        {
-            goto done;
-        }
-        for (i = 0; i < row_bytes; ++i)
-        {
-            int a = i >= (size_t)channels ? (int)current[i - (size_t)channels] : 0;
-            int b = previous != 0 ? (int)previous[i] : 0;
-            int prediction = 0;
-
-            if (filter == 1)
+            unsigned char filter = raw[raw_pos++];
+            unsigned char *current = raw + raw_pos;
+            uint32_t x;
+            if (!png_unfilter(current, previous, row_bytes, bpp, filter)) goto done;
+            for (x = 0u; x < pass.width; ++x)
             {
-                prediction = a;
+                size_t target = (size_t)(pass.y + y * pass.dy) * layout.width + pass.x + x * pass.dx;
+                if (!png_pixel(&layout, &colours, current, x, keep_alpha, &pixels[target])) goto done;
             }
-            else if (filter == 2)
-            {
-                prediction = b;
-            }
-            else if (filter == 3)
-            {
-                prediction = (a + b) >> 1;
-            }
-            else if (filter == 4)
-            {
-                int c = (previous != 0 && i >= (size_t)channels) ? (int)previous[i - (size_t)channels]
-                                                                 : 0;
-
-                prediction = paeth_predictor(a, b, c);
-            }
-            current[i] = (unsigned char)((int)current[i] + prediction);
-        }
-        /* Either retain straight alpha or composite onto Paint's white page. */
-        for (i = 0; i < (size_t)width; ++i)
-        {
-            uint32_t red = current[i * (size_t)channels];
-            uint32_t green = current[i * (size_t)channels + 1u];
-            uint32_t blue = current[i * (size_t)channels + 2u];
-
-            if (channels == 4 && !keep_alpha)
-            {
-                uint32_t alpha = current[i * (size_t)channels + 3u];
-
-                red = (red * alpha + 255u * (255u - alpha) + 127u) / 255u;
-                green = (green * alpha + 255u * (255u - alpha) + 127u) / 255u;
-                blue = (blue * alpha + 255u * (255u - alpha) + 127u) / 255u;
-            }
-            pixels[(size_t)y * (size_t)width + i] = (red << 16) | (green << 8) | blue |
-                (keep_alpha ? (channels == 4 ? (uint32_t)current[i * 4u + 3u] << 24 : 0xff000000u) : 0);
+            previous = current;
+            raw_pos += row_bytes;
         }
     }
     if (dest == 0)
     {
         out->pixels = pixels;
-        out->width = width;
-        out->height = height;
+        out->width = layout.width;
+        out->height = layout.height;
     }
     pixels = 0;
     ok = 1;
@@ -869,10 +974,7 @@ static int png_decode(const unsigned char *data, size_t size, struct sx_png_imag
 done:
     free(packed);
     free(raw);
-    if (pixels != dest)
-    {
-        free(pixels);
-    }
+    if (pixels != dest) free(pixels);
     return ok ? 0 : -1;
 }
 
@@ -901,32 +1003,18 @@ int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_ima
 int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height)
 {
     static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-    const unsigned char *ihdr = data + 16;
-    uint32_t w;
-    uint32_t h;
+    struct png_layout layout;
 
-    /* The signature, then IHDR: 13 bytes of body after its length and type. */
-    if (data == 0 || size < 8u + 8u + 13u + 4u || memcmp(data, k_signature, 8) != 0 ||
-        read_u32be(data + 8) != 13u || read_u32be(data + 12) != 0x49484452u)
+    /* Only the signature and complete IHDR are needed; decode validates the
+     * remaining chunks, compressed data and palette indices. */
+    if (data == 0 || size < 33u || memcmp(data, k_signature, 8) != 0 ||
+        read_u32be(data + 8) != 13u || read_u32be(data + 12) != 0x49484452u ||
+        !png_header(data + 16u, &layout))
     {
         return -1;
     }
-    w = read_u32be(ihdr);
-    h = read_u32be(ihdr + 4u);
-    if (w == 0u || h == 0u || w > SX_PNG_MAX_DIMENSION || h > SX_PNG_MAX_DIMENSION ||
-        ihdr[8] != 8u || (ihdr[9] != 2u && ihdr[9] != 6u) || ihdr[10] != 0u || ihdr[11] != 0u ||
-        ihdr[12] != 0u)
-    {
-        return -1;
-    }
-    if (width != 0)
-    {
-        *width = w;
-    }
-    if (height != 0)
-    {
-        *height = h;
-    }
+    if (width != 0) *width = layout.width;
+    if (height != 0) *height = layout.height;
     return 0;
 }
 

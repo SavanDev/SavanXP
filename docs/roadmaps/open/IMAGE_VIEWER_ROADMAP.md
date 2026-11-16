@@ -1,6 +1,6 @@
 # Image Viewer and the image formats
 
-Status: **phases I1–I3 landed** (shared BMP decoding, PNG wallpapers, extended BMP formats).
+Status: **phases I1–I4 landed** (shared BMP decoding, PNG wallpapers, extended BMP and PNG formats).
 Everything else is planned.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
@@ -30,7 +30,7 @@ same formats it reads.
 
 | Piece | Where | What it gives the viewer |
 |---|---|---|
-| PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I2) | 8-bit RGB/RGBA, non-interlaced, all filters, full inflate. Up to 4096 on a side. Refuses palette, grey, `tRNS`, Adam7, other depths |
+| PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I4) | All base colour types and their legal 1/2/4/8/16-bit depths, `tRNS`, Adam7, all filters, full inflate. Up to 4096 on a side |
 | BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into`, `sx_bmp_decode_argb_into` (I3) | `BI_RGB` 1/4/8/16/24/32 bpp, 16/32-bit masks and alpha, RLE4/RLE8. Up to 4096 on a side |
 | JPEG decoder | — | nothing |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
@@ -164,13 +164,33 @@ palettes, 555/565 and wider masks, alpha endpoints and midpoints, every RLE
 instruction and padding, plus malformed metadata, indices, masks, truncated
 streams and out-of-bounds runs/deltas. Existing 24/32-bit checks remain.
 
-### I4 — The rest of PNG
+### I4 — The rest of PNG (done)
 
-Palette with `tRNS`, grey and grey with alpha, depths 1, 2, 4 and 16,
-Adam7 interlacing. Most PNGs found outside the tree use at least one of
-them. The cursors keep working unchanged: the decoder only accepts more.
-Checking chunk CRCs stays optional and off; Adler-32 already guards the
-pixels.
+The shared decoder accepts indexed colour with `PLTE` and optional `tRNS`,
+greyscale, greyscale-alpha, RGB and RGBA at every legal PNG sample depth.
+Adam7 reconstructs each pass independently, including packed rows and empty
+passes, then scatters pixels into the caller's final image. The API and
+4096-per-side bound are unchanged. Paint, wallpaper and PNG cursors share
+these formats; CUR validates its bounded dimensions with `sx_png_info`
+before allocation rather than keeping a separate PNG subset.
+
+Samples are rescaled to 8 bits with nearest rounding. Colour keys are tested
+at the original depth before rescaling; unused high bits in low-depth keys
+are masked as specified by the
+[PNG reference](https://www.w3.org/TR/2025/REC-png-3-20250624/).
+The RGB functions composite onto white; `_argb` retains straight alpha.
+Palette entries not covered by `tRNS` stay opaque. Gamma, profiles and
+background-colour metadata are not applied. Chunk CRC checking stays off;
+zlib headers and Adler-32 are checked. Invalid palette indices, malformed
+or misplaced `PLTE`/`tRNS`, missing `IEND` and unknown critical chunks are
+rejected. `sx_png_info` still needs only a complete IHDR; decode validates
+the remaining file.
+
+Host assertions cover every type/depth, all five filters, ordinary and Adam7
+rows, narrow images with empty passes, 16-bit key collisions, palette alpha,
+buffer guards and truncated/malformed input. Existing RGB/RGBA and cursor
+pack checks remain; independent libpng-encoded indexed and greyscale-alpha
+Adam7 fixtures also pass through CUR selection and retain exact alpha.
 
 ### I5 — JPEG baseline and the common entry point
 

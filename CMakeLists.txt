@@ -815,7 +815,8 @@ add_test(NAME sxmidi-fm-test COMMAND savanxp-sxmidi-fm-test)
 
 # libsximg's decoders built with the host compiler and exercised for real:
 # PNGs made by hand (stored) and by real zlib (fixed and dynamic), the five
-# filters, RGB and RGBA; BMP palettes, masks, alpha, RLE and row orders; and the
+# filters, PNG colour types/depths, transparency and Adam7; BMP palettes,
+# masks, alpha, RLE and row orders; and the
 # rejection of whatever is outside each subset. It is the only check of the
 # decoders; the guest smoke only proves that the library loads and that Paint
 # reads a file.
