@@ -31,6 +31,29 @@ bool check(bool ok, const char* what) {
     return ok;
 }
 
+/* The common entry point must preserve the per-format pixel contract. */
+bool metadata_matches(const sx_image_metadata& a, const sx_image_metadata& b) {
+    return a.format == b.format && a.source_width == b.source_width && a.source_height == b.source_height &&
+           a.width == b.width && a.height == b.height && a.scale_denom == b.scale_denom;
+}
+
+bool common_pixels(const unsigned char* data, size_t size, uint32_t format,
+                   uint32_t w, uint32_t h, const uint32_t* expected) {
+    sx_image_metadata wanted = {format,w,h,w,h,1}, info = {}, decoded = {};
+    sx_image_options zero = {}, exact = {w,h,w*h,1};
+    if (sx_image_format(data,size) != format ||
+        sx_image_info(data,size,nullptr,&info) != SX_IMAGE_OK || !metadata_matches(info,wanted) ||
+        sx_image_info(data,size,&zero,&info) != SX_IMAGE_OK || !metadata_matches(info,wanted) ||
+        sx_image_info(data,size,&exact,&info) != SX_IMAGE_OK || !metadata_matches(info,wanted)) return false;
+    std::vector<uint32_t> pixels((size_t)w*h+2,0xdeadbeef);
+    if (sx_image_decode_into(data,size,nullptr,pixels.data()+1,(size_t)w*h,&decoded) != SX_IMAGE_OK ||
+        !metadata_matches(decoded,wanted) || pixels.front() != 0xdeadbeef || pixels.back() != 0xdeadbeef ||
+        memcmp(pixels.data()+1,expected,(size_t)w*h*sizeof(uint32_t)) != 0) return false;
+    return sx_image_decode_into(data,size,&exact,pixels.data()+1,(size_t)w*h,nullptr) == SX_IMAGE_OK &&
+           pixels.front() == 0xdeadbeef && pixels.back() == 0xdeadbeef &&
+           memcmp(pixels.data()+1,expected,(size_t)w*h*sizeof(uint32_t)) == 0;
+}
+
 /* --- constructores -------------------------------------------------------- */
 
 uint32_t adler(const std::vector<unsigned char>& data) {
@@ -340,7 +363,7 @@ bool bmp_matches(const Bmp& bmp, uint32_t width, uint32_t height) {
             }
         }
     }
-    return true;
+    return common_pixels(bmp.bytes.data(),bmp.bytes.size(),SX_IMAGE_FORMAT_BMP,w,h,pixels.data());
 }
 
 bool bmp_refused(const Bmp& bmp) {
@@ -466,7 +489,8 @@ bool bmp_pixels(const Bmp& bmp, const std::vector<uint32_t>& expected, bool argb
     int result = argb ? sx_bmp_decode_argb_into(bmp.bytes.data(), bmp.bytes.size(), pixels.data() + 1u, expected.size()) :
                         sx_bmp_decode_into(bmp.bytes.data(), bmp.bytes.size(), pixels.data() + 1u, expected.size());
     return result == 0 && pixels.front() == 0xdeadbeefu && pixels.back() == 0xdeadbeefu &&
-           std::vector<uint32_t>(pixels.begin() + 1, pixels.end() - 1) == expected;
+           std::vector<uint32_t>(pixels.begin() + 1, pixels.end() - 1) == expected &&
+           (argb || common_pixels(bmp.bytes.data(),bmp.bytes.size(),SX_IMAGE_FORMAT_BMP,w,h,expected.data()));
 }
 
 bool bmp_decode_refused(const Bmp& bmp) {
@@ -731,6 +755,7 @@ bool png_pixels(const Png& png, uint32_t width, uint32_t height, const std::vect
     for (size_t i = 0; ok && i < argb.size(); ++i) {
         ok = alpha.pixels[i] == argb[i] && rgb.pixels[i] == png_white(argb[i]) && into[i+1] == rgb.pixels[i];
     }
+    if (ok) ok = common_pixels(png.bytes.data(),png.bytes.size(),SX_IMAGE_FORMAT_PNG,w,h,rgb.pixels);
     sx_png_free(&rgb); sx_png_free(&alpha);
     return ok;
 }
@@ -978,6 +1003,7 @@ void png_into_tests() {
             std::vector<uint32_t> small((size_t)w * h - 1u);
             ok = ok && sx_png_decode_into(fixture.data, fixture.size, small.data(), small.size()) != 0 &&
                  sx_png_decode_into(fixture.data, fixture.size, 0, pixels.size()) != 0;
+            ok = ok && common_pixels(fixture.data,fixture.size,SX_IMAGE_FORMAT_PNG,w,h,img.pixels);
         }
         check(ok, fixture.name);
         sx_png_free(&img);
@@ -1004,6 +1030,111 @@ void png_into_tests() {
                   sx_bmp_info(k_png_rgb_dynamic, sizeof(k_png_rgb_dynamic), &w, &h) != 0,
               "png and bmp info each refuse the other's file");
     }
+}
+
+/* Errors before decode leave pixels intact; a failed decode may be partial. */
+bool common_error(const std::vector<unsigned char>& data, const sx_image_options* options, int expected,
+                  size_t count = 32, bool info_error = true, bool pixels_unchanged = true) {
+    sx_image_metadata info = {9,9,9,9,9,9}, decoded = info, zero = {};
+    uint32_t pixels[34];
+    for (auto& p : pixels) p = 0xdeadbeef;
+    int header_result = sx_image_info(data.data(),data.size(),options,&info);
+    bool ok = info_error ? header_result == expected && metadata_matches(info,zero) : header_result == SX_IMAGE_OK;
+    ok = sx_image_decode_into(data.data(),data.size(),options,pixels+1,count,&decoded) == expected &&
+         metadata_matches(decoded,zero) && pixels[0] == 0xdeadbeef && pixels[33] == 0xdeadbeef && ok;
+    if (pixels_unchanged) for (auto p : pixels) ok = p == 0xdeadbeef && ok;
+    return ok;
+}
+
+void common_image_tests() {
+    const unsigned char png_sig[] = {137,80,78,71,13,10,26,10};
+    for (size_t length = 0; length <= sizeof(png_sig); ++length) {
+        check(sx_image_format(png_sig,length) == (length == 8 ? SX_IMAGE_FORMAT_PNG : SX_IMAGE_FORMAT_UNKNOWN),
+              "common format detection respects PNG signature extent");
+    }
+    check(sx_image_format(nullptr,100) == SX_IMAGE_FORMAT_UNKNOWN &&
+          sx_image_format((const unsigned char*)"BM",1) == SX_IMAGE_FORMAT_UNKNOWN &&
+          sx_image_format((const unsigned char*)"BM",2) == SX_IMAGE_FORMAT_BMP,
+          "common format detection handles null input and short BMP signatures");
+    check(common_error({'B','M'},nullptr,SX_IMAGE_ERROR_HEADER) &&
+          common_error(std::vector<unsigned char>(png_sig,png_sig+8),nullptr,SX_IMAGE_ERROR_HEADER),
+          "recognized signatures do not imply valid headers");
+    check(common_error({0,1,2,3},nullptr,SX_IMAGE_ERROR_FORMAT), "unknown image format has its own error");
+    check(sx_image_format((const unsigned char*)"\xff\xd8",2) == SX_IMAGE_FORMAT_JPEG &&
+          common_error({0xff,0xd8,0xff,0xd9},nullptr,SX_IMAGE_ERROR_UNSUPPORTED),
+          "JPEG is recognized but not advertised as decodable");
+    Png png = png_raw(3,2,2,8,0,{0,1,2,3,4,5,6,7,8,9,0,9,8,7,6,5,4,3,2,1});
+    Bmp bmp(3,2,24,true);
+    for (const auto& bytes : {png.bytes,bmp.bytes}) {
+        for (uint32_t denominator : {2u,4u,8u}) {
+            sx_image_options options = {0,0,0,denominator};
+            check(common_error(bytes,&options,SX_IMAGE_ERROR_SCALE), "BMP/PNG exact reduction is explicitly unsupported");
+        }
+        for (uint32_t denominator : {3u,16u,0xffffffffu}) {
+            sx_image_options options = {0,0,0,denominator};
+            check(common_error(bytes,&options,SX_IMAGE_ERROR_ARGUMENT), "invalid scale denominators are argument errors");
+        }
+        for (auto limits : {sx_image_options{2,0,0,0},{0,1,0,0},{0,0,5,0},{1,1,1,0}}) {
+            check(common_error(bytes,&limits,SX_IMAGE_ERROR_LIMIT), "width, height and pixel budgets are enforced before writes");
+        }
+        check(common_error(bytes,nullptr,SX_IMAGE_ERROR_BUFFER,5,false), "common decode rejects one-pixel-short buffers before writes");
+        check(common_error(bytes,nullptr,SX_IMAGE_ERROR_BUFFER,0,false), "common decode rejects zero destination capacity");
+        sx_image_metadata info = {9,9,9,9,9,9}, zero = {};
+        check(sx_image_decode_into(bytes.data(),bytes.size(),nullptr,nullptr,6,&info) == SX_IMAGE_ERROR_ARGUMENT &&
+              metadata_matches(info,zero), "common decode rejects null pixels and clears metadata");
+        check(sx_image_info(bytes.data(),bytes.size(),nullptr,nullptr) == SX_IMAGE_ERROR_ARGUMENT,
+              "common info requires output metadata");
+        sx_image_options large = {0xffffffffu,0xffffffffu,0xffffffffu,0};
+        check(sx_image_info(bytes.data(),bytes.size(),&large,&info) == SX_IMAGE_OK && info.width == 3 &&
+              info.height == 2 && info.scale_denom == 1, "larger option limits retain the normal dimensions");
+    }
+    sx_image_metadata info = {9,9,9,9,9,9}, zero = {};
+    uint32_t pixel = 0xdeadbeef;
+    check(sx_image_info(nullptr,0,nullptr,&info) == SX_IMAGE_ERROR_ARGUMENT && metadata_matches(info,zero) &&
+          sx_image_decode_into(nullptr,0,nullptr,&pixel,1,nullptr) == SX_IMAGE_ERROR_ARGUMENT && pixel == 0xdeadbeef,
+          "null data is an argument error without pixel writes");
+    // Header-only PNG is a valid plan; missing image data is a decode failure.
+    auto header_only = png; header_only.bytes.resize(33);
+    check(common_error(header_only.bytes,nullptr,SX_IMAGE_ERROR_DECODE,6,false),
+          "a successful header plan does not promise decodable pixel data");
+    auto malformed_png = png;
+    malformed_png.bytes[25] = 5;
+    check(common_error(malformed_png.bytes,nullptr,SX_IMAGE_ERROR_HEADER), "unsupported PNG header reports HEADER");
+    auto bad_palette = png_raw(3,1,3,8,0,{0,0,0,1},{0,0,0});
+    check(common_error(bad_palette.bytes,nullptr,SX_IMAGE_ERROR_DECODE,3,false,false),
+          "common decode propagates late PNG data failure with reset metadata");
+    auto bad_rle = bmp_fixture(3,1,8,1,{2,0,2,1,0,1},1);
+    check(common_error(bad_rle.bytes,nullptr,SX_IMAGE_ERROR_DECODE,3,false,false),
+          "common decode propagates late BMP data failure with reset metadata");
+    for (size_t dimension_at : {size_t{16},size_t{20}}) {
+        auto huge = png;
+        uint32_t dimension = SX_IMAGE_MAX_DIMENSION+1u;
+        for (unsigned i=0; i<4; ++i) huge.bytes[dimension_at+i] = (unsigned char)(dimension >> (24u-8u*i));
+        sx_image_options large = {0xffffffffu,0xffffffffu,0xffffffffu,0};
+        check(common_error(huge.bytes,&large,SX_IMAGE_ERROR_LIMIT), "PNG global dimension limit cannot be raised by options");
+        check(sx_png_info(huge.bytes.data(),huge.bytes.size(),nullptr,nullptr) < 0,
+              "legacy PNG dimension limit remains intact");
+    }
+    for (size_t dimension_at : {size_t{18},size_t{22}}) {
+        auto huge = bmp; huge.le32(dimension_at,SX_IMAGE_MAX_DIMENSION+1u);
+        sx_image_options large = {0xffffffffu,0xffffffffu,0xffffffffu,0};
+        check(common_error(huge.bytes,&large,SX_IMAGE_ERROR_LIMIT), "BMP global dimension limit cannot be raised by options");
+        check(sx_bmp_info(huge.bytes.data(),huge.bytes.size(),nullptr,nullptr) < 0,
+              "legacy BMP dimension limit remains intact");
+    }
+    // JPEG is not inspected beyond its signature until the next delivery.
+    sx_image_options exact = {0,0,0,8};
+    check(common_error({0xff,0xd8},&exact,SX_IMAGE_ERROR_UNSUPPORTED), "JPEG scale requests do not fake JPEG support");
+    const struct {int code; const char* message;} messages[] = {
+        {SX_IMAGE_OK,"Success"}, {SX_IMAGE_ERROR_ARGUMENT,"Invalid image argument"},
+        {SX_IMAGE_ERROR_FORMAT,"Unrecognized image format"}, {SX_IMAGE_ERROR_UNSUPPORTED,"Unsupported image format"},
+        {SX_IMAGE_ERROR_HEADER,"Invalid or unsupported image header"}, {SX_IMAGE_ERROR_LIMIT,"Image exceeds decode limits"},
+        {SX_IMAGE_ERROR_SCALE,"Image decoder does not support the requested scale"},
+        {SX_IMAGE_ERROR_BUFFER,"Image buffer is too small"}, {SX_IMAGE_ERROR_DECODE,"Image decoding failed"},
+        {12345,"Unknown image error"}
+    };
+    for (const auto& test : messages) check(strcmp(sx_image_error_string(test.code),test.message)==0,
+                                          "common errors have deterministic English diagnostics");
 }
 
 }  // namespace
@@ -1201,6 +1332,7 @@ int main() {
     bmp_extended_tests();
     png_into_tests();
     png_extended_tests();
+    common_image_tests();
 
     /* free tolera vacia y nula */
     {

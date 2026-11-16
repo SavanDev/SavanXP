@@ -65,6 +65,73 @@ int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels,
  * explicit alpha mask pixels are opaque. RLE skips use palette entry zero. */
 int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
 
+/* Common image API. These structures use fixed-width fields in both SUN and
+ * POSIX. Detection uses only signatures; successful detection is not validation.
+ * Data, options, output metadata and pixels must not overlap. */
+#define SX_IMAGE_MAX_DIMENSION 4096u
+#define SX_IMAGE_MAX_PIXELS (SX_IMAGE_MAX_DIMENSION * SX_IMAGE_MAX_DIMENSION)
+
+enum sx_image_format_id {
+    SX_IMAGE_FORMAT_UNKNOWN = 0,
+    SX_IMAGE_FORMAT_BMP = 1,
+    SX_IMAGE_FORMAT_PNG = 2,
+    SX_IMAGE_FORMAT_JPEG = 3
+};
+
+enum sx_image_result {
+    SX_IMAGE_OK = 0,
+    SX_IMAGE_ERROR_ARGUMENT = -1,
+    SX_IMAGE_ERROR_FORMAT = -2,
+    SX_IMAGE_ERROR_UNSUPPORTED = -3,
+    SX_IMAGE_ERROR_HEADER = -4,
+    SX_IMAGE_ERROR_LIMIT = -5,
+    SX_IMAGE_ERROR_SCALE = -6,
+    SX_IMAGE_ERROR_BUFFER = -7,
+    SX_IMAGE_ERROR_DECODE = -8
+};
+
+struct sx_image_options {
+    uint32_t max_width;   /* zero: global limit; larger values cannot raise it */
+    uint32_t max_height;
+    uint32_t max_pixels;  /* zero: global pixel budget */
+    uint32_t scale_denom; /* 0: auto; otherwise exactly 1, 2, 4 or 8 */
+};
+
+struct sx_image_metadata {
+    uint32_t format;      /* sx_image_format_id */
+    uint32_t source_width;
+    uint32_t source_height;
+    uint32_t width;       /* decoded dimensions, used to allocate pixels */
+    uint32_t height;
+    uint32_t scale_denom; /* actual denominator, never zero on success */
+};
+
+uint32_t sx_image_format(const unsigned char *data, size_t size);
+
+/* Plan a decode using the same options as decode_into. NULL options means
+ * all zeroes. BMP/PNG support denominator 1 only: auto selects 1, an explicit
+ * 2/4/8 returns ERROR_SCALE, and an image exceeding any limit returns
+ * ERROR_LIMIT. Future JPEG reduction selects the smallest fitting 1/2/4/8;
+ * output dimensions round up. JPEG is currently recognized but UNSUPPORTED.
+ * `out` is required and is zeroed on error. Header validation does not prove
+ * that pixel data can be decoded. No allocation or system calls. */
+int sx_image_info(const unsigned char *data, size_t size,
+                  const struct sx_image_options *options, struct sx_image_metadata *out);
+
+/* Decodes top-down 0x00RRGGBB onto white, exactly as the per-format functions.
+ * Options have the same meaning as in info; pixel_count counts uint32_t entries
+ * and must hold width*height. `out` is optional, zeroed on error and filled on
+ * success. Arguments, headers, limits and buffer capacity are checked before
+ * any pixel write. ERROR_DECODE covers corrupt/unsupported pixel data or a
+ * decoder resource failure; the buffer may then contain part of the image.
+ * Inputs, options, output metadata and destination must not overlap. */
+int sx_image_decode_into(const unsigned char *data, size_t size,
+                         const struct sx_image_options *options, uint32_t *pixels,
+                         size_t pixel_count, struct sx_image_metadata *out);
+
+/* Static English diagnostic, including a fallback for unknown result codes. */
+const char *sx_image_error_string(int result);
+
 #ifdef __cplusplus
 }
 #endif

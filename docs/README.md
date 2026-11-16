@@ -218,6 +218,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Media — `media/`
 
+- [`IMAGE_FORMATS.md`](media/IMAGE_FORMATS.md) — `libsximg`'s common BMP/PNG API:
+  content detection, output metadata, limits, scaling contract and error semantics.
 - [`MEDIA_PLAYER.md`](media/MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
 - [`SOUND.md`](media/SOUND.md) — SUN Sound panel, popup shortcut, master and

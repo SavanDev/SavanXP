@@ -699,13 +699,13 @@ static int png_header(const unsigned char *body, struct png_layout *layout)
         case 3u: channels = 1u; break;
         case 4u: channels = 2u; break;
         case 6u: channels = 4u; break;
-        default: return 0;
+        default: return SX_IMAGE_ERROR_HEADER;
     }
     if ((depth != 1u && depth != 2u && depth != 4u && depth != 8u && depth != 16u) ||
         (type == 3u && depth == 16u) || (type != 0u && type != 3u && depth < 8u) ||
         body[10] != 0u || body[11] != 0u || body[12] > 1u)
     {
-        return 0;
+        return SX_IMAGE_ERROR_HEADER;
     }
     layout->width = read_u32be(body);
     layout->height = read_u32be(body + 4u);
@@ -713,8 +713,26 @@ static int png_header(const unsigned char *body, struct png_layout *layout)
     layout->type = type;
     layout->channels = channels;
     layout->interlace = body[12];
-    return layout->width != 0u && layout->height != 0u &&
-           layout->width <= SX_PNG_MAX_DIMENSION && layout->height <= SX_PNG_MAX_DIMENSION;
+    if (layout->width == 0u || layout->height == 0u)
+    {
+        return SX_IMAGE_ERROR_HEADER;
+    }
+    if (layout->width > SX_PNG_MAX_DIMENSION || layout->height > SX_PNG_MAX_DIMENSION)
+    {
+        return SX_IMAGE_ERROR_LIMIT;
+    }
+    return SX_IMAGE_OK;
+}
+
+static int png_read_header(const unsigned char *data, size_t size, struct png_layout *layout)
+{
+    static const unsigned char signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    if (data == 0 || size < 33u || memcmp(data, signature, 8) != 0 ||
+        read_u32be(data + 8) != 13u || read_u32be(data + 12) != 0x49484452u)
+    {
+        return SX_IMAGE_ERROR_HEADER;
+    }
+    return png_header(data + 16u, layout);
 }
 
 static void png_pass_layout(const struct png_layout *layout, unsigned index, struct png_pass *pass)
@@ -855,7 +873,7 @@ static int png_decode(const unsigned char *data, size_t size, struct sx_png_imag
         if (have_data && type != 0x49444154u) data_finished = 1;
         if (type == 0x49484452u) /* IHDR */
         {
-            if (have_header || pos != 8u || length != 13u || !png_header(body, &layout)) goto done;
+            if (have_header || pos != 8u || length != 13u || png_header(body, &layout) != SX_IMAGE_OK) goto done;
             if (dest != 0 && dest_count < (size_t)layout.width * layout.height) goto done;
             have_header = 1;
         }
@@ -1002,14 +1020,11 @@ int sx_png_decode_argb(const unsigned char *data, size_t size, struct sx_png_ima
 
 int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height)
 {
-    static const unsigned char k_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
     struct png_layout layout;
 
     /* Only the signature and complete IHDR are needed; decode validates the
      * remaining chunks, compressed data and palette indices. */
-    if (data == 0 || size < 33u || memcmp(data, k_signature, 8) != 0 ||
-        read_u32be(data + 8) != 13u || read_u32be(data + 12) != 0x49484452u ||
-        !png_header(data + 16u, &layout))
+    if (png_read_header(data, size, &layout) != SX_IMAGE_OK)
     {
         return -1;
     }
@@ -1123,11 +1138,14 @@ static int bmp_parse(const unsigned char *data, size_t size, struct bmp_layout *
     {
         height = -height;
     }
-    if (width <= 0 || height <= 0 || width > (int64_t)SX_BMP_MAX_DIMENSION ||
-        height > (int64_t)SX_BMP_MAX_DIMENSION ||
+    if (width <= 0 || height <= 0 ||
         (layout->top_down && (compression == 1u || compression == 2u)))
     {
         return -1;
+    }
+    if (width > (int64_t)SX_BMP_MAX_DIMENSION || height > (int64_t)SX_BMP_MAX_DIMENSION)
+    {
+        return SX_IMAGE_ERROR_LIMIT;
     }
     layout->width = (uint32_t)width;
     layout->height = (uint32_t)height;
@@ -1350,4 +1368,113 @@ int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels,
 int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
 {
     return bmp_decode_into(data, size, pixels, pixel_count, 1);
+}
+
+/* --- Common image interface ----------------------------------------------- */
+
+uint32_t sx_image_format(const unsigned char *data, size_t size)
+{
+    static const unsigned char png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    if (data == 0) return SX_IMAGE_FORMAT_UNKNOWN;
+    if (size >= 8u && memcmp(data, png_signature, 8u) == 0) return SX_IMAGE_FORMAT_PNG;
+    if (size >= 2u && data[0] == 'B' && data[1] == 'M') return SX_IMAGE_FORMAT_BMP;
+    if (size >= 2u && data[0] == 0xffu && data[1] == 0xd8u) return SX_IMAGE_FORMAT_JPEG;
+    return SX_IMAGE_FORMAT_UNKNOWN;
+}
+
+static uint32_t image_limit(uint32_t requested, uint32_t maximum)
+{
+    return requested != 0u && requested < maximum ? requested : maximum;
+}
+
+int sx_image_info(const unsigned char *data, size_t size,
+                  const struct sx_image_options *options, struct sx_image_metadata *out)
+{
+    struct sx_image_options defaults = {0};
+    struct sx_image_metadata metadata = {0};
+    int result;
+
+    if (out == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+    if (data == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    if (options == 0) options = &defaults;
+    if (options->scale_denom != 0u && options->scale_denom != 1u && options->scale_denom != 2u &&
+        options->scale_denom != 4u && options->scale_denom != 8u) return SX_IMAGE_ERROR_ARGUMENT;
+    metadata.format = sx_image_format(data, size);
+    switch (metadata.format)
+    {
+        case SX_IMAGE_FORMAT_PNG:
+        {
+            struct png_layout layout;
+            result = png_read_header(data, size, &layout);
+            if (result != SX_IMAGE_OK) return result;
+            metadata.source_width = layout.width;
+            metadata.source_height = layout.height;
+            break;
+        }
+        case SX_IMAGE_FORMAT_BMP:
+        {
+            struct bmp_layout layout;
+            result = bmp_parse(data, size, &layout);
+            if (result != 0) return result == SX_IMAGE_ERROR_LIMIT ? result : SX_IMAGE_ERROR_HEADER;
+            metadata.source_width = layout.width;
+            metadata.source_height = layout.height;
+            break;
+        }
+        case SX_IMAGE_FORMAT_JPEG: return SX_IMAGE_ERROR_UNSUPPORTED;
+        default: return SX_IMAGE_ERROR_FORMAT;
+    }
+    /* BMP/PNG have no decoder-level reduction. Do not silently resample or
+     * accept an exact scale request that the selected decoder cannot honour. */
+    if (options->scale_denom > 1u) return SX_IMAGE_ERROR_SCALE;
+    metadata.width = metadata.source_width;
+    metadata.height = metadata.source_height;
+    metadata.scale_denom = 1u;
+    if (metadata.width > image_limit(options->max_width, SX_IMAGE_MAX_DIMENSION) ||
+        metadata.height > image_limit(options->max_height, SX_IMAGE_MAX_DIMENSION) ||
+        (uint64_t)metadata.width * metadata.height > image_limit(options->max_pixels, SX_IMAGE_MAX_PIXELS))
+    {
+        return SX_IMAGE_ERROR_LIMIT;
+    }
+    *out = metadata;
+    return SX_IMAGE_OK;
+}
+
+int sx_image_decode_into(const unsigned char *data, size_t size,
+                         const struct sx_image_options *options, uint32_t *pixels,
+                         size_t pixel_count, struct sx_image_metadata *out)
+{
+    struct sx_image_metadata metadata;
+    int result;
+    if (out != 0) memset(out, 0, sizeof(*out));
+    if (pixels == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    result = sx_image_info(data, size, options, &metadata);
+    if (result != SX_IMAGE_OK) return result;
+    if (pixel_count < (size_t)metadata.width * metadata.height) return SX_IMAGE_ERROR_BUFFER;
+    switch (metadata.format)
+    {
+        case SX_IMAGE_FORMAT_PNG: result = sx_png_decode_into(data, size, pixels, pixel_count); break;
+        case SX_IMAGE_FORMAT_BMP: result = sx_bmp_decode_into(data, size, pixels, pixel_count); break;
+        default: return SX_IMAGE_ERROR_UNSUPPORTED;
+    }
+    if (result != 0) return SX_IMAGE_ERROR_DECODE;
+    if (out != 0) *out = metadata;
+    return SX_IMAGE_OK;
+}
+
+const char *sx_image_error_string(int result)
+{
+    switch (result)
+    {
+        case SX_IMAGE_OK: return "Success";
+        case SX_IMAGE_ERROR_ARGUMENT: return "Invalid image argument";
+        case SX_IMAGE_ERROR_FORMAT: return "Unrecognized image format";
+        case SX_IMAGE_ERROR_UNSUPPORTED: return "Unsupported image format";
+        case SX_IMAGE_ERROR_HEADER: return "Invalid or unsupported image header";
+        case SX_IMAGE_ERROR_LIMIT: return "Image exceeds decode limits";
+        case SX_IMAGE_ERROR_SCALE: return "Image decoder does not support the requested scale";
+        case SX_IMAGE_ERROR_BUFFER: return "Image buffer is too small";
+        case SX_IMAGE_ERROR_DECODE: return "Image decoding failed";
+        default: return "Unknown image error";
+    }
 }

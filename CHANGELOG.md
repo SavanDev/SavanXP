@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`libsximg` adds common BMP/PNG decoding with `sx_image_format`, `sx_image_info` and `sx_image_decode_into`.**
+  Callers can set output limits and receive source/output dimensions, scale and named errors;
+  JPEG is identified but remains unsupported. See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md).
+
 - **Paint, desktop wallpapers and PNG cursors now read indexed and greyscale PNGs, all legal sample depths, `tRNS` and Adam7.**
   `libsximg` retains straight alpha for cursors, composites documents onto white, and rescales 16-bit samples to 8 bits.
   Incomplete PNGs and unsupported critical chunks are rejected.

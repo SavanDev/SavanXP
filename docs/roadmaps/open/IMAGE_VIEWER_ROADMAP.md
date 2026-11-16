@@ -1,7 +1,7 @@
 # Image Viewer and the image formats
 
 Status: **phases I1–I4 landed** (shared BMP decoding, PNG wallpapers, extended BMP and PNG formats).
-Everything else is planned.
+I5 has landed its common BMP/PNG interface; JPEG decoding is still pending.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -67,11 +67,13 @@ use them, and nothing gains from changing them.
 
 ### One entry point by content, with JPEG
 
-With a third format, every caller would repeat the same "PNG signature?
-`BM`? `FF D8`?" chain. Phase I5 adds `sx_image_info` and
-`sx_image_decode_into`, which look at the first bytes and call the right
-decoder, and `sx_image_format` to name what was found. The per-format calls
-remain for callers that only accept one.
+I5's first delivery provides `sx_image_info`, `sx_image_decode_into` and
+`sx_image_format` for BMP and PNG, detecting content rather than extensions.
+JPEG is recognized but returns `SX_IMAGE_ERROR_UNSUPPORTED`. The per-format
+calls remain for callers that only accept one format or need straight alpha.
+The shared contract for output limits, original/decoded dimensions, exact
+and automatic scale, and error codes is documented in
+[IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md).
 
 ### JPEG is ours, not vendored
 
@@ -192,16 +194,31 @@ buffer guards and truncated/malformed input. Existing RGB/RGBA and cursor
 pack checks remain; independent libpng-encoded indexed and greyscale-alpha
 Adam7 fixtures also pass through CUR selection and retain exact alpha.
 
-### I5 — JPEG baseline and the common entry point
+### I5 — JPEG baseline and the common entry point (in progress)
 
-`sx_jpeg_info`, `sx_jpeg_decode_into` and the `sx_image_*` calls above.
-Accepts SOF0 and SOF1 (8-bit, Huffman), one or three components, any
-sampling factor of 1 or 2 (4:4:4, 4:2:2, 4:2:0, 4:4:0), restart markers,
-JFIF and Adobe (`APP14`) colour transforms, and reduced-scale decoding.
-Refuses, by name in the host test: progressive (SOF2), arithmetic coding,
-12-bit, lossless, CMYK/YCCK. The host test decodes small images made with a
-reference encoder and compares pixels within a stated tolerance, since IDCTs
-differ in rounding.
+1. **Common API and contract (done):** BMP/PNG detection and decode via
+   `sx_image_format`, `sx_image_info`, `sx_image_decode_into`; output limits,
+   original/decoded dimensions, scale denominator and named errors. Existing
+   format-specific functions remain unchanged. See
+   [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md) for the contract and tests.
+2. **Greyscale JPEG end to end:** marker/table parsing, Huffman coefficients,
+   dequantisation and integer IDCT, with stage-level assertions against T.81.
+3. **Complete colour and scan support:** SOF0 and SOF1 (8-bit, Huffman),
+   one or three components, legal sampling factors of 1 or 2 (4:4:4, 4:2:2,
+   4:2:0, 4:4:0), interleaved/separate scans, restart markers, JFIF and
+   Adobe (`APP14`) colour transforms.
+4. **Reduced decode:** denominators 1/2/4/8, planning and decode in agreement,
+   without first building a full-resolution bitmap.
+5. **Consumer integration and closure:** wallpaper uses the common API;
+   Display Properties accepts `.jpg`/`.jpeg`, with visual and persistence
+   verification. Paint keeps its current formats unless extended separately.
+
+The JPEG calls will be `sx_jpeg_info` and `sx_jpeg_decode_into`, alongside
+the common entry points. The host test must refuse, by name: progressive
+(SOF2), arithmetic coding, 12-bit, lossless and CMYK/YCCK. Reference-encoded
+fixtures are compared within a stated tolerance for IDCT rounding and matched
+chroma reconstruction. JPEG errors and scale handling must be covered before
+I5 closes; identifying a JPEG signature alone is not decoder support.
 
 ### I6 — Image Viewer
 
