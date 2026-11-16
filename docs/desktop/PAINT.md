@@ -72,9 +72,10 @@ changes size. The selftest below proves push, pop, and empty-pop.
   Save As refuses a `.png` name and keeps the dialog open. A failed Save As
   leaves the document's name unchanged.
 - **Load BMP:** through `libsximg` (`sx_bmp_info`, `sx_bmp_decode_into`),
-  decoded straight into the new document: uncompressed 24 or 32 bpp,
-  bottom-up or top-down (negative height); anything else is a rejection, not
-  a guess. Images larger than 512x384 are refused.
+  decoded straight into the new document: 1/4/8-bit palettes, RGB555,
+  24/32-bit RGB, 16/32-bit masks (including alpha composited onto white),
+  and RLE4/RLE8. Uncompressed rows may be bottom-up or top-down; RLE is
+  bottom-up only. Images larger than 512x384 are refused.
 - **Load PNG:** through `libsximg.so.0.4` (`savanxp/img.h`), composited over
   white; images larger than 512x384 are refused.
 

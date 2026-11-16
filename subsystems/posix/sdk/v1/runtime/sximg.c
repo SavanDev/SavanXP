@@ -946,14 +946,26 @@ int sx_png_decode_into(const unsigned char *data, size_t size, uint32_t *pixels,
 #define BMP_FILE_HEADER_BYTES 14u
 #define BMP_INFO_HEADER_BYTES 40u
 
+struct bmp_channel
+{
+    uint32_t mask;
+    uint32_t maximum;
+    unsigned shift;
+};
+
 struct bmp_layout
 {
     uint32_t width;
     uint32_t height;
-    uint32_t bytes_per_pixel;
+    uint32_t bits;
+    uint32_t compression;
+    uint32_t palette_count;
+    size_t palette_offset;
     size_t stride;
     size_t pixel_offset;
+    size_t pixel_bytes;
     int top_down;
+    struct bmp_channel channels[4]; /* red, green, blue, optional alpha */
 };
 
 static uint32_t read_u16le(const unsigned char *p)
@@ -966,30 +978,56 @@ static uint32_t read_u32le(const unsigned char *p)
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-/* Validates the headers and that every row lies inside the buffer. */
+static int bmp_channel_init(struct bmp_channel *channel, uint32_t mask, uint32_t bits)
+{
+    channel->mask = mask;
+    channel->shift = 0u;
+    if (mask == 0u || (bits == 16u && (mask >> 16) != 0u))
+    {
+        return -1;
+    }
+    while ((mask & 1u) == 0u)
+    {
+        ++channel->shift;
+        mask >>= 1;
+    }
+    channel->maximum = mask;
+    /* A component is one contiguous run of bits. Unsigned wrap is intentional. */
+    return (mask & (mask + 1u)) == 0u ? 0 : -1;
+}
+
+/* Validates the layout and the extent of the rows or compressed stream.
+ * Palette indices and RLE instructions are checked while decoding. */
 static int bmp_parse(const unsigned char *data, size_t size, struct bmp_layout *layout)
 {
     uint32_t header_bytes;
     uint32_t bits;
+    uint32_t compression;
+    uint32_t used_masks = 0u;
     int64_t width;
     int64_t height;
+    size_t metadata_end;
     size_t offset;
+    unsigned i;
 
     if (data == 0 || size < BMP_FILE_HEADER_BYTES + BMP_INFO_HEADER_BYTES || data[0] != 'B' ||
         data[1] != 'M')
     {
         return -1;
     }
+    memset(layout, 0, sizeof(*layout));
     header_bytes = read_u32le(data + 14);
     bits = read_u16le(data + 28);
+    compression = read_u32le(data + 30);
     if (header_bytes < BMP_INFO_HEADER_BYTES || header_bytes > size - BMP_FILE_HEADER_BYTES ||
-        read_u16le(data + 26) != 1u ||  /* planes */
-        (bits != 24u && bits != 32u) ||
-        read_u32le(data + 30) != 0u)    /* BI_RGB */
+        read_u16le(data + 26) != 1u ||
+        (bits != 1u && bits != 4u && bits != 8u && bits != 16u && bits != 24u && bits != 32u) ||
+        (compression != 0u && !(compression == 1u && bits == 8u) &&
+         !(compression == 2u && bits == 4u) &&
+         !(compression == 3u && (bits == 16u || bits == 32u))))
     {
         return -1;
     }
-    /* Both are signed; a negative height means the rows are stored top-down. */
     width = (int32_t)read_u32le(data + 18);
     height = (int32_t)read_u32le(data + 22);
     layout->top_down = height < 0;
@@ -998,23 +1036,145 @@ static int bmp_parse(const unsigned char *data, size_t size, struct bmp_layout *
         height = -height;
     }
     if (width <= 0 || height <= 0 || width > (int64_t)SX_BMP_MAX_DIMENSION ||
-        height > (int64_t)SX_BMP_MAX_DIMENSION)
+        height > (int64_t)SX_BMP_MAX_DIMENSION ||
+        (layout->top_down && (compression == 1u || compression == 2u)))
     {
         return -1;
     }
     layout->width = (uint32_t)width;
     layout->height = (uint32_t)height;
-    layout->bytes_per_pixel = bits / 8u;
-    /* Rows are padded to four bytes. */
-    layout->stride = ((size_t)layout->width * layout->bytes_per_pixel + 3u) & ~(size_t)3u;
+    layout->bits = bits;
+    layout->compression = compression;
+    metadata_end = BMP_FILE_HEADER_BYTES + (size_t)header_bytes;
     offset = read_u32le(data + 10);
-    if (offset < BMP_FILE_HEADER_BYTES + (size_t)header_bytes || offset > size ||
-        layout->stride * (size_t)layout->height > size - offset)
+    if (offset < metadata_end || offset > size)
     {
         return -1;
     }
+    if (compression == 3u)
+    {
+        /* INFO stores three masks after its header; V2/V3/V4/V5 embed them. */
+        if (header_bytes == 40u)
+        {
+            if (offset - metadata_end < 12u) return -1;
+            metadata_end += 12u;
+        }
+        else if (header_bytes < 52u)
+        {
+            return -1;
+        }
+        for (i = 0u; i < 4u; ++i)
+        {
+            uint32_t mask = i == 3u && header_bytes < 56u ? 0u : read_u32le(data + 54u + i * 4u);
+            if (i == 3u && mask == 0u) continue;
+            if ((mask & used_masks) != 0u || bmp_channel_init(&layout->channels[i], mask, bits) != 0)
+            {
+                return -1;
+            }
+            used_masks |= mask;
+        }
+    }
+    else if (bits == 16u)
+    {
+        bmp_channel_init(&layout->channels[0], 0x7c00u, bits);
+        bmp_channel_init(&layout->channels[1], 0x03e0u, bits);
+        bmp_channel_init(&layout->channels[2], 0x001fu, bits);
+    }
+    if (bits <= 8u)
+    {
+        uint32_t count = read_u32le(data + 46);
+        if (count == 0u) count = 1u << bits;
+        if (count > (1u << bits) || (size_t)count * 4u > offset - metadata_end)
+        {
+            return -1;
+        }
+        layout->palette_count = count;
+        layout->palette_offset = metadata_end;
+    }
     layout->pixel_offset = offset;
+    if (compression == 1u || compression == 2u)
+    {
+        layout->pixel_bytes = read_u32le(data + 34);
+        if (layout->pixel_bytes < 2u || layout->pixel_bytes > size - offset) return -1;
+    }
+    else
+    {
+        layout->stride = (((size_t)layout->width * bits + 31u) / 32u) * 4u;
+        layout->pixel_bytes = layout->stride * layout->height;
+        if (layout->pixel_bytes > size - offset) return -1;
+    }
     return 0;
+}
+
+static uint32_t bmp_palette_pixel(const unsigned char *data, const struct bmp_layout *layout,
+                                  uint32_t index, int keep_alpha)
+{
+    const unsigned char *entry = data + layout->palette_offset + index * 4u;
+    /* RGBQUAD's reserved byte is not alpha. */
+    return ((uint32_t)entry[2] << 16) | ((uint32_t)entry[1] << 8) | entry[0] |
+           (keep_alpha ? 0xff000000u : 0u);
+}
+
+static uint32_t bmp_component(uint32_t pixel, const struct bmp_channel *channel)
+{
+    uint32_t value = (pixel & channel->mask) >> channel->shift;
+    return (uint32_t)(((uint64_t)value * 255u + channel->maximum / 2u) / channel->maximum);
+}
+
+static int bmp_rle(const unsigned char *data, const struct bmp_layout *layout,
+                   uint32_t *pixels, int keep_alpha)
+{
+    const unsigned char *stream = data + layout->pixel_offset;
+    size_t at = 0u;
+    uint32_t x = 0u, y = 0u;
+    size_t i;
+    /* Early EOB, short rows and delta skips leave palette entry zero. */
+    for (i = 0u; i < (size_t)layout->width * layout->height; ++i)
+    {
+        pixels[i] = bmp_palette_pixel(data, layout, 0u, keep_alpha);
+    }
+    while (layout->pixel_bytes - at >= 2u)
+    {
+        uint32_t count = stream[at++];
+        uint32_t code = stream[at++];
+        size_t literal_bytes = 0u;
+        size_t padded_bytes = 0u;
+        if (count == 0u)
+        {
+            if (code == 1u) return 0; /* end of bitmap */
+            if (y >= layout->height) return -1;
+            if (code == 0u)
+            {
+                x = 0u;
+                ++y;
+                continue;
+            }
+            if (code == 2u)
+            {
+                if (layout->pixel_bytes - at < 2u) return -1;
+                x += stream[at++];
+                y += stream[at++];
+                if (x > layout->width || y >= layout->height) return -1;
+                continue;
+            }
+            count = code;
+            literal_bytes = layout->bits == 8u ? count : (count + 1u) / 2u;
+            padded_bytes = (literal_bytes + 1u) & ~(size_t)1u;
+            if (padded_bytes > layout->pixel_bytes - at) return -1;
+        }
+        if (y >= layout->height || count > layout->width - x) return -1;
+        for (i = 0u; i < count; ++i)
+        {
+            uint32_t index;
+            uint32_t packed = literal_bytes ? stream[at + (layout->bits == 8u ? i : i / 2u)] : code;
+            index = layout->bits == 8u ? packed : ((i & 1u) ? packed & 15u : packed >> 4);
+            if (index >= layout->palette_count) return -1;
+            pixels[(size_t)(layout->height - 1u - y) * layout->width + x++] =
+                bmp_palette_pixel(data, layout, index, keep_alpha);
+        }
+        at += padded_bytes;
+    }
+    return -1; /* An explicit EOB is required, even after the last full row. */
 }
 
 int sx_bmp_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height)
@@ -1036,29 +1196,70 @@ int sx_bmp_info(const unsigned char *data, size_t size, uint32_t *width, uint32_
     return 0;
 }
 
-int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
+static int bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels,
+                           size_t pixel_count, int keep_alpha)
 {
     struct bmp_layout layout;
     uint32_t y;
-
     if (pixels == 0 || bmp_parse(data, size, &layout) != 0 ||
-        pixel_count < (size_t)layout.width * (size_t)layout.height)
+        pixel_count < (size_t)layout.width * layout.height)
     {
         return -1;
+    }
+    if (layout.compression == 1u || layout.compression == 2u)
+    {
+        return bmp_rle(data, &layout, pixels, keep_alpha);
     }
     for (y = 0u; y < layout.height; ++y)
     {
         uint32_t source_row = layout.top_down ? y : layout.height - 1u - y;
         const unsigned char *source = data + layout.pixel_offset + (size_t)source_row * layout.stride;
-        uint32_t *target = pixels + (size_t)y * (size_t)layout.width;
+        uint32_t *target = pixels + (size_t)y * layout.width;
         uint32_t x;
-
         for (x = 0u; x < layout.width; ++x)
         {
-            const unsigned char *pixel = source + (size_t)x * layout.bytes_per_pixel;
-
-            target[x] = ((uint32_t)pixel[2] << 16) | ((uint32_t)pixel[1] << 8) | (uint32_t)pixel[0];
+            uint32_t red, green, blue, alpha = 255u;
+            if (layout.bits <= 8u)
+            {
+                uint32_t bit = x * layout.bits;
+                uint32_t index = (source[bit / 8u] >> (8u - layout.bits - bit % 8u)) &
+                                 ((1u << layout.bits) - 1u);
+                if (index >= layout.palette_count) return -1;
+                target[x] = bmp_palette_pixel(data, &layout, index, keep_alpha);
+                continue;
+            }
+            if (layout.bits == 16u || layout.compression == 3u)
+            {
+                const unsigned char *p = source + (size_t)x * (layout.bits / 8u);
+                uint32_t value = layout.bits == 16u ? read_u16le(p) : read_u32le(p);
+                red = bmp_component(value, &layout.channels[0]);
+                green = bmp_component(value, &layout.channels[1]);
+                blue = bmp_component(value, &layout.channels[2]);
+                if (layout.channels[3].mask) alpha = bmp_component(value, &layout.channels[3]);
+            }
+            else
+            {
+                const unsigned char *p = source + (size_t)x * (layout.bits / 8u);
+                red = p[2]; green = p[1]; blue = p[0];
+            }
+            if (!keep_alpha && alpha != 255u)
+            {
+                red = (red * alpha + 255u * (255u - alpha) + 127u) / 255u;
+                green = (green * alpha + 255u * (255u - alpha) + 127u) / 255u;
+                blue = (blue * alpha + 255u * (255u - alpha) + 127u) / 255u;
+            }
+            target[x] = (red << 16) | (green << 8) | blue | (keep_alpha ? alpha << 24 : 0u);
         }
     }
     return 0;
+}
+
+int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
+{
+    return bmp_decode_into(data, size, pixels, pixel_count, 0);
+}
+
+int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count)
+{
+    return bmp_decode_into(data, size, pixels, pixel_count, 1);
 }

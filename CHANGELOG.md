@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Paint and desktop wallpapers now read paletted, 16-bit, masked and RLE4/RLE8 BMPs, including V4/V5 alpha.**
+  `libsximg` composites alpha onto white; `sx_bmp_decode_argb_into` preserves it for callers.
+  Image Viewer roadmap phase I3 is complete.
+
 - **SSL runs the original Alpine Xeyes from Start and by double-clicking its ELF in Files.**
   `install_xeyes.py` installs its pinned runtime persistently; `x11d` adds child windows and icon pixmaps.
   `linux-xeyes` checks Linux reference pixels, pointer tracking, resize, relaunch and restart; see [LINUX.md](docs/userland/LINUX.md).

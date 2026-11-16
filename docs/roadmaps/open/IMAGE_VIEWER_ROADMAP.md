@@ -1,6 +1,6 @@
 # Image Viewer and the image formats
 
-Status: **phases I1 and I2 landed** (BMP in `libsximg`, PNG wallpapers).
+Status: **phases I1–I3 landed** (shared BMP decoding, PNG wallpapers, extended BMP formats).
 Everything else is planned.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
@@ -31,7 +31,7 @@ same formats it reads.
 | Piece | Where | What it gives the viewer |
 |---|---|---|
 | PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I2) | 8-bit RGB/RGBA, non-interlaced, all filters, full inflate. Up to 4096 on a side. Refuses palette, grey, `tRNS`, Adam7, other depths |
-| BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into` (I1) | `BI_RGB` 24 and 32 bpp, bottom-up or top-down. Up to 4096 on a side |
+| BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into`, `sx_bmp_decode_argb_into` (I3) | `BI_RGB` 1/4/8/16/24/32 bpp, 16/32-bit masks and alpha, RLE4/RLE8. Up to 4096 on a side |
 | JPEG decoder | — | nothing |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
 | Scaling | `sx_painter_draw_scaled_bitmap` (`gfx2d.h`), `SX_SCALE_NEAREST` / `BILINEAR` | zoom and fit-to-window |
@@ -138,12 +138,31 @@ the decoder table when I5 lands. Verification: `tools/shoot.sh --scenario
 wallpaperpng` picks `/paint-test.png` with Browse and reads the tiled pixels
 off the desktop.
 
-### I3 — The rest of BMP
+### I3 — The rest of BMP (done)
 
-Palettes (1, 4 and 8 bpp), 16 bpp (5-5-5 and through `BI_BITFIELDS`),
+Palettes (1, 4 and 8 bpp), 16 bpp (5-5-5 and `BI_BITFIELDS`),
 32 bpp with masks and alpha (`BITMAPV4HEADER`/`V5`), `BI_RLE4` and
-`BI_RLE8`. These are what other systems save; Windows XP's Paint saves 8 bpp
-palettes by default.
+`BI_RLE8` are shared by Paint and the wallpaper. The decoder follows the
+[bitmap header](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv4header)
+and [RLE](https://learn.microsoft.com/en-us/windows/win32/gdi/bitmap-compression)
+references. INFO has three external masks; larger headers embed them
+(V2/V3 are accepted too). Masks must be contiguous, disjoint and within
+the pixel depth. Components are scaled to 8 bits with nearest rounding.
+`sx_bmp_decode_into` composites explicit alpha onto white;
+`sx_bmp_decode_argb_into` retains straight alpha in caller-owned pixels.
+BI_RGB's unused high bits and palette reserved bytes are ignored.
+
+RLE accepts encoded and word-aligned absolute runs, EOL, EOB and delta;
+short rows, skips and early EOB leave palette entry zero. Top-down RLE is
+refused. A nonzero `biSizeImage` bounds the compressed stream and an explicit
+EOB is required. `sx_bmp_info` validates metadata and pixel-data extent;
+only decode validates indices and RLE instructions, so it may still fail.
+Colour profiles and gamma conversion are not applied.
+
+The host test checks exact pixels in both row orders, packed odd-width
+palettes, 555/565 and wider masks, alpha endpoints and midpoints, every RLE
+instruction and padding, plus malformed metadata, indices, masks, truncated
+streams and out-of-bounds runs/deltas. Existing 24/32-bit checks remain.
 
 ### I4 — The rest of PNG
 
@@ -179,7 +198,7 @@ A SUN program, `system/imgview`:
 - F11 fullscreen, Esc to leave it.
 - Declares `ext_open=.bmp,.png,.jpg,.jpeg` and the matching `mime_open`.
 - An image that cannot be read shows why in the window ("Not a supported
-  BMP: 8 bpp palette"), not an empty frame.
+  BMP: embedded JPEG"), not an empty frame.
 
 Verification: an `imgview --selftest` scenario in `tools/smoke_catalog.py`
 that opens one fixture of each format through the same functions the window

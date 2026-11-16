@@ -41,23 +41,27 @@ int sx_png_info(const unsigned char *data, size_t size, uint32_t *width, uint32_
  * negative error; on error the buffer may hold part of the image. */
 int sx_png_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
 
-/* System BMP decoder: BI_RGB at 24 or 32 bpp with a BITMAPINFOHEADER or a
- * larger header, rows bottom-up or top-down (negative height). The fourth
- * byte of a 32 bpp pixel is ignored. Palettes, 16 bpp, BI_BITFIELDS and RLE
- * are rejected. Like the PNG decoder it works on memory only; the caller
- * owns the pixels, so a program can decode into a section or a bitmap of
- * its own. Roadmap: docs/roadmaps/open/IMAGE_VIEWER_ROADMAP.md. */
+/* System BMP decoder: INFO or larger headers; BI_RGB at 1/4/8/16/24/32
+ * bpp, BI_BITFIELDS at 16/32 bpp (including V4/V5 alpha), BI_RLE4/BI_RLE8.
+ * Uncompressed rows may be top-down. BI_RGB's high byte and palette reserved
+ * bytes are ignored. Works on memory only; the caller owns the pixels.
+ * Roadmap: docs/roadmaps/open/IMAGE_VIEWER_ROADMAP.md. */
 
 #define SX_BMP_MAX_DIMENSION 4096u
 
-/* Reads the size from the headers and checks that the whole image is in
- * the buffer and within the subset. Returns 0 or a negative error. */
+/* Reads the size, validates headers, masks, palette and pixel-data extent.
+ * Pixel indices and RLE instructions are checked only by decode, which may
+ * still fail. Returns 0 or a negative error. */
 int sx_bmp_info(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height);
 
-/* Decodes into `pixels`, top-down 0x00RRGGBB, `pixel_count` entries long
+/* Decodes onto white into `pixels`, top-down 0x00RRGGBB, `pixel_count` entries long
  * (at least width*height). Returns 0 or a negative error; on error the
  * buffer may hold part of the image. */
 int sx_bmp_decode_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
+
+/* Same buffer contract, retaining straight alpha as 0xAARRGGBB. Without an
+ * explicit alpha mask pixels are opaque. RLE skips use palette entry zero. */
+int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
 
 #ifdef __cplusplus
 }
