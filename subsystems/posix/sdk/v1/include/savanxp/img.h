@@ -118,7 +118,7 @@ uint32_t sx_image_format(const unsigned char *data, size_t size);
  * all zeroes. BMP/PNG support denominator 1 only: auto selects 1, an explicit
  * 2/4/8 returns ERROR_SCALE, and an image exceeding any limit returns
  * ERROR_LIMIT. Future JPEG reduction selects the smallest fitting 1/2/4/8;
- * output dimensions round up. Current greyscale JPEG supports scale 1 only.
+ * output dimensions round up. Current JPEG supports scale 1 only.
  * `out` is required and is zeroed on error. Header validation does not prove
  * that pixel data can be decoded. No allocation or system calls. */
 int sx_image_info(const unsigned char *data, size_t size,
@@ -135,13 +135,14 @@ int sx_image_decode_into(const unsigned char *data, size_t size,
                          const struct sx_image_options *options, uint32_t *pixels,
                          size_t pixel_count, struct sx_image_metadata *out);
 
-/* Sequential greyscale JPEG: SOF0/SOF1, 8-bit samples, selected tables before
- * SOS, restart intervals, and one noninterleaved scan. Sampling factors 1/2
- * are accepted. Full resolution only (auto or denominator 1); colour and
- * reduced decode arrive in subsequent I5 deliveries. The options, metadata,
- * errors and buffer contract are the same as the common interface. Info
- * validates through SOS; decode also validates entropy data, padding and EOI.
- * Both calls allocate nothing. The input and all outputs must not overlap. */
+/* Sequential JPEG: SOF0/SOF1, 8-bit greyscale, RGB or YCbCr, sampling factors
+ * 1/2, interleaved/separate scans and restart intervals. JFIF and Adobe APP14
+ * select colour interpretation. Full resolution only (auto or denominator 1).
+ * Options, metadata, errors and buffer contract match the common interface.
+ * Info validates through the first SOS without allocating. Decode validates
+ * every scan, padding and EOI, using up to three byte planes for colour (at
+ * most 3*source_width*source_height workspace bytes); greyscale needs no heap.
+ * Neither call uses floating point. Inputs and outputs must not overlap. */
 int sx_jpeg_info(const unsigned char *data, size_t size,
                  const struct sx_image_options *options, struct sx_image_metadata *out);
 int sx_jpeg_decode_into(const unsigned char *data, size_t size,

@@ -2,8 +2,17 @@
  * operator tests do; no testing-only functions enter the public SDK. */
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
+static unsigned allocations, releases, fail_allocation;
+static void *test_alloc(size_t size) { ++allocations; return fail_allocation ? NULL : malloc(size); }
+static void test_free(void *ptr) { if(ptr) ++releases; free(ptr); }
+#define malloc test_alloc
+#define free test_free
 #include "../../subsystems/posix/sdk/v1/runtime/sximg.c"
+#undef malloc
+#undef free
 #include "sxjpeg_fixtures.h"
+#include "sxjpeg_color_fixtures.h"
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { printf("FAIL: %s (line %d)\n",msg,__LINE__); ++failures; } } while (0)
@@ -201,6 +210,229 @@ static void fixtures(void) {
     }
 }
 
+static void color_fixtures(void) {
+    const struct { const unsigned char *jpeg,*pixels; size_t size; unsigned w,h; const char *name; } refs[]={
+#define REF(name,w,h) {jpeg_color_##name,expected_color_##name,sizeof(jpeg_color_##name),w,h,#name}
+        REF(y444,9,13),REF(y422,17,9),REF(y420,17,19),REF(y440,9,17),REF(separate,17,19),
+        REF(mixed,17,19),REF(pair,17,9),REF(rgb,13,9),REF(rgb_separate,17,13),REF(rgb_ids,9,9),
+        REF(no_marker,9,9),REF(adobe_ycc,9,13),REF(both,9,9),REF(rgb422,17,9)
+#undef REF
+    };
+    for(unsigned n=0;n<sizeof(refs)/sizeof(refs[0]);++n) {
+        const unsigned char *data=refs[n].jpeg; size_t size=refs[n].size;
+        unsigned w=refs[n].w,h=refs[n].h, count=w*h; uint32_t pixels[325],common[323];
+        for(unsigned i=0;i<325;++i) pixels[i]=0xdeadbeef;
+        struct sx_image_metadata info={0},decoded={0},zero={0};
+        unsigned before=allocations, freed=releases;
+        CHECK(sx_jpeg_info(data,size,NULL,&info)==0 && info.width==w && info.height==h &&
+              info.source_width==w && info.source_height==h && info.format==SX_IMAGE_FORMAT_JPEG &&
+              info.scale_denom==1,"colour reference metadata");
+        CHECK(allocations==before,"colour info allocates nothing");
+        CHECK(sx_jpeg_decode_into(data,size,NULL,pixels+1,count,&decoded)==0 && metadata_equal(&info,&decoded),"colour reference decoded");
+        CHECK(allocations==before+1 && releases==freed+1,"one bounded colour workspace released");
+        unsigned max_error=0;
+        for(unsigned i=0;i<count;++i) {
+            CHECK((pixels[i+1]>>24)==0,"opaque RGB packing");
+            for(unsigned c=0;c<3;++c) {
+                unsigned value=(pixels[i+1]>>(16-8*c))&255;
+                unsigned delta=(unsigned)abs((int)value-refs[n].pixels[3*i+c]);
+                if(delta>max_error) max_error=delta;
+            }
+        }
+        printf("colour %s: maximum channel difference %u\n",refs[n].name,max_error);
+        // A one-level component IDCT difference plus the YCbCr matrix can change RGB by three levels.
+        CHECK(max_error<=3,"colour reference tolerance is three RGB levels");
+        CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef,"colour exact buffer guards");
+        CHECK(sx_image_info(data,size,NULL,&decoded)==0 && metadata_equal(&info,&decoded),"common colour plan");
+        CHECK(sx_image_decode_into(data,size,NULL,common,count,NULL)==0 && !memcmp(common,pixels+1,count*4),"common colour pixels");
+        before=allocations;
+        CHECK(sx_jpeg_decode_into(data,size,NULL,common,count-1,&decoded)==SX_IMAGE_ERROR_BUFFER &&
+              metadata_equal(&decoded,&zero) && allocations==before,"colour capacity checked before allocation");
+        struct sx_image_options options={w,h,count,1};
+        CHECK(sx_jpeg_decode_into(data,size,&options,common,count,NULL)==0,"colour exact limits");
+        options.max_pixels=count-1;
+        CHECK(sx_jpeg_decode_into(data,size,&options,common,count,NULL)==SX_IMAGE_ERROR_LIMIT,"colour output budget");
+        for(unsigned scale=2;scale<=8;scale*=2) {
+            options=(struct sx_image_options){0,0,0,scale};
+            CHECK(sx_jpeg_decode_into(data,size,&options,common,count,NULL)==SX_IMAGE_ERROR_SCALE,"colour reduction deferred");
+        }
+        for(size_t length=0;length<size;++length) {
+            pixels[0]=pixels[count+1]=0xdeadbeef; decoded=info; before=allocations; freed=releases;
+            CHECK(sx_jpeg_decode_into(data,length,NULL,pixels+1,count,&decoded)<0 && metadata_equal(&decoded,&zero),"every colour truncated prefix rejected");
+            CHECK(pixels[0]==0xdeadbeef && pixels[count+1]==0xdeadbeef,"truncated colour guards");
+            CHECK(allocations-before==releases-freed,"truncated colour workspace released");
+        }
+        fail_allocation=1; decoded=info;
+        for(unsigned i=0;i<325;++i) pixels[i]=0xdeadbeef;
+        CHECK(sx_jpeg_decode_into(data,size,NULL,pixels+1,count,&decoded)==SX_IMAGE_ERROR_DECODE &&
+              metadata_equal(&decoded,&zero),"colour allocation failure contract");
+        for(unsigned i=0;i<325;++i) CHECK(pixels[i]==0xdeadbeef,"allocation failure precedes writes");
+        fail_allocation=0;
+    }
+}
+
+static void dc_bits(int difference) {
+    unsigned magnitude=(unsigned)abs(difference), category=0;
+    while(magnitude) { ++category; magnitude>>=1; }
+    bits(category,4);
+    if(category) bits((unsigned)(difference<0 ? difference+(1<<category)-1 : difference),category);
+    bits(0,1); // AC EOB.
+}
+
+/* Independent constant-block encoder exercises every combination of H/V 1/2,
+ * including uncommon component ratios, partial MCUs and two-component scans.
+ * Quantizers and restart intervals change at each scan boundary. */
+static void color_synthetic(const unsigned factors[3],unsigned mode,unsigned app) {
+    unsigned hmax=1,vmax=1;
+    for(unsigned c=0;c<3;++c) { if((factors[c]>>4)>hmax) hmax=factors[c]>>4;
+        if((factors[c]&15)>vmax) vmax=factors[c]&15; }
+    used=pending=bit_count=0; mark(0xd8);
+    unsigned char adobe[12]={'A','d','o','b','e',0,100,0,0,0,0,0};
+    adobe[11]=(unsigned char)(app==1);
+    if(app<3) segment(0xee,adobe,12);
+    if(app==2) { const unsigned char jfif[14]={'J','F','I','F',0,1,2,0,0,1,0,1,0,0}; segment(0xe0,jfif,14); }
+    unsigned char huff[47]={0}; huff[4]=12;
+    for(unsigned i=0;i<12;++i) huff[17+i]=(unsigned char)i;
+    huff[29]=0x10; huff[30]=1; segment(0xc4,huff,sizeof(huff));
+    unsigned char frame[15]={8,0,19,0,17,3,1,0,0,2,0,0,3,0,0};
+    const unsigned char rgb[3]={'R','G','B'};
+    for(unsigned c=0;c<3;++c) {frame[6+3*c]=app==3?rgb[c]:(unsigned char)(c+1); frame[7+3*c]=(unsigned char)factors[c];}
+    segment(0xc0,frame,sizeof(frame));
+    unsigned scans=mode==0?1:mode==1?3:2;
+    for(unsigned s=0;s<scans;++s) {
+        unsigned q=1u<<s; unsigned char quant[65]={0}; memset(quant+1,(int)q,64); segment(0xdb,quant,65);
+        segment(0xc4,huff,sizeof(huff)); // Table redefinition also works after entropy data.
+        unsigned char dri[2]={0,(unsigned char)(s+1)}; segment(0xdd,dri,2);
+        unsigned select[3]={0,1,2},count=3;
+        if(mode==1) {count=1; select[0]=(s+2)%3;}
+        if(mode==2) {count=s==0?2:1; select[0]=s==0?0:1; select[1]=2;}
+        unsigned char scan[10]={0}; scan[0]=(unsigned char)count;
+        for(unsigned i=0;i<count;++i) scan[1+2*i]=frame[6+3*select[i]];
+        scan[2+2*count]=63; segment(0xda,scan,4+2*count);
+        unsigned c=select[0],cw=(17*(factors[c]>>4)+hmax-1)/hmax,ch=(19*(factors[c]&15)+vmax-1)/vmax;
+        unsigned across=count>1?(17+8*hmax-1)/(8*hmax):(cw+7)/8;
+        unsigned down=count>1?(19+8*vmax-1)/(8*vmax):(ch+7)/8;
+        int predictor[3]={0}; unsigned restart=0;
+        for(unsigned m=0;m<across*down;++m) {
+            if(m && m%(s+1)==0) {pad(); mark(0xd0+(restart++&7)); memset(predictor,0,sizeof(predictor));}
+            for(unsigned i=0;i<count;++i) {
+                c=select[i]; unsigned h=count>1?factors[c]>>4:1, v=count>1?factors[c]&15:1;
+                for(unsigned by=0;by<v;++by) for(unsigned bx=0;bx<h;++bx) {
+                    int dc=(int)(8*c+8*((m%across)*h+bx+(m/across)*v+by))*8/(int)q;
+                    dc_bits(dc-predictor[c]); predictor[c]=dc;
+                }
+            }
+        }
+        pad();
+    }
+    mark(0xd9);
+}
+
+static void color_scans(void) {
+    uint32_t pixels[325]; struct sx_image_metadata info;
+    CHECK(jpeg_ycbcr(128,128,128)==0x808080 && jpeg_ycbcr(0,128,128)==0 &&
+          jpeg_ycbcr(255,128,128)==0xffffff,"neutral YCbCr conversion");
+    CHECK(jpeg_ycbcr(76,85,255)==0xfe0000 && jpeg_ycbcr(150,44,21)==0x00ff01 &&
+          jpeg_ycbcr(29,255,107)==0x0000fe,"JFIF primary conversion and clipping");
+    for(unsigned combination=0;combination<64;++combination) {
+        unsigned factors[3],blocks=0;
+        for(unsigned c=0;c<3;++c) {unsigned f=(combination>>(2*c))&3;
+            factors[c]=((1+(f>>1))<<4)| (1+(f&1)); blocks+=(factors[c]>>4)*(factors[c]&15);}
+        for(unsigned mode=0;mode<3;++mode) for(unsigned app=0;app<5;++app) {
+            color_synthetic(factors,mode,app);
+            pixels[0]=pixels[324]=0xdeadbeef;
+            if(mode==0 && blocks>10) {
+                CHECK(sx_jpeg_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_JPEG_SAMPLING,"interleaved MCU ten-block ceiling");
+                continue;
+            }
+            CHECK(sx_image_decode_into(fixture,used,NULL,pixels+1,323,&info)==0,"synthetic colour scan decoded");
+            unsigned hmax=1,vmax=1;
+            for(unsigned c=0;c<3;++c) {if((factors[c]>>4)>hmax) hmax=factors[c]>>4;
+                if((factors[c]&15)>vmax) vmax=factors[c]&15;}
+            for(unsigned y=0;y<19;++y) for(unsigned x=0;x<17;++x) {
+                unsigned value[3];
+                for(unsigned c=0;c<3;++c) value[c]=128+8*c+8*((x*(factors[c]>>4)/hmax)/8+(y*(factors[c]&15)/vmax)/8);
+                uint32_t expected=(app==0 || app==3)?(value[0]<<16)|(value[1]<<8)|value[2]:jpeg_ycbcr(value[0],value[1],value[2]);
+                CHECK(pixels[1+y*17+x]==expected,"exact component placement, predictor resets, table snapshots and replication");
+            }
+            CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"synthetic colour guards");
+        }
+    }
+}
+
+static size_t later_marker(unsigned marker,unsigned occurrence) {
+    for(size_t i=2;i+1<used;++i) if(fixture[i]==255 && fixture[i+1]==marker && occurrence--==0) return i;
+    CHECK(0,"later fixture marker exists"); return 0;
+}
+
+static void color_malformed(void) {
+    const unsigned factors[3]={0x22,0x11,0x11};
+    // These images exceed error_expected's destination, so use a fitting 8x8 frame.
+#define COLOR(mode,app) do { color_synthetic(factors,mode,app); size_t f=find_marker(0xc0); \
+    fixture[f+6]=8; fixture[f+8]=8; } while(0)
+    COLOR(0,0); fixture[find_marker(0xc0)+13]=1; error_expected(SX_IMAGE_ERROR_HEADER,1); // Repeated frame ID.
+    COLOR(0,0); fixture[find_marker(0xda)+7]=1; error_expected(SX_IMAGE_ERROR_HEADER,1); // Repeated scan selector.
+    COLOR(0,0); fixture[find_marker(0xda)+5]=2; fixture[find_marker(0xda)+7]=1;
+    error_expected(SX_IMAGE_ERROR_HEADER,1); // Interleaved order must follow SOF.
+    COLOR(0,0); fixture[find_marker(0xda)+9]=99; error_expected(SX_IMAGE_ERROR_HEADER,1);
+    COLOR(0,0); fixture[find_marker(0xda)+10]=0x22; error_expected(SX_IMAGE_ERROR_HEADER,1); // Missing selected tables.
+    COLOR(0,0); fixture[find_marker(0xc0)+18]=1; error_expected(SX_IMAGE_ERROR_HEADER,1); // Missing Cr quantizer.
+    COLOR(0,0); fixture[find_marker(0xee)+15]=2; error_expected(SX_IMAGE_ERROR_JPEG_COLOR,1);
+    COLOR(0,0); fixture[find_marker(0xee)+15]=255; error_expected(SX_IMAGE_ERROR_JPEG_COLOR,1);
+    COLOR(0,0); size_t at=find_marker(0xee); fixture[at+3]=13;
+    memmove(fixture+at+15,fixture+at+16,used-at-16); --used; error_expected(SX_IMAGE_ERROR_HEADER,1);
+    COLOR(0,2); at=find_marker(0xe0); fixture[at+16]=1; fixture[at+17]=1;
+    error_expected(SX_IMAGE_ERROR_HEADER,1); // Thumbnail extent exceeds APP0.
+#undef COLOR
+    uint32_t pixels[325]; struct sx_image_metadata info,zero={0};
+    for(unsigned fault=0;fault<11;++fault) {
+        color_synthetic(factors,1,0);
+        size_t scan=later_marker(0xda,1), third=later_marker(0xda,2);
+        switch(fault) {
+        case 0: used=scan; mark(0xd9); break; // Only one component supplied.
+        case 1: fixture[scan+5]=3; break; // Component repeated from first scan.
+        case 2: fixture[scan+5]=99; break;
+        case 3: fixture[scan+6]=0x11; break; // Missing Huffman tables in later scan.
+        case 4: fixture[scan+7]=1; break; // Nonsequential later scan.
+        case 5: fixture[later_marker(0xd0,1)+1]=0xd3; break;
+        case 6: used=third; mark(0xd9); break; // Missing last component.
+        case 7: at=later_marker(0xdb,1); fixture[at+5]=0; break; // Malformed replacement quantizer.
+        case 8: at=later_marker(0xc4,2); fixture[at+4]=0x30; break;
+        case 9: fixture[later_marker(0xdd,1)+3]=3; break; // Truncated DRI body.
+        case 10: used-=2; {const unsigned char adobe[12]={'A','d','o','b','e',0,100,0,0,0,0,1};
+            segment(0xee,adobe,12); mark(0xd9);} break; // Contradictory colour hints.
+        }
+        unsigned before=allocations,freed=releases; pixels[0]=pixels[324]=0xdeadbeef;
+        CHECK(sx_jpeg_info(fixture,used,NULL,&info)==0,"late colour error cannot be detected by info");
+        CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,323,&info)==SX_IMAGE_ERROR_DECODE &&
+              metadata_equal(&info,&zero),"invalid later scan is decode failure");
+        CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"late colour error guards");
+        CHECK(allocations-before==releases-freed,"late colour error workspace released");
+    }
+    // SOF1 supports the same full colour path without changing SOF0 output.
+    memcpy(fixture,jpeg_color_separate,sizeof(jpeg_color_separate)); used=sizeof(jpeg_color_separate);
+    fixture[find_marker(0xc0)+1]=0xc1;
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,323,NULL)==0,"SOF1 colour and separate scans");
+    uint32_t baseline[323];
+    CHECK(sx_jpeg_decode_into(jpeg_color_separate,sizeof(jpeg_color_separate),NULL,baseline,323,NULL)==0 &&
+          !memcmp(baseline,pixels+1,sizeof(baseline)),"SOF0 and SOF1 colour agree");
+    uint32_t seed=0x8943;
+    for(unsigned i=0;i<3000;++i) {
+        const unsigned char *original=i%2?jpeg_color_separate:jpeg_color_mixed;
+        size_t size=i%2?sizeof(jpeg_color_separate):sizeof(jpeg_color_mixed);
+        memcpy(fixture,original,size); used=size; seed=seed*1664525u+1013904223u;
+        size_t at_mutation=seed%size; seed=seed*1664525u+1013904223u;
+        fixture[at_mutation]^=(unsigned char)(1u<<(seed%8));
+        pixels[0]=pixels[324]=0xdeadbeef;
+        unsigned before=allocations,freed=releases;
+        int result=sx_image_decode_into(fixture,used,NULL,pixels+1,323,&info);
+        CHECK(pixels[0]==0xdeadbeef && pixels[324]==0xdeadbeef,"mutated colour guards");
+        CHECK(allocations-before==releases-freed,"mutated colour workspace released");
+        if(result) CHECK(metadata_equal(&info,&zero),"mutated colour failure metadata cleared");
+        else CHECK(info.width*info.height<=323 && info.scale_denom==1,"mutated colour success dimensions bounded");
+    }
+}
+
 static void malformed(void) {
     minimal(8,8,0); CHECK(sx_jpeg_info(NULL,0,NULL,NULL)==SX_IMAGE_ERROR_ARGUMENT,"null info arguments");
     struct sx_image_metadata info={0}; uint32_t pixels[4098];
@@ -227,7 +459,8 @@ static void malformed(void) {
         memmove(fixture+tail+(components-1)*3,fixture+tail,used-tail); used+=(components-1)*3;
         fixture[at+3]=(unsigned char)(8+3*components); fixture[at+9]=(unsigned char)components;
         for(unsigned c=1;c<components;++c) { fixture[at+10+3*c]=(unsigned char)c; fixture[at+11+3*c]=0x11; fixture[at+12+3*c]=0; }
-        error_expected(SX_IMAGE_ERROR_JPEG_COLOR,1); // RGB/YCbCr and CMYK/YCCK not yet supported
+        if (components == 3) error_expected(SX_IMAGE_ERROR_DECODE,0); // Two components have no scan.
+        else error_expected(SX_IMAGE_ERROR_JPEG_COLOR,1); // CMYK/YCCK remains unsupported.
     }
     for(unsigned sampling=0;sampling<4;++sampling) {
         minimal(8,8,0); fixture[find_marker(0xc0)+11]=(unsigned char)(sampling==0?0:sampling==1?0x10:sampling==2?0x31:0x14);
@@ -320,7 +553,7 @@ static void malformed(void) {
 }
 
 int main(void) {
-    stages(); fixtures(); malformed();
+    stages(); fixtures(); color_fixtures(); color_scans(); color_malformed(); malformed();
     if(failures) { printf("SXJPEG TEST FAIL %d\n",failures); return 1; }
     puts("SXJPEG TEST PASS"); return 0;
 }

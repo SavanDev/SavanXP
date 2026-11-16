@@ -413,6 +413,15 @@ These adoptions are of design, not of code: no lines are copied, so there is
 nothing to license or redistribute. The decision and the reason for each live
 in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 
+- [ITU-T T.81 (1992)](https://www.w3.org/Graphics/JPEG/itu-t81.pdf) and
+  [JFIF 1.02](https://www.w3.org/Graphics/JPEG/jfif3.pdf): sequential JPEG
+  framing, entropy coding, reconstruction and YCbCr conversion in `libsximg`.
+  [libjpeg-turbo 3.2.1 colour conventions](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.1/src/jdapimin.c)
+  inform JFIF/Adobe/markerless interpretation; its encoder/decoder produced
+  host fixtures from our own samples. `Reference`: implemented here to share
+  the memory-only SUN/POSIX API, with no upstream decoder code copied or
+  linked. Specifications and upstream code are not redistributed. See
+  [IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md#sequential-jpeg).
 - X Consortium's [X11R7.7 core protocol](https://www.x.org/releases/X11R7.7/doc/xproto/x11protocol.html):
   the wire encoding, resource errors, events and ellipse edge convention of
   SSL's portable X11 engine. `Reference`: implemented here, with no X server

@@ -218,7 +218,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Media — `media/`
 
-- [`IMAGE_FORMATS.md`](media/IMAGE_FORMATS.md) — `libsximg`'s common BMP/PNG/greyscale JPEG API:
+- [`IMAGE_FORMATS.md`](media/IMAGE_FORMATS.md) — `libsximg`'s common BMP/PNG/JPEG API:
   content detection, output metadata, limits, scaling, error semantics and JPEG stages.
 - [`MEDIA_PLAYER.md`](media/MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.

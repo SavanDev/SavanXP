@@ -1370,7 +1370,7 @@ int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pi
     return bmp_decode_into(data, size, pixels, pixel_count, 1);
 }
 
-/* --- Sequential greyscale JPEG (T.81, Annexes B/C/F and A.3.3) -------------- */
+/* --- Sequential JPEG (T.81, Annexes B/C/F and A.3.3) ------------------------ */
 
 static const unsigned char jpeg_zigzag[64] = {
     0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
@@ -1388,13 +1388,22 @@ struct jpeg_huffman
     unsigned valid;
 };
 
+struct jpeg_component
+{
+    unsigned id, h, v, quant_id, dc_id, ac_id;
+    uint32_t width, height;
+    unsigned char *samples;
+};
+
 struct jpeg_state
 {
     const unsigned char *data;
     size_t size, entropy;
     uint32_t width, height;
-    unsigned frame, component, quant_id, dc_id, ac_id;
-    unsigned restart_interval;
+    unsigned frame, components, hmax, vmax;
+    struct jpeg_component component[3];
+    unsigned scan_count, scan[3], decoded;
+    unsigned restart_interval, jfif, adobe, transform;
     uint16_t quant[4][64];
     unsigned quant_present[4], quant_wide[4];
     struct jpeg_huffman huff[2][4];
@@ -1516,39 +1525,114 @@ static int jpeg_process_error(unsigned marker)
     return SX_IMAGE_ERROR_UNSUPPORTED;
 }
 
-/* Info validates the frame, scan parameters and selected tables, stopping
- * at entropy data. Decode additionally requires all blocks and the EOI. */
-static int jpeg_prepare(const unsigned char *data, size_t size, struct jpeg_state *state)
+/* Colour is a file convention outside T.81. JFIF takes precedence over
+ * Adobe; otherwise APP14 or the ordered R/G/B identifiers select RGB. */
+static int jpeg_rgb(const struct jpeg_state *state)
 {
-    size_t pos = 2u;
-    if (size < 2u || data[0] != 0xffu || data[1] != 0xd8u) return SX_IMAGE_ERROR_HEADER;
-    memset(state, 0, sizeof(*state));
-    state->data = data;
-    state->size = size;
-    while (pos < size)
+    if (state->jfif) return 0;
+    if (state->adobe) return state->transform == 0u;
+    return state->component[0].id == 'R' && state->component[1].id == 'G' &&
+           state->component[2].id == 'B';
+}
+
+static int jpeg_application(struct jpeg_state *state, unsigned marker,
+                            const unsigned char *body, size_t length)
+{
+    if (marker == 0xe0u && length >= 5u && memcmp(body, "JFIF\0", 5u) == 0)
+    {
+        if (length < 14u || length < 14u + (size_t)body[12] * body[13] * 3u)
+            return SX_IMAGE_ERROR_HEADER;
+        state->jfif = 1u;
+    }
+    if (marker == 0xeeu && length >= 5u && memcmp(body, "Adobe", 5u) == 0)
+    {
+        if (length < 12u) return SX_IMAGE_ERROR_HEADER;
+        if (body[11] > 1u) return SX_IMAGE_ERROR_JPEG_COLOR;
+        if (state->adobe && state->transform != body[11]) return SX_IMAGE_ERROR_JPEG_COLOR;
+        state->adobe = 1u;
+        state->transform = body[11];
+    }
+    return SX_IMAGE_OK;
+}
+
+/* Scan selectors must be unique, in frame order for interleaved scans, and
+ * each sequential component occurs exactly once in the complete frame. */
+static int jpeg_scan_header(struct jpeg_state *state, const unsigned char *body, size_t length)
+{
+    unsigned i, blocks = 0u, mask = state->decoded, count;
+    if (!state->frame || length < 1u) return SX_IMAGE_ERROR_HEADER;
+    count = body[0];
+    if (count == 0u || count > state->components || length != 4u + 2u * count ||
+        body[1u + 2u * count] != 0u || body[2u + 2u * count] != 63u ||
+        body[3u + 2u * count] != 0u) return SX_IMAGE_ERROR_HEADER;
+    for (i = 0u; i < count; ++i)
+    {
+        unsigned c, dc = body[2u + 2u * i] >> 4, ac = body[2u + 2u * i] & 15u;
+        struct jpeg_component *component;
+        for (c = 0u; c < state->components && state->component[c].id != body[1u + 2u * i]; ++c) {}
+        if (c == state->components || (mask & (1u << c)) ||
+            (i != 0u && c <= state->scan[i - 1u])) return SX_IMAGE_ERROR_HEADER;
+        component = &state->component[c];
+        if (dc > 3u || ac > 3u || (state->frame == 0xc0u && (dc > 1u || ac > 1u)) ||
+            !state->huff[0][dc].valid || !state->huff[1][ac].valid ||
+            !state->quant_present[component->quant_id] ||
+            (state->frame == 0xc0u && state->quant_wide[component->quant_id])) return SX_IMAGE_ERROR_HEADER;
+        component->dc_id = dc; component->ac_id = ac;
+        state->scan[i] = c;
+        mask |= 1u << c;
+        blocks += component->h * component->v;
+    }
+    if (count > 1u && blocks > 10u) return SX_IMAGE_ERROR_JPEG_SAMPLING;
+    state->scan_count = count;
+    return SX_IMAGE_OK;
+}
+
+/* Returns 0 at SOS, 1 at a complete EOI, or a public error. Info stops at
+ * the first SOS; decode reuses this parser for tables and subsequent scans. */
+static int jpeg_headers(struct jpeg_state *state, size_t pos)
+{
+    while (pos < state->size)
     {
         unsigned marker;
         size_t length;
         const unsigned char *body;
-        if (!jpeg_marker(data, size, &pos, &marker)) return SX_IMAGE_ERROR_HEADER;
-        if (marker == 0xd8u || marker == 0xd9u || marker == 1u ||
+        if (!jpeg_marker(state->data, state->size, &pos, &marker)) return SX_IMAGE_ERROR_HEADER;
+        if (marker == 0xd9u)
+            return state->components && state->decoded == (1u << state->components) - 1u ? 1 : SX_IMAGE_ERROR_HEADER;
+        if (marker == 0xd8u || marker == 1u ||
             (marker >= 0xd0u && marker <= 0xd7u)) return SX_IMAGE_ERROR_HEADER;
-        if (!jpeg_segment(data, size, &pos, &body, &length)) return SX_IMAGE_ERROR_HEADER;
+        if (!jpeg_segment(state->data, state->size, &pos, &body, &length)) return SX_IMAGE_ERROR_HEADER;
         if (marker == 0xc0u || marker == 0xc1u)
         {
-            unsigned sampling;
+            unsigned c;
             if (state->frame || length < 6u || body[5] == 0u ||
                 length != 6u + (size_t)body[5] * 3u) return SX_IMAGE_ERROR_HEADER;
             if (body[0] != 8u) return SX_IMAGE_ERROR_JPEG_PRECISION;
-            if (body[5] != 1u) return SX_IMAGE_ERROR_JPEG_COLOR;
+            if (body[5] != 1u && body[5] != 3u) return SX_IMAGE_ERROR_JPEG_COLOR;
             state->height = read_u16be(body + 1u);
             state->width = read_u16be(body + 3u);
-            if (state->width == 0u || state->height == 0u || body[8] > 3u) return SX_IMAGE_ERROR_HEADER;
-            sampling = body[7];
-            if ((sampling >> 4) < 1u || (sampling >> 4) > 2u ||
-                (sampling & 15u) < 1u || (sampling & 15u) > 2u) return SX_IMAGE_ERROR_JPEG_SAMPLING;
-            state->component = body[6];
-            state->quant_id = body[8];
+            if (state->width == 0u || state->height == 0u) return SX_IMAGE_ERROR_HEADER;
+            state->components = body[5];
+            for (c = 0u; c < state->components; ++c)
+            {
+                unsigned i, sampling = body[7u + 3u * c];
+                struct jpeg_component *component = &state->component[c];
+                component->id = body[6u + 3u * c]; component->quant_id = body[8u + 3u * c];
+                component->h = sampling >> 4; component->v = sampling & 15u;
+                if (component->quant_id > 3u) return SX_IMAGE_ERROR_HEADER;
+                for (i = 0u; i < c; ++i)
+                    if (component->id == state->component[i].id) return SX_IMAGE_ERROR_HEADER;
+                if (component->h < 1u || component->h > 2u || component->v < 1u || component->v > 2u)
+                    return SX_IMAGE_ERROR_JPEG_SAMPLING;
+                if (component->h > state->hmax) state->hmax = component->h;
+                if (component->v > state->vmax) state->vmax = component->v;
+            }
+            for (c = 0u; c < state->components; ++c)
+            {
+                struct jpeg_component *component = &state->component[c];
+                component->width = (state->width * component->h + state->hmax - 1u) / state->hmax;
+                component->height = (state->height * component->v + state->vmax - 1u) / state->vmax;
+            }
             state->frame = marker;
         }
         else if (marker == 0xdbu)
@@ -1566,25 +1650,30 @@ static int jpeg_prepare(const unsigned char *data, size_t size, struct jpeg_stat
         }
         else if (marker == 0xdau)
         {
-            unsigned dc, ac;
-            if (!state->frame || length != 6u || body[0] != 1u || body[1] != state->component ||
-                body[3] != 0u || body[4] != 63u || body[5] != 0u) return SX_IMAGE_ERROR_HEADER;
-            dc = body[2] >> 4; ac = body[2] & 15u;
-            if (dc > 3u || ac > 3u || (state->frame == 0xc0u && (dc > 1u || ac > 1u)) ||
-                !state->huff[0][dc].valid || !state->huff[1][ac].valid ||
-                !state->quant_present[state->quant_id] ||
-                (state->frame == 0xc0u && state->quant_wide[state->quant_id])) return SX_IMAGE_ERROR_HEADER;
-            state->dc_id = dc; state->ac_id = ac; state->entropy = pos;
+            int result = jpeg_scan_header(state, body, length);
+            if (result != SX_IMAGE_OK) return result;
+            state->entropy = pos;
             if (state->width > SX_IMAGE_MAX_DIMENSION || state->height > SX_IMAGE_MAX_DIMENSION)
                 return SX_IMAGE_ERROR_LIMIT;
             return SX_IMAGE_OK;
         }
-        else if (!((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu))
+        else if ((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu)
         {
-            return jpeg_process_error(marker);
+            int result = jpeg_application(state, marker, body, length);
+            if (result != SX_IMAGE_OK) return result;
         }
+        else return jpeg_process_error(marker);
     }
     return SX_IMAGE_ERROR_HEADER;
+}
+
+static int jpeg_prepare(const unsigned char *data, size_t size, struct jpeg_state *state)
+{
+    if (size < 2u || data[0] != 0xffu || data[1] != 0xd8u) return SX_IMAGE_ERROR_HEADER;
+    memset(state, 0, sizeof(*state));
+    state->data = data;
+    state->size = size;
+    return jpeg_headers(state, 2u);
 }
 
 static int jpeg_bits(struct jpeg_reader *reader, unsigned count, uint32_t *value)
@@ -1736,58 +1825,116 @@ static int jpeg_align(struct jpeg_reader *reader)
     return 1;
 }
 
-static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels)
+/* Decode one MCU sequence using current tables. Noninterleaved MCUs have
+ * one block; interleaved MCUs carry each selected component's H*V blocks. */
+static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *end)
 {
     struct jpeg_reader reader = {state->data, state->size, state->entropy, 0u, 0u};
-    uint32_t across = (state->width + 7u) / 8u, down = (state->height + 7u) / 8u;
+    struct jpeg_component *first = &state->component[state->scan[0]];
+    unsigned interleaved = state->scan_count > 1u;
+    uint32_t across = interleaved ? (state->width + 8u * state->hmax - 1u) / (8u * state->hmax) :
+                                   (first->width + 7u) / 8u;
+    uint32_t down = interleaved ? (state->height + 8u * state->vmax - 1u) / (8u * state->vmax) :
+                                 (first->height + 7u) / 8u;
     uint32_t index, total = across * down;
     unsigned restart = 0u;
-    int32_t predictor = 0;
+    int32_t predictor[3] = {0, 0, 0};
     for (index = 0u; index < total; ++index)
     {
-        int32_t block[64];
-        unsigned char samples[64];
-        uint32_t x, y, bx = (index % across) * 8u, by = (index / across) * 8u;
+        unsigned i;
         if (index != 0u && state->restart_interval != 0u && index % state->restart_interval == 0u)
         {
             unsigned marker;
             if (!jpeg_align(&reader) || !jpeg_marker(reader.data, reader.size, &reader.pos, &marker) ||
                 marker != 0xd0u + restart) return 0;
             restart = (restart + 1u) & 7u;
-            predictor = 0;
+            memset(predictor, 0, sizeof(predictor));
         }
-        if (!jpeg_block(&reader, &state->huff[0][state->dc_id], &state->huff[1][state->ac_id],
-                        &predictor, block)) return 0;
-        jpeg_dequantize(block, state->quant[state->quant_id]);
-        jpeg_idct(block, samples);
-        for (y = 0u; y < 8u && by + y < state->height; ++y)
-            for (x = 0u; x < 8u && bx + x < state->width; ++x)
-                pixels[(size_t)(by + y) * state->width + bx + x] = (uint32_t)samples[y * 8u + x] * 0x010101u;
+        for (i = 0u; i < state->scan_count; ++i)
+        {
+            unsigned c = state->scan[i], dx, dy;
+            struct jpeg_component *component = &state->component[c];
+            unsigned h = interleaved ? component->h : 1u, v = interleaved ? component->v : 1u;
+            for (dy = 0u; dy < v; ++dy) for (dx = 0u; dx < h; ++dx)
+            {
+                int32_t block[64];
+                unsigned char samples[64];
+                uint32_t x, y, bx = ((index % across) * h + dx) * 8u;
+                uint32_t by = ((index / across) * v + dy) * 8u;
+                if (!jpeg_block(&reader, &state->huff[0][component->dc_id], &state->huff[1][component->ac_id],
+                                &predictor[c], block)) return 0;
+                jpeg_dequantize(block, state->quant[component->quant_id]);
+                jpeg_idct(block, samples);
+                for (y = 0u; y < 8u && by + y < component->height; ++y)
+                    for (x = 0u; x < 8u && bx + x < component->width; ++x)
+                    {
+                        size_t at = (size_t)(by + y) * component->width + bx + x;
+                        if (state->components == 1u) pixels[at] = (uint32_t)samples[y * 8u + x] * 0x010101u;
+                        else component->samples[at] = samples[y * 8u + x];
+                    }
+            }
+        }
     }
     if (!jpeg_align(&reader)) return 0;
-    while (reader.pos < reader.size)
+    for (index = 0u; index < state->scan_count; ++index) state->decoded |= 1u << state->scan[index];
+    *end = reader.pos;
+    return 1;
+}
+
+/* Q16 full-range JFIF/CCIR 601 conversion, rounded to nearest and clamped.
+ * Component samples are replicated for each integer sampling ratio. */
+static uint32_t jpeg_ycbcr(unsigned y, unsigned cb, unsigned cr)
+{
+    int32_t b = (int32_t)cb - 128, r = (int32_t)cr - 128;
+    unsigned red = jpeg_clamp((int64_t)y + jpeg_round(91881 * r, 65536));
+    unsigned green = jpeg_clamp((int64_t)y + jpeg_round(-22554 * b - 46802 * r, 65536));
+    unsigned blue = jpeg_clamp((int64_t)y + jpeg_round(116130 * b, 65536));
+    return (red << 16) | (green << 8) | blue;
+}
+
+static int jpeg_decode(struct jpeg_state *state, uint32_t *pixels)
+{
+    unsigned c;
+    size_t size = 0u, offset = 0u, end;
+    unsigned char *workspace = 0;
+    int result;
+    if (state->components == 3u)
     {
-        unsigned marker;
-        const unsigned char *body;
-        size_t length;
-        if (!jpeg_marker(reader.data, reader.size, &reader.pos, &marker)) return 0;
-        if (marker == 0xd9u) return 1;
-        if (!jpeg_segment(reader.data, reader.size, &reader.pos, &body, &length)) return 0;
-        if (marker == 0xdbu)
+        /* Each byte plane is at most the output area: <= 3*4096*4096 bytes.
+         * Dequantize immediately so later table redefinitions are harmless. */
+        for (c = 0u; c < 3u; ++c) size += (size_t)state->component[c].width * state->component[c].height;
+        workspace = (unsigned char *)malloc(size);
+        if (workspace == 0) return 0;
+        for (c = 0u; c < 3u; ++c)
         {
-            if (!jpeg_quant_tables(state, body, length)) return 0;
+            state->component[c].samples = workspace + offset;
+            offset += (size_t)state->component[c].width * state->component[c].height;
         }
-        else if (marker == 0xc4u)
-        {
-            if (!jpeg_huffman_tables(state, body, length)) return 0;
-        }
-        else if (marker == 0xddu)
-        {
-            if (length != 2u) return 0;
-        }
-        else if (!((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu)) return 0;
     }
-    return 0;
+    do
+    {
+        if (!jpeg_decode_scan(state, pixels, &end)) { free(workspace); return 0; }
+        result = jpeg_headers(state, end);
+    } while (result == SX_IMAGE_OK);
+    if (result == 1 && state->components == 3u)
+    {
+        uint32_t x, y;
+        int rgb = jpeg_rgb(state);
+        for (y = 0u; y < state->height; ++y) for (x = 0u; x < state->width; ++x)
+        {
+            unsigned sample[3];
+            for (c = 0u; c < 3u; ++c)
+            {
+                const struct jpeg_component *component = &state->component[c];
+                sample[c] = component->samples[(size_t)(y * component->v / state->vmax) * component->width +
+                                               x * component->h / state->hmax];
+            }
+            pixels[(size_t)y * state->width + x] = rgb ? (sample[0] << 16) | (sample[1] << 8) | sample[2] :
+                                                       jpeg_ycbcr(sample[0], sample[1], sample[2]);
+        }
+    }
+    free(workspace);
+    return result == 1;
 }
 
 /* --- Common image interface ----------------------------------------------- */
@@ -1905,7 +2052,7 @@ int sx_jpeg_decode_into(const unsigned char *data, size_t size, const struct sx_
     result = jpeg_plan(data, size, options, &metadata, &state);
     if (result != SX_IMAGE_OK) return result;
     if (pixel_count < (size_t)metadata.width * metadata.height) return SX_IMAGE_ERROR_BUFFER;
-    if (!jpeg_decode_scan(&state, pixels)) return SX_IMAGE_ERROR_DECODE;
+    if (!jpeg_decode(&state, pixels)) return SX_IMAGE_ERROR_DECODE;
     if (out != 0) *out = metadata;
     return SX_IMAGE_OK;
 }

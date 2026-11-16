@@ -12,9 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **`libsximg` decodes RGB/YCbCr JPEG with JFIF and Adobe colour transforms.**
+  Sampling factors 1/2, interleaved and separate scans, and restart intervals are supported at full resolution.
+  See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-jpeg); reduced decoding remains pending.
+
 - **`libsximg` decodes sequential 8-bit greyscale JPEG through `sx_jpeg_info`, `sx_jpeg_decode_into` and the common image API.**
   SOF0/SOF1, restart markers and full-resolution output are supported, with named rejection errors;
-  colour and reduced decoding remain pending. See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-greyscale-jpeg).
+  see [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-jpeg) for the supported subset.
 
 - **`libsximg` adds common BMP/PNG decoding with `sx_image_format`, `sx_image_info` and `sx_image_decode_into`.**
   Callers can set output limits and receive source/output dimensions, scale and named errors.
