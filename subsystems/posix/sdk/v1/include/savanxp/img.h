@@ -87,7 +87,13 @@ enum sx_image_result {
     SX_IMAGE_ERROR_LIMIT = -5,
     SX_IMAGE_ERROR_SCALE = -6,
     SX_IMAGE_ERROR_BUFFER = -7,
-    SX_IMAGE_ERROR_DECODE = -8
+    SX_IMAGE_ERROR_DECODE = -8,
+    SX_IMAGE_ERROR_JPEG_PROGRESSIVE = -9,
+    SX_IMAGE_ERROR_JPEG_ARITHMETIC = -10,
+    SX_IMAGE_ERROR_JPEG_PRECISION = -11,
+    SX_IMAGE_ERROR_JPEG_LOSSLESS = -12,
+    SX_IMAGE_ERROR_JPEG_COLOR = -13,
+    SX_IMAGE_ERROR_JPEG_SAMPLING = -14
 };
 
 struct sx_image_options {
@@ -112,7 +118,7 @@ uint32_t sx_image_format(const unsigned char *data, size_t size);
  * all zeroes. BMP/PNG support denominator 1 only: auto selects 1, an explicit
  * 2/4/8 returns ERROR_SCALE, and an image exceeding any limit returns
  * ERROR_LIMIT. Future JPEG reduction selects the smallest fitting 1/2/4/8;
- * output dimensions round up. JPEG is currently recognized but UNSUPPORTED.
+ * output dimensions round up. Current greyscale JPEG supports scale 1 only.
  * `out` is required and is zeroed on error. Header validation does not prove
  * that pixel data can be decoded. No allocation or system calls. */
 int sx_image_info(const unsigned char *data, size_t size,
@@ -128,6 +134,19 @@ int sx_image_info(const unsigned char *data, size_t size,
 int sx_image_decode_into(const unsigned char *data, size_t size,
                          const struct sx_image_options *options, uint32_t *pixels,
                          size_t pixel_count, struct sx_image_metadata *out);
+
+/* Sequential greyscale JPEG: SOF0/SOF1, 8-bit samples, selected tables before
+ * SOS, restart intervals, and one noninterleaved scan. Sampling factors 1/2
+ * are accepted. Full resolution only (auto or denominator 1); colour and
+ * reduced decode arrive in subsequent I5 deliveries. The options, metadata,
+ * errors and buffer contract are the same as the common interface. Info
+ * validates through SOS; decode also validates entropy data, padding and EOI.
+ * Both calls allocate nothing. The input and all outputs must not overlap. */
+int sx_jpeg_info(const unsigned char *data, size_t size,
+                 const struct sx_image_options *options, struct sx_image_metadata *out);
+int sx_jpeg_decode_into(const unsigned char *data, size_t size,
+                        const struct sx_image_options *options, uint32_t *pixels,
+                        size_t pixel_count, struct sx_image_metadata *out);
 
 /* Static English diagnostic, including a fallback for unknown result codes. */
 const char *sx_image_error_string(int result);

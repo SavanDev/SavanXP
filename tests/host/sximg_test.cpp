@@ -1061,8 +1061,8 @@ void common_image_tests() {
           "recognized signatures do not imply valid headers");
     check(common_error({0,1,2,3},nullptr,SX_IMAGE_ERROR_FORMAT), "unknown image format has its own error");
     check(sx_image_format((const unsigned char*)"\xff\xd8",2) == SX_IMAGE_FORMAT_JPEG &&
-          common_error({0xff,0xd8,0xff,0xd9},nullptr,SX_IMAGE_ERROR_UNSUPPORTED),
-          "JPEG is recognized but not advertised as decodable");
+          common_error({0xff,0xd8,0xff,0xd9},nullptr,SX_IMAGE_ERROR_HEADER),
+          "JPEG detection still requires a valid decode header");
     Png png = png_raw(3,2,2,8,0,{0,1,2,3,4,5,6,7,8,9,0,9,8,7,6,5,4,3,2,1});
     Bmp bmp(3,2,24,true);
     for (const auto& bytes : {png.bytes,bmp.bytes}) {
@@ -1122,9 +1122,9 @@ void common_image_tests() {
         check(sx_bmp_info(huge.bytes.data(),huge.bytes.size(),nullptr,nullptr) < 0,
               "legacy BMP dimension limit remains intact");
     }
-    // JPEG is not inspected beyond its signature until the next delivery.
+    // A JPEG signature alone is not a validated frame/scan plan.
     sx_image_options exact = {0,0,0,8};
-    check(common_error({0xff,0xd8},&exact,SX_IMAGE_ERROR_UNSUPPORTED), "JPEG scale requests do not fake JPEG support");
+    check(common_error({0xff,0xd8},&exact,SX_IMAGE_ERROR_HEADER), "truncated JPEG headers do not become decode plans");
     const struct {int code; const char* message;} messages[] = {
         {SX_IMAGE_OK,"Success"}, {SX_IMAGE_ERROR_ARGUMENT,"Invalid image argument"},
         {SX_IMAGE_ERROR_FORMAT,"Unrecognized image format"}, {SX_IMAGE_ERROR_UNSUPPORTED,"Unsupported image format"},

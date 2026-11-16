@@ -1,7 +1,7 @@
 # Image Viewer and the image formats
 
 Status: **phases I1–I4 landed** (shared BMP decoding, PNG wallpapers, extended BMP and PNG formats).
-I5 has landed its common BMP/PNG interface; JPEG decoding is still pending.
+I5 has landed its common interface and full-resolution greyscale JPEG; colour and reduction are pending.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -32,7 +32,7 @@ same formats it reads.
 |---|---|---|
 | PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I4) | All base colour types and their legal 1/2/4/8/16-bit depths, `tRNS`, Adam7, all filters, full inflate. Up to 4096 on a side |
 | BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into`, `sx_bmp_decode_argb_into` (I3) | `BI_RGB` 1/4/8/16/24/32 bpp, 16/32-bit masks and alpha, RLE4/RLE8. Up to 4096 on a side |
-| JPEG decoder | — | nothing |
+| JPEG decoder | `sx_jpeg_info`, `sx_jpeg_decode_into` (I5 greyscale delivery) | SOF0/SOF1, 8-bit one-component JPEG, restart markers, full resolution. Up to 4096 on a side; colour and reduction pending |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
 | Scaling | `sx_painter_draw_scaled_bitmap` (`gfx2d.h`), `SX_SCALE_NEAREST` / `BILINEAR` | zoom and fit-to-window |
 | Scrolling, toolbar, status bar | `SXGUI_SCROLLBAR`, `SXGUI_FLAG_TOOLBAR`, the status label | the frame around the image |
@@ -67,10 +67,10 @@ use them, and nothing gains from changing them.
 
 ### One entry point by content, with JPEG
 
-I5's first delivery provides `sx_image_info`, `sx_image_decode_into` and
-`sx_image_format` for BMP and PNG, detecting content rather than extensions.
-JPEG is recognized but returns `SX_IMAGE_ERROR_UNSUPPORTED`. The per-format
-calls remain for callers that only accept one format or need straight alpha.
+I5 provides `sx_image_info`, `sx_image_decode_into` and `sx_image_format`
+for BMP, PNG and sequential greyscale JPEG, detecting content rather than
+extensions. The per-format calls remain for callers that only accept one
+format or need straight alpha.
 The shared contract for output limits, original/decoded dimensions, exact
 and automatic scale, and error codes is documented in
 [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md).
@@ -201,8 +201,11 @@ Adam7 fixtures also pass through CUR selection and retain exact alpha.
    original/decoded dimensions, scale denominator and named errors. Existing
    format-specific functions remain unchanged. See
    [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md) for the contract and tests.
-2. **Greyscale JPEG end to end:** marker/table parsing, Huffman coefficients,
-   dequantisation and integer IDCT, with stage-level assertions against T.81.
+2. **Greyscale JPEG end to end (done):** SOF0/SOF1, 8-bit one-component
+   frames, tables, Huffman coefficients, restart markers, dequantisation and
+   integer IDCT, connected to the common API at scale 1. Stage assertions
+   follow T.81; reference fixtures compare within one intensity level.
+   See [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md#sequential-greyscale-jpeg).
 3. **Complete colour and scan support:** SOF0 and SOF1 (8-bit, Huffman),
    one or three components, legal sampling factors of 1 or 2 (4:4:4, 4:2:2,
    4:2:0, 4:4:0), interleaved/separate scans, restart markers, JFIF and
@@ -213,8 +216,8 @@ Adam7 fixtures also pass through CUR selection and retain exact alpha.
    Display Properties accepts `.jpg`/`.jpeg`, with visual and persistence
    verification. Paint keeps its current formats unless extended separately.
 
-The JPEG calls will be `sx_jpeg_info` and `sx_jpeg_decode_into`, alongside
-the common entry points. The host test must refuse, by name: progressive
+The JPEG calls are `sx_jpeg_info` and `sx_jpeg_decode_into`, alongside
+the common entry points. The host test refuses, by name: progressive
 (SOF2), arithmetic coding, 12-bit, lossless and CMYK/YCCK. Reference-encoded
 fixtures are compared within a stated tolerance for IDCT rounding and matched
 chroma reconstruction. JPEG errors and scale handling must be covered before

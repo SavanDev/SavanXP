@@ -1370,6 +1370,426 @@ int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pi
     return bmp_decode_into(data, size, pixels, pixel_count, 1);
 }
 
+/* --- Sequential greyscale JPEG (T.81, Annexes B/C/F and A.3.3) -------------- */
+
+static const unsigned char jpeg_zigzag[64] = {
+    0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
+    12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,
+    35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,
+    58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63
+};
+
+struct jpeg_huffman
+{
+    uint16_t count[17];
+    uint32_t first[17];
+    uint16_t offset[17];
+    unsigned char symbols[256];
+    unsigned valid;
+};
+
+struct jpeg_state
+{
+    const unsigned char *data;
+    size_t size, entropy;
+    uint32_t width, height;
+    unsigned frame, component, quant_id, dc_id, ac_id;
+    unsigned restart_interval;
+    uint16_t quant[4][64];
+    unsigned quant_present[4], quant_wide[4];
+    struct jpeg_huffman huff[2][4];
+};
+
+struct jpeg_reader
+{
+    const unsigned char *data;
+    size_t size, pos;
+    unsigned byte, remaining;
+};
+
+/* JPEG canonical codes are MSB-first and reserve the all-ones code, which
+ * makes one-bit padding distinguishable from actual Huffman symbols. */
+static int jpeg_huffman_build(struct jpeg_huffman *table, const unsigned char *counts,
+                              const unsigned char *symbols, size_t total, unsigned ac)
+{
+    unsigned seen[256] = {0};
+    uint32_t code = 0u;
+    size_t offset = 0u;
+    unsigned length;
+    if (total == 0u || total > 256u) return 0;
+    memset(table, 0, sizeof(*table));
+    for (length = 1u; length <= 16u; ++length)
+    {
+        unsigned count = counts[length - 1u];
+        size_t i;
+        if (offset + count > total || code + count >= (1u << length)) return 0;
+        table->count[length] = (uint16_t)count;
+        table->first[length] = code;
+        table->offset[length] = (uint16_t)offset;
+        for (i = offset; i < offset + count; ++i)
+        {
+            unsigned symbol = symbols[i];
+            unsigned bits = symbol & 15u;
+            if (seen[symbol]++ || (!ac && symbol > 11u) ||
+                (ac && (bits > 10u || (bits == 0u && symbol != 0u && symbol != 0xf0u)))) return 0;
+            table->symbols[i] = (unsigned char)symbol;
+        }
+        code = (code + count) << 1;
+        offset += count;
+    }
+    if (offset != total) return 0;
+    table->valid = 1u;
+    return 1;
+}
+
+static int jpeg_marker(const unsigned char *data, size_t size, size_t *pos, unsigned *marker)
+{
+    if (*pos >= size || data[(*pos)++] != 0xffu) return 0;
+    while (*pos < size && data[*pos] == 0xffu) ++*pos;
+    if (*pos >= size || data[*pos] == 0u) return 0;
+    *marker = data[(*pos)++];
+    return 1;
+}
+
+static int jpeg_segment(const unsigned char *data, size_t size, size_t *pos,
+                        const unsigned char **body, size_t *length)
+{
+    uint32_t bytes;
+    if (size - *pos < 2u) return 0;
+    bytes = read_u16be(data + *pos);
+    if (bytes < 2u || bytes > size - *pos) return 0;
+    *body = data + *pos + 2u;
+    *length = bytes - 2u;
+    *pos += bytes;
+    return 1;
+}
+
+static int jpeg_quant_tables(struct jpeg_state *state, const unsigned char *body, size_t length)
+{
+    size_t at = 0u;
+    if (length == 0u) return 0;
+    while (at < length)
+    {
+        unsigned spec = body[at++], precision = spec >> 4, id = spec & 15u;
+        unsigned i;
+        if (precision > 1u || id > 3u || length - at < 64u * (precision + 1u)) return 0;
+        for (i = 0u; i < 64u; ++i)
+        {
+            uint32_t value = precision ? read_u16be(body + at) : body[at];
+            if (value == 0u) return 0;
+            state->quant[id][jpeg_zigzag[i]] = (uint16_t)value;
+            at += precision + 1u;
+        }
+        state->quant_present[id] = 1u;
+        state->quant_wide[id] = precision;
+    }
+    return 1;
+}
+
+static int jpeg_huffman_tables(struct jpeg_state *state, const unsigned char *body, size_t length)
+{
+    size_t at = 0u;
+    if (length == 0u) return 0;
+    while (at < length)
+    {
+        unsigned spec = body[at++], ac = spec >> 4, id = spec & 15u;
+        size_t total = 0u;
+        unsigned i;
+        const unsigned char *counts;
+        if (ac > 1u || id > 3u || length - at < 16u) return 0;
+        counts = body + at;
+        for (i = 0u; i < 16u; ++i) total += counts[i];
+        at += 16u;
+        if (total > length - at ||
+            !jpeg_huffman_build(&state->huff[ac][id], counts, body + at, total, ac)) return 0;
+        at += total;
+    }
+    return 1;
+}
+
+static int jpeg_process_error(unsigned marker)
+{
+    if (marker == 0xc2u || marker == 0xc6u) return SX_IMAGE_ERROR_JPEG_PROGRESSIVE;
+    if (marker == 0xc9u || marker == 0xcau || marker == 0xcbu || marker == 0xcdu ||
+        marker == 0xceu || marker == 0xcfu || marker == 0xccu) return SX_IMAGE_ERROR_JPEG_ARITHMETIC;
+    if (marker == 0xc3u || marker == 0xc7u) return SX_IMAGE_ERROR_JPEG_LOSSLESS;
+    return SX_IMAGE_ERROR_UNSUPPORTED;
+}
+
+/* Info validates the frame, scan parameters and selected tables, stopping
+ * at entropy data. Decode additionally requires all blocks and the EOI. */
+static int jpeg_prepare(const unsigned char *data, size_t size, struct jpeg_state *state)
+{
+    size_t pos = 2u;
+    if (size < 2u || data[0] != 0xffu || data[1] != 0xd8u) return SX_IMAGE_ERROR_HEADER;
+    memset(state, 0, sizeof(*state));
+    state->data = data;
+    state->size = size;
+    while (pos < size)
+    {
+        unsigned marker;
+        size_t length;
+        const unsigned char *body;
+        if (!jpeg_marker(data, size, &pos, &marker)) return SX_IMAGE_ERROR_HEADER;
+        if (marker == 0xd8u || marker == 0xd9u || marker == 1u ||
+            (marker >= 0xd0u && marker <= 0xd7u)) return SX_IMAGE_ERROR_HEADER;
+        if (!jpeg_segment(data, size, &pos, &body, &length)) return SX_IMAGE_ERROR_HEADER;
+        if (marker == 0xc0u || marker == 0xc1u)
+        {
+            unsigned sampling;
+            if (state->frame || length < 6u || body[5] == 0u ||
+                length != 6u + (size_t)body[5] * 3u) return SX_IMAGE_ERROR_HEADER;
+            if (body[0] != 8u) return SX_IMAGE_ERROR_JPEG_PRECISION;
+            if (body[5] != 1u) return SX_IMAGE_ERROR_JPEG_COLOR;
+            state->height = read_u16be(body + 1u);
+            state->width = read_u16be(body + 3u);
+            if (state->width == 0u || state->height == 0u || body[8] > 3u) return SX_IMAGE_ERROR_HEADER;
+            sampling = body[7];
+            if ((sampling >> 4) < 1u || (sampling >> 4) > 2u ||
+                (sampling & 15u) < 1u || (sampling & 15u) > 2u) return SX_IMAGE_ERROR_JPEG_SAMPLING;
+            state->component = body[6];
+            state->quant_id = body[8];
+            state->frame = marker;
+        }
+        else if (marker == 0xdbu)
+        {
+            if (!jpeg_quant_tables(state, body, length)) return SX_IMAGE_ERROR_HEADER;
+        }
+        else if (marker == 0xc4u)
+        {
+            if (!jpeg_huffman_tables(state, body, length)) return SX_IMAGE_ERROR_HEADER;
+        }
+        else if (marker == 0xddu)
+        {
+            if (length != 2u) return SX_IMAGE_ERROR_HEADER;
+            state->restart_interval = read_u16be(body);
+        }
+        else if (marker == 0xdau)
+        {
+            unsigned dc, ac;
+            if (!state->frame || length != 6u || body[0] != 1u || body[1] != state->component ||
+                body[3] != 0u || body[4] != 63u || body[5] != 0u) return SX_IMAGE_ERROR_HEADER;
+            dc = body[2] >> 4; ac = body[2] & 15u;
+            if (dc > 3u || ac > 3u || (state->frame == 0xc0u && (dc > 1u || ac > 1u)) ||
+                !state->huff[0][dc].valid || !state->huff[1][ac].valid ||
+                !state->quant_present[state->quant_id] ||
+                (state->frame == 0xc0u && state->quant_wide[state->quant_id])) return SX_IMAGE_ERROR_HEADER;
+            state->dc_id = dc; state->ac_id = ac; state->entropy = pos;
+            if (state->width > SX_IMAGE_MAX_DIMENSION || state->height > SX_IMAGE_MAX_DIMENSION)
+                return SX_IMAGE_ERROR_LIMIT;
+            return SX_IMAGE_OK;
+        }
+        else if (!((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu))
+        {
+            return jpeg_process_error(marker);
+        }
+    }
+    return SX_IMAGE_ERROR_HEADER;
+}
+
+static int jpeg_bits(struct jpeg_reader *reader, unsigned count, uint32_t *value)
+{
+    unsigned i;
+    uint32_t result = 0u;
+    if (count > 16u) return 0;
+    for (i = 0u; i < count; ++i)
+    {
+        if (reader->remaining == 0u)
+        {
+            if (reader->pos >= reader->size) return 0;
+            reader->byte = reader->data[reader->pos++];
+            if (reader->byte == 0xffu)
+            {
+                if (reader->pos >= reader->size || reader->data[reader->pos++] != 0u) return 0;
+            }
+            reader->remaining = 8u;
+        }
+        result = (result << 1) | ((reader->byte >> --reader->remaining) & 1u);
+    }
+    *value = result;
+    return 1;
+}
+
+static int jpeg_symbol(struct jpeg_reader *reader, const struct jpeg_huffman *table, unsigned *symbol)
+{
+    uint32_t code = 0u;
+    unsigned length;
+    for (length = 1u; length <= 16u; ++length)
+    {
+        uint32_t bit;
+        if (!jpeg_bits(reader, 1u, &bit)) return 0;
+        code = (code << 1) | bit;
+        if (code >= table->first[length] && code - table->first[length] < table->count[length])
+        {
+            *symbol = table->symbols[table->offset[length] + code - table->first[length]];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int jpeg_receive(struct jpeg_reader *reader, unsigned count, int32_t *value)
+{
+    uint32_t bits;
+    if (!jpeg_bits(reader, count, &bits)) return 0;
+    *value = (int32_t)bits;
+    if (count != 0u && bits < (1u << (count - 1u))) *value -= (int32_t)((1u << count) - 1u);
+    return 1;
+}
+
+static int jpeg_block(struct jpeg_reader *reader, const struct jpeg_huffman *dc,
+                      const struct jpeg_huffman *ac, int32_t *predictor, int32_t block[64])
+{
+    unsigned symbol, k = 1u;
+    int32_t difference;
+    memset(block, 0, 64u * sizeof(*block));
+    if (!jpeg_symbol(reader, dc, &symbol) || symbol > 11u ||
+        !jpeg_receive(reader, symbol, &difference)) return 0;
+    difference += *predictor;
+    if (difference < -1024 || difference > 1023) return 0;
+    *predictor = block[0] = difference;
+    while (k < 64u)
+    {
+        unsigned run, count;
+        int32_t value;
+        if (!jpeg_symbol(reader, ac, &symbol)) return 0;
+        run = symbol >> 4; count = symbol & 15u;
+        if (count == 0u)
+        {
+            if (run == 0u) break;
+            if (run != 15u || k + 16u > 64u) return 0;
+            k += 16u;
+        }
+        else
+        {
+            if (count > 10u || k + run >= 64u || !jpeg_receive(reader, count, &value)) return 0;
+            k += run;
+            block[jpeg_zigzag[k++]] = value;
+        }
+    }
+    return 1;
+}
+
+static void jpeg_dequantize(int32_t block[64], const uint16_t quant[64])
+{
+    unsigned i;
+    /* The entropy stage bounds coefficients to [-1024,1023], so even
+     * 16-bit SOF1 quantizers fit in signed 32 bits after multiplication. */
+    for (i = 0u; i < 64u; ++i) block[i] *= (int32_t)quant[i];
+}
+
+/* Q14 C(u)*cos((2*x+1)*u*pi/16), calculated from the T.81 IDCT definition.
+ * Both separable sums use int64_t; their worst-case magnitude with validated
+ * coefficients and 16-bit quantizers is below 2^61. No floating point or
+ * runtime trigonometry is required by the decoder. */
+static const int16_t jpeg_basis[8][8] = {
+    {11585,16069,15137,13623,11585,9102,6270,3196},
+    {11585,13623,6270,-3196,-11585,-16069,-15137,-9102},
+    {11585,9102,-6270,-16069,-11585,3196,15137,13623},
+    {11585,3196,-15137,-9102,11585,13623,-6270,-16069},
+    {11585,-3196,-15137,9102,11585,-13623,-6270,16069},
+    {11585,-9102,-6270,16069,-11585,-3196,15137,-13623},
+    {11585,-13623,6270,3196,-11585,16069,-15137,9102},
+    {11585,-16069,15137,-13623,11585,-9102,6270,-3196},
+};
+
+static int64_t jpeg_round(int64_t value, int64_t divisor)
+{
+    return value < 0 ? -((-value + divisor / 2) / divisor) : (value + divisor / 2) / divisor;
+}
+
+static unsigned char jpeg_clamp(int64_t value)
+{
+    return value < 0 ? 0u : value > 255 ? 255u : (unsigned char)value;
+}
+
+static void jpeg_idct(const int32_t block[64], unsigned char pixels[64])
+{
+    int64_t temp[64];
+    unsigned x, y, u, v;
+    int dc_only = 1;
+    for (u = 1u; u < 64u; ++u) if (block[u] != 0) dc_only = 0;
+    if (dc_only)
+    {
+        memset(pixels, jpeg_clamp(jpeg_round(block[0], 8) + 128), 64u);
+        return;
+    }
+    for (v = 0u; v < 8u; ++v) for (x = 0u; x < 8u; ++x)
+    {
+        int64_t sum = 0;
+        for (u = 0u; u < 8u; ++u) sum += (int64_t)block[v * 8u + u] * jpeg_basis[x][u];
+        temp[v * 8u + x] = sum;
+    }
+    for (y = 0u; y < 8u; ++y) for (x = 0u; x < 8u; ++x)
+    {
+        int64_t sum = 0;
+        for (v = 0u; v < 8u; ++v) sum += temp[v * 8u + x] * jpeg_basis[y][v];
+        pixels[y * 8u + x] = jpeg_clamp(jpeg_round(sum, INT64_C(1) << 30) + 128);
+    }
+}
+
+static int jpeg_align(struct jpeg_reader *reader)
+{
+    unsigned mask = (1u << reader->remaining) - 1u;
+    if ((reader->byte & mask) != mask) return 0;
+    reader->remaining = 0u;
+    return 1;
+}
+
+static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels)
+{
+    struct jpeg_reader reader = {state->data, state->size, state->entropy, 0u, 0u};
+    uint32_t across = (state->width + 7u) / 8u, down = (state->height + 7u) / 8u;
+    uint32_t index, total = across * down;
+    unsigned restart = 0u;
+    int32_t predictor = 0;
+    for (index = 0u; index < total; ++index)
+    {
+        int32_t block[64];
+        unsigned char samples[64];
+        uint32_t x, y, bx = (index % across) * 8u, by = (index / across) * 8u;
+        if (index != 0u && state->restart_interval != 0u && index % state->restart_interval == 0u)
+        {
+            unsigned marker;
+            if (!jpeg_align(&reader) || !jpeg_marker(reader.data, reader.size, &reader.pos, &marker) ||
+                marker != 0xd0u + restart) return 0;
+            restart = (restart + 1u) & 7u;
+            predictor = 0;
+        }
+        if (!jpeg_block(&reader, &state->huff[0][state->dc_id], &state->huff[1][state->ac_id],
+                        &predictor, block)) return 0;
+        jpeg_dequantize(block, state->quant[state->quant_id]);
+        jpeg_idct(block, samples);
+        for (y = 0u; y < 8u && by + y < state->height; ++y)
+            for (x = 0u; x < 8u && bx + x < state->width; ++x)
+                pixels[(size_t)(by + y) * state->width + bx + x] = (uint32_t)samples[y * 8u + x] * 0x010101u;
+    }
+    if (!jpeg_align(&reader)) return 0;
+    while (reader.pos < reader.size)
+    {
+        unsigned marker;
+        const unsigned char *body;
+        size_t length;
+        if (!jpeg_marker(reader.data, reader.size, &reader.pos, &marker)) return 0;
+        if (marker == 0xd9u) return 1;
+        if (!jpeg_segment(reader.data, reader.size, &reader.pos, &body, &length)) return 0;
+        if (marker == 0xdbu)
+        {
+            if (!jpeg_quant_tables(state, body, length)) return 0;
+        }
+        else if (marker == 0xc4u)
+        {
+            if (!jpeg_huffman_tables(state, body, length)) return 0;
+        }
+        else if (marker == 0xddu)
+        {
+            if (length != 2u) return 0;
+        }
+        else if (!((marker >= 0xe0u && marker <= 0xefu) || marker == 0xfeu)) return 0;
+    }
+    return 0;
+}
+
 /* --- Common image interface ----------------------------------------------- */
 
 uint32_t sx_image_format(const unsigned char *data, size_t size)
@@ -1421,7 +1841,7 @@ int sx_image_info(const unsigned char *data, size_t size,
             metadata.source_height = layout.height;
             break;
         }
-        case SX_IMAGE_FORMAT_JPEG: return SX_IMAGE_ERROR_UNSUPPORTED;
+        case SX_IMAGE_FORMAT_JPEG: return sx_jpeg_info(data, size, options, out);
         default: return SX_IMAGE_ERROR_FORMAT;
     }
     /* BMP/PNG have no decoder-level reduction. Do not silently resample or
@@ -1440,6 +1860,56 @@ int sx_image_info(const unsigned char *data, size_t size,
     return SX_IMAGE_OK;
 }
 
+static int jpeg_plan(const unsigned char *data, size_t size, const struct sx_image_options *options,
+                      struct sx_image_metadata *out, struct jpeg_state *state)
+{
+    struct sx_image_options defaults = {0};
+    struct sx_image_metadata metadata = {0};
+    int result;
+    if (data == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    if (options == 0) options = &defaults;
+    if (options->scale_denom != 0u && options->scale_denom != 1u && options->scale_denom != 2u &&
+        options->scale_denom != 4u && options->scale_denom != 8u) return SX_IMAGE_ERROR_ARGUMENT;
+    result = jpeg_prepare(data, size, state);
+    if (result != SX_IMAGE_OK) return result;
+    if (options->scale_denom > 1u) return SX_IMAGE_ERROR_SCALE;
+    if (state->width > image_limit(options->max_width, SX_IMAGE_MAX_DIMENSION) ||
+        state->height > image_limit(options->max_height, SX_IMAGE_MAX_DIMENSION) ||
+        (uint64_t)state->width * state->height > image_limit(options->max_pixels, SX_IMAGE_MAX_PIXELS))
+        return SX_IMAGE_ERROR_LIMIT;
+    metadata.format = SX_IMAGE_FORMAT_JPEG;
+    metadata.source_width = metadata.width = state->width;
+    metadata.source_height = metadata.height = state->height;
+    metadata.scale_denom = 1u;
+    *out = metadata;
+    return SX_IMAGE_OK;
+}
+
+int sx_jpeg_info(const unsigned char *data, size_t size, const struct sx_image_options *options,
+                  struct sx_image_metadata *out)
+{
+    struct jpeg_state state;
+    if (out == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+    return jpeg_plan(data, size, options, out, &state);
+}
+
+int sx_jpeg_decode_into(const unsigned char *data, size_t size, const struct sx_image_options *options,
+                         uint32_t *pixels, size_t pixel_count, struct sx_image_metadata *out)
+{
+    struct jpeg_state state;
+    struct sx_image_metadata metadata;
+    int result;
+    if (out != 0) memset(out, 0, sizeof(*out));
+    if (pixels == 0) return SX_IMAGE_ERROR_ARGUMENT;
+    result = jpeg_plan(data, size, options, &metadata, &state);
+    if (result != SX_IMAGE_OK) return result;
+    if (pixel_count < (size_t)metadata.width * metadata.height) return SX_IMAGE_ERROR_BUFFER;
+    if (!jpeg_decode_scan(&state, pixels)) return SX_IMAGE_ERROR_DECODE;
+    if (out != 0) *out = metadata;
+    return SX_IMAGE_OK;
+}
+
 int sx_image_decode_into(const unsigned char *data, size_t size,
                          const struct sx_image_options *options, uint32_t *pixels,
                          size_t pixel_count, struct sx_image_metadata *out)
@@ -1455,6 +1925,7 @@ int sx_image_decode_into(const unsigned char *data, size_t size,
     {
         case SX_IMAGE_FORMAT_PNG: result = sx_png_decode_into(data, size, pixels, pixel_count); break;
         case SX_IMAGE_FORMAT_BMP: result = sx_bmp_decode_into(data, size, pixels, pixel_count); break;
+        case SX_IMAGE_FORMAT_JPEG: return sx_jpeg_decode_into(data, size, options, pixels, pixel_count, out);
         default: return SX_IMAGE_ERROR_UNSUPPORTED;
     }
     if (result != 0) return SX_IMAGE_ERROR_DECODE;
@@ -1475,6 +1946,12 @@ const char *sx_image_error_string(int result)
         case SX_IMAGE_ERROR_SCALE: return "Image decoder does not support the requested scale";
         case SX_IMAGE_ERROR_BUFFER: return "Image buffer is too small";
         case SX_IMAGE_ERROR_DECODE: return "Image decoding failed";
+        case SX_IMAGE_ERROR_JPEG_PROGRESSIVE: return "Progressive JPEG is unsupported";
+        case SX_IMAGE_ERROR_JPEG_ARITHMETIC: return "Arithmetic JPEG is unsupported";
+        case SX_IMAGE_ERROR_JPEG_PRECISION: return "Unsupported JPEG sample precision";
+        case SX_IMAGE_ERROR_JPEG_LOSSLESS: return "Lossless JPEG is unsupported";
+        case SX_IMAGE_ERROR_JPEG_COLOR: return "Unsupported JPEG colour components";
+        case SX_IMAGE_ERROR_JPEG_SAMPLING: return "Unsupported JPEG sampling factors";
         default: return "Unknown image error";
     }
 }

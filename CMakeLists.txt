@@ -828,6 +828,17 @@ target_include_directories(savanxp-sximg-test PRIVATE
 target_compile_options(savanxp-sximg-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sximg-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# Stage checks include the private decoder; checked-in fixtures are generated
+# from our own samples. Neither the build nor the runtime needs libjpeg.
+add_executable(savanxp-sxjpeg-test tests/host/sxjpeg_test.c)
+target_include_directories(savanxp-sxjpeg-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sxjpeg-test PRIVATE -O1 -Wall -Wextra)
+if(SAVANXP_HOST_LIBM)
+    target_link_libraries(savanxp-sxjpeg-test PRIVATE ${SAVANXP_HOST_LIBM})
+endif()
+add_test(NAME sxjpeg-test COMMAND savanxp-sxjpeg-test)
+
 # La musica del port doomgeneric se prueba fuera de QEMU: el mus2mid de
 # upstream convierte un MUS y libsxmidi lo renderiza. Usa el WAD del repo para
 # cubrir la musica real que suena al jugar.
@@ -1095,7 +1106,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

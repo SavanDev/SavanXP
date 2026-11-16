@@ -12,9 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **`libsximg` decodes sequential 8-bit greyscale JPEG through `sx_jpeg_info`, `sx_jpeg_decode_into` and the common image API.**
+  SOF0/SOF1, restart markers and full-resolution output are supported, with named rejection errors;
+  colour and reduced decoding remain pending. See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#sequential-greyscale-jpeg).
+
 - **`libsximg` adds common BMP/PNG decoding with `sx_image_format`, `sx_image_info` and `sx_image_decode_into`.**
-  Callers can set output limits and receive source/output dimensions, scale and named errors;
-  JPEG is identified but remains unsupported. See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md).
+  Callers can set output limits and receive source/output dimensions, scale and named errors.
+  See [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md) for format coverage and the decoding contract.
 
 - **Paint, desktop wallpapers and PNG cursors now read indexed and greyscale PNGs, all legal sample depths, `tRNS` and Adam7.**
   `libsximg` retains straight alpha for cursors, composites documents onto white, and rescales 16-bit samples to 8 bits.
