@@ -8,10 +8,9 @@
 
 namespace {
 
-// Four ATA slots, four AHCI ports, four NVMe namespaces, virtio-blk and the
-// LiveCD's ramdisk, plus the partitions partition:: cuts out of them (up to
-// 16), with room left for new drivers without touching the core.
-constexpr size_t kMaxBlockDevices = 32;
+// Physical disks, the LiveCD ramdisk and up to 32 partition devices share
+// this table. Keep room for both when increasing the partition capacity.
+constexpr size_t kMaxBlockDevices = 64;
 
 struct Device {
     bool present;

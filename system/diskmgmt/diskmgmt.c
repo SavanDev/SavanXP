@@ -35,8 +35,9 @@
 
 #include "diskmgmt.sunres.h"
 
-#define DM_MAX_DEVICES 32
-#define DM_MAX_SEGMENTS 24
+#define DM_MAX_DEVICES 64
+// Up to 32 partitions, with a free extent before, between and after them.
+#define DM_MAX_SEGMENTS 65
 #define DM_ROW_CAPACITY 160
 
 #define DM_DEFAULT_WIDTH 640

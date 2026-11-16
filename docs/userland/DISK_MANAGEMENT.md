@@ -23,6 +23,14 @@ rather than duplicate formatting or mounting controls.
 | Raw sector access, rescan; Initialize, New Partition, Format, Delete | done |
 | Mount and unmount | done |
 
+## Capacity
+
+The kernel registers up to 32 partitions across all disks, within a shared
+64-entry block-device table that also holds physical disks and the LiveCD
+ramdisk. Storage detection and Disk Management cover all 64 entries. The disk
+map holds up to 65 segments per disk, enough for 32 partitions and the free
+extents around them. These are in-memory limits; disk formats are unchanged.
+
 ## The window
 
 - **Top: the volume list.** One row per partition and per whole-disk volume

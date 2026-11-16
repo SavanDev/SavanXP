@@ -58,7 +58,7 @@ bool check(bool ok, const char* what) {
 // range and the read-only flag, so it is replicated here: without it the test
 // could not show that a read past the partition is refused.
 
-constexpr size_t kMaxDevices = 16;
+constexpr size_t kMaxDevices = 64;
 
 struct Device {
     bool present;
@@ -402,6 +402,45 @@ void case_bogus_entries_are_discarded() {
     check(g_device_count == 1, "out-of-range or empty entries are discarded");
 }
 
+// A multi-disk machine must not lose the last USB partitions after NVMe
+// and SATA partitions have consumed the old 16-slice budget.
+void case_many_disks_keep_last_usb_partitions() {
+    printf("case: eight disks with 32 partitions\n");
+    reset_devices();
+    const char* names[] = {"nvme0", "ahci0", "ahci1", "ahci2", "ahci3", "usb0", "usb1", "usb2"};
+    for (size_t disk = 0; disk < 8; ++disk) {
+        const size_t parent = add_disk(4096, names[disk], /*writable=*/true);
+        uint8_t* image = disk_bytes(parent);
+        write_boot_signature(image);
+        for (size_t part = 0; part < 4; ++part) {
+            uint8_t* entry = mbr_entry(image, part);
+            entry[4] = 0x0c;
+            const uint32_t start = 64 + static_cast<uint32_t>(part) * 256;
+            put32(entry + 8, start);
+            put32(entry + 12, 256);
+            image[byte_offset(start)] = static_cast<uint8_t>(disk * 4 + part + 1);
+        }
+    }
+    enumerate_partitions();
+    check(g_device_count == 40, "all eight disks and 32 partitions are registered");
+    for (size_t disk = 0; disk < 8; ++disk) {
+        for (size_t part = 0; part < 4; ++part) {
+            const size_t device = 8 + disk * 4 + part;
+            partition::Info info = {};
+            check(partition::info(device, info) && info.parent_index == disk && info.number == part + 1,
+                  "each partition keeps its parent and ordinal");
+            uint8_t sector[block::kSectorSize] = {};
+            check(block::read(device, 0, 1, sector) && sector[0] == disk * 4 + part + 1,
+                  "each partition reads its own parent, including the last USB disk");
+        }
+    }
+    check(partition::rescan(7), "the last USB disk can be rescanned at full partition capacity");
+    check(g_device_count == 40, "rescan reuses the existing partition slots");
+    block::DeviceInfo last = {};
+    check(block::device_info(39, last) && strcmp(last.name, "usb2p4") == 0,
+          "the last USB partition remains visible after rescan");
+}
+
 // Several disks at once: each slice must stay tied to ITS parent.
 void case_two_disks_do_not_cross() {
     printf("case: two partitioned disks\n");
@@ -741,6 +780,7 @@ int main() {
     case_raw_disk_is_left_alone();
     case_bogus_entries_are_discarded();
     case_two_disks_do_not_cross();
+    case_many_disks_keep_last_usb_partitions();
     case_gpt_metadata();
     case_damaged_primary_uses_backup();
     case_damaged_entries_use_backup();

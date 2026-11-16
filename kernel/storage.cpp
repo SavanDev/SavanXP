@@ -16,7 +16,7 @@
 
 namespace {
 
-constexpr size_t kMaxCache = 32;
+constexpr size_t kMaxCache = 64;
 
 // What is on a device that is not mounted, read from its first sectors. Kept
 // per device id until the generation moves, so a Disk Management window that
