@@ -56,8 +56,8 @@ ordering points, like the journal's, holds unchanged.
 
 What changes is **durability**: a write is safe once the queue reaches it, not
 when the syscall returns. A power cut loses the tail of the queue and never
-reorders it. `SYS_SYNC` (and the `sync` command) and `/dev/power`'s shutdown and
-reboot wait for the queue. On QEMU, closing the window kills the guest without
+reorders it. `SYS_SYNC` (and the `sync` command), and power-off or reboot by
+any path, including the power button ([`POWER.md`](POWER.md)), wait for the queue. On QEMU, closing the window kills the guest without
 either; the idle drain usually empties the queue within milliseconds of the last
 write. If it did not, the image is consistent but may have a pending journal,
 which the host tools refuse (`sxfs_sync` leaves the image untouched); one boot of

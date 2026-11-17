@@ -619,13 +619,14 @@ bool sync_all() {
     return drain_all();
 }
 
-void shutdown_all() {
-    (void)drain_all();
+bool shutdown_all() {
+    const bool drained = drain_all();
     for (size_t i = 0; i < g_driver_count; ++i) {
         if (g_drivers[i]->shutdown != nullptr) {
             g_drivers[i]->shutdown();
         }
     }
+    return drained;
 }
 
 bool writeback_checkpoint(uint64_t& ticket) {

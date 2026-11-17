@@ -135,9 +135,10 @@ bool flush(size_t index);
 // writeback queue, whatever device `index` is.
 bool sync(size_t index);
 bool sync_all();
-// Drains the writeback queue, then runs every driver's shutdown hook. For
-// /dev/power, right before S5 or a reboot.
-void shutdown_all();
+// Drains the writeback queue, then runs every driver's shutdown hook, even
+// when the drain failed. For power::shutdown/reboot, right before S5 or a
+// reset. False if the queue did not drain.
+bool shutdown_all();
 // A nonblocking durability frontier. Later writes do not delay this ticket;
 // the caller may park while background steps reach its device flushes.
 enum class WritebackCompletion { pending, complete, failed, invalid };

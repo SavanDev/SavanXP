@@ -8,6 +8,7 @@
 #include "kernel/acpi_tables.hpp"
 #include "kernel/console.hpp"
 #include "kernel/ioapic.hpp"
+#include "kernel/power.hpp"
 #include "kernel/string.hpp"
 
 namespace {
@@ -201,12 +202,13 @@ void sci_interrupt() {
     }
 
     if ((status & kPm1PwrBtnBit) != 0) {
-        // Ack del boton y apagado ordenado por S5 (mismo camino que /dev/power).
+        // Acknowledge the button and power off the way /dev/power does:
+        // volumes synced and the writeback queue drained before S5.
         out16(g_pm1a_evt_port, kPm1PwrBtnBit);
         if (g_pm1b_evt_port != 0) {
             out16(g_pm1b_evt_port, kPm1PwrBtnBit);
         }
-        acpi::shutdown(); // no retorna
+        power::shutdown(); // does not return
     }
 
     // Otros bits fijos: limpiarlos para no re-disparar la SCI.

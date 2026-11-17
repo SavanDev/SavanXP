@@ -8,6 +8,14 @@ Cut-off notes:
 - `v0.1.1` covers the changes after `v0.1.0`, including work already merged into
   the tree but not yet tagged in git.
 
+## [Unreleased]
+
+### Fixed
+
+- **Power-off and reboot sync and mark every volume clean first, and the ACPI power button no longer drops queued writes.**
+  Both go through `power::shutdown()`/`power::reboot()`; failures are logged (`power:`) instead of ignored.
+  See [POWER.md](docs/kernel/POWER.md).
+
 ## [0.4.3] - 2026-11-17
 
 ### Added

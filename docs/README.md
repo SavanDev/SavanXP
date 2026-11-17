@@ -61,6 +61,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`NVME.md`](kernel/NVME.md) — the NVMe disk driver ported from OpenBSD: why disks
   are read-only without `nvme-rw`, the polled bring-up, the shutdown notification
   and the limits (512-byte blocks, 2 TiB).
+- [`POWER.md`](kernel/POWER.md) — power-off and reboot: who can ask for them,
+  the sequence (volumes synced and marked clean, writeback drained, drivers
+  told, then ACPI), why the power button may do it from an interrupt, and
+  what is still missing next to an NT shutdown.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.
