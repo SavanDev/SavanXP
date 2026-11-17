@@ -53,9 +53,17 @@ fallback milestone on purpose:
   received; it never sets one.
 - FB1 makes the choice observable: the accepted mode, and the fact that it came
   from the bootloader, appear in the boot log.
-- Changing the mode after boot from Display Properties needs a backend that
-  can set modes. That means QEMU's adapters today and a native driver (FB7) on
-  physical hardware. It is not a gap FB1-FB6 can close.
+- Changing the mode after boot already works end to end on a backend that
+  can set modes: `GPU_IOC_SET_MODE` reaches `display::Backend::set_mode`,
+  `compositord` re-imports its display section and `windowd` lays the session
+  out again, with rollback at each layer
+  ([Display Properties](../../desktop/DISPLAY_PROPERTIES.md#changing-the-resolution)).
+  The backend advertises it with
+  `SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING`. `fb_gpu` sets that flag
+  only on Bochs' DISPI adapter, and `virtio_gpu` always does, so today only
+  QEMU can change mode. On physical hardware the missing piece is a backend
+  that implements `set_mode` (FB7), not the API above it. FB1-FB6 cannot close
+  this gap.
 - Choosing a different firmware mode at boot, such as a boot menu entry per
   resolution or a mode stored on disk, would be bootloader configuration
   work. If that need appears, it gets its own item in
@@ -123,7 +131,10 @@ FB1 lands in two increments:
 - **FB1a** adds the memory model and channel masks to `boot::FramebufferInfo`
   and a pure validation function with its host tests. No caller changes yet.
 - **FB1b** routes splash, console and `fb_gpu` through that single result,
-  replaces their separate gates, and writes the boot log line.
+  replaces their separate gates, and writes the boot log line. The same check
+  covers modes set at runtime: a mode programmed through DISPI `set_mode` is
+  validated before `publish_mode` hands its geometry to the console, so the
+  boot descriptor is not the only one that is trusted.
 
 Carry the memory model and channel masks through the boot descriptor. Establish
 one checked description before splash, console or the display backend writes
@@ -223,7 +234,12 @@ risk: [Pentium 4 Evo N1020v](../../hardware/PENTIUM4_EVO_N1020V.md) (GRUB
 --framebuffer`, where stolen memory can rule out 32 bpp at large sizes). If
 either offers its panel's size, or a usable size, only at 24 bpp, 24-bit
 becomes part of the core milestone. Otherwise it stays optional until a target
-or reproducible fixture needs it. RGB565 stays optional either way. Respect destination pitch
+or reproducible fixture needs it. RGB565 stays optional either way.
+
+Other depths are handled at the final copy. `set_mode` keeps accepting only
+32 bpp requests, and `compositord` keeps asking for 32. A backend whose
+physical format differs reports its 32-bit logical mode and converts, so
+`GPU_IOC_SET_MODE` callers never have to know the scanout's depth. Respect destination pitch
 and pixel size; the source surface pitch remains independent. Unsupported
 layouts remain an explained rejection, not a guessed color order.
 
@@ -283,10 +299,16 @@ Write the target-specific plan before implementation: resource ownership,
 firmware handoff, timings/EDID or panel tables, PLL/pipe/plane programming,
 interrupts, vblank, buffer lifetime, cursor plane and failure recovery. Bind
 through `display::Driver`; integrate common inventory/lifecycle as those APIs
-become available. Roll back partial initialization before falling back, so an
+become available. Mode setting plugs into the existing contract rather than a
+new API: implement `set_mode` with the same all-or-nothing rollback as DISPI
+and virtio, report real `max_width`/`max_height`/`max_bytes` in the connector
+properties, and set `SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING` only
+once that works. Roll back partial initialization before falling back, so an
 unsuccessful probe does not leave the firmware scanout unusable.
 
-**Acceptance:** repeated physical boots and mode changes, failure injection,
+**Acceptance:** the resolution slider in Display Properties works on the
+named target, including the keep-or-revert countdown, without changes to the
+application. Repeated physical boots and mode changes, failure injection,
 session exit and emergency output succeed on the named target. Vblank completion
 is verified independently of submit completion; synchronized flips and cursor
 behavior have explicit tests. Native mode setting does not imply 3D acceleration.
