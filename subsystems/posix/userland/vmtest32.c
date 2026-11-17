@@ -39,7 +39,7 @@ static int anonymous(void) {
     CHECK((long)map_view_at((int)fd, (unsigned long)a, RW) == -SAVANXP_ENOMEM);
     CHECK((long)map_view_at((int)fd, 0x10000001, RW) == -SAVANXP_EINVAL);
     CHECK((long)map_view_at((int)fd, 0xfffff000, RW) == -SAVANXP_ENOMEM);
-    CHECK((long)map_view_at((int)fd, 0x08eff000, RW) == -SAVANXP_ENOMEM);
+    CHECK((long)map_view_at((int)fd, 0x0eeff000, RW) == -SAVANXP_ENOMEM);
     int duplicate = (int)savanxp_dup((int)fd);
     CHECK(duplicate >= 0 && savanxp_close((int)fd) == 0 && savanxp_close(duplicate) == 0);
     CHECK(a[4096] == 27 && unmap_view(a) == 0 && b[4096] == 27 && unmap_view((void*)b) == 0);

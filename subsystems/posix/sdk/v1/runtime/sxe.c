@@ -4,6 +4,7 @@
  */
 
 #include "shared/version.h"
+#include <limits.h>
 
 #include "savanxp/libc.h"
 #include "savanxp/sxe.h"
@@ -577,29 +578,19 @@ const uint32_t* sxe_icons_pixels(const struct sxe_icons* icons, const struct sxe
     return (const uint32_t*)(const void*)(icons->blob + entry->offset);
 }
 
-/* --- Capa de disco: extraccion de secciones ELF -------------------------- */
-
+/* --- Disk layer: ELF32/ELF64 section extraction -------------------------- */
 #define SXE_ELF_HEADER_BYTES 64u
 #define SXE_ELF_SHDR_BYTES 64u
-/* Acota el recorrido de la tabla de secciones. Un binario de userland de este
- * sistema tiene decenas, no cientos. */
 #define SXE_ELF_MAX_SECTIONS 256u
-/* Solo hace falta para comparar ".sxmeta"/".sxicon": no se carga .shstrtab
- * entero, se lee de a un nombre. */
 #define SXE_SECTION_NAME_CAPACITY 32u
-
-/* Offsets dentro del ELF64 header. */
-#define SXE_ELF_OFF_CLASS 4u
-#define SXE_ELF_OFF_DATA 5u
-#define SXE_ELF_OFF_SHOFF 40u
-#define SXE_ELF_OFF_SHENTSIZE 58u
-#define SXE_ELF_OFF_SHNUM 60u
-#define SXE_ELF_OFF_SHSTRNDX 62u
-
-/* Offsets dentro de un section header ELF64. */
 #define SXE_SHDR_OFF_NAME 0u
-#define SXE_SHDR_OFF_OFFSET 24u
-#define SXE_SHDR_OFF_SIZE 32u
+
+static uint64_t sxe_section_offset(const uint8_t* shdr, int elf32) {
+    return elf32 ? sxe_load_u32(shdr + 16) : sxe_load_u64(shdr + 24);
+}
+static uint64_t sxe_section_size(const uint8_t* shdr, int elf32) {
+    return elf32 ? sxe_load_u32(shdr + 20) : sxe_load_u64(shdr + 32);
+}
 
 static int sxe_read_exact(int fd, void* buffer, size_t count)
 {
@@ -621,7 +612,7 @@ static int sxe_read_exact(int fd, void* buffer, size_t count)
 
 static int sxe_read_at(int fd, uint64_t offset, void* buffer, size_t count)
 {
-    if (offset > (uint64_t)0x7fffffffffffffffULL)
+    if (offset > (uint64_t)LONG_MAX)
     {
         return 0;
     }
@@ -669,6 +660,8 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
     uint32_t name_index = 0;
     uint32_t index = 0;
     int result = SXE_ABSENT;
+    int elf32 = 0;
+    uint32_t section_entry_bytes = 0;
 
     if (out_length != 0)
     {
@@ -690,46 +683,47 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
         (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
-    /* Un archivo que no es ELF64 little-endian no tiene secciones que buscar:
-     * para el llamador es exactamente lo mismo que no tener recursos. */
+    /* Resource readers accept both little-endian ELF classes. */
     if (header[0] != 0x7fu || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' ||
-        header[SXE_ELF_OFF_CLASS] != 2u || header[SXE_ELF_OFF_DATA] != 1u)
+        (header[4] != 1u && header[4] != 2u) || header[5] != 1u)
     {
         (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
-    section_header_offset = sxe_load_u64(header + SXE_ELF_OFF_SHOFF);
-    section_count = sxe_load_u16(header + SXE_ELF_OFF_SHNUM);
-    name_index = sxe_load_u16(header + SXE_ELF_OFF_SHSTRNDX);
+    elf32 = header[4] == 1;
+    section_entry_bytes = elf32 ? 40u : 64u;
+    section_header_offset = elf32 ? sxe_load_u32(header + 32) : sxe_load_u64(header + 40);
+    section_count = sxe_load_u16(header + (elf32 ? 48 : 60));
+    name_index = sxe_load_u16(header + (elf32 ? 50 : 62));
 
     if (section_header_offset == 0u || section_count == 0u || section_count > SXE_ELF_MAX_SECTIONS ||
-        sxe_load_u16(header + SXE_ELF_OFF_SHENTSIZE) != SXE_ELF_SHDR_BYTES || name_index >= section_count)
+        sxe_load_u16(header + (elf32 ? 46 : 58)) != section_entry_bytes || name_index >= section_count)
     {
         (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
-    if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)name_index * SXE_ELF_SHDR_BYTES), shdr, sizeof(shdr)))
+    if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)name_index * section_entry_bytes), shdr, section_entry_bytes))
     {
         (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
-    strtab_offset = sxe_load_u64(shdr + SXE_SHDR_OFF_OFFSET);
-    strtab_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
+    strtab_offset = sxe_section_offset(shdr, elf32);
+    strtab_size = sxe_section_size(shdr, elf32);
     if (strtab_size == 0u)
     {
         (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
-    /* La seccion 0 es SHT_NULL por definicion: se saltea. */
+    /* Section zero is SHT_NULL and has no resource payload. */
     for (index = 1u; index < section_count; ++index)
     {
         uint64_t data_offset = 0;
         uint64_t data_size = 0;
 
-        if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)index * SXE_ELF_SHDR_BYTES), shdr, sizeof(shdr)))
+        if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)index * section_entry_bytes), shdr, section_entry_bytes))
         {
             break;
         }
@@ -738,8 +732,8 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
             continue;
         }
 
-        data_offset = sxe_load_u64(shdr + SXE_SHDR_OFF_OFFSET);
-        data_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
+        data_offset = sxe_section_offset(shdr, elf32);
+        data_size = sxe_section_size(shdr, elf32);
         if (data_size == 0u)
         {
             result = SXE_ABSENT;

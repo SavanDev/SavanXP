@@ -138,6 +138,8 @@ set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/memory.cpp
     arch/x86/io.cpp
     arch/x86/sections.cpp
+    arch/x86/graphics.cpp
+    arch/x86/waits.cpp
 )
 # These paths execute on a bounded per-process kernel stack. Reject large
 # Debug aggregate temporaries before they can corrupt another task.
@@ -148,7 +150,9 @@ set_source_files_properties(
 # Reused storage, memory and object-lifetime modules; other subsystems are ported progressively.
 set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
-    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp kernel/section.cpp kernel/heap.cpp)
+    kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp kernel/section.cpp kernel/heap.cpp
+    subsystems/posix/sdk/v1/runtime/div64.c
+    kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
 target_include_directories(savanxp_kernel_objects PRIVATE

@@ -46,6 +46,8 @@ i386 support; retained code is not necessarily part of the active build.
   reference shell/BusyBox, exec/cleanup and guest persistence verification.
 - [`I386_SDK.md`](I386_SDK.md) — i386 integer widths, limits, conversions,
   formatted I/O and static/shared runtime ABI checks before the graphics port.
+- [`I386_GRAPHICS.md`](I386_GRAPHICS.md) — reference desktop, GPU surfaces,
+  shared graphics libraries, input, waits and visual regressions.
 - [`I386_MEMORY.md`](I386_MEMORY.md) — section/view ownership, heap growth,
   stack demand, fork and the embedded ELF32 shared-library loader.
 - [`I386_PROCESSES.md`](I386_PROCESSES.md) — private i386 process contexts, PIT

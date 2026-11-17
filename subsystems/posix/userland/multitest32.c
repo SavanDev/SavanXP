@@ -94,7 +94,7 @@ static int worker(int argc, char** argv) {
     if (strcmp(argv[1], "fault-text") == 0)
         __asm__ volatile("movb $0, 0x08000000" : : : "memory");
     if (strcmp(argv[1], "fault-guard") == 0)
-        __asm__ volatile("movb $0, 0x08eff000" : : : "memory");
+        __asm__ volatile("movb $0, 0x0eeff000" : : : "memory");
     if (strcmp(argv[1], "fault-gp") == 0) __asm__ volatile("cli");
     if (strcmp(argv[1], "fault-segments") == 0)
         __asm__ volatile("xorw %%ax, %%ax; movw %%ax, %%ds; movw %%ax, %%es; "
@@ -116,8 +116,10 @@ static int worker(int argc, char** argv) {
         return 0;
     }
     if (strcmp(argv[1], "gpu-busy") == 0) {
+        long fd;
         struct savanxp_gpu_info info;
-        return gpu_get_info(3, &info) == -SAVANXP_EBADF && gpu_open() == -SAVANXP_EBUSY ? 0 : 93;
+        return gpu_get_info(3, &info) == -SAVANXP_EBADF && (fd = gpu_open()) >= 0 &&
+            gpu_acquire((int)fd) == -SAVANXP_EBUSY && savanxp_close((int)fd) == 0 ? 0 : 93;
     }
     if (strcmp(argv[1], "gpu-exit") == 0) {
         long fd = gpu_open();
@@ -136,12 +138,12 @@ static int memory_checks(void) {
         savanxp_waitpid(-1, (int*)readonly) != -SAVANXP_EFAULT ||
         savanxp_read(0, (void*)readonly, sizeof(struct savanxp_input_event)) != -SAVANXP_EFAULT ||
         savanxp_write(1, (void*)0x08800000, 1) != -SAVANXP_EFAULT ||
-        savanxp_write(1, (void*)0x08fffffe, 4) != -SAVANXP_EFAULT ||
+        savanxp_write(1, (void*)0x0efffffe, 4) != -SAVANXP_EFAULT ||
         savanxp_write(1, (void*)0xfffffffe, 4) != -SAVANXP_EFAULT ||
         spawn((const char*)0x08800000, 0, 0) != -SAVANXP_EFAULT)
         return fail("page-aware syscall validation");
     long fd = gpu_open();
-    if (fd != 3 || gpu_get_info((int)fd, (struct savanxp_gpu_info*)readonly) != -SAVANXP_EFAULT ||
+    if (fd != 3 || gpu_get_info((int)fd, (struct savanxp_gpu_info*)readonly) != -SAVANXP_EINVAL ||
         savanxp_close((int)fd) != 0) return fail("read-only ioctl buffer");
     // Both immediate and blocking wait results straddle distinct physical pages.
     int* status = (int*)(g_pages + 4094);
@@ -178,10 +180,10 @@ static int memory_checks(void) {
     const char* hog = "/disk/bin/memhog32";
     const char* args[] = {hog};
     for (int round = 0; round < 2; ++round) {
-        long children[6];
+        long children[64];
         int count = 0;
         long error = 0;
-        for (; count < 6; ++count) {
+        for (; count < 64; ++count) {
             long result = spawn(hog, args, 1);
             if (result < 0) { error = result; break; }
             children[count] = result;
@@ -251,14 +253,14 @@ int main(int argc, char** argv) {
     puts_out("MULTITASK arguments PASS\n");
 
     // Fill every remaining slot with sleeping children, then reap and reuse it.
-    long children[6]; int count = 0;
-    for (; count < 6; ++count) {
+    long children[64]; int count = 0;
+    for (; count < 64; ++count) {
         long pid = child("sleep");
         if (pid == -SAVANXP_EAGAIN) break;
         if (pid < 0) return fail("capacity spawn");
         children[count] = pid;
     }
-    if (count == 0 || count == 6) return fail("bounded table");
+    if (count == 0 || count == 64) return fail("bounded table");
     unsigned long before_sleep = uptime_ms();
     sleep_ms(50);
     if (uptime_ms() - before_sleep < 50) return fail("sleep wakeup");
@@ -282,7 +284,7 @@ int main(int argc, char** argv) {
     puts_out("MULTITASK sleep and reclamation PASS\n");
 
     long fd = gpu_open();
-    if (fd != 3 || !collect(child("gpu-busy"), 0) || savanxp_close((int)fd) < 0 ||
+    if (fd != 3 || gpu_acquire((int)fd) != 0 || !collect(child("gpu-busy"), 0) || savanxp_close((int)fd) < 0 ||
         !collect(child("gpu-exit"), 0) || !collect(child("gpu-exit"), 0)) return fail("GPU ownership on exit");
     puts_out("MULTITASK GPU ownership PASS\n");
     if (memory_checks() != 0) return 1;

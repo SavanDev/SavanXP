@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **i386 boots the v0.4.0 graphical desktop with shared SxGUI libraries.**
+  GPU surfaces, PS/2 wheel input and 64 processes support the reference WM and apps;
+  `windowd-smoke`, `sxgui-smoke`, `taskbar` and `calc-smoke` verify it; see [graphics](docs/I386_GRAPHICS.md).
+
 - **i386 supports memory sections, growing heaps and ELF32 shared libraries.**
   PIE startup, `fork`, shared/private views and pipe handle transfer are usable;
   `smoke shared`/`shared-memory` check loading and 32 MiB cleanup; full smoke allows 360 s.

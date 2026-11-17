@@ -135,11 +135,11 @@
 ## Minimum verification for the shared library work
 
 - The ELF32 loader is covered by `./build.sh smoke shared` and
-  `./build.sh smoke shared-memory`. SxGUI is not ported to i386 yet; restore
-  `sxgui-smoke` with the graphics port. Until then `./build.sh smoke desktop`
-  checks `desktop32`; it must not be reported as evidence that SxGUI works.
+  `./build.sh smoke shared-memory`. The reference graphical session is covered
+  by `./build.sh smoke windowd-smoke` and `./build.sh smoke sxgui-smoke`.
+  `./build.sh smoke desktop` now boots the full reference session.
 
-- Once ported, run `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
+- Run `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
   program that draws is touched. It is the only check that looks at what SxGUI
   puts on screen, and it is what caught a toolkit that stopped painting.
   `smoke` and `calc-smoke` only prove the loader works, not that the toolkit

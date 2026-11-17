@@ -11,7 +11,7 @@ x86_64 system is maintained on [`master`](https://github.com/SavanDev/SavanXP/tr
 The active goal is **parity with SavanXP v0.4.0**, preserving its visuals,
 behavior and internal design with the fewest changes required by 32-bit x86.
 After reaching that target, work advances to v0.4.1 and then later parity
-targets. The minimal system below is an intermediate stage; see the
+targets. The restored desktop is an intermediate stage; see the
 [parity policy and roadmap](docs/I386_PORT.md).
 
 Current parity target: `v0.4.0` (in progress) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
@@ -43,11 +43,14 @@ port 1234. `--headless` disables the QEMU window. SMP and virtio are not ported.
 - PIT preemption with x87/SSE state, `spawn`, `waitpid`, `exit`, sleep and yield.
 - The reference `sh` and eleven BusyBox applets, canonical console input and CPIO `/bin`.
 - Per-process descriptors, shared offsets, files/directories, pipes, polling and `exec`.
-- `init32`, `sysinfo`, the `sh32` diagnostic and a minimal `desktop32`.
+- The reference graphical init, compositor, WM, taskbar, Start menu and Program Manager.
+- Shared ELF32 SxGFX/Gfx2D/SxGUI and the reference graphical applications.
+- Events, timers, semaphores, 64 process slots and PS/2 wheel input.
+- `init32`, `sh32` and `desktop32` as explicit diagnostics.
 - External static SDK applications built with `tools/build-user.sh`.
 
-At boot, `init32` runs `sysinfo` and starts the reference `sh`; it restarts the
-shell when it exits. Try:
+At boot, the reference `init` starts the graphical session. Open Shell from
+Program Manager to use the reference terminal. Try:
 
 ```text
 help
@@ -57,15 +60,16 @@ pwd
 echo hello | cat > hello.txt
 cat hello.txt
 sh -c "exec echo replaced"
-sh32
 ```
 
-`sh32` remains a diagnostic child for `multitest`, `start`, `wait` and `desktop`.
+`sh32` remains a child of the explicit console diagnostic boot for `multitest`,
+`start`, `wait` and `desktop`.
 The reference shell launches external programs by name or full path and supports
 pipes and redirection. See the [i386 POSIX contract](docs/I386_POSIX.md).
 Memory sections, heap growth, fork and ELF32 shared libraries are supported;
-see [the memory contract](docs/I386_MEMORY.md). The full window manager, SxGUI,
-networking and audio remain unported.
+see [the memory contract](docs/I386_MEMORY.md) and
+[graphics contract](docs/I386_GRAPHICS.md). Networking, audio and power services
+remain unported; v0.4.0 parity is still in progress.
 Retained source and older design documents are porting material until verified.
 See the [ordered porting roadmap](docs/I386_PORT.md) and
 [process implementation and limits](docs/I386_PROCESSES.md).

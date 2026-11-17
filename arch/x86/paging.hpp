@@ -5,13 +5,15 @@ namespace i386::paging {
 constexpr uint32_t kUserWindowBase = 0x08000000u;
 constexpr uint32_t kUserWindowEnd = 0x40000000u;
 constexpr uint32_t kPageBytes = 4096;
-constexpr uint32_t kUserStackTop = 0x09000000u;
+constexpr uint32_t kUserStackTop = 0x0f000000u;
 constexpr uint32_t kUserStackBottom = kUserStackTop - 1024u * 1024u;
 constexpr uint32_t kUserStackGuard = kUserStackBottom - kPageBytes;
 constexpr uint32_t kSectionViewBase = 0x10000000u;
 // Supervisor aliases of physical 0..1 GiB, independent of user CR3 mappings.
 constexpr uint32_t kDirectMapBase = 0x40000000u;
 constexpr uint32_t kDirectMapBytes = 0x40000000u;
+constexpr uint32_t kKernelViewsBase = 0x80000000u;
+constexpr uint32_t kKernelViewsEnd = 0xb0000000u;
 
 bool cpu_has_pse();
 void enable_identity_1gib();
@@ -31,4 +33,7 @@ bool map_borrowed_page(uint32_t* directory, uint32_t address, uint32_t physical,
 void unmap_borrowed_range(uint32_t* directory, uint32_t address, uint32_t bytes);
 void activate(const uint32_t* directory);
 void activate_kernel();
+// Contiguous supervisor views of scattered section pages; shared by all CR3s.
+bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base);
+bool unmap_kernel_pages(void* base, uint32_t count);
 }

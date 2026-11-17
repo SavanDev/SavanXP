@@ -26,8 +26,8 @@ multiboot2_header:
     .word 5                                /* type 5: framebuffer */
     .word 1                                /* optional */
     .long 20                               /* tag size */
-    .long 1024                             /* width */
-    .long 768                              /* height */
+    .long 1280                             /* Reference desktop width */
+    .long 800                              /* Reference desktop height */
     .long 32                               /* bits per pixel */
 
     /* Tags are 8-byte aligned; include padding after the 20-byte request. */

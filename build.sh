@@ -47,7 +47,7 @@ Options:
   --smp 1         one CPU (SMP is not ported yet)
   --headless      disable the graphical QEMU window
   --legacy        compatibility alias; i386 is already selected
-  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, legacy-cpu
+  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, legacy-cpu
   --timeout SEC   smoke timeout (default: 360)
   --list          list supported smoke scenarios
 EOF
@@ -74,7 +74,7 @@ if ((LIST)); then
 fi
 if [[ "$COMMAND" == smoke ]]; then
     case "$SCENARIO" in
-        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|legacy-cpu) ;;
+        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|legacy-cpu) ;;
         *) echo "build.sh: '$SCENARIO' is not ported to i386; use smoke --list (x86_64 scenarios live on master)" >&2; exit 2 ;;
     esac
     INCLUDE_TEST_APPS=ON

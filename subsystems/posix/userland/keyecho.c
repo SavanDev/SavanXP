@@ -48,10 +48,11 @@ int main(void) {
 
     puts_out("keyecho: leyendo stdin\n");
     for (;;) {
+        struct savanxp_pollfd input_poll = {0, SAVANXP_POLLIN, 0};
+        if (savanxp_poll(&input_poll, 1, -1) < 0) return 1;
         const long received = savanxp_read(0, &event, sizeof(event));
         if (received != (long)sizeof(event)) {
-            /* Sin eventos la lectura se bloquea dentro del kernel; un error
-             * real (-errno) se reporta y el bucle sigue: keyecho no sale. */
+            /* The reference raw device can drain between poll and read. */
             if (received < 0) {
                 puts_out("keyecho: read fallo ");
                 print_u32((uint32_t)(-received));

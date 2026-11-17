@@ -1,4 +1,6 @@
 #include "syscall.hpp"
+#include "waits.hpp"
+#include "kernel/device.hpp"
 
 #include <stdint.h>
 
@@ -58,9 +60,8 @@ void copy_text(char* destination, size_t capacity, const char* source) {
 }
 
 void handle(ContextFrame& frame) {
-    /* Los argumentos se leen de edi/esi/edx y no de ebx/ecx/edx: las
-     * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
-     * ABI, y el usuario pone el numero en eax. */
+    // SDK arguments occupy EDI, ESI, EDX, ECX and EBX on i386.
+    if (waits::syscall(frame)) return;
     switch (frame.eax) {
         case SAVANXP_SYS_FORK:
             frame.eax = process::fork(frame); return;
@@ -228,7 +229,8 @@ void handle(ContextFrame& frame) {
                 info.pid = task.pid; info.parent_pid = task.parent; info.exit_code = task.exit_status;
                 const uint32_t states[] = {SAVANXP_PROC_UNUSED, SAVANXP_PROC_READY, SAVANXP_PROC_RUNNING,
                     SAVANXP_PROC_SLEEPING, SAVANXP_PROC_BLOCKED_READ, SAVANXP_PROC_BLOCKED_WRITE,
-                    SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_ZOMBIE};
+                    SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_BLOCKED_WAIT, SAVANXP_PROC_ZOMBIE,
+                    SAVANXP_PROC_BLOCKED_WAIT};
                 info.state = states[static_cast<uint32_t>(task.state)];
                 copy_text(info.name, sizeof(info.name), task.name);
                 info.memory_bytes = paging::resident_bytes(task.directory);
@@ -252,91 +254,16 @@ void handle(ContextFrame& frame) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
             }
-            switch (frame.esi) {
-                case GPU_IOC_GET_INFO: {
-                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_info), true)) {
-                        frame.eax = failure(SAVANXP_EFAULT);
-                        return;
-                    }
-                    const savanxp_fb_info& fb = fb32::info();
-                    savanxp_gpu_info info = {};
-                    info.width = fb.width;
-                    info.height = fb.height;
-                    info.pitch = fb.pitch;
-                    info.bpp = fb.bpp;
-                    info.buffer_size = fb.buffer_size;
-                    info.backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER;
-                    info.flags = 0;
-                    memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.edx)), &info,
-                           sizeof(info));
-                    frame.eax = 0;
-                    return;
-                }
-                case GPU_IOC_ACQUIRE:
-                case GPU_IOC_RELEASE: {
-                    // Keep serial diagnostics from painting over the desktop.
-                    fb32::console_set_enabled(frame.esi == GPU_IOC_RELEASE);
-                    frame.eax = 0;
-                    return;
-                }
-                case GPU_IOC_PRESENT: {
-                    /* Validate the full client buffer before copying a complete frame. */
-                    const uint32_t bytes = fb32::info().buffer_size;
-                    if (!is_user_range(frame.edx, bytes)) {
-                        frame.eax = failure(SAVANXP_EFAULT);
-                        return;
-                    }
-                    const uint32_t pitch_pixels = fb32::info().pitch / 4u;
-                    if (!fb32::present(reinterpret_cast<const uint32_t*>(
-                                           static_cast<uintptr_t>(frame.edx)),
-                                       pitch_pixels, 0, 0, fb32::info().width,
-                                       fb32::info().height)) {
-                        frame.eax = failure(SAVANXP_EINVAL);
-                        return;
-                    }
-                    frame.eax = 0;
-                    return;
-                }
-                case GPU_IOC_PRESENT_REGION: {
-                    if (!is_user_range(frame.edx, sizeof(savanxp_gpu_present_region))) {
-                        frame.eax = failure(SAVANXP_EFAULT);
-                        return;
-                    }
-                    savanxp_gpu_present_region region = {};
-                    memcpy(&region, reinterpret_cast<const void*>(static_cast<uintptr_t>(frame.edx)),
-                           sizeof(region));
-                    if (region.pixels == 0 || region.width == 0 || region.height == 0 ||
-                        region.source_pitch < region.width) {
-                        frame.eax = failure(SAVANXP_EINVAL);
-                        return;
-                    }
-                    const uint64_t pixel_count = static_cast<uint64_t>(region.source_pitch) *
-                                                 region.height;
-                    if (pixel_count > 0xFFFFFFFFull / sizeof(uint32_t)) {
-                        frame.eax = failure(SAVANXP_EFAULT);
-                        return;
-                    }
-                    const uint32_t bytes = static_cast<uint32_t>(pixel_count * sizeof(uint32_t));
-                    if (region.pixels > 0xFFFFFFFFull ||
-                        !is_user_range(static_cast<uint32_t>(region.pixels), static_cast<uint32_t>(bytes))) {
-                        frame.eax = failure(SAVANXP_EFAULT);
-                        return;
-                    }
-                    if (!fb32::present(reinterpret_cast<const uint32_t*>(
-                                           static_cast<uintptr_t>(region.pixels)),
-                                       region.source_pitch, region.x, region.y, region.width,
-                                       region.height)) {
-                        frame.eax = failure(SAVANXP_EINVAL);
-                        return;
-                    }
-                    frame.eax = 0;
-                    return;
-                }
-                default: {
-                    frame.eax = failure(SAVANXP_ENOTTY);
-                    return;
-                }
-            }
+            auto& entry = process::current()->handles[frame.edi];
+            auto* file = object::as_io(entry.object);
+            frame.eax = device::ioctl(file->device, frame.esi, frame.edx, entry.granted_access);
+            return;
+        }
+        case SAVANXP_SYS_MONOTONIC_NS: {
+            const uint64_t ns = pit::uptime_ms() * 1000000ull;
+            frame.eax = static_cast<uint32_t>(ns);
+            frame.edx = static_cast<uint32_t>(ns >> 32);
+            return;
         }
         case kSysUptimeMs: {
             /* El SDK devuelve unsigned long: en i386 caben los primeros 49

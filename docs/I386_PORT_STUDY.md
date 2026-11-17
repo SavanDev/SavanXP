@@ -679,14 +679,172 @@ static external programs retain their bytes and receive the fixes when rebuilt.
 The ordinary build and canonical persistence checks continue to protect those
 binaries and their assets.
 
+## 11. Restoring the reference graphics session
+
+Milestone 4 replaces the default bring-up desktop with the v0.4.0 session:
+reference init, window manager, compositor daemon, taskbar, desktop background,
+Program Manager and native applications. The reference rendering and client
+protocol sources remain the implementation. Rewriting a smaller desktop would
+have avoided several missing kernel mechanisms, but would also have changed the
+parity target. Compiling the retained implementations exposed those mechanisms
+instead. [I386_GRAPHICS.md](I386_GRAPHICS.md) records the resulting contracts.
+
+### A contiguous surface is a virtual-memory requirement
+
+The framebuffer backend imports a section's physical-page list and expects a
+contiguous kernel view. A user view or a physical direct-map pointer cannot
+substitute: sections can be physically fragmented, and each user CR3 can map
+that view at a different address. The port therefore reuses the reference
+framebuffer backend and GPU dispatcher through native user-copy and mapping
+adapters. Supervisor-only page tables in `0x80000000..0xb0000000` provide those
+contiguous aliases and are shared into every process directory. Removing an
+import releases its view and section reference without freeing borrowed pages.
+Empty kernel page tables remain cached; the window bounds that retained cost.
+
+GRUB's linear framebuffer has a device identity mapping, whereas allocated RAM
+uses aliases starting at `0x40000000`. Treating these as one uniform HHDM would
+point the GPU at unrelated memory. The native adapter keeps the two mechanisms
+separate, rejects overlapping device mappings and supplies the existing VBE
+dispi aperture path before processes start. QEMU exposes the larger aperture,
+mode switching and double buffering. PAT write combining and other hardware
+backends are later capacity/hardware work; this implementation does not claim
+asynchronous presentation or a hardware cursor.
+
+### Input draining was a real interface difference
+
+The first visible session painted Program Manager and its taskbar but did not
+respond to the keyboard. Raw scancodes still reached the kernel. The problem
+was the prototype's blocking `/dev/input0` read: the reference WM loops over
+reads until the queue is empty, then returns to frame/request processing. A
+blocking empty read suspended it inside that loop indefinitely. Keeping the
+prototype behavior and modifying the WM would have changed a reference client
+contract. Native device reads now drain complete records and return zero when
+empty; `poll` waits for readiness. Event polling also tests waitable-object
+signals instead of reporting `POLLNVAL`.
+
+The mouse now exposes the same event records and readiness path. IntelliMouse
+sample-rate negotiation precedes reporting so acknowledgements cannot enter the
+packet stream; ID 3 enables the fourth wheel byte, with the reference sign.
+Three-byte devices remain supported. The queues use the reference 512-record
+bounds and carry a dropped mouse record's wheel count forward. Graphical
+ownership suppresses canonical TTY consumption and the old kernel cursor; the
+reference compositor draws its own cursor. The retained `desktop32` diagnostic
+was adapted to the reference GPU ABI and its own cursor, rather than preserving
+the prototype's incompatible strip/pitch interpretation inside the real driver.
+
+### Object waits and process supervision
+
+The reference objects already separated events, timers and semaphores from the
+architecture scheduler. Reusing `kernel/object.cpp` avoids replacing the client
+wake/submit protocol with pipes or periodic busy waiting. The native scheduler
+retains objects during waits, evaluates wait-any/all and deadlines, and drops
+references on completion or process termination. The PIT services timers;
+blocking returns a saved user frame rather than retaining a kernel continuation.
+The wide `monotonic_ns()` result needed an explicit EDX:EAX return on i386:
+casting a native 32-bit syscall result to `unsigned long long` loses its high
+half. Clock resolution remains the PIT's delivered tick resolution.
+
+The six-process bound could start a few examples but could not support the
+reference session's capacity contract. It is now 64, matching the reference;
+the 64-descriptor and 64-view budgets remain. The pressure regression fills the
+actual table and still exercises clean refusal/reclamation. Its sparse helper
+now uses 4 MiB of BSS rather than 12 MiB so the expanded kernel and CPIO leave
+room for a surviving child on the 32-MiB regression machine.
+
+The reference init also expects orphan apps to become its children when their
+window manager exits. Detaching them, as the bring-up scheduler did, bypassed
+that supervision. Orphans are now reparented to PID 1 and wake its child wait
+when appropriate. Diagnostic init reaps unrelated adopted children while
+waiting for its supervised shell. Missing socket support previously made
+`audiod` fail and restart repeatedly; an unavailable socket syscall now causes
+a deliberate clean exit. This is a temporary service boundary until milestone
+5, not a substitute audio implementation.
+
+### Two stack assumptions found by the WM selftest
+
+The reference presentation selftest initially failed its independent SXE icon
+read, although ordinary icons had painted. Its automatic 64-KiB buffer crossed
+pages that user instructions had not touched. The native copy validator rejected
+those pages before the file read could initialize them. The reference VMM
+materializes reserved stack pages during validation as well as on user faults.
+Restoring that mechanism fixes the caller without making its buffer static or
+pre-touching it. The guard, arbitrary holes and existing read-only permissions
+remain protected.
+
+The next selftest failure was an `ENOEXEC` for `gfxdemo`. The original demo's two
+1920x1080 arrays occupy about 17 MiB, extending past the prototype's stack at
+`0x09000000`. Reducing those arrays would change the reference program; moving
+the native stack to `0x0f000000` instead gives the image room below the section
+allocation window. The reserve remains 1 MiB, its guard is `0x0eeff000`, and only
+eight pages are mapped initially. This supersedes the original stack addresses
+in earlier chapters. Loader checks still reject an image that reaches the new
+reserved stack, and fault regressions assert the new guard address.
+
+### Retiring the prototype's permanent screen copy
+
+The 32-MiB memory/fault scenario passed, but the shared-memory regression then
+failed the fifth simultaneous 1-MiB heap allocation. This was genuine capacity
+pressure: the full desktop binaries enlarged CPIO, while the prototype still
+reserved a 1280x800 pixel copy in kernel BSS. Only about 5.9 MiB remained free at
+boot. The allocator correctly refused the request, but reducing the regression
+would have hidden the cost introduced by retaining a bring-up mechanism.
+
+An experiment stripping all ordinary ELF symbols from CPIO copies would save
+about 1.4 MiB, insufficient headroom for the existing heap workload. Keeping the
+six-live-block and private-fork checks, and removing the obsolete screen copy,
+is the smaller system change. The reference backend and user compositor already
+own their surfaces; `desktop32` now owns its diagnostic cursor too. Native text
+can write glyphs and scroll directly in the framebuffer without another complete
+screen in RAM. The prototype kernel cursor and its presentation entry points
+were retired with that storage. Fonts, text colours and the running desktop's
+rendering sources stay the same. `llvm-size build/kernel.elf` shows the
+4,096,000-byte reduction in BSS. The unchanged six-live-block, reallocation and
+private-fork cases then passed `smoke shared-memory` with 32 MiB. Physical
+framebuffer-read performance remains part of the later hardware assessment.
+Restoring 1280x800 also exposed the diagnostic shell's old 768-line upper
+bound: its clear command fell back to 25 EGA rows instead of the actual 50.
+Using the reported console height preserves that command's original scrolling
+approach. Hidden native console clears must also respect graphics ownership;
+writing directly to VRAM cannot bypass the existing console-enable gate.
+
+### Resources and evidence
+
+The retained SXE reader only understood ELF64 section headers. Supporting
+ELF32 offsets and entry widths preserves the resource format and lets the same
+manifest, title, accent and icon bytes reach Program Manager and the WM. The
+reader retains ELF64 support for inspecting preserved files; that does not make
+them executable. Resource generation and stamping now follow manifest/icon and
+build-ID dependencies. The shared runtime variants remove graphics units owned
+by declared libraries, and the built-artifact sharing check remains mandatory.
+Reference disk assets and generated MIME icons are staged for fresh images;
+CPIO carries binaries/libraries rather than duplicating persistent media assets.
+
+The reference WM selftest now reports `DESKTOP SMOKE PASS`, including twelve
+overlay windows with `windowd_fds=40` and `app_fds=12`, owned windows, fullscreen
+restoration and two deliberate compositor reconnections. The visual Notepad
+scenario verified actual built-font glyphs for `linea38` and `linea39`, their
+spacing, wheel movement/return and scrollbar clicks. The restored gate also
+checks the taskbar's label; a loaded library or a changed pixel alone is not
+adequate evidence. Normal smoke runs boot the exact normal ISO for graphics;
+console regressions replay that ISO into a disposable copy with only the
+`console-init` command-line selection changed. The first attempt to rebuild
+that copy with an unrestricted `grub-mkrescue` selected optional EFI tooling
+and failed on missing `mformat`; replaying the existing boot records avoids
+introducing that unrelated host dependency.
+
+The repeatable entry points are `smoke windowd-smoke`, `smoke sxgui-smoke`,
+`smoke taskbar`, `smoke calc-smoke`, the full `smoke`, `smoke memory`,
+`smoke shared-memory`, host tests and the POSIX/Doom persistence checks.
+These establish the running desktop dependency, not complete v0.4.0 parity.
+Audio/network/power services, external application runtime, optional SMP/virtio,
+physical-machine validation and performance remain later milestones. The boot
+console/logo path also remains the native bootstrap rather than proof of full
+boot-visual parity.
+
 ## Continuing the study
 
-The next account should follow the reference GPU/surface ownership and client
-protocols through the SxGUI/compositor port, then verify the original session's
-layout, glyphs and interactions. This is planned work; the existing `desktop32`
-screenshot only verifies its own temporary implementation.
-
-Repeatable memory entry points are `./build.sh smoke shared`,
-`./build.sh smoke shared-memory`, the full `./build.sh smoke` and the existing
-memory/POSIX/persistence checks. Keep observed evidence separate from planned
-subsystem work and preserve the pinned v0.4.0 target until the full parity review.
+The next account should trace the reference device services and application
+runtime through milestone 5, distinguishing a service that is absent from one
+that works. Preserve the original state and ownership contracts when adapting
+socket, audio and power mechanisms. Keep the v0.4.0 target pinned until the
+remaining feature and hardware gaps have passed their explicit parity review.

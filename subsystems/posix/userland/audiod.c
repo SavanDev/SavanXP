@@ -1153,9 +1153,14 @@ int main(int argc, char** argv)
         eprintf("audiod: otro demonio ya escucha\n");
         return 0;
     }
+    if (sock_fd == -SAVANXP_ENOSYS)
+    {
+        eprintf("audiod: network service unavailable; exiting without audio\n");
+        return 0;
+    }
     if (sock_fd < 0)
     {
-        eprintf("audiod: no se pudo escuchar (%s)\n", result_error_string(sock_fd));
+        eprintf("audiod: could not listen (%s)\n", result_error_string(sock_fd));
         return 1;
     }
     if (audiod_check_loopback((int)sock_fd) < 0)

@@ -1158,6 +1158,10 @@ def scenario_notepadwheel(s):
         s.qmp.tap("ret")
     time.sleep(1.0)
     image = s.shot("notepad-lleno")
+    # A drawing regression must also retain the taskbar's actual label glyphs.
+    bx, by, bw, bh = button_rect(image, 1)
+    expect_text(image, (bx, by, bx + bw, by + bh), "Notepad", TEXT, FACE,
+                "the taskbar label")
     area = find_list_area(image)
     print("  editor en", area)
     s.qmp.move_to((area[0] + area[2]) // 2, (area[1] + area[3]) // 2)

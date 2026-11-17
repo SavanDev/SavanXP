@@ -14,6 +14,8 @@ namespace ps2_32 {
  * /dev/input0 (diagnostics can explicitly duplicate that descriptor to stdin). */
 
 void initialize();
+bool has_mouse_event();
+bool pop_mouse_event(savanxp_mouse_event& event);
 
 /* Hay evento pendiente para la syscall READ. */
 bool has_pending_event();
@@ -21,8 +23,8 @@ bool has_pending_event();
 /* Saca el evento mas viejo a `out`. false si no habia ninguno. */
 bool pop_event(struct savanxp_input_event& out);
 
-/* Clear boot-time events when starting the scheduler. Spawning a program
- * does not clear the shared queue. */
+/* Clear raw queues at scheduler startup and graphics-session boundaries.
+ * Spawning an ordinary program does not clear the shared queue. */
 void clear_queue();
 
 /* Ultimo ASCII imprimible (para el eco de la consola EGA). 0 si ninguno. */

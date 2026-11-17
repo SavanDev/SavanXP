@@ -23,10 +23,10 @@ tags, control word `0x037f`, MXCSR `0x1f80` and zeroed register storage. FS/GS a
 EFLAGS are independent too. Kernel C++ is compiled without SSE; the explicit
 context helpers are the only kernel users of these registers.
 
-ELF32 programs retain the image base `0x08000000` and stack top `0x09000000`.
+ELF32 programs retain the image base `0x08000000` and stack top `0x0f000000`.
 The user range now extends to `0x40000000` for section views. The stack reserves
 1 MiB with eight initial pages and grows on user not-present faults; its
-permanent guard is `0x08eff000`. Private CR3 directories use two-level non-PAE
+permanent guard is `0x0eeff000`. Private CR3 directories use two-level non-PAE
 paging. Holes remain absent; text/rodata are read-only and data/BSS/stack writable.
 Borrowed section pages have independent object/view references and are not freed
 as private image pages. [I386_MEMORY.md](I386_MEMORY.md) defines ownership, fork,
@@ -43,7 +43,7 @@ destination CR3. Copies split at page boundaries because adjacent virtual pages
 can have unrelated physical addresses. Kernel video identity mappings cannot
 replace the RAM alias window; a framebuffer overlapping it is unsupported.
 
-The six-slot process table, private directories and 16 KiB kernel stacks remain
+The reference 64-slot process table, private directories and 16 KiB kernel stacks remain
 bounded static metadata. A full table returns `EAGAIN`; physical exhaustion
 returns `ENOMEM` and reclaims all pages from the partial load. Exit or fault
 releases the user pages/tables after switching CR3; a zombie retains only its
@@ -63,7 +63,7 @@ preempted even without `yield` or `sleep`. User execution is preemptible; kernel
 execution is atomic with respect to task switching. Long kernel work can delay
 a tick, so this is not a real-time scheduling guarantee.
 
-Processes move between running, runnable, sleeping, reading, writing, polling, waiting and zombie
+Processes move between running, runnable, sleeping, reading, writing, polling, child/object waiting and zombie
 states. A blocking syscall stores its return frame and request, then returns a
 different frame to assembly; it does not retain a sleeping C++ continuation.
 PIT delivery and scheduler boundaries service deadlines, blocked I/O and polling. The keyboard
@@ -74,8 +74,10 @@ switches at ring 3 boundaries or from idle.
 
 ## 3. Process lifecycle and userland policy
 
-The kernel starts `/disk/bin/init32` as PID 1. `init32` launches `sysinfo`, waits
-for it, then launches the reference `sh` and restarts it on exit. CPIO supplies
+The kernel normally starts the reference `/bin/init` as PID 1 and restores
+its graphical restart policy. Orphans are reparented to init for collection.
+An explicit `console-init` diagnostic boot starts `/disk/bin/init32`, which
+runs `sysinfo`, reaps orphan diagnostics and supervises the reference `sh`. CPIO supplies
 `/bin` and `/README`; the persistent `/disk/bin` remains first in command lookup.
 The [POSIX contract](I386_POSIX.md) describes canonical input, shared descriptors,
 redirection, pipes and transactional `exec`. No kernel `EXIT` stage chooses the
@@ -97,15 +99,16 @@ excess arguments or strings return `E2BIG`, and a missing or invalid image retur
 child's PID and its plain integer exit status, including when the child exited
 before the call. A null status pointer is allowed. A nonexistent, unrelated or
 already-collected child returns `ECHILD`. Zombies retain their slot until
-collected. When a parent exits, live orphans become detached and are reclaimed
-on exit; existing orphan zombies are reclaimed immediately. PIDs increase rather
+collected. When a parent exits, its children are reparented to PID 1, which reaps
+existing zombies and future exits. Without a surviving init, orphans are detached
+and reclaimed automatically. PIDs increase rather
 than being reused with slots, and stop allocating before the signed PID range
 would overflow.
 
-The GPU stays a single-client device represented by a shared I/O object. Only
-processes holding a descriptor for that object may use it; normal spawn inherits
-only descriptors 0, 1 and 2, so unrelated GPU handles do not pass to children.
-Closing its last reference, including on exit/fault, releases video ownership.
+GPU descriptors use shared I/O objects. Queries can use independent opens;
+presentation requires the single graphics-session owner. Normal spawn inherits
+only descriptors 0, 1 and 2. Exit/fault releases ownership and imported surfaces;
+see [I386_GRAPHICS.md](I386_GRAPHICS.md) for the reference device contract.
 Input/output descriptors now follow the reference I/O model rather than permanent
 numbered kernel channels. `sh32` and `keyecho` explicitly open `/dev/input0` and
 replace their stdin to retain raw-event diagnostics; the reference shell reads
@@ -169,14 +172,14 @@ reaped children must return the exact baseline free-page count.
 The host also types `start`, `wait`, `run` and `exit`, checking background
 collection, fault status 134 followed by a working shell prompt, foreground
 status and return from the diagnostic to the reference shell. The POSIX check also
-verifies reference-shell restart by init32. The desktop check then proves that shell blocking, console clearing, graphics,
-mouse movement/buttons and cursor restoration still work. The harness uses a
+verifies reference-shell restart by init32. The explicit `--expect-desktop` diagnostic checks console clearing, fullscreen
+graphics and cursor restoration. Normal `smoke desktop` now boots the reference
+session, while `sxgui-smoke` verifies actual toolkit glyphs and wheel/scrollbar input. The harness uses a
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
 ## Remaining boundaries
 
-User-installed signal handlers, the remaining waitable object APIs, SMP and ASLR
-remain unported. The six-process capacity remains; RAM above the mapped first
-GiB is not allocated. User read-only pages and supervisor mappings are protected,
-but absence of NX prevents execute-disable and full W^X enforcement. The full
-graphics session and physical laptop validation are still outstanding.
+User-installed signal handlers, SMP and ASLR remain unported. Events, timers,
+semaphores and wait-any/all now use the reference objects; see
+[I386_GRAPHICS.md](I386_GRAPHICS.md). RAM above the mapped first GiB is not allocated. User read-only pages and supervisor mappings are protected,
+but absence of NX prevents execute-disable and full W^X enforcement. Physical laptop validation remains outstanding.

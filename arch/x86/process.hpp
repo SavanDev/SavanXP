@@ -8,8 +8,8 @@
 
 namespace i386::process {
 
-constexpr uint32_t kCapacity = 6;
-enum class State { unused, runnable, running, sleeping, reading, writing, polling, waiting, zombie };
+constexpr uint32_t kCapacity = 64;
+enum class State { unused, runnable, running, sleeping, reading, writing, polling, waiting, zombie, object_wait };
 
 // The process table is bounded; user images and page tables use the reference
 // physical allocator. Kernel stacks and saved CPU/FPU contexts stay per slot.
@@ -23,6 +23,9 @@ struct alignas(4096) Process {
     int wait_pid;
     uint32_t wait_status;
     uint32_t io_fd, io_buffer, io_size, io_progress;
+    uint32_t object_count;
+    bool wait_all;
+    object::Header* wait_objects[16];
     uint32_t poll_buffer, poll_count;
     savanxp_pollfd poll_entries[64];
     ::process::HandleEntry handles[64];

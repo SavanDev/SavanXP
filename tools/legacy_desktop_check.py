@@ -38,22 +38,22 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                 return result
 
             def assert_desktop(image):
-                if image.size != (1024, 768):
-                    raise RuntimeError(f"desktop geometry: {image.size}, expected 1024x768")
+                if image.size != (1280, 800):
+                    raise RuntimeError(f"desktop geometry: {image.size}, expected 1280x800")
                 for point, colour in [((900, 500), (18, 26, 44)),
-                                      ((900, 750), (28, 42, 62)),
+                                      ((900, 782), (28, 42, 62)),
                                       ((100, 300), (232, 236, 242))]:
                     if image.getpixel(point) != colour:
                         raise RuntimeError(f"desktop geometry/colour mismatch at {point}")
-                # Full glyph coverage, including text crossing a 64-row strip.
+                # Full glyph coverage of the explicit fullscreen diagnostic.
                 for font, x, y, text, colour, background in [
                     ("title", 12, 4, "SavanXP Legacy", (236, 246, 255), (28, 42, 62)),
                     ("title", 92, 76, "SavanXP Legacy", (236, 246, 255), (44, 79, 124)),
                     ("body", 96, 116, "i386 legacy target", (40, 52, 68), (232, 236, 242)),
-                    ("body", 12, 742, "SavanXP Legacy", (214, 226, 240), (28, 42, 62)),
+                    ("body", 12, 774, "SavanXP Legacy", (214, 226, 240), (28, 42, 62)),
                 ]:
                     expected = glyphs.render(fonts[font], x, y, text, colour, background,
-                                             (0, 0, 1024, 768))
+                                             (0, 0, 1280, 800))
                     if not expected or any(image.getpixel(p) != c for p, c in expected.items()):
                         raise RuntimeError(f"desktop glyph mismatch: {text!r} at {(x, y)}")
 
@@ -90,7 +90,7 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                         if image.getpixel((x + column, y + row)) != colour:
                             raise RuntimeError(f"cursor mismatch at {(x + column, y + row)}")
 
-            assert_pointer(before, 512, 384)
+            assert_pointer(before, 640, 400)
             client.relative(160, 100)
             time.sleep(0.3)
             client.button("left", True)
@@ -102,7 +102,7 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                 log = serial.read_text(errors="replace")
                 events = re.findall(r"ps2: mouse dx (-?\d+) dy (-?\d+) buttons (\d+) at (\d+),(\d+)", log)
                 if (events and any(e[2] == "1" for e in events) and
-                    events[-1][2:] == ("0", "672", "484") and
+                    events[-1][2:] == ("0", "800", "500") and
                     "ps2: tecla down 0x00000061" in log and
                     "ps2: tecla up 0x00000061" in log):
                     break
@@ -111,14 +111,28 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                 time.sleep(0.1)
             after = capture("desktop-after")
             assert_desktop(after)
-            assert_pointer(after, 672, 484)
-            if after.crop((512, 384, 523, 402)).getextrema() != ((232, 232), (236, 236), (242, 242)):
-                raise RuntimeError("old cursor background was not restored")
+            assert_pointer(after, 800, 500)
+            # At 1280x800 the initial cursor straddles the window's six-pixel
+            # shadow: x < 646 is shadow and the remaining columns are wallpaper.
+            for y in range(400, 418):
+                for x in range(640, 651):
+                    expected = (10, 14, 22) if x < 646 else (18, 26, 44)
+                    if after.getpixel((x, y)) != expected:
+                        raise RuntimeError("old cursor background was not restored")
             # Force a clamp at the bottom-right corner, then return to the centre.
             def move_and_wait(dx, dy, target):
                 event_pattern = r"ps2: mouse dx (-?\d+) dy (-?\d+) buttons (\d+) at (\d+),(\d+)"
                 start = len(re.findall(event_pattern, serial.read_text(errors="replace")))
-                client.relative(dx, dy)
+                # Pace PS/2-sized steps, as the reference visual driver does;
+                # one large QMP event can overflow the emulated controller.
+                remaining_x, remaining_y = dx, dy
+                while remaining_x or remaining_y:
+                    step_x = max(-64, min(64, remaining_x))
+                    step_y = max(-64, min(64, remaining_y))
+                    client.relative(step_x, step_y)
+                    remaining_x -= step_x
+                    remaining_y -= step_y
+                    time.sleep(.03)
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:
                     delivered = re.findall(event_pattern, serial.read_text(errors="replace"))[start:]
@@ -129,20 +143,35 @@ def check_desktop(qmp_socket: Path, binary: Path, serial: Path,
                     time.sleep(0.1)
                 raise RuntimeError(f"mouse motion did not finish at {target}: {delivered}")
 
-            move_and_wait(400, 300, (1023, 767))
-            edge = capture("desktop-edge")
-            if edge.getpixel((1023, 767)) != (16, 20, 24):
-                raise RuntimeError("cursor did not clamp to the screen edge")
-            move_and_wait(-511, -383, (512, 384))
-            restored = capture("desktop-restored")
+            move_and_wait(1280, 800, (1279, 799))
+            # Input delivery precedes the next client frame now that the
+            # diagnostic, like the real compositor, owns its software cursor.
+            deadline = time.monotonic() + 10
+            while True:
+                edge = capture("desktop-edge")
+                if edge.getpixel((1279, 799)) == (16, 20, 24):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("cursor did not clamp to the screen edge")
+                time.sleep(.1)
+            move_and_wait(-639, -399, (640, 400))
+            deadline = time.monotonic() + 10
+            while True:
+                restored = capture("desktop-restored")
+                try:
+                    assert_pointer(restored, 640, 400)
+                    break
+                except RuntimeError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(.1)
             assert_desktop(restored)
-            assert_pointer(restored, 512, 384)
             if restored.tobytes() != before.tobytes():
                 raise RuntimeError("cursor movement left trails or damaged the desktop")
 
 
 def check_console_clear(qmp_socket: Path, artifacts: Path | None) -> None:
-    """After sh32 clear, old boot text must be gone from all 48 console rows."""
+    """After sh32 clear, old boot text must be gone from all console rows."""
     from PIL import Image, ImageDraw
 
     with tempfile.TemporaryDirectory(prefix="savanxp-console-check.") as temporary:
@@ -154,8 +183,8 @@ def check_console_clear(qmp_socket: Path, artifacts: Path | None) -> None:
                 with Image.open(path) as screenshot:
                     image = screenshot.convert("RGB")
                 # Ignore the cursor and the bottom rows used by the prompt/IRQ diagnostics.
-                area = image.crop((0, 0, 1024, 704))
-                ImageDraw.Draw(area).rectangle((512, 384, 522, 401), fill=(16, 24, 36))
+                area = image.crop((0, 0, image.width, image.height - 64))
+                ImageDraw.Draw(area).rectangle((640, 400, 650, 417), fill=(16, 24, 36))
                 if area.getextrema() == ((16, 16), (24, 24), (36, 36)):
                     image.save(path.with_suffix(".png"))
                     return

@@ -26,8 +26,8 @@ The SDK's existing `spawn_fd`/`spawn_fds` convenience functions also work.
 
 Exit, a user exception and termination through `kill` release all descriptors.
 A zombie keeps its wait status and slot, not its file or pipe references. The
-single GPU client is also a shared I/O object: only its holders can operate it,
-and its last close releases console suppression. A GPU handle outside the three
+GPU descriptor is also a shared I/O object; independent queries are allowed,
+while presentation requires the graphics-session owner. A GPU handle outside the three
 standard channels does not pass to a spawned child.
 
 The reference bounds remain 256 I/O objects and 64 pipes globally. A full process
@@ -80,8 +80,9 @@ reference get/set nonblocking operations across duplicated descriptors.
 
 ## Console and shell
 
-Normal commands boot into the reference `sh` source and shared `shell_core`,
-launched/restarted by `init32` after `sysinfo`. The shell retains its parser,
+Normal boot now starts graphical init and the reference desktop terminal.
+The explicit `console-init` diagnostic boot runs the reference `sh` and
+`shell_core`, launched/restarted by `init32` after `sysinfo`. The shell retains its parser,
 prompt, builtins, command lookup, pipelines and redirection. Its eleven BusyBox
 applets are `cat`, `cp`, `echo`, `false`, `ls`, `mkdir`, `mv`, `ps`, `rm`, `sleep`
 and `true`, using the original `vendor/busybox-port` sources. This is the same
@@ -92,9 +93,10 @@ The canonical console uses the reference pending-line discipline: editing and
 echo occur in the kernel, Enter makes a line ready, and a read consumes the line
 without its newline. Ctrl+L clears it. The prototype's raw-event clients remain
 available through `/dev/input0`; `sh32` and `keyecho` explicitly replace stdin
-with that stream. Active raw stdin/read/poll consumers suppress TTY draining so
-canonical input does not steal their events. This is a compatibility bridge for
-the diagnostics and minimal desktop, not terminal job control or process groups.
+with that stream. Active raw stdin/read/poll consumers and graphics ownership
+suppress TTY draining so canonical input does not steal their events. Raw reads
+drain records, returning zero when empty; `poll` supplies waiting. This is not
+terminal job control or process groups.
 Input layout changes require a write-capable descriptor. The ISO angle-bracket
 key supplies `<`/`>` for shell redirection with the default ES keyboard map.
 
@@ -105,9 +107,8 @@ kernel/user output remain visible.
 
 A failed pipeline closes all owned endpoints/redirection descriptors, terminates
 already-launched children and waits for them before showing another prompt.
-This also handles capacity failure after some stages have started. The small
-process table can still reject a pipeline requiring more live tasks than fit;
-recovery does not claim increased process capacity.
+This also handles capacity failure after some stages have started. The 64-process table can still reject a pipeline requiring more live tasks
+than fit; the regression also fails a later stage after earlier stages start.
 
 `exec` first loads a replacement into a separate directory. Failure
 releases that staging image and leaves the original intact. Success switches
@@ -147,7 +148,7 @@ pipe failures and 300 pipe reuse cycles exercise allocation rollback. It also
 runs every BusyBox applet and checks copied bytes. The host types pipelines,
 redirection, CWD operations, exec and shell exit/restart, and audits live
 processes/descriptors and the exact free-page baseline after missing-command and
-capacity failures. The regression calls `SPAWN_FD` directly to verify ECX/EBX
+partial-pipeline failures. The regression calls `SPAWN_FD` directly to verify ECX/EBX
 argument mapping and invalid-descriptor rollback. Existing fdtest, waittest,
 pipestress, seektest, renametest and truncatetest run as actual ELF32 programs.
 
@@ -158,8 +159,8 @@ source image hash too. Its writable-disk harness flag is for this isolated check
 it is never enabled by normal smoke commands.
 
 Process-info CPU counters and an explicit idle-process entry still need the
-reference accounting integration. The six-process table, 1 GiB managed RAM limit
-and lack of NX remain. Full signals/job control, the reference full desktop and
-later device services are still parity gaps. Memory sections, growing heaps,
+reference accounting integration. The 64-process table, 1 GiB managed RAM limit
+and lack of NX remain. Full signals/job control and later device services remain parity gaps. The
+reference desktop is covered by [I386_GRAPHICS.md](I386_GRAPHICS.md). Memory sections, growing heaps,
 fork and ELF32 shared libraries were restored in the following milestone; see
 [I386_MEMORY.md](I386_MEMORY.md) for the current memory contract and regressions.

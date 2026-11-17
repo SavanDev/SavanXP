@@ -1,4 +1,6 @@
 #include "process.hpp"
+#include "waits.hpp"
+#include "kernel/display.hpp"
 
 #include "cpu.hpp"
 #include "kernel/string.hpp"
@@ -42,6 +44,7 @@ void wake_tasks() {
             task.state = State::runnable;
         }
     }
+    waits::service();
     io::service();
 }
 
@@ -60,6 +63,7 @@ ContextFrame* schedule(ContextFrame* frame) {
     } else {
         g_idle_frame = frame;
     }
+    waits::service();
     io::service();
     Process* next = nullptr;
     for (uint32_t offset = 1; offset <= kCapacity; ++offset) {
@@ -307,7 +311,21 @@ long wait(int pid, uint32_t status) {
     return 0; // The exit path fills in the actual child PID before resuming.
 }
 
+static void notify_parent(Process& child) {
+    for (auto& parent : g_processes) {
+        if (parent.state != State::waiting || !matches(child, parent, parent.wait_pid)) continue;
+        if (parent.wait_status)
+            paging::copy_to_user(parent.directory, parent.wait_status, &child.exit_status, sizeof(int));
+        parent.frame->eax = child.pid;
+        parent.state = State::runnable;
+        child.state = State::unused;
+        return;
+    }
+}
+
 static void terminate(Process& child, int status) {
+    waits::clear(child);
+    display::release_session_for(child.pid);
     sections::release_views(child);
     io::release_handles(child);
     serial::write("process: pid ");
@@ -317,25 +335,18 @@ static void terminate(Process& child, int status) {
     serial::write("\n");
     child.exit_status = status;
     child.state = child.parent == 0 ? State::unused : State::zombie;
-    for (auto& parent : g_processes) {
-        if (parent.state == State::waiting && matches(child, parent, parent.wait_pid)) {
-            if (parent.wait_status != 0) {
-                paging::copy_to_user(parent.directory, parent.wait_status, &status, sizeof(status));
-            }
-            parent.frame->eax = child.pid;
-            parent.state = State::runnable;
-            child.state = State::unused;
-            break;
-        }
-    }
-    // Detached children are reaped when they exit; already-dead orphans are
-    // released here so an exiting parent cannot exhaust the bounded table.
+    notify_parent(child);
+    // Preserve the reference init supervision contract when windowd dies.
+    Process* init = nullptr;
+    for (auto& candidate : g_processes)
+        if (candidate.pid == 1 && &candidate != &child &&
+            candidate.state != State::unused && candidate.state != State::zombie) init = &candidate;
     for (auto& orphan : g_processes) {
-        if (orphan.state != State::unused && orphan.parent == child.pid) {
-            orphan.parent = 0;
-            if (orphan.state == State::zombie) {
-                orphan.state = State::unused;
-            }
+        if (orphan.state == State::unused || orphan.parent != child.pid) continue;
+        orphan.parent = init ? init->pid : 0;
+        if (orphan.state == State::zombie) {
+            if (init) notify_parent(orphan);
+            else orphan.state = State::unused;
         }
     }
 }

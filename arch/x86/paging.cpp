@@ -1,4 +1,5 @@
 #include "paging.hpp"
+#include "process.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 
@@ -51,6 +52,7 @@ bool map_identity(uint64_t address, uint32_t bytes) {
     if (address < kUserWindowEnd && address + bytes > kUserWindowBase) return false;
     if (address < static_cast<uint64_t>(kDirectMapBase) + kDirectMapBytes &&
         address + bytes > kDirectMapBase) return false;
+    if (address < kKernelViewsEnd && address + bytes > kKernelViewsBase) return false;
     const uint32_t first = static_cast<uint32_t>(address >> 22);
     const uint32_t last = static_cast<uint32_t>((address + bytes - 1) >> 22);
     for (uint32_t index = first; index <= last; ++index)
@@ -116,7 +118,12 @@ bool user_range(const uint32_t* directory, uint32_t address, uint32_t bytes, boo
     if (!inside(address, bytes)) return false;
     const uint32_t end = address + bytes;
     for (uint32_t page = address & kMask; page < end; page += kPageBytes) {
-        if (!user_pointer(directory, page)) return false;
+        if (!user_pointer(directory, page)) {
+            // Match the reference VMM: syscall buffers can be the first use
+            // of stack pages reserved by a large automatic C object.
+            if (page < kUserStackBottom || page >= kUserStackTop ||
+                !map_user_range(const_cast<uint32_t*>(directory), page, kPageBytes, true)) return false;
+        }
         const uint32_t entry = directory[page >> 22];
         const uint32_t leaf = table(entry)[(page >> 12) & 1023];
         if (writable && ((entry & kWrite) == 0 || (leaf & kWrite) == 0)) return false;
@@ -218,4 +225,67 @@ void activate(const uint32_t* directory) {
     asm volatile("mov %0, %%cr3" : : "r"(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory))) : "memory");
 }
 void activate_kernel() { activate(g_page_directory); }
+namespace {
+
+bool kernel_leaf(uint32_t address, uint32_t*& leaf, bool create) {
+    const uint32_t index = address >> 22;
+    auto& entry = g_page_directory[index];
+    if (!entry) {
+        if (!create) return false;
+        memory::PageAllocation allocation = {};
+        if (!memory::allocate_page(allocation)) return false;
+        memset(allocation.virtual_address, 0, kPageBytes);
+        entry = static_cast<uint32_t>(allocation.physical_address) | kPresent | kWrite;
+        // Kernel execution is atomic on this uniprocessor. New directories
+        // inherit the root; existing directories share the same page tables.
+        for (uint32_t slot = 0; slot < process::kCapacity; ++slot) {
+            auto* task = process::at(slot);
+            if (task->state != process::State::unused) task->directory[index] = entry;
+        }
+    }
+    if (entry & kLarge) return false;
+    leaf = &table(entry)[(address >> 12) & 1023];
+    return true;
+}
+}
+
+bool unmap_kernel_pages(void* base, uint32_t count) {
+    const uintptr_t address = reinterpret_cast<uintptr_t>(base);
+    if ((address & 4095) || address < kKernelViewsBase ||
+        static_cast<uint64_t>(address) + static_cast<uint64_t>(count) * kPageBytes > kKernelViewsEnd)
+        return false;
+    for (uint32_t n = 0; n < count; ++n) {
+        const uint32_t page = address + n * kPageBytes;
+        uint32_t* leaf;
+        if (kernel_leaf(page, leaf, false)) *leaf = 0;
+        asm volatile("invlpg (%0)" : : "r"(page) : "memory");
+    }
+    return true;
+}
+
+bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base) {
+    if (!pages || !base || !count || count > (kKernelViewsEnd - kKernelViewsBase) / kPageBytes)
+        return false;
+    for (uint32_t n = 0; n < count; ++n)
+        if ((pages[n] & 4095) || pages[n] >= kDirectMapBytes) return false;
+    uint32_t run = 0, start = kKernelViewsBase;
+    for (uint32_t page = kKernelViewsBase; page < kKernelViewsEnd; page += kPageBytes) {
+        uint32_t* leaf;
+        if (kernel_leaf(page, leaf, false) && (*leaf & kPresent)) { run = 0; continue; }
+        if (!run) start = page;
+        if (++run != count) continue;
+        for (uint32_t n = 0; n < count; ++n) {
+            if (!kernel_leaf(start + n * kPageBytes, leaf, true)) {
+                unmap_kernel_pages(reinterpret_cast<void*>(start), n);
+                return false;
+            }
+            *leaf = static_cast<uint32_t>(pages[n]) | kPresent | (flags & kWrite);
+            asm volatile("invlpg (%0)" : : "r"(start + n * kPageBytes) : "memory");
+        }
+        *base = reinterpret_cast<void*>(start);
+        return true;
+    }
+    return false;
+}
+
 } // namespace i386::paging

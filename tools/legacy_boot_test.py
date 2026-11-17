@@ -17,6 +17,7 @@ from pathlib import Path
 # Mismo directorio: el cliente QMP que ya usa el arranque de smokes.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qmp_client import QmpClient
+from i386_console_iso import make_console_iso
 
 SUCCESS_TOKEN = "I386 BOOT OK"
 PROCESS_TOKEN = "process: private stacks, address spaces and FXSAVE ready"
@@ -251,6 +252,11 @@ def check_shared(qmp_socket: Path, serial: Path) -> None:
     """Exercise section ownership and real ELF32 calls through the reference shell."""
     wait_serial(serial, re.escape(REFERENCE_PROMPT))
     commands = (
+        ("eventtest", None),
+        ("timertest", None),
+        ("semaphoretest", None),
+        ("handletest", None),
+        ("sxetest", "SXE SMOKE PASS"),
         ("sdkint32", "SDK32 static integer ABI PASS"),
         ("sdkintpie", "SDK32 shared integer ABI PASS"),
         ("vmtest32", "VM32 PASS"),
@@ -282,13 +288,26 @@ def check_shared(qmp_socket: Path, serial: Path) -> None:
     print("i386 memory objects and ELF32 shared libraries: PASS", flush=True)
 
 
+def check_windowd(qmp_socket: Path, serial: Path) -> None:
+    wait_serial(serial, re.escape(REFERENCE_PROMPT))
+    offset = len(serial.read_text(errors="replace"))
+    type_shell(qmp_socket, ("windowd --selftest",))
+    wait_serial(serial, r"DESKTOP SMOKE (?:PASS|FAIL).*?savanxp:/\$ ", offset, timeout=180)
+    text = serial.read_text(errors="replace")[offset:]
+    if "DESKTOP SMOKE FAIL" in text or "DESKTOP SMOKE PASS" not in text:
+        raise RuntimeError("reference window manager selftest failed; see serial.log")
+    if "user: exception #" in text or "kernel: fatal" in text:
+        raise RuntimeError("window manager selftest contained a process fault")
+    print("i386 reference window manager selftest: PASS", flush=True)
+
+
 def check_posix(qmp_socket: Path, serial: Path) -> None:
     """Run the reference shell and multicall apps, not the bring-up shell."""
     wait_serial(serial, re.escape(REFERENCE_PROMPT))
     commands = (
         ("posixtest32", r"POSIX PASS.*?savanxp:/\$ "),
         ("echo failed | missing", r"sh: command not found.*?savanxp:/\$ "),
-        ("sleep 10 | sleep 10 | sleep 10 | sleep 10 | sleep 10", r"sh: command not found.*?savanxp:/\$ "),
+        ("sleep 1 | sleep 1 | sleep 1 | sleep 1 | missing", r"sh: command not found.*?savanxp:/\$ "),
         ("posixtest32 audit", r"POSIX shell cleanup PASS.*?savanxp:/\$ "),
         ("fdtest", r"fdtest: ok.*?savanxp:/\$ "),
         ("waittest", r"waittest: ok.*?savanxp:/\$ "),
@@ -370,7 +389,7 @@ def check_processes(text: str) -> None:
             raise RuntimeError(f"missing process regression: {token}")
     # Prove the hardware denied each forbidden access for the expected reason.
     for address, error in ((0, 5), (0x08800000, 4), (0x00100000, 5),
-                           (0x40000000, 5), (0x08000000, 7), (0x08eff000, 6)):
+                           (0x40000000, 5), (0x08000000, 7), (0x0eeff000, 6)):
         if not re.search(rf"exception vector 14, error 0x{error:08x}, eip 0x[0-9a-f]+, "
                          rf"cs 0x00000023, cr2 0x{address:08x}", text):
             raise RuntimeError(f"missing page protection fault for {address:#x}, error {error}")
@@ -406,6 +425,7 @@ def run_boot(
     expect_posix: bool = False,
     persistence: str | None = None,
     expect_shared: bool = False,
+    expect_windowd: bool = False,
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -443,6 +463,7 @@ def run_boot(
     legacy_shell_requested = False
     posix_checked = False
     shared_checked = False
+    windowd_checked = False
     persistence_checked = False
     try:
         while time.monotonic() < deadline:
@@ -460,6 +481,10 @@ def run_boot(
             if persistence and not persistence_checked and REFERENCE_PROMPT in shell_transcript(text):
                 check_persistence(qmp_socket, serial, persistence)
                 persistence_checked = True
+                continue
+            if expect_windowd and not windowd_checked and REFERENCE_PROMPT in shell_transcript(text):
+                check_windowd(qmp_socket, serial)
+                windowd_checked = True
                 continue
             if expect_shared and not shared_checked and REFERENCE_PROMPT in shell_transcript(text):
                 check_shared(qmp_socket, serial)
@@ -519,7 +544,7 @@ def run_boot(
                     check_console_clear(qmp_socket, artifacts)
                     type_shell(qmp_socket, ("desktop",))
                     desktop_requested = True
-                if (not expect_shared or shared_checked) and (not persistence or persistence_checked) and (not expect_posix or posix_checked) and all(token in text for token in require) and all(
+                if (not expect_windowd or windowd_checked) and (not expect_shared or shared_checked) and (not persistence or persistence_checked) and (not expect_posix or posix_checked) and all(token in text for token in require) and all(
                     pattern.search(shell_transcript(text)) for pattern in patterns
                 ):
                     if expect_processes:
@@ -596,6 +621,7 @@ def main() -> int:
     parser.add_argument("--expect-persistence", choices=("write", "read"), help="isolated cold-boot persistence phase")
     parser.add_argument("--writable-disk", action="store_true", help="write to a disposable persistence-test image")
     parser.add_argument("--expect-shared", action="store_true", help="verify memory objects, heap and ELF32 libraries")
+    parser.add_argument("--expect-windowd", action="store_true", help="run the reference compositor/WM protocol selftest")
     parser.add_argument("--expect-posix", action="store_true", help="verify the reference shell, BusyBox and descriptor lifecycle")
     parser.add_argument("--expect-processes", action="store_true",
                         help="run multitest32 and prove PIT preemption, FPU preservation and process lifecycle")
@@ -640,6 +666,7 @@ def main() -> int:
     if not qemu:
         raise SystemExit("qemu-system-i386 was not found in PATH or SAVANXP_QEMU")
     with tempfile.TemporaryDirectory(prefix="savanxp-i386-boot.") as temporary:
+        iso = make_console_iso(iso, Path(temporary))
         serial = (args.artifacts or Path(temporary)) / "serial.log"
         command = [
             qemu,
@@ -683,7 +710,7 @@ def main() -> int:
             detail = " (userland program ran)"
         keys: tuple[tuple[str, int], ...] = ()
         qmp_socket: Path | None = None
-        if args.expect_shared or args.expect_posix or args.expect_persistence:
+        if args.expect_shared or args.expect_posix or args.expect_persistence or args.expect_windowd:
             qmp_socket = Path(temporary) / "qmp.sock"
             command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
         if args.expect_key:
@@ -727,7 +754,7 @@ def main() -> int:
             detail = " (desktop glyphs, PS/2 motion, buttons and cursor restoration)"
         run_boot(
             qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
-            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes, args.expect_posix, args.expect_persistence, args.expect_shared,
+            shell_commands, patterns, args.expect_desktop, args.artifacts, args.expect_processes, args.expect_posix, args.expect_persistence, args.expect_shared, args.expect_windowd,
         )
     return 0
 

@@ -2,16 +2,19 @@
 
 #include "savanxp/syscall.h"
 
-/* Minimal i386 desktop, launched as a child of the diagnostic or reference shell.
- * One fullscreen /dev/gpu0 client renders 64-row strips to keep its working
- * buffer at 256 KiB. The kernel composes the cursor over every presentation.
- * The window and taskbar are informational; there is no window manager. */
-
-#define DESKTOP_MAX_WIDTH 1024
-#define DESKTOP_STRIP_ROWS 64
-#define DESKTOP_FRAME_MS 250
-
-static uint32_t g_strip[DESKTOP_MAX_WIDTH * DESKTOP_STRIP_ROWS];
+/* Fullscreen diagnostic retained while validating the reference desktop.
+ * It uses the reference GPU byte-pitch ABI and owns its software cursor. */
+#define DESKTOP_MAX_WIDTH 1280
+#define DESKTOP_MAX_HEIGHT 800
+#define DESKTOP_FRAME_MS 100
+static uint32_t g_frame[DESKTOP_MAX_WIDTH * DESKTOP_MAX_HEIGHT];
+static const char* const kPointer[] = {
+    "o          ", "oo         ", "o#o        ", "o##o       ",
+    "o###o      ", "o####o     ", "o#####o    ", "o######o   ",
+    "o#######o  ", "o########o ", "o#####oooo ", "o##o#o     ",
+    "o#o o#o    ", "oo  o#o    ", "o    o#o   ", "     o#o   ",
+    "      o#o  ", "       oo  ",
+};
 
 static const char* const kTitle = "SavanXP Legacy";
 static const char* const kSubtitle = "i386 legacy target";
@@ -118,7 +121,7 @@ int main(void) {
         return 1;
     }
     if (gpu_get_info(fd, &gpu) < 0 || gpu.width == 0 || gpu.width > DESKTOP_MAX_WIDTH ||
-        gpu.height == 0 || gpu.bpp != 32) {
+        gpu.height == 0 || gpu.height > DESKTOP_MAX_HEIGHT || gpu.bpp != 32) {
         puts_out("desktop: unsupported /dev/gpu0 geometry\n");
         savanxp_close(fd);
         return 1;
@@ -131,7 +134,7 @@ int main(void) {
     }
     memset(&screen, 0, sizeof(screen));
     screen.width = gpu.width;
-    screen.height = DESKTOP_STRIP_ROWS;
+    screen.height = gpu.height;
     screen.pitch = gpu.width * 4u;
     screen.bpp = gpu.bpp;
     screen.buffer_size = screen.pitch * screen.height;
@@ -139,23 +142,30 @@ int main(void) {
     format_size(geometry, sizeof(geometry), gpu.width, gpu.height, gpu.bpp);
     puts_out("desktop: gpu ");
     puts_out(geometry);
-    puts_out(", framebuffer backend, 64-row strips\n");
+    puts_out(", reference framebuffer ABI\n");
 
     puts_out("desktop: ready\n");
+    int mouse = (int)savanxp_open_mode("/dev/mouse0", SAVANXP_OPEN_READ | SAVANXP_OPEN_NONBLOCK);
+    int x = gpu.width / 2, y = gpu.height / 2;
     for (;;) {
-        int y = 0;
-        while (y < (int)gpu.height) {
-            const int rows = ((int)gpu.height - y) < DESKTOP_STRIP_ROWS
-                                 ? (int)gpu.height - y
-                                 : DESKTOP_STRIP_ROWS;
-            draw_desktop(g_strip, &screen, y, (int)gpu.width, (int)gpu.height);
-            if (gpu_present_region(fd, g_strip, gpu.width, 0, (uint32_t)y,
-                                   gpu.width, (uint32_t)rows) < 0) {
-                puts_out("desktop: present failed\n");
-                savanxp_close(fd);
-                return 1;
-            }
-            y += rows;
+        struct savanxp_mouse_event event;
+        while (mouse >= 0 && savanxp_read(mouse, &event, sizeof(event)) == sizeof(event)) {
+            x += event.delta_x; y += event.delta_y;
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            if (x >= (int)gpu.width) x = gpu.width - 1;
+            if (y >= (int)gpu.height) y = gpu.height - 1;
+        }
+        draw_desktop(g_frame, &screen, 0, gpu.width, gpu.height);
+        for (int row = 0; row < 18 && y + row < (int)gpu.height; ++row)
+            for (int col = 0; col < 11 && x + col < (int)gpu.width; ++col)
+                if (kPointer[row][col] != ' ')
+                    g_frame[(y + row) * gpu.width + x + col] = kPointer[row][col] == '#'
+                        ? gfx_rgb(244, 248, 255) : gfx_rgb(16, 20, 24);
+        if (gpu_present(fd, g_frame) < 0) {
+            puts_out("desktop: present failed\n");
+            savanxp_close(fd);
+            return 1;
         }
         sleep_ms(DESKTOP_FRAME_MS);
     }

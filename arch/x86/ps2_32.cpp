@@ -111,20 +111,22 @@ bool g_ctrl = false;
 bool g_alt = false;
 bool g_extended = false;
 
-/* Assemble three-byte mouse packets; bit 3 resynchronizes the first byte. */
-uint8_t g_mouse_packet[3] = {};
+/* Assemble PS/2 packets; bit 3 resynchronizes the first byte. */
+uint8_t g_mouse_packet[4] = {};
 uint32_t g_mouse_packet_index = 0;
+uint32_t g_mouse_packet_length = 3;
 uint32_t g_mouse_buttons = 0;
+constexpr uint32_t kMouseQueueCapacity = 512;
+savanxp_mouse_event g_mouse_events[kMouseQueueCapacity];
+uint32_t g_mouse_head, g_mouse_count;
 
 /* Ultimo evento decodificado, para el log y la consola. */
 char g_last_ascii = 0;
 uint32_t g_last_key = SAVANXP_KEY_NONE;
 
-/* Cola de eventos para la syscall READ: la escribe solo la IRQ1 y la lee el
- * proceso unico desde el syscall handler. pop_event() protege su lectura con
- * cli (restaurando el IF previo) porque la espera de READ se hace con
- * interrupciones vivas; push() corre dentro de la IRQ, que ya esta con IF=0. */
-constexpr size_t kQueueCapacity = 64;
+/* IRQ1 produces raw events; device reads drain them and poll supplies waiting.
+ * Queue mutations preserve the caller's interrupt state. */
+constexpr size_t kQueueCapacity = 512;
 savanxp_input_event g_queue[kQueueCapacity] = {};
 size_t g_read_index = 0;
 size_t g_write_index = 0;
@@ -250,7 +252,8 @@ char ascii_for(uint8_t scancode, bool extended) {
 
 void push_event(uint32_t type, uint32_t key, int32_t ascii) {
     if (g_pending >= kQueueCapacity) {
-        return;
+        g_read_index = (g_read_index + 1) % kQueueCapacity;
+        --g_pending;
     }
     g_queue[g_write_index].type = type;
     g_queue[g_write_index].key = key;
@@ -347,7 +350,7 @@ void handle_mouse_byte(uint8_t byte) {
         return;
     }
     g_mouse_packet[g_mouse_packet_index++] = byte;
-    if (g_mouse_packet_index < 3) {
+    if (g_mouse_packet_index < g_mouse_packet_length) {
         return;
     }
     g_mouse_packet_index = 0;
@@ -375,7 +378,9 @@ void handle_mouse_byte(uint8_t byte) {
     if ((flags & kMousePacketMiddleButton) != 0) {
         buttons |= SAVANXP_MOUSE_BUTTON_MIDDLE;
     }
-    const bool changed = delta_x != 0 || delta_y != 0 || buttons != g_mouse_buttons;
+    const int32_t wheel = g_mouse_packet_length == 4
+        ? -static_cast<int32_t>(static_cast<int8_t>(g_mouse_packet[3])) : 0;
+    const bool changed = delta_x != 0 || delta_y != 0 || wheel != 0 || buttons != g_mouse_buttons;
     g_mouse_buttons = buttons;
     fb32::pointer_move(delta_x, -delta_y);
     fb32::pointer_set_buttons(buttons);
@@ -383,6 +388,13 @@ void handle_mouse_byte(uint8_t byte) {
     if (!changed) {
         return;
     }
+    if (g_mouse_count == kMouseQueueCapacity) {
+        const int32_t dropped_wheel = g_mouse_events[g_mouse_head].wheel;
+        g_mouse_head = (g_mouse_head + 1) % kMouseQueueCapacity;
+        --g_mouse_count;
+        g_mouse_events[g_mouse_head].wheel += dropped_wheel;
+    }
+    g_mouse_events[(g_mouse_head + g_mouse_count++) % kMouseQueueCapacity] = {delta_x, -delta_y, wheel, buttons, 0, 0, 0};
     int32_t pointer_x = 0;
     int32_t pointer_y = 0;
     fb32::pointer_position(pointer_x, pointer_y);
@@ -461,6 +473,17 @@ bool mouse_command(uint8_t command) {
            wait_reply(reply, true) && reply == kAck;
 }
 
+// IntelliMouse negotiation precedes reporting so ACKs cannot enter packets.
+bool enable_mouse_wheel() {
+    constexpr uint8_t rates[] = {200, 100, 80};
+    for (uint8_t rate : rates) {
+        if (!mouse_command(0xf3) || !mouse_command(rate)) return false;
+    }
+    uint8_t id = 0;
+    return mouse_command(0xf2) && wait_reply(id, true) && id == 3 &&
+        mouse_command(0xf3) && mouse_command(100);
+}
+
 }  // namespace
 
 bool has_pending_event() {
@@ -468,12 +491,8 @@ bool has_pending_event() {
 }
 
 bool pop_event(savanxp_input_event& out) {
-    /* Chequeo y extraccion atomicos respecto de la IRQ1: el consumidor
-     * corre con interrupciones vivas (la espera de READ usa sti;hlt), y sin
-     * este cli el contador g_pending se podria perder entre el ++ de la IRQ
-     * y el -- de aqui. El IF previo se restaura: en el syscall handler el
-     * gate llega con IF=0 y asi debe salir para que sti;hlt no pierda el
-     * despertar. */
+    /* Exclude the IRQ producer while consuming a record, preserving the
+     * caller's IF for both boot and syscall use. */
     const uint32_t flags = [&]() {
         uint32_t value;
         asm volatile("pushf; pop %0; cli" : "=r"(value) : : "memory");
@@ -495,10 +514,8 @@ bool pop_event(savanxp_input_event& out) {
 }
 
 void clear_queue() {
-    /* El vaciado es atomico contra la IRQ1: se apagan las interrupciones
-     * mientras se mueven los indices y se restaura el IF previo, igual que
-     * en pop_event(). Asi el vaciado no depende de quien llame: el cargador
-     * lo llama con IF=0, pero el IF previo se restaura igual. */
+    /* Reset both raw queues at boot/session boundaries atomically against
+     * keyboard and mouse IRQs, preserving the caller's IF. */
     const uint32_t flags = [&]() {
         uint32_t value;
         asm volatile("pushf; pop %0; cli" : "=r"(value) : : "memory");
@@ -507,6 +524,7 @@ void clear_queue() {
     g_read_index = 0;
     g_write_index = 0;
     g_pending = 0;
+    g_mouse_head = g_mouse_count = 0;
     g_last_ascii = 0;
     g_last_key = SAVANXP_KEY_NONE;
     if ((flags & (1u << 9)) != 0) {
@@ -539,6 +557,15 @@ int get_layout() {
     return g_normal == kNormalEn ? SAVANXP_KEYBOARD_LAYOUT_EN : SAVANXP_KEYBOARD_LAYOUT_ES;
 }
 
+bool has_mouse_event() { return g_mouse_count != 0; }
+bool pop_mouse_event(savanxp_mouse_event& event) {
+    if (!g_mouse_count) return false;
+    event = g_mouse_events[g_mouse_head];
+    g_mouse_head = (g_mouse_head + 1) % kMouseQueueCapacity;
+    --g_mouse_count;
+    return true;
+}
+
 void initialize() {
     /* Wait for controller responses: real hardware is slower than QEMU.
      * Self-test may reset the configuration, so disable ports again after it. */
@@ -562,8 +589,9 @@ void initialize() {
     controller_command(kCommandEnableKeyboard);
     controller_command(kCommandResetEnable);
     controller_command(kCommandEnableAux);
-    const bool mouse_ready = mouse_command(kMouseSetDefaults) &&
-                             mouse_command(kMouseEnableReporting);
+    const bool mouse_defaults = mouse_command(kMouseSetDefaults);
+    g_mouse_packet_length = mouse_defaults && enable_mouse_wheel() ? 4 : 3;
+    const bool mouse_ready = mouse_defaults && mouse_command(kMouseEnableReporting);
     discard_data();
     g_mouse_packet_index = 0;
 
@@ -575,7 +603,8 @@ void initialize() {
     }
 
     serial::write("ps2: teclado listo (irq 1, scancodes set 1)\n");
-    serial::write(mouse_ready ? "ps2: mouse ready (irq 12, 3-byte packets)\n"
+    serial::write(g_mouse_packet_length == 4 ? "ps2: mouse wheel enabled (4-byte packets)\n" : "ps2: mouse without wheel (3-byte packets)\n");
+    serial::write(mouse_ready ? "ps2: mouse ready (irq 12)\n"
                               : "ps2: mouse unavailable\n");
 }
 

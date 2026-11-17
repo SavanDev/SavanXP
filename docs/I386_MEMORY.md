@@ -2,7 +2,7 @@
 
 The active i386 kernel now uses the v0.4.0 section model for anonymous memory,
 heap arenas and library images. This is milestone 3 of [the port](I386_PORT.md),
-not a claim of complete v0.4.0 parity. The full SxGUI session is the next dependency.
+not a claim of complete v0.4.0 parity. The [graphics port](I386_GRAPHICS.md) builds on these contracts.
 
 ## Address space and ownership
 
@@ -15,8 +15,9 @@ reserved stack or its guard. Device identity mappings that overlap user space or
 the direct map are rejected; supporting other framebuffer placements needs an
 explicit kernel device mapping. RAM allocation remains limited to the first GiB.
 
-The user stack keeps its existing top, `0x09000000`, but reserves the reference
-1 MiB, with the permanent guard at `0x08eff000`. Only eight pages are initially
+The user stack now ends at `0x0f000000`, reserving the reference
+1 MiB with its permanent guard at `0x0eeff000`. Milestone 4 raised the original
+stack location to admit the reference graphics demos without shrinking their buffers. Only eight pages are initially
 resident. A user not-present page fault inside that reserve materializes a zeroed
 page and resumes the original context. Protection faults and accesses to the
 guard still terminate the task. Syscall validation does not grow absent buffers.
@@ -46,7 +47,7 @@ the reference's per-view rule.
 `fork` copies private image/stack pages and CPU/FPU state, retains shared views,
 clones `SAVANXP_VIEW_PRIVATE` sections and retains every descriptor with its
 original grant. Heap arenas and writable library segments use private views.
-The six-process capacity remains. Pipe handle queues use the reference four-slot
+Milestone 4 restores the reference 64-process capacity. Pipe handle queues use the reference four-slot
 ownership protocol: send retains, receive installs then releases the queue
 reference, a full descriptor table leaves the entry queued, and the final reader
 closing drains abandoned entries. I/O objects cannot be sent through this queue.
@@ -145,11 +146,10 @@ symbols, imported functions, shared text across simultaneously live processes,
 private spawned/forked data, all 61 nonstandard descriptors free after loading,
 and repeated partial-image rollback with fd 0 available.
 
-The full smoke includes this workload plus POSIX/shell, CPU/FPU/fault and minimal
-desktop glyph/input checks. It does not exercise SxGUI; that requires the GPU,
-window protocol and compositor port and restoration of `sxgui-smoke` in milestone
-4. The 64-process reference capacity, complete signal/object APIs and hardware
-coverage remain later parity work. The subsequent [SDK prerequisite](I386_SDK.md)
+The full smoke includes this workload plus POSIX/shell, CPU/FPU/fault and
+SxGUI glyph/input checks. [I386_GRAPHICS.md](I386_GRAPHICS.md) covers the restored
+reference desktop, 64-process capacity and waitable objects. Complete signal
+APIs and hardware coverage remain later parity work. The subsequent [SDK prerequisite](I386_SDK.md)
 corrects the inherited integer limits, parsers, aliases and format macros and
 adds static/shared integer-ABI checks to these scenarios. These tests do not
 certify every libc function. Passing memory and loader tests does not

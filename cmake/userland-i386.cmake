@@ -57,8 +57,7 @@ target_link_libraries(savanxp-i386-sh32 PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sh32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sh32 PROPERTIES OUTPUT_NAME sh32 SUFFIX "")
 
-# Fullscreen desktop, launched as a shell child; renders 64-row strips
-# through /dev/gpu0 to keep its working buffer small.
+# Fullscreen diagnostic retained beside the reference graphical session.
 add_executable(savanxp-i386-desktop32 subsystems/posix/userland/desktop32.c)
 target_include_directories(savanxp-i386-desktop32 PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -138,7 +137,7 @@ foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
 endforeach()
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    set(SAVANXP_I386_POSIX_TESTS sdkint32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest)
+    set(SAVANXP_I386_POSIX_TESTS sdkint32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest eventtest timertest semaphoretest handletest sxetest)
     foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
         savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
     endforeach()
@@ -153,6 +152,9 @@ add_custom_target(savanxp_i386_userland
 add_custom_target(savanxp_i386_diskfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_DISKFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/bin"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
+            --project-root "${CMAKE_SOURCE_DIR}" --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "$<TARGET_FILE:savanxp-i386-sysinfo>" "${SAVANXP_DISKFS_ROOT}/bin/sysinfo"
     COMMAND "${CMAKE_COMMAND}" -E copy
@@ -199,7 +201,9 @@ foreach(name IN LISTS SAVANXP_I386_LIBRARIES)
 endforeach()
 add_custom_target(savanxp_i386_initramfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}" "${SAVANXP_ROOTFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin" "${SAVANXP_ROOTFS_ROOT}/lib"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/bin" "${SAVANXP_ROOTFS_ROOT}/bin"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/lib" "${SAVANXP_ROOTFS_ROOT}/lib"
     COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/rootfs/README" "${SAVANXP_ROOTFS_ROOT}/README"
     ${SAVANXP_I386_ROOT_STRIP_COMMANDS}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"

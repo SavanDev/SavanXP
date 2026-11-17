@@ -71,10 +71,11 @@ static int read_line(void) {
 
     g_length = 0;
     for (;;) {
+        struct savanxp_pollfd input_poll = {0, SAVANXP_POLLIN, 0};
+        if (savanxp_poll(&input_poll, 1, -1) < 0) return 1;
         const long received = savanxp_read(0, &event, sizeof(event));
         if (received != (long)sizeof(event)) {
-            /* La syscall READ bloquea en el kernel; un error real (-errno)
-             * se reporta y se sigue leyendo. El shell no sale por un error. */
+            /* poll blocks; a raw-device read only drains pending events. */
             if (received < 0) {
                 puts_out("sh32: read fallo\n");
             }
@@ -261,7 +262,7 @@ static int run_command(int argc, char* argv[]) {
         unsigned int rows = 25;
         memset(&info, 0, sizeof(info));
         if (system_info(&info) == 0 && info.framebuffer_bpp == 32 &&
-            info.framebuffer_height >= 16 && info.framebuffer_height <= 768) {
+            info.framebuffer_height >= 16) {
             rows = info.framebuffer_height / 16;
         }
         for (unsigned int line = 0; line < rows; ++line) {

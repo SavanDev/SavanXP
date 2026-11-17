@@ -352,7 +352,14 @@ unsigned long uptime_ms(void) {
 }
 
 unsigned long long monotonic_ns(void) {
+#if defined(__i386__)
+    /* Wide scalar returns use EDX:EAX, like the i386 C ABI. */
+    unsigned long low, high;
+    __asm__ volatile("int $0x80" : "=a"(low), "=d"(high) : "a"(SAVANXP_SYS_MONOTONIC_NS) : "memory", "cc");
+    return ((unsigned long long)high << 32) | low;
+#else
     return (unsigned long long)syscall0(SAVANXP_SYS_MONOTONIC_NS);
+#endif
 }
 
 long clear_screen(void) {

@@ -61,3 +61,6 @@ ports/*
 ports/doomgeneric/wad/*.wad
 !ports/doomgeneric/wad/
 !ports/doomgeneric/wad/README.md
+
+!tools/i386_console_iso.py
+!tools/i386_graphics_test.py

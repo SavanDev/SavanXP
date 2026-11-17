@@ -10,7 +10,11 @@ SCENARIOS = {
     "shared-memory": "memory objects and ELF32 libraries with 32 MiB RAM",
     "posix": "reference shell, BusyBox, file descriptors, pipes, inheritance and cleanup",
     "memory": "32 MiB RAM, user fault isolation, page protection and ENOMEM rollback",
-    "desktop": "desktop glyphs, mouse motion/buttons and cursor restoration",
+    "desktop": "reference window manager, Program Manager and taskbar",
+    "windowd-smoke": "reference WM/surface protocol, capacity, reconnect and fullscreen selftest",
+    "sxgui-smoke": "built SxGUI editor glyphs, taskbar label and wheel/scrollbar interaction",
+    "taskbar": "reference taskbar activation, minimization and window state",
+    "calc-smoke": "reference shared-library calculator and visible result",
     "legacy-cpu": "QMP assertion that qemu32 exposes no long mode or NX",
 }
 

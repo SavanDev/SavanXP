@@ -2,7 +2,7 @@
 
 // A sparse-on-disk ELF with enough resident BSS to force partial-load failure
 // on the 32 MiB regression machine. The normal process table still bounds it.
-static volatile unsigned char g_memory[12 * 1024 * 1024];
+static volatile unsigned char g_memory[4 * 1024 * 1024];
 
 int main(int argc, char** argv) {
     for (unsigned int index = 0; index < sizeof(g_memory); index += 4096)

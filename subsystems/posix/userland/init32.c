@@ -6,11 +6,16 @@ static int launch(const char* path) {
     const char* arguments[] = {path};
     long pid = spawn(path, arguments, 1);
     int status = 0;
-    if (pid < 0 || savanxp_waitpid((int)pid, &status) != pid) {
+    if (pid < 0) {
         puts_out("init32: launch/wait failed\n");
         return 1;
     }
-    return status;
+    // PID 1 also reaps orphans from a diagnostic child, like the real init.
+    for (;;) {
+        const long reaped = savanxp_waitpid(SAVANXP_WAIT_ANY, &status);
+        if (reaped == pid) return status;
+        if (reaped < 0) return 1;
+    }
 }
 
 int main(void) {

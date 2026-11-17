@@ -1,6 +1,9 @@
 #include "io.hpp"
 
 #include "fb32.hpp"
+#include "kernel/device.hpp"
+#include "kernel/display.hpp"
+#include "kernel/ui.hpp"
 #include "kernel/string.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/vfs.hpp"
@@ -19,9 +22,9 @@ constexpr uint32_t kPipeCount = 64, kPipeCapacity = 8192, kChunk = 256;
 object::IoObject g_objects[object::kMaxIoObjects];
 ::process::Pipe g_pipes[kPipeCount];
 uint8_t g_pipe_storage[kPipeCount][kPipeCapacity];
-object::IoObject* g_gpu;
-vfs::Vnode* g_gpu_node;
+const vfs::Vnode* g_gpu_node;
 vfs::Vnode* g_input_node;
+vfs::Vnode* g_mouse_node;
 tty::TtyDevice g_tty;
 
 object::IoObject* lookup(const process::Process& task, uint32_t fd, uint32_t access = object::access_query) {
@@ -45,10 +48,7 @@ void destroy(object::Header* header) {
         }
         if (!pipe.reader_refs && !pipe.writer_refs) memset(&pipe, 0, sizeof(pipe));
     }
-    if (file == g_gpu) {
-        g_gpu = nullptr;
-        fb32::console_set_enabled(true);
-    }
+    if (file->device) device::close(file->device);
     memset(file, 0, sizeof(*file));
 }
 
@@ -117,12 +117,22 @@ void feed_tty(const savanxp_input_event& event) {
 
 int try_read(process::Process& task, object::IoObject& file, uint32_t buffer, uint32_t count) {
     if (file.kind == HandleKind::tty) return tty_read(task, buffer, count);
-    if (file.kind == HandleKind::device && file.node == g_input_node) {
-        if (count < sizeof(savanxp_input_event)) return -SAVANXP_EINVAL;
-        savanxp_input_event event = {};
-        if (!ps2_32::pop_event(event)) return kBlocked;
-        paging::copy_to_user(task.directory, buffer, &event, sizeof(event));
-        return sizeof(event);
+    if (file.kind == HandleKind::device && (file.node == g_input_node || file.node == g_mouse_node)) {
+        const bool mouse = file.node == g_mouse_node;
+        const uint32_t stride = mouse ? sizeof(savanxp_mouse_event) : sizeof(savanxp_input_event);
+        if (count < stride) return -SAVANXP_EINVAL;
+        uint32_t copied = 0;
+        while (count - copied >= stride) {
+            savanxp_mouse_event pointer;
+            savanxp_input_event key;
+            if (mouse ? !ps2_32::pop_mouse_event(pointer) : !ps2_32::pop_event(key)) break;
+            paging::copy_to_user(task.directory, buffer + copied,
+                mouse ? static_cast<const void*>(&pointer) : static_cast<const void*>(&key), stride);
+            copied += stride;
+        }
+        // Reference devices drain their queues and return zero when empty.
+        // poll supplies the blocking wait; draining must not suspend windowd.
+        return copied;
     }
     if (file.kind == HandleKind::pipe) {
         auto& pipe = *file.pipe;
@@ -171,7 +181,14 @@ int evaluate_poll(process::Process& task) {
         entry.revents = 0;
         if (entry.fd < 0) continue;
         auto* file = lookup(task, static_cast<uint32_t>(entry.fd));
-        if (!file) { entry.revents = SAVANXP_POLLNVAL; ++ready; continue; }
+        if (!file) {
+            auto* header = static_cast<uint32_t>(entry.fd) < kMaxHandles ? task.handles[entry.fd].object : nullptr;
+            if (header && header->waitable && (task.handles[entry.fd].granted_access & object::access_synchronize)) {
+                if (object::can_satisfy_wait(header)) entry.revents = entry.events & SAVANXP_POLLIN;
+            } else entry.revents = SAVANXP_POLLNVAL;
+            if (entry.revents) ++ready;
+            continue;
+        }
         bool readable = false, writable = false;
         if (file->kind == HandleKind::pipe) {
             const auto& pipe = *file->pipe;
@@ -188,6 +205,8 @@ int evaluate_poll(process::Process& task) {
             writable = true;
         } else if (file->kind == HandleKind::device && file->node == g_input_node) {
             readable = ps2_32::has_pending_event();
+        } else if (file->kind == HandleKind::device && file->node == g_mouse_node) {
+            readable = ps2_32::has_mouse_event();
         } else if (file->kind == HandleKind::vnode) {
             readable = writable = true;
         }
@@ -231,7 +250,8 @@ int install_object(process::Process& task, object::Header* header, uint32_t acce
 
 void initialize() {
     g_input_node = vfs::install_external_file("/dev/input0", vfs::Backend::device, nullptr, 0, true);
-    g_gpu_node = vfs::install_external_file("/dev/gpu0", vfs::Backend::device, nullptr, 0, true);
+    g_mouse_node = vfs::install_external_file("/dev/mouse0", vfs::Backend::device, nullptr, 0, false);
+    g_gpu_node = vfs::resolve("/dev/gpu0");
 }
 
 bool initialize_handles(process::Process& child, const process::Process* parent, int stdin_fd, int stdout_fd) {
@@ -297,18 +317,18 @@ int open(process::Process& task, const char* path, uint32_t flags) {
     auto* node = vfs::open(path, flags);
     if (!node) return -vfs::last_error();
     if (node == g_gpu_node) {
-        if (!fb32::ready()) return -SAVANXP_ENODEV;
-        if (g_gpu) return -SAVANXP_EBUSY;
+        if (!display::ready()) return -SAVANXP_ENODEV;
     }
     if (node->type == vfs::NodeType::directory && (flags & SAVANXP_OPEN_WRITE)) return -SAVANXP_EISDIR;
     if (!(flags & (SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE))) flags |= SAVANXP_OPEN_READ;
     auto* file = allocate(node->backend == vfs::Backend::device ? HandleKind::device : HandleKind::vnode, flags);
     if (!file) return -SAVANXP_ENOMEM;
     file->node = node;
+    if (node == g_gpu_node) file->device = static_cast<device::Device*>(node->data);
     if (flags & SAVANXP_OPEN_APPEND) file->offset = node->size;
     const int result = install(task, file);
     if (result < 0) { memset(file, 0, sizeof(*file)); return result; }
-    if (node == g_gpu_node) { g_gpu = file; serial::write("gpu0: opened by userland\n"); }
+    if (node == g_gpu_node) serial::write("gpu0: opened by userland\n");
     return result;
 }
 
@@ -447,7 +467,7 @@ int poll(process::Process& task, uint32_t array, uint32_t count, int32_t timeout
 }
 
 void service() {
-    bool raw_reader = false;
+    bool raw_reader = ui::graphics_active();
     for (uint32_t index = 0; index < process::kCapacity; ++index) {
         auto& task = *process::at(index);
         // A raw-input client owns keyboard delivery while it is the consumer
@@ -534,7 +554,7 @@ bool input_descriptor(process::Process& task, uint32_t fd, bool writable) {
 
 bool gpu_descriptor(process::Process& task, uint32_t fd) {
     const auto* file = lookup(task, fd);
-    return file && file == g_gpu;
+    return file && file->node == g_gpu_node;
 }
 void clear_console() {
     memset(&g_tty, 0, sizeof(g_tty));

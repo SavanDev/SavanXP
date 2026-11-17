@@ -62,8 +62,9 @@ def main() -> int:
         assert "master" in run("build", success=False, environment=bad_arch).stderr
         assert "not ported" in run("run", "--virtio", success=False).stderr
         assert "one CPU" in run("run", "--smp", "2", success=False).stderr
-        assert "not ported" in run("smoke", "sxgui-smoke", success=False).stderr
-        assert "processes" in run("smoke", "--list").stdout
+        assert "not ported" in run("smoke", "audio-smoke", success=False).stderr
+        catalog = run("smoke", "--list").stdout
+        assert "processes" in catalog and "sxgui-smoke" in catalog
     print("i386 default build/run workflow: PASS")
     return 0
 

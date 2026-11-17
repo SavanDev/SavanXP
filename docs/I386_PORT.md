@@ -70,13 +70,14 @@ must be accounted for in that review rather than silently dropping features.
 The graph links the i386 boot/CPU, paging, process, console, input and syscall
 implementation with the shared ATA, block, partition, filesystem, SxFS, VFS and
 runtime modules. `cmake/userland-i386.cmake` builds the SDK runtime and static
-`init32`, the reference `sh`/BusyBox subset, core tools, `sysinfo`, `sh32` and
-`desktop32`, plus optional process, memory and POSIX diagnostics.
+the reference graphical `init`, compositor/WM and applications, shared graphics
+libraries, `sh`/BusyBox and core tools, plus optional diagnostics. `init32`,
+`sh32` and `desktop32` remain explicit diagnostic programs.
 The default disk is `build/disk.img`, the ISO is `build/SavanXP.iso`, and the
 CMake cache is `build/linux-i386`. See [BUILD_CMAKE.md](BUILD_CMAKE.md).
 
 Private process maps/stacks, eager x87/SSE state, PIT preemption and spawn/wait/
-exit are implemented. Six process slots use allocator-backed 4 KiB user pages
+exit are implemented. Sixty-four process slots use allocator-backed 4 KiB user pages
 below the supervisor direct map; user faults terminate only their
 process. ELF write permissions, unmapped holes and a stack guard are enforced;
 supervisor mappings remain protected without NX. The reference descriptor model,
@@ -85,7 +86,8 @@ regular-file/directory operations, byte pipes, canonical TTY, polling and
 [I386_PROCESSES.md](I386_PROCESSES.md)
 defines the exact current guarantees. Section views, growing heaps, demand-grown stacks and the embedded ELF32
 library loader are usable; [I386_MEMORY.md](I386_MEMORY.md) defines their scope.
-The full window manager and SxGUI are not linked into this kernel.
+The reference window manager, compositor and SxGUI run on i386;
+[I386_GRAPHICS.md](I386_GRAPHICS.md) defines their ownership, input and verification contracts.
 
 ## Ordered next milestones
 
@@ -101,8 +103,9 @@ changes, and record implementation/verification evidence as work lands.
    loads roll back, exit reclaims pages, and 4 KiB permissions/guards protect
    user and supervisor memory without NX. `./build.sh smoke memory` exercises
    partial-load `ENOMEM` on 32 MiB. [Mechanism and evidence](I386_PORT_STUDY.md#7-fault-containment-and-allocator-backed-user-pages).
-   The six-slot table remains a bound. Milestone 3 extends the original virtual
-   window and restores section objects, heap growth and stack-demand behavior. This closes the milestone, not v0.4.0 parity.
+   Milestone 3 extends the original virtual window and restores section
+   objects, heap growth and stack-demand behavior; milestone 4 raises the
+   original six-slot process bound to the reference 64. This closes the milestone, not v0.4.0 parity.
 2. **File descriptors and the POSIX base — completed.** Per-process descriptor
    tables and shared I/O objects support files/directories, canonical console
    input, byte pipes, standard-channel inheritance, polling, `exec` and process
@@ -110,7 +113,8 @@ changes, and record implementation/verification evidence as work lands.
    as static ELF32, including pipelines and redirection. `smoke posix` checks
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
-   The existing six-slot limit still bounds pipeline capacity; complete signal/object APIs remain parity gaps. [Contracts and limits](I386_POSIX.md).
+   Milestone 4 restores the reference process bound and event/timer/semaphore
+   waits; full signal/accounting parity remains outstanding. [Contracts and limits](I386_POSIX.md).
 3. **Memory objects and ELF32 shared libraries — completed.**
    Reference section objects/views, growing heaps, private/shared fork and
    demand-grown stacks support ELF32 PIE and the embedded dependency loader.
@@ -122,11 +126,14 @@ changes, and record implementation/verification evidence as work lands.
    64-bit conversions and integer formatted I/O now follow the i386 data model.
    `sdkint32`/`sdkintpie` exercise static and shared runtime calls in the shared
    smokes. [SDK contract and tests](I386_SDK.md).
-4. **Graphics stack and full desktop — next.** Port the GPU/surface APIs, SxGUI,
-   compositor/window manager and client protocols; then restore taskbar,
-   Program Manager and applications. Keep the minimal desktop as a regression
-   until the full session passes glyph/input/ownership checks.
-5. **Device services and applications.** Port audio, networking, ACPI/power
+4. **Graphics stack and full desktop — completed.** The default boot runs the
+   reference init, compositor/WM, taskbar, Program Manager and applications as
+   ELF32, using shared SxGFX/Gfx2D/SxGUI libraries. Surface ownership, waitable
+   events, input draining/wheel packets and 64 process slots support the unchanged
+   rendering/client code. `windowd-smoke` covers capacity, reconnect and fullscreen;
+   `sxgui-smoke` checks editor/taskbar glyphs and input. `desktop32` remains an
+   explicit diagnostic. [Contracts and limits](I386_GRAPHICS.md).
+5. **Device services and applications — next.** Port audio, networking, ACPI/power
    and remaining storage/input backends with guest regressions. Restore Doom,
    Ccleste, FFmpeg and the other applications as their dependencies become ready.
    The static Doom build currently verifies installation/persistence only.
@@ -152,8 +159,8 @@ Run `./build.sh build`, `./build.sh smoke`, `./build.sh smoke memory`,
 `./tools/verify_doom_persistence.sh` for build/persistence changes. Run
 `python3 tools/verify_posix_persistence.py` for changes to guest file I/O,
 descriptor ownership or the POSIX base. The default
-smoke checks the current i386 shell, preemption, lifecycle and minimal desktop
-against the new binaries. Unsupported x86_64 smoke scenarios fail explicitly;
-restore them alongside the subsystem they actually verify. When SxGUI lands,
-restore `sxgui-smoke` and its glyph assertions before declaring the toolkit
-usable. A successful loader-only smoke is not evidence of drawing.
+smoke checks the i386 shell, memory/libraries, preemption and lifecycle before
+booting the real session for SxGUI glyph/input assertions. Console checks use an
+explicit disposable `console-init` ISO; normal boot starts graphical init.
+Unsupported scenarios fail explicitly until their subsystem is ported. A
+successful loader-only smoke is not evidence of drawing.

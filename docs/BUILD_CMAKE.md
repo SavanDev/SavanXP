@@ -23,6 +23,10 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke shared
 ./build.sh smoke shared-memory
 ./build.sh smoke desktop
+./build.sh smoke windowd-smoke
+./build.sh smoke sxgui-smoke
+./build.sh smoke taskbar
+./build.sh smoke calc-smoke
 ./build.sh smoke legacy-cpu
 ./build.sh test
 ./build.sh clean
@@ -32,7 +36,7 @@ The default build directory is `build/linux-i386`; output goes to `build`.
 `build` compiles the kernel/userland, packs the CPIO root and updates `disk.img`. `iso`, `run`
 and `debug` also prepare the disk and build a GRUB2 BIOS ISO. The ISO does not
 embed the disk. It loads `initramfs.cpio` as a Multiboot2 module for the reference
-`/bin` and `/README`; the current init32 boot policy requires the IDE disk. `run` launches
+`/bin` and `/README`; the current boot policy requires the IDE disk and starts the reference graphical init. `run` launches
 `qemu-system-i386` with SeaBIOS/i440FX, `qemu32`, standard VGA, PS/2 and one CPU.
 `debug` adds `-s -S`. There is no UEFI firmware or Limine download.
 
@@ -71,17 +75,18 @@ SMP values other than one and virtio are rejected until those features are porte
 ISO and a snapshot of the normal disk. It checks the reference shell/BusyBox and
 POSIX base, then runs the diagnostic shell for keyboard,
 concurrent CPU workers, spawn/wait/exit, contained user faults, page protection,
-shell restart, desktop glyphs, PS/2
-buttons and cursor restoration. The default timeout is 360 seconds. Logs/screenshots stay in a unique directory
-under `build/smoke-logs`. `smoke --list` lists supported cases. Former x86_64
-scenarios such as `sxgui-smoke` and `windowd-smoke` are unavailable until their
-subsystems have been ported; the minimal desktop check does not prove SxGUI.
+shell restart, then boots the reference desktop for SxGUI glyphs, PS/2 wheel
+and scrollbar checks. Console regressions use a disposable `console-init` ISO
+derived from the exact normal ISO; the default boot remains graphical. The default timeout is 360 seconds. Logs/screenshots stay in a unique directory
+under `build/smoke-logs`. `smoke --list` lists supported cases. `windowd-smoke` runs the restored protocol/capacity/reconnect selftest;
+`sxgui-smoke` checks editor/taskbar glyphs against built fonts. `taskbar` and
+`calc-smoke` exercise the reference UI. See [I386_GRAPHICS.md](I386_GRAPHICS.md).
 
 `./build.sh smoke memory` runs the process/fault regression with 32 MiB of RAM.
 It requires partial ELF allocation to fail with `ENOMEM`, retries it without page
 leaks, and verifies surviving children, page reclamation and slot reuse. The
 normal 1 GiB smoke exercises table exhaustion instead. `multitest32` and its
-12 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
+4 MiB BSS helper `memhog32` are diagnostic apps gated by `SAVANXP_INCLUDE_TEST_APPS`.
 
 `./build.sh smoke shared` checks memory sections, heap growth, private/shared
 fork, the SDK's native/64-bit integer ABI and real ELF32 dependency calls.

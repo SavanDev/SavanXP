@@ -6,11 +6,16 @@
 #include "kernel/partition.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/vfs.hpp"
+#include "kernel/string.hpp"
 
 #include "boot_state.hpp"
 #include "cpu.hpp"
 #include "egatext.hpp"
 #include "fb32.hpp"
+#include "kernel/display.hpp"
+#include "kernel/device.hpp"
+#include "kernel/fb_gpu.hpp"
+#include "kernel/gpu_device.hpp"
 #include "multiboot2.hpp"
 #include "memory.hpp"
 #include "io.hpp"
@@ -315,7 +320,7 @@ namespace {
 
 /* Programa del MVP: es el primero que el kernel i386 ejecuta en ring 3, asi
  * que tiene que ser uno que solo use syscalls de escritura y de consulta. */
-constexpr const char* kUserProgramPath = "/disk/bin/init32";
+const char* g_user_program_path = "/bin/init";
 
 }
 
@@ -379,6 +384,10 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
         }
         switch (static_cast<TagType>(type)) {
             case TagType::cmdline:
+                // An explicit diagnostic boot keeps the console regression
+                // suite available without changing normal desktop startup.
+                if (strcmp(reinterpret_cast<const char*>(tag + 8), "console-init") == 0)
+                    g_user_program_path = "/disk/bin/init32";
                 serial::write("cmdline: '");
                 write_tag_string(tag);
                 serial::write("'\n");
@@ -423,12 +432,24 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     initialize_video();
 
     mount_root_filesystem();
+    device::initialize();
+    boot::FramebufferInfo framebuffer = {};
+    framebuffer.address = reinterpret_cast<void*>(static_cast<uintptr_t>(fb32::address()));
+    framebuffer.width = fb32::info().width;
+    framebuffer.height = fb32::info().height;
+    framebuffer.pitch = fb32::info().pitch;
+    framebuffer.bpp = fb32::info().bpp;
+    framebuffer.available = fb32::ready();
+    framebuffer.mapped_bytes = fb32::info().buffer_size;
+    display::register_driver(fb_gpu::driver());
+    display::bind_best(framebuffer);
+    gpu_device::initialize();
     io::initialize();
 
     serial::write("I386 BOOT OK\n");
 
     // Userland init owns boot policy; the kernel only starts its first process.
-    user32::run(kUserProgramPath);
+    user32::run(g_user_program_path);
 
     for (;;) {
         asm volatile("hlt");
