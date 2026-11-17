@@ -48,6 +48,13 @@ configure expands compiler flags without quoting. Set
 `SAVANXP_VERIFY_SIGNATURE=1` to additionally download and verify the release
 signature with GPG; the archive SHA-256 is always mandatory.
 
+On this branch the target is `x86_32`/ELF32 with a 16-byte call-stack ABI.
+The native runtime supplies ELF32 startup and 64-bit integer division helpers;
+upstream FFmpeg remains unpatched. Once the engine is available, the normal
+CMake build includes Media Player. `./build.sh smoke media-smoke` checks audio,
+video, seeking/synchronization and an actually presented frame; see
+[the service contract](../../docs/I386_SERVICES.md).
+
 The build produces one artifact:
 
 ```text

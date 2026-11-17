@@ -1,6 +1,13 @@
 #include "syscall.hpp"
 #include "waits.hpp"
+#include "services.hpp"
+#include "kernel/rtc.hpp"
+#include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
+#include "kernel/net.hpp"
+#include "kernel/pci.hpp"
+#include "kernel/pcspeaker.hpp"
+#include "kernel/timer.hpp"
 
 #include <stdint.h>
 
@@ -61,8 +68,18 @@ void copy_text(char* destination, size_t capacity, const char* source) {
 
 void handle(ContextFrame& frame) {
     // SDK arguments occupy EDI, ESI, EDX, ECX and EBX on i386.
+    if (native_syscall(frame)) return;
     if (waits::syscall(frame)) return;
     switch (frame.eax) {
+        case SAVANXP_SYS_SOCKET:
+            frame.eax = io::socket(*process::current(), frame.edi, frame.esi, frame.edx); return;
+        case SAVANXP_SYS_BIND:
+        case SAVANXP_SYS_CONNECT:
+        case SAVANXP_SYS_SETSOCKOPT:
+        case SAVANXP_SYS_SENDTO:
+        case SAVANXP_SYS_RECVFROM:
+            frame.eax = io::socket_call(*process::current(), frame.eax, frame.edi,
+                frame.esi, frame.edx, frame.ecx, frame.ebx); return;
         case SAVANXP_SYS_FORK:
             frame.eax = process::fork(frame); return;
         case SAVANXP_SYS_PIPE_SEND_HANDLE:
@@ -218,6 +235,46 @@ void handle(ContextFrame& frame) {
             } else frame.eax = io::mutate(resolved, frame.eax, frame.esi);
             return;
         }
+        case SAVANXP_SYS_REALTIME: {
+            if (!is_user_range(frame.edi, sizeof(savanxp_realtime), true)) { frame.eax = failure(SAVANXP_EFAULT); return; }
+            savanxp_realtime value = {};
+            const bool valid = rtc::read_time(&value);
+            memcpy(reinterpret_cast<void*>(frame.edi), &value, sizeof(value));
+            frame.eax = valid ? 0 : failure(SAVANXP_EIO); return;
+        }
+        case SAVANXP_SYS_FSCHECK: {
+            if (!is_user_range(frame.edi, sizeof(savanxp_fscheck_report), true)) {
+                frame.eax = failure(SAVANXP_EFAULT); return;
+            }
+            sxfs::CheckReport report = {};
+            if (!sxfs::check(sxfs::root(), report)) { frame.eax = failure(SAVANXP_EIO); return; }
+            savanxp_fscheck_report out = {};
+            out.total_sectors = report.total_sectors;
+            out.data_lba = report.data_lba;
+            out.sequence = report.sequence;
+            out.journal_pending = report.journal_pending;
+            out.clean_shutdown = report.clean_shutdown;
+            out.journal_valid = report.journal_valid;
+            out.inodes_allocated = report.inodes_allocated;
+            out.files = report.files;
+            out.directories = report.directories;
+            out.data_sectors = report.data_sectors;
+            out.data_used_sectors = report.data_used_sectors;
+            out.data_claimed_sectors = report.data_claimed_sectors;
+            out.leaked_blocks = report.leaked_blocks;
+            out.lost_blocks = report.lost_blocks;
+            out.double_claimed = report.double_claimed_blocks;
+            out.metadata_unmarked = report.metadata_unmarked;
+            out.orphan_inodes = report.orphan_inodes;
+            out.alias_inodes = report.alias_inodes;
+            out.duplicate_names = report.duplicate_names;
+            out.bad_dir_entries = report.bad_dir_entries;
+            out.unreadable_dirs = report.unreadable_dirs;
+            out.metadata_commits = report.metadata_commits;
+            out.metadata_bytes_written = report.metadata_bytes_written;
+            memcpy(reinterpret_cast<void*>(frame.edi), &out, sizeof(out));
+            frame.eax = 0; return;
+        }
         case SAVANXP_SYS_PROC_INFO: {
             if (!is_user_range(frame.esi, sizeof(savanxp_process_info), true)) { frame.eax = failure(SAVANXP_EFAULT); return; }
             uint32_t index = 0;
@@ -226,6 +283,7 @@ void handle(ContextFrame& frame) {
                 if (task.state == process::State::unused) continue;
                 if (index++ != frame.edi) continue;
                 savanxp_process_info info = {};
+                info.cpu_ticks = task.cpu_ticks;
                 info.pid = task.pid; info.parent_pid = task.parent; info.exit_code = task.exit_status;
                 const uint32_t states[] = {SAVANXP_PROC_UNUSED, SAVANXP_PROC_READY, SAVANXP_PROC_RUNNING,
                     SAVANXP_PROC_SLEEPING, SAVANXP_PROC_BLOCKED_READ, SAVANXP_PROC_BLOCKED_WRITE,
@@ -250,7 +308,7 @@ void handle(ContextFrame& frame) {
                 else frame.eax = failure(SAVANXP_ENOTTY);
                 return;
             }
-            if (!io::gpu_descriptor(*process::current(), frame.edi)) {
+            if (frame.edi >= io::kMaxHandles || !object::as_io(process::current()->handles[frame.edi].object)) {
                 frame.eax = failure(SAVANXP_EBADF);
                 return;
             }
@@ -283,9 +341,7 @@ void handle(ContextFrame& frame) {
             return;
         }
         case kSysSystemInfo: {
-            /* Todo lo que el arranque annoto mas el estado real del volumen; lo
-             * que aun no existe (reloj, PCI, red) se queda en cero y el
-             * programa lo ve como tal. */
+            // Combine the recorded boot handoff with live service state.
             struct savanxp_system_info info = {};
             const boot_state::State& boot = boot_state::state();
             const sxfs::VolumeId volume = sxfs::root();
@@ -294,6 +350,32 @@ void handle(ContextFrame& frame) {
             copy_text(info.bootloader_version, sizeof(info.bootloader_version), boot.bootloader_version);
             copy_text(info.firmware, sizeof(info.firmware), boot.firmware);
 
+            info.input_ready = 1;
+            info.net_present = net::present();
+            info.speaker_ready = pcspeaker::ready();
+            info.pci_device_count = pci::device_count();
+            info.cpu_ticks_total = pit::ticks();
+            info.cpu_khz = timer::tsc_khz();
+            arch::x86_64::CpuIdentity identity = {};
+            arch::x86_64::query_cpu_identity(identity);
+            static_assert(arch::x86_64::kCpuFeatureSse2 == SAVANXP_CPU_FEATURE_SSE2 &&
+                arch::x86_64::kCpuFeaturePae == SAVANXP_CPU_FEATURE_PAE &&
+                arch::x86_64::kCpuFeatureNx == SAVANXP_CPU_FEATURE_NX &&
+                arch::x86_64::kCpuFeatureLongMode == SAVANXP_CPU_FEATURE_LONG_MODE &&
+                arch::x86_64::kCpuFeatureX2Apic == SAVANXP_CPU_FEATURE_X2APIC &&
+                arch::x86_64::kCpuFeatureHypervisor == SAVANXP_CPU_FEATURE_HYPERVISOR);
+            info.cpu_features = identity.features;
+            memcpy(info.cpu_vendor, identity.vendor, sizeof(info.cpu_vendor));
+            memcpy(info.cpu_brand, identity.brand, sizeof(info.cpu_brand));
+            for (size_t index = 0; index < pci::device_count(); ++index) {
+                pci::DeviceInfo device = {};
+                if (pci::device_info(index, device) && device.class_code == 2) {
+                    info.net_hardware = 1;
+                    info.net_hardware_vendor = device.vendor_id;
+                    info.net_hardware_device = device.device_id;
+                    break;
+                }
+            }
             info.framebuffer_ready = boot.framebuffer_ready;
             info.framebuffer_width = boot.framebuffer_width;
             info.framebuffer_height = boot.framebuffer_height;

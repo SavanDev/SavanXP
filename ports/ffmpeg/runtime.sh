@@ -9,7 +9,7 @@ rm -rf "$SYSROOT"
 mkdir -p "$SYSROOT/include"
 cp -R "$SDK/include/." "$SYSROOT/include/"
 cp -R "$REPO/include/." "$SYSROOT/include/"
-cp "$SDK/linker.ld" "$SYSROOT/linker.ld"
+cp "$SDK/linker32.ld" "$SYSROOT/linker.ld"
 
 mkdir -p "$RUNTIME"
 cd "$RUNTIME"
@@ -17,13 +17,13 @@ cd "$RUNTIME"
 echo "== compilando el runtime con $($CLANG --version | head -1)"
 $SX_CC -c -x assembler-with-cpp "$SDK/runtime/crt0.S" -o crt0.o $SX_TARGET_CFLAGS
 $SX_CC -c -x assembler-with-cpp "$SDK/runtime/setjmp.S" -o setjmp.o $SX_TARGET_CFLAGS
-for unit in libc posix gfx gfx2d sxgui sxgui_app sxchrome; do
+for unit in libc posix gfx gfx2d sxgui sxgui_app sxchrome div64 bootstrap32; do
     $SX_CC -c -x c "$SDK/runtime/$unit.c" -o "$unit.o" $SX_TARGET_CFLAGS
 done
 $SX_CC -c -x c "$SDK/runtime/math.c" -o math.o -fno-builtin $SX_TARGET_CFLAGS
 
 rm -f libsavanxp.a libsxgui.a
-$AR_CMD rcs libsavanxp.a libc.o posix.o gfx.o gfx2d.o math.o setjmp.o
+$AR_CMD rcs libsavanxp.a libc.o posix.o gfx.o gfx2d.o math.o setjmp.o div64.o bootstrap32.o
 $AR_CMD rcs libsxgui.a sxgui.o sxgui_app.o sxchrome.o
 $RANLIB_CMD libsavanxp.a libsxgui.a
 

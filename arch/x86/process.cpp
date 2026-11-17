@@ -1,6 +1,7 @@
 #include "process.hpp"
 #include "waits.hpp"
 #include "kernel/display.hpp"
+#include "kernel/audio_device.hpp"
 
 #include "cpu.hpp"
 #include "kernel/string.hpp"
@@ -139,7 +140,7 @@ long spawn(const char* path, const char* const* argv, uint32_t argc, int stdin_f
         task.frame = reinterpret_cast<ContextFrame*>(task.kernel_stack + sizeof(task.kernel_stack) -
                                                      sizeof(ContextFrame));
         paging::initialize_process_directory(task.directory);
-        const int error = user32::load(path, task.directory, *task.frame, argc, argv);
+        const int error = user32::load(path, task.directory, *task.frame, argc, argv, &task.native_subsystem);
         if (error != 0) {
             paging::destroy_process_directory(task.directory);
             return -error;
@@ -181,6 +182,7 @@ long fork(const ContextFrame& frame) {
             child.handles[fd] = g_current->handles[fd];
             object::retain(child.handles[fd].object);
         }
+        child.native_subsystem = g_current->native_subsystem;
         strcpy(child.cwd, g_current->cwd);
         strcpy(child.name, g_current->name);
         *child.frame = frame;
@@ -202,6 +204,7 @@ long fork(const ContextFrame& frame) {
 }
 
 ContextFrame* timer(ContextFrame* frame) {
+    if (g_current && g_current->state == State::running) ++g_current->cpu_ticks;
     // Kernel execution is atomic with respect to scheduling. Blocking syscalls
     // return to this scheduler instead of retaining C++ continuations on stacks.
     if (g_current != nullptr && (frame->cs & 3u) == 0) {
@@ -246,7 +249,8 @@ int replace_image(const char* path, const char* const* argv, uint32_t argc, Cont
     auto* directory = static_cast<uint32_t*>(staging.virtual_address);
     paging::initialize_process_directory(directory);
     ContextFrame replacement = {};
-    const int error = user32::load(path, directory, replacement, argc, argv);
+    bool native_subsystem = false;
+    const int error = user32::load(path, directory, replacement, argc, argv, &native_subsystem);
     if (error) {
         paging::destroy_process_directory(directory);
         memory::free_allocation(staging);
@@ -261,6 +265,7 @@ int replace_image(const char* path, const char* const* argv, uint32_t argc, Cont
     memory::free_allocation(staging);
     paging::activate(g_current->directory);
     frame = replacement;
+    g_current->native_subsystem = native_subsystem;
     initialize_fpu_state(g_current->fpu);
     restore_fpu_state(g_current->fpu);
     const char* name = path;
@@ -326,6 +331,7 @@ static void notify_parent(Process& child) {
 static void terminate(Process& child, int status) {
     waits::clear(child);
     display::release_session_for(child.pid);
+    audio_device::release_session_for(child.pid);
     sections::release_views(child);
     io::release_handles(child);
     serial::write("process: pid ");

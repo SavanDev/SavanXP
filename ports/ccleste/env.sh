@@ -40,9 +40,7 @@ STAMPED="$OUTPUT_ROOT/ccleste/ccleste"
 # up front. The heap lives in .bss: it costs address space, not image bytes.
 SX_HEAP_SIZE="$((8 * 1024 * 1024))"
 
-# SAVANXP_ARCH (x86_64 por defecto) elige el triple y los modelos de memoria,
-# igual que en el arbol. Va antes de los arrays de flags: se expanden al
-# asignarse, y un SX_MCMODEL aun vacio desaparece del argv sin avisar.
+# Select the branch ABI before expanding the target compiler flags.
 . "$REPO/tools/arch-env.sh"
 
 # Celeste Classic uses floating point (sin/cos/fmodf/floorf) in its update step,
@@ -62,6 +60,7 @@ SX_TARGET_CFLAGS=(
     -mno-mmx
     -msse
     -msse2
+    -mstack-alignment=16
     -Wno-language-extension-token
     -Wno-c23-extensions
     "-DSX_HEAP_SIZE=$SX_HEAP_SIZE"

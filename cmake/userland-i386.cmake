@@ -131,16 +131,19 @@ file(GLOB SAVANXP_BUSYBOX_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/vendor/
 list(SORT SAVANXP_BUSYBOX_SOURCES)
 savanxp_i386_program(busybox ${SAVANXP_BUSYBOX_SOURCES})
 target_include_directories(savanxp-i386-busybox PRIVATE "${CMAKE_SOURCE_DIR}/vendor/busybox-port")
-set(SAVANXP_I386_CORE_APPS uname df rmdir truncate sync errtest)
+set(SAVANXP_I386_CORE_APPS uname df rmdir truncate sync errtest netinfo ping udpsend udprecv tcpget beep volume fscheck)
 foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
     savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
 endforeach()
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    set(SAVANXP_I386_POSIX_TESTS sdkint32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest eventtest timertest semaphoretest handletest sxetest)
+    set(SAVANXP_I386_POSIX_TESTS sdkint32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest eventtest timertest semaphoretest handletest sxetest nettest udptest tcptest audiotest cliptest devtest32)
     foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
         savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
     endforeach()
+    savanxp_i386_program(nativeguihost subsystems/native/test/guihost.c)
+    savanxp_i386_program(nativesxguihost subsystems/native/test/sxguihost.c)
+    list(APPEND SAVANXP_I386_POSIX_TESTS nativeguihost nativesxguihost)
 endif()
 
 add_custom_target(savanxp_i386_userland
@@ -193,11 +196,14 @@ endif()
 set(SAVANXP_I386_ROOT_STRIP_COMMANDS)
 foreach(name IN LISTS SAVANXP_I386_ROOT_PROGRAMS)
     list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
-        COMMAND "${SAVANXP_OBJCOPY}" --strip-debug "${SAVANXP_ROOTFS_ROOT}/bin/${name}")
+        COMMAND "${SAVANXP_OBJCOPY}" --strip-unneeded "${SAVANXP_ROOTFS_ROOT}/bin/${name}")
 endforeach()
 foreach(name IN LISTS SAVANXP_I386_LIBRARIES)
+    if(name STREQUAL "libffmpeg.so.0.4")
+        continue() # Optional codec engine is loaded from the persistent disk.
+    endif()
     list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
-        COMMAND "${SAVANXP_OBJCOPY}" --strip-debug "${SAVANXP_ROOTFS_ROOT}/lib/${name}")
+        COMMAND "${SAVANXP_OBJCOPY}" --strip-unneeded "${SAVANXP_ROOTFS_ROOT}/lib/${name}")
 endforeach()
 add_custom_target(savanxp_i386_initramfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
@@ -205,6 +211,7 @@ add_custom_target(savanxp_i386_initramfs
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/bin" "${SAVANXP_ROOTFS_ROOT}/bin"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/lib" "${SAVANXP_ROOTFS_ROOT}/lib"
     COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/rootfs/README" "${SAVANXP_ROOTFS_ROOT}/README"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${SAVANXP_ROOTFS_ROOT}/lib/libffmpeg.so.0.4"
     ${SAVANXP_I386_ROOT_STRIP_COMMANDS}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"
         --source "${SAVANXP_ROOTFS_ROOT}" --output "${SAVANXP_INITRAMFS}"

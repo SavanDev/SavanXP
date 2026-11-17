@@ -86,8 +86,10 @@ Celeste Classic uses floating point in its update step, so the port is built wit
 `-msse -msse2` and links the SDK math runtime, the same choice the FFmpeg port
 makes. The 23 sound effects decode to 772 KiB of unsigned 8-bit mono PCM, which
 does not fit the 256 KiB default arena, so the runtime is compiled with
-`-DSX_HEAP_SIZE=1048576`. The heap lives in `.bss`: it costs address space, not
-image bytes.
+`-DSX_HEAP_SIZE=8388608`, including space for decoded music. The bootstrap
+heap occupies guest RAM in `.bss`, without adding those bytes to the ELF file.
+On this branch the port emits ELF32 PIE and uses 16-byte stack alignment,
+matching the shared FFmpeg engine and the native SDK.
 
 ## Game data
 

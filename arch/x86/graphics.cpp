@@ -68,21 +68,50 @@ void sync_framebuffer_geometry() {
 }
 }
 namespace console {
+void write(const char* text) { i386::serial::SerialOnly serial_only; i386::serial::write(text); }
+void serial_write(const char* bytes, size_t count) {
+    i386::serial::SerialOnly serial_only;
+    for (size_t i = 0; i < count; ++i) i386::serial::write_char(bytes[i]);
+}
+void write_line(const char* text) { write(text); write("\n"); }
 void set_external_framebuffer(void* address, const savanxp_fb_info& info) {
     i386::fb32::set_external(address, info);
 }
-void printf(const char* format, ...) {
-    // The backend's diagnostics use strings and unsigned decimal fields only.
+namespace {
+void number(uint64_t value, unsigned base) {
+    char buffer[32]; unsigned count = 0;
+    do { buffer[count++] = "0123456789abcdef"[value % base]; value /= base; } while (value);
+    while (count) i386::serial::write_char(buffer[--count]);
+}
+}
+void vprintf(const char* format, va_list args) {
     i386::serial::SerialOnly serial_only;
-    va_list args;
-    va_start(args, format);
     for (const char* p = format; *p; ++p) {
         if (*p != '%') { i386::serial::write_char(*p); continue; }
         ++p;
-        if (*p == 'u') i386::serial::write_dec(va_arg(args, unsigned));
-        else if (*p == 's') i386::serial::write(va_arg(args, const char*));
+        unsigned width = 0;
+        while (*p == 'l') { ++width; ++p; }
+        if (*p == 'u' || *p == 'x') {
+            const uint64_t value = width > 1 ? va_arg(args, uint64_t) :
+                width ? va_arg(args, unsigned long) : va_arg(args, unsigned);
+            number(value, *p == 'x' ? 16 : 10);
+        } else if (*p == 'd' || *p == 'i') {
+            const int value = va_arg(args, int);
+            if (value < 0) i386::serial::write_char('-');
+            number(value < 0 ? 0u - static_cast<unsigned>(value) : value, 10);
+        } else if (*p == 's') {
+            const char* value = va_arg(args, const char*);
+            i386::serial::write(value ? value : "(null)");
+        } else if (*p == 'c') i386::serial::write_char(static_cast<char>(va_arg(args, int)));
+        else if (*p == 'p') { i386::serial::write("0x"); number(reinterpret_cast<uintptr_t>(va_arg(args, void*)), 16); }
         else if (*p == '%') i386::serial::write_char('%');
+        else if (!*p) break;
     }
+}
+void printf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
     va_end(args);
 }
 }

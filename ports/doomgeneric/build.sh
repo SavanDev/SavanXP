@@ -22,7 +22,7 @@ OBJCOPY="${SAVANXP_OBJCOPY:-llvm-objcopy}"
 READELF="${SAVANXP_READELF:-llvm-readelf}"
 PYTHON="${SAVANXP_PYTHON:-python3}"
 
-# The i386 loader currently accepts static ELF32 only.
+# Use the same native ABI as the in-tree ELF32 shared-library clients.
 . "$ROOT/tools/arch-env.sh"
 
 usage() {
@@ -109,13 +109,13 @@ done
 cp -a "$PORT_DIR/overlay/." "$SRC/"
 
 SDK="$ROOT/subsystems/posix/sdk/v1"
-# Keep this port buildable as static ELF32 while shared libraries are ported.
+# Restore the reference PIE profile and shared MIDI synthesizer.
 COMMON_FLAGS=(
     -target "$SX_TARGET_TRIPLE"
     -ffreestanding
     -fstack-protector-strong
-    -fno-pic
-    -fno-pie
+    -fPIC
+    -mstack-protector-guard=global
     -ffunction-sections
     -fdata-sections
     -mno-red-zone
@@ -123,6 +123,7 @@ COMMON_FLAGS=(
     -mno-mmx
     -msse
     -msse2
+    -mstack-alignment=16
     -Wall
     -Wextra
     -Wpedantic
@@ -131,8 +132,9 @@ COMMON_FLAGS=(
     -fmacro-prefix-map="$SRC=ports/doomgeneric/source/doomgeneric"
 )
 LINK_FLAGS=(
-    -nostdlib -static -fuse-ld=lld
-    "-Wl,-m,$SX_LINK_EMULATION" "-Wl,-T,$SDK/linker32.ld"
+    -nostdlib -fuse-ld=lld -pie
+    "-Wl,-m,$SX_LINK_EMULATION"
+    -Wl,--dynamic-linker,/disk/lib/ld.so.0.4 -Wl,--export-dynamic -Wl,-e,_start
     -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none -Wl,--gc-sections
 )
 INCLUDE_FLAGS=(
@@ -187,7 +189,10 @@ gfx2d="$OBJ/gfx2d.o"
 math="$OBJ/math.o"
 setjmp_object="$OBJ/setjmp.o"
 audio="$OBJ/audio.o"
-midi_object="$OBJ/sxmidi.o"
+ldso_object="$OBJ/ldso.o"
+bootstrap_object="$OBJ/bootstrap32.o"
+SX_MIDI_LIB="${SAVANXP_MIDI_LIB:-$OUTPUT_ROOT/diskfs/lib/libsxmidi.so.0.4}"
+[[ -f "$SX_MIDI_LIB" ]] || { echo "doomgeneric: build libsxmidi with ./build.sh build first" >&2; exit 1; }
 div64_object="$OBJ/div64.o"
 compile_asm "$SDK/runtime/crt0.S" "$crt0"
 compile_c "$SDK/runtime/libc.c" "$libc"
@@ -197,13 +202,14 @@ compile_c "$SDK/runtime/gfx2d.c" "$gfx2d"
 compile_c "$SDK/runtime/math.c" "$math"
 compile_asm "$SDK/runtime/setjmp.S" "$setjmp_object"
 compile_c "$SDK/runtime/audio.c" "$audio"
-compile_c "$SDK/runtime/sxmidi.c" "$midi_object"
+compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object"
+compile_c "$SDK/runtime/bootstrap32.c" "$bootstrap_object"
 compile_c "$SDK/runtime/div64.c" "$div64_object"
 
 "$LINK_CC" -target "$SX_HOST_TRIPLE" "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
     "$crt0" "$libc" "$posix" "$gfx" "$gfx2d" "$math" "$setjmp_object" "$audio" \
-    "$midi_object" "$div64_object" "${APP_OBJECTS[@]}"
+    "$ldso_object" "$bootstrap_object" "$div64_object" "${APP_OBJECTS[@]}" "$SX_MIDI_LIB"
 
 BUILD_ID=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)
 [[ -n "$BUILD_ID" ]] || BUILD_ID=unknown

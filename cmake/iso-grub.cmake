@@ -29,6 +29,13 @@ if(SAVANXP_GRUB_MKRESCUE AND SAVANXP_GRUB_I386_PC)
         COMMENT "Creating SavanXP.iso (i386, GRUB2)"
         VERBATIM
     )
+    add_custom_target(savanxp_live_iso
+        COMMAND "${CMAKE_COMMAND}" -E env "SAVANXP_XORRISO=${SAVANXP_XORRISO}"
+            "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/build_live_iso.py"
+            --iso "${SAVANXP_ISO_IMAGE}" --source "${SAVANXP_DISKFS_ROOT}"
+            --cli "${SAVANXP_SXFS_CLI}" --output "${SAVANXP_OUTPUT_ROOT}/SavanXP-live.iso"
+        DEPENDS savanxp_iso
+        COMMENT "Creating the standalone i386 LiveCD" VERBATIM)
 else()
     message(STATUS "grub-mkrescue or the i386-pc platform files were not found; the i386 ISO target is unavailable.")
 endif()

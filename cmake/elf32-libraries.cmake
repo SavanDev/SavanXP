@@ -81,6 +81,7 @@ function(savanxp_i386_pie name)
 endfunction()
 
 savanxp_i386_library(libmath subsystems/posix/sdk/v1/runtime/math.c)
+savanxp_i386_library(libsxmidi subsystems/posix/sdk/v1/runtime/sxmidi.c)
 if(SAVANXP_INCLUDE_TEST_APPS)
     savanxp_i386_library(libchainbase subsystems/posix/userland/chaintest_lib.c)
     savanxp_i386_library(libchaintop subsystems/posix/userland/chaintest_lib.c)

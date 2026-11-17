@@ -53,9 +53,8 @@
 #define SX_ARENA_FIRST_BYTES ((size_t)(1024u * 1024u))
 #define SX_ARENA_MAX_BYTES ((size_t)(32u * 1024u * 1024u))
 #define SX_ARENA_CAPACITY ((size_t)8u)
-/* 16 y no sizeof(void*): es el max_align_t de x86-64. Con 8, un movaps
- * sobre un buffer de malloc en una app -Sse podia faultear, porque clang
- * asume que malloc devuelve memoria apta para cualquier tipo. */
+/* Preserve 16-byte payload alignment on both x86 ABIs. SSE consumers may
+ * use aligned loads/stores even when the source has no explicit intrinsics. */
 #define SX_ALLOC_ALIGNMENT ((size_t)16)
 #define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
 #define SX_ALLOC_MAGIC 0x53584148u
@@ -231,12 +230,14 @@ struct sx_DIR {
 };
 
 typedef struct sx_alloc_header {
-    size_t size;
+    _Alignas(SX_ALLOC_ALIGNMENT) size_t size;
     uint32_t magic;
     uint32_t free;
     struct sx_alloc_header* next;
     struct sx_alloc_header* prev;
 } sx_alloc_header;
+_Static_assert(sizeof(sx_alloc_header) % SX_ALLOC_ALIGNMENT == 0,
+               "heap headers must preserve payload alignment after splitting");
 
 /* Prefijo de una asignacion alineada: se escribe en los 16 bytes justo antes
  * del puntero que se devuelve, y guarda el puntero real que hay que liberar. */

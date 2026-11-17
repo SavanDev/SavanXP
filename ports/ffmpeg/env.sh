@@ -48,9 +48,7 @@ RUNTIME="$WORK/runtime"
 SYSROOT="$WORK/sysroot"
 OUT="$WORK/out"
 
-# SAVANXP_ARCH (x86_64 por defecto) elige el triple y los modelos de memoria,
-# igual que en el arbol. Va antes de SX_TARGET_CFLAGS: esa cadena se expande al
-# asignarse, y un SX_MCMODEL aun vacio desaparece sin avisar.
+# Select the branch ABI before expanding the target compiler flags.
 . "$REPO/tools/arch-env.sh"
 
 # FFmpeg uses floating point in the selected decoders, so this port uses the
@@ -67,7 +65,7 @@ OUT="$WORK/out"
 # independent", y la siguiente linea compila las unidades del runtime con los mismos
 # flags, asi que dejarlos en -fno-pie mientras FFmpeg es PIC no describe nada real.
 SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fPIC -mno-red-zone"
-SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS ${SX_MCMODEL_SMALL:+$SX_MCMODEL_SMALL }-mno-mmx -msse -msse2"
+SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS ${SX_MCMODEL_SMALL:+$SX_MCMODEL_SMALL }-mno-mmx -msse -msse2 -mstack-alignment=16"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
 
 CLANG="${SAVANXP_CLANG:-clang}"

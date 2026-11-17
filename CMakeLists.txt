@@ -102,6 +102,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS
     -mno-mmx
     -msse
     -msse2
+    -mstack-alignment=16
     -ffunction-sections
     -fdata-sections
     -Wall
@@ -139,6 +140,9 @@ set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/io.cpp
     arch/x86/sections.cpp
     arch/x86/graphics.cpp
+    arch/x86/cpu_identity.cpp
+    arch/x86/native.cpp
+    arch/x86/services.cpp
     arch/x86/waits.cpp
 )
 # These paths execute on a bounded per-process kernel stack. Reject large
@@ -149,10 +153,13 @@ set_source_files_properties(
 )
 # Reused storage, memory and object-lifetime modules; other subsystems are ported progressively.
 set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
-    kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
+    kernel/ramdisk.cpp kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
     kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp kernel/section.cpp kernel/heap.cpp
     subsystems/posix/sdk/v1/runtime/div64.c
-    kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp)
+    kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
+    kernel/pci.cpp kernel/audio.cpp kernel/audio_device.cpp kernel/ac97.cpp
+    kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/power.cpp
+    kernel/pcspeaker.cpp kernel/clipboard.cpp kernel/serial_dev.cpp kernel/rtc.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
 target_include_directories(savanxp_kernel_objects PRIVATE
@@ -445,6 +452,8 @@ add_test(NAME i386-workflow-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/i386_workflow_test.py"
             --root "${CMAKE_SOURCE_DIR}")
+add_test(NAME audio-capture-test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/audio_capture_test.py")
 add_test(NAME tcp-echo-server-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/tcp_echo_server_test.py"

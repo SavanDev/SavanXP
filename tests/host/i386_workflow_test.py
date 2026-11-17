@@ -55,6 +55,7 @@ def main() -> int:
             assert launch[launch.index("-machine") + 1] == "pc", launch
             assert any(str(disk) in argument and "if=ide,index=0" in argument for argument in launch)
             assert any("SavanXP.iso" in argument and "media=cdrom" in argument for argument in launch)
+            assert "rtl8139,netdev=net0" in launch and "AC97,audiodev=audio0" in launch
             assert all("pflash" not in argument and "fat:rw:" not in argument for argument in launch)
             assert ("-S" in launch) == (mode == "debug"), launch
             assert disk.read_bytes() == b"persistent data"
@@ -62,9 +63,9 @@ def main() -> int:
         assert "master" in run("build", success=False, environment=bad_arch).stderr
         assert "not ported" in run("run", "--virtio", success=False).stderr
         assert "one CPU" in run("run", "--smp", "2", success=False).stderr
-        assert "not ported" in run("smoke", "audio-smoke", success=False).stderr
+        assert "not ported" in run("smoke", "audio-record", success=False).stderr
         catalog = run("smoke", "--list").stdout
-        assert "processes" in catalog and "sxgui-smoke" in catalog
+        assert "processes" in catalog and "sxgui-smoke" in catalog and "services" in catalog
     print("i386 default build/run workflow: PASS")
     return 0
 

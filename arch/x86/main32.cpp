@@ -5,6 +5,7 @@
 #include "kernel/fs.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/sxfs.hpp"
+#include "kernel/ramdisk.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/string.hpp"
 
@@ -22,6 +23,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/heap.hpp"
 #include "paging.hpp"
+#include "services.hpp"
 #include "pit.hpp"
 #include "ps2_32.hpp"
 #include "serial.hpp"
@@ -232,14 +234,17 @@ void report_block_devices() {
     }
 }
 
-/* Monta el SxFS persistente del primer disco que lo reconozca y lo publica
- * bajo /disk. La pila de almacenamiento es la misma que la de x86_64: ATA PIO,
- * registro de dispositivos de bloque, driver MBR y SxFS sobre el VFS. */
+// Mount the first recognized SxFS volume at /disk. Reference driver priority
+// selects direct ATA before the optional LiveCD RAM image.
 void mount_root_filesystem() {
     const auto& boot = boot_state::state();
-    vfs::initialize(reinterpret_cast<const void*>(boot.initramfs_address), boot.initramfs_size);
+    vfs::initialize(reinterpret_cast<const void*>(boot.initramfs_address + paging::kDirectMapBase), boot.initramfs_size);
     if (!vfs::ready()) halt_with("vfs: invalid initramfs");
     block::register_driver(ata::driver());
+    block::register_driver(ramdisk::driver());
+    if (boot.disk_image_address && boot.disk_image_size)
+        ramdisk::attach_image(reinterpret_cast<void*>(boot.disk_image_address + paging::kDirectMapBase),
+            boot.disk_image_size, true, "live0");
     block::register_driver(partition::driver());
     block::probe_all();
     report_block_devices();
@@ -377,7 +382,10 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
             const auto* words = reinterpret_cast<const uint32_t*>(tag);
             if (size < 16 || words[3] < words[2] || words[3] > paging::kDirectMapBytes)
                 halt_with("memory: invalid Multiboot2 module");
-            if (boot_state::state().initramfs_address == 0) {
+            if (size >= 21 && memcmp(tag + 16, "sxfs", 5) == 0) {
+                boot_state::state().disk_image_address = words[2];
+                boot_state::state().disk_image_size = words[3] - words[2];
+            } else if (boot_state::state().initramfs_address == 0) {
                 boot_state::state().initramfs_address = words[2];
                 boot_state::state().initramfs_size = words[3] - words[2];
             }
@@ -444,6 +452,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     display::register_driver(fb_gpu::driver());
     display::bind_best(framebuffer);
     gpu_device::initialize();
+    services::initialize(info_address);
     io::initialize();
 
     serial::write("I386 BOOT OK\n");

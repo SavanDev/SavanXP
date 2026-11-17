@@ -14,6 +14,7 @@ struct State {
     char bootloader_version[32];
     char firmware[16];
     uint32_t initramfs_address, initramfs_size;
+    uint32_t disk_image_address, disk_image_size;
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint32_t framebuffer_width;

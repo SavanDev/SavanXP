@@ -10,7 +10,11 @@
 #include "kernel/nic.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
+#if defined(__i386__)
+#include "../arch/x86/services.hpp"
+#else
 #include "kernel/smp.hpp"
+#endif
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 #include "savanxp/syscall.h"
@@ -1769,6 +1773,31 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
         return negative_error(SAVANXP_EIO);
     }
     return static_cast<int>(count);
+}
+
+// The native scheduler cannot copy through the running task's address space
+// when servicing a different reader. Return bytes/peer in kernel memory.
+int recvfrom_socket_bytes(Socket* socket, uint8_t* output, size_t count, savanxp_sockaddr_in* peer) {
+    if (!socket || !socket->in_use || !output || !count) return negative_error(SAVANXP_EINVAL);
+    if (socket->type == SAVANXP_SOCK_STREAM) {
+        const int result = read_socket_bytes(socket, output, count, true);
+        if (result >= 0 && peer) {
+            *peer = {}; peer->ipv4 = socket->remote_ip; peer->port = socket->remote_port;
+        }
+        return result;
+    }
+    if (socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP)
+        return negative_error(SAVANXP_EINVAL);
+    if (!bring_up()) return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+    const int result = ensure_socket_bound(socket);
+    if (result < 0) return result;
+    net_pump();
+    UdpPacket packet = {};
+    if (!dequeue_udp_packet(*socket, packet)) return negative_error(SAVANXP_EAGAIN);
+    const size_t copied = packet.length < count ? packet.length : count;
+    memcpy(output, packet.data, copied);
+    if (peer) { *peer = {}; peer->ipv4 = packet.source_ip; peer->port = packet.source_port; }
+    return static_cast<int>(copied);
 }
 
 int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms, bool nonblocking) {

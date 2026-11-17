@@ -14,6 +14,9 @@ import shoot_session
 
 
 def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float) -> int:
+    report_scenario = scenario
+    diskless = scenario == "live-desktop"
+    if diskless: scenario = "desktop"
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
     serial.unlink(missing_ok=True)
@@ -21,11 +24,19 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
         socket = Path(tmp) / "qmp"
         command = [os.environ.get("SAVANXP_QEMU", shutil.which("qemu-system-i386") or "qemu-system-i386"),
                    "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
-                   "-m", "1024M", "-smp", "1", "-vga", "std", "-nic", "none",
+                   "-m", "1024M", "-smp", "1", "-vga", "std",
+                   "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
+                   "-audiodev", "none,id=audio0", "-device", "AC97,audiodev=audio0",
                    "-display", "none", "-boot", "d", "-cdrom", str(iso),
                    "-drive", f"file={disk},format=raw,if=ide,snapshot=on",
                    "-serial", f"file:{serial}", "-qmp", f"unix:{socket},server=on,wait=off",
                    "-no-reboot", "-no-shutdown"]
+        if diskless:
+            drive = command.index("-drive")
+            del command[drive:drive + 2]
+        audio_path = artifacts / "audio.wav"
+        if scenario in ("doom", "ccleste"):
+            command[command.index("none,id=audio0")] = f"wav,id=audio0,path={audio_path},out.frequency=48000"
         with (artifacts / "qemu.log").open("w") as log:
             process = subprocess.Popen(command, stdout=log, stderr=log)
             try:
@@ -39,6 +50,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                     time.sleep(.2)
                 else:
                     raise RuntimeError("graphical init did not start Program Manager")
+                if diskless and ("live0:" not in text or "ata0:" in text):
+                    raise RuntimeError("the diskless desktop did not use the LiveCD ramdisk")
                 def expired(_signum, _frame):
                     raise TimeoutError(f"{scenario} exceeded its {timeout:g}s deadline")
                 previous_alarm = signal.signal(signal.SIGALRM, expired)
@@ -46,7 +59,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                 # Exercise the real reference UI and its built font tables.
                 shots = shoot_session.run_scenario(
                     "notepadwheel" if scenario == "sxgui-smoke" else scenario,
-                    socket, artifacts, boot_wait=5)
+                    socket, artifacts, boot_wait=5, audio_path=audio_path)
                 if scenario == "desktop":
                     from PIL import Image
                     with Image.open(shots[-1]) as screen:
@@ -55,10 +68,26 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                     shoot_session.expect_text(image, (bx, by, bx + bw, by + bh),
                         "Program Manager", shoot_session.TEXT, shoot_session.FACE,
                         "the default session taskbar")
+                if scenario in ("doom", "ccleste"):
+                    from PIL import Image, ImageChops
+                    # Both ports request the reference 640x400 client surface.
+                    # Restrict content checks to that surface, excluding the
+                    # wallpaper, window chrome and taskbar.
+                    with Image.open(shots[0]) as source:
+                        first = source.convert("RGB").crop((348, 234, 988, 634))
+                    with Image.open(shots[1] if scenario == "doom" else shots[-1]) as source:
+                        game = source.convert("RGB").crop((348, 234, 988, 634))
+                    minimum = 64 if scenario == "doom" else 8
+                    if len(game.getcolors(1 << 20) or []) < minimum or not ImageChops.difference(first, game).getbbox():
+                        raise RuntimeError("the game did not draw a changing scene")
+                    log_text = serial.read_text(errors="replace")
+                    expected = "CCLESTE DISPLAY READY" if scenario == "ccleste" else "doomgeneric: musica sonando:"
+                    if expected not in log_text:
+                        raise RuntimeError("the installed game did not reach its runtime checkpoint")
                 text = serial.read_text(errors="replace")
                 if "exception vector" in text or "user: exception #" in text or "stack overflow" in text or "compositor startup failed" in text:
                     raise RuntimeError("a graphical process faulted; see serial.log")
-                print(f"i386 {scenario}: PASS ({len(shots)} screen assertions)", flush=True)
+                print(f"i386 {report_scenario}: PASS ({len(shots)} captures)", flush=True)
                 return 0
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)

@@ -27,6 +27,14 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke sxgui-smoke
 ./build.sh smoke taskbar
 ./build.sh smoke calc-smoke
+./build.sh smoke services       # requires the installed FFmpeg/Ccleste ports and generated media
+./build.sh smoke power-smoke
+./build.sh smoke storage-smoke  # builds a separate diskless LiveCD
+./build.sh smoke partition-smoke # isolated MBR and GPT volume wrappers
+./build.sh smoke live-desktop   # full desktop without an ATA disk
+./build.sh smoke doom           # installed Doom/Ccleste and a real IWAD
+./build.sh smoke ccleste
+./build.sh smoke native-smoke   # optional installed Haxe nativehello
 ./build.sh smoke legacy-cpu
 ./build.sh test
 ./build.sh clean
@@ -140,3 +148,25 @@ The CPIO staging tree is a copy of the internal disk staging tree plus the
 reference root README. Debug symbols are removed from the CPIO copies with the
 already-discovered LLVM objcopy; installed disk binaries keep their build bytes.
 This keeps the read-only root small enough for the 32 MiB regression machine.
+
+## Device services and standalone LiveCD
+
+Normal QEMU runs attach RTL8139 user networking and AC'97 audio. Headless runs
+use a null host audio sink; `audio-smoke` captures actual PCM to a WAV file.
+`net-smoke` checks hardware packet counters, `tcp-smoke` runs the reference fault
+and socket-deadline test, and `device-smoke` checks permissions, killed-owner
+cleanup, clipboard and PC speaker. `media-smoke` additionally needs the official
+FFmpeg/Ccleste ports and `ports/ffmpeg/build.sh --skip-port --with-test-media`.
+See [I386_SERVICES.md](I386_SERVICES.md).
+
+`./build.sh live-iso` creates `build/SavanXP-live.iso` from a separate generated
+128 MiB SxFS module and the normal ISO. It uses the internal staged userland,
+not a copy of the persistent disk or its external games and saves. GRUB loads
+the module with the `sxfs` command line; the kernel translates its physical
+address through the supervisor RAM map and attaches the reference ramdisk.
+A direct ATA SxFS volume has priority over the RAM image; partition slices
+retain the reference enumeration order. `partition-smoke` checks an MBR slice
+without a LiveCD module. RAM-image writes
+last only for that boot. `storage-smoke` boots the LiveCD without an ATA disk,
+checks consistency and writes/reads a guest file. It needs 256 MiB in the test;
+the normal ISO remains suitable for the 32 MiB console regressions.

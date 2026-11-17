@@ -28,10 +28,14 @@ def build_qemu_args(
         "-drive", f"file={iso},media=cdrom,format=raw,readonly=on,if=ide,index=2",
         "-drive", f"file={disk_image},media=disk,format=raw,if=ide,index=0",
         "-vga", "std", "-display", "none" if headless else "gtk",
-        "-nic", "none", "-serial", f"file:{serial_path}" if serial_path else "stdio",
+        "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0", "-serial", f"file:{serial_path}" if serial_path else "stdio",
         "-debugcon", f"file:{debug_log}", "-global", "isa-debugcon.iobase=0xe9",
         "-no-reboot", "-monitor", f"unix:{monitor_path},server=on,wait=off" if monitor_path else "none",
     ]
+    if headless:
+        command += ["-audiodev", "none,id=audio0", "-device", "AC97,audiodev=audio0"]
+    else:
+        command += ["-device", "AC97"]
     if qmp_path is not None:
         command += ["-qmp", f"unix:{qmp_path},server=on,wait=off"]
     if debug:

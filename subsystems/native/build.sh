@@ -78,7 +78,7 @@ PYTHON="${SAVANXP_PYTHON:-python3}"
 OBJCOPY="${SAVANXP_OBJCOPY:-llvm-objcopy}"
 READELF="${SAVANXP_READELF:-llvm-readelf}"
 
-# SAVANXP_ARCH (x86_64 por defecto) elige el triple, igual que en el arbol.
+# Use the same branch ABI as the native kernel and POSIX applications.
 . "$ROOT/tools/arch-env.sh"
 
 for tool in "$HAXE" "$CLANG" "$CLANGXX" "$LD" git; do
@@ -167,6 +167,8 @@ CFLAGS=(
     -fno-pic
     -fno-pie
     -mno-red-zone
+    -mstack-alignment=16
+    -mstack-protector-guard=global
     ${SX_MCMODEL_SMALL}
     -I "$NATIVE_SDK/include"
     -I "$SDK/include"
@@ -244,7 +246,7 @@ EOF
 
     local crt0="$obj_dir/crt0.o"
     local objects=()
-    "$CLANG" -c "$SDK/runtime/crt0.S" -o "$crt0" "${CFLAGS[@]}"
+    "$CLANG" -c "$NATIVE_SDK/runtime/crt0.S" -o "$crt0" "${CFLAGS[@]}"
     objects+=("$crt0")
     local runtime_c=(sx_native.c sx_gui.c sx_text.c sx_sysinfo.c sx_fs.c)
     for unit in "${runtime_c[@]}"; do
@@ -252,6 +254,9 @@ EOF
         compile_c "$NATIVE_SDK/runtime/$unit" "$object"
         objects+=("$object")
     done
+    local div64="$obj_dir/div64.o"
+    compile_c "$SDK/runtime/div64.c" "$div64"
+    objects+=("$div64")
     local runtime_cxx=(sx_cxx.cpp sx_entry.cpp)
     for unit in "${runtime_cxx[@]}"; do
         object="$obj_dir/${unit%.cpp}.o"
@@ -269,7 +274,7 @@ EOF
     done < <(find "$gen_dir/src" -type f -name '*.cpp' -print0 | sort -z)
 
     local elf="$OUT_ROOT/$name.elf"
-    "$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker.ld" -o "$elf" "${objects[@]}"
+    "$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker32.ld" -o "$elf" "${objects[@]}"
     "$PYTHON" - "$elf" "$OSABI_HEX" <<'PY'
 import sys
 from pathlib import Path

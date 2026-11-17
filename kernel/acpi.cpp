@@ -5,7 +5,9 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#if !defined(__i386__)
 #include "kernel/ioapic.hpp"
+#endif
 #include "kernel/string.hpp"
 
 namespace {
@@ -173,15 +175,21 @@ bool g_sci_active = false;
 constexpr uint16_t kPm1PwrBtnBit = 1u << 8; // PWRBTN_STS / PWRBTN_EN
 constexpr uint16_t kPm1CntSciEn = 1u << 0;  // SCI_EN en PM1a_CNT
 
-// Limine entrega el RSDP como puntero HHDM ya virtual, mientras que las tablas
-// ACPI guardan direcciones fisicas. Normalizamos: si la direccion ya cae en el
-// half alto la usamos tal cual, si no le sumamos el offset HHDM.
+// x86_64 accepts the bootloader's high-half RSDP pointer. On i386, both the
+// Multiboot RSDP and table references are physical addresses below the RAM cap.
 template <typename T>
 T* acpi_map(uint64_t address) {
+#if defined(__i386__)
+    // ACPI addresses are physical; a numeric comparison cannot distinguish
+    // them from the native RAM alias, which begins below 4 GiB.
+    if (!address || address > 0x40000000ull - sizeof(T)) return nullptr;
+    return reinterpret_cast<T*>(static_cast<uintptr_t>(address + g_hhdm_offset));
+#else
     if (address >= g_hhdm_offset) {
         return reinterpret_cast<T*>(address);
     }
     return reinterpret_cast<T*>(address + g_hhdm_offset);
+#endif
 }
 
 bool checksum_ok(const void* data, size_t length) {
@@ -199,6 +207,12 @@ const SdtHeader* find_table(const RsdpDescriptor* rsdp, const char (&signature)[
         ? acpi_map<SdtHeader>(rsdp->xsdt_address)
         : acpi_map<SdtHeader>(rsdp->rsdt_address);
 
+    if (!root || root->length < sizeof(SdtHeader)) return nullptr;
+#if defined(__i386__)
+    const uintptr_t root_physical = reinterpret_cast<uintptr_t>(root) - g_hhdm_offset;
+    if (root->length > 0x40000000ull - root_physical) return nullptr;
+#endif
+    if (!checksum_ok(root, root->length)) return nullptr;
     const size_t entry_size = use_xsdt ? sizeof(uint64_t) : sizeof(uint32_t);
     const size_t entry_count = (root->length - sizeof(SdtHeader)) / entry_size;
     const uint8_t* entries = reinterpret_cast<const uint8_t*>(root) + sizeof(SdtHeader);
@@ -216,7 +230,11 @@ const SdtHeader* find_table(const RsdpDescriptor* rsdp, const char (&signature)[
         }
 
         const SdtHeader* table = acpi_map<SdtHeader>(table_phys);
-        if (memcmp(table->signature, signature, 4) == 0) {
+        if (!table || table->length < sizeof(SdtHeader)) continue;
+#if defined(__i386__)
+        if (table->length > 0x40000000ull - table_phys) continue;
+#endif
+        if (memcmp(table->signature, signature, 4) == 0 && checksum_ok(table, table->length)) {
             return table;
         }
     }
@@ -330,13 +348,13 @@ void initialize(const boot::BootInfo& boot_info) {
     }
 
     const RsdpDescriptor* rsdp = acpi_map<RsdpDescriptor>(boot_info.acpi_rsdp_address);
-    if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
+    if (!rsdp || memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
         console::printf("acpi: RSDP invalido (firma/checksum)\n");
         return;
     }
 
     const SdtHeader* fadt_header = find_table(rsdp, "FACP");
-    if (fadt_header == nullptr) {
+    if (fadt_header == nullptr || fadt_header->length < offsetof(Fadt, flags) + sizeof(uint32_t)) {
         console::printf("acpi: FADT (FACP) no encontrada\n");
         return;
     }
@@ -395,7 +413,11 @@ void initialize(const boot::BootInfo& boot_info) {
     }
     if (dsdt_phys != 0) {
         const SdtHeader* dsdt = acpi_map<SdtHeader>(dsdt_phys);
-        if (memcmp(dsdt->signature, "DSDT", 4) == 0) {
+        if (dsdt && dsdt->length >= sizeof(SdtHeader)
+#if defined(__i386__)
+            && dsdt->length <= 0x40000000ull - dsdt_phys
+#endif
+            && memcmp(dsdt->signature, "DSDT", 4) == 0 && checksum_ok(dsdt, dsdt->length)) {
             parse_s5(dsdt);
         }
     }
@@ -475,10 +497,13 @@ bool start_sci() {
 
     // 4) Rutear la SCI. Por spec ACPI es level-triggered, active-low. Preferir el
     //    IOAPIC; si no hay, caer al PIC legacy cuando la GSI entra en 0..15.
+#if !defined(__i386__)
     if (ioapic::ready()) {
         g_sci_active = ioapic::route_gsi(g_sci_int, ioapic::Polarity::active_low,
                                          ioapic::Trigger::level, sci_interrupt) != 0;
-    } else if (g_sci_int < 16) {
+    } else
+#endif
+    if (g_sci_int < 16) {
         g_sci_active = arch::x86_64::register_irq_handler(
             static_cast<uint8_t>(g_sci_int), sci_interrupt);
         if (g_sci_active) {
@@ -521,7 +546,7 @@ bool start_sci() {
         if (g_reset_reg.address_space_id == 1) { // I/O
             out8(static_cast<uint16_t>(g_reset_reg.address), g_reset_value);
         } else if (g_reset_reg.address_space_id == 0) { // memoria
-            *acpi_map<volatile uint8_t>(g_reset_reg.address) = g_reset_value;
+            if (auto* reset = acpi_map<volatile uint8_t>(g_reset_reg.address)) *reset = g_reset_value;
         }
         short_delay();
     }

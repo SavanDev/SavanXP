@@ -3,9 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-namespace process {
-struct Process;
-}
+struct savanxp_sockaddr_in;
 
 namespace net {
 
@@ -22,6 +20,8 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms);
 int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, bool nonblocking);
 int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms, bool nonblocking);
 int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking);
+// Nonblocking receive into kernel memory, usable when waking another CR3.
+int recvfrom_socket_bytes(Socket* socket, uint8_t* output, size_t count, savanxp_sockaddr_in* peer);
 int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblocking);
 int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking);
 int set_socket_option(Socket* socket, uint32_t option, uint64_t value);

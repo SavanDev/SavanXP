@@ -108,7 +108,18 @@ Each round-trip compares against the original input and checks adjacent guard
 bytes, catching both silent truncation and an oversized destination write.
 
 The tests do not certify the entire SDK or the full graphical session. The
-remaining graphics, signals, object services and device work stays in the port
-roadmap. No kernel calling convention, filesystem format or disk reset is needed
+remaining parity work stays in the port roadmap. Later graphics/object and
+device restoration is documented in [I386_GRAPHICS.md](I386_GRAPHICS.md) and
+[I386_SERVICES.md](I386_SERVICES.md). No kernel calling convention, filesystem format or disk reset is needed
 for these corrections; statically linked external apps gain them when rebuilt.
 The persistence regression keeps already-installed external binaries and assets.
+
+## Application alignment found during milestone 5
+
+Native callers now declare `-mstack-alignment=16`, including the standalone
+builders. `crt0` already aligns the initial stack, but every intermediate caller
+must preserve the same ABI for shared libraries. The heap header itself is
+16-byte aligned, keeping `sizeof(header)` a multiple of the payload alignment
+on ILP32 as on LP64. `heaptest` checks small split allocations and explicit
+alignment in addition to growing/recycling arenas. Actual FFmpeg audio/video
+selftests exposed and verify these requirements; see [the study](I386_PORT_STUDY.md#12-restoring-device-services-and-the-external-application-abi).

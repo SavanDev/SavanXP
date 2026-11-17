@@ -8,8 +8,10 @@ import sys
 
 import legacy_boot_test
 import i386_graphics_test
+import i386_services_test
 
-SCENARIOS = ("smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke")
+SERVICE_SCENARIOS = ("services", "device-smoke", "audio-smoke", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke")
+SCENARIOS = SERVICE_SCENARIOS + ("smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
 
 
 def main() -> int:
@@ -22,8 +24,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=360)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
-    if args.scenario in ("desktop", "sxgui-smoke", "taskbar", "calc-smoke"):
-        return i386_graphics_test.run(args.iso, args.disk_image, args.artifacts,
+    if args.scenario in SERVICE_SCENARIOS:
+        iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "storage-smoke" else args.iso
+        return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel)
+    if args.scenario in ("desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop"):
+        iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "live-desktop" else args.iso
+        return i386_graphics_test.run(iso, args.disk_image, args.artifacts,
             "calc" if args.scenario == "calc-smoke" else args.scenario, args.accel, args.timeout)
     command = ["--iso", str(args.iso), "--disk-image", str(args.disk_image),
                "--expect-user", "--accel", args.accel, "--timeout", str(args.timeout),

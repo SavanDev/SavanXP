@@ -101,6 +101,7 @@ extern "C" const uint32_t i386_irq_table[16];
 constexpr uint8_t kIrqCount = 16;
 
 cpu::IrqHandler g_irq_handlers[kIrqCount];
+cpu::IrqHandler g_shared_irq_handlers[kIrqCount][4];
 
 /* Primer vector del PIC tras el remapeo de initialize(): los IRQ 0..15 viven
  * en 0x20..0x2F. */
@@ -113,6 +114,8 @@ extern "C" ContextFrame* i386_handle_irq(ContextFrame* frame) {
     if (irq < kIrqCount && g_irq_handlers[irq] != nullptr) {
         g_irq_handlers[irq]();
     }
+    if (irq < kIrqCount)
+        for (auto handler : g_shared_irq_handlers[irq]) if (handler) handler();
     cpu::acknowledge_irq(static_cast<uint8_t>(irq));
     return irq == 0 ? process::timer(frame) : frame;
 }
@@ -292,6 +295,19 @@ void cpu::register_irq_handler(uint8_t irq, IrqHandler handler) {
     }
     g_irq_handlers[irq] = handler;
     write_idt_gate(kPicVectorOffset + irq, i386_irq_table[irq], kTypeInterruptGate);
+}
+
+bool cpu::register_shared_irq_handler(uint8_t irq, IrqHandler handler) {
+    if (irq >= kIrqCount || !handler) return false;
+    if (g_irq_handlers[irq] == handler) return true;
+    for (auto existing : g_shared_irq_handlers[irq]) if (existing == handler) return true;
+    for (auto& entry : g_shared_irq_handlers[irq]) {
+        if (entry) continue;
+        entry = handler;
+        write_idt_gate(kPicVectorOffset + irq, i386_irq_table[irq], kTypeInterruptGate);
+        return true;
+    }
+    return false;
 }
 
 void cpu::enable_irq(uint8_t irq) {

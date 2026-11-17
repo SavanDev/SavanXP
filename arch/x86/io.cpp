@@ -2,6 +2,7 @@
 
 #include "fb32.hpp"
 #include "kernel/device.hpp"
+#include "kernel/net.hpp"
 #include "kernel/display.hpp"
 #include "kernel/ui.hpp"
 #include "kernel/string.hpp"
@@ -49,6 +50,7 @@ void destroy(object::Header* header) {
         if (!pipe.reader_refs && !pipe.writer_refs) memset(&pipe, 0, sizeof(pipe));
     }
     if (file->device) device::close(file->device);
+    if (file->socket) net::close_socket(file->socket);
     memset(file, 0, sizeof(*file));
 }
 
@@ -117,6 +119,21 @@ void feed_tty(const savanxp_input_event& event) {
 
 int try_read(process::Process& task, object::IoObject& file, uint32_t buffer, uint32_t count) {
     if (file.kind == HandleKind::tty) return tty_read(task, buffer, count);
+    if (file.device) return device::read(file.device, buffer, count);
+    if (file.socket) {
+        uint8_t scratch[1024];
+        savanxp_sockaddr_in peer = {};
+        const int received = task.io_operation == SAVANXP_SYS_RECVFROM ?
+            net::recvfrom_socket_bytes(file.socket, scratch, count < sizeof(scratch) ? count : sizeof(scratch), &peer) :
+            net::read_socket_bytes(file.socket, scratch, count < sizeof(scratch) ? count : sizeof(scratch), true);
+        if (received == -SAVANXP_EAGAIN) return kBlocked;
+        if (received >= 0) {
+            if (received) paging::copy_to_user(task.directory, buffer, scratch, received);
+            if (task.io_operation == SAVANXP_SYS_RECVFROM && task.io_peer)
+                paging::copy_to_user(task.directory, task.io_peer, &peer, sizeof(peer));
+        }
+        return received;
+    }
     if (file.kind == HandleKind::device && (file.node == g_input_node || file.node == g_mouse_node)) {
         const bool mouse = file.node == g_mouse_node;
         const uint32_t stride = mouse ? sizeof(savanxp_mouse_event) : sizeof(savanxp_input_event);
@@ -200,6 +217,10 @@ int evaluate_poll(process::Process& task) {
                 writable = pipe.size < kPipeCapacity && pipe.reader_refs;
                 if (!pipe.reader_refs) entry.revents |= SAVANXP_POLLERR;
             }
+        } else if (file->socket) {
+            readable = net::socket_can_read(file->socket);
+            writable = net::socket_can_write(file->socket);
+            if (net::socket_has_hangup(file->socket)) entry.revents |= SAVANXP_POLLHUP;
         } else if (file->kind == HandleKind::tty) {
             readable = g_tty.line_ready;
             writable = true;
@@ -209,6 +230,9 @@ int evaluate_poll(process::Process& task) {
             readable = ps2_32::has_mouse_event();
         } else if (file->kind == HandleKind::vnode) {
             readable = writable = true;
+        } else if (file->device) {
+            readable = device::can_read(file->device);
+            writable = file->device->write != nullptr;
         }
         if (readable && (file->open_flags & SAVANXP_OPEN_READ)) entry.revents |= entry.events & SAVANXP_POLLIN;
         if (writable && (file->open_flags & SAVANXP_OPEN_WRITE)) entry.revents |= entry.events & SAVANXP_POLLOUT;
@@ -313,6 +337,46 @@ int duplicate(process::Process& task, uint32_t oldfd, int newfd) {
     return install_object(task, task.handles[oldfd].object, task.handles[oldfd].granted_access, newfd);
 }
 
+int socket(process::Process& task, uint32_t domain, uint32_t type, uint32_t protocol) {
+    net::Socket* sock = nullptr;
+    const int result = net::create_socket(domain, type, protocol, sock);
+    if (result < 0) return result;
+    auto* file = allocate(HandleKind::socket, SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    if (!file) { net::close_socket(sock); return -SAVANXP_ENOMEM; }
+    file->socket = sock;
+    const int fd = install(task, file);
+    if (fd < 0) destroy(&file->header);
+    return fd;
+}
+
+int socket_call(process::Process& task, uint32_t operation, uint32_t fd,
+                uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5) {
+    auto* file = lookup(task, fd);
+    if (!file || !file->socket) return -SAVANXP_EBADF;
+    const bool nonblock = (file->open_flags & ::process::open_nonblock) != 0;
+    switch (operation) {
+        case SAVANXP_SYS_BIND: return net::bind_socket(file->socket, arg2);
+        case SAVANXP_SYS_CONNECT: return net::connect_socket(file->socket, arg2, arg3);
+        case SAVANXP_SYS_SETSOCKOPT: return net::set_socket_option(file->socket, arg2, arg3);
+        case SAVANXP_SYS_SENDTO: return net::sendto_socket(file->socket, arg2, arg3, arg4, nonblock);
+        case SAVANXP_SYS_RECVFROM: {
+            if (!arg3) return -SAVANXP_EINVAL;
+            if (!valid(task, arg2, arg3, true) ||
+                (arg4 && !valid(task, arg4, sizeof(savanxp_sockaddr_in), true))) return -SAVANXP_EFAULT;
+            task.io_operation = operation; task.io_peer = arg4;
+            const int result = try_read(task, *file, arg2, arg3);
+            if (result != kBlocked) return result;
+            if (nonblock) return -SAVANXP_EAGAIN;
+            const uint32_t timeout = net::socket_recv_timeout_ms(file->socket);
+            task.wake_ms = arg5 ? pit::uptime_ms() + arg5 : timeout ? pit::uptime_ms() + timeout : 0;
+            task.io_fd = fd; task.io_buffer = arg2; task.io_size = arg3;
+            task.state = process::State::reading;
+            return kBlocked;
+        }
+    }
+    return -SAVANXP_ENOSYS;
+}
+
 int open(process::Process& task, const char* path, uint32_t flags) {
     auto* node = vfs::open(path, flags);
     if (!node) return -vfs::last_error();
@@ -324,7 +388,7 @@ int open(process::Process& task, const char* path, uint32_t flags) {
     auto* file = allocate(node->backend == vfs::Backend::device ? HandleKind::device : HandleKind::vnode, flags);
     if (!file) return -SAVANXP_ENOMEM;
     file->node = node;
-    if (node == g_gpu_node) file->device = static_cast<device::Device*>(node->data);
+    if (node->backend == vfs::Backend::device) file->device = static_cast<device::Device*>(node->data);
     if (flags & SAVANXP_OPEN_APPEND) file->offset = node->size;
     const int result = install(task, file);
     if (result < 0) { memset(file, 0, sizeof(*file)); return result; }
@@ -337,10 +401,13 @@ int read(process::Process& task, uint32_t fd, uint32_t buffer, uint32_t count) {
     if (!file) return -SAVANXP_EBADF;
     if (!count) return 0;
     if (!valid(task, buffer, count, true)) return -SAVANXP_EFAULT;
+    task.io_operation = 0;
     const int result = try_read(task, *file, buffer, count);
     if (result != kBlocked) return result;
     if (file->open_flags & ::process::open_nonblock) return -SAVANXP_EAGAIN;
     task.io_fd = fd; task.io_buffer = buffer; task.io_size = count;
+    const uint32_t timeout = file->socket ? net::socket_recv_timeout_ms(file->socket) : 0;
+    task.wake_ms = timeout ? pit::uptime_ms() + timeout : 0;
     task.state = process::State::reading;
     return kBlocked;
 }
@@ -350,6 +417,9 @@ int write(process::Process& task, uint32_t fd, uint32_t buffer, uint32_t count) 
     if (!file) return -SAVANXP_EBADF;
     if (!count) return 0;
     if (!valid(task, buffer, count, false)) return -SAVANXP_EFAULT;
+    if (file->device) return device::write(file->device, buffer, count);
+    if (file->socket) return net::write_socket(file->socket, buffer, count,
+        (file->open_flags & ::process::open_nonblock) != 0);
     if (file->kind == HandleKind::pipe) {
         const int result = pipe_write(task, *file, buffer, count);
         if (file->open_flags & ::process::open_nonblock) return result == kBlocked ? -SAVANXP_EAGAIN : result;
@@ -467,6 +537,7 @@ int poll(process::Process& task, uint32_t array, uint32_t count, int32_t timeout
 }
 
 void service() {
+    net::poll();
     bool raw_reader = ui::graphics_active();
     for (uint32_t index = 0; index < process::kCapacity; ++index) {
         auto& task = *process::at(index);
@@ -492,6 +563,8 @@ void service() {
             auto* file = lookup(task, task.io_fd, object::access_read);
             const int result = file ? try_read(task, *file, task.io_buffer, task.io_size) : -SAVANXP_EBADF;
             if (result != kBlocked) complete(task, result);
+            else if (file && file->socket && task.wake_ms && task.wake_ms <= pit::uptime_ms())
+                complete(task, -SAVANXP_ETIMEDOUT);
         } else if (task.state == process::State::writing) {
             auto* file = lookup(task, task.io_fd, object::access_write);
             const int result = file ? pipe_write(task, *file, task.io_buffer + task.io_progress,

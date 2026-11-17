@@ -68,8 +68,9 @@ The reference shell launches external programs by name or full path and supports
 pipes and redirection. See the [i386 POSIX contract](docs/I386_POSIX.md).
 Memory sections, heap growth, fork and ELF32 shared libraries are supported;
 see [the memory contract](docs/I386_MEMORY.md) and
-[graphics contract](docs/I386_GRAPHICS.md). Networking, audio and power services
-remain unported; v0.4.0 parity is still in progress.
+[graphics contract](docs/I386_GRAPHICS.md). PCI, RTL8139 networking, AC'97 audio,
+ACPI power and external applications are covered by the
+[device-service contract](docs/I386_SERVICES.md). v0.4.0 parity remains in progress.
 Retained source and older design documents are porting material until verified.
 See the [ordered porting roadmap](docs/I386_PORT.md) and
 [process implementation and limits](docs/I386_PROCESSES.md).
@@ -88,7 +89,9 @@ An existing valid `build/disk.img` is preserved, including external binaries and
 `/disk/games` data. Old ELF64 files remain on disk but cannot execute on i386.
 Rebuild individual applications as they are ported. The earlier experimental
 `build/i386/disk-i386.img` is left untouched; it is not migrated automatically.
-The ISO needs the separate disk for userland; it is not a standalone LiveCD.
+The normal ISO uses the separate persistent disk. `./build.sh live-iso` builds
+a standalone `build/SavanXP-live.iso` with a disposable RAM-backed SxFS volume;
+see [LiveCD and services](docs/I386_SERVICES.md).
 
 `./build.sh clean` preserves the disk and external artifacts.
 `--no-test-apps` omits `keyecho` and `multitest32` from staging; additive sync

@@ -104,7 +104,7 @@ compile_c() {
 compile_asm() {
     local source=$1
     local object=$2
-    "$CLANG" -c -x assembler-with-cpp "$source" -o "$object" "${SX_TARGET_CFLAGS[@]}"
+    "$CLANG" -target "$SX_TARGET_TRIPLE" -c -x assembler-with-cpp "$source" -o "$object" "${SX_TARGET_CFLAGS[@]}"
 }
 
 if ((SKIP_PORT == 0)); then
@@ -159,7 +159,7 @@ if ((SKIP_PORT == 0)); then
     echo "== compilando el runtime del SDK"
     compile_asm "$SDK/runtime/crt0.S" "$OBJ/crt0.o"
     compile_asm "$SDK/runtime/setjmp.S" "$OBJ/setjmp.o"
-    for unit in libc posix gfx gfx2d audio math; do
+    for unit in libc posix gfx gfx2d audio math div64 bootstrap32; do
         compile_c "$SDK/runtime/$unit.c" "$OBJ/$unit.o" \
             -fno-builtin "${INCLUDE_FLAGS[@]}"
     done
@@ -171,7 +171,7 @@ if ((SKIP_PORT == 0)); then
     echo "== linkeando ccleste"
     LINK_ARGS=(
         "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/gfx.o" "$OBJ/gfx2d.o"
-        "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
+        "$OBJ/math.o" "$OBJ/div64.o" "$OBJ/bootstrap32.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
     )
     # DT_NEEDED por soname: el cargador mapea libffmpeg.so.0.4 de /disk/lib y

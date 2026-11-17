@@ -80,11 +80,11 @@ writes/scrolling use the native framebuffer directly, and clients draw cursors.
 This releases 4,096,000 bytes of permanent kernel storage and preserves the
 complete heap regression on the 32-MiB machine.
 
-`/bin/init` retains its desktop restart/fallback policy. Since sockets and audio
-are not ported yet, `audiod` treats an unavailable socket syscall as a deliberate
-exit instead of entering a supervisor restart loop. This is absence of the
-service, not evidence of working audio. The volume popup remains part of the
-reference UI and cannot mix audio yet.
+`/bin/init` retains its desktop restart/fallback policy. Milestone 5 supplies
+RTL8139 sockets and AC'97 audio, so the reference `audiod` and volume controls
+can serve desktop clients. Deliberate absence of a device still follows init's
+fallback policy. Audio PCM, ownership and protocol checks are documented in
+[I386_SERVICES.md](I386_SERVICES.md).
 
 The console regression suite derives a disposable ISO from the supplied ISO,
 replaying its boot records and changing only the GRUB command line to
@@ -123,5 +123,6 @@ A successful build and matching installed binaries are prerequisites for any
 visual claim. A stale disk executable can survive a failed build. Persistence
 checks compare executable, WAD, configuration and save bytes on an isolated
 image; their success does not establish that Doom runs on the new graphics
-stack. Hardware input variants, audio, networking, power, optional virtio/SMP,
-external application parity and performance remain in later milestones.
+stack. Milestone 5 adds independent runtime evidence for the external games,
+media and device services in [I386_SERVICES.md](I386_SERVICES.md). Hardware input
+variants, optional virtio/SMP and physical performance remain later work.

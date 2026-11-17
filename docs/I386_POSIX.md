@@ -158,9 +158,11 @@ a disposable copy, allows guest writes to it, rebuilds that copy through normal
 source image hash too. Its writable-disk harness flag is for this isolated check;
 it is never enabled by normal smoke commands.
 
-Process-info CPU counters and an explicit idle-process entry still need the
-reference accounting integration. The 64-process table, 1 GiB managed RAM limit
-and lack of NX remain. Full signals/job control and later device services remain parity gaps. The
+Process-info CPU counters now count running PIT ticks, against the system's
+total tick count; an explicit reference idle-process entry remains a parity gap.
+The 64-process table, 1 GiB managed RAM limit and lack of NX remain. Full signals/
+job control remain later parity work. [I386_SERVICES.md](I386_SERVICES.md) describes
+the restored sockets, device dispatch, realtime and filesystem-check calls. The
 reference desktop is covered by [I386_GRAPHICS.md](I386_GRAPHICS.md). Memory sections, growing heaps,
 fork and ELF32 shared libraries were restored in the following milestone; see
 [I386_MEMORY.md](I386_MEMORY.md) for the current memory contract and regressions.

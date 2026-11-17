@@ -134,6 +134,7 @@ COMMON_FLAGS=(
     -fno-pic
     -fno-pie
     -mno-red-zone
+    -mstack-alignment=16
     ${SX_MCMODEL_SMALL}
     -mno-mmx
     -Wall

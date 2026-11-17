@@ -12,6 +12,15 @@ Cut-off notes:
 
 ### Added
 
+- **A separate i386 LiveCD boots without a persistent disk.**
+  `./build.sh live-iso` creates `SavanXP-live.iso` with a disposable SxFS ramdisk;
+  `smoke storage-smoke` checks diskless boot and guest file operations.
+
+- **i386 runs the reference device services and applications.**
+  PCI/CPU discovery, CMOS `realtime`, AC'97 playback, RTL8139 sockets, ACPI power,
+  clipboard, serial output and PC speaker support the desktop and optional Haxe apps.
+  `services`, `power-smoke` and `native-smoke` check the [service contracts](docs/I386_SERVICES.md).
+
 - **i386 boots the v0.4.0 graphical desktop with shared SxGUI libraries.**
   GPU surfaces, PS/2 wheel input and 64 processes support the reference WM and apps;
   `windowd-smoke`, `sxgui-smoke`, `taskbar` and `calc-smoke` verify it; see [graphics](docs/I386_GRAPHICS.md).
@@ -78,12 +87,16 @@ Cut-off notes:
 
 ### Changed
 
+- **Official media and game ports build and run on i386.**
+  FFmpeg, Media Player and Ccleste use ELF32; Doom again loads the shared MIDI
+  synthesizer. See [device services](docs/I386_SERVICES.md) for runtime gates.
+
 - **i386 is the only build and boot target on this branch.** Normal `build`,
   `iso`, `run`, `debug` and `smoke` use ELF32 and GRUB/BIOS with `build/disk.img`;
   existing external files survive. [Porting roadmap](docs/I386_PORT.md).
 
-- **External SDK applications and the Doom persistence build use static ELF32.**
-  The SDK supplies i386 jump/division helpers; Doom runtime support remains pending.
+- **External SDK applications default to static ELF32.**
+  The SDK supplies i386 jump/division helpers and the shared native stack ABI.
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`
   in `include/shared/version.h` feeds System Properties, the boot splash and the
@@ -95,6 +108,13 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **Native SSE applications keep aligned stacks and heap buffers.**
+  A common 16-byte ABI prevents FFmpeg decoding faults; CPIO boot copies drop
+  unused symbols to preserve the complete heap regression with 32 MiB.
+
+- **Library sharing checks ignore coincidental static helper names.**
+  They still reject executable copies of externally visible shared-library symbols.
 
 - **The i386 SDK preserves native and 64-bit integer values across conversions and stdio.**
   `limits.h`, `intmax_t`, `PRI*`/`SCN*`, `printf` and `sscanf` agree on widths;

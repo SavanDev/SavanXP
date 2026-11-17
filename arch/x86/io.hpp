@@ -11,6 +11,9 @@ bool initialize_handles(process::Process& child, const process::Process* parent,
                         int stdin_fd = 0, int stdout_fd = 1);
 void release_handles(process::Process& task);
 void service();
+int socket(process::Process& task, uint32_t domain, uint32_t type, uint32_t protocol);
+int socket_call(process::Process& task, uint32_t operation, uint32_t fd,
+                uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5);
 int open(process::Process& task, const char* path, uint32_t flags);
 int send_handle(process::Process& task, uint32_t pipe_fd, uint32_t fd);
 int receive_handle(process::Process& task, uint32_t pipe_fd);

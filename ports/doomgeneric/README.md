@@ -7,11 +7,13 @@ The versioned port is the only Doom integration kept in the repository.
 
 ## i386 branch status
 
-The port builds and installs as static ELF32, with the SDK MIDI synthesizer
-linked into the executable. Shared-library loading is not available on this
-branch. This build is used by the persistence regression; it does not imply
-Doom runs in the i386 guest. File descriptors, sufficient heap growth, the full
-window manager and audio still need porting. See [the roadmap](../../docs/I386_PORT.md).
+The port builds as ELF32 PIE with the embedded native loader and the shared
+`libsxmidi.so.0.4` synthesizer, preserving the reference application design.
+The reference desktop and AC'97/RTL8139 services support graphics and audio.
+`./build.sh smoke doom` checks the installed game, FM music and silence after
+closing its window; it requires a real installed IWAD and Ccleste for the
+reference Games catalog order. Persistence remains a separate regression.
+See [service contracts](../../docs/I386_SERVICES.md).
 
 ## Layout
 
@@ -79,6 +81,6 @@ identical across the rebuild. The current regression assets are
 
 The retained overlay converts MUS tracks with upstream `mus2mid.c` and renders
 them through `sx_midi_song_create_with_bank`, using the WAD's `GENMIDI` bank
-when present. The i386 build links this synthesizer statically. Guest PCM
-output, full graphics/window integration and the music smoke remain pending;
-the original working x86_64 integration is on `master`.
+when present. The engine and overlay retain the reference implementation;
+the build adapts the target triple, 16-byte stack ABI, ELF32 startup and integer
+division helpers. The synthesizer is shared as in v0.4.0.

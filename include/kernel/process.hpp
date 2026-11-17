@@ -4,6 +4,7 @@
 #include "../../arch/x86/process.hpp"
 namespace process {
 using Process = i386::process::Process;
+using SavedContext = i386::ContextFrame;
 constexpr size_t kMaxFileHandles = 64;
 Process* current();
 uint32_t current_pid();

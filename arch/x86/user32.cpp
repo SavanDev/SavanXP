@@ -64,7 +64,7 @@ bool read_at(vfs::Vnode& node, uint32_t offset, void* buffer, uint32_t count) {
 } // namespace
 
 int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t argc,
-         const char* const* argv) {
+         const char* const* argv, bool* native_subsystem) {
     vfs::Vnode* node = vfs::open(path, SAVANXP_OPEN_READ);
     if (node == nullptr) {
         return SAVANXP_ENOENT;
@@ -181,6 +181,7 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
     paging::copy_to_user(directory, stack, pointers, (argc + 1) * sizeof(uint32_t));
     initialize_user_frame(frame, header.entry, stack, image_base, argc, stack);
     frame.ecx = interpreter_address;
+    if (native_subsystem) *native_subsystem = header.identification[7] == 0x53;
     serial::write("user: ");
     serial::write(path);
     serial::write(" loaded at ");

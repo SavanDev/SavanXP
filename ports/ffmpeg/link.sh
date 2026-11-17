@@ -3,7 +3,7 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$OUTPUT_ROOT/external"
 
 # ---- libffmpeg.so.0.4 -----------------------------------------------------
 #

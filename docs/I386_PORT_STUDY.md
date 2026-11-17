@@ -841,10 +841,179 @@ physical-machine validation and performance remain later milestones. The boot
 console/logo path also remains the native bootstrap rather than proof of full
 boot-visual parity.
 
+## 12. Restoring device services and the external application ABI
+
+Milestone 4 ended with a working reference desktop, but its service boundary
+still rejected socket syscalls and dispatched only GPU and raw-input handles.
+The audio daemon therefore left deliberately, and retaining the AC'97, network
+and power sources did not make any of them usable. Milestone 5 reconnects these
+reference implementations rather than introducing a second service protocol.
+[I386_SERVICES.md](I386_SERVICES.md) records the current native contract.
+
+### Physical addresses, legacy interrupts and sleeping readers
+
+The PCI enumerator and AC'97 driver compile unchanged. Their DMA allocations
+already separate physical bus addresses from the allocator's supervisor pointer.
+RTL8139 needed the protected-mode FLAGS save/restore instructions in its receive
+critical section. BIOS-assigned INTx routes through the PIC, with ELCR level
+triggering and shared handlers; retaining polling alone was considered, but it
+would discard the reference device wakeup path. AML/IOAPIC routing and optional
+virtio backends remain the later hardware/capacity milestone, rather than being
+claimed from successful legacy-device tests.
+
+ACPI brought a different address ambiguity. The original high-half comparison
+can distinguish physical addresses from high virtual pointers on x86_64; on
+this branch a physical table may numerically exceed the RAM alias base. Native
+ACPI table references must therefore be treated as physical and translated
+explicitly. Multiboot2 carries the RSDP itself in a boot-information tag, not a
+Limine pointer response. The reference FADT/DSDT parser and S5/reset policy can
+then remain in use.
+
+Socket I/O cannot permanently wait inside the caller's kernel continuation:
+that would stop the audio daemon from running while a client waits for it. The
+native descriptor layer retains blocked receives in the process and returns to
+the scheduler. On retries it receives into kernel memory, then copies through
+the waiting process's page directory. Temporarily changing the running task to
+make an existing user-copy helper select another CR3 was rejected: destination
+ownership belongs to the caller of the copy, as in the reference TCP reader.
+The added datagram receive helper extends the same kernel-buffer boundary to
+UDP peer addresses. The reference stack, packet queues and retransmission
+algorithms remain shared.
+
+Observed guest evidence includes `nettest` gateway replies and increasing
+hardware TX/RX counters, `udptest`, `audiod --selftest` and AC'97 streamed PCM.
+The reference `tcptest` verified injected packet loss, bulk and echo payloads,
+reordering, a reply delayed seven seconds, a 500 ms receive timeout and partial
+writes. Its delayed reader consumed one of 672 elapsed ticks in the recorded
+run, establishing that it parked instead of merely returning correct bytes.
+The WAV backend left zero RIFF/data sizes even after QMP quit; the capture held
+425,352 nonzero samples spanning approximately -14,000..14,000. The harness
+therefore validates its actual PCM bytes rather than accepting an empty header.
+
+### Two alignment assumptions exposed by real FFmpeg decoding
+
+The first native FFmpeg build retained the upstream source and selected the
+existing no-assembly codec profile for `x86_32`. Media Player loaded the engine,
+but decoding its first WAV ended in #GP at `write_number`'s aligned SSE store to
+the stack. Disassembly identified `movapd` at offset `0x68a90e` in that build.
+FFmpeg's configure profile declared 16-byte stack alignment, while the native
+freestanding compiler profile had not explicitly stated that ABI. Aligning
+only the initial stack was insufficient: every intermediate caller must use
+the same convention. The correction declares it for all native user code and
+the standalone builders; it does not disable SSE or add realignment thunks to
+upstream code. The next WAV selftest passed.
+
+The MJPEG test then reached another #GP, at an aligned store into a
+`SwsContext` (`ff_yuv2rgb_c_init_tables`, offset `0x640e7a` in that engine).
+The SDK rounded allocation lengths to 16 bytes, but its heap header shrank
+from 32 bytes on LP64 to 20 bytes on i386. Returning `header + 1` broke the
+advertised payload alignment, and later splits repeated the error. Giving the
+header itself 16-byte alignment preserves the original allocator and its
+split/merge rules; a static assertion makes the size invariant explicit.
+`heaptest` now checks consecutive small split allocations and an explicitly
+aligned allocation alongside its existing arena-growth/recycling workload.
+The codec and game tests are being rerun after this correction; their completion
+must be established independently of the successful compile.
+
+The build's sharing guard also rejected Media Player because its local loader
+helper `read_header` had the same name as an unrelated local FFmpeg helper.
+These symbols cannot interpose on one another. Comparing globally visible
+symbols preserves the intended guard against private copies of shared APIs
+without treating coincidental static helper names as duplicate library code.
+
+The optional FFmpeg engine is installed only on the persistent volume, without
+a second resident CPIO copy. Doom's temporary static MIDI runtime is replaced
+by the reference PIE and shared synthesizer, and Ccleste's assembly startup is
+compiled with the same target triple as its C units. These changes restore the
+reference architecture of the applications; installation alone is still not
+proof that their graphics, audio and persistence work. At this stage milestone
+5 was still in progress; the following runtime gates established its closure.
+
+### Follow-up evidence and the remaining storage boundary
+
+After aligning the heap header, the unchanged Media Player tests decoded WAV,
+MJPEG and synchronized AVI, including seeking. Ccleste decoded all 23 effects,
+a music track and 120 simulation frames; the graphical session showed its title
+and playable room. The power regression established guest-requested S5, a fresh
+boot after reset, and shutdown from QMP's firmware power-button event. The
+native Haxe sample also verified its ABI, containers, floats and direct display
+calls after adapting its register/string instructions and static entry.
+
+The first Doom close test appeared to report one second of stale audio.
+Inspection contradicted that interpretation: the purported residue contained
+159 distinct changing amplitudes; the final constant sample lasted under one
+millisecond. The verifier had equated eight zero crossings in 20 ms with live
+music, so bass-heavy or DC-biased FM audio looked stale. It now detects varying
+PCM levels rather than high crossing frequency. A host regression includes
+changing 40 Hz audio that never crosses zero and confirms that 50 ms of repeated
+last-sample PLC passes while 500 ms still fails. The complete game scenario was then rerun with that corrected measurement:
+music remained audible and the measured residue after window closure was
+0.000 s. The change to the checker alone was not treated as runtime evidence.
+
+The reference ramdisk was another retained source that the native graph did not
+use. The normal GRUB ISO must remain small enough for 32 MiB console tests, and
+embedding the persistent 1 GiB disk would both exceed the RAM window and carry
+user-owned games/configuration into a generated distribution artifact. The
+separate LiveCD target instead builds a fresh bounded SxFS module from internal
+staging and derives a second ISO using the original BIOS boot records. The
+kernel reserves all Multiboot modules before allocation and translates the RAM
+image through the supervisor alias before attaching the reference backend.
+A diskless guest selected `live0`, passed `fscheck` and wrote/read a new file;
+the original ATA-backed persistent path is still checked independently.
+
+### Retaining the 32 MiB heap regression
+
+The expanded resident kernel and CPIO first failed the original six-live-block
+heap regression at allocation index four. Reducing the workload or changing
+its geometric arena-growth policy would have hidden a capacity regression.
+Inspection instead found 1,390,584 bytes of unused static symbol tables in the
+resident CPIO. Stripping unneeded symbols from only those boot copies preserves
+their dynamic symbol tables and SXE resources while keeping the full original
+executables on the persistent disk. The 32 MiB regression is rerun after that
+change; its original arena count and allocation sizes remain unchanged.
+
+The corrected boot packaging restored the complete shared-memory regression on
+32 MiB, including all six live heap allocations; it did not reduce that gate.
+The CPIO and LiveCD image now both use supervisor aliases, so their kernel reads
+do not depend on module placement outside the per-process user window. The
+reference CPUID query and CMOS clock also fill the existing discovery/realtime
+ABI rather than leaving the system properties and taskbar with placeholder
+values. `devtest32` checks that discovery, the realtime clock, device access
+permissions and refusal of native-only syscalls from a POSIX image.
+
+### Milestone closure and its limits
+
+The final service run passed the reference TCP/UDP, audio-daemon and media
+checks, including a decoded frame presented through the GPU. Captured steady
+AC'97 levels changed from 12,000 to 6,000 at 50% master volume. Measuring the
+steady distribution avoids charging a preceding stream's buffered tail to the
+next stream; leaving gain unapplied would still fail the half-amplitude gate.
+Both MBR and GPT guest roots passed consistency and file-I/O checks. The LiveCD
+also booted the reference graphical session without an ATA disk, and a fresh
+build without diagnostic applications displayed Program Manager correctly.
+
+The complete smoke, 32 MiB memory/shared-library gates, WM capacity/reconnect/
+fullscreen test and 19 host tests passed. The original native compositor and
+interactive toolkit harnesses verified shared surfaces, fork/exec identity,
+input delivery and repainting. Doom and POSIX persistence checks used isolated
+copies across normal rebuilds, preserving executable/WAD/configuration/save
+bytes and guest-written file contents. An installed-image audit compared the
+actual ELF32 artifacts with their built counterparts, avoiding stale-image
+results after a failed build. [I386_SERVICES.md](I386_SERVICES.md) gives the
+reproducible gates and prerequisite applications.
+
+Milestone 5 is therefore complete for the reference legacy-device path. This
+does not close the version target: the next milestone must establish physical
+hardware behavior, performance, suspend, SMP and optional virtio support.
+Legacy PIC routing does not claim the reference AML/IOAPIC implementation, and
+AC'97 playback does not stand in for virtio capture. Signal/job-control gaps,
+explicit idle-process accounting and the reference boot visuals remain visible
+in the eventual v0.4.0 parity review. The target does not move to v0.4.1 yet.
+
 ## Continuing the study
 
-The next account should trace the reference device services and application
-runtime through milestone 5, distinguishing a service that is absent from one
-that works. Preserve the original state and ownership contracts when adapting
-socket, audio and power mechanisms. Keep the v0.4.0 target pinned until the
-remaining feature and hardware gaps have passed their explicit parity review.
+The next account should trace milestone 6 through observed hardware and
+capacity failures, the selected adaptations, rejected alternatives and explicit
+parity evidence. Preserve the reference mechanisms while adding physical
+coverage, SMP and virtio. Keep v0.4.0 pinned until the remaining feature and
+hardware gaps pass their version-parity review.

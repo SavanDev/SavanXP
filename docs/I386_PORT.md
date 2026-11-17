@@ -88,6 +88,8 @@ defines the exact current guarantees. Section views, growing heaps, demand-grown
 library loader are usable; [I386_MEMORY.md](I386_MEMORY.md) defines their scope.
 The reference window manager, compositor and SxGUI run on i386;
 [I386_GRAPHICS.md](I386_GRAPHICS.md) defines their ownership, input and verification contracts.
+[I386_SERVICES.md](I386_SERVICES.md) covers legacy device services, external
+applications, optional LiveCD boot and their completed milestone 5 regressions.
 
 ## Ordered next milestones
 
@@ -114,7 +116,7 @@ changes, and record implementation/verification evidence as work lands.
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
    Milestone 4 restores the reference process bound and event/timer/semaphore
-   waits; full signal/accounting parity remains outstanding. [Contracts and limits](I386_POSIX.md).
+   waits; full signal and idle-process accounting parity remains outstanding. [Contracts and limits](I386_POSIX.md).
 3. **Memory objects and ELF32 shared libraries — completed.**
    Reference section objects/views, growing heaps, private/shared fork and
    demand-grown stacks support ELF32 PIE and the embedded dependency loader.
@@ -133,11 +135,14 @@ changes, and record implementation/verification evidence as work lands.
    rendering/client code. `windowd-smoke` covers capacity, reconnect and fullscreen;
    `sxgui-smoke` checks editor/taskbar glyphs and input. `desktop32` remains an
    explicit diagnostic. [Contracts and limits](I386_GRAPHICS.md).
-5. **Device services and applications — next.** Port audio, networking, ACPI/power
-   and remaining storage/input backends with guest regressions. Restore Doom,
-   Ccleste, FFmpeg and the other applications as their dependencies become ready.
-   The static Doom build currently verifies installation/persistence only.
-6. **Physical hardware and capacity.** Validate BIOS/E820, ATA and framebuffer
+5. **Device services and applications — completed.** Reference PCI/CPU discovery,
+   CMOS clock, AC'97 audio, RTL8139 networking, ACPI power and legacy device nodes
+   run on i386. ATA/MBR/GPT and the optional LiveCD ramdisk have guest regressions;
+   the existing PS/2 path supports the restored applications. FFmpeg/Media Player,
+   Ccleste, shared-MIDI Doom and optional native Haxe clients pass runtime checks,
+   alongside memory, graphics and persistence gates. [Contracts and evidence](I386_SERVICES.md).
+   Optional virtio backends and physical-machine coverage remain in milestone 6.
+6. **Physical hardware and capacity — next.** Validate BIOS/E820, ATA and framebuffer
    variants on the target laptop, then address suspend/power and performance.
    Port the reference SMP and optional virtio support after the single-CPU base
    is reliable; they remain part of the parity assessment.

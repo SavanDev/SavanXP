@@ -12,7 +12,7 @@ PARSERS="h264,hevc,vp8,vp9,mpeg4video,mpegvideo,mjpeg,aac,ac3,mpegaudio,vorbis,o
 CONFIGURE_ARGS=(
     --prefix="$WORK/install"
     --enable-cross-compile
-    --arch=x86_64
+    --arch=x86_32
     --target-os=none
     --cc="$SX_CC"
     --ld="$SX_LD"

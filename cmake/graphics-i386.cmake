@@ -54,6 +54,35 @@ savanxp_i386_pie(mines DEPENDS libgfx2d libsxgui libsxgfx  SOURCES
 savanxp_i386_pie(calc DEPENDS libgfx2d libmath libsxgui libsxgfx
     SOURCES
     subsystems/posix/userland/calc.c)
+# The pinned FFmpeg port is optional until its external engine has been built.
+set(SAVANXP_FFMPEG_ROOT "${SAVANXP_OUTPUT_ROOT}/ports/ffmpeg/work" CACHE PATH "FFmpeg port work directory")
+set(SAVANXP_FFMPEG_LIBRARY "${SAVANXP_OUTPUT_ROOT}/external/libffmpeg.so.0.4" CACHE FILEPATH "ELF32 FFmpeg engine")
+file(GLOB ffmpeg_sources "${SAVANXP_FFMPEG_ROOT}/ffmpeg-*/libavformat/avformat.h")
+if(EXISTS "${SAVANXP_FFMPEG_LIBRARY}" AND ffmpeg_sources)
+    file(READ "${SAVANXP_FFMPEG_LIBRARY}" ffmpeg_header LIMIT 20 HEX)
+    string(SUBSTRING "${ffmpeg_header}" 0 10 ffmpeg_class)
+    string(SUBSTRING "${ffmpeg_header}" 36 4 ffmpeg_machine)
+    if(ffmpeg_class STREQUAL "7f454c4601" AND ffmpeg_machine STREQUAL "0300")
+        list(GET ffmpeg_sources 0 ffmpeg_header_path)
+        get_filename_component(ffmpeg_include "${ffmpeg_header_path}" DIRECTORY)
+        get_filename_component(ffmpeg_include "${ffmpeg_include}" DIRECTORY)
+        add_library(savanxp-i386-libffmpeg SHARED IMPORTED)
+        set_target_properties(savanxp-i386-libffmpeg PROPERTIES IMPORTED_LOCATION "${SAVANXP_FFMPEG_LIBRARY}")
+        savanxp_i386_pie(mediaplayer DEPENDS libgfx2d libffmpeg libmath libsxgui libsxgfx SOURCES
+            subsystems/posix/userland/mediaplayer/media.c
+            subsystems/posix/userland/mediaplayer/mediaplayer.c
+            subsystems/posix/userland/mediaplayer/playback.c
+            subsystems/posix/userland/mediaplayer/selftest.c)
+        target_include_directories(savanxp-i386-mediaplayer PRIVATE "${ffmpeg_include}" "${SAVANXP_FFMPEG_ROOT}/build")
+        add_custom_command(TARGET savanxp_i386_diskfs POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy "${SAVANXP_FFMPEG_LIBRARY}" "${SAVANXP_DISKFS_ROOT}/lib/libffmpeg.so.0.4"
+            VERBATIM)
+        list(APPEND SAVANXP_I386_LIBRARIES libffmpeg.so.0.4)
+    else()
+        message(STATUS "Retaining foreign FFmpeg engine as data; rebuild ports/ffmpeg for i386")
+    endif()
+endif()
+
 if(SAVANXP_INCLUDE_TEST_APPS)
 savanxp_i386_pie(widgetsdemo DEPENDS libgfx2d libsxgui libsxgfx   SOURCES
     subsystems/posix/userland/widgetsdemo.c)

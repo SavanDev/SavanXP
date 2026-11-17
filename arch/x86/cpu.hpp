@@ -57,6 +57,8 @@ using IrqHandler = void (*)();
 /* Registra el manejador de un IRQ y abre su puerta en la IDT. Si el IRQ ya
  * tenia manejador, este lo sustituye. */
 void register_irq_handler(uint8_t irq, IrqHandler handler);
+// PCI INTx and ACPI SCI can share a level-triggered PIC line.
+bool register_shared_irq_handler(uint8_t irq, IrqHandler handler);
 
 /* Quita la mascara del PIC para ese IRQ. Las interrupciones siguen apagadas
  * hasta que alguien las encienda con enable_interrupts(). */

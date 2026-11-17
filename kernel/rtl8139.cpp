@@ -186,13 +186,21 @@ bool transmit(const void* frame, size_t length) {
 // su seccion critica con esto la vuelve atomica en monocore: mientras el main
 // drena el ring, el IRQ del NIC no puede preemptarlo (evita corromper g_cur_rx).
 inline uint64_t irq_save() {
-    uint64_t f;
+    uintptr_t f;
+#if defined(__i386__)
+    asm volatile("pushfl; pop %0; cli" : "=r"(f)::"memory");
+#else
     asm volatile("pushfq; pop %0; cli" : "=r"(f)::"memory");
+#endif
     return f;
 }
 
 inline void irq_restore(uint64_t f) {
+#if defined(__i386__)
+    asm volatile("push %0; popfl" ::"r"(static_cast<uintptr_t>(f)) : "memory", "cc");
+#else
     asm volatile("push %0; popfq" ::"r"(f) : "memory", "cc");
+#endif
 }
 
 void poll_receive() {

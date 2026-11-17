@@ -35,7 +35,7 @@ while (($#)); do
         --virtio) echo "build.sh: virtio drivers are not ported to i386 yet" >&2; exit 2 ;;
         -h|--help)
             cat <<'EOF'
-Usage: ./build.sh [build|configure|kernel|userland|iso|run|debug|smoke|test|clean] [options]
+Usage: ./build.sh [build|configure|kernel|userland|iso|live-iso|run|debug|smoke|test|clean] [options]
 
 This branch builds i386 ELF32 and boots through GRUB2/BIOS.
 Options:
@@ -47,7 +47,7 @@ Options:
   --smp 1         one CPU (SMP is not ported yet)
   --headless      disable the graphical QEMU window
   --legacy        compatibility alias; i386 is already selected
-  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, legacy-cpu
+  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, services, device-smoke, audio-smoke, net-smoke, tcp-smoke, media-smoke, power-smoke, native-smoke, storage-smoke, partition-smoke, live-desktop, doom, ccleste, legacy-cpu
   --timeout SEC   smoke timeout (default: 360)
   --list          list supported smoke scenarios
 EOF
@@ -56,7 +56,7 @@ EOF
     esac
 done
 case "$COMMAND" in
-    build|configure|kernel|userland|iso|run|debug|smoke|test|clean) ;;
+    build|configure|kernel|userland|iso|live-iso|run|debug|smoke|test|clean) ;;
     *)
         if [[ "$COMMAND" == *-smoke || "$COMMAND" == legacy-cpu ]]; then
             SCENARIO=$COMMAND; COMMAND=smoke
@@ -74,7 +74,7 @@ if ((LIST)); then
 fi
 if [[ "$COMMAND" == smoke ]]; then
     case "$SCENARIO" in
-        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|legacy-cpu) ;;
+        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|services|device-smoke|audio-smoke|net-smoke|tcp-smoke|media-smoke|power-smoke|native-smoke|storage-smoke|partition-smoke|live-desktop|doom|ccleste|legacy-cpu) ;;
         *) echo "build.sh: '$SCENARIO' is not ported to i386; use smoke --list (x86_64 scenarios live on master)" >&2; exit 2 ;;
     esac
     INCLUDE_TEST_APPS=ON
@@ -99,6 +99,7 @@ case "$COMMAND" in
     build) configure; build_target savanxp ;;
     kernel) configure; build_target savanxp_kernel ;;
     userland) configure; build_target savanxp_userland ;;
+    live-iso) configure; build_target savanxp_live_iso ;;
     iso) configure; build_target savanxp_disk; build_target savanxp_iso ;;
     run|debug)
         configure
@@ -118,6 +119,7 @@ case "$COMMAND" in
         configure
         build_target savanxp_disk
         build_target savanxp_iso
+        [[ "$SCENARIO" != storage-smoke && "$SCENARIO" != live-desktop ]] || build_target savanxp_live_iso
         ARTIFACTS=$(mktemp -d "$OUTPUT_ROOT/smoke-logs/$SCENARIO.XXXXXX")
         echo "Smoke artifacts: $ARTIFACTS"
         exec "$PYTHON" "$ROOT/tools/run_smoke.py" --scenario "$SCENARIO" \

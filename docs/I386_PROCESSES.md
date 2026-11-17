@@ -177,6 +177,12 @@ graphics and cursor restoration. Normal `smoke desktop` now boots the reference
 session, while `sxgui-smoke` verifies actual toolkit glyphs and wheel/scrollbar input. The harness uses a
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
+Process-info accounting records running PIT ticks, including kernel time, while
+the system reports total PIT ticks. Socket reads/receives park in the native
+scheduler and copy through the waiting process's address space; killed audio
+owners release their session. The optional native OSABI survives fork and
+changes on successful exec. See [I386_SERVICES.md](I386_SERVICES.md).
+
 ## Remaining boundaries
 
 User-installed signal handlers, SMP and ASLR remain unported. Events, timers,

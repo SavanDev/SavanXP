@@ -55,7 +55,7 @@ def library_symbols(library_dir, nm="nm"):
         if path.is_symlink() or not path.is_file():
             continue
         out = subprocess.run(
-            [nm, "--defined-only", "--format=posix", str(path)],
+            [nm, "-g", "--defined-only", "--format=posix", str(path)],
             capture_output=True, text=True, check=False,
         ).stdout
         symbols = set()
@@ -77,7 +77,7 @@ def readelf_dynamic(path: Path, readelf="readelf") -> list[str]:
 
 def defined_symbols(path: Path, nm="nm") -> set[str]:
     out = subprocess.run(
-        [nm, str(path)], capture_output=True, text=True, check=False
+        [nm, "-g", str(path)], capture_output=True, text=True, check=False
     ).stdout
     found = set()
     for line in out.splitlines():

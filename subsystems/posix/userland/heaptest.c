@@ -257,7 +257,28 @@ struct heaptest_case {
     int (*run)(void);
 };
 
+static int check_alignment(void) {
+    void* blocks[64] = {0};
+    void* aligned = 0;
+    int index;
+    for (index = 0; index < 64; ++index) {
+        blocks[index] = malloc((size_t)index + 1);
+        if (!blocks[index] || ((uintptr_t)blocks[index] & 15u)) {
+            eprintf("heaptest: unaligned split allocation %d\n", index);
+            return 0;
+        }
+    }
+    for (index = 0; index < 64; ++index) free(blocks[index]);
+    if (posix_memalign(&aligned, 64, 513) != 0 || ((uintptr_t)aligned & 63u)) {
+        eprintf("heaptest: posix_memalign failed\n");
+        return 0;
+    }
+    free(aligned);
+    return 1;
+}
+
 int main(void) {
+    if (!check_alignment()) return 1;
     static const struct heaptest_case cases[] = {
         { "growth", test_growth },
         { "bootstrap", test_bootstrap_survives },

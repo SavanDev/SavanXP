@@ -31,12 +31,10 @@ long sxn_syscall3(long number, long a, long b, long c) {
 }
 
 long sxn_syscall5(long number, long a, long b, long c, long d, long e) {
-    register long r10 __asm__("r10") = d;
-    register long r8 __asm__("r8") = e;
     long result;
     __asm__ volatile("int $0x80"
                      : "=a"(result)
-                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "c"(d), "b"(e)
                      : "memory");
     return result;
 }
@@ -136,9 +134,9 @@ void sxn_hello(void) {
 #define SXN_ALLOC_ALIGNMENT 16u
 #define SXN_ALLOC_MAGIC 0x53584e41u /* "SXNA" */
 
-/* Header de 32 bytes antes de cada payload; con la arena alineada a 16, los
- * payloads quedan alineados a 16. `next_free` solo es valido en bloques libres
- * (magic == 0), encadenados en orden de direccion para poder coalescer. */
+/* The header is a multiple of 16 bytes on both x86 data models. With an
+ * aligned arena, splitting preserves payload alignment. Free blocks are
+ * linked by address so adjacent blocks can coalesce. */
 typedef struct sxn_block {
     unsigned long size; /* bytes del payload, multiplo de 16 */
     unsigned long magic; /* SXN_ALLOC_MAGIC = asignado, 0 = libre */
@@ -280,16 +278,15 @@ void *sxn_realloc(void *ptr, unsigned long size) {
 /* Acceso de 64 bits sin promesa de alineacion ni de aliasing exclusivo. */
 typedef unsigned long long sxn_word __attribute__((may_alias, aligned(1)));
 
-/* Instrucciones de string en vez de un lazo byte a byte: 8 bytes por iteracion
- * y sin overhead de lazo, que sin optimizacion cuesta media docena de
- * instrucciones por byte. Requisito: DF=0, garantizado por el cld del crt0. */
+/* Protected-mode string instructions copy four bytes per iteration.
+ * DF=0 is established by crt0 before entering the runtime. */
 void *memcpy(void *destination, const void *source, unsigned long count) {
     void *cursor = destination;
     const void *origin = source;
-    unsigned long words = count >> 3;
-    unsigned long tail = count & 7u;
+    unsigned long words = count >> 2;
+    unsigned long tail = count & 3u;
 
-    __asm__ volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+    __asm__ volatile("rep movsl" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
     __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
 
     return destination;
@@ -303,7 +300,7 @@ void *memmove(void *destination, const void *source, unsigned long count) {
     if (out == in || count == 0) {
         return destination;
     }
-    /* Sin solape hacia adelante: el movsq ascendente de memcpy es correcto. */
+    /* Forward memcpy is safe when the destination precedes the source. */
     if (out < in) {
         return memcpy(destination, source, count);
     }
@@ -323,13 +320,13 @@ void *memmove(void *destination, const void *source, unsigned long count) {
 
 void *memset(void *destination, int value, unsigned long count) {
     unsigned char byte = (unsigned char)value;
-    /* Replica el byte en las 8 posiciones para que stosq escriba el mismo patron. */
-    unsigned long long pattern = (unsigned long long)byte * 0x0101010101010101ULL;
+    /* Repeat the byte across the four-byte protected-mode accumulator. */
+    unsigned long pattern = (unsigned long)byte * 0x01010101UL;
     void *cursor = destination;
-    unsigned long words = count >> 3;
-    unsigned long tail = count & 7u;
+    unsigned long words = count >> 2;
+    unsigned long tail = count & 3u;
 
-    __asm__ volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+    __asm__ volatile("rep stosl" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
     __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
 
     return destination;

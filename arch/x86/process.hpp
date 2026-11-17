@@ -16,6 +16,7 @@ enum class State { unused, runnable, running, sleeping, reading, writing, pollin
 struct alignas(4096) Process {
     State state;
     uint32_t pid, parent;
+    bool native_subsystem;
     int exit_status;
     ContextFrame* frame;
     FpuState fpu;
@@ -23,6 +24,7 @@ struct alignas(4096) Process {
     int wait_pid;
     uint32_t wait_status;
     uint32_t io_fd, io_buffer, io_size, io_progress;
+    uint32_t io_operation, io_peer;
     uint32_t object_count;
     bool wait_all;
     object::Header* wait_objects[16];
@@ -38,6 +40,7 @@ struct alignas(4096) Process {
     uint32_t next_view_base;
     char cwd[256], name[32];
     uint32_t preemptions;
+    uint64_t cpu_ticks;
     alignas(4096) uint32_t directory[1024];
     alignas(16) uint8_t kernel_stack[16384];
 };

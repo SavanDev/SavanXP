@@ -198,9 +198,10 @@ class Qmp(object):
 
 
 class Session(object):
-    def __init__(self, qmp, out_dir):
+    def __init__(self, qmp, out_dir, audio_path=None):
         self.qmp = qmp
         self.out = out_dir
+        self.audio_path = audio_path
         self.index = 0
 
     def shot(self, name):
@@ -1397,7 +1398,7 @@ def _wav_signal(path, seconds=8.0, rate=48000, window_s=0.25):
     return best
 
 
-def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02, min_crossings=8):
+def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02):
     """Cuanto sigue sonando DESPUES de la ultima musica real, en segundos.
 
     Un cliente vivo manda musica que se mueve: sus ventanas cruzan por cero. Lo
@@ -1418,20 +1419,17 @@ def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02, min_crossings=8
         seg = tail[start:start + window]
         if not seg:
             continue
-        crossings = 0
-        previous = seg[0]
-        for value in seg[1:]:
-            if (value < 0) != (previous < 0):
-                crossings += 1
-            previous = value
-        if crossings >= min_crossings:
+        # A DC-biased or bass-heavy FM waveform can move without crossing
+        # zero eight times per 20 ms. PLC repeats one exact sample; detect
+        # changing PCM levels instead, excluding tiny quantization noise.
+        if len(set(seg)) >= 4 and max(seg) - min(seg) > 16:
             last_active = start + len(seg)
     last_nonzero = 0
     for index in range(len(tail) - 1, -1, -1):
         if tail[index] != 0:
             last_nonzero = index + 1
             break
-    return (last_nonzero - last_active) / float(rate)
+    return max(0.0, (last_nonzero - last_active) / float(rate))
 
 
 def scenario_doom(s):
@@ -1458,7 +1456,7 @@ def scenario_doom(s):
     time.sleep(20)
     s.shot("doom-nivel")
 
-    wav = Path(s.out).resolve().parent.parent / "doom-music.wav"
+    wav = Path(s.audio_path) if s.audio_path else Path(s.out).resolve().parent.parent / "doom-music.wav"
     level = _wav_signal(wav)
     if level is None:
         raise Failure(
@@ -1557,7 +1555,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False):
+def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False, audio_path=None):
     """Ejecuta un escenario visual contra una instancia YA encendida.
 
     Es el punto de entrada que usa `build.sh smoke` para los escenarios que
@@ -1575,6 +1573,6 @@ def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False):
     # El handoff es el arranque de init; despues la sesion tarda en estar pintada.
     if boot_wait:
         time.sleep(boot_wait)
-    session = Session(qmp, out_dir)
+    session = Session(qmp, out_dir, audio_path=audio_path)
     SCENARIOS[name](session)
     return sorted(str(p) for p in Path(out_dir).glob("*.png"))

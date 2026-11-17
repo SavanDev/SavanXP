@@ -88,6 +88,12 @@ export SAVANXP_EXTERNAL_ROOT="$TEMP/external"
 export SAVANXP_DISK_IMAGE="$TEMP/disk.img"
 export SAVANXP_SXFS_CLI="$TEMP/tools/sxfs-cli"
 
+# The reference Doom build depends on the native shared MIDI synthesizer.
+[[ -f "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" ]] || {
+    echo "verify-doom: build the native libraries with ./build.sh build first" >&2
+    exit 1
+}
+cp "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" "$TEMP/diskfs/lib/"
 "$ROOT/ports/doomgeneric/build.sh" --wad "$WAD_PATH"
 
 # Add data that the normal internal build must not replace.
