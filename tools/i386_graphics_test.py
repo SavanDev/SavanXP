@@ -11,9 +11,10 @@ import tempfile
 import time
 
 import shoot_session
+from run_qemu import storage_network_args, sound_device, graphics_input_args
 
 
-def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float) -> int:
+def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float, virtio: bool = False) -> int:
     report_scenario = scenario
     diskless = scenario == "live-desktop"
     if diskless: scenario = "desktop"
@@ -24,13 +25,14 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
         socket = Path(tmp) / "qmp"
         command = [os.environ.get("SAVANXP_QEMU", shutil.which("qemu-system-i386") or "qemu-system-i386"),
                    "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
-                   "-m", "1024M", "-smp", "1", "-vga", "std",
-                   "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
-                   "-audiodev", "none,id=audio0", "-device", "AC97,audiodev=audio0",
+                   "-m", "1024M", "-smp", "1",
+                   "-netdev", "user,id=net0",
+                   "-audiodev", "none,id=audio0", "-device", sound_device(virtio),
                    "-display", "none", "-boot", "d", "-cdrom", str(iso),
-                   "-drive", f"file={disk},format=raw,if=ide,snapshot=on",
                    "-serial", f"file:{serial}", "-qmp", f"unix:{socket},server=on,wait=off",
                    "-no-reboot", "-no-shutdown"]
+        command += storage_network_args(disk, virtio=virtio, snapshot=True)
+        command += graphics_input_args(virtio)
         if diskless:
             drive = command.index("-drive")
             del command[drive:drive + 2]
@@ -52,6 +54,10 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                     raise RuntimeError("graphical init did not start Program Manager")
                 if diskless and ("live0:" not in text or "ata0:" in text):
                     raise RuntimeError("the diskless desktop did not use the LiveCD ramdisk")
+                if virtio:
+                    for marker in ("virtio-gpu: ready", "virtio-input: tablet ready", "virtio-input: keyboard ready", "vblk0:"):
+                        if marker not in text:
+                            raise RuntimeError(f"virtio graphical backend missing: {marker}")
                 def expired(_signum, _frame):
                     raise TimeoutError(f"{scenario} exceeded its {timeout:g}s deadline")
                 previous_alarm = signal.signal(signal.SIGALRM, expired)
@@ -59,7 +65,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                 # Exercise the real reference UI and its built font tables.
                 shots = shoot_session.run_scenario(
                     "notepadwheel" if scenario == "sxgui-smoke" else scenario,
-                    socket, artifacts, boot_wait=5, audio_path=audio_path)
+                    socket, artifacts, boot_wait=5, abs_pointer=virtio, audio_path=audio_path)
                 if scenario == "desktop":
                     from PIL import Image
                     with Image.open(shots[-1]) as screen:
@@ -87,7 +93,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
                 text = serial.read_text(errors="replace")
                 if "exception vector" in text or "user: exception #" in text or "stack overflow" in text or "compositor startup failed" in text:
                     raise RuntimeError("a graphical process faulted; see serial.log")
-                print(f"i386 {report_scenario}: PASS ({len(shots)} captures)", flush=True)
+                print(f"i386 {report_scenario}{' virtio' if virtio else ''}: PASS ({len(shots)} captures)", flush=True)
                 return 0
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
@@ -109,8 +115,9 @@ def main() -> int:
     parser.add_argument("--scenario", default="sxgui-smoke")
     parser.add_argument("--accel", default="tcg")
     parser.add_argument("--timeout", type=float, default=360)
+    parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
-    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, args.accel, args.timeout)
+    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, args.accel, args.timeout, args.virtio)
 
 
 if __name__ == "__main__":

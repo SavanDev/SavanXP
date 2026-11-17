@@ -10,7 +10,7 @@ import legacy_boot_test
 import i386_graphics_test
 import i386_services_test
 
-SERVICE_SCENARIOS = ("services", "device-smoke", "audio-smoke", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke")
+SERVICE_SCENARIOS = ("services", "device-smoke", "audio-smoke", "audio-record", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke")
 SCENARIOS = SERVICE_SCENARIOS + ("smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
 
 
@@ -23,14 +23,20 @@ def main() -> int:
     parser.add_argument("--artifacts", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=360)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
+    parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
+    graphics = ("desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop")
+    if args.virtio and args.scenario not in SERVICE_SCENARIOS + graphics:
+        parser.error("--virtio currently supports service and graphical scenarios; use virtio-smoke")
+    if args.virtio and args.scenario in ("storage-smoke", "live-desktop"):
+        parser.error("LiveCD scenarios are diskless; use virtio-smoke to check virtio storage")
     if args.scenario in SERVICE_SCENARIOS:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "storage-smoke" else args.iso
-        return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel)
+        return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel, args.virtio)
     if args.scenario in ("desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop"):
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "live-desktop" else args.iso
         return i386_graphics_test.run(iso, args.disk_image, args.artifacts,
-            "calc" if args.scenario == "calc-smoke" else args.scenario, args.accel, args.timeout)
+            "calc" if args.scenario == "calc-smoke" else args.scenario, args.accel, args.timeout, args.virtio)
     command = ["--iso", str(args.iso), "--disk-image", str(args.disk_image),
                "--expect-user", "--accel", args.accel, "--timeout", str(args.timeout),
                "--artifacts", str(args.artifacts)]

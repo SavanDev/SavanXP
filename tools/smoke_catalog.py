@@ -16,6 +16,8 @@ SCENARIOS = {
     "taskbar": "reference taskbar activation, minimization and window state",
     "calc-smoke": "reference shared-library calculator and visible result",
     "services": "native devices, AC97 PCM, RTL8139, UDP/TCP, installed FFmpeg and Ccleste",
+    "virtio-smoke": "virtio disk I/O, UDP/TCP, captured playback/gain and capture-ring reads",
+    "audio-record": "virtio capture-ring completion with a deterministic silent input source",
     "device-smoke": "device permissions, killed audio owner, clipboard and PC speaker",
     "audio-smoke": "audio daemon selftest and captured AC97 PCM",
     "net-smoke": "RTL8139 gateway packets/counters and UDP loopback",

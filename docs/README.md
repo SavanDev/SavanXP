@@ -41,13 +41,15 @@ i386 support; retained code is not necessarily part of the active build.
   and TLB shootdown work.
 - [`REAL_HARDWARE.md`](REAL_HARDWARE.md) — the i386 porting route through a
   minimal graphical desktop in QEMU, its verification commands, and the
-  remaining hardware gaps for a Compaq Evo N1020v.
+  Compaq Evo N1020v analysis reserved for the v0.4.2 hardware target.
 - [`I386_POSIX.md`](I386_POSIX.md) — shared descriptors, files, pipes, canonical TTY,
   reference shell/BusyBox, exec/cleanup and guest persistence verification.
 - [`I386_SDK.md`](I386_SDK.md) — i386 integer widths, limits, conversions,
   formatted I/O and static/shared runtime ABI checks before the graphics port.
 - [`I386_SERVICES.md`](I386_SERVICES.md) — native device services, sockets, audio,
-  power and external application ABI; milestone 5 verification in progress.
+  power and external application ABI; completed milestone 5 verification.
+- [`I386_VIRTIO.md`](I386_VIRTIO.md) — milestone 6 virtio transport, device
+  integration, PIC interrupt policy, capture and graphical regression gates.
 - [`I386_GRAPHICS.md`](I386_GRAPHICS.md) — reference desktop, GPU surfaces,
   shared graphics libraries, input, waits and visual regressions.
 - [`I386_MEMORY.md`](I386_MEMORY.md) — section/view ownership, heap growth,

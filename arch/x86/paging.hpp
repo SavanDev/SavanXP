@@ -36,4 +36,6 @@ void activate_kernel();
 // Contiguous supervisor views of scattered section pages; shared by all CR3s.
 bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base);
 bool unmap_kernel_pages(void* base, uint32_t count);
+// Uncached supervisor views of device BARs below the non-PAE 4 GiB ceiling.
+bool map_kernel_mmio(uint64_t physical, uint32_t bytes, void** base);
 }

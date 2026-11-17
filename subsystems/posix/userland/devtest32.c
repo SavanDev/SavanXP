@@ -29,6 +29,11 @@ int main(int argc, char** argv) {
     }
     fd = savanxp_open_mode("/dev/audio0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (fd < 0) return fail("audio open");
+    if (argc > 1 && strcmp(argv[1], "virtio") == 0) {
+        struct savanxp_audio_info info = {};
+        if (audio_get_info((int)fd, &info) < 0 || info.backend != SAVANXP_AUDIO_BACKEND_VIRTIO)
+            return fail("virtio audio backend");
+    }
     if (argc > 1 && strcmp(argv[1], "owner") == 0) {
         if (savanxp_write((int)fd, samples, sizeof(samples)) != sizeof(samples)) return fail("child audio write");
         puts_out("DEV32 CHILD OWNS AUDIO\n");

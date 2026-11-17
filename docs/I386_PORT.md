@@ -24,6 +24,13 @@ advance the active target automatically or excuse unfinished v0.4.0 behavior.
 The baseline version is a compatibility target, not a claim that the current
 i386 prototype has already reached it.
 
+Validation follows the same version sequence. The v0.4.0 and v0.4.1 targets
+are assessed in emulation; physical-machine bring-up and validation begin
+with the v0.4.2 target. Laptop-specific BIOS/E820, ATA, framebuffer, peripheral
+and power work is deferred to that stage, not an extra requirement for closing
+an earlier target. This does not defer reference features that can be exercised
+in emulation, including SMP and virtio.
+
 ### Change policy
 
 - Port and reuse the reference implementation wherever possible. Preserve
@@ -56,9 +63,10 @@ requires evidence for all applicable reference capabilities, including:
   including external programs and persistent data across rebuilds.
 - The reference internal subsystem model, adapted to the CPU/ABI rather than
   replaced by permanent prototype shortcuts, with its relevant regressions.
-- The reference device and capacity features on supported hardware or suitable
-  emulation. A missing capability such as SMP or virtio remains a parity gap
-  even when the first physical target cannot exercise it.
+- The reference device and capacity features in suitable emulation for
+  v0.4.0/v0.4.1, with physical-machine validation added at v0.4.2. A missing
+  capability such as SMP or virtio remains a parity gap even when the eventual
+  physical target cannot exercise it.
 
 Record remaining gaps explicitly; passing the current minimal smoke is not
 sufficient to close v0.4.0. Move to v0.4.1 only after the v0.4.0 parity review
@@ -141,15 +149,26 @@ changes, and record implementation/verification evidence as work lands.
    the existing PS/2 path supports the restored applications. FFmpeg/Media Player,
    Ccleste, shared-MIDI Doom and optional native Haxe clients pass runtime checks,
    alongside memory, graphics and persistence gates. [Contracts and evidence](I386_SERVICES.md).
-   Optional virtio backends and physical-machine coverage remain in milestone 6.
-6. **Physical hardware and capacity — next.** Validate BIOS/E820, ATA and framebuffer
-   variants on the target laptop, then address suspend/power and performance.
-   Port the reference SMP and optional virtio support after the single-CPU base
-   is reliable; they remain part of the parity assessment.
+   Optional virtio backends remain in milestone 6; physical-machine coverage
+   begins with the v0.4.2 target.
+6. **Capacity and remaining reference parity in emulation — in progress.** Port the
+   reference SMP and optional virtio support, and assess performance, power
+   mechanisms and the remaining internal/visual gaps against v0.4.0 in QEMU.
+   Complete the feature-by-feature parity review before advancing to v0.4.1.
+   Physical-machine bring-up is reserved for the v0.4.2 target.
+
+   **6.1 — Virtio integration completed.** The reference PCI transport, block, network,
+   sound, GPU, tablet and keyboard drivers are linked on i386. The optional
+   `--virtio` profile retains the same desktop and applications;
+   [I386_VIRTIO.md](I386_VIRTIO.md) defines its gates and architecture boundary.
+   **6.2 — SMP and interrupt infrastructure remain pending**, followed by the
+   remaining internal/visual parity review. Working virtio is not completion
+   of milestone 6 or of the v0.4.0 target.
 
 The detailed laptop analysis and earlier completed milestones are in
-[REAL_HARDWARE.md](REAL_HARDWARE.md); the list above is the current branch plan,
-not a claim that those later subsystems have been ported.
+[REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation
+for the v0.4.2 target. The list above is the current branch plan, not a claim
+that those later subsystems have been ported.
 
 ## Migration and verification rules
 

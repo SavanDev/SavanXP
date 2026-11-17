@@ -6,6 +6,12 @@
 #include "kernel/partition.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/ramdisk.hpp"
+#include "kernel/pci.hpp"
+#include "kernel/virtio_blk.hpp"
+#include "kernel/virtio_gpu.hpp"
+#include "kernel/virtio_input.hpp"
+#include "kernel/ui.hpp"
+#include "kernel/timer.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/string.hpp"
 
@@ -235,12 +241,13 @@ void report_block_devices() {
 }
 
 // Mount the first recognized SxFS volume at /disk. Reference driver priority
-// selects direct ATA before the optional LiveCD RAM image.
+// selects virtio, direct ATA, then the optional LiveCD RAM image.
 void mount_root_filesystem() {
     const auto& boot = boot_state::state();
     vfs::initialize(reinterpret_cast<const void*>(boot.initramfs_address + paging::kDirectMapBase), boot.initramfs_size);
     if (!vfs::ready()) halt_with("vfs: invalid initramfs");
     block::register_driver(ata::driver());
+    block::register_driver(virtio_blk::driver());
     block::register_driver(ramdisk::driver());
     if (boot.disk_image_address && boot.disk_image_size)
         ramdisk::attach_image(reinterpret_cast<void*>(boot.disk_image_address + paging::kDirectMapBase),
@@ -439,6 +446,9 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     if (!heap::ready()) halt_with("memory: cannot initialize kernel heap");
     initialize_video();
 
+    // PCI storage needs discovery before probing and mounting the root.
+    timer::calibrate_monotonic();
+    pci::initialize();
     mount_root_filesystem();
     device::initialize();
     boot::FramebufferInfo framebuffer = {};
@@ -450,7 +460,12 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     framebuffer.available = fb32::ready();
     framebuffer.mapped_bytes = fb32::info().buffer_size;
     display::register_driver(fb_gpu::driver());
+    display::register_driver(virtio_gpu::driver());
     display::bind_best(framebuffer);
+    ui::sync_framebuffer_geometry();
+    framebuffer.width = display::framebuffer_info().width;
+    framebuffer.height = display::framebuffer_info().height;
+    virtio_input::initialize(framebuffer);
     gpu_device::initialize();
     services::initialize(info_address);
     io::initialize();

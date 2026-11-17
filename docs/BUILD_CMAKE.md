@@ -14,6 +14,7 @@ for the [progressive port](I386_PORT.md).
 ./build.sh kernel
 ./build.sh iso
 ./build.sh run
+./build.sh run --virtio
 ./build.sh debug --headless
 ./build.sh smoke
 ./build.sh smoke boot
@@ -28,6 +29,9 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke taskbar
 ./build.sh smoke calc-smoke
 ./build.sh smoke services       # requires the installed FFmpeg/Ccleste ports and generated media
+./build.sh smoke virtio-smoke   # native virtio disk/network/playback and a separate capture boot
+./build.sh smoke audio-record   # virtio RX ring with deterministic silent host input
+./build.sh smoke sxgui-smoke --virtio
 ./build.sh smoke power-smoke
 ./build.sh smoke storage-smoke  # builds a separate diskless LiveCD
 ./build.sh smoke partition-smoke # isolated MBR and GPT volume wrappers
@@ -73,9 +77,13 @@ from `SAVANXP_PYTHON` (default `python3` from `PATH`).
 
 Environment overrides include `SAVANXP_BUILD_DIR`, `SAVANXP_OUTPUT_ROOT`,
 `SAVANXP_BUILD_TYPE`, `SAVANXP_INCLUDE_TEST_APPS`, `SAVANXP_JOBS`,
-`SAVANXP_ACCEL`, `SAVANXP_HEADLESS`, and `SAVANXP_QEMU`.
+`SAVANXP_ACCEL`, `SAVANXP_VIRTIO` (`ON`/`OFF`), `SAVANXP_HEADLESS`, and `SAVANXP_QEMU`.
 `--legacy` remains a compatibility alias; i386 is already selected.
-SMP values other than one and virtio are rejected until those features are ported.
+SMP values other than one remain rejected. `--virtio` selects the reference
+block, network, sound, GPU, tablet and keyboard devices; the default profile
+retains ATA, RTL8139, AC'97, standard VGA and PS/2. Service and graphical smokes
+accept `--virtio`; unsupported combinations fail explicitly.
+See [I386_VIRTIO.md](I386_VIRTIO.md) for capture and interrupt limitations.
 
 ## Regression checks
 
@@ -141,8 +149,9 @@ Application dependencies still require the corresponding i386 syscall support.
 `/disk/bin/NAME` from the reference shell.
 
 `./tools/verify_doom_persistence.sh` builds and installs the canonical Doom port
-as static ELF32 into an isolated copy, adds WAD/config/save data, then runs the
-normal build and compares hashes. This checks preservation only. Doom's complete memory, graphics and audio requirements remain outside this milestone.
+as ELF32 PIE with shared MIDI into an isolated copy, adds WAD/config/save data,
+then runs the normal build and compares hashes. This checks preservation;
+`smoke doom` separately checks game display and captured music.
 
 The CPIO staging tree is a copy of the internal disk staging tree plus the
 reference root README. Debug symbols are removed from the CPIO copies with the

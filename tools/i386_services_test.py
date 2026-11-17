@@ -16,6 +16,7 @@ from qmp_client import QmpClient, QmpError
 
 from i386_console_iso import make_console_iso
 from legacy_boot_test import type_shell, wait_serial, REFERENCE_PROMPT
+from run_qemu import storage_network_args, sound_device, graphics_input_args
 
 
 def make_partition_image(source: Path, destination: Path, gpt: bool) -> None:
@@ -51,14 +52,20 @@ def make_partition_image(source: Path, destination: Path, gpt: bool) -> None:
                 writer.seek(table * 512); writer.write(entries)
 
 
-def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 360, accel: str = "tcg") -> int:
+def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 360, accel: str = "tcg", virtio: bool = False) -> int:
+    if scenario == "virtio-smoke":
+        run(iso, disk, artifacts / "services", "virtio-services", timeout, accel, True)
+        return run(iso, disk, artifacts / "record", "audio-record", timeout, accel, True)
+    virtio = virtio or scenario == "audio-record"
+    if virtio and scenario == "storage-smoke":
+        raise ValueError("storage-smoke is diskless; use virtio-smoke to check virtio storage")
     if scenario == "partition-smoke":
         for mode in ("partition-mbr", "partition-gpt"):
-            run(iso, disk, artifacts / mode, mode, timeout, accel)
+            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio)
         return 0
     if scenario == "power-smoke":
         for mode in ("power-reboot", "power-shutdown", "power-button"):
-            run(iso, disk, artifacts / mode, mode, timeout, accel)
+            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio)
         return 0
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
@@ -74,11 +81,16 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
         command = [os.environ.get("SAVANXP_QEMU", shutil.which("qemu-system-i386") or "qemu-system-i386"),
                    "-machine", "pc", "-cpu", "qemu32", "-accel", accel, "-m", "256M",
                    "-display", "none", "-boot", "d", "-cdrom", str(console_iso),
-                   "-drive", f"file={disk},format=raw,if=ide,snapshot=on",
                    "-serial", f"file:{serial}", "-qmp", f"unix:{qmp},server=on,wait=off",
-                   "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
+                   "-netdev", "user,id=net0",
                    "-audiodev", f"wav,id=audio0,path={artifacts / 'audio.wav'}",
-                   "-device", "AC97,audiodev=audio0", "-no-reboot", "-no-shutdown"]
+                   "-device", sound_device(virtio), "-no-reboot", "-no-shutdown"]
+        if scenario == "audio-record":
+            # QEMU's WAV backend only implements playback. Its null backend
+            # provides a deterministic silent capture source for RX testing.
+            command[command.index("-audiodev") + 1] = "none,id=audio0"
+        command += storage_network_args(disk, virtio=virtio, snapshot=True)
+        command += graphics_input_args(virtio)
         if scenario == "storage-smoke":
             drive = command.index("-drive")
             del command[drive:drive + 2]
@@ -86,7 +98,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
             command.remove("-no-reboot")
         echo_server = None
         echo_log = None
-        if scenario in ("services", "tcp-smoke"):
+        if scenario in ("services", "tcp-smoke", "virtio-services"):
             port_file = tmp / "tcp-port"
             echo_log = (artifacts / "tcp-server.log").open("w")
             echo_server = subprocess.Popen([shutil.which("python3"), str(Path(__file__).with_name("tcp_echo_server.py")),
@@ -101,6 +113,14 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
             process = subprocess.Popen(command, stdout=log, stderr=log)
             try:
                 wait_serial(serial, re.escape(REFERENCE_PROMPT), timeout=min(timeout, 90))
+                if virtio:
+                    boot_log = serial.read_text(errors="replace")
+                    for marker in ("virtio-blk: ready", "virtio-sound: ready", "capture=on", "vblk0:",
+                                   "virtio-gpu: ready", "virtio-input: tablet ready", "virtio-input: keyboard ready"):
+                        if marker not in boot_log:
+                            raise RuntimeError(f"virtio backend missing: {marker}")
+                    if "ata0:" in boot_log or "rtl8139: ready" in boot_log:
+                        raise RuntimeError("virtio smoke fell back to a legacy disk/NIC")
                 if scenario.startswith("power-"):
                     if "acpi: FADT ok" not in serial.read_text():
                         raise RuntimeError("the ACPI tables were not parsed")
@@ -134,22 +154,25 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     boot_log = serial.read_text(errors="replace")
                     if "live0:" not in boot_log or "ata0:" in boot_log:
                         raise RuntimeError("the diskless boot did not select the LiveCD ramdisk")
-                if scenario.startswith("partition-") and "ata0p1:" not in serial.read_text(errors="replace"):
-                    raise RuntimeError("the ATA partition was not enumerated")
+                partition = "vblk0p1:" if virtio else "ata0p1:"
+                if scenario.startswith("partition-") and partition not in serial.read_text(errors="replace"):
+                    raise RuntimeError("the disk partition was not enumerated")
                 commands = []
-                if scenario == "storage-smoke" or scenario.startswith("partition-"):
+                if scenario in ("storage-smoke", "virtio-services") or scenario.startswith("partition-"):
                     commands += [("fscheck", "result: clean"),
                                  ("echo live-ramdisk > /disk/live-test.txt", "process exited with status 0"),
                                  ("cat /disk/live-test.txt", "live-ramdisk")]
-                if scenario in ("services", "device-smoke"):
-                    commands += [("devtest32", "DEV32 PASS"), ("cliptest", "cliptest: PASS"), ("beep 440 100", "process exited with status 0"), ("fscheck", "result: clean")]
-                if scenario in ("services", "net-smoke"):
+                if scenario in ("services", "device-smoke", "virtio-services"):
+                    commands += [("devtest32 virtio" if virtio else "devtest32", "DEV32 PASS"), ("cliptest", "cliptest: PASS"), ("beep 440 100", "process exited with status 0"), ("fscheck", "result: clean")]
+                if scenario in ("services", "net-smoke", "virtio-services"):
                     commands += [("nettest", "NET SMOKE PASS"), ("udptest", "udp ok from")]
-                if scenario in ("services", "audio-smoke"):
+                if scenario in ("services", "audio-smoke", "virtio-services"):
                     commands += [("audiod --selftest", "AUDIOD SELFTEST PASS"),
                                  ("audiotest --stream", "AUDIO STREAM PASS"),
                                  ("audiotest --stream-quiet", "AUDIO STREAM QUIET PASS")]
-                if scenario in ("services", "tcp-smoke"):
+                if scenario == "audio-record":
+                    commands += [("audiotest --record", "AUDIO RECORD PASS")]
+                if scenario in ("services", "tcp-smoke", "virtio-services"):
                     commands += [(f"tcptest {tcp_port}", "TCP SMOKE PASS")]
                 if scenario in ("services", "media-smoke"):
                     commands += [("mediaplayer --selftest /disk/media/tono.wav", "MEDIAPLAYER PASS"),
@@ -172,6 +195,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                         raise RuntimeError(f"{command} failed: {text[-3000:]}")
                     if "exception vector" in text or "kernel: fatal" in text:
                         raise RuntimeError(f"{command} faulted: {text[-3000:]}")
+                    if virtio and command == "nettest" and "virtio-net: up" not in text:
+                        raise RuntimeError("nettest did not bring up the virtio NIC")
                     if command.startswith("audiotest --stream"):
                         pcm = capture.read_bytes()[capture_start:]
                         pcm = pcm[:len(pcm) // 2 * 2]
@@ -201,7 +226,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                 with QmpClient(qmp) as client:
                     client.execute("quit")
                 process.wait(timeout=10)
-                if scenario in ("services", "audio-smoke"):
+                if scenario in ("services", "audio-smoke", "virtio-services"):
                     normal = stream_peaks.get("audiotest --stream", 0)
                     quiet = stream_peaks.get("audiotest --stream-quiet", 0)
                     if not normal or not .4 * normal <= quiet <= .6 * normal:
@@ -220,8 +245,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     samples = struct.unpack("<" + "h" * ((len(pcm) - 44) // 2), pcm[44:])
                     active = sum(value != 0 for value in samples)
                     if active < rate or min(samples) >= -1000 or max(samples) <= 1000:
-                        raise RuntimeError("AC97 capture did not contain the test tone")
-                    print(f"i386 AC97 captured PCM: PASS ({active} nonzero samples)", flush=True)
+                        raise RuntimeError("playback capture did not contain the test tone")
+                    print(f"i386 {'virtio' if virtio else 'AC97'} captured PCM: PASS ({active} nonzero samples)", flush=True)
                 return 0
             finally:
                 if echo_server:
@@ -241,9 +266,10 @@ def main() -> int:
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--disk-image", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--scenario", choices=("services", "net-smoke", "audio-smoke", "tcp-smoke", "media-smoke", "device-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke"), default="services")
+    parser.add_argument("--scenario", choices=("services", "net-smoke", "audio-smoke", "audio-record", "tcp-smoke", "media-smoke", "device-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke"), default="services")
+    parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
-    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario)
+    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, virtio=args.virtio)
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -387,7 +387,7 @@ Adapter g_adapter = {};
 bool g_gpu_msix_enabled = false;
 
 // Local-APIC interrupt vector for the GPU MSI-X message (timer uses 48).
-constexpr uint8_t kGpuMsixVector = 49u;
+[[maybe_unused]] constexpr uint8_t kGpuMsixVector = 49u;
 
 // Keep stable aliases while the driver is migrated away from namespace globals.
 virtio_pci::Device& g_device = g_adapter.transport.device;
@@ -3363,6 +3363,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     // legacy INTx path below is a fallback this kernel cannot actually route on
     // q35 (no IOAPIC), so without MSI-X the driver falls back to polling. This
     // must happen before queue setup so the queues bind to the MSI-X vector.
+#if !defined(__i386__)
+    // The i386 port uses the existing PIC INTx/polling paths until its local
+    // APIC interrupt boundary is available; do not arm an undeliverable MSI.
     if (arch::x86_64::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::x86_64::InterruptEoi::local_apic) &&
         virtio_pci::enable_msix(g_device, kGpuMsixVector)) {
         g_gpu_msix_enabled = true;
@@ -3370,6 +3373,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         g_irq_line = kGpuMsixVector;
         console::printf("virtio-gpu: msi-x vector %u armed\n", static_cast<unsigned>(kGpuMsixVector));
     }
+#endif
 
     if (!setup_control_queue()) {
         fail_device("failed to setup control queue");
@@ -3392,6 +3396,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         pci_device.irq_line != 0xff &&
         pci_device.irq_line < 16 &&
         arch::x86_64::register_irq_handler(pci_device.irq_line, gpu_irq)) {
+        virtio_pci::enable_intx(g_device);
         arch::x86_64::enable_irq(pci_device.irq_line);
         g_irq_line = pci_device.irq_line;
         g_irq_registered = true;

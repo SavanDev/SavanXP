@@ -6,6 +6,9 @@
 #include "fb32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
+#include "kernel/virtio_input.hpp"
+#include "kernel/input.hpp"
+#include "kernel/ps2.hpp"
 
 namespace i386 {
 
@@ -346,6 +349,7 @@ void write_int(int32_t value) {
 
 /* Apply a complete packet; PS/2 Y grows upwards, unlike screen Y. */
 void handle_mouse_byte(uint8_t byte) {
+    if (virtio_input::mouse_ready()) return;
     if (g_mouse_packet_index == 0 && (byte & kMousePacketFlagAlways1) == 0) {
         return;
     }
@@ -388,13 +392,7 @@ void handle_mouse_byte(uint8_t byte) {
     if (!changed) {
         return;
     }
-    if (g_mouse_count == kMouseQueueCapacity) {
-        const int32_t dropped_wheel = g_mouse_events[g_mouse_head].wheel;
-        g_mouse_head = (g_mouse_head + 1) % kMouseQueueCapacity;
-        --g_mouse_count;
-        g_mouse_events[g_mouse_head].wheel += dropped_wheel;
-    }
-    g_mouse_events[(g_mouse_head + g_mouse_count++) % kMouseQueueCapacity] = {delta_x, -delta_y, wheel, buttons, 0, 0, 0};
+    inject_mouse_event({delta_x, -delta_y, wheel, buttons, 0, 0, 0});
     int32_t pointer_x = 0;
     int32_t pointer_y = 0;
     fb32::pointer_position(pointer_x, pointer_y);
@@ -420,7 +418,7 @@ void input_irq() {
         const uint8_t byte = inb(kDataPort);
         if ((status & kStatusAuxData) != 0) {
             handle_mouse_byte(byte);
-        } else {
+        } else if (!virtio_input::keyboard_ready()) {
             handle_code(byte);
         }
     }
@@ -485,6 +483,27 @@ bool enable_mouse_wheel() {
 }
 
 }  // namespace
+
+void inject_scancode(uint8_t code, bool extended) {
+    if (extended) handle_code(kScancodeExtendedPrefix);
+    handle_code(code);
+}
+
+void inject_key_event(uint32_t key, bool pressed) {
+    g_last_key = key;
+    g_last_ascii = 0;
+    push_event(pressed ? SAVANXP_INPUT_EVENT_KEY_DOWN : SAVANXP_INPUT_EVENT_KEY_UP, key, 0);
+}
+
+void inject_mouse_event(const savanxp_mouse_event& event) {
+    if (g_mouse_count == kMouseQueueCapacity) {
+        const int32_t dropped_wheel = g_mouse_events[g_mouse_head].wheel;
+        g_mouse_head = (g_mouse_head + 1) % kMouseQueueCapacity;
+        --g_mouse_count;
+        g_mouse_events[g_mouse_head].wheel += dropped_wheel;
+    }
+    g_mouse_events[(g_mouse_head + g_mouse_count++) % kMouseQueueCapacity] = event;
+}
 
 bool has_pending_event() {
     return g_pending != 0;
@@ -611,4 +630,21 @@ void initialize() {
 }  // namespace ps2_32
 
 }  // namespace i386
+
+namespace ps2 {
+void inject_scancode(uint8_t code, bool extended) { i386::ps2_32::inject_scancode(code, extended); }
+void inject_key_event(uint32_t key, bool pressed) { i386::ps2_32::inject_key_event(key, pressed); }
+}
+
+namespace input {
+void submit_mouse_event(const MouseEvent& event) {
+    int32_t x, y;
+    i386::fb32::pointer_position(x, y);
+    i386::fb32::pointer_move(event.has_absolute ? event.absolute_x - x : event.delta_x,
+                           event.has_absolute ? event.absolute_y - y : event.delta_y);
+    i386::fb32::pointer_set_buttons(event.buttons);
+    i386::ps2_32::inject_mouse_event({event.delta_x, event.delta_y, event.wheel, event.buttons,
+        event.absolute_x, event.absolute_y, event.has_absolute ? SAVANXP_MOUSE_FLAG_ABSOLUTE : 0u});
+}
+}
 

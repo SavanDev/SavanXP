@@ -1003,17 +1003,145 @@ results after a failed build. [I386_SERVICES.md](I386_SERVICES.md) gives the
 reproducible gates and prerequisite applications.
 
 Milestone 5 is therefore complete for the reference legacy-device path. This
-does not close the version target: the next milestone must establish physical
-hardware behavior, performance, suspend, SMP and optional virtio support.
+does not close the version target. At closure, the roadmap grouped physical
+hardware behavior, performance, suspend, SMP and optional virtio support into
+the next milestone; the validation-scope correction below supersedes that grouping.
 Legacy PIC routing does not claim the reference AML/IOAPIC implementation, and
 AC'97 playback does not stand in for virtio capture. Signal/job-control gaps,
 explicit idle-process accounting and the reference boot visuals remain visible
 in the eventual v0.4.0 parity review. The target does not move to v0.4.1 yet.
 
+### Correction: validation scope follows the reference version
+
+After milestone 5, the project clarified that physical-machine bring-up and
+testing enter the reference sequence at v0.4.2. The previous roadmap made
+laptop testing a v0.4.0 completion gate, adding a requirement ahead of the
+version whose behavior this branch is meant to reproduce. Keeping that gate
+would mix architecture parity with later hardware enablement.
+
+The decision is to validate v0.4.0 and v0.4.1 in emulation, then introduce
+physical-machine bring-up when the active target reaches v0.4.2. The alternative
+of retaining physical tests in milestone 6 was rejected because it changes the
+reference validation scope. SMP, virtio and other capabilities already present
+in the active reference remain parity requirements, exercised in QEMU; a
+later physical test does not substitute for implementing them now.
+
+This is a planning correction, not new runtime evidence. The existing QEMU
+results remain valid and physical hardware remains untested. The roadmap,
+service contract and hardware analysis now distinguish the current emulated
+parity work from the deferred laptop work. No kernel or build behavior changes.
+
+## 13. Restoring the optional virtio profile in emulation
+
+Milestone 6 starts with the optional device profile, after correcting the
+version validation scope above. Milestone 5 had restored the legacy devices,
+but retaining the virtio sources did not make that alternative profile work.
+The reference transport and block/network/sound/input drivers are reused
+without changing their rings, feature negotiation, DMA layouts or data paths.
+The GPU keeps its reference resource, cursor, imported-surface and presentation
+machinery. This exercises the new mapping boundary on one CPU before adding
+the concurrent-kernel requirements of SMP.
+
+### MMIO is not a physical RAM alias
+
+The native architecture supplied mappings for scattered RAM sections and an
+identity-mapped framebuffer, but no `map_kernel_mmio` implementation for PCI
+BARs. Reusing the RAM alias would address ordinary RAM rather than the BAR;
+extending identity mapping would mix device addresses with the existing user,
+RAM-alias and kernel-view windows and their cache attributes. Neither is a
+valid replacement for the transport's MMIO contract.
+
+The selected adaptation maps BAR pages into the existing shared supervisor
+view arena. It preserves the offset within an unaligned first page, installs
+writable PWT/PCD leaves and rejects spans outside the non-PAE 4 GiB ceiling.
+RAM sections retain their stricter allocator-address bound; accepting a device
+BAR above the first GiB does not expand allocatable RAM. The mapping shares
+the native page-table propagation mechanism with graphics sections, so a
+driver invoked after a process switch sees the same BAR through that CR3.
+The transport also rejects a BAR size that cannot fit the native `size_t`.
+
+Reading the initialization order identified a second dependency: virtio root
+probing needs PCI discovery before mounting SxFS, whereas the legacy path had
+enumerated PCI later with audio/network initialization. Discovery now happens
+once before root probing. The TSC calibration also moves ahead of GPU probing,
+so the reference GPU's boot-time timeout can advance with IF clear. These are
+ordering and architecture-boundary adaptations, not new storage or GPU models.
+
+### A shared PIC line can stop the first user instruction
+
+The first block/network/sound integration booted and passed file operations,
+device ownership and UDP checks. Adding the GPU exposed a different failure:
+the boot reached the scheduler, then init made no visible progress. QMP samples
+showed the CPU at the initial user EIP and inside the GPU ISR/interrupt return,
+rather than a user exception or an ELF loader fault. Polling devices and the
+GPU shared a level-triggered PIC line. Enabling that line for the GPU also
+exposed another device's unacknowledged INTx, repeatedly interrupting the CPU.
+
+One option was to add handlers to all polling drivers solely to acknowledge
+their ISR bytes. Another was to disable the GPU interrupt and rely entirely
+on polling. The smaller adaptation is to leave PCI INTx disabled on native
+devices that use polling, and enable delivery only after the GPU installs its
+existing handler. No driver's completion algorithm changes. The corrected
+guest advances into init and runs the reference applications, while the GPU
+keeps its interrupt notification and deferred completion path. MSI-X remains
+explicitly deferred until the native local-APIC boundary is implemented;
+programming a message into an unavailable vector would not be parity.
+
+The architecture adapter exposes GPU completion/scanout event handles through
+the existing descriptor objects and native object waits. Scheduler service
+boundaries run the retained display background work. Virtio keyboard input
+feeds the existing native decoder, and tablet events retain absolute position,
+wheel and button fields through the raw mouse queue. The legacy source is
+ignored while its corresponding virtio input source is active, following the
+reference preference and avoiding duplicate events.
+
+### Correcting the instruments without weakening the checks
+
+The first capture read failed with an I/O error while playback worked. QEMU
+reported that the WAV sink had no input driver: that backend implements output
+only. Keeping the WAV sink and changing guest capture to manufacture data
+would conceal the missing source. Instead, playback/gain use the WAV sink and
+capture uses a separate null-backend guest, which supplies deterministic silent
+input. The original eight-period `audiotest --record` workload is unchanged.
+It proves RX completion, slot recycling and the copy to user memory, not
+nonzero microphone input or recording quality.
+
+The first graphical test drew Notepad and its taskbar label, but the expected
+`linea20` glyphs after wheel-up were absent. Screen inspection showed that the
+cursor had remained at the screen corner: the harness still sent relative
+PS/2 motion to an absolute tablet. The retained harness already offered an
+absolute-pointer mode. Selecting it for the virtio profile made the same glyph,
+wheel and scrollbar assertions pass without modifying the toolkit, changing
+the desktop's pixels or weakening the checks.
+
+### Verification and effect on parity
+
+The resulting profile passes guest SxFS read/write/consistency, MBR and GPT
+slices, device permissions and killed audio-owner recovery. The reference NIC
+test moves hardware TX/RX counters, UDP delivers data, and the TCP harness
+passes its loss/reordering/deadline cases. Captured playback has 636,704 nonzero
+samples in the observed run; steady amplitude changes from 12,000 to 6,000 at
+50% volume. The separate capture guest completes all eight period reads. The
+graphical guest passes the original six editor/taskbar and input captures.
+[I386_VIRTIO.md](I386_VIRTIO.md) records reproducible commands and limitations.
+
+The default full smoke, the unchanged 32 MiB memory/shared-library regressions
+and all 19 host tests pass. Doom's installed executable, IWAD, configs and save
+fixture survive an isolated normal rebuild; POSIX writes survive rebuild and
+cold boot without changing the source image. The optional profile changes the
+QEMU controllers, not the persistent SxFS format or the installed applications.
+
+This completes milestone 6.1, not milestone 6. The native scheduler still runs
+on one CPU; SMP, its local-APIC/TSS/locking/TLB boundaries, AML/IOAPIC routing
+and the remaining internal/visual gaps need their own reference comparisons
+and runtime evidence. Physical-machine testing remains reserved for v0.4.2.
+The active version target remains v0.4.0.
+
 ## Continuing the study
 
-The next account should trace milestone 6 through observed hardware and
-capacity failures, the selected adaptations, rejected alternatives and explicit
-parity evidence. Preserve the reference mechanisms while adding physical
-coverage, SMP and virtio. Keep v0.4.0 pinned until the remaining feature and
-hardware gaps pass their version-parity review.
+The next account should trace milestone 6.2 through SMP and interrupt-boundary
+failures in emulation, the selected adaptations, rejected alternatives and
+explicit parity evidence. Preserve the reference per-CPU state, kernel lock
+and TLB synchronization model while adapting AP startup to GRUB/protected mode.
+Keep v0.4.0 pinned until its remaining feature gaps pass their version-parity
+review; begin physical coverage at the v0.4.2 target.

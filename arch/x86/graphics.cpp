@@ -4,10 +4,13 @@
 #include "process.hpp"
 #include "ps2_32.hpp"
 #include "serial.hpp"
+#include "io.hpp"
+#include "waits.hpp"
 #include "kernel/console.hpp"
 #include "kernel/display.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_input.hpp"
 #include "kernel/vmm.hpp"
 
 namespace process {
@@ -25,6 +28,13 @@ bool copy_from_user(void* destination, uint64_t address, size_t size) {
     return validate_user_range(address, size, false) &&
         i386::paging::copy_from_user(current()->directory, destination, address, size);
 }
+int export_handle(object::Header* header, uint32_t access, uint32_t flags) {
+    if (!current() || !header) return -SAVANXP_EBADF;
+    const int fd = i386::io::install_object(*current(), header, access);
+    if (fd >= 0) current()->handles[fd].flags = flags;
+    return fd;
+}
+void notify_object_signal(object::Header*) { i386::waits::service(); }
 }
 namespace vm {
 bool map_kernel_pages(const uint64_t* pages, uint64_t count, uint64_t flags, void** base) {
@@ -32,6 +42,9 @@ bool map_kernel_pages(const uint64_t* pages, uint64_t count, uint64_t flags, voi
 }
 bool unmap_kernel_pages(void* base, uint64_t count) {
     return count <= UINT32_MAX && i386::paging::unmap_kernel_pages(base, count);
+}
+bool map_kernel_mmio(uint64_t physical, size_t size, uint64_t, void** base) {
+    return i386::paging::map_kernel_mmio(physical, size, base);
 }
 // GRUB's device framebuffer uses an identity mapping. RAM has a separate
 // supervisor direct map; these offsets must never be interchanged.
@@ -54,17 +67,20 @@ bool acquire_graphics_session(uint32_t pid) {
     if (g_owner == pid) return true;
     g_owner = pid;
     i386::ps2_32::clear_queue();
+    virtio_input::begin_graphics_session();
     i386::fb32::console_set_enabled(false);
     return true;
 }
 void release_graphics_session(uint32_t pid) {
     if (!owns_graphics_session(pid)) return;
     g_owner = 0;
+    virtio_input::end_graphics_session();
     i386::ps2_32::clear_queue();
     i386::fb32::console_set_enabled(true);
 }
 void sync_framebuffer_geometry() {
     i386::fb32::set_external(display::framebuffer_address(), display::framebuffer_info());
+    virtio_input::set_framebuffer_extent(display::framebuffer_info().width, display::framebuffer_info().height);
 }
 }
 namespace console {

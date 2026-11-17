@@ -29,7 +29,10 @@ supports mode changes and double buffering. The native boot request is
 1280x800x32. F11's 640x400 path, restoration and compositor restart use the
 reference code. The framebuffer backend is synchronous and supplies a software
 cursor through the compositor; asynchronous events and a hardware cursor are
-not advertised. The native adapter does not configure PAT write combining.
+not advertised for that backend. The optional virtio profile uses the reference
+GPU, tablet and keyboard drivers, including GPU events and absolute pointer
+records; see [I386_VIRTIO.md](I386_VIRTIO.md). The native adapter does not
+configure PAT write combining.
 
 ## Address spaces and scheduling
 

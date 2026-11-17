@@ -14,6 +14,10 @@ namespace ps2_32 {
  * /dev/input0 (diagnostics can explicitly duplicate that descriptor to stdin). */
 
 void initialize();
+// Retained virtio keyboard/tablet drivers feed the same native event queues.
+void inject_scancode(uint8_t code, bool extended);
+void inject_key_event(uint32_t key, bool pressed);
+void inject_mouse_event(const savanxp_mouse_event& event);
 bool has_mouse_event();
 bool pop_mouse_event(savanxp_mouse_event& event);
 

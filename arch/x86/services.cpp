@@ -16,6 +16,8 @@
 #include "kernel/clipboard.hpp"
 #include "kernel/serial_dev.hpp"
 #include "kernel/rtl8139.hpp"
+#include "kernel/virtio_net.hpp"
+#include "kernel/virtio_sound.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/uacpi_glue.hpp"
 
@@ -83,11 +85,12 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t slot, uint8_t function, arch::x86_64
 namespace i386::services {
 void initialize(uint32_t information) {
     timer::calibrate_monotonic();
-    pci::initialize();
     audio::register_driver(ac97::driver());
+    audio::register_driver(virtio_sound::driver());
     audio::bind_best();
     audio_device::initialize();
     nic::register_driver(rtl8139::driver());
+    nic::register_driver(virtio_net::driver());
     nic::bind_best();
     net::initialize();
     boot::BootInfo boot = {};

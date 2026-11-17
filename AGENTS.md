@@ -9,6 +9,10 @@
   differences. Bring-up shortcuts are temporary, not final replacements.
 - Advance to `v0.4.1` only after `v0.4.0` parity is reached. Do not follow the
   moving `master` tip as the current specification.
+- Match the reference version's validation scope: use emulation for `v0.4.0`
+  and `v0.4.1`; physical-machine bring-up and validation begin when the active
+  parity target reaches `v0.4.2`. Physical testing is not a prerequisite for
+  closing the earlier targets; their reference capabilities still need evidence.
 - Follow `docs/I386_PORT.md` for the pinned references, completion criteria,
   current capabilities and porting order.
   Retained subsystem sources are not evidence that a feature works on i386.

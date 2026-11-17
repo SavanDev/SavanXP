@@ -8,6 +8,9 @@
 > **Status: Route A has a working i386 prototype in QEMU, through the minimal
 > graphical desktop and preemptive process lifecycle. Physical hardware is not validated.**
 > This document records the porting route and the remaining hardware gaps.
+> Physical-machine bring-up and validation are reserved for the **v0.4.2**
+> parity target. The v0.4.0 and v0.4.1 targets are validated in emulation;
+> the laptop analysis below is preparation, not an earlier release gate.
 >
 > The reference machine is a **Compaq Evo N1020v** (2002): a 32-bit Pentium 4
 > with no long mode, a legacy BIOS, PATA storage, AC'97 audio, a PS/2 trackpad

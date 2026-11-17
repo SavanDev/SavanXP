@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **The optional i386 virtio profile runs the reference desktop and services.**
+  `run --virtio` selects the disk, NIC, sound, GPU, tablet and keyboard backends;
+  `smoke virtio-smoke`, `audio-record` and `sxgui-smoke --virtio` check the
+  [virtio contracts](docs/I386_VIRTIO.md), including playback gain and capture reads.
+
 - **A separate i386 LiveCD boots without a persistent disk.**
   `./build.sh live-iso` creates `SavanXP-live.iso` with a disposable SxFS ramdisk;
   `smoke storage-smoke` checks diskless boot and guest file operations.

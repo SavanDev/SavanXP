@@ -263,11 +263,13 @@ bool unmap_kernel_pages(void* base, uint32_t count) {
     return true;
 }
 
-bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base) {
-    if (!pages || !base || !count || count > (kKernelViewsEnd - kKernelViewsBase) / kPageBytes)
+namespace {
+// Both RAM sections and PCI BARs use the existing shared supervisor tables.
+// MMIO supplies a contiguous physical base instead of an array of RAM pages.
+bool map_kernel_range(const uint64_t* pages, uint32_t physical, uint32_t count,
+                      uint32_t flags, void** base) {
+    if (!base || !count || count > (kKernelViewsEnd - kKernelViewsBase) / kPageBytes)
         return false;
-    for (uint32_t n = 0; n < count; ++n)
-        if ((pages[n] & 4095) || pages[n] >= kDirectMapBytes) return false;
     uint32_t run = 0, start = kKernelViewsBase;
     for (uint32_t page = kKernelViewsBase; page < kKernelViewsEnd; page += kPageBytes) {
         uint32_t* leaf;
@@ -279,13 +281,36 @@ bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, voi
                 unmap_kernel_pages(reinterpret_cast<void*>(start), n);
                 return false;
             }
-            *leaf = static_cast<uint32_t>(pages[n]) | kPresent | (flags & kWrite);
+            const uint32_t address = pages ? static_cast<uint32_t>(pages[n]) : physical + n * kPageBytes;
+            *leaf = address | kPresent | (flags & (kWrite | 0x18u));
             asm volatile("invlpg (%0)" : : "r"(start + n * kPageBytes) : "memory");
         }
         *base = reinterpret_cast<void*>(start);
         return true;
     }
     return false;
+}
+}
+
+bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base) {
+    if (!pages || count > (kKernelViewsEnd - kKernelViewsBase) / kPageBytes) return false;
+    for (uint32_t n = 0; n < count; ++n)
+        if ((pages[n] & 4095) || pages[n] >= kDirectMapBytes) return false;
+    return map_kernel_range(pages, 0, count, flags, base);
+}
+
+bool map_kernel_mmio(uint64_t physical, uint32_t bytes, void** base) {
+    constexpr uint64_t end = 0x100000000ull;
+    if (!base || !bytes || physical >= end || bytes > end - physical) return false;
+    const uint32_t offset = physical & 4095u;
+    const uint64_t span = static_cast<uint64_t>(offset) + bytes;
+    const uint32_t count = (span + kPageBytes - 1) / kPageBytes;
+    void* mapped = nullptr;
+    // PWT | PCD selects uncached device memory with the default x86 PAT.
+    if (!map_kernel_range(nullptr, static_cast<uint32_t>(physical) & kMask,
+                          count, kWrite | 0x18u, &mapped)) return false;
+    *base = static_cast<uint8_t*>(mapped) + offset;
+    return true;
 }
 
 } // namespace i386::paging

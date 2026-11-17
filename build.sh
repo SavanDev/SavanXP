@@ -10,6 +10,7 @@ BUILD_TYPE=${SAVANXP_BUILD_TYPE:-Debug}
 INCLUDE_TEST_APPS=${SAVANXP_INCLUDE_TEST_APPS:-ON}
 ACCEL=${SAVANXP_ACCEL:-tcg}
 SMP=${SAVANXP_SMP:-1}
+VIRTIO=${SAVANXP_VIRTIO:-OFF}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
 PYTHON=${SAVANXP_PYTHON:-python3}
@@ -32,7 +33,7 @@ while (($#)); do
         --scenario) SCENARIO=${2:?--scenario requires a value}; shift 2 ;;
         --timeout) TIMEOUT=${2:?--timeout requires a value}; shift 2 ;;
         --list) LIST=1; shift ;;
-        --virtio) echo "build.sh: virtio drivers are not ported to i386 yet" >&2; exit 2 ;;
+        --virtio) VIRTIO=ON; shift ;;
         -h|--help)
             cat <<'EOF'
 Usage: ./build.sh [build|configure|kernel|userland|iso|live-iso|run|debug|smoke|test|clean] [options]
@@ -45,9 +46,10 @@ Options:
   --jobs N        build parallelism
   --accel tcg|kvm QEMU accelerator (default: tcg)
   --smp 1         one CPU (SMP is not ported yet)
+  --virtio        virtio disk, network, sound, GPU, tablet and keyboard
   --headless      disable the graphical QEMU window
   --legacy        compatibility alias; i386 is already selected
-  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, services, device-smoke, audio-smoke, net-smoke, tcp-smoke, media-smoke, power-smoke, native-smoke, storage-smoke, partition-smoke, live-desktop, doom, ccleste, legacy-cpu
+  --scenario NAME smoke scenario: smoke, boot, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, services, device-smoke, audio-smoke, audio-record, virtio-smoke, net-smoke, tcp-smoke, media-smoke, power-smoke, native-smoke, storage-smoke, partition-smoke, live-desktop, doom, ccleste, legacy-cpu
   --timeout SEC   smoke timeout (default: 360)
   --list          list supported smoke scenarios
 EOF
@@ -66,7 +68,7 @@ case "$COMMAND" in
 esac
 case "$ACCEL" in tcg|kvm) ;; *) echo "build.sh: --accel must be tcg or kvm" >&2; exit 2 ;; esac
 [[ "$SMP" == 1 ]] || { echo "build.sh: i386 currently supports one CPU only" >&2; exit 2; }
-[[ "${SAVANXP_VIRTIO:-OFF}" != ON ]] || { echo "build.sh: virtio is not ported to i386 yet" >&2; exit 2; }
+case "$VIRTIO" in ON|OFF) ;; *) echo "build.sh: SAVANXP_VIRTIO must be ON or OFF" >&2; exit 2 ;; esac
 if ((LIST)); then
     [[ "$COMMAND" == smoke ]] || { echo "build.sh: --list requires smoke" >&2; exit 2; }
     "$PYTHON" "$ROOT/tools/smoke_catalog.py" --list
@@ -74,7 +76,7 @@ if ((LIST)); then
 fi
 if [[ "$COMMAND" == smoke ]]; then
     case "$SCENARIO" in
-        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|services|device-smoke|audio-smoke|net-smoke|tcp-smoke|media-smoke|power-smoke|native-smoke|storage-smoke|partition-smoke|live-desktop|doom|ccleste|legacy-cpu) ;;
+        smoke|boot|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|services|device-smoke|audio-smoke|audio-record|net-smoke|tcp-smoke|media-smoke|power-smoke|native-smoke|storage-smoke|partition-smoke|live-desktop|doom|ccleste|legacy-cpu|virtio-smoke) ;;
         *) echo "build.sh: '$SCENARIO' is not ported to i386; use smoke --list (x86_64 scenarios live on master)" >&2; exit 2 ;;
     esac
     INCLUDE_TEST_APPS=ON
@@ -86,6 +88,7 @@ CONFIGURE_ARGS=(
     -DSAVANXP_ARCH=i386 "-DSAVANXP_OUTPUT_ROOT=$OUTPUT_ROOT"
     "-DSAVANXP_INCLUDE_TEST_APPS=$INCLUDE_TEST_APPS"
     "-DSAVANXP_ACCEL=$ACCEL" "-DSAVANXP_SMP=$SMP" "-DSAVANXP_HEADLESS=$HEADLESS"
+    "-DSAVANXP_VIRTIO=$VIRTIO"
 )
 [[ -f "$BUILD_DIR/CMakeCache.txt" ]] || CONFIGURE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$ROOT/cmake/toolchain-linux.cmake")
 configure() { cmake "${CONFIGURE_ARGS[@]}"; }
@@ -107,6 +110,7 @@ case "$COMMAND" in
         build_target savanxp_iso
         QEMU_ARGS=(--iso "$OUTPUT_ROOT/SavanXP.iso" --disk-image "$OUTPUT_ROOT/disk.img" --accel "$ACCEL")
         [[ "$HEADLESS" != ON ]] || QEMU_ARGS+=(--headless)
+        [[ "$VIRTIO" != ON ]] || QEMU_ARGS+=(--virtio)
         [[ "$COMMAND" != debug ]] || QEMU_ARGS+=(--debug)
         exec "$PYTHON" "$ROOT/tools/run_qemu.py" "${QEMU_ARGS[@]}" ;;
     smoke)
@@ -122,10 +126,12 @@ case "$COMMAND" in
         [[ "$SCENARIO" != storage-smoke && "$SCENARIO" != live-desktop ]] || build_target savanxp_live_iso
         ARTIFACTS=$(mktemp -d "$OUTPUT_ROOT/smoke-logs/$SCENARIO.XXXXXX")
         echo "Smoke artifacts: $ARTIFACTS"
+        SMOKE_ARGS=()
+        [[ "$VIRTIO" != ON ]] || SMOKE_ARGS+=(--virtio)
         exec "$PYTHON" "$ROOT/tools/run_smoke.py" --scenario "$SCENARIO" \
             --iso "$OUTPUT_ROOT/SavanXP.iso" --disk-image "$OUTPUT_ROOT/disk.img" \
             --desktop-elf "$BUILD_DIR/desktop32" --accel "$ACCEL" \
-            --timeout "$TIMEOUT" --artifacts "$ARTIFACTS" ;;
+            --timeout "$TIMEOUT" --artifacts "$ARTIFACTS" "${SMOKE_ARGS[@]}" ;;
     test) configure; build_target savanxp_tests; ctest --test-dir "$BUILD_DIR" --output-on-failure ;;
     clean) configure; build_target clean ;;
 esac

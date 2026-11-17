@@ -67,7 +67,8 @@ static bool map_bar(Device& device, uint8_t bar_index, MappedBar*& mapped) {
         return true;
     }
 
-    if (!pci::bar_info(device.pci_device, bar_index, bar.info) || bar.info.io_space) {
+    if (!pci::bar_info(device.pci_device, bar_index, bar.info) || bar.info.io_space ||
+        bar.info.size > SIZE_MAX) {
         return false;
     }
 
@@ -127,12 +128,24 @@ bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cf
 
     uint16_t command = pci::read_config_u16(device.pci_device.bus, device.pci_device.slot, device.pci_device.function, kPciCommandOffset);
     command = static_cast<uint16_t>(command | kPciCommandMemory | kPciCommandBusMaster);
-    // Clear the Interrupt Disable bit so the device can assert legacy INTx; we
-    // drive completions by interrupt, falling back to polling if none arrive.
+    // Native PIC lines are shared. Polling drivers must not assert an INTx
+    // that nobody acknowledges, starving every device on the same line.
+#if defined(__i386__)
+    command = static_cast<uint16_t>(command | kPciCommandInterruptDisable);
+#else
+    // The reference APIC path drives completions by interrupt where available.
     command = static_cast<uint16_t>(command & ~kPciCommandInterruptDisable);
+#endif
     pci::write_config_u16(device.pci_device.bus, device.pci_device.slot, device.pci_device.function, kPciCommandOffset, command);
     device.ready = true;
     return true;
+}
+
+void enable_intx(Device& device) {
+    const auto& pci = device.pci_device;
+    const uint16_t command = pci::read_config_u16(pci.bus, pci.slot, pci.function, kPciCommandOffset);
+    pci::write_config_u16(pci.bus, pci.slot, pci.function, kPciCommandOffset,
+                         static_cast<uint16_t>(command & ~kPciCommandInterruptDisable));
 }
 
 bool enable_msix(Device& device, uint8_t apic_vector) {

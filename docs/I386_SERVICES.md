@@ -16,8 +16,9 @@ supervisor RAM aliases; they are never passed a virtual address as a bus address
 
 BIOS assigns PCI INTx lines. The native adapter enables level triggering in the
 PIC ELCR and permits shared handlers, including an ACPI SCI on the same line.
-This is the legacy PIC path; the AML/IOAPIC and virtio work belongs to milestone
-6 and remains a parity gap. The ACPI RSDP comes from Multiboot2 tags 14/15;
+This is the legacy PIC path; AML/IOAPIC routing remains a milestone 6 parity
+gap. The optional virtio integration is described in [I386_VIRTIO.md](I386_VIRTIO.md).
+The ACPI RSDP comes from Multiboot2 tags 14/15;
 physical ACPI addresses use the supervisor RAM alias, independently of the
 framebuffer's device identity mapping. S5/reset keep the reference fallbacks.
 The device clock copies the reference PIT-channel-2 TSC calibration and works
@@ -74,13 +75,13 @@ userland and a separate generated 128 MiB SxFS module. It never copies or resets
 footprint. The LiveCD's `sxfs` Multiboot module uses the unchanged reference
 ramdisk driver, with an unpartitioned ATA SxFS taking priority if attached.
 Writes last only for the current boot. `storage-smoke` uses 256 MiB, attaches no ATA disk, checks `live0`,
-reports a consistent filesystem and writes/reads a file in the guest. Virtual
-block/input backends remain the explicit virtio work in milestone 6.
+reports a consistent filesystem and writes/reads a file in the guest. The
+optional virtio disk/input profile is covered separately in milestone 6.
 `partition-smoke` boots isolated MBR and GPT wrappers around the valid persistent
 volume, checks `ata0p1` and exercises file I/O on each slice. `live-desktop` also
 boots the full reference graphical session without an ATA disk and checks the
 Program Manager taskbar glyphs. Device probing
-retains reference order: direct ATA, RAM image, then partition children. A
+retains reference order: virtio block, direct ATA, RAM image, then partition children. A
 LiveCD module can therefore precede an ATA partition when both are present;
 this existing reference limitation is not a claim of universal disk priority.
 
@@ -123,9 +124,11 @@ heaptest's six live allocations or changing the heap growth algorithm.
 
 ## Remaining parity work
 
-This closes milestone 5, not complete v0.4.0 parity. Physical hardware,
-performance, suspend, AML/IOAPIC routing, SMP and optional virtio backends remain
-in milestone 6. AC'97 keeps the reference playback-only contract; virtio capture
-is not claimed. Full signals/job control, explicit idle-process accounting and
-the reference boot-console/logo still need the final version-parity review.
-The active target remains v0.4.0; see [I386_PORT.md](I386_PORT.md).
+This closes milestone 5, not complete v0.4.0 parity. Milestone 6 covers SMP,
+virtio integration and the remaining reference performance, power and
+AML/IOAPIC mechanisms in emulation. AC'97 keeps the reference playback-only
+contract; the separate virtio profile adds capture-ring reads. Full signals/job control, explicit
+idle-process accounting and the reference boot-console/logo still need the
+final version-parity review. Physical-machine bring-up, including laptop
+suspend behavior, begins with the v0.4.2 target and does not block v0.4.0 or
+v0.4.1 parity. The active target remains v0.4.0; see [I386_PORT.md](I386_PORT.md).

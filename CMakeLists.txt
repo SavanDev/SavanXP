@@ -14,6 +14,7 @@ if(NOT SAVANXP_ACCEL STREQUAL "tcg" AND NOT SAVANXP_ACCEL STREQUAL "kvm")
     message(FATAL_ERROR "SAVANXP_ACCEL must be tcg or kvm")
 endif()
 set(SAVANXP_SMP 1 CACHE STRING "Number of virtual CPUs")
+option(SAVANXP_VIRTIO "Use QEMU virtio hardware" OFF)
 option(SAVANXP_HEADLESS "Run QEMU without a graphical display" OFF)
 # This branch ports SavanXP to i386; the x86_64 system lives on master.
 set(SAVANXP_ARCH "i386" CACHE STRING "Target architecture (this branch: i386)")
@@ -159,6 +160,8 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
     kernel/pci.cpp kernel/audio.cpp kernel/audio_device.cpp kernel/ac97.cpp
     kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/power.cpp
+    kernel/virtio_pci.cpp kernel/virtio_blk.cpp kernel/virtio_net.cpp kernel/virtio_sound.cpp
+    kernel/virtio_gpu.cpp kernel/virtio_input.cpp
     kernel/pcspeaker.cpp kernel/clipboard.cpp kernel/serial_dev.cpp kernel/rtc.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})

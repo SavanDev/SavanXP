@@ -8,6 +8,10 @@
 
 namespace virtio_pci {
 
+struct Device;
+// Enable legacy delivery only after installing a handler that reads the ISR.
+void enable_intx(Device& device);
+
 constexpr uint16_t kPciVendorVirtio = 0x1af4u;
 constexpr uint16_t kPciCommandOffset = 0x04;
 constexpr uint16_t kPciCommandMemory = 1u << 1;

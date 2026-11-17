@@ -1,4 +1,5 @@
 #include "io.hpp"
+#include "kernel/virtio_input.hpp"
 
 #include "fb32.hpp"
 #include "kernel/device.hpp"
@@ -537,6 +538,8 @@ int poll(process::Process& task, uint32_t array, uint32_t count, int32_t timeout
 }
 
 void service() {
+    display::poll();
+    virtio_input::poll();
     net::poll();
     bool raw_reader = ui::graphics_active();
     for (uint32_t index = 0; index < process::kCapacity; ++index) {

@@ -17,6 +17,7 @@ def find_qemu(binary: str = "qemu-system-i386") -> str | None:
 def build_qemu_args(
     *, iso: Path, disk_image: Path, debug_log: Path, accel: str, smp: int = 1,
     headless: bool = False, debug: bool = False,
+    virtio: bool = False,
     monitor_path: Path | None = None, serial_path: Path | None = None,
     qmp_path: Path | None = None,
 ) -> list[str]:
@@ -26,21 +27,46 @@ def build_qemu_args(
         "qemu-system-i386", "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
         "-m", "1024M", "-smp", "1", "-boot", "d",
         "-drive", f"file={iso},media=cdrom,format=raw,readonly=on,if=ide,index=2",
-        "-drive", f"file={disk_image},media=disk,format=raw,if=ide,index=0",
-        "-vga", "std", "-display", "none" if headless else "gtk",
-        "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0", "-serial", f"file:{serial_path}" if serial_path else "stdio",
+        "-display", "none" if headless else "gtk",
+        "-netdev", "user,id=net0", "-serial", f"file:{serial_path}" if serial_path else "stdio",
         "-debugcon", f"file:{debug_log}", "-global", "isa-debugcon.iobase=0xe9",
         "-no-reboot", "-monitor", f"unix:{monitor_path},server=on,wait=off" if monitor_path else "none",
     ]
-    if headless:
-        command += ["-audiodev", "none,id=audio0", "-device", "AC97,audiodev=audio0"]
+    command += storage_network_args(disk_image, virtio=virtio)
+    command += graphics_input_args(virtio)
+    if headless or virtio:
+        command += ["-audiodev", "none,id=audio0" if headless else "sdl,id=audio0",
+                    "-device", sound_device(virtio)]
     else:
+        # Preserve QEMU's existing host-audio selection in the default profile.
         command += ["-device", "AC97"]
     if qmp_path is not None:
         command += ["-qmp", f"unix:{qmp_path},server=on,wait=off"]
     if debug:
         command += ["-s", "-S"]
     return command
+
+
+def storage_network_args(disk_image: Path, *, virtio: bool, snapshot: bool = False) -> list[str]:
+    drive = f"file={disk_image},media=disk,format=raw"
+    if snapshot:
+        drive += ",snapshot=on"
+    if virtio:
+        return ["-drive", drive + ",if=none,id=svdisk",
+                "-device", "virtio-blk-pci,drive=svdisk,disable-legacy=on",
+                "-device", "virtio-net-pci,netdev=net0,disable-legacy=on"]
+    return ["-drive", drive + ",if=ide,index=0", "-device", "rtl8139,netdev=net0"]
+
+
+def sound_device(virtio: bool) -> str:
+    return "virtio-sound-pci,audiodev=audio0,streams=2" if virtio else "AC97,audiodev=audio0"
+
+
+def graphics_input_args(virtio: bool) -> list[str]:
+    if virtio:
+        return ["-vga", "none", "-device", "virtio-vga,xres=1280,yres=800",
+                "-device", "virtio-tablet-pci", "-device", "virtio-keyboard-pci"]
+    return ["-vga", "std"]
 
 
 def main() -> int:
@@ -51,6 +77,7 @@ def main() -> int:
     parser.add_argument("--smp", type=int, choices=(1,), default=1)
     parser.add_argument("--legacy", action="store_true", help="compatibility alias; i386 is already selected")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--virtio", action="store_true", help="virtio disk, network, sound, GPU, tablet and keyboard")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--qmp-path", type=Path)
     parser.add_argument("--monitor-path", type=Path)
@@ -66,7 +93,7 @@ def main() -> int:
         parser.error("qemu-system-i386 was not found in PATH or SAVANXP_QEMU")
     command = build_qemu_args(
         iso=iso, disk_image=disk, debug_log=iso.parent / "debugcon.log",
-        accel=args.accel, smp=args.smp, headless=args.headless, debug=args.debug,
+        accel=args.accel, smp=args.smp, headless=args.headless, debug=args.debug, virtio=args.virtio,
         qmp_path=args.qmp_path, monitor_path=args.monitor_path, serial_path=args.serial_log,
     )
     command[0] = qemu
