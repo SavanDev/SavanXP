@@ -1,8 +1,8 @@
 # Framebuffer reliability and real hardware roadmap
 
-> **Status: planned, 2026-11-16.** This document records the implementation
-> review and the work still required. No phase below is complete merely because
-> the current desktop boots or a QEMU scenario passes.
+> **Status: planned, 2026-11-16; revised 2026-11-17.** This document records
+> the implementation review and the work still required. No phase below is
+> complete merely because the current desktop boots or a QEMU scenario passes.
 
 Make the firmware framebuffer a predictable fallback on physical machines:
 validated geometry and color, known memory attributes, explicit presentation
@@ -41,6 +41,26 @@ Those records establish usable output, not a new cache audit, refresh guarantee
 or benchmark. This roadmap's baseline is a static review, not another hardware
 verification run.
 
+## Scope against HW-11
+
+HW-11 lists five gaps. This roadmap takes four of them: the log line (FB1), the
+cache type (FB2), tearing and the missing vertical sync (FB3, FB6) and the
+32 bpp gate (FB5). The fifth, **choosing the mode**, stays outside the firmware
+fallback milestone on purpose:
+
+- Limine picks the mode once, before the kernel starts, from EDID or the
+  forced `1024x768x32` boot entry. The fallback works with whatever mode it
+  received; it never sets one.
+- FB1 makes the choice observable: the accepted mode, and the fact that it came
+  from the bootloader, appear in the boot log.
+- Changing the mode after boot from Display Properties needs a backend that
+  can set modes. That means QEMU's adapters today and a native driver (FB7) on
+  physical hardware. It is not a gap FB1-FB6 can close.
+- Choosing a different firmware mode at boot, such as a boot menu entry per
+  resolution or a mode stored on disk, would be bootloader configuration
+  work. If that need appears, it gets its own item in
+  [REAL_HARDWARE.md](../../hardware/REAL_HARDWARE.md) rather than a phase here.
+
 ## Rules and boundaries
 
 - Preserve a usable firmware fallback and serial diagnostics. A failed optional
@@ -62,23 +82,48 @@ verification run.
 
 ## Phase order
 
-All phases are **open**. The last column is a dependency, not a completion claim.
+Each phase has two states, tracked separately:
 
-| Phase | Priority and result | Prerequisites |
-| --- | --- | --- |
-| FB1 | High: validated boot descriptor and usable diagnostics | None |
-| FB2 | High: measured, coherent framebuffer memory attributes | FB1 |
-| FB3 | High: defined presentation completion and ordering | FB1; coordinate with FB2 |
-| FB4 | High, small: visible emergency output | FB1; agree emergency contract with FB3 |
-| FB5 | Medium: physical pixel format conversion | FB1; FB2/FB3 for physical validation |
-| FB6 | Medium: measured copy and scheduling improvements | FB2, FB3, FB5 |
-| FB7 | Conditional: one native display driver | FB1-FB6 and a demonstrated hardware need |
+- **Code done:** implemented, host tests and QEMU scenarios pass, and the
+  commit is recorded here.
+- **Metal verified:** the physical part of its acceptance has been run and
+  recorded in the matching hardware document.
 
-FB4 can land before FB2/FB3 finish. RGB/BGR correctness in FB5 precedes optional
-24-bit or RGB565 coverage. FB7 is a separately accepted target project; it must
-not delay closing the firmware fallback milestone, FB1-FB6.
+A phase can be code done while its physical run is pending. Later phases may
+build on code-done prerequisites; only the milestone needs every phase metal
+verified. Physical tests queue behind available machines, so an increment that
+waits for hardware should not hold back the code that follows it.
+
+Sizes use the scale of [REAL_HARDWARE.md](../../hardware/REAL_HARDWARE.md):
+S is a few commits, M a short series, L a project of its own.
+
+| Phase | Priority and result | Size | Prerequisites | Code | Metal |
+| --- | --- | --- | --- | --- | --- |
+| FB1a | High: masks and a checked descriptor, host tests | S | None | open | n/a |
+| FB1b | High: one gate for splash/console/backend, honest boot log | S | FB1a | open | open |
+| FB2 | High: measured, coherent framebuffer memory attributes | M | FB1b | open | open |
+| FB3 | High: defined presentation completion and ordering | M | FB1a; coordinate with FB2 | open | open |
+| FB4 | High: visible emergency output | S | FB1a; agree emergency contract with FB3 | open | open |
+| FB5 | Medium: physical pixel format conversion | M | FB1a; FB2/FB3 for physical validation | open | open |
+| FB6 | Medium: measured copy and scheduling improvements | L | FB2, FB3, FB5 | open | open |
+| FB7 | Conditional: one native display driver | L | FB1-FB6 and a demonstrated hardware need | open | open |
+
+**First increment:** FB1a. It touches only the boot descriptor and a pure
+validation function, is fully testable on the host and changes no output.
+
+FB4 can land before FB2/FB3 finish. RGB/BGR correctness in FB5 precedes other
+depths, unless a target's mode survey promotes 24-bit (see FB5). FB7 is a
+separately accepted target project; it must not delay closing the firmware
+fallback milestone, FB1-FB6.
 
 ## FB1 — validate once and describe what boot supplied
+
+FB1 lands in two increments:
+
+- **FB1a** adds the memory model and channel masks to `boot::FramebufferInfo`
+  and a pure validation function with its host tests. No caller changes yet.
+- **FB1b** routes splash, console and `fb_gpu` through that single result,
+  replaces their separate gates, and writes the boot log line.
 
 Carry the memory model and channel masks through the boot descriptor. Establish
 one checked description before splash, console or the display backend writes
@@ -87,7 +132,8 @@ checked size arithmetic, address-range overflow and every ABI narrowing.
 Check the mapped span against the visible span without silently making an
 inconsistent descriptor valid by increasing its claimed capacity.
 
-Log geometry, pitch, depth, masks, visible bytes and established mapped bytes.
+Log geometry, pitch, depth, masks, visible bytes, established mapped bytes and
+that the mode came from the bootloader.
 Record the physical address through a justified translation, not an unverified
 subtraction from an arbitrary virtual address. Diagnose rejected descriptors
 through serial output without touching their memory. Keep unsupported-format
@@ -169,8 +215,15 @@ path for an exact match and bounded conversion paths for supported alternate
 32-bit channel orders. Share the format description with splash and console,
 including panic output, rather than teaching each caller different mask rules.
 
-Add packed 24-bit and RGB565 only as explicit, separately tested increments
-when a target or reproducible fixture needs them. Respect destination pitch
+Packed 24-bit and RGB565 are explicit, separately tested increments. Whether
+24-bit is core or optional depends on evidence that has not been collected yet.
+Before FB5 starts, record the mode list of the VBE machines whose panels are at
+risk: [Pentium 4 Evo N1020v](../../hardware/PENTIUM4_EVO_N1020V.md) (GRUB
+`videoinfo`) and [Core 2 Duo](../../hardware/CORE2_DUO.md) (`hwinfo
+--framebuffer`, where stolen memory can rule out 32 bpp at large sizes). If
+either offers its panel's size, or a usable size, only at 24 bpp, 24-bit
+becomes part of the core milestone. Otherwise it stays optional until a target
+or reproducible fixture needs it. RGB565 stays optional either way. Respect destination pitch
 and pixel size; the source surface pitch remains independent. Unsupported
 layouts remain an explained rejection, not a guessed color order.
 
@@ -182,6 +235,13 @@ separate status and require physical evidence before being called verified on
 hardware. Existing application surface ABIs and screenshots remain compatible.
 
 ## FB6 — measure bandwidth, then improve copy and frame cadence
+
+The measurements in [GRAPHICS_PERF.md](../../desktop/GRAPHICS_PERF.md) are from
+QEMU under TCG, where the `fb_gpu` copy cost is inflated and unrelated to
+physical memory types. There is no physical baseline yet. FB6's first
+deliverable is therefore a measurement, not an optimization: the workloads
+below run on at least one physical machine with the current code and the
+results are recorded. The regression limits are chosen from that baseline.
 
 Extend existing graphics measurements with actual bytes copied, including
 previous damage, conversion time, rectangle count, full-copy fallbacks and
@@ -234,23 +294,17 @@ Broader GPU families and connectors require their own evidence and scope.
 
 ## Verification and progress records
 
-For each implementation increment, run `./build.sh build`, inspect its successful
-output, then run `./build.sh test`. Follow the additional gates in `AGENTS.md`:
-kernel changes require `smoke`; native API changes require `native-test`;
-compositor changes require `windowd-smoke` and `taskbar-smoke`; drawing changes
-require `sxgui-smoke`. Run applicable cursor/effects scenarios from
-`./build.sh smoke --list` and exercise both framebuffer and virtio backends.
-Register new integration assertions in `tools/smoke_catalog.py` when needed.
+Each increment follows the verification table in `AGENTS.md` ("Minimum
+verification for any change"). On top of it, framebuffer work exercises both
+the `fb_gpu` and `virtio_gpu` backends, runs the applicable cursor and effects
+scenarios from `./build.sh smoke --list`, and checks visible changes with
+`./tools/shoot.sh`. New integration assertions are registered in
+`tools/smoke_catalog.py`.
 
-Inspect visible changes with `./tools/shoot.sh`, using a short output directory.
-Keep tests and screenshots outside tracked documentation. Changes touching the
-persistent image/build/SDK also require `./tools/verify_doom_persistence.sh`.
-Never use a passing scenario against a previous binary as evidence for a failed
-build, or weaken an assertion to close a phase.
-
-Record each phase's implementation commit, exact commands/results, hardware,
-boot mode, firmware, resolution, cache audit and remaining limitations. Mark
-unavailable physical tests as pending, and missing optional fixtures as skipped
+Record each phase's implementation commit in the Code column and its physical
+run in the Metal column of the phase table, with exact commands/results,
+hardware, boot mode, firmware, resolution, cache audit and remaining
+limitations. Mark unavailable physical tests as pending, and missing optional fixtures as skipped
 with their reason. Store physical run summaries in the matching hardware
 document and measurements in `GRAPHICS_PERF.md`; link them here when closing a
 phase. Screenshots validate pixels, not absence of tearing or correct cache

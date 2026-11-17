@@ -408,7 +408,8 @@ Other remaining work:
   **SavanXP (1024x768)** entry forces `1024x768x32`, the one VESA mode with
   32 bpp a video BIOS of any age can be expected to list, for a machine where
   the preferred mode does not light up. Display Properties still cannot
-  change the mode afterwards.
+  change the mode afterwards. The framebuffer roadmap leaves mode choice outside
+  the firmware fallback milestone and says why.
 - **`fb_gpu:` does not say what it got.** Its log line prints
   `tipo del firmware` for the cache type of any adapter that is not Bochs'.
   It should print the mapping's real type and the bit depth.
