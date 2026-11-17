@@ -3101,6 +3101,88 @@ static void log_other_child(void) {
     sxn_exit(0);
 }
 
+/* power-smoke (docs/kernel/POWER.md#the-test): the guest half. On the first
+ * boot it writes a payload it never flushes, says READY and keeps writing, so
+ * the writeback queue is not empty when the host presses the power button.
+ * The host checks the volume came down clean and boots the machine again;
+ * this time the payload exists and has to read back whole. */
+#define POWER_PAYLOAD_PATH "/system/native-power-payload.dat"
+#define POWER_CHURN_PATH "/system/native-power-churn.dat"
+#define POWER_PAYLOAD_BYTES (512ul * 1024ul)
+#define POWER_CHUNK_BYTES 4096ul
+
+static unsigned char g_power_chunk[POWER_CHUNK_BYTES];
+
+static unsigned char power_payload_byte(unsigned long offset) {
+    return (unsigned char)(offset * 131ul + (offset >> 12));
+}
+
+static int power_write_file(const char* path, unsigned long bytes, int payload) {
+    unsigned long offset;
+    long handle = sxn_create_file(path, SXN_CREATE_ALWAYS);
+
+    if (handle < 0) {
+        return 0;
+    }
+    for (offset = 0; offset < bytes; offset += POWER_CHUNK_BYTES) {
+        unsigned long index;
+        for (index = 0; index < POWER_CHUNK_BYTES; ++index) {
+            g_power_chunk[index] = payload ? power_payload_byte(offset + index) : (unsigned char)(offset >> 12);
+        }
+        if (sxn_write(handle, g_power_chunk, POWER_CHUNK_BYTES) != (long)POWER_CHUNK_BYTES) {
+            (void)sxn_close(handle);
+            return 0;
+        }
+    }
+    return sxn_close(handle) == 0;
+}
+
+static void run_power(void) {
+    struct sxn_file_info info;
+    long handle;
+    unsigned long offset;
+
+    if (sxn_query_path(POWER_PAYLOAD_PATH, &info) == -SAVANXP_ENOENT) {
+        /* First boot. No sxn_flush_file anywhere: durability is the power-off's job. */
+        if (!power_write_file(POWER_PAYLOAD_PATH, POWER_PAYLOAD_BYTES, 1)) {
+            (void)sxn_log("nativetest: power: payload write failed");
+            sxn_exit(1);
+        }
+        (void)sxn_log("NATIVE POWER READY");
+        for (;;) {
+            if (!power_write_file(POWER_CHURN_PATH, 256ul * 1024ul, 0)) {
+                (void)sxn_log("nativetest: power: churn write failed");
+                sxn_exit(1);
+            }
+        }
+    }
+
+    /* Second boot: the payload, every byte. */
+    check(sxn_query_path(POWER_PAYLOAD_PATH, &info) == 0 && info.size == POWER_PAYLOAD_BYTES);
+    handle = sxn_open_file(POWER_PAYLOAD_PATH, SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        int intact = 1;
+        for (offset = 0; offset < POWER_PAYLOAD_BYTES; offset += POWER_CHUNK_BYTES) {
+            unsigned long index;
+            if (sxn_read(handle, g_power_chunk, POWER_CHUNK_BYTES) != (long)POWER_CHUNK_BYTES) {
+                intact = 0;
+                break;
+            }
+            for (index = 0; index < POWER_CHUNK_BYTES; ++index) {
+                if (g_power_chunk[index] != power_payload_byte(offset + index)) {
+                    intact = 0;
+                }
+            }
+        }
+        check(intact);
+        check(sxn_close(handle) == 0);
+    }
+    (void)sxn_log(g_failures ? "nativetest: power: payload damaged after power-off"
+                             : "nativetest: power: payload read back after power-off");
+    sxn_exit(g_failures ? 1 : 0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -3129,6 +3211,9 @@ int main(int argc, char** argv) {
         }
         sxn_log(g_failures ? "NATIVE NETWORK FAIL" : "NATIVE NETWORK PASS");
         sxn_exit(g_failures ? 1 : 0);
+    }
+    if (argc > 1 && streq(argv[1], "power")) {
+        run_power();
     }
     if (argc > 1 && streq(argv[1], "file-user")) {
         char byte;

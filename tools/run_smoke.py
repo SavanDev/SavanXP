@@ -120,7 +120,7 @@ def make_smoke_copy(source: Path, destination: Path, sxfs_cli: Path) -> None:
 
 
 def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str, usb_host: str,
-                     limit: float = 60.0) -> None:
+                     disk_image: Path, limit: float = 60.0) -> None:
     """Run a port-owned one-shot QMP action at the guest ready token."""
     output_dir = log_dir / f"{run_tag}-callback"
     command = [
@@ -131,12 +131,15 @@ def run_qmp_callback(callback: Path, qmp_path: Path, log_dir: Path, run_tag: str
         "--out-dir",
         str(output_dir),
     ]
-    # The guest's serial log, for a callback that checks what the guest saw,
-    # and the bus of the USB host controller, for one that plugs devices in.
+    # The guest's serial log, for a callback that checks what the guest saw;
+    # the bus of the USB host controller, for one that plugs devices in; and
+    # the run's disk copy, for one that inspects the volume while the machine
+    # is stopped.
     environment = dict(
         os.environ,
         SAVANXP_SMOKE_SERIAL_LOG=str(log_dir / f"{run_tag}.serial.log"),
         SAVANXP_SMOKE_USB_BUS=usb_host_devices(usb_host)[1],
+        SAVANXP_SMOKE_DISK_IMAGE=str(disk_image),
     )
     try:
         result = subprocess.run(
@@ -524,7 +527,7 @@ def main() -> int:
                                     if args.qmp_callback:
                                         run_qmp_callback(
                                             args.qmp_callback.resolve(), qmp_path, log_dir, run_tag,
-                                            args.usb_host, max(60.0, deadline - time.monotonic()),
+                                            args.usb_host, run_disk, max(60.0, deadline - time.monotonic()),
                                         )
                                     else:
                                         with QmpClient(qmp_path) as client:

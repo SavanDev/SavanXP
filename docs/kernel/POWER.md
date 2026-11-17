@@ -55,6 +55,28 @@ storage drivers complete by polling, without needing interrupts.
 **Keep it that way.** A filesystem or block path that sleeps with the lock
 released would make this handler deadlock on the mutation lock.
 
+## The test
+
+`./build.sh smoke power-smoke` presses the power button with writes still in
+the queue, and then boots the machine again:
+
+1. `nativetest power` (SUN, [`sdk/nativetest`](../../sdk/nativetest/main.c))
+   writes a 512 KiB payload it never flushes, logs `NATIVE POWER READY`, and
+   keeps rewriting a second file so commits are always in flight.
+2. [`tools/power_smoke.py`](../../tools/power_smoke.py) sends QMP
+   `system_powerdown`. The smoke machine runs with `-no-shutdown`, so QEMU
+   stops instead of exiting. With the machine stopped, the script checks the
+   disk copy: the serial log shows the `power::shutdown()` line and no failure,
+   both superblocks carry the same sequence and `CLEAN`, and the journal has no
+   pending transaction. Then it resets the machine.
+3. On the second boot the payload exists, `nativetest power` reads back every
+   byte, and the scenario ends with `NATIVE POWER PASS`.
+
+Against the old power button, which called `acpi::shutdown()` directly, the
+volume checks alone failed on every run, in three different ways: a pending
+journal, superblocks without `CLEAN`, or a payload that did not read back after
+the reboot. A change that breaks this sequence should fail this scenario.
+
 ## What it does not do yet
 
 Compared with Windows NT, this is only the last stage (`NtShutdownSystem`):

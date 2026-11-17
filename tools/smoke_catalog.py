@@ -834,6 +834,18 @@ SCENARIOS: dict[str, Scenario] = {
         qmp_callback="tools/linux_restart_smoke.py",
         remove_paths=("/system/linux/work/l2-files.dat", "/system/linux/work/restart-marker"),
     ),
+    "power-smoke": _qemu_scenario(
+        "nativepower",
+        "NATIVE POWER PASS",
+        "NATIVE POWER FAIL",
+        "The power button leaves the volume clean and unflushed data readable after the next boot",
+        300.0,
+        ready="NATIVE POWER READY",
+        qmp_callback="tools/power_smoke.py",
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
+        ),
+    ),
     "win32-cards": _qemu_scenario(
         "win32cards",
         "WIN32 CARDS PASS",

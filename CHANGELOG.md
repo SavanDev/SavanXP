@@ -10,6 +10,11 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Added
+
+- **`power-smoke` scenario: the power button with unflushed writes leaves the volume clean, and the data reads back after the next boot.**
+  `nativetest power` is the guest half; QMP callbacks now get the run's disk copy (`SAVANXP_SMOKE_DISK_IMAGE`).
+
 ### Fixed
 
 - **Power-off and reboot sync and mark every volume clean first, and the ACPI power button no longer drops queued writes.**
