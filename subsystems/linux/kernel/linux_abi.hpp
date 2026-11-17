@@ -22,31 +22,31 @@ constexpr uint64_t kSysClose = 3;
 constexpr uint64_t kSysStat = 4;
 constexpr uint64_t kSysFstat = 5;
 constexpr uint64_t kSysLstat = 6;
-constexpr uint64_t kSysSendfile = 40;
-constexpr uint64_t kSysFcntl = 72;
-constexpr uint64_t kSysGetcwd = 79;
-constexpr uint64_t kSysChdir = 80;
-constexpr uint64_t kSysMkdir = 83;
-constexpr uint64_t kSysUmask = 95;
-constexpr uint64_t kSysGetuid = 102;
-constexpr uint64_t kSysGetdents64 = 217;
 constexpr uint64_t kSysLseek = 8;
 constexpr uint64_t kSysMmap = 9;
 constexpr uint64_t kSysMprotect = 10;
-constexpr uint64_t kSysReadlink = 89;
-constexpr uint64_t kSysGetrandom = 318;
 constexpr uint64_t kSysMunmap = 11;
 constexpr uint64_t kSysBrk = 12;
 constexpr uint64_t kSysIoctl = 16;
 constexpr uint64_t kSysWritev = 20;
 constexpr uint64_t kSysMremap = 25;
 constexpr uint64_t kSysNanosleep = 35;
+constexpr uint64_t kSysSendfile = 40;
 constexpr uint64_t kSysExit = 60;
+constexpr uint64_t kSysFcntl = 72;
+constexpr uint64_t kSysGetcwd = 79;
+constexpr uint64_t kSysChdir = 80;
+constexpr uint64_t kSysMkdir = 83;
 constexpr uint64_t kSysUnlink = 87;
+constexpr uint64_t kSysReadlink = 89;
+constexpr uint64_t kSysUmask = 95;
+constexpr uint64_t kSysGetuid = 102;
 constexpr uint64_t kSysArchPrctl = 158;
+constexpr uint64_t kSysGetdents64 = 217;
 constexpr uint64_t kSysSetTidAddress = 218;
 constexpr uint64_t kSysClockGettime = 228;
 constexpr uint64_t kSysExitGroup = 231;
+constexpr uint64_t kSysGetrandom = 318;
 
 // L5 local stream transport and its supporting calls.
 constexpr uint64_t kSysPoll = 7;
@@ -87,14 +87,22 @@ constexpr int64_t kEFAULT = 14;
 constexpr int64_t kEEXIST = 17;
 constexpr int64_t kENODEV = 19;
 constexpr int64_t kENOTDIR = 20;
-constexpr int64_t kERANGE = 34;
 constexpr int64_t kEISDIR = 21;
 constexpr int64_t kEINVAL = 22;
 constexpr int64_t kEMFILE = 24;
 constexpr int64_t kENOTTY = 25;
 constexpr int64_t kESPIPE = 29;
+constexpr int64_t kEPIPE = 32;
+constexpr int64_t kERANGE = 34;
 constexpr int64_t kENAMETOOLONG = 36;
 constexpr int64_t kENOSYS = 38;
+constexpr int64_t kENOTSOCK = 88;
+constexpr int64_t kENOPROTOOPT = 92;
+constexpr int64_t kEPROTONOSUPPORT = 93;
+constexpr int64_t kEAFNOSUPPORT = 97;
+constexpr int64_t kEISCONN = 106;
+constexpr int64_t kENOTCONN = 107;
+constexpr int64_t kECONNREFUSED = 111;
 
 // The most one read or write moves (MAX_RW_COUNT): a page short of 2 GiB.
 constexpr uint64_t kMaxRwCount = 0x7ffff000;
@@ -134,6 +142,37 @@ constexpr uint64_t kOpenCloseOnExec = 02000000;
 constexpr uint64_t kSeekSet = 0;
 constexpr uint64_t kSeekCur = 1;
 constexpr uint64_t kSeekEnd = 2;
+
+// fcntl commands and descriptor flags (include/uapi/asm-generic/fcntl.h).
+constexpr uint64_t kFcntlGetFd = 1;
+constexpr uint64_t kFcntlSetFd = 2;
+constexpr uint64_t kFcntlGetFl = 3;
+constexpr uint64_t kFcntlSetFl = 4;
+constexpr uint64_t kFdCloseOnExec = 1;
+
+// struct linux_dirent64 (include/linux/dirent.h): d_name follows d_ino,
+// d_off, d_reclen and d_type, and records are 8-byte aligned.
+constexpr uint64_t kDirentNameOffset = 19;
+constexpr uint8_t kDirentTypeDirectory = 4;
+constexpr uint8_t kDirentTypeRegular = 8;
+
+// Sockets (include/linux/socket.h, include/linux/net.h,
+// include/uapi/asm-generic/socket.h, include/uapi/linux/un.h).
+constexpr uint64_t kAfUnix = 1;
+constexpr uint64_t kSockStream = 1;
+constexpr uint64_t kSockNonblock = 04000;
+constexpr uint64_t kSockCloseOnExec = 02000000;
+constexpr uint64_t kMsgDontWait = 0x40;
+constexpr uint64_t kSolSocket = 1;
+constexpr uint64_t kSoType = 3;
+constexpr uint64_t kSoError = 4;
+constexpr uint64_t kSoSndbuf = 7;
+constexpr uint64_t kShutRead = 0;
+constexpr uint64_t kShutWrite = 1;
+constexpr uint64_t kShutReadWrite = 2;
+// sizeof(struct sockaddr_un): the family, then a 108-byte path.
+constexpr uint64_t kSockaddrUnSize = 110;
+constexpr uint64_t kSockaddrFamilySize = 2;
 
 // struct stat of x86-64 (arch/x86/include/uapi/asm/stat.h).
 struct Stat {

@@ -53,6 +53,9 @@ constexpr uint32_t kDescriptorCloseOnExec = 1u << 0;
 constexpr uint32_t kDescriptorSocket = 1u << 1;
 constexpr uint32_t kDescriptorNonblock = 1u << 2;
 constexpr uint32_t kNoSocketHandle = 0xffffffffu;
+// Descriptor::shutdown bits: the directions shutdown() has closed.
+constexpr uint8_t kShutdownRead = 1u << 0;
+constexpr uint8_t kShutdownWrite = 1u << 1;
 
 // One descriptor: the kernel handle it names, plus one (0 is a free slot,
 // so zeroed state is an empty table), and its Linux flags.
@@ -258,8 +261,8 @@ int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::Pa
 // write(fd, buffer, count).
 process::SavedContext* linux_write(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & 2) { set_result(context, -SX_EPIPE); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+        if (d->shutdown & kShutdownWrite) { set_result(context, -abi::kEPIPE); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
     }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
@@ -290,8 +293,8 @@ process::SavedContext* linux_write(process::Thread& self, process::SavedContext*
 // the caller writes the rest, as musl's stdio does.
 process::SavedContext* linux_writev(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & 2) { set_result(context, -SX_EPIPE); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+        if (d->shutdown & kShutdownWrite) { set_result(context, -abi::kEPIPE); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
     }
     const uint64_t vector = context->rsi;
     const uint64_t count = context->rdx;
@@ -369,8 +372,8 @@ int64_t linux_ioctl(process::Process& proc, const process::SavedContext* context
 // read(fd, buffer, count).
 process::SavedContext* linux_read(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & 1) { set_result(context, 0); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -107); return context; }
+        if (d->shutdown & kShutdownRead) { set_result(context, 0); return context; }
+        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
     }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
@@ -645,7 +648,7 @@ int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
         const auto* node = vfs::next_entry(file->cursor);
         if (node == nullptr) return total ? static_cast<int64_t>(total) : (vfs::last_error() ? vfs_failure() : 0);
         const size_t length = strlen(node->name);
-        const size_t record = (19 + length + 1 + 7) & ~size_t(7);
+        const size_t record = (abi::kDirentNameOffset + length + 1 + 7) & ~size_t(7);
         if (record > capacity - total) {
             file->cursor.next = saved;
             return total ? static_cast<int64_t>(total) : -abi::kEINVAL;
@@ -658,8 +661,8 @@ int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
         memcpy(bytes, &ino, 8);
         memcpy(bytes + 8, &offset, 8);
         memcpy(bytes + 16, &size, 2);
-        bytes[18] = node->type == vfs::NodeType::directory ? 4 : 8;
-        memcpy(bytes + 19, node->name, length + 1);
+        bytes[18] = node->type == vfs::NodeType::directory ? abi::kDirentTypeDirectory : abi::kDirentTypeRegular;
+        memcpy(bytes + abi::kDirentNameOffset, node->name, length + 1);
         if (!sx::copy_to_user(c->rsi + total, bytes, record)) {
             file->cursor.next = saved;
             return total ? static_cast<int64_t>(total) : -abi::kEFAULT;
@@ -701,20 +704,20 @@ int64_t linux_mkdir(process::Process& proc, const process::SavedContext* c) {
 int64_t linux_fcntl(process::Process& proc, const process::SavedContext* c) {
     auto* d = descriptor_of(proc, c->rdi);
     if (!d) return -abi::kEBADF;
-    if (c->rsi == 1) return d->flags & kDescriptorCloseOnExec ? 1 : 0; // F_GETFD
-    if (c->rsi == 2) { // F_SETFD
-        d->flags = (d->flags & ~kDescriptorCloseOnExec) | (c->rdx & 1 ? kDescriptorCloseOnExec : 0);
+    if (c->rsi == abi::kFcntlGetFd) return d->flags & kDescriptorCloseOnExec ? abi::kFdCloseOnExec : 0;
+    if (c->rsi == abi::kFcntlSetFd) {
+        d->flags = (d->flags & ~kDescriptorCloseOnExec) | (c->rdx & abi::kFdCloseOnExec ? kDescriptorCloseOnExec : 0);
         return 0;
     }
-    if (c->rsi == 3) { // F_GETFL
-        if (d->flags & kDescriptorSocket) return 2 | (d->flags & kDescriptorNonblock ? abi::kOpenNonblock : 0);
+    if (c->rsi == abi::kFcntlGetFl) {
+        if (d->flags & kDescriptorSocket) return abi::kOpenReadWrite | (d->flags & kDescriptorNonblock ? abi::kOpenNonblock : 0);
         auto* file = process::io_object_of(proc, d->handle_plus_one - 1);
         if (!file) return -abi::kEBADF;
-        return (file->open_flags & process::open_write ? (file->open_flags & process::open_read ? 2 : 1) : 0) |
+        return (file->open_flags & process::open_write ? (file->open_flags & process::open_read ? abi::kOpenReadWrite : abi::kOpenWriteOnly) : abi::kOpenReadOnly) |
             (file->open_flags & process::open_nonblock ? abi::kOpenNonblock : 0) | abi::kOpenLargeFile;
     }
-    if (c->rsi == 4) { // F_SETFL
-        if (c->rdx & ~(3ull | abi::kOpenNonblock | abi::kOpenLargeFile)) return -abi::kEINVAL;
+    if (c->rsi == abi::kFcntlSetFl) {
+        if (c->rdx & ~(abi::kOpenAccessMode | abi::kOpenNonblock | abi::kOpenLargeFile)) return -abi::kEINVAL;
         d->flags = (d->flags & ~kDescriptorNonblock) | (c->rdx & abi::kOpenNonblock ? kDescriptorNonblock : 0);
         const uint32_t handles[] = {d->handle_plus_one, d->read_handle_plus_one};
         for (uint32_t handle : handles) {
@@ -763,7 +766,7 @@ process::SavedContext* linux_sendfile(process::Thread& self, process::SavedConte
     size_t count = vfs::read(*file->node, file->offset, bytes, c->r10 < kPage ? c->r10 : kPage);
     if (!count) { set_result(c, vfs::last_error() ? vfs_failure() : 0); return c; }
     uint64_t page = 0;
-    if (vm::map_region(proc.address_space, page, kPage, 3, vm::RegionPlacement::anywhere) != vm::RegionStatus::ok) {
+    if (vm::map_region(proc.address_space, page, kPage, region::kRead | region::kWrite, vm::RegionPlacement::anywhere) != vm::RegionStatus::ok) {
         set_result(c, -abi::kENOMEM); return c;
     }
     if (!sx::copy_to_user(page, bytes, count)) {
@@ -953,7 +956,8 @@ int64_t linux_mprotect(process::Process& proc, const process::SavedContext* c) {
     uint64_t size;
     if (!round_to_pages(c->rsi, size)) return -abi::kENOMEM;
     if (!size) return 0;
-    auto result = vm::protect_regions(proc.address_space, c->rdi, size, c->rdx & 7);
+    auto result = vm::protect_regions(proc.address_space, c->rdi, size,
+        c->rdx & (abi::kProtRead | abi::kProtWrite | abi::kProtExec));
     if (result == vm::RegionStatus::not_mapped || result == vm::RegionStatus::foreign) return -abi::kENOMEM;
     return region_error(proc, abi::kSysMprotect, result);
 }
@@ -1077,19 +1081,19 @@ int64_t linux_set_tid_address(process::Thread& self, const process::SavedContext
 // Only the measured X display paths are registered. Abstract names deliberately
 // return ECONNREFUSED, so libxcb retries the pathname as in the Linux profile.
 int64_t linux_socket(process::Process& proc, const process::SavedContext* c) {
-    if (c->rdi != 1) { report_unsupported(proc, abi::kSysSocket, "socket family"); return -97; }
-    if ((c->rsi & ~(02000000ull | 04000ull)) != 1 || c->rdx) return -93;
+    if (c->rdi != abi::kAfUnix) { report_unsupported(proc, abi::kSysSocket, "socket family"); return -abi::kEAFNOSUPPORT; }
+    if ((c->rsi & ~(abi::kSockCloseOnExec | abi::kSockNonblock)) != abi::kSockStream || c->rdx) return -abi::kEPROTONOSUPPORT;
     auto* state = descriptors_of(proc);
     if (!state) return -abi::kENOMEM;
     const int64_t fd = allocate_descriptor(*state, kNoSocketHandle - 1,
-        kDescriptorSocket | (c->rsi & 02000000 ? kDescriptorCloseOnExec : 0) |
-        (c->rsi & 04000 ? kDescriptorNonblock : 0));
+        kDescriptorSocket | (c->rsi & abi::kSockCloseOnExec ? kDescriptorCloseOnExec : 0) |
+        (c->rsi & abi::kSockNonblock ? kDescriptorNonblock : 0));
     return fd < 0 ? -abi::kEMFILE : fd;
 }
 
 Descriptor* socket_of(process::Process& proc, uint64_t fd, int64_t& error) {
     auto* d = descriptor_of(proc, fd);
-    error = d ? -88 : -abi::kEBADF; // ENOTSOCK
+    error = d ? -abi::kENOTSOCK : -abi::kEBADF;
     return d && (d->flags & kDescriptorSocket) ? d : nullptr;
 }
 
@@ -1097,23 +1101,27 @@ int64_t linux_connect(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
     if (!d) return error;
-    if (d->handle_plus_one != kNoSocketHandle || d->shutdown) return -106; // EISCONN
-    if (c->rdx < 3 || c->rdx > 110) return -abi::kEINVAL;
-    unsigned char address[110] = {};
+    if (d->handle_plus_one != kNoSocketHandle || d->shutdown) return -abi::kEISCONN;
+    if (c->rdx <= abi::kSockaddrFamilySize || c->rdx > abi::kSockaddrUnSize) return -abi::kEINVAL;
+    unsigned char address[abi::kSockaddrUnSize] = {};
     if (!sx::copy_from_user(address, c->rsi, c->rdx)) return -abi::kEFAULT;
-    if (address[0] != 1 || address[1]) return -97;
-    if (!address[2]) return -111;
-    const char* path = reinterpret_cast<const char*>(address + 2);
+    // sun_family is a little-endian 16-bit AF_UNIX.
+    if (address[0] != abi::kAfUnix || address[1]) return -abi::kEAFNOSUPPORT;
+    if (!address[abi::kSockaddrFamilySize]) return -abi::kECONNREFUSED;
+    const char* path = reinterpret_cast<const char*>(address + abi::kSockaddrFamilySize);
     const char prefix[] = "/tmp/.X11-unix/X";
-    if (c->rdx < 19 || strncmp(path, prefix, sizeof(prefix) - 1) || (path[16] != '0' && path[16] != '1') ||
-        (c->rdx > 19 && path[17])) return -abi::kENOENT;
-    const uint8_t display = path[16] - '0';
+    // The display digit follows the prefix; a longer address must end right after it.
+    constexpr uint64_t kDigit = sizeof(prefix) - 1;
+    constexpr uint64_t kNamed = abi::kSockaddrFamilySize + kDigit + 1;
+    if (c->rdx < kNamed || strncmp(path, prefix, kDigit) || (path[kDigit] != '0' && path[kDigit] != '1') ||
+        (c->rdx > kNamed && path[kDigit + 1])) return -abi::kENOENT;
+    const uint8_t display = path[kDigit] - '0';
     int32_t handles[2];
     // A desktop service may run as the caller's user, or as the system.
     auto* service = object::find_port(display ? "x11d.1" : "x11d.0");
     if (service && !cred::acts_as_system(service->creator) && service->creator.euid != proc.credentials.euid) return -abi::kEACCES;
     const int result = process::connect_port(proc, display ? "x11d.1" : "x11d.0", handles);
-    if (result) return result == -SX_ENOENT ? -111 : result;
+    if (result) return result == -SX_ENOENT ? -abi::kECONNREFUSED : result;
     d->handle_plus_one = handles[0] + 1;
     d->read_handle_plus_one = handles[1] + 1;
     d->display = display;
@@ -1128,11 +1136,12 @@ int64_t linux_getpeername(process::Process& proc, const process::SavedContext* c
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
     if (!d) return error;
-    if (!d->read_handle_plus_one) return -107;
+    if (!d->read_handle_plus_one) return -abi::kENOTCONN;
     uint32_t capacity;
     if (!sx::copy_from_user(&capacity, c->rdx, sizeof(capacity)) ||
         !sx::validate_user_range(c->rdx, sizeof(capacity), true)) return -abi::kEFAULT;
-    unsigned char address[20] = {1, 0};
+    // The family, the 17-byte display path and its NUL.
+    unsigned char address[20] = {abi::kAfUnix, 0};
     memcpy(address + 2, "/tmp/.X11-unix/X0", 17);
     address[18] += d->display;
     const uint32_t length = 20;
@@ -1145,14 +1154,16 @@ int64_t linux_getpeername(process::Process& proc, const process::SavedContext* c
 int64_t linux_getsockopt(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     if (!socket_of(proc, c->rdi, error)) return error;
-    if (c->rsi != 1 || (c->rdx != 7 && c->rdx != 3 && c->rdx != 4)) {
-        report_unsupported(proc, abi::kSysGetsockopt, "socket option"); return -92;
+    if (c->rsi != abi::kSolSocket ||
+        (c->rdx != abi::kSoSndbuf && c->rdx != abi::kSoType && c->rdx != abi::kSoError)) {
+        report_unsupported(proc, abi::kSysGetsockopt, "socket option"); return -abi::kENOPROTOOPT;
     }
     uint32_t capacity;
     if (!sx::copy_from_user(&capacity, c->r8, sizeof(capacity)) ||
         !sx::validate_user_range(c->r8, sizeof(capacity), true)) return -abi::kEFAULT;
     const uint32_t length = capacity < 4 ? capacity : 4;
-    const int value = c->rdx == 7 ? process::detail::kPipeCapacity : (c->rdx == 3 ? 1 : 0);
+    const int value = c->rdx == abi::kSoSndbuf ? process::detail::kPipeCapacity
+        : (c->rdx == abi::kSoType ? static_cast<int>(abi::kSockStream) : 0);
     if ((length && !sx::copy_to_user(c->r10, &value, length)) ||
         !sx::copy_to_user(c->r8, &length, sizeof(length))) return -abi::kEFAULT;
     return 0;
@@ -1162,15 +1173,15 @@ int64_t linux_shutdown(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
     if (!d) return error;
-    if (c->rsi > 2) return -abi::kEINVAL;
-    if (!d->read_handle_plus_one) return -107;
+    if (c->rsi > abi::kShutReadWrite) return -abi::kEINVAL;
+    if (!d->read_handle_plus_one) return -abi::kENOTCONN;
     // Publish the new state before releasing: pipe closure may recheck polls.
     const uint32_t old_read = d->read_handle_plus_one;
     const uint32_t old_write = d->handle_plus_one;
-    if (c->rsi != 1) { d->shutdown |= 1; d->read_handle_plus_one = kNoSocketHandle; }
-    if (c->rsi != 0) { d->shutdown |= 2; d->handle_plus_one = kNoSocketHandle; }
-    if (c->rsi != 1 && old_read != kNoSocketHandle) (void)sx::close_handle(proc, old_read - 1);
-    if (c->rsi != 0 && old_write != kNoSocketHandle) (void)sx::close_handle(proc, old_write - 1);
+    if (c->rsi != abi::kShutWrite) { d->shutdown |= kShutdownRead; d->read_handle_plus_one = kNoSocketHandle; }
+    if (c->rsi != abi::kShutRead) { d->shutdown |= kShutdownWrite; d->handle_plus_one = kNoSocketHandle; }
+    if (c->rsi != abi::kShutWrite && old_read != kNoSocketHandle) (void)sx::close_handle(proc, old_read - 1);
+    if (c->rsi != abi::kShutRead && old_write != kNoSocketHandle) (void)sx::close_handle(proc, old_write - 1);
     return 0;
 }
 
@@ -1214,9 +1225,9 @@ int evaluate_poll(process::Thread& self, ThreadState& state) {
                 p.revents |= process::detail::poll_open_file(output, p.events & abi::kPollOut) & abi::kPollOut;
                 if (!output->pipe->reader_refs) p.revents |= abi::kPollErr;
             }
-            if (d->shutdown & 1) p.revents |= (p.events & abi::kPollIn);
-            if (d->shutdown & 2) p.revents |= (p.events & abi::kPollOut);
-            if (d->shutdown == 3) p.revents |= abi::kPollHup;
+            if (d->shutdown & kShutdownRead) p.revents |= (p.events & abi::kPollIn);
+            if (d->shutdown & kShutdownWrite) p.revents |= (p.events & abi::kPollOut);
+            if (d->shutdown == (kShutdownRead | kShutdownWrite)) p.revents |= abi::kPollHup;
             if (!d->read_handle_plus_one) p.revents |= abi::kPollHup;
         } else {
             p.revents = process::detail::poll_open_file(
@@ -1262,9 +1273,9 @@ process::SavedContext* linux_receive(process::Thread& self, process::SavedContex
     auto* d = socket_of(proc, c->rdi, error);
     if (!d) { set_result(c, error); return c; }
     const uint64_t flags = message ? c->rdx : c->r10;
-    if (flags & ~0x40ull) { report_unsupported(proc, c->rax, "receive flags"); set_result(c, -abi::kEINVAL); return c; }
-    if (!d->read_handle_plus_one) { set_result(c, -107); return c; }
-    if (d->shutdown & 1) { set_result(c, 0); return c; }
+    if (flags & ~abi::kMsgDontWait) { report_unsupported(proc, c->rax, "receive flags"); set_result(c, -abi::kEINVAL); return c; }
+    if (!d->read_handle_plus_one) { set_result(c, -abi::kENOTCONN); return c; }
+    if (d->shutdown & kShutdownRead) { set_result(c, 0); return c; }
     abi::Message header = {};
     abi::Iovec single = {c->rsi, c->rdx};
     uint64_t count = 1;
@@ -1291,7 +1302,7 @@ process::SavedContext* linux_receive(process::Thread& self, process::SavedContex
     auto* input = process::io_object_of(proc, handle);
     if (!input) { set_result(c, -abi::kEBADF); return c; }
     if (!process::detail::poll_open_file(input, abi::kPollIn) &&
-        !(flags & 0x40) && !(d->flags & kDescriptorNonblock)) {
+        !(flags & abi::kMsgDontWait) && !(d->flags & kDescriptorNonblock)) {
         auto* state = thread_state_of(self);
         if (!state) { set_result(c, -abi::kENOMEM); return c; }
         process::clear_wait_state(self);
