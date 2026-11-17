@@ -158,6 +158,13 @@ IDs, and make Stop, navigation and close cancel work while the UI remains
 responsive. Loading still runs synchronously in Web Viewer; N2 does not claim
 background loading, shared DNS/HTTP, HTTPS or a new renderer.
 
+**Carried limit: TIME_WAIT shares the 32 socket slots.** Rapid active closes
+can fill the table for up to 60 seconds, and a new socket then fails with
+`ENOMEM`. Before N4 opens many short HTTP connections, a full table should
+reclaim a `TIME_WAIT` slot, the one closest to expiry, instead of refusing,
+with a `tcp-smoke` assertion that opens more sockets than the table holds.
+See [NETWORKING.md](../../net/NETWORKING.md#closing-keeps-protocol-state-alive).
+
 ## N1 implementation checkpoint — 2026-11-15
 
 **N1 is complete.** This records N1's acceptance; the N2 checkpoint above

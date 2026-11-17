@@ -141,7 +141,8 @@ exhaustion can end them earlier. The heartbeat reclaims every expired slot.
 Attached and detached sockets share the existing 32-slot budget. Rapid closes
 can therefore temporarily exhaust it (`ENOMEM`), and an explicitly bound port
 stays busy until its protocol state expires. This is bounded retention, not a
-handle leak. The read-only `NET_IOC_GET_TCP_LIFETIMES` diagnostic reports
+handle leak. Reclaiming a `TIME_WAIT` slot when the table is full is planned
+before N4 ([WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#next-implementation-step--n3)). The read-only `NET_IOC_GET_TCP_LIFETIMES` diagnostic reports
 attached streams, closing streams, `TIME_WAIT` streams, FIN retransmissions and
 orphan close timeouts, without servicing the stack. Existing TCP statistics
 and fault-injection structures keep their ABI sizes.
