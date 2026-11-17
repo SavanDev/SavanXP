@@ -184,8 +184,11 @@
 ## Minimum verification for any change
 
 Every change: `./build.sh build` succeeds, then `./build.sh test` (the host
-tests) passes. On top of that, by area — these are the scenarios CI runs on
-every push, plus the ones specific to each area:
+tests) passes. The exception is a change that touches only documentation
+(the Markdown files listed under "Documentation language", and `CLAUDE.md`):
+nothing in the build reads them, so it needs no build, no tests and no
+scenario. On top of that, by area — these are the scenarios CI runs on every
+push, plus the ones specific to each area:
 
 | Area touched | Run |
 | --- | --- |

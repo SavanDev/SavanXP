@@ -107,7 +107,8 @@ read the `./build.sh build` output before believing a check.
 
 ### 10. Verify before calling it done
 
-Every change: `./build.sh build`, then `./build.sh test`. Then the scenario
+Every change: `./build.sh build`, then `./build.sh test`; a change that
+touches only documentation needs neither. Then the scenario
 for the area, from the table in `AGENTS.md` ("Minimum verification for any
 change"): `smoke smoke` for the kernel and POSIX, `smoke native-test` for SUN
 and syscalls, `smoke windowd-smoke` for the desktop, `smoke sxgui-smoke` for
