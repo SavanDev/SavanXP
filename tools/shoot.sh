@@ -28,7 +28,7 @@ VIRTIO=0
 SMP=2
 BOOT_WAIT=45
 KEEP_RUNNING=0
-SCENARIOS="linux-xeyes linux-xclient mediaplayer_fullscreen desktop alttab clipboard calc mines paint files console appwiz system display imgview wallpaperpng wallpaperjpeg effects resolution taskbar startmenu sound volume_popup kbdlayout contextmenu desktopicons filesmenu filestoolbar filesclipboard taskmgrmenu diskmgmt logview sxgldiag wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
+SCENARIOS="linux-xeyes linux-xclient mediaplayer_fullscreen desktop alttab clipboard calc mines paint files console appwiz system display imgview image-assoc wallpaperpng wallpaperjpeg effects resolution taskbar startmenu sound volume_popup kbdlayout contextmenu desktopicons filesmenu filestoolbar filesclipboard taskmgrmenu diskmgmt logview sxgldiag wheel notepadwheel webview bench saturate spin gears nightwood ccleste"
 
 usage() {
     cat <<'EOF'
@@ -154,7 +154,7 @@ if [[ "$SCENARIO" == wallpaperjpeg ]]; then
         --out-dir "$OUT_DIR/wallpaper-fixtures"
 fi
 
-if [[ "$SCENARIO" == imgview ]]; then
+if [[ "$SCENARIO" == imgview || "$SCENARIO" == image-assoc ]]; then
     python3 "$ROOT/tools/imgview_fixture.py" --sxfs-cli "$SXFS_CLI" --image "$run_disk" \
         --out-dir "$OUT_DIR/image-fixtures"
 fi

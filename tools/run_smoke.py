@@ -309,7 +309,7 @@ def main() -> int:
             if args.visual_scenario == "wallpaperjpeg":
                 from wallpaper_fixture import install_fixtures
                 install_fixtures(args.sxfs_cli.resolve(), run_disk, log_dir / f"{run_tag}.wallpapers")
-            if args.scenario == "imgview-test" or args.visual_scenario == "imgview":
+            if args.scenario == "imgview-test" or args.visual_scenario in ("imgview", "image-assoc"):
                 from imgview_fixture import install_fixtures
                 install_fixtures(args.sxfs_cli.resolve(), run_disk, log_dir / f"{run_tag}.images")
             for remove_path in args.remove_path:

@@ -878,6 +878,7 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 #define VIEW_CMD_OPEN 10
 #define VIEW_CMD_DELETE 11
 #define VIEW_CMD_RENAME 12
+#define VIEW_CMD_EDIT 13
 
 /* The Command Prompt, as Ctrl+Alt+T opens it (docs/desktop/CONSOLE.md). */
 static const char *k_console_path = "/system/console.sxe";
@@ -903,8 +904,9 @@ static const struct sxgui_menu k_background_menu = {
     (int)(sizeof(k_background_items) / sizeof(k_background_items[0])),
 };
 
-static const struct sxgui_menu_item k_item_items[] = {
+static struct sxgui_menu_item k_item_items[] = {
     {"Open", VIEW_CMD_OPEN, 0},
+    {"Edit", VIEW_CMD_EDIT, SXGUI_MENU_DISABLED},
     {0, 0, 0},
     {"Rename", VIEW_CMD_RENAME, 0},
     {"Delete", VIEW_CMD_DELETE, 0},
@@ -1162,6 +1164,10 @@ static void run_command(int id)
             open_item(g_subject);
         }
         break;
+    case VIEW_CMD_EDIT:
+        if (subject_valid() && shortcut_edit_path(desktop_main_window(), g_items[g_subject].path) == SHORTCUT_OPEN_FAILED)
+            desktop_confirm("Desktop", "Cannot edit this file.", 0, 0);
+        break;
     case VIEW_CMD_RENAME:
         if (subject_valid())
         {
@@ -1188,6 +1194,7 @@ static void show_menu(int index, int x, int y)
     {
         g_selected = index;
         desktop_repaint_background();
+        k_item_items[1].flags = shortcut_can_edit_path(g_items[g_subject].path) ? 0 : SXGUI_MENU_DISABLED;
         desktop_context_menu(&k_item_menu, run_command, x, y);
     }
     else

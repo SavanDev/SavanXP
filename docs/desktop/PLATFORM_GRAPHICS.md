@@ -152,3 +152,17 @@ until it does. When a gap is closed, the workarounds listed for it go too.
 | The listbox row height is private (`sxgui_row_height`, `gfx_text_height() + 4`) | `aboutapp.c` copies the formula to size its list to whole rows (`ABOUT_LICENSE_LIST_HEIGHT`) | A public `sxgui_row_height()`, or a constructor that takes a row count |
 | `sx_painter_draw_text` does not expand `\t` | `license_wrap` turns tabs into spaces to the next multiple of eight before drawing | Tab stops in the text drawing, or in the text view at least |
 | No widget hierarchy: a tab page's controls are siblings of the tab control | Each tabbed program hides the other pages' controls with `SXGUI_FLAG_VISIBLE` in its own `show_page` (`sound.c`, `display.c`, `taskmgr.c`, `aboutapp.c`) | A page index on each widget that the tab control honours, so painting, hit testing and focus skip the other pages without per-program code |
+
+## Keyboard menu navigation
+
+`sxgui_popup_menu_step` skips separators and disabled actions in both
+directions, wraps between selectable entries, and returns -1 when none are
+available. This rule is shared by context menus, menu bars and the desktop;
+programs do not compensate by counting or hiding disabled rows. Image Edit
+introduced a disabled row for folders and exposed a selector that previously
+stopped on it even though Enter correctly refused to run it.
+
+The host `sxgui-menu-test` checks the real selector, including leading/trailing
+disabled rows, wraparound and an entirely unavailable menu. The visual
+`filesmenu` scenario checks that Down still reaches Send To Desktop for a
+folder when Edit is disabled.

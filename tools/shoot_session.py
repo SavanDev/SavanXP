@@ -1249,6 +1249,120 @@ def scenario_display(s):
     s.qmp.tap("esc", pause=2.0)
 
 
+def scenario_image_assoc(s):
+    """Open/Edit from Files, real desktop images and document shortcuts."""
+    area = (0, 0, 1280, 770)
+    menu_point = [0, 0]
+
+    def expect_app(name, path, viewer):
+        deadline = time.time() + 35
+        while True:
+            image = s.shot(name)
+            text = "Actual Size" if viewer else path + " | Pencil | undo 0"
+            if find_text(image, area, text, TEXT, FACE, solid_only=True)[0] is not None:
+                break
+            if time.time() >= deadline:
+                raise Failure("association did not open the expected program/document: " + text)
+            time.sleep(1)
+        if viewer:
+            expect_text(image, area, path.rsplit("/", 1)[-1], TEXT, FACE, "viewer opened the selected image")
+            expect_text(image, area, "16 x 16 pixels", TEXT, FACE, "viewer decoded the associated image")
+        return image
+
+    def select_file(name, right=False):
+        # Home selects "..", leaving every fixture name on the white field.
+        # White glyphs alone cannot distinguish a selected row from blank paper.
+        s.qmp.tap("home", pause=0.5)
+        s.qmp.move_to(1100, 80)  # Keep the cursor off the filename glyphs.
+        image = s.shot("assoc-files-before-select")
+        origin = find_text(image, area, name, TEXT, FIELD)[0]
+        if origin is None:
+            raise Failure("association fixture is absent from Files: " + name)
+        menu_point[:] = [origin[0] + 5, origin[1] + 5]
+        s.qmp.move_to(*menu_point)
+        s.qmp.click("right" if right else "left")
+
+    def menu_action(label, steps):
+        for _ in range(steps):
+            s.qmp.tap("down", pause=0.3)
+        image = s.shot("assoc-menu-" + label.lower().replace(" ", "-"))
+        x, y = menu_point
+        popup_area = (x + 2, y + 2, x + 112, y + 75)
+        origin = find_text(image, popup_area, label, SELECT_TEXT, SELECT)[0]
+        if origin is None or image.getpixel((origin[0] - 2, origin[1] + 4)) != SELECT:
+            raise Failure("the popup did not select its enabled " + label + " action")
+        s.qmp.tap("ret", pause=2)
+
+    def close_app():
+        s.qmp.chord("alt", "f4")
+        time.sleep(1.5)
+
+    s.run("filesapp /imgview-test")
+    files_choose_view(s, s.shot("assoc-files"), "Details")
+    for name in ("01-bitmap.BMP", "03-colour.JpEg"):
+        select_file(name)
+        s.qmp.tap("ret", pause=2)
+        expect_app("assoc-files-open", "/imgview-test/" + name, True)
+        close_app()
+    select_file("01-bitmap.BMP", right=True)
+    menu_action("Edit", 2)
+    expect_app("assoc-files-edit", "/imgview-test/01-bitmap.BMP", False)
+    close_app()
+    select_file("01-bitmap.BMP", right=True)
+    menu_action("Send To Desktop", 3)
+    image = s.shot("assoc-shortcut-created")
+    expect_text(image, area, "Shortcut created on the desktop.", TEXT, FACE, "Send To Desktop created a document shortcut")
+    close_app()  # Files: leave the desktop's own menu visible to the test.
+    image = s.shot("assoc-files-closed")
+    if find_text(image, area, "Address", TEXT, FACE)[0] is not None:
+        raise Failure("Files stayed open before the desktop association checks")
+
+    # Only the disposable run disk changes. Keep short names so the desktop
+    # label itself remains a useful target independent of its assigned cell.
+    s.open_console()
+    s.qmp.type_line("cp /imgview-test/02-colour.png /users/user/Desktop/Assoc.png; mv /users/user/Desktop/01-bitmap.BMP.sxlnk /users/user/Desktop/AssocLink.sxlnk; exit")
+    s.qmp.tap("ret", pause=5)
+
+    def desktop_icon(name, right=False):
+        s.qmp.move_to(1100, 80)
+        image = s.shot("assoc-desktop")
+        origin = None
+        for fg, bg in (((255, 255, 255), FACE), (SELECT_TEXT, SELECT)):
+            origin = find_text(image, (0, 0, 290, 770), name, fg, bg, solid_only=True)[0]
+            if origin is not None:
+                break
+        if origin is None:
+            raise Failure("association fixture is absent from the desktop: " + name)
+        # The filename label is itself a hit target; avoid guessing where
+        # its centred icon begins from the left edge of a shorter label.
+        menu_point[:] = [origin[0] + 5, origin[1] + 4]
+        s.qmp.move_to(*menu_point)
+        if right:
+            s.qmp.click("right")
+        return origin
+
+    desktop_icon("Assoc.png")
+    for _ in range(2):
+        s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.06)
+        s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(0.1)
+    expect_app("assoc-desktop-double-click", "/users/user/Desktop/Assoc.png", True)
+    close_app()
+    desktop_icon("Assoc.png", right=True)
+    menu_action("Edit", 2)
+    expect_app("assoc-desktop-edit", "/users/user/Desktop/Assoc.png", False)
+    close_app()
+    desktop_icon("AssocLink", right=True)
+    menu_action("Open", 1)
+    expect_app("assoc-shortcut-open", "/imgview-test/01-bitmap.BMP", True)
+    close_app()
+    desktop_icon("AssocLink", right=True)
+    menu_action("Edit", 2)
+    expect_app("assoc-shortcut-edit", "/imgview-test/01-bitmap.BMP", False)
+    close_app()
+
+
 def scenario_imgview(s):
     """Exercise the SUN viewer's pixels and controls on a disposable image."""
     from PIL import ImageChops
@@ -4048,6 +4162,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,
+    "image-assoc": scenario_image_assoc,
     "imgview": scenario_imgview,
     "wallpaperpng": scenario_wallpaperpng,
     "wallpaperjpeg": scenario_wallpaperjpeg,

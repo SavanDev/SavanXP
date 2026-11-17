@@ -1044,7 +1044,7 @@ int sxgui_popup_menu_step(const struct sxgui_menu *menu, int hot, int direction)
             index += menu->item_count;
         }
         index %= menu->item_count;
-        if (menu->items[index].text != 0)
+        if (sxgui_popup_menu_item_selectable(menu, index))
         {
             return index;
         }

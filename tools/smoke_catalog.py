@@ -630,6 +630,12 @@ SCENARIOS: dict[str, Scenario] = {
         "imgview-selftest", "IMGVIEW SELFTEST PASS", "IMGVIEW SELFTEST FAIL",
         "Native image sections, BMP/PNG/JPEG pixels, reduction, errors and folder navigation",
     ),
+    "image-assoc-smoke": _qemu_scenario(
+        "", "IMAGE ASSOC SMOKE PASS", "IMAGE ASSOC SMOKE FAIL",
+        "Files/desktop Open in Image Viewer and Edit in Paint, including document shortcuts",
+        480.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="image-assoc",
+    ),
     "imgview-smoke": _qemu_scenario(
         "", "IMGVIEW SMOKE PASS", "IMGVIEW SMOKE FAIL",
         "Image Viewer chrome, Open dialog, image pixels, zoom, pan, navigation and fullscreen",

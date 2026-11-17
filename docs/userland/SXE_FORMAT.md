@@ -741,20 +741,44 @@ uninstalls your games is not a test, it is a bug.
 
 ### File associations (phase 5)
 
-The association does not live in `progman.ini` but in its own registry,
-`/assoc.ini`, because they are different things: one is the start menu
-arrangement, the other is system-wide policy. Minimal format, one line per
-association:
+The association does not live in `progman.ini`: menu arrangement and file
+actions are separate policy. `file_assoc` reads the user's `Settings/assoc.ini`
+through `savanxp_settings_path` (including the legacy loose/root fallback),
+then the shipped `/system/assoc.ini`, then executable `EXT_OPEN` capabilities.
+The build updates only the shipped defaults; it never writes user choices.
 
 ```ini
-# /assoc.ini — who opens each extension
+# Settings/assoc.ini — per-action user choices
 .txt=/bin/notepad
-.log=/bin/notepad
+open:.png=/system/imgview.sxe
+edit:.png=/bin/paint
 ```
 
-Precedence: **user policy > first binary declaring the extension > nothing**.
-The third case is not an error: filesapp falls back to its default editor, and
-another caller can decide otherwise.
+A plain `.ext=` line remains **Open**, so existing policy files keep their
+meaning. `open:.ext=` is equivalent; `edit:.ext=` chooses the editor.
+Extensions are compared without case, verbs use lowercase, and program paths
+must be absolute. `#` and `;` start comments. Unknown verbs are ignored.
+Open and Edit occupy one extension slot; the bounded in-memory table holds
+64 extensions, leaving room beyond the base system's image, media, text, HTML
+and executable associations. They have independent precedence:
+**user choice > shipped default > capability**. Capabilities supply Open only.
+Unclaimed Open keeps the caller's fallback (Files and the desktop use Notepad);
+Edit has no implicit fallback and is disabled when no editor is associated.
+
+The shipped policy makes `.bmp`, `.png`, `.jpg` and `.jpeg` open in
+`/system/imgview.sxe`, with Edit routed to `/bin/paint`. This is data in
+`/system/assoc.ini`, not a special tie-break for image programs in the scanner.
+A user choosing another Open program retains the default editor, and vice
+versa. Paint's decoder support does not change here: JPEG Edit reaches Paint,
+which currently reports that it cannot read the image.
+
+Files and the desktop expose Edit in the item's context menu for an editable
+document. The shared `shortcut` path follows one document shortcut and its
+working directory, as Open does. Directories, executable files and nested
+shortcuts do not acquire an Edit action. Both callers cache their association
+snapshot for the session; changed policy takes effect when they restart.
+`filesapp-smoke` asserts the real defaults and precedence in both load orders;
+`image-assoc-smoke` checks Open/Edit from Files, desktop images and shortcuts.
 
 "First binary declaring it" was not theoretical: while `/disk/bin` was a copy of
 the initramfs `/bin` and both were scanned, **every program showed up twice**,

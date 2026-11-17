@@ -71,5 +71,10 @@ enum shortcut_open_kind
  */
 enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *context, const char *path);
 
+/* Edit follows the same single shortcut and working-directory rules as Open,
+ * but only launches an explicitly associated editor, without a fallback. */
+enum shortcut_open_kind shortcut_edit_path(const struct savanxp_gfx_context *context, const char *path);
+int shortcut_can_edit_path(const char *path);
+
 /* Parse, format and naming checks. Returns the number of failures. */
 int shortcut_selftest(void);

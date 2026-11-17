@@ -23,9 +23,14 @@ a fixed-size navigation list. The status index counts matching extensions,
 including files that fail to decode, so navigation can continue past an error.
 
 The `.sxres` declares `ext_open` and `mime_open` capabilities for these four
-extensions and three media types. This delivery does not change the existing
-association policy or write a user's `assoc.ini`. Choosing the viewer as the
-default Open application, while retaining Paint for Edit, remains an I6 task.
+extensions and three media types. Shipped `/system/assoc.ini` makes Image
+Viewer the default **Open** action (including double click and Enter) in
+Files and on the desktop, and associates **Edit** with Paint. User choices
+in `Settings/assoc.ini` override each action independently; existing `.ext=`
+lines remain Open, while `edit:.ext=` selects an editor. See
+[SXE_FORMAT.md](../userland/SXE_FORMAT.md#file-associations-phase-5).
+JPEG Edit is associated too, but Paint still cannot decode JPEG; adding that
+support is separate work. No user policy file is rewritten by the build.
 
 ## Viewing controls
 
@@ -67,6 +72,8 @@ named rejection errors, including progressive JPEG, are specified in
 
 ## Verification
 
+- `image-assoc-smoke` checks Open/Edit from Files, desktop images and image
+  shortcuts; `filesapp-smoke` checks policy precedence against real binaries.
 - `imgview-view-test` is the host test of fit, zoom anchoring, scroll clamps,
   edge dimensions and case-insensitive image names.
 - `./build.sh smoke imgview-test` runs `imgview --selftest` in the guest.

@@ -329,18 +329,18 @@ static long launch(const struct savanxp_gfx_context *context, const char *progra
     return gfx_desktop_launch_ex(context, program, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
 }
 
-/* A document: whoever its extension is associated with (file_assoc), or
- * Notepad when nobody is. */
+/* Files and the desktop keep one association snapshot for both actions. */
+static void ensure_associations(void)
+{
+    static int loaded;
+    if (!loaded) { (void)file_assoc_load(); loaded = 1; }
+}
+
+/* A document: its Open association, or Notepad when nobody claims it. */
 static enum shortcut_open_kind open_document(const struct savanxp_gfx_context *context, const char *path)
 {
-    static int assoc_loaded = 0;
     const char *program;
-
-    if (!assoc_loaded)
-    {
-        (void)file_assoc_load();
-        assoc_loaded = 1;
-    }
+    ensure_associations();
     program = file_assoc_program_for_file(path);
     if (program != 0)
     {
@@ -350,8 +350,16 @@ static enum shortcut_open_kind open_document(const struct savanxp_gfx_context *c
 }
 
 /* What a path opens as, without following shortcuts. */
-static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *context, const char *path, const char *args)
+static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *context, const char *path, const char *args, int edit)
 {
+    if (edit)
+    {
+        const char *editor;
+        if (is_directory(path) || shortcut_is_program_path(path) || linux_program(path)) return SHORTCUT_OPEN_FAILED;
+        ensure_associations();
+        editor = file_assoc_editor_for_file(path);
+        return editor && launch(context, editor, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
+    }
     if (is_directory(path))
     {
         return launch(context, SHORTCUT_FILES_PATH, path) >= 0 ? SHORTCUT_OPEN_FOLDER : SHORTCUT_OPEN_FAILED;
@@ -369,7 +377,7 @@ static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *cont
     return open_document(context, path);
 }
 
-enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *context, const char *path)
+static enum shortcut_open_kind act_on_path(const struct savanxp_gfx_context *context, const char *path, int edit)
 {
     struct shortcut shortcut;
     enum shortcut_open_kind kind;
@@ -382,7 +390,7 @@ enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *con
     }
     if (!shortcut_is_shortcut_name(path) || is_directory(path))
     {
-        return open_plain(context, path, 0);
+        return open_plain(context, path, 0, edit);
     }
     if (shortcut_load(path, &shortcut) != 0)
     {
@@ -400,12 +408,37 @@ enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *con
     {
         changed_directory = 1;
     }
-    kind = open_plain(context, shortcut.target, shortcut.args);
+    kind = open_plain(context, shortcut.target, shortcut.args, edit);
     if (changed_directory)
     {
         (void)chdir(saved_directory);
     }
     return kind;
+}
+
+enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *context, const char *path)
+{
+    return act_on_path(context, path, 0);
+}
+
+enum shortcut_open_kind shortcut_edit_path(const struct savanxp_gfx_context *context, const char *path)
+{
+    return act_on_path(context, path, 1);
+}
+
+int shortcut_can_edit_path(const char *path)
+{
+    struct shortcut shortcut;
+    struct stat info;
+    if (!path || !path[0]) return 0;
+    if (shortcut_is_shortcut_name(path))
+    {
+        if (shortcut_load(path, &shortcut) != 0 || shortcut_is_shortcut_name(shortcut.target)) return 0;
+        path = shortcut.target;
+    }
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || shortcut_is_program_path(path) || linux_program(path)) return 0;
+    ensure_associations();
+    return file_assoc_editor_for_file(path) != 0;
 }
 
 /* ---- selftest ----------------------------------------------------------- */

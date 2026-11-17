@@ -4,6 +4,7 @@
 
 #include <dirent.h>
 #include <stdio.h>
+#include <string.h>
 
 static struct file_assoc_entry g_entries[FILE_ASSOC_MAX_ENTRIES];
 static int g_entry_count = 0;
@@ -115,13 +116,9 @@ static int find_entry(const char *extension)
     return -1;
 }
 
-/*
- * Agrega o pisa una asociacion. La politica del usuario gana siempre: una
- * entrada de politica sobreescribe una del escaneo, pero nunca al reves. Sin
- * esto, el orden en que se cargan las dos fuentes decidiria la precedencia, que
- * es justo lo que no debe pasar.
- */
-static int set_entry(const char *extension, const char *program, int from_policy)
+/* Add or replace one action. Explicit user policy wins over shipped defaults
+ * and scanned capabilities, regardless of which extension has the other action. */
+static int set_entry(const char *extension, const char *program, int from_policy, int edit)
 {
     char normalized[FILE_ASSOC_EXT_CAPACITY];
     int index;
@@ -138,31 +135,22 @@ static int set_entry(const char *extension, const char *program, int from_policy
     }
 
     index = find_entry(normalized);
-    if (index >= 0)
+    if (index < 0)
     {
-        /*
-         * What is already registered is overridden ONLY by the user's policy.
-         * Between two binaries that declare the same extension, the first one
-         * in the scan wins. That stops a later program from silently taking
-         * over an association the system's own program declared.
-         */
-        if (!from_policy)
-        {
-            return 0;
-        }
-        copy_field(g_entries[index].program, sizeof(g_entries[index].program), program);
-        g_entries[index].from_policy = from_policy;
-        return 1;
+        if (g_entry_count >= FILE_ASSOC_MAX_ENTRIES) return 0;
+        index = g_entry_count++;
+        memset(&g_entries[index], 0, sizeof(g_entries[index]));
+        copy_field(g_entries[index].extension, sizeof(g_entries[index].extension), normalized);
     }
-
-    if (g_entry_count >= FILE_ASSOC_MAX_ENTRIES)
     {
-        return 0;
+        char *target = edit ? g_entries[index].editor : g_entries[index].program;
+        int *policy = edit ? &g_entries[index].edit_from_policy : &g_entries[index].from_policy;
+        /* User choices replace defaults; defaults precede capability scanning.
+         * Open and Edit have independent precedence for the same extension. */
+        if (target[0] != '\0' && !from_policy) return 0;
+        copy_field(target, FILE_ASSOC_PATH_CAPACITY, program);
+        *policy = from_policy;
     }
-    copy_field(g_entries[g_entry_count].extension, sizeof(g_entries[g_entry_count].extension), normalized);
-    copy_field(g_entries[g_entry_count].program, sizeof(g_entries[g_entry_count].program), program);
-    g_entries[g_entry_count].from_policy = from_policy;
-    g_entry_count += 1;
     return 1;
 }
 
@@ -204,14 +192,13 @@ const char *file_assoc_extension_of(const char *file_path, char *out, size_t cap
 
 /* --- politica del usuario ------------------------------------------------- */
 
-int file_assoc_parse_policy(const char *text, size_t length)
+static int parse_entries(const char *text, size_t length, int from_policy)
 {
     static char buffer[FILE_ASSOC_POLICY_MAX_BYTES];
     size_t copy_length = 0;
     size_t offset = 0;
     int added = 0;
 
-    g_entry_count = 0;
     if (text == 0 || length == 0)
     {
         return 0;
@@ -256,27 +243,35 @@ int file_assoc_parse_policy(const char *text, size_t length)
             continue;
         }
         *separator = '\0';
-        if (set_entry(trim(line), trim(separator + 1), 1))
+        line = trim(line);
         {
-            added += 1;
+            int edit = strncmp(line, "edit:", 5) == 0;
+            if (edit || strncmp(line, "open:", 5) == 0) line += 5;
+            if (strchr(line, ':') != 0) continue;
+            if (set_entry(trim(line), trim(separator + 1), from_policy, edit))
+            {
+                added += 1;
+            }
         }
     }
     return added;
 }
 
-int file_assoc_load_policy(void)
+int file_assoc_parse_policy(const char *text, size_t length)
+{
+    g_entry_count = 0;
+    return parse_entries(text, length, 1);
+}
+
+static int load_policy_file(const char *path, int from_policy)
 {
     static char file_buffer[FILE_ASSOC_POLICY_MAX_BYTES];
-    char path[256];
-    int fd = savanxp_settings_path(FILE_ASSOC_POLICY_NAME, 0, path, sizeof(path)) == 0
-        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
-        : -1;
+    int fd = (int)savanxp_open_mode(path, SAVANXP_OPEN_READ);
     long total = 0;
 
-    g_entry_count = 0;
     if (fd < 0)
     {
-        /* Sin politica no hay error: el escaneo solo decide todo. */
+        /* Missing policy is normal: lower-priority sources still apply. */
         return 0;
     }
     while (total < (long)(sizeof(file_buffer) - 1u))
@@ -293,7 +288,15 @@ int file_assoc_load_policy(void)
     {
         return 0;
     }
-    return file_assoc_parse_policy(file_buffer, (size_t)total);
+    return parse_entries(file_buffer, (size_t)total, from_policy);
+}
+
+int file_assoc_load_policy(void)
+{
+    char path[256];
+    g_entry_count = 0;
+    if (savanxp_settings_path(FILE_ASSOC_POLICY_NAME, 0, path, sizeof(path)) != 0) return 0;
+    return load_policy_file(path, 1);
 }
 
 /* --- escaneo de capacidades ----------------------------------------------- */
@@ -330,7 +333,7 @@ static int scan_program(const char *path, void *meta_buffer, size_t meta_capacit
         {
             continue;
         }
-        if (set_entry(extension, path, 0))
+        if (set_entry(extension, path, 0, 0))
         {
             added += 1;
         }
@@ -400,6 +403,7 @@ int file_assoc_scan_examined(void)
 int file_assoc_load(void)
 {
     (void)file_assoc_load_policy();
+    (void)load_policy_file(FILE_ASSOC_DEFAULTS_PATH, 0);
     (void)file_assoc_scan_programs(0);
     return g_entry_count;
 }
@@ -420,7 +424,16 @@ const char *file_assoc_program_for_file(const char *file_path)
     {
         return 0;
     }
-    return g_entries[index].program;
+    return g_entries[index].program[0] ? g_entries[index].program : 0;
+}
+
+const char *file_assoc_editor_for_file(const char *file_path)
+{
+    char extension[FILE_ASSOC_EXT_CAPACITY];
+    int index;
+    if (!file_assoc_extension_of(file_path, extension, sizeof(extension))) return 0;
+    index = find_entry(extension);
+    return index >= 0 && g_entries[index].editor[0] ? g_entries[index].editor : 0;
 }
 
 int file_assoc_count(void)
@@ -591,6 +604,57 @@ static void selftest_scan(void)
     expect(file_assoc_scan_examined() == 0, "escaneo: no abrio ningun binario");
 }
 
+static void selftest_actions(void)
+{
+    static const char *const extensions[] = {"/image.BMP", "/image.PNG", "/image.JPG", "/image.JpEg"};
+    static const char choices[] = ".png=/bin/notepad\nedit:.bmp=/bin/notepad\n";
+    unsigned i;
+
+    (void)file_assoc_parse_policy("", 0);
+    expect(load_policy_file(FILE_ASSOC_DEFAULTS_PATH, 0) == 8, "shipped defaults define eight actions");
+    expect(file_assoc_count() == 4, "Open and Edit share one extension slot");
+    for (i = 0; i < sizeof(extensions) / sizeof(extensions[0]); ++i)
+    {
+        const char *open = file_assoc_program_for_file(extensions[i]);
+        const char *edit = file_assoc_editor_for_file(extensions[i]);
+        expect(open && !strcmp(open, "/system/imgview.sxe"), "images default to Image Viewer");
+        expect(edit && !strcmp(edit, "/bin/paint"), "image Edit defaults to Paint, including JPEG");
+    }
+    (void)file_assoc_scan_programs(0);
+    expect(!strcmp(file_assoc_program_for_file("/image.png"), "/system/imgview.sxe"), "Paint capability cannot replace viewer default");
+    expect(file_assoc_program_for_file("/page.html") &&
+        !strcmp(file_assoc_program_for_file("/page.html"), "/system/webview.sxe"), "image defaults preserve HTML association");
+    expect(file_assoc_program_for_file("/page.htm") &&
+        !strcmp(file_assoc_program_for_file("/page.htm"), "/system/webview.sxe"), "image defaults preserve HTM association");
+    expect(file_assoc_editor_for_file("/notes.txt") == 0, "Open capability does not imply Edit");
+    expect(file_assoc_editor_for_file("/unknown") == 0, "Edit has no fallback without an extension");
+
+    /* Choices after defaults override only their own action. */
+    expect(parse_entries(choices, sizeof(choices) - 1, 1) == 2, "independent user choices parsed");
+    expect(!strcmp(file_assoc_program_for_file("/image.png"), "/bin/notepad"), "legacy user Open overrides default");
+    expect(!strcmp(file_assoc_editor_for_file("/image.png"), "/bin/paint"), "user Open preserves default Edit");
+    expect(!strcmp(file_assoc_editor_for_file("/image.bmp"), "/bin/notepad"), "user Edit overrides default");
+    expect(!strcmp(file_assoc_program_for_file("/image.bmp"), "/system/imgview.sxe"), "user Edit preserves default Open");
+
+    /* Production load order: choices, defaults, capabilities. */
+    (void)file_assoc_parse_policy(choices, sizeof(choices) - 1);
+    (void)load_policy_file(FILE_ASSOC_DEFAULTS_PATH, 0);
+    (void)file_assoc_scan_programs(0);
+    expect(!strcmp(file_assoc_program_for_file("/image.png"), "/bin/notepad"), "earlier user Open survives defaults and scan");
+    expect(!strcmp(file_assoc_editor_for_file("/image.bmp"), "/bin/notepad"), "earlier user Edit survives defaults and scan");
+    expect(!strcmp(file_assoc_program_for_file("/image.bmp"), "/system/imgview.sxe"), "Edit-only entry accepts default Open");
+
+    (void)file_assoc_parse_policy("edit:.txt=/bin/paint\n", sizeof("edit:.txt=/bin/paint\n") - 1);
+    expect(file_assoc_program_for_file("/notes.txt") == 0, "Edit-only entry has no Open yet");
+    (void)file_assoc_scan_programs(0);
+    expect(!strcmp(file_assoc_program_for_file("/notes.txt"), "/bin/notepad"), "capability fills Open beside user Edit");
+    expect(!strcmp(file_assoc_editor_for_file("/notes.txt"), "/bin/paint"), "scan preserves Edit-only choice");
+    (void)file_assoc_parse_policy("open:.png=/bin/notepad\nprint:.png=/bin/paint\n", sizeof("open:.png=/bin/notepad\nprint:.png=/bin/paint\n") - 1);
+    expect(file_assoc_count() == 1 && file_assoc_program_for_file("/image.png") &&
+        !strcmp(file_assoc_program_for_file("/image.png"), "/bin/notepad"), "explicit Open prefix and unknown verb rejection");
+    (void)file_assoc_load();
+}
+
 int file_assoc_selftest(void)
 {
     g_selftest_failures = 0;
@@ -599,6 +663,7 @@ int file_assoc_selftest(void)
     selftest_policy();
     selftest_scan();
     selftest_precedence();
+    selftest_actions();
 
     return g_selftest_failures;
 }

@@ -1,9 +1,8 @@
 # Image Viewer and the image formats
 
-Status: **phases I1–I5 landed** (shared BMP/PNG/JPEG decoders, the common image API,
-reduced JPEG and wallpaper/Display Properties integration). **I6 is in progress:**
-the native viewer and its controls are delivered; default Open/Edit association
-policy remains pending. Progressive JPEG (I7) remains.
+Status: **phases I1–I6 landed**: shared BMP/PNG/JPEG decoders, reduced JPEG,
+wallpaper integration, and the native viewer with Open/Edit associations.
+Progressive JPEG (I7) remains.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -109,15 +108,13 @@ picture that size costs its full size at once. The limits are therefore:
 
 ### Who opens an image by default
 
-Files and the desktop resolve a double click through `file_assoc`
-([SXE_FORMAT.md](../../userland/SXE_FORMAT.md)): the user's `assoc.ini`
-first, then the first program that declares the extension, scanning `/bin`
-before `/system`. Paint (in `/bin`) declares `.bmp` and `.png`, so with no
-policy it would keep opening them. On Windows the viewer opens a picture and
-Paint is "Edit". **Open question for I6**: whether the viewer wins by a
-policy line the system ships, or by a tie-break rule in `file_assoc`. Either
-way the decision goes into `SXE_FORMAT.md`; it is not solved inside the
-viewer.
+Files and the desktop resolve Open and Edit through `file_assoc`:
+user choices first, then the shipped `/system/assoc.ini`, then declared Open
+capabilities. Image Viewer is the default Open action for BMP/PNG/JPEG and
+Paint is Edit, without changing Paint's current format support. Each user
+action overrides its default independently. The policy lives in data rather
+than a scanner tie-break; see
+[SXE_FORMAT.md](../../userland/SXE_FORMAT.md#file-associations-phase-5).
 
 ## Phases
 
@@ -230,17 +227,20 @@ fixtures are compared within a stated tolerance for IDCT rounding and matched
 chroma reconstruction. Errors, scale planning/decoding and consumer integration
 are covered; JPEG signature detection alone is not decoder support.
 
-### I6 — Image Viewer
+### I6 — Image Viewer (done)
 
 **First delivery landed:** the SUN program `system/imgview` opens BMP, PNG
 and sequential JPEG with Fit/Actual Size, zoom, scrollbars, drag panning,
 folder navigation, status, native Open and fullscreen. It declares its
-capabilities without changing user associations. See
+capabilities without rewriting user associations. See
 [IMAGE_VIEWER.md](../../desktop/IMAGE_VIEWER.md) for the controls, memory and
 scale contract, and the host, native selftest and visual scenarios.
 
-**Remaining:** settle and implement the default Open/Edit association policy
-preserving explicit user choices.
+**Association delivery landed:** `/system/assoc.ini` supplies independent
+Open (Image Viewer) and Edit (Paint) defaults. User choices are preserved;
+Files and the desktop share the actions, including document shortcuts.
+`filesapp-smoke` checks precedence and `image-assoc-smoke` checks the actual
+launches. Paint JPEG editing remains separate from this viewer phase.
 
 ### I7 — Progressive JPEG
 

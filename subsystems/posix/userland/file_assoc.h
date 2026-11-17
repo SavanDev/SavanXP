@@ -5,16 +5,16 @@
 /*
  * File associations (docs/userland/SXE_FORMAT.md, phase 5).
  *
- * Answers "which program opens this file" with the split the document sets:
+ * Resolves Open and Edit with the capability/policy split in the document:
  *
  *   - The BINARY declares a CAPABILITY, in the EXT_OPEN tag of its .sxmeta:
  *     "I can open .txt". Declaring it does not make it the one that opens them.
- *   - The REGISTRY resolves the ASSOCIATION: /assoc.ini says which one wins.
- *     It is the user's policy, as on Windows it lives in the registry and not
- *     in the EXE.
+ *   - The REGISTRY resolves each ACTION: Settings/assoc.ini overrides the
+ *     shipped /system/assoc.ini defaults independently for Open and Edit.
+ *     Policy lives outside the executable.
  *
- * Precedence: the user's policy > the first binary that declares the extension
- * > nothing (and then the caller decides its own default).
+ * Precedence: user policy > /system/assoc.ini > the first binary declaring
+ * the extension > nothing. Capabilities provide Open only; Edit is policy.
  *
  * BY EXTENSION ONLY AT THIS STAGE. The MIME_OPEN tag is still stamped and can
  * be read, but resolving by content type needs a detection layer -- extension
@@ -28,12 +28,13 @@
 /* Con punto y en minusculas: ".txt". Alcanza para lo que declara un .sxres. */
 #define FILE_ASSOC_EXT_CAPACITY 16
 #define FILE_ASSOC_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
-#define FILE_ASSOC_MAX_ENTRIES 32
+#define FILE_ASSOC_MAX_ENTRIES 64
 
-/* The user's policy file. Format: one `.ext=/path/program` line per
- * association, with '#' and ';' starting a comment. */
+/* Policy lines: `.ext=/path/program` (Open), or `edit:.ext=/path/editor`.
+ * `open:.ext` is also accepted; '#' and ';' start comments. */
 #define FILE_ASSOC_POLICY_NAME "assoc.ini" /* in the profile: savanxp_settings_path */
 #define FILE_ASSOC_POLICY_MAX_BYTES 4096
+#define FILE_ASSOC_DEFAULTS_PATH "/system/assoc.ini"
 
 /*
  * The first directory scanned for programs that declare extensions; /system
@@ -46,21 +47,14 @@ struct file_assoc_entry
 {
     char extension[FILE_ASSOC_EXT_CAPACITY];
     char program[FILE_ASSOC_PATH_CAPACITY];
-    /* 1 = lo fijo el usuario en assoc.ini; 0 = lo declaro un binario. */
+    char editor[FILE_ASSOC_PATH_CAPACITY];
+    /* Non-zero for an explicit user choice, independently for each action. */
     int from_policy;
+    int edit_from_policy;
 };
 
-/*
- * Carga la politica y escanea los binarios instalados. Es caro (abre el
- * .sxmeta de cada ejecutable), asi que se llama UNA vez y el resultado queda
- * en memoria mientras viva el proceso.
- *
- * Deliberadamente sin cache en disco: la decision del documento es medir
- * primero. Un indice persistente agrega bugs de invalidacion que no se pagan
- * hasta saber que el escaneo se nota.
- *
- * Devuelve cuantas asociaciones quedaron.
- */
+/* Load user policy, shipped defaults, then executable Open capabilities.
+ * The caller keeps this in memory for its lifetime; there is no disk cache. */
 int file_assoc_load(void);
 
 /* Solo la politica, sin escanear. El escaneo se agrega encima. */
@@ -86,6 +80,8 @@ int file_assoc_scan_programs(file_assoc_path_exists_fn exists);
  * hay asociacion" no es un error.
  */
 const char *file_assoc_program_for_file(const char *file_path);
+/* Edit has no implicit fallback. A missing association returns NULL. */
+const char *file_assoc_editor_for_file(const char *file_path);
 
 /* Extension de un path, con punto y en minusculas. Devuelve 0 si no tiene.
  * Expuesto porque el llamador suele querer mostrarla. */

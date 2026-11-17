@@ -39,6 +39,7 @@ disagree.
 
 | Command | Toolbar | Menu | Keys | Enabled when |
 |---|---|---|---|---|
+| Open / Edit | — | Item context menu | Enter opens | Open follows the selected item; Edit needs an associated editor |
 | Back | Back | Go | Alt+Left | there is a folder to go back to |
 | Forward | Forward | Go | Alt+Right | after Back |
 | Up One Level | Up | Go, folder's context menu | Backspace | not at the root |

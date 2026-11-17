@@ -1106,14 +1106,16 @@ static void on_menu_command(int id, void *user)
 #define FILESAPP_CMD_CUT 28
 #define FILESAPP_CMD_COPY 29
 #define FILESAPP_CMD_PASTE 30
+#define FILESAPP_CMD_EDIT 31
 
 #define FILESAPP_QUESTION_WIDTH 340
 #define FILESAPP_QUESTION_HEIGHT 96
 #define FILESAPP_RENAME_HEIGHT 112
 
-/* Not const: Pin to Start Menu is enabled only for a program or a shortcut. */
+/* Edit needs an associated editor; Pin to Start needs a program or shortcut. */
 static struct sxgui_menu_item k_entry_items[] = {
     {"Open", FILESAPP_CMD_OPEN, 0},
+    {"Edit", FILESAPP_CMD_EDIT, 0},
     {0, 0, 0},
     {"Send To Desktop", FILESAPP_CMD_SEND_TO_DESKTOP, 0},
     {"Pin to Start Menu", FILESAPP_CMD_PIN_TO_START, 0},
@@ -2178,6 +2180,15 @@ static void on_context_command(int id, void *user)
     case FILESAPP_CMD_OPEN:
         filesapp_activate_selected();
         break;
+    case FILESAPP_CMD_EDIT:
+        {
+            char path[FILESAPP_PATH_CAPACITY];
+            if (filesapp_join_path(g_current_path, g_subject, path, sizeof(path)) &&
+                shortcut_edit_path(&g_app.gfx, path) != SHORTCUT_OPEN_FAILED)
+                filesapp_set_status("Opening with associated editor...");
+            else filesapp_set_status("Cannot edit it.");
+        }
+        break;
     case FILESAPP_CMD_SEND_TO_DESKTOP:
         filesapp_send_to_desktop();
         break;
@@ -2225,7 +2236,12 @@ static void filesapp_show_menu(int item, int x, int y)
         FILESAPP_LIST->value = item;
         snprintf(g_subject, sizeof(g_subject), "%s", g_entries[row].name);
         filesapp_update_commands();
-        filesapp_enable_item(&k_entry_items[3], filesapp_subject_can_pin());
+        {
+            char path[FILESAPP_PATH_CAPACITY];
+            filesapp_enable_item(&k_entry_items[1],
+                filesapp_join_path(g_current_path, g_subject, path, sizeof(path)) && shortcut_can_edit_path(path));
+        }
+        filesapp_enable_item(&k_entry_items[4], filesapp_subject_can_pin());
         sxgui_context_menu_open(&g_app.ui, &k_entry_menu, x, y, on_context_command, 0);
         return;
     }
@@ -2813,7 +2829,7 @@ static int filesapp_selftest(void)
             printf("FILESAPP SMOKE assoc %s -> %s (%s)\n",
                 entry->extension,
                 entry->program,
-                entry->from_policy ? "politica" : "declarada");
+                entry->from_policy ? "user policy" : "default/capability");
         }
     }
 

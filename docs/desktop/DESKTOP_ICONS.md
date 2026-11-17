@@ -78,6 +78,15 @@ with its extension, or to Notepad; a shortcut opens its target, with its
 argument and working directory. A shortcut to a shortcut is not followed, as
 on Windows.
 
+**Edit is a separate association**, shared by Files and the desktop through
+`shortcut_edit_path`. Image defaults are Open in Image Viewer and Edit in
+Paint, with independent user overrides. A document shortcut follows its target
+and working directory for either action; folders, programs and nested shortcuts
+have Edit disabled. Paint's format support is unchanged, so JPEG Edit currently
+reports an unsupported image. Policy and precedence are specified in
+[SXE_FORMAT.md](../userland/SXE_FORMAT.md#file-associations-phase-5);
+`image-assoc-smoke` drives both actions from the two callers.
+
 Programs get their name from their `.sxmeta` (`SXE_TAG_NAME`) when a
 shortcut is made for them: `/system/console.sxe` becomes `Command Prompt.sxlnk`.
 
@@ -116,7 +125,7 @@ with it.
 | Menu | Items |
 |---|---|
 | Background | Arrange Icons (folders first, then by name), Refresh, New Folder, New Text Document, Open Command Prompt, Properties (opens [Display Properties](./DISPLAY_PROPERTIES.md)) |
-| Icon | Open, Rename, Delete |
+| Icon | Open, Edit (when an editor is associated), Rename, Delete |
 
 New Folder and New Text Document create "New Folder" / "New Text
 Document.txt" (with " (2)" and on when taken) and start their name being
@@ -179,7 +188,8 @@ tells which row a right click landed on.
 and End Process Tree on the Processes tab, Switch To and End Task on
 Applications, from a right click, Shift+F10 or the Menu key.
 
-**Files**: a right click on a row opens Open, Send To
+**Files**: a right click on a row opens Open, Edit (enabled when an editor
+is associated), Send To
 Desktop (a shortcut in the Desktop folder, named as the desktop would name
 it), Pin to Start Menu ([START_MENU.md](./START_MENU.md#shortcuts)),
 Rename... and Delete; on `..` or the empty part of the list, Up One
