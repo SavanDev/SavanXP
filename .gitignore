@@ -31,6 +31,7 @@ tools/*
 !tools/audio_wav.py
 !tools/audio_capture_fixture.py
 !tools/wallpaper_fixture.py
+!tools/imgview_fixture.py
 !tools/qmp_client.py
 !tools/taskbar_smoke.py
 !tools/win32_input.py

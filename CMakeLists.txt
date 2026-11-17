@@ -651,7 +651,8 @@ file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/subsystems/win32/host/*.sxres")
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png")
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png"
+    "${CMAKE_SOURCE_DIR}/system/imgview/*.png")
 add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_SXE_ROOT}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"
@@ -674,6 +675,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/logview"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxgldiag"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/webview"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/imgview"
             # The Win32 subsystem's host, whose sources live with the subsystem.
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/win32/host"
             ${SAVANXP_SXE_ARGUMENTS}
@@ -827,6 +829,12 @@ target_include_directories(savanxp-sximg-test PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 target_compile_options(savanxp-sximg-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sximg-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
+# Pure viewport geometry used by the native image viewer.
+add_executable(savanxp-imgview-test system/imgview/view.c tests/host/imgview_test.c)
+target_include_directories(savanxp-imgview-test PRIVATE "${CMAKE_SOURCE_DIR}/system/imgview")
+target_compile_options(savanxp-imgview-test PRIVATE -O1 -Wall -Wextra)
+add_test(NAME imgview-view-test COMMAND savanxp-imgview-test)
 
 # Stage checks include the private decoder; checked-in fixtures are generated
 # from our own samples. Neither the build nor the runtime needs libjpeg.
@@ -1106,7 +1114,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-imgview-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

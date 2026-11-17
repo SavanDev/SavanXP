@@ -13,6 +13,8 @@ joins the set instead of standing out from it.
   Celeste ports (`ports/*/overlay/icon*.png`).
 - The media player's folder and speaker glyphs, which the taskbar tray also
   uses for the volume icon.
+- Image Viewer's separately drawn application icons and 20x20 toolbar objects
+  (`system/imgview/`), sharing Files' navigation arrows and the player's fullscreen glyph.
 - Files' 20x20 toolbar glyphs (`system/gfx/toolbar_glyphs/`, shared by Files and the file dialog),
   which must also read by their silhouette alone, since a disabled button
   draws only that (see [`FILES.md`](FILES.md#toolbar-widgets)).

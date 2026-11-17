@@ -192,6 +192,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the wallpaper configuration (`desktop.cfg`) and how the desktop follows it,
   the shipped wallpapers, and changing the resolution while the session runs
   (the session's largest mode, the layout after a change, `display.cfg`).
+- [`IMAGE_VIEWER.md`](desktop/IMAGE_VIEWER.md) — the SUN Image Viewer: BMP/PNG/JPEG,
+  fit and zoom, scrolling and folder navigation, fullscreen, decode limits and tests.
 - [`FILES.md`](desktop/FILES.md) — Files, the file browser: the toolbar,
   address bar, history and Properties, the toolbar widgets
   (`SXGUI_FLAG_TOOLBAR`), Cut, Copy and Paste with the shared copy engine

@@ -1249,6 +1249,162 @@ def scenario_display(s):
     s.qmp.tap("esc", pause=2.0)
 
 
+def scenario_imgview(s):
+    """Exercise the SUN viewer's pixels and controls on a disposable image."""
+    from PIL import ImageChops
+    area = lambda im: (0, 0, im.width, im.height - TASKBAR_HEIGHT)
+
+    def label(im, text):
+        expect_text(im, area(im), text, TEXT, FACE, "Image Viewer: " + text)
+
+    def canvas(im):
+        channels = [channel.point([255 if value == 78 else 0 for value in range(256)]) for channel in im.split()]
+        selected = ImageChops.multiply(ImageChops.multiply(channels[0], channels[1]), channels[2])
+        box = selected.getbbox()
+        if box is None:
+            raise Failure("Image Viewer has no dark canvas")
+        return box
+
+    def palette(im):
+        colours = {(224, 48, 80), (32, 208, 96), (48, 80, 224), (224, 208, 48)}
+        histogram = {colour: count for count, colour in (im.getcolors(im.width * im.height) or [])}
+        if any(histogram.get(colour, 0) < 16 for colour in colours):
+            raise Failure("Image Viewer did not paint all four exact image colours")
+
+    def step(code, name, text):
+        s.qmp.tap(code, pause=1.5)
+        im = s.shot(name)
+        label(im, text)
+        return im
+
+    s.run("imgview /imgview-test/03-colour.JpEg", wait=4)
+    deadline = time.time() + 40
+    while True:
+        image = s.shot("imgview-jpeg")
+        if find_text(image, area(image), "16 x 16 pixels", TEXT, FACE)[0] is not None:
+            break
+        if time.time() >= deadline:
+            raise Failure("Image Viewer did not open its JPEG")
+        time.sleep(1)
+    for text in ("Open", "Previous", "Next", "Zoom In", "Zoom Out", "Fit", "Actual Size", "Full Screen", "JPEG", "3 of 8", "100.0%"):
+        label(image, text)
+    # Compare the enabled toolbar icons against their checked-in source art.
+    # Transparent pixels must reveal the native button face without a halo.
+    from PIL import Image
+    open_label = find_text(image, area(image), "Open", TEXT, FACE)[0]
+    for name in ("document-open", "zoom-in", "zoom-out", "zoom-fit-best", "zoom-original", "view-fullscreen"):
+        art = Image.open(Path(__file__).resolve().parents[1] / "system/imgview/icons" / (name + ".png")).convert("RGBA")
+        expected = Image.new("RGB", art.size, FACE)
+        expected.paste(art, mask=art.getchannel("A"))
+        anchor = next((x, y) for y in range(20) for x in range(20) if art.getpixel((x, y))[3])
+        colour = expected.getpixel(anchor)
+        found = False
+        for y in range(max(0, open_label[1] - 34), open_label[1]):
+            for x in range(image.width - 20):
+                if image.getpixel((x + anchor[0], y + anchor[1])) == colour and ImageChops.difference(image.crop((x, y, x + 20, y + 20)), expected).getbbox() is None:
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            raise Failure("Image Viewer toolbar does not show its native " + name + " icon")
+    palette(image)
+    window_canvas = canvas(image)
+    palette(step("left", "imgview-png", "PNG"))
+    palette(step("left", "imgview-bmp", "BMP"))
+    step("left", "imgview-first-boundary", "1 of 8")
+    step("pgdn", "imgview-next-png", "2 of 8")
+    step("right", "imgview-next-jpeg", "3 of 8")
+    image = step("right", "imgview-reduced-jpeg", "4097 x 17 pixels")
+    label(image, "Decode 1/2")
+    image = step("right", "imgview-fit", "1024 x 768 pixels")
+    palette(image)
+    image = step("1", "imgview-actual-size", "100.0%")
+    # Zoom to 200%, then wheel and drag within the image. Compare a fixed
+    # central patch after moving the cursor away, so cursor pixels cannot pass.
+    origin = find_text(image, area(image), "Zoom In", TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("Image Viewer has no Zoom In toolbar button")
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    for _ in range(3):
+        s.qmp.click()
+        time.sleep(0.5)
+    s.qmp.move_to(1100, 70)
+    image = s.shot("imgview-zoom")
+    label(image, "200.0%")
+    x = (window_canvas[0] + window_canvas[2]) // 2
+    y = (window_canvas[1] + window_canvas[3]) // 2
+    patch = (x - 120, y - 100, x + 120, y + 100)
+    s.qmp.move_to(1100, 70)
+    before = s.shot("imgview-before-wheel")
+    s.qmp.move_to(x, y)
+    s.qmp.wheel(-1)
+    s.qmp.move_to(1100, 70)
+    after = s.shot("imgview-wheel")
+    if ImageChops.difference(before.crop(patch), after.crop(patch)).getbbox() is None:
+        raise Failure("Image Viewer wheel did not scroll the enlarged image")
+    s.qmp.move_to(x, y)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.2)
+    if s.qmp.abs_pointer:
+        s.qmp._abs_move(x + 40, y + 32)
+    else:
+        s.qmp._rel_step(40, 32)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(0.6)
+    s.qmp.move_to(1100, 70)
+    dragged = s.shot("imgview-drag")
+    if ImageChops.difference(after.crop(patch), dragged.crop(patch)).getbbox() is None:
+        raise Failure("Image Viewer dragging did not pan the enlarged image")
+    step("f", "imgview-fit-again", "1024 x 768 pixels")
+    image = step("right", "imgview-progressive-error", "6 of 8")
+    expect_text(image, area(image), "Progressive JPEG is unsupported.", (255, 255, 255), (78, 78, 78), "named progressive JPEG error")
+    image = step("right", "imgview-broken-error", "7 of 8")
+    expect_text(image, area(image), "Unable to open image", (255, 255, 255), (78, 78, 78), "late decode error replaces previous pixels")
+    image = step("right", "imgview-alpha", "8 of 8")
+    histogram = {colour: count for count, colour in image.getcolors(image.width * image.height)}
+    if histogram.get((127, 127, 255), 0) < 100:
+        raise Failure("Image Viewer did not composite PNG alpha onto white")
+    step("right", "imgview-last-boundary", "8 of 8")
+    s.qmp.chord("ctrl", "o")
+    time.sleep(2)
+    image = s.shot("imgview-open-dialog")
+    for text in ("Look in:", "File name:"):
+        label(image, text)
+    s.qmp.tap("esc", pause=1)
+    image = s.shot("imgview-open-cancel")
+    label(image, "8 of 8")
+    s.qmp.chord("ctrl", "o")
+    time.sleep(1)
+    s.qmp.type_line("/imgview-test/05-pan.bmp")
+    s.qmp.tap("ret", pause=2)
+    image = s.shot("imgview-open-selected")
+    label(image, "1024 x 768 pixels")
+    palette(image)
+    s.qmp.tap("f11", pause=2)
+    image = s.shot("imgview-fullscreen")
+    if find_text(image, area(image), "Actual Size", TEXT, FACE)[0] is not None:
+        raise Failure("Image Viewer fullscreen kept its toolbar")
+    fullscreen_canvas = canvas(image)
+    if fullscreen_canvas[2] - fullscreen_canvas[0] < image.width - 10:
+        raise Failure("Image Viewer fullscreen did not expand to the screen width")
+    expect_text(image, (0, 0, image.width, image.height), "1024 x 768 pixels", TEXT, FACE,
+                "fullscreen retains the status below the former taskbar area")
+    s.qmp.tap("esc", pause=2)
+    image = s.shot("imgview-restored")
+    label(image, "Actual Size")
+    label(image, "1024 x 768 pixels")
+    s.qmp.chord("ctrl", "o")
+    time.sleep(1)
+    s.qmp.type_line("/wallpapers/Mountains.bmp")
+    s.qmp.tap("ret", pause=2)
+    image = s.shot("imgview-native-design")
+    label(image, "Mountains.bmp")
+    label(image, "640 x 400 pixels")
+    s.qmp.chord("alt", "f4")
+    time.sleep(1)
+
+
 def scenario_wallpaperpng(s):
     """A PNG as the desktop wallpaper (docs/desktop/DISPLAY_PROPERTIES.md).
 
@@ -3892,6 +4048,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,
+    "imgview": scenario_imgview,
     "wallpaperpng": scenario_wallpaperpng,
     "wallpaperjpeg": scenario_wallpaperjpeg,
     "effects": scenario_effects,

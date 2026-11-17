@@ -1,8 +1,9 @@
 # Image Viewer and the image formats
 
 Status: **phases I1–I5 landed** (shared BMP/PNG/JPEG decoders, the common image API,
-reduced JPEG and wallpaper/Display Properties integration). The viewer (I6)
-and progressive JPEG (I7) remain.
+reduced JPEG and wallpaper/Display Properties integration). **I6 is in progress:**
+the native viewer and its controls are delivered; default Open/Edit association
+policy remains pending. Progressive JPEG (I7) remains.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -231,26 +232,15 @@ are covered; JPEG signature detection alone is not decoder support.
 
 ### I6 — Image Viewer
 
-A SUN program, `system/imgview`:
+**First delivery landed:** the SUN program `system/imgview` opens BMP, PNG
+and sequential JPEG with Fit/Actual Size, zoom, scrollbars, drag panning,
+folder navigation, status, native Open and fullscreen. It declares its
+capabilities without changing user associations. See
+[IMAGE_VIEWER.md](../../desktop/IMAGE_VIEWER.md) for the controls, memory and
+scale contract, and the host, native selftest and visual scenarios.
 
-- Opens the file named in `argv[1]`, or one from File > Open.
-- **Fit to window** by default (never enlarging), **actual size**, zoom in
-  and out by steps; scrollbars and dragging when the image is larger than
-  the window. Nearest-neighbour from 200 % up, bilinear below.
-- **Previous / next image in the same folder** (Left/Right, PageUp/PageDown),
-  in Files' order.
-- Status bar: name, size in pixels, format, zoom, and the reduced scale when
-  a JPEG was decoded at one.
-- F11 fullscreen, Esc to leave it.
-- Declares `ext_open=.bmp,.png,.jpg,.jpeg` and the matching `mime_open`.
-- An image that cannot be read shows why in the window ("Not a supported
-  BMP: embedded JPEG"), not an empty frame.
-
-Verification: an `imgview --selftest` scenario in `tools/smoke_catalog.py`
-that opens one fixture of each format through the same functions the window
-uses, and a `tools/shoot.sh` scenario that looks at the window. Document:
-`docs/desktop/IMAGE_VIEWER.md`, at which point this roadmap keeps only the
-pending phases.
+**Remaining:** settle and implement the default Open/Edit association policy
+preserving explicit user choices.
 
 ### I7 — Progressive JPEG
 

@@ -1,0 +1,10 @@
+# Presentation and capabilities of the native Image Viewer.
+name=Image Viewer
+description=View BMP, PNG and JPEG images
+version=system
+vendor=SavanXP
+accent=225b95
+icon_file=icon.png,icon-32.png
+mime_open=image/bmp,image/png,image/jpeg
+ext_open=.bmp,.png,.jpg,.jpeg
+category=Accessories

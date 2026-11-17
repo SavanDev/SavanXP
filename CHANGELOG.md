@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Image Viewer opens BMP, PNG and JPEG with native SUN controls and house-style icons.**
+  Fit, actual size, zoom, pan, folder navigation, Open and fullscreen are available from Accessories or `imgview`.
+  See [IMAGE_VIEWER.md](docs/desktop/IMAGE_VIEWER.md); default Open/Edit associations remain pending.
+
 - **Desktop wallpapers and Display Properties now open JPEG through the common image API.**
   `.jpg`/`.jpeg` join the list and Browse; large sequential JPEGs reduce to fit the 2048-side output limit.
   Image Viewer roadmap I5 is complete; see [DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md).

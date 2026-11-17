@@ -626,6 +626,16 @@ SCENARIOS: dict[str, Scenario] = {
         no_network=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "imgview-test": _qemu_scenario(
+        "imgview-selftest", "IMGVIEW SELFTEST PASS", "IMGVIEW SELFTEST FAIL",
+        "Native image sections, BMP/PNG/JPEG pixels, reduction, errors and folder navigation",
+    ),
+    "imgview-smoke": _qemu_scenario(
+        "", "IMGVIEW SMOKE PASS", "IMGVIEW SMOKE FAIL",
+        "Image Viewer chrome, Open dialog, image pixels, zoom, pan, navigation and fullscreen",
+        480.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="imgview",
+    ),
     "wallpaper-smoke": _qemu_scenario(
         "", "WALLPAPER SMOKE PASS", "WALLPAPER SMOKE FAIL",
         "JPEG wallpaper list/Browse, reduced preview, invalid data and reboot persistence",

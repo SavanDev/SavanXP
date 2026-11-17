@@ -155,3 +155,7 @@ savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32t
 
 # Web Viewer retains its renderer while moving to the native application frame.
 savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES webview.c)
+
+# Native image viewer over the common memory-only decoder.
+savanxp_system_service(NAME imgview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg
+    SOURCES imgview.c view.c)
