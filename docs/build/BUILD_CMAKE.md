@@ -142,7 +142,8 @@ stamp, About and the console banner. `sysinfo` prints them as two lines,
   number, and the commit right after it bumps `SAVANXP_VERSION_PATCH` (or
   MINOR/MAJOR when the next release is planned as one). Every build checks
   this: if `vX.Y.Z` is already tagged on an earlier commit, it prints a CMake
-  warning asking for the bump.
+  warning asking for the bump. The whole release procedure is in
+  [RELEASING.md](RELEASING.md).
 - **The build number** is the commit count of `HEAD` (`git rev-list --count
   HEAD`). It grows with every commit and the same code always gets the same
   number; uncommitted changes do not change it. Without git it is `0`, and a

@@ -13,6 +13,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   targets, external applications, version and build number, and persistent-image rules.
 - [`BUILD_LINUX.md`](build/BUILD_LINUX.md) — host packages, QEMU setup, official
   ports, smoke tests, KVM configuration, and the GitHub Actions CI.
+- [`RELEASING.md`](build/RELEASING.md) — closing a version: release commit, the
+  release ISO in its own output root, the checks before publishing, tag, assets,
+  release notes and the GitHub release.
 
 ## Kernel — `kernel/`
 
