@@ -80,6 +80,11 @@ changes size. The selftest below proves push, pop, and empty-pop.
   greyscale, greyscale-alpha, RGB and RGBA at every legal PNG depth, including
   `tRNS` and Adam7. Samples are rescaled to 8 bits with nearest rounding and
   composited over white; images larger than 512x384 are refused.
+- **JPEG: not read yet, deliberately.** The shipped `/system/assoc.ini`
+  already makes Paint the Edit action for `.jpg` and `.jpeg`, so Edit on a
+  JPEG opens Paint, which reports that it cannot read the file. Reading JPEG
+  is pending work, tracked in
+  [IMAGE_VIEWER_ROADMAP.md](../roadmaps/open/IMAGE_VIEWER_ROADMAP.md#later-unordered).
 
 ## Verification
 

@@ -254,3 +254,11 @@ EXIF orientation; rotate the view; copy the image to the clipboard (it holds
 named formats, [CLIPBOARD.md](../../desktop/CLIPBOARD.md)); "Set as desktop
 background"; a slideshow; GIF. A PNG encoder, so that Paint can save PNG, is
 a separate decision and not part of this plan.
+
+**JPEG in Paint (pending).** The I6 defaults route JPEG Edit to Paint on
+purpose, before Paint can read JPEG; until then Edit opens Paint, which
+reports that it cannot read the file. The work is Paint's: read through the
+common API (`sx_image_info`, `sx_image_decode_into`), which already decodes
+JPEG. What its 512x384 canvas limit does with a larger photo (refuse it, as
+for BMP and PNG, or decode it at a reduced scale) is decided then. See
+[PAINT.md](../../desktop/PAINT.md#files-bmp-in-bmp-out-png-in-read-through-libsximg).
