@@ -1,7 +1,9 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phases 0 to 3 done, on master. Phase 4 not started.** This document is
-> the measurement: what the kernel already has, what it is missing, and in what
+> **Reference status: phases 0 to 3 done in v0.4.0; phase 4 not started.** The
+> x86_64 implementation below is historical porting material. Native i386 AP
+> bring-up and its remaining scheduling work are tracked in [I386_SMP.md](I386_SMP.md).
+> This document records what the reference kernel has, what it is missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
 > Phase 0 landed as `smp::` ([smp.hpp](../include/kernel/smp.hpp),

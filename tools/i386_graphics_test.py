@@ -14,7 +14,7 @@ import shoot_session
 from run_qemu import storage_network_args, sound_device, graphics_input_args
 
 
-def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float, virtio: bool = False) -> int:
+def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float, virtio: bool = False, smp: int = 1) -> int:
     report_scenario = scenario
     diskless = scenario == "live-desktop"
     if diskless: scenario = "desktop"
@@ -25,7 +25,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
         socket = Path(tmp) / "qmp"
         command = [os.environ.get("SAVANXP_QEMU", shutil.which("qemu-system-i386") or "qemu-system-i386"),
                    "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
-                   "-m", "1024M", "-smp", "1",
+                   "-m", "1024M", "-smp", str(smp),
                    "-netdev", "user,id=net0",
                    "-audiodev", "none,id=audio0", "-device", sound_device(virtio),
                    "-display", "none", "-boot", "d", "-cdrom", str(iso),
@@ -116,8 +116,9 @@ def main() -> int:
     parser.add_argument("--accel", default="tcg")
     parser.add_argument("--timeout", type=float, default=360)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()
-    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, args.accel, args.timeout, args.virtio)
+    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, args.accel, args.timeout, args.virtio, args.smp)
 
 
 if __name__ == "__main__":

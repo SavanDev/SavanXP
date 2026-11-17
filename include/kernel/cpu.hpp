@@ -41,7 +41,11 @@ constexpr uint32_t kMaxCpus = 32;
 // Cada TSS tiene su descriptor en la GDT, uno detras de otro a partir de este
 // selector, y en modo largo un descriptor de TSS ocupa dos entradas (16 bytes).
 constexpr uint16_t kTssSelectorBase = 0x28;
+#if defined(__i386__)
+constexpr uint16_t kTssDescriptorSize = 8;
+#else
 constexpr uint16_t kTssDescriptorSize = 16;
+#endif
 
 // Indice denso de este core: 0 es el BSP y los APs siguen en orden de arranque.
 //

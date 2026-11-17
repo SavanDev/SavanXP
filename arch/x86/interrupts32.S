@@ -218,4 +218,26 @@ i386_exception_common:
     movl %eax, %esp
     jmp restore_context
 
+/* Local APIC/MSI/IPI gates keep the full vector, independent of PIC IRQs. */
+.macro i386_external_stub vector
+    .global i386_external_\vector
+i386_external_\vector:
+    cld
+    pushl $\vector
+    jmp i386_external_common
+.endm
+.irp vector,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,255
+    i386_external_stub \vector
+.endr
+.global i386_external_table
+i386_external_table:
+.irp vector,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71
+    .long i386_external_\vector
+.endr
+i386_external_common:
+    save_context
+    call i386_handle_external
+    movl %eax, %esp
+    jmp restore_context
+
 .section .note.GNU-stack,"",@progbits

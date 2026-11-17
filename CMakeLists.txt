@@ -22,8 +22,8 @@ set_property(CACHE SAVANXP_ARCH PROPERTY STRINGS i386)
 if(NOT SAVANXP_ARCH STREQUAL "i386")
     message(FATAL_ERROR "This branch supports i386 only. Use master for x86_64 and a separate build directory.")
 endif()
-if(NOT SAVANXP_SMP EQUAL 1)
-    message(FATAL_ERROR "The i386 kernel currently supports one CPU only.")
+if(NOT SAVANXP_SMP MATCHES "^([1-9]|[12][0-9]|3[0-2])$")
+    message(FATAL_ERROR "SAVANXP_SMP must be between 1 and 32 (AP bring-up; one scheduling CPU).")
 endif()
 set(SAVANXP_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
     "Output root (staging, images and persistent disk)")
@@ -124,6 +124,9 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
 )
 set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/entry32.S
+    arch/x86/ap_boot.S
+    arch/x86/lapic.cpp
+    arch/x86/smp.cpp
     arch/x86/process.cpp
     arch/x86/context.cpp
     arch/x86/interrupts32.S
@@ -397,6 +400,11 @@ add_test(NAME physical-memory-test COMMAND savanxp-physical-memory-test)
 add_custom_target(savanxp_tests
     DEPENDS savanxp-physical-memory-test savanxp-div64-test savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
     COMMENT "Building SavanXP host tests")
+add_executable(savanxp-i386-madt-test tests/host/i386_madt_test.cpp)
+target_compile_options(savanxp-i386-madt-test PRIVATE -Wall -Wextra -UNDEBUG)
+set_target_properties(savanxp-i386-madt-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_dependencies(savanxp_tests savanxp-i386-madt-test)
+add_test(NAME i386-madt-test COMMAND savanxp-i386-madt-test)
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)

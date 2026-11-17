@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "boot/boot_info.hpp"
 
@@ -12,6 +13,8 @@ void initialize(const boot::BootInfo& boot_info);
 
 // true si se encontraron RSDP y FADT validos.
 bool ready();
+// Validated SDT from the initialized RSDP; null if absent or malformed.
+const void* table(const char (&signature)[5], size_t& length);
 
 // PM timer del chipset (ACPI): contador libre a 3.579545 MHz declarado por la
 // FADT. Puerto 0 = la maquina no lo expone. Es de 24 bits salvo que la FADT

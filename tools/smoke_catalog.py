@@ -3,6 +3,7 @@
 import argparse
 
 SCENARIOS = {
+    "smp-boot": "AP bring-up (--smp 2..32), private TSS/stacks, cache controls and targeted IPIs; BSP scheduling",
     "smoke": "memory/ELF32 libraries, reference POSIX/shell, CPU/FPU and desktop graphics",
     "boot": "kernel, persistent root and init/shell startup",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",

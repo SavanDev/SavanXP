@@ -1137,11 +1137,122 @@ and the remaining internal/visual gaps need their own reference comparisons
 and runtime evidence. Physical-machine testing remains reserved for v0.4.2.
 The active version target remains v0.4.0.
 
+## 14. Starting APs without a bootloader MP handoff
+
+After the virtio integration was committed as `6aaedc05`, milestone 6.2 began
+with the reference SMP phase 0 and the TSS part of phase 1. The intent is the
+same as v0.4.0: establish CPU identity, private entry state and interrupt
+delivery before allowing another CPU into mutable kernel state. This
+checkpoint deliberately leaves user scheduling on the BSP; an online AP count
+is not evidence of concurrent process execution.
+
+### Replacing only the missing startup boundary
+
+The x86_64 reference delegates AP startup to Limine, which supplies a running
+processor, page tables and a stack. Reintroducing Limine or a long-mode stage
+would contradict this branch's i386/GRUB boot contract. GRUB2 supplies ACPI
+tables but no equivalent MP callback, so the smallest native adaptation is a
+MADT-discovered INIT/SIPI path and a short real-to-protected-mode trampoline.
+The existing ACPI table walker is reused rather than duplicating RSDP/root
+discovery; the new bounded topology parser handles enabled Local APIC/x2APIC
+records, disabled entries, duplicates, sparse IDs and address overrides.
+The BSP is dense index zero independently of firmware enumeration order.
+
+The trampoline occupies one checked low-memory page, physical `0x7000`,
+already inside the kernel's excluded low range. It rejects an E820 or boot
+information/module conflict instead of overwriting it. A single per-launch
+stack mailbox was considered but rejected: after a timeout, a late AP could
+read the next AP's stack/index and corrupt its state. Instead all stack slots
+are populated before launch and indexed by the processor's own initial APIC
+ID. Startup timeouts also retain the allocated stacks. This trades bounded
+reserved RAM for a safe late-arrival path, matching the reference's rule that
+boot-owned AP storage must not be recycled underneath a running processor.
+
+The AP enables PSE and paging on the shared kernel CR3, then uses its allocated
+supervisor stack, the shared GDT/IDT and its private protected-mode TSS. APs
+do not initialize the PIC, print, allocate or enter the scheduler. Only their
+own register state, startup slot and atomic ping counter are mutable from AP
+code at this stage; the existing one-owner kernel therefore remains valid.
+
+### Hardware state revealed two native assumptions
+
+The first four-CPU boot reached the reference desktop and acknowledged two
+targeted pings from each of its three APs. QMP showed distinct selectors
+`0x30`, `0x38`, `0x40` and distinct supervisor stacks, but it also showed AP
+CR0 values with CD/NW still set. INIT had disabled their caches, while the
+BSP inherited enabled caches from GRUB. The trampoline now flushes and clears
+those bits before enabling paging. The durable SMP check inspects every
+actual CPU context and rejects that mismatch, rather than treating a startup
+message or a working IPI as sufficient CPU initialization.
+
+Preparing one TSS per CPU exposed an older native layout error. The structure
+was 112 bytes and placed `iomap_base` at offset 108; protected-mode hardware
+reads a 16-bit offset at 102. That field was zero, allowing zeroed TSS bytes
+to act as permissions for some ports. A control boot with the pre-change
+kernel and the current `multitest32 fault-io` diagnostic actually executed
+`IN 0x80` from ring 3 and exited 99. With the corrected 104-byte layout,
+explicit offset assertions and the I/O bitmap outside the descriptor limit,
+the same instruction produced #GP and the shell survived. The old structure
+is preserved in `git show 6aaedc05:arch/x86/cpu.cpp`; the control used the same
+current diagnostic/disk on both kernels, so an older test binary could not
+conceal the defect. This restores the reference's user port restriction rather
+than introducing a new process privilege policy.
+
+### Local APIC delivery restores the deferred GPU path
+
+Native external-vector stubs preserve the existing i386 context layout and
+dispatch local-APIC EOIs separately from PIC IRQs. The BSP alone owns LINT0
+ExtINT; AP LINTs and timers remain masked. The parked AP selftest sends two
+fixed-vector messages to each physical APIC ID and checks that CPU's counter,
+not a global aggregate that a broadcast could accidentally satisfy. It also
+reads each AP's actual task register. The two pings check repeated delivery
+through EOI as well as the first successful ICR write.
+
+This supplies the local vector boundary that milestone 6.1 lacked. The GPU
+now takes its original MSI-X path when xAPIC initialization succeeds, with
+INTx still available as fallback. The native device test additionally requires
+actual GPU IRQ notifications, so arming an MSI-X table without delivering a
+message cannot pass. The transport's earlier polling-device INTx masking
+remains: MSI-X delivery is independent of that PCI legacy-interrupt bit.
+No polling driver, GPU queue algorithm or desktop rendering path is replaced.
+
+### Evidence and the next synchronization boundary
+
+The four-CPU regression passed software topology/selector/ping assertions and
+QMP hardware checks for paging, write protection, caches, FPU controls, TSS
+limits, distinct stacks and parked ring-0 state. The 32-CPU capacity run passed
+with 31 private AP TSS/stacks and 62 directed pings. An isolated optimized
+build without test applications also passed four-CPU startup and reached the
+reference desktop. All 20 host tests passed, including malformed MADT bounds,
+disabled/duplicate/sparse IDs and a BSP listed after the retained CPU bound.
+
+The four-CPU virtio profile passed device ownership, UDP/TCP, playback/gain and
+the separate capture boot; GPU MSI-X was armed and IRQ delivery observed.
+The same profile passed all six SxGUI glyph/wheel/scrollbar captures and ACPI
+reboot, shutdown and power-button SCI checks. [I386_SMP.md](I386_SMP.md) gives
+the repeatable commands and the exact scope of those assertions.
+
+The default full smoke and unchanged 32 MiB memory/shared-library gates passed,
+including the added port-permission fault. Doom and POSIX persistence survived
+normal rebuilds and cold boot of isolated images. An extraction after the
+normal rebuild matched the built diagnostics/UI libraries and preserved the
+installed external executables and IWAD. The final kernel's executable
+sections also matched the tested artifact after a comment-only cleanup.
+
+The next boundary is deliberately still closed: a parked AP accesses only
+permanent kernel mappings and its own state, so it does not need a global
+kernel lock or shared-view TLB invalidation. An AP running user processes
+would immediately need both. The reference per-CPU current/idle state, lock
+acquisition at entry, release after leaving the outgoing stack, local timers,
+remote termination and lazy kernel-TLB synchronization must precede that
+release. Bringing up 32 processors does not complete those mechanisms or
+milestone 6, and does not advance the v0.4.0 parity target.
+
 ## Continuing the study
 
-The next account should trace milestone 6.2 through SMP and interrupt-boundary
-failures in emulation, the selected adaptations, rejected alternatives and
-explicit parity evidence. Preserve the reference per-CPU state, kernel lock
-and TLB synchronization model while adapting AP startup to GRUB/protected mode.
+The next account should trace milestone 6.2 through concurrent user scheduling
+and shared-kernel failures in emulation, the selected adaptations, rejected
+alternatives and explicit parity evidence. Preserve the reference per-CPU
+state, kernel lock and TLB synchronization model when releasing the parked APs.
 Keep v0.4.0 pinned until its remaining feature gaps pass their version-parity
 review; begin physical coverage at the v0.4.2 target.

@@ -4,10 +4,9 @@
 
 namespace i386 {
 
-/* Los selectores son los mismos que usa arch/x86_64 para que el codigo que
- * los menciona signifique lo mismo en las dos arquitecturas: el kernel vive
- * en 0x08/0x10, un proceso de usuario corre con 0x1b/0x23 y el TSS esta en
- * 0x28 (0x28 + 8 * indice de processor, como alli). */
+/* Keep the reference ring-0 selectors (0x08/0x10) and ring-3 selectors
+ * (0x1b/0x23). TSS descriptors start at 0x28; protected mode uses an eight-byte
+ * stride per CPU, whereas the reference long-mode descriptors use sixteen. */
 namespace cpu {
 
 constexpr uint16_t kKernelCodeSelector = 0x08;
@@ -15,6 +14,14 @@ constexpr uint16_t kKernelDataSelector = 0x10;
 constexpr uint16_t kUserDataSelector = 0x1b;
 constexpr uint16_t kUserCodeSelector = 0x23;
 constexpr uint16_t kTssSelector = 0x28;
+constexpr uint32_t kMaxCpus = 32;
+// An i386 TSS descriptor occupies one GDT entry, unlike long mode's two.
+inline uint32_t index() {
+    uint16_t selector;
+    asm("str %0" : "=r"(selector));
+    const uint32_t cpu = static_cast<uint32_t>(selector - kTssSelector) / 8;
+    return cpu < kMaxCpus ? cpu : 0;
+}
 
 constexpr uint32_t kSyscallVector = 0x80;
 
@@ -24,6 +31,7 @@ constexpr uint32_t kSyscallVector = 0x80;
  * protegido; aqui ya se puede recargar porque los descriptores de ring 0 son
  * los mismos y CS sigue apuntando a 0x08. */
 void initialize();
+void initialize_secondary(uint32_t index);
 
 /* esp0/ss0 son la pila de ring 0 que el processor carga cuando un proceso de
  * usuario ejecuta int $0x80. */
@@ -53,6 +61,7 @@ void enable_fpu();
 /* Tipo de los manejadores de IRQ: void(void), como en kernel/cpu.hpp. Los IRQ
  * 0..15 llegan por el PIC legacy, remapeado a 0x20..0x2F en initialize(). */
 using IrqHandler = void (*)();
+bool register_external_handler(uint8_t vector, IrqHandler handler, bool local_apic_eoi);
 
 /* Registra el manejador de un IRQ y abre su puerta en la IDT. Si el IRQ ya
  * tenia manejador, este lo sustituye. */

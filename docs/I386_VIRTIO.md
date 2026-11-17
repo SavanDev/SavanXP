@@ -37,12 +37,16 @@ The native kernel currently uses the legacy PIC. The GPU installs its existing
 INTx handler and acknowledges its ISR byte there; scheduler service boundaries
 run the reference background completion work. Completion and scanout events
 are exported through the same retained object/handle model and native waits.
-The reference GPU's MSI-X path is deferred until a local-APIC vector boundary
-exists on i386, rather than programming a message the CPU cannot deliver.
+Milestone 6.1 initially deferred the reference MSI-X path. The subsequent
+[SMP bring-up](I386_SMP.md) supplies native local-APIC vectors, so the GPU now
+prefers MSI-X and retains INTx as fallback. `devtest32 virtio` requires a
+nonzero GPU IRQ notification count, checking delivery rather than only arming
+a table entry. Both paths use the reference background completion work.
 
 Block, network, sound and input keep their reference polling contracts. On
 i386 the PCI transport initially disables legacy INTx delivery for each device;
-the GPU enables it only after installing its handler. Without this distinction,
+the GPU enables INTx only after installing its fallback handler. MSI-X uses
+the local APIC independently of that legacy-delivery bit. Without this distinction,
 a polling device can hold a shared PIC line active while only the GPU's ISR
 is acknowledged. An observed boot repeatedly returned to the first user EIP
 without executing it; QMP register samples showed the GPU interrupt path
@@ -110,8 +114,9 @@ write/read checks. The default full smoke, 32 MiB memory/shared-memory gates,
 
 ## Remaining milestone 6 work
 
-This integration does not establish SMP, local-APIC/MSI-X or AML/IOAPIC routing
-parity. The kernel still schedules on one CPU with its existing first-GiB RAM
+This integration does not establish multi-CPU scheduling or AML/IOAPIC routing
+parity. Local xAPIC/MSI-X and parked APs are covered by the SMP bring-up gates.
+The kernel still schedules on one CPU with its existing first-GiB RAM
 ceiling and lacks PAT write combining. Full signals/job control, explicit
 idle-process accounting, ASLR and the reference boot-console/logo remain in
 the final feature review. Passing the virtio gates closes only that part of

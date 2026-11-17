@@ -33,6 +33,11 @@ int main(int argc, char** argv) {
         struct savanxp_audio_info info = {};
         if (audio_get_info((int)fd, &info) < 0 || info.backend != SAVANXP_AUDIO_BACKEND_VIRTIO)
             return fail("virtio audio backend");
+        long gpu = gpu_open();
+        struct savanxp_gpu_stats stats = {};
+        if (gpu < 0 || gpu_get_stats((int)gpu, &stats) < 0 || !stats.irq_notifications)
+            return fail("GPU interrupt delivery");
+        savanxp_close((int)gpu);
     }
     if (argc > 1 && strcmp(argv[1], "owner") == 0) {
         if (savanxp_write((int)fd, samples, sizeof(samples)) != sizeof(samples)) return fail("child audio write");

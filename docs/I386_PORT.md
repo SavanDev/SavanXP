@@ -161,9 +161,12 @@ changes, and record implementation/verification evidence as work lands.
    sound, GPU, tablet and keyboard drivers are linked on i386. The optional
    `--virtio` profile retains the same desktop and applications;
    [I386_VIRTIO.md](I386_VIRTIO.md) defines its gates and architecture boundary.
-   **6.2 — SMP and interrupt infrastructure remain pending**, followed by the
-   remaining internal/visual parity review. Working virtio is not completion
-   of milestone 6 or of the v0.4.0 target.
+   **6.2 — SMP and interrupt infrastructure in progress.** AP startup, private
+   TSS/stacks, targeted IPIs and the GPU MSI-X boundary are verified in QEMU.
+   APs remain parked; the shared-kernel lock, scheduling on APs and TLB
+   synchronization are next. [Contracts and evidence](I386_SMP.md).
+   The remaining internal/visual parity review follows. These intermediate
+   results do not complete milestone 6 or the v0.4.0 target.
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation

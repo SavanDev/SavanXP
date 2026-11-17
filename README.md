@@ -32,7 +32,8 @@ OVMF and Limine are not required. See [host setup](docs/BUILD_LINUX.md).
 `run` uses SeaBIOS/i440FX, a `qemu32` CPU, VGA, PS/2 and an IDE disk. TCG is the
 default; `--accel kvm` selects KVM. `debug` starts paused with a GDB server on
 port 1234. `--headless` disables the QEMU window. `--virtio` selects the optional
-virtio disk, NIC, sound, GPU, tablet and keyboard profile. SMP remains pending.
+virtio disk, NIC, sound, GPU, tablet and keyboard profile. `--smp N` starts
+additional CPUs for bring-up checks; user processes still run on the BSP.
 
 ## What works today
 
@@ -51,6 +52,8 @@ virtio disk, NIC, sound, GPU, tablet and keyboard profile. SMP remains pending.
 - External static SDK applications built with `tools/build-user.sh`.
 - Optional virtio devices with captured playback/gain, capture-ring reads,
   SxFS/MBR/GPT and SxGUI glyph/input regressions; see [virtio](docs/I386_VIRTIO.md).
+- MADT CPU discovery, protected-mode AP startup, private TSS/stacks and targeted
+  xAPIC IPIs; multi-CPU scheduling remains pending. See [SMP](docs/I386_SMP.md).
 
 At boot, the reference `init` starts the graphical session. Open Shell from
 Program Manager to use the reference terminal. Try:

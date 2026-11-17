@@ -15,6 +15,7 @@ for the [progressive port](I386_PORT.md).
 ./build.sh iso
 ./build.sh run
 ./build.sh run --virtio
+./build.sh run --smp 4           # AP bring-up; the BSP still runs user processes
 ./build.sh debug --headless
 ./build.sh smoke
 ./build.sh smoke boot
@@ -32,6 +33,8 @@ for the [progressive port](I386_PORT.md).
 ./build.sh smoke virtio-smoke   # native virtio disk/network/playback and a separate capture boot
 ./build.sh smoke audio-record   # virtio RX ring with deterministic silent host input
 ./build.sh smoke sxgui-smoke --virtio
+./build.sh smoke smp-boot --smp 4
+./build.sh smoke smp-boot --smp 32 --virtio
 ./build.sh smoke power-smoke
 ./build.sh smoke storage-smoke  # builds a separate diskless LiveCD
 ./build.sh smoke partition-smoke # isolated MBR and GPT volume wrappers
@@ -79,7 +82,11 @@ Environment overrides include `SAVANXP_BUILD_DIR`, `SAVANXP_OUTPUT_ROOT`,
 `SAVANXP_BUILD_TYPE`, `SAVANXP_INCLUDE_TEST_APPS`, `SAVANXP_JOBS`,
 `SAVANXP_ACCEL`, `SAVANXP_VIRTIO` (`ON`/`OFF`), `SAVANXP_HEADLESS`, and `SAVANXP_QEMU`.
 `--legacy` remains a compatibility alias; i386 is already selected.
-SMP values other than one remain rejected. `--virtio` selects the reference
+`--smp N` / `SAVANXP_SMP` accepts 1–32 virtual CPUs for AP bring-up. APs load
+private TSS/stacks and accept IPIs; only the BSP schedules user processes.
+The dedicated `smp-boot` check requires at least two CPUs and inspects their
+hardware state through QMP. [I386_SMP.md](I386_SMP.md) defines the current boundary.
+`--virtio` selects the reference
 block, network, sound, GPU, tablet and keyboard devices; the default profile
 retains ATA, RTL8139, AC'97, standard VGA and PS/2. Service and graphical smokes
 accept `--virtio`; unsupported combinations fail explicitly.

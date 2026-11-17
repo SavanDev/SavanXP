@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **i386 starts additional CPUs and verifies their private TSS, stacks and IPIs.**
+  `run --smp N` supports AP bring-up for 1–32 CPUs; only the BSP schedules.
+  `smoke smp-boot --smp 4` checks hardware state through QMP, and virtio GPU
+  now uses MSI-X when the local APIC is available; see [SMP](docs/I386_SMP.md).
+
 - **The optional i386 virtio profile runs the reference desktop and services.**
   `run --virtio` selects the disk, NIC, sound, GPU, tablet and keyboard backends;
   `smoke virtio-smoke`, `audio-record` and `sxgui-smoke --virtio` check the
@@ -113,6 +118,9 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **Ring-3 port I/O is denied by the i386 TSS.** The `multitest32 fault-io`
+  regression verifies that `IN` from port `0x80` terminates only its caller.
 
 - **Native SSE applications keep aligned stacks and heap buffers.**
   A common 16-byte ABI prevents FFmpeg decoding faults; CPIO boot copies drop

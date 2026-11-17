@@ -20,6 +20,7 @@
 #include "pit.hpp"
 #include "ps2_32.hpp"
 #include "process.hpp"
+#include "smp.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 #include "user32.hpp"
@@ -397,8 +398,8 @@ void handle(ContextFrame& frame) {
             info.process_count = process::count();
             object::section_live_counts(info.sections_live, info.file_sections_live);
             info.last_view_failure = sections::last_failure();
-            info.cpu_count = 1;
-            info.cpu_online = 1;
+            info.cpu_count = smp::cpu_count();
+            info.cpu_online = smp::online_count();
 
             if (!is_user_range(frame.edi, static_cast<uint32_t>(sizeof(info)), true)) {
                 frame.eax = failure(SAVANXP_EFAULT);

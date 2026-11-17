@@ -96,6 +96,13 @@ static int worker(int argc, char** argv) {
     if (strcmp(argv[1], "fault-guard") == 0)
         __asm__ volatile("movb $0, 0x0eeff000" : : : "memory");
     if (strcmp(argv[1], "fault-gp") == 0) __asm__ volatile("cli");
+    if (strcmp(argv[1], "fault-io") == 0) {
+        // Port 0x80 used to be permitted by the malformed TSS I/O-map offset.
+        // Correct ring-3 permissions must fault before issuing this harmless IN.
+        __asm__ volatile("inb $0x80, %%al" ::: "eax");
+        puts_out("MEMORY ring-3 port I/O unexpectedly permitted\n");
+        return 99;
+    }
     if (strcmp(argv[1], "fault-segments") == 0)
         __asm__ volatile("xorw %%ax, %%ax; movw %%ax, %%ds; movw %%ax, %%es; "
                          "movw %%ax, %%fs; movw %%ax, %%gs; std; ud2" : : : "eax", "cc");
@@ -156,8 +163,8 @@ static int memory_checks(void) {
         return fail("cross-page blocked status");
     const char* modes[] = {"fault-ud", "fault-div", "fault-null", "fault-hole", "fault-kernel",
                           "fault-alias", "fault-text", "fault-guard", "fault-gp", "fault-segments",
-                          "fault-gpu"};
-    const int vectors[] = {6, 0, 14, 14, 14, 14, 14, 14, 13, 6, 6};
+                          "fault-gpu", "fault-io"};
+    const int vectors[] = {6, 0, 14, 14, 14, 14, 14, 14, 13, 6, 6, 13};
     long sibling = child("sleep");
     if (sibling < 0) return fail("fault sibling");
     for (unsigned int index = 0; index < sizeof(vectors) / sizeof(vectors[0]); ++index) {

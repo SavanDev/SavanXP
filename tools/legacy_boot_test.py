@@ -632,6 +632,7 @@ def main() -> int:
     parser.add_argument("--memory-mib", type=int, default=1024,
                         help="guest RAM; 32 exercises ELF partial-allocation failure")
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
+    parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()
     if args.memory_mib < 16 or args.memory_mib > 1024:
         parser.error("--memory-mib must be between 16 and 1024")
@@ -670,6 +671,7 @@ def main() -> int:
         serial = (args.artifacts or Path(temporary)) / "serial.log"
         command = [
             qemu,
+            "-smp", str(args.smp),
             "-machine",
             "pc",
             "-accel",

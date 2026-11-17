@@ -52,20 +52,20 @@ def make_partition_image(source: Path, destination: Path, gpt: bool) -> None:
                 writer.seek(table * 512); writer.write(entries)
 
 
-def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 360, accel: str = "tcg", virtio: bool = False) -> int:
+def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 360, accel: str = "tcg", virtio: bool = False, smp: int = 1) -> int:
     if scenario == "virtio-smoke":
-        run(iso, disk, artifacts / "services", "virtio-services", timeout, accel, True)
-        return run(iso, disk, artifacts / "record", "audio-record", timeout, accel, True)
+        run(iso, disk, artifacts / "services", "virtio-services", timeout, accel, True, smp)
+        return run(iso, disk, artifacts / "record", "audio-record", timeout, accel, True, smp)
     virtio = virtio or scenario == "audio-record"
     if virtio and scenario == "storage-smoke":
         raise ValueError("storage-smoke is diskless; use virtio-smoke to check virtio storage")
     if scenario == "partition-smoke":
         for mode in ("partition-mbr", "partition-gpt"):
-            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio)
+            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio, smp)
         return 0
     if scenario == "power-smoke":
         for mode in ("power-reboot", "power-shutdown", "power-button"):
-            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio)
+            run(iso, disk, artifacts / mode, mode, timeout, accel, virtio, smp)
         return 0
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
@@ -79,7 +79,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
             disk = partitioned
         qmp = tmp / "qmp"
         command = [os.environ.get("SAVANXP_QEMU", shutil.which("qemu-system-i386") or "qemu-system-i386"),
-                   "-machine", "pc", "-cpu", "qemu32", "-accel", accel, "-m", "256M",
+                   "-machine", "pc", "-cpu", "qemu32", "-accel", accel, "-m", "256M", "-smp", str(smp),
                    "-display", "none", "-boot", "d", "-cdrom", str(console_iso),
                    "-serial", f"file:{serial}", "-qmp", f"unix:{qmp},server=on,wait=off",
                    "-netdev", "user,id=net0",
@@ -268,8 +268,9 @@ def main() -> int:
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--scenario", choices=("services", "net-smoke", "audio-smoke", "audio-record", "tcp-smoke", "media-smoke", "device-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke"), default="services")
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()
-    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, virtio=args.virtio)
+    return run(args.iso.resolve(), args.disk_image.resolve(), args.artifacts.resolve(), args.scenario, virtio=args.virtio, smp=args.smp)
 
 if __name__ == "__main__":
     raise SystemExit(main())

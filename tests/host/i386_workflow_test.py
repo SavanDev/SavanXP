@@ -43,9 +43,9 @@ def main() -> int:
             assert (result.returncode == 0) == success, result.stdout + result.stderr
             return result
 
-        for mode, virtio in (("run", False), ("debug", False), ("run", True)):
+        for mode, virtio, cpus in (("run", False, 1), ("debug", False, 1), ("run", True, 1), ("run", True, 4)):
             (temp / "calls").unlink(missing_ok=True)
-            run(mode, "--headless", *(("--virtio",) if virtio else ()))
+            run(mode, "--headless", "--smp", str(cpus), *(("--virtio",) if virtio else ()))
             calls = [json.loads(line) for line in (temp / "calls").read_text().splitlines()]
             assert "-DSAVANXP_ARCH=i386" in calls[0], calls
             assert any(call[-1] == "savanxp_disk" for call in calls), calls
@@ -53,6 +53,8 @@ def main() -> int:
             launch = calls[-1]
             assert launch[launch.index("-cpu") + 1] == "qemu32", launch
             assert launch[launch.index("-machine") + 1] == "pc", launch
+            assert launch[launch.index("-smp") + 1] == str(cpus), launch
+            assert f"-DSAVANXP_SMP={cpus}" in calls[0], calls
             disk_interface = "if=none,id=svdisk" if virtio else "if=ide,index=0"
             assert any(str(disk) in argument and disk_interface in argument for argument in launch)
             assert any("SavanXP.iso" in argument and "media=cdrom" in argument for argument in launch)
@@ -71,7 +73,8 @@ def main() -> int:
             assert disk.read_bytes() == b"persistent data"
         bad_arch = dict(env, SAVANXP_ARCH="x86_64")
         assert "master" in run("build", success=False, environment=bad_arch).stderr
-        assert "one CPU" in run("run", "--smp", "2", success=False).stderr
+        for invalid in ("0", "33", "invalid"):
+            assert "between 1 and 32" in run("run", "--smp", invalid, success=False).stderr
         assert "not ported" in run("smoke", "unknown-smoke", success=False).stderr
         catalog = run("smoke", "--list").stdout
         assert "processes" in catalog and "sxgui-smoke" in catalog and "services" in catalog

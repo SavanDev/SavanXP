@@ -2,6 +2,7 @@
 #include "context.hpp"
 #include "process.hpp"
 #include "paging.hpp"
+#include "lapic.hpp"
 #include "kernel/string.hpp"
 
 #include <stdint.h>
@@ -25,14 +26,12 @@ constexpr uint64_t kKernelDataEntry = 0x00CF92000000FFFFull;
 constexpr uint64_t kUserDataEntry = 0x00CFF2000000FFFFull;
 constexpr uint64_t kUserCodeEntry = 0x00CFFA000000FFFFull;
 
-/* Cinco entradas fijas (nula, codigo y datos de ring 0, datos y codigo de
- * ring 3) y las dos palabras del descriptor del TSS. Los selectores salen de
- * ahi: 0x08, 0x10, 0x1b, 0x23 y 0x28. */
-constexpr uint32_t kEntryCount = 7;
+// Five fixed entries followed by one eight-byte TSS descriptor per CPU.
+constexpr uint32_t kEntryCount = 5 + cpu::kMaxCpus;
 
-/* TSS de 32 bits. Solo esp0 (offset 4) y ss0 (offset 8) se usan hoy: son los
- * unicos campos que el processor carga al bajar de ring 3. El resto esta para
- * que el descriptor sea un TSS completo y no media estructura. */
+// Architectural 104-byte protected-mode TSS. Unused selector slots include
+// their reserved halfword. The I/O bitmap starts beyond the descriptor limit,
+// denying ring-3 port I/O rather than interpreting zeroed TSS fields as a bitmap.
 struct TaskStateSegment {
     uint32_t previous_tss;
     uint32_t esp0;
@@ -52,17 +51,19 @@ struct TaskStateSegment {
     uint32_t ebp;
     uint32_t esi;
     uint32_t edi;
-    uint32_t cs;
-    uint32_t eflags_after_switch;
-    uint32_t ss_after_switch;
-    uint32_t ds;
     uint32_t es;
+    uint32_t cs;
+    uint32_t ss;
+    uint32_t ds;
     uint32_t fs;
     uint32_t gs;
     uint32_t ldt;
-    uint32_t trap;
-    uint32_t iomap_base;
+    uint16_t trap;
+    uint16_t iomap_base;
 };
+static_assert(sizeof(TaskStateSegment) == 104);
+static_assert(__builtin_offsetof(TaskStateSegment, esp0) == 4);
+static_assert(__builtin_offsetof(TaskStateSegment, iomap_base) == 102);
 
 /* lgdt y lidt leen seis bytes seguidos: limite (2) y base (4). Sin packed el
  * compilador mete relleno entre ambos y el processor leeria relleno como parte
@@ -82,7 +83,7 @@ struct IdtEntry {
     uint16_t offset_high;
 };
 
-TaskStateSegment g_tss;
+TaskStateSegment g_tss[cpu::kMaxCpus];
 uint64_t g_gdt[kEntryCount];
 IdtEntry g_idt[256];
 
@@ -97,6 +98,14 @@ extern "C" const uint32_t i386_exception_table[32];
 
 /* Tabla de direcciones de las 16 stubs de IRQ (interrupts32.S). */
 extern "C" const uint32_t i386_irq_table[16];
+extern "C" const uint32_t i386_external_table[24];
+extern "C" void i386_external_255();
+struct ExternalHandlers {
+    cpu::IrqHandler handlers[4];
+    uint32_t count;
+    bool local_eoi;
+};
+ExternalHandlers g_external[256];
 
 constexpr uint8_t kIrqCount = 16;
 
@@ -118,6 +127,13 @@ extern "C" ContextFrame* i386_handle_irq(ContextFrame* frame) {
         for (auto handler : g_shared_irq_handlers[irq]) if (handler) handler();
     cpu::acknowledge_irq(static_cast<uint8_t>(irq));
     return irq == 0 ? process::timer(frame) : frame;
+}
+
+extern "C" ContextFrame* i386_handle_external(ContextFrame* frame) {
+    auto& entry = g_external[frame->vector];
+    for (uint32_t n = 0; n < entry.count; ++n) entry.handlers[n]();
+    if (entry.local_eoi) lapic::acknowledge();
+    return frame;
 }
 
 inline void outb(uint16_t port, uint8_t value) {
@@ -154,19 +170,19 @@ inline uint32_t handler_address(void (*handler)()) {
     return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handler));
 }
 
-/* El descriptor de TSS ocupa dos entradas de la GDT: base y limite repartidos
- * entre las dos palabras y el byte de flags (tipo 9 = TSS de 32 bits
- * disponible, P=1) en la segunda. */
+// Each protected-mode TSS has its own available descriptor (type 9, present).
 void write_tss_entry(uint32_t index) {
-    const uint32_t base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&g_tss));
+    auto& tss = g_tss[index];
+    const uint32_t base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&tss));
     const uint32_t limit = static_cast<uint32_t>(sizeof(TaskStateSegment)) - 1u;
-    g_tss.iomap_base = static_cast<uint32_t>(sizeof(TaskStateSegment));
+    tss.iomap_base = sizeof(TaskStateSegment);
+    tss.ss0 = cpu::kKernelDataSelector;
 
     const uint64_t low = (limit & 0xFFFFu) | (static_cast<uint64_t>(base & 0xFFFFu) << 16);
     const uint64_t high = ((base >> 16) & 0xFFu) | (0x89ull << 8) |
                           ((static_cast<uint64_t>(limit >> 16) & 0xFu) << 16) |
                           ((static_cast<uint64_t>(base) >> 24) << 24);
-    g_gdt[index] = low | (high << 32);
+    g_gdt[5 + index] = low | (high << 32);
 }
 
 void write_idt_gate(uint32_t vector, uint32_t handler, uint8_t attributes) {
@@ -231,32 +247,27 @@ void cpu::initialize() {
     g_gdt[2] = kKernelDataEntry;
     g_gdt[3] = kUserDataEntry;
     g_gdt[4] = kUserCodeEntry;
-    write_tss_entry(5);
-    g_tss.ss0 = kKernelDataSelector;
+    for (uint32_t index = 0; index < kMaxCpus; ++index) write_tss_entry(index);
 
     const TableDescriptor gdt_descriptor{static_cast<uint16_t>(sizeof(g_gdt) - 1u),
                                          static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_gdt))};
     asm volatile("lgdt %0" : : "m"(gdt_descriptor));
 
-    /* Todas las vectores caen en el stub de excepcion hasta que haya
-     * interrupciones propias; int $0x80 es el unico con DPL 3. La IDT se
-     * instala antes de recargar segmentos y cargar el TSS: un fallo a partir
-     * de aqui se cuenta en vez de acabar en triple fault. */
-    /* Cada excepcion tiene su propia puerta porque el processor no apila el
-     * numero de vector: lo apila el stub (interrupts32.S). Los vectores 32..47
-     * son las IRQ del PIC remapeado (0x20..0x2F) y apuntan a sus entradas
-     * aunque todavia no haya driver: el marco comun solo acusa al PIC cuando no
-     * hay handler, que es lo que evita que el PIT (IRQ0, sin instalar todavia)
-     * desalinee la pila al llegar. El resto son marcadores. */
+    /* Exceptions normalize their vector/error frames; PIC IRQs use vectors
+     * 32..47, local APIC/MSI/IPI gates use 48..71, and other gates share the
+     * spurious entry. Only int 0x80 has DPL 3. Install the IDT before loading
+     * the TSS so an initialization fault is reported instead of triple-faulting. */
     for (uint32_t vector = 0; vector < 256; ++vector) {
         const uint32_t handler = vector < 32u
                                      ? i386_exception_table[vector]
                                      : (vector < kPicVectorOffset + kIrqCount
                                             ? i386_irq_table[vector - kPicVectorOffset]
-                                            : i386_irq_table[0]);
+                                            : handler_address(i386_external_255));
         write_idt_gate(vector, handler, kTypeInterruptGate);
     }
     write_idt_gate(kSyscallVector, handler_address(i386_syscall_entry), kTypeUserInterruptGate);
+    for (uint32_t vector = 48; vector < 72; ++vector)
+        write_idt_gate(vector, i386_external_table[vector - 48], kTypeInterruptGate);
 
     const TableDescriptor idt_descriptor{static_cast<uint16_t>(sizeof(g_idt) - 1u),
                                          static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_idt))};
@@ -287,6 +298,32 @@ void cpu::initialize() {
     outb(0xA1, 0x01);
     outb(0x21, 0xFF); /* mascara: todo cerrado */
     outb(0xA1, 0xFF);
+}
+
+void cpu::initialize_secondary(uint32_t index) {
+    if (!index || index >= kMaxCpus) halt_forever();
+    const TableDescriptor gdt{static_cast<uint16_t>(sizeof(g_gdt) - 1),
+        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_gdt))};
+    const TableDescriptor idt{static_cast<uint16_t>(sizeof(g_idt) - 1),
+        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_idt))};
+    asm volatile("lgdt %0; lidt %1" :: "m"(gdt), "m"(idt) : "memory");
+    const uint16_t selector = kTssSelector + index * 8;
+    asm volatile("ltr %0" :: "r"(selector) : "memory");
+    enable_fpu();
+}
+
+bool cpu::register_external_handler(uint8_t vector, IrqHandler handler, bool local_eoi) {
+    if ((vector < 48 || vector >= 72) && vector != 255) return false;
+    if (!handler) return false;
+    auto& entry = g_external[vector];
+    if (entry.count && entry.local_eoi != local_eoi) return false;
+    for (uint32_t n = 0; n < entry.count; ++n) if (entry.handlers[n] == handler) return true;
+    if (entry.count == 4) return false;
+    entry.local_eoi = local_eoi;
+    entry.handlers[entry.count] = handler;
+    asm volatile("" ::: "memory");
+    ++entry.count;
+    return true;
 }
 
 void cpu::register_irq_handler(uint8_t irq, IrqHandler handler) {
@@ -342,11 +379,11 @@ void cpu::enable_interrupts() {
 }
 
 void cpu::set_ring0_stack(uint32_t stack_top) {
-    g_tss.esp0 = stack_top;
+    g_tss[index()].esp0 = stack_top;
 }
 
 uint32_t cpu::ring0_stack_top() {
-    return g_tss.esp0;
+    return g_tss[index()].esp0;
 }
 
 /* Definido en interrupts32.S. */

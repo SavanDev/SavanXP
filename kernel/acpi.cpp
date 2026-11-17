@@ -145,6 +145,7 @@ constexpr uint32_t kFadtFlagTimerValueExtended = 1u << 8;
 
 uint64_t g_hhdm_offset = 0;
 bool g_ready = false;
+const RsdpDescriptor* g_rsdp = nullptr;
 
 uint16_t g_pm_tmr_port = 0;
 bool g_pm_tmr_32bit = false;
@@ -341,6 +342,7 @@ namespace acpi {
 
 void initialize(const boot::BootInfo& boot_info) {
     g_hhdm_offset = boot_info.hhdm_offset;
+    g_rsdp = nullptr;
 
     if (boot_info.acpi_rsdp_address == 0 || g_hhdm_offset == 0) {
         console::printf("acpi: RSDP no disponible desde el bootloader\n");
@@ -353,6 +355,7 @@ void initialize(const boot::BootInfo& boot_info) {
         return;
     }
 
+    g_rsdp = rsdp;
     const SdtHeader* fadt_header = find_table(rsdp, "FACP");
     if (fadt_header == nullptr || fadt_header->length < offsetof(Fadt, flags) + sizeof(uint32_t)) {
         console::printf("acpi: FADT (FACP) no encontrada\n");
@@ -433,6 +436,12 @@ void initialize(const boot::BootInfo& boot_info) {
 
 bool ready() {
     return g_ready;
+}
+
+const void* table(const char (&signature)[5], size_t& length) {
+    const auto* header = g_rsdp ? find_table(g_rsdp, signature) : nullptr;
+    length = header ? header->length : 0;
+    return header;
 }
 
 uint16_t pm_timer_port() {

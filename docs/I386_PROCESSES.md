@@ -16,6 +16,12 @@ There is no dependency on a frame guessed from TSS.esp0. Ring 0 IRQs have no
 hardware ESP/SS pair, so their frames are retained by pointer rather than copied
 as full ring 3 frames.
 
+Each started CPU has its own architectural 104-byte protected-mode TSS and
+eight-byte GDT descriptor. The I/O bitmap offset lies beyond the TSS limit,
+denying direct user port access. AP bring-up verifies private selectors and
+stacks, but APs remain parked until the shared-kernel lock and TLB work allow
+scheduling there; see [I386_SMP.md](I386_SMP.md).
+
 Each process owns a 16 KiB kernel stack, a saved return frame and an aligned
 512-byte FXSAVE area. Switching eagerly saves/restores x87, all eight SSE
 registers, the x87 control word and MXCSR. A new process starts with empty x87
@@ -131,7 +137,7 @@ Kernel exceptions remain fatal, as do NMI, double fault and machine check even
 when they interrupt user code. Invalid syscall buffers return `EFAULT` before
 the kernel touches them: validation walks every user page and requires write
 permission for read/input, wait status, system-info and GPU-info destinations.
-The single-CPU kernel does not schedule within a syscall, and user mappings
+The BSP-only scheduler does not switch within a syscall, and user mappings
 cannot currently change while a blocked operation retains a pointer.
 
 ## Verification
@@ -160,7 +166,8 @@ The same run checks specific/any-child waits, argument boundaries and bad
 pointers, capacity exhaustion, sleeping wakeups, repeated slot reuse, null
 status pointers, orphan cleanup, process counts and GPU ownership on exit.
 It also checks #UD, divide error, privileged-instruction #GP and #PF from null,
-absent, kernel, RAM-alias, read-only text and stack-guard accesses. A fault with
+absent, kernel, RAM-alias, read-only text and stack-guard accesses. A ring-3
+`IN` from port `0x80` must produce #GP before completing the I/O. A fault with
 null data selectors and DF set exercises the exception entry. The host requires
 the page-fault error bits and CR2 values, surviving siblings, successful waits,
 GPU reacquisition and identical free-page counts after teardown. A `memhog32`
@@ -185,7 +192,8 @@ changes on successful exec. See [I386_SERVICES.md](I386_SERVICES.md).
 
 ## Remaining boundaries
 
-User-installed signal handlers, SMP and ASLR remain unported. Events, timers,
+User-installed signal handlers, scheduling on APs and ASLR remain unported. Events, timers,
 semaphores and wait-any/all now use the reference objects; see
 [I386_GRAPHICS.md](I386_GRAPHICS.md). RAM above the mapped first GiB is not allocated. User read-only pages and supervisor mappings are protected,
-but absence of NX prevents execute-disable and full W^X enforcement. Physical laptop validation remains outstanding.
+but absence of NX prevents execute-disable and full W^X enforcement. Physical
+laptop validation is reserved for the v0.4.2 target.

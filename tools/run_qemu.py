@@ -18,21 +18,22 @@ def build_qemu_args(
     *, iso: Path, disk_image: Path, debug_log: Path, accel: str, smp: int = 1,
     headless: bool = False, debug: bool = False,
     virtio: bool = False,
+    snapshot: bool = False,
     monitor_path: Path | None = None, serial_path: Path | None = None,
     qmp_path: Path | None = None,
 ) -> list[str]:
-    if smp != 1:
-        raise ValueError("The i386 kernel currently supports one CPU only")
+    if smp < 1 or smp > 32:
+        raise ValueError("--smp must be between 1 and 32 (AP bring-up; one scheduling CPU)")
     command = [
         "qemu-system-i386", "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
-        "-m", "1024M", "-smp", "1", "-boot", "d",
+        "-m", "1024M", "-smp", str(smp), "-boot", "d",
         "-drive", f"file={iso},media=cdrom,format=raw,readonly=on,if=ide,index=2",
         "-display", "none" if headless else "gtk",
         "-netdev", "user,id=net0", "-serial", f"file:{serial_path}" if serial_path else "stdio",
         "-debugcon", f"file:{debug_log}", "-global", "isa-debugcon.iobase=0xe9",
         "-no-reboot", "-monitor", f"unix:{monitor_path},server=on,wait=off" if monitor_path else "none",
     ]
-    command += storage_network_args(disk_image, virtio=virtio)
+    command += storage_network_args(disk_image, virtio=virtio, snapshot=snapshot)
     command += graphics_input_args(virtio)
     if headless or virtio:
         command += ["-audiodev", "none,id=audio0" if headless else "sdl,id=audio0",
@@ -74,7 +75,8 @@ def main() -> int:
     parser.add_argument("--iso", required=True, type=Path)
     parser.add_argument("--disk-image", required=True, type=Path)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
-    parser.add_argument("--smp", type=int, choices=(1,), default=1)
+    parser.add_argument("--smp", type=int, choices=range(1, 33), default=1,
+                        help="virtual CPUs for AP bring-up; only the BSP schedules")
     parser.add_argument("--legacy", action="store_true", help="compatibility alias; i386 is already selected")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--virtio", action="store_true", help="virtio disk, network, sound, GPU, tablet and keyboard")

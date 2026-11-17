@@ -50,6 +50,8 @@ i386 support; retained code is not necessarily part of the active build.
   power and external application ABI; completed milestone 5 verification.
 - [`I386_VIRTIO.md`](I386_VIRTIO.md) — milestone 6 virtio transport, device
   integration, PIC interrupt policy, capture and graphical regression gates.
+- [`I386_SMP.md`](I386_SMP.md) — protected-mode AP startup, MADT, private
+  TSS/stacks, xAPIC/IPIs and the remaining multi-CPU scheduling work.
 - [`I386_GRAPHICS.md`](I386_GRAPHICS.md) — reference desktop, GPU surfaces,
   shared graphics libraries, input, waits and visual regressions.
 - [`I386_MEMORY.md`](I386_MEMORY.md) — section/view ownership, heap growth,
