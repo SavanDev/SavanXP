@@ -35,6 +35,10 @@ struct sxnwm_client {
      * gave none, and then the submit event carries requests too. */
     long request_fd;
     struct savanxp_wm_input_ring* ring;
+    /* Set by a program that answers this window's close itself (sxngui's
+     * on_close): a close request then no longer cuts its waits short, so it
+     * can open "save changes?" in a window and present. */
+    int close_handled;
 };
 
 /* What a window says about itself: the title on its caption and its taskbar
@@ -83,6 +87,7 @@ static inline long sxnwm_attach(struct sxnwm_client* ctx, long section_fd) {
     ctx->batches = (struct savanxp_gpu_dirty_rect_batch*)((unsigned char*)ctx->header + ctx->header->command_offset);
     ctx->batch_capacity = ctx->header->batch_capacity;
     ctx->ring = 0;
+    ctx->close_handled = 0;
     return 0;
 }
 
@@ -125,6 +130,7 @@ static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uin
     ctx->ring = 0;
     ctx->events_fd = -1;
     ctx->request_fd = -1;
+    ctx->close_handled = 0;
     result = sxn_port_connect(SAVANXP_WM_PORT_NAME, handles);
     if (result < 0) {
         return result;
@@ -457,6 +463,19 @@ static inline int sxnwm_close_requested(const struct sxnwm_client* ctx) {
         (ctx->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0u;
 }
 
+/* Turns down the close the WM asked for: the user answered Cancel to "save
+ * changes?". The WM withdraws the request, so sxnwm_close_requested drops
+ * back to 0 and the window is not shown as not responding; a session that
+ * was ending is not ended (a cancelled shutdown, docs/kernel/POWER.md). */
+static inline long sxnwm_decline_close(struct sxnwm_client* ctx) {
+    if (ctx == 0 || ctx->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header->requests.close_declined += 1u;
+    __asm__ volatile("" ::: "memory");
+    return sxnwm_notify(ctx);
+}
+
 /* Copies `title` into a presentation title field, cut to fit. */
 static inline void sxnwm_copy_title(char* out, const char* title) {
     uint32_t index = 0;
@@ -596,7 +615,7 @@ static inline long sxnwm_window_request_ex(struct sxnwm_client* owner, uint32_t 
         if (requests->window_reply_sequence == sequence) {
             return requests->window_reply_status;
         }
-        if (sxnwm_close_requested(owner)) {
+        if (sxnwm_close_requested(owner) && !owner->close_handled) {
             return -SAVANXP_EPIPE;
         }
         if (sxn_clock_ns() >= deadline) {

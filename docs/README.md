@@ -62,7 +62,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   are read-only without `nvme-rw`, the polled bring-up, the shutdown notification
   and the limits (512-byte blocks, 2 TiB).
 - [`POWER.md`](kernel/POWER.md) — power-off and reboot: who can ask for them,
-  the sequence (volumes synced and marked clean, writeback drained, drivers
+  how `init`, `sessiond` and `windowd` end the session first (every window
+  asked to close, "save changes?", a Cancel that cancels the shutdown), the
+  kernel sequence (volumes synced and marked clean, writeback drained, drivers
   told, then ACPI), why the power button may do it from an interrupt, and
   what is still missing next to an NT shutdown.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the

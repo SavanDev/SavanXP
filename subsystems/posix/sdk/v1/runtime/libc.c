@@ -529,24 +529,14 @@ long audio_get_muted(int fd) {
     return savanxp_ioctl(fd, AUDIO_IOC_GET_MUTED, 0);
 }
 
+/* Both go through init, which ends the session first, and fall back to
+ * /dev/power where init does not serve (sxn_request_shutdown). */
 int power_shutdown(void) {
-    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
-    if (fd < 0) {
-        return (int)fd;
-    }
-    long result = savanxp_ioctl((int)fd, POWER_IOC_SHUTDOWN, 0);
-    savanxp_close((int)fd);
-    return (int)result;
+    return (int)sxn_request_shutdown(SAVANXP_SHUTDOWN_POWER_OFF);
 }
 
 int power_reboot(void) {
-    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
-    if (fd < 0) {
-        return (int)fd;
-    }
-    long result = savanxp_ioctl((int)fd, POWER_IOC_REBOOT, 0);
-    savanxp_close((int)fd);
-    return (int)result;
+    return (int)sxn_request_shutdown(SAVANXP_SHUTDOWN_REBOOT);
 }
 
 int clipboard_clear(void);
@@ -932,6 +922,8 @@ const char* error_string(int error_code) {
             return "read-only volume";
         case SAVANXP_ECHILD:
             return "no child process";
+        case SAVANXP_ECANCELED:
+            return "canceled";
         case SAVANXP_ECONNRESET:
             return "connection reset by peer";
         case SAVANXP_ECONNREFUSED:

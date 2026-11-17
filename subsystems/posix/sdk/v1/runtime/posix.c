@@ -943,6 +943,7 @@ char* sx_strerror(int error_number) {
         case ECONNRESET: return "connection reset by peer";
         case ECONNREFUSED: return "connection refused";
         case ETIMEDOUT: return "timed out";
+        case ECANCELED: return "operation canceled";
         default: return "error";
     }
 }

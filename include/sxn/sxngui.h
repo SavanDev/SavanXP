@@ -43,6 +43,11 @@ struct sxngui_app {
     int (*on_pointer)(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event);
     void (*on_paint)(struct sxngui_app *app); /* the app's own painting, after the widgets */
     void (*on_resize)(struct sxngui_app *app); /* relayout after a new size */
+    /* The WM asked the main window to close: its X, Alt+F4, or the session
+     * ending for a shutdown. NULL: the app quits. Set, the app decides -- ask
+     * "save changes?" and then sxngui_app_quit, or sxngui_app_decline_close if
+     * the user cancels, which also cancels a shutdown. Once per request. */
+    void (*on_close)(struct sxngui_app *app);
 
     /* Periodic refresh for a window that shows data changing on its own.
      * Called every tick_interval_ms while the app runs (0 or NULL: never).
@@ -70,6 +75,9 @@ struct sxngui_app {
     struct sxgui_dialog *watched_dialog;
     void (*watched_closed)(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user);
     void *watched_user;
+
+    /* Owned by the frame: on_close was called for the request now standing. */
+    int close_pending;
 };
 
 /* The toolkit's host for SUN. sxngui_app_init installs it; a SUN program
@@ -91,6 +99,8 @@ int sxngui_app_set_content_size(struct sxngui_app *app, int width, int height);
 
 void sxngui_app_request_repaint(struct sxngui_app *app);
 void sxngui_app_quit(struct sxngui_app *app, int exit_code);
+/* Turns down the close on_close was called for (sxnwm_decline_close). */
+long sxngui_app_decline_close(struct sxngui_app *app);
 
 /* Calls `closed` once `dialog` is no longer the active one, however it went:
  * its own button, ESC, the window's close button, or another dialog begun

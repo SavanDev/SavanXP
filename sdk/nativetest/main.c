@@ -3137,6 +3137,123 @@ static int power_write_file(const char* path, unsigned long bytes, int payload) 
     return sxn_close(handle) == 0;
 }
 
+/* session-end-smoke (docs/kernel/POWER.md#ending-the-session). init runs the
+ * real session and starts this driver in it. A window ("session-end-client")
+ * turns down the first close it is asked for and takes the second: the first
+ * shutdown request has to come back cancelled with the window alive, the
+ * second has to end the session with the window gone. Meanwhile a request
+ * that arrives during a shutdown is refused. init powers the machine off
+ * once the driver hangs up after the last reply. */
+#define SESSION_END_CLIENT_PORT "sessionendclient"
+
+static int session_end_wait_port(const char* name, unsigned long limit_ms) {
+    long sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    unsigned long waited;
+    int found = 0;
+
+    for (waited = 0; waited < limit_ms; waited += 100ul) {
+        int32_t handles[2] = {-1, -1};
+        if (sxn_port_connect(name, handles) == 0) {
+            (void)sxn_close(handles[0]);
+            (void)sxn_close(handles[1]);
+            found = 1;
+            break;
+        }
+        (void)sxn_wait_one(sleeper, 100);
+    }
+    (void)sxn_close(sleeper);
+    return found;
+}
+
+/* Connects to init's port and asks for a power-off; reads the first reply. */
+static int session_end_request(int32_t handles[2], struct savanxp_shutdown_reply* accepted) {
+    struct savanxp_shutdown_request request;
+
+    handles[0] = handles[1] = -1;
+    if (sxn_port_connect(SAVANXP_SHUTDOWN_PORT_NAME, handles) < 0) {
+        return 0;
+    }
+    request.magic = SAVANXP_SHUTDOWN_MAGIC;
+    request.action = SAVANXP_SHUTDOWN_POWER_OFF;
+    request.reserved[0] = request.reserved[1] = 0;
+    return sxn_write(handles[0], &request, sizeof(request)) == (long)sizeof(request) &&
+        sxn_read(handles[1], accepted, sizeof(*accepted)) == (long)sizeof(*accepted);
+}
+
+static void run_session_end_client(void) {
+    struct sxnwm_client window;
+    long sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    int declined = 0;
+
+    if (sxnwm_connect(&window) < 0) {
+        (void)sxn_log("nativetest: session-end: the client got no window");
+        sxn_exit(1);
+    }
+    (void)sxnwm_submit_full(&window);
+    if (sxn_port_create(SESSION_END_CLIENT_PORT) < 0) {
+        sxn_exit(1);
+    }
+    for (;;) {
+        if (sxnwm_close_requested(&window)) {
+            if (declined) {
+                (void)sxn_log("nativetest: session-end: the client closes");
+                sxn_exit(0);
+            }
+            declined = 1;
+            (void)sxn_log("nativetest: session-end: the client turns the close down");
+            (void)sxnwm_decline_close(&window);
+            /* The request stands until windowd drops it. */
+            while (sxnwm_close_requested(&window)) {
+                (void)sxn_wait_one(sleeper, 20);
+            }
+        }
+        (void)sxn_wait_one(sleeper, 20);
+    }
+}
+
+static void run_session_end(void) {
+    char* client_argv[] = {"/bin/nativetest.sxe", "session-end-client", 0};
+    struct sxn_process_query query;
+    struct savanxp_shutdown_reply first;
+    struct savanxp_shutdown_reply done;
+    struct savanxp_shutdown_reply busy;
+    int32_t handles[2];
+    int32_t second[2];
+    long client;
+
+    check(session_end_wait_port(SAVANXP_WM_PORT_NAME, 60000ul));
+    client = sxn_spawn_stdio(client_argv[0], client_argv, 2);
+    check(client > 0);
+    check(session_end_wait_port(SESSION_END_CLIENT_PORT, 20000ul));
+
+    /* Cancelled: the window turns its close down. */
+    check(session_end_request(handles, &first));
+    check(first.stage == SAVANXP_SHUTDOWN_STAGE_ACCEPTED && first.status == 0);
+    check(sxn_read(handles[1], &done, sizeof(done)) == (long)sizeof(done));
+    check(done.stage == SAVANXP_SHUTDOWN_STAGE_DONE && done.status == -SAVANXP_ECANCELED);
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    check(sxn_process_query(client, &query) == 0 && query.state == SXN_PROCESS_RUNNING);
+    (void)sxn_log("nativetest: session-end: a declined close cancelled the shutdown");
+
+    /* Through: the window closes, the session ends. A second request
+     * meanwhile is refused. */
+    check(session_end_request(handles, &first));
+    check(first.stage == SAVANXP_SHUTDOWN_STAGE_ACCEPTED && first.status == 0);
+    check(session_end_request(second, &busy));
+    check(busy.stage == SAVANXP_SHUTDOWN_STAGE_ACCEPTED && busy.status == -SAVANXP_EBUSY);
+    (void)sxn_close(second[0]);
+    (void)sxn_close(second[1]);
+    check(sxn_read(handles[1], &done, sizeof(done)) == (long)sizeof(done));
+    check(done.stage == SAVANXP_SHUTDOWN_STAGE_DONE && done.status == 0);
+    check(sxn_process_query(client, &query) != 0 || query.state == SXN_PROCESS_ENDED);
+    (void)sxn_log(g_failures ? "NATIVE SESSION END FAIL" : "NATIVE SESSION END PASS");
+    /* Hanging up lets init cut the power. */
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    sxn_exit(g_failures ? 1 : 0);
+}
+
 static void run_power(void) {
     struct sxn_file_info info;
     long handle;
@@ -3214,6 +3331,12 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "power")) {
         run_power();
+    }
+    if (argc > 1 && streq(argv[1], "session-end")) {
+        run_session_end();
+    }
+    if (argc > 1 && streq(argv[1], "session-end-client")) {
+        run_session_end_client();
     }
     if (argc > 1 && streq(argv[1], "file-user")) {
         char byte;

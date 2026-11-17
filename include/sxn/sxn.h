@@ -414,3 +414,49 @@ static inline long sxn_socket_recvfrom(long handle, void* bytes, unsigned long s
 static inline long sxn_wait_io(const struct sxn_io_interest* interests, unsigned long count, long timeout_ms) {
     return sxn_trap(SXN_SYS_WAIT_IO, (unsigned long)interests, count, (unsigned long)timeout_ms);
 }
+
+/* Power off or restart (docs/kernel/POWER.md#ending-the-session): `action` is
+ * SAVANXP_SHUTDOWN_POWER_OFF or SAVANXP_SHUTDOWN_REBOOT. init is asked, and
+ * this returns once it accepted: the session then ends as the user answers
+ * each application, and the machine goes down unless one of them cancels.
+ * 0, -EBUSY with another shutdown under way, -EINVAL for an unknown action.
+ * Without init's port (the rescue system, a smoke run) it goes to /dev/power
+ * directly, which does not return when it succeeds. ExitWindowsEx. */
+static inline long sxn_request_shutdown(uint32_t action) {
+    int32_t handles[2] = {-1, -1};
+    struct savanxp_shutdown_request request;
+    struct savanxp_shutdown_reply reply;
+    long result;
+
+    if (action != SAVANXP_SHUTDOWN_POWER_OFF && action != SAVANXP_SHUTDOWN_REBOOT) {
+        return -SAVANXP_EINVAL;
+    }
+    result = sxn_port_connect(SAVANXP_SHUTDOWN_PORT_NAME, handles);
+    if (result == -SAVANXP_ENOENT) {
+        long device = sxn_open_device("power", SXN_DEVICE_WRITE);
+
+        if (device < 0) {
+            return device;
+        }
+        result = sxn_device_control(device,
+            action == SAVANXP_SHUTDOWN_REBOOT ? POWER_IOC_REBOOT : POWER_IOC_SHUTDOWN, 0);
+        (void)sxn_close(device);
+        return result;
+    }
+    if (result < 0) {
+        return result;
+    }
+    request.magic = SAVANXP_SHUTDOWN_MAGIC;
+    request.action = action;
+    request.reserved[0] = request.reserved[1] = 0;
+    result = sxn_write(handles[0], &request, sizeof(request));
+    if (result == (long)sizeof(request)) {
+        result = sxn_read(handles[1], &reply, sizeof(reply));
+        result = result == (long)sizeof(reply) ? (long)reply.status : -SAVANXP_EPIPE;
+    } else if (result >= 0) {
+        result = -SAVANXP_EPIPE;
+    }
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    return result;
+}

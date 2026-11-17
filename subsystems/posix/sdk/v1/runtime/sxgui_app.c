@@ -200,6 +200,48 @@ void sxgui_app_quit(struct sxgui_app *app, int exit_code)
     }
 }
 
+long sxgui_app_decline_close(struct sxgui_app *app)
+{
+    if (app == 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    return gfx_decline_close(&app->gfx);
+}
+
+/* The main window's close (on_close). The request stands until the WM drops
+ * it -- the process ends, or it turned the close down -- so the hook runs
+ * once per request, not once per pass. Without the hook the runtime's default
+ * close ends the process; with it, a WM that went away still quits, since
+ * there is nothing left to show a question on. */
+static void sxgui_app_service_close(struct sxgui_app *app)
+{
+    int requested;
+
+    if (app->on_close == 0)
+    {
+        return;
+    }
+    requested = app->gfx.header != 0 &&
+        (app->gfx.header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0u;
+    if (!requested && gfx_should_close(&app->gfx))
+    {
+        sxgui_app_quit(app, 0);
+        return;
+    }
+    if (!requested)
+    {
+        app->close_pending = 0;
+        return;
+    }
+    if (!app->close_pending)
+    {
+        app->close_pending = 1;
+        app->on_close(app);
+        app->needs_repaint = 1;
+    }
+}
+
 /* --- dialogo en ventana propia (docs/desktop/OWNED_WINDOWS.md) ---------------------
  *
  * El frame es el host de dialogos de su contexto: cada sxgui_dialog_begin pide
@@ -348,6 +390,11 @@ int sxgui_app_run(struct sxgui_app *app)
     }
 
     next_tick_ms = uptime_ms() + app->tick_interval_ms;
+    /* An app that answers its own close keeps the runtime from ending it. */
+    if (app->on_close != 0)
+    {
+        gfx_handle_close(1);
+    }
     /* Solo este loop sabe pintar y bombear la ventana de un dialogo: una app con
      * loop propio sigue teniendo el dialogo adentro de su superficie. */
     sxgui_app_attach_dialog_host(app);
@@ -355,6 +402,11 @@ int sxgui_app_run(struct sxgui_app *app)
 
     while (app->running)
     {
+        sxgui_app_service_close(app);
+        if (!app->running)
+        {
+            break;
+        }
         /* El intervalo se relee en cada vuelta: una app que deja cambiar la
          * velocidad de refresco solo tiene que escribir el campo. */
         if (app->on_tick != 0 && app->tick_interval_ms != 0)

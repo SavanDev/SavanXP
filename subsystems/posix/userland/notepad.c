@@ -63,6 +63,9 @@ static struct sxgui_widget g_about_widgets[4];
 #define NOTEPAD_PENDING_EXIT 1
 #define NOTEPAD_PENDING_NEW 2
 #define NOTEPAD_PENDING_OPEN 3
+/* Exit as the WM asked for it: the window's X, Alt+F4, or the session ending
+ * for a shutdown. Unlike File > Exit, a Cancel has to tell the WM. */
+#define NOTEPAD_PENDING_CLOSE 4
 
 static struct sxgui_dialog g_confirm_dialog;
 static struct sxgui_widget g_confirm_widgets[4];
@@ -292,6 +295,19 @@ static void on_open_cancel(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 0);
 }
 
+/* The question was answered with Cancel: the paused action is dropped, and a
+ * close the WM asked for is turned down (which cancels a shutdown). */
+static void notepad_drop_pending(void)
+{
+    int pending = g_pending_action;
+
+    g_pending_action = NOTEPAD_PENDING_NONE;
+    if (pending == NOTEPAD_PENDING_CLOSE)
+    {
+        (void)sxgui_app_decline_close(&g_app);
+    }
+}
+
 /* Corre la accion que la confirmacion tenia en pausa. */
 static void notepad_run_pending(void)
 {
@@ -301,6 +317,7 @@ static void notepad_run_pending(void)
     switch (pending)
     {
     case NOTEPAD_PENDING_EXIT:
+    case NOTEPAD_PENDING_CLOSE:
         sxgui_app_quit(&g_app, 0);
         break;
     case NOTEPAD_PENDING_NEW:
@@ -332,12 +349,13 @@ static void on_confirm_save(struct sxgui_widget *widget, void *user)
     (void)widget;
     (void)user;
     sxgui_dialog_end(&g_app.ui, 1);
-    /* Si guardar falla -- sin nombre, o el disco lo rechaza -- no se descarta
-     * nada: notepad_save ya abrio el dialogo de Save As o dejo el error en la
-     * barra de estado, y la accion pendiente se cancela. */
+    /* If saving fails -- no name yet, or the disk refuses it -- nothing is
+     * discarded: notepad_save has already opened Save As or left the error in
+     * the status bar, and the pending action is dropped. A close the WM asked
+     * for is turned down, so a shutdown waits for nothing. */
     if (notepad_save() < 0)
     {
-        g_pending_action = NOTEPAD_PENDING_NONE;
+        notepad_drop_pending();
         return;
     }
     notepad_run_pending();
@@ -355,8 +373,27 @@ static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    g_pending_action = NOTEPAD_PENDING_NONE;
+    notepad_drop_pending();
     sxgui_dialog_end(&g_app.ui, 0);
+}
+
+/* The window's close (sxgui_app.on_close): the same question as File > Exit. */
+static void on_close(struct sxgui_app *app)
+{
+    if (!notepad_confirm_discard(NOTEPAD_PENDING_CLOSE))
+    {
+        sxgui_app_quit(app, 0);
+    }
+}
+
+/* The question can also go away by its own X or by ESC, which the frame
+ * answers without a button: that is a Cancel too. */
+static void on_paint(struct sxgui_app *app)
+{
+    if (g_pending_action != NOTEPAD_PENDING_NONE && !sxgui_dialog_active(&app->ui))
+    {
+        notepad_drop_pending();
+    }
 }
 
 static void on_about_ok(struct sxgui_widget *widget, void *user)
@@ -623,6 +660,8 @@ int main(int argc, char **argv)
     }
     g_app.on_key = on_key;
     g_app.on_resize = on_resize;
+    g_app.on_close = on_close;
+    g_app.on_paint = on_paint;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     (void)sxgui_app_set_content_size(&g_app, NOTEPAD_CONTENT_WIDTH, NOTEPAD_CONTENT_HEIGHT);
     notepad_layout(&g_app);

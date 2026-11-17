@@ -846,6 +846,16 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
         ),
     ),
+    "session-end-smoke": _qemu_scenario(
+        "nativesessionend",
+        "NATIVE SESSION END PASS",
+        "NATIVE SESSION END FAIL",
+        "A shutdown through init ends the real session: a declined close cancels it, the next one goes through",
+        300.0,
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
+        ),
+    ),
     "win32-cards": _qemu_scenario(
         "win32cards",
         "WIN32 CARDS PASS",

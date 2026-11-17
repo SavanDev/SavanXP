@@ -1819,16 +1819,11 @@ static void show_failure(const char *title, long result)
     sxgui_dialog_begin(&g_app.ui, &g_message_dialog, TASKMGR_CONFIRM_WIDTH, TASKMGR_CONFIRM_HEIGHT);
 }
 
-static void power_request(unsigned long code)
+/* init ends the session, Task Manager's window included, before the power
+ * goes (docs/kernel/POWER.md#ending-the-session). */
+static void power_request(uint32_t action)
 {
-    long device = sxn_open_device("power", SXN_DEVICE_WRITE);
-
-    if (device >= 0)
-    {
-        /* Does not return when it succeeds. */
-        (void)sxn_device_control(device, code, 0);
-        (void)sxn_close(device);
-    }
+    (void)sxn_request_shutdown(action);
 }
 
 static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
@@ -1847,13 +1842,13 @@ static void on_confirm_accept(struct sxgui_widget *widget, void *user)
     if (g_pending_power == TASKMGR_CMD_SHUTDOWN)
     {
         g_pending_power = 0;
-        power_request(POWER_IOC_SHUTDOWN);
+        power_request(SAVANXP_SHUTDOWN_POWER_OFF);
         return;
     }
     if (g_pending_power == TASKMGR_CMD_REBOOT)
     {
         g_pending_power = 0;
-        power_request(POWER_IOC_REBOOT);
+        power_request(SAVANXP_SHUTDOWN_REBOOT);
         return;
     }
 

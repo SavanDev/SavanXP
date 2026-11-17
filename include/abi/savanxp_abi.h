@@ -78,6 +78,9 @@ enum sx_status {
     // A call cut short because its thread is ending (a kill, or an exec of
     // a sibling). The thread never returns to user mode to see it.
     SX_EINTR = 4,
+    // An operation someone turned down before it finished: a shutdown an
+    // application cancelled (docs/kernel/POWER.md).
+    SX_ECANCELED = 125,
     // A name or a path longer than the VFS, or the volume's format, takes.
     SX_ENAMETOOLONG = 36,
 };
@@ -113,6 +116,7 @@ typedef enum sx_status savanxp_error_code;
 #define SAVANXP_ETIMEDOUT SX_ETIMEDOUT
 #define SAVANXP_ECONNREFUSED SX_ECONNREFUSED
 #define SAVANXP_EINTR SX_EINTR
+#define SAVANXP_ECANCELED SX_ECANCELED
 #define SAVANXP_ENAMETOOLONG SX_ENAMETOOLONG
 
 
@@ -508,6 +512,46 @@ enum savanxp_audio_ioctl {
     AUDIO_IOC_CAPTURE_GET_STATE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 12),
     AUDIO_IOC_CAPTURE_SET_VOLUME = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 13),
     AUDIO_IOC_CAPTURE_SET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 14),
+};
+
+/*
+ * Asking for a shutdown (docs/kernel/POWER.md#ending-the-session). init owns
+ * it: a program connects to init's port, writes one request and reads up to
+ * two replies. The first (stage ACCEPTED) comes at once: status 0, or -EBUSY
+ * while another shutdown is under way. The second (stage DONE) comes once
+ * the session has ended: status 0 when the machine is about to power off or
+ * restart, -ECANCELED when an application turned its close down and nothing
+ * happened. A requester that only wants to start it closes after the first.
+ * Any process may ask, as any process may open /dev/power today.
+ *
+ * init asks the session manager the same way, on its own port, which serves
+ * only its parent: one request (action END_SESSION), one DONE reply.
+ */
+#define SAVANXP_SHUTDOWN_PORT_NAME "shutdown"
+#define SAVANXP_SESSION_PORT_NAME "sessiond"
+#define SAVANXP_SHUTDOWN_MAGIC 0x4e574453u /* "SDWN" */
+
+enum savanxp_shutdown_action {
+    SAVANXP_SHUTDOWN_POWER_OFF = 1,
+    SAVANXP_SHUTDOWN_REBOOT = 2,
+    SAVANXP_SHUTDOWN_END_SESSION = 3, /* init -> sessiond only */
+};
+
+enum savanxp_shutdown_stage {
+    SAVANXP_SHUTDOWN_STAGE_ACCEPTED = 1,
+    SAVANXP_SHUTDOWN_STAGE_DONE = 2,
+};
+
+struct savanxp_shutdown_request {
+    uint32_t magic;  /* SAVANXP_SHUTDOWN_MAGIC */
+    uint32_t action; /* enum savanxp_shutdown_action */
+    uint32_t reserved[2];
+};
+
+struct savanxp_shutdown_reply {
+    int32_t status;  /* 0 or -errno */
+    uint32_t stage;  /* enum savanxp_shutdown_stage */
+    uint32_t reserved[2];
 };
 
 enum savanxp_power_ioctl {
@@ -1279,7 +1323,12 @@ struct savanxp_wm_client_requests {
      * hides the cursor and sends SAVANXP_WM_EVENT_POINTER_MOTION records. One
      * word written whole, so it needs no seqlock. */
     uint32_t pointer_capture;
-    uint32_t pointer_reserved;
+    /* A close the WM asked for and the program turned down: its user
+     * answered Cancel to "save changes?". The client adds one; the WM then
+     * drops the request (SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN and the
+     * not-responding wait), and a session that was ending is not ended
+     * (docs/kernel/POWER.md). One word written whole, like the capture. */
+    uint32_t close_declined;
 };
 
 /* A window client's desktop pointer snapshot, published by windowd even
@@ -1493,6 +1542,13 @@ enum savanxp_wm_event_kind {
  * to the WM (docs/desktop/DESKTOP_ARCHITECTURE.md#frames). A client that does
  * not ask has its requests seen on the WM's next tick. */
 #define SAVANXP_WM_HELLO_REQUEST_EVENT 0x00000004u
+/* Not a window: the session is ending. Granted only to the WM's own parent,
+ * the session manager. The WM asks every application window to close, as
+ * its X does, and keeps the shell; it answers once, on the event pipe, with
+ * a WELCOME record when no application window is left (status 0) or when
+ * one turned the close down (-ECANCELED). Nothing else travels on that
+ * connection (docs/kernel/POWER.md#ending-the-session). */
+#define SAVANXP_WM_HELLO_END_SESSION 0x00000008u
 
 struct savanxp_wm_hello {
     uint32_t magic;        /* SAVANXP_WM_HELLO_MAGIC */

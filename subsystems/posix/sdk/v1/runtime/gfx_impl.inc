@@ -57,10 +57,25 @@ static void gfx_copy_present_region(
 /* 1 once the WM is gone: its end of the event pipe hung up. Nothing composes
  * the surface any more, so the window is as good as closed. */
 static int g_gfx_wm_gone = 0;
+/* The program answers its main window's close itself (gfx_handle_close), and
+ * which header is the main window's. */
+static int g_gfx_close_handled = 0;
+static struct savanxp_gpu_client_surface_header* g_gfx_main_header = 0;
 
 static int gfx_shutdown_requested(const struct savanxp_gfx_context* context) {
     return context != 0 && context->header != 0 &&
         ((context->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0 || g_gfx_wm_gone);
+}
+
+/* Whether a wait on `context` should stop for a close: the WM went away, or
+ * the window was asked to close and nobody answers that but the runtime. A
+ * program that answers its main window's close keeps working while it asks
+ * "save changes?": it opens the question in a window of its own and presents. */
+static int gfx_close_cuts_waits(const struct savanxp_gfx_context* context) {
+    if (!gfx_shutdown_requested(context)) {
+        return 0;
+    }
+    return g_gfx_wm_gone || !g_gfx_close_handled || context->header != g_gfx_main_header;
 }
 
 /* Looks at the event pipe for a hang-up. A poll, so only where waiting or
@@ -89,8 +104,6 @@ static int gfx_check_wm_gone(const struct savanxp_gfx_context* context) {
  * itself -- ask to save, stop its audio first -- calls gfx_handle_close(1) and
  * then checks gfx_should_close. Owned windows (dialogs) never end the process.
  */
-static int g_gfx_close_handled = 0;
-static struct savanxp_gpu_client_surface_header* g_gfx_main_header = 0;
 
 void gfx_handle_close(int handled) {
     g_gfx_close_handled = handled != 0;
@@ -120,7 +133,7 @@ static long gfx_wait_for_header(
     while (!ready(context)) {
         long wait_result = 0;
 
-        if (gfx_shutdown_requested(context)) {
+        if (gfx_close_cuts_waits(context)) {
             gfx_default_close();
             return -SAVANXP_EPIPE;
         }
@@ -133,7 +146,7 @@ static long gfx_wait_for_header(
         if (ready(context)) {
             break;
         }
-        if (gfx_shutdown_requested(context)) {
+        if (gfx_close_cuts_waits(context)) {
             gfx_default_close();
             return -SAVANXP_EPIPE;
         }
@@ -1077,6 +1090,15 @@ int gfx_should_close(const struct savanxp_gfx_context* context) {
     return gfx_shutdown_requested(context) || (context != 0 && context->header != 0 && gfx_check_wm_gone(context));
 }
 
+long gfx_decline_close(const struct savanxp_gfx_context* context) {
+    if (context == 0 || context->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    context->header->requests.close_declined += 1u;
+    __asm__ volatile("" ::: "memory");
+    return gfx_notify_wm(context);
+}
+
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event) {
     uint32_t max_width = 0;
     uint32_t max_height = 0;
@@ -1351,7 +1373,7 @@ static long gfx_window_request(
         if (requests->window_reply_sequence == sequence) {
             return requests->window_reply_status;
         }
-        if (gfx_shutdown_requested(owner)) {
+        if (gfx_close_cuts_waits(owner)) {
             return -SAVANXP_EPIPE;
         }
         if (owner->wake_event_fd < 0 || uptime_ms() >= deadline) {

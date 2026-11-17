@@ -340,6 +340,15 @@ void sxngui_app_quit(struct sxngui_app *app, int exit_code)
     }
 }
 
+long sxngui_app_decline_close(struct sxngui_app *app)
+{
+    if (app == 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    return sxnwm_decline_close(&app->wm);
+}
+
 /* ---- dialogs in owned windows -------------------------------------------------- *
  *
  * The frame is the dialog host of its context: each sxgui_dialog_begin asks
@@ -656,6 +665,8 @@ int sxngui_app_run(struct sxngui_app *app)
     app->popup_host.user = app;
     app->ui.popup_host = &app->popup_host;
     next_tick_ms = sxngui_uptime_ms() + app->tick_interval_ms;
+    /* An app that answers its own close keeps its waits going while it asks. */
+    app->wm.close_handled = app->on_close != 0;
 
     while (app->running)
     {
@@ -663,10 +674,25 @@ int sxngui_app_run(struct sxngui_app *app)
          * again and the wait below returns at once. */
         (void)sxn_event_reset(app->wm.wake_fd);
 
+        /* The main window's close: the app's to answer when it has on_close,
+         * once per request -- the request stands until the WM drops it. */
         if (sxnwm_close_requested(&app->wm))
         {
-            sxngui_app_quit(app, 0);
-            break;
+            if (app->on_close == 0)
+            {
+                sxngui_app_quit(app, 0);
+                break;
+            }
+            if (!app->close_pending)
+            {
+                app->close_pending = 1;
+                app->on_close(app);
+                app->needs_repaint = 1;
+            }
+        }
+        else
+        {
+            app->close_pending = 0;
         }
         /* The interval is read on every pass: an app that offers a refresh
          * speed only has to write the field. */

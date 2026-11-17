@@ -196,6 +196,8 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `CreateWindow` + message loop | `sxnwm_connect`, `sxnwm_poll_input` | done |
 | `InvalidateRect` / partial `BitBlt` to screen | `sxnwm_submit_rects`, `sxnwm_wait_idle` | done |
 | `SetWindowPos` (size), `WM_SIZE`, `WM_CLOSE` | `sxnwm_request_size`, `sxnwm_check_resize`, `sxnwm_close_requested` | done |
+| `WM_QUERYENDSESSION` returning `FALSE` (a Cancel to "save changes?") | `sxnwm_decline_close`; `on_close` and `sxngui_app_decline_close` in the frame | done (consumer: `nativetest session-end`) |
+| `ExitWindowsEx` | `sxn_request_shutdown` (`init` ends the session first, [POWER.md](../kernel/POWER.md#ending-the-session)) | done (Task Manager) |
 | `SetWindowText`, `WM_SETICON` | `sxnwm_set_title`, `sxnwm_set_presentation` | done |
 | `ClipCursor` + raw input (`WM_INPUT`), `ShowCursor(FALSE)` | `sxnwm_set_pointer_capture`, `SAVANXP_WM_EVENT_POINTER_MOTION` | done (Nightwood); suspended by the WM whenever the window is not active |
 | `waveOutOpen`/`waveOutWrite`, XAudio2 | `sxnaudio_open`, `sxnaudio_frames_due`, `sxnaudio_write` | done (Nightwood); mixed by `audiod` when it runs ([AUDIO_DAEMON.md](../media/AUDIO_DAEMON.md#sun-clients)) |

@@ -27,6 +27,7 @@
 #define ECONNRESET 104
 #define ETIMEDOUT 110
 #define ECONNREFUSED 111
+#define ECANCELED 125
 
 /* Los que faltaban. No es cosmetico: libavutil/error.c arma su tabla de
  * errores con #if EDOM > 0, y un codigo sin definir evalua a 0 y deja la tabla

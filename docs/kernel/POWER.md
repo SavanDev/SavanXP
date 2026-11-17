@@ -1,21 +1,25 @@
 # Power-off and reboot
 
-How the machine goes down: what the kernel does once something asks for
-power-off or a reset, who can ask, and what is still missing next to a
-Windows NT shutdown.
+How the machine goes down: how the session is ended first, what the kernel
+does once the power is asked for, who can ask, and what is still missing next
+to a Windows NT shutdown.
 
-The code is `power::shutdown()` and `power::reboot()` in
-[`kernel/power.cpp`](../../kernel/power.cpp); the hardware half is
+The session half is `init`'s shutdown service
+([`init.c`](../../subsystems/posix/userland/init.c)), `sessiond` and
+`windowd`. The kernel half is `power::shutdown()` and `power::reboot()` in
+[`kernel/power.cpp`](../../kernel/power.cpp), and the hardware half is
 `acpi::shutdown()` and `acpi::reboot()` in [`kernel/acpi.cpp`](../../kernel/acpi.cpp).
 
 ## Who asks
 
 | request | path |
 | --- | --- |
-| Start menu's Shut Down dialog, Program Manager, Task Manager | `POWER_IOC_SHUTDOWN` / `POWER_IOC_REBOOT` on `/dev/power` (`power_shutdown()`, `power_reboot()` in libc) |
-| the ACPI power button (QEMU's `system_powerdown`) | the SCI handler, `sci_interrupt()` in `acpi.cpp` |
+| Start menu's Shut Down dialog, Program Manager, Task Manager | `init`'s `shutdown` port (`power_shutdown()`, `power_reboot()` in POSIX; `sxn_request_shutdown()` in SUN), which [ends the session](#ending-the-session) and then opens `/dev/power` |
+| the ACPI power button (QEMU's `system_powerdown`) | the SCI handler, `sci_interrupt()` in `acpi.cpp`, straight to the kernel |
+| anything where `init` does not serve its port (the rescue system, a smoke run) | `power_shutdown()` and `sxn_request_shutdown()` fall back to `/dev/power` |
 
-All of them end in the same `power::shutdown()` or `power::reboot()`.
+Any process may ask, as any process may open `/dev/power`. The kernel side of
+all of them ends in the same `power::shutdown()` or `power::reboot()`.
 **Rule: nothing calls `acpi::shutdown()` or `acpi::reboot()` directly.** Those
 two only cut the power, and anything that skips `power::` loses whatever the
 writeback queue still holds.
@@ -77,24 +81,75 @@ volume checks alone failed on every run, in three different ways: a pending
 journal, superblocks without `CLEAN`, or a payload that did not read back after
 the reboot. A change that breaks this sequence should fail this scenario.
 
+## Ending the session
+
+`init` owns the shutdown, as winlogon does in Windows. A program asks on
+`init`'s port (`SAVANXP_SHUTDOWN_PORT_NAME`, the request and replies in
+`savanxp_abi.h`), and `init` ends the session in order before it touches
+`/dev/power`:
+
+1. **`init` accepts.** The first reply (stage `ACCEPTED`) comes at once:
+   status 0, or `-EBUSY` while another shutdown is under way. From then on
+   `init`'s supervisor restarts nothing that exits. A second thread serves
+   the port, because the first stays in `waitpid`. It keeps answering new
+   requests (`-EBUSY`) while it waits for the session.
+2. **`sessiond` ends the session.** `init` asks on `sessiond`'s port
+   (`SAVANXP_SESSION_PORT_NAME`, which serves only its parent). `sessiond`
+   stops restarting the desktop and connects to `windowd` with
+   `SAVANXP_WM_HELLO_END_SESSION`, which `windowd` grants only to its own
+   parent.
+3. **`windowd` asks every application window to close**, exactly as its X
+   does, and keeps the shell. A window that connects meanwhile is asked too.
+   Each program answers as it answers the X:
+   - by default the runtime ends it;
+   - a program that answers itself (`on_close` in the `sxgui_app` and
+     `sxngui_app` frames) asks "save changes?" (Notepad does), then quits;
+   - if the user answers Cancel, the program turns the close down
+     (`gfx_decline_close`, `sxnwm_decline_close`, the
+     `close_declined` word in the surface header);
+   - a window that does not close becomes "not responding", and the shell
+     offers End Now. Nothing ends it behind the user's back, so a shutdown
+     waits for the user as long as it takes, as Windows does by default.
+4. **The answer travels back.** When no application window is left, `windowd`
+   answers `sessiond` with 0. `sessiond` ends the desktop, `windowd` and
+   `compositord`, answers `init` and exits. If a program turned its close down,
+   `windowd` withdraws the other requests and answers `-ECANCELED`. The
+   session goes on, and `init` answers its requester the same way.
+5. **`init` stops the services** (`audiod`, `elevationd`, a fallback shell),
+   sends the second reply (stage `DONE`, status 0), and gives the requester
+   up to two seconds to hang up. Then it opens `/dev/power`, and the kernel
+   does [the sequence](#the-sequence) below.
+
+A requester that only wants to start the shutdown closes after the first reply
+(`power_shutdown()` and `sxn_request_shutdown()` do), so the desktop is never
+blocked while the session ends.
+
+The Win32 names, for orientation: the request is `ExitWindowsEx`, the close
+request is `WM_QUERYENDSESSION` and `WM_ENDSESSION` folded into `WM_CLOSE`,
+and a declined close is a `WM_QUERYENDSESSION` that returned `FALSE`.
+
+### Testing it
+
+`./build.sh smoke session-end-smoke` runs the real session (`init`'s
+`nativesessionend` spec) and starts `nativetest session-end` in it. A window of
+its own (`session-end-client`) turns down the first close and takes the
+second. The first shutdown request has to come back `-ECANCELED` with the
+window alive. The second has to end the session with the window gone, a
+request sent meanwhile has to get `-EBUSY`, and the machine powers off after
+`NATIVE SESSION END PASS`.
+
+`./tools/shoot.sh --scenario notepadclose` checks Notepad's side on screen:
+Alt+F4 asks, Esc keeps the window and its text, a second Alt+F4 asks again,
+and Discard closes it.
+
 ## What it does not do yet
 
-Compared with Windows NT, this is only the last stage (`NtShutdownSystem`):
-
-- **Applications are not asked.** There is no `WM_QUERYENDSESSION` or
-  `WM_ENDSESSION`. Data a program holds in memory is lost without a prompt.
-- **Processes are not told or stopped.** Nothing reaches services or
-  background programs before the power goes.
-- **There is no "safe to turn off" screen** when ACPI and the fallback ports
-  all fail. The machine halts with the last frame on screen.
-
-### Interaction with `init`
-
-`init` plays no part in the sequence above: the kernel does all of it inside
-the request, and no process runs again afterwards. The day applications and
-processes are told first, `init` has to know the session is ending. Today it
-restarts `sessiond`, `audiod` and `elevationd` when they exit
-([`init.c`](../../subsystems/posix/userland/init.c)), so stopping them before
-power-off would make `init` start them again. Ending the session needs a
-shutdown state that `init` checks before restarting anything, or it needs
-`init` to drive the shutdown itself.
+- **The power button skips the session.** It goes straight from the SCI
+  handler to `power::shutdown()`: the volumes are synced, but applications are
+  not asked. Making it ask needs a way for the kernel to tell `init`.
+- **Programs without a window are not told.** Services and background
+  programs are ended, not asked: nothing like `SERVICE_CONTROL_SHUTDOWN`
+  reaches them.
+- **No "SavanXP is shutting down" screen**, and no "safe to turn off" screen
+  when ACPI and the fallback ports all fail. The machine halts with the last
+  frame on screen.

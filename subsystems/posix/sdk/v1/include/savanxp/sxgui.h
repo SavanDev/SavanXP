@@ -34,6 +34,12 @@ struct sxgui_app {
     int (*on_pointer)(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event);
     void (*on_paint)(struct sxgui_app *app);  /* extra painting after sxgui_paint */
     void (*on_resize)(struct sxgui_app *app); /* widget relayout after RESIZED */
+    /* The WM asked the main window to close: its X, Alt+F4, or the session
+     * ending for a shutdown. NULL: the app quits, as always. Set, the app
+     * decides -- ask "save changes?" and then sxgui_app_quit, or
+     * sxgui_app_decline_close if the user cancels, which also cancels a
+     * shutdown. Called once per request. The WM going away still quits. */
+    void (*on_close)(struct sxgui_app *app);
 
     /* Periodic refresh, for a window showing data that changes on its own --
      * a monitor, a clock. Called every `tick_interval_ms` while the app runs;
@@ -59,6 +65,9 @@ struct sxgui_app {
     struct sxgui_popup_host popup_host;
     struct savanxp_gfx_context popup_gfx;
     int popup_window_open;
+
+    /* Owned by the frame: on_close was called for the request now standing. */
+    int close_pending;
 };
 
 /* Margin sxgui_app_autosize leaves to the right of and below the widgets'
@@ -102,6 +111,8 @@ int sxgui_app_set_content_size(struct sxgui_app *app, int width, int height);
 int sxgui_app_autosize(struct sxgui_app *app);
 void sxgui_app_request_repaint(struct sxgui_app *app);
 void sxgui_app_quit(struct sxgui_app *app, int exit_code);
+/* Turns down the close on_close was called for (gfx_decline_close). */
+long sxgui_app_decline_close(struct sxgui_app *app);
 /* Blocks until the app quits; releases the gfx session and returns exit_code. */
 int sxgui_app_run(struct sxgui_app *app);
 

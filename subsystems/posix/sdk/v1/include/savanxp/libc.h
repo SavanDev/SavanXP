@@ -216,6 +216,11 @@ struct savanxp_gfx_context {
     uint32_t window_id;
 };
 
+/* Power off or restart: init ends the session first -- every application is
+ * asked to close and may ask "save changes?" -- and returns as soon as it has
+ * accepted. 0, -EBUSY with another shutdown under way. Where init does not
+ * serve (the rescue system) /dev/power is used directly, which does not
+ * return when it succeeds (docs/kernel/POWER.md#ending-the-session). */
 int power_shutdown(void);
 int power_reboot(void);
 
@@ -275,6 +280,12 @@ int gfx_should_close(const struct savanxp_gfx_context* context);
  * audio first -- calls gfx_handle_close(1) and then watches gfx_should_close;
  * if it never exits, the shell offers to end it as not responding. */
 void gfx_handle_close(int handled);
+/* Turns down the close the WM asked for on the MAIN window `context`: its
+ * user answered Cancel to "save changes?". The WM withdraws the request, so
+ * gfx_should_close drops back to 0 and the window is not shown as not
+ * responding; a session that was ending is not ended (a cancelled
+ * shutdown). 0 or a negative error. */
+long gfx_decline_close(const struct savanxp_gfx_context* context);
 /* Starts a program; it opens its own window by connecting to the WM (protocol
  * v5). The caller does the spawn, the WM is not involved: the new process
  * gets only stdio and is reaped by the runtime once it exits. Returns the pid

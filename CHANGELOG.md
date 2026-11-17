@@ -12,10 +12,18 @@ Cut-off notes:
 
 ### Added
 
+- **Shut Down and Restart end the session first, as Windows does.** `init` serves a `shutdown` port
+  (`power_shutdown()`/`power_reboot()`, SUN `sxn_request_shutdown()`); `sessiond` and `windowd` ask every window to close,
+  a Cancel to "save changes?" cancels the shutdown, and `init` stops its services before `/dev/power`.
+  Programs answer with `on_close` and `gfx_decline_close`/`sxnwm_decline_close`; new errno `ECANCELED`.
+  `session-end-smoke` and `shoot.sh --scenario notepadclose` cover it; see [POWER.md](docs/kernel/POWER.md#ending-the-session).
+
 - **`power-smoke` scenario: the power button with unflushed writes leaves the volume clean, and the data reads back after the next boot.**
   `nativetest power` is the guest half; QMP callbacks now get the run's disk copy (`SAVANXP_SMOKE_DISK_IMAGE`).
 
 ### Fixed
+
+- **Closing Notepad with unsaved changes (X, Alt+F4) asks "save changes?" instead of discarding them.**
 
 - **Power-off and reboot sync and mark every volume clean first, and the ACPI power button no longer drops queued writes.**
   Both go through `power::shutdown()`/`power::reboot()`; failures are logged (`power:`) instead of ignored.

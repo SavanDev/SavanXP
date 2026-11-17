@@ -216,8 +216,10 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
    rest and starts the session again, with the same quick-exit limit; past it,
    `sessiond` exits with an error and `init` falls back to the text shell, as
    it does for `windowd` today.
-5. Later: ending the session and shutting down (the Shut Down of Task Manager
-   and the Start menu would ask `sessiond`, not kill processes themselves).
+5. It ends the session for a shutdown, when `init` asks on its port (which
+   serves only its parent): it tells `windowd` the session is ending, and
+   ends the rest once every application window has closed, or reports that
+   one turned its close down ([POWER.md](../kernel/POWER.md#ending-the-session)).
 
 `compositord` was `windowd`'s child until phase 3, joined by a private port
 `windowd` created and named on its command line. Since phase 4 step 1 it is
@@ -248,10 +250,12 @@ descriptors and no ordering: the desktop can connect before or after anything
 reservation for the desktop from `windowd`. In NT the trust comes from who
 created you as well, not from what the client claims.
 
-A control channel becomes necessary only for something `sessiond` has to tell
-`windowd` -- "the session is ending, close every window". When that exists it
-is a connection to the same port with its own hello flag, granted under the
-same parentage rule.
+A control channel became necessary for one thing `sessiond` has to tell
+`windowd`: "the session is ending, close every window". It is a connection
+to the same port with its own hello flag, `SAVANXP_WM_HELLO_END_SESSION`,
+granted only to `windowd`'s own parent. It carries no window, and its one
+answer comes when the session is over or cancelled
+([POWER.md](../kernel/POWER.md#ending-the-session)).
 
 ### Clients when the WM goes away
 
@@ -314,7 +318,15 @@ where `SXN_SYS_TERMINATE` reaches only a caller's own children.
   WM going away (its event pipe hangs up), ends the process at its next poll
   or present. A program that answers itself -- asks to save, stops its audio
   -- calls `gfx_handle_close(1)` and watches `gfx_should_close`. The desktop,
-  the media player and ccleste do.
+  the media player and ccleste do. In the toolkit frames that is the
+  `on_close` hook (`sxgui_app`, `sxngui_app`); Notepad uses it to ask "save
+  changes?". While a program answers its close, the request does not cut its
+  waits short, so it can open the question in a window of its own.
+- **A program may turn the close down**: its user answered Cancel.
+  `gfx_decline_close` (`sxgui_app_decline_close`) or `sxnwm_decline_close`
+  adds one to `close_declined` in the surface header, and `windowd` withdraws
+  the request: the flag clears, the not-responding wait stops, and the next
+  X asks again. While the session is ending, that cancels the shutdown.
 - **Taking a client down is dropping its connection.** A client that sends a
   malformed batch, or the session ending, has its event pipe closed: the
   hang-up ends a well-behaved process the same way. Only a process `windowd`

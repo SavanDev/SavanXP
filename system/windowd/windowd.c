@@ -2539,6 +2539,122 @@ static void service_close_requests(struct windowd_session *session, struct windo
     }
 }
 
+/* Answers the session manager once and forgets the session was ending. */
+static void answer_end_session(struct windowd_session *session, int status)
+{
+    struct savanxp_wm_event record;
+
+    memset(&record, 0, sizeof(record));
+    record.kind = SAVANXP_WM_EVENT_WELCOME;
+    record.payload.welcome.status = status;
+    (void)savanxp_write(session->end_session_fd, &record, sizeof(record));
+    close_fd_if_needed(&session->end_session_fd);
+}
+
+/*
+ * A program turned a close down (savanxp_wm_client_requests.close_declined):
+ * its user answered Cancel to "save changes?". The request is withdrawn -- the
+ * flag cleared, the not-responding wait stopped -- so the program is not asked
+ * again until someone closes it again. While the session is ending that is
+ * Windows' cancelled shutdown: the other windows asked to close are left
+ * alone and the session manager is told the session did not end.
+ */
+static void service_close_declines(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    int declined = 0;
+    int slot;
+
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        struct windowd_client *client = &session->overlay_clients[slot];
+        uint32_t value;
+
+        if (client->pid <= 0 || client->owner_slot >= 0 || client->header == 0)
+        {
+            continue;
+        }
+        value = client->header->requests.close_declined;
+        if (value == client->close_declined_seen)
+        {
+            continue;
+        }
+        client->close_declined_seen = value;
+        if (client->close_requested_ms == 0)
+        {
+            continue;
+        }
+        client->header->flags &= ~SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+        client->close_requested_ms = 0;
+        if (client->not_responding)
+        {
+            client->not_responding = 0;
+            windowd_dirty_rect_add_client(dirty, client);
+        }
+        declined = 1;
+        eprintf("windowd: %s (pid %ld) declined to close\n",
+            client->path[0] != '\0' ? client->path : "?", client->pid);
+    }
+    if (!declined || session->end_session_fd < 0)
+    {
+        return;
+    }
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        struct windowd_client *client = &session->overlay_clients[slot];
+
+        if (client->pid > 0 && client->owner_slot < 0 && client->close_requested_ms != 0 &&
+            client->header != 0)
+        {
+            client->header->flags &= ~SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+            client->close_requested_ms = 0;
+            if (client->not_responding)
+            {
+                client->not_responding = 0;
+                windowd_dirty_rect_add_client(dirty, client);
+            }
+        }
+    }
+    eprintf("windowd: the session end was cancelled\n");
+    answer_end_session(session, -SAVANXP_ECANCELED);
+}
+
+/*
+ * The session is ending: every application window is asked to close, the
+ * shell is not, and one that connects meanwhile is asked too. Once none is
+ * left the session manager hears that the session is over. A window that
+ * does not close is the usual not-responding window: the shell offers End
+ * Now, and nothing ends it behind the user's back.
+ */
+static void service_end_session(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    int remaining = 0;
+    int slot;
+
+    if (session->end_session_fd < 0)
+    {
+        return;
+    }
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        struct windowd_client *client = &session->overlay_clients[slot];
+
+        if (client->pid <= 0 || client->owner_slot >= 0)
+        {
+            continue;
+        }
+        remaining += 1;
+        if (client->close_requested_ms == 0)
+        {
+            (void)close_overlay_window(session, dirty, slot);
+        }
+    }
+    if (remaining == 0)
+    {
+        eprintf("windowd: every application window closed; the session is over\n");
+        answer_end_session(session, 0);
+    }
+}
+
 /* Starts a program the session needs and holds a window slot for it until it
  * connects (admit_connection). Returns the slot, or -1 with nothing held.
  * Programs anybody else starts need no slot held: they take a free one when
@@ -2638,6 +2754,27 @@ static void admit_connection(
     {
         eprintf("windowd: pid %ld speaks another WM protocol (%u)\n", connection->pid, (unsigned)hello->version);
         refuse_connection(connection, -SAVANXP_EINVAL);
+        return;
+    }
+    if ((hello->flags & SAVANXP_WM_HELLO_END_SESSION) != 0u)
+    {
+        /* Only the session manager ends the session: windowd's own parent. */
+        if (connection->pid <= 0 || connection->pid != process_parent(savanxp_getpid()))
+        {
+            eprintf("windowd: pid %ld may not end the session\n", connection->pid);
+            refuse_connection(connection, -SAVANXP_EACCES);
+            return;
+        }
+        if (session->end_session_fd >= 0)
+        {
+            refuse_connection(connection, -SAVANXP_EBUSY);
+            return;
+        }
+        session->end_session_fd = connection->write_fd;
+        connection->write_fd = -1;
+        close_pending_connection(connection);
+        eprintf("windowd: the session is ending; asking every window to close\n");
+        service_end_session(session, dirty);
         return;
     }
     if (connection->pid <= 0 || process_has_window(session, connection->pid))
@@ -2832,6 +2969,7 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
     session->submit_event_fd = -1;
     session->request_event_fd = -1;
     session->port_fd = -1;
+    session->end_session_fd = -1;
     for (slot = 0; slot < WINDOWD_MAX_PENDING_CONNECTIONS; ++slot)
     {
         session->pending[slot].read_fd = -1;
@@ -4552,6 +4690,8 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
     (void)event_reset(session->request_event_fd);
     service_connections(session, dirty);
     service_close_requests(session, dirty);
+    service_close_declines(session, dirty);
+    service_end_session(session, dirty);
     service_desktop(session, dirty);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -7358,6 +7498,8 @@ int main(int argc, char **argv)
             consent_opened_or_closed(&session, &dirty);
         }
         service_close_requests(&session, &dirty);
+        service_close_declines(&session, &dirty);
+        service_end_session(&session, &dirty);
         service_desktop(&session, &dirty);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {

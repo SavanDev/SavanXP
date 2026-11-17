@@ -1,9 +1,12 @@
 #include "libc.h"
 
+#include <pthread.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "sxn/sxn.h"
 
 static int is_space_char(char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n';
@@ -862,18 +865,191 @@ __attribute__((noreturn)) static void run_rescue_system(void) {
     }
 }
 
+/* --- Shutdown (docs/kernel/POWER.md#ending-the-session) -----------------------
+ *
+ * init owns the shutdown, as Windows' winlogon does: whoever wants one asks on
+ * init's port, and init ends the session in order before it touches
+ * /dev/power. A second thread serves the port while the first stays in
+ * waitpid. While a shutdown is under way the first restarts nothing, so
+ * nothing init stops comes back. */
+
+/* What init started and still watches, for the shutdown thread to stop. */
+static volatile long g_audiod_pid = 0;
+static volatile long g_elevationd_pid = 0;
+static volatile long g_sessiond_pid = 0;
+static volatile long g_shell_pid = 0;
+/* The savanxp_shutdown_action under way, or 0. */
+static volatile int g_shutting_down = 0;
+
+/* How long a requester gets to read the last reply and hang up before the
+ * power goes, and how long a request may take to arrive after connecting. */
+#define INIT_SHUTDOWN_GOODBYE_MS 2000
+#define INIT_SHUTDOWN_REQUEST_MS 2000
+
+static void shutdown_reply(int32_t write_handle, int32_t status, uint32_t stage) {
+    struct savanxp_shutdown_reply reply;
+
+    memset(&reply, 0, sizeof(reply));
+    reply.status = status;
+    reply.stage = stage;
+    (void)sxn_write(write_handle, &reply, sizeof(reply));
+}
+
+static int serve_shutdown_request(struct sxn_port_connection* connection, long port);
+
+/* Asks sessiond to end the session and waits for its answer, however long the
+ * user takes with "save changes?". Requests that arrive meanwhile are answered
+ * (-EBUSY), not left waiting. 0 when it ended, or there was none to end;
+ * -ECANCELED when an application turned its close down. */
+static int end_session(long port) {
+    int32_t handles[2] = {-1, -1};
+    struct savanxp_shutdown_request request;
+    struct savanxp_shutdown_reply reply;
+    long got;
+
+    if (g_sessiond_pid <= 0 || sxn_port_connect(SAVANXP_SESSION_PORT_NAME, handles) < 0) {
+        return 0;
+    }
+    memset(&request, 0, sizeof(request));
+    request.magic = SAVANXP_SHUTDOWN_MAGIC;
+    request.action = SAVANXP_SHUTDOWN_END_SESSION;
+    got = sxn_write(handles[0], &request, sizeof(request));
+    while (got == (long)sizeof(request)) {
+        int32_t waits[2] = {handles[1], (int32_t)port};
+        struct sxn_port_connection other;
+
+        if (sxn_wait_many(waits, 2, -1) == 0) {
+            got = sxn_read(handles[1], &reply, sizeof(reply));
+            break;
+        }
+        while (sxn_port_accept(port, &other) == 0) {
+            (void)serve_shutdown_request(&other, port);
+            (void)sxn_close(other.read_handle);
+            (void)sxn_close(other.write_handle);
+        }
+    }
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    /* A sessiond that went away has no session left to end. */
+    if (got != (long)sizeof(reply)) {
+        return 0;
+    }
+    return reply.status == -SAVANXP_ECANCELED ? -SAVANXP_ECANCELED : 0;
+}
+
+static void stop_process(volatile long* pid) {
+    if (*pid > 0) {
+        (void)savanxp_kill((int)*pid, SAVANXP_SIGKILL);
+    }
+}
+
+/* /dev/power itself: the kernel syncs the volumes and cuts the power. */
+static void power_device(int action) {
+    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
+    long result = fd;
+
+    if (fd >= 0) {
+        result = savanxp_ioctl((int)fd, action == SAVANXP_SHUTDOWN_REBOOT ? POWER_IOC_REBOOT : POWER_IOC_SHUTDOWN, 0);
+        savanxp_close((int)fd);
+    }
+    printf("init: /dev/power did not %s (%s)\n", action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "power off",
+           result_error_string(result));
+}
+
+/* One request, start to end. Returns 1 if the machine should go down now. */
+static int serve_shutdown_request(struct sxn_port_connection* connection, long port) {
+    struct savanxp_shutdown_request request;
+    int32_t ready = connection->read_handle;
+    int action;
+    int status;
+
+    if (sxn_wait_many(&ready, 1, INIT_SHUTDOWN_REQUEST_MS) != 0 ||
+        sxn_read(connection->read_handle, &request, sizeof(request)) != (long)sizeof(request) ||
+        request.magic != SAVANXP_SHUTDOWN_MAGIC ||
+        (request.action != SAVANXP_SHUTDOWN_POWER_OFF && request.action != SAVANXP_SHUTDOWN_REBOOT)) {
+        shutdown_reply(connection->write_handle, -SAVANXP_EINVAL, SAVANXP_SHUTDOWN_STAGE_ACCEPTED);
+        return 0;
+    }
+    if (g_shutting_down != 0) {
+        shutdown_reply(connection->write_handle, -SAVANXP_EBUSY, SAVANXP_SHUTDOWN_STAGE_ACCEPTED);
+        return 0;
+    }
+    action = (int)request.action;
+    g_shutting_down = action;
+    shutdown_reply(connection->write_handle, 0, SAVANXP_SHUTDOWN_STAGE_ACCEPTED);
+    printf("init: %s requested by pid %u; ending the session\n",
+           action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "shutdown", (unsigned)connection->client_pid);
+
+    status = end_session(port);
+    if (status == -SAVANXP_ECANCELED) {
+        printf("init: an application cancelled the %s\n", action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "shutdown");
+        g_shutting_down = 0;
+        shutdown_reply(connection->write_handle, status, SAVANXP_SHUTDOWN_STAGE_DONE);
+        return 0;
+    }
+
+    /* The session is over; the services hold nothing the disk still needs. */
+    stop_process(&g_sessiond_pid);
+    stop_process(&g_shell_pid);
+    stop_process(&g_elevationd_pid);
+    stop_process(&g_audiod_pid);
+    printf("init: session ended and services stopped; %s\n",
+           action == SAVANXP_SHUTDOWN_REBOOT ? "restarting" : "powering off");
+    shutdown_reply(connection->write_handle, 0, SAVANXP_SHUTDOWN_STAGE_DONE);
+    /* The requester may want to say something before the power goes: give it
+     * until it hangs up, or a moment. */
+    (void)sxn_wait_many(&ready, 1, INIT_SHUTDOWN_GOODBYE_MS);
+    return 1;
+}
+
+static void* shutdown_service(void* argument) {
+    long port = (long)argument;
+
+    for (;;) {
+        struct sxn_port_connection connection;
+
+        (void)sxn_wait_one(port, -1);
+        while (sxn_port_accept(port, &connection) == 0) {
+            int go = serve_shutdown_request(&connection, port);
+
+            (void)sxn_close(connection.read_handle);
+            (void)sxn_close(connection.write_handle);
+            if (go) {
+                power_device(g_shutting_down);
+                /* Still here: the power did not go. Nothing is left running
+                 * to go back to, so stay down. */
+                for (;;) {
+                    sleep_ms(1000);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/* Opens init's port before the session starts, so a desktop always finds it. */
+static void start_shutdown_service(void) {
+    static pthread_t thread;
+    long port = sxn_port_create(SAVANXP_SHUTDOWN_PORT_NAME);
+
+    if (port < 0 || pthread_create(&thread, 0, shutdown_service, (void*)port) != 0) {
+        printf("init: cannot serve %s; programs fall back to /dev/power\n", SAVANXP_SHUTDOWN_PORT_NAME);
+    }
+}
+
+/* The system as it runs normally: services, the shutdown port, the session,
+ * and the supervisor that restarts them. The graphical session belongs to
+ * sessiond (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-
+ * sessiond); init keeps audiod, elevationd and the fallback to the text
+ * shell. A smoke scenario that needs the real
+ * session passes the program that drives it (`driver`), started once the
+ * session is. Never returns. */
+__attribute__((noreturn)) static void run_system(const char* const* driver);
+
 int main(int argc, char** argv) {
     if (started_from_rescue(argc, argv)) {
         run_rescue_system();
     }
-
-    /* The graphical session belongs to sessiond (docs/desktop/
-     * DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond); init keeps audiod
-     * and the fallback to the text shell. */
-    const char* sessiond_argv[] = {"/system/sessiond.sxe", 0};
-    const char* shell_argv[] = {"/bin/sh", 0};
-    unsigned long last_sessiond_start_ms = 0;
-    int rapid_failures = 0;
 
     /* The smoke trigger is staged into the initramfs, never onto the disk, so a
      * smoke build leaves the persistent image alone. */
@@ -889,106 +1065,143 @@ int main(int argc, char** argv) {
         if (automation_spec[0] == '\0') {
             memcpy(automation_spec, "smoke", sizeof("smoke"));
         }
+        if (strcmp(automation_spec, "nativesessionend") == 0) {
+            /* The real session, its shutdown included, driven from inside. */
+            static const char* const driver[] = {"/bin/nativetest.sxe", "session-end", 0};
+            run_system(driver);
+        }
         (void)run_automation_spec(automation_spec);
         for (;;) {
             sleep_ms(1000);
         }
     }
 
+    run_system(0);
+}
+
+__attribute__((noreturn)) static void run_system(const char* const* driver) {
+    const char* sessiond_argv[] = {"/system/sessiond.sxe", 0};
+    const char* shell_argv[] = {"/bin/sh", 0};
+    const char* audiod_argv[] = {"/bin/audiod", 0};
+    const char* elevationd_argv[] = {"/system/elevationd.sxe", 0};
+    unsigned long last_sessiond_start_ms = 0;
+    unsigned long elevationd_started_ms = 0;
+    int rapid_failures = 0;
+    int driver_started = 0;
+
     ensure_user_profile();
     apply_keyboard_layout_preference();
     apply_audio_preference();
+    start_shutdown_service();
 
-    /* El demonio de audio antes que windowd: asi gana siempre la carrera por
-     * /dev/audio0 y los clientes lo encuentran ya escuchando. Sin red o sin
-     * audio sale solo y todo sigue directo; el supervisor de abajo solo lo
-     * relanza si muere sirviendo, no si su salida es deliberada. En modo smoke
-     * no se llega aca y el device queda libre como siempre. */
-    const char* audiod_argv[] = {"/bin/audiod", 0};
-    long audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
-    if (audiod_pid < 0) {
-        printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
-        audiod_pid = 0;
+    /* The audio daemon before windowd, so it always wins the race for
+     * /dev/audio0 and clients find it already listening. Without a network or
+     * audio device it leaves on its own and everything plays directly; the
+     * supervisor below restarts it only if it dies while serving, not when it
+     * leaves on purpose. */
+    g_audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+    if (g_audiod_pid < 0) {
+        printf("init: failed to spawn audiod (%s)\n", result_error_string(g_audiod_pid));
+        g_audiod_pid = 0;
     }
 
     /* The elevation broker before the session (docs/kernel/
      * USERS_AND_PERMISSIONS.md#elevation): its port name is taken before any
      * program could take it. It is restarted if it dies, unless it dies at
      * once, which is a broken binary or a name already taken. */
-    const char* elevationd_argv[] = {"/system/elevationd.sxe", 0};
-    long elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
-    unsigned long elevationd_started_ms = uptime_ms();
-    if (elevationd_pid < 0) {
-        printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));
-        elevationd_pid = 0;
+    g_elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
+    elevationd_started_ms = uptime_ms();
+    if (g_elevationd_pid < 0) {
+        printf("init: failed to spawn elevationd (%s)\n", result_error_string(g_elevationd_pid));
+        g_elevationd_pid = 0;
     }
 
-    long sessiond_pid = 0;
     for (;;) {
         int status = 0;
         unsigned long runtime_ms = 0;
 
-        if (sessiond_pid <= 0) {
-            sessiond_pid = spawn("/system/sessiond.sxe", sessiond_argv, 1);
-            if (sessiond_pid < 0) {
-                printf("init: failed to spawn sessiond (%s)\n", result_error_string(sessiond_pid));
-                sessiond_pid = 0;
+        if (g_sessiond_pid <= 0 && g_shutting_down == 0) {
+            g_sessiond_pid = spawn("/system/sessiond.sxe", sessiond_argv, 1);
+            if (g_sessiond_pid < 0) {
+                printf("init: failed to spawn sessiond (%s)\n", result_error_string(g_sessiond_pid));
+                g_sessiond_pid = 0;
                 sleep_ms(1000);
             } else {
                 last_sessiond_start_ms = uptime_ms();
             }
         }
+        if (driver != 0 && !driver_started && g_sessiond_pid > 0) {
+            long driver_pid = spawn(driver[0], driver, 2);
 
-        if (audiod_pid <= 0 && sessiond_pid <= 0) {
+            driver_started = 1;
+            if (driver_pid < 0) {
+                printf("init: failed to spawn %s (%s)\n", driver[0], result_error_string(driver_pid));
+            }
+        }
+
+        if (g_audiod_pid <= 0 && g_sessiond_pid <= 0) {
             sleep_ms(1000);
             continue;
         }
 
         long pid = savanxp_waitpid(-1, &status);
         if (pid < 0) {
-            /* Sin hijo que reapear todavia (carrera): reintentar en un rato. */
+            /* No child to reap yet (a race): try again in a moment. */
             sleep_ms(250);
             continue;
         }
 
-        if (pid == audiod_pid && audiod_pid != 0) {
-            audiod_pid = 0;
+        if (g_shutting_down != 0) {
+            /* The shutdown thread is stopping these: reap, restart nothing. */
+            if (pid == g_audiod_pid) {
+                g_audiod_pid = 0;
+            } else if (pid == g_elevationd_pid) {
+                g_elevationd_pid = 0;
+            } else if (pid == g_sessiond_pid) {
+                g_sessiond_pid = 0;
+            }
+            continue;
+        }
+
+        if (pid == g_audiod_pid && g_audiod_pid != 0) {
+            g_audiod_pid = 0;
             if (status == 0) {
-                /* Salida deliberada (sin red, sin audio, otro demonio): el
-                 * sistema sigue directo por turnos, no hay que insistir. */
+                /* It left on purpose (no network, no audio, another daemon):
+                 * the system plays directly, one program at a time; no point
+                 * insisting. */
                 printf("init: audiod left without mixing (status 0)\n");
             } else {
                 printf("init: audiod exited with %d, restarting\n", status);
                 sleep_ms(250);
-                audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
-                if (audiod_pid < 0) {
-                    printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
-                    audiod_pid = 0;
+                g_audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+                if (g_audiod_pid < 0) {
+                    printf("init: failed to spawn audiod (%s)\n", result_error_string(g_audiod_pid));
+                    g_audiod_pid = 0;
                 }
             }
             continue;
         }
 
-        if (pid == elevationd_pid && elevationd_pid != 0) {
-            elevationd_pid = 0;
+        if (pid == g_elevationd_pid && g_elevationd_pid != 0) {
+            g_elevationd_pid = 0;
             if (uptime_ms() - elevationd_started_ms < 2000UL) {
                 printf("init: elevationd exited at once with %d; elevation is unavailable\n", status);
             } else {
                 printf("init: elevationd exited with %d, restarting\n", status);
-                elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
+                g_elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
                 elevationd_started_ms = uptime_ms();
-                if (elevationd_pid < 0) {
-                    printf("init: failed to spawn elevationd (%s)\n", result_error_string(elevationd_pid));
-                    elevationd_pid = 0;
+                if (g_elevationd_pid < 0) {
+                    printf("init: failed to spawn elevationd (%s)\n", result_error_string(g_elevationd_pid));
+                    g_elevationd_pid = 0;
                 }
             }
             continue;
         }
 
-        if (pid == sessiond_pid && sessiond_pid != 0) {
+        if (pid == g_sessiond_pid && g_sessiond_pid != 0) {
             runtime_ms = uptime_ms() - last_sessiond_start_ms;
             printf("init: sessiond exited with %d, restarting\n", status);
-            sessiond_pid = 0;
+            g_sessiond_pid = 0;
 
             if (status != 0 && runtime_ms < 2000UL) {
                 rapid_failures += 1;
@@ -1000,13 +1213,15 @@ int main(int argc, char** argv) {
              * the session will not come up. */
             if (status == 3 || rapid_failures >= 3) {
                 printf("init: the graphical session is unstable, falling back to /bin/sh\n");
-                long shell_pid = spawn("/bin/sh", shell_argv, 1);
-                if (shell_pid < 0) {
-                    printf("init: failed to spawn fallback shell (%s)\n", result_error_string(shell_pid));
+                g_shell_pid = spawn("/bin/sh", shell_argv, 1);
+                if (g_shell_pid < 0) {
+                    printf("init: failed to spawn fallback shell (%s)\n", result_error_string(g_shell_pid));
+                    g_shell_pid = 0;
                     sleep_ms(1000);
                 } else {
                     int shell_status = 0;
-                    savanxp_waitpid((int)shell_pid, &shell_status);
+                    savanxp_waitpid((int)g_shell_pid, &shell_status);
+                    g_shell_pid = 0;
                     printf("init: fallback shell exited with %d, retrying the session\n", shell_status);
                 }
                 rapid_failures = 0;

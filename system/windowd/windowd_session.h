@@ -107,6 +107,9 @@ struct windowd_client
      * (docs/desktop/DESKTOP_ARCHITECTURE.md#closing-a-window). 0 = not asked. */
     unsigned long close_requested_ms;
     int not_responding;
+    /* The last savanxp_wm_client_requests.close_declined seen: a new value
+     * is the program turning the close down. */
+    uint32_t close_declined_seen;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de
@@ -183,6 +186,9 @@ struct windowd_session
     /* How long a window asked to close may keep running before it is shown as
      * not responding. A field so the selftest need not wait it out. */
     unsigned long hung_close_ms;
+    /* The session is ending (SAVANXP_WM_HELLO_END_SESSION): the write end of
+     * the session manager's event pipe, owed one answer. -1 otherwise. */
+    int end_session_fd;
     /* The cursor moved or changed shape since the last commit: compositord
      * draws it, so a commit has to tell it even with nothing else damaged. */
     int cursor_moved;

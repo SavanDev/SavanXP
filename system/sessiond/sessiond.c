@@ -17,6 +17,10 @@
  * their parent is also what makes its desktop the shell: windowd grants the
  * role to a client whose parent is windowd's own parent, and compositord
  * takes as its window manager only a sibling.
+ *
+ * It also ends the session when init asks, for a shutdown
+ * (docs/kernel/POWER.md#ending-the-session): a second thread serves its port,
+ * which takes only its parent, while the first stays in waitpid.
  */
 
 static const char* const k_compositord_path = "/system/compositord.sxe";
@@ -59,6 +63,11 @@ struct sessiond_child {
 static struct sessiond_child g_compositord = {0, 0, 0, 0ull, 0};
 static struct sessiond_child g_windowd = {0, 0, 0, 0ull, 0};
 static struct sessiond_child g_desktop = {0, 1, 0, 0ull, 0};
+
+/* The session is ending: the end-session thread owns it, and the main loop
+ * restarts nothing that exits meanwhile. */
+static volatile int g_ending = 0;
+static unsigned char g_end_stack[16384] __attribute__((aligned(16)));
 
 /* One event nobody sets: waiting on it with a timeout is a sleep. */
 static long g_sleep_event = -1;
@@ -184,11 +193,125 @@ static void end_session(void) {
     end_child(&g_compositord);
 }
 
+/*
+ * Asks windowd to end the session (SAVANXP_WM_HELLO_END_SESSION) and waits
+ * for its one answer: 0 once every application window has closed, -ECANCELED
+ * when one turned the close down. windowd waits for the user as long as it
+ * takes -- a "save changes?" question, a window not responding -- so this does
+ * too. A windowd that is gone has no windows left: that is an ended session.
+ */
+static int ask_windowd_to_end(void) {
+    int32_t handles[2] = {-1, -1};
+    struct savanxp_wm_hello hello;
+    struct savanxp_wm_event answer;
+    long got;
+
+    if (sxn_port_connect(SAVANXP_WM_PORT_NAME, handles) < 0) {
+        return 0;
+    }
+    hello.magic = SAVANXP_WM_HELLO_MAGIC;
+    hello.version = SAVANXP_WM_PROTOCOL_VERSION;
+    hello.flags = SAVANXP_WM_HELLO_END_SESSION;
+    hello.launch_flags = 0;
+    hello.reserved[0] = hello.reserved[1] = hello.reserved[2] = hello.reserved[3] = 0;
+    got = sxn_write(handles[0], &hello, sizeof(hello));
+    if (got == (long)sizeof(hello)) {
+        got = sxn_read(handles[1], &answer, sizeof(answer));
+    }
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    if (got != (long)sizeof(answer) || answer.kind != SAVANXP_WM_EVENT_WELCOME) {
+        return 0;
+    }
+    return answer.payload.welcome.status;
+}
+
+/* Ends a session program without waiting: the main loop reaps it. */
+static void terminate_child(const struct sessiond_child* child) {
+    if (child->pid > 0) {
+        (void)sxn_terminate(child->pid, 0);
+    }
+}
+
+static void answer_init(int32_t write_handle, int32_t status) {
+    struct savanxp_shutdown_reply reply;
+
+    reply.status = status;
+    reply.stage = SAVANXP_SHUTDOWN_STAGE_DONE;
+    reply.reserved[0] = reply.reserved[1] = 0;
+    (void)sxn_write(write_handle, &reply, sizeof(reply));
+}
+
+/*
+ * The end-session thread. Only init, sessiond's parent, is served; anyone
+ * else is dropped unread. On an ended session the rest of it is ended here
+ * and sessiond exits, which init, shutting down, does not answer with a new
+ * session. On a cancelled one the session goes on: the desktop, if it exited
+ * meanwhile, is started again.
+ */
+static void end_session_thread(void* argument) {
+    long port = (long)argument;
+    struct sxn_native_info self;
+    struct sxn_process_query query;
+    uint32_t parent = 0;
+
+    if (sxn_info(&self) == 0 && sxn_process_query((long)self.pid, &query) == 0) {
+        parent = query.parent_pid;
+    }
+    for (;;) {
+        struct sxn_port_connection connection;
+        struct savanxp_shutdown_request request;
+        int status;
+
+        (void)sxn_wait_one(port, -1);
+        while (sxn_port_accept(port, &connection) == 0) {
+            if (parent == 0 || connection.client_pid != parent ||
+                sxn_read(connection.read_handle, &request, sizeof(request)) != (long)sizeof(request) ||
+                request.magic != SAVANXP_SHUTDOWN_MAGIC || request.action != SAVANXP_SHUTDOWN_END_SESSION) {
+                (void)sxn_close(connection.read_handle);
+                (void)sxn_close(connection.write_handle);
+                continue;
+            }
+            log_line("sessiond: ending the session");
+            g_ending = 1;
+            status = ask_windowd_to_end();
+            if (status == -SAVANXP_ECANCELED) {
+                log_line("sessiond: an application cancelled the end of the session");
+                g_ending = 0;
+                if (g_windowd.pid > 0 && g_desktop.pid <= 0) {
+                    (void)start_child(&g_desktop);
+                }
+                answer_init(connection.write_handle, status);
+                (void)sxn_close(connection.read_handle);
+                (void)sxn_close(connection.write_handle);
+                continue;
+            }
+            /* No application window is left: what remains is the session's
+             * own programs, which hold nothing of the user's. */
+            terminate_child(&g_desktop);
+            terminate_child(&g_windowd);
+            terminate_child(&g_compositord);
+            log_line("sessiond: the session has ended");
+            answer_init(connection.write_handle, 0);
+            (void)sxn_close(connection.read_handle);
+            (void)sxn_close(connection.write_handle);
+            sxn_exit(0);
+        }
+    }
+}
+
 int main(void) {
+    long end_port;
+
     g_compositord.path = k_compositord_path;
     g_windowd.path = k_windowd_path;
     g_desktop.path = k_desktop_path;
     g_sleep_event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    end_port = sxn_port_create(SAVANXP_SESSION_PORT_NAME);
+    if (end_port < 0 ||
+        sxn_thread_create(end_session_thread, (void*)end_port, g_end_stack + sizeof(g_end_stack), 0) < 0) {
+        log_line("sessiond: cannot serve its port; the session cannot be ended for a shutdown");
+    }
 
     for (;;) {
         int status = 0;
@@ -206,6 +329,14 @@ int main(void) {
         if (pid < 0) {
             /* No child: nothing to watch. Start over. */
             g_windowd.pid = 0;
+            continue;
+        }
+        if (g_ending) {
+            /* The end-session thread owns the session now: reap, restart
+             * nothing. */
+            if (pid == g_desktop.pid) {
+                g_desktop.pid = 0;
+            }
             continue;
         }
 

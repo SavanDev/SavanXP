@@ -2839,6 +2839,47 @@ def crop_without_cursor(image, box, cursor_x, cursor_y, size=40):
     return cropped.tobytes()
 
 
+def scenario_notepadclose(s):
+    """Closing Notepad with unsaved changes asks first (docs/kernel/POWER.md#ending-the-session).
+
+    Alt+F4 shows "save changes?"; Esc turns the close down and the window and
+    its text stay; a second Alt+F4 asks again, which only happens if windowd
+    withdrew the first request; Discard closes it. The same answer is what a
+    shutdown gets, so a Cancel here is also a cancelled shutdown.
+    """
+    screen = (0, 0, 1280, 800)
+    question = "The document has unsaved changes."
+    s.open_notepad()
+    s.qmp.type_text("unsaved")
+    time.sleep(1.0)
+
+    s.qmp.chord("alt", "f4")
+    time.sleep(1.5)
+    image = s.shot("notepad-close-asks")
+    expect_text(image, screen, question, TEXT, FACE, "Notepad's question on Alt+F4")
+
+    s.qmp.tap("esc")
+    time.sleep(1.5)
+    image = s.shot("notepad-close-cancelled")
+    if find_text(image, screen, question, TEXT, FACE)[0] is not None:
+        raise Failure("the question is still on screen after Esc")
+    expect_text(image, screen, "unsaved", TEXT, FIELD, "Notepad's text after a cancelled close")
+
+    s.qmp.chord("alt", "f4")
+    time.sleep(1.5)
+    image = s.shot("notepad-close-asks-again")
+    expect_text(image, screen, question, TEXT, FACE, "Notepad's question on the second Alt+F4")
+
+    # The focus starts on Save; Discard is the next button.
+    s.qmp.tap("tab")
+    time.sleep(0.5)
+    s.qmp.tap("spc")
+    time.sleep(2.0)
+    image = s.shot("notepad-closed")
+    if find_text(image, screen, "unsaved", TEXT, FIELD)[0] is not None:
+        raise Failure("Notepad is still open after Discard")
+
+
 def scenario_notepadwheel(s):
     """Verificacion ad hoc del scroll del editor de Notepad (rueda + barra)."""
     s.open_notepad()
@@ -4173,6 +4214,7 @@ SCENARIOS = {
     "wheel": scenario_wheel,
     "webview": scenario_webview,
     "notepadwheel": scenario_notepadwheel,
+    "notepadclose": scenario_notepadclose,
     "kbdlayout": scenario_kbdlayout,
     "contextmenu": scenario_contextmenu,
     "desktopicons": scenario_desktopicons,
@@ -4255,3 +4297,4 @@ def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False, 
     session = Session(qmp, out_dir, serial)
     SCENARIOS[name](session)
     return sorted(str(p) for p in Path(out_dir).glob("*.png"))
+
