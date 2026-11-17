@@ -1804,7 +1804,7 @@ bool fault_in_region(VmSpace& space, uint64_t address, bool write, bool execute)
     const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
     // Mapped already, with the region's own access: asked twice.
     if (page_table_for(space, page, false) != nullptr) {
-        return !write || (access & region::kWrite) != 0;
+        return true;
     }
     if (!space.regions->entries[index].anonymous) return false;
     memory::PageAllocation allocation = {};

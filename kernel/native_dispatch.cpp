@@ -543,7 +543,6 @@ sxn_identity identity_of(const cred::Credentials& who) {
 int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles, uint64_t user_creator) {
     char name[object::kPortNameCapacity] = {};
 
-
     if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0' ||
         !sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true) ||
         (user_creator != 0 && !sx::validate_user_range(user_creator, sizeof(sxn_identity), true))) {
