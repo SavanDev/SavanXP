@@ -161,7 +161,11 @@ At 1920x1080 on the firmware framebuffer, all drawing in software:
 4. **Jack switching on the ALC269**: turn the policy on and plug the jack.
    Only if it does not follow is there codec work (HW-6).
 5. **HW-14**: the battery level, AC state and the lid.
-6. A driver for the Intel 3160 is a Wi-Fi project, and Wi-Fi is out of scope.
+6. **Page flips on the panel's firmware mode** (ND3 in
+   [NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md)),
+   after the Haswell phase. A hardware cursor costs more here than on
+   Haswell: from Skylake it needs its own DDB allocation and watermarks.
+7. A driver for the Intel 3160 is a Wi-Fi project, and Wi-Fi is out of scope.
 
 ## Sources
 

@@ -83,8 +83,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   ISO boots on metal, the shared driver work packages (HW-1 to HW-15) and their
   order, and how to inventory a machine and record a run.
 - [`RYZEN5_1600_VEGA56.md`](hardware/RYZEN5_1600_VEGA56.md) — the development host:
-  inventory, what was verified on it, the Vega 56 on the firmware framebuffer and
-  why no native driver is planned, the ALC892 notes and the pending audio checks.
+  inventory, what was verified on it, the Vega 56 on the firmware framebuffer,
+  why no native mode setting is planned and the page flips possible without it,
+  the ALC892 notes and the pending audio checks.
 - [`PENTIUM4_EVO_N1020V.md`](hardware/PENTIUM4_EVO_N1020V.md) — the Compaq laptop:
   why it cannot boot `master`, whether `master` could support it, the state of the
   i386 port on `legacy`, and the 64-bit Pentium 4s that are `master` targets.
@@ -106,6 +107,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   ATA ports at the 28-bit limit, APIC IDs from 16.
 - [`CORE_I5_4440.md`](hardware/CORE_I5_4440.md) — a Haswell desktop (H81) verified
   under UEFI: xHCI and EHCI hubs, AHCI, the steady tick loss, frequent late writers.
+- [`NATIVE_GRAPHICS.md`](hardware/NATIVE_GRAPHICS.md) — the research behind native
+  graphics: what OpenBSD, FreeBSD and NetBSD carry (Linux's DRM), its measured
+  size, what a port needs from the kernel, page flips on the firmware's mode
+  (level 1) and mode setting (level 2) family by family, and the references
+  with their licenses.
 
 ## Userland — `userland/`
 
@@ -290,6 +296,14 @@ all its phases have landed; the links to it move with it.
 - [`FRAMEBUFFER_ROADMAP.md`](roadmaps/open/FRAMEBUFFER_ROADMAP.md) — firmware framebuffer
   validation, cache attributes, presentation semantics, emergency output, pixel
   formats, measured performance and the gates for a native display driver.
+- [`NATIVE_DISPLAY_ROADMAP.md`](roadmaps/open/NATIVE_DISPLAY_ROADMAP.md) — display
+  drivers of our own under FB7, one GPU family at a time: page flips and a
+  hardware cursor on the firmware's mode first (Haswell, the Vega 56, Skylake,
+  the Radeon 3000), then mode setting (AtomBIOS Radeons, Intel GMA, Intel DDI),
+  phases ND1-ND7.
+- [`DRM_PORT_ROADMAP.md`](roadmaps/open/DRM_PORT_ROADMAP.md) — not planned: porting
+  OpenBSD's DRM drivers (`i915` first, `amdgpu` last) on a Linux interface layer
+  of our own, when to start, the kernel prerequisites and phases DP0-DP6.
 - [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.

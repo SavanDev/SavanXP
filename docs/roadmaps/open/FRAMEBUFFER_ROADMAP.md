@@ -295,6 +295,14 @@ tests. Select an exact GPU generation, PCI ID, connector and monitor/panel.
 [Intel GMA](../../hardware/CORE2_DUO.md#chipset-graphics) is a documented
 candidate, not a commitment to support every GMA or a claim of tested hardware.
 
+The candidates, what each GPU family allows and a plan per family are in
+[NATIVE_DISPLAY_ROADMAP.md](NATIVE_DISPLAY_ROADMAP.md), from the research in
+[NATIVE_GRAPHICS.md](../../hardware/NATIVE_GRAPHICS.md). It splits the work
+into two levels: page flips and a hardware cursor on the firmware's mode
+(level 1), possible on Intel and on every AMD generation including the
+Vega 56, then mode setting (level 2). The acceptance below is level 2's;
+level 1 does not change the mode, and its phases carry their own.
+
 Write the target-specific plan before implementation: resource ownership,
 firmware handoff, timings/EDID or panel tables, PLL/pipe/plane programming,
 interrupts, vblank, buffer lifetime, cursor plane and failure recovery. Bind

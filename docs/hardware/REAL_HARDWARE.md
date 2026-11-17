@@ -421,6 +421,13 @@ Other remaining work:
   say which are plausible (Intel GMA, the AtomBIOS Radeons) and which are not
   (Vega, the NVIDIA and VIA chipsets). None gives acceleration: SxGL stays a
   software rasterizer ([SXGL.md](../desktop/SXGL.md)).
+- **Page flips and a hardware cursor on the firmware's mode** are a smaller
+  step than mode setting, and Intel and every AMD generation allow it, the
+  Vega included. The research is in [NATIVE_GRAPHICS.md](NATIVE_GRAPHICS.md),
+  the phases in
+  [NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md),
+  and the deferred alternative, porting a DRM driver from OpenBSD, in
+  [DRM_PORT_ROADMAP.md](../roadmaps/open/DRM_PORT_ROADMAP.md).
 
 ### HW-12 — Running from a disk
 

@@ -86,7 +86,10 @@ is an interpreter for those tables plus the code that picks an output and its
 timings from EDID. That is an L package, it buys the monitor's native
 resolution, mode changes from Display Properties and a page flip, and it buys
 no acceleration. It should wait until the machine has been run on VBE and
-found wanting.
+found wanting. Page flips and a hardware cursor on the firmware's mode come
+first and are smaller; both are phases of
+[NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md)
+(ND4 and ND5), on the [FX-4100](AMD_FX_4100.md)'s 760G first.
 
 The graphics core also exposes its own HD Audio function for HDMI
 (`1002:960f`, `1002:970f`). Like the Vega's, it is a second controller that

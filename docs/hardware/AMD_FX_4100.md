@@ -105,6 +105,10 @@ At 1280x1024, all drawing in software:
 3. **HW-6**: speakers on the jack, to learn whether the SB7x0 plays without
    its snooping quirk.
 4. **HW-15**: `alc(4)` for the AR8151.
+5. **The Radeon 3000**: page flips and a hardware cursor on the firmware's
+   mode, then AtomBIOS mode setting (ND4 and ND5 in
+   [NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md)).
+   This is the machine for the AtomBIOS Radeons.
 
 ## Sources
 

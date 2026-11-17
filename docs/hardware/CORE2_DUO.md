@@ -88,7 +88,8 @@ do only mode setting. The work is reading the panel timings (EDID, or the
 video BIOS table on a laptop's internal panel), programming the PLL, the pipe
 and the plane, and the LVDS or analog output. An L package per generation
 (945, 965, G4x), giving the native resolution, mode changes and a page flip.
-No acceleration.
+No acceleration. It is phase ND6 of
+[NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md).
 
 ## The rest of the machine
 

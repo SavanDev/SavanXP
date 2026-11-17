@@ -119,7 +119,10 @@ In the order that makes the machine more useful soonest:
    ([NVME.md](../kernel/NVME.md)).
 3. **The physical audio checks** still owed to the follow-up software, below.
 
-Not planned: the native Vega driver, HDMI and DisplayPort audio, Wi-Fi.
+Not planned: mode setting on the Vega (an `amdgpu` port), HDMI and
+DisplayPort audio, Wi-Fi. Page flips and a hardware cursor on the
+firmware's mode do not need `amdgpu`; they are a possible later phase, ND2 in
+[NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md).
 
 ## The Vega 56
 
@@ -139,7 +142,7 @@ is enough for the desktop, and it is everything there is:
   machine; the hardware backend in [VIRGL_ROADMAP.md](../roadmaps/open/VIRGL_ROADMAP.md)
   is for virtual machines.
 
-### Why a native driver is not planned
+### Why native mode setting is not planned
 
 Vega 10 is driven by Linux's `amdgpu`, and nothing smaller exists to learn
 from. Lighting a display natively means AMD's Display Core, the largest part
@@ -147,11 +150,30 @@ of that driver; anything past mode setting means loading signed firmware for
 the card's security processor, power controller and command processors, then
 a memory manager and a command submission path. OpenBSD and FreeBSD do not
 have their own driver either: they carry the Linux one whole, behind a
-compatibility layer for the Linux kernel's interfaces.
+compatibility layer for the Linux kernel's interfaces. NetBSD carries an
+older import of the same code.
 
 A port would therefore be a Linux kernel-interface layer first and a GPU
-driver second: XL, with a second project hidden inside it. Nothing in the
+driver second: XL, with a second project hidden inside it. Measured on
+OpenBSD's tree, the AMD code alone is about 1.2 million lines, twenty times
+this kernel. The measurements and what the layer needs from the kernel are
+in [NATIVE_GRAPHICS.md](NATIVE_GRAPHICS.md), and the deferred plan in
+[DRM_PORT_ROADMAP.md](../roadmaps/open/DRM_PORT_ROADMAP.md). Nothing in the
 desktop needs it today.
+
+### Page flips without `amdgpu`
+
+Setting a mode is out of reach; switching between two buffers on the mode
+the firmware set is not. DCE 12, the Vega's display engine, keeps the scanout
+register of earlier Radeons: `GRPH_PRIMARY_SURFACE_ADDRESS`, written under
+`GRPH_UPDATE_LOCK` and latched at vertical blank, with
+`GRPH_SURFACE_UPDATE_PENDING` to poll for completion, and a cursor plane
+(`CUR_SURFACE_ADDRESS`). Driving only those registers gives tear-free
+presentation and a hardware cursor, with no firmware file, no SMU and no
+Display Core. It is phase ND2 of
+[NATIVE_DISPLAY_ROADMAP.md](../roadmaps/open/NATIVE_DISPLAY_ROADMAP.md).
+Still to record for it: the BAR the CPU sees, the VRAM the firmware reserves,
+and the GPU address of the GOP framebuffer.
 
 ### What is worth doing instead (HW-11)
 
