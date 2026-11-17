@@ -178,6 +178,14 @@ revision byte: the same `10ec:8168` covers chips from the 8168B to the 8168H,
 each with its own quirks. What a first run on metal should report is that
 line, the link line, and whether `rx_frames` grows on a live LAN.
 
+Bring-up is now resumable (`prepare`: chip reset, PHY reset, then up to four
+seconds of link negotiation), and transmit returns without waiting for DMA;
+see [NETWORKING.md](../net/NETWORKING.md#native-setup-and-route-waits).
+Neither path has run on metal.
+The first run should bring the link up both ways, through `NET_IOC_UP` (the
+blocking `bring_up`) and through a SUN socket (`prepare` advanced by the
+heartbeat), and report `tx_errors` beside `rx_frames`.
+
 What the driver leaves out: offloads, VLAN, jumbo frames, interrupt
 moderation, Wake-on-LAN, and the old 8169S PHY DSP fixups. Devices behind a
 PCIe root port are polled, because `route_pci_intx` looks the device up in
