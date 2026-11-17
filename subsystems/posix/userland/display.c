@@ -122,7 +122,7 @@ static int g_preview_height = 0;
 
 /* ---- the background list -------------------------------------------------
  *
- * "(None)" first, then every BMP and PNG in /wallpapers by name, then whatever the
+ * "(None)" first, then every BMP, PNG and JPEG in /wallpapers, then whatever the
  * user picked with Browse. The list shows names; the paths are kept beside
  * them. */
 #define DISPLAY_MAX_BACKGROUNDS 64
@@ -161,7 +161,9 @@ static int has_image_extension(const char *name)
     size_t length = strlen(name);
 
     return length > 4 && (compare_names(name + length - 4, ".bmp") == 0 ||
-                          compare_names(name + length - 4, ".png") == 0);
+                          compare_names(name + length - 4, ".png") == 0 ||
+                          compare_names(name + length - 4, ".jpg") == 0 ||
+                          (length > 5 && compare_names(name + length - 5, ".jpeg") == 0));
 }
 
 /* The name a path shows in the list: its file name without the extension. */
@@ -174,7 +176,7 @@ static void name_from_path(const char *path, char *name, size_t capacity)
     length = strlen(start);
     if (has_image_extension(start))
     {
-        length -= 4;
+        length = (size_t)(strrchr(start, '.') - start);
     }
     if (length >= capacity)
     {
@@ -1197,7 +1199,7 @@ static void on_browse(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    open_prompt("Browse", "Path of a BMP or PNG image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
+    open_prompt("Browse", "Path of a BMP, PNG or JPEG image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
 }
 
 static void on_position_changed(struct sxgui_widget *widget, void *user)

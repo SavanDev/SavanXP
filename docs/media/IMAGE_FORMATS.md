@@ -95,9 +95,10 @@ interface cannot truthfully distinguish those causes. These failures stay
 The format-specific PNG/BMP functions, their alpha variants and their error
 conventions remain available. The common interface returns the same white
 composite as `sx_png_decode_into` or `sx_bmp_decode_into`; it does not replace
-the straight-alpha calls used by cursors. Existing programs keep their current
-format and file-association policies. JPEG integration into applications is
-a later I5 delivery.
+the straight-alpha calls used by cursors. Desktop wallpapers and Display
+Properties use the common API with a 2048-side output ceiling and automatic
+JPEG reduction; see [DISPLAY_PROPERTIES.md](../desktop/DISPLAY_PROPERTIES.md).
+Paint retains its BMP/PNG calls and file associations.
 
 `tests/host/sximg_test.cpp` compares common output and metadata with the
 existing BMP/PNG fixtures, including paletted, masked, RLE, transparent,
@@ -203,8 +204,8 @@ factors 1/2, exact component placement, mixed/separate scan order, partial MCUs,
 table redefinitions and changing restart intervals. Tests also check every
 truncated reference prefix, buffer guards, allocation failures and release,
 named unsupported modes, SOF1, restart wraparound, malformed/duplicate/missing
-scans and deterministic mutations. JPEG integration into applications remains
-a later delivery.
+scans and deterministic mutations. `wallpaper-smoke` exercises the common
+API in both desktop consumers, including reduced placement and reboot persistence.
 
 The same twenty JPEG fixtures also have sixty reduced references at 2/4/8,
 with the same one-level greyscale and three-level RGB tolerances. For the

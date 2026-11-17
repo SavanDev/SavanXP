@@ -1,7 +1,8 @@
 # Image Viewer and the image formats
 
-Status: **phases I1–I4 landed** (shared BMP decoding, PNG wallpapers, extended BMP and PNG formats).
-I5 has landed its common interface, greyscale/colour JPEG and reduced decoding; consumer integration is pending.
+Status: **phases I1–I5 landed** (shared BMP/PNG/JPEG decoders, the common image API,
+reduced JPEG and wallpaper/Display Properties integration). The viewer (I6)
+and progressive JPEG (I7) remain.
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -136,8 +137,8 @@ decodes with the first that accepts it; Display Properties lists `.bmp` and
 `.png` in `/wallpapers`, and Browse accepts both. The check that keeps the
 list from showing something the desktop cannot draw is unchanged.
 Transparent pixels come out white (see
-[DISPLAY_PROPERTIES.md](../../desktop/DISPLAY_PROPERTIES.md)). JPEG joins
-the decoder table when I5 lands. Verification: `tools/shoot.sh --scenario
+[DISPLAY_PROPERTIES.md](../../desktop/DISPLAY_PROPERTIES.md)). I5 replaces
+the table with the common API and adds JPEG. Verification: `tools/shoot.sh --scenario
 wallpaperpng` picks `/paint-test.png` with Browse and reads the tiled pixels
 off the desktop.
 
@@ -195,7 +196,7 @@ buffer guards and truncated/malformed input. Existing RGB/RGBA and cursor
 pack checks remain; independent libpng-encoded indexed and greyscale-alpha
 Adam7 fixtures also pass through CUR selection and retain exact alpha.
 
-### I5 — JPEG baseline and the common entry point (in progress)
+### I5 — JPEG baseline and the common entry point (done)
 
 1. **Common API and contract (done):** BMP/PNG detection and decode via
    `sx_image_format`, `sx_image_info`, `sx_image_decode_into`; output limits,
@@ -215,16 +216,18 @@ Adam7 fixtures also pass through CUR selection and retain exact alpha.
    without first building a full-resolution bitmap. Automatic fitting honours
    every output limit; explicit scales are exact. Larger JPEG sources may fit
    at a reduced scale. See [IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md).
-5. **Consumer integration and closure:** wallpaper uses the common API;
-   Display Properties accepts `.jpg`/`.jpeg`, with visual and persistence
-   verification. Paint keeps its current formats unless extended separately.
+5. **Consumer integration and closure (done):** wallpaper and previews use the
+   common API at a 2048-side output limit; Display Properties lists and browses
+   `.jpg`/`.jpeg`. `wallpaper-smoke` and the `wallpaperjpeg` visual scenario
+   check exact tile/Center pixels, automatic reduction, invalid data, content
+   detection and a real reboot. Paint keeps its current formats.
 
 The JPEG calls are `sx_jpeg_info` and `sx_jpeg_decode_into`, alongside
 the common entry points. The host test refuses, by name: progressive
 (SOF2), arithmetic coding, 12-bit, lossless and CMYK/YCCK. Reference-encoded
 fixtures are compared within a stated tolerance for IDCT rounding and matched
-chroma reconstruction. JPEG errors and scale handling must be covered before
-I5 closes; identifying a JPEG signature alone is not decoder support.
+chroma reconstruction. Errors, scale planning/decoding and consumer integration
+are covered; JPEG signature detection alone is not decoder support.
 
 ### I6 — Image Viewer
 

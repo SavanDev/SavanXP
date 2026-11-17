@@ -323,19 +323,6 @@ static void unmap_private_section(void *view, int section_fd)
     }
 }
 
-/* The decoders the wallpaper reads, told apart by the file's first bytes
- * (each info call checks its own signature), never by the extension. */
-struct image_decoder
-{
-    int (*info)(const unsigned char *data, size_t size, uint32_t *width, uint32_t *height);
-    int (*decode_into)(const unsigned char *data, size_t size, uint32_t *pixels, size_t pixel_count);
-};
-
-static const struct image_decoder k_decoders[] = {
-    {sx_bmp_info, sx_bmp_decode_into},
-    {sx_png_info, sx_png_decode_into},
-};
-
 void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image)
 {
     if (image == 0)
@@ -356,25 +343,25 @@ void desktop_wallpaper_image_unload(struct desktop_wallpaper_image *image)
     image->height = 0;
 }
 
-/*
- * Decodes the image with libsximg (savanxp/img.h) into BGRX pixels ready for
- * the painter: an uncompressed BMP of 24 or 32 bpp, or a PNG of 8-bit RGB or
- * RGBA (transparent pixels come out white). Anything outside those profiles
- * is refused, and the caller falls back to the plain colour.
+/* Decode BMP, PNG or sequential JPEG by content through libsximg's common
+ * API. JPEG selects the first scale that fits the wallpaper output budget;
+ * alpha is composited onto white. A failure leaves the plain colour.
  *
- * The file is read into a section that is dropped once decoded, and the
- * pixels live in a section of their own, not on the heap: an image is up to
- * 16 MiB and the desktop keeps it for as long as it is the wallpaper.
+ * File bytes and destination pixels live in private sections. The input
+ * section is dropped after decode; the desktop keeps at most 16 MiB of
+ * pixels outside the heap for as long as this image is its wallpaper.
  */
 int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const char *path)
 {
     struct savanxp_stat info = {0};
     unsigned char *data = 0;
     int data_fd = 0;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    const struct image_decoder *decoder = 0;
-    size_t index;
+    const struct sx_image_options options = {
+        DESKTOP_WALLPAPER_MAX_DIMENSION, DESKTOP_WALLPAPER_MAX_DIMENSION,
+        DESKTOP_WALLPAPER_MAX_DIMENSION * DESKTOP_WALLPAPER_MAX_DIMENSION, 0u
+    };
+    struct sx_image_metadata decoded = {0};
+    int planned = 0;
     int fd;
     int loaded = 0;
 
@@ -396,30 +383,23 @@ int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const ch
     data = (unsigned char *)map_private_section((unsigned long)info.st_size, &data_fd);
     if (data != 0 && read_exact(fd, data, (unsigned long)info.st_size) == 0)
     {
-        for (index = 0; index < sizeof(k_decoders) / sizeof(k_decoders[0]); ++index)
-        {
-            if (k_decoders[index].info(data, (size_t)info.st_size, &width, &height) == 0)
-            {
-                decoder = &k_decoders[index];
-                break;
-            }
-        }
+        planned = sx_image_info(data, (size_t)info.st_size, &options, &decoded) == SX_IMAGE_OK;
     }
-    if (decoder != 0 && width <= DESKTOP_WALLPAPER_MAX_DIMENSION && height <= DESKTOP_WALLPAPER_MAX_DIMENSION)
+    if (planned)
     {
-        size_t count = (size_t)width * (size_t)height;
+        size_t count = (size_t)decoded.width * decoded.height;
 
         image->pixels = (uint32_t *)map_private_section((unsigned long)(count * sizeof(uint32_t)),
                                                         &image->section_fd);
         loaded = image->pixels != 0 &&
-                 decoder->decode_into(data, (size_t)info.st_size, image->pixels, count) == 0;
+                 sx_image_decode_into(data, (size_t)info.st_size, &options, image->pixels, count, 0) == SX_IMAGE_OK;
     }
     savanxp_close(fd);
     unmap_private_section(data, data_fd);
     if (loaded)
     {
-        image->width = (int)width;
-        image->height = (int)height;
+        image->width = (int)decoded.width;
+        image->height = (int)decoded.height;
         return 0;
     }
     desktop_wallpaper_image_unload(image);

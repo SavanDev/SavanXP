@@ -626,6 +626,12 @@ SCENARIOS: dict[str, Scenario] = {
         no_network=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "wallpaper-smoke": _qemu_scenario(
+        "", "WALLPAPER SMOKE PASS", "WALLPAPER SMOKE FAIL",
+        "JPEG wallpaper list/Browse, reduced preview, invalid data and reboot persistence",
+        600.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="wallpaperjpeg",
+    ),
     "sxgui-smoke": _qemu_scenario(
         "",
         "SXGUI SMOKE PASS",

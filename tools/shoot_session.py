@@ -1269,8 +1269,8 @@ def scenario_wallpaperpng(s):
     s.qmp.click()
     time.sleep(1.5)
     image = s.shot("browse-prompt")
-    expect_text(image, (0, 0, image.size[0], image.size[1]), "Path of a BMP or PNG image:", TEXT, FACE,
-                "Browse asks for a BMP or PNG")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Path of a BMP, PNG or JPEG image:", TEXT, FACE,
+                "Browse asks for a BMP, PNG or JPEG")
     for _ in range(64):
         s.qmp.tap("backspace", pause=0.04)
     s.qmp.type_line("/paint-test.png")
@@ -1285,6 +1285,139 @@ def scenario_wallpaperpng(s):
             if got != colour:
                 raise Failure("PNG wallpaper pixel (%d, %d) is %r, expected %r" %
                               (tile_x + dx, tile_y + dy, got, colour))
+
+
+def scenario_wallpaperjpeg(s):
+    """JPEG list/Browse, reduced previews, corrupt data and reboot persistence.
+
+    The launchers seed their disposable disk through wallpaper_fixture.py.
+    Its RGB DC-only tiles have exact colours; the 4097x17 photo needs 1/4
+    decoding to fit the wallpaper's 2048-side budget.
+    """
+    area = lambda image: (0, 0, image.width, image.height - TASKBAR_HEIGHT)
+
+    def click_label(image, text, field=False):
+        colours = ((TEXT, FIELD), (SELECT_TEXT, SELECT)) if field else ((TEXT, FACE),)
+        for foreground, background in colours:
+            origin = find_text(image, area(image), text, foreground, background)[0]
+            if origin is not None:
+                s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+                s.qmp.click()
+                time.sleep(1.5)
+                return
+        raise Failure("wallpaper: missing control or list entry " + text)
+
+    def open_properties():
+        s.run("display", wait=3)
+        deadline = time.time() + 40
+        while True:
+            image = s.shot("jpeg-properties")
+            if find_text(image, area(image), "Background:", TEXT, FACE)[0] is not None:
+                return image
+            if time.time() >= deadline:
+                raise Failure("wallpaper: Display Properties did not open")
+            time.sleep(1)
+
+    def expect_preview(image):
+        label = find_text(image, area(image), "Background:", TEXT, FACE)[0]
+        if label is None:
+            raise Failure("wallpaper: no Background label beside the preview")
+        # The monitor's screen ends 40 pixels above the label, and is 95 high
+        # at the default 1280x800. Check inside each half, away from its bezel.
+        y = label[1] - 87
+        expect_pixel(image, image.width // 2 - 40, y, (224, 48, 80), "JPEG preview left half")
+        expect_pixel(image, image.width // 2 + 40, y, (32, 208, 96), "JPEG preview right half")
+
+    def expect_tiles(image):
+        for x, y in ((640, 320), (800, 480), (1024, 160)):
+            for dx, dy, colour in ((0, 0, (224, 48, 80)), (8, 0, (32, 208, 96)),
+                                   (0, 8, (48, 80, 224)), (8, 8, (224, 208, 48))):
+                expect_pixel(image, x + dx, y + dy, colour, "JPEG tiled wallpaper")
+
+    def expect_photo(image):
+        for y in (200, 400, 600):
+            expect_pixel(image, 300, y, (224, 48, 80), "reduced JPEG wallpaper left half")
+            expect_pixel(image, 1100, y, (32, 208, 96), "reduced JPEG wallpaper right half")
+
+    def browse(path, accepted):
+        image = s.shot("jpeg-before-browse")
+        click_label(image, "Browse...")
+        image = s.shot("jpeg-browse-prompt")
+        expect_text(image, area(image), "Path of a BMP, PNG or JPEG image:", TEXT, FACE, "Browse includes JPEG")
+        for _ in range(64):
+            s.qmp.tap("backspace", pause=0.04)
+        s.qmp.type_line(path)
+        s.qmp.tap("ret", pause=2)
+        s.qmp.move_to(1000, 100)
+        image = s.shot("jpeg-browse-result")
+        if not accepted:
+            expect_text(image, area(image), "That file is not an image this system can show.", TEXT, FACE,
+                        "a valid header with missing EOI is rejected")
+            s.qmp.tap("esc", pause=1)
+        else:
+            expect_text(image, area(image), "Background:", TEXT, FACE, "a valid image closes Browse")
+
+    image = open_properties()
+    # Mixed-case .jpeg and .jpg both enter the list; names lose the whole suffix.
+    for name in ("00-I5 Photo", "01-I5 RGB"):
+        expect_text(image, area(image), name, TEXT, FIELD, "JPEG listed by its name")
+    if find_text(image, area(image), "00-I5 Photo.", TEXT, FIELD)[0] is not None:
+        raise Failure("wallpaper: .jpeg name retained part of its extension")
+    click_label(image, "00-I5 Photo", field=True)
+    expect_preview(s.shot("jpeg-reduced-preview"))
+    click_label(s.shot("jpeg-position"), "Stretch", field=True)
+    s.qmp.tap("up", pause=0.3)
+    s.qmp.tap("up", pause=0.3)
+    s.qmp.tap("ret", pause=1)
+    s.qmp.move_to(1000, 100)
+    expect_text(s.shot("jpeg-center-option"), area(image), "Center", TEXT, FIELD, "centred JPEG chosen")
+    s.qmp.tap("ret", pause=4)
+    image = s.shot("jpeg-reduced-exact-dimensions")
+    # 4097x17 becomes 1025x5 at 1/4; this proves the consumer's output budget,
+    # which Stretch alone would conceal if full-size decoding were used.
+    left, top = (image.width - 1025) // 2, (image.height - 5) // 2
+    for x, y in ((left-1,top+2),(left+1025,top+2),(640,top-1),(640,top+5)):
+        expect_pixel(image, x, y, (0,128,128), "reduced JPEG exact boundary")
+    expect_pixel(image, left, top+2, (224,48,80), "reduced JPEG first column")
+    expect_pixel(image, left+1024, top+2, (32,208,96), "reduced JPEG last column")
+    image = open_properties()
+    click_label(image, "01-I5 RGB", field=True)
+    s.qmp.tap("ret", pause=4)
+    expect_tiles(s.shot("jpeg-tiled-desktop"))
+
+    open_properties()
+    browse("/i5-broken.jpg", accepted=False)
+    s.qmp.tap("esc", pause=2)
+    expect_tiles(s.shot("jpeg-rejection-keeps-wallpaper"))
+
+    open_properties()
+    browse("/i5-picture.png", accepted=True)
+    s.qmp.tap("ret", pause=4)
+    expect_tiles(s.shot("jpeg-content-not-extension"))
+
+    image = open_properties()
+    click_label(image, "00-I5 Photo", field=True)
+    expect_preview(s.shot("jpeg-final-preview"))
+    s.qmp.tap("ret", pause=4)
+    expect_photo(s.shot("jpeg-reduced-desktop"))
+
+    if not s.serial:
+        raise Failure("wallpaper persistence needs the guest serial log")
+    marker = "handoff: starting /bin/init"
+    boots = Path(s.serial).read_text(errors="replace").count(marker)
+    s.qmp.cmd("set-action", reboot="reset")
+    s.qmp.cmd("system_reset")
+    deadline = time.time() + 240
+    while Path(s.serial).read_text(errors="replace").count(marker) <= boots:
+        if time.time() >= deadline:
+            raise Failure("wallpaper persistence: machine did not restart")
+        time.sleep(0.5)
+    time.sleep(75)
+    expect_photo(s.shot("jpeg-wallpaper-after-reboot"))
+    image = open_properties()
+    expect_text(image, area(image), "00-I5 Photo", SELECT_TEXT, SELECT, "saved JPEG remains selected after reboot")
+    expect_preview(image)
+    s.qmp.tap("esc", pause=2)
 
 
 def scenario_effects(s):
@@ -3760,6 +3893,7 @@ SCENARIOS = {
     "system": scenario_system,
     "display": scenario_display,
     "wallpaperpng": scenario_wallpaperpng,
+    "wallpaperjpeg": scenario_wallpaperjpeg,
     "effects": scenario_effects,
     "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,

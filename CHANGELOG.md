@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Desktop wallpapers and Display Properties now open JPEG through the common image API.**
+  `.jpg`/`.jpeg` join the list and Browse; large sequential JPEGs reduce to fit the 2048-side output limit.
+  Image Viewer roadmap I5 is complete; see [DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md).
+
 - **`libsximg` decodes JPEG at 1/2, 1/4 or 1/8 resolution without a full-size bitmap.**
   Automatic scale selection fits output limits; exact scales and source/output dimensions agree across both image APIs.
   Larger JPEG sources can fit at a reduced scale; see [IMAGE_FORMATS.md](docs/media/IMAGE_FORMATS.md#limits-and-scaling).

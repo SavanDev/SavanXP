@@ -306,6 +306,9 @@ def main() -> int:
                     reset_audio_preferences(args.sxfs_cli.resolve(),run_disk)
             except RuntimeError as error:
                 raise SystemExit(f"smoke: {error}")
+            if args.visual_scenario == "wallpaperjpeg":
+                from wallpaper_fixture import install_fixtures
+                install_fixtures(args.sxfs_cli.resolve(), run_disk, log_dir / f"{run_tag}.wallpapers")
             for remove_path in args.remove_path:
                 removed = subprocess.run(
                     [str(args.sxfs_cli.resolve()), "rm", "-f", str(run_disk), remove_path],

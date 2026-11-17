@@ -16,13 +16,13 @@
  * file is what keeps the two in step: the desktop re-reads it periodically.
  */
 
-/* The shipped wallpapers. Display Properties lists every .bmp and .png in it. */
+/* The shipped wallpapers. Display lists .bmp, .png, .jpg and .jpeg files. */
 #define DESKTOP_WALLPAPER_DIRECTORY "/wallpapers"
 /* What a fresh profile shows. */
 #define DESKTOP_WALLPAPER_DEFAULT_IMAGE DESKTOP_WALLPAPER_DIRECTORY "/Clouds.bmp"
 #define DESKTOP_WALLPAPER_DEFAULT_COLOR 0x008080u
 #define DESKTOP_WALLPAPER_PATH_MAX 256
-/* Larger images are refused rather than decoded. */
+/* Decoded output ceiling; larger JPEG sources may fit at a reduced scale. */
 #define DESKTOP_WALLPAPER_MAX_DIMENSION 2048
 
 enum desktop_wallpaper_position
@@ -67,7 +67,7 @@ const char *desktop_wallpaper_position_name(int position);
 
 /* ---- images -------------------------------------------------------------- */
 
-/* Decodes an uncompressed 24 or 32 bpp BMP, or an 8-bit RGB or RGBA PNG.
+/* Decodes the BMP, PNG and sequential JPEG formats supported by libsximg.
  * Returns 0 on success; on failure the image is left empty. Whatever the
  * image held before is released. */
 int desktop_wallpaper_image_load(struct desktop_wallpaper_image *image, const char *path);
