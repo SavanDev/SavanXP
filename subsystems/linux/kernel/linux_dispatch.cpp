@@ -199,15 +199,23 @@ bool handle_of(process::Process& proc, uint64_t descriptor, uint64_t& handle) {
 
 Descriptor* descriptor_of(process::Process& proc, uint64_t number) {
     auto* state = descriptors_of(proc);
-    if (!state || number >= kMaxDescriptors || !state->descriptors[number].handle_plus_one) return nullptr;
+    if (!state || number >= kMaxDescriptors || !state->descriptors[number].handle_plus_one) {
+        return nullptr;
+    }
     return &state->descriptors[number];
 }
 
 bool read_handle_of(process::Process& proc, uint64_t number, uint64_t& handle) {
     auto* d = descriptor_of(proc, number);
-    if (!d) return false;
-    if (!(d->flags & kDescriptorSocket)) return handle_of(proc, number, handle);
-    if (!d->read_handle_plus_one || d->read_handle_plus_one == kNoSocketHandle) return false;
+    if (!d) {
+        return false;
+    }
+    if (!(d->flags & kDescriptorSocket)) {
+        return handle_of(proc, number, handle);
+    }
+    if (!d->read_handle_plus_one || d->read_handle_plus_one == kNoSocketHandle) {
+        return false;
+    }
     handle = d->read_handle_plus_one - 1;
     return true;
 }
@@ -240,15 +248,25 @@ int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::Pa
     vfs::PathBuffer guest;
     vfs::PathBuffer joined;
     ProcessState* state = paths_of(proc);
-    if (guest == nullptr || host == nullptr || joined == nullptr || state == nullptr) return -abi::kENOMEM;
+    if (guest == nullptr || host == nullptr || joined == nullptr || state == nullptr) {
+        return -abi::kENOMEM;
+    }
     const sx_status copied = sx::copy_user_path_from(proc, user_path, guest, guest.capacity());
-    if (copied == SX_ENAMETOOLONG) return -abi::kENAMETOOLONG;
-    if (copied != sx::kStatusOk) return -abi::kEFAULT;
+    if (copied == SX_ENAMETOOLONG) {
+        return -abi::kENAMETOOLONG;
+    }
+    if (copied != sx::kStatusOk) {
+        return -abi::kEFAULT;
+    }
     const char* text = guest;
-    if (text[0] == '\0') return -abi::kENOENT;
+    if (text[0] == '\0') {
+        return -abi::kENOENT;
+    }
     if (text[0] != '/') {
         const size_t base = strlen(state->cwd);
-        if (base + 1 + strlen(text) + 1 > joined.capacity()) return -abi::kENAMETOOLONG;
+        if (base + 1 + strlen(text) + 1 > joined.capacity()) {
+            return -abi::kENAMETOOLONG;
+        }
         strcpy(joined, state->cwd);
         char* out = joined;
         out[base] = '/';
@@ -261,8 +279,14 @@ int64_t guest_path_from_user(process::Process& proc, uint64_t user_path, vfs::Pa
 // write(fd, buffer, count).
 process::SavedContext* linux_write(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & kShutdownWrite) { set_result(context, -abi::kEPIPE); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
+        if (d->shutdown & kShutdownWrite) {
+            set_result(context, -abi::kEPIPE);
+            return context;
+        }
+        if (!d->read_handle_plus_one) {
+            set_result(context, -abi::kENOTCONN);
+            return context;
+        }
     }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
@@ -293,8 +317,14 @@ process::SavedContext* linux_write(process::Thread& self, process::SavedContext*
 // the caller writes the rest, as musl's stdio does.
 process::SavedContext* linux_writev(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & kShutdownWrite) { set_result(context, -abi::kEPIPE); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
+        if (d->shutdown & kShutdownWrite) {
+            set_result(context, -abi::kEPIPE);
+            return context;
+        }
+        if (!d->read_handle_plus_one) {
+            set_result(context, -abi::kENOTCONN);
+            return context;
+        }
     }
     const uint64_t vector = context->rsi;
     const uint64_t count = context->rdx;
@@ -372,8 +402,14 @@ int64_t linux_ioctl(process::Process& proc, const process::SavedContext* context
 // read(fd, buffer, count).
 process::SavedContext* linux_read(process::Thread& self, process::SavedContext* context) {
     if (auto* d = descriptor_of(*self.process, context->rdi); d && (d->flags & kDescriptorSocket)) {
-        if (d->shutdown & kShutdownRead) { set_result(context, 0); return context; }
-        if (!d->read_handle_plus_one) { set_result(context, -abi::kENOTCONN); return context; }
+        if (d->shutdown & kShutdownRead) {
+            set_result(context, 0);
+            return context;
+        }
+        if (!d->read_handle_plus_one) {
+            set_result(context, -abi::kENOTCONN);
+            return context;
+        }
     }
     const uint64_t buffer = context->rsi;
     size_t count = static_cast<size_t>(context->rdx);
@@ -411,7 +447,8 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
     }
     const uint64_t flags = context->rsi;
     const uint64_t honoured = abi::kOpenAccessMode | abi::kOpenCreate | abi::kOpenTruncate |
-                              abi::kOpenLargeFile | abi::kOpenNoCtty | abi::kOpenCloseOnExec | abi::kOpenDirectory;
+                              abi::kOpenLargeFile | abi::kOpenNoCtty | abi::kOpenCloseOnExec |
+                              abi::kOpenDirectory;
     if ((flags & ~honoured) != 0) {
         report_unsupported(proc, abi::kSysOpen, "open flag");
         return -abi::kEINVAL;
@@ -444,13 +481,18 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
     }
     if ((flags & abi::kOpenDirectory) != 0) {
         const vfs::Vnode* node = vfs::open(proc.credentials, host, 0, 0);
-        if (node == nullptr) return vfs_failure();
-        if (node->type != vfs::NodeType::directory) return -abi::kENOTDIR;
+        if (node == nullptr) {
+            return vfs_failure();
+        }
+        if (node->type != vfs::NodeType::directory) {
+            return -abi::kENOTDIR;
+        }
     }
     object::IoObject* file = nullptr;
-    const sx_status opened = sx::open_file(proc.credentials, host, open_flags,
-                                           static_cast<uint16_t>(context->rdx & vfs::kModePermissions & ~paths_of(proc)->mask),
-                                           sx::open_accept_directory, file);
+    const sx_status opened = sx::open_file(
+        proc.credentials, host, open_flags,
+        static_cast<uint16_t>(context->rdx & vfs::kModePermissions & ~paths_of(proc)->mask),
+        sx::open_accept_directory, file);
     if (opened != sx::kStatusOk) {
         return -static_cast<int64_t>(opened);
     }
@@ -473,18 +515,26 @@ int64_t linux_open(process::Process& proc, const process::SavedContext* context)
 // close(fd).
 int64_t linux_close(process::Process& proc, const process::SavedContext* context) {
     auto* d = descriptor_of(proc, context->rdi);
-    if (!d) return -abi::kEBADF;
+    if (!d) {
+        return -abi::kEBADF;
+    }
     const Descriptor old = *d;
     *d = {};
-    if (old.handle_plus_one != kNoSocketHandle) (void)sx::close_handle(proc, old.handle_plus_one - 1);
-    if ((old.flags & kDescriptorSocket) && old.read_handle_plus_one && old.read_handle_plus_one != kNoSocketHandle)
+    if (old.handle_plus_one != kNoSocketHandle) {
+        (void)sx::close_handle(proc, old.handle_plus_one - 1);
+    }
+    if ((old.flags & kDescriptorSocket) && old.read_handle_plus_one &&
+        old.read_handle_plus_one != kNoSocketHandle) {
         (void)sx::close_handle(proc, old.read_handle_plus_one - 1);
+    }
     return 0;
 }
 
 // lseek(fd, offset, whence). A pipe, a socket or a device has no offset.
 int64_t linux_lseek(process::Process& proc, const process::SavedContext* context) {
-    if (auto* d = descriptor_of(proc, context->rdi); d && (d->flags & kDescriptorSocket)) return -abi::kESPIPE;
+    if (auto* d = descriptor_of(proc, context->rdi); d && (d->flags & kDescriptorSocket)) {
+        return -abi::kESPIPE;
+    }
     uint64_t handle = 0;
     if (!handle_of(proc, context->rdi, handle)) {
         return -abi::kEBADF;
@@ -567,7 +617,9 @@ int64_t copy_stat_out(uint64_t user_out, const abi::Stat& value) {
 int64_t linux_fstat(process::Process& proc, const process::SavedContext* context) {
     if (auto* d = descriptor_of(proc, context->rdi); d && (d->flags & kDescriptorSocket)) {
         abi::Stat value = {};
-        value.nlink = 1; value.dev = 1; value.blksize = kPage;
+        value.nlink = 1;
+        value.dev = 1;
+        value.blksize = kPage;
         value.mode = abi::kModeSocket | 0777u;
         return copy_stat_out(context->rsi, value);
     }
@@ -636,17 +688,24 @@ int64_t linux_unlink(process::Process& proc, const process::SavedContext* contex
 // getdents64 uses the VFS cursor; an undersized buffer must not consume an entry.
 int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
     uint64_t handle;
-    if (!handle_of(proc, c->rdi, handle)) return -abi::kEBADF;
+    if (!handle_of(proc, c->rdi, handle)) {
+        return -abi::kEBADF;
+    }
     auto* file = process::io_object_of(proc, handle);
-    if (file == nullptr || file->node == nullptr || file->node->type != vfs::NodeType::directory)
+    if (file == nullptr || file->node == nullptr || file->node->type != vfs::NodeType::directory) {
         return -abi::kENOTDIR;
+    }
     const size_t capacity = c->rdx < abi::kMaxRwCount ? c->rdx : abi::kMaxRwCount;
-    if (!sx::validate_user_range(c->rsi, capacity, true)) return -abi::kEFAULT;
+    if (!sx::validate_user_range(c->rsi, capacity, true)) {
+        return -abi::kEFAULT;
+    }
     size_t total = 0;
     for (;;) {
         const int saved = file->cursor.next;
         const auto* node = vfs::next_entry(file->cursor);
-        if (node == nullptr) return total ? static_cast<int64_t>(total) : (vfs::last_error() ? vfs_failure() : 0);
+        if (node == nullptr) {
+            return total ? static_cast<int64_t>(total) : (vfs::last_error() ? vfs_failure() : 0);
+        }
         const size_t length = strlen(node->name);
         const size_t record = (abi::kDirentNameOffset + length + 1 + 7) & ~size_t(7);
         if (record > capacity - total) {
@@ -654,14 +713,18 @@ int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
             return total ? static_cast<int64_t>(total) : -abi::kEINVAL;
         }
         char bytes[512]{};
-        if (record > sizeof(bytes)) { file->cursor.next = saved; return -abi::kENAMETOOLONG; }
+        if (record > sizeof(bytes)) {
+            file->cursor.next = saved;
+            return -abi::kENAMETOOLONG;
+        }
         uint64_t ino = vfs::node_number(*node);
         int64_t offset = static_cast<int64_t>(file->offset + record);
         uint16_t size = static_cast<uint16_t>(record);
         memcpy(bytes, &ino, 8);
         memcpy(bytes + 8, &offset, 8);
         memcpy(bytes + 16, &size, 2);
-        bytes[18] = node->type == vfs::NodeType::directory ? abi::kDirentTypeDirectory : abi::kDirentTypeRegular;
+        bytes[18] = node->type == vfs::NodeType::directory ? abi::kDirentTypeDirectory
+                                                           : abi::kDirentTypeRegular;
         memcpy(bytes + abi::kDirentNameOffset, node->name, length + 1);
         if (!sx::copy_to_user(c->rsi + total, bytes, record)) {
             file->cursor.next = saved;
@@ -675,11 +738,19 @@ int64_t linux_getdents(process::Process& proc, const process::SavedContext* c) {
 int64_t linux_chdir(process::Process& proc, const process::SavedContext* c) {
     vfs::PathBuffer host;
     int64_t result = guest_path_from_user(proc, c->rdi, host);
-    if (result) return result;
+    if (result) {
+        return result;
+    }
     const auto* node = vfs::open(proc.credentials, host, 0, 0);
-    if (!node) return vfs_failure();
-    if (node->type != vfs::NodeType::directory) return -abi::kENOTDIR;
-    if (!vfs::permits(proc.credentials, *node, vfs::kAccessExecute)) return -abi::kEACCES;
+    if (!node) {
+        return vfs_failure();
+    }
+    if (node->type != vfs::NodeType::directory) {
+        return -abi::kENOTDIR;
+    }
+    if (!vfs::permits(proc.credentials, *node, vfs::kAccessExecute)) {
+        return -abi::kEACCES;
+    }
     const char* guest = static_cast<const char*>(host) + strlen("/system/linux");
     strcpy(paths_of(proc)->cwd, *guest ? guest : "/");
     return 0;
@@ -688,43 +759,73 @@ int64_t linux_chdir(process::Process& proc, const process::SavedContext* c) {
 int64_t linux_getcwd(process::Process& proc, const process::SavedContext* c) {
     const char* cwd = paths_of(proc)->cwd;
     size_t length = strlen(cwd) + 1;
-    if (c->rsi < length) return -abi::kERANGE;
+    if (c->rsi < length) {
+        return -abi::kERANGE;
+    }
     return sx::copy_to_user(c->rdi, cwd, length) ? static_cast<int64_t>(length) : -abi::kEFAULT;
 }
 
 int64_t linux_mkdir(process::Process& proc, const process::SavedContext* c) {
     vfs::PathBuffer host;
     int64_t result = guest_path_from_user(proc, c->rdi, host);
-    if (result) return result;
-    if (vfs::open(proc.credentials, host, 0, 0)) return -abi::kEEXIST;
-    if (vfs::last_error() != SX_ENOENT) return vfs_failure();
-    return vfs::mkdir(proc.credentials, host, c->rsi & 0777 & ~paths_of(proc)->mask) ? 0 : vfs_failure();
+    if (result) {
+        return result;
+    }
+    if (vfs::open(proc.credentials, host, 0, 0)) {
+        return -abi::kEEXIST;
+    }
+    if (vfs::last_error() != SX_ENOENT) {
+        return vfs_failure();
+    }
+    return vfs::mkdir(proc.credentials, host, c->rsi & 0777 & ~paths_of(proc)->mask)
+               ? 0
+               : vfs_failure();
 }
 
 int64_t linux_fcntl(process::Process& proc, const process::SavedContext* c) {
     auto* d = descriptor_of(proc, c->rdi);
-    if (!d) return -abi::kEBADF;
-    if (c->rsi == abi::kFcntlGetFd) return d->flags & kDescriptorCloseOnExec ? abi::kFdCloseOnExec : 0;
+    if (!d) {
+        return -abi::kEBADF;
+    }
+    if (c->rsi == abi::kFcntlGetFd) {
+        return d->flags & kDescriptorCloseOnExec ? abi::kFdCloseOnExec : 0;
+    }
     if (c->rsi == abi::kFcntlSetFd) {
-        d->flags = (d->flags & ~kDescriptorCloseOnExec) | (c->rdx & abi::kFdCloseOnExec ? kDescriptorCloseOnExec : 0);
+        d->flags = (d->flags & ~kDescriptorCloseOnExec) |
+                   (c->rdx & abi::kFdCloseOnExec ? kDescriptorCloseOnExec : 0);
         return 0;
     }
     if (c->rsi == abi::kFcntlGetFl) {
-        if (d->flags & kDescriptorSocket) return abi::kOpenReadWrite | (d->flags & kDescriptorNonblock ? abi::kOpenNonblock : 0);
+        if (d->flags & kDescriptorSocket) {
+            return abi::kOpenReadWrite | (d->flags & kDescriptorNonblock ? abi::kOpenNonblock : 0);
+        }
         auto* file = process::io_object_of(proc, d->handle_plus_one - 1);
-        if (!file) return -abi::kEBADF;
-        return (file->open_flags & process::open_write ? (file->open_flags & process::open_read ? abi::kOpenReadWrite : abi::kOpenWriteOnly) : abi::kOpenReadOnly) |
-            (file->open_flags & process::open_nonblock ? abi::kOpenNonblock : 0) | abi::kOpenLargeFile;
+        if (!file) {
+            return -abi::kEBADF;
+        }
+        return (file->open_flags & process::open_write
+                    ? (file->open_flags & process::open_read ? abi::kOpenReadWrite
+                                                             : abi::kOpenWriteOnly)
+                    : abi::kOpenReadOnly) |
+               (file->open_flags & process::open_nonblock ? abi::kOpenNonblock : 0) |
+               abi::kOpenLargeFile;
     }
     if (c->rsi == abi::kFcntlSetFl) {
-        if (c->rdx & ~(abi::kOpenAccessMode | abi::kOpenNonblock | abi::kOpenLargeFile)) return -abi::kEINVAL;
-        d->flags = (d->flags & ~kDescriptorNonblock) | (c->rdx & abi::kOpenNonblock ? kDescriptorNonblock : 0);
+        if (c->rdx & ~(abi::kOpenAccessMode | abi::kOpenNonblock | abi::kOpenLargeFile)) {
+            return -abi::kEINVAL;
+        }
+        d->flags = (d->flags & ~kDescriptorNonblock) |
+                   (c->rdx & abi::kOpenNonblock ? kDescriptorNonblock : 0);
         const uint32_t handles[] = {d->handle_plus_one, d->read_handle_plus_one};
         for (uint32_t handle : handles) {
-            if (!handle || handle == kNoSocketHandle) continue;
+            if (!handle || handle == kNoSocketHandle) {
+                continue;
+            }
             auto* file = process::io_object_of(proc, handle - 1);
-            if (file) file->open_flags = (file->open_flags & ~process::open_nonblock) |
-                (c->rdx & abi::kOpenNonblock ? process::open_nonblock : 0);
+            if (file) {
+                file->open_flags = (file->open_flags & ~process::open_nonblock) |
+                                   (c->rdx & abi::kOpenNonblock ? process::open_nonblock : 0);
+            }
         }
         return 0;
     }
@@ -736,10 +837,14 @@ int64_t linux_fcntl(process::Process& proc, const process::SavedContext* c) {
 // pipe parks before any byte moves; the wait hook retries the instruction.
 void recheck_transfer(process::Thread& thread, uint64_t, bool) {
     auto* state = thread_state_of(thread);
-    if (!state || !state->transfer_wait) return;
+    if (!state || !state->transfer_wait) {
+        return;
+    }
     auto* out = process::io_object_of(*thread.process, state->transfer_output);
     if (out && out->pipe && out->pipe->reader_refs &&
-        process::detail::kPipeCapacity - out->pipe->size < state->transfer_count) return;
+        process::detail::kPipeCapacity - out->pipe->size < state->transfer_count) {
+        return;
+    }
     state->transfer_wait = false;
     thread.context->rip -= 2;
     process::detail::complete_blocked_wait(thread, abi::kSysSendfile);
@@ -753,25 +858,45 @@ process::SavedContext* linux_sendfile(process::Thread& self, process::SavedConte
     auto& proc = *self.process;
     uint64_t input, output;
     if (!handle_of(proc, c->rsi, input) || !handle_of(proc, c->rdi, output)) {
-        set_result(c, -abi::kEBADF); return c;
+        set_result(c, -abi::kEBADF);
+        return c;
     }
     auto* file = process::io_object_of(proc, input);
-    if (!file || !(file->open_flags & SAVANXP_OPEN_READ)) { set_result(c, -abi::kEBADF); return c; }
-    if (!file->node || file->node->type != vfs::NodeType::file) { set_result(c, -abi::kEINVAL); return c; }
+    if (!file || !(file->open_flags & SAVANXP_OPEN_READ)) {
+        set_result(c, -abi::kEBADF);
+        return c;
+    }
+    if (!file->node || file->node->type != vfs::NodeType::file) {
+        set_result(c, -abi::kEINVAL);
+        return c;
+    }
     // The measured profile uses the open file offset. Explicit offsets arrive
     // with a consumer, rather than being silently ignored.
-    if (c->rdx) { report_unsupported(proc, abi::kSysSendfile, "explicit offset"); set_result(c, -abi::kEINVAL); return c; }
-    if (!c->r10) { set_result(c, 0); return c; }
+    if (c->rdx) {
+        report_unsupported(proc, abi::kSysSendfile, "explicit offset");
+        set_result(c, -abi::kEINVAL);
+        return c;
+    }
+    if (!c->r10) {
+        set_result(c, 0);
+        return c;
+    }
     char bytes[kPage];
     size_t count = vfs::read(*file->node, file->offset, bytes, c->r10 < kPage ? c->r10 : kPage);
-    if (!count) { set_result(c, vfs::last_error() ? vfs_failure() : 0); return c; }
+    if (!count) {
+        set_result(c, vfs::last_error() ? vfs_failure() : 0);
+        return c;
+    }
     uint64_t page = 0;
-    if (vm::map_region(proc.address_space, page, kPage, region::kRead | region::kWrite, vm::RegionPlacement::anywhere) != vm::RegionStatus::ok) {
-        set_result(c, -abi::kENOMEM); return c;
+    if (vm::map_region(proc.address_space, page, kPage, region::kRead | region::kWrite,
+                       vm::RegionPlacement::anywhere) != vm::RegionStatus::ok) {
+        set_result(c, -abi::kENOMEM);
+        return c;
     }
     if (!sx::copy_to_user(page, bytes, count)) {
         (void)vm::unmap_regions(proc.address_space, page, kPage);
-        set_result(c, -abi::kEFAULT); return c;
+        set_result(c, -abi::kEFAULT);
+        return c;
     }
     const int result = process::native_write_handle(self, output, page, count, false);
     (void)vm::unmap_regions(proc.address_space, page, kPage);
@@ -786,7 +911,9 @@ process::SavedContext* linux_sendfile(process::Thread& self, process::SavedConte
         self.state = process::State::blocked_wait;
         return process::choose_next_context(c);
     }
-    if (result > 0) file->offset += result;
+    if (result > 0) {
+        file->offset += result;
+    }
     set_result(c, result);
     return c;
 }
@@ -933,15 +1060,21 @@ int64_t linux_mmap(process::Process& proc, const process::SavedContext* context)
         status = vm::map_region(proc.address_space, where, size, access, placement);
     } else {
         uint64_t handle;
-        if (!handle_of(proc, context->r8, handle)) return -abi::kEBADF;
+        if (!handle_of(proc, context->r8, handle)) {
+            return -abi::kEBADF;
+        }
         auto* file = process::io_object_of(proc, handle);
-        if (!file || !(file->open_flags & process::open_read)) return -abi::kEACCES;
-        if (!file->node || file->node->type != vfs::NodeType::file) return -abi::kENODEV;
+        if (!file || !(file->open_flags & process::open_read)) {
+            return -abi::kEACCES;
+        }
+        if (!file->node || file->node->type != vfs::NodeType::file) {
+            return -abi::kENODEV;
+        }
         auto read = [](void* node, uint64_t position, void* buffer, size_t count) {
             return vfs::read(*static_cast<vfs::Vnode*>(node), position, buffer, count) == count;
         };
-        status = vm::map_private_file(proc.address_space, where, size, access, placement,
-                                      read, file->node, file->node->size, offset);
+        status = vm::map_private_file(proc.address_space, where, size, access, placement, read,
+                                      file->node, file->node->size, offset);
     }
     if (status != vm::RegionStatus::ok) {
         return region_error(proc, abi::kSysMmap, status);
@@ -950,23 +1083,37 @@ int64_t linux_mmap(process::Process& proc, const process::SavedContext* context)
 }
 
 int64_t linux_mprotect(process::Process& proc, const process::SavedContext* c) {
-    if ((c->rdi & (kPage - 1)) || (c->rdx & ~(abi::kProtRead | abi::kProtWrite | abi::kProtExec | abi::kProtSem)))
+    if ((c->rdi & (kPage - 1)) ||
+        (c->rdx & ~(abi::kProtRead | abi::kProtWrite | abi::kProtExec | abi::kProtSem))) {
         return -abi::kEINVAL;
-    if ((c->rdx & abi::kProtWrite) && (c->rdx & abi::kProtExec)) return -abi::kEACCES;
+    }
+    if ((c->rdx & abi::kProtWrite) && (c->rdx & abi::kProtExec)) {
+        return -abi::kEACCES;
+    }
     uint64_t size;
-    if (!round_to_pages(c->rsi, size)) return -abi::kENOMEM;
-    if (!size) return 0;
+    if (!round_to_pages(c->rsi, size)) {
+        return -abi::kENOMEM;
+    }
+    if (!size) {
+        return 0;
+    }
     auto result = vm::protect_regions(proc.address_space, c->rdi, size,
-        c->rdx & (abi::kProtRead | abi::kProtWrite | abi::kProtExec));
-    if (result == vm::RegionStatus::not_mapped || result == vm::RegionStatus::foreign) return -abi::kENOMEM;
+                                      c->rdx & (abi::kProtRead | abi::kProtWrite | abi::kProtExec));
+    if (result == vm::RegionStatus::not_mapped || result == vm::RegionStatus::foreign) {
+        return -abi::kENOMEM;
+    }
     return region_error(proc, abi::kSysMprotect, result);
 }
 
 int64_t linux_readlink(process::Process& proc, const process::SavedContext* c) {
-    if (!c->rdx) return -abi::kEINVAL;
+    if (!c->rdx) {
+        return -abi::kEINVAL;
+    }
     vfs::PathBuffer host;
     int64_t result = guest_path_from_user(proc, c->rdi, host);
-    if (result) return result;
+    if (result) {
+        return result;
+    }
     // The VFS has no links: existing paths are EINVAL, missing ones retain
     // their lookup error. Never pretend a resolved regular file is a link.
     return vfs::open(proc.credentials, host, 0, 0) ? -abi::kEINVAL : vfs_failure();
@@ -978,9 +1125,13 @@ int64_t linux_getrandom(process::Process& proc, const process::SavedContext* c) 
         return -abi::kEINVAL;
     }
     const size_t count = c->rsi < 256 ? c->rsi : 256;
-    if (!count) return 0;
+    if (!count) {
+        return 0;
+    }
     uint64_t bytes[32];
-    for (uint64_t& word : bytes) word = arch::random_u64();
+    for (uint64_t& word : bytes) {
+        word = arch::random_u64();
+    }
     return sx::copy_to_user(c->rdi, bytes, count) ? static_cast<int64_t>(count) : -abi::kEFAULT;
 }
 
@@ -1081,13 +1232,21 @@ int64_t linux_set_tid_address(process::Thread& self, const process::SavedContext
 // Only the measured X display paths are registered. Abstract names deliberately
 // return ECONNREFUSED, so libxcb retries the pathname as in the Linux profile.
 int64_t linux_socket(process::Process& proc, const process::SavedContext* c) {
-    if (c->rdi != abi::kAfUnix) { report_unsupported(proc, abi::kSysSocket, "socket family"); return -abi::kEAFNOSUPPORT; }
-    if ((c->rsi & ~(abi::kSockCloseOnExec | abi::kSockNonblock)) != abi::kSockStream || c->rdx) return -abi::kEPROTONOSUPPORT;
+    if (c->rdi != abi::kAfUnix) {
+        report_unsupported(proc, abi::kSysSocket, "socket family");
+        return -abi::kEAFNOSUPPORT;
+    }
+    if ((c->rsi & ~(abi::kSockCloseOnExec | abi::kSockNonblock)) != abi::kSockStream || c->rdx) {
+        return -abi::kEPROTONOSUPPORT;
+    }
     auto* state = descriptors_of(proc);
-    if (!state) return -abi::kENOMEM;
-    const int64_t fd = allocate_descriptor(*state, kNoSocketHandle - 1,
+    if (!state) {
+        return -abi::kENOMEM;
+    }
+    const int64_t fd = allocate_descriptor(
+        *state, kNoSocketHandle - 1,
         kDescriptorSocket | (c->rsi & abi::kSockCloseOnExec ? kDescriptorCloseOnExec : 0) |
-        (c->rsi & abi::kSockNonblock ? kDescriptorNonblock : 0));
+            (c->rsi & abi::kSockNonblock ? kDescriptorNonblock : 0));
     return fd < 0 ? -abi::kEMFILE : fd;
 }
 
@@ -1100,28 +1259,47 @@ Descriptor* socket_of(process::Process& proc, uint64_t fd, int64_t& error) {
 int64_t linux_connect(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
-    if (!d) return error;
-    if (d->handle_plus_one != kNoSocketHandle || d->shutdown) return -abi::kEISCONN;
-    if (c->rdx <= abi::kSockaddrFamilySize || c->rdx > abi::kSockaddrUnSize) return -abi::kEINVAL;
+    if (!d) {
+        return error;
+    }
+    if (d->handle_plus_one != kNoSocketHandle || d->shutdown) {
+        return -abi::kEISCONN;
+    }
+    if (c->rdx <= abi::kSockaddrFamilySize || c->rdx > abi::kSockaddrUnSize) {
+        return -abi::kEINVAL;
+    }
     unsigned char address[abi::kSockaddrUnSize] = {};
-    if (!sx::copy_from_user(address, c->rsi, c->rdx)) return -abi::kEFAULT;
+    if (!sx::copy_from_user(address, c->rsi, c->rdx)) {
+        return -abi::kEFAULT;
+    }
     // sun_family is a little-endian 16-bit AF_UNIX.
-    if (address[0] != abi::kAfUnix || address[1]) return -abi::kEAFNOSUPPORT;
-    if (!address[abi::kSockaddrFamilySize]) return -abi::kECONNREFUSED;
+    if (address[0] != abi::kAfUnix || address[1]) {
+        return -abi::kEAFNOSUPPORT;
+    }
+    if (!address[abi::kSockaddrFamilySize]) {
+        return -abi::kECONNREFUSED;
+    }
     const char* path = reinterpret_cast<const char*>(address + abi::kSockaddrFamilySize);
     const char prefix[] = "/tmp/.X11-unix/X";
     // The display digit follows the prefix; a longer address must end right after it.
     constexpr uint64_t kDigit = sizeof(prefix) - 1;
     constexpr uint64_t kNamed = abi::kSockaddrFamilySize + kDigit + 1;
-    if (c->rdx < kNamed || strncmp(path, prefix, kDigit) || (path[kDigit] != '0' && path[kDigit] != '1') ||
-        (c->rdx > kNamed && path[kDigit + 1])) return -abi::kENOENT;
+    if (c->rdx < kNamed || strncmp(path, prefix, kDigit) ||
+        (path[kDigit] != '0' && path[kDigit] != '1') || (c->rdx > kNamed && path[kDigit + 1])) {
+        return -abi::kENOENT;
+    }
     const uint8_t display = path[kDigit] - '0';
     int32_t handles[2];
     // A desktop service may run as the caller's user, or as the system.
     auto* service = object::find_port(display ? "x11d.1" : "x11d.0");
-    if (service && !cred::acts_as_system(service->creator) && service->creator.euid != proc.credentials.euid) return -abi::kEACCES;
+    if (service && !cred::acts_as_system(service->creator) &&
+        service->creator.euid != proc.credentials.euid) {
+        return -abi::kEACCES;
+    }
     const int result = process::connect_port(proc, display ? "x11d.1" : "x11d.0", handles);
-    if (result) return result == -SX_ENOENT ? -abi::kECONNREFUSED : result;
+    if (result) {
+        return result == -SX_ENOENT ? -abi::kECONNREFUSED : result;
+    }
     d->handle_plus_one = handles[0] + 1;
     d->read_handle_plus_one = handles[1] + 1;
     d->display = display;
@@ -1135,11 +1313,17 @@ int64_t linux_connect(process::Process& proc, const process::SavedContext* c) {
 int64_t linux_getpeername(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
-    if (!d) return error;
-    if (!d->read_handle_plus_one) return -abi::kENOTCONN;
+    if (!d) {
+        return error;
+    }
+    if (!d->read_handle_plus_one) {
+        return -abi::kENOTCONN;
+    }
     uint32_t capacity;
     if (!sx::copy_from_user(&capacity, c->rdx, sizeof(capacity)) ||
-        !sx::validate_user_range(c->rdx, sizeof(capacity), true)) return -abi::kEFAULT;
+        !sx::validate_user_range(c->rdx, sizeof(capacity), true)) {
+        return -abi::kEFAULT;
+    }
     // The family, the 17-byte display path and its NUL.
     unsigned char address[20] = {abi::kAfUnix, 0};
     memcpy(address + 2, "/tmp/.X11-unix/X0", 17);
@@ -1147,50 +1331,82 @@ int64_t linux_getpeername(process::Process& proc, const process::SavedContext* c
     const uint32_t length = 20;
     const uint32_t copied = capacity < length ? capacity : length;
     if ((copied && !sx::copy_to_user(c->rsi, address, copied)) ||
-        !sx::copy_to_user(c->rdx, &length, sizeof(length))) return -abi::kEFAULT;
+        !sx::copy_to_user(c->rdx, &length, sizeof(length))) {
+        return -abi::kEFAULT;
+    }
     return 0;
 }
 
 int64_t linux_getsockopt(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
-    if (!socket_of(proc, c->rdi, error)) return error;
+    if (!socket_of(proc, c->rdi, error)) {
+        return error;
+    }
     if (c->rsi != abi::kSolSocket ||
         (c->rdx != abi::kSoSndbuf && c->rdx != abi::kSoType && c->rdx != abi::kSoError)) {
-        report_unsupported(proc, abi::kSysGetsockopt, "socket option"); return -abi::kENOPROTOOPT;
+        report_unsupported(proc, abi::kSysGetsockopt, "socket option");
+        return -abi::kENOPROTOOPT;
     }
     uint32_t capacity;
     if (!sx::copy_from_user(&capacity, c->r8, sizeof(capacity)) ||
-        !sx::validate_user_range(c->r8, sizeof(capacity), true)) return -abi::kEFAULT;
+        !sx::validate_user_range(c->r8, sizeof(capacity), true)) {
+        return -abi::kEFAULT;
+    }
     const uint32_t length = capacity < 4 ? capacity : 4;
-    const int value = c->rdx == abi::kSoSndbuf ? process::detail::kPipeCapacity
-        : (c->rdx == abi::kSoType ? static_cast<int>(abi::kSockStream) : 0);
+    const int value = c->rdx == abi::kSoSndbuf
+                          ? process::detail::kPipeCapacity
+                          : (c->rdx == abi::kSoType ? static_cast<int>(abi::kSockStream) : 0);
     if ((length && !sx::copy_to_user(c->r10, &value, length)) ||
-        !sx::copy_to_user(c->r8, &length, sizeof(length))) return -abi::kEFAULT;
+        !sx::copy_to_user(c->r8, &length, sizeof(length))) {
+        return -abi::kEFAULT;
+    }
     return 0;
 }
 
 int64_t linux_shutdown(process::Process& proc, const process::SavedContext* c) {
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
-    if (!d) return error;
-    if (c->rsi > abi::kShutReadWrite) return -abi::kEINVAL;
-    if (!d->read_handle_plus_one) return -abi::kENOTCONN;
+    if (!d) {
+        return error;
+    }
+    if (c->rsi > abi::kShutReadWrite) {
+        return -abi::kEINVAL;
+    }
+    if (!d->read_handle_plus_one) {
+        return -abi::kENOTCONN;
+    }
     // Publish the new state before releasing: pipe closure may recheck polls.
     const uint32_t old_read = d->read_handle_plus_one;
     const uint32_t old_write = d->handle_plus_one;
-    if (c->rsi != abi::kShutWrite) { d->shutdown |= kShutdownRead; d->read_handle_plus_one = kNoSocketHandle; }
-    if (c->rsi != abi::kShutRead) { d->shutdown |= kShutdownWrite; d->handle_plus_one = kNoSocketHandle; }
-    if (c->rsi != abi::kShutWrite && old_read != kNoSocketHandle) (void)sx::close_handle(proc, old_read - 1);
-    if (c->rsi != abi::kShutRead && old_write != kNoSocketHandle) (void)sx::close_handle(proc, old_write - 1);
+    if (c->rsi != abi::kShutWrite) {
+        d->shutdown |= kShutdownRead;
+        d->read_handle_plus_one = kNoSocketHandle;
+    }
+    if (c->rsi != abi::kShutRead) {
+        d->shutdown |= kShutdownWrite;
+        d->handle_plus_one = kNoSocketHandle;
+    }
+    if (c->rsi != abi::kShutWrite && old_read != kNoSocketHandle) {
+        (void)sx::close_handle(proc, old_read - 1);
+    }
+    if (c->rsi != abi::kShutRead && old_write != kNoSocketHandle) {
+        (void)sx::close_handle(proc, old_write - 1);
+    }
     return 0;
 }
 
 int64_t linux_access(process::Process& proc, const process::SavedContext* c) {
-    if (c->rsi & ~7ull) return -abi::kEINVAL;
+    if (c->rsi & ~7ull) {
+        return -abi::kEINVAL;
+    }
     vfs::PathBuffer host;
     const int64_t result = guest_path_from_user(proc, c->rdi, host);
-    if (result) return result;
-    if (!vfs::open(proc.credentials, host, 0, 0)) return vfs_failure();
+    if (result) {
+        return result;
+    }
+    if (!vfs::open(proc.credentials, host, 0, 0)) {
+        return vfs_failure();
+    }
     return vfs::may_access(proc.credentials, host, c->rsi) ? 0 : -abi::kEACCES;
 }
 
@@ -1210,53 +1426,84 @@ int evaluate_poll(process::Thread& self, ThreadState& state) {
     for (uint32_t i = 0; i < state.poll_count; ++i) {
         auto& p = state.poll_entries[i];
         p.revents = 0;
-        if (p.fd < 0) continue;
+        if (p.fd < 0) {
+            continue;
+        }
         auto* d = descriptor_of(*self.process, p.fd);
-        if (!d) p.revents = abi::kPollNval;
-        else if (d->flags & kDescriptorSocket) {
+        if (!d) {
+            p.revents = abi::kPollNval;
+        } else if (d->flags & kDescriptorSocket) {
             auto* input = d->read_handle_plus_one && d->read_handle_plus_one != kNoSocketHandle
-                ? process::io_object_of(*self.process, d->read_handle_plus_one - 1) : nullptr;
+                              ? process::io_object_of(*self.process, d->read_handle_plus_one - 1)
+                              : nullptr;
             auto* output = d->handle_plus_one != kNoSocketHandle
-                ? process::io_object_of(*self.process, d->handle_plus_one - 1) : nullptr;
+                               ? process::io_object_of(*self.process, d->handle_plus_one - 1)
+                               : nullptr;
             // POLLHUP on the input means the peer will never write again.
             // A missing output reader is POLLERR, not a read hangup.
-            if (input) p.revents |= process::detail::poll_open_file(input, p.events & abi::kPollIn);
-            if (output) {
-                p.revents |= process::detail::poll_open_file(output, p.events & abi::kPollOut) & abi::kPollOut;
-                if (!output->pipe->reader_refs) p.revents |= abi::kPollErr;
+            if (input) {
+                p.revents |= process::detail::poll_open_file(input, p.events & abi::kPollIn);
             }
-            if (d->shutdown & kShutdownRead) p.revents |= (p.events & abi::kPollIn);
-            if (d->shutdown & kShutdownWrite) p.revents |= (p.events & abi::kPollOut);
-            if (d->shutdown == (kShutdownRead | kShutdownWrite)) p.revents |= abi::kPollHup;
-            if (!d->read_handle_plus_one) p.revents |= abi::kPollHup;
+            if (output) {
+                p.revents |= process::detail::poll_open_file(output, p.events & abi::kPollOut) &
+                             abi::kPollOut;
+                if (!output->pipe->reader_refs) {
+                    p.revents |= abi::kPollErr;
+                }
+            }
+            if (d->shutdown & kShutdownRead) {
+                p.revents |= (p.events & abi::kPollIn);
+            }
+            if (d->shutdown & kShutdownWrite) {
+                p.revents |= (p.events & abi::kPollOut);
+            }
+            if (d->shutdown == (kShutdownRead | kShutdownWrite)) {
+                p.revents |= abi::kPollHup;
+            }
+            if (!d->read_handle_plus_one) {
+                p.revents |= abi::kPollHup;
+            }
         } else {
             p.revents = process::detail::poll_open_file(
                 process::io_object_of(*self.process, d->handle_plus_one - 1), p.events);
         }
-        if (p.revents) ++ready;
+        if (p.revents) {
+            ++ready;
+        }
     }
     return ready;
 }
 
 bool commit_poll(process::Thread& self, ThreadState& state) {
-    return !state.poll_count || process::write_to_process_memory(*self.process, state.poll_address,
-        state.poll_entries, state.poll_count * sizeof(abi::Pollfd));
+    return !state.poll_count ||
+           process::write_to_process_memory(*self.process, state.poll_address, state.poll_entries,
+                                            state.poll_count * sizeof(abi::Pollfd));
 }
 
 process::SavedContext* linux_poll(process::Thread& self, process::SavedContext* c) {
     auto* state = thread_state_of(self);
-    if (!state) { set_result(c, -abi::kENOMEM); return c; }
-    if (c->rsi > kMaxDescriptors) { set_result(c, -abi::kEINVAL); return c; }
+    if (!state) {
+        set_result(c, -abi::kENOMEM);
+        return c;
+    }
+    if (c->rsi > kMaxDescriptors) {
+        set_result(c, -abi::kEINVAL);
+        return c;
+    }
     state->poll_count = c->rsi;
     state->poll_address = c->rdi;
     const size_t bytes = state->poll_count * sizeof(abi::Pollfd);
     if (bytes && (!sx::validate_user_range(c->rdi, bytes, true) ||
-        !sx::copy_from_user(state->poll_entries, c->rdi, bytes))) {
-        set_result(c, -abi::kEFAULT); return c;
+                  !sx::copy_from_user(state->poll_entries, c->rdi, bytes))) {
+        set_result(c, -abi::kEFAULT);
+        return c;
     }
     const int ready = evaluate_poll(self, *state);
     const int32_t timeout = c->rdx;
-    if (ready || !timeout) { set_result(c, commit_poll(self, *state) ? ready : -abi::kEFAULT); return c; }
+    if (ready || !timeout) {
+        set_result(c, commit_poll(self, *state) ? ready : -abi::kEFAULT);
+        return c;
+    }
     process::clear_wait_state(self);
     state->poll_active = true;
     self.wake_deadline_ms = timeout > 0 ? process::current_uptime_ms() + timeout : 0;
@@ -1267,44 +1514,85 @@ process::SavedContext* linux_poll(process::Thread& self, process::SavedContext* 
 // Receive into a validated vector without passing Linux metadata to the kernel.
 // A blocking receive parks before reading, then retries its instruction; a
 // partial vector is returned immediately, without waiting for another segment.
-process::SavedContext* linux_receive(process::Thread& self, process::SavedContext* c, bool message) {
+process::SavedContext* linux_receive(process::Thread& self, process::SavedContext* c,
+                                     bool message) {
     auto& proc = *self.process;
     int64_t error;
     auto* d = socket_of(proc, c->rdi, error);
-    if (!d) { set_result(c, error); return c; }
+    if (!d) {
+        set_result(c, error);
+        return c;
+    }
     const uint64_t flags = message ? c->rdx : c->r10;
-    if (flags & ~abi::kMsgDontWait) { report_unsupported(proc, c->rax, "receive flags"); set_result(c, -abi::kEINVAL); return c; }
-    if (!d->read_handle_plus_one) { set_result(c, -abi::kENOTCONN); return c; }
-    if (d->shutdown & kShutdownRead) { set_result(c, 0); return c; }
+    if (flags & ~abi::kMsgDontWait) {
+        report_unsupported(proc, c->rax, "receive flags");
+        set_result(c, -abi::kEINVAL);
+        return c;
+    }
+    if (!d->read_handle_plus_one) {
+        set_result(c, -abi::kENOTCONN);
+        return c;
+    }
+    if (d->shutdown & kShutdownRead) {
+        set_result(c, 0);
+        return c;
+    }
     abi::Message header = {};
     abi::Iovec single = {c->rsi, c->rdx};
     uint64_t count = 1;
     if (message) {
         if (!sx::copy_from_user(&header, c->rsi, sizeof(header)) ||
-            !sx::validate_user_range(c->rsi, sizeof(header), true)) { set_result(c, -abi::kEFAULT); return c; }
+            !sx::validate_user_range(c->rsi, sizeof(header), true)) {
+            set_result(c, -abi::kEFAULT);
+            return c;
+        }
         count = header.iov_count;
-        if (count > abi::kIovMax) { set_result(c, -abi::kEINVAL); return c; }
+        if (count > abi::kIovMax) {
+            set_result(c, -abi::kEINVAL);
+            return c;
+        }
     } else if (c->r8) {
         uint32_t length;
         if (!sx::copy_from_user(&length, c->r9, 4) || !sx::validate_user_range(c->r9, 4, true) ||
-            (length && !sx::validate_user_range(c->r8, length, true))) { set_result(c, -abi::kEFAULT); return c; }
+            (length && !sx::validate_user_range(c->r8, length, true))) {
+            set_result(c, -abi::kEFAULT);
+            return c;
+        }
     }
     uint64_t length = 0;
     for (uint64_t i = 0; i < count; ++i) {
         abi::Iovec v = single;
-        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) { set_result(c, -abi::kEFAULT); return c; }
-        if (v.length > 0x7fffffffffffffffull - length) { set_result(c, -abi::kEINVAL); return c; }
+        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) {
+            set_result(c, -abi::kEFAULT);
+            return c;
+        }
+        if (v.length > 0x7fffffffffffffffull - length) {
+            set_result(c, -abi::kEINVAL);
+            return c;
+        }
         length += v.length;
-        if (v.length && !sx::validate_user_range(v.base, v.length, true)) { set_result(c, -abi::kEFAULT); return c; }
+        if (v.length && !sx::validate_user_range(v.base, v.length, true)) {
+            set_result(c, -abi::kEFAULT);
+            return c;
+        }
     }
-    if (!length) { set_result(c, 0); return c; }
+    if (!length) {
+        set_result(c, 0);
+        return c;
+    }
     const uint64_t handle = d->read_handle_plus_one - 1;
     auto* input = process::io_object_of(proc, handle);
-    if (!input) { set_result(c, -abi::kEBADF); return c; }
-    if (!process::detail::poll_open_file(input, abi::kPollIn) &&
-        !(flags & abi::kMsgDontWait) && !(d->flags & kDescriptorNonblock)) {
+    if (!input) {
+        set_result(c, -abi::kEBADF);
+        return c;
+    }
+    if (!process::detail::poll_open_file(input, abi::kPollIn) && !(flags & abi::kMsgDontWait) &&
+        !(d->flags & kDescriptorNonblock)) {
         auto* state = thread_state_of(self);
-        if (!state) { set_result(c, -abi::kENOMEM); return c; }
+        if (!state) {
+            set_result(c, -abi::kENOMEM);
+            return c;
+        }
         process::clear_wait_state(self);
         state->receive_handle = handle;
         state->receive_syscall = c->rax;
@@ -1319,13 +1607,28 @@ process::SavedContext* linux_receive(process::Thread& self, process::SavedContex
     int64_t total = 0;
     for (uint64_t i = 0; i < count && total < static_cast<int64_t>(abi::kMaxRwCount); ++i) {
         abi::Iovec v = single;
-        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) { if (!total) total = -abi::kEFAULT; break; }
-        if (!v.length) continue;
-        const uint64_t n = v.length < abi::kMaxRwCount - total ? v.length : abi::kMaxRwCount - total;
+        if (message && !sx::copy_from_user(&v, header.iov + i * sizeof(v), sizeof(v))) {
+            if (!total) {
+                total = -abi::kEFAULT;
+            }
+            break;
+        }
+        if (!v.length) {
+            continue;
+        }
+        const uint64_t n =
+            v.length < abi::kMaxRwCount - total ? v.length : abi::kMaxRwCount - total;
         const int result = process::native_read_handle(self, handle, v.base, n);
-        if (result < 0) { if (!total) total = result; break; }
+        if (result < 0) {
+            if (!total) {
+                total = result;
+            }
+            break;
+        }
         total += result;
-        if (static_cast<uint64_t>(result) < n) break;
+        if (static_cast<uint64_t>(result) < n) {
+            break;
+        }
     }
     input->open_flags = old_flags;
     if (total >= 0) {
@@ -1333,10 +1636,14 @@ process::SavedContext* linux_receive(process::Thread& self, process::SavedContex
             header.name_length = 0;
             header.control_length = 0;
             header.flags = 0;
-            if (!sx::copy_to_user(c->rsi, &header, sizeof(header))) total = -abi::kEFAULT;
+            if (!sx::copy_to_user(c->rsi, &header, sizeof(header))) {
+                total = -abi::kEFAULT;
+            }
         } else if (c->r8) {
             const uint32_t zero = 0;
-            if (!sx::copy_to_user(c->r9, &zero, 4)) total = -abi::kEFAULT;
+            if (!sx::copy_to_user(c->r9, &zero, 4)) {
+                total = -abi::kEFAULT;
+            }
         }
     }
     set_result(c, total);
@@ -1345,15 +1652,22 @@ process::SavedContext* linux_receive(process::Thread& self, process::SavedContex
 
 void recheck_transport(process::Thread& thread, uint64_t now, bool deadlines) {
     auto* state = thread_state_of(thread);
-    if (!state) return;
+    if (!state) {
+        return;
+    }
     if (state->poll_active) {
         const int ready = evaluate_poll(thread, *state);
-        if (!ready && !(deadlines && thread.wake_deadline_ms && thread.wake_deadline_ms <= now)) return;
+        if (!ready && !(deadlines && thread.wake_deadline_ms && thread.wake_deadline_ms <= now)) {
+            return;
+        }
         state->poll_active = false;
-        process::detail::complete_blocked_wait(thread, commit_poll(thread, *state) ? ready : -abi::kEFAULT);
+        process::detail::complete_blocked_wait(thread,
+                                               commit_poll(thread, *state) ? ready : -abi::kEFAULT);
     } else if (state->receive_wait) {
         auto* input = process::io_object_of(*thread.process, state->receive_handle);
-        if (input && !process::detail::poll_open_file(input, abi::kPollIn)) return;
+        if (input && !process::detail::poll_open_file(input, abi::kPollIn)) {
+            return;
+        }
         state->receive_wait = false;
         thread.context->rip -= 2;
         process::detail::complete_blocked_wait(thread, state->receive_syscall);
@@ -1372,16 +1686,33 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
     process::Process& proc = *self->process;
 
     switch (context->rax) {
-        case abi::kSysSocket: set_result(context, linux_socket(proc, context)); return context;
-        case abi::kSysConnect: set_result(context, linux_connect(proc, context)); return context;
-        case abi::kSysGetpeername: set_result(context, linux_getpeername(proc, context)); return context;
-        case abi::kSysGetsockopt: set_result(context, linux_getsockopt(proc, context)); return context;
-        case abi::kSysShutdown: set_result(context, linux_shutdown(proc, context)); return context;
-        case abi::kSysAccess: set_result(context, linux_access(proc, context)); return context;
-        case abi::kSysUname: set_result(context, linux_uname(context)); return context;
-        case abi::kSysPoll: return linux_poll(*self, context);
-        case abi::kSysRecvfrom: return linux_receive(*self, context, false);
-        case abi::kSysRecvmsg: return linux_receive(*self, context, true);
+        case abi::kSysSocket:
+            set_result(context, linux_socket(proc, context));
+            return context;
+        case abi::kSysConnect:
+            set_result(context, linux_connect(proc, context));
+            return context;
+        case abi::kSysGetpeername:
+            set_result(context, linux_getpeername(proc, context));
+            return context;
+        case abi::kSysGetsockopt:
+            set_result(context, linux_getsockopt(proc, context));
+            return context;
+        case abi::kSysShutdown:
+            set_result(context, linux_shutdown(proc, context));
+            return context;
+        case abi::kSysAccess:
+            set_result(context, linux_access(proc, context));
+            return context;
+        case abi::kSysUname:
+            set_result(context, linux_uname(context));
+            return context;
+        case abi::kSysPoll:
+            return linux_poll(*self, context);
+        case abi::kSysRecvfrom:
+            return linux_receive(*self, context, false);
+        case abi::kSysRecvmsg:
+            return linux_receive(*self, context, true);
         case abi::kSysRead:
             return linux_read(*self, context);
         case abi::kSysWrite:
@@ -1395,17 +1726,23 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
         case abi::kSysSendfile:
             return linux_sendfile(*self, context);
         case abi::kSysGetdents64:
-            set_result(context, linux_getdents(proc, context)); return context;
+            set_result(context, linux_getdents(proc, context));
+            return context;
         case abi::kSysChdir:
-            set_result(context, linux_chdir(proc, context)); return context;
+            set_result(context, linux_chdir(proc, context));
+            return context;
         case abi::kSysGetcwd:
-            set_result(context, linux_getcwd(proc, context)); return context;
+            set_result(context, linux_getcwd(proc, context));
+            return context;
         case abi::kSysMkdir:
-            set_result(context, linux_mkdir(proc, context)); return context;
+            set_result(context, linux_mkdir(proc, context));
+            return context;
         case abi::kSysFcntl:
-            set_result(context, linux_fcntl(proc, context)); return context;
+            set_result(context, linux_fcntl(proc, context));
+            return context;
         case abi::kSysGetuid:
-            set_result(context, proc.credentials.uid); return context;
+            set_result(context, proc.credentials.uid);
+            return context;
         case abi::kSysUmask: {
             auto* state = paths_of(proc);
             set_result(context, state->mask);
@@ -1436,11 +1773,14 @@ process::SavedContext* dispatch_linux_syscall(process::SavedContext* context) {
             set_result(context, linux_ioctl(proc, context));
             return context;
         case abi::kSysMprotect:
-            set_result(context, linux_mprotect(proc, context)); return context;
+            set_result(context, linux_mprotect(proc, context));
+            return context;
         case abi::kSysReadlink:
-            set_result(context, linux_readlink(proc, context)); return context;
+            set_result(context, linux_readlink(proc, context));
+            return context;
         case abi::kSysGetrandom:
-            set_result(context, linux_getrandom(proc, context)); return context;
+            set_result(context, linux_getrandom(proc, context));
+            return context;
         case abi::kSysMmap:
             set_result(context, linux_mmap(proc, context));
             return context;
@@ -1527,15 +1867,21 @@ bool linux_guest_path(const char* guest, char* host, size_t capacity) {
     return true;
 }
 
-bool linux_interpreter_source(void* credentials, const char* guest,
-                              elf::InterpreterSource& source, elf::LoadFailure& failure) {
+bool linux_interpreter_source(void* credentials, const char* guest, elf::InterpreterSource& source,
+                              elf::LoadFailure& failure) {
     vfs::PathBuffer host;
-    if (host == nullptr) { failure = elf::LoadFailure::out_of_memory; return false; }
-    if (!linux_guest_path(guest, host, host.capacity())) { failure = elf::LoadFailure::bad_header; return false; }
+    if (host == nullptr) {
+        failure = elf::LoadFailure::out_of_memory;
+        return false;
+    }
+    if (!linux_guest_path(guest, host, host.capacity())) {
+        failure = elf::LoadFailure::bad_header;
+        return false;
+    }
     const auto& who = *static_cast<const cred::Credentials*>(credentials);
     if (!vfs::may_execute(who, host)) {
         failure = vfs::last_error() == SX_EACCES ? elf::LoadFailure::interpreter_denied
-                                               : elf::LoadFailure::missing_interpreter;
+                                                 : elf::LoadFailure::missing_interpreter;
         return false;
     }
     auto* node = vfs::open(who, host, SAVANXP_OPEN_READ, 0);
@@ -1547,7 +1893,8 @@ bool linux_interpreter_source(void* credentials, const char* guest,
     source.size = node->size;
     source.read = [](void* context, uint64_t offset, void* buffer, size_t count) {
         auto& file = *static_cast<vfs::Vnode*>(context);
-        return offset <= file.size && count <= file.size - offset && vfs::read(file, offset, buffer, count) == count;
+        return offset <= file.size && count <= file.size - offset &&
+               vfs::read(file, offset, buffer, count) == count;
     };
     return true;
 }
