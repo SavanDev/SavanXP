@@ -465,6 +465,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Doom starts on a fresh system, as on the ISO, instead of exiting with `failed to prepare data directories`.**
+  A user's Doom no longer tries to create `/games/doom/savegames`; settings and saves stay in `$HOME/doom`.
+  `doom-music-smoke` now starts it without that directory.
+
 - **TCP progresses independently of socket consumers and closes reliably after packet loss.**
   SUN/POSIX retain errors (`POLLERR` for `poll`), drain accepted data before FIN and keep TIME_WAIT for 60 seconds.
   `NET_IOC_GET_TCP_LIFETIMES` reports retained close state; see [NETWORKING.md](docs/net/NETWORKING.md).

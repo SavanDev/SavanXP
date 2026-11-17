@@ -36,12 +36,6 @@ static void sx_fail(const char *message) {
     sx_shutdown_exit(1);
 }
 
-static void sx_prepare_data_dirs(void) {
-    if (sx_make_dirs(FILES_DIR) < 0 || sx_make_dirs(FILES_DIR "/savegames") < 0) {
-        sx_fail("doomgeneric: failed to prepare data directories");
-    }
-}
-
 static unsigned char sx_unshift_ascii(unsigned char key) {
     switch (key) {
         case '!': return '1';
@@ -255,8 +249,8 @@ static void sx_fps_stamp(void) {
 }
 
 void DG_Init(void) {
-    sx_prepare_data_dirs();
-
+    // Settings and saves go where m_config.c puts them: $HOME/doom for a user,
+    // /games/doom for the system. A user cannot write to /games/doom.
     {
         long open_result = gfx_open(&g_gfx);
         if (open_result < 0) {

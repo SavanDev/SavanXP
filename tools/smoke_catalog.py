@@ -661,10 +661,12 @@ SCENARIOS: dict[str, Scenario] = {
         host_action="visual",
         visual_scenario="notepadwheel",
     ),
-    # Necesita el port DoomGeneric instalado y un WAD en el volumen; por eso el
-    # único requisito de maquina es la imagen de siempre. Si el port no esta, el
-    # escenario falla en voz alta (el WAV sale en silencio) en vez de pasar sin
-    # comprobar nada.
+    # Needs the DoomGeneric port installed and a WAD on the volume, so the only
+    # machine requirement is the usual image. Without the port the scenario
+    # fails loudly (the WAV is silent) instead of passing without checking
+    # anything. The disposable copy drops /games/doom/savegames, which a fresh
+    # install lacks: the user's Doom must start without writing to the system's
+    # game directory, as it has to on the ISO.
     "doom-music-smoke": _qemu_scenario(
         "",
         "DOOM MUSIC SMOKE PASS",
@@ -678,6 +680,7 @@ SCENARIOS: dict[str, Scenario] = {
         completion="host",
         ready_wait=45.0,
         prepare=("./tools/restore_doom.sh",),
+        remove_paths=("/games/doom/savegames",),
         host_action="visual",
         visual_scenario="doom",
     ),
