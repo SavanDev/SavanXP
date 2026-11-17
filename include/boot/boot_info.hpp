@@ -40,6 +40,19 @@ struct FramebufferInfo {
     // real para cambiar de modo, y lo que hace posible el doble buffer, que
     // necesita mas alto virtual que el modo visible. Nunca menor a pitch*height.
     uint64_t mapped_bytes;
+    // The pixel layout as Limine reports it: memory model 1 is RGB, and each
+    // channel is `size` bits starting at bit `shift` of a pixel.
+    uint8_t memory_model;
+    uint8_t red_mask_size;
+    uint8_t red_mask_shift;
+    uint8_t green_mask_size;
+    uint8_t green_mask_shift;
+    uint8_t blue_mask_size;
+    uint8_t blue_mask_shift;
+    // Bytes from `address` to the end of the memory map's framebuffer region
+    // that holds it, as found, never raised to fit the mode; 0 when no region
+    // holds it. framebuffer::validate checks it against the visible mode.
+    uint64_t region_bytes;
 };
 
 struct MemoryRegion {

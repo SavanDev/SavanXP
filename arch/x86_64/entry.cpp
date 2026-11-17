@@ -211,6 +211,13 @@ boot::BootInfo build_boot_info() {
         info.framebuffer.height = framebuffer->height;
         info.framebuffer.pitch = framebuffer->pitch;
         info.framebuffer.bpp = framebuffer->bpp;
+        info.framebuffer.memory_model = framebuffer->memory_model;
+        info.framebuffer.red_mask_size = framebuffer->red_mask_size;
+        info.framebuffer.red_mask_shift = framebuffer->red_mask_shift;
+        info.framebuffer.green_mask_size = framebuffer->green_mask_size;
+        info.framebuffer.green_mask_shift = framebuffer->green_mask_shift;
+        info.framebuffer.blue_mask_size = framebuffer->blue_mask_size;
+        info.framebuffer.blue_mask_shift = framebuffer->blue_mask_shift;
         info.framebuffer.available = true;
     }
 
@@ -253,11 +260,12 @@ boot::BootInfo build_boot_info() {
         info.memory_map = g_memory_regions;
         info.memory_map_entries = copied_entries;
 
-        // Cuanto hay mapeado de verdad detras del framebuffer. Limine entrega
-        // una direccion del HHDM y publica la apertura entera como region de
-        // tipo framebuffer, asi que el resto de la VRAM ya esta accesible sin
-        // mapear nada nuevo. Sin region que la contenga se cae al modo que
-        // entrego el firmware, que es lo unico garantizado.
+        // How much is really mapped behind the framebuffer. Limine hands over
+        // an HHDM address and publishes the whole aperture as a framebuffer
+        // region, so the rest of the VRAM is already reachable without mapping
+        // anything new. With no region holding it, this falls back to the mode
+        // the firmware set, the only thing guaranteed. `region_bytes` keeps
+        // what the region said, before that fallback raises `mapped_bytes`.
         if (info.framebuffer.available && info.framebuffer.address != nullptr) {
             const uint64_t framebuffer_physical =
                 reinterpret_cast<uint64_t>(info.framebuffer.address) - info.hhdm_offset;
@@ -270,6 +278,7 @@ boot::BootInfo build_boot_info() {
                 }
                 info.framebuffer.mapped_bytes =
                     (region.base + region.length) - framebuffer_physical;
+                info.framebuffer.region_bytes = info.framebuffer.mapped_bytes;
                 break;
             }
 

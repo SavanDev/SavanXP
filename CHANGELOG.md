@@ -21,6 +21,10 @@ Cut-off notes:
 - **`power-smoke` scenario: the power button with unflushed writes leaves the volume clean, and the data reads back after the next boot.**
   `nativetest power` is the guest half; QMP callbacks now get the run's disk copy (`SAVANXP_SMOKE_DISK_IMAGE`).
 
+- **The boot framebuffer descriptor now carries Limine's memory model and channel masks, with a checked validator.**
+  `framebuffer::validate` and host test `framebuffer-layout-test`; nothing calls it yet, output is unchanged.
+  FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
+
 ### Fixed
 
 - **Closing Notepad with unsaved changes (X, Alt+F4) asks "save changes?" instead of discarding them.**

@@ -107,7 +107,7 @@ S is a few commits, M a short series, L a project of its own.
 
 | Phase | Priority and result | Size | Prerequisites | Code | Metal |
 | --- | --- | --- | --- | --- | --- |
-| FB1a | High: masks and a checked descriptor, host tests | S | None | open | n/a |
+| FB1a | High: masks and a checked descriptor, host tests | S | None | done, 2026-11-17 | n/a |
 | FB1b | High: one gate for splash/console/backend, honest boot log | S | FB1a | open | open |
 | FB2 | High: measured, coherent framebuffer memory attributes | M | FB1b | open | open |
 | FB3 | High: defined presentation completion and ordering | M | FB1a; coordinate with FB2 | open | open |
@@ -116,8 +116,9 @@ S is a few commits, M a short series, L a project of its own.
 | FB6 | Medium: measured copy and scheduling improvements | L | FB2, FB3, FB5 | open | open |
 | FB7 | Conditional: one native display driver | L | FB1-FB6 and a demonstrated hardware need | open | open |
 
-**First increment:** FB1a. It touches only the boot descriptor and a pure
-validation function, is fully testable on the host and changes no output.
+**First increment:** FB1a, done: the boot descriptor carries the masks and
+`framebuffer::validate` (`kernel/framebuffer_layout.cpp`) checks it, with
+`framebuffer-layout-test` on the host; nothing calls it yet. **Next:** FB1b.
 
 FB4 can land before FB2/FB3 finish. RGB/BGR correctness in FB5 precedes other
 depths, unless a target's mode survey promotes 24-bit (see FB5). FB7 is a
