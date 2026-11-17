@@ -135,7 +135,9 @@ FB1 lands in two increments:
   replaces their separate gates, and writes the boot log line. The same check
   covers modes set at runtime: a mode programmed through DISPI `set_mode` is
   validated before `publish_mode` hands its geometry to the console, so the
-  boot descriptor is not the only one that is trusted.
+  boot descriptor is not the only one that is trusted. A 32-bit BGR layout
+  boots as it does today, with red and blue swapped, plus a warning in the
+  boot log naming the format and FB5; it is not demoted to serial output.
 
 Carry the memory model and channel masks through the boot descriptor. Establish
 one checked description before splash, console or the display backend writes
@@ -149,7 +151,11 @@ that the mode came from the bootloader.
 Record the physical address through a justified translation, not an unverified
 subtraction from an arbitrary virtual address. Diagnose rejected descriptors
 through serial output without touching their memory. Keep unsupported-format
-rejection explicit until FB5 supports that format.
+rejection explicit until FB5 supports that format, with one exception decided
+on 2026-11-17: 32-bit BGR (`xbgr8888`) is accepted and reported as such,
+because rejecting it would take the desktop away from machines that have one
+today, only with swapped colors. FB1b turns that into a log warning; FB5 makes
+the colors correct.
 
 **Acceptance:** host cases cover zero dimensions, undersized pitch/span,
 overflow, narrowing, padding and invalid masks. Guarded buffers show no writes
@@ -240,9 +246,13 @@ or reproducible fixture needs it. RGB565 stays optional either way.
 Other depths are handled at the final copy. `set_mode` keeps accepting only
 32 bpp requests, and `compositord` keeps asking for 32. A backend whose
 physical format differs reports its 32-bit logical mode and converts, so
-`GPU_IOC_SET_MODE` callers never have to know the scanout's depth. Respect destination pitch
+`GPU_IOC_SET_MODE` callers never have to know the scanout's depth.
+
+Respect destination pitch
 and pixel size; the source surface pitch remains independent. Unsupported
-layouts remain an explained rejection, not a guessed color order.
+layouts remain an explained rejection, not a guessed color order. BGR is
+the exception already accepted since FB1 (see there); FB5 replaces its
+warning with a correct conversion.
 
 **Acceptance:** deterministic color bars and channel ramps compare against
 expected bytes for every supported format. Guard bytes catch row overruns;

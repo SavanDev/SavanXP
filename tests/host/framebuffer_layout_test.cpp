@@ -129,11 +129,13 @@ void handles_depth_and_masks() {
     info.red_mask_size = 255;
     check(reason_of(info) == Reject::invalid_masks, "absurd channel size");
 
-    // BGR is recognized but stays rejected until FB5 converts to it.
+    // BGR is accepted and named, so the caller can warn; FB5 converts to it.
     info = good();
     info.red_mask_shift = 0;
     info.blue_mask_shift = 16;
-    check(reason_of(info) == Reject::unsupported_format, "xbgr8888 rejected until FB5");
+    const framebuffer::Result bgr = framebuffer::validate(info);
+    check(bgr.reason == Reject::none, "xbgr8888 accepted");
+    check(bgr.layout.format == Format::xbgr8888, "xbgr8888 reported as such");
 
     // Valid, non-overlapping, but no layout the writers know (10-bit channels).
     info = good();

@@ -76,7 +76,7 @@ Result validate(const boot::FramebufferInfo& info) {
     } else if (is_channel(red, 8, 0) && is_channel(green, 8, 8) && is_channel(blue, 8, 16)) {
         format = Format::xbgr8888;
     }
-    if (format != Format::xrgb8888) {
+    if (format == Format::unknown) {
         return reject(Reject::unsupported_format);
     }
 

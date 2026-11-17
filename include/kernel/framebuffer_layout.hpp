@@ -18,8 +18,10 @@ enum class Format : uint8_t {
     unknown = 0,
     // 32 bpp, blue in the low byte: the compositor's canonical surface format.
     xrgb8888,
-    // 32 bpp, red in the low byte. Recognized for diagnostics; converting to
-    // it is FB5's work, so it is rejected until then.
+    // 32 bpp, red in the low byte. Accepted, because rejecting it would leave
+    // machines that boot with it today without a desktop. The writers still
+    // emit XRGB, so red and blue show swapped until FB5 converts at the final
+    // copy; the caller warns when it sees this format.
     xbgr8888,
 };
 

@@ -23,7 +23,7 @@ Cut-off notes:
 
 - **The boot framebuffer descriptor now carries Limine's memory model and channel masks, with a checked validator.**
   `framebuffer::validate` and host test `framebuffer-layout-test`; nothing calls it yet, output is unchanged.
-  FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
+  It accepts 32-bit BGR and names it so callers can warn. FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
 ### Fixed
 
