@@ -148,9 +148,10 @@
   are not copied into the build image or the ISO by any script either.
 - Game data (no `*.wad` is committed; see `ports/doomgeneric/wad/README.md`),
   build output, logs and screenshots from a check.
-- `.gitignore` allow-lists `tools/` and `ports/`: a new file there is ignored
-  until its `!` line is added. Add the line in the same commit; do not use
-  `git add -f` to get around it.
+- `.gitignore` allow-lists `ports/`: a new port is ignored until its `!`
+  lines are added. Add them in the same commit; do not use `git add -f` to get
+  around it. `tools/` is not allow-listed: only the Limine checkout and the
+  maintainer-only `tools/icon_art.py` are ignored there.
 
 ## Tests and reporting
 
