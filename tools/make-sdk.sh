@@ -150,17 +150,58 @@ compile_manifest() {
     done < <(grep -v '^[[:space:]]*\(#\|$\)' "$manifest")
 }
 
-for sse in 0 1; do
-    variant=$(savanxp_sdk_variant "$sse")
+for variant_spec in "0 0" "1 0" "1 1"; do
+    read -r sse pie <<<"$variant_spec"
+    variant=$(savanxp_sdk_variant "$sse" "$pie")
     lib="$TMP/lib/$variant"
     mkdir -p "$lib"
-    mapfile -t flags < <(savanxp_sdk_compile_flags "$sse")
+    if ((pie)); then
+        mapfile -t flags < <(savanxp_sdk_pie_compile_flags)
+    else
+        mapfile -t flags < <(savanxp_sdk_compile_flags "$sse")
+    fi
     flags+=(-I "$SDK_SRC/include" -I "$ROOT/include")
-    mapfile -t groups < <(savanxp_sdk_groups "$sse")
+    mapfile -t groups < <(savanxp_sdk_groups "$sse" "$pie")
     : >"$lib/units.txt"
     compile_manifest "$MANIFEST" "" "$lib" "$variant" "${groups[@]}"
     compile_manifest "$SUN_MANIFEST" "sun-" "$lib" "$variant" core gui
+    if ((pie)); then
+        # The loader goes into every PIE program: crt0 runs it through the
+        # weak sx_run_interpreter hook (docs/kernel/SHARED_LIBRARIES.md).
+        # <dlfcn.h> is POSIX's layer over it, for POSIX programs only.
+        for loader_unit in "loader system/loader/ldso.c" "dlfcn subsystems/posix/userland/dlfcn.c"; do
+            read -r group path <<<"$loader_unit"
+            object="$lib/$(basename -- "$path" .c).o"
+            "$CC" -c -x c "$ROOT/$path" -o "$object" "${flags[@]}" \
+                -MD -MF "$DEPS/$variant-$(basename -- "$path" .c).d"
+            printf '%s %s\n' "$group" "$(basename -- "$object")" >>"$lib/units.txt"
+        done
+    fi
 done
+
+# --- shared libraries ------------------------------------------------------
+# The system's libraries a PIE program may link against (--needs), copied from
+# the build, and lib/shared/libraries.txt: each soname and the runtime objects
+# it replaces, which build-user.sh leaves out of a program that links it.
+LIBRARIES="$SDK_SRC/runtime/libraries.txt"
+INPUTS+=("$LIBRARIES")
+SHARED="$TMP/lib/shared"
+mkdir -p "$SHARED"
+: >"$SHARED/libraries.txt"
+while read -r name soname units; do
+    built="$BUILD_ROOT/diskfs/lib/$soname"
+    [[ -f "$built" ]] || {
+        echo "make-sdk.sh: $soname is not built yet ($built); run ./build.sh build" >&2
+        exit 1
+    }
+    cp "$built" "$SHARED/$soname"
+    INPUTS+=("$built")
+    objects=""
+    for unit in $units; do
+        objects+=" $(basename -- "${unit%.*}").o"
+    done
+    printf '%s%s\n' "$soname" "$objects" >>"$SHARED/libraries.txt"
+done < <(grep -v '^[[:space:]]*\(#\|$\)' "$LIBRARIES")
 
 # --- tools -----------------------------------------------------------------
 SHARE="$TMP/share/sdk"

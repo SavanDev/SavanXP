@@ -1,6 +1,6 @@
 # SDK 2.0 roadmap
 
-> **Status: phases 0 (2.0 declared), 1 (no internal include paths), 2 (the sysroot) and 3 (SUN on equal terms) done; phases 4–5 planned.** This records why the external SDK is
+> **Status: phases 0 to 4 done (2.0 declared, no internal include paths, the sysroot, SUN on equal terms, dynamic linking); phase 5 planned.** This records why the external SDK is
 > due a major version, what it depends on today that an SDK should not, and
 > the phases that turn it into one SDK for both POSIX and SUN programs. The
 > measurements below were taken on 2026-11-18 at `9a293bfa`.
@@ -269,7 +269,7 @@ What landed, and where it differs from the plan:
 - Every other `--native` build links to the same image as before, apart
   from the build id in `.sxmeta`.
 
-### Phase 4 — dynamic linking through the SDK
+### Phase 4 — dynamic linking through the SDK (done, FFmpeg moved to phase 5)
 
 - `build-user.sh --pie` links PIE against `ldso.o` and `dlfcn.o` from the
   sysroot. It adds `--export-dynamic` and the `/lib/ld.so.0.4`
@@ -280,6 +280,42 @@ What landed, and where it differs from the plan:
   Changing the default would be its own minor version.
 - **Acceptance:** each port builds and runs its scenario, and the
   `ld*test` programs pass.
+
+What landed, and where it differs from the plan:
+
+- The sysroot gains `lib/pie`: every runtime group compiled with the in-tree
+  PIC profile (`-fPIC -mcmodel=medium`, SSE, function sections), the SUN
+  runtime, and the groups `loader` (`ldso.o`) and `dlfcn` (`dlfcn.o`).
+  `lib/shared` holds the six system libraries, copied from the staged disk
+  tree, so the `savanxp_sdk` target now runs after `savanxp_diskfs`.
+- Which runtime units each library replaces lives in
+  `runtime/libraries.txt`. CMake reads it for `SAVANXP_LIBRARY_REPLACES_*`,
+  which used to be five `set()` lines, and the sysroot reads it for
+  `--needs`. `check_shared_libs` still passes.
+- `build-user.sh --pie` implies `--sse`, as every PIE program in the tree
+  is SSE. It links with clang as the driver, using the in-tree PIE flags,
+  which `tools/lib/sdk_flags.sh` now holds for the ports too.
+  `--export-dynamic` is dropped for SUN programs, as CMake drops it.
+  `--needs` takes a system soname or a path, and leaves the replaced
+  objects out.
+- `doomgeneric` and `ccleste` no longer compile the runtime, `ldso.c` or
+  `dlfcn.c`, and no longer spell out the PIE link flags. They link the
+  sysroot's PIE objects, and Doom links `lib/shared/libsxmidi.so.0.4`. Doom
+  compiles its own sources with the SDK's PIE flags. ccleste keeps its own,
+  which its layout test asserts, and its 8 MiB arena is now a strong
+  `sx_heap_bootstrap` instead of `-DSX_HEAP_SIZE`. Neither port includes
+  `subsystems/posix/userland` any more.
+- **FFmpeg moves to phase 5.** Its scripts build their own sysroot with
+  archives (`libsavanxp.a`, `libsxgui.a`) so that FFmpeg's `configure` can
+  link test programs, and `ldso.o` there is compiled with the small code
+  model. That is the toolchain-integration case phase 5 is for, and any
+  change to those scripts changes the fingerprint that forces a full FFmpeg
+  rebuild. Its scripts were left unchanged.
+- `sdk/piesmoke` uses `sqrt` and `cos` from `libmath.so.0.4` by `DT_NEEDED`,
+  and `libsximg.so.0.4` through `dlopen` and `dlsym`. The new `pie-smoke`
+  scenario builds it with `--pie --needs libmath.so.0.4` and runs it, and
+  `sdk-sysroot-test` builds it from a copy of the sysroot and checks
+  `ET_DYN`, `PT_INTERP` and the `DT_NEEDED`.
 
 ### Phase 5 — toolchain integration
 

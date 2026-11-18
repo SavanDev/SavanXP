@@ -1,0 +1,20 @@
+# The system's shared libraries a program may link against, and the runtime
+# units each one replaces (docs/kernel/SHARED_LIBRARIES.md).
+#
+# Read by CMake (SAVANXP_LIBRARY_REPLACES_<library>, for an in-tree PIE
+# program's DEPENDS) and by tools/make-sdk.sh, which ships the libraries in the
+# SDK sysroot for build-user.sh --pie --needs. One source, so the two cannot
+# disagree on which units leave the program.
+#
+# A program that links a library must not also carry the units it replaces:
+# the executable's copy would satisfy the reference, the linker would emit no
+# DT_NEEDED, and nothing would be shared.
+#
+# Each line is "<library> <soname> <unit>...", the units as repository paths
+# from runtime/units.txt. A library that replaces no unit lists none.
+libmath     libmath.so.0.4    subsystems/posix/sdk/v1/runtime/math.c
+libsxmidi   libsxmidi.so.0.4  subsystems/posix/sdk/v1/runtime/sxmidi.c
+libsximg    libsximg.so.0.4
+libgfx2d    libgfx2d.so.0.4   system/gfx/pixels.c system/gfx/gfx2d.c system/gfx/sxchrome.c
+libsxgfx    libsxgfx.so.0.4   subsystems/posix/sdk/v1/runtime/gfx.c subsystems/posix/sdk/v1/runtime/gfx_scaled.c
+libsxgui    libsxgui.so.0.4   system/gfx/sxgui.c

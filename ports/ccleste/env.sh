@@ -11,9 +11,8 @@ case "$OUTPUT_ROOT" in
     /*) ;;
     *) OUTPUT_ROOT="$REPO/$OUTPUT_ROOT" ;;
 esac
-SDK="$REPO/subsystems/posix/sdk/v1"
-# shellcheck source=../../tools/lib/runtime_units.sh
-. "$REPO/tools/lib/runtime_units.sh"
+# shellcheck source=../../tools/lib/sdk_flags.sh
+. "$REPO/tools/lib/sdk_flags.sh"
 UPSTREAM_FILE="$PORT/UPSTREAM"
 
 metadata() {
@@ -40,6 +39,8 @@ STAMPED="$OUTPUT_ROOT/ccleste/ccleste"
 # The 23 sound effects decode to 772 KiB of unsigned 8-bit mono PCM, and the
 # five music loops decode to about 4 MB more, so the port asks for more heap
 # up front. The heap lives in .bss: it costs address space, not image bytes.
+# build.sh links it as a strong bootstrap arena over the prebuilt runtime's
+# weak one (savanxp_sdk_heap_source), as build-user.sh --heap-mib does.
 SX_HEAP_SIZE="$((8 * 1024 * 1024))"
 
 # Celeste Classic uses floating point (sin/cos/fmodf/floorf) in its update step,
@@ -61,7 +62,6 @@ SX_TARGET_CFLAGS=(
     -msse2
     -Wno-language-extension-token
     -Wno-c23-extensions
-    "-DSX_HEAP_SIZE=$SX_HEAP_SIZE"
 )
 
 CLANG="${SAVANXP_CLANG:-clang}"
@@ -71,20 +71,15 @@ READELF="${SAVANXP_READELF:-llvm-readelf}"
 SIZE_CMD="${SAVANXP_SIZE:-llvm-size}"
 PYTHON="${SAVANXP_PYTHON:-python3}"
 
-# The target compiler is freestanding. The link driver uses the Linux triple so
-# clang delegates to ld.lld. The PIE profile mirrors mediaplayer's: no -static,
-# no fixed linker script, -pie with an explicit entry, --export-dynamic so the
-# loader has symbols to resolve the libraries against, and --dynamic-linker
-# with the path the interpreter would have as a file of its own (PT_INTERP is
-# recorded but not executed yet: the kernel maps the image and crt0 runs the
-# loader linked inside the program).
+# The target compiler is freestanding. The link driver and its flags are the
+# SDK's PIE profile (tools/lib/sdk_flags.sh), the one mediaplayer uses: clang
+# with the Linux triple delegates to ld.lld, -pie with an explicit entry,
+# --export-dynamic so the loader has symbols to resolve the libraries against,
+# and --dynamic-linker with the loader's path. The loader itself is linked
+# inside the program from the SDK sysroot, and crt0 runs it.
 SX_CC="$CLANG -target x86_64-unknown-none-elf"
-SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
-SX_TARGET_LDFLAGS=(
-    -nostdlib -fuse-ld=lld -pie
-    -Wl,-z,max-page-size=0x1000 -Wl,--dynamic-linker,/lib/ld.so.0.4
-    -Wl,--build-id=none -Wl,--export-dynamic -Wl,--gc-sections -Wl,-e,_start
-)
+SX_LD="$LINK_CC"
+mapfile -t SX_TARGET_LDFLAGS < <(savanxp_sdk_pie_link_flags 0)
 
 # libffmpeg.so.0.4 comes from the FFmpeg port (same artifacts mediaplayer uses:
 # the shared object plus the public headers and the generated config.h). The

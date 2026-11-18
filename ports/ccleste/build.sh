@@ -101,12 +101,6 @@ compile_c() {
     $SX_CC -c -x c "$source" -o "$object" "${SX_TARGET_CFLAGS[@]}" "$@"
 }
 
-compile_asm() {
-    local source=$1
-    local object=$2
-    "$CLANG" -c -x assembler-with-cpp "$source" -o "$object" "${SX_TARGET_CFLAGS[@]}"
-}
-
 if ((SKIP_PORT == 0)); then
     # The engine is compiled from the pristine upstream tree; the SavanXP
     # frontend is compiled alongside it and never overwrites an upstream file.
@@ -121,10 +115,14 @@ if ((SKIP_PORT == 0)); then
        "$PORT/overlay/ccleste_savanxp_assets.h" \
        "$BUILD_SRC/"
 
-    INCLUDE_FLAGS=(-I "$SDK/include" -I "$REPO/include" -I "$BUILD_SRC")
-    # The userland headers, and for the overlay FFmpeg's public headers plus
-    # its generated config.h (as mediaplayer does).
-    INCLUDE_FLAGS+=(-I "$REPO/subsystems/posix/userland")
+    # The port builds against the SDK sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+    # phase 4): its headers, its PIE runtime and the loader. make-sdk.sh brings
+    # it up to date first.
+    SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$REPO/tools/make-sdk.sh" --quiet
+    SYSROOT=$(SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$REPO/tools/make-sdk.sh" --print-path)
+    INCLUDE_FLAGS=(-I "$SYSROOT/include" -I "$BUILD_SRC")
+    # For the overlay, FFmpeg's public headers plus its generated config.h (as
+    # mediaplayer does).
     if [[ -n "$FFMPEG_SRC" ]]; then
         INCLUDE_FLAGS+=(-I "$FFMPEG_SRC" -I "$FFMPEG_BUILD")
     fi
@@ -156,32 +154,19 @@ if ((SKIP_PORT == 0)); then
         OBJECTS+=("$OBJ/$name.o")
     done
 
-    echo "== compiling the SDK runtime"
-    # The units come from the runtime's manifest
-    # (subsystems/posix/sdk/v1/runtime/units.txt); core brings sxe, which the
-    # window runtime uses to publish its title and icon from its own .sxe.
-    RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$REPO" core audio math setjmp)
-    mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
-    RUNTIME_OBJECTS=()
-    for unit in "${RUNTIME_UNITS[@]}"; do
-        object=$(savanxp_runtime_object "$OBJ" "$unit")
-        if [[ "$unit" == *.S ]]; then
-            compile_asm "$unit" "$object"
-        else
-            compile_c "$unit" "$object" -fno-builtin "${INCLUDE_FLAGS[@]}"
-        fi
-        RUNTIME_OBJECTS+=("$object")
-    done
-
-    echo "== compiling the loader (it goes inside the program, as in mediaplayer)"
-    compile_c "$REPO/system/loader/ldso.c" "$OBJ/ldso.o" \
-        -Wall -Wextra -Wpedantic "${INCLUDE_FLAGS[@]}"
-    compile_c "$REPO/subsystems/posix/userland/dlfcn.c" "$OBJ/dlfcn.o" \
-        -Wall -Wextra -Wpedantic "${INCLUDE_FLAGS[@]}"
+    # The runtime, prebuilt in the sysroot's PIE variant; core brings sxe,
+    # which the window runtime uses to publish its title and icon from its own
+    # .sxe. The loader goes inside the program, as in mediaplayer, with
+    # <dlfcn.h> over it. The heap arena of SX_HEAP_SIZE replaces the runtime's
+    # weak default.
+    mapfile -t RUNTIME_OBJECTS < <(savanxp_sdk_runtime_objects "$SYSROOT" pie core audio math setjmp loader dlfcn)
+    savanxp_sdk_heap_source "$SX_HEAP_SIZE" >"$OBJ/heap.c"
+    compile_c "$OBJ/heap.c" "$OBJ/heap.o"
+    RUNTIME_OBJECTS+=("$OBJ/heap.o")
 
     echo "== linkeando ccleste"
     LINK_ARGS=(
-        "${RUNTIME_OBJECTS[@]}" "$OBJ/ldso.o" "$OBJ/dlfcn.o"
+        "${RUNTIME_OBJECTS[@]}"
         "${OBJECTS[@]}"
     )
     # DT_NEEDED by soname: the loader maps libffmpeg.so.0.4 from /lib, and

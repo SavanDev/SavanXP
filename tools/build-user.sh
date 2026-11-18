@@ -36,10 +36,14 @@ SSE=0
 GUI=0
 AUDIO=0
 HEAP_MIB=0
+PIE=0
+NEEDS=()
 OUTPUT_PATH=""
 DESTINATION=""
 CC=${SAVANXP_CLANG:-clang}
 LD=${SAVANXP_LD:-ld.lld}
+# A PIE program links through clang, which hands the link to ld.lld.
+LINK_CC=${SAVANXP_LINK_CC:-$CC}
 PYTHON=${SAVANXP_PYTHON:-python3}
 OBJCOPY=${SAVANXP_OBJCOPY:-llvm-objcopy}
 READELF=${SAVANXP_READELF:-llvm-readelf}
@@ -54,6 +58,11 @@ Options:
                     application frame, sxngui.h, and file dialog)
   --audio           link the PCM audio runtime
   --heap-mib N      set the fixed heap size in MiB
+  --pie             link a position-independent executable with the loader
+                    inside, able to map shared libraries (implies --sse)
+  --needs LIB       with --pie, link against a shared library: a system
+                    library by soname (libmath.so.0.4, ...) from the sysroot,
+                    or a path to one; its soname becomes a DT_NEEDED. Repeatable
   --no-install      build only
   --no-compact      pass --no-compact to SxFS installation
   --native          build a SUN program: stamp EI_OSABI as a native subsystem
@@ -72,6 +81,8 @@ while (($#)); do
         --gui) GUI=1; shift ;;
         --audio) AUDIO=1; shift ;;
         --heap-mib) HEAP_MIB=${2:?--heap-mib requires a value}; shift 2 ;;
+        --pie) PIE=1; shift ;;
+        --needs) NEEDS+=("${2:?--needs requires a value}"); shift 2 ;;
         --no-install) NO_INSTALL=1; shift ;;
         --no-compact) NO_COMPACT=1; shift ;;
         --native) NATIVE=1; shift ;;
@@ -83,6 +94,9 @@ while (($#)); do
 done
 [[ -n "$SOURCE" ]] || { echo "build-user.sh: --source is required" >&2; exit 2; }
 [[ "$HEAP_MIB" =~ ^[0-9]+$ ]] || { echo "build-user.sh: --heap-mib takes a whole number of MiB" >&2; exit 2; }
+((${#NEEDS[@]} == 0 || PIE)) || { echo "build-user.sh: --needs needs --pie: a static program maps no library" >&2; exit 2; }
+# Every PIE program is SSE, as in the tree: the PIC runtime is built that way.
+((PIE == 0)) || SSE=1
 SOURCE=$(realpath "$SOURCE")
 [[ -e "$SOURCE" ]] || { echo "build-user.sh: source does not exist: $SOURCE" >&2; exit 2; }
 if [[ -z "$NAME" ]]; then
@@ -138,7 +152,7 @@ esac
     exit 2
 }
 
-for tool in "$CC" "$LD" "$PYTHON" "$OBJCOPY" "$READELF"; do
+for tool in "$CC" "$LD" "$LINK_CC" "$PYTHON" "$OBJCOPY" "$READELF"; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "build-user.sh: required tool not found: $tool" >&2
         exit 1
@@ -203,7 +217,11 @@ RESOURCE_ARGS=(--program "$NAME")
 
 # An external program sees the sysroot's include/ and its own sources, never
 # the repository's tree.
-mapfile -t COMMON_FLAGS < <(savanxp_sdk_compile_flags "$SSE")
+if ((PIE)); then
+    mapfile -t COMMON_FLAGS < <(savanxp_sdk_pie_compile_flags)
+else
+    mapfile -t COMMON_FLAGS < <(savanxp_sdk_compile_flags "$SSE")
+fi
 COMMON_FLAGS+=(-I "$SOURCE_ROOT" -I "$SYSROOT/include")
 if [[ -d "$SOURCE_ROOT/include" ]]; then
     COMMON_FLAGS+=(-I "$SOURCE_ROOT/include")
@@ -236,7 +254,7 @@ done
 # The runtime is prebuilt in the sysroot, one directory per variant.
 # lib/<variant>/units.txt lists its objects by group in manifest order, and
 # they link in that order, all of them for every group the program asks for.
-RUNTIME_LIB="$SYSROOT/lib/$(savanxp_sdk_variant "$SSE")"
+RUNTIME_VARIANT=$(savanxp_sdk_variant "$SSE" "$PIE")
 RUNTIME_GROUPS=(core setjmp)
 ((SSE)) && RUNTIME_GROUPS+=(math gl)
 ((AUDIO)) && RUNTIME_GROUPS+=(audio)
@@ -246,31 +264,62 @@ RUNTIME_GROUPS=(core setjmp)
 # strong toolkit host replaces the POSIX frame's weak one.
 ((NATIVE)) && RUNTIME_GROUPS+=(sun-core)
 ((NATIVE && GUI)) && RUNTIME_GROUPS+=(sun-gui)
+# A PIE program carries the loader, and a POSIX one <dlfcn.h> over it.
+((PIE)) && RUNTIME_GROUPS+=(loader)
+((PIE && !NATIVE)) && RUNTIME_GROUPS+=(dlfcn)
+
+# The libraries named with --needs, and the runtime objects they replace: a
+# program that links a library must not carry its own copy, or the linker
+# emits no DT_NEEDED and nothing is shared (runtime/libraries.txt).
+NEEDED_FILES=()
+REPLACED_OBJECTS=()
+for needed in "${NEEDS[@]}"; do
+    if [[ "$needed" == */* ]]; then
+        [[ -f "$needed" ]] || { echo "build-user.sh: no such library: $needed" >&2; exit 2; }
+        NEEDED_FILES+=("$(realpath -- "$needed")")
+        continue
+    fi
+    [[ -f "$SYSROOT/lib/shared/$needed" ]] || {
+        echo "build-user.sh: $needed is not a system library the SDK ships; name one in" \
+             "$SYSROOT/lib/shared or pass a path" >&2
+        exit 2
+    }
+    NEEDED_FILES+=("$SYSROOT/lib/shared/$needed")
+    while read -r soname replaced; do
+        [[ "$soname" == "$needed" ]] || continue
+        for object in $replaced; do
+            REPLACED_OBJECTS+=("$object")
+        done
+    done <"$SYSROOT/lib/shared/libraries.txt"
+done
+
+# The runtime is prebuilt in the sysroot, one directory per variant.
+# lib/<variant>/units.txt lists its objects by group in manifest order, and
+# they link in that order, all of them for every group the program asks for.
 RUNTIME_OBJECTS=()
-while read -r group object; do
-    for wanted in "${RUNTIME_GROUPS[@]}"; do
-        if [[ "$group" == "$wanted" ]]; then
-            RUNTIME_OBJECTS+=("$RUNTIME_LIB/$object")
-            break
-        fi
+while IFS= read -r object; do
+    for replaced in "${REPLACED_OBJECTS[@]}"; do
+        [[ "$(basename -- "$object")" != "$replaced" ]] || continue 2
     done
-done <"$RUNTIME_LIB/units.txt"
+    RUNTIME_OBJECTS+=("$object")
+done < <(savanxp_sdk_runtime_objects "$SYSROOT" "$RUNTIME_VARIANT" "${RUNTIME_GROUPS[@]}")
 if ((HEAP_MIB > 0)); then
     # The runtime's bootstrap arena is weak (runtime/posix.c); this program
     # brings a strong one of the size it asked for.
-    heap_bytes=$((HEAP_MIB * 1024 * 1024))
-    cat >"$OBJ_ROOT/heap.c" <<HEAP
-#include <stddef.h>
-_Alignas(16) unsigned char sx_heap_bootstrap[${heap_bytes}u];
-const size_t sx_heap_bootstrap_size = ${heap_bytes}u;
-HEAP
+    savanxp_sdk_heap_source $((HEAP_MIB * 1024 * 1024)) >"$OBJ_ROOT/heap.c"
     compile_c "$OBJ_ROOT/heap.c" "$OBJ_ROOT/heap.o"
     RUNTIME_OBJECTS+=("$OBJ_ROOT/heap.o")
 fi
 
-"$LD" -nostdlib -static -T "$SYSROOT/linker.ld" \
-    -z max-page-size=0x1000 --build-id=none \
-    -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
+if ((PIE)); then
+    mapfile -t PIE_LINK_FLAGS < <(savanxp_sdk_pie_link_flags "$NATIVE")
+    "$LINK_CC" "${PIE_LINK_FLAGS[@]}" \
+        -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}" "${NEEDED_FILES[@]}"
+else
+    "$LD" -nostdlib -static -T "$SYSROOT/linker.ld" \
+        -z max-page-size=0x1000 --build-id=none \
+        -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
+fi
 
 "$PYTHON" "$TOOLS/stamp_sxe.py" \
     --binary "$RAW_OUTPUT" \

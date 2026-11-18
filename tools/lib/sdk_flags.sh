@@ -28,24 +28,110 @@ savanxp_sdk_compile_flags() {
     fi
 }
 
-# savanxp_sdk_variant SSE
+# savanxp_sdk_pie_compile_flags
+# The flags of a PIE program and of the runtime variant it links: the in-tree
+# PIC profile (SAVANXP_USER_COMPILE_OPTIONS_PIC in CMakeLists.txt), SSE
+# included, as every PIE program in the tree has it.
+savanxp_sdk_pie_compile_flags() {
+    printf '%s\n' \
+        -target x86_64-unknown-none-elf \
+        -ffreestanding \
+        -fstack-protector-strong \
+        -fPIC \
+        -mno-red-zone \
+        -mcmodel=medium \
+        -mno-mmx \
+        -msse \
+        -msse2 \
+        -ffunction-sections \
+        -fdata-sections \
+        -Wall \
+        -Wextra \
+        -Wpedantic \
+        -Wno-language-extension-token \
+        -Wno-c23-extensions
+}
+
+# savanxp_sdk_pie_link_flags NATIVE
+# The link flags of a PIE program, for clang as the link driver: the in-tree
+# PIE profile (SAVANXP_USER_LINK_OPTIONS_PIE). The Linux triple makes clang
+# hand the link to ld.lld. PT_INTERP names the loader's path, and the loader
+# itself is linked into the program (ldso.o in the sysroot), which crt0 runs.
+# A POSIX program exports its symbols, for dlopen and for the libraries that
+# resolve against it; a SUN program has no dlopen and does not, so
+# --gc-sections can drop what it does not call.
+savanxp_sdk_pie_link_flags() {
+    printf '%s\n' \
+        -target x86_64-unknown-linux-gnu \
+        -nostdlib \
+        -fuse-ld=lld \
+        -pie \
+        -Wl,-z,max-page-size=0x1000 \
+        -Wl,--dynamic-linker,/lib/ld.so.0.4 \
+        -Wl,--build-id=none
+    if (($1 == 0)); then
+        printf '%s\n' -Wl,--export-dynamic
+    fi
+    printf '%s\n' \
+        -Wl,--gc-sections \
+        -Wl,-e,_start
+}
+
+# savanxp_sdk_variant SSE [PIE]
 # The name of the runtime variant: the sysroot directory under lib/.
 savanxp_sdk_variant() {
-    if (($1)); then
+    if ((${2:-0})); then
+        printf 'pie\n'
+    elif (($1)); then
         printf 'sse\n'
     else
         printf 'nosse\n'
     fi
 }
 
-# savanxp_sdk_groups SSE
+# savanxp_sdk_groups SSE [PIE]
 # The runtime groups the sysroot builds for a variant. math and gl need SSE.
+# The PIE variant has every group, midi included, and the loader.
 savanxp_sdk_groups() {
-    if (($1)); then
+    if ((${2:-0})); then
+        printf '%s\n' core math gui audio midi gl setjmp
+    elif (($1)); then
         printf '%s\n' core math gui audio gl setjmp
     else
         printf '%s\n' core gui audio setjmp
     fi
+}
+
+# savanxp_sdk_runtime_objects SYSROOT VARIANT GROUP...
+# Prints, in link order, the path of every object of the named groups in the
+# sysroot's lib/VARIANT/units.txt. The ports that link against the sysroot
+# use it as build-user.sh does.
+savanxp_sdk_runtime_objects() {
+    local sysroot=$1 variant=$2
+    shift 2
+    local manifest="$sysroot/lib/$variant/units.txt" group object wanted
+    [[ -f "$manifest" ]] || {
+        echo "sdk_flags: no runtime variant '$variant' in $sysroot" >&2
+        return 1
+    }
+    while read -r group object; do
+        for wanted in "$@"; do
+            if [[ "$group" == "$wanted" ]]; then
+                printf '%s\n' "$sysroot/lib/$variant/$object"
+                break
+            fi
+        done
+    done <"$manifest"
+}
+
+# savanxp_sdk_heap_source BYTES
+# Prints a C translation unit with a strong bootstrap heap arena of BYTES,
+# which replaces the runtime's weak 256 KiB one (runtime/posix.c).
+savanxp_sdk_heap_source() {
+    printf '%s\n' \
+        '#include <stddef.h>' \
+        "_Alignas(16) unsigned char sx_heap_bootstrap[${1}u];" \
+        "const size_t sx_heap_bootstrap_size = ${1}u;"
 }
 
 # savanxp_sdk_version ABI_HEADER

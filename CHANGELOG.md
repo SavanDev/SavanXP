@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **`build-user.sh --pie` builds a program that maps shared libraries; `--needs libmath.so.0.4` links one.**
+  The SDK sysroot gains a PIE runtime with the loader and `<dlfcn.h>`, and the system libraries (`lib/shared`). The Doom
+  and ccleste ports now link those instead of compiling their own copies. New example `sdk/piesmoke` and scenario
+  `pie-smoke`; which units each library replaces is in `runtime/libraries.txt`. Phase 4 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
+
 - **An external SUN program can open an SXGUI window: `build-user.sh --native --gui` links SUN's application frame.**
   `sxn/sxngui.h` and `sxn/sxnfiledlg.h` come from the SDK sysroot, and every `--native` build gets `<name>.sunres.h`.
   The SUN runtime is listed once, in `system/runtime/units.txt`. New example `sdk/sungui`, run by `windowd-smoke`; see [NATIVE_APPS.md](docs/userland/NATIVE_APPS.md).

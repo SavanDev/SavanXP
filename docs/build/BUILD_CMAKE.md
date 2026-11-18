@@ -124,9 +124,16 @@ unit, the path from the repository root. Every build reads it:
 |---|---|
 | CMake (`SAVANXP_USER_RUNTIME_SOURCES`) | `core math gui audio midi` |
 | `tools/make-sdk.sh` | `core gui audio setjmp` without SSE, plus `math gl` with it, prebuilt into the sysroot. `tools/build-user.sh` links `core setjmp`, plus `math gl` (`--sse`), `audio` (`--audio`) and `gui` (`--gui`) |
-| `ports/doomgeneric/build.sh` | `core math audio setjmp` |
-| `ports/ccleste/build.sh` | `core audio math setjmp` |
+| `ports/doomgeneric/build.sh` | `core math audio setjmp`, from the sysroot's PIE variant |
+| `ports/ccleste/build.sh` | `core audio math setjmp`, from the sysroot's PIE variant |
 | `ports/ffmpeg/runtime.sh` | `core math setjmp` into `libsavanxp.a`, `gui` into `libsxgui.a` |
+
+Which runtime units each system library replaces is written once too, in
+`subsystems/posix/sdk/v1/runtime/libraries.txt`. CMake turns it into
+`SAVANXP_LIBRARY_REPLACES_<library>`, the units an in-tree PIE program's
+`DEPENDS` leave out. `tools/make-sdk.sh` ships the libraries in the sysroot's
+`lib/shared/`, with the objects each replaces, for `build-user.sh --pie
+--needs`.
 
 The SUN runtime has a manifest of the same format, `system/runtime/units.txt`
 (`core`: the heap's page source; `gui`: the application frame and the file

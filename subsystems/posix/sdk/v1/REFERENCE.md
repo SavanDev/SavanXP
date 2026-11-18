@@ -40,6 +40,8 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   headers `public-headers.txt` adds from the repository's `include/`
 - the runtime under `runtime/`, as grouped by `runtime/units.txt`
 - `linker.ld`
+- `runtime/libraries.txt`: the system libraries a PIE program may link
+  against, and the runtime units each replaces
 - the sysroot `build/sdk/2.0` that `tools/make-sdk.sh` assembles from them,
   its layout included ([`README.md`](README.md#the-sysroot))
 - `tools/build-user.sh`, the copy in the sysroot's `share/sdk/`, and
@@ -237,9 +239,9 @@ reached through the standard headers. Its practical limits:
 - `termios`: `tcgetattr` reports a fixed canonical mode with echo, and
   `tcsetattr` is accepted and ignored. There is no job control.
 - `chmod`, `fchmod`, `chown` and `umask` exist.
-- `dlfcn.h` is declared here, but it is implemented by the loader, which only
-  PIE programs carry. A program from `build-user.sh` is static, and using
-  `dlopen` there is a link error.
+- `dlfcn.h` is implemented by the loader, which only PIE programs carry
+  (`build-user.sh --pie`). In a static program, using `dlopen` is a link
+  error.
 - `select` and `poll` aim for consistent use rather than exhaustive POSIX
   compatibility; not every descriptor type has full Unix semantics.
 - Threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
@@ -254,8 +256,6 @@ reached through the standard headers. Its practical limits:
 
 ## Not included
 
-- linking an external program against shared libraries through
-  `build-user.sh` (roadmap phase 4)
 - full POSIX compatibility
 - `listen` and `accept`
 - file-backed `mmap`, and partial `munmap` by range

@@ -751,6 +751,15 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",
         ),
     ),
+    "pie-smoke": _qemu_scenario(
+        "piesmoke",
+        "PIE SMOKE PASS",
+        "PIE SMOKE FAIL",
+        "An SDK PIE program: libmath by DT_NEEDED, libsximg by dlopen",
+        prepare=(
+            "./tools/build-user.sh --source sdk/piesmoke --name piesmoke --pie --needs libmath.so.0.4",
+        ),
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

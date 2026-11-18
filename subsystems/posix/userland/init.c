@@ -48,6 +48,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "float")) {
         return "FLOAT SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "piesmoke")) {
+        return "PIE SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "ccleste")) {
         return "CCLESTE SELFTEST";
     }
@@ -210,6 +213,8 @@ static int run_automation_spec(const char* spec) {
     const char* tcptest_argv[] = {"/bin/tcptest", 0, 0};
     const char* ntptest_argv[] = {"/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/bin/floatsmoke", 0};
+    /* An external PIE program from the SDK (sdk/piesmoke). */
+    const char* piesmoke_argv[] = {"/bin/piesmoke", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
@@ -378,6 +383,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
             path = "/bin/floatsmoke";
             argv = floatsmoke_argv;
+            argc = 1;
+        } else if (strcmp(spec, "piesmoke") == 0) {
+            path = "/bin/piesmoke";
+            argv = piesmoke_argv;
             argc = 1;
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";

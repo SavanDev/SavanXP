@@ -4,8 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
-# shellcheck source=../../tools/lib/runtime_units.sh
-. "$ROOT/tools/lib/runtime_units.sh"
+# shellcheck source=../../tools/lib/sdk_flags.sh
+. "$ROOT/tools/lib/sdk_flags.sh"
 PORT_DIR="$SCRIPT_DIR"
 OUTPUT_ROOT="${SAVANXP_OUTPUT_ROOT:-$ROOT/build}"
 BUILD_ROOT="${SAVANXP_DOOM_BUILD_ROOT:-$OUTPUT_ROOT/ports/doomgeneric}"
@@ -26,8 +26,6 @@ PYTHON="${SAVANXP_PYTHON:-python3}"
 # La libreria del sistema se busca donde el build base la instala (el mismo
 # directorio que check_shared_libs lee). El port no la construye: la trae el
 # arbol, y sin ella no hay sintetizador que enlazar.
-LIBS_DIR="${SAVANXP_LIBS_DIR:-$OUTPUT_ROOT/diskfs/lib}"
-SX_MIDI_LIB="$LIBS_DIR/libsxmidi.so.0.4"
 
 usage() {
     cat <<'EOF'
@@ -78,11 +76,13 @@ done
     echo "doomgeneric: Python Pillow is required to generate SXE resources" >&2
     exit 1
 }
-if [[ ! -f "$SX_MIDI_LIB" ]]; then
-    echo "doomgeneric: falta $SX_MIDI_LIB; ejecuta ./build.sh build primero" >&2
-    echo "doomgeneric: la musica del port enlaza contra libsxmidi.so.0.4" >&2
-    exit 1
-fi
+# The port builds against the SDK sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# phase 4): its PIE runtime, the loader and libsxmidi.so.0.4, which the music
+# links against. make-sdk.sh brings it up to date and fails, naming
+# ./build.sh build, if the system's libraries are not built yet.
+SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$ROOT/tools/make-sdk.sh" --quiet
+SYSROOT=$(SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$ROOT/tools/make-sdk.sh" --print-path)
+SX_MIDI_LIB="$SYSROOT/lib/shared/libsxmidi.so.0.4"
 
 SOURCE_DIR="$PORT_DIR/source/doomgeneric"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -118,46 +118,15 @@ for patch in "$PORT_DIR"/patches/*.patch; do
 done
 cp -a "$PORT_DIR/overlay/." "$SRC/"
 
-SDK="$ROOT/subsystems/posix/sdk/v1"
-# Perfil PIE, el mismo que ccleste y mediaplayer: para mapear una libreria el
-# ejecutable tiene que ser ET_DYN con .dynsym, y eso exige PIC, -pie y
-# --export-dynamic. Con -mno-sse no hay motivo: el kernel guarda FPU/SSE por
-# proceso (fpu_save/fpu_restore), asi que el ABI SSE es seguro como en el resto
-# del userland. -mcmodel=medium es el que usa el perfil PIC del arbol.
-COMMON_FLAGS=(
-    -target x86_64-unknown-none-elf
-    -ffreestanding
-    -fstack-protector-strong
-    -fPIC
-    -mno-red-zone
-    -mcmodel=medium
-    -mno-mmx
-    -msse
-    -msse2
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-language-extension-token
-    -Wno-c23-extensions
-    -fmacro-prefix-map="$SRC=ports/doomgeneric/source/doomgeneric"
-)
-LINK_FLAGS=(
-    -nostdlib
-    -fuse-ld=lld
-    -pie
-    -Wl,-z,max-page-size=0x1000
-    -Wl,--dynamic-linker,/lib/ld.so.0.4
-    -Wl,--build-id=none
-    -Wl,--export-dynamic
-    -Wl,--gc-sections
-    -Wl,-e,_start
-)
-# The userland directory holds headers the overlay uses that the SDK does not
-# ship; the loader itself needs only the SDK and the repository's include/.
+# The SDK's PIE profile, as ccleste and mediaplayer use: to map a library the
+# executable has to be ET_DYN with .dynsym, which takes PIC, -pie and
+# --export-dynamic. The flags come from the SDK (tools/lib/sdk_flags.sh), so
+# the port and the prebuilt runtime it links always agree.
+mapfile -t COMMON_FLAGS < <(savanxp_sdk_pie_compile_flags)
+COMMON_FLAGS+=(-fmacro-prefix-map="$SRC=ports/doomgeneric/source/doomgeneric")
+mapfile -t LINK_FLAGS < <(savanxp_sdk_pie_link_flags 0)
 INCLUDE_FLAGS=(
-    -I "$SDK/include"
-    -I "$ROOT/include"
-    -I "$ROOT/subsystems/posix/userland"
+    -I "$SYSROOT/include"
     -I "$SRC"
 )
 
@@ -166,12 +135,6 @@ compile_c() {
     local object=$2
     shift 2
     "$CC" -c -x c "$source" -o "$object" "${COMMON_FLAGS[@]}" "${INCLUDE_FLAGS[@]}" "$@"
-}
-
-compile_asm() {
-    local source=$1
-    local object=$2
-    "$CC" -c "$source" -o "$object" "${COMMON_FLAGS[@]}" "${INCLUDE_FLAGS[@]}"
 }
 
 # The explicit source list is intentional. The pristine upstream tree also
@@ -198,35 +161,17 @@ for source in "${APP_SOURCES[@]}"; do
     index=$((index + 1))
 done
 
-# The runtime's units come from its manifest
-# (subsystems/posix/sdk/v1/runtime/units.txt). The window runtime reads the
-# program's own .sxe to publish its title and icon
-# (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along in core.
-RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$ROOT" core math audio setjmp)
-mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
-RUNTIME_OBJECTS=()
-for unit in "${RUNTIME_UNITS[@]}"; do
-    object=$(savanxp_runtime_object "$OBJ" "$unit")
-    if [[ "$unit" == *.S ]]; then
-        compile_asm "$unit" "$object"
-    else
-        compile_c "$unit" "$object"
-    fi
-    RUNTIME_OBJECTS+=("$object")
-done
-ldso_object="$OBJ/ldso.o"
-dlfcn_object="$OBJ/dlfcn.o"
-# The loader goes inside the program (like mediaplayer): crt0 runs it through
-# the weak sx_run_interpreter hook, and without a DT_NEEDED it stays silent.
-# <dlfcn.h> is POSIX's layer over it and goes with it, as in every POSIX PIE.
-compile_c "$ROOT/system/loader/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
-compile_c "$ROOT/subsystems/posix/userland/dlfcn.c" "$dlfcn_object" -Wall -Wextra -Wpedantic
+# The runtime, prebuilt in the sysroot's PIE variant. The window runtime reads
+# the program's own .sxe to publish its title and icon
+# (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along in
+# core. midi is left out: libsxmidi.so.0.4 replaces it. The loader goes inside
+# the program: crt0 runs it through the weak sx_run_interpreter hook, and
+# <dlfcn.h> is POSIX's layer over it.
+mapfile -t RUNTIME_OBJECTS < <(savanxp_sdk_runtime_objects "$SYSROOT" pie core math audio setjmp loader dlfcn)
 
-"$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
+"$LINK_CC" "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
     "${RUNTIME_OBJECTS[@]}" \
-    "$ldso_object" \
-    "$dlfcn_object" \
     "${APP_OBJECTS[@]}" \
     "$SX_MIDI_LIB"
 

@@ -10,8 +10,10 @@ Two checks:
   allowlist (subsystems/posix/sdk/v1/public-headers.txt) leaves out fails here.
 - A copy of the sysroot in a temporary directory, away from the repository,
   builds sdk/hello, sdk/gfxhello (--gui), sdk/nativetest (--native),
-  sdk/sungui (--native --gui, on SUN's application frame) and a --heap-mib
-  program with its own share/sdk/build-user.sh.
+  sdk/sungui (--native --gui, on SUN's application frame), a --heap-mib
+  program and sdk/piesmoke (--pie --needs libmath.so.0.4, checked to be
+  ET_DYN with the loader's PT_INTERP and the DT_NEEDED) with its own
+  share/sdk/build-user.sh.
 """
 
 from __future__ import annotations
@@ -81,7 +83,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     copy = scratch / "sdk"
     shutil.copytree(sysroot, copy)
     sources = scratch / "src"
-    for name in ("hello", "gfxhello", "nativetest", "sungui"):
+    for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke"):
         shutil.copytree(root / "sdk" / name, sources / name)
     environment = os.environ.copy()
     environment["SAVANXP_CLANG"] = clang
@@ -94,6 +96,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
         ("nativetest", ["--source", str(sources / "nativetest"), "--native"]),
         ("sungui", ["--source", str(sources / "sungui"), "--native", "--gui"]),
         ("hello-heap", ["--source", str(sources / "hello"), "--heap-mib", "2"]),
+        ("piesmoke", ["--source", str(sources / "piesmoke"), "--pie", "--needs", "libmath.so.0.4"]),
     ]
     for name, arguments in builds:
         output = scratch / f"{name}.elf"
@@ -101,6 +104,13 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
             cwd=scratch, env=environment)
         if output.read_bytes()[:4] != b"\x7fELF":
             raise SystemExit(f"{name}: {output} is not an ELF image")
+    # The PIE one is ET_DYN, asks for the loader's path and names libmath.
+    readelf = shutil.which("llvm-readelf") or "llvm-readelf"
+    dump = run([readelf, "-h", "-l", "-d", str(scratch / "piesmoke.elf")]).stdout
+    for expected in ("DYN (Shared object file)", "[Requesting program interpreter: /lib/ld.so.0.4]",
+                     "Shared library: [libmath.so.0.4]"):
+        if expected not in dump:
+            raise SystemExit(f"piesmoke: '{expected}' missing from its headers:\n{dump}")
 
 
 def main() -> int:
@@ -123,7 +133,7 @@ def main() -> int:
         scratch = Path(temporary)
         count = check_headers(sysroot, clang, scratch)
         check_standalone(sysroot, root, clang, linker, scratch)
-    print(f"sdk sysroot: {count} headers self-contained; a copy builds five programs: PASS")
+    print(f"sdk sysroot: {count} headers self-contained; a copy builds six programs: PASS")
     return 0
 
 

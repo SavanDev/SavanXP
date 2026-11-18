@@ -54,9 +54,11 @@ Installation uses `tools/sxfs_sync.py`; it never resets or deletes
 QEMU or another VM before installing: the image lock coordinates SavanXP
 builders, but it cannot stop an external writer that bypasses the protocol.
 
-The port links the system's MIDI synthesizer, so the base build has to have
-produced it first. `build.sh` fails with the fix if
-`build/diskfs/lib/libsxmidi.so.0.4` is missing:
+The port builds against the SDK sysroot (`build/sdk/2.0`): its PIE runtime,
+the loader, and the system's MIDI synthesizer, `libsxmidi.so.0.4`, which the
+music links against. The base build has to have produced them first.
+`build.sh` brings the sysroot up to date and fails with the fix if the
+libraries are missing:
 
 ```bash
 ./build.sh build

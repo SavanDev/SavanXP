@@ -421,26 +421,40 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
-# Variantes del runtime, elegidas por las librerias que el programa usa.
+# Runtime variants, chosen by the libraries a program uses.
 #
-# Un runtime por COMBINACION de unidades que salen a una libreria. La razon es la
-# misma para todas: si el ejecutable trae la copia, el enlazador no emite
-# DT_NEEDED, la libreria no se carga y no se comparte nada. El programa tiene que
-# dejar el simbolo indefinido para que el mecanismo sea real.
+# One runtime per COMBINATION of units that move out to a library. The reason
+# is the same for all of them: if the executable carries the copy, the linker
+# emits no DT_NEEDED, the library is not loaded and nothing is shared. The
+# program has to leave the symbol undefined for the mechanism to be real.
 #
-# Las combinaciones las pide el programa segun sus DEPENDS, no una bandera. Con
-# math, sxgui y gfx withdrawn hay ocho subconjuntos: enumerarlos seria ocho
-# bloques casi identicos, y el sexto se olvidaria. Lo que decide es "esta
-# libreria reemplaza estas unidades", y `savanxp_program` lo lee de DEPENDS.
+# The program asks for the combinations through its DEPENDS, not a flag. With
+# several libraries there are many subsets: enumerating them would be blocks
+# that differ in one line, and one would be forgotten. What decides is "this
+# library replaces these units", and `savanxp_program` reads it from DEPENDS.
 #
-# El target se nombra por el conjunto que le falta, asi que dos programas con
-# DEPENDS distintos reciben targets distintos sin que nadie los enumere.
+# The target is named after the set it lacks, so two programs with different
+# DEPENDS get different targets without anyone listing them.
+#
+# Which units each library replaces is written once, in
+# subsystems/posix/sdk/v1/runtime/libraries.txt, which tools/make-sdk.sh also
+# reads for the SDK sysroot.
 set(SAVANXP_POSIX_RUNTIME subsystems/posix/sdk/v1/runtime)
-set(SAVANXP_LIBRARY_REPLACES_libmath ${SAVANXP_POSIX_RUNTIME}/math.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxmidi ${SAVANXP_POSIX_RUNTIME}/sxmidi.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgui system/gfx/sxgui.c)
-set(SAVANXP_LIBRARY_REPLACES_libsxgfx ${SAVANXP_POSIX_RUNTIME}/gfx.c ${SAVANXP_POSIX_RUNTIME}/gfx_scaled.c)
-set(SAVANXP_LIBRARY_REPLACES_libgfx2d system/gfx/pixels.c system/gfx/gfx2d.c system/gfx/sxchrome.c)
+set(SAVANXP_LIBRARIES_MANIFEST "${CMAKE_SOURCE_DIR}/${SAVANXP_POSIX_RUNTIME}/libraries.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SAVANXP_LIBRARIES_MANIFEST}")
+file(STRINGS "${SAVANXP_LIBRARIES_MANIFEST}" savanxp_library_lines REGEX "^[a-z]")
+foreach(line IN LISTS savanxp_library_lines)
+    string(REGEX REPLACE "[ \t]+" ";" fields "${line}")
+    list(LENGTH fields field_count)
+    if(field_count LESS 2)
+        message(FATAL_ERROR "${SAVANXP_LIBRARIES_MANIFEST}: malformed line '${line}'")
+    endif()
+    list(GET fields 0 library)
+    if(field_count GREATER 2)
+        list(SUBLIST fields 2 -1 units)
+        set(SAVANXP_LIBRARY_REPLACES_${library} ${units})
+    endif()
+endforeach()
 
 # El reproductor de medios es un programa de este arbol que depende de una libreria
 # que construye ports/ffmpeg. Eso rompe una suposicion: un programa se compila con
@@ -1574,6 +1588,9 @@ add_custom_target(savanxp_sdk
     COMMENT "Assembling the SDK sysroot"
     VERBATIM
 )
+# The sysroot ships the system's shared libraries (runtime/libraries.txt) from
+# the staged disk tree, which savanxp_diskfs wipes and refills: it must be done.
+add_dependencies(savanxp_sdk savanxp_diskfs)
 
 add_custom_target(savanxp
     DEPENDS savanxp_image savanxp_disk savanxp_sdk

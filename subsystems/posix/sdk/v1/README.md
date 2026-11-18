@@ -67,7 +67,12 @@ build/sdk/2.0/
                       runtime's (system/runtime/units.txt) as sun-core and
                       sun-gui
   lib/sse/            the same with SSE, plus the math and gl groups
+  lib/pie/            every group compiled position-independent, with SSE,
+                      plus the loader (ldso.o) and <dlfcn.h> (dlfcn.o)
   lib/*/units.txt     each object's group, in link order
+  lib/shared/         the system's shared libraries a PIE program links
+                      against, and libraries.txt: the runtime objects each
+                      one replaces
   share/sdk/          build-user.sh and the tools it runs, and the system
                       icon catalogue a .sxres names with icon=
 ```
@@ -98,12 +103,10 @@ cp -R build/sdk/2.0 ~/savanxp-sdk
 ## ABI rules
 
 - System calls go through `int 0x80`.
-- `tools/build-user.sh` produces static `ELF64` images for `x86_64`. The
-  system has a dynamic loader and shared libraries in `/lib`
-  ([SHARED_LIBRARIES.md](../../../../docs/kernel/SHARED_LIBRARIES.md)), but
-  linking an external program against them is not part of the SDK yet: the
-  ports that do it (`doomgeneric`, `ccleste`, FFmpeg) set it up themselves.
-  The roadmap's phase 4 moves it into the SDK.
+- `tools/build-user.sh` produces static `ELF64` images for `x86_64` by
+  default. With `--pie` it produces a position-independent one that carries
+  the loader and can map the system's shared libraries from `/lib`
+  ([SHARED_LIBRARIES.md](../../../../docs/kernel/SHARED_LIBRARIES.md)).
 - `main(int argc, char** argv)` is supported, with at most
   `SAVANXP_MAX_ARGC = 15` arguments of up to `SAVANXP_MAX_ARG_LENGTH = 63`
   bytes.
@@ -139,6 +142,12 @@ The tool:
   toolkit, `--audio` for PCM audio, `--sse` for SSE/SSE2, `libm` and SxGL;
 - with `--heap-mib N`, gives the program an N MiB bootstrap heap arena in
   place of the runtime's default 256 KiB;
+- with `--pie`, links a position-independent executable. It is compiled with
+  SSE, as every PIE program is, and carries the loader, and `<dlfcn.h>` if it
+  is a POSIX program. `--needs libmath.so.0.4` (repeatable) links it against
+  a system library from the sysroot, or against a library by path such as a
+  port's. The library's soname becomes a `DT_NEEDED`, and the runtime objects
+  it replaces (`runtime/libraries.txt`) stay out of the program;
 - builds a SUN program instead with `--native`, which with `--gui` links
   SUN's application frame and file dialog
   ([NATIVE_APPS.md](../../../../docs/userland/NATIVE_APPS.md)).

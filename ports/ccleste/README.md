@@ -85,9 +85,10 @@ build/ccleste/ccleste                    # stamped copy
 Celeste Classic uses floating point in its update step, so the port is built with
 `-msse -msse2` and links the SDK math runtime, the same choice the FFmpeg port
 makes. The 23 sound effects decode to 772 KiB of unsigned 8-bit mono PCM, which
-does not fit the 256 KiB default arena, so the runtime is compiled with
-`-DSX_HEAP_SIZE=1048576`. The heap lives in `.bss`: it costs address space, not
-image bytes.
+does not fit the 256 KiB default arena, so the port links a larger bootstrap
+arena (`SX_HEAP_SIZE` in `env.sh`) over the SDK runtime's weak one. The heap
+lives in `.bss`: it costs address space, not image bytes. The port builds against
+the SDK sysroot (`build/sdk/2.0`): its headers, its PIE runtime and the loader.
 
 ## Game data
 
