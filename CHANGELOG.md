@@ -18,6 +18,10 @@ Cut-off notes:
   Programs answer with `on_close` and `gfx_decline_close`/`sxnwm_decline_close`; new errno `ECANCELED`.
   `session-end-smoke` and `shoot.sh --scenario notepadclose` cover it; see [POWER.md](docs/kernel/POWER.md#ending-the-session).
 
+- **At shutdown, `init` asks its services to stop instead of killing them.** `audiod` and `elevationd` get
+  `SAVANXP_SERVICE_CONTROL_SHUTDOWN` on their control channel (`--service`, stdin) and five seconds; `audiod` saves a
+  volume changed just before. See [POWER.md](docs/kernel/POWER.md#services).
+
 - **Power-off and restart show a "SavanXP is shutting down..." (or "restarting...") screen.**
   When every power-off method fails, it becomes "It is now safe to turn off your computer." and the CPU halts.
   See [POWER.md](docs/kernel/POWER.md#the-screen).

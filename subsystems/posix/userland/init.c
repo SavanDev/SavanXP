@@ -886,6 +886,10 @@ static volatile long g_audiod_pid = 0;
 static volatile long g_elevationd_pid = 0;
 static volatile long g_sessiond_pid = 0;
 static volatile long g_shell_pid = 0;
+/* The write end of each service's control channel, or -1
+ * (docs/kernel/POWER.md#services). */
+static volatile long g_audiod_control = -1;
+static volatile long g_elevationd_control = -1;
 /* The savanxp_shutdown_action under way, or 0. */
 static volatile int g_shutting_down = 0;
 /* /dev/power opened for reading, which the power button's presses come
@@ -897,6 +901,52 @@ static long g_button_fd = -1;
  * power goes, and how long a request may take to arrive after connecting. */
 #define INIT_SHUTDOWN_GOODBYE_MS 2000
 #define INIT_SHUTDOWN_REQUEST_MS 2000
+/* How long the services get to stop on their own, all together, before init
+ * ends them: Windows' WaitToKillServiceTimeout, shorter. */
+#define INIT_SERVICE_STOP_MS 5000UL
+
+/* Starts a service as Windows' service control manager does: with
+ * SAVANXP_SERVICE_ARGUMENT and the read end of a control pipe as its standard
+ * input (SAVANXP_SERVICE_CONTROL_HANDLE). A POSIX spawn passes a child its
+ * stdio and nothing else, so stdin is the channel. init keeps the write end in
+ * `control`, which replaces the one of the instance before. Without a pipe
+ * the service still starts, only without being asked anything. */
+static long spawn_service(const char* path, volatile long* control) {
+    const char* service_argv[] = {path, SAVANXP_SERVICE_ARGUMENT, 0};
+    const char* plain_argv[] = {path, 0};
+    int channel[2] = {-1, -1};
+    long pid;
+
+    if (*control >= 0) {
+        (void)savanxp_close((int)*control);
+        *control = -1;
+    }
+    if (savanxp_pipe(channel) < 0) {
+        return spawn(path, plain_argv, 1);
+    }
+    pid = spawn_fd(path, service_argv, 2, channel[0], 1);
+    (void)savanxp_close(channel[0]);
+    if (pid < 0) {
+        (void)savanxp_close(channel[1]);
+    } else {
+        *control = channel[1];
+    }
+    return pid;
+}
+
+/* Whether `pid` still runs: present and not a zombie the supervisor has yet
+ * to reap. */
+static int service_running(long pid) {
+    struct savanxp_process_info process;
+    unsigned long index;
+
+    for (index = 0; pid > 0 && proc_info(index, &process) > 0; ++index) {
+        if ((long)process.pid == pid) {
+            return process.state != SAVANXP_PROC_ZOMBIE;
+        }
+    }
+    return 0;
+}
 
 static void shutdown_reply(int32_t write_handle, int32_t status, uint32_t stage) {
     struct savanxp_shutdown_reply reply;
@@ -969,6 +1019,60 @@ static void stop_process(volatile long* pid) {
     }
 }
 
+/* Asks every service to stop (SAVANXP_SERVICE_CONTROL_SHUTDOWN), gives them
+ * INIT_SERVICE_STOP_MS together, and ends the ones still running. */
+static void stop_services(void) {
+    struct {
+        const char* name;
+        volatile long* pid;
+        volatile long* control;
+        long asked_pid;
+    } services[] = {
+        {"audiod", &g_audiod_pid, &g_audiod_control, 0},
+        {"elevationd", &g_elevationd_pid, &g_elevationd_control, 0},
+    };
+    const unsigned count = sizeof(services) / sizeof(services[0]);
+    struct savanxp_service_control request;
+    unsigned long deadline = uptime_ms() + INIT_SERVICE_STOP_MS;
+    unsigned index;
+
+    memset(&request, 0, sizeof(request));
+    request.magic = SAVANXP_SERVICE_CONTROL_MAGIC;
+    request.control = SAVANXP_SERVICE_CONTROL_SHUTDOWN;
+    for (index = 0; index < count; ++index) {
+        /* The supervisor zeroes the pid when it reaps: keep the one asked. */
+        long pid = *services[index].pid;
+
+        if (pid > 0 && *services[index].control >= 0 &&
+            savanxp_write((int)*services[index].control, &request, sizeof(request)) == (long)sizeof(request)) {
+            services[index].asked_pid = pid;
+            printf("init: asking %s to stop\n", services[index].name);
+        }
+    }
+    for (;;) {
+        int waiting = 0;
+
+        for (index = 0; index < count; ++index) {
+            waiting |= service_running(services[index].asked_pid);
+        }
+        if (!waiting || uptime_ms() >= deadline) {
+            break;
+        }
+        sleep_ms(50);
+    }
+    for (index = 0; index < count; ++index) {
+        if (services[index].asked_pid > 0 && !service_running(services[index].asked_pid)) {
+            printf("init: %s stopped\n", services[index].name);
+            continue;
+        }
+        if (services[index].asked_pid > 0) {
+            printf("init: %s did not stop within %lu s; ending it\n", services[index].name,
+                   INIT_SERVICE_STOP_MS / 1000UL);
+        }
+        stop_process(services[index].pid);
+    }
+}
+
 /* /dev/power itself: the kernel syncs the volumes and cuts the power. */
 static void power_device(int action) {
     long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
@@ -1000,8 +1104,7 @@ static int run_shutdown(int action, long port, int32_t requester) {
     /* The session is over; the services hold nothing the disk still needs. */
     stop_process(&g_sessiond_pid);
     stop_process(&g_shell_pid);
-    stop_process(&g_elevationd_pid);
-    stop_process(&g_audiod_pid);
+    stop_services();
     printf("init: session ended and services stopped; %s\n",
            action == SAVANXP_SHUTDOWN_REBOOT ? "restarting" : "powering off");
     if (requester >= 0) {
@@ -1167,8 +1270,6 @@ int main(int argc, char** argv) {
 __attribute__((noreturn)) static void run_system(const char* const* driver) {
     const char* sessiond_argv[] = {"/system/sessiond.sxe", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
-    const char* audiod_argv[] = {"/bin/audiod", 0};
-    const char* elevationd_argv[] = {"/system/elevationd.sxe", 0};
     unsigned long last_sessiond_start_ms = 0;
     unsigned long elevationd_started_ms = 0;
     int rapid_failures = 0;
@@ -1184,7 +1285,7 @@ __attribute__((noreturn)) static void run_system(const char* const* driver) {
      * audio device it leaves on its own and everything plays directly; the
      * supervisor below restarts it only if it dies while serving, not when it
      * leaves on purpose. */
-    g_audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+    g_audiod_pid = spawn_service("/bin/audiod", &g_audiod_control);
     if (g_audiod_pid < 0) {
         printf("init: failed to spawn audiod (%s)\n", result_error_string(g_audiod_pid));
         g_audiod_pid = 0;
@@ -1194,7 +1295,7 @@ __attribute__((noreturn)) static void run_system(const char* const* driver) {
      * USERS_AND_PERMISSIONS.md#elevation): its port name is taken before any
      * program could take it. It is restarted if it dies, unless it dies at
      * once, which is a broken binary or a name already taken. */
-    g_elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
+    g_elevationd_pid = spawn_service("/system/elevationd.sxe", &g_elevationd_control);
     elevationd_started_ms = uptime_ms();
     if (g_elevationd_pid < 0) {
         printf("init: failed to spawn elevationd (%s)\n", result_error_string(g_elevationd_pid));
@@ -1258,7 +1359,7 @@ __attribute__((noreturn)) static void run_system(const char* const* driver) {
             } else {
                 printf("init: audiod exited with %d, restarting\n", status);
                 sleep_ms(250);
-                g_audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+                g_audiod_pid = spawn_service("/bin/audiod", &g_audiod_control);
                 if (g_audiod_pid < 0) {
                     printf("init: failed to spawn audiod (%s)\n", result_error_string(g_audiod_pid));
                     g_audiod_pid = 0;
@@ -1273,7 +1374,7 @@ __attribute__((noreturn)) static void run_system(const char* const* driver) {
                 printf("init: elevationd exited at once with %d; elevation is unavailable\n", status);
             } else {
                 printf("init: elevationd exited with %d, restarting\n", status);
-                g_elevationd_pid = spawn("/system/elevationd.sxe", elevationd_argv, 1);
+                g_elevationd_pid = spawn_service("/system/elevationd.sxe", &g_elevationd_control);
                 elevationd_started_ms = uptime_ms();
                 if (g_elevationd_pid < 0) {
                     printf("init: failed to spawn elevationd (%s)\n", result_error_string(g_elevationd_pid));

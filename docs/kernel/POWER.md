@@ -148,8 +148,8 @@ the reboot. A change that breaks this sequence should fail this scenario.
    `compositord`, answers `init` and exits. If a program turned its close down,
    `windowd` withdraws the other requests and answers `-ECANCELED`. The
    session goes on, and `init` answers its requester the same way.
-5. **`init` stops the services** (`audiod`, `elevationd`, a fallback shell),
-   sends the second reply (stage `DONE`, status 0), and gives the requester
+5. **`init` stops the services.** It [asks them](#services) to stop and
+   waits for them, ends a fallback shell, then sends the second reply (stage `DONE`, status 0), and gives the requester
    up to two seconds to hang up. Then it opens `/dev/power`, and the kernel
    does [the sequence](#the-sequence) below.
 
@@ -160,6 +160,38 @@ blocked while the session ends.
 The Win32 names, for orientation: the request is `ExitWindowsEx`, the close
 request is `WM_QUERYENDSESSION` and `WM_ENDSESSION` folded into `WM_CLOSE`,
 and a declined close is a `WM_QUERYENDSESSION` that returned `FALSE`.
+
+### Services
+
+`init` is also the service control manager. It starts `audiod` and
+`elevationd` with `--service` (`SAVANXP_SERVICE_ARGUMENT`), and the read end
+of a pipe as their standard input (`SAVANXP_SERVICE_CONTROL_HANDLE`). It keeps
+the write end. Standard input is used because a POSIX spawn, which `init`
+uses, passes a child its stdio and nothing else.
+
+At shutdown, `init` writes one `struct savanxp_service_control` with
+`SAVANXP_SERVICE_CONTROL_SHUTDOWN`, Windows' `SERVICE_CONTROL_SHUTDOWN`, to
+every service (`init: asking audiod to stop`). Then it gives them five seconds
+together (`INIT_SERVICE_STOP_MS`), shorter than Windows'
+`WaitToKillServiceTimeout`. A service that is still running after that is
+ended (`init: audiod did not stop within 5 s; ending it`). End of file on the
+channel means `init` is gone, and a service stops then too.
+
+- **`audiod`** saves what its 250 ms debounce still holds, waits for a save in
+  flight, and exits (`audiod: stopping for the shutdown`,
+  `audiod: sound preferences saved`). Before this, a volume changed just
+  before the shutdown was lost.
+- **`elevationd`** has nothing to save; it exits.
+
+A new service that holds state reads the channel the same way, from POSIX
+(`read` on fd 0, made non-blocking) or from SUN (`sxn_read` and
+`sxn_wait_many` on handle 0).
+
+`power-button-smoke` checks it on the second press. Both services have to be
+asked and stop on their own before the session is declared over. The window
+that closes sets the master volume to 37 as it goes, before `audiod`'s
+debounce has run, and the next boot has to find 37. With the services killed
+as before, the volume was lost in two runs of two.
 
 ### Testing it
 
@@ -213,9 +245,9 @@ Against a kernel that powers off on the first press, it fails at that press.
 
 ## What it does not do yet
 
-- **Programs without a window are not told.** Services and background
-  programs are ended, not asked: nothing like `SERVICE_CONTROL_SHUTDOWN`
-  reaches them.
+- **Only init's services are asked.** A background program with no window
+  that is not one of them (a process started from a shell, a fallback shell)
+  is ended, not told.
 - **The screen comes only when `/dev/power` is opened.** Between the end of
   the session and that moment, `init` stops the services and gives the
   requester up to two seconds to hang up. Meanwhile the desktop's last frame

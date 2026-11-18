@@ -554,6 +554,28 @@ struct savanxp_shutdown_reply {
     uint32_t reserved[2];
 };
 
+/* The control channel of a service init starts, as Windows' service control
+ * manager has one to each service (docs/kernel/POWER.md#services). init
+ * starts the service with SAVANXP_SERVICE_ARGUMENT and the read end of a pipe
+ * as its standard input, SAVANXP_SERVICE_CONTROL_HANDLE; a record on it is a
+ * request, and end of file means init is gone. A service started any other
+ * way reads nothing from it. */
+#define SAVANXP_SERVICE_ARGUMENT "--service"
+#define SAVANXP_SERVICE_CONTROL_HANDLE 0
+#define SAVANXP_SERVICE_CONTROL_MAGIC 0x43565353u /* "SSVC" */
+
+enum savanxp_service_control_code {
+    /* The machine is going down: make durable what has to be, then exit.
+     * init waits a few seconds before it ends the service anyway. */
+    SAVANXP_SERVICE_CONTROL_SHUTDOWN = 1,
+};
+
+struct savanxp_service_control {
+    uint32_t magic;    /* SAVANXP_SERVICE_CONTROL_MAGIC */
+    uint32_t control;  /* enum savanxp_service_control_code */
+    uint32_t reserved[2];
+};
+
 enum savanxp_power_ioctl {
     POWER_IOC_SHUTDOWN = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 1),
     POWER_IOC_REBOOT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 2),

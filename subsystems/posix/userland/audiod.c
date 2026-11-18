@@ -1130,6 +1130,34 @@ static int audiod_acquire_device(int fd, const struct savanxp_audio_info* info)
     }
 }
 
+/* init's control channel (docs/kernel/POWER.md#services), or -1 when audiod
+ * was not started as a service. */
+static long g_service_control = -1;
+
+/* A shutdown, or init gone: save what is pending and leave. A record that is
+ * not one this audiod knows is ignored. */
+static void audiod_poll_control(void)
+{
+    struct savanxp_service_control request;
+    long got;
+
+    if (g_service_control < 0)
+    {
+        return;
+    }
+    got = sxn_read(g_service_control, &request, sizeof(request));
+    if (got == -SAVANXP_EAGAIN ||
+        (got > 0 && (got != (long)sizeof(request) || request.magic != SAVANXP_SERVICE_CONTROL_MAGIC ||
+                     request.control != SAVANXP_SERVICE_CONTROL_SHUTDOWN)))
+    {
+        return;
+    }
+    eprintf("audiod: stopping for the shutdown\n");
+    audiod_preferences_finish(3000);
+    audiod_preferences_stop_worker();
+    exit(0);
+}
+
 static int audiod_serve(int sock_fd, int audio_fd)
 {
     unsigned char datagram[SAVANXP_AUDIOD_MAX_DATAGRAM];
@@ -1158,6 +1186,7 @@ static int audiod_serve(int sock_fd, int audio_fd)
         audiod_poll_capture();
         audiod_flush_capture();
         audiod_preferences_tick(now_ms);
+        audiod_poll_control();
         audiod_expire_streams(now_ms);
 
         // Control operations and scheduling may consume part of a period.
@@ -1724,9 +1753,15 @@ int main(int argc, char** argv)
         return audiod_selftest();
     }
     g_preferences_enabled = !(argc == 2 && strcmp(argv[1],"--no-preferences") == 0);
-    if (argc > 2 || (argc == 2 && g_preferences_enabled))
+    if (argc == 2 && strcmp(argv[1], SAVANXP_SERVICE_ARGUMENT) == 0)
     {
-        eprintf("usage: audiod [--selftest | --no-preferences]\n");
+        /* Started by init, with its control channel. */
+        g_service_control = SAVANXP_SERVICE_CONTROL_HANDLE;
+        (void)sxn_set_nonblocking(g_service_control, 1);
+    }
+    else if (argc > 2 || (argc == 2 && g_preferences_enabled))
+    {
+        eprintf("usage: audiod [--selftest | --no-preferences | " SAVANXP_SERVICE_ARGUMENT "]\n");
         return 1;
     }
 

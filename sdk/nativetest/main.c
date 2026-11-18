@@ -3184,6 +3184,10 @@ static int session_end_request(int32_t handles[2], struct savanxp_shutdown_reply
  * session ends, never flushed, read back on the next boot. */
 #define POWER_BUTTON_ARMED_PATH "/system/native-button-armed.dat"
 #define POWER_BUTTON_CLOSED_PATH "/system/native-button-closed.dat"
+/* The master volume the client sets as it closes, moments before the
+ * services stop: audiod has to save it when init asks it to stop, since its
+ * own 250 ms debounce has not run yet (docs/kernel/POWER.md#services). */
+#define POWER_BUTTON_VOLUME 37u
 
 static void run_session_end_client(int mark) {
     struct sxnwm_client window;
@@ -3202,8 +3206,14 @@ static void run_session_end_client(int mark) {
         if (sxnwm_close_requested(&window)) {
             if (declined) {
                 (void)sxn_log("nativetest: session-end: the client closes");
-                if (mark && !power_write_file(POWER_BUTTON_CLOSED_PATH, POWER_CHUNK_BYTES, 1)) {
-                    (void)sxn_log("nativetest: power-button: the mark could not be written");
+                if (mark) {
+                    long audio = sxn_open_device("audio0", SXN_DEVICE_WRITE);
+                    if (audio < 0 || sxnaudio_master_volume(audio, POWER_BUTTON_VOLUME) != 0) {
+                        (void)sxn_log("nativetest: power-button: the volume could not be set");
+                    }
+                    if (!power_write_file(POWER_BUTTON_CLOSED_PATH, POWER_CHUNK_BYTES, 1)) {
+                        (void)sxn_log("nativetest: power-button: the mark could not be written");
+                    }
                 }
                 sxn_exit(0);
             }
@@ -3275,7 +3285,23 @@ static void run_power_button(void) {
     long sleeper;
 
     if (sxn_query_path(POWER_BUTTON_ARMED_PATH, &info) == 0) {
+        long audio = sxn_open_device("audio0", SXN_DEVICE_WRITE);
+        uint32_t volume = 0, muted = 0;
+        unsigned waited;
+
         check(sxn_query_path(POWER_BUTTON_CLOSED_PATH, &info) == 0 && info.size == POWER_CHUNK_BYTES);
+        /* audiod applies the saved volume once it has loaded its preferences. */
+        sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+        for (waited = 0; waited < 20000u; waited += 100u) {
+            if (audio >= 0 && sxnaudio_master_get(audio, &volume, &muted) == 0 && volume == POWER_BUTTON_VOLUME) {
+                break;
+            }
+            (void)sxn_wait_one(sleeper, 100);
+        }
+        if (volume != POWER_BUTTON_VOLUME) {
+            (void)sxn_log("nativetest: power-button: the volume set before the shutdown was not kept");
+        }
+        check(volume == POWER_BUTTON_VOLUME);
         (void)sxn_log(g_failures ? "NATIVE BUTTON FAIL" : "NATIVE BUTTON PASS");
         sxn_exit(g_failures ? 1 : 0);
     }

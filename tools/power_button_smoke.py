@@ -8,13 +8,16 @@ power button twice:
 1. The first press has to reach init (the kernel tells it instead of powering
    off), end in "an application cancelled the shutdown", and leave the machine
    running.
-2. The second has to end the session (the window closes first) and power the
+2. The second has to end the session (the window closes first, setting the
+   master volume as it goes), ask audiod and elevationd to stop and see them
+   stop on their own, and power the
    machine off through power::shutdown(), with the volume left clean. The
    screen QEMU kept when it stopped has to be the power-off screen
    (docs/kernel/POWER.md#the-screen), not the desktop's last frame.
 
 Then it boots the machine again, where `nativetest power-button` checks the
-mark the window wrote as it closed (docs/kernel/POWER.md#the-power-button).
+mark the window wrote as it closed, and the volume audiod saved when it was
+asked to stop (docs/kernel/POWER.md#the-power-button).
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ CANCELLED = "init: an application cancelled the shutdown"
 CLOSED = "nativetest: session-end: the client closes"
 ENDED = "init: session ended and services stopped; powering off"
 SYNCING = "power: shutdown: syncing volumes"
+SERVICES = ("audiod", "elevationd")
 # kernel/boot_screen.cpp: the background, and the colour of the name and the
 # message drawn on it.
 SCREEN_BACKGROUND = (0x00, 0x00, 0x00)
@@ -116,6 +120,16 @@ def main() -> int:
         missing = in_order(serial, [PRESSED, REQUESTED, CLOSED, ENDED, SYNCING], after_first)
         if missing:
             return fail(f"second press: missing or out of order: {missing!r}")
+        # The services were asked, and stopped on their own before the session
+        # was declared over (docs/kernel/POWER.md#services).
+        # The two lines of a request are written by two processes at once:
+        # each has to come after the window closed and before init saw the
+        # service gone.
+        for service in SERVICES:
+            for line in (f"init: asking {service} to stop", f"{service}: stopping for the shutdown"):
+                missing = in_order(serial, [CLOSED, line, f"init: {service} stopped", ENDED], after_first)
+                if missing:
+                    return fail(f"second press: {service} was not asked to stop: missing or out of order: {missing!r}")
         for line in serial.splitlines():
             if "power: a volume did not sync" in line or "power: the writeback queue did not drain" in line:
                 return fail(f"the shutdown reported a failure: {line.strip()}")

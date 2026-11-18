@@ -257,6 +257,32 @@ static void audiod_preferences_tick(uint64_t now) {
         if (sent == SAVANXP_AUDIOD_RECORD_BYTES || sent != -SAVANXP_EAGAIN) client->flush_id = 0;
     }
 }
+/* Shutdown (docs/kernel/POWER.md#services): what the 250 ms debounce still
+ * holds is saved now, through the same worker, and a save in flight is waited
+ * for. Returns once the last change is durable, its save failed, there is no
+ * worker to save with, or `limit_ms` passed. */
+static void audiod_preferences_finish(uint64_t limit_ms) {
+    const uint64_t deadline = uptime_ms() + limit_ms;
+
+    /* A volume set in the last 100 ms has not been seen yet. */
+    audiod_preferences_observe(uptime_ms(),1);
+    g_preferences_dirty_ms = 0;
+    g_preferences_retry_ms = 0;
+    while (g_preferences_enabled && g_preferences_child >= 0 && uptime_ms() < deadline) {
+        if (!g_preferences_saving && g_preferences_saved == g_preferences_generation) {
+            eprintf("audiod: sound preferences saved\n");
+            return;
+        }
+        if (!g_preferences_saving && g_preferences_failed == g_preferences_generation) {
+            break;
+        }
+        audiod_preferences_tick(uptime_ms());
+        sleep_ms(10);
+    }
+    if (g_preferences_enabled && g_preferences_saved != g_preferences_generation) {
+        eprintf("audiod: the last sound preferences were not saved\n");
+    }
+}
 static void audiod_handle_preferences(struct audiod_native_client* client, const unsigned char* data, size_t length) {
     struct savanxp_audiod_preference_request request;
     uint64_t now = uptime_ms();

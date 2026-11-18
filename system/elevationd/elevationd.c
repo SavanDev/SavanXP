@@ -298,8 +298,22 @@ static void serve(long port) {
     close_handle(&client_write);
 }
 
-int main(void) {
+/* init's request on the control channel (docs/kernel/POWER.md#services). 1 to
+ * stop: a shutdown, or init gone. Nothing here has to be saved first. */
+static int control_says_stop(long control) {
+    struct savanxp_service_control request;
+    long got = sxn_read(control, &request, sizeof(request));
+
+    if (got <= 0) {
+        return 1;
+    }
+    return got == (long)sizeof(request) && request.magic == SAVANXP_SERVICE_CONTROL_MAGIC &&
+        request.control == SAVANXP_SERVICE_CONTROL_SHUTDOWN;
+}
+
+int main(int argc, char** argv) {
     long port = sxn_port_create(SAVANXP_ELEVATION_PORT_NAME);
+    long control = argc == 2 && strcmp(argv[1], SAVANXP_SERVICE_ARGUMENT) == 0 ? SAVANXP_SERVICE_CONTROL_HANDLE : -1;
     int index;
 
     if (port < 0) {
@@ -313,8 +327,14 @@ int main(void) {
     log_line("elevationd: ready");
 
     for (;;) {
-        if (sxn_wait_one(port, ELEVATIOND_TICK_MS) == 0) {
+        int32_t handles[2] = {(int32_t)port, (int32_t)control};
+        long which = sxn_wait_many(handles, control >= 0 ? 2 : 1, ELEVATIOND_TICK_MS);
+
+        if (which == 0) {
             serve(port);
+        } else if (which == 1 && control_says_stop(control)) {
+            log_line("elevationd: stopping for the shutdown");
+            sxn_exit(0);
         }
         reap_children();
     }
