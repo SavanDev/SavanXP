@@ -2123,3 +2123,110 @@ on VGA and on the four-CPU virtio profile. The previous ISO reached the
 desktop and failed the artwork and animation assertions. A diskless LiveCD
 boot reached Program Manager from the SxFS ramdisk. QEMU checks without an
 SxFS disk or without VGA confirmed the fallback diagnostics.
+
+## 25. Matched QEMU boots for the v0.4.0 review
+
+The parity review starts with two clean Debug builds, the pinned v0.4.0
+reference (`8ece07f4`) and the i386 checkpoint (`de642584`). Both use the
+same Clang 23.1.5 and QEMU 11.1.3. Each build creates its own 1 GiB SxFS
+volume with the userland for its ABI. Snapshots place each guest's writes
+in a disposable overlay so every run starts from its build's initial disk.
+
+The tag normally launches its development tree through Q35/UEFI. Its
+release ISO can boot through BIOS, but loads a 256 MiB SxFS module into
+guest RAM. For this comparison, package the tag's development tree as a
+BIOS Limine CD. Its `limine-dev.conf` loads the kernel and CPIO, and the
+guest mounts an attached SxFS disk just as i386 does. This keeps the BIOS,
+machine and storage topology common. Limine versus GRUB and the different
+kernel and initramfs sizes still affect end-to-end startup time. Keep
+loader time distinct from kernel and desktop time when measuring startup.
+
+### Reproducing the pair
+
+From the i386 repository with a local Limine clone, build the two pinned
+trees outside the working build directory. The tag's `build.sh build`
+finishes the CMake target and then calls `tools/check_shared_libs.py`,
+which the tag lacks. Invoke the CMake target directly and select the
+Python interpreter with Pillow in its initial configuration.
+
+```sh
+audit=$(mktemp -d /tmp/savanxp-parity.XXXXXXXX)
+git clone --shared --no-checkout . "$audit/reference"
+git -C "$audit/reference" checkout --detach 'v0.4.0^{commit}'
+git clone --shared --no-checkout . "$audit/i386"
+git -C "$audit/i386" checkout --detach de642584dc3f85502547cdee1652a7c9111c4e41
+git clone --shared tools/limine "$audit/reference/tools/limine"
+git -C "$audit/reference/tools/limine" checkout --detach 7a9013f305de0bea1f6310e76e7baba30499fef0
+(
+    cd "$audit/reference"
+    cmake -S . -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux.cmake \
+        "-DPython3_EXECUTABLE=$(command -v python3)"
+    cmake --build build/linux --target savanxp
+    make -C tools/limine
+    xorriso -as mkisofs -b boot/limine/limine-bios-cd.bin \
+        -no-emul-boot -boot-load-size 4 -boot-info-table -iso-level 3 \
+        -V SAVANXP -o build/SavanXP-parity.iso build/image
+    tools/limine/limine bios-install build/SavanXP-parity.iso
+)
+(cd "$audit/i386" && ./build.sh iso --debug)
+```
+
+Launch both with the i386 tree's QEMU argument builder and the same
+`qemu-system-x86_64` binary so that the reference can enter long mode.
+The builder gives both guests 1024 MiB, TCG, the `pc` machine, an IDE CD,
+user networking and headless audio. Set `version` to `reference` or
+`i386` and `profile` to `pc` or `virtio`. Run the guests in sequence.
+
+```sh
+version=reference profile=pc
+PYTHONPATH="$audit/i386/tools" python3 - "$audit" "$version" "$profile" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+from run_qemu import build_qemu_args
+
+root, version, profile = sys.argv[1:]
+build = Path(root) / version / "build"
+run = Path(root) / "runs" / version / profile
+run.mkdir(parents=True, exist_ok=True)
+virtio = profile == "virtio"
+iso = build / ("SavanXP-parity.iso" if version == "reference" else "SavanXP.iso")
+args = build_qemu_args(
+    iso=iso, disk_image=build / "disk.img", debug_log=run / "debugcon.log",
+    accel="tcg", smp=4 if virtio else 1, headless=True, virtio=virtio,
+    snapshot=True, serial_path=run / "serial.log", qmp_path=run / "qmp",
+)
+args[0] = "qemu-system-x86_64"
+args[args.index("-cpu") + 1] = "max" if virtio else "qemu64"
+subprocess.run(args, check=True)
+PY
+```
+
+### Boot evidence and comparison limits
+
+| Profile | CPU | vCPU | Emulated devices | v0.4.0 | i386 |
+| --- | --- | ---: | --- | --- | --- |
+| `pc` | `qemu64` | 1 | ATA, VGA, PS/2, RTL8139, AC'97 | Desktop reached | Desktop reached |
+| `virtio` | `max` | 4 | virtio block, GPU, input, network and sound | Desktop reached, four scheduling CPUs | Desktop reached, four scheduling CPUs |
+
+The first four-vCPU reference run with `qemu64` reached IOAPIC
+initialization and stopped producing boot output before the kernel SMP
+report. The 65-second timeout expired at that point. With one vCPU,
+`qemu64` reached the virtio desktop on both builds. With four vCPUs,
+the same machine and virtio devices reached the desktop with `max` on
+both builds. With that model the reference uses x2APIC while i386
+retains xAPIC. Later measurements need to account for this difference
+in interrupt delivery.
+
+Extracting the kernel from each ISO matched its staged ELF byte for byte.
+The disk extraction confirmed each ABI's Program Manager and that the
+fonts used for the check match the guest's `libsxgfx.so.0.4`. In each boot,
+QMP confirmed the vCPU count and the SxFS backing image under the overlay.
+The PCI device lists matched within each profile. Serial confirmed the
+storage device and SxFS mount. A QMP screenshot
+at 1280x800 and the desktop smoke's `expect_text` check confirmed the
+`Program Manager` taskbar glyphs. SHA-256 of each base disk matched
+before and after its runs. This establishes the comparison environment
+and a desktop checkpoint. The feature, visual and performance comparisons
+are still part of the parity review.
