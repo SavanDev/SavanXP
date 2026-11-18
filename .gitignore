@@ -62,6 +62,7 @@ tools/*
 !tools/iso_boot_test.py
 !tools/iso_volume.py
 !tools/stage_licenses.py
+!tools/fat_image.c
 !tools/write_smoke_spec.py
 !tools/smoke_profile.py
 !tools/check_shared_libs.py

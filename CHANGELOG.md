@@ -57,6 +57,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **A fresh clone builds again: `tools/fat_image.c`, the source of `build/tools/fat-image`, is in the repository.**
+  `.gitignore`'s `tools/*` had kept it out since the commit that added it, and every build compiles it.
+
 - **FFmpeg's license notice says where its source is: the `ffmpeg-7.1.1.tar.xz` asset of the release.** `SOURCE.md`
   described a static binary; it now covers the shared library and how to replace it. See
   [RELEASING.md](docs/build/RELEASING.md#ffmpegs-source).
