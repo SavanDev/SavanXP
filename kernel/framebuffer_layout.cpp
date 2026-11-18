@@ -130,6 +130,17 @@ Result validate(const boot::FramebufferInfo& info) {
     return result;
 }
 
+Result adopt(boot::FramebufferInfo& info) {
+    const Result result = validate(info);
+    if (result.reason == Reject::none) {
+        info.mapped_bytes = result.layout.mapped_bytes;
+    } else {
+        info.available = false;
+        info.mapped_bytes = 0;
+    }
+    return result;
+}
+
 const char* reject_name(Reject reason) {
     switch (reason) {
     case Reject::none: return "none";

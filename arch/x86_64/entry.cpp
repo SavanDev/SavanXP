@@ -4,6 +4,7 @@
 #include "arch/cpu.hpp"
 #include "boot/boot_info.hpp"
 #include "kernel/console.hpp"
+#include "kernel/framebuffer_layout.hpp"
 #include "kernel/kernel.hpp"
 #include "kernel/panic.hpp"
 #include "limine.h"
@@ -219,6 +220,7 @@ boot::BootInfo build_boot_info() {
         info.framebuffer.blue_mask_size = framebuffer->blue_mask_size;
         info.framebuffer.blue_mask_shift = framebuffer->blue_mask_shift;
         info.framebuffer.available = true;
+        info.framebuffer.delivered = true;
     }
 
     if (g_cmdline_request.response != nullptr) {
@@ -263,28 +265,24 @@ boot::BootInfo build_boot_info() {
         // How much is really mapped behind the framebuffer. Limine hands over
         // an HHDM address and publishes the whole aperture as a framebuffer
         // region, so the rest of the VRAM is already reachable without mapping
-        // anything new. With no region holding it, this falls back to the mode
-        // the firmware set, the only thing guaranteed. `region_bytes` keeps
-        // what the region said, before that fallback raises `mapped_bytes`.
-        if (info.framebuffer.available && info.framebuffer.address != nullptr) {
+        // anything new. Only an address inside the HHDM is translated, and
+        // only a framebuffer region that holds the result counts as evidence.
+        // `region_bytes` stays 0 otherwise; framebuffer::adopt below then
+        // trusts the visible mode alone, the only thing guaranteed.
+        if (info.framebuffer.available && info.framebuffer.address != nullptr &&
+            reinterpret_cast<uint64_t>(info.framebuffer.address) >= info.hhdm_offset) {
             const uint64_t framebuffer_physical =
                 reinterpret_cast<uint64_t>(info.framebuffer.address) - info.hhdm_offset;
             for (size_t index = 0; index < copied_entries; ++index) {
                 const boot::MemoryRegion& region = g_memory_regions[index];
                 if (region.type != boot::MemoryRegionType::framebuffer ||
                     framebuffer_physical < region.base ||
-                    framebuffer_physical >= region.base + region.length) {
+                    framebuffer_physical - region.base >= region.length) {
                     continue;
                 }
-                info.framebuffer.mapped_bytes =
-                    (region.base + region.length) - framebuffer_physical;
-                info.framebuffer.region_bytes = info.framebuffer.mapped_bytes;
+                info.framebuffer.region_bytes =
+                    region.length - (framebuffer_physical - region.base);
                 break;
-            }
-
-            const uint64_t minimum_bytes = info.framebuffer.pitch * info.framebuffer.height;
-            if (info.framebuffer.mapped_bytes < minimum_bytes) {
-                info.framebuffer.mapped_bytes = minimum_bytes;
             }
         }
 
@@ -332,6 +330,10 @@ boot::BootInfo build_boot_info() {
             );
         }
     }
+
+    // One check before splash, console or a display backend writes a pixel
+    // (FB1, docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md); kernel_main logs it.
+    (void)framebuffer::adopt(info.framebuffer);
 
     return info;
 }

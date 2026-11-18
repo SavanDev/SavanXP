@@ -18,6 +18,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/fb_gpu.hpp"
+#include "kernel/framebuffer_layout.hpp"
 #include "kernel/fat.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/gpu_device.hpp"
@@ -106,6 +107,56 @@ namespace
         uint64_t reclaimable_bytes;
     };
 
+    // What the bootloader handed over and what framebuffer::adopt made of it
+    // (FB1, docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md). The mode is always the
+    // bootloader's choice: nothing before a display backend sets one.
+    void log_boot_framebuffer(const boot::BootInfo &boot_info)
+    {
+        const boot::FramebufferInfo &fb = boot_info.framebuffer;
+        if (!fb.delivered)
+        {
+            console::printf("framebuffer: none from the bootloader, serial output only\n");
+            return;
+        }
+        console::printf("framebuffer: %llux%llu pitch=%llu bpp=%u model=%u masks r%u@%u g%u@%u b%u@%u, mode chosen by the bootloader\n",
+            fb.width, fb.height, fb.pitch,
+            static_cast<unsigned>(fb.bpp), static_cast<unsigned>(fb.memory_model),
+            static_cast<unsigned>(fb.red_mask_size), static_cast<unsigned>(fb.red_mask_shift),
+            static_cast<unsigned>(fb.green_mask_size), static_cast<unsigned>(fb.green_mask_shift),
+            static_cast<unsigned>(fb.blue_mask_size), static_cast<unsigned>(fb.blue_mask_shift));
+
+        // adopt() left the delivered fields alone, so checking them again as
+        // delivered gives back its verdict, and the reason when it said no.
+        boot::FramebufferInfo as_delivered = fb;
+        as_delivered.available = true;
+        const framebuffer::Result check = framebuffer::validate(as_delivered);
+        if (check.reason != framebuffer::Reject::none)
+        {
+            console::printf("framebuffer: rejected (%s); no splash or screen console, serial output only\n",
+                framebuffer::reject_name(check.reason));
+            return;
+        }
+
+        const uint64_t address = reinterpret_cast<uint64_t>(fb.address);
+        if (fb.region_bytes != 0)
+        {
+            console::printf("framebuffer: accepted %s, visible %llu KiB, mapped %llu KiB from the memory map region at phys 0x%llx\n",
+                framebuffer::format_name(check.layout.format),
+                check.layout.visible_bytes / 1024u, fb.mapped_bytes / 1024u,
+                address - boot_info.hhdm_offset);
+        }
+        else
+        {
+            console::printf("framebuffer: accepted %s, visible %llu KiB, mapped %llu KiB (no memory map region holds it; physical address unknown)\n",
+                framebuffer::format_name(check.layout.format),
+                check.layout.visible_bytes / 1024u, fb.mapped_bytes / 1024u);
+        }
+        if (check.layout.format == framebuffer::Format::xbgr8888)
+        {
+            console::printf("framebuffer: warning: BGR layout, red and blue show swapped until the final copy converts it (FB5)\n");
+        }
+    }
+
     MemorySummary summarize_memory(const boot::BootInfo &boot_info)
     {
         MemorySummary summary = {};
@@ -158,6 +209,7 @@ namespace
         firmware_type_name(boot_info.firmware_type),
         boot_info.bootloader_name != nullptr ? boot_info.bootloader_name : "unknown",
         boot_info.bootloader_version != nullptr ? boot_info.bootloader_version : "");
+    log_boot_framebuffer(boot_info);
 
     boot_screen::show("Initializing physical memory");
     memory::initialize(boot_info);

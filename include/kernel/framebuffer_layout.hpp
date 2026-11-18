@@ -63,6 +63,12 @@ struct Result {
 
 Result validate(const boot::FramebufferInfo& info);
 
+// Validates the boot descriptor once, before anything draws, and makes it
+// what every writer trusts: accepted, `mapped_bytes` becomes the established
+// span; rejected, `available` turns false and only serial output remains.
+// The other fields are left as delivered, for the boot log.
+Result adopt(boot::FramebufferInfo& info);
+
 // A short stable name for a log line, e.g. "pitch_too_small".
 const char* reject_name(Reject reason);
 const char* format_name(Format format);

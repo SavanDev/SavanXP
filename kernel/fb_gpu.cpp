@@ -7,6 +7,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/framebuffer_layout.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -510,6 +511,35 @@ bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) 
     return true;
 }
 
+// A mode programmed through DISPI goes through the same check as the boot
+// descriptor before publish_mode hands its geometry to the console (FB1b in
+// docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md). DISPI's 32 bpp is XRGB8888.
+bool programmed_mode_valid(const savanxp_fb_info& info) {
+    boot::FramebufferInfo candidate = {};
+    candidate.address = g_fb_base;
+    candidate.width = info.width;
+    candidate.height = info.height;
+    candidate.pitch = info.pitch;
+    candidate.bpp = static_cast<uint16_t>(info.bpp);
+    candidate.available = true;
+    candidate.delivered = true;
+    candidate.memory_model = framebuffer::kMemoryModelRgb;
+    candidate.red_mask_size = 8;
+    candidate.red_mask_shift = 16;
+    candidate.green_mask_size = 8;
+    candidate.green_mask_shift = 8;
+    candidate.blue_mask_size = 8;
+    candidate.blue_mask_shift = 0;
+    candidate.region_bytes = g_mapped_bytes;
+    const framebuffer::Result check = framebuffer::validate(candidate);
+    if (check.reason != framebuffer::Reject::none) {
+        console::printf("fb_gpu: mode %ux%u pitch=%u rejected (%s)\n",
+            info.width, info.height, info.pitch, framebuffer::reject_name(check.reason));
+        return false;
+    }
+    return true;
+}
+
 void publish_mode(const savanxp_fb_info& info) {
     console::printf("fb_gpu: modo %ux%u pitch=%u, doble buffer %s\n",
         info.width, info.height, info.pitch,
@@ -556,11 +586,13 @@ bool set_mode(savanxp_gpu_mode& mode) {
         }
 
         savanxp_fb_info applied = {};
-        if (!apply_dispi_mode(requested_width, requested_height, applied)) {
-            // Reponer lo que habia: quedarse en un modo a medio programar deja
-            // la pantalla inutilizable y sin forma de volver.
+        if (!apply_dispi_mode(requested_width, requested_height, applied) ||
+            !programmed_mode_valid(applied)) {
+            // Put back what was there: staying in a half-programmed mode
+            // leaves the screen unusable with no way back.
             savanxp_fb_info restored = {};
-            if (apply_dispi_mode(g_fb_info.width, g_fb_info.height, restored)) {
+            if (apply_dispi_mode(g_fb_info.width, g_fb_info.height, restored) &&
+                programmed_mode_valid(restored)) {
                 publish_mode(restored);
             }
             return false;
@@ -1033,9 +1065,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     // El modo del firmware es el techo y el punto de retorno de cualquier
     // cambio posterior, asi que se guarda antes de tocar nada.
     g_native_info = g_fb_info;
-    g_mapped_bytes = framebuffer.mapped_bytes >= g_fb_info.buffer_size
-        ? framebuffer.mapped_bytes
-        : g_fb_info.buffer_size;
+    g_mapped_bytes = framebuffer.mapped_bytes;
     g_dispi_available = detect_dispi();
     if (g_dispi_available) {
         read_dispi_caps();
@@ -1069,10 +1099,13 @@ namespace {
 constexpr int kDriverPriority = 10;
 
 bool driver_probe(const boot::FramebufferInfo& framebuffer) {
+    // framebuffer::adopt already decided whether the boot descriptor is
+    // usable; on a machine where it is not, this driver declines instead of
+    // binding anyway and leaving a dead backend.
+    if (!framebuffer.available) {
+        return false;
+    }
     initialize(framebuffer);
-    // ready() ya exige scanout lineal de 32bpp con tamano no nulo, asi que en
-    // una maquina sin framebuffer utilizable este driver declina en vez de
-    // atarse igual y dejar un backend muerto.
     return ready();
 }
 

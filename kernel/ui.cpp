@@ -266,13 +266,17 @@ namespace ui {
 
 void initialize(const boot::FramebufferInfo& framebuffer) {
     g_framebuffer = framebuffer;
-    g_framebuffer_info = {
-        .width = static_cast<uint32_t>(framebuffer.width),
-        .height = static_cast<uint32_t>(framebuffer.height),
-        .pitch = static_cast<uint32_t>(framebuffer.pitch),
-        .bpp = framebuffer.bpp,
-        .buffer_size = static_cast<uint32_t>(framebuffer.pitch * framebuffer.height),
-    };
+    // A rejected boot framebuffer has no geometry to offer.
+    g_framebuffer_info = {};
+    if (framebuffer.available) {
+        g_framebuffer_info = {
+            .width = static_cast<uint32_t>(framebuffer.width),
+            .height = static_cast<uint32_t>(framebuffer.height),
+            .pitch = static_cast<uint32_t>(framebuffer.pitch),
+            .bpp = framebuffer.bpp,
+            .buffer_size = static_cast<uint32_t>(framebuffer.pitch * framebuffer.height),
+        };
+    }
     reset_input_queue();
     reset_mouse_queue();
     g_owner_pid = 0;

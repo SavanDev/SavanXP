@@ -3822,9 +3822,6 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     uint32_t preferred_height = native_height;
 
     if (framebuffer.available &&
-        framebuffer.width != 0 &&
-        framebuffer.height != 0 &&
-        framebuffer.bpp == 32 &&
         (framebuffer.width > native_width || framebuffer.height > native_height)) {
         preferred_width = static_cast<uint32_t>(framebuffer.width);
         preferred_height = static_cast<uint32_t>(framebuffer.height);

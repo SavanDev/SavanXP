@@ -26,7 +26,7 @@ The normal path is application surfaces in shared memory, composition by
 | Area | Current behavior and review finding |
 | --- | --- |
 | Boot descriptor | `arch/x86_64/entry.cpp` retains address, dimensions, pitch and bpp from Limine, but not its color masks. `boot::FramebufferInfo` also carries mapped bytes. |
-| Validation | `fb_gpu::initialize` narrows geometry and buffer size to 32 bits. `ready()` checks address, 32 bpp and nonzero size, rather than validating the complete descriptor. Console and splash have separate gates. |
+| Validation | Since FB1: `framebuffer::adopt` checks the boot descriptor once in `build_boot_info`, and `available` is the only gate splash, console, `ui` and both display backends read. DISPI modes set at runtime pass the same check. Before FB1, `ready()` and each writer had a partial gate of its own. |
 | Copies | `fb_gpu` copies dirty rectangles from imported surfaces; contiguous rows can use one copy. The x86-64 kernel `memcpy` uses `rep movsq` and a byte tail. |
 | Bochs path | DISPI supplies mode changes, an aperture size and panning. Double buffering tracks the previous damage as well as current damage. Some older comments describe superseded full-copy or front-buffer-only behavior. |
 | Physical GPU fallback | Uses the firmware's fixed mode and visible framebuffer. No generic page flip, vertical blank notification or hardware cursor is exposed. |
@@ -108,7 +108,7 @@ S is a few commits, M a short series, L a project of its own.
 | Phase | Priority and result | Size | Prerequisites | Code | Metal |
 | --- | --- | --- | --- | --- | --- |
 | FB1a | High: masks and a checked descriptor, host tests | S | None | done, 2026-11-17 | n/a |
-| FB1b | High: one gate for splash/console/backend, honest boot log | S | FB1a | open | open |
+| FB1b | High: one gate for splash/console/backend, honest boot log | S | FB1a | done, 2026-11-17 | open: BIOS and UEFI boot logs |
 | FB2 | High: measured, coherent framebuffer memory attributes | M | FB1b | open | open |
 | FB3 | High: defined presentation completion and ordering | M | FB1a; coordinate with FB2 | open | open |
 | FB4 | High: visible emergency output | S | FB1a; agree emergency contract with FB3 | open | open |
@@ -116,9 +116,14 @@ S is a few commits, M a short series, L a project of its own.
 | FB6 | Medium: measured copy and scheduling improvements | L | FB2, FB3, FB5 | open | open |
 | FB7 | Conditional: one native display driver | L | FB1-FB6 and a demonstrated hardware need | open | open |
 
-**First increment:** FB1a, done: the boot descriptor carries the masks and
+**FB1 code is done.** FB1a: the boot descriptor carries the masks and
 `framebuffer::validate` (`kernel/framebuffer_layout.cpp`) checks it, with
-`framebuffer-layout-test` on the host; nothing calls it yet. **Next:** FB1b.
+`framebuffer-layout-test` on the host. FB1b: `framebuffer::adopt` applies it
+before anything draws, every writer reads the one `available` gate, DISPI
+modes are checked before `publish_mode`, and the boot log has two
+`framebuffer:` lines (plus a warning for BGR). Its metal check is pending: a
+BIOS and a UEFI boot log naming the accepted layout. **Next:** FB4 (small, only
+needs FB1a) or FB2/FB3.
 
 FB4 can land before FB2/FB3 finish. RGB/BGR correctness in FB5 precedes other
 depths, unless a target's mode survey promotes 24-bit (see FB5). FB7 is a

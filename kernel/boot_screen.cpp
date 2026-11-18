@@ -354,12 +354,11 @@ void draw_status(const Layout& layout) {
 
 void initialize(const boot::FramebufferInfo& framebuffer) {
     g_framebuffer = framebuffer;
+    // The descriptor itself was checked by framebuffer::adopt; the size is
+    // the splash's own need, to fit its layout.
     g_ready = framebuffer.available &&
-        framebuffer.address != nullptr &&
         framebuffer.width >= 320 &&
-        framebuffer.height >= 200 &&
-        framebuffer.pitch >= framebuffer.width * sizeof(uint32_t) &&
-        framebuffer.bpp == 32;
+        framebuffer.height >= 200;
     g_painted = false;
     g_fade_start_ns = 0;
     g_active = g_ready;

@@ -32,13 +32,18 @@ struct FramebufferInfo {
     uint64_t height;
     uint64_t pitch;
     uint16_t bpp;
+    // Whether this descriptor passed framebuffer::adopt, the one check every
+    // writer relies on (splash, console, display backends). `delivered` says
+    // whether the bootloader handed one over at all.
     bool available;
-    // Bytes utilizables desde `address`: lo que queda de la region de
-    // framebuffer del mapa de memoria a partir de ahi. El firmware entrega un
-    // modo que ocupa pitch*height, pero la apertura de VRAM suele ser mucho
-    // mas grande, y ese resto tambien esta mapeado por el HHDM. Es el techo
-    // real para cambiar de modo, y lo que hace posible el doble buffer, que
-    // necesita mas alto virtual que el modo visible. Nunca menor a pitch*height.
+    bool delivered;
+    // Usable bytes from `address`: the rest of the memory map's framebuffer
+    // region from there on. The firmware sets a mode that takes pitch*height,
+    // but the VRAM aperture is usually much larger, and that remainder is
+    // mapped by the HHDM too. It is the real ceiling for changing mode, and
+    // what makes double buffering possible, which needs more virtual height
+    // than the visible mode. Set by framebuffer::adopt: never less than
+    // pitch*height when `available`, 0 when rejected.
     uint64_t mapped_bytes;
     // The pixel layout as Limine reports it: memory model 1 is RGB, and each
     // channel is `size` bits starting at bit `shift` of a pixel.
@@ -51,7 +56,8 @@ struct FramebufferInfo {
     uint8_t blue_mask_shift;
     // Bytes from `address` to the end of the memory map's framebuffer region
     // that holds it, as found, never raised to fit the mode; 0 when no region
-    // holds it. framebuffer::validate checks it against the visible mode.
+    // holds it. framebuffer::adopt checks it against the visible mode and sets
+    // `mapped_bytes` from it.
     uint64_t region_bytes;
 };
 

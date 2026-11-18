@@ -224,6 +224,45 @@ void never_touches_the_pixels() {
     munmap(guarded, page);
 }
 
+// adopt() is what every writer trusts: accepted keeps the descriptor drawable
+// with the established span; rejected turns it off and leaves the delivered
+// fields for the boot log.
+void adopt_sets_the_single_gate() {
+    boot::FramebufferInfo info = good();
+    info.delivered = true;
+    info.mapped_bytes = 1;
+    check(framebuffer::adopt(info).reason == Reject::none, "adopt accepts");
+    check(info.available, "accepted stays available");
+    check(info.mapped_bytes == 16ull * 1024ull * 1024ull, "accepted mapped bytes from region");
+
+    info = good();
+    info.delivered = true;
+    info.region_bytes = 0;
+    check(framebuffer::adopt(info).reason == Reject::none, "adopt accepts without region");
+    check(info.mapped_bytes == 1280ull * 4ull * 800ull, "no region maps the visible mode");
+
+    info = good();
+    info.delivered = true;
+    info.pitch = 16;
+    info.mapped_bytes = 123;
+    check(framebuffer::adopt(info).reason == Reject::pitch_too_small, "adopt reports the reason");
+    check(!info.available, "rejected is not available");
+    check(info.mapped_bytes == 0, "rejected maps nothing");
+    check(info.delivered && info.width == 1280 && info.pitch == 16, "delivered fields kept for the log");
+
+    // The boot log re-checks the delivered fields and gets the same verdict.
+    boot::FramebufferInfo as_delivered = info;
+    as_delivered.available = true;
+    check(reason_of(as_delivered) == Reject::pitch_too_small, "re-check gives the same reason");
+
+    // A BGR descriptor stays available; the caller warns.
+    info = good();
+    info.red_mask_shift = 0;
+    info.blue_mask_shift = 16;
+    const framebuffer::Result bgr = framebuffer::adopt(info);
+    check(info.available && bgr.layout.format == Format::xbgr8888, "BGR adopted");
+}
+
 void names_every_reason() {
     for (int value = 0; value <= static_cast<int>(Reject::mapped_too_small); ++value) {
         const char* name = framebuffer::reject_name(static_cast<Reject>(value));
@@ -242,6 +281,7 @@ int main() {
     handles_overflow_and_narrowing();
     handles_the_mapped_span();
     never_touches_the_pixels();
+    adopt_sets_the_single_gate();
     names_every_reason();
     std::printf("framebuffer-layout-test: ok (%d checks)\n", g_checks);
     return 0;

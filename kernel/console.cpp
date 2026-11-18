@@ -87,7 +87,7 @@ void serial_write_char(char value) {
 }
 
 bool drawable() {
-    return g_framebuffer.available && g_framebuffer.address != nullptr && g_framebuffer.bpp == 32;
+    return g_framebuffer.available;
 }
 
 uint32_t* pixel_row(uint64_t y) {
@@ -120,7 +120,7 @@ void forget_cell(size_t row, size_t column) {
 }
 
 void draw_background() {
-    if (!g_console_visible || !g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
+    if (!g_console_visible || !g_framebuffer.available) {
         return;
     }
 
@@ -326,7 +326,7 @@ const boot::FramebufferInfo& framebuffer_info() {
 }
 
 bool framebuffer_ready() {
-    return g_framebuffer.available && g_framebuffer.address != nullptr && g_framebuffer.bpp == 32;
+    return g_framebuffer.available;
 }
 
 void set_framebuffer_console_enabled(bool enabled) {

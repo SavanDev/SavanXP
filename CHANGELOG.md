@@ -25,6 +25,12 @@ Cut-off notes:
   `framebuffer::validate` and host test `framebuffer-layout-test`; nothing calls it yet, output is unchanged.
   It accepts 32-bit BGR and names it so callers can warn. FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
+### Changed
+
+- **The boot framebuffer is checked once before anything draws; the boot log gains two `framebuffer:` lines.**
+  A malformed descriptor now leaves serial output only instead of being drawn into; a BGR one boots with a warning.
+  DISPI mode changes pass the same check. FB1b of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
+
 ### Fixed
 
 - **Closing Notepad with unsaved changes (X, Alt+F4) asks "save changes?" instead of discarding them.**

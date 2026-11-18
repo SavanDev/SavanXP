@@ -410,9 +410,11 @@ Other remaining work:
   the preferred mode does not light up. Display Properties still cannot
   change the mode afterwards. The framebuffer roadmap leaves mode choice outside
   the firmware fallback milestone and says why.
-- **`fb_gpu:` does not say what it got.** Its log line prints
-  `tipo del firmware` for the cache type of any adapter that is not Bochs'.
-  It should print the mapping's real type and the bit depth.
+- **The cache type is not reported.** The boot log's `framebuffer:` lines
+  give the geometry, depth, channel masks and mapped span the bootloader
+  handed over, and whether it was accepted (FB1). `fb_gpu:` still prints
+  `tipo del firmware` for the cache type of any adapter that is not Bochs';
+  reporting the real type is FB2.
 - **32 bpp is a hard gate** in the driver, the console and the splash. A
   firmware with only 24 bpp modes gives a serial console and nothing else.
 - **No vertical sync.** Double buffering by panning exists for Bochs' adapter
