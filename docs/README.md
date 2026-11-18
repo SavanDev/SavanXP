@@ -249,9 +249,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`MIDI.md`](media/MIDI.md) — `libsxmidi`, the General MIDI synthesizer: the SMF
   parser, the built-in instrument bank, and how the Doom port plays music
   through it.
-- [`SXMEDIA.md`](media/SXMEDIA.md) — **withdrawn.** What the multimedia layer was, what
-  building it taught, and what has to exist before trying again: a way for one
-  program to use a codec library it was not built with.
+- [`SXMEDIA.md`](media/SXMEDIA.md) — **withdrawn, and not coming back.** What the
+  multimedia layer was, what building it taught, and why a shared FFmpeg and
+  SUN's own `dlopen` leave no reason for it.
 
 ## Filesystem — `fs/`
 

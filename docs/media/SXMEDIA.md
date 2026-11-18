@@ -8,6 +8,31 @@ The layer was built across eleven commits between `092dfd5` and `42c12ca` and th
 removed. It worked, at the level it reached. What it could not do was the one thing
 it was for, and the reason is structural rather than a matter of effort.
 
+## Why it is not coming back (decided 2026-11-18)
+
+The obstacle below is gone, and with it the reason for the layer:
+
+- **One player plays everything the build enables.** FFmpeg is
+  `/lib/libffmpeg.so.0.4`, a `DT_NEEDED` of `mediaplayer`; `dlopen` exists in
+  POSIX ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md)). A new codec is a
+  change to the port (an AV1 decoder is `libdav1d` added to it), not a layer
+  over it.
+- **Licensing is no argument for codecs of our own.** FFmpeg is built LGPL-2.1
+  only (the configure guard refuses GPL and nonfree), the library can be
+  replaced without relinking the player, its notice ships in
+  `/system/licenses/ffmpeg/`, and a published ISO carries the pinned source
+  archive next to it ([LICENSE_NOTICES.md](../third-party/LICENSE_NOTICES.md)).
+  That is one file per release, against years of decoders.
+- **The one gap left is SUN's, and it closes in SUN.** A SUN program cannot load
+  `libffmpeg` today: SUN has `DT_NEEDED` but no `dlopen`, and the library takes
+  its C library from a POSIX program. By the parity rule that gap is closed in
+  the subsystem that lacks it, not worked around with a media layer.
+
+What survives from the list at the end of this document does not need the
+layer: the notice that names the codec is in the Media Player
+([MEDIA_PLAYER.md](MEDIA_PLAYER.md#what-it-does-with-a-codec-it-cannot-decode)),
+and a streaming voice in the mixer is the mixer's work.
+
 ---
 
 ## What it was
@@ -165,7 +190,7 @@ In order, because each one removes a reason the last attempt failed:
    idea: derived from the same configuration that linked the library, never typed.
    Cheap, and it stays correct on its own.
 3. **A notice that names the codec**, which is the part that does not depend on any
-   of the above. A user who cannot play a file should be told `vorbis`, not
+   of the above. **Done in the Media Player (2026-11-18).** A user who cannot play a file should be told `vorbis`, not
    `stb_vorbis`, and never be told which library failed.
 4. **A streaming voice in the mixer.** Independent of SxMedia and still blocking:
    `sx_audio_mixer_start_voice` takes a whole sample buffer, so a three-minute track
