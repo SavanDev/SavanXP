@@ -285,6 +285,7 @@ void handle(ContextFrame& frame) {
                 if (index++ != frame.edi) continue;
                 savanxp_process_info info = {};
                 info.cpu_ticks = task.cpu_ticks;
+                info.flags = task.idle ? SAVANXP_PROC_FLAG_IDLE : 0;
                 info.pid = task.pid; info.parent_pid = task.parent; info.exit_code = task.exit_status;
                 const uint32_t states[] = {SAVANXP_PROC_UNUSED, SAVANXP_PROC_READY, SAVANXP_PROC_RUNNING,
                     SAVANXP_PROC_SLEEPING, SAVANXP_PROC_BLOCKED_READ, SAVANXP_PROC_BLOCKED_WRITE,
@@ -355,7 +356,7 @@ void handle(ContextFrame& frame) {
             info.net_present = net::present();
             info.speaker_ready = pcspeaker::ready();
             info.pci_device_count = pci::device_count();
-            info.cpu_ticks_total = pit::ticks();
+            info.cpu_ticks_total = process::total_cpu_ticks();
             info.cpu_khz = timer::tsc_khz();
             arch::x86_64::CpuIdentity identity = {};
             arch::x86_64::query_cpu_identity(identity);
@@ -399,7 +400,7 @@ void handle(ContextFrame& frame) {
             object::section_live_counts(info.sections_live, info.file_sections_live);
             info.last_view_failure = sections::last_failure();
             info.cpu_count = smp::cpu_count();
-            info.cpu_online = smp::online_count();
+            info.cpu_online = smp::scheduling_count();
 
             if (!is_user_range(frame.edi, static_cast<uint32_t>(sizeof(info)), true)) {
                 frame.eax = failure(SAVANXP_EFAULT);
@@ -436,6 +437,7 @@ void handle(ContextFrame& frame) {
 
 // The assembly passes the actual saved frame and restores the returned one.
 extern "C" ContextFrame* i386_handle_syscall(ContextFrame* frame) {
+    process::begin_syscall();
     syscall::handle(*frame);
     return process::finish_syscall(frame);
 }

@@ -23,7 +23,7 @@ def build_qemu_args(
     qmp_path: Path | None = None,
 ) -> list[str]:
     if smp < 1 or smp > 32:
-        raise ValueError("--smp must be between 1 and 32 (AP bring-up; one scheduling CPU)")
+        raise ValueError("--smp must be between 1 and 32")
     command = [
         "qemu-system-i386", "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
         "-m", "1024M", "-smp", str(smp), "-boot", "d",

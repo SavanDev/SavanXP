@@ -1,38 +1,29 @@
-/*
- * smptest: que los procesos corran de verdad en varios cores a la vez.
- *
- * Que el sistema arranque y pase el resto de los tests con `--smp 4` no prueba
- * nada: pasaria igual con los APs estacionados. Lo que si lo prueba es el
- * estado de los procesos. En un core, mientras este proceso esta adentro de una
- * syscall, el unico en State::running es el: todos los demas estan listos,
- * bloqueados o dormidos. Ver a OTRO proceso en running desde aca es verlo
- * corriendo en otro core en ese mismo instante.
- *
- * No se mide con ticks ni con trabajo hecho: bajo TCG los vCPUs pueden turnarse
- * un solo hilo del host, y ahi ni los ticks de cada core ni el trabajo total
- * dicen cuantos corrieron a la vez. El estado si.
- *
- * Y dos caminos que solo existen con varios cores:
- *  - matar a un proceso que esta corriendo en OTRO core, que el kernel no puede
- *    desarmar en el acto y le pide a ese core que lo termine;
- *  - el ida y vuelta por un pipe, donde el que despierta al otro le manda el
- *    IPI de replanificar a un core ocioso en vez de cederle el suyo.
- *
- * Con un solo core no hay paralelismo que medir: esa parte se saltea y el
- * resto corre igual.
- */
+/* v0.4.0 SMP regression: observe another running child while the parent is
+ * inside a syscall, terminate a remote runner, then exchange pipe records.
+ * This checks scheduler ownership rather than guessing from elapsed time.
+ * Native i386 also samples CPUID in both the parent and spinning children. */
 #include "libc.h"
 
-#define SPIN_MS 800ul
+#define SPIN_MS 3000ul
 #define PING_ROUNDS 2000
 
-/* Un hijo que no es este proceso ni un ocioso, visto en running. */
+static void record_cpu(const char* role) {
+#if defined(__i386__)
+    unsigned int a, b, c, d;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
+    printf("smptest: %s lapic=%u\n", role, b >> 24);
+#else
+    (void)role;
+#endif
+}
+
+/* A child owned by another scheduling CPU. */
 static int child_seen_running(const long* children, unsigned int count) {
     struct savanxp_process_info info;
     unsigned long index;
     unsigned int child;
 
-    for (index = 0; proc_info(index, &info) >= 0; ++index) {
+    for (index = 0; proc_info(index, &info) > 0; ++index) {
         if (info.state != SAVANXP_PROC_RUNNING) {
             continue;
         }
@@ -45,9 +36,14 @@ static int child_seen_running(const long* children, unsigned int count) {
     return 0;
 }
 
-static int check_parallel_spin(unsigned int cores) {
+static int check_parallel_spin(unsigned int cores, unsigned int processes) {
     long children[32];
     unsigned int spinners = cores - 1u;
+    // Idle processes consume the same reference 64-slot table. At 32 CPUs
+    // reserve the existing init/shell/test slots instead of asking fork to
+    // exceed that capacity. At least one child must still run concurrently.
+    if (spinners > 64u - processes) spinners = 64u - processes;
+    if (!spinners) return 0;
     unsigned int index;
     int seen = 0;
     const unsigned long deadline = uptime_ms() + SPIN_MS;
@@ -59,17 +55,16 @@ static int check_parallel_spin(unsigned int cores) {
             return 0;
         }
         if (children[index] == 0) {
-            while (uptime_ms() < deadline) {
-                /* Girar sin dormir: la unica forma de quedarse con un core. */
-            }
+            record_cpu("worker");
+            while (uptime_ms() < deadline) { /* Remain runnable. */ }
             exit(0);
         }
     }
 
-    /* El padre tambien gira, preguntando. Mientras pregunta esta en running en
-     * su core, asi que un hijo en running esta en otro. */
+    /* The parent owns one CPU while enumerating the running children. */
     while (uptime_ms() < deadline) {
         if (child_seen_running(children, spinners)) {
+            record_cpu("parent");
             seen = 1;
             break;
         }
@@ -78,16 +73,16 @@ static int check_parallel_spin(unsigned int cores) {
     for (index = 0; index < spinners; ++index) {
         int status = -1;
         if (savanxp_waitpid((int)children[index], &status) < 0 || status != 0) {
-            printf("smptest: FAIL waitpid del spinner %ld (%d)\n", children[index], status);
+            printf("smptest: FAIL spinner waitpid %ld (%d)\n", children[index], status);
             return 0;
         }
     }
 
     if (!seen) {
-        printf("smptest: FAIL ningun spinner corrio a la vez que este proceso\n");
+        printf("smptest: FAIL no child ran concurrently with the parent\n");
         return 0;
     }
-    printf("smptest: %u spinners corriendo en paralelo\n", spinners);
+    printf("smptest: %u spinners ran in parallel\n", spinners);
     return 1;
 }
 
@@ -101,8 +96,7 @@ static int check_cross_core_kill(void) {
     }
     if (victim == 0) {
         for (;;) {
-            /* Siempre en ring 3 y siempre corriendo: con cores libres, en otro
-             * core que el que lo mata. */
+            /* Stay in ring 3 until another process terminates this runner. */
         }
     }
 
@@ -116,7 +110,7 @@ static int check_cross_core_kill(void) {
         return 0;
     }
     if (status != 128 + SAVANXP_SIGTERM) {
-        printf("smptest: FAIL kill esperaba %d, llego %d\n", 128 + SAVANXP_SIGTERM, status);
+        printf("smptest: FAIL kill expected %d, received %d\n", 128 + SAVANXP_SIGTERM, status);
         return 0;
     }
     return 1;
@@ -159,22 +153,22 @@ static int check_pipe_ping_pong(void) {
             uint32_t value = (uint32_t)round * 2u;
             if (savanxp_write(to_child[1], &value, sizeof(value)) != (long)sizeof(value) ||
                 savanxp_read(to_parent[0], &value, sizeof(value)) != (long)sizeof(value)) {
-                printf("smptest: FAIL pipe cortado en la vuelta %d\n", round);
+                printf("smptest: FAIL pipe interrupted at round %d\n", round);
                 return 0;
             }
             if (value != (uint32_t)round * 2u + 1u) {
-                printf("smptest: FAIL vuelta %d devolvio %u\n", round, (unsigned)value);
+                printf("smptest: FAIL round %d returned %u\n", round, (unsigned)value);
                 return 0;
             }
         }
-        printf("smptest: %d idas y vueltas por pipe en %lu ms\n", PING_ROUNDS, uptime_ms() - start);
+        printf("smptest: %d pipe round trips in %lu ms\n", PING_ROUNDS, uptime_ms() - start);
     }
 
     savanxp_close(to_child[1]);
     {
         int status = -1;
         if (savanxp_waitpid((int)child, &status) < 0 || status != 0) {
-            printf("smptest: FAIL el eco termino con %d\n", status);
+            printf("smptest: FAIL echo exited with %d\n", status);
             return 0;
         }
     }
@@ -194,14 +188,16 @@ int main(void) {
     if (cores > 32u) {
         cores = 32u;
     }
-    printf("smptest: %u core(s) planificando\n", cores);
+    printf("smptest: %u scheduling CPU(s)\n", cores);
 
-    if (cores > 1u && !check_parallel_spin(cores)) {
+    if (cores > 1u && !check_parallel_spin(cores, info.process_count)) {
         return 1;
     }
-    if (!check_cross_core_kill() || !check_pipe_ping_pong()) {
-        return 1;
+    for (unsigned int round = 0; round < 16; ++round) {
+        if (!check_cross_core_kill()) return 1;
     }
+    puts_out("smptest: 16 termination/reap rounds passed\n");
+    if (!check_pipe_ping_pong()) return 1;
 
     puts_out("smptest: ok\n");
     return 0;

@@ -12,8 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **i386 schedules user processes on up to 32 CPUs.** Per-CPU timers and the
+  reference kernel lock support parallel execution, safe remote termination and
+  shared-view TLB synchronization. CPU usage accounts for all scheduling CPUs;
+  `smoke smp --smp 4` checks the restored path.
+
 - **i386 starts additional CPUs and verifies their private TSS, stacks and IPIs.**
-  `run --smp N` supports AP bring-up for 1–32 CPUs; only the BSP schedules.
+  `run --smp N` supports AP bring-up for 1–32 CPUs.
   `smoke smp-boot --smp 4` checks hardware state through QMP, and virtio GPU
   now uses MSI-X when the local APIC is available; see [SMP](docs/I386_SMP.md).
 
@@ -96,6 +101,14 @@ Cut-off notes:
   behavior. [Scope and limits](docs/I386_PROCESSES.md).
 
 ### Changed
+
+- **Interruptible i386 kernel waits no longer monopolize their CPU.** Waiting
+  continuations preserve their state and exit safely after a kill request;
+  `smoke kernel-preempt` checks CPU/FPU state and deferred cleanup.
+
+- **i386 restores one protected idle process per scheduling CPU.** Task Manager
+  reports idle and busy time; init's PID follows the idle processes, and zombies
+  remain in the process count until reaped. `smoke idle` checks this behavior.
 
 - **Official media and game ports build and run on i386.**
   FFmpeg, Media Player and Ccleste use ELF32; Doom again loads the shared MIDI

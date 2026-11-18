@@ -65,7 +65,7 @@ Events, timers and semaphores reuse `kernel/object.cpp`. Native waits retain
 objects while blocked, support wait-any/all and deadlines, and release their
 references on completion or termination. Polling an event tests its signal
 without consuming it. `monotonic_ns()` returns its full value in EDX:EAX, at PIT
-resolution. Orphans are reparented to PID 1 so the reference init can reap apps
+resolution. Orphans are reparented to the recorded init PID so it can reap apps
 after a window-manager failure.
 
 ## Input and boot policy

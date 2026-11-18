@@ -9,6 +9,7 @@ namespace i386::lapic {
 namespace {
 volatile uint32_t* g_registers;
 uint32_t g_physical;
+uint32_t g_timer_count;
 constexpr uint32_t kBaseMsr = 0x1b;
 constexpr uint64_t kBaseAddressMask = 0x000ffffffffff000ull;
 uint64_t base_msr() {
@@ -30,7 +31,7 @@ bool enable(bool bsp) {
     write_base(base | (1u << 11));
     write(0xf0, 0x100u | 255u); // Software enable and a dedicated spurious gate.
     write(0x80, 0); // TPR: accept all ordinary vectors.
-    write(0x320, 1u << 16); // The scheduler still uses the BSP PIT.
+    write(0x320, 1u << 16); // Masked until this AP enters the scheduler.
     write(0x350, bsp ? 0x700u : 1u << 16); // Only the BSP owns PIC ExtINT.
     write(0x360, 1u << 16);
     return true;
@@ -61,6 +62,26 @@ bool initialize(uint32_t address) {
     g_registers = static_cast<volatile uint32_t*>(mapped);
     g_physical = address;
     return enable(true);
+}
+bool calibrate_timer() {
+    if (!ready()) return false;
+    write(0x3e0, 3); // Divide by 16.
+    write(0x320, (1u << 16) | kTimerVector);
+    write(0x380, 0xffffffffu);
+    const uint64_t deadline = timer::monotonic_ns() + 10000000;
+    while (timer::monotonic_ns() < deadline) asm volatile("pause");
+    const uint32_t elapsed = 0xffffffffu - read(0x390);
+    write(0x380, 0);
+    if (elapsed < 100 || elapsed > 0x7fffffffu) return false;
+    g_timer_count = elapsed; // 10 ms, matching the existing PIT tick.
+    return true;
+}
+bool start_timer() {
+    if (!g_timer_count) return false;
+    write(0x3e0, 3);
+    write(0x320, (1u << 17) | kTimerVector); // Periodic, unmasked.
+    write(0x380, g_timer_count);
+    return true;
 }
 bool initialize_secondary() { return g_registers && enable(false); }
 bool ready() { return g_registers != nullptr; }

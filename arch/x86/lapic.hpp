@@ -3,6 +3,10 @@
 
 namespace i386::lapic {
 constexpr uint8_t kPingVector = 64;
+constexpr uint8_t kTimerVector = 65;
+constexpr uint8_t kRescheduleVector = 66;
+bool calibrate_timer();
+bool start_timer();
 bool initialize(uint32_t address);
 bool initialize_secondary();
 bool ready();

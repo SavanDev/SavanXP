@@ -18,9 +18,10 @@ as full ring 3 frames.
 
 Each started CPU has its own architectural 104-byte protected-mode TSS and
 eight-byte GDT descriptor. The I/O bitmap offset lies beyond the TSS limit,
-denying direct user port access. AP bring-up verifies private selectors and
-stacks, but APs remain parked until the shared-kernel lock and TLB work allow
-scheduling there; see [I386_SMP.md](I386_SMP.md).
+denying direct user port access. Each scheduling CPU owns its current process
+and pinned idle process; the reference ticket lock serializes kernel entries and is
+released after changing stacks. APs use local timers; the BSP retains the PIT.
+See [I386_SMP.md](I386_SMP.md) for startup, remote termination and TLB rules.
 
 Each process owns a 16 KiB kernel stack, a saved return frame and an aligned
 512-byte FXSAVE area. Switching eagerly saves/restores x87, all eight SSE
@@ -65,23 +66,30 @@ Debug aggregate temporaries exceeding the stack budget.
 
 The PIT remains at 100 Hz. The scheduler rotates runnable processes every two
 ticks, giving a 20 ms quantum in delivered PIT time. A CPU-bound process is
-preempted even without `yield` or `sleep`. User execution is preemptible; kernel
-execution is atomic with respect to task switching. Long kernel work can delay
-a tick, so this is not a real-time scheduling guarantee.
+preempted even without `yield` or `sleep`. Interrupt gates keep kernel critical
+sections atomic. A continuation inside the unlocked interrupt-wait helper can
+be preempted by the timer, including an idle yield or a blocking network call;
+it can resume only on its original CPU. Long critical work can still delay a
+tick, so this is not a real-time scheduling guarantee.
 
 Processes move between running, runnable, sleeping, reading, writing, polling, child/object waiting and zombie
-states. A blocking syscall stores its return frame and request, then returns a
-different frame to assembly; it does not retain a sleeping C++ continuation.
+states. Asynchronous waits store their return frame/request and return a
+different frame to assembly. Network connect/send waits can retain a C++
+continuation, saved as a shorter ring-0 frame on the process kernel stack.
 PIT delivery and scheduler boundaries service deadlines, blocked I/O and polling. The keyboard
-queue is a shared console stream, not reset by spawning a child. If all tasks
-are blocked, a separate kernel idle stack/frame executes `sti; hlt` until the
-next IRQ. IRQs interrupting kernel code return to that code; the scheduler only
-switches at ring 3 boundaries or from idle.
+queue is a shared console stream, not reset by spawning a child. When normal
+tasks are blocked, each CPU runs its own ring-3 idle process. Idle yield halts
+inside the kernel with the global lock released, attributing timer ticks to
+that idle. BSP ticks service deadlines even when interrupting that wait; kernel
+continuations can be suspended there and resume on their original CPU.
+[I386_SMP.md](I386_SMP.md) defines the lock and kill lifetime rules.
 
 ## 3. Process lifecycle and userland policy
 
-The kernel normally starts the reference `/bin/init` as PID 1 and restores
-its graphical restart policy. Orphans are reparented to init for collection.
+The kernel creates one idle per scheduling CPU before starting the reference
+`/bin/init`, whose PID is recorded dynamically for supervision and orphan
+adoption. Init and idle processes reject kill requests with `EACCES`. The
+reference graphical restart policy is retained. Orphans are reparented to init for collection.
 An explicit `console-init` diagnostic boot starts `/disk/bin/init32`, which
 runs `sysinfo`, reaps orphan diagnostics and supervises the reference `sh`. CPIO supplies
 `/bin` and `/README`; the persistent `/disk/bin` remains first in command lookup.
@@ -105,7 +113,7 @@ excess arguments or strings return `E2BIG`, and a missing or invalid image retur
 child's PID and its plain integer exit status, including when the child exited
 before the call. A null status pointer is allowed. A nonexistent, unrelated or
 already-collected child returns `ECHILD`. Zombies retain their slot until
-collected. When a parent exits, its children are reparented to PID 1, which reaps
+collected. When a parent exits, its children are reparented to the recorded init, which reaps
 existing zombies and future exits. Without a surviving init, orphans are detached
 and reclaimed automatically. PIDs increase rather
 than being reused with slots, and stop allocating before the signed PID range
@@ -137,8 +145,9 @@ Kernel exceptions remain fatal, as do NMI, double fault and machine check even
 when they interrupt user code. Invalid syscall buffers return `EFAULT` before
 the kernel touches them: validation walks every user page and requires write
 permission for read/input, wait status, system-info and GPU-info destinations.
-The BSP-only scheduler does not switch within a syscall, and user mappings
-cannot currently change while a blocked operation retains a pointer.
+A CPU does not switch a process within its syscall. Kernel waits release the
+global lock and resume on the same CPU; remote termination records a pending
+exit and cannot destroy that process until it reaches a safe return boundary.
 
 ## Verification
 
@@ -184,15 +193,16 @@ graphics and cursor restoration. Normal `smoke desktop` now boots the reference
 session, while `sxgui-smoke` verifies actual toolkit glyphs and wheel/scrollbar input. The harness uses a
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
-Process-info accounting records running PIT ticks, including kernel time, while
-the system reports total PIT ticks. Socket reads/receives park in the native
+Process-info accounting records running ticks, including kernel time, while
+the system reports ticks summed across scheduling CPUs. BSP PIT ticks still
+provide uptime; AP timer ticks do not advance wall time. Socket reads/receives park in the native
 scheduler and copy through the waiting process's address space; killed audio
 owners release their session. The optional native OSABI survives fork and
 changes on successful exec. See [I386_SERVICES.md](I386_SERVICES.md).
 
 ## Remaining boundaries
 
-User-installed signal handlers, scheduling on APs and ASLR remain unported. Events, timers,
+User-installed signal handlers and ASLR remain unported. Events, timers,
 semaphores and wait-any/all now use the reference objects; see
 [I386_GRAPHICS.md](I386_GRAPHICS.md). RAM above the mapped first GiB is not allocated. User read-only pages and supervisor mappings are protected,
 but absence of NX prevents execute-disable and full W^X enforcement. Physical

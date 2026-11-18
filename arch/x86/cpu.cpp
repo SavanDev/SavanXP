@@ -133,6 +133,12 @@ extern "C" ContextFrame* i386_handle_external(ContextFrame* frame) {
     auto& entry = g_external[frame->vector];
     for (uint32_t n = 0; n < entry.count; ++n) entry.handlers[n]();
     if (entry.local_eoi) lapic::acknowledge();
+    if (frame->vector == lapic::kTimerVector) return process::timer(frame);
+    if (frame->vector == lapic::kRescheduleVector) {
+        serial::write("smp: reschedule IPI received cpu=");
+        serial::write_dec(cpu::index()); serial::write("\n");
+        return process::reschedule(frame, true);
+    }
     return frame;
 }
 

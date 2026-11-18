@@ -66,9 +66,6 @@ void enable_irq(uint8_t irq) { i386::cpu::enable_irq(irq); }
 void disable_interrupts() { i386::cpu::disable_interrupts(); }
 [[noreturn]] void halt_forever() { i386::cpu::halt_forever(); }
 }
-namespace smp {
-void wait_for_interrupt() { asm volatile("sti; hlt; cli" ::: "memory"); }
-}
 namespace uacpi_glue {
 uint8_t route_pci_intx(uint8_t bus, uint8_t slot, uint8_t function, arch::x86_64::IrqHandler handler) {
     // BIOS has assigned legacy INTx lines. ELCR selects level triggering on

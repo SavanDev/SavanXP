@@ -5,17 +5,14 @@
  * Procesos, Rendimiento y Red, barra de estado con los tres numeros de siempre
  * y un menu que puede lanzar una tarea nueva o apagar la maquina.
  *
- * COMO SE MIDE EL USO DE CPU. El kernel no lleva porcentajes: lleva un contador
- * de ticks por proceso (savanxp_process_info.cpu_ticks) y el contador global de
- * ticks (savanxp_system_info.cpu_ticks_total). Un tick incrementa exactamente
- * un proceso, asi que entre dos muestras la suma de los incrementos ES el
- * incremento global, y el porcentaje de cada uno es su parte de esa torta. El
- * del sistema es lo que NO se llevaron los procesos ociosos, uno por core. De
- * ahi que todo lo que se muestra salga de comparar dos muestras: una sola no
- * dice nada.
+ * CPU accounting uses per-process ticks and the system total. System usage is
+ * the share not consumed by the per-CPU idle processes. A process occupying
+ * one of four CPUs therefore contributes 25% of the total capacity.
  *
- * Con varios cores la torta es la de todos juntos: un proceso que ocupa un core
- * entero de cuatro se ve al 25%, igual que en el Task Manager de siempre.
+ * The APIs enumerate counters separately, so samples are not atomic. When
+ * sampling skew makes idle deltas contradict observed non-idle work, keep at
+ * least that observed work instead of reporting a busy CPU as idle. Percent
+ * estimates are bounded to 100%; the kernel counters remain unmodified.
  *
  * QUE NO ESTA. No hay pestania de Aplicaciones ni de Usuarios. La primera
  * necesita que el WM publique su lista de ventanas, que hoy no es parte del
@@ -456,6 +453,7 @@ static void refresh_sample(void)
     unsigned long proc_index = 0;
     uint64_t ticks_delta = 0;
     uint64_t idle_delta = 0;
+    uint64_t active_delta = 0;
     int index;
 
     memset(&g_info, 0, sizeof(g_info));
@@ -503,21 +501,32 @@ static void refresh_sample(void)
         }
         if (ticks_delta != 0ull)
         {
-            sample->cpu_percent = (unsigned int)((delta * 100ull) / ticks_delta);
+            sample->cpu_percent = delta >= ticks_delta ? 100u
+                : (unsigned int)((delta * 100ull) / ticks_delta);
         }
         if ((sample->flags & SAVANXP_PROC_FLAG_IDLE) != 0u)
         {
             idle_delta += delta;
         }
+        else
+        {
+            active_delta += delta;
+        }
     }
 
-    /* El uso del sistema es lo que el ocioso NO se llevo. Si el ocioso no
-     * aparecio en la muestra anterior -- la primera pasada -- queda en cero, que
-     * es lo honesto: todavia no hay intervalo que medir. */
+    /* Preserve idle-complement accounting, including work by exited tasks.
+     * Separately enumerated counters may skew across a timer boundary; known
+     * active work is a lower bound on the busy estimate in that case. */
     g_cpu_percent = 0;
-    if (ticks_delta != 0ull && idle_delta <= ticks_delta)
+    if (ticks_delta != 0ull)
     {
-        g_cpu_percent = (unsigned int)(((ticks_delta - idle_delta) * 100ull) / ticks_delta);
+        uint64_t busy_delta = idle_delta <= ticks_delta ? ticks_delta - idle_delta : 0;
+        if (busy_delta < active_delta)
+        {
+            busy_delta = active_delta;
+        }
+        g_cpu_percent = busy_delta >= ticks_delta ? 100u
+            : (unsigned int)((busy_delta * 100ull) / ticks_delta);
     }
 
     /* La memoria sale del pool del asignador de paginas, no del mapa de memoria

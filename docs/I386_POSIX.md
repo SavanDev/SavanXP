@@ -50,8 +50,12 @@ Syscalls validate every user page and require writable pages for destination
 buffers. Invalid pointers return `EFAULT`; read/write access mismatches return
 `EBADF`. Copies to or from an inactive task walk its physical aliases and split
 at 4 KiB boundaries. This includes blocked I/O completion, not just active
-syscalls. No user mapping can currently change concurrently with a blocked
-operation in the single-threaded, single-CPU process model.
+syscalls. Processes remain single-threaded: another CPU cannot resume a
+process whose kernel continuation is still owned. Timer-preempted continuations
+remain pinned to their original CPU; killing one defers mapping/handle
+destruction until the syscall returns, even when it is currently runnable
+without a CPU owner.
+See [I386_SMP.md](I386_SMP.md).
 
 `seek` uses the signed 32-bit SDK `long` range and rejects negative/overflowing
 positions. Append opens start at the current file end, as in v0.4.0; this is not
@@ -72,8 +76,9 @@ Larger nonblocking writes may return partial progress.
 
 The process stores a blocked operation's descriptor, user address, size and write
 progress. The PIT and scheduler boundaries retry it through physical aliases,
-complete its saved frame and make it runnable. No kernel C continuation sleeps
-on its stack. `poll` stores up to 64 entries and checks readability/writability,
+complete its saved frame and make it runnable. These asynchronous operations
+retain no C++ continuation. Connect/send paths may wait on a live kernel stack;
+the timer can preempt those waits while keeping them on their original CPU. `poll` stores up to 64 entries and checks readability/writability,
 EOF/HUP, missing readers/ERR, invalid descriptors/NVAL and deadlines. A negative
 descriptor is ignored; a negative timeout has no deadline. `fcntl` shares the
 reference get/set nonblocking operations across duplicated descriptors.
@@ -158,8 +163,10 @@ a disposable copy, allows guest writes to it, rebuilds that copy through normal
 source image hash too. Its writable-disk harness flag is for this isolated check;
 it is never enabled by normal smoke commands.
 
-Process-info CPU counters now count running PIT ticks, against the system's
-total tick count; an explicit reference idle-process entry remains a parity gap.
+Process-info counters charge the current process on each CPU against the
+aggregate tick total. Each scheduling CPU exports a protected ring-3 idle
+process, making idle/busy usage calculable; [I386_SMP.md](I386_SMP.md) defines
+the accounting and sample limits.
 The 64-process table, 1 GiB managed RAM limit and lack of NX remain. Full signals/
 job control remain later parity work. [I386_SERVICES.md](I386_SERVICES.md) describes
 the restored sockets, device dispatch, realtime and filesystem-check calls. The

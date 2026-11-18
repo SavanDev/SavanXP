@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify native AP startup, private TSS/stacks and targeted IPIs in QEMU."""
+"""Verify native SMP startup, hardware contexts and concurrent user scheduling."""
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -8,31 +8,85 @@ import subprocess
 import tempfile
 import time
 
-from legacy_boot_test import wait_serial
+from legacy_boot_test import wait_serial, type_shell
+from i386_console_iso import make_console_iso
 from qmp_client import QmpClient
 from run_qemu import build_qemu_args, find_qemu
 
 
-def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float) -> int:
-    if smp < 2:
+def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float, scheduling: bool = False, idle: bool = False, kernel_preempt: bool = False) -> int:
+    console = scheduling or idle or kernel_preempt
+    if kernel_preempt and smp > 8:
+        raise ValueError("kernel-preempt supports 1..8 CPUs for its bounded regression workload")
+    if console and virtio:
+        raise ValueError("smp uses the PS/2 console; validate virtio with sxgui-smoke/virtio-smoke")
+    if smp < 2 and not (idle or kernel_preempt):
         raise ValueError("smp-boot requires --smp 2..32 to exercise an AP")
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
     serial.write_text("")
     with tempfile.TemporaryDirectory(prefix="sx-i386-smp.") as temporary:
         qmp = Path(temporary) / "qmp"
-        command = build_qemu_args(iso=iso, disk_image=disk, debug_log=artifacts / "debug.log",
+        boot_iso = make_console_iso(iso.resolve(), Path(temporary)) if console else iso
+        command = build_qemu_args(iso=boot_iso, disk_image=disk, debug_log=artifacts / "debug.log",
             accel=accel, smp=smp, headless=True, virtio=virtio, snapshot=True,
             serial_path=serial, qmp_path=qmp)
         command[0] = find_qemu() or "qemu-system-i386"
         with (artifacts / "qemu.log").open("w") as log:
             guest = subprocess.Popen(command, stdout=log, stderr=log)
             try:
-                wait_serial(serial, "user: /bin/progman loaded", timeout=min(timeout, 90))
+                wait_serial(serial, r"savanxp:/\$ " if console else "user: /bin/progman loaded", timeout=min(timeout, 90))
+                if kernel_preempt:
+                    type_shell(qmp, ("kpreempt32",))
+                    result = wait_serial(serial, r"KPREEMPT (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
+                    if result[1] != "PASS": raise RuntimeError("kernel-continuation regression failed")
+                    text = serial.read_text(errors="replace")
+                    workers = set(re.findall(r"KPREEMPT worker pid=(\d+)", text))
+                    victims = set(re.findall(r"KPREEMPT victim pid=(\d+)", text))
+                    summaries = re.findall(r"process: kernel continuations pid=(\d+) suspended=(\d+) resumed=(\d+) cpu=(\d+)", text)
+                    tested = [r for r in summaries if r[0] in workers]
+                    if not tested or any(int(r[1]) <= 0 or r[1] != r[2] for r in tested):
+                        raise RuntimeError("no balanced real ring-0 suspensions/resumptions")
+                    suspended = dict(re.findall(r"process: kernel suspended pid=(\d+) cpu=(\d+)", text))
+                    resumed = dict(re.findall(r"process: kernel resumed pid=(\d+) cpu=(\d+) stack=PASS", text))
+                    if any(suspended.get(r[0]) != resumed.get(r[0]) or r[0] not in resumed for r in tested):
+                        raise RuntimeError("a kernel continuation migrated or failed its stack checks")
+                    deferred = re.findall(r"process: kernel kill deferred pid=(\d+) cpu=(\d+) suspended=(\d+)", text)
+                    acknowledged = set(re.findall(r"process: kernel kill resumed pid=(\d+) cpu=\d+", text))
+                    if len(victims) != 3 or not victims <= {r[0] for r in deferred} or not victims <= acknowledged:
+                        raise RuntimeError("deferred kernel kills did not resume safely")
+                    if smp == 1 and not victims <= {r[0] for r in deferred if r[2] == "1"}:
+                        raise RuntimeError("single-CPU kill did not target suspended kernel contexts")
+                if scheduling or idle:
+                    type_shell(qmp, ("idletest",))
+                    result = wait_serial(serial, r"IDLE (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
+                    if result[1] != "PASS": raise RuntimeError("idle-process accounting regression failed")
+                    type_shell(qmp, ("taskmgr --selftest",))
+                    result = wait_serial(serial, r"TASKMGR SMOKE (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
+                    if result[1] != "PASS": raise RuntimeError("reference Task Manager selftest failed")
+                    text = serial.read_text(errors="replace")
+                    entered = re.findall(r"idle: ring3 cpu=(\d+) pid=(\d+)", text)
+                    if len(entered) != smp or {int(r[0]) for r in entered} != set(range(smp)) or len({r[1] for r in entered}) != smp:
+                        raise RuntimeError("not every scheduling CPU executed its own ring-3 idle")
+                if scheduling:
+                    type_shell(qmp, ("smptest",))
+                    wait_serial(serial, r"smptest: ok.*?savanxp:/\$ ", timeout=timeout)
+                    text = serial.read_text(errors="replace")
+                    if ("spinners ran in parallel" not in text or "smp: remote termination requested" not in text
+                            or "smp: reschedule IPI received" not in text):
+                        raise RuntimeError("no concurrent execution or remote teardown was observed")
+                    ids = {int(n) for n in re.findall(r"smptest: (?:worker|parent) lapic=(\d+)", text)}
+                    if not ids or not any(n != 0 for n in ids):
+                        raise RuntimeError("no user process executed on an AP")
+                    # Existing register/x87/SSE and fault/reclamation gates under SMP.
+                    type_shell(qmp, ("multitest32",))
+                    wait_serial(serial, r"MULTITASK PASS.*?savanxp:/\$ ", timeout=timeout)
                 text = serial.read_text(errors="replace")
                 aps = smp - 1
                 required = (f"smp: reported={smp} online={smp} scheduling=1 (xAPIC)",
-                    f"smp: private TSS {aps}/{aps}, targeted IPI {2 * aps}/{2 * aps} PASS")
+                    f"smp: private TSS {aps}/{aps}, targeted IPI {2 * aps}/{2 * aps} PASS",
+                    f"smp: scheduling={smp} online={smp} (PIT BSP, local APIC APs)",
+                    *(("smp: lazy kernel TLB PASS",) if smp > 1 else ()))
                 for token in required:
                     if token not in text:
                         raise RuntimeError(f"missing SMP evidence: {token}")
@@ -55,7 +109,7 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                 if len(cpus) != smp:
                     raise RuntimeError("QEMU did not create the requested CPUs")
                 contexts = re.findall(r"CPU#\d+\s+(.*?)(?=CPU#|\Z)", registers, re.S)
-                selectors, tss_bases, stack_pages = set(), set(), set()
+                selectors, tss_bases = set(), set()
                 if len(contexts) != smp:
                     raise RuntimeError("QMP did not expose each hardware CPU context")
                 for context in contexts:
@@ -68,17 +122,14 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                         continue
                     cr0 = int(re.search(r"CR0=([0-9a-f]+)", context, re.I)[1], 16)
                     cr4 = int(re.search(r"CR4=([0-9a-f]+)", context, re.I)[1], 16)
-                    esp = int(re.search(r"ESP=([0-9a-f]+)", context, re.I)[1], 16)
                     if cr0 & 0x6000000c or (cr0 & 0x80010001) != 0x80010001 or (cr4 & 0x610) != 0x610:
                         raise RuntimeError("AP paging, write protection, caches or FPU controls differ from the BSP contract")
-                    if "CPL=0" not in context or "HLT=1" not in context or not 0x40000000 <= esp < 0x80000000:
-                        raise RuntimeError("an AP did not remain parked on its reserved supervisor stack")
-                    stack_pages.add(esp & ~4095)
-                if selectors != {0x28 + 8 * n for n in range(smp)} or len(tss_bases) != smp or len(stack_pages) != aps:
-                    raise RuntimeError("hardware contexts reused a TSS or AP stack")
-                if "exception vector" in text or "BOOT FAIL" in text:
+                if selectors != {0x28 + 8 * n for n in range(smp)} or len(tss_bases) != smp:
+                    raise RuntimeError("hardware contexts reused a TSS")
+                if "kernel: fatal exception" in text or "BOOT FAIL" in text or (not scheduling and "exception vector" in text):
                     raise RuntimeError("SMP boot contained a process/kernel fault")
-                print(f"i386 SMP bring-up: PASS ({smp} CPUs, {aps} private AP TSS/stacks, {2 * aps} targeted IPIs; one scheduling CPU)", flush=True)
+                label = "kernel preemption" if kernel_preempt else "idle accounting" if idle else "scheduling" if scheduling else "startup"
+                print(f"i386 SMP {label}: PASS ({smp} CPUs, {aps} private AP TSS, {2 * aps} startup IPIs; {smp} scheduling CPUs)", flush=True)
                 return 0
             finally:
                 guest.terminate()

@@ -33,7 +33,7 @@ OVMF and Limine are not required. See [host setup](docs/BUILD_LINUX.md).
 default; `--accel kvm` selects KVM. `debug` starts paused with a GDB server on
 port 1234. `--headless` disables the QEMU window. `--virtio` selects the optional
 virtio disk, NIC, sound, GPU, tablet and keyboard profile. `--smp N` starts
-additional CPUs for bring-up checks; user processes still run on the BSP.
+up to 32 CPUs with preemptive user scheduling on the BSP and available APs.
 
 ## What works today
 
@@ -53,7 +53,10 @@ additional CPUs for bring-up checks; user processes still run on the BSP.
 - Optional virtio devices with captured playback/gain, capture-ring reads,
   SxFS/MBR/GPT and SxGUI glyph/input regressions; see [virtio](docs/I386_VIRTIO.md).
 - MADT CPU discovery, protected-mode AP startup, private TSS/stacks and targeted
-  xAPIC IPIs; multi-CPU scheduling remains pending. See [SMP](docs/I386_SMP.md).
+  xAPIC IPIs, preemptive scheduling, safe remote termination and shared-view TLB
+  synchronization. Retained kernel waits are preemptible on their original CPU;
+  per-CPU idle processes restore CPU usage accounting.
+  See [SMP](docs/I386_SMP.md).
 
 At boot, the reference `init` starts the graphical session. Open Shell from
 Program Manager to use the reference terminal. Try:

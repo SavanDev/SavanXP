@@ -70,9 +70,14 @@ static int worker(int argc, char** argv) {
     }
     if (strcmp(argv[1], "audit") == 0) {
         struct savanxp_process_info info;
-        unsigned int count = 0;
+        unsigned int count = 0, idles = 0;
         for (unsigned long index = 0; proc_info(index, &info) > 0; ++index) {
             CHECK(info.state != SAVANXP_PROC_ZOMBIE, "shell left a zombie");
+            if (info.flags & SAVANXP_PROC_FLAG_IDLE) {
+                CHECK(info.handle_count == 0, "idle acquired descriptors");
+                ++idles;
+                continue;
+            }
             CHECK(info.handle_count == 3, "shell leaked descriptors");
             ++count;
         }
@@ -80,6 +85,7 @@ static int worker(int argc, char** argv) {
         struct savanxp_system_info memory;
         char bytes[12];
         CHECK(system_info(&memory) == 0, "shell cleanup memory sample");
+        CHECK(idles == memory.cpu_online, "shell cleanup idle count");
         number(bytes, (unsigned int)memory.memory_free_bytes);
         puts_out("POSIX audit free bytes "); puts_out(bytes); puts_out("\n");
         puts_out("POSIX shell cleanup PASS\n"); return 0;

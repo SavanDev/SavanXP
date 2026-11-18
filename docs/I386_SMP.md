@@ -1,10 +1,11 @@
-# i386 SMP bring-up
+# i386 SMP startup and scheduling
 
 Milestone 6.2 adapts the SMP design of SavanXP v0.4.0, commit
 `8ece07f4dae90812155a541951cbf8b3701bd92d`. Its first checkpoint implements
-AP startup, private TSS/stacks and repeated directed IPIs. User processes
-still run only on the BSP. `--smp N` exposes this bring-up stage, not parallel
-user execution. Physical-machine validation remains reserved for v0.4.2.
+AP startup, private TSS/stacks and repeated directed IPIs. The next checkpoint
+adds preemptive user scheduling on available APs under the reference global
+kernel lock. `--smp N` runs this path for 1–32 CPUs. Physical-machine validation
+remains reserved for v0.4.2.
 
 ## Discovery and protected-mode entry
 
@@ -35,14 +36,18 @@ enter on memory reused by a process or another CPU.
 
 Each AP loads the already-built GDT/IDT, its own TSS selector, and x87/SSE
 control state. Only then does it enable local interrupts and publish online.
-AP code touches its own slot, registers and atomic ping count; it does not
-print, allocate, mount devices or call the scheduler concurrently with the BSP.
+Before scheduling is released, AP code touches only its own slot, registers
+and startup probe state. It does not allocate, mount devices or access mutable
+subsystems concurrently with boot. Scheduling starts only after userland and
+all per-CPU idle processes are initialized, with the kernel lock held.
 
 ## Local APIC and interrupts
 
 The local xAPIC registers use an uncached shared supervisor MMIO view. The BSP
-owns the single LINT0 ExtINT route for the existing PIC; AP LINT inputs and
-timers remain masked. The PIC/PIT driver and its IRQ numbering are unchanged.
+owns the single LINT0 ExtINT route for the existing PIC; AP LINT inputs remain
+masked. The BSP calibrates a divide-by-16 local timer against the existing
+monotonic TSC clock. Each scheduling AP starts a periodic 10 ms timer on vector
+65. Vector 66 requests rescheduling; the BSP retains PIT scheduling and uptime. The PIC/PIT driver and its IRQ numbering are unchanged.
 External vectors have separate saved-frame stubs and explicit local-APIC EOI;
 vector 255 is a dedicated spurious gate and sends no EOI.
 
@@ -91,8 +96,8 @@ of merely compiling a structure with the expected layout.
 ```
 
 The SMP harness compares software reports with QMP's actual CPU list and
-register contexts. Each AP must be halted in ring 0, on a distinct reserved
-supervisor stack, with its own 104-byte TSS and the expected selector. It
+register contexts. Each CPU must have its own 104-byte TSS and expected
+selector; APs may now be executing user code, servicing an interrupt or idle. It
 requires paging, write protection, PSE and FPU controls, and rejects disabled
 caches. Artifacts retain serial logs, `cpus.json` and `registers.txt`.
 
@@ -110,18 +115,152 @@ rebuild/cold-boot persistence passed on isolated images. Extraction after the
 normal rebuild matched the built diagnostic/UI binaries and preserved the
 installed Doom/Ccleste executables and IWAD byte for byte.
 
-## Next checkpoint: scheduling and synchronization
+## Scheduling and synchronization
 
-The APs are online but parked. `system_info.cpu_count` reports enabled firmware
-CPUs and `cpu_online` reports startup acknowledgements; neither means that APs
-run user processes. Boot logs explicitly report `scheduling=1` and the existing
-PIT scheduler remains the only execution owner of mutable kernel state.
+Native per-CPU state holds the current and idle process pointers and local
+tick/quantum counters. Idle processes use the normal per-process 16 KiB
+kernel stacks, user frames, page directories and x87/SSE state. The process table and round-robin cursor stay
+shared under the reference ticket lock. The scheduler excludes processes owned
+by another CPU even when their state has changed while a kernel continuation
+waits. The outgoing FPU context is saved before publication and the incoming
+CR3, FPU state and that CPU's TSS.esp0 are installed before returning to userland.
 
-Before releasing APs to userland, restore the reference per-CPU scheduler
-state and idle ownership, the global kernel lock at interrupt/syscall entries
-and its release after leaving the outgoing stack. Add per-AP timer/reschedule
-delivery, deferred termination of processes running remotely, and lazy shared
-kernel-TLB synchronization at lock acquisition. Parked APs currently access
-only permanent mappings; that is why they do not yet need a shootdown protocol.
-The next regressions must prove actual concurrent user execution and safe
-remote teardown, not infer them from CPU counts or successful startup IPIs.
+All syscall, PIC IRQ, ordinary external-vector and exception entries acquire the
+lock before calling C++. Assembly remembers whether this entry acquired it,
+changes to the returned frame's stack, then releases it. Releasing on the old
+stack would let another CPU resume or recycle a process still executing there.
+A nested IRQ while the same CPU holds the lock leaves ownership with the outer
+entry. Ping and spurious IPIs bypass it; startup waits for their acknowledgement.
+
+A retained kernel wait releases the lock around `sti; hlt; cli` and reacquires
+it before continuing. A timer can suspend a continuation in that exact unlocked
+wait window; its ordinary runnable state is qualified by `in_syscall`, which
+keeps it pinned to its original CPU until the outer syscall finishes. Ordinary
+asynchronous waits still retain a request/frame rather than a C++ stack.
+
+Protected mode supplies only EIP/CS/EFLAGS on a same-privilege interrupt. The
+ring-0 frame is 64 bytes, versus 72 bytes for a ring-3 frame including ESP/SS.
+The scheduler retains the actual pointer and assembly restores it in place;
+it does not copy a partial frame as a full user context. The named assembly
+wait window (`i386_wait_interrupt_resume`) makes the saved EIP an explicit
+eligibility check. Code with the lock held remains non-preemptible.
+
+After resumption, the wait wrapper reacquires the global lock and synchronizes
+the kernel TLB before checking the caller, stack marker, wait depth, assigned
+CPU and an actual volatile hardware STR read. FPU state is
+saved/restored by the same scheduler path used for user processes.
+
+Killing a remote owner or a suspended kernel continuation records a pending
+status and requests rescheduling. A continuation remains alive even while
+runnable with no CPU owner: its stack, CR3, section views and handles are not
+destroyed by the requester. It resumes on its CPU and exits when its syscall
+returns. Kill does not cancel the network operation immediately; a retained
+operation may still take its original timeout. User-mode timer/IPI exits keep
+the existing direct cleanup path.
+
+Shared kernel-view map/unmap/retarget operations advance a generation under
+the lock. Each CPU reloads CR3 when acquiring the lock if its generation is
+stale. Code outside the lock accesses only permanent kernel mappings, its own
+reserved stack/state and APIC registers. A startup probe makes an AP cache a
+view, retargets it on the BSP, reads it without synchronization and then after
+synchronization. The first/last values must be `0xa1`/`0xb2`; the intermediate
+value is reported because retention of a stale TLB entry is not guaranteed.
+
+`system_info.cpu_count` reports enabled firmware CPUs. `cpu_online` now reports
+scheduling CPUs, matching v0.4.0 and the number of exported idle processes; the
+earlier online-only meaning is superseded. The second boot marker
+`smp: scheduling=N` records that same scheduling count. An AP needs startup,
+successful targeted IPIs recorded for its own slot and a calibrated local timer. A delayed AP that
+missed those checks stays parked even if it later publishes online. It also
+needs an allocated idle process. Unsupported topology or failed readiness
+keeps the BSP path; idle allocation failure parks the affected AP. CPU accounting
+sums per-CPU timer ticks; uptime advances only from BSP PIT ticks.
+
+## Reference idle processes and accounting
+
+The reference nine-byte `MOV EAX,YIELD; INT 80; JMP` loop runs in ring 3 in each
+idle's private address space. Native code is placed at `0x08000000`, inside the
+i386 user window, rather than the reference long-mode address. A read-only code
+page and one writable stack page account for exactly 8 KiB of user memory.
+Idle processes have root CWD, no parent, no handles and `SAVANXP_PROC_FLAG_IDLE`.
+They occupy the shared 64-slot process table and never migrate or enter the
+ordinary runnable search. When no normal process is runnable, the CPU selects
+its own idle as the fallback. No separate synthetic ring-0 idle frame remains.
+
+Idle `yield` follows v0.4.0: if no work is ready, it calls the shared interrupt
+wait with the kernel lock released. That kernel continuation remains on its
+CPU. The BSP tick services deadlines before returning to it, even when the
+saved interrupt frame is ring 0; otherwise sleeping processes could stop
+waking when every CPU is idle. The first completed yield checks the actual
+user frame, CPU owner and TSS.esp0 before logging `idle: ring3 cpu=N pid=P`.
+
+Idles are allocated before init, so init's PID is discovered dynamically and
+used for orphan adoption and protection. Killing an idle or init returns
+`EACCES`. Process counts include zombies until reaping, matching reference
+enumeration. A failed idle allocation releases partially mapped pages; the BSP
+idle is required and a failing AP remains parked.
+
+Each timer tick charges exactly the current process and the system total,
+including ticks spent halted inside idle's syscall. Task Manager retains its
+idle-complement usage model and original layout. Its samples enumerate counters
+separately; with 32 CPUs and a 100 Hz native timer, skew could make idle deltas
+exceed the sampled total and display 0% despite measured work. The estimator
+now keeps at least the observed non-idle work and bounds percentages to 100%.
+The raw counters and API layout are unchanged. This is an approximation for
+non-atomic samples, not a new atomic snapshot guarantee.
+
+## Functional gates and remaining parity
+
+```sh
+./build.sh smoke kernel-preempt
+./build.sh smoke kernel-preempt --smp 4
+./build.sh smoke idle
+./build.sh smoke idle --smp 4
+./build.sh smoke smp --smp 4
+./build.sh smoke smp-boot --smp 32 --virtio
+./build.sh smoke virtio-smoke --smp 4
+./build.sh smoke sxgui-smoke --smp 4 --virtio
+```
+
+The `kernel-preempt` scenario (1–8 CPUs) runs `kpreempt32`. The existing TCP
+fault injector drops every sequence-consuming packet, so CONNECT remains in
+the kernel until timeout without contacting an external TCP server. More
+waiters than CPUs force actual ring-0 suspension; a non-cooperating sibling
+must accrue CPU ticks during short probes while those calls remain pending.
+The shared assembly probe verifies GPRs, segments, flags, x87/SSE registers and
+control words across the call. Three kills require deferred cleanup, original
+waiter resources and exact free-page recovery; the runtime-discovered socket
+capacity must return to its baseline after normal exits and every kill; on one CPU all victims must
+actually be suspended rather than owned by another CPU. The harness checks
+balanced suspend/resume records and CPU/stack validation. The eight-CPU bound
+is a diagnostic workload bound, not a system scheduling limit.
+
+The `idle` scenario (1–32 CPUs) derives a console ISO and runs `idletest` and
+the reference Task Manager selftest. It checks idle identity/protection, init
+protection, zombie counts and exact page reclamation. Sandwiching process
+counter reads between global samples gives bounds for tick conservation;
+sleep must accrue idle time and a busy process must accrue roughly one CPU's
+share. The harness requires a verified ring-3 idle entry on every CPU.
+
+The `smp` scenario includes those checks, then runs the reference `smptest`: another child must be running while the parent enumerates
+processes inside a syscall, and a CPUID sample must show the parent or a child on an AP.
+Sixteen termination/reap cycles exercise deferred cleanup; the harness must
+observe a remote request and actual reschedule-vector delivery. A timer may
+safely finish termination before the queued IPI runs. Two thousand pipe round trips
+exercise cross-CPU wakeups. The existing `multitest32` then checks integer,
+x87/SSE, private memory, faults, slot reuse and page reclamation under SMP.
+At 32 CPUs, `smptest` limits spinners to the remaining process slots after
+accounting for idles/init/shell/test, preserving the reference capacity of 64. The separate `smp-boot`
+scenario boots the normal desktop, including virtio.
+Both use QEMU disk snapshots and retain serial/QMP artifacts.
+
+These checkpoints restore idle accounting and timer-preemptible kernel waits
+without claiming complete milestone 6 or v0.4.0 parity. Same-CPU preemptive
+wakeup handoff, IOAPIC/GSI routing, AML behavior, ASLR/signals and the remaining
+performance/visual review are separate work. v0.4.0 deliberately keeps idle
+wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
+not a parity gap. The historical study's earlier wake-IPI suggestions are
+superseded by the pinned-reference review.
+The historical startup evidence above describes the earlier parked stage;
+[the study](I386_PORT_STUDY.md#17-preempting-retained-kernel-waits-without-migrating-them)
+records the transition and subsequent test results.

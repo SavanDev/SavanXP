@@ -1,7 +1,4 @@
-/* Puestos de entrada de 32 bits. El gate de int $0x80 es el mismo numero y el
- * mismo atributo (presente, DPL 3, interrupt gate) que en arch/x86_64, asi que
- * el lado del SDK que usa "int $0x80" con el numero en eax y los argumentos en
- * edi/esi/edx no cambia al compilarse para i386. */
+/* Protected-mode entries retain the reference int 0x80 register ABI. */
 
 .section .text
 
@@ -24,21 +21,55 @@
     pushl %ebx
 .endm
 
+/* EBP records ownership for this entry, including nested IRQs during a kernel
+ * wait. Release only after moving to the selected stack: another CPU may then
+ * resume or reuse the outgoing process. No user registers are live here. */
+.macro enter_kernel
+    call i386_kernel_enter
+    movl %eax, %ebp
+.endm
+.macro leave_kernel
+    movl %eax, %ebx
+    movl %eax, %esp
+    andl $-16, %esp
+    subl $12, %esp
+    pushl %ebp
+    call i386_kernel_leave
+    movl %ebx, %esp
+    jmp restore_context
+.endm
+
+/* A ring-0 timer can suspend only this unlocked wait window. IRET restores
+ * its short same-privilege frame in place, then CLI/RET returns to the pinned
+ * C++ continuation, which reacquires the kernel lock before using shared data. */
+.global i386_wait_interrupt
+.type i386_wait_interrupt, @function
+i386_wait_interrupt:
+    sti
+    hlt
+.global i386_wait_interrupt_resume
+i386_wait_interrupt_resume:
+    cli
+    ret
+.size i386_wait_interrupt, . - i386_wait_interrupt
+
 .global i386_syscall_entry
 .type i386_syscall_entry, @function
 i386_syscall_entry:
     cld
     pushl $0x80
     save_context
+    enter_kernel
     call i386_handle_syscall
-    movl %eax, %esp
-    jmp restore_context
+    leave_kernel
 .size i386_syscall_entry, . - i386_syscall_entry
 
 .global i386_resume
 .type i386_resume, @function
 i386_resume:
-    movl 4(%esp), %esp
+    movl 4(%esp), %eax
+    movl $1, %ebp
+    leave_kernel
 restore_context:
     pop %gs
     pop %fs
@@ -206,17 +237,17 @@ i386_irq_table:
 
 i386_irq_common:
     save_context
+    enter_kernel
     call i386_handle_irq
-    movl %eax, %esp
-    jmp restore_context
+    leave_kernel
 
 /* Prefix: four segment registers, pusha, vector, normalized error word,
  * then the hardware EIP/CS/EFLAGS (and ESP/SS only on a privilege change). */
 i386_exception_common:
     save_context
+    enter_kernel
     call i386_report_exception
-    movl %eax, %esp
-    jmp restore_context
+    leave_kernel
 
 /* Local APIC/MSI/IPI gates keep the full vector, independent of PIC IRQs. */
 .macro i386_external_stub vector
@@ -236,8 +267,13 @@ i386_external_table:
 .endr
 i386_external_common:
     save_context
-    call i386_handle_external
-    movl %eax, %esp
-    jmp restore_context
+    xorl %ebp, %ebp
+    cmpl $64, 48(%ebx)
+    je 1f
+    cmpl $255, 48(%ebx)
+    je 1f
+    enter_kernel
+1:  call i386_handle_external
+    leave_kernel
 
 .section .note.GNU-stack,"",@progbits

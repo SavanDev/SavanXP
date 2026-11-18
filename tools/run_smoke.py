@@ -12,7 +12,7 @@ import i386_services_test
 import i386_smp_test
 
 SERVICE_SCENARIOS = ("services", "device-smoke", "audio-smoke", "audio-record", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke")
-SCENARIOS = SERVICE_SCENARIOS + ("smp-boot", "smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
+SCENARIOS = SERVICE_SCENARIOS + ("smp-boot", "smp", "idle", "kernel-preempt", "smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
 
 
 def main() -> int:
@@ -32,10 +32,12 @@ def main() -> int:
         parser.error("--virtio currently supports service and graphical scenarios; use virtio-smoke")
     if args.virtio and args.scenario in ("storage-smoke", "live-desktop"):
         parser.error("LiveCD scenarios are diskless; use virtio-smoke to check virtio storage")
-    if args.scenario == "smp-boot":
-        if args.smp < 2: parser.error("smp-boot requires --smp 2..32")
+    if args.scenario in ("smp-boot", "smp", "idle", "kernel-preempt"):
+        if args.scenario == "kernel-preempt" and args.smp > 8:
+            parser.error("kernel-preempt supports 1..8 CPUs for its bounded regression workload")
+        if args.smp < 2 and args.scenario not in ("idle", "kernel-preempt"): parser.error("smp-boot requires --smp 2..32")
         return i386_smp_test.run(args.iso, args.disk_image, args.artifacts,
-                                args.smp, args.virtio, args.accel, args.timeout)
+                                args.smp, args.virtio, args.accel, args.timeout, scheduling=args.scenario == "smp", idle=args.scenario == "idle", kernel_preempt=args.scenario == "kernel-preempt")
     if args.scenario in SERVICE_SCENARIOS:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "storage-smoke" else args.iso
         return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel, args.virtio, args.smp)

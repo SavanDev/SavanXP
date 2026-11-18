@@ -3,7 +3,10 @@
 import argparse
 
 SCENARIOS = {
-    "smp-boot": "AP bring-up (--smp 2..32), private TSS/stacks, cache controls and targeted IPIs; BSP scheduling",
+    "smp-boot": "AP startup (--smp 2..32), private TSS, cache controls, IPIs, TLB and scheduling",
+    "smp": "parallel user execution, remote IPI termination, pipes, CPU/FPU and memory reclamation (--smp 2..32)",
+    "idle": "per-CPU ring-3 idle, process protection, sleep/busy accounting and Task Manager (--smp 1..32)",
+    "kernel-preempt": "real blocking CONNECT preemption, pinned ring-0 CPU/FPU state and deferred kills (--smp 1..8)",
     "smoke": "memory/ELF32 libraries, reference POSIX/shell, CPU/FPU and desktop graphics",
     "boot": "kernel, persistent root and init/shell startup",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",

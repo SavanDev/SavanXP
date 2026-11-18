@@ -4,11 +4,30 @@
 .global context_probe32
 .type context_probe32, @function
 context_probe32:
+    xorl %ecx, %ecx
+    jmp .Lprobe_entry
+/* Same register/x87/SSE checks around CONNECT, whose timer waits exercise
+ * ring-0 frames. Arguments: marker, fd, sockaddr, timeout_ms. */
+.global context_connect_probe32
+.type context_connect_probe32, @function
+context_connect_probe32:
+    movl $1, %ecx
+.Lprobe_entry:
     pushl %ebp
     pushl %ebx
     pushl %esi
     pushl %edi
     subl $208, %esp
+    movl %ecx, 204(%esp)
+    testl %ecx, %ecx
+    jz .Largs_ready
+    movl 232(%esp), %eax
+    movl %eax, 192(%esp)
+    movl 236(%esp), %eax
+    movl %eax, 196(%esp)
+    movl 240(%esp), %eax
+    movl %eax, 200(%esp)
+.Largs_ready:
     movl 228(%esp), %eax
     movl %eax, 0(%esp)
     movl 232(%esp), %eax
@@ -65,6 +84,13 @@ context_probe32:
 .Lloop:
     movl $0x84de84de, %ecx
     movl $9, %eax
+    cmpl $0, 204(%esp)
+    je .Lcall_ready
+    movl 192(%esp), %edi
+    movl 196(%esp), %esi
+    movl 200(%esp), %edx
+    movl $29, %eax // SAVANXP_SYS_CONNECT; checked by kpreempt32's static assertion.
+.Lcall_ready:
     stc
     std
     int $0x80
@@ -79,14 +105,28 @@ context_probe32:
     jne .Lregister_bad
     cmpl $0x51ab51ab, %ebp
     jne .Lregister_bad
+    cmpl $0x84de84de, %ecx
+    jne .Lregister_bad
+    cmpl $0, 204(%esp)
+    jne .Lconnect_args
     cmpl $0x62bc62bc, %esi
     jne .Lregister_bad
     cmpl $0x73cd73cd, %edi
     jne .Lregister_bad
-    cmpl $0x84de84de, %ecx
-    jne .Lregister_bad
     cmpl $0x95ef95ef, %edx
     jne .Lregister_bad
+    jmp .Larguments_ok
+.Lconnect_args:
+    movl 192(%esp), %eax
+    cmpl %eax, %edi
+    jne .Lregister_bad
+    movl 196(%esp), %eax
+    cmpl %eax, %esi
+    jne .Lregister_bad
+    movl 200(%esp), %eax
+    cmpl %eax, %edx
+    jne .Lregister_bad
+.Larguments_ok:
     cmpl $0xcafebabe, 32(%esp)
     jne .Lstack_bad
     movdqu %xmm0, 64(%esp)
@@ -144,9 +184,19 @@ context_probe32:
     shll $20, %eax
     cmpl 52(%esp), %eax
     jne .Lx87_bad
+    cmpl $0, 204(%esp)
+    jne .Lconnect_result
     movl 36(%esp), %eax
     cmpl 4(%esp), %eax
     jb .Lloop
+    xorl %eax, %eax
+    jmp .Lfinish
+.Lconnect_result:
+    cmpl $-110, 36(%esp) // SAVANXP_ETIMEDOUT, also checked in C.
+    je .Lconnect_pass
+    movl $8, %eax
+    jmp .Lfinish
+.Lconnect_pass:
     xorl %eax, %eax
     jmp .Lfinish
 .Linitial_bad:
@@ -186,4 +236,5 @@ context_probe32:
     popl %ebp
     ret
 .size context_probe32, . - context_probe32
+.size context_connect_probe32, . - context_connect_probe32
 .section .note.GNU-stack,"",@progbits

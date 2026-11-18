@@ -124,7 +124,8 @@ changes, and record implementation/verification evidence as work lands.
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
    Milestone 4 restores the reference process bound and event/timer/semaphore
-   waits; full signal and idle-process accounting parity remains outstanding. [Contracts and limits](I386_POSIX.md).
+   waits; full signal parity remains outstanding. Milestone 6 restores idle processes
+   and their CPU accounting. [Contracts and limits](I386_POSIX.md).
 3. **Memory objects and ELF32 shared libraries — completed.**
    Reference section objects/views, growing heaps, private/shared fork and
    demand-grown stacks support ELF32 PIE and the embedded dependency loader.
@@ -163,8 +164,12 @@ changes, and record implementation/verification evidence as work lands.
    [I386_VIRTIO.md](I386_VIRTIO.md) defines its gates and architecture boundary.
    **6.2 — SMP and interrupt infrastructure in progress.** AP startup, private
    TSS/stacks, targeted IPIs and the GPU MSI-X boundary are verified in QEMU.
-   APs remain parked; the shared-kernel lock, scheduling on APs and TLB
-   synchronization are next. [Contracts and evidence](I386_SMP.md).
+   User processes now run on APs under the reference global lock, with local
+   timers, deferred remote termination and lazy kernel-TLB synchronization.
+   Per-CPU ring-3 idle processes, dynamic init ownership and idle/busy accounting
+   now follow the reference. Retained kernel waits are timer-preemptible and
+   resume on their original CPU; same-CPU wakeup handoff and the wider interrupt/
+   parity review remain. [Contracts and evidence](I386_SMP.md).
    The remaining internal/visual parity review follows. These intermediate
    results do not complete milestone 6 or the v0.4.0 target.
 

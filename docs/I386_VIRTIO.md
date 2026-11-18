@@ -115,9 +115,9 @@ write/read checks. The default full smoke, 32 MiB memory/shared-memory gates,
 ## Remaining milestone 6 work
 
 This integration does not establish multi-CPU scheduling or AML/IOAPIC routing
-parity. Local xAPIC/MSI-X and parked APs are covered by the SMP bring-up gates.
-The kernel still schedules on one CPU with its existing first-GiB RAM
-ceiling and lacks PAT write combining. Full signals/job control, explicit
-idle-process accounting, ASLR and the reference boot-console/logo remain in
+parity. Local xAPIC/MSI-X and concurrent AP scheduling are covered by the SMP
+and virtio service/graphics gates.
+The first-GiB RAM ceiling and lack of PAT write combining remain. Full signals/
+job control, ASLR and the reference boot-console/logo remain in
 the final feature review. Passing the virtio gates closes only that part of
 milestone 6; the active version target remains v0.4.0.

@@ -15,7 +15,7 @@ for the [progressive port](I386_PORT.md).
 ./build.sh iso
 ./build.sh run
 ./build.sh run --virtio
-./build.sh run --smp 4           # AP bring-up; the BSP still runs user processes
+./build.sh run --smp 4           # preemptive scheduling on four CPUs
 ./build.sh debug --headless
 ./build.sh smoke
 ./build.sh smoke boot
@@ -82,10 +82,15 @@ Environment overrides include `SAVANXP_BUILD_DIR`, `SAVANXP_OUTPUT_ROOT`,
 `SAVANXP_BUILD_TYPE`, `SAVANXP_INCLUDE_TEST_APPS`, `SAVANXP_JOBS`,
 `SAVANXP_ACCEL`, `SAVANXP_VIRTIO` (`ON`/`OFF`), `SAVANXP_HEADLESS`, and `SAVANXP_QEMU`.
 `--legacy` remains a compatibility alias; i386 is already selected.
-`--smp N` / `SAVANXP_SMP` accepts 1–32 virtual CPUs for AP bring-up. APs load
-private TSS/stacks and accept IPIs; only the BSP schedules user processes.
-The dedicated `smp-boot` check requires at least two CPUs and inspects their
-hardware state through QMP. [I386_SMP.md](I386_SMP.md) defines the current boundary.
+`--smp N` / `SAVANXP_SMP` accepts 1–32 virtual CPUs. APs with successful
+startup/IPI checks and a calibrated local timer schedule user processes under
+the reference global kernel lock. `smoke smp --smp 4` checks parallel execution,
+remote termination and CPU/FPU/memory regressions; `smoke idle` supports
+1–32 CPUs and checks idle accounting plus the Task Manager selftest. `smp-boot`
+checks startup and hardware state through QMP. `smp` and `smp-boot` require at
+least two CPUs. `smoke kernel-preempt` supports 1–8 CPUs and checks retained
+kernel waits, original CPU ownership, x87/SSE state and deferred kill cleanup.
+[I386_SMP.md](I386_SMP.md) defines the current boundary.
 `--virtio` selects the reference
 block, network, sound, GPU, tablet and keyboard devices; the default profile
 retains ATA, RTL8139, AC'97, standard VGA and PS/2. Service and graphical smokes

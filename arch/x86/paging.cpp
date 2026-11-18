@@ -1,5 +1,6 @@
 #include "paging.hpp"
 #include "process.hpp"
+#include "cpu.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 
@@ -11,6 +12,8 @@ constexpr uint32_t kMask = 0xfffff000u;
 constexpr uint32_t kFirst = kUserWindowBase >> 22;
 constexpr uint32_t kEnd = kUserWindowEnd >> 22;
 bool g_enabled;
+uint32_t g_kernel_generation;
+uint32_t g_seen_generation[cpu::kMaxCpus];
 
 uint32_t* table(uint32_t entry) {
     return reinterpret_cast<uint32_t*>((entry & kMask) + kDirectMapBase);
@@ -55,9 +58,14 @@ bool map_identity(uint64_t address, uint32_t bytes) {
     if (address < kKernelViewsEnd && address + bytes > kKernelViewsBase) return false;
     const uint32_t first = static_cast<uint32_t>(address >> 22);
     const uint32_t last = static_cast<uint32_t>((address + bytes - 1) >> 22);
-    for (uint32_t index = first; index <= last; ++index)
+    for (uint32_t index = first; index <= last; ++index) {
         g_page_directory[index] = (index << 22) | kPresent | kWrite | kLarge;
-    if (g_enabled) activate_kernel();
+        for (uint32_t n = 0; n < process::kCapacity; ++n)
+            if (process::at(n)->state != process::State::unused)
+                process::at(n)->directory[index] = g_page_directory[index];
+    }
+    ++g_kernel_generation;
+    if (g_enabled) sync_kernel_tlb();
     return true;
 }
 
@@ -225,6 +233,13 @@ void activate(const uint32_t* directory) {
     asm volatile("mov %0, %%cr3" : : "r"(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(directory))) : "memory");
 }
 void activate_kernel() { activate(g_page_directory); }
+void sync_kernel_tlb() {
+    auto& seen = g_seen_generation[cpu::index()];
+    if (seen == g_kernel_generation) return;
+    uint32_t cr3;
+    asm volatile("mov %%cr3, %0; mov %0, %%cr3" : "=r"(cr3) :: "memory");
+    seen = g_kernel_generation;
+}
 namespace {
 
 bool kernel_leaf(uint32_t address, uint32_t*& leaf, bool create) {
@@ -236,7 +251,7 @@ bool kernel_leaf(uint32_t address, uint32_t*& leaf, bool create) {
         if (!memory::allocate_page(allocation)) return false;
         memset(allocation.virtual_address, 0, kPageBytes);
         entry = static_cast<uint32_t>(allocation.physical_address) | kPresent | kWrite;
-        // Kernel execution is atomic on this uniprocessor. New directories
+        // The global kernel lock serializes publication. New directories
         // inherit the root; existing directories share the same page tables.
         for (uint32_t slot = 0; slot < process::kCapacity; ++slot) {
             auto* task = process::at(slot);
@@ -254,6 +269,7 @@ bool unmap_kernel_pages(void* base, uint32_t count) {
     if ((address & 4095) || address < kKernelViewsBase ||
         static_cast<uint64_t>(address) + static_cast<uint64_t>(count) * kPageBytes > kKernelViewsEnd)
         return false;
+    ++g_kernel_generation;
     for (uint32_t n = 0; n < count; ++n) {
         const uint32_t page = address + n * kPageBytes;
         uint32_t* leaf;
@@ -285,11 +301,24 @@ bool map_kernel_range(const uint64_t* pages, uint32_t physical, uint32_t count,
             *leaf = address | kPresent | (flags & (kWrite | 0x18u));
             asm volatile("invlpg (%0)" : : "r"(start + n * kPageBytes) : "memory");
         }
+        ++g_kernel_generation;
         *base = reinterpret_cast<void*>(start);
         return true;
     }
     return false;
 }
+}
+
+bool retarget_kernel_page(void* base, uint32_t physical) {
+    const uint32_t address = reinterpret_cast<uintptr_t>(base);
+    uint32_t* leaf;
+    if ((address & 4095) || (physical & 4095) || physical >= kDirectMapBytes ||
+        address < kKernelViewsBase || address >= kKernelViewsEnd ||
+        !kernel_leaf(address, leaf, false) || !(*leaf & kPresent)) return false;
+    *leaf = physical | (*leaf & ~kMask);
+    ++g_kernel_generation;
+    asm volatile("invlpg (%0)" :: "r"(address) : "memory");
+    return true;
 }
 
 bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base) {

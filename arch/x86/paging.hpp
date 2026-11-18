@@ -33,6 +33,9 @@ bool map_borrowed_page(uint32_t* directory, uint32_t address, uint32_t physical,
 void unmap_borrowed_range(uint32_t* directory, uint32_t address, uint32_t bytes);
 void activate(const uint32_t* directory);
 void activate_kernel();
+// Called with the global kernel lock, before accessing shared kernel views.
+void sync_kernel_tlb();
+bool retarget_kernel_page(void* base, uint32_t physical);
 // Contiguous supervisor views of scattered section pages; shared by all CR3s.
 bool map_kernel_pages(const uint64_t* pages, uint32_t count, uint32_t flags, void** base);
 bool unmap_kernel_pages(void* base, uint32_t count);
