@@ -209,9 +209,45 @@ now keeps at least the observed non-idle work and bounds percentages to 100%.
 The raw counters and API layout are unchanged. This is an approximation for
 non-atomic samples, not a new atomic snapshot guarantee.
 
+## Syscall-return wakeup handoff
+
+Like v0.4.0's `note_woken`, completing a blocked I/O, object wait or poll marks
+`resched_pending` on the CPU performing the wakeup. The current caller finishes
+its C++ work and publishes its user frame before the scheduler hands that CPU
+to the ordinary runnable search. An already-blocked caller schedules anyway. This is a scheduling
+opportunity, not a priority boost or a guarantee that a particular waiter wins
+against every other runnable process. Timers and completed scheduling decisions
+consume their own wakeup notifications, so unrelated syscalls do not inherit a
+stale request. No wake IPI assigns the waiter to an idle CPU.
+
+Pipe reads, writes and final endpoint releases mark pending readiness changes.
+At syscall return, the native code drains blocked pipe readers/writers and
+rechecks polls until those changes settle. This includes EOF, `EPIPE`, `dup2`
+replacement of the last endpoint and partial-write progress. Rechecks happen
+after publishing the caller's outer frame: they may complete the caller's own
+newly blocked operation. Iteration replaces recursive reader/writer wakeups;
+it preserves the reference's return-time behavior without growing a 16 KiB
+kernel stack or polling device drivers after every syscall. Device servicing
+continues on its existing timer/scheduling paths. Object-wait completion also
+rechecks polls, so an event observed with `poll` gets the same handoff as
+`wait_one`/`wait_many`.
+
+The `wakeup` scenario runs `wakeup32` on 1–32 CPUs. Fourteen cases repeat 16
+times: auto/manual events, wait-all, semaphores, event polling, pipe data/space,
+EOF/hangup, broken readers, descriptor replacement and partial writes. A shared
+section records whether the waiter executed before the triggering syscall's
+caller continued, with no intervening syscall. Only the one-CPU run asserts
+that order; SMP runs check delivery and results because other CPUs can race
+the observation. An unrelated-call control discards samples containing a PIT
+tick, and exact process/free-page counts must recover after all children and
+views are released. This checks local wakeup policy without using a latency
+threshold as evidence.
+
 ## Functional gates and remaining parity
 
 ```sh
+./build.sh smoke wakeup
+./build.sh smoke wakeup --smp 4
 ./build.sh smoke kernel-preempt
 ./build.sh smoke kernel-preempt --smp 4
 ./build.sh smoke idle
@@ -254,9 +290,9 @@ accounting for idles/init/shell/test, preserving the reference capacity of 64. T
 scenario boots the normal desktop, including virtio.
 Both use QEMU disk snapshots and retain serial/QMP artifacts.
 
-These checkpoints restore idle accounting and timer-preemptible kernel waits
-without claiming complete milestone 6 or v0.4.0 parity. Same-CPU preemptive
-wakeup handoff, IOAPIC/GSI routing, AML behavior, ASLR/signals and the remaining
+These checkpoints restore idle accounting, timer-preemptible kernel waits
+and syscall-return wakeup handoff without claiming complete milestone 6 or
+v0.4.0 parity. IOAPIC/GSI routing, AML behavior, ASLR/signals and the remaining
 performance/visual review are separate work. v0.4.0 deliberately keeps idle
 wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
 not a parity gap. The historical study's earlier wake-IPI suggestions are

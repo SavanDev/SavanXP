@@ -137,7 +137,7 @@ foreach(name IN LISTS SAVANXP_I386_CORE_APPS)
 endforeach()
 
 if(SAVANXP_INCLUDE_TEST_APPS)
-    set(SAVANXP_I386_POSIX_TESTS sdkint32 smptest idletest kpreempt32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest eventtest timertest semaphoretest handletest sxetest nettest udptest tcptest audiotest cliptest devtest32)
+    set(SAVANXP_I386_POSIX_TESTS sdkint32 smptest idletest kpreempt32 wakeup32 vmtest32 heaptest mmaptest posixtest32 fdtest waittest pipestress seektest renametest truncatetest eventtest timertest semaphoretest handletest sxetest nettest udptest tcptest audiotest cliptest devtest32)
     foreach(name IN LISTS SAVANXP_I386_POSIX_TESTS)
         savanxp_i386_program(${name} subsystems/posix/userland/${name}.c)
     endforeach()

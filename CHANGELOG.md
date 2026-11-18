@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 hands off the CPU when a syscall wakes a blocked process.** Events,
+  semaphores, pipes and polling resume without waiting for the next timer tick;
+  `smoke wakeup` checks execution order and resource recovery.
+
 - **Interruptible i386 kernel waits no longer monopolize their CPU.** Waiting
   continuations preserve their state and exit safely after a kill request;
   `smoke kernel-preempt` checks CPU/FPU state and deferred cleanup.

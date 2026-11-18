@@ -29,6 +29,7 @@ struct CpuState {
     uint32_t ticks, slice_tick;
     Process* idle;
     bool idle_entered;
+    bool resched_pending;
 };
 CpuState g_cpus[cpu::kMaxCpus];
 CpuState& local() { return g_cpus[cpu::index()]; }
@@ -108,6 +109,8 @@ ContextFrame* schedule(ContextFrame* frame) {
     waits::service();
     io::service();
     Process* next = nullptr;
+    // This scheduling decision consumes all wakeups serviced above.
+    local().resched_pending = false;
     const uint32_t here = cpu::index();
     for (uint32_t offset = 1; offset <= kCapacity; ++offset) {
         Process& candidate = g_processes[(g_last_slot + offset) % kCapacity];
@@ -284,6 +287,9 @@ ContextFrame* timer(ContextFrame* frame) {
     ++local().ticks;
     if (current_slot()) { ++g_total_cpu_ticks; ++current_slot()->cpu_ticks; }
     if (!cpu::index()) wake_tasks();
+    // The timer owns its scheduling decision; do not carry its wakeups into
+    // an unrelated syscall return (the same policy as v0.4.0).
+    local().resched_pending = false;
     const bool kernel = (frame->cs & 3u) == 0;
     // Interrupt gates keep ordinary kernel work atomic. Only the exact wait
     // window runs with IF set and the lock released, so it may be suspended.
@@ -298,6 +304,11 @@ ContextFrame* timer(ContextFrame* frame) {
 
 void begin_syscall() {
     current_slot()->in_syscall = true;
+}
+
+void note_woken(Process& task) {
+    // v0.4.0 hands off on the waker's CPU, without an idle-CPU wake IPI.
+    if (&task != current_slot()) local().resched_pending = true;
 }
 
 ContextFrame* finish_syscall(ContextFrame* frame, bool reschedule) {
@@ -316,8 +327,9 @@ ContextFrame* finish_syscall(ContextFrame* frame, bool reschedule) {
     // Cleanup can itself wait; keep the continuation alive/pinned until all
     // C++ work is complete and the user frame is ready to publish.
     current_slot()->frame = frame;
+    io::service_pending();
     current_slot()->in_syscall = false;
-    if (reschedule || current_slot()->state != State::running) {
+    if (reschedule || local().resched_pending || current_slot()->state != State::running) {
         return schedule(frame);
     }
     return frame;

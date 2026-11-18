@@ -28,6 +28,7 @@ const vfs::Vnode* g_gpu_node;
 vfs::Vnode* g_input_node;
 vfs::Vnode* g_mouse_node;
 tty::TtyDevice g_tty;
+bool g_pipe_changed;
 
 object::IoObject* lookup(const process::Process& task, uint32_t fd, uint32_t access = object::access_query) {
     if (fd >= kMaxHandles || (task.handles[fd].granted_access & access) != access) return nullptr;
@@ -38,6 +39,7 @@ void destroy(object::Header* header) {
     auto* file = object::as_io(header);
     if (file->kind == HandleKind::pipe) {
         auto& pipe = *file->pipe;
+        g_pipe_changed = true;
         if (file->open_flags & SAVANXP_OPEN_READ) --pipe.reader_refs;
         if (file->open_flags & SAVANXP_OPEN_WRITE) --pipe.writer_refs;
         if (!pipe.reader_refs) {
@@ -86,6 +88,7 @@ bool valid(process::Process& task, uint32_t buffer, uint32_t count, bool writabl
 void complete(process::Process& task, int result) {
     task.frame->eax = static_cast<uint32_t>(result);
     task.state = process::State::runnable;
+    process::note_woken(task);
 }
 
 int tty_read(process::Process& task, uint32_t buffer, uint32_t count) {
@@ -161,6 +164,7 @@ int try_read(process::Process& task, object::IoObject& file, uint32_t buffer, ui
         if (first < bytes) paging::copy_to_user(task.directory, buffer + first, pipe.buffer, bytes - first);
         pipe.read_pos = (pipe.read_pos + bytes) % kPipeCapacity;
         pipe.size -= bytes;
+        g_pipe_changed = true;
         return bytes;
     }
     if (file.kind != HandleKind::vnode || file.node->type != vfs::NodeType::file) return -SAVANXP_EBADF;
@@ -189,6 +193,7 @@ int pipe_write(process::Process& task, object::IoObject& file, uint32_t buffer, 
     if (first < bytes) paging::copy_from_user(task.directory, pipe.buffer, buffer + first, bytes - first);
     pipe.write_pos = (pipe.write_pos + bytes) % kPipeCapacity;
     pipe.size += bytes;
+    g_pipe_changed = true;
     return bytes;
 }
 
@@ -537,6 +542,31 @@ int poll(process::Process& task, uint32_t array, uint32_t count, int32_t timeout
     return kBlocked;
 }
 
+static void service_waiters(bool pipes_only);
+
+void service_pending() {
+    // Defer pipe rechecks until the outer syscall frame has been published.
+    // A read may unblock a partial writer, whose progress may unblock another
+    // reader. Drain those changes without recursive wakeups or driver polls.
+    while (g_pipe_changed) {
+        g_pipe_changed = false;
+        service_waiters(true);
+    }
+}
+
+void recheck_poll_waiters() {
+    for (uint32_t index = 0; index < process::kCapacity; ++index) {
+        auto& task = *process::at(index);
+        if (task.state != process::State::polling) continue;
+        const int ready = evaluate_poll(task);
+        if (ready || (task.wake_ms && task.wake_ms <= pit::uptime_ms())) {
+            if (task.poll_count) paging::copy_to_user(task.directory, task.poll_buffer, task.poll_entries,
+                                                    task.poll_count * sizeof(savanxp_pollfd));
+            complete(task, ready);
+        }
+    }
+}
+
 void service() {
     display::poll();
     virtio_input::poll();
@@ -560,10 +590,16 @@ void service() {
         savanxp_input_event event;
         while (!g_tty.line_ready && ps2_32::pop_event(event)) feed_tty(event);
     }
+    service_waiters(false);
+    service_pending();
+}
+
+static void service_waiters(bool pipes_only) {
     for (uint32_t index = 0; index < process::kCapacity; ++index) {
         auto& task = *process::at(index);
         if (task.state == process::State::reading) {
             auto* file = lookup(task, task.io_fd, object::access_read);
+            if (pipes_only && file && file->kind != HandleKind::pipe) continue;
             const int result = file ? try_read(task, *file, task.io_buffer, task.io_size) : -SAVANXP_EBADF;
             if (result != kBlocked) complete(task, result);
             else if (file && file->socket && task.wake_ms && task.wake_ms <= pit::uptime_ms())
@@ -576,15 +612,9 @@ void service() {
             if (result < 0) { complete(task, result); continue; }
             task.io_progress += result;
             if (task.io_progress == task.io_size) complete(task, task.io_progress);
-        } else if (task.state == process::State::polling) {
-            const int ready = evaluate_poll(task);
-            if (ready || (task.wake_ms && task.wake_ms <= pit::uptime_ms())) {
-                if (task.poll_count) paging::copy_to_user(task.directory, task.poll_buffer, task.poll_entries,
-                                                        task.poll_count * sizeof(savanxp_pollfd));
-                complete(task, ready);
-            }
         }
     }
+    recheck_poll_waiters();
 }
 
 int stat(process::Process& task, const char* path, uint32_t buffer) {

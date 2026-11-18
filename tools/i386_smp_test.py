@@ -14,13 +14,13 @@ from qmp_client import QmpClient
 from run_qemu import build_qemu_args, find_qemu
 
 
-def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float, scheduling: bool = False, idle: bool = False, kernel_preempt: bool = False) -> int:
-    console = scheduling or idle or kernel_preempt
+def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float, scheduling: bool = False, idle: bool = False, kernel_preempt: bool = False, wakeup: bool = False) -> int:
+    console = scheduling or idle or kernel_preempt or wakeup
     if kernel_preempt and smp > 8:
         raise ValueError("kernel-preempt supports 1..8 CPUs for its bounded regression workload")
     if console and virtio:
         raise ValueError("smp uses the PS/2 console; validate virtio with sxgui-smoke/virtio-smoke")
-    if smp < 2 and not (idle or kernel_preempt):
+    if smp < 2 and not (idle or kernel_preempt or wakeup):
         raise ValueError("smp-boot requires --smp 2..32 to exercise an AP")
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
@@ -36,6 +36,15 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
             guest = subprocess.Popen(command, stdout=log, stderr=log)
             try:
                 wait_serial(serial, r"savanxp:/\$ " if console else "user: /bin/progman loaded", timeout=min(timeout, 90))
+                if wakeup:
+                    type_shell(qmp, ("wakeup32",))
+                    result = wait_serial(serial, r"WAKEUP (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
+                    if result[1] != "PASS": raise RuntimeError("syscall wakeup handoff regression failed")
+                    text = serial.read_text(errors="replace")
+                    if len(re.findall(r"WAKEUP [\w-]+ PASS rounds=16", text)) != 14:
+                        raise RuntimeError("missing event/pipe/poll handoff coverage")
+                    if smp == 1 and "order=checked" not in text:
+                        raise RuntimeError("single-CPU execution order was not checked")
                 if kernel_preempt:
                     type_shell(qmp, ("kpreempt32",))
                     result = wait_serial(serial, r"KPREEMPT (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
@@ -128,7 +137,7 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                     raise RuntimeError("hardware contexts reused a TSS")
                 if "kernel: fatal exception" in text or "BOOT FAIL" in text or (not scheduling and "exception vector" in text):
                     raise RuntimeError("SMP boot contained a process/kernel fault")
-                label = "kernel preemption" if kernel_preempt else "idle accounting" if idle else "scheduling" if scheduling else "startup"
+                label = "wakeup handoff" if wakeup else "kernel preemption" if kernel_preempt else "idle accounting" if idle else "scheduling" if scheduling else "startup"
                 print(f"i386 SMP {label}: PASS ({smp} CPUs, {aps} private AP TSS, {2 * aps} startup IPIs; {smp} scheduling CPUs)", flush=True)
                 return 0
             finally:

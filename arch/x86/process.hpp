@@ -62,6 +62,7 @@ ContextFrame* timer(ContextFrame* frame);
 ContextFrame* reschedule(ContextFrame* frame, bool ipi = false);
 uint64_t total_cpu_ticks();
 void begin_syscall();
+void note_woken(Process& task);
 ContextFrame* finish_syscall(ContextFrame* frame, bool reschedule = false);
 uint32_t current_pid();
 uint32_t count();

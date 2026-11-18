@@ -77,7 +77,9 @@ void service() {
         clear(task);
         task.frame->eax = result;
         task.state = process::State::runnable;
+        process::note_woken(task);
     }
+    io::recheck_poll_waiters();
 }
 bool syscall(ContextFrame& frame) {
     int result;
