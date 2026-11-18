@@ -26,6 +26,8 @@ writeback queue still holds.
 
 ## The sequence
 
+0. **The screen**: "SavanXP is shutting down..." or "SavanXP is
+   restarting..." ([below](#the-screen)).
 1. **`fs::sync_all()`**: every mounted volume makes its metadata durable and
    marks itself clean, the way an unmount would. On SxFS that is both
    superblocks with `CLEAN` and the journal header cleared, so the next boot
@@ -36,8 +38,13 @@ writeback queue still holds.
    driver's `shutdown` hook (NVMe's shutdown notification,
    [`NVME.md`](NVME.md)).
 3. **`acpi::shutdown()`**: S5 through `PM1a/b_CNT`, then the QEMU, Bochs and
-   VirtualBox ports, then `hlt` forever. **`acpi::reboot()`**: the FADT reset
-   register, port `0xCF9`, the 8042 reset pulse, then `hlt` forever.
+   VirtualBox ports. **`acpi::reboot()`**: the FADT reset register, port
+   `0xCF9`, the 8042 reset pulse. Each waits about a second and returns if
+   the machine is still on.
+4. **Still on**: the log says `power: the power-off did not happen; it is now
+   safe to turn off the computer` (or `the restart`), the screen says "It is
+   now safe to turn off your computer.", and the CPU halts for good. The disks
+   were synced at step 1, so cutting the power by hand loses nothing.
 
 The serial log shows `power: shutdown: syncing volumes` (or `reboot`).
 A step that fails is logged and the next still runs:
@@ -45,6 +52,31 @@ A step that fails is logged and the next still runs:
 The machine still goes down, because a failed disk will not recover by staying
 on, and the volume replays its journal at the next mount: it loses the last
 commits, never their order.
+
+## The screen
+
+The kernel draws it, not the session, so every path shows it: the Start menu
+through `init`, the power button, and a program that opens `/dev/power` with no
+session at all. `power::shutdown()` and `power::reboot()` draw it before they
+sync anything:
+
+1. **`display::emergency_console()`**, the operation a panic uses
+   (FB4, [`FRAMEBUFFER_ROADMAP.md`](../roadmaps/open/FRAMEBUFFER_ROADMAP.md)).
+   On DISPI the desktop may have left its second buffer on screen, so this
+   makes the buffer the console writes into the one shown. On virtio-gpu the
+   console's buffer is already the one shown, so there is nothing to do.
+2. **The console stops drawing** on the framebuffer. The `power:` lines that
+   follow go to the serial port only.
+3. **`boot_screen::show_power()`** paints the boot splash's logo, name,
+   edition and version on black, with the message where the boot bar runs. It
+   is drawn once, in the geometry the console has now, because the desktop may
+   have changed the mode. Then it is flushed when the display needs that.
+
+`power-button-smoke` takes a screenshot of the machine once it has stopped and
+checks it is this screen: black, with the name and the message, not the
+desktop's last frame. That check fails if the screen is not drawn. The "safe to
+turn off" screen has no scenario, because QEMU always powers off. It was
+checked once by hand, with S5 and the ports skipped.
 
 ## Why it may run from an interrupt
 
@@ -184,6 +216,7 @@ Against a kernel that powers off on the first press, it fails at that press.
 - **Programs without a window are not told.** Services and background
   programs are ended, not asked: nothing like `SERVICE_CONTROL_SHUTDOWN`
   reaches them.
-- **No "SavanXP is shutting down" screen**, and no "safe to turn off" screen
-  when ACPI and the fallback ports all fail. The machine halts with the last
-  frame on screen.
+- **The screen comes only when `/dev/power` is opened.** Between the end of
+  the session and that moment, `init` stops the services and gives the
+  requester up to two seconds to hang up. Meanwhile the desktop's last frame
+  stays on screen. Windows shows its screen while the session logs off.

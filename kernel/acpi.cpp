@@ -21,6 +21,14 @@ void short_delay() {
     }
 }
 
+// About a second: a thousand short delays. For the wait before a power-off or
+// reset is declared failed, where no timer can run.
+void long_delay() {
+    for (int i = 0; i < 1000; ++i) {
+        short_delay();
+    }
+}
+
 // --- Estructuras ACPI (offsets fijos del spec) ---
 
 using acpi_tables::SdtHeader;
@@ -418,7 +426,7 @@ bool start_sci() {
     return g_sci_active;
 }
 
-[[noreturn]] void shutdown() {
+void shutdown() {
     arch::disable_interrupts();
 
     if (g_s5_available && g_pm1a_cnt_port != 0) {
@@ -431,15 +439,16 @@ bool start_sci() {
         short_delay();
     }
 
-    // Fallbacks de apagado conocidos por hipervisor.
+    // The power-off ports hypervisors are known to have.
     out16(0x604, 0x2000);   // QEMU (>= 2.0)
     out16(0xB004, 0x2000);  // Bochs / VirtualBox legacy
     out16(0x4004, 0x3400);  // VirtualBox
 
-    arch::halt_forever();
+    // Real hardware may take a moment to drop the power after S5.
+    long_delay();
 }
 
-[[noreturn]] void reboot() {
+void reboot() {
     arch::disable_interrupts();
 
     // 1) Reset register de la FADT.
@@ -468,8 +477,8 @@ bool start_sci() {
     out8(0x64, 0xFE);
     short_delay();
 
-    // 4) Ultimo recurso.
-    arch::halt_forever();
+    // 4) Still on: the caller decides what to show.
+    long_delay();
 }
 
 } // namespace acpi

@@ -9,7 +9,9 @@ power button twice:
    off), end in "an application cancelled the shutdown", and leave the machine
    running.
 2. The second has to end the session (the window closes first) and power the
-   machine off through power::shutdown(), with the volume left clean.
+   machine off through power::shutdown(), with the volume left clean. The
+   screen QEMU kept when it stopped has to be the power-off screen
+   (docs/kernel/POWER.md#the-screen), not the desktop's last frame.
 
 Then it boots the machine again, where `nativetest power-button` checks the
 mark the window wrote as it closed (docs/kernel/POWER.md#the-power-button).
@@ -24,6 +26,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from PIL import Image  # noqa: E402
 from power_smoke import check_volume, wait_for_status  # noqa: E402
 from qmp_client import QmpClient  # noqa: E402
 
@@ -34,6 +37,10 @@ CANCELLED = "init: an application cancelled the shutdown"
 CLOSED = "nativetest: session-end: the client closes"
 ENDED = "init: session ended and services stopped; powering off"
 SYNCING = "power: shutdown: syncing volumes"
+# kernel/boot_screen.cpp: the background, and the colour of the name and the
+# message drawn on it.
+SCREEN_BACKGROUND = (0x00, 0x00, 0x00)
+SCREEN_TEXT = (0xF2, 0xF6, 0xF9)
 
 
 def fail(message: str) -> int:
@@ -60,6 +67,20 @@ def in_order(serial: str, lines: list[str], start: int = 0) -> str:
         if found < 0:
             return line
         position = found + len(line)
+    return ""
+
+
+def check_screen(shot: Path) -> str:
+    """What is wrong with the screen the machine stopped on, or ""."""
+    image = Image.open(shot).convert("RGB")
+    width, height = image.size
+    total = width * height
+    counts = {colour: count for count, colour in image.getcolors(maxcolors=1 << 24)}
+    background = counts.get(SCREEN_BACKGROUND, 0)
+    text = counts.get(SCREEN_TEXT, 0)
+    print(f"power-button-smoke: screen {width}x{height}, background {background}, text {text} of {total}", flush=True)
+    if background < total * 0.85 or text == 0:
+        return "the screen is not the power-off screen"
     return ""
 
 
@@ -99,6 +120,12 @@ def main() -> int:
             if "power: a volume did not sync" in line or "power: the writeback queue did not drain" in line:
                 return fail(f"the shutdown reported a failure: {line.strip()}")
         print("power-button-smoke: the second press ended the session and powered off", flush=True)
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        shot = (args.out_dir / "power-off-screen.ppm").resolve()
+        qmp.screenshot(shot)
+        problem = check_screen(shot)
+        if problem:
+            return fail(problem)
         problem = check_volume(image)
         if problem:
             return fail(problem)

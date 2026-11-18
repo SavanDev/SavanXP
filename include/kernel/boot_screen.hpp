@@ -28,4 +28,11 @@ void animate();
 // un panico) va a escribir sobre el framebuffer y la animacion tiene que parar.
 void finish();
 
+// The power-off screen: the splash's logo and name on black, with `message`
+// where the boot bar runs ("SavanXP is shutting down...", "It is now safe to
+// turn off your computer."). Drawn once into `framebuffer`, the geometry the
+// console has now (the desktop may have changed the mode); the caller flushes
+// it when the display needs that. Ends the boot animation if it still runs.
+void show_power(const boot::FramebufferInfo& framebuffer, const char* message);
+
 } // namespace boot_screen

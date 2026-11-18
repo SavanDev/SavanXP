@@ -3,11 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/cpu.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/block.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/credentials.hpp"
 #include "kernel/device.hpp"
+#include "kernel/display.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/object.hpp"
 #include "kernel/panic.hpp"
@@ -98,6 +101,29 @@ int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access
     }
 }
 
+// The power-off screen (docs/kernel/POWER.md#the-screen). The session is gone,
+// or never was, so the kernel takes the display back: the buffer the console
+// writes into is made the one shown (on DISPI the desktop may have left the
+// second buffer up), the console stops drawing over it, and the log lines
+// still reach the serial port.
+void show_screen(const char* message) {
+    display::emergency_console();
+    console::set_framebuffer_console_enabled(false);
+    const boot::FramebufferInfo& framebuffer = console::framebuffer_info();
+    boot_screen::show_power(framebuffer, message);
+    if (display::ready() && framebuffer.address != nullptr && framebuffer.address == display::framebuffer_address()) {
+        (void)display::flush();
+    }
+}
+
+// Every method failed and the machine is still on. The disks are already
+// synced, so the user may cut the power, as Windows said when ACPI could not.
+[[noreturn]] void safe_to_turn_off(const char* what) {
+    console::printf("power: %s did not happen; it is now safe to turn off the computer\n", what);
+    show_screen("It is now safe to turn off your computer.");
+    arch::halt_forever();
+}
+
 // Leaves the disks as a clean unmount would. The volumes go first: their sync
 // writes the clean superblocks through the writeback queue, which the block
 // layer then drains before telling each driver the power is going away.
@@ -116,13 +142,17 @@ void prepare(const char* what) {
 namespace power {
 
 void shutdown() {
+    show_screen("SavanXP is shutting down...");
     prepare("shutdown");
     acpi::shutdown();
+    safe_to_turn_off("the power-off");
 }
 
 void reboot() {
+    show_screen("SavanXP is restarting...");
     prepare("reboot");
     acpi::reboot();
+    safe_to_turn_off("the restart");
 }
 
 void button_pressed() {

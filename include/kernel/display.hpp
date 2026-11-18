@@ -62,7 +62,8 @@ struct Backend {
     void (*gpu3d_release_for)(uint32_t pid);
     // Emergency output (FB4, docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md):
     // panic() calls it with every other core stopped and interrupts off, before
-    // drawing its text. It makes the buffer the console writes into the
+    // drawing its text, and power:: with the big kernel lock held, before the
+    // power-off screen. It makes the buffer the console writes into the
     // visible one and hands the console the geometry the hardware really has.
     // It must not allocate, wait or take a lock. Optional: null when the
     // console's buffer is always the one shown.
@@ -152,7 +153,8 @@ int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& request);
 // Destroys every 3D context and resource `pid` owns. Called on process exit.
 void gpu3d_release_for(uint32_t pid);
 
-// The bound backend's emergency_console, if it has one. For panic() only.
+// The bound backend's emergency_console, if it has one. For panic() and the
+// power-off screen.
 void emergency_console();
 
 } // namespace display

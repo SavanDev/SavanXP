@@ -40,13 +40,14 @@ bool start_sci();
 // despues del bringup de uACPI, que apaga TODOS los eventos fijos en su init.
 bool enable_power_button();
 
-// Apaga la maquina (estado S5 via PM1a/PM1b_CNT). Si no hay _S5_ o no apaga,
-// intenta los puertos de apagado conocidos de los hipervisores y, como ultimo
-// recurso, detiene la CPU para siempre. No retorna.
-[[noreturn]] void shutdown();
+// Powers the machine off: S5 through PM1a/PM1b_CNT, then the known hypervisor
+// power-off ports. Returns, with interrupts off, only if the machine is still
+// on about a second later: power::shutdown() then says it is safe to turn off.
+void shutdown();
 
-// Reinicia la maquina con una cascada de metodos: reset register de la FADT,
-// puerto 0xCF9 y el controlador de teclado 8042. No retorna.
-[[noreturn]] void reboot();
+// Resets the machine with a cascade of methods: the FADT reset register, port
+// 0xCF9 and the 8042 keyboard controller. Returns, with interrupts off, only if
+// none of them did.
+void reboot();
 
 } // namespace acpi

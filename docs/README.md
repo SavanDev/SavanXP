@@ -66,8 +66,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   asked to close, "save changes?", a Cancel that cancels the shutdown), the
   kernel sequence (volumes synced and marked clean, writeback drained, drivers
   told, then ACPI), how the power button goes through `init` (and when it
-  powers off at once, even from an interrupt), and what is still missing next
-  to an NT shutdown.
+  powers off at once, even from an interrupt), the "shutting down" and "safe to
+  turn off" screens, and what is still missing next to an NT shutdown.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
   queue's contract, how it keeps write order, when it drains, and what durability
   it gives up.

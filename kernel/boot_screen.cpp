@@ -325,11 +325,9 @@ uint32_t fade_level(uint64_t now_ns) {
     return static_cast<uint32_t>((step * kFadeOpaque) / kFadeSteps);
 }
 
-// Lo que no cambia entre pasos del arranque: logo, nombre, version y canaleta.
-// Se repinta solo al pintar el splash por primera vez y en cada escalon de la
-// entrada; todo va encima de lo anterior y cada escalon es mas claro, asi que
-// no hace falta borrar antes. La canaleta tapa la barra: hay que redibujarla.
-void draw_static(const Layout& layout) {
+// The logo, the name, the edition and the version: what the boot splash and
+// the power-off screen share.
+void draw_identity(const Layout& layout) {
     if (layout.with_logo) {
         draw_logo(layout.logo_x, layout.logo_y, layout.scale);
     }
@@ -341,6 +339,15 @@ void draw_static(const Layout& layout) {
     draw_text(g_framebuffer.width - version_width - (16 * layout.scale),
               g_framebuffer.height - (SX_CONSOLE_GLYPH_H * layout.scale) - (12 * layout.scale),
               SAVANXP_FULL_VERSION_STRING, layout.scale, faded(kMuted));
+}
+
+// What does not change between boot steps: the identity and the trough. It is
+// repainted only when the splash is first painted and at each step of the
+// fade-in; everything goes over what was there and each step is brighter, so
+// nothing has to be cleared first. The trough covers the bar, which has to be
+// drawn again.
+void draw_static(const Layout& layout) {
+    draw_identity(layout);
     draw_trough(layout);
 }
 
@@ -432,6 +439,23 @@ void animate() {
 
 void finish() {
     g_active = false;
+}
+
+void show_power(const boot::FramebufferInfo& framebuffer, const char* message) {
+    g_active = false;
+    g_framebuffer = framebuffer;
+    g_ready = framebuffer.available && framebuffer.address != nullptr && framebuffer.bpp == 32 &&
+        framebuffer.width >= 320 && framebuffer.height >= 200;
+    if (!g_ready) {
+        return;
+    }
+    g_fade = kFadeOpaque;
+    const Layout layout = compute_layout();
+    fill_rect(0, 0, g_framebuffer.width, g_framebuffer.height, kBackground);
+    draw_identity(layout);
+    // Where the boot bar runs: the bar says "still alive", and nothing here is
+    // any more.
+    draw_centered_text(layout.bar_y, message, layout.scale, kWordmark);
 }
 
 } // namespace boot_screen

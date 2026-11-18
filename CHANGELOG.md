@@ -18,6 +18,10 @@ Cut-off notes:
   Programs answer with `on_close` and `gfx_decline_close`/`sxnwm_decline_close`; new errno `ECANCELED`.
   `session-end-smoke` and `shoot.sh --scenario notepadclose` cover it; see [POWER.md](docs/kernel/POWER.md#ending-the-session).
 
+- **Power-off and restart show a "SavanXP is shutting down..." (or "restarting...") screen.**
+  When every power-off method fails, it becomes "It is now safe to turn off your computer." and the CPU halts.
+  See [POWER.md](docs/kernel/POWER.md#the-screen).
+
 - **The power button ends the session through `init`, as Shut Down does; an application can still cancel it.**
   `init` watches it with `POWER_IOC_WATCH_BUTTON` on `/dev/power`. With no watcher, or a press still unread, the kernel
   powers off at once. `power-button-smoke` covers it; see [POWER.md](docs/kernel/POWER.md#the-power-button).
