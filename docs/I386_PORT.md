@@ -170,8 +170,9 @@ changes, and record implementation/verification evidence as work lands.
    now follow the reference. Retained kernel waits are timer-preemptible and
    resume on their original CPU. Same-CPU syscall-return wakeup handoff now
    follows the reference. The port now uses the reference MADT/IOAPIC router
-   for PS/2 and the ACPI SCI, with a PIC fallback. PCI INTx routing through
-   AML `_PRT` and the remaining timer and parity review are still open.
+   for PS/2 and the ACPI SCI, with a PIC fallback. The vendored AML interpreter
+   resolves root-bus PCI INTx through `_PRT` and link `_CRS`. The BSP timer and
+   the remaining internal and visual parity review are still open.
    [Contracts and evidence](I386_SMP.md).
    The remaining internal/visual parity review follows. These intermediate
    results do not complete milestone 6 or the v0.4.0 target.

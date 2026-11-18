@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 uses firmware AML to route PCI interrupts for the RTL8139.**
+  `smoke net-smoke` checks that the adapter delivers an INTx interrupt through
+  the IOAPIC as well as exchanging packets.
+
 - **i386 routes PS/2 and the ACPI power button through the IOAPIC.** The legacy
   PIC remains available when APIC routing is unavailable. `smoke power-smoke`
   checks both paths.

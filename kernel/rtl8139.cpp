@@ -34,6 +34,7 @@ constexpr uint16_t kRegCommand = 0x37;
 constexpr uint16_t kRegCapr = 0x38;
 constexpr uint16_t kRegCbr = 0x3a;
 constexpr uint16_t kRegIsr = 0x3e;
+constexpr uint16_t kPacketInterrupts = 0x000f; // RX/TX success or error.
 constexpr uint16_t kRegImr = 0x3c;
 constexpr uint16_t kRegTcr = 0x40;
 constexpr uint16_t kRegRcr = 0x44;
@@ -74,7 +75,7 @@ uint32_t g_rx_errors = 0;
 bool g_present = false;
 bool g_up = false;
 
-// Estado del camino interrupt-driven (INTx via _PRT/IOAPIC).
+// Interrupt state for the platform's PCI route.
 volatile uint32_t g_irq_count = 0;
 bool g_irq_routed = false;
 
@@ -135,13 +136,6 @@ bool wait_for_clear_reset() {
         }
     }
     return false;
-}
-
-void clear_interrupt_status() {
-    const uint16_t status = in16(static_cast<uint16_t>(g_io_base + kRegIsr));
-    if (status != 0) {
-        out16(static_cast<uint16_t>(g_io_base + kRegIsr), status);
-    }
 }
 
 bool transmit(const void* frame, size_t length) {
@@ -209,7 +203,12 @@ void poll_receive() {
     }
 
     const uint64_t flags = irq_save();
-    clear_interrupt_status();
+    // A routed device keeps its INTx asserted until the IRQ handler sees it.
+    // The periodic RX service can run before that handler acquires the lock.
+    if (!g_irq_routed) {
+        const uint16_t status = in16(g_io_base + kRegIsr);
+        if (status) out16(g_io_base + kRegIsr, status);
+    }
     auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
     while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
         uint8_t* packet = rx + g_cur_rx;
@@ -260,8 +259,12 @@ void poll_receive() {
     irq_restore(flags);
 }
 
-// Drain RX and clear the interrupt status before acknowledging the level-triggered line.
+// Check ownership on shared lines before draining RX and clearing the ISR.
 void irq_handler() {
+    if (!g_up) return;
+    const uint16_t status = in16(g_io_base + kRegIsr);
+    if (!(status & kPacketInterrupts)) return;
+    out16(g_io_base + kRegIsr, status);
     g_irq_count = g_irq_count + 1;
     if (g_irq_count == 1) {
         console::write("rtl8139: first INTx received\n");
@@ -348,11 +351,9 @@ bool bring_up() {
     g_cur_rx = 0;
     g_up = true;
 
-    // Si la INTx quedo ruteada (en probe), habilitar las interrupciones del
-    // rtl8139 (ROK|TOK|RER|TER) => interrupt-driven. Si no, IMR=0 y seguimos en
-    // polling (fallback). El IMR ya se puso en 0 arriba (linea kRegImr).
+    // The IMR remains zero on the polling path.
     if (g_irq_routed) {
-        out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x000F);
+        out16(static_cast<uint16_t>(g_io_base + kRegImr), kPacketInterrupts);
     }
 
     rtl_log(

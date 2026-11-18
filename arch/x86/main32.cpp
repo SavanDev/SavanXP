@@ -452,11 +452,11 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     pci::initialize();
     mount_root_filesystem();
     device::initialize();
-    services::initialize_firmware(info_address);
+    const uint32_t rsdp_physical = services::initialize_firmware(info_address);
     i386::smp::initialize(info_address);
     ioapic::initialize();
     ps2_32::initialize();
-    services::initialize();
+    services::initialize(rsdp_physical);
     boot::FramebufferInfo framebuffer = {};
     framebuffer.address = reinterpret_cast<void*>(static_cast<uintptr_t>(fb32::address()));
     framebuffer.width = fb32::info().width;

@@ -1881,9 +1881,74 @@ ExtINT, and BIOS-assigned PCI INTx uses the PIC until the reference AML
 portion of milestone 6.2. The reference BSP timer, AML, and the other
 internal and visual gaps still need review before v0.4.0 parity.
 
+## 20. Resolving PCI interrupts through firmware AML
+
+The BIOS interrupt-line register provided a useful PIC fallback for RTL8139.
+It does not describe how firmware connects an INTx pin to an I/O APIC input.
+Packets could also arrive through polling, so the previous network smoke
+could pass without exercising even one hardware interrupt. The port now runs
+the same vendored uACPI interpreter as v0.4.0 and asks firmware for the routing
+table appropriate to the I/O APIC with `_PIC(1)` when that method exists.
+Root bridge selection uses segment zero and the device's bus. `_PRT` matches
+the slot, function or wildcard, and INTx pin. A direct entry supplies the
+GSI, while a link entry supplies it and the electrical mode through `_CRS`.
+The previous BIOS/PIC route is still available when firmware resolution fails.
+
+The native bridge accepts the physical Multiboot RSDP, uses uncached
+supervisor mappings and returns the complete page span when unmapping. The
+old unmap calculation omitted the first-page offset, which could leave a
+second page mapped when a firmware table straddled a boundary. The bridge
+also reuses the native clock, saves 32-bit EFLAGS and rejects PCI configuration
+access outside the aligned legacy register window. It runs on the BSP while
+APs are parked. Namespace loading attaches uACPI to the existing SCI vector
+for its own event machinery and clears fixed-event enables. The native ACPI
+driver rearms the power button after that step, including on failure.
+Full namespace initialization and GPE activation remain deferred as in
+the reference boot path.
+
+The initial routing experiment could log an IRQ while the RTL8139's device
+status was already empty. The periodic RX service could acknowledge the
+interrupt before the external vector acquired the kernel lock. Checking the
+device status exposed the problem on both tested chipsets even though
+packet tests passed. For routed devices, the interrupt handler now checks
+and clears the adapter's pending packet status before EOI. RX polling still
+drains the ring. With no route, polling also clears the status.
+
+On QEMU i440fx, the RTL8139 INTA link resolved to GSI 11 and delivered a
+device-owned interrupt on vector 53. Q35 resolved the link to GSI 23 and
+also delivered the interrupt. The normal network gate checks both the
+firmware result and actual ISR service. The same gate rejected the
+`86d8c3a7` ISO with its missing AML-derived route. The Q35 check ran the same
+gate with a `SAVANXP_QEMU` wrapper that selected `-machine q35`, replaced the
+IDE drive connection with `if=none,id=svdisk`, and appended
+`-device virtio-blk-pci,drive=svdisk,disable-legacy=on`. It kept the RTL8139
+and the same SxFS snapshot.
+
+The power smoke passed after AML setup, including a QMP power-button
+shutdown and a separate boot with `qemu32,-apic`. The TCP suite passed
+both with the AML route and with `qemu32,-apic`, where the RTL8139 still
+reported a device-owned interrupt through the PIC. The 32 MiB ELF32
+shared-library check and the isolated Doom rebuild also passed.
+
+```sh
+./build.sh build
+./build.sh iso
+./build.sh smoke net-smoke --smp 4
+./build.sh smoke tcp-smoke --smp 4
+./build.sh smoke power-smoke --smp 4
+./build.sh smoke shared-memory
+./tools/verify_doom_persistence.sh --wad path/to/doom1.wad
+```
+
+These runs cover link-based routes on two emulated chipsets. Direct
+`_PRT` entries are supported by the reused resolver, but these
+firmware tables exercised link resources. PCI bridge swizzling, ECAM and
+enabling device AML event methods remain outside the verified scope. This
+closes the reference root-bus PCI interrupt path within milestone 6.2.
+
 ## Continuing the study
 
-Trace the reference AML namespace and PCI interrupt routing, then review the
-remaining timer and internal/visual differences against v0.4.0. Keep the
-reference's measured policy distinct from proposed SMP extensions, and
-preserve evidence when replacing adaptations.
+Review the wall clock and BSP timer against the pinned reference, then
+trace the remaining internal and visual differences. Keep the reference's
+measured policy distinct from proposed future extensions, and preserve
+evidence when replacing adaptations.

@@ -66,21 +66,8 @@ void enable_irq(uint8_t irq) { i386::cpu::enable_irq(irq); }
 void disable_interrupts() { i386::cpu::disable_interrupts(); }
 [[noreturn]] void halt_forever() { i386::cpu::halt_forever(); }
 }
-namespace uacpi_glue {
-uint8_t route_pci_intx(uint8_t bus, uint8_t slot, uint8_t function, arch::x86_64::IrqHandler handler) {
-    // Use the BIOS's PIC assignment until AML can resolve PCI _PRT routes.
-    // The ELCR selects level triggering for these legacy lines.
-    const uint8_t irq = pci::read_config_u8(bus, slot, function, 0x3c);
-    if (irq < 3 || irq >= 16 || irq == 8 || irq == 13) return 0;
-    const uint16_t elcr = irq < 8 ? 0x4d0 : 0x4d1;
-    out8(elcr, in8(elcr) | (1u << (irq & 7)));
-    if (!i386::cpu::register_shared_irq_handler(irq, handler)) return 0;
-    i386::cpu::enable_irq(irq);
-    return 0x20 + irq;
-}
-}
 namespace i386::services {
-void initialize_firmware(uint32_t information) {
+uint32_t initialize_firmware(uint32_t information) {
     boot::BootInfo boot = {};
     boot.hhdm_offset = paging::kDirectMapBase;
     const auto* bytes = reinterpret_cast<const uint8_t*>(information);
@@ -94,9 +81,11 @@ void initialize_firmware(uint32_t information) {
         offset = (offset + tag[1] + 7) & ~7u;
     }
     acpi::initialize(boot);
+    return boot.acpi_rsdp_address;
 }
-void initialize() {
+void initialize(uint32_t rsdp_physical) {
     acpi::start_sci();
+    uacpi_glue::bringup(rsdp_physical);
     audio::register_driver(ac97::driver());
     audio::register_driver(virtio_sound::driver());
     audio::bind_best();

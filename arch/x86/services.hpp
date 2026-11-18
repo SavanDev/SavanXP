@@ -1,8 +1,8 @@
 #pragma once
 #include <stdint.h>
 namespace i386::services {
-void initialize_firmware(uint32_t multiboot_info);
-void initialize();
+uint32_t initialize_firmware(uint32_t multiboot_info);
+void initialize(uint32_t rsdp_physical);
 }
 // The reference network stack waits inside a non-preemptible kernel call.
 // Only device IRQs run during this wait; the user context is not rescheduled.

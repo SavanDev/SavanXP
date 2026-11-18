@@ -1,13 +1,5 @@
-// uacpi_glue.cpp — Capa de host (uacpi_kernel_*) que uACPI necesita del kernel.
-//
-// Implementa la kernel-api de uACPI mapeandola a los subsistemas de SavanXP
-// (heap, vmm, pci, timer, ioapic). uACPI vive vendorizado en vendor/uacpi/.
-//
-// Supuestos validos HOY en SavanXP (si cambian, revisar los bloques marcados):
-//   * Monocore: no hay bring-up de CPUs secundarias -> sincronizacion trivial.
-//   * Kernel no-preemptivo: el work de GPE/Notify puede correr sincrono (por
-//     ahora) sin romper reentrancia grave.
-
+// The reference AML interpreter runs on the BSP during boot. APs are parked,
+// and the existing ACPI driver owns the fixed power-button event.
 extern "C" {
 #include "uacpi/kernel_api.h"
 #include "uacpi/namespace.h"
@@ -22,14 +14,14 @@ extern "C" {
 #include <stdint.h>
 
 #include "kernel/acpi.hpp"
-#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/timer.hpp"
-#include "kernel/vmm.hpp"
+#include "../arch/x86/paging.hpp"
+#include "kernel/uacpi_glue.hpp"
 
 namespace {
 
@@ -41,48 +33,12 @@ inline uint8_t  in8(uint16_t port)  { uint8_t  v; asm volatile("inb %1,%0":"=a"(
 inline uint16_t in16(uint16_t port) { uint16_t v; asm volatile("inw %1,%0":"=a"(v):"Nd"(port)); return v; }
 inline uint32_t in32(uint16_t port) { uint32_t v; asm volatile("inl %1,%0":"=a"(v):"Nd"(port)); return v; }
 
-// --- Fuente de tiempo independiente de interrupciones (TSC) ---
-// Durante el bringup de uACPI las interrupciones estan deshabilitadas, asi que
-// timer::ticks() (que avanza por IRQ) no avanza. Calibramos el TSC contra el PIT
-// canal 2 una sola vez, haciendo polling del bit OUT (0x61 bit5) sin IRQ.
-uint64_t g_tsc_per_us = 0;
-uint64_t g_tsc_base = 0;
+uint64_t g_rsdp_physical;
+bool g_namespace_ready;
 
-inline uint64_t rdtsc() {
-    uint32_t lo, hi;
-    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (uint64_t(hi) << 32) | lo;
-}
-
-void calibrate_tsc() {
-    if (g_tsc_per_us != 0) {
-        return; // ya calibrado: el arranque lo pide antes que uACPI
-    }
-    constexpr uint16_t kPitCount = 11932; // ~10ms @ 1193182 Hz
-    const uint8_t saved = in8(0x61);
-    // Gate ch2 on (bit0=1), speaker off (bit1=0).
-    out8(0x61, static_cast<uint8_t>((saved & ~0x02) | 0x01));
-    // Ch2, lobyte/hibyte, modo 0 (interrupt on terminal count), binario.
-    out8(0x43, 0xB0);
-    out8(0x42, kPitCount & 0xFF);
-    out8(0x42, static_cast<uint8_t>(kPitCount >> 8));
-    const uint64_t start = rdtsc();
-    while ((in8(0x61) & 0x20) == 0) { /* espera terminal count */ }
-    const uint64_t end = rdtsc();
-    out8(0x61, saved);
-    g_tsc_per_us = (end - start) / 10000; // 10ms = 10000us
-    if (g_tsc_per_us == 0) g_tsc_per_us = 1;
-    g_tsc_base = rdtsc();
-}
-
-// RSDP fisico, cacheado desde boot_info al inicializar (ver set_rsdp_physical).
-uint64_t g_rsdp_physical = 0;
-
-// Un unico SCI: guardamos el handler+ctx de uACPI y registramos un trampolin
-// sin-argumentos que es lo que expone arch::x86_64::register_irq_handler.
+// uACPI shares the existing SCI vector through this argument-free trampoline.
 uacpi_interrupt_handler g_sci_handler = nullptr;
 uacpi_handle            g_sci_ctx = nullptr;
-uint32_t                g_sci_irq = 0;
 
 void sci_trampoline() {
     if (g_sci_handler) {
@@ -110,52 +66,27 @@ struct Event { volatile uint32_t count; };
 
 } // namespace
 
-// Se llama una vez desde el bootstrap ACPI antes de uacpi_initialize().
-// boot_info.acpi_rsdp_address viene HHDM-virtual (Limine); lo normalizamos a fisico.
 namespace uacpi_glue {
-void set_rsdp_physical(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
-    g_rsdp_physical = (rsdp_from_bootinfo >= hhdm_offset)
-                        ? rsdp_from_bootinfo - hhdm_offset
-                        : rsdp_from_bootinfo;
-}
+bool bringup(uint64_t rsdp_physical) {
+    if (!rsdp_physical || !ioapic::ready()) return false;
+    g_rsdp_physical = rsdp_physical;
 
-// Bringup de uACPI hasta cargar e inicializar el namespace (interpreta el AML de
-// la DSDT/SSDTs). NO habilita GPEs ni instala el SCI todavia (eso es una etapa
-// posterior; por ahora el boton de power lo sigue manejando acpi::start_sci).
-bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
-    // Reloj monotono independiente de IRQ, requerido por stall/sleep/timeouts.
-    calibrate_tsc();
-    set_rsdp_physical(rsdp_from_bootinfo, hhdm_offset);
-
-    uacpi_status st = uacpi_initialize(0);
-    if (uacpi_unlikely_error(st)) {
-        console::printf("uacpi: initialize fallo: %s\n", uacpi_status_to_string(st));
-        return false;
+    uacpi_status status = uacpi_initialize(0);
+    if (status == UACPI_STATUS_OK) status = uacpi_namespace_load();
+    if (status == UACPI_STATUS_OK) {
+        // Firmware can return a different _PRT for the PIC and I/O APIC.
+        status = uacpi_set_interrupt_model(UACPI_INTERRUPT_MODEL_IOAPIC);
     }
-
-    st = uacpi_namespace_load();
-    if (uacpi_unlikely_error(st)) {
-        console::printf("uacpi: namespace_load fallo: %s\n", uacpi_status_to_string(st));
-        return false;
-    }
-
-    // NOTA: uacpi_namespace_initialize() (corre _INI/_STA) se difiere a la etapa
-    // de eventos. Esos metodos acceden a campos con Lock rule y necesitan el
-    // handshake del ACPI Global Lock, que a su vez requiere el subsistema de
-    // GPE/SCI de uACPI activo y con interrupciones habilitadas. Aca corremos
-    // pre-scheduler con IRQ off; el namespace ya cargado alcanza para consultas
-    // (enumeracion, _CRS, _PRT). Ver [[uacpi-ioapic-work]].
-    console::printf("uacpi: namespace cargado (%s), AML interpretado ok\n",
-                    uacpi_status_to_string(st));
-
-    // uacpi_initialize apaga TODOS los eventos fijos (initialize_fixed_events en
-    // event.c), incluido el PWRBTN_EN que acpi::start_sci acababa de habilitar:
-    // sin esto el boton de power no genera SCI y la maquina no se apaga. Mientras
-    // la ACPI hand-rolled siga siendo la dueña del boton (uACPI todavia no toma
-    // los eventos, ver la nota de arriba), el rearme va aca, pegado a la causa.
-    // Cuando uACPI tome los eventos esto se invierte: el handler de PWRBTN pasa a
-    // instalarse con uacpi_install_fixed_event_handler y esta llamada se va.
+    // Initialization clears fixed-event enables even if a later stage fails.
     acpi::enable_power_button();
+    if (uacpi_unlikely_error(status)) {
+        console::printf("uacpi: AML boot setup failed: %s\n", uacpi_status_to_string(status));
+        return false;
+    }
+    // Namespace loading chains uACPI on the SCI. As in v0.4.0, defer
+    // _INI/_STA and GPE activation while boot runs with interrupts disabled.
+    g_namespace_ready = true;
+    console::write_line("uacpi: AML namespace loaded for IOAPIC routing");
     return true;
 }
 
@@ -253,63 +184,77 @@ uacpi_iteration_decision prt_dump_cb(void* user, uacpi_namespace_node* node, uac
 
 // Recorre los root bridges PCI/PCIe y resuelve los link devices del _PRT a GSIs.
 void dump_pci_routing() {
+    if (!g_namespace_ready) return;
     PrtDumpCtx ctx = {};
     uacpi_find_devices("PNP0A03", prt_dump_cb, &ctx); // PCI root bridge
     uacpi_find_devices("PNP0A08", prt_dump_cb, &ctx); // PCIe root bridge
 }
 
-// Busca en el _PRT de un root la entrada (device, pin) y resuelve su GSI.
+// Resolve the INTx entry on the device's root bridge.
 struct RouteCtx {
-    uint32_t target_dev;
-    uint8_t target_pin; // 0-based (0=INTA)
+    uint8_t bus;
+    uint8_t device;
+    uint8_t function;
+    uint8_t target_pin; // Zero-based (0 = INTA).
     LinkIrq result;
-    bool found;
+    const char* source;
 };
 
 uacpi_iteration_decision route_find_cb(void* user, uacpi_namespace_node* node, uacpi_u32) {
     RouteCtx* ctx = static_cast<RouteCtx*>(user);
+    uacpi_u64 segment = 0, bus = 0;
+    auto status = uacpi_eval_integer(node, "_SEG", nullptr, &segment);
+    if (status != UACPI_STATUS_NOT_FOUND && (uacpi_unlikely_error(status) || segment != 0))
+        return UACPI_ITERATION_DECISION_CONTINUE;
+    status = uacpi_eval_integer(node, "_BBN", nullptr, &bus);
+    if (status != UACPI_STATUS_NOT_FOUND && (uacpi_unlikely_error(status) || bus != ctx->bus))
+        return UACPI_ITERATION_DECISION_CONTINUE;
+    if (status == UACPI_STATUS_NOT_FOUND && ctx->bus != 0)
+        return UACPI_ITERATION_DECISION_CONTINUE;
+
     uacpi_pci_routing_table* prt = nullptr;
     if (uacpi_unlikely_error(uacpi_get_pci_routing_table(node, &prt))) {
         return UACPI_ITERATION_DECISION_CONTINUE;
     }
     for (uacpi_size i = 0; i < prt->num_entries; ++i) {
         const uacpi_pci_routing_table_entry& e = prt->entries[i];
-        if ((e.address >> 16) != ctx->target_dev || e.pin != ctx->target_pin) {
+        const uint16_t function = uint16_t(e.address);
+        if ((e.address >> 16) != ctx->device || e.pin != ctx->target_pin ||
+            (function != 0xffff && function != ctx->function)) {
             continue;
         }
         if (e.source == nullptr) {
-            // GSI directa: PCI INTx es level/active-low por electrica.
+            // A direct PCI GSI uses the standard level/active-low mode.
             ctx->result.gsi = e.index;
             ctx->result.triggering = UACPI_TRIGGERING_LEVEL;
             ctx->result.polarity = UACPI_POLARITY_ACTIVE_LOW;
-            ctx->found = ctx->result.found = true;
-        } else if (resolve_link_gsi(e.source, ctx->result)) {
-            ctx->found = true;
+            ctx->source = "direct GSI";
+        } else if (e.index == 0 && resolve_link_gsi(e.source, ctx->result)) {
+            ctx->source = "link _CRS";
         }
-        break;
+        if (ctx->source) break;
     }
     uacpi_free_pci_routing_table(prt);
-    return ctx->found ? UACPI_ITERATION_DECISION_BREAK : UACPI_ITERATION_DECISION_CONTINUE;
+    return ctx->source ? UACPI_ITERATION_DECISION_BREAK : UACPI_ITERATION_DECISION_CONTINUE;
 }
 
-uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::x86_64::IrqHandler handler) {
-    const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3D); // Interrupt Pin
-    if (pin < 1 || pin > 4) {
-        return 0; // el dispositivo no usa INTx
-    }
+static uint8_t route_pci_intx_ioapic(uint8_t bus, uint8_t dev, uint8_t func, uint8_t pin,
+                                     arch::x86_64::IrqHandler handler) {
+    if (!g_namespace_ready) return 0;
     RouteCtx ctx = {};
-    ctx.target_dev = dev;
+    ctx.bus = bus;
+    ctx.device = dev;
+    ctx.function = func;
     ctx.target_pin = static_cast<uint8_t>(pin - 1);
     uacpi_find_devices("PNP0A03", route_find_cb, &ctx);
-    if (!ctx.found) {
+    if (!ctx.source) {
         uacpi_find_devices("PNP0A08", route_find_cb, &ctx);
     }
-    if (!ctx.found) {
-        console::printf("uacpi: INTx dev %u sin entrada _PRT\n", static_cast<unsigned>(dev));
+    if (!ctx.source) {
+        console::printf("uacpi: INTx dev %u has no matching _PRT entry\n", static_cast<unsigned>(dev));
         return 0;
     }
-    // Programar el IOAPIC con la polaridad/trigger que declara el firmware (_CRS).
+    // Apply the firmware-provided polarity and trigger mode.
     const ioapic::Polarity pol = ctx.result.polarity == UACPI_POLARITY_ACTIVE_LOW
                                      ? ioapic::Polarity::active_low
                                      : ioapic::Polarity::active_high;
@@ -317,11 +262,25 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
                                     ? ioapic::Trigger::level
                                     : ioapic::Trigger::edge;
     const uint8_t vec = ioapic::route_gsi(ctx.result.gsi, pol, trg, handler);
-    console::printf("uacpi: INTx dev %u INT%c -> GSI %u %s (vector %u)\n",
+    console::printf("uacpi: INTx dev %u INT%c -> GSI %u %s (vector %u, %s)\n",
                     static_cast<unsigned>(dev), static_cast<char>('A' + ctx.target_pin),
-                    static_cast<unsigned>(ctx.result.gsi), vec ? "ruteado" : "FALLO",
-                    static_cast<unsigned>(vec));
+                    static_cast<unsigned>(ctx.result.gsi), vec ? "routed" : "unavailable",
+                    static_cast<unsigned>(vec), ctx.source);
     return vec;
+}
+
+uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
+                       arch::x86_64::IrqHandler handler) {
+    const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3d);
+    if (pin < 1 || pin > 4) return 0;
+    if (const uint8_t vector = route_pci_intx_ioapic(bus, dev, func, pin, handler))
+        return vector;
+
+    const uint8_t irq = pci::read_config_u8(bus, dev, func, 0x3c);
+    if (irq < 3 || irq >= 16 || irq == 8 || irq == 13) return 0;
+    if (!arch::x86_64::register_irq_handler(irq, handler)) return 0;
+    arch::x86_64::enable_irq(irq);
+    return 0x20 + irq;
 }
 } // namespace uacpi_glue
 
@@ -343,16 +302,16 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr* out) {
 // ======================= Mapeo de memoria =======================
 void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len) {
     void* virt = nullptr;
-    // Flags: presente + escribible + cache-disable (registros ACPI son MMIO).
-    if (!vm::map_kernel_mmio(addr, len,
-            vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable, &virt)) {
-        return nullptr;
-    }
+    if (!i386::paging::map_kernel_mmio(addr, len, &virt)) return nullptr;
     return virt;
 }
 void uacpi_kernel_unmap(void* addr, uacpi_size len) {
-    const uint64_t pages = (len + 0xFFF) / 0x1000;
-    vm::unmap_kernel_pages(addr, pages);
+    // The mapper returns the original offset within the first mapped page.
+    const uintptr_t address = reinterpret_cast<uintptr_t>(addr);
+    const uint32_t offset = address & (i386::paging::kPageBytes - 1);
+    const uint32_t pages = (uint64_t(offset) + len + i386::paging::kPageBytes - 1) /
+                           i386::paging::kPageBytes;
+    i386::paging::unmap_kernel_pages(reinterpret_cast<void*>(address - offset), pages);
 }
 
 // ======================= MMIO directo =======================
@@ -366,7 +325,8 @@ void uacpi_kernel_mmio_write32(void* p, uacpi_u32 v) { *reinterpret_cast<volatil
 void uacpi_kernel_mmio_write64(void* p, uacpi_u64 v) { *reinterpret_cast<volatile uint64_t*>(p) = v; }
 
 // ======================= I/O ports =======================
-uacpi_status uacpi_kernel_io_map(uacpi_io_addr base, uacpi_size, uacpi_handle* out) {
+uacpi_status uacpi_kernel_io_map(uacpi_io_addr base, uacpi_size length, uacpi_handle* out) {
+    if (base >= 0x10000 || length > 0x10000 - base) return UACPI_STATUS_INVALID_ARGUMENT;
     *out = io_pack(base);
     return UACPI_STATUS_OK;
 }
@@ -379,34 +339,55 @@ uacpi_status uacpi_kernel_io_write8 (uacpi_handle h, uacpi_size off, uacpi_u8  v
 uacpi_status uacpi_kernel_io_write16(uacpi_handle h, uacpi_size off, uacpi_u16 v) { out16(io_base(h) + off, v); return UACPI_STATUS_OK; }
 uacpi_status uacpi_kernel_io_write32(uacpi_handle h, uacpi_size off, uacpi_u32 v) { out32(io_base(h) + off, v); return UACPI_STATUS_OK; }
 
-// ======================= PCI config =======================
-// LIMITACION: pci.cpp usa CF8/CFC (256 bytes legacy). offset >= 256 (config
-// PCIe extendida via ECAM) devolvera basura. Cubrir cuando exista ECAM/MCFG.
+// CF8/CFC exposes only the aligned registers of segment zero's first 256 bytes.
 uacpi_status uacpi_kernel_pci_device_open(uacpi_pci_address a, uacpi_handle* out) {
-    // a.segment se ignora (un solo segmento en SavanXP hoy).
+    if (a.segment != 0 || a.device > 31 || a.function > 7)
+        return UACPI_STATUS_INVALID_ARGUMENT;
     *out = pci_pack(a.bus, a.device, a.function);
     return UACPI_STATUS_OK;
 }
 void uacpi_kernel_pci_device_close(uacpi_handle) {}
 
-uacpi_status uacpi_kernel_pci_read8 (uacpi_handle h, uacpi_size off, uacpi_u8*  v) { auto d=pci_unpack(h); *v=pci::read_config_u8 (d.bus,d.slot,d.func,off); return UACPI_STATUS_OK; }
-uacpi_status uacpi_kernel_pci_read16(uacpi_handle h, uacpi_size off, uacpi_u16* v) { auto d=pci_unpack(h); *v=pci::read_config_u16(d.bus,d.slot,d.func,off); return UACPI_STATUS_OK; }
-uacpi_status uacpi_kernel_pci_read32(uacpi_handle h, uacpi_size off, uacpi_u32* v) { auto d=pci_unpack(h); *v=pci::read_config_u32(d.bus,d.slot,d.func,off); return UACPI_STATUS_OK; }
-uacpi_status uacpi_kernel_pci_write16(uacpi_handle h, uacpi_size off, uacpi_u16 v){ auto d=pci_unpack(h); pci::write_config_u16(d.bus,d.slot,d.func,off,v); return UACPI_STATUS_OK; }
-uacpi_status uacpi_kernel_pci_write32(uacpi_handle h, uacpi_size off, uacpi_u32 v){ auto d=pci_unpack(h); pci::write_config_u32(d.bus,d.slot,d.func,off,v); return UACPI_STATUS_OK; }
-uacpi_status uacpi_kernel_pci_write8 (uacpi_handle h, uacpi_size off, uacpi_u8  v){ auto d=pci_unpack(h); pci::write_config_u8 (d.bus,d.slot,d.func,off,v); return UACPI_STATUS_OK; }
+uacpi_status uacpi_kernel_pci_read8(uacpi_handle handle, uacpi_size offset, uacpi_u8* value) {
+    if (offset >= 256) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    *value = pci::read_config_u8(addr.bus, addr.slot, addr.func, uint8_t(offset));
+    return UACPI_STATUS_OK;
+}
+uacpi_status uacpi_kernel_pci_read16(uacpi_handle handle, uacpi_size offset, uacpi_u16* value) {
+    if (offset >= 256 || offset % sizeof(uacpi_u16)) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    *value = pci::read_config_u16(addr.bus, addr.slot, addr.func, uint8_t(offset));
+    return UACPI_STATUS_OK;
+}
+uacpi_status uacpi_kernel_pci_read32(uacpi_handle handle, uacpi_size offset, uacpi_u32* value) {
+    if (offset >= 256 || offset % sizeof(uacpi_u32)) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    *value = pci::read_config_u32(addr.bus, addr.slot, addr.func, uint8_t(offset));
+    return UACPI_STATUS_OK;
+}
+
+uacpi_status uacpi_kernel_pci_write8(uacpi_handle handle, uacpi_size offset, uacpi_u8 value) {
+    if (offset >= 256) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    pci::write_config_u8(addr.bus, addr.slot, addr.func, uint8_t(offset), value);
+    return UACPI_STATUS_OK;
+}
+uacpi_status uacpi_kernel_pci_write16(uacpi_handle handle, uacpi_size offset, uacpi_u16 value) {
+    if (offset >= 256 || offset % sizeof(uacpi_u16)) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    pci::write_config_u16(addr.bus, addr.slot, addr.func, uint8_t(offset), value);
+    return UACPI_STATUS_OK;
+}
+uacpi_status uacpi_kernel_pci_write32(uacpi_handle handle, uacpi_size offset, uacpi_u32 value) {
+    if (offset >= 256 || offset % sizeof(uacpi_u32)) return UACPI_STATUS_INVALID_ARGUMENT;
+    const auto addr = pci_unpack(handle);
+    pci::write_config_u32(addr.bus, addr.slot, addr.func, uint8_t(offset), value);
+    return UACPI_STATUS_OK;
+}
 
 // ======================= Heap =======================
-// Cargar el namespace es el tramo mas largo del arranque (segundos bajo TCG)
-// y no vuelve al kernel por ningun otro lado: sin interrupciones no hay tick
-// que anime el splash y sin log no hay linea que lo pulse. Reservar memoria
-// es lo unico que uACPI hace todo el tiempo mientras construye el arbol, asi
-// que de ahi sale el pulso. animate() sale por derecha sola si la fase del
-// reloj no cambio.
-void* uacpi_kernel_alloc(uacpi_size size) {
-    boot_screen::animate();
-    return heap::allocate(size);
-}
+void* uacpi_kernel_alloc(uacpi_size size) { return heap::allocate(size); }
 void* uacpi_kernel_alloc_zeroed(uacpi_size size) {
     void* p = heap::allocate(size);
     if (p) { for (uacpi_size i = 0; i < size; ++i) reinterpret_cast<uint8_t*>(p)[i] = 0; }
@@ -414,33 +395,28 @@ void* uacpi_kernel_alloc_zeroed(uacpi_size size) {
 }
 void uacpi_kernel_free(void* mem) { heap::free(mem); }
 
-// ======================= Tiempo (TSC, sin interrupciones) =======================
-uacpi_u64 uacpi_kernel_get_nanoseconds_since_boot(void) {
-    if (g_tsc_per_us == 0) return 0;
-    return ((rdtsc() - g_tsc_base) * 1000ULL) / g_tsc_per_us;
-}
+// Native monotonic time advances with IF clear during boot.
+uacpi_u64 uacpi_kernel_get_nanoseconds_since_boot(void) { return timer::monotonic_ns(); }
 void uacpi_kernel_stall(uacpi_u8 usec) {
-    const uint64_t target = rdtsc() + uint64_t(usec) * g_tsc_per_us;
-    while (rdtsc() < target) { asm volatile("pause"); }
+    const uint64_t target = timer::monotonic_ns() + uint64_t(usec) * 1000;
+    while (timer::monotonic_ns() < target) asm volatile("pause");
 }
 void uacpi_kernel_sleep(uacpi_u64 msec) {
-    const uint64_t target = rdtsc() + msec * 1000ULL * g_tsc_per_us;
-    while (rdtsc() < target) { asm volatile("pause"); }
+    const uint64_t target = timer::monotonic_ns() + msec * 1000000;
+    while (timer::monotonic_ns() < target) asm volatile("pause");
 }
 
 // ======================= Interrupciones (flags) =======================
 uacpi_interrupt_state uacpi_kernel_disable_interrupts(void) {
-    uint64_t flags;
-    asm volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+    uintptr_t flags;
+    asm volatile("pushfl; pop %0; cli" : "=r"(flags) :: "memory");
     return static_cast<uacpi_interrupt_state>(flags);
 }
 void uacpi_kernel_restore_interrupts(uacpi_interrupt_state state) {
-    asm volatile("push %0; popfq" :: "r"(uint64_t(state)) : "memory", "cc");
+    asm volatile("push %0; popfl" :: "r"(uintptr_t(state)) : "memory", "cc");
 }
 
-// ======================= Spinlocks (monocore) =======================
-// Sin SMP no hay contencion: el "lock" solo salva/restaura IF. Reemplazar por
-// un spinlock real cuando exista SMP.
+// All interpreter calls run on the BSP before AP scheduling starts.
 uacpi_handle uacpi_kernel_create_spinlock(void) { return reinterpret_cast<uacpi_handle>(1); }
 void uacpi_kernel_free_spinlock(uacpi_handle) {}
 uacpi_cpu_flags uacpi_kernel_lock_spinlock(uacpi_handle) {
@@ -450,9 +426,7 @@ void uacpi_kernel_unlock_spinlock(uacpi_handle, uacpi_cpu_flags f) {
     uacpi_kernel_restore_interrupts(static_cast<uacpi_interrupt_state>(f));
 }
 
-// ======================= Mutex (monocore, un solo hilo) =======================
-// No hay concurrencia real: acquire/release son no-ops que siempre exitan. El
-// handle no-nulo basta para que uACPI lo trate como valido.
+// Boot AML queries have a single caller.
 uacpi_handle uacpi_kernel_create_mutex(void) { return reinterpret_cast<uacpi_handle>(1); }
 void uacpi_kernel_free_mutex(uacpi_handle) {}
 uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle, uacpi_u16) { return UACPI_STATUS_OK; }
@@ -512,7 +486,6 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
     if (g_sci_handler) return UACPI_STATUS_ALREADY_EXISTS;
     g_sci_handler = handler;
     g_sci_ctx = ctx;
-    g_sci_irq = irq;
 
     bool routed = false;
     if (ioapic::ready()) {
@@ -552,86 +525,3 @@ uacpi_status uacpi_kernel_wait_for_work_completion(void) {
 }
 
 } // extern "C"
-
-namespace timer {
-
-// --- Reloj de pared ---------------------------------------------------------
-//
-// Dos fuentes, y cual es la buena depende de donde corra el kernel. El TSC
-// cuenta ciclos del procesador real; el PM timer de la ACPI es un contador del
-// chipset a 3.579545 MHz. En metal desnudo miden lo mismo. Adentro de un
-// hipervisor no: el tiempo de la maquina virtual no es el del reloj de pared
-// del host, y el PM timer es el que va con el primero -- que es tambien el que
-// mueve a los devices emulados. Ver timer::adopt_pm_timer() en timer.hpp.
-//
-// El acumulador no es reentrante. Alcanza mientras los syscalls corran con
-// IF=0 (nadie puede entrar dos veces) y haya un solo core planificando; cuando
-// el scheduler use los APs esto pide un lock, igual que el resto del kernel.
-uint16_t g_pm_port = 0;
-uint32_t g_pm_last = 0;
-uint64_t g_pm_ticks = 0;     // acumulado desde que se adopto, ya sin vueltas
-uint64_t g_pm_epoch_ns = 0;  // lo que marcaba el TSC al adoptarlo, para no saltar
-
-uint64_t pm_timer_ns() {
-    const uint32_t raw = in32(g_pm_port);
-    g_pm_ticks += static_cast<uint32_t>(raw - g_pm_last);
-    g_pm_last = raw;
-    // Partido en segundos y resto: ticks * 1e9 desborda un uint64 a la hora y
-    // media de encendido.
-    const uint64_t seconds = g_pm_ticks / acpi::kPmTimerHz;
-    const uint64_t remainder = g_pm_ticks % acpi::kPmTimerHz;
-    return g_pm_epoch_ns + seconds * 1000000000ull +
-           (remainder * 1000000000ull) / acpi::kPmTimerHz;
-}
-
-void calibrate_monotonic() {
-    calibrate_tsc();
-}
-
-void adopt_pm_timer() {
-    if (g_pm_port != 0) {
-        return;
-    }
-    if (!acpi::ready() || acpi::pm_timer_port() == 0) {
-        console::printf("timer: sin PM timer ACPI, el reloj de pared sigue en el TSC\n");
-        return;
-    }
-    // Con 24 bits el contador da la vuelta cada 4,7 s y no hay forma honesta de
-    // saber cuantas dio si nadie lo leyo en ese rato. Mejor el TSC, que podra
-    // irse de ritmo pero no pierde tiempo de golpe.
-    if (!acpi::pm_timer_is_32bit()) {
-        console::printf("timer: PM timer ACPI de 24 bits (0x%x), el reloj de pared sigue en el TSC\n",
-                        static_cast<unsigned>(acpi::pm_timer_port()));
-        return;
-    }
-
-    g_pm_epoch_ns = uacpi_kernel_get_nanoseconds_since_boot();
-    g_pm_last = acpi::pm_timer_read();
-    g_pm_ticks = 0;
-    g_pm_port = acpi::pm_timer_port();
-    console::printf("timer: reloj de pared por PM timer ACPI (0x%x, 32 bits)\n",
-                    static_cast<unsigned>(g_pm_port));
-}
-
-uint64_t monotonic_ns() {
-    if (g_pm_port != 0) {
-        return pm_timer_ns();
-    }
-    return uacpi_kernel_get_nanoseconds_since_boot();
-}
-
-uint64_t monotonic_ms() {
-    return monotonic_ns() / 1000000ull;
-}
-
-uint32_t tsc_khz() {
-    // g_tsc_per_us ES la frecuencia en MHz por construccion (ticks del TSC en
-    // un microsegundo), asi que los kHz son eso por mil. El calibrado fuerza un
-    // minimo de 1 para no dividir por cero; ese valor de relleno no es una
-    // velocidad real y se reporta como "sin calibrar".
-    if (g_tsc_per_us <= 1) {
-        return 0;
-    }
-    return static_cast<uint32_t>(g_tsc_per_us * 1000ull);
-}
-} // namespace timer

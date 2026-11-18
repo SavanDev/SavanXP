@@ -25,7 +25,7 @@ SCENARIOS = {
     "audio-record": "virtio capture-ring completion with a deterministic silent input source",
     "device-smoke": "device permissions, killed audio owner, clipboard and PC speaker",
     "audio-smoke": "audio daemon selftest and captured AC97 PCM",
-    "net-smoke": "RTL8139 gateway packets/counters and UDP loopback",
+    "net-smoke": "RTL8139 AML/IOAPIC interrupt delivery, gateway packets and UDP loopback",
     "tcp-smoke": "reference TCP loss, reordering, delayed reads and socket deadlines",
     "doom": "installed Doom display, FM music and silence after window closure",
     "ccleste": "installed Celeste title, level interaction and changing game surface",

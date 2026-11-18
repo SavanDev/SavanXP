@@ -14,11 +14,15 @@ objects as the reference, with native user-memory copies and scheduler waits.
 PCI DMA allocations use the physical allocator's contiguous-page API and its
 supervisor RAM aliases; they are never passed a virtual address as a bus address.
 
-BIOS assigns PCI INTx lines. The native adapter enables level triggering in the
-PIC ELCR and permits shared handlers. The ACPI SCI now prefers its I/O APIC GSI
-and falls back to the PIC for a legacy line. Routing PCI INTx via AML `_PRT`
-remains a milestone 6 parity gap. See [I/O APIC delivery](I386_SMP.md#local-apic-and-interrupts)
+The RTL8139 uses the loaded AML namespace to resolve its root bridge's
+`_PRT` and the link device's `_CRS` where applicable. The I/O APIC uses the
+resulting GSI and electrical mode. If firmware routing fails, the BIOS PCI
+line goes through the PIC with level triggering in the ELCR, or the NIC polls
+if there is no usable route. The ACPI SCI prefers its I/O APIC GSI and falls
+back to the PIC for a legacy line. See [I/O APIC delivery](I386_SMP.md#local-apic-and-interrupts)
 and [the optional virtio profile](I386_VIRTIO.md).
+`smoke net-smoke` requires an AML-derived route and a device-owned RTL8139
+interrupt in addition to successful packet exchange.
 The ACPI RSDP comes from Multiboot2 tags 14/15;
 physical ACPI addresses use the supervisor RAM alias, independently of the
 framebuffer's device identity mapping. S5/reset keep the reference fallbacks.
@@ -126,8 +130,8 @@ heaptest's six live allocations or changing the heap growth algorithm.
 ## Remaining parity work
 
 This closes milestone 5, not complete v0.4.0 parity. Milestone 6 covers SMP,
-virtio integration and the remaining reference performance, power and
-AML mechanisms in emulation. AC'97 keeps the reference playback-only
+virtio integration and the remaining reference performance and power
+mechanisms in emulation. AC'97 keeps the reference playback-only
 contract; the separate virtio profile adds capture-ring reads. Full signals/job control, explicit
 idle-process accounting and the reference boot-console/logo still need the
 final version-parity review. Physical-machine bring-up, including laptop

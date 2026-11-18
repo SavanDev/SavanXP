@@ -163,6 +163,7 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
     kernel/pci.cpp kernel/audio.cpp kernel/audio_device.cpp kernel/ac97.cpp
     kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/ioapic.cpp kernel/power.cpp
+    kernel/uacpi_glue.cpp
     kernel/virtio_pci.cpp kernel/virtio_blk.cpp kernel/virtio_net.cpp kernel/virtio_sound.cpp
     kernel/virtio_gpu.cpp kernel/virtio_input.cpp
     kernel/pcspeaker.cpp kernel/clipboard.cpp kernel/serial_dev.cpp kernel/rtc.cpp)
@@ -172,7 +173,6 @@ target_include_directories(savanxp_kernel_objects PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
     "${CMAKE_SOURCE_DIR}/vendor"
-    "${CMAKE_SOURCE_DIR}/vendor/uacpi/include"
     "${SAVANXP_GENERATED_ROOT}"
 )
 target_compile_options(savanxp_kernel_objects PRIVATE ${SAVANXP_KERNEL_COMPILE_OPTIONS})
@@ -181,6 +181,16 @@ set_target_properties(savanxp_kernel_objects PROPERTIES
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
+
+include("${CMAKE_SOURCE_DIR}/vendor/uacpi/uacpi.cmake")
+target_include_directories(savanxp_kernel_objects SYSTEM PRIVATE ${UACPI_INCLUDES})
+add_library(savanxp_uacpi_objects OBJECT ${UACPI_SOURCES})
+target_include_directories(savanxp_uacpi_objects PRIVATE ${UACPI_INCLUDES})
+target_compile_options(savanxp_uacpi_objects PRIVATE
+    "-target;${SAVANXP_TARGET_TRIPLE}" -ffreestanding -fstack-protector-strong
+    -fno-pic -fno-pie -mgeneral-regs-only -Wall -DUACPI_USE_BUILTIN_STRING
+)
+set_target_properties(savanxp_uacpi_objects PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
 
 # The SDK runtime is compiled as ELF32; unused units are discarded at link.
 set(SAVANXP_USER_RUNTIME_SOURCES
@@ -293,8 +303,9 @@ add_custom_target(savanxp_kernel
             --build-id=none
             -o "${SAVANXP_KERNEL_ELF}"
             $<TARGET_OBJECTS:savanxp_kernel_objects>
+            $<TARGET_OBJECTS:savanxp_uacpi_objects>
     COMMAND_EXPAND_LISTS
-    DEPENDS savanxp_kernel_objects
+    DEPENDS savanxp_kernel_objects savanxp_uacpi_objects
     COMMENT "Linking SavanXP kernel"
     VERBATIM
 )

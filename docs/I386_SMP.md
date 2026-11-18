@@ -70,7 +70,8 @@ overrides for PS/2 and routes the FADT SCI as a level-triggered, active-low GSI.
 Each GSI uses one of vectors 50–63 with local APIC EOI after chained handlers.
 The BSP installs routes before interrupts are enabled. The PIC entries for
 successfully routed devices stay masked. PS/2 and SCI fall back to the PIC if
-their route is unavailable. PIT and BIOS-assigned PCI INTx still use ExtINT.
+their route is unavailable. PIT and fallback BIOS-assigned PCI INTx use ExtINT.
+The RTL8139 prefers a firmware-derived I/O APIC route during probe.
 
 `smoke power-smoke --smp 4` checks route programming, guest reset and shutdown,
 and shutdown from the QEMU power button. It also boots with local APIC support
@@ -305,9 +306,9 @@ scenario boots the normal desktop, including virtio.
 Both use QEMU disk snapshots and retain serial/QMP artifacts.
 
 These checkpoints cover idle accounting, timer-preemptible kernel waits,
-syscall-return wakeup handoff and I/O APIC routing for PS/2 and SCI. AML-based
-PCI INTx, BSP timer parity, ASLR/signals and the performance/visual review
-remain open. v0.4.0 deliberately keeps idle
+syscall-return wakeup handoff, I/O APIC routing for PS/2 and SCI, and AML-based
+root-bus PCI INTx. BSP timer parity, ASLR/signals and the performance/visual
+review remain open. v0.4.0 deliberately keeps idle
 wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
 not a parity gap. The historical study's earlier wake-IPI suggestions are
 superseded by the pinned-reference review.

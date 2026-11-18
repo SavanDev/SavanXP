@@ -133,8 +133,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     if not sci_route:
                         raise RuntimeError(f"the SCI was not routed through the {controller}")
                     if pic_only:
-                        if "ioapic: GSI" in boot_log:
-                            raise RuntimeError("an IOAPIC route was installed without a local APIC")
+                        if "ioapic: GSI" in boot_log or "AML namespace loaded for IOAPIC" in boot_log:
+                            raise RuntimeError("APIC routing ran without a local APIC")
                         type_shell(qmp, ("echo picinput",))
                         wait_serial(serial, r"\r?\npicinput\r?\n", len(boot_log))
                     else:
@@ -216,6 +216,12 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                         raise RuntimeError(f"{command} faulted: {text[-3000:]}")
                     if virtio and command == "nettest" and "virtio-net: up" not in text:
                         raise RuntimeError("nettest did not bring up the virtio NIC")
+                    if scenario == "net-smoke" and not virtio and command == "nettest":
+                        boot_log = serial.read_text(errors="replace")[:offset]
+                        route = r"uacpi: INTx dev \d+ INT[A-D] -> GSI \d+ routed \(vector \d+, (link _CRS|direct GSI)\)"
+                        if not re.search(route, boot_log):
+                            raise RuntimeError("RTL8139 had no AML-derived IOAPIC route")
+                        wait_serial(serial, "rtl8139: first INTx received", offset, timeout=5)
                     if command.startswith("audiotest --stream"):
                         pcm = capture.read_bytes()[capture_start:]
                         pcm = pcm[:len(pcm) // 2 * 2]

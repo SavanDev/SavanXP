@@ -181,7 +181,8 @@ namespace
     // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la
     // DSDT). Todavia no toma los eventos: convive con acpi::start_sci.
     boot_screen::show("Starting ACPI");
-    uacpi_glue::bringup(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
+    uacpi_glue::bringup(boot_info.acpi_rsdp_address >= boot_info.hhdm_offset
+        ? boot_info.acpi_rsdp_address - boot_info.hhdm_offset : boot_info.acpi_rsdp_address);
     uacpi_glue::dump_pci_routing();
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
