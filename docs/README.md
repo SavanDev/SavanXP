@@ -359,6 +359,11 @@ all its phases have landed; the links to it move with it.
   for BMP, PNG and JPEG and the decoders under it in `libsximg`: what exists, the
   decisions (memory-only decoders, caller-owned pixels, JPEG written from T.81,
   size limits, who opens an image by default) and phases I1-I7.
+- [`SXBASIC_ROADMAP.md`](roadmaps/open/SXBASIC_ROADMAP.md) — SxBASIC (Savan BASIC),
+  a BASIC language and visual development environment in the spirit of Visual Basic
+  that runs on SavanXP only: why it lives in this repository, bytecode over a
+  call-free core, executables as a stub plus bytecode over `libsxbasic.so`, the code
+  editor as `SXGUI_TEXTEDIT` options, the slices it takes from other roadmaps, phases 0-6.
 
 ## Third-party code — `third-party/`
 
