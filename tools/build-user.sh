@@ -173,11 +173,12 @@ COMMON_FLAGS=(
     -Wpedantic
     -Wno-language-extension-token
     -Wno-c23-extensions
+    # An external program sees the SDK and the repository's public include/,
+    # never the in-tree userland or the build's generated headers
+    # (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 1).
     -I "$SOURCE_ROOT"
     -I "$SDK/include"
     -I "$ROOT/include"
-    -I "$ROOT/subsystems/posix/userland"
-    -I "$BUILD_ROOT/generated"
 )
 if ((SSE)); then
     COMMON_FLAGS+=(-msse -msse2)

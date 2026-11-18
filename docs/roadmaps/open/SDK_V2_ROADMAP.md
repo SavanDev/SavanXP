@@ -1,6 +1,6 @@
 # SDK 2.0 roadmap
 
-> **Status: phase 0 done (2.0 declared); phases 1–5 planned.** This records why the external SDK is
+> **Status: phases 0 (2.0 declared) and 1 (no internal include paths) done; phases 2–5 planned.** This records why the external SDK is
 > due a major version, what it depends on today that an SDK should not, and
 > the phases that turn it into one SDK for both POSIX and SUN programs. The
 > measurements below were taken on 2026-11-18 at `9a293bfa`.
@@ -40,7 +40,8 @@ statement of what already shipped. It should not wait for the larger work below.
 
 ### Include paths
 
-`tools/build-user.sh` compiles every program with:
+`tools/build-user.sh` compiled every program with the following flags until
+phase 1. It now passes only the first two:
 
 ```
 -I <sdk>/include  -I include  -I subsystems/posix/userland  -I build/generated
@@ -53,10 +54,10 @@ statement of what already shipped. It should not wait for the larger work below.
   Some of those are service protocols, not API. Phase 2 decides which of them
   are public.
 - Neither the headers nor the runtime units nor the examples under `sdk/`
-  need `subsystems/posix/userland` or `build/generated`. All of them pass
-  `clang -fsyntax-only` with only `-I <sdk>/include -I include`. The two
-  flags look like leftovers. Only a full build can show that removing them
-  is safe; the syntax-only pass can't (phase 1).
+  need `subsystems/posix/userland` or `build/generated`. Phase 1 removed
+  both flags. Every example builds to a byte-identical ELF without them,
+  and so do the `--gui`, `--audio`, `--sse`, `--native` and `--heap-mib`
+  combinations.
 - `ports/ccleste` and `ports/doomgeneric` add `subsystems/posix/userland`
   themselves.
 
@@ -169,7 +170,7 @@ directory with no checkout around it.
 - **Acceptance:** `./build.sh build`, `./build.sh test`,
   `smoke smoke`, `smoke native-test`.
 
-### Phase 1 — drop the leftover include paths
+### Phase 1 — drop the leftover include paths (done)
 
 - Remove `-I subsystems/posix/userland` and `-I build/generated` from
   `build-user.sh`.
