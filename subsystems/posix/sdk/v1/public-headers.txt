@@ -1,0 +1,39 @@
+# The headers from the repository's include/ that the SDK ships
+# (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 2).
+#
+# tools/make-sdk.sh copies every header under this directory's include/ and,
+# from include/, exactly these, into the sysroot's include/. A header not
+# listed here is private to the system: an SDK header that includes one fails
+# the sdk-sysroot host test.
+#
+# The list is the closure of what the SDK's headers, the SUN headers and SxGL
+# include, plus shared/version.h, which tools/gen_sxe_resources.py reads.
+# audiod_protocol.h and elevation_protocol.h are service protocols, public
+# because savanxp/audio_server.h and sxn/sxnelevate.h are built on them.
+# virgl_protocol.h is the payload of GPU_IOC_3D_SUBMIT, an ioctl of the public
+# ABI; sdk/nativetest builds its command buffers with it.
+
+abi/savanxp_abi.h
+abi/savanxp_native_abi.h
+audio/audiod_protocol.h
+elevation/elevation_protocol.h
+shared/version.h
+sxe/sxe_format.h
+sxgfx/gfx2d.h
+sxgfx/pixels.h
+sxgfx/sxchrome.h
+sxgfx/sxgl.h
+sxgfx/sxgui.h
+sxgfx/virgl_protocol.h
+sxn/sxn.h
+sxn/sxnaudio.h
+sxn/sxncapture.h
+sxn/sxncursor.h
+sxn/sxneffects.h
+sxn/sxnelevate.h
+sxn/sxnfiledlg.h
+sxn/sxngui.h
+sxn/sxnwidgets.h
+sxn/sxnwm.h
+wm/wm_protocol.h
+wm/wm_shell_protocol.h

@@ -1215,6 +1215,14 @@ add_test(NAME external-builder-test
             --root "${CMAKE_SOURCE_DIR}"
             --clang "${CMAKE_C_COMPILER}"
             --ld "ld.lld")
+# The SDK sysroot needs nothing outside itself: its headers compile alone and a
+# copy away from the repository builds programs.
+add_test(NAME sdk-sysroot-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/sdk_sysroot_test.py"
+            --root "${CMAKE_SOURCE_DIR}"
+            --clang "${CMAKE_C_COMPILER}"
+            --ld "${SAVANXP_LD}")
 add_test(NAME doom-port-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/doom_port_layout_test.py"
@@ -1548,8 +1556,20 @@ if(EXISTS "${SAVANXP_LIMINE_INSTALLER}")
     )
 endif()
 
+# The SDK sysroot, build/sdk/<MAJOR.MINOR> (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# phase 2). tools/make-sdk.sh decides on its own whether anything changed, so
+# the target runs it on every build and it returns at once when nothing did.
+add_custom_target(savanxp_sdk
+    COMMAND "${CMAKE_COMMAND}" -E env
+            "SAVANXP_OUTPUT_ROOT=${SAVANXP_OUTPUT_ROOT}"
+            "SAVANXP_CLANG=${CMAKE_C_COMPILER}"
+            "${CMAKE_SOURCE_DIR}/tools/make-sdk.sh" --quiet
+    COMMENT "Assembling the SDK sysroot"
+    VERBATIM
+)
+
 add_custom_target(savanxp
-    DEPENDS savanxp_image savanxp_disk
+    DEPENDS savanxp_image savanxp_disk savanxp_sdk
     COMMENT "Building SavanXP base system"
 )
 

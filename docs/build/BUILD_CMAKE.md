@@ -104,6 +104,12 @@ userland registry:
 builder accepts a single C/assembly file or a directory, stamps SXE resources,
 and installs through `tools/sxfs_sync.py` unless `--no-install` is selected.
 
+The builder compiles against the SDK sysroot, `build/sdk/<MAJOR.MINOR>`, and
+never the repository's tree. `tools/make-sdk.sh` assembles the sysroot: the
+`savanxp_sdk` target runs it on every `./build.sh build`, and `build-user.sh`
+runs it before every build. It rebuilds only when an input changed. The layout
+is in [the SDK README](../../subsystems/posix/sdk/v1/README.md#the-sysroot).
+
 `tools/new-user-app.sh` creates a new application from `sdk/template`, and
 `tools/run-user.sh` builds, installs, and boots an external application in one
 step.
@@ -117,7 +123,7 @@ unit, the path from the repository root. Every build reads it:
 | Consumer | Groups |
 |---|---|
 | CMake (`SAVANXP_USER_RUNTIME_SOURCES`) | `core math gui audio midi` |
-| `tools/build-user.sh` | `core setjmp`, plus `math` (`--sse`), `audio` (`--audio`), `gui` (`--gui`) |
+| `tools/make-sdk.sh` | `core gui audio setjmp` without SSE, plus `math gl` with it, prebuilt into the sysroot. `tools/build-user.sh` links `core setjmp`, plus `math gl` (`--sse`), `audio` (`--audio`) and `gui` (`--gui`) |
 | `ports/doomgeneric/build.sh` | `core math audio setjmp` |
 | `ports/ccleste/build.sh` | `core audio math setjmp` |
 | `ports/ffmpeg/runtime.sh` | `core math setjmp` into `libsavanxp.a`, `gui` into `libsxgui.a` |
@@ -126,8 +132,9 @@ The scripts read it through `tools/lib/runtime_units.sh`
 (`savanxp_runtime_units ROOT GROUP...`), which fails on an unknown group;
 CMake re-configures when the manifest changes. Moving or adding a runtime unit
 is an edit to the manifest and nothing else. Per-unit compile flags (the
-`-fno-builtin` on `math.c`, `--heap-mib` on `posix.c`) stay in the script
-that needs them, keyed by file name.
+`-fno-builtin` on `math.c`) stay in the script that needs them, keyed by file
+name. `--heap-mib` no longer recompiles `posix.c`: the bootstrap arena is weak,
+and the program links a strong one.
 
 ## Version and build number
 
@@ -176,6 +183,9 @@ stamp, About and the console banner. `sysinfo` prints them as two lines,
 - `tools/smoke_catalog.py` keeps commands, tokens, and callbacks declarative.
 - `tools/build-user.sh` builds optional external applications: POSIX, or SUN
   with `--native`, installed as `/bin/<name>.sxe`.
+- `tools/make-sdk.sh` assembles the SDK sysroot under `build/sdk/`;
+  `tools/lib/sdk_flags.sh` holds the compile flags it shares with
+  `build-user.sh`.
 - `tools/lib/runtime_units.sh` reads the runtime manifest for the builds
   outside CMake.
 - `tools/new-user-app.sh` creates a new application from the SDK template.

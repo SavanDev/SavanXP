@@ -1,13 +1,14 @@
 # SDK 2.0
 
-This directory is the public surface for building external C programs for
-SavanXP. The contract it carries is **SDK 2.0**; the exact list of what is
-stable, and the versioning rules, are in [`REFERENCE.md`](REFERENCE.md).
+This directory holds the sources of the public surface for building external
+C programs for SavanXP. The contract it carries is **SDK 2.0**; the exact list
+of what is stable, and the versioning rules, are in [`REFERENCE.md`](REFERENCE.md).
 
-The directory keeps its `v1` name for now. The SDK 2.0 roadmap
+Programs do not build against this directory but against the **sysroot** the
+build assembles from it, `build/sdk/2.0` (below). The directory keeps its `v1`
+name; the SDK 2.0 roadmap
 ([`docs/roadmaps/open/SDK_V2_ROADMAP.md`](../../../../docs/roadmaps/open/SDK_V2_ROADMAP.md))
-replaces it with a sysroot the build generates, which serves POSIX and SUN
-programs alike.
+records where it is going.
 
 ## Breaking changes since 1.2
 
@@ -49,6 +50,48 @@ not 1.3:
   unit by group (`core`, `math`, `gui`, `audio`, `midi`, `gl`, `setjmp`), and
   every build reads it.
 - `linker.ld`: programs load at `0x400000`.
+
+## The sysroot
+
+`./build.sh build` runs `tools/make-sdk.sh`, which assembles
+`build/sdk/<MAJOR.MINOR>`:
+
+```text
+build/sdk/2.0/
+  VERSION
+  include/            this directory's include/, plus the headers from the
+                      repository's include/ that public-headers.txt lists
+  linker.ld
+  lib/nosse/          the runtime prebuilt without SSE: crt0.o and every unit
+                      of the core, gui, audio and setjmp groups, sxn_runtime.o
+  lib/sse/            the same with SSE, plus the math and gl groups
+  lib/*/units.txt     each object's group, in link order
+  share/sdk/          build-user.sh and the tools it runs, and the system
+                      icon catalogue a .sxres names with icon=
+```
+
+- **Headers.** `public-headers.txt` is the allowlist of what the repository's
+  `include/` contributes. Everything else there is private to the system. The
+  `sdk-sysroot-test` host test fails if a header in the sysroot needs a file
+  outside it.
+- **The runtime is compiled once per variant**, with the same flags a program
+  gets (`tools/lib/sdk_flags.sh`). A program links every object of each group
+  it asks for, in manifest order, so the result is the same binary that
+  compiling the runtime with it would give.
+- **`tools/build-user.sh` brings the sysroot up to date before every build**,
+  so it never lags behind an edited runtime. `make-sdk.sh` returns at once when
+  nothing changed.
+- **The sysroot stands alone.** A copy anywhere builds programs with its own
+  `share/sdk/build-user.sh`, needing only `clang`, `ld.lld`, `llvm-objcopy`,
+  `llvm-readelf` and Python with Pillow. Output goes to `$PWD/build` unless
+  `SAVANXP_OUTPUT_ROOT` says otherwise. Installing into a disk image needs
+  `SAVANXP_DISK_IMAGE` and `SAVANXP_SXFS_CLI`, which default to `disk.img` and
+  `tools/sxfs-cli` under that output root.
+
+```bash
+cp -R build/sdk/2.0 ~/savanxp-sdk
+~/savanxp-sdk/share/sdk/build-user.sh --source ~/myapp --name myapp --no-install
+```
 
 ## ABI rules
 
@@ -92,6 +135,8 @@ The tool:
 - adds `-I <source>` and, when it exists, `-I <source>/include`;
 - links the runtime groups the program asks for: `--gui` for the SXGUI
   toolkit, `--audio` for PCM audio, `--sse` for SSE/SSE2, `libm` and SxGL;
+- with `--heap-mib N`, gives the program an N MiB bootstrap heap arena in
+  place of the runtime's default 256 KiB;
 - builds a SUN program instead with `--native`
   ([NATIVE_APPS.md](../../../../docs/userland/NATIVE_APPS.md)).
 

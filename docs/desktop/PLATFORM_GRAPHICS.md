@@ -133,7 +133,7 @@ headers.
 
 ## Builds outside CMake
 
-CMake and the builds outside it (`tools/build-user.sh`, the Doom, ccleste and
+CMake and the builds outside it (`tools/make-sdk.sh`, the Doom, ccleste and
 FFmpeg ports) take the runtime's units from one manifest,
 `subsystems/posix/sdk/v1/runtime/units.txt`, whose entries are repository
 paths ([BUILD_CMAKE.md](../build/BUILD_CMAKE.md#the-runtimes-units-one-manifest)).

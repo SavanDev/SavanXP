@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 # Build and optionally install a freestanding user program (POSIX by default,
-# native Sx with --native, which stamps EI_OSABI from the neutral ABI header).
-# This is intentionally separate from the in-tree CMake userland registry.
+# native Sx with --native, which stamps EI_OSABI from the neutral ABI header)
+# against the SDK sysroot. This is intentionally separate from the in-tree
+# CMake userland registry.
+#
+# The same script runs from two places (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# phase 2):
+# - tools/build-user.sh in the repository, which first brings the sysroot up
+#   to date with tools/make-sdk.sh and then builds against it;
+# - share/sdk/build-user.sh inside a sysroot, which needs nothing outside the
+#   sysroot but clang, ld.lld, the LLVM binutils and Python with Pillow.
 set -euo pipefail
 
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-SDK="$ROOT/subsystems/posix/sdk/v1"
-# shellcheck source=lib/runtime_units.sh
-. "$ROOT/tools/lib/runtime_units.sh"
-BUILD_ROOT=${SAVANXP_OUTPUT_ROOT:-"$ROOT/build"}
+TOOLS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/sdk_flags.sh
+. "$TOOLS/lib/sdk_flags.sh"
+if [[ -f "$TOOLS/../../VERSION" ]]; then
+    # Inside a sysroot: share/sdk/build-user.sh.
+    SYSROOT=$(cd -- "$TOOLS/../.." && pwd)
+    REPO=""
+    BUILD_ROOT=$(realpath -m -- "${SAVANXP_OUTPUT_ROOT:-"$PWD/build"}")
+else
+    # In the repository: the sysroot is resolved once the tools are checked.
+    SYSROOT=""
+    REPO=$(cd -- "$TOOLS/.." && pwd)
+    BUILD_ROOT=$(realpath -m -- "${SAVANXP_OUTPUT_ROOT:-"$REPO/build"}")
+fi
 EXTERNAL_ROOT="$BUILD_ROOT/external"
 NAME=""
 SOURCE=""
@@ -64,6 +81,7 @@ while (($#)); do
     esac
 done
 [[ -n "$SOURCE" ]] || { echo "build-user.sh: --source is required" >&2; exit 2; }
+[[ "$HEAP_MIB" =~ ^[0-9]+$ ]] || { echo "build-user.sh: --heap-mib takes a whole number of MiB" >&2; exit 2; }
 SOURCE=$(realpath "$SOURCE")
 [[ -e "$SOURCE" ]] || { echo "build-user.sh: source does not exist: $SOURCE" >&2; exit 2; }
 if [[ -z "$NAME" ]]; then
@@ -130,7 +148,12 @@ done
     exit 1
 }
 
-OBJ_ROOT="$BUILD_ROOT/sdk/$NAME"
+if [[ -n "$REPO" ]]; then
+    SAVANXP_OUTPUT_ROOT="$BUILD_ROOT" "$REPO/tools/make-sdk.sh" --quiet
+    SYSROOT=$(SAVANXP_OUTPUT_ROOT="$BUILD_ROOT" "$REPO/tools/make-sdk.sh" --print-path)
+fi
+
+OBJ_ROOT="$EXTERNAL_ROOT/obj/$NAME"
 RAW_OUTPUT=${OUTPUT_PATH:-"$EXTERNAL_ROOT/$NAME.elf"}
 mkdir -p "$OBJ_ROOT" "$EXTERNAL_ROOT" "$(dirname "$RAW_OUTPUT")"
 
@@ -159,32 +182,10 @@ fi
     exit 1
 }
 
-COMMON_FLAGS=(
-    -target x86_64-unknown-none-elf
-    -ffreestanding
-    -fstack-protector-strong
-    -fno-pic
-    -fno-pie
-    -mno-red-zone
-    -mcmodel=small
-    -mno-mmx
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-language-extension-token
-    -Wno-c23-extensions
-    # An external program sees the SDK and the repository's public include/,
-    # never the in-tree userland or the build's generated headers
-    # (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 1).
-    -I "$SOURCE_ROOT"
-    -I "$SDK/include"
-    -I "$ROOT/include"
-)
-if ((SSE)); then
-    COMMON_FLAGS+=(-msse -msse2)
-else
-    COMMON_FLAGS+=(-mno-sse -mno-sse2 -mgeneral-regs-only)
-fi
+# An external program sees the sysroot's include/ and its own sources, never
+# the repository's tree.
+mapfile -t COMMON_FLAGS < <(savanxp_sdk_compile_flags "$SSE")
+COMMON_FLAGS+=(-I "$SOURCE_ROOT" -I "$SYSROOT/include")
 if [[ -d "$SOURCE_ROOT/include" ]]; then
     COMMON_FLAGS+=(-I "$SOURCE_ROOT/include")
 fi
@@ -212,54 +213,59 @@ for source in "${SOURCE_FILES[@]}"; do
     index=$((index + 1))
 done
 
-# The runtime's units come from its manifest
-# (subsystems/posix/sdk/v1/runtime/units.txt); this script names groups only.
+# The runtime is prebuilt in the sysroot, one directory per variant.
+# lib/<variant>/units.txt lists its objects by group in manifest order, and
+# they link in that order, all of them for every group the program asks for.
+RUNTIME_LIB="$SYSROOT/lib/$(savanxp_sdk_variant "$SSE")"
 RUNTIME_GROUPS=(core setjmp)
 ((SSE)) && RUNTIME_GROUPS+=(math gl)
 ((AUDIO)) && RUNTIME_GROUPS+=(audio)
 ((GUI)) && RUNTIME_GROUPS+=(gui)
-RUNTIME_UNITS_TEXT=$(savanxp_runtime_units "$ROOT" "${RUNTIME_GROUPS[@]}")
-mapfile -t RUNTIME_UNITS <<<"$RUNTIME_UNITS_TEXT"
 RUNTIME_OBJECTS=()
-for unit in "${RUNTIME_UNITS[@]}"; do
-    object=$(savanxp_runtime_object "$OBJ_ROOT" "$unit")
-    case "${unit##*/}" in
-        *.S) compile_asm "$unit" "$object" ;;
-        posix.c)
-            if ((HEAP_MIB > 0)); then
-                compile_c "$unit" "$object" "-DSX_HEAP_SIZE=(${HEAP_MIB}u*1024u*1024u)"
-            else
-                compile_c "$unit" "$object"
-            fi
-            ;;
-        math.c) compile_c "$unit" "$object" -fno-builtin ;;
-        *) compile_c "$unit" "$object" ;;
-    esac
-    RUNTIME_OBJECTS+=("$object")
-done
+while read -r group object; do
+    for wanted in "${RUNTIME_GROUPS[@]}"; do
+        if [[ "$group" == "$wanted" ]]; then
+            RUNTIME_OBJECTS+=("$RUNTIME_LIB/$object")
+            break
+        fi
+    done
+done <"$RUNTIME_LIB/units.txt"
 if ((NATIVE)); then
     # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
     # on SXN, replacing the runtime's weak POSIX one.
-    compile_c "$ROOT/system/runtime/sxn_runtime.c" "$OBJ_ROOT/sxn_runtime.o"
-    RUNTIME_OBJECTS+=("$OBJ_ROOT/sxn_runtime.o")
+    RUNTIME_OBJECTS+=("$RUNTIME_LIB/sxn_runtime.o")
+fi
+if ((HEAP_MIB > 0)); then
+    # The runtime's bootstrap arena is weak (runtime/posix.c); this program
+    # brings a strong one of the size it asked for.
+    heap_bytes=$((HEAP_MIB * 1024 * 1024))
+    cat >"$OBJ_ROOT/heap.c" <<HEAP
+#include <stddef.h>
+_Alignas(16) unsigned char sx_heap_bootstrap[${heap_bytes}u];
+const size_t sx_heap_bootstrap_size = ${heap_bytes}u;
+HEAP
+    compile_c "$OBJ_ROOT/heap.c" "$OBJ_ROOT/heap.o"
+    RUNTIME_OBJECTS+=("$OBJ_ROOT/heap.o")
 fi
 
-"$LD" -nostdlib -static -T "$SDK/linker.ld" \
+"$LD" -nostdlib -static -T "$SYSROOT/linker.ld" \
     -z max-page-size=0x1000 --build-id=none \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
 
 RESOURCE_ROOT="$OBJ_ROOT/sxe"
 rm -rf "$RESOURCE_ROOT"
 mkdir -p "$RESOURCE_ROOT"
-BUILD_ID=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)
+# The build id is the commit of the program's own sources, when they are in git.
+BUILD_ID=$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || true)
 [[ -n "$BUILD_ID" ]] || BUILD_ID=unknown
-"$PYTHON" "$ROOT/tools/gen_sxe_resources.py" \
-    --project-root "$ROOT" \
+"$PYTHON" "$TOOLS/gen_sxe_resources.py" \
+    --project-root "$SYSROOT" \
+    --icon-root "$SYSROOT/share/sdk/icons" \
     --manifest-dir "$SOURCE_ROOT" \
     --output-dir "$RESOURCE_ROOT" \
     --build-id "$BUILD_ID" \
     --program "$NAME"
-"$PYTHON" "$ROOT/tools/stamp_sxe.py" \
+"$PYTHON" "$TOOLS/stamp_sxe.py" \
     --binary "$RAW_OUTPUT" \
     --name "$NAME" \
     --resource-dir "$RESOURCE_ROOT" \
@@ -268,9 +274,9 @@ BUILD_ID=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)
 if ((NATIVE)); then
     # Last, as in the CMake build, so nothing that rewrites the ELF afterwards
     # can drop the mark. It also refuses a SUN program without .sxmeta or .sxe.
-    "$PYTHON" "$ROOT/tools/stamp_osabi.py" \
+    "$PYTHON" "$TOOLS/stamp_osabi.py" \
         --binary "$RAW_OUTPUT" \
-        --abi-header "$ROOT/include/abi/savanxp_native_abi.h" \
+        --abi-header "$SYSROOT/include/abi/savanxp_native_abi.h" \
         --installed-name "$(basename -- "$DESTINATION")"
 fi
 if [[ "$RAW_OUTPUT" != "$EXTERNAL_ROOT/$NAME.elf" ]]; then
@@ -290,7 +296,7 @@ if ((NO_INSTALL == 0)); then
     cp "$RAW_OUTPUT" "$STAGE/$DESTINATION_RELATIVE"
     SYNC_ARGS=(--image "$IMAGE" --source "$STAGE" --cli "$CLI" --sectors "${SAVANXP_SXFS_SECTORS:-2097152}")
     ((NO_COMPACT == 0)) || SYNC_ARGS+=(--no-compact)
-    "$PYTHON" "$ROOT/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
+    "$PYTHON" "$TOOLS/sxfs_sync.py" "${SYNC_ARGS[@]}"
     echo "build-user.sh: installed $DESTINATION"
 fi
 echo "build-user.sh: ELF $RAW_OUTPUT"

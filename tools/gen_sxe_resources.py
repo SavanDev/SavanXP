@@ -469,12 +469,12 @@ def collect_icons_from_file(fmt, manifest_path, relative_paths, label):
     return images
 
 
-def collect_icons(fmt, project_root, icon_name, label):
-    """El manifiesto referencia el icono por nombre de asset, igual que
-    progman.ini lo hace hoy contra el set horneado. Los dos tamanos que el
-    sistema usa son obligatorios: un .sxicon con uno solo obligaria a escalar
-    en runtime."""
-    root = os.path.join(project_root, "assets", "desktop", "icons")
+def collect_icons(fmt, icon_root, icon_name, label):
+    """The manifest names the icon by its asset name in the system catalogue
+    under icon_root, as progman.ini does with the baked set. Both sizes the
+    system uses are required: a .sxicon with only one would force scaling at
+    run time."""
+    root = icon_root
     images = []
     for size in (fmt["SXE_ICON_SIZE_SMALL"], fmt["SXE_ICON_SIZE_LARGE"]):
         path = os.path.join(root, f"{size}x{size}", f"{icon_name}.png")
@@ -574,9 +574,14 @@ def main():
     parser.add_argument("--build-id", default="unknown",
                         help="Commit o id de build a estampar en BUILD_ID cuando el .sxres no lo fija.")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--icon-root",
+                        help="The system icon catalogue, with 16x16/ and 32x32/ inside. "
+                             "Defaults to assets/desktop/icons under the project root; "
+                             "the SDK sysroot passes its own copy.")
     args = parser.parse_args()
 
     project_root = args.project_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    icon_root = args.icon_root or os.path.join(project_root, "assets", "desktop", "icons")
     fmt = load_format(project_root)
     launch_flags = load_launch_flags(project_root)
     window_flags = load_window_flags(project_root)
@@ -621,7 +626,7 @@ def main():
             images = collect_icons_from_file(fmt, manifest_path, manifest["icon_file"], label)
             write_if_changed(icon_path, build_icon_blob(fmt, images, label))
         elif manifest.get("icon"):
-            images = collect_icons(fmt, project_root, manifest["icon"], label)
+            images = collect_icons(fmt, icon_root, manifest["icon"], label)
             write_if_changed(icon_path, build_icon_blob(fmt, images, label))
         elif os.path.isfile(icon_path):
             # El manifiesto dejo de declarar icono (o nunca tuvo uno): sacar el

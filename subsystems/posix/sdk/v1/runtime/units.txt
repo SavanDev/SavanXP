@@ -1,7 +1,7 @@
 # The POSIX userland runtime: every unit, once (docs/build/BUILD_CMAKE.md).
 #
 # Read by CMake (SAVANXP_USER_RUNTIME_SOURCES) and by the builds outside it
-# (tools/build-user.sh, ports/doomgeneric/build.sh, ports/ccleste/build.sh)
+# (tools/make-sdk.sh, ports/doomgeneric/build.sh, ports/ccleste/build.sh)
 # through tools/lib/runtime_units.sh. A unit that moves or appears changes
 # here and nowhere else.
 #

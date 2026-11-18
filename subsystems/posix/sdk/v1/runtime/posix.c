@@ -275,10 +275,11 @@ struct sx_socket_state {
     unsigned long send_timeout_ms;
 };
 
-static union {
-    _Alignas(SX_ALLOC_ALIGNMENT) uintptr_t alignment;
-    unsigned char bytes[SX_HEAP_SIZE];
-} g_heap = {0};
+/* The bootstrap arena and its size are weak, so a program can bring its own
+ * without recompiling the runtime: tools/build-user.sh --heap-mib links strong
+ * definitions generated for that program against the prebuilt SDK runtime. */
+__attribute__((weak)) _Alignas(SX_ALLOC_ALIGNMENT) unsigned char sx_heap_bootstrap[SX_HEAP_SIZE];
+__attribute__((weak)) const size_t sx_heap_bootstrap_size = SX_HEAP_SIZE;
 static sx_arena* g_arenas = 0;
 static size_t g_mapped_arena_count = 0;
 static size_t g_mapped_bytes = 0;
@@ -434,7 +435,7 @@ static void sx_allocator_init(void) {
     if (g_arenas != 0) {
         return;
     }
-    (void)sx_arena_stamp(g_heap.bytes, SX_HEAP_SIZE, 0);
+    (void)sx_arena_stamp(sx_heap_bootstrap, sx_heap_bootstrap_size, 0);
 }
 
 /* Piso de tamano para la proxima arena: duplicar lo que ya esta mapeado, para

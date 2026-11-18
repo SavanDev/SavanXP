@@ -1,6 +1,6 @@
 # SDK 2.0 roadmap
 
-> **Status: phases 0 (2.0 declared) and 1 (no internal include paths) done; phases 2–5 planned.** This records why the external SDK is
+> **Status: phases 0 (2.0 declared), 1 (no internal include paths) and 2 (the sysroot) done; phases 3–5 planned.** This records why the external SDK is
 > due a major version, what it depends on today that an SDK should not, and
 > the phases that turn it into one SDK for both POSIX and SUN programs. The
 > measurements below were taken on 2026-11-18 at `9a293bfa`.
@@ -128,12 +128,18 @@ allowlist:
 ```text
 build/sdk/2.0/
   include/        public headers only: POSIX, savanxp/, sxn/, sxgfx/, abi/, sxe/
-  lib/            crt0.o, libsavanxp.a, libsxn.a, libsxgui.a, libsxgl.a, …,
-                  ldso.o, dlfcn.o
+  lib/nosse/      crt0.o and the runtime objects, without SSE
+  lib/sse/        the same with SSE, plus libm and SxGL
   linker.ld
-  share/sdk/      build-user, gen_sxe_resources.py, CMake toolchain file
+  share/sdk/      build-user.sh, the SXE tools, the icon catalogue
   VERSION
 ```
+
+Phase 2 ships objects, not archives: a program links every object of
+each group it asks for, which an archive would only add `--whole-archive`
+to. Archives with ordinary semantics (`libsavanxp.a`, ...) belong to
+phase 5, for build systems that expect `-l`. Phase 4 adds `ldso.o` and
+`dlfcn.o`, and phase 5 the CMake toolchain file.
 
 This avoids moving hundreds of lines between directories, and the comment
 translation each move would force (AGENTS.md, rule 3b). The allowlist is
@@ -180,7 +186,7 @@ directory with no checkout around it.
 - **Acceptance:** every `sdk/` example builds, and the smoke scenarios
   that use `build-user.sh` pass.
 
-### Phase 2 — the sysroot
+### Phase 2 — the sysroot (done)
 
 - `./build.sh build` assembles `build/sdk/2.0` from a header allowlist
   and archives the runtime per `units.txt` group.
@@ -195,6 +201,37 @@ directory with no checkout around it.
   `sdk/hello`, `sdk/gfxhello` and `sdk/nativetest` against the copy, with
   only `clang` and `ld.lld`. The image keeps `/bin/doomgeneric` and the
   WADs (AGENTS.md, rule 4).
+
+What landed, and what it settled:
+
+- `tools/make-sdk.sh` assembles the sysroot. The `savanxp_sdk` target runs
+  it on every build, and `build-user.sh` runs it before every build. It
+  rebuilds only when an input recorded by the last build changed, and the
+  compilers' dependency files list those inputs.
+- `public-headers.txt` is the allowlist: 24 headers from `include/`.
+  `audiod_protocol.h` and `elevation_protocol.h` are public, because public
+  headers are built on them. So is `virgl_protocol.h`, which is the payload of
+  the public `GPU_IOC_3D_SUBMIT` and which `sdk/nativetest` uses.
+- **Same binaries.** All 14 `sdk/` examples, and seven combinations of
+  `--gui`, `--audio`, `--sse` and `--native`, link to byte-identical images
+  against the sysroot and with the runtime compiled from source.
+- `--heap-mib` no longer recompiles `posix.c`. The bootstrap arena
+  (`sx_heap_bootstrap`, `sx_heap_bootstrap_size`) is weak, and the program
+  links strong definitions generated for it. The weak 256 KiB stays in its
+  `.bss` unused, because static images are not linked with `--gc-sections`.
+- The build id comes from the program's own git checkout, not the
+  repository's, and `gen_sxe_resources.py` takes the icon catalogue as
+  `--icon-root`.
+- `sdk-sysroot-test` compiles each of the 72 sysroot headers on its own,
+  seeing only the sysroot, and fails on any file read from outside it. A
+  copy of the sysroot builds `hello`, `gfxhello --gui`, `nativetest --native`
+  and a `--heap-mib` program.
+- The `midi` group is not in the sysroot: `build-user.sh` has no flag that
+  links it, so `savanxp/midi.h` stays a header without a library, as it
+  already was.
+- **Found while testing, not fixed here:** `sys/time.h` and `sys/select.h`
+  both define `struct timeval`, so a program that includes both does not
+  compile.
 
 ### Phase 3 — SUN on equal terms
 

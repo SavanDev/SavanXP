@@ -36,10 +36,14 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
 
 ## What the contract covers
 
-- `include/savanxp/*.h` and the standard headers under `include/`
+- `include/savanxp/*.h` and the standard headers under `include/`, and the
+  headers `public-headers.txt` adds from the repository's `include/`
 - the runtime under `runtime/`, as grouped by `runtime/units.txt`
 - `linker.ld`
-- `tools/build-user.sh` and `tools/new-user-app.sh`
+- the sysroot `build/sdk/2.0` that `tools/make-sdk.sh` assembles from them,
+  its layout included ([`README.md`](README.md#the-sysroot))
+- `tools/build-user.sh`, the copy in the sysroot's `share/sdk/`, and
+  `tools/new-user-app.sh`
 
 ## Visible limits
 

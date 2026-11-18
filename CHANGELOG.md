@@ -55,6 +55,13 @@ Cut-off notes:
   Neither was ever part of the SDK, so the SDK stays 2.0; a program that included an in-tree userland header stops
   building. Every `sdk/` example still builds to the same binary. Phase 1 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
 
+- **The SDK is a sysroot, `build/sdk/2.0`, that `./build.sh build` assembles with the new `tools/make-sdk.sh`.**
+  It holds the public headers (allowlist: `public-headers.txt`), the runtime prebuilt with and without SSE, and its own
+  `share/sdk/build-user.sh`, so a copy builds programs away from the repository. `tools/build-user.sh` builds against it,
+  to the same binaries as before. `--heap-mib` links a strong bootstrap arena instead of recompiling `posix.c`. New host
+  test `sdk-sysroot-test`. Phase 2 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md); layout in the
+  [SDK README](subsystems/posix/sdk/v1/README.md#the-sysroot).
+
 - **The tick no longer reads the network card or the PS/2 controller every millisecond when their interrupts work.**
   It checks them every 64 ticks and goes back to polling, with a `nic:` or `ps2:` log line, if those interrupts never
   arrive. Under KVM the tick holds the kernel lock about a third as long. See [NETWORKING.md](docs/net/NETWORKING.md#receive-interrupts-and-the-tick).
