@@ -102,6 +102,7 @@ def main() -> int:
         "make-tone.py",
         "make-clip.py",
         "make-avclip.py",
+        "make-unsupported.py",
         "qmp_display.py",
     }
     ast.parse((port / "tests" / "qmp_display.py").read_text(encoding="utf-8"))

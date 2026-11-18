@@ -245,10 +245,13 @@ static int run_automation_spec(const char* spec) {
     const char* ccleste_argv[] = {"/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
-    /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
-     * los dos intercalados en AVI, que ademas mide la sincronia. */
+    /* Three paths: audio only (WAV), video only with no container (raw MJPEG),
+     * and both interleaved in AVI, which also measures the sync. Then two files
+     * with codecs the port does not enable, which have to be named. */
     const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/media/tono.wav",
-                                      "/media/clip.mjpeg", "--sync", "/media/avsync.avi", 0};
+                                      "/media/clip.mjpeg", "--sync", "/media/avsync.avi",
+                                      "--unsupported", "ffv1", "/media/ffv1.avi",
+                                      "--unsupported", "pcm_mulaw", "/media/mulaw.wav", 0};
     const char* mediaplayer_show_argv[] = {"/bin/mediaplayer", "--gpu-hold", "8000", "/media/avsync.avi", 0};
     const char* path = "/bin/smoke";
     const char* const* argv = smoke_argv;
@@ -367,7 +370,7 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "mediaplayer") == 0) {
             path = "/bin/mediaplayer";
             argv = mediaplayer_argv;
-            argc = 6;
+            argc = (int)(sizeof(mediaplayer_argv) / sizeof(mediaplayer_argv[0])) - 1;
         } else if (strcmp(spec, "mediaplayer-show") == 0) {
             path = "/bin/mediaplayer";
             argv = mediaplayer_show_argv;

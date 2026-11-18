@@ -1,20 +1,22 @@
-/* Modos sin ventana del reproductor: las herramientas de prueba del port.
+/* The player's windowless modes: the port's test tools.
  *
- * Viven adentro del mismo binario porque cada ejecutable que linkea libavcodec
- * se lleva todos los decoders habilitados (ver link.sh): un wavinfo y un player
- * aparte eran megas repetidos en una imagen de 64 MiB.
+ * They live inside the same binary because every executable that linked
+ * libavcodec carried every enabled decoder (see link.sh): a separate wavinfo and
+ * player were megabytes repeated in a 64 MiB image.
  *
- *   --probe <archivo>                 lo que hay adentro, y decodificarlo entero
- *   --selftest [--sync] <archivo>...  decodifica, convierte, reposiciona y
- *                                     verifica; con --sync ademas mide la
- *                                     sincronia contra el clip de make-avclip.py
- *   --gpu-hold <ms> <archivo>         muestra el video por /dev/gpu0 y deja el
- *                                     ultimo cuadro fijo para la captura
+ *   --probe <file>                    what is inside, and decode all of it
+ *   --selftest [--sync] [--unsupported <codec>] <file>...
+ *                                     decode, convert, seek and verify; --sync
+ *                                     also measures the sync against the
+ *                                     make-avclip.py clip, and --unsupported
+ *                                     expects the file to have a stream in that
+ *                                     codec and the player to name it
+ *   --gpu-hold <ms> <file>            show the video through /dev/gpu0 and keep
+ *                                     the last frame still for the capture
  *
- * El selftest existe porque "se ve y se oye bien" no es algo que un harness
- * pueda asertar, pero "todos los cuadros decodificaron, el audio dura lo que
- * el archivo, el seek cae donde se pidio y el destello coincide con el pitido"
- * si. */
+ * The selftest exists because "it looks and sounds right" is not something a
+ * harness can assert, but "every frame decoded, the audio lasts as long as the
+ * file, the seek lands where it was asked and the flash matches the beep" is. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -283,7 +285,7 @@ static void check_seek(struct media* media, struct selftest_run* run, int sync) 
     }
 }
 
-static int selftest_file(const char* path, int sync) {
+static int selftest_file(const char* path, int sync, const char* unsupported) {
     const struct media_audio_format format = {SELFTEST_RATE, SELFTEST_CHANNELS};
     struct selftest_run run;
     struct media media;
@@ -291,8 +293,25 @@ static int selftest_file(const char* path, int sync) {
 
     memset(&run, 0, sizeof(run));
     if (!media_open(&media, path, &format, error, sizeof(error))) {
+        /* A file with nothing playable is refused, and the reason has to say why. */
+        if (unsupported != NULL && strstr(error, unsupported) != NULL) {
+            printf("mediaplayer: %s: refused, %s\n", path, error);
+            return 0;
+        }
         printf("mediaplayer: FAIL %s: %s\n", path, error);
         return 1;
+    }
+    if (unsupported != NULL) {
+        const char* video = media_unsupported_video_codec(&media);
+        const char* audio = media_unsupported_audio_codec(&media);
+        if ((video == NULL || strcmp(video, unsupported) != 0) &&
+            (audio == NULL || strcmp(audio, unsupported) != 0)) {
+            printf("mediaplayer: FAIL %s: %s was not named (video %s, audio %s)\n", path, unsupported,
+                   video != NULL ? video : "-", audio != NULL ? audio : "-");
+            media_close(&media);
+            return 1;
+        }
+        printf("mediaplayer: %s: %s %s left out and named\n", path, unsupported, video != NULL ? "video" : "audio");
     }
     printf("mediaplayer: %s: %s, video %s, audio %s, ", path, media_container_name(&media),
            media_video_codec_name(&media), media_audio_codec_name(&media));
@@ -333,6 +352,7 @@ int selftest_main(int argc, char** argv) {
     int failures = 0;
     int files = 0;
     int sync = 0;
+    const char* unsupported = NULL;
     int index = 0;
 
     for (index = 0; index < argc; ++index) {
@@ -340,9 +360,14 @@ int selftest_main(int argc, char** argv) {
             sync = 1;
             continue;
         }
-        failures += selftest_file(argv[index], sync);
+        if (strcmp(argv[index], "--unsupported") == 0 && index + 1 < argc) {
+            unsupported = argv[++index];
+            continue;
+        }
+        failures += selftest_file(argv[index], sync, unsupported);
         files += 1;
         sync = 0;
+        unsupported = NULL;
     }
     if (files == 0) {
         printf("mediaplayer: --selftest necesita al menos un archivo\n");

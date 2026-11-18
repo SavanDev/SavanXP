@@ -313,8 +313,14 @@ static void paint_video_area(void) {
     } else if (!media_has_video(&g.playback.media)) {
         const char* title = media_metadata(&g.playback.media, "title");
         const char* artist = media_metadata(&g.playback.media, "artist");
+        const char* video_codec = media_unsupported_video_codec(&g.playback.media);
         char detail[96];
-        snprintf(detail, sizeof(detail), "%s audio", media_audio_codec_name(&g.playback.media));
+        if (video_codec != NULL) {
+            snprintf(detail, sizeof(detail), "%s video is not supported; playing %s audio", video_codec,
+                     media_audio_codec_name(&g.playback.media));
+        } else {
+            snprintf(detail, sizeof(detail), "%s audio", media_audio_codec_name(&g.playback.media));
+        }
         paint_centered_text(painter, y - line, title != NULL ? title : base_name(g.playback.path),
                             gfx_rgb(240, 240, 240));
         if (artist != NULL) {
@@ -502,6 +508,15 @@ static void open_file(const char* path) {
     if (!playback_open(&g.playback, path)) {
         snprintf(g.message, sizeof(g.message), "Cannot open %s: %s", base_name(path), g.playback.error);
         playback_close(&g.playback);
+    } else {
+        const char* video_codec = media_unsupported_video_codec(&g.playback.media);
+        const char* audio_codec = media_unsupported_audio_codec(&g.playback.media);
+        if (video_codec != NULL) {
+            printf("mediaplayer: %s: %s video is not supported\n", base_name(path), video_codec);
+        }
+        if (audio_codec != NULL) {
+            printf("mediaplayer: %s: %s audio is not supported\n", base_name(path), audio_codec);
+        }
     }
     request_window_size();
     /* Con o sin pedido atendido, el cuadro del archivo nuevo tiene otras

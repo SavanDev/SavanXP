@@ -37,6 +37,29 @@ the library's symbols unrelocated. So the player asks first, with
 which is itself an FFmpeg call and was the one that faulted before the check
 existed. With no motor, the window still opens and says which library is missing.
 
+## What it does with a codec it cannot decode
+
+A stream whose codec no enabled decoder takes is left out **and named**, with
+FFmpeg's name for the codec (`av1`, `pcm_mulaw`), never a library's:
+
+- the other stream still plays. With the video left out, the video area says
+  `av1 video is not supported; playing opus audio`;
+- with nothing playable, the file is refused and the error names every codec
+  left out: `unsupported video codec: av1`;
+- each left-out stream is also printed on stdout when the file opens.
+
+`media_unsupported_video_codec()` and `media_unsupported_audio_codec()` hold
+the names. An album cover is not counted: an MP3 whose cover is a PNG is not
+missing a video. A decoder that exists and refuses the stream at
+`avcodec_open2` is reported the same way, because for the user it is the same.
+
+Not covered yet: a video that plays with its audio left out says so only on
+stdout, because while frames are on screen the video area has no room for
+text. The control bar is where it belongs once it has a status line.
+
+`mediaplayer --selftest --unsupported <codec> <file>` checks both shapes, with
+`ffv1.avi` and `mulaw.wav` from `ports/ffmpeg/tests/make-unsupported.py`.
+
 ## Layers
 
 ```

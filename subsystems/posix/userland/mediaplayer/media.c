@@ -120,17 +120,40 @@ static void stream_reset(struct media_stream* stream) {
     stream->next_time_us = MEDIA_NO_TIME;
 }
 
-static int open_stream(struct media* media, struct media_stream* stream, enum AVMediaType type) {
+/* The codec of the stream of this type the file would play if it could, or NULL
+ * when it has none worth naming: an album cover in an MP3 arrives as a one-frame
+ * video stream, and not being able to show it is not a missing video. */
+static const char* best_stream_codec(const struct media* media, enum AVMediaType type) {
+    const AVStream* av_stream = NULL;
+    int index = av_find_best_stream(media->format, type, -1, -1, NULL, 0);
+
+    if (index < 0) {
+        return NULL;
+    }
+    av_stream = media->format->streams[index];
+    if (type == AVMEDIA_TYPE_VIDEO && (av_stream->disposition & AV_DISPOSITION_ATTACHED_PIC) != 0) {
+        return NULL;
+    }
+    return avcodec_get_name(av_stream->codecpar->codec_id);
+}
+
+/* Opens the decoder of the best stream of this type. When the file has such a
+ * stream and no enabled decoder takes it, its codec is left in *unsupported. */
+static int open_stream(struct media* media, struct media_stream* stream, enum AVMediaType type,
+                       const char** unsupported) {
     const AVCodec* codec = NULL;
     AVStream* av_stream = NULL;
     int index = av_find_best_stream(media->format, type, -1, -1, &codec, 0);
 
     if (index < 0 || codec == NULL) {
+        if (index == AVERROR_DECODER_NOT_FOUND || index >= 0) {
+            *unsupported = best_stream_codec(media, type);
+        }
         return 0;
     }
     av_stream = media->format->streams[index];
-    /* La tapa de un disco en un MP3 llega como un stream de video de un solo
-     * cuadro. Mostrarla es una mejora futura; reproducirla como video no. */
+    /* An album cover in an MP3 arrives as a one-frame video stream. Showing it is
+     * a future improvement; playing it as video is not. */
     if (type == AVMEDIA_TYPE_VIDEO && (av_stream->disposition & AV_DISPOSITION_ATTACHED_PIC) != 0) {
         return 0;
     }
@@ -144,10 +167,13 @@ static int open_stream(struct media* media, struct media_stream* stream, enum AV
         return 0;
     }
     stream->decoder->pkt_timebase = av_stream->time_base;
-    /* Sin hilos en el kernel: un decoder que intente crearlos no arranca. */
+    /* No threads in the kernel: a decoder that tries to create them does not start. */
     stream->decoder->thread_count = 1;
     if (avcodec_open2(stream->decoder, codec, NULL) < 0) {
+        /* The decoder exists and refused this stream: for the user that is the
+         * same as not having it. */
         avcodec_free_context(&stream->decoder);
+        *unsupported = avcodec_get_name(av_stream->codecpar->codec_id);
         return 0;
     }
     stream->index = index;
@@ -193,14 +219,28 @@ int media_open(struct media* media, const char* path, const struct media_audio_f
     media->seekable = media->format->pb != NULL && (media->format->pb->seekable & AVIO_SEEKABLE_NORMAL) != 0 &&
                       media->duration_us > 0;
 
-    (void)open_stream(media, &media->video, AVMEDIA_TYPE_VIDEO);
+    (void)open_stream(media, &media->video, AVMEDIA_TYPE_VIDEO, &media->video_unsupported);
     if (audio_out != NULL && audio_out->sample_rate > 0 && audio_out->channels > 0) {
         media->audio_out = *audio_out;
-        (void)open_stream(media, &media->audio, AVMEDIA_TYPE_AUDIO);
+        (void)open_stream(media, &media->audio, AVMEDIA_TYPE_AUDIO, &media->audio_unsupported);
     }
 
     if (media->video.index < 0 && media->audio.index < 0) {
-        copy_error(error, error_capacity, "no stream with a supported codec");
+        const char* video = media->video_unsupported;
+        const char* audio = media->audio_unsupported;
+        char reason[96];
+
+        if (video != NULL && audio != NULL) {
+            snprintf(reason, sizeof(reason), "unsupported codecs: %s video, %s audio", video, audio);
+        } else if (video != NULL || audio != NULL) {
+            snprintf(reason, sizeof(reason), "unsupported %s codec: %s", video != NULL ? "video" : "audio",
+                     video != NULL ? video : audio);
+        } else if (media->audio_out.sample_rate == 0 && best_stream_codec(media, AVMEDIA_TYPE_AUDIO) != NULL) {
+            snprintf(reason, sizeof(reason), "no video, and no audio device for the sound");
+        } else {
+            snprintf(reason, sizeof(reason), "no audio or video stream");
+        }
+        copy_error(error, error_capacity, reason);
         media_close(media);
         return 0;
     }
@@ -287,6 +327,14 @@ const char* media_video_codec_name(const struct media* media) {
 
 const char* media_audio_codec_name(const struct media* media) {
     return media->audio.decoder != NULL ? media->audio.decoder->codec->name : "none";
+}
+
+const char* media_unsupported_video_codec(const struct media* media) {
+    return media->video_unsupported;
+}
+
+const char* media_unsupported_audio_codec(const struct media* media) {
+    return media->audio_unsupported;
 }
 
 /* ---- demultiplexado y decodificacion -------------------------------------- */

@@ -62,7 +62,7 @@ built either, and the launcher registry drops the entry the way it drops Doom's.
 ## Installation
 
 `install.sh` stages one file, `/lib/libffmpeg.so.0.4`, and when requested the
-three deterministic test clips under `build/media/`. It requires an existing valid
+five deterministic test clips under `build/media/`. It requires an existing valid
 `build/disk.img` and `build/tools/sxfs-cli`, then uses `tools/sxfs_sync.py` with
 the persistent-image lock, candidate validation, atomic replacement, rollback, and
 safe compaction. It never passes `--reset`.
@@ -83,9 +83,13 @@ builders but cannot stop an external writer that bypasses the protocol.
 build/media/tono.wav
 build/media/clip.mjpeg
 build/media/avsync.avi
+build/media/ffv1.avi
+build/media/mulaw.wav
 ```
 
-They are installed under `/media/` and are not committed to Git.
+`ffv1.avi` (FFV1 video, PCM audio) and `mulaw.wav` (mu-law audio only) carry
+codecs this port does not enable, so the selftest can check that the player
+names them. They are installed under `/media/` and are not committed to Git.
 
 ## Smoke
 

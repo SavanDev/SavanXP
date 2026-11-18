@@ -49,10 +49,10 @@ echo "ffmpeg: staged /system/licenses/ffmpeg"
 
 if ((WITH_TEST_MEDIA)); then
     mkdir -p "$OUTPUT_ROOT/media" "$STAGE/media"
-    for generator in make-tone.py make-clip.py make-avclip.py; do
+    for generator in make-tone.py make-clip.py make-avclip.py make-unsupported.py; do
         "$PYTHON" "$PORT/tests/$generator"
     done
-    for media in tono.wav clip.mjpeg avsync.avi; do
+    for media in tono.wav clip.mjpeg avsync.avi ffv1.avi mulaw.wav; do
         cp "$OUTPUT_ROOT/media/$media" "$STAGE/media/$media"
     done
 fi
@@ -93,5 +93,5 @@ fi
 "$PYTHON" "$REPO/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
 echo "ffmpeg: sincronizado el volumen"
 if ((WITH_TEST_MEDIA)); then
-    echo "ffmpeg: instalados /media/{tono.wav,clip.mjpeg,avsync.avi}"
+    echo "ffmpeg: installed /media/{tono.wav,clip.mjpeg,avsync.avi,ffv1.avi,mulaw.wav}"
 fi

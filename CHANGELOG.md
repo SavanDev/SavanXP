@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The Media Player names a codec it cannot decode instead of silently dropping the stream.** An AV1 WebM plays its
+  sound and says `av1 video is not supported`; a file with nothing playable is refused naming the codecs. New
+  `mediaplayer --selftest --unsupported <codec>`; see [MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md#what-it-does-with-a-codec-it-cannot-decode).
+
 - **Shut Down and Restart end the session first, as Windows does.** `init` serves a `shutdown` port
   (`power_shutdown()`/`power_reboot()`, SUN `sxn_request_shutdown()`); `sessiond` and `windowd` ask every window to close,
   a Cancel to "save changes?" cancels the shutdown, and `init` stops its services before `/dev/power`.

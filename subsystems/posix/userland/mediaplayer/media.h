@@ -85,6 +85,11 @@ struct media {
      * un tiempo que retrocede (un wrap de MPEG-TS) no tiene que descartar nada. */
     int64_t video_skip_until_us;
     int64_t audio_skip_until_us;
+
+    /* The codec of a stream the file has and this build cannot decode, or NULL.
+     * FFmpeg's own name for the codec ("av1"), never a library's. */
+    const char* video_unsupported;
+    const char* audio_unsupported;
 };
 
 /* El nombre de la libreria que el cargador no pudo traer, o NULL si el motor esta
@@ -121,6 +126,11 @@ int64_t media_frame_duration_us(const struct media* media);
 const char* media_container_name(const struct media* media);
 const char* media_video_codec_name(const struct media* media);
 const char* media_audio_codec_name(const struct media* media);
+/* The codec of the video or audio stream that was left out because no enabled
+ * decoder could open it, or NULL. A file with one of these still opens if the
+ * other stream plays; with neither, media_open fails and names them. */
+const char* media_unsupported_video_codec(const struct media* media);
+const char* media_unsupported_audio_codec(const struct media* media);
 
 /* Decodifica el proximo cuadro de video: queda en media->video_frame con su
  * tiempo en media->video_time_us. 1 = hay cuadro, 0 = se termino, <0 = error. */
