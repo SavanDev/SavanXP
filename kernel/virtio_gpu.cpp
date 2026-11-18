@@ -4493,6 +4493,9 @@ const display::Backend kBackend = {
     gpu3d_submit,
     gpu3d_transfer,
     gpu3d_release_for,
+    // The console keeps its own scanout path; FB4 covers the firmware
+    // framebuffer backend only.
+    nullptr,
 };
 } // namespace
 

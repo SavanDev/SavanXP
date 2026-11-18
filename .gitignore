@@ -38,6 +38,7 @@ tools/*
 !tools/win32_window_smoke.py
 !tools/linux_restart_smoke.py
 !tools/power_smoke.py
+!tools/panic_display_smoke.py
 !tools/linux_xclient_smoke.py
 !tools/linux_xeyes_smoke.py
 !tools/win32_dialog_smoke.py

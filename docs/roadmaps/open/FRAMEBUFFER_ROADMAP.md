@@ -32,7 +32,7 @@ The normal path is application surfaces in shared memory, composition by
 | Physical GPU fallback | Uses the firmware's fixed mode and visible framebuffer. No generic page flip, vertical blank notification or hardware cursor is exposed. |
 | Cache attributes | Aperture remapping prefers a WC PAT entry on the DISPI path. The firmware alias remains and the alias probe accesses both views. Other hardware is logged as `tipo del firmware`, which does not identify its actual memory type. |
 | Completion | The framebuffer backend retires presents synchronously; `wait_for_idle` is empty and `flush` checks readiness. There is no monitor refresh completion signal. |
-| Emergency output | Panic enables the console at the framebuffer base. Session release resets DISPI panning, but panic does not take that normal release path. Visibility with the second buffer selected needs a regression test. |
+| Emergency output | Since FB4: `panic()` calls `display::emergency_console()` before drawing. `fb_gpu` reads the mode back from the DISPI registers, pans to the console's buffer and hands the console that geometry. Before FB4, a panic with the second buffer shown drew where nobody looked. |
 
 Recorded physical runs include the
 [Vega 56](../../hardware/RYZEN5_1600_VEGA56.md) and
@@ -111,7 +111,7 @@ S is a few commits, M a short series, L a project of its own.
 | FB1b | High: one gate for splash/console/backend, honest boot log | S | FB1a | done, 2026-11-17 | open: BIOS and UEFI boot logs |
 | FB2 | High: measured, coherent framebuffer memory attributes | M | FB1b | open | open |
 | FB3 | High: defined presentation completion and ordering | M | FB1a; coordinate with FB2 | open | open |
-| FB4 | High: visible emergency output | S | FB1a; agree emergency contract with FB3 | open | open |
+| FB4 | High: visible emergency output | S | FB1a; agree emergency contract with FB3 | done, 2026-11-17 | open: a panic on a disposable boot |
 | FB5 | Medium: physical pixel format conversion | M | FB1a; FB2/FB3 for physical validation | open | open |
 | FB6 | Medium: measured copy and scheduling improvements | L | FB2, FB3, FB5 | open | open |
 | FB7 | Conditional: one native display driver | L | FB1-FB6 and a demonstrated hardware need | open | open |
@@ -122,8 +122,10 @@ S is a few commits, M a short series, L a project of its own.
 before anything draws, every writer reads the one `available` gate, DISPI
 modes are checked before `publish_mode`, and the boot log has two
 `framebuffer:` lines (plus a warning for BGR). Its metal check is pending: a
-BIOS and a UEFI boot log naming the accepted layout. **Next:** FB4 (small, only
-needs FB1a) or FB2/FB3.
+BIOS and a UEFI boot log naming the accepted layout.
+
+**FB4 code is done.** See its section for what it covers and what it does
+not. **Next:** FB2 and FB3, which need physical runs to close.
 
 FB4 can land before FB2/FB3 finish. RGB/BGR correctness in FB5 precedes other
 depths, unless a target's mode survey promotes 24-bit (see FB5). FB7 is a
@@ -230,6 +232,40 @@ partial mode change rather than trusting stale console geometry.
 then verifies visible panic text and serial output. Also cover a single-buffer
 fallback and compositor exit/session cleanup. Run the physical emergency test
 on a disposable boot session; do not claim physical verification from QEMU.
+
+**As built.** `display::Backend::emergency_console` is optional; `panic()`
+calls it through `display::emergency_console()` after stopping the other
+cores and before the console is shown. `fb_gpu` implements it with port I/O
+and plain stores only:
+
+- It reads the mode the adapter is really scanning out from the DISPI
+  registers, not from `g_fb_info`, and runs it through the FB1 check.
+- When that mode is usable, it pans to offset 0, where the console writes,
+  drops double buffering and hands the console that geometry.
+- When the registers describe no usable mode (a panic in the middle of
+  `apply_dispi_mode`), it programs the firmware's mode again, single
+  buffered. If even that does not read back, `console::detach_framebuffer()`
+  leaves serial output alone.
+
+Without DISPI the firmware's scanout never moves, so there is nothing to do.
+`virtio_gpu` leaves the operation null and keeps its previous behavior; it is
+outside this milestone.
+
+`panictest --display VARIANT` takes the graphics session, shows a magenta
+frame and panics. Four scenarios run it, and `tools/panic_display_smoke.py`
+checks the screenshot: no magenta left, the console's background and text
+visible, and the screen the size of the scanned-out mode.
+
+| Scenario | State at the panic |
+| --- | --- |
+| `panic-display-front` | double buffered, first buffer shown |
+| `panic-display-back` | double buffered, second buffer shown; failed before FB4 |
+| `panic-display-single` | a mode too large for two buffers (2560x1638 under QEMU) |
+| `panic-display-released` | session released after a flip, as when the desktop exits |
+
+Not covered by a scenario: the reprogramming path after a half-applied
+mode, which needs a panic injected inside `apply_dispi_mode`. The physical
+run is pending.
 
 ## FB5 — convert physical pixel formats at the final copy
 

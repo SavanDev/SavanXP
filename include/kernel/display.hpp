@@ -60,6 +60,13 @@ struct Backend {
     int (*gpu3d_submit)(uint32_t pid, uint32_t context_id, const void* commands, uint32_t size);
     int (*gpu3d_transfer)(uint32_t pid, const savanxp_gpu_3d_transfer& request);
     void (*gpu3d_release_for)(uint32_t pid);
+    // Emergency output (FB4, docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md):
+    // panic() calls it with every other core stopped and interrupts off, before
+    // drawing its text. It makes the buffer the console writes into the
+    // visible one and hands the console the geometry the hardware really has.
+    // It must not allocate, wait or take a lock. Optional: null when the
+    // console's buffer is always the one shown.
+    void (*emergency_console)();
 };
 
 // Un driver de display candidato. El core no conoce a ninguno por nombre: cada
@@ -144,5 +151,8 @@ int gpu3d_submit(uint32_t pid, uint32_t context_id, const void* commands, uint32
 int gpu3d_transfer(uint32_t pid, const savanxp_gpu_3d_transfer& request);
 // Destroys every 3D context and resource `pid` owns. Called on process exit.
 void gpu3d_release_for(uint32_t pid);
+
+// The bound backend's emergency_console, if it has one. For panic() only.
+void emergency_console();
 
 } // namespace display

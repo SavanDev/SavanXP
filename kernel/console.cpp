@@ -382,6 +382,12 @@ void set_external_framebuffer(void* address, const savanxp_fb_info& info) {
     redraw_all();
 }
 
+void detach_framebuffer() {
+    forget_screen();
+    g_framebuffer.available = false;
+    g_cursor_drawn = false;
+}
+
 bool present_pixels(const void* pixels, size_t byte_count) {
     if (!framebuffer_ready() || pixels == nullptr) {
         return false;

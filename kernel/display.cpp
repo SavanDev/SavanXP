@@ -98,6 +98,12 @@ bool set_cursor(const savanxp_gpu_cursor_image& image) { return g_backend != nul
 bool move_cursor(const savanxp_gpu_cursor_position& position) { return g_backend != nullptr && g_backend->move_cursor(position); }
 bool get_present_timeline(savanxp_gpu_present_timeline& timeline) { return g_backend != nullptr && g_backend->get_present_timeline(timeline); }
 bool wait_present(savanxp_gpu_present_wait& request) { return g_backend != nullptr && g_backend->wait_present(request); }
+
+void emergency_console() {
+    if (g_backend != nullptr && g_backend->emergency_console != nullptr) {
+        g_backend->emergency_console();
+    }
+}
 void release_session_resources() { if (g_backend != nullptr) { g_backend->release_session_resources(); } }
 int create_present_event() { return g_backend != nullptr ? g_backend->create_present_event() : -static_cast<int>(SX_ENOSYS); }
 int create_scanout_event() { return g_backend != nullptr ? g_backend->create_scanout_event() : -static_cast<int>(SX_ENOSYS); }

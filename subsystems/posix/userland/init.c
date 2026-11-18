@@ -241,6 +241,7 @@ static int run_automation_spec(const char* spec) {
     const char* elevtest_argv[] = {"/bin/elevtest", 0};
 
     const char* panictest_argv[] = {"/bin/panictest", 0};
+    const char* panicdisplay_argv[] = {"/bin/panictest", "--display", 0, 0};
     const char* ccleste_argv[] = {"/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
@@ -383,6 +384,13 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/panictest";
             argv = panictest_argv;
             argc = 1;
+        } else if (text_starts_with(spec, "panictest ")) {
+            /* The panic text must be what the screen shows, whichever DISPI
+             * buffer was visible (FB4, docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md). */
+            path = "/bin/panictest";
+            panicdisplay_argv[2] = skip_spaces(spec + strlen("panictest"));
+            argv = panicdisplay_argv;
+            argc = 3;
         } else if (strcmp(spec, "sessiontest") == 0) {
             path = "/bin/sessiontest";
             argv = sessiontest_argv;

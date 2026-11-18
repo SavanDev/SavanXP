@@ -33,6 +33,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A kernel panic is visible on screen even when the desktop was showing its second DISPI buffer or another mode.**
+  New `panic-display-front`/`-back`/`-single`/`-released` scenarios (`panictest --display`) check the screenshot.
+  FB4 of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
+
 - **Closing Notepad with unsaved changes (X, Alt+F4) asks "save changes?" instead of discarding them.**
 
 - **Power-off and reboot sync and mark every volume clean first, and the ACPI power button no longer drops queued writes.**

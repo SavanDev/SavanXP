@@ -514,7 +514,7 @@ bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) 
 // A mode programmed through DISPI goes through the same check as the boot
 // descriptor before publish_mode hands its geometry to the console (FB1b in
 // docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md). DISPI's 32 bpp is XRGB8888.
-bool programmed_mode_valid(const savanxp_fb_info& info) {
+framebuffer::Reject check_mode(const savanxp_fb_info& info) {
     boot::FramebufferInfo candidate = {};
     candidate.address = g_fb_base;
     candidate.width = info.width;
@@ -531,13 +531,80 @@ bool programmed_mode_valid(const savanxp_fb_info& info) {
     candidate.blue_mask_size = 8;
     candidate.blue_mask_shift = 0;
     candidate.region_bytes = g_mapped_bytes;
-    const framebuffer::Result check = framebuffer::validate(candidate);
-    if (check.reason != framebuffer::Reject::none) {
+    return framebuffer::validate(candidate).reason;
+}
+
+bool programmed_mode_valid(const savanxp_fb_info& info) {
+    const framebuffer::Reject reason = check_mode(info);
+    if (reason != framebuffer::Reject::none) {
         console::printf("fb_gpu: mode %ux%u pitch=%u rejected (%s)\n",
-            info.width, info.height, info.pitch, framebuffer::reject_name(check.reason));
+            info.width, info.height, info.pitch, framebuffer::reject_name(reason));
         return false;
     }
     return true;
+}
+
+// The mode the adapter is scanning out now, read back from its registers
+// rather than from g_fb_info, which a panic may have caught mid-change.
+bool read_programmed_mode(savanxp_fb_info& result) {
+    const uint16_t enable = dispi_read(kDispiRegisterEnable);
+    const uint32_t width = dispi_read(kDispiRegisterXres);
+    const uint32_t height = dispi_read(kDispiRegisterYres);
+    const uint32_t bpp = dispi_read(kDispiRegisterBpp);
+    const uint32_t virtual_width = dispi_read(kDispiRegisterVirtWidth);
+    if ((enable & kDispiEnabled) == 0 || bpp != 32u || width == 0 || height == 0) {
+        return false;
+    }
+    const uint32_t pitch = (virtual_width >= width ? virtual_width : width) * 4u;
+    result = {
+        .width = width,
+        .height = height,
+        .pitch = pitch,
+        .bpp = 32u,
+        .buffer_size = pitch * height,
+    };
+    return check_mode(result) == framebuffer::Reject::none;
+}
+
+// FB4: panic() calls this with the other cores stopped and interrupts off.
+// The console always writes from the start of the aperture, so that buffer is
+// made the visible one, and the console gets the geometry the adapter really
+// has. When the registers describe no usable mode (a panic in the middle of
+// apply_dispi_mode), the firmware's mode is programmed again, single
+// buffered; if even that does not read back, the console stops drawing and
+// serial output is all that is left. Port I/O and plain stores only: no
+// allocation, no lock, no wait. Without DISPI the firmware's scanout never
+// moves, so there is nothing to do.
+void emergency_console() {
+    if (!g_dispi_available || g_fb_base == nullptr) {
+        return;
+    }
+    savanxp_fb_info shown = {};
+    if (!read_programmed_mode(shown)) {
+        dispi_write(kDispiRegisterEnable, kDispiDisabled);
+        dispi_write(kDispiRegisterXres, static_cast<uint16_t>(g_native_info.width));
+        dispi_write(kDispiRegisterYres, static_cast<uint16_t>(g_native_info.height));
+        dispi_write(kDispiRegisterBpp, 32u);
+        dispi_write(kDispiRegisterVirtWidth, static_cast<uint16_t>(g_native_info.width));
+        dispi_write(kDispiRegisterVirtHeight, static_cast<uint16_t>(g_native_info.height));
+        dispi_write(kDispiRegisterEnable, kDispiEnabled | kDispiLfbEnabled);
+        if (!read_programmed_mode(shown)) {
+            console::detach_framebuffer();
+            return;
+        }
+    }
+    dispi_write(kDispiRegisterXOffset, 0);
+    dispi_write(kDispiRegisterYOffset, 0);
+    g_double_buffered = false;
+    g_front_offset_bytes = 0;
+    g_back_offset_bytes = 0;
+    forget_previous_damage();
+    g_fb_info = shown;
+    g_gpu_info.width = shown.width;
+    g_gpu_info.height = shown.height;
+    g_gpu_info.pitch = shown.pitch;
+    g_gpu_info.buffer_size = shown.buffer_size;
+    console::set_external_framebuffer(g_fb_base, shown);
 }
 
 void publish_mode(const savanxp_fb_info& info) {
@@ -1040,6 +1107,7 @@ const display::Backend kBackend = {
     nullptr,
     nullptr,
     nullptr,
+    emergency_console,
 };
 
 } // namespace

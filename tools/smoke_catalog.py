@@ -154,6 +154,47 @@ SCENARIOS: dict[str, Scenario] = {
         "A kernel panic halts every core",
         120.0,
     ),
+    # The panic text is what the screen shows, whichever DISPI buffer was
+    # visible and whatever mode was set (FB4,
+    # docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md). panictest leaves a magenta
+    # frame on screen, then panics; tools/panic_display_smoke.py checks the
+    # screenshot.
+    "panic-display-front": _qemu_scenario(
+        "panictest front",
+        "smp: other cores stopped",
+        "PANICTEST FAIL",
+        "Panic text visible with the first DISPI buffer shown",
+        120.0,
+        ready="smp: other cores stopped",
+        qmp_callback="tools/panic_display_smoke.py",
+    ),
+    "panic-display-back": _qemu_scenario(
+        "panictest back",
+        "smp: other cores stopped",
+        "PANICTEST FAIL",
+        "Panic text visible with the second DISPI buffer shown",
+        120.0,
+        ready="smp: other cores stopped",
+        qmp_callback="tools/panic_display_smoke.py",
+    ),
+    "panic-display-single": _qemu_scenario(
+        "panictest single",
+        "smp: other cores stopped",
+        "PANICTEST FAIL",
+        "Panic text visible in a single-buffered mode other than the firmware's",
+        120.0,
+        ready="smp: other cores stopped",
+        qmp_callback="tools/panic_display_smoke.py",
+    ),
+    "panic-display-released": _qemu_scenario(
+        "panictest released",
+        "smp: other cores stopped",
+        "PANICTEST FAIL",
+        "Panic text visible after the graphics session was released",
+        120.0,
+        ready="smp: other cores stopped",
+        qmp_callback="tools/panic_display_smoke.py",
+    ),
     "windowd-smoke": _qemu_scenario(
         "windowd-selftest",
         "WINDOWD SMOKE PASS",
