@@ -1,0 +1,77 @@
+SxBASIC Form 1
+
+Begin Form AddForm
+    Text = "Add Reading"
+    Width = 264
+    Height = 110
+    Begin Label CelsiusLabel
+        Text = "Celsius:"
+        Left = 8
+        Top = 12
+        Width = 60
+        Height = 20
+    End
+    Begin TextBox CelsiusBox
+        Left = 72
+        Top = 8
+        Width = 184
+        Height = 24
+    End
+    Begin Label PreviewLabel
+        Text = ""
+        Left = 72
+        Top = 40
+        Width = 184
+        Height = 20
+    End
+    Begin Button OkButton
+        Text = "OK"
+        Left = 80
+        Top = 76
+        Width = 84
+        Height = 26
+        Default = True
+    End
+    Begin Button CancelButton
+        Text = "Cancel"
+        Left = 172
+        Top = 76
+        Width = 84
+        Height = 26
+        Cancel = True
+    End
+End
+
+' The dialog of the two-form sample of the Savan BASIC reference
+' (docs/userland/SXBASIC.md). MainForm shows it with ShowModal and reads
+' Accepted and Celsius once it is hidden.
+
+Public Accepted As Boolean
+Public Celsius As Double
+
+Private Sub Form_Load()
+    CelsiusBox.SetFocus
+End Sub
+
+Private Sub CelsiusBox_Change()
+    If IsNumeric(CelsiusBox.Text) Then
+        PreviewLabel.Text = FormatTemperature(CelsiusToFahrenheit(CDbl(CelsiusBox.Text)), "F")
+    Else
+        PreviewLabel.Text = ""
+    End If
+End Sub
+
+Private Sub OkButton_Click()
+    If Not IsNumeric(CelsiusBox.Text) Then
+        MsgBox "Type a temperature in degrees Celsius.", mbWarning, "Add Reading"
+        CelsiusBox.SetFocus
+        Exit Sub
+    End If
+    Celsius = CDbl(CelsiusBox.Text)
+    Accepted = True
+    Me.Hide
+End Sub
+
+Private Sub CancelButton_Click()
+    Me.Hide
+End Sub

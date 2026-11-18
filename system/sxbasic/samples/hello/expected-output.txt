@@ -1,0 +1,22 @@
+Hello from Savan BASIC
+Sum of 1 to 10: 55
+1
+2
+Fizz
+4
+Buzz
+Fizz
+7
+8
+Fizz
+Buzz
+11
+Fizz
+13
+14
+FizzBuzz
+Words: 3
+Last word: THREE
+Average: 3.5
+Grade for 7: B
+Error 11: Division by zero

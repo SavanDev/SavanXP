@@ -1,0 +1,10 @@
+SxBASIC Project 1
+
+Name = "Converter"
+Description = "Two-form sample of the Savan BASIC reference"
+Version = "1.0"
+Kind = Windows
+Startup = MainForm
+Form = "MainForm.sbf"
+Form = "AddForm.sbf"
+Module = "Conversions.bas"

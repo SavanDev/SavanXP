@@ -1,0 +1,110 @@
+SxBASIC Form 1
+
+Begin Form MainForm
+    Text = "Temperature Converter"
+    Width = 360
+    Height = 224
+    Begin Menu FileMenu
+        Text = "File"
+        Begin MenuItem FileClear
+            Text = "Clear"
+        End
+        Begin MenuItem FileSeparator
+            Text = "-"
+        End
+        Begin MenuItem FileExit
+            Text = "Exit"
+        End
+    End
+    Begin Menu HelpMenu
+        Text = "Help"
+        Begin MenuItem HelpAbout
+            Text = "About Converter..."
+        End
+    End
+    Begin ListBox ReadingsList
+        Left = 8
+        Top = 8
+        Width = 252
+        Height = 180
+    End
+    Begin Button AddButton
+        Text = "Add..."
+        Left = 268
+        Top = 8
+        Width = 84
+        Height = 26
+    End
+    Begin Button ClearButton
+        Text = "Clear"
+        Left = 268
+        Top = 40
+        Width = 84
+        Height = 26
+    End
+    Begin Label AverageLabel
+        Text = ""
+        Left = 8
+        Top = 196
+        Width = 344
+        Height = 20
+    End
+End
+
+' The main form of the two-form sample of the Savan BASIC reference
+' (docs/userland/SXBASIC.md). AddForm asks for a reading; Conversions.bas
+' converts and formats it.
+
+Dim readingCount As Integer
+Dim total As Double
+
+Private Sub Form_Load()
+    UpdateAverage
+End Sub
+
+Private Sub AddButton_Click()
+    AddForm.ShowModal
+    If AddForm.Accepted Then
+        AddReading AddForm.Celsius
+    End If
+    Unload AddForm
+End Sub
+
+Private Sub ClearButton_Click()
+    ClearReadings
+End Sub
+
+Private Sub FileClear_Click()
+    ClearReadings
+End Sub
+
+Private Sub FileExit_Click()
+    Unload Me
+End Sub
+
+Private Sub HelpAbout_Click()
+    MsgBox "Temperature Converter" & NewLine & "A Savan BASIC sample.", mbInformation, "About"
+End Sub
+
+Private Sub AddReading(celsius As Double)
+    ReadingsList.AddItem FormatTemperature(celsius, "C") & " = " & _
+        FormatTemperature(CelsiusToFahrenheit(celsius), "F")
+    readingCount = readingCount + 1
+    total = total + celsius
+    UpdateAverage
+End Sub
+
+Private Sub ClearReadings()
+    ReadingsList.Clear
+    readingCount = 0
+    total = 0
+    UpdateAverage
+End Sub
+
+Private Sub UpdateAverage()
+    If readingCount = 0 Then
+        AverageLabel.Text = "No readings yet."
+    Else
+        AverageLabel.Text = "Average: " & FormatTemperature(total / readingCount, "C")
+    End If
+End Sub

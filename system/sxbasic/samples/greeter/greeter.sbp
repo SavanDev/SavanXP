@@ -1,0 +1,8 @@
+SxBASIC Project 1
+
+Name = "Greeter"
+Description = "One-form sample of the Savan BASIC reference"
+Version = "1.0"
+Kind = Windows
+Startup = MainForm
+Form = "MainForm.sbf"

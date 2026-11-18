@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, nothing started.** SxBASIC is a BASIC language and a visual
+> **Status: open, phase 0 done.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -13,7 +13,11 @@ One name for the language and the environment, as Visual Basic had. **SxBASIC**
 in code, files and documents (`libsxbasic.so`, `SXBASIC.md`), after SxFS and
 SxGL; **Savan BASIC** where a user reads it (the Start menu, the title bar,
 the About box). "Visual" stays out of it: next to "BASIC" it is Microsoft's
-mark. The file extensions are settled in phase 0.
+mark. The files are `.sbp` (project), `.sbf` (form) and `.bas` (module):
+`.bas` because every BASIC uses it for source and editors elsewhere already
+colour it, and not `.sx*`, which stays with the system's own formats (`.sxe`,
+`.sxres`, `.sxlnk`). Bare `.sb` was passed over: Microsoft Small Basic and
+Scratch 1.x already use it, and one extension cannot name three kinds of file.
 
 ## What it is, and what it is not
 
@@ -151,7 +155,7 @@ commit. Only the slice SxBASIC uses lands, not the rest of the other phase.
 
 ## Phases
 
-### Phase 0 — the language and the files, on paper
+### Phase 0 — the language and the files, on paper (done)
 
 A reference document for the dialect (`docs/userland/SXBASIC.md`, listed
 in `docs/README.md`): types (integer, double, string, boolean, arrays,
@@ -159,10 +163,24 @@ control and form references), statements, `Sub` and `Function`, events, the
 built-in procedures, and how a runtime error reports its line. Plus the
 project files, all text so they diff and merge: the project (its forms, its
 modules, the start form, title and icon), a form (controls, their properties,
-then its code), a module. The file extensions are settled here.
+then its code), a module.
 
 Done when the document exists and a small program of each kind (console, one
 form, two forms with a module) is written in it by hand.
+
+**What landed.** [SXBASIC.md](../../userland/SXBASIC.md) and three projects
+under `system/sxbasic/samples/`: `hello` (console, with the output it must
+print), `greeter` (one form) and `converter` (two forms, a module, a menu, a
+dialog). Decisions the reference makes that change the plan above:
+
+- No `Variant`: every name is typed, one 64-bit `Integer`, `ByVal` by
+  default, `Try`/`Catch` instead of `On Error`.
+- A form exists once and loads on first use, as VB's default instances.
+  Forms after the first are owned windows, so four can be open at once.
+- `ShowModal` and `DoEvents` need a virtual machine that can suspend a
+  procedure and resume it, which phase 1 builds in from the start; the
+  debugger of phase 6 relies on the same thing.
+- `GroupBox` does not contain controls; radio buttons group by number.
 
 ### Phase 1 — the core: compiler and virtual machine
 

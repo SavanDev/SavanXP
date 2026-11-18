@@ -1,0 +1,8 @@
+SxBASIC Project 1
+
+Name = "Hello"
+Description = "Console sample of the Savan BASIC reference"
+Version = "1.0"
+Kind = Console
+Startup = Main
+Module = "Main.bas"
