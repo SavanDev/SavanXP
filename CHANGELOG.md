@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **i386 displays the v0.4.0 startup logo and animation before the desktop.**
+  `smoke boot-screen` checks the artwork, fade, marquee and session handoff.
+
 - **i386 schedules user processes on up to 32 CPUs.** Per-CPU timers and the
   reference kernel lock support parallel execution, safe remote termination and
   shared-view TLB synchronization. CPU usage accounts for all scheduling CPUs;

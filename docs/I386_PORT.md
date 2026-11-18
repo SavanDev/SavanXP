@@ -184,10 +184,13 @@ changes, and record implementation/verification evidence as work lands.
    **Signals.** Target selection, exit status and `SIGCHLD` bookkeeping
    follow the limited reference contract. [Contracts and evidence](I386_POSIX.md).
 
-   **Remaining v0.4.0 review.** Port and verify the reference's boot screen,
-   logo, and handoff to the graphical session. Compare the resulting system
-   feature by feature in QEMU, including power and performance, and record
-   evidence or justified i386 differences before changing the target.
+   **Boot and session handoff.** The GRUB framebuffer shows the reference
+   splash, including the startup logo, fade, marquee and status. The compositor
+   takes ownership at graphics-session acquisition. [Evidence](I386_GRAPHICS.md).
+
+   **Remaining v0.4.0 review.** Compare the resulting system feature by
+   feature in QEMU, including power and performance, and record evidence or
+   justified i386 differences before changing the target.
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation

@@ -83,6 +83,15 @@ writes/scrolling use the native framebuffer directly, and clients draw cursors.
 This releases 4,096,000 bytes of permanent kernel storage and preserves the
 complete heap regression on the 32-MiB machine.
 
+Normal boot uses the v0.4.0 splash renderer on the BGRX framebuffer supplied
+by GRUB. Its logo, wordmark, version and animation use the reference artwork
+and layout, with the branch's existing `Legacy Edition` designation. The boot
+thread advances status at native initialization stages. Monotonic time drives
+the fade and marquee through log output, RTC calibration, AML allocation and
+the BSP timer. Graphics-session acquisition stops the animation before the
+compositor presents its first frame. The explicit console boot and unsupported
+framebuffer modes retain their text or serial diagnostics.
+
 `/bin/init` retains its desktop restart/fallback policy. Milestone 5 supplies
 RTL8139 sockets and AC'97 audio, so the reference `audiod` and volume controls
 can serve desktop clients. Deliberate absence of a device still follows init's
@@ -99,6 +108,8 @@ diagnostics; the latter now uses the reference GPU ABI and draws its own cursor.
 ## Reproducible checks
 
 ```sh
+./build.sh smoke boot-screen
+./build.sh smoke boot-screen --virtio --smp 4
 ./build.sh smoke windowd-smoke
 ./build.sh smoke sxgui-smoke
 ./build.sh smoke taskbar

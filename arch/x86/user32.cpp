@@ -1,7 +1,7 @@
 #include "user32.hpp"
 
 #include "boot_state.hpp"
-#include "cpu.hpp"
+#include "kernel/panic.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
 #include "paging.hpp"
@@ -199,10 +199,7 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
     if (boot_state::state().sxfs_mounted != 0) {
         const char* arguments[] = {path};
         const long pid = process::spawn(path, arguments, 1);
-        if (pid < 0) {
-            serial::write("process: cannot load boot program\n");
-            cpu::halt_forever();
-        }
+        if (pid < 0) panic("process: cannot load boot program");
     }
     process::start();
 }

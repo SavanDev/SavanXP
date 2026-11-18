@@ -4,6 +4,7 @@
 #include "lapic.hpp"
 #include "process.hpp"
 #include "kernel/acpi.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/timer.hpp"
 
@@ -113,6 +114,7 @@ ContextFrame* tick(ContextFrame* frame) {
 
     const uint64_t entry = timer::monotonic_ns();
     ++g_ticks;
+    boot_screen::animate();
     auto* next = process::timer(frame);
     if (!entry) return next;
     const uint64_t end = timer::monotonic_ns();

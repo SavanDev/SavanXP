@@ -116,6 +116,7 @@ write/read checks. The default full smoke, 32 MiB memory/shared-memory gates,
 Local xAPIC/MSI-X, concurrent AP scheduling and PS/2/SCI I/O APIC routing are
 covered by the [SMP gates](I386_SMP.md). The legacy RTL8139's AML routes are
 covered by the [device service gates](I386_SERVICES.md).
-The first-GiB RAM ceiling and lack of PAT write combining remain. The reference
-boot-console/logo remains in the final feature review. Passing the virtio gates closes only that part of
-milestone 6; the active version target remains v0.4.0.
+The first-GiB RAM ceiling and lack of PAT write combining remain.
+`smoke boot-screen --virtio --smp 4` checks the VGA splash followed by the
+virtio graphical session. The active version target remains v0.4.0 while its
+final feature review is open.

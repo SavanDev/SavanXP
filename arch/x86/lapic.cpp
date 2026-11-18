@@ -2,6 +2,7 @@
 #include "lapic.hpp"
 #include "cpu.hpp"
 #include "paging.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/rtc.hpp"
@@ -51,6 +52,7 @@ bool wait_for_rtc_edge() {
     if (!rtc::read_time(&first) || !first.valid) return false;
     const uint64_t deadline = timer::monotonic_ms() + 2000;
     do {
+        boot_screen::animate();
         if (rtc::read_time(&current) && current.valid && current.second != first.second)
             return true;
     } while (timer::monotonic_ms() < deadline);

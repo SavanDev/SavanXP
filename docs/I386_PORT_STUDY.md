@@ -2021,7 +2021,7 @@ the v0.4.0 target.
 ## 22. Randomized section views inside the 32-bit user window
 
 The first i386 section allocator always began at `0x10000000`. Moving the ELF
-load bias would address a different part of the virtual map: v0.4.0 keeps the
+load bias would address a different part of the virtual map. v0.4.0 keeps the
 executable and stack at fixed addresses and seeds only the section cursor in
 `VmSpace`. The 16 GiB reference offset cannot fit below the i386 kernel's
 supervisor alias at `0x40000000`. A 256 MiB initial window supplies 65,536
@@ -2047,7 +2047,9 @@ In QEMU, `./build.sh smoke shared` samples the first view across eight spawn
 and exec pairs. It checks page alignment, variation within the seed window,
 fork inheritance, failed-exec preservation and explicit placement at the
 upper boundary followed by automatic wrap. The 32 MiB `shared-memory` run
-also retained the existing section and loader rollback gates. The desktop
+also retained the existing section and loader rollback gates. Running
+`aslrtest32` with `-cpu qemu32,+rdrand` passed with RDRAND enabled and the
+fallback counter still zero. The desktop
 passed `sxgui-smoke --virtio --smp 4` with the randomized views and the
 isolated Doom persistence check passed after a normal rebuild. This restores
 the reference's section-placement policy within the smaller address space.
@@ -2060,28 +2062,64 @@ and returned from SIGCHLD without updating the process. In the pinned
 `kernel/process.cpp`, `kill_process` resolves zero to the sender, validates the
 signed PID and records a pending bit and the last signal. Child termination
 records the same SIGCHLD state on the parent before waking a waiter. An
-unreaped zombie remains addressable; a signal to it leaves its existing exit
+unreaped zombie remains addressable. A signal to it leaves its existing exit
 status intact.
 
 The i386 process slot now carries the same two fields, with fresh slots
 starting clear. Fork starts the child clear and exec preserves the signal
-state of the existing process. The delivery boundary remains the reference
-one: SIGCHLD updates bookkeeping, while the other four signals end the
-target with status `128 + signal`. A terminating self-signal can use the
+state of the existing process. SIGCHLD updates bookkeeping, while the other
+four signals end the target with status `128 + signal`. A terminating self-signal can use the
 syscall return path already responsible for deferred exits. A remote or
 retained ring-0 target still unwinds on its owning CPU. A queued termination
 keeps its first requested exit status even when another signal updates
 `last_signal`. The pinned SDK's user-installed actions are local libc
-state; handler dispatch, process groups and job control require a different
+state. Handler dispatch, process groups and job control require a different
 contract. Broken pipe writes continue to return `EPIPE`.
 
 `./build.sh smoke posix` runs `sigtest` through the normal syscall entry in
 the diagnostic console. It verifies signed PID validation, protected init,
-nonterminating SIGCHLD, self-termination, a remote SIGTERM at the process
-boundary, zombie status and the broken-pipe result.
+nonterminating SIGCHLD, self-termination, SIGTERM sent to another process,
+zombie status and the broken-pipe result.
 `./build.sh smoke smp --smp 4` exercises the IPI and memory reclamation.
 For direct bookkeeping evidence, the process-table address and field offsets
 were taken from the ISO's debug ELF with GDB. QEMU `pmemsave` snapshots of a
 console shell before and after running `true` showed
 `(pending_signals, last_signal)` change from `(0, 0)` to `(16, 17)`. This
 observes the child-exit event independently of an explicit signal syscall.
+
+## 24. The reference boot screen and the display handoff
+
+Before this step, native i386 mirrored early serial messages onto the
+framebuffer and left that console visible until the graphical client took
+over. The pinned kernel sets aside the linear boot scanout for its
+logo, fade, marquee and status. The existing splash module already accepts
+a `boot::FramebufferInfo` and draws without a heap or an active display
+driver. The port compiles that renderer and the existing generated logo and
+wordmark into ELF32. GRUB supplies the BGRX aperture. The native page tables
+must map it before painting, so its first status follows the switch to the
+bootstrap page directory. The phase labels follow native initialization
+order, including PCI and storage discovery.
+
+The selected clock preserves the reference animation during quiet boot
+stages. Serial line completion, the RTC edge wait and the AML allocator
+advance it before timer interrupts can run. The BSP tick supplies the pulse
+after scheduling starts. The boot thread is the sole painter before APs
+enter the scheduler, and the kernel lock serializes drawing and ownership
+once they do. Acquiring the display stops the splash before the compositor
+presents. Under virtio, the initial image belongs to the VGA compatibility
+scanout and the compositor presents through virtio's own primary surface.
+The diagnostic init preserves text output, and an unavailable SxFS root or
+a failed init load gives the screen back to boot diagnostics.
+
+The baseline ISO was built from `git archive v0.4.0` with the tag's
+`./build.sh iso`. Both builds booted in QEMU at 1280x800 with standard VGA.
+The generated `boot_logo.h` matched byte for byte. At full brightness, the
+captured logo, wordmark and version regions matched pixel for pixel. The branch's
+`Legacy Edition` label, introduced by `8f8b3c1a`, remains visible, and the
+status text reflects the initialization stage at capture time. The
+`boot-screen` smoke checks a dimmed frame, full artwork, two marquee
+positions and the Program Manager taskbar glyphs after handoff. It passes
+on VGA and on the four-CPU virtio profile. The previous ISO reached the
+desktop and failed the artwork and animation assertions. A diskless LiveCD
+boot reached Program Manager from the SxFS ramdisk. QEMU checks without an
+SxFS disk or without VGA confirmed the fallback diagnostics.

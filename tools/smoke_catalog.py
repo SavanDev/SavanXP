@@ -10,6 +10,7 @@ SCENARIOS = {
     "kernel-preempt": "real blocking CONNECT preemption, pinned ring-0 CPU/FPU state and deferred kills (--smp 1..8)",
     "smoke": "memory/ELF32 libraries, reference POSIX/shell, CPU/FPU and desktop graphics",
     "boot": "kernel, persistent root and init/shell startup",
+    "boot-screen": "reference splash artwork, fade, marquee and desktop handoff",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",
     "shared": "memory objects, heap, fork, SDK integer ABI and ELF32 library calls",
     "shared-memory": "memory objects and ELF32 libraries with 32 MiB RAM",

@@ -4,6 +4,7 @@
 
 #include "egatext.hpp"
 #include "fb32.hpp"
+#include "kernel/boot_screen.hpp"
 
 namespace i386 {
 
@@ -63,6 +64,7 @@ void serial::write_char(char character) {
         egatext::write_char(character);
         fb32::console_write_char(character);
     }
+    if (character == '\n') boot_screen::animate();
 }
 
 void serial::write(const char* text) {

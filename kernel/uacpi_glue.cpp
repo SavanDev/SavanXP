@@ -20,6 +20,7 @@ extern "C" {
 #include "kernel/ioapic.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/timer.hpp"
+#include "kernel/boot_screen.hpp"
 #include "../arch/x86/paging.hpp"
 #include "kernel/uacpi_glue.hpp"
 
@@ -387,7 +388,10 @@ uacpi_status uacpi_kernel_pci_write32(uacpi_handle handle, uacpi_size offset, ua
 }
 
 // ======================= Heap =======================
-void* uacpi_kernel_alloc(uacpi_size size) { return heap::allocate(size); }
+void* uacpi_kernel_alloc(uacpi_size size) {
+    boot_screen::animate();
+    return heap::allocate(size);
+}
 void* uacpi_kernel_alloc_zeroed(uacpi_size size) {
     void* p = heap::allocate(size);
     if (p) { for (uacpi_size i = 0; i < size; ++i) reinterpret_cast<uint8_t*>(p)[i] = 0; }

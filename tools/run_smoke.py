@@ -12,7 +12,7 @@ import i386_services_test
 import i386_smp_test
 
 SERVICE_SCENARIOS = ("services", "device-smoke", "clock-smoke", "audio-smoke", "audio-record", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke")
-SCENARIOS = SERVICE_SCENARIOS + ("smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
+SCENARIOS = SERVICE_SCENARIOS + ("smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "smoke", "boot", "boot-screen", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
 
 
 def main() -> int:
@@ -27,7 +27,7 @@ def main() -> int:
     parser.add_argument("--virtio", action="store_true")
     parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()
-    graphics = ("desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop")
+    graphics = ("boot-screen", "desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop")
     if args.virtio and args.scenario not in SERVICE_SCENARIOS + graphics + ("smp-boot",):
         parser.error("--virtio currently supports service and graphical scenarios; use virtio-smoke")
     if args.virtio and args.scenario in ("storage-smoke", "live-desktop"):
@@ -41,7 +41,7 @@ def main() -> int:
     if args.scenario in SERVICE_SCENARIOS:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "storage-smoke" else args.iso
         return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel, args.virtio, args.smp)
-    if args.scenario in ("desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop"):
+    if args.scenario in graphics:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "live-desktop" else args.iso
         return i386_graphics_test.run(iso, args.disk_image, args.artifacts,
             "calc" if args.scenario == "calc-smoke" else args.scenario, args.accel, args.timeout, args.virtio, args.smp)

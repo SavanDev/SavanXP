@@ -10,14 +10,84 @@ import subprocess
 import tempfile
 import time
 
+from qmp_client import QmpClient
 import shoot_session
 from run_qemu import storage_network_args, sound_device, graphics_input_args
+
+
+def check_boot_screen(socket: Path, serial: Path, artifacts: Path, timeout: float) -> None:
+    """Check the reference artwork and two animation phases on the GRUB scanout."""
+    from PIL import Image
+    from gen_boot_logo import read_system_name, render_logo, render_wordmark
+
+    root = Path(__file__).resolve().parents[1]
+    system_name = read_system_name(root)
+    logo = render_logo(root / "assets/brand/logo.png")
+    mark = render_wordmark(root / "assets/desktop/fonts/NotoSans-Regular.ttf",
+                           system_name)
+    texture = Image.frombytes("P", (logo["width"], logo["height"]), bytes(logo["indices"]))
+    texture.putpalette(bytes((colour >> shift) & 255 for colour in logo["palette"]
+                             for shift in (16, 8, 0)))
+    texture = texture.convert("RGB")
+    alpha = Image.frombytes("L", (mark["width"], mark["height"]), bytes(mark["coverage"]))
+    wordmark = Image.merge("RGB", tuple(alpha.point(lambda a: a * channel // 255)
+                                        for channel in (242, 246, 249))).tobytes()
+    # The default 1280x800 mode uses the reference's unit scale.
+    logo_x = (1280 - logo["width"]) // 2
+    logo_y = 800 * 46 // 100 - (logo["height"] + 24 + mark["height"] + 62 + 16) // 2
+    mark_x = (1280 - mark["width"]) // 2
+    mark_y = logo_y + logo["height"] + 24
+    bar_x = (1280 - 240) // 2
+    band_y = mark_y + mark["height"] + 62 + 3
+    logo_box = (logo_x, logo_y, logo_x + logo["width"], logo_y + logo["height"])
+    mark_box = (mark_x, mark_y, mark_x + mark["width"], mark_y + mark["height"])
+    fade_frames = {}
+    for step in range(1, 33):
+        fade = step * 255 // 32
+        ramp = [value * fade // 255 for value in range(256)]
+        fade_frames[texture.point(ramp * 3).tobytes()] = fade
+
+    artifacts.mkdir(parents=True, exist_ok=True)
+    frame = socket.parent / "boot-screen.ppm"
+    dim = opaque = False
+    positions = set()
+    deadline = time.monotonic() + min(timeout, 90)
+    with QmpClient(socket, timeout=5) as qmp:
+        while time.monotonic() < deadline:
+            log = serial.read_text(errors="replace") if serial.exists() else ""
+            if "user: /bin/progman loaded" in log or "BOOT FAIL" in log:
+                break
+            if any(line.startswith(f"{system_name} v") and line.endswith(" booting...")
+                   for line in log.splitlines()):
+                qmp.screenshot(frame)
+                with Image.open(frame) as image:
+                    if image.size == (1280, 800):
+                        fade = fade_frames.get(image.crop(logo_box).tobytes())
+                        if fade == 255 and image.crop(mark_box).tobytes() == wordmark and not opaque:
+                            image.save(artifacts / "opaque.png")
+                            opaque = True
+                        elif fade and fade < 255 and not dim:
+                            image.save(artifacts / "fade.png")
+                            dim = True
+                        if fade and len(positions) < 2:
+                            highlight = tuple(channel * fade // 255 for channel in (127, 211, 245))
+                            position = next((x for x in range(bar_x + 2, bar_x + 238)
+                                             if image.getpixel((x, band_y)) == highlight), None)
+                            if position is not None and position not in positions:
+                                positions.add(position)
+                                image.save(artifacts / f"marquee-{len(positions)}.png")
+                if dim and opaque and len(positions) >= 2:
+                    print("i386 splash: artwork, fade and marquee PASS", flush=True)
+                    return
+            time.sleep(.08)
+    raise RuntimeError(f"reference boot screen missing: fade={dim}, artwork={opaque}, marquee={len(positions)} positions")
 
 
 def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeout: float, virtio: bool = False, smp: int = 1) -> int:
     report_scenario = scenario
     diskless = scenario == "live-desktop"
-    if diskless: scenario = "desktop"
+    splash = scenario == "boot-screen"
+    if diskless or splash: scenario = "desktop"
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
     serial.unlink(missing_ok=True)
@@ -42,6 +112,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, accel: str, timeo
         with (artifacts / "qemu.log").open("w") as log:
             process = subprocess.Popen(command, stdout=log, stderr=log)
             try:
+                if splash:
+                    check_boot_screen(socket, serial, artifacts / "splash", timeout)
                 deadline = time.monotonic() + min(timeout, 90)
                 while time.monotonic() < deadline:
                     text = serial.read_text(errors="replace") if serial.exists() else ""

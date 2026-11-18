@@ -160,7 +160,7 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/ramdisk.cpp kernel/ata.cpp kernel/block.cpp kernel/partition.cpp kernel/fs.cpp
     kernel/sxfs.cpp kernel/vfs.cpp kernel/runtime.cpp kernel/physical_memory.cpp kernel/object_lifetime.cpp kernel/section.cpp kernel/heap.cpp
     subsystems/posix/sdk/v1/runtime/div64.c
-    kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
+    kernel/object.cpp kernel/boot_screen.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
     kernel/pci.cpp kernel/audio.cpp kernel/audio_device.cpp kernel/ac97.cpp
     kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/ioapic.cpp kernel/power.cpp
     kernel/uacpi_glue.cpp

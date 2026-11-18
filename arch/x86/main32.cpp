@@ -2,6 +2,7 @@
 
 #include "kernel/ata.hpp"
 #include "kernel/block.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/partition.hpp"
 #include "kernel/sxfs.hpp"
@@ -15,6 +16,7 @@
 #include "kernel/timer.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/string.hpp"
+#include "shared/version.h"
 
 #include "boot_state.hpp"
 #include "cpu.hpp"
@@ -50,12 +52,15 @@ namespace {
 
 using namespace i386;
 
+bool g_console_boot;
+
 [[noreturn]] void halt_with(const char* message) {
+    cpu::disable_interrupts();
+    boot_screen::finish();
+    fb32::console_set_enabled(true);
     serial::write(message);
     serial::write("\nI386 BOOT FAIL\n");
-    for (;;) {
-        asm volatile("hlt");
-    }
+    cpu::halt_forever();
 }
 
 /* Las cadenas (cmdline, nombre del cargador) empiezan en el byte 8 de la
@@ -200,15 +205,15 @@ void report_framebuffer(const uint8_t* tag) {
     }
 }
 
-/* Enable the graphical console when GRUB provides a supported BGRX mode.
- * EGA was handled in report_framebuffer; serial remains available otherwise. */
-void initialize_video() {
+// Map the GRUB BGRX framebuffer before either the splash or GPU probes use it.
+// Unsupported modes keep the serial and, if provided, EGA console.
+boot::FramebufferInfo initialize_video() {
     const boot_state::State& boot = boot_state::state();
     if (boot.framebuffer_ready == 0 || boot.framebuffer_bgrx == 0 ||
         !fb32::initialize(boot.framebuffer_address, boot.framebuffer_pitch, boot.framebuffer_width,
                           boot.framebuffer_height, static_cast<uint8_t>(boot.framebuffer_bpp),
                           boot.framebuffer_color_type)) {
-        return;
+        return {};
     }
     serial::write("console: framebuffer 8x16 at ");
     serial::write_hex64(fb32::address());
@@ -219,6 +224,10 @@ void initialize_video() {
     serial::write(", ");
     serial::write_dec(fb32::info().pitch);
     serial::write(" bytes per row\n");
+
+    return {reinterpret_cast<void*>(static_cast<uintptr_t>(fb32::address())),
+        fb32::info().width, fb32::info().height, fb32::info().pitch,
+        static_cast<uint16_t>(fb32::info().bpp), true, fb32::info().buffer_size};
 }
 
 void report_block_devices() {
@@ -258,6 +267,7 @@ void mount_root_filesystem() {
     report_block_devices();
     boot_state::state().block_ready = block::device_count() != 0 ? 1 : 0;
 
+    boot_screen::show("Mounting storage");
     fs::initialize();
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
@@ -329,14 +339,6 @@ State g_state = {};
 
 } // namespace i386
 
-namespace {
-
-/* Programa del MVP: es el primero que el kernel i386 ejecuta en ring 3, asi
- * que tiene que ser uno que solo use syscalls de escritura y de consulta. */
-const char* g_user_program_path = "/bin/init";
-
-}
-
 [[noreturn]] void panic(const char* message) { halt_with(message); }
 
 extern "C" uintptr_t __stack_chk_guard = 0;
@@ -398,8 +400,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
             case TagType::cmdline:
                 // An explicit diagnostic boot keeps the console regression
                 // suite available without changing normal desktop startup.
-                if (strcmp(reinterpret_cast<const char*>(tag + 8), "console-init") == 0)
-                    g_user_program_path = "/disk/bin/init32";
+                g_console_boot = strcmp(reinterpret_cast<const char*>(tag + 8), "console-init") == 0;
                 serial::write("cmdline: '");
                 write_tag_string(tag);
                 serial::write("'\n");
@@ -431,6 +432,17 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     }
     paging::enable_identity_1gib();
     serial::write("paginacion: identidad 0..1 GiB, 4 MiB por pagina, sin NX\n");
+    timer::calibrate_monotonic();
+    auto framebuffer = initialize_video();
+    if (!g_console_boot) {
+        boot_screen::initialize(framebuffer);
+        if (boot_screen::ready()) {
+            fb32::console_set_enabled(false);
+            boot_screen::show("Preparing CPU");
+        }
+    }
+    serial::write(SAVANXP_DISPLAY_NAME " booting...\n");
+    boot_screen::show("Initializing physical memory");
     if (!initialize_memory(info_address)) {
         halt_with("memory: cannot initialize physical allocator");
     }
@@ -438,31 +450,26 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::write_dec(static_cast<uint32_t>(memory::free_page_count()));
     serial::write("\n");
 
-    /* Map video before mounting SxFS so subsequent boot output is visible. */
+    boot_screen::show("Initializing heap");
     heap::initialize();
     if (!heap::ready()) halt_with("memory: cannot initialize kernel heap");
-    initialize_video();
 
     // PCI storage needs discovery before probing and mounting the root.
-    timer::calibrate_monotonic();
+    boot_screen::show("Scanning PCI bus");
     pci::initialize();
+    boot_screen::show("Loading userland");
     mount_root_filesystem();
     device::initialize();
+    boot_screen::show("Detecting firmware");
     const uint32_t rsdp_physical = services::initialize_firmware(info_address);
     timer::adopt_pm_timer();
     i386::smp::initialize(info_address);
     timer::initialize(1000);
     ioapic::initialize();
+    boot_screen::show("Initializing input");
     ps2_32::initialize();
     services::initialize(rsdp_physical);
-    boot::FramebufferInfo framebuffer = {};
-    framebuffer.address = reinterpret_cast<void*>(static_cast<uintptr_t>(fb32::address()));
-    framebuffer.width = fb32::info().width;
-    framebuffer.height = fb32::info().height;
-    framebuffer.pitch = fb32::info().pitch;
-    framebuffer.bpp = fb32::info().bpp;
-    framebuffer.available = fb32::ready();
-    framebuffer.mapped_bytes = fb32::info().buffer_size;
+    boot_screen::show("Preparing display");
     display::register_driver(fb_gpu::driver());
     display::register_driver(virtio_gpu::driver());
     display::bind_best(framebuffer);
@@ -476,9 +483,13 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::write("I386 BOOT OK\n");
 
     // Userland init owns boot policy; the kernel only starts its first process.
-    user32::run(g_user_program_path);
-
-    for (;;) {
-        asm volatile("hlt");
+    if (boot_state::state().sxfs_mounted) {
+        boot_screen::show("Starting session");
+    } else if (boot_screen::ready()) {
+        boot_screen::finish();
+        fb32::console_set_enabled(true);
+        fb32::console_clear();
+        serial::write("handoff: no SxFS volume available for the session\n");
     }
+    user32::run(g_console_boot ? "/disk/bin/init32" : "/bin/init");
 }

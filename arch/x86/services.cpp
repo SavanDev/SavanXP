@@ -6,6 +6,7 @@
 #include "kernel/acpi.hpp"
 #include "kernel/audio.hpp"
 #include "kernel/audio_device.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/net.hpp"
 #include "kernel/nic.hpp"
@@ -55,7 +56,9 @@ uint32_t initialize_firmware(uint32_t information) {
 }
 void initialize(uint32_t rsdp_physical) {
     acpi::start_sci();
+    boot_screen::show("Starting ACPI");
     uacpi_glue::bringup(rsdp_physical);
+    boot_screen::show("Initializing devices");
     audio::register_driver(ac97::driver());
     audio::register_driver(virtio_sound::driver());
     audio::bind_best();

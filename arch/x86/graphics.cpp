@@ -6,6 +6,7 @@
 #include "serial.hpp"
 #include "io.hpp"
 #include "waits.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/display.hpp"
 #include "kernel/process.hpp"
@@ -69,6 +70,7 @@ bool acquire_graphics_session(uint32_t pid) {
     i386::ps2_32::clear_queue();
     virtio_input::begin_graphics_session();
     i386::fb32::console_set_enabled(false);
+    boot_screen::finish();
     return true;
 }
 void release_graphics_session(uint32_t pid) {
