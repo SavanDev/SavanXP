@@ -73,17 +73,65 @@ void flush_full() {
     (void)display::flush();
 }
 
-void serial_write_char(char value) {
+constexpr uint16_t kUartLineStatus = 5;
+constexpr uint8_t kUartTransmitterEmpty = 0x20;
+
+// Sends one byte now, waiting for the UART if it is busy.
+void uart_put(char value) {
     out8(kDebugConPort, static_cast<uint8_t>(value));
 
     if (!g_serial_ready) {
         return;
     }
 
-    while ((in8(kCom1Port + 5) & 0x20) == 0) {
+    while ((in8(kCom1Port + kUartLineStatus) & kUartTransmitterEmpty) == 0) {
     }
 
     out8(kCom1Port, static_cast<uint8_t>(value));
+}
+
+// Serial output is queued and fed to the UART by the BSP's tick, a FIFO's
+// worth at a time, so a writer holding the kernel lock does not wait for the
+// port (docs/kernel/SYSTEM_LOG.md#the-serial-port). Writers and the tick both
+// run under the kernel lock, which is what keeps the queue consistent.
+enum class SerialMode : uint8_t {
+    // Until the first tick: nothing would drain the queue.
+    synchronous_boot,
+    queued,
+    // A panic, a fatal exception or power-off: whatever is printed next must
+    // be out before the machine stops.
+    synchronous_final,
+};
+
+constexpr size_t kSerialQueueSize = 4096; // a power of two
+char g_serial_queue[kSerialQueueSize] = {};
+size_t g_serial_queue_head = 0; // bytes queued, ever
+size_t g_serial_queue_tail = 0; // bytes sent, ever
+SerialMode g_serial_mode = SerialMode::synchronous_boot;
+size_t g_uart_fifo_depth = 1;
+// Per tick, whatever the FIFO takes. Under KVM every port write leaves the VM,
+// about 100 us a byte with COM1 and the debug console together, so a full
+// 16-byte FIFO would be a 1.6 ms hold; 8 bytes is still 8 KB/s at 1000 Hz,
+// twice what 38400 baud carries.
+constexpr size_t kSerialBytesPerTick = 8;
+
+void send_oldest_queued() {
+    uart_put(g_serial_queue[g_serial_queue_tail % kSerialQueueSize]);
+    ++g_serial_queue_tail;
+}
+
+void serial_write_char(char value) {
+    if (g_serial_mode != SerialMode::queued) {
+        uart_put(value);
+        return;
+    }
+    // Full: the oldest byte goes out now, as every byte did before the queue.
+    // Nothing is dropped.
+    if (g_serial_queue_head - g_serial_queue_tail == kSerialQueueSize) {
+        send_oldest_queued();
+    }
+    g_serial_queue[g_serial_queue_head % kSerialQueueSize] = value;
+    ++g_serial_queue_head;
 }
 
 bool drawable() {
@@ -295,7 +343,40 @@ void early_init() {
     out8(kCom1Port + 3, 0x03);
     out8(kCom1Port + 2, 0xc7);
     out8(kCom1Port + 4, 0x0b);
+    // IIR bits 6-7 set: the FIFO the line above enabled exists (16550A), and
+    // an empty transmitter takes 16 bytes. An 8250 or 16450 takes one.
+    g_uart_fifo_depth = (in8(kCom1Port + 2) & 0xc0) == 0xc0 ? 16 : 1;
     g_serial_ready = true;
+}
+
+void serial_tick() {
+    if (g_serial_mode == SerialMode::synchronous_final) {
+        return;
+    }
+    g_serial_mode = SerialMode::queued;
+    if (g_serial_queue_head == g_serial_queue_tail) {
+        return;
+    }
+    if (g_serial_ready && (in8(kCom1Port + kUartLineStatus) & kUartTransmitterEmpty) == 0) {
+        return;
+    }
+    // The transmitter is empty, so a FIFO's worth goes in without waiting.
+    const size_t budget = g_uart_fifo_depth < kSerialBytesPerTick ? g_uart_fifo_depth : kSerialBytesPerTick;
+    for (size_t sent = 0; sent < budget && g_serial_queue_tail != g_serial_queue_head; ++sent) {
+        const char value = g_serial_queue[g_serial_queue_tail % kSerialQueueSize];
+        ++g_serial_queue_tail;
+        out8(kDebugConPort, static_cast<uint8_t>(value));
+        if (g_serial_ready) {
+            out8(kCom1Port, static_cast<uint8_t>(value));
+        }
+    }
+}
+
+void serial_flush_synchronous() {
+    g_serial_mode = SerialMode::synchronous_final;
+    while (g_serial_queue_tail != g_serial_queue_head) {
+        send_oldest_queued();
+    }
 }
 
 void init(const boot::BootInfo& boot_info) {

@@ -541,6 +541,7 @@ uint64_t read_cr2() {
     // state this fault came from, nor print over the report.
     uint32_t targets = 0;
     const uint32_t stopped = smp::stop_other_cores(targets);
+    console::serial_flush_synchronous();
     console::write_line("");
     console::printf("exception: #%u %s\n", static_cast<unsigned>(vector), exception_name(vector));
     if (has_error_code) {

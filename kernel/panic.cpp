@@ -16,6 +16,7 @@ extern "C" [[noreturn]] void __stack_chk_fail() {
     arch::disable_interrupts();
     uint32_t targets = 0;
     const uint32_t stopped = smp::stop_other_cores(targets);
+    console::serial_flush_synchronous();
     boot_screen::finish();
     // The desktop may be showing a buffer the console does not write into,
     // or a mode change may have been cut short: make the console visible

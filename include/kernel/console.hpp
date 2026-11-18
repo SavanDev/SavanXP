@@ -26,6 +26,13 @@ void write_char(char character);
  * Es lo que hace falta para emitir diagnostico mientras hay algo compuesto en
  * pantalla; ver kernel/serial_dev.cpp. */
 void serial_write(const char* text, size_t length);
+// Called by the BSP's tick, under the kernel lock: feeds the UART what its
+// transmitter takes without waiting. The first call starts queuing serial
+// output instead of waiting for the port at every character.
+void serial_tick();
+// Sends everything queued now, and every later character as it is written.
+// For the paths that end the machine: panic, a fatal exception, power-off.
+void serial_flush_synchronous();
 void write(const char* text);
 void write_line(const char* text);
 void vprintf(const char* format, va_list args);

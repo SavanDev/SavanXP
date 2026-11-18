@@ -842,11 +842,29 @@ rank check above, and a KVM run of the suite as routine.
 **5.1 — shorter holds, no new lock. Start now.** Nothing here adds
 concurrency, so nothing here can add a race.
 
-- *The serial port.* The system log already keeps every line
-  ([SYSTEM_LOG.md](../../kernel/SYSTEM_LOG.md)). The UART becomes a reader of
-  that log, fed a few characters per tick while its transmitter is free; only
-  a panic writes synchronously. Expected: the longest hold on a calm desktop
-  falls from 20-45 ms to under 1 ms, and `timer-stats`' lost ticks with it.
+- *The serial port.* **Done.** The plan was for the UART to read the system
+  log; it cannot, because the log keeps only complete, cleaned lines and the
+  port needs every byte. Serial output goes to a 4 KiB queue instead, which the
+  BSP's tick feeds to the UART at up to 8 bytes per tick while its transmitter
+  is free. A full queue, a panic, a fatal exception and power-off write
+  synchronously ([SYSTEM_LOG.md](../../kernel/SYSTEM_LOG.md#the-serial-port)).
+  Measured on 2026-11-18, idle `desktop` under KVM on two cores, 60 s, two runs
+  each against the previous commit:
+
+  | | Before | After |
+  | --- | --- | --- |
+  | Longest hold of a calm window | 8-11 ms | 0.65-0.86 ms, the tick |
+  | Print of the stats reports (`report=`) | ~40 ms | 0.22 ms |
+  | Ticks lost per calm 2 s window | 23-41 ms | 0 |
+  | Tick handler, average | 65-68 µs | 75-90 µs |
+  | `held` | 10.6-11.1% | 10.6-13.3% |
+
+  The serial port costs what it cost; it is paid in pieces of under a
+  millisecond inside the tick rather than in one hold per line. Under KVM a
+  byte costs about 100 µs of port exits, which is why the tick sends 8 bytes
+  and not the FIFO's 16. Each run also had one to five windows where every
+  hold stretched at once, syscalls included, and windows lasted 2.3-2.4 s:
+  the host taking the CPU away, not the kernel.
 - *The tick.* Measure its parts before touching them (it already has
   `timer-stats`): which polls have an interrupt they could wait for instead,
   which can run every N ticks, and whether the walks of the thread table can

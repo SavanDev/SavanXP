@@ -32,6 +32,41 @@ The kernel side is `kernel/klog.cpp`. `console::write_char` and
 `klog::ScopedSource` names a process for the length of a write. Like the
 console, it runs under the kernel lock and takes no lock of its own.
 
+## The serial port
+
+The serial port does not read the log: it needs every byte in order, a prompt
+without its line break and binary written to `/dev/serial` included, and the
+log keeps only complete, cleaned lines. Instead `kernel/console.cpp` queues
+the bytes it sends to COM1 and to QEMU's debug console (port `0xe9`), and the
+BSP's tick feeds them to the UART (`console::serial_tick()`):
+
+- The queue holds 4 KiB. Writers and the tick both run under the kernel lock,
+  which is all that keeps it consistent; it has no lock of its own.
+- Each tick, if COM1's transmitter is empty, it sends what the UART's FIFO
+  takes without waiting, up to 8 bytes: a 16550A takes 16, an 8250 or 16450
+  one (read from IIR when the port is set up). Under KVM each byte costs
+  about 100 us of port exits, so the cap keeps the tick's hold under 1 ms;
+  8 bytes at 1000 Hz is 8 KB/s, twice what 38400 baud carries.
+- A writer that finds the queue full sends its oldest byte at once, waiting
+  for the port as every write did before the queue. Nothing is dropped; a
+  burst larger than the queue costs what it always cost.
+- Until the first tick, nothing would drain the queue, so boot output is
+  written synchronously.
+- A panic, a fatal exception and power-off call
+  `console::serial_flush_synchronous()`: the queue goes out, and every later
+  character is written as it comes, because the machine may stop before
+  another tick.
+
+Why: waiting for the port at every character, with the kernel lock held and
+interrupts off, made each stats line a hold of several milliseconds, and the
+tick's own reports of 15-40 ms the longest holds of an idle desktop
+([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice 5.1).
+
+**Trap.** A core that hangs with the kernel lock held also stops the tick, so
+up to 4 KiB of the last output can stay in the queue and never reach the
+port. A panic flushes it; a silent hang does not. When the serial log of a
+hang ends too early, that is where the rest is.
+
 ## Lines and records
 
 A record is one line, without its line break, in a `struct sxn_log_record`

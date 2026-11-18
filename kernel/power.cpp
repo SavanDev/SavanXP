@@ -128,6 +128,8 @@ void show_screen(const char* message) {
 // writes the clean superblocks through the writeback queue, which the block
 // layer then drains before telling each driver the power is going away.
 void prepare(const char* what) {
+    // The machine may stop before another tick drains the serial queue.
+    console::serial_flush_synchronous();
     console::printf("power: %s: syncing volumes\n", what);
     if (!fs::sync_all()) {
         console::printf("power: a volume did not sync; it will replay its journal at the next mount\n");

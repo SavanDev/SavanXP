@@ -299,6 +299,7 @@ namespace timer
         device::service_background();
         input::poll();
         azalia::poll();
+        console::serial_tick();
         if (g_backend == Backend::local_apic)
         {
             arch::acknowledge_local_apic_interrupt();

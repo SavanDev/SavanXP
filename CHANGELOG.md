@@ -43,6 +43,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Serial output is queued and fed to the UART from the tick, so a kernel print no longer waits for the port.**
+  The stats reports stop being the longest kernel lock holds of an idle desktop. A panic, a fatal exception and
+  power-off still write synchronously. Slice 5.1 of [SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md); see [SYSTEM_LOG.md](docs/kernel/SYSTEM_LOG.md#the-serial-port).
+
 - **The boot framebuffer is checked once before anything draws; the boot log gains two `framebuffer:` lines.**
   A malformed descriptor now leaves serial output only instead of being drawn into; a BGR one boots with a warning.
   DISPI mode changes pass the same check. FB1b of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
