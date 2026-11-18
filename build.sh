@@ -298,7 +298,7 @@ require_tool() {
     }
 }
 
-for tool in cmake ninja ctest clang clang++ ld.lld lld-link llvm-rc llvm-objcopy llvm-readelf python3 git; do
+for tool in cmake ninja ctest clang clang++ ld.lld lld-link llvm-rc llvm-objcopy llvm-readelf llvm-ar python3 git flock; do
     require_tool "$tool"
 done
 

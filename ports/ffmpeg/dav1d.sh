@@ -2,7 +2,7 @@
 # Build dav1d, the AV1 decoder, as a static archive for libffmpeg.so.0.4.
 #
 # dav1d builds with Meson. This writes a cross file for the SavanXP target
-# from the same compiler, sysroot and runtime FFmpeg's configure uses, and
+# naming the same compiler driver FFmpeg's configure uses, the SDK's sxcc, and
 # installs headers, libdav1d.a and dav1d.pc under $DAV1D_PREFIX, where
 # configure.sh finds them through pkg-config.
 #
@@ -21,8 +21,8 @@ command -v "$MESON" >/dev/null 2>&1 || {
     echo "dav1d: missing $DAV1D_SRC; run fetch.sh first" >&2
     exit 1
 }
-[ -f "$RUNTIME/libsavanxp.a" ] || {
-    echo "dav1d: missing $RUNTIME/libsavanxp.a; run runtime.sh first" >&2
+[ -f "$RUNTIME/.savanxp-runtime-fingerprint" ] || {
+    echo "dav1d: the SDK sysroot is not checked yet; run runtime.sh first" >&2
     exit 1
 }
 
@@ -38,14 +38,12 @@ read -r -a target_cflags <<< "$SX_TARGET_CFLAGS"
 CROSS="$WORK/dav1d-cross.ini"
 cat > "$CROSS.new" <<EOF
 [binaries]
-c = $(meson_list $CLANG -target x86_64-unknown-none-elf)
+c = $(meson_list $SX_CC)
 ar = '$AR_CMD'
 strip = '$STRIP_CMD'
 
 [built-in options]
 c_args = $(meson_list "${target_cflags[@]}")
-c_link_args = $(meson_list -fuse-ld=lld -nostdlib -static -Wl,-T,"$SYSROOT/linker.ld" \
-    -Wl,-z,max-page-size=0x1000 "$RUNTIME/crt0.o" "$RUNTIME/libsavanxp.a")
 
 [host_machine]
 system = 'savanxp'

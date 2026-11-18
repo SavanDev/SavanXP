@@ -7,7 +7,7 @@ of what is stable, and the versioning rules, are in [`REFERENCE.md`](REFERENCE.m
 Programs do not build against this directory but against the **sysroot** the
 build assembles from it, `build/sdk/2.0` (below). The directory keeps its `v1`
 name; the SDK 2.0 roadmap
-([`docs/roadmaps/open/SDK_V2_ROADMAP.md`](../../../../docs/roadmaps/open/SDK_V2_ROADMAP.md))
+([`docs/roadmaps/done/SDK_V2_ROADMAP.md`](../../../../docs/roadmaps/done/SDK_V2_ROADMAP.md))
 records where it is going.
 
 ## Breaking changes since 1.2
@@ -70,11 +70,13 @@ build/sdk/2.0/
   lib/pie/            every group compiled position-independent, with SSE,
                       plus the loader (ldso.o) and <dlfcn.h> (dlfcn.o)
   lib/*/units.txt     each object's group, in link order
+  lib/*/lib*.a        the same groups as ordinary archives, for -l (below)
   lib/shared/         the system's shared libraries a PIE program links
                       against, and libraries.txt: the runtime objects each
                       one replaces
-  share/sdk/          build-user.sh and the tools it runs, and the system
-                      icon catalogue a .sxres names with icon=
+  share/sdk/          build-user.sh and the tools it runs, sxcc,
+                      savanxp-toolchain.cmake, and the system icon catalogue
+                      a .sxres names with icon=
 ```
 
 - **Headers.** `public-headers.txt` is the allowlist of what the repository's
@@ -99,6 +101,43 @@ build/sdk/2.0/
 cp -R build/sdk/2.0 ~/savanxp-sdk
 ~/savanxp-sdk/share/sdk/build-user.sh --source ~/myapp --name myapp --no-install
 ```
+
+## Other build systems: sxcc and CMake
+
+A project with a build system of its own builds against the sysroot as it
+would with any cross compiler. `share/sdk/sxcc` is clang with the SDK's
+target flags and sysroot. It works as `CC` for autotools, in a Meson cross
+file, and in FFmpeg's `configure`, which is its first user. It adds:
+
+- **when compiling**, the ABI flags of the profile and `-isystem
+  <sysroot>/include`, and no warnings: those are the project's to choose;
+- **when linking a program**, `crt0.o` first, `-lsavanxp` last, and the
+  linker script, or for the pie profile the PIE flags and the loader;
+- **when linking a library** (`-shared`), a bare shared link: its undefined
+  symbols resolve against the program that loads it.
+
+Its options, which clang never sees, are `--sx-profile=nosse|sse|pie`
+(default `sse`, or `$SAVANXP_SDK_PROFILE`) and `--sx-native` for a SUN
+program. The runtime groups beyond the core are archives a program names:
+`-lsxgui`, `-lsxaudio`, `-lsxmidi`, `-lsxgl`, `-lsxngui`, `-lm`, and `-ldl`
+in the pie profile. What has to be linked whether or not anything references
+it stays a loose object, and sxcc adds it: `crt0.o`, SUN's `sxn_runtime.o`,
+and the loader.
+
+For CMake, `share/sdk/savanxp-toolchain.cmake` names sxcc as the compiler.
+`sdk/cmakesmoke` is a complete example:
+
+```bash
+cmake -S sdk/cmakesmoke -B build/external/cmakesmoke -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=build/sdk/2.0/share/sdk/savanxp-toolchain.cmake \
+    [-DSAVANXP_SDK_PROFILE=pie] [-DSAVANXP_SDK_NATIVE=ON]
+cmake --build build/external/cmakesmoke
+```
+
+Both produce a bare ELF image. Stamping its SXE resources, and the native
+OSABI for a SUN program, is done with the tools in `share/sdk/`, as
+`sdk/cmakesmoke/build.sh` shows. A larger bootstrap heap is a strong
+`sx_heap_bootstrap` and `sx_heap_bootstrap_size` defined by the program.
 
 ## ABI rules
 

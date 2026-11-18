@@ -76,7 +76,7 @@ done
     echo "doomgeneric: Python Pillow is required to generate SXE resources" >&2
     exit 1
 }
-# The port builds against the SDK sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# The port builds against the SDK sysroot (docs/roadmaps/done/SDK_V2_ROADMAP.md,
 # phase 4): its PIE runtime, the loader and libsxmidi.so.0.4, which the music
 # links against. make-sdk.sh brings it up to date and fails, naming
 # ./build.sh build, if the system's libraries are not built yet.

@@ -1,0 +1,6 @@
+# SXE resources of the SDK's CMake example. See docs/userland/SXE_FORMAT.md.
+# No category: a headless test program, not a menu entry.
+name=CMake smoke
+description=A program built with CMake and the SDK's toolchain file
+version=system
+vendor=SavanXP

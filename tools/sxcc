@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# sxcc: a C compiler driver for SavanXP programs, built against the SDK sysroot
+# (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 5).
+#
+# It is clang with the SDK's target flags and sysroot, for build systems that
+# expect an ordinary cross compiler: autotools (CC=sxcc), Meson (a cross file
+# naming it), CMake (share/sdk/savanxp-toolchain.cmake) and FFmpeg's configure.
+# Arguments go to clang unchanged, with these added:
+#
+#   compiling (-c, -S, -E, ...)  the ABI flags of the profile and
+#                                -isystem <sysroot>/include
+#   linking a program            crt0.o first; the runtime (-lsavanxp, from
+#                                lib/<profile>/) last; the linker script for a
+#                                static profile, or the PIE flags and the
+#                                loader for the pie profile
+#   linking a library (-shared)  a bare shared link, no runtime: the library's
+#                                undefined symbols resolve against the program
+#
+# The groups beyond the core are archives a program asks for: -lsxgui,
+# -lsxaudio, -lsxmidi, -lsxgl, -lsxngui, -lm, and -ldl in the pie profile.
+#
+# sxcc's own options, removed before clang sees them:
+#
+#   --sx-profile=nosse|sse|pie   the runtime variant (default: sse, or
+#                                $SAVANXP_SDK_PROFILE)
+#   --sx-native                  a SUN program: links sxn_runtime.o, and the
+#                                pie profile neither exports symbols nor
+#                                carries <dlfcn.h>
+#
+# It makes a bare ELF image. SXE resources and the native OSABI are stamped
+# afterwards by the tools next to it, as build-user.sh does.
+set -euo pipefail
+
+TOOLS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/sdk_flags.sh
+. "$TOOLS/lib/sdk_flags.sh"
+if [[ -f "$TOOLS/../../VERSION" ]]; then
+    SYSROOT=$(cd -- "$TOOLS/../.." && pwd)
+else
+    REPO=$(cd -- "$TOOLS/.." && pwd)
+    "$REPO/tools/make-sdk.sh" --quiet >&2
+    SYSROOT=$("$REPO/tools/make-sdk.sh" --print-path)
+fi
+CC=${SAVANXP_CLANG:-clang}
+LINK_CC=${SAVANXP_LINK_CC:-$CC}
+PROFILE=${SAVANXP_SDK_PROFILE:-sse}
+NATIVE=0
+
+MODE=link
+SHARED=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --sx-profile=*) PROFILE=${arg#--sx-profile=}; continue ;;
+        --sx-native) NATIVE=1; continue ;;
+        -c|-S|-E|-M|-MM|-fsyntax-only|--version|-dumpversion|-dumpmachine|-print-*|--print-*|-'###')
+            MODE=compile ;;
+        -shared|-Wl,-shared) SHARED=1; continue ;;
+    esac
+    ARGS+=("$arg")
+done
+
+# A call with no input file (sxcc -v, sxcc -dM -E -) only asks clang
+# something: nothing is linked.
+expects_value=0
+INPUTS=0
+for arg in "${ARGS[@]}"; do
+    if ((expects_value)); then expects_value=0; continue; fi
+    case "$arg" in
+        -o|-I|-D|-U|-include|-isystem|-iquote|-idirafter|-MF|-MT|-MQ|-L|-Xlinker|-Xclang|-x) expects_value=1 ;;
+        -) INPUTS=$((INPUTS + 1)) ;;
+        -*) ;;
+        *) INPUTS=$((INPUTS + 1)) ;;
+    esac
+done
+((INPUTS)) || MODE=compile
+
+case "$PROFILE" in
+    nosse) SSE=0; PIE=0 ;;
+    sse) SSE=1; PIE=0 ;;
+    pie) SSE=1; PIE=1 ;;
+    *) echo "sxcc: unknown profile '$PROFILE' (nosse, sse or pie)" >&2; exit 2 ;;
+esac
+LIB="$SYSROOT/lib/$PROFILE"
+mapfile -t ABI < <(savanxp_sdk_abi_flags "$SSE" "$PIE")
+COMPILE=("$CC" "${ABI[@]}" -isystem "$SYSROOT/include")
+
+if [[ "$MODE" == compile ]]; then
+    exec "${COMPILE[@]}" "${ARGS[@]}"
+fi
+
+if ((SHARED)); then
+    # -Wl,-shared, not -shared: the bare-metal driver ignores -shared.
+    exec "${COMPILE[@]}" -nostdlib -fuse-ld=lld -Wl,-shared \
+        -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none "${ARGS[@]}"
+fi
+
+RUNTIME_HEAD=("$LIB/crt0.o")
+RUNTIME_TAIL=()
+((NATIVE == 0)) || RUNTIME_TAIL+=("$LIB/sxn_runtime.o")
+if ((PIE)); then
+    RUNTIME_TAIL+=("$LIB/ldso.o")
+    ((NATIVE)) || RUNTIME_TAIL+=("$LIB/dlfcn.o")
+fi
+RUNTIME_TAIL+=(-L "$LIB" -lsavanxp)
+
+if ((PIE == 0)); then
+    # The bare-metal driver links a static image with ld.lld, sources included.
+    exec "${COMPILE[@]}" -nostdlib -fuse-ld=lld -static \
+        -Wl,-T,"$SYSROOT/linker.ld" -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none \
+        "${RUNTIME_HEAD[@]}" -L "$LIB" "${ARGS[@]}" "${RUNTIME_TAIL[@]}"
+fi
+
+# A PIE link goes through the Linux driver, which the bare-metal one cannot
+# replace: it forces -Bstatic. Sources on the line are compiled first with the
+# target flags, so `sxcc --sx-profile=pie main.c -o main` works as it does
+# for the static profiles.
+TMPDIR_SXCC=""
+cleanup() { [[ -z "$TMPDIR_SXCC" ]] || rm -rf -- "$TMPDIR_SXCC"; }
+trap cleanup EXIT
+LINK_ARGS=()
+SOURCES=()
+expects_value=0
+for arg in "${ARGS[@]}"; do
+    if ((expects_value)); then
+        expects_value=0
+        LINK_ARGS+=("$arg")
+        continue
+    fi
+    case "$arg" in
+        -o|-I|-D|-U|-include|-isystem|-iquote|-idirafter|-MF|-MT|-MQ|-L|-Xlinker|-Xclang)
+            expects_value=1
+            LINK_ARGS+=("$arg")
+            ;;
+        -x)
+            echo "sxcc: -x is not supported when linking a pie program; compile with -c first" >&2
+            exit 2
+            ;;
+        -*) LINK_ARGS+=("$arg") ;;
+        *.c|*.S|*.s|*.i) SOURCES+=("$arg"); LINK_ARGS+=("@SOURCE@${#SOURCES[@]}") ;;
+        *) LINK_ARGS+=("$arg") ;;
+    esac
+done
+if ((${#SOURCES[@]})); then
+    TMPDIR_SXCC=$(mktemp -d "${TMPDIR:-/tmp}/sxcc.XXXXXX")
+    # Every argument but the inputs and -o goes to the compile, which ignores
+    # the link-only ones (-Qunused-arguments).
+    COMPILE_ARGS=()
+    skip=0
+    for arg in "${LINK_ARGS[@]}"; do
+        if ((skip)); then skip=0; continue; fi
+        case "$arg" in
+            -o) skip=1 ;;
+            @SOURCE@*) ;;
+            *) COMPILE_ARGS+=("$arg") ;;
+        esac
+    done
+    for index in "${!SOURCES[@]}"; do
+        "${COMPILE[@]}" -Qunused-arguments "${COMPILE_ARGS[@]}" \
+            -c "${SOURCES[$index]}" -o "$TMPDIR_SXCC/source-$((index + 1)).o"
+    done
+    for index in "${!LINK_ARGS[@]}"; do
+        if [[ "${LINK_ARGS[$index]}" == @SOURCE@* ]]; then
+            LINK_ARGS[index]="$TMPDIR_SXCC/source-${LINK_ARGS[$index]#@SOURCE@}.o"
+        fi
+    done
+fi
+mapfile -t PIE_FLAGS < <(savanxp_sdk_pie_link_flags "$NATIVE")
+"$LINK_CC" "${PIE_FLAGS[@]}" -Qunused-arguments \
+    "${RUNTIME_HEAD[@]}" -L "$LIB" "${LINK_ARGS[@]}" "${RUNTIME_TAIL[@]}"

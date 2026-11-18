@@ -18,14 +18,12 @@ CONFIGURE_ARGS=(
     --target-os=none
     --cc="$SX_CC"
     --ld="$SX_LD"
-    --host-cc="$SX_CC -ffreestanding -isystem $SYSROOT/include"
+    --host-cc="$SX_CC"
     --ar="$AR_CMD"
     --ranlib="$RANLIB_CMD"
     --nm="$NM_CMD -g"
     --strip="$STRIP_CMD"
     --extra-cflags="$SX_TARGET_CFLAGS"
-    --extra-ldflags="$SX_TARGET_LDFLAGS $RUNTIME/crt0.o"
-    --extra-libs="$RUNTIME/libsavanxp.a"
     --disable-everything
     --disable-autodetect
     --disable-programs

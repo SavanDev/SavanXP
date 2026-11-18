@@ -4,7 +4,7 @@
 # against the SDK sysroot. This is intentionally separate from the in-tree
 # CMake userland registry.
 #
-# The same script runs from two places (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# The same script runs from two places (docs/roadmaps/done/SDK_V2_ROADMAP.md,
 # phase 2):
 # - tools/build-user.sh in the repository, which first brings the sysroot up
 #   to date with tools/make-sdk.sh and then builds against it;

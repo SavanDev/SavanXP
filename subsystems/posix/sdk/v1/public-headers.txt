@@ -1,5 +1,5 @@
 # The headers from the repository's include/ that the SDK ships
-# (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 2).
+# (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 2).
 #
 # tools/make-sdk.sh copies every header under this directory's include/ and,
 # from include/, exactly these, into the sysroot's include/. A header not

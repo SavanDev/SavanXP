@@ -12,10 +12,15 @@ Cut-off notes:
 
 ### Added
 
+- **Other build systems build against the SDK: `share/sdk/sxcc` and `share/sdk/savanxp-toolchain.cmake`.**
+  `sxcc` is clang with the sysroot's flags, runtime and linker script (`--sx-profile=nosse|sse|pie`, `--sx-native`); the
+  sysroot gains archives for `-l` (`libsavanxp.a`, `libsxgui.a`, ...). The FFmpeg port now builds through it. New example
+  `sdk/cmakesmoke` and scenario `cmake-smoke`; the build now needs `llvm-ar`. See the [SDK README](subsystems/posix/sdk/v1/README.md#other-build-systems-sxcc-and-cmake).
+
 - **`build-user.sh --pie` builds a program that maps shared libraries; `--needs libmath.so.0.4` links one.**
   The SDK sysroot gains a PIE runtime with the loader and `<dlfcn.h>`, and the system libraries (`lib/shared`). The Doom
   and ccleste ports now link those instead of compiling their own copies. New example `sdk/piesmoke` and scenario
-  `pie-smoke`; which units each library replaces is in `runtime/libraries.txt`. Phase 4 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
+  `pie-smoke`; which units each library replaces is in `runtime/libraries.txt`. Phase 4 of [SDK_V2_ROADMAP.md](docs/roadmaps/done/SDK_V2_ROADMAP.md).
 
 - **An external SUN program can open an SXGUI window: `build-user.sh --native --gui` links SUN's application frame.**
   `sxn/sxngui.h` and `sxn/sxnfiledlg.h` come from the SDK sysroot, and every `--native` build gets `<name>.sunres.h`.
@@ -58,17 +63,17 @@ Cut-off notes:
 
 - **The SDK is 2.0 (`SAVANXP_SDK_VERSION_MAJOR 2`, `MINOR 0`), recording breaks already shipped since 1.2.**
   The breaks: the `savanxp_` prefix on raw calls, no `/dev/fb0`, and `gfx_open` needing the compositor. Its README
-  and REFERENCE are now in English, with a versioning policy. See [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
+  and REFERENCE are now in English, with a versioning policy. See [SDK_V2_ROADMAP.md](docs/roadmaps/done/SDK_V2_ROADMAP.md).
 
 - **`tools/build-user.sh` no longer puts `subsystems/posix/userland` or `build/generated` on an external program's include path.**
   Neither was ever part of the SDK, so the SDK stays 2.0; a program that included an in-tree userland header stops
-  building. Every `sdk/` example still builds to the same binary. Phase 1 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
+  building. Every `sdk/` example still builds to the same binary. Phase 1 of [SDK_V2_ROADMAP.md](docs/roadmaps/done/SDK_V2_ROADMAP.md).
 
 - **The SDK is a sysroot, `build/sdk/2.0`, that `./build.sh build` assembles with the new `tools/make-sdk.sh`.**
   It holds the public headers (allowlist: `public-headers.txt`), the runtime prebuilt with and without SSE, and its own
   `share/sdk/build-user.sh`, so a copy builds programs away from the repository. `tools/build-user.sh` builds against it,
   to the same binaries as before. `--heap-mib` links a strong bootstrap arena instead of recompiling `posix.c`. New host
-  test `sdk-sysroot-test`. Phase 2 of [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md); layout in the
+  test `sdk-sysroot-test`. Phase 2 of [SDK_V2_ROADMAP.md](docs/roadmaps/done/SDK_V2_ROADMAP.md); layout in the
   [SDK README](subsystems/posix/sdk/v1/README.md#the-sysroot).
 
 - **The tick no longer reads the network card or the PS/2 controller every millisecond when their interrupts work.**

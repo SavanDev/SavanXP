@@ -1,6 +1,6 @@
 # SDK 2.0 roadmap
 
-> **Status: phases 0 to 4 done (2.0 declared, no internal include paths, the sysroot, SUN on equal terms, dynamic linking); phase 5 planned.** This records why the external SDK is
+> **Status: done.** All six phases landed (2.0 declared, no internal include paths, the sysroot, SUN on equal terms, dynamic linking, toolchain integration). This records why the external SDK is
 > due a major version, what it depends on today that an SDK should not, and
 > the phases that turn it into one SDK for both POSIX and SUN programs. The
 > measurements below were taken on 2026-11-18 at `9a293bfa`.
@@ -317,12 +317,55 @@ What landed, and where it differs from the plan:
   `sdk-sysroot-test` builds it from a copy of the sysroot and checks
   `ET_DYN`, `PT_INTERP` and the `DT_NEEDED`.
 
-### Phase 5 — toolchain integration
+### Phase 5 — toolchain integration (done)
 
 - A CMake toolchain file and a `sxcc` wrapper in `share/sdk/`, so an
   autotools or CMake project configures against the sysroot without a
   bespoke script.
 - FFmpeg's `env.sh` becomes the first consumer.
+
+What landed:
+
+- **Archives.** Each runtime variant now also has its groups as ordinary
+  archives: `libsavanxp.a` (core, math, setjmp), `libm.a`, `libsxgui.a`,
+  `libsxaudio.a`, `libsxmidi.a`, `libsxgl.a`, `libsxngui.a`, and `libdl.a`
+  in the PIE variant. Three objects stay loose because they must be linked
+  whether or not anything references them. `crt0.o` starts the program.
+  `sxn_runtime.o`'s heap page source replaces a weak POSIX one, which an
+  archive would never pull in. `ldso.o` is found by crt0 through a weak hook.
+  The static SSE variant gains the `midi` group, for `libsxmidi.a`.
+  `build-user.sh` keeps linking the objects themselves, and its images did
+  not change.
+- `make-sdk.sh` needs `llvm-ar`, now found by CMake (`SAVANXP_AR`),
+  required by `build.sh` and listed in BUILD_LINUX.md. `build.sh` now also
+  requires `flock`, which `make-sdk.sh` has used since phase 2 but `build.sh`
+  only checked for the smoke scenarios.
+- `tools/lib/sdk_flags.sh` separates the ABI flags (`savanxp_sdk_abi_flags`)
+  from the repository's warnings. `sxcc` passes the first only.
+- **`sxcc`** is clang with the profile's ABI flags and `-isystem
+  <sysroot>/include`. When it links a program it adds crt0, `-lsavanxp`, and
+  the linker script or the PIE flags and loader. `-shared` gets a bare
+  shared link. Its options are `--sx-profile=nosse|sse|pie` and
+  `--sx-native`. A call with no input file passes through, so `sxcc -v` and
+  `sxcc -dM -E -` only query clang. Static profiles link through the
+  bare-metal driver, sources included. The bare-metal driver turns `-pie`
+  into `-Bstatic`, so the pie profile links through the Linux driver, and
+  any sources on the link line are compiled first.
+- **`savanxp-toolchain.cmake`** names sxcc for C and ASM, and passes the
+  profile through `CMAKE_C_FLAGS_INIT`, which also reaches the link line,
+  and through `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`. `sdk/cmakesmoke` is
+  built with it by its own `build.sh`, which stamps the SXE resources with the
+  sysroot's tools and installs it. The `cmake-smoke` scenario runs it.
+- **FFmpeg** compiles through `sxcc --sx-profile=sse` plus `-fPIC`, for
+  `configure` and for dav1d's Meson cross file alike. `runtime.sh` no longer
+  builds a sysroot of its own: it brings the SDK's up to date, fingerprints
+  it by content, and checks a test link. `--extra-ldflags` and
+  `--extra-libs` are gone, because sxcc adds crt0 and the runtime, and
+  `link.sh` takes `libmath.so.0.4` from the sysroot's `lib/shared`. The unused
+  `SX_TARGET_LDFLAGS_PIE` is removed.
+- `sdk-sysroot-test` also builds with the copy's `sxcc` in every profile, a
+  SUN program and one linking `-lsxgui`, and builds `sdk/cmakesmoke` with
+  CMake and the copy's toolchain file.
 
 ## Not in this roadmap
 

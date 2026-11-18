@@ -5570,7 +5570,7 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
 }
 
 /* A SUN program with an SXGUI window, built outside the tree against the SDK
- * sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 3): sdk/sungui runs on
+ * sysroot (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 3): sdk/sungui runs on
  * SUN's application frame, sxngui. Like the native client selftest, it waits
  * for the marker square in the window's centre, sends 'A', and waits for the
  * square to turn green and the program to exit. The colours also live in

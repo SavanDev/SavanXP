@@ -47,7 +47,15 @@ The pipeline deliberately remains:
 fetch.sh -> runtime.sh -> dav1d.sh -> configure.sh -> make.sh -> link.sh
 ```
 
-`dav1d.sh` writes a Meson cross file from the same compiler, sysroot and runtime
+Everything compiles through the SDK: `runtime.sh` brings the SDK sysroot
+(`build/sdk/2.0`) up to date and checks a test link, and the compiler `configure`
+and Meson are given is the sysroot's `share/sdk/sxcc` with its static SSE profile,
+plus `-fPIC` so the objects can go into the shared library. sxcc supplies the
+target flags, the headers, and for a test link crt0, the runtime and the linker
+script. `libmath.so.0.4`, which the library declares, comes from the sysroot's
+`lib/shared`.
+
+`dav1d.sh` writes a Meson cross file naming the same compiler driver
 `configure` uses, builds `libdav1d.a` without assembly and with both 8- and
 16-bit depths, and installs it with its `dav1d.pc` under the work directory,
 where `configure.sh` finds it through `pkg-config` and nothing else.

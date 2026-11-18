@@ -8,7 +8,9 @@ staging, and host tests.
 
 The host needs:
 
-- Clang/LLVM (`clang`, `ld.lld`, `llvm-objcopy`, and `llvm-readelf`)
+- Clang/LLVM (`clang`, `ld.lld`, `llvm-objcopy`, `llvm-readelf`, and `llvm-ar`,
+  which assembles the SDK sysroot's archives)
+- `flock` (util-linux), which serializes the SDK sysroot's assembly
 - CMake and Ninja
 - Python 3 with Pillow
 - Git

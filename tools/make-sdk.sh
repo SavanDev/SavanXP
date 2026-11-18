@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assemble the SDK sysroot, build/sdk/<MAJOR.MINOR>: the public headers, the
 # runtime prebuilt in its two variants, the linker script and the tools that
-# build a program against it (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 2).
+# build a program against it (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 2).
 #
 # ./build.sh build runs it, and tools/build-user.sh runs it before every build,
 # so the sysroot never lags behind the sources. It rebuilds only when one of
@@ -17,6 +17,7 @@ SDK_SRC="$ROOT/subsystems/posix/sdk/v1"
 . "$ROOT/tools/lib/runtime_units.sh"
 BUILD_ROOT=$(realpath -m -- "${SAVANXP_OUTPUT_ROOT:-"$ROOT/build"}")
 CC=${SAVANXP_CLANG:-clang}
+AR=${SAVANXP_AR:-llvm-ar}
 QUIET=0
 FORCE=0
 
@@ -44,10 +45,12 @@ while (($#)); do
     esac
 done
 
-command -v "$CC" >/dev/null 2>&1 || {
-    echo "make-sdk.sh: required tool not found: $CC" >&2
-    exit 1
-}
+for tool in "$CC" "$AR"; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "make-sdk.sh: required tool not found: $tool" >&2
+        exit 1
+    }
+done
 
 mkdir -p "$SDK_PARENT"
 # One assembler at a time: the smoke scenarios and the host tests may run
@@ -179,6 +182,49 @@ for variant_spec in "0 0" "1 0" "1 1"; do
     fi
 done
 
+# --- archives ----------------------------------------------------------------
+# For build systems that link with -l (tools/sxcc, the CMake toolchain file),
+# each variant also has the groups as ordinary archives, which take only the
+# objects a program references. build-user.sh keeps linking the objects
+# themselves. What must be linked whether or not anything references it stays
+# a loose object: crt0.o, which starts the program; sxn_runtime.o, whose heap
+# page source replaces the POSIX runtime's weak one; and ldso.o, which crt0
+# finds through a weak hook.
+#
+#   libsavanxp.a   core (without crt0), math and setjmp: what every program needs
+#   libm.a         math alone, for builds that add -lm (empty without SSE)
+#   libsxgui.a     gui, libsxaudio.a audio, libsxmidi.a midi, libsxgl.a gl
+#   libsxngui.a    sun-gui: SUN's application frame and file dialog
+#   libdl.a        dlfcn, in the PIE variant
+make_archive() {
+    local lib=$1 archive=$2
+    shift 2
+    local group object wanted
+    local -a members=()
+    while read -r group object; do
+        [[ "$object" != crt0.o ]] || continue
+        for wanted in "$@"; do
+            if [[ "$group" == "$wanted" ]]; then
+                members+=("$lib/$object")
+                break
+            fi
+        done
+    done <"$lib/units.txt"
+    rm -f "$lib/$archive"
+    "$AR" rcsD "$lib/$archive" "${members[@]}"
+}
+for variant in nosse sse pie; do
+    lib="$TMP/lib/$variant"
+    make_archive "$lib" libsavanxp.a core math setjmp
+    make_archive "$lib" libm.a math
+    make_archive "$lib" libsxgui.a gui
+    make_archive "$lib" libsxaudio.a audio
+    make_archive "$lib" libsxmidi.a midi
+    make_archive "$lib" libsxgl.a gl
+    make_archive "$lib" libsxngui.a sun-gui
+done
+make_archive "$TMP/lib/pie" libdl.a dlfcn
+
 # --- shared libraries ------------------------------------------------------
 # The system's libraries a PIE program may link against (--needs), copied from
 # the build, and lib/shared/libraries.txt: each soname and the runtime objects
@@ -206,7 +252,7 @@ done < <(grep -v '^[[:space:]]*\(#\|$\)' "$LIBRARIES")
 # --- tools -----------------------------------------------------------------
 SHARE="$TMP/share/sdk"
 mkdir -p "$SHARE/lib" "$SHARE/icons"
-for tool in build-user.sh gen_sxe_resources.py stamp_sxe.py stamp_osabi.py sxfs_sync.py; do
+for tool in build-user.sh sxcc savanxp-toolchain.cmake gen_sxe_resources.py stamp_sxe.py stamp_osabi.py sxfs_sync.py; do
     cp "$ROOT/tools/$tool" "$SHARE/$tool"
     INPUTS+=("$ROOT/tools/$tool")
 done

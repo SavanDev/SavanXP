@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The SDK sysroot is self-contained (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 2).
+"""The SDK sysroot is self-contained (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 2).
 
 Two checks:
 
@@ -14,6 +14,9 @@ Two checks:
   program and sdk/piesmoke (--pie --needs libmath.so.0.4, checked to be
   ET_DYN with the loader's PT_INTERP and the DT_NEEDED) with its own
   share/sdk/build-user.sh.
+- The same copy's sxcc builds static programs in one step and in two, in
+  every profile, a SUN program and one linking -lsxgui; and CMake with its
+  share/sdk/savanxp-toolchain.cmake builds sdk/cmakesmoke.
 """
 
 from __future__ import annotations
@@ -83,7 +86,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     copy = scratch / "sdk"
     shutil.copytree(sysroot, copy)
     sources = scratch / "src"
-    for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke"):
+    for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke", "cmakesmoke"):
         shutil.copytree(root / "sdk" / name, sources / name)
     environment = os.environ.copy()
     environment["SAVANXP_CLANG"] = clang
@@ -113,6 +116,47 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
             raise SystemExit(f"piesmoke: '{expected}' missing from its headers:\n{dump}")
 
 
+def check_toolchain(scratch: Path, clang: str, linker: str) -> None:
+    """sxcc and the CMake toolchain file, from the same copy of the sysroot."""
+    copy = scratch / "sdk"
+    sources = scratch / "src"
+    sxcc = str(copy / "share" / "sdk" / "sxcc")
+    environment = os.environ.copy()
+    environment["SAVANXP_CLANG"] = clang
+    environment.pop("SAVANXP_SDK_PROFILE", None)
+    readelf = shutil.which("llvm-readelf") or "llvm-readelf"
+    out = scratch / "sxcc"
+    out.mkdir()
+    # One step and two steps, every profile, a SUN program and an archive by -l.
+    run([sxcc, "--sx-profile=nosse", str(sources / "hello" / "main.c"), "-o", str(out / "nosse")],
+        env=environment)
+    run([sxcc, "-c", str(sources / "hello" / "main.c"), "-o", str(out / "hello.o")], env=environment)
+    run([sxcc, str(out / "hello.o"), "-o", str(out / "sse")], env=environment)
+    run([sxcc, str(sources / "gfxhello" / "main.c"), "-lsxgui", "-o", str(out / "gui")], env=environment)
+    run([sxcc, "--sx-native", str(sources / "nativetest" / "main.c"), "-o", str(out / "native")],
+        env=environment)
+    run([sxcc, "--sx-profile=pie", str(sources / "piesmoke" / "main.c"), "-o", str(out / "pie"),
+         str(copy / "lib" / "shared" / "libmath.so.0.4")], env=environment)
+    for name in ("nosse", "sse", "gui", "native"):
+        if "EXEC (Executable file)" not in run([readelf, "-h", str(out / name)]).stdout:
+            raise SystemExit(f"sxcc: {name} is not a static executable")
+    dump = run([readelf, "-h", "-d", str(out / "pie")]).stdout
+    if "DYN (Shared object file)" not in dump or "[libmath.so.0.4]" not in dump:
+        raise SystemExit(f"sxcc: the pie profile did not link a PIE against libmath:\n{dump}")
+    symbols = run([shutil.which("llvm-nm") or "llvm-nm", str(out / "native")]).stdout
+    if " T sx_heap_pages_map" not in symbols:
+        raise SystemExit("sxcc --sx-native did not link SUN's heap page source")
+
+    # CMake with the toolchain file, as sdk/cmakesmoke/build.sh does.
+    build = scratch / "cmake-build"
+    run(["cmake", "-S", str(sources / "cmakesmoke"), "-B", str(build), "-G", "Ninja",
+         f"-DCMAKE_TOOLCHAIN_FILE={copy / 'share' / 'sdk' / 'savanxp-toolchain.cmake'}"],
+        env=environment)
+    run(["cmake", "--build", str(build)], env=environment)
+    if "EXEC (Executable file)" not in run([readelf, "-h", str(build / "cmakesmoke")]).stdout:
+        raise SystemExit("cmake: cmakesmoke is not a static executable")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
@@ -133,7 +177,9 @@ def main() -> int:
         scratch = Path(temporary)
         count = check_headers(sysroot, clang, scratch)
         check_standalone(sysroot, root, clang, linker, scratch)
-    print(f"sdk sysroot: {count} headers self-contained; a copy builds six programs: PASS")
+        check_toolchain(scratch, clang, linker)
+    print(f"sdk sysroot: {count} headers self-contained; a copy builds six programs with "
+          "build-user.sh, five with sxcc and one with CMake: PASS")
     return 0
 
 

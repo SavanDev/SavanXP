@@ -4,9 +4,29 @@
 # compiles the program with them, so the two always agree. The sysroot ships a
 # copy of this file next to its build-user.sh.
 
-# savanxp_sdk_compile_flags SSE
-# Prints the flags one per line. SSE is 1 for the --sse variant, 0 otherwise.
-savanxp_sdk_compile_flags() {
+# savanxp_sdk_abi_flags SSE [PIE]
+# The flags that make an object fit the SDK's runtime: the target, the code
+# model, position independence and the register set. A program and the runtime
+# variant it links must agree on these. PIE is the in-tree PIC profile
+# (SAVANXP_USER_COMPILE_OPTIONS_PIC in CMakeLists.txt), SSE included, as every
+# PIE program in the tree has it. tools/sxcc gives a foreign build system these
+# and nothing else.
+savanxp_sdk_abi_flags() {
+    if ((${2:-0})); then
+        printf '%s\n' \
+            -target x86_64-unknown-none-elf \
+            -ffreestanding \
+            -fstack-protector-strong \
+            -fPIC \
+            -mno-red-zone \
+            -mcmodel=medium \
+            -mno-mmx \
+            -msse \
+            -msse2 \
+            -ffunction-sections \
+            -fdata-sections
+        return
+    fi
     printf '%s\n' \
         -target x86_64-unknown-none-elf \
         -ffreestanding \
@@ -15,12 +35,7 @@ savanxp_sdk_compile_flags() {
         -fno-pie \
         -mno-red-zone \
         -mcmodel=small \
-        -mno-mmx \
-        -Wall \
-        -Wextra \
-        -Wpedantic \
-        -Wno-language-extension-token \
-        -Wno-c23-extensions
+        -mno-mmx
     if (($1)); then
         printf '%s\n' -msse -msse2
     else
@@ -28,28 +43,30 @@ savanxp_sdk_compile_flags() {
     fi
 }
 
-# savanxp_sdk_pie_compile_flags
-# The flags of a PIE program and of the runtime variant it links: the in-tree
-# PIC profile (SAVANXP_USER_COMPILE_OPTIONS_PIC in CMakeLists.txt), SSE
-# included, as every PIE program in the tree has it.
-savanxp_sdk_pie_compile_flags() {
+# savanxp_sdk_warning_flags
+# The warnings the repository builds its own code with.
+savanxp_sdk_warning_flags() {
     printf '%s\n' \
-        -target x86_64-unknown-none-elf \
-        -ffreestanding \
-        -fstack-protector-strong \
-        -fPIC \
-        -mno-red-zone \
-        -mcmodel=medium \
-        -mno-mmx \
-        -msse \
-        -msse2 \
-        -ffunction-sections \
-        -fdata-sections \
         -Wall \
         -Wextra \
         -Wpedantic \
         -Wno-language-extension-token \
         -Wno-c23-extensions
+}
+
+# savanxp_sdk_compile_flags SSE
+# The flags build-user.sh compiles a static program and the runtime with:
+# the ABI flags and the repository's warnings. SSE is 1 for the --sse variant.
+savanxp_sdk_compile_flags() {
+    savanxp_sdk_abi_flags "$1" 0
+    savanxp_sdk_warning_flags
+}
+
+# savanxp_sdk_pie_compile_flags
+# The same for a PIE program and the runtime variant it links.
+savanxp_sdk_pie_compile_flags() {
+    savanxp_sdk_abi_flags 1 1
+    savanxp_sdk_warning_flags
 }
 
 # savanxp_sdk_pie_link_flags NATIVE
@@ -90,13 +107,13 @@ savanxp_sdk_variant() {
 }
 
 # savanxp_sdk_groups SSE [PIE]
-# The runtime groups the sysroot builds for a variant. math and gl need SSE.
-# The PIE variant has every group, midi included, and the loader.
+# The runtime groups the sysroot builds for a variant. math, midi and gl need
+# SSE. The PIE variant also gets the loader (make-sdk.sh).
 savanxp_sdk_groups() {
     if ((${2:-0})); then
         printf '%s\n' core math gui audio midi gl setjmp
     elif (($1)); then
-        printf '%s\n' core math gui audio gl setjmp
+        printf '%s\n' core math gui audio midi gl setjmp
     else
         printf '%s\n' core gui audio setjmp
     fi

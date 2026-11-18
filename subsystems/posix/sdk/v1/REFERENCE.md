@@ -26,7 +26,7 @@ print it.
   version it lands in. The release checks the number against those entries
   ([RELEASING.md](../../../../docs/build/RELEASING.md#1-the-release-commit)).
 - SUN's surface counts the same as POSIX's once the SDK carries it
-  ([SDK_V2_ROADMAP.md](../../../../docs/roadmaps/open/SDK_V2_ROADMAP.md),
+  ([SDK_V2_ROADMAP.md](../../../../docs/roadmaps/done/SDK_V2_ROADMAP.md),
   phase 3).
 - The SDK version is not the soname version: shared libraries are
   `lib*.so.0.4`, tracking the OS
@@ -46,6 +46,9 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   its layout included ([`README.md`](README.md#the-sysroot))
 - `tools/build-user.sh`, the copy in the sysroot's `share/sdk/`, and
   `tools/new-user-app.sh`
+- `share/sdk/sxcc`, its options and profiles, the archive names it links
+  with `-l`, and `share/sdk/savanxp-toolchain.cmake`
+  ([`README.md`](README.md#other-build-systems-sxcc-and-cmake))
 
 ## Visible limits
 

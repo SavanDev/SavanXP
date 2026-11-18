@@ -69,9 +69,10 @@ ARCHIVES=(
 # and did not need the library. The failure shows up when the player moves into
 # the tree, and that is why it is fixed on this side: a library that uses another
 # has to say so.
-SAVANXP_MATH_LIBRARY="${SAVANXP_MATH_LIBRARY:-$OUTPUT_ROOT/diskfs/lib}"
+# libmath comes from the SDK sysroot's system libraries (lib/shared).
+SAVANXP_MATH_LIBRARY="${SAVANXP_MATH_LIBRARY:-$SYSROOT/lib/shared}"
 if [[ ! -f "$SAVANXP_MATH_LIBRARY/libmath.so.0.4" ]]; then
-    echo "ffmpeg: falta $SAVANXP_MATH_LIBRARY/libmath.so.0.4; ejecuta ./build.sh build primero" >&2
+    echo "ffmpeg: missing $SAVANXP_MATH_LIBRARY/libmath.so.0.4; run ./build.sh build first" >&2
     exit 1
 fi
 

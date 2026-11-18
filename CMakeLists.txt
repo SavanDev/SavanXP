@@ -58,6 +58,8 @@ find_program(SAVANXP_HOST_CC NAMES clang cc REQUIRED)
 find_program(SAVANXP_LD NAMES ld.lld REQUIRED)
 find_program(SAVANXP_OBJCOPY NAMES llvm-objcopy REQUIRED)
 find_program(SAVANXP_READELF NAMES llvm-readelf REQUIRED)
+# The SDK sysroot's archives (tools/make-sdk.sh).
+find_program(SAVANXP_AR NAMES llvm-ar REQUIRED)
 find_program(SAVANXP_XORRISO NAMES xorriso)
 if(NOT SAVANXP_XORRISO)
     set(SAVANXP_XORRISO xorriso)
@@ -1577,13 +1579,14 @@ if(EXISTS "${SAVANXP_LIMINE_INSTALLER}")
     )
 endif()
 
-# The SDK sysroot, build/sdk/<MAJOR.MINOR> (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+# The SDK sysroot, build/sdk/<MAJOR.MINOR> (docs/roadmaps/done/SDK_V2_ROADMAP.md,
 # phase 2). tools/make-sdk.sh decides on its own whether anything changed, so
 # the target runs it on every build and it returns at once when nothing did.
 add_custom_target(savanxp_sdk
     COMMAND "${CMAKE_COMMAND}" -E env
             "SAVANXP_OUTPUT_ROOT=${SAVANXP_OUTPUT_ROOT}"
             "SAVANXP_CLANG=${CMAKE_C_COMPILER}"
+            "SAVANXP_AR=${SAVANXP_AR}"
             "${CMAKE_SOURCE_DIR}/tools/make-sdk.sh" --quiet
     COMMENT "Assembling the SDK sysroot"
     VERBATIM

@@ -760,6 +760,13 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/piesmoke --name piesmoke --pie --needs libmath.so.0.4",
         ),
     ),
+    "cmake-smoke": _qemu_scenario(
+        "cmakesmoke",
+        "CMAKE SMOKE PASS",
+        "CMAKE SMOKE FAIL",
+        "A program built with CMake and the SDK's toolchain file, through sxcc",
+        prepare=("./sdk/cmakesmoke/build.sh",),
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

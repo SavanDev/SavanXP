@@ -115,7 +115,7 @@ if ((SKIP_PORT == 0)); then
        "$PORT/overlay/ccleste_savanxp_assets.h" \
        "$BUILD_SRC/"
 
-    # The port builds against the SDK sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md,
+    # The port builds against the SDK sysroot (docs/roadmaps/done/SDK_V2_ROADMAP.md,
     # phase 4): its headers, its PIE runtime and the loader. make-sdk.sh brings
     # it up to date first.
     SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$REPO/tools/make-sdk.sh" --quiet

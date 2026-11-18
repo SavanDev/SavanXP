@@ -11,9 +11,6 @@ case "$OUTPUT_ROOT" in
     /*) ;;
     *) OUTPUT_ROOT="$REPO/$OUTPUT_ROOT" ;;
 esac
-SDK="$REPO/subsystems/posix/sdk/v1"
-# shellcheck source=../../tools/lib/runtime_units.sh
-. "$REPO/tools/lib/runtime_units.sh"
 UPSTREAM_FILE="$PORT/UPSTREAM"
 
 metadata() {
@@ -55,29 +52,28 @@ esac
 
 SRC="$WORK/ffmpeg-${FFMPEG_VERSION}"
 BUILD="$WORK/build"
+# The SDK sysroot (docs/roadmaps/done/SDK_V2_ROADMAP.md, phase 5); runtime.sh
+# brings it up to date. RUNTIME keeps this port's fingerprint of it and the
+# link probe.
+SYSROOT=$(SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$REPO/tools/make-sdk.sh" --print-path)
 RUNTIME="$WORK/runtime"
-SYSROOT="$WORK/sysroot"
 OUT="$WORK/out"
 DAV1D_SRC="$WORK/dav1d-${DAV1D_VERSION}"
 DAV1D_BUILD="$WORK/dav1d-build"
 DAV1D_PREFIX="$WORK/dav1d-install"
 
-# FFmpeg uses floating point in the selected decoders, so this port uses the
-# SSE/SSE2 ABI and links the SDK math runtime.
-# -fPIC, not -fno-pic, because this port's goal is FFmpeg ending up in
+# FFmpeg compiles through the SDK's compiler driver, sxcc, with its static SSE
+# profile: the target's ABI flags and the sysroot's headers come from it, and a
+# link gets crt0, the runtime and the linker script, which is what the test
+# programs of configure and of dav1d's Meson need. FFmpeg uses floating point
+# in the selected decoders, hence SSE.
+#
+# -fPIC on top, because this port's goal is FFmpeg ending up in
 # /lib/libffmpeg.so.0.4: the objects of a .a have to be relocatable to go into a
-# shared library, and with -fno-pic they are not.
-#
-# Compiling with -fPIC does not break a static link -- PIC code works in a
-# static link -- so the change can be reverted by dropping the flag if it ever
-# gets in the way.
-#
-# -fno-pie goes with it: it is what says "this executable is not position
-# independent", and the next line compiles the runtime units with the same
-# flags, so leaving them at -fno-pie while FFmpeg is PIC describes nothing real.
-SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fPIC -mno-red-zone"
-SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -mcmodel=small -mno-mmx -msse -msse2"
-SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
+# shared library. It overrides the profile's -fno-pic and -fno-pie, and PIC
+# code still links into the static test programs.
+SXCC="$SYSROOT/share/sdk/sxcc"
+SX_TARGET_CFLAGS="-fPIC"
 
 CLANG="${SAVANXP_CLANG:-clang}"
 LINK_CC="${SAVANXP_LINK_CC:-$CLANG}"
@@ -88,29 +84,8 @@ NM_CMD="${SAVANXP_NM:-llvm-nm}"
 STRIP_CMD="${SAVANXP_STRIP:-llvm-strip}"
 SIZE_CMD="${SAVANXP_SIZE:-llvm-size}"
 
-# The target compiler is freestanding. The link driver uses the Linux triple
-# so clang delegates to ld.lld.
-SX_CC="$CLANG -target x86_64-unknown-none-elf"
-SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
-
-# -no-pie is required with -fno-pic; -static keeps the SDK linker script's
-# PT_LOAD layout free of an ELF interpreter.
-SX_TARGET_LDFLAGS="-nostdlib -static -no-pie -fuse-ld=lld -Wl,-T,$SYSROOT/linker.ld"
-SX_TARGET_LDFLAGS="$SX_TARGET_LDFLAGS -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none"
-
-# El perfil PIE, para el reproductor. Son las mismas banderas que usa el arbol
-# (SAVANXP_USER_LINK_OPTIONS_PIE en CMakeLists.txt) y estan duplicadas aqui a
-# proposito: el port no puede leer las variables de CMake, y copiar el guion de
-# enlace a mano seria peor que copiar nueve banderas. Si una de las dos listas
-# cambia, hay que cambiar la otra.
-#
-# --export-dynamic no es opcional: libffmpeg.so.0.4 deja 112 simbolos sin definir
-# y el cargador los resuelve contra ESTE ejecutable. Sin la bandera, la carga falla.
-SX_TARGET_LDFLAGS_PIE="-nostdlib -fuse-ld=lld -pie"
-SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-z,max-page-size=0x1000"
-SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--dynamic-linker,/lib/ld.so.0.4"
-SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--build-id=none -Wl,--export-dynamic"
-SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-e,_start"
+SX_CC="$SXCC --sx-profile=sse"
+SX_LD="$SX_CC"
 
 sx_jobs() {
     if command -v nproc >/dev/null 2>&1; then

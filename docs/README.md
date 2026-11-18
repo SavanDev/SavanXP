@@ -287,12 +287,12 @@ all its phases have landed; the links to it move with it.
 - [`USB_ROADMAP.md`](roadmaps/done/USB_ROADMAP.md) — the USB stack: xHCI first and polled,
   HID, mass storage, hubs and hot plug, what was copied from OpenBSD and what
   was only read, the QEMU harness, and the run on real hardware.
+- [`SDK_V2_ROADMAP.md`](roadmaps/done/SDK_V2_ROADMAP.md) — why the external SDK
+  became 2.0, and how it became one self-contained sysroot for POSIX and SUN
+  programs: dynamic linking, sxcc and the CMake toolchain file.
 
 ### Open — `roadmaps/open/`
 
-- [`SDK_V2_ROADMAP.md`](roadmaps/open/SDK_V2_ROADMAP.md) — why the external SDK is
-  due 2.0, what it still takes from the internal tree, and the phases to one
-  self-contained sysroot for POSIX and SUN programs, with dynamic linking.
 - [`SYSTEM_LIMITS_ROADMAP.md`](roadmaps/open/SYSTEM_LIMITS_ROADMAP.md) — how many windows,
   descriptors and kernel objects fit today, the chain of limits from the owned windows
   per process down to the kernel tables, what each raise costs, and the order to do them.
