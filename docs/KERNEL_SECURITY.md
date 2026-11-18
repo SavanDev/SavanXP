@@ -143,10 +143,11 @@ source for network keys, signatures or storage encryption.
 
 ### Mapping randomization
 
-The start of the 16 GiB section-view window is selected per new process and
-`exec` from RDRAND/TSC-derived kernel entropy. This randomizes dynamic malloc
+The section-view cursor is selected per new process and `exec` from
+RDRAND/TSC-derived kernel entropy. The reference uses a 16 GiB window; i386
+uses 256 MiB within its user address space. This randomizes dynamic malloc
 arenas, GPU sections and other section-backed mappings. Fork preserves the
-parent's mappings.
+parent's mappings and cursor.
 
 This is partial ASLR only. The executable image, BSS and user stack are still
 at fixed addresses, and the kernel is not relocated.

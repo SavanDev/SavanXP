@@ -111,8 +111,14 @@ segments. The native build emits SysV hash tables for exact symbol counts.
 Temporary file and range-section descriptors close after use, including fd 0;
 rejected unpublished images release already-placed views. Published dependency
 failures retain the reference diagnostic state until process exit. There is no
-`dlopen`/unload, lazy binding, TLS, COPY relocation support, ASLR or `mprotect`.
+`dlopen`/unload, lazy binding, TLS, COPY relocation support or `mprotect`.
 The existing POSIX anonymous `mmap` still rejects `PROT_EXEC`.
+
+Spawn and successful exec seed the automatic section-view cursor within
+`[0x10000000, 0x20000000)` at page granularity. This leaves at least 512 MiB
+above the initial cursor and the allocator can wrap within the full section
+range. Fork inherits the views and cursor. Executable and stack placement
+remain fixed, as in v0.4.0. See [the porting study](I386_PORT_STUDY.md).
 
 ## Build and verification
 

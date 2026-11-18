@@ -261,6 +261,7 @@ def check_shared(qmp_socket: Path, serial: Path) -> None:
         ("vmtest32", "VM32 PASS"),
         ("heaptest", "heaptest ok"),
         ("mmaptest", "mmaptest: ok"),
+        ("aslrtest32", "ASLR32 PASS"),
         ("pietest", None),
         ("interptest", None),
         ("libtest", None),

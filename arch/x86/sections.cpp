@@ -1,4 +1,5 @@
 #include "sections.hpp"
+#include "cpu.hpp"
 #include "io.hpp"
 #include "paging.hpp"
 #include "kernel/string.hpp"
@@ -9,6 +10,9 @@
 namespace i386::sections {
 namespace {
 uint32_t g_failure;
+// Select a starting page within 256 MiB, leaving at least 512 MiB above it.
+constexpr uint32_t kSectionAslrWindowBytes = 256u << 20;
+static_assert(paging::kSectionViewBase + kSectionAslrWindowBytes < paging::kUserWindowEnd);
 uint32_t access_for(uint32_t flags, uint32_t defaults) {
     uint32_t access = flags & (object::access_read | object::access_write | object::access_execute);
     return access ? access : defaults;
@@ -25,6 +29,12 @@ int install(process::Process& task, object::SectionObject* section, uint32_t acc
 }
 }
 uint32_t last_failure() { return g_failure; }
+
+void randomize_base(process::Process& task) {
+    const uint32_t seed = cpu::random_u32() ^ task.pid;
+    const uint32_t offset = (seed % kSectionAslrWindowBytes) & ~(paging::kPageBytes - 1);
+    task.next_view_base = paging::kSectionViewBase + offset;
+}
 
 int create(process::Process& task, uint32_t size, uint32_t flags) {
     if (!size) return -SAVANXP_EINVAL;
@@ -52,13 +62,16 @@ long map(process::Process& task, uint32_t fd, uint32_t base, uint32_t flags) {
     if ((access & object::access_write) && (access & object::access_execute)) return -SAVANXP_EINVAL;
     if (base & 4095) return -SAVANXP_EINVAL;
     const uint32_t size = static_cast<uint32_t>(section->size_bytes);
-    if (!base) {
-        uint32_t candidate = task.next_view_base ? task.next_view_base : paging::kSectionViewBase;
+    const bool automatic = base == 0;
+    if (automatic) {
+        const uint32_t candidate = task.next_view_base ? task.next_view_base : paging::kSectionViewBase;
         bool found = false;
         for (unsigned pass = 0; pass < 2 && !found; ++pass) {
-            const uint32_t end = pass ? candidate : paging::kUserWindowEnd;
+            const uint32_t end = paging::kUserWindowEnd;
+            // The cursor limits starting pages, so a view can straddle it.
             for (uint32_t page = pass ? paging::kSectionViewBase : candidate;
-                 size <= end && page <= end - size; page += paging::kPageBytes) {
+                 (!pass || page < candidate) && size <= end && page <= end - size;
+                 page += paging::kPageBytes) {
                 if (paging::range_free(task.directory, page, size)) { base = page; found = true; break; }
             }
         }
@@ -81,7 +94,7 @@ long map(process::Process& task, uint32_t fd, uint32_t base, uint32_t flags) {
     object::retain(&section->header);
     *view = {base, size, access, section, (flags & SAVANXP_VIEW_PRIVATE) == 0};
     if (task.next_view_base < paging::kSectionViewBase) task.next_view_base = paging::kSectionViewBase;
-    if (base + size > task.next_view_base) task.next_view_base = base + size;
+    if (automatic || base + size > task.next_view_base) task.next_view_base = base + size;
     g_failure = 0;
     return base;
 }

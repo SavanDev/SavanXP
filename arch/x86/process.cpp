@@ -207,6 +207,7 @@ long spawn(const char* path, const char* const* argv, uint32_t argc, int stdin_f
         memcpy(task.name, name, length);
         initialize_fpu_state(task.fpu);
         task.pid = g_next_pid++;
+        sections::randomize_base(task);
         task.parent = current_pid();
         if (!current_slot() && !g_init_pid) g_init_pid = task.pid;
         task.state = State::runnable;
@@ -370,6 +371,7 @@ int replace_image(const char* path, const char* const* argv, uint32_t argc, Cont
     // program, descriptors and CWD. Kernel stacks do not depend on user CR3.
     paging::activate_kernel();
     sections::release_views(*current_slot());
+    sections::randomize_base(*current_slot());
     paging::destroy_process_directory(current_slot()->directory);
     memcpy(current_slot()->directory, directory, 4096);
     memory::free_allocation(staging);

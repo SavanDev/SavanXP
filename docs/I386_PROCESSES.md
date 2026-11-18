@@ -207,7 +207,8 @@ changes on successful exec. See [I386_SERVICES.md](I386_SERVICES.md).
 
 ## Remaining boundaries
 
-User-installed signal handlers and ASLR remain unported. Events, timers,
+Kernel delivery to user-installed signal handlers is outside the v0.4.0
+contract. See [section-view placement](I386_MEMORY.md). Events, timers,
 semaphores and wait-any/all now use the reference objects; see
 [I386_GRAPHICS.md](I386_GRAPHICS.md). RAM above the mapped first GiB is not allocated. User read-only pages and supervisor mappings are protected,
 but absence of NX prevents execute-disable and full W^X enforcement. Physical

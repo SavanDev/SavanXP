@@ -177,8 +177,12 @@ changes, and record implementation/verification evidence as work lands.
    The remaining internal/visual parity review follows. These intermediate
    results do not complete milestone 6 or the v0.4.0 target.
 
-   **Remaining v0.4.0 review.** Port and verify the reference's randomized base
-   for section views and its boot screen, logo, and handoff to the graphical
+   **Section views.** Spawn and exec choose a randomized starting page in
+   the i386 section window. Fork preserves the parent's views and cursor.
+   [Contracts and evidence](I386_MEMORY.md).
+
+   **Remaining v0.4.0 review.** Port and verify the reference's boot
+   screen, logo, and handoff to the graphical
    session. Audit the limited v0.4.0 signal behavior. For example, its
    `kill(0, signal)` targets the caller and its process state records
    `SIGCHLD`. Full kernel delivery to user handlers and POSIX job control

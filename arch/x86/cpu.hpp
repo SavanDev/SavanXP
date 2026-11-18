@@ -32,6 +32,8 @@ constexpr uint32_t kSyscallVector = 0x80;
  * los mismos y CS sigue apuntando a 0x08. */
 void initialize();
 void initialize_secondary(uint32_t index);
+// Called under the kernel lock after CPU initialization.
+uint32_t random_u32();
 
 /* esp0/ss0 son la pila de ring 0 que el processor carga cuando un proceso de
  * usuario ejecuta int $0x80. */

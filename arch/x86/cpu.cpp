@@ -88,6 +88,8 @@ struct IdtEntry {
 TaskStateSegment g_tss[cpu::kMaxCpus];
 uint64_t g_gdt[kEntryCount];
 IdtEntry g_idt[256];
+bool g_rdrand_available;
+uint64_t g_entropy_counter;
 
 static_assert(sizeof(IdtEntry) == 8, "las puertas de IDT de 32 bits ocupan 8 bytes");
 
@@ -249,7 +251,26 @@ extern "C" ContextFrame* i386_report_exception(const uint32_t* frame) {
     cpu::halt_forever();
 }
 
+uint32_t cpu::random_u32() {
+    for (uint32_t attempt = 0; g_rdrand_available && attempt < 16; ++attempt) {
+        uint32_t value;
+        uint8_t success;
+        asm volatile("rdrand %0; setc %1" : "=r"(value), "=qm"(success));
+        if (success && value) return value;
+    }
+
+    // The reference fallback mixes the TSC with a serialized counter.
+    uint32_t low, high;
+    asm volatile("rdtsc" : "=a"(low), "=d"(high));
+    const uint64_t tsc = (uint64_t(high) << 32) | low;
+    const uint64_t mixed = (tsc ^ ++g_entropy_counter) * 0x9e3779b97f4a7c15ULL;
+    return static_cast<uint32_t>(mixed >> 32);
+}
+
 void cpu::initialize() {
+    uint32_t eax, ebx, ecx, edx;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1u), "c"(0u));
+    g_rdrand_available = (ecx & (1u << 30)) != 0;
     g_gdt[0] = 0;
     g_gdt[1] = kKernelCodeEntry;
     g_gdt[2] = kKernelDataEntry;

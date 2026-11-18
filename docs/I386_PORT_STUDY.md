@@ -2017,3 +2017,37 @@ continues with the remaining internal and visual differences.
 Review signals, ASLR and the remaining boot and desktop differences against
 the pinned reference. Record performance and power evidence before closing
 the v0.4.0 target.
+
+## 22. Randomized section views inside the 32-bit user window
+
+The first i386 section allocator always began at `0x10000000`. Moving the ELF
+load bias would address a different part of the virtual map: v0.4.0 keeps the
+executable and stack at fixed addresses and seeds only the section cursor in
+`VmSpace`. The 16 GiB reference offset cannot fit below the i386 kernel's
+supervisor alias at `0x40000000`. A 256 MiB initial window supplies 65,536
+page-aligned starting positions and leaves at least 512 MiB above every seed.
+The full 768 MiB section region remains available to the allocator.
+
+The native CPU boundary tries a 32-bit RDRAND sample after checking CPUID and
+uses the reference TSC/counter mix on CPUs without it or after repeated
+failures. The upper half of the mixed value supplies the 32-bit fallback
+sample, and the PID participates as in the reference. The global kernel lock
+serializes the counter after scheduling starts. The fallback has the same
+non-cryptographic limitation as v0.4.0.
+
+A new process receives its seed before it becomes runnable. Exec replaces the
+cursor with the rest of the user image, after the ELF load can no longer fail.
+Fork copies both the mapped addresses and the cursor. The allocator searches
+forward, then below the cursor. A free range that begins below the cursor may
+span it, as in the reference. A successful automatic placement advances the
+cursor even after a wrap. Explicit mappings keep their requested addresses and
+can raise the cursor when they extend above it.
+
+In QEMU, `./build.sh smoke shared` samples the first view across eight spawn
+and exec pairs. It checks page alignment, variation within the seed window,
+fork inheritance, failed-exec preservation and explicit placement at the
+upper boundary followed by automatic wrap. The 32 MiB `shared-memory` run
+also retained the existing section and loader rollback gates. The desktop
+passed `sxgui-smoke --virtio --smp 4` with the randomized views and the
+isolated Doom persistence check passed after a normal rebuild. This restores
+the reference's section-placement policy within the smaller address space.

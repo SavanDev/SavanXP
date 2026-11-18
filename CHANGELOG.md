@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 randomizes the starting address of section views on spawn and exec.**
+  Fork keeps its parent's mappings and allocation cursor. `smoke shared` checks
+  automatic placement and explicit addresses.
+
 - **i386 schedules at 1000 Hz with the local APIC or PIT fallback.** Uptime
   and process deadlines use the monotonic clock. `smoke clock-smoke`
   checks nanosecond reporting and clock behavior through sleep and load.

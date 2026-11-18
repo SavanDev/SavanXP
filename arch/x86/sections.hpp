@@ -2,6 +2,7 @@
 #include "process.hpp"
 
 namespace i386::sections {
+void randomize_base(process::Process& task);
 int create(process::Process& task, uint32_t size, uint32_t flags);
 int open(process::Process& task, uint32_t fd, uint32_t offset, uint32_t length, uint32_t flags);
 long map(process::Process& task, uint32_t fd, uint32_t base, uint32_t flags);
