@@ -865,11 +865,34 @@ concurrency, so nothing here can add a race.
   and not the FIFO's 16. Each run also had one to five windows where every
   hold stretched at once, syscalls included, and windows lasted 2.3-2.4 s:
   the host taking the CPU away, not the kernel.
-- *The tick.* Measure its parts before touching them (it already has
-  `timer-stats`): which polls have an interrupt they could wait for instead,
-  which can run every N ticks, and whether the walks of the thread table can
-  be one. Re-measure on hardware, where a port read does not cost a VM
-  exit.
+- *The tick.* **Done under KVM; owed on hardware.** Measured with a
+  temporary probe (not committed) around each part of the BSP's tick, idle
+  `desktop` under KVM on two cores, on 2026-11-18. Average per tick, 110 µs
+  in all with the probe's own cost:
+
+  | Part | µs per tick |
+  | --- | --- |
+  | `net::poll()`: the RTL8139's status registers | 36.7 |
+  | the serial queue (proportional to output) | 34.3 |
+  | `ps2`: the 8042's status port | 20.2 |
+  | `wake_parked_waiters` | 3.4 |
+  | `object::poll_timers` | 1.7 |
+  | the other three thread-table walks together | 1.4 |
+  | the AP's tick, on the AP | 1.0 |
+  | display, Azalia, writeback, view reclaim, splash | under 0.3 each |
+
+  Nearly all of it was port reads that leave the VM. Both devices already
+  had a routed interrupt that drained them, so the tick now reads each one
+  only every 64 ticks as a safety net, and polls every tick again if two
+  checks in a row find data no interrupt announced
+  ([NETWORKING.md](../../net/NETWORKING.md#receive-interrupts-and-the-tick),
+  [INPUT.md](../../kernel/INPUT.md#the-tick-and-ps2-interrupts)). Against
+  the previous commit, two runs each: tick average 79-83 µs to 28 µs, and
+  `held` 12.2-12.7% to 6.6-6.8%. The walks of the thread table cost about
+  5 µs together, not worth merging. What is left is mostly the serial
+  queue, which costs what the output costs. On hardware a port read is
+  about a microsecond, so the gain there is small; it has not been
+  measured.
 - *Commits per operation.* A copy should not pay a journal commit's flushes
   for every `write`; confirm the count first. This is SxFS work
   ([SXFS_ROADMAP.md](SXFS_ROADMAP.md), "Where the remaining cost is") and it

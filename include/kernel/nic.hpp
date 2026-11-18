@@ -42,6 +42,10 @@ struct Nic {
     void (*get_stats)(Stats& stats);
     // One initialization step: 0 ready, -EAGAIN pending, other negative failure.
     int (*prepare)();
+    // Optional. True when the device's interrupt is routed, with the number
+    // it has delivered. Such a NIC is polled by the tick only as a safety
+    // net (docs/net/NETWORKING.md#receive-interrupts-and-the-tick).
+    bool (*interrupts)(uint32_t& delivered);
 };
 
 // Driver candidato, mismo patron que display::Driver / audio::Driver.
@@ -76,6 +80,9 @@ const uint8_t* mac_address();
 bool transmit(const void* frame, size_t length, const void* owner = nullptr);
 void cancel_transmit(const void* owner);
 void poll_receive();
+// The BSP tick's poll: every tick for a NIC without a working interrupt,
+// every 64 ticks otherwise.
+void poll_from_tick();
 void get_stats(Stats& stats);
 
 } // namespace nic

@@ -92,7 +92,7 @@ overwrites identical bytes.
 
 ### Independent, bounded and synchronized progress
 
-The BSP timer calls `net::poll()` before waking readers and readiness waiters,
+The BSP timer calls `net::tick()` before waking readers and readiness waiters,
 regardless of whether any thread is waiting on a socket. A nonblocking caller
 can sleep or compute after accepting a write; SYN, data, routes and close
 continue to progress. Deadlines use the monotonic clock. POSIX blocking calls
@@ -120,6 +120,29 @@ these ownership rules. Boot initialization runs before competing entries exist.
 Queued TCP frames carry a socket owner token: failure or cancellation removes
 frames not yet submitted to hardware before the slot can be reused. An already
 submitted frame cannot be recalled.
+
+### Receive interrupts and the tick
+
+The tick's pass serves the protocol timers every time, but not always the
+NIC. A driver whose interrupt is routed says so through `Nic::interrupts`,
+with the number it has delivered (RTL8139 and RTL8168 today; virtio-net has
+none and is polled every tick). For such a NIC, `nic::poll_from_tick()`
+retries a transmit queue the ring refused, and otherwise reads the device
+only every 64 ticks, as a safety net: the interrupt handler drains receive.
+Syscalls (`net::poll()`, the blocking wrappers) still poll the device every
+time.
+
+The safety net also checks the interrupt. When two checks in a row find
+frames with no interrupt delivered since the previous one, the interrupt is
+not arriving: the boot log says `nic: <driver> receives frames its interrupt
+does not announce; polling it every tick`, and the tick polls every time from
+then on. One such check alone proves nothing, because the tick runs with
+interrupts off and a pending one has not been taken yet.
+
+Why: reading the RTL8139's status registers costs two or three port reads,
+and under KVM each leaves the VM. That was 37 µs of every tick, a third of
+the tick's hold of the kernel lock on an idle desktop
+([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice 5.1).
 
 ### Closing keeps protocol state alive
 

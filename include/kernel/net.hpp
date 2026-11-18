@@ -15,6 +15,9 @@ void initialize();
 bool ready();
 bool present();
 void poll();
+// The BSP tick's share: protocol timers every tick, the NIC as
+// nic::poll_from_tick() decides.
+void tick();
 int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& out_socket, bool asynchronous = false);
 void close_socket(Socket* socket);
 int bind_socket(Socket* socket, uint64_t user_address);

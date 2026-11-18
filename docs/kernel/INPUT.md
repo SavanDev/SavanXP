@@ -103,6 +103,24 @@ session. The reason is the elevation prompt: its answer has to be what
 `windowd` read ([USERS_AND_PERMISSIONS.md](USERS_AND_PERMISSIONS.md#elevation)).
 Nothing writes events into the queues but the drivers.
 
+## The tick and PS/2 interrupts
+
+`ps2` routes IRQ1 and IRQ12, and their handlers drain the 8042 into the
+driver's raw queue; `poll` decodes that queue. With the interrupts routed,
+`poll` reads the controller's status port itself only once every 64 calls,
+as a safety net. If two such checks in a row find bytes with no interrupt
+since the previous one, the interrupts are not arriving: the log says `ps2:
+input arrives without its interrupts; polling the controller every tick` and
+`poll` reads the controller every time, as it did before. One check alone
+proves nothing: the tick runs with interrupts off, so an interrupt can be
+pending while it looks.
+
+Why: the status read cost about 20 µs of every tick under KVM, where a port
+read leaves the VM ([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice
+5.1). `virtio-input`'s `poll` reads only its rings in memory while nothing
+arrives. What `usb-hid`'s costs depends on the host controller and was not
+measured.
+
 ## Verification
 
 `./build.sh smoke kbd-smoke` drives the keyboard over QMP: plain and shifted

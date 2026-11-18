@@ -535,6 +535,11 @@ void irq_handler() {
 
 void attach(const nic::Events& events) { g_events = events; }
 
+bool interrupts(uint32_t& delivered) {
+    delivered = g_irq_count;
+    return g_irq_routed;
+}
+
 bool is_up() { return g_up; }
 
 const uint8_t* mac_address() { return g_mac; }
@@ -808,6 +813,7 @@ const nic::Nic kNic = {
     &poll_receive,
     &get_stats,
     &prepare,
+    &interrupts,
 };
 
 const nic::Nic& nic_of() { return kNic; }

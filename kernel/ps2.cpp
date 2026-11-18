@@ -91,6 +91,18 @@ size_t g_raw_write_index = 0;
 size_t g_raw_count = 0;
 bool g_raw_overflow = false;
 
+// With IRQ1/IRQ12 routed, the interrupts drain the controller and poll() reads
+// its status port only every kSafetyPolls calls
+// (docs/kernel/INPUT.md#the-tick-and-ps2-interrupts).
+constexpr uint32_t kSafetyPolls = 64;
+bool g_irq_routed = false;
+volatile uint32_t g_irq_count = 0;
+uint32_t g_polls_to_safety_drain = 0;
+uint32_t g_irqs_at_safety_drain = 0;
+// Safety drains in a row that found bytes no interrupt announced.
+uint32_t g_unannounced_drains = 0;
+bool g_polls_always = false;
+
 bool g_extended_prefix = false;
 uint8_t g_pause_sequence_index = 0;
 uint8_t g_print_screen_state = 0;
@@ -217,10 +229,39 @@ bool dequeue_raw_byte(RawByte& value) {
     return true;
 }
 
-void drain_controller_output_to_queue() {
+// Returns how many bytes it took.
+size_t drain_controller_output_to_queue() {
+    size_t taken = 0;
     while ((in8(kStatusPort) & kStatusOutputReady) != 0) {
         const uint8_t status = in8(kStatusPort);
         enqueue_raw_byte(in8(kDataPort), (status & kStatusAuxiliaryOutput) != 0);
+        ++taken;
+    }
+    return taken;
+}
+
+// What poll() does about the controller itself: everything without working
+// interrupts, a periodic check with them.
+void drain_from_poll() {
+    if (!g_irq_routed || g_polls_always) {
+        (void)drain_controller_output_to_queue();
+        return;
+    }
+    if (g_polls_to_safety_drain != 0) {
+        --g_polls_to_safety_drain;
+        return;
+    }
+    g_polls_to_safety_drain = kSafetyPolls - 1;
+    const uint32_t delivered = g_irq_count;
+    // Bytes waiting with no interrupt since the last check. Once can be an
+    // interrupt pending while the tick runs with IF=0; twice in a row means
+    // the interrupts do not arrive.
+    const bool unannounced = drain_controller_output_to_queue() != 0 && delivered == g_irqs_at_safety_drain;
+    g_unannounced_drains = unannounced ? g_unannounced_drains + 1 : 0;
+    g_irqs_at_safety_drain = delivered;
+    if (g_unannounced_drains >= 2) {
+        g_polls_always = true;
+        console::write_line("ps2: input arrives without its interrupts; polling the controller every tick");
     }
 }
 
@@ -848,11 +889,13 @@ bool initialize_controller(bool& second_port_present) {
 }
 
 void keyboard_irq() {
-    drain_controller_output_to_queue();
+    g_irq_count = g_irq_count + 1;
+    (void)drain_controller_output_to_queue();
 }
 
 void mouse_irq() {
-    drain_controller_output_to_queue();
+    g_irq_count = g_irq_count + 1;
+    (void)drain_controller_output_to_queue();
 }
 
 void set_keyboard_leds(uint32_t lock_modifiers) {
@@ -866,6 +909,7 @@ namespace ps2 {
 
 void initialize() {
     g_ready = false;
+    g_irq_routed = false;
     g_mouse_ready = false;
     g_keyboard_active = false;
     clear_raw_queue();
@@ -917,6 +961,7 @@ void initialize() {
             arch::enable_irq(12);
         }
     }
+    g_irq_routed = true;
     g_ready = true;
 
     if (g_keyboard_active || g_mouse_ready) {
@@ -933,7 +978,7 @@ void initialize() {
 }
 
 void poll() {
-    drain_controller_output_to_queue();
+    drain_from_poll();
 
     if (g_raw_overflow) {
         g_raw_overflow = false;

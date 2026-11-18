@@ -3270,7 +3270,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     if (this_cpu().index == 0) {
         const uint64_t current_tick = process::detail::now_ms();
         object::poll_timers(current_tick, process::detail::wake_waiters_for_object);
-        net::poll();
+        net::tick();
         wake_sleepers(current_tick);
         wake_wait_timeouts(current_tick);
         wake_parked_waiters(current_tick);

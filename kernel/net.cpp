@@ -1559,12 +1559,16 @@ void tcp_release_stash() {
 // callbacks never sleep. A guard prevents nested service from duplicating work.
 bool g_in_pump = false;
 
-void net_pump() {
+void net_pump(bool from_tick = false) {
     if (g_in_pump) {
         return;
     }
     g_in_pump = true;
-    nic::poll_receive();
+    if (from_tick) {
+        nic::poll_from_tick();
+    } else {
+        nic::poll_receive();
+    }
     tcp_release_stash();
     for (auto& socket : g_sockets) {
         if (socket.in_use && socket.asynchronous && socket.type == SAVANXP_SOCK_DGRAM &&
@@ -2432,6 +2436,10 @@ bool present() {
 
 void poll() {
     net_pump();
+}
+
+void tick() {
+    net_pump(true);
 }
 
 } // namespace net

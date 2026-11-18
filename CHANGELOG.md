@@ -47,6 +47,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The tick no longer reads the network card or the PS/2 controller every millisecond when their interrupts work.**
+  It checks them every 64 ticks and goes back to polling, with a `nic:` or `ps2:` log line, if those interrupts never
+  arrive. Under KVM the tick holds the kernel lock about a third as long. See [NETWORKING.md](docs/net/NETWORKING.md#receive-interrupts-and-the-tick).
+
 - **Serial output is queued and fed to the UART from the tick, so a kernel print no longer waits for the port.**
   The stats reports stop being the longest kernel lock holds of an idle desktop. A panic, a fatal exception and
   power-off still write synchronously. Slice 5.1 of [SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md); see [SYSTEM_LOG.md](docs/kernel/SYSTEM_LOG.md#the-serial-port).

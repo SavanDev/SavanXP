@@ -1,5 +1,6 @@
 #include "kernel/nic.hpp"
 #include "abi/savanxp_abi.h"
+#include "kernel/console.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 
@@ -25,6 +26,14 @@ struct TxFrame {
 TxFrame g_tx[64] = {};
 size_t g_tx_head = 0, g_tx_size = 0;
 Events g_events = {};
+
+// The tick's safety-net poll of a NIC whose interrupt is routed.
+constexpr uint32_t kSafetyPollTicks = 64;
+uint32_t g_ticks_to_safety_poll = 0;
+uint32_t g_interrupts_at_safety_poll = 0;
+// Safety polls in a row that found frames no interrupt announced.
+uint32_t g_unannounced_polls = 0;
+bool g_tick_polls_always = false;
 
 void drain_tx() {
     for (size_t budget = 0; budget < 16 && g_tx_size; ++budget) {
@@ -123,6 +132,43 @@ void poll_receive() {
         drain_tx();
         g_nic->poll_receive();
         drain_tx();
+    }
+}
+
+void poll_from_tick() {
+    if (g_nic == nullptr) {
+        return;
+    }
+    uint32_t delivered = 0;
+    if (g_tick_polls_always || g_nic->interrupts == nullptr || !g_nic->interrupts(delivered)) {
+        poll_receive();
+        return;
+    }
+    // A full ring the device refused waits for no interrupt: retry it now.
+    if (g_tx_size != 0) {
+        drain_tx();
+    }
+    if (g_ticks_to_safety_poll != 0) {
+        --g_ticks_to_safety_poll;
+        return;
+    }
+    g_ticks_to_safety_poll = kSafetyPollTicks - 1;
+
+    Stats before = {};
+    g_nic->get_stats(before);
+    poll_receive();
+    Stats after = {};
+    g_nic->get_stats(after);
+    // Frames waiting with no interrupt since the last safety poll. Once can
+    // be an interrupt pending while the tick runs with IF=0; twice in a row
+    // means the interrupt does not arrive.
+    const bool unannounced = after.rx_frames != before.rx_frames && delivered == g_interrupts_at_safety_poll;
+    g_unannounced_polls = unannounced ? g_unannounced_polls + 1 : 0;
+    g_interrupts_at_safety_poll = delivered;
+    if (g_unannounced_polls >= 2) {
+        g_tick_polls_always = true;
+        console::printf("nic: %s receives frames its interrupt does not announce; polling it every tick\n",
+            g_bound_driver != nullptr ? g_bound_driver->name : "?");
     }
 }
 

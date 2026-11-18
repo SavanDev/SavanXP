@@ -211,6 +211,11 @@ void irq_handler() {
     poll_receive();
 }
 
+bool interrupts(uint32_t& delivered) {
+    delivered = g_irq_count;
+    return g_irq_routed;
+}
+
 void attach(const nic::Events& events) {
     g_events = events;
 }
@@ -350,6 +355,7 @@ const nic::Nic kNic = {
     &poll_receive,
     &get_stats,
     &prepare,
+    &interrupts,
 };
 
 const nic::Nic& nic_of() { return kNic; }

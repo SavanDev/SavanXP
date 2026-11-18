@@ -309,6 +309,7 @@ const nic::Nic kNic = {
     &poll_receive,
     &get_stats,
     &prepare,
+    nullptr,
 };
 
 const nic::Nic& nic_of() { return kNic; }
