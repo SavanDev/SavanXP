@@ -113,7 +113,11 @@ direct-mapped cache, for the devices that queue their writes.
   halting, and returns. A step is one device command: up to 128 sectors (64 KiB)
   of adjacent writes merged from consecutive records, or one device flush. On
   the way back to user mode interrupts are enabled again, so a process that
-  became runnable gets the CPU after at most one step.
+  became runnable gets the CPU after at most one step. That holds for the
+  idle core only. The step runs with the kernel lock held and the disk polled,
+  so a system call on any other core waits for it too. Audio is where that is
+  heard: [SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)
+  measures it, and slice 5.2 takes the wait out of the lock.
 - **Age.** If no CPU goes idle (a process that never sleeps), the timer tick on
   the bootstrap core does one step every 100 ms once the oldest record is a
   second old.

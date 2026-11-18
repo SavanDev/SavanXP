@@ -691,6 +691,99 @@ never under TCG:
   ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md), D4), a network server.
 - More than two cores by default.
 
+### What storage under the lock sounds like
+
+Measured on 2026-11-18, while finding out why `audio-preferences` fails. It
+turned out to be the clearest user-visible cost of the lock so far, and it is
+what makes 5.2 the next job rather than a later one. On hardware it shows as
+short audio dropouts while something touches the disk, worse on older
+machines. That was reported on hardware, but not measured there.
+
+**The scenario.** `./build.sh smoke audio-preferences` plays a continuous
+source through `audiod` on HDA while it captures and saves preferences. It has
+failed since it was introduced (`b4c02b9a`: 1 pass in 5 here), in three ways
+that depend on host load:
+
+- the recorded output has a silence gap of 31-59 ms (the limit is 20 ms);
+- capture drops frames;
+- capture reads fail.
+
+Under KVM it fails less often, but it still fails. The test is right: it
+measures a real stall.
+
+**The mechanism.** It is the same as the `cp` row of the table above, at a
+smaller scale. When a core has nothing to run, the idle's `SAVANXP_SYS_YIELD`
+runs one `block::writeback_step()` (up to 64 KiB, or a device flush) with the
+kernel lock held and the disk polled. Each of `audiod`'s system calls on the
+other core waits for that step, so a loop iteration that needs a few calls
+stalls for a few steps. Its device queue drains, and the HDA stream underruns.
+The preference saves the scenario makes are enough writeback to cause it.
+Media Player reading a file is a lighter case of the same path: a read issued
+under the lock, polled.
+
+**The evidence.** The 2-core TCG machine of the suite ran on a Ryzen 5 1600
+with QEMU 11.1.3. Two temporary probes were used, and neither was committed:
+
+- `unlock_kernel()` printed every hold over 15 ms with its time, holder and
+  call;
+- `audiod` printed every loop phase over 15 ms, and every `sleep_ms(10)` that
+  returned more than 15 ms late.
+
+In one run:
+
+| | count | how many overlap an idle `YIELD` hold |
+| --- | --- | --- |
+| kernel lock holds over 15 ms | 37, 34 of them the idle's `YIELD` (longest 80 ms) | — |
+| `audiod` stalls over 15 ms | 46 | 30 |
+| `audiod` stalls of 30 ms or more | 15 | 11 |
+| HDA underruns | 2 | 2: right after idle holds of 37 and 80 ms |
+
+The holds and the stalls end within a millisecond of each other. One example
+is a 69 ms idle hold that ended at t=4494, and a `sleep_ms(10)` that started
+at t=4424 and took 70 ms. The stalls fall in whichever phase of `audiod` is
+running (accept, drain, capture, render), which is what a lock wait looks
+like and not what slow mixer code looks like. Neither tick reports
+(`timer-stats:`, `smp-stats:`) printed once during the run. Under storage
+load that is the lost-tick symptom of the `cp` row, but it was not
+investigated.
+
+**Ruled out:**
+
+- *Scheduling.* With the scheduler temporarily forced to pick `audiod` first
+  whenever it was ready, the stalls (31-44 per run) and the gaps stayed.
+- *Clock drift.* `uptime_ms()` is the TSC (`timer::monotonic_ms()`), not the
+  tick count.
+- *The preference worker's `sync`.* With it removed, capture still dropped
+  frames.
+
+**What 5.2 must also respect, learned here:**
+
+- *The power-off path.* [POWER.md](../../kernel/POWER.md#why-it-may-run-from-an-interrupt)
+  relies on SxFS and the block layer never dropping the lock partway through,
+  so the SCI handler can call `power::shutdown()` with no volume halfway
+  through a mutation. A writeback step that waits for the disk without the
+  lock breaks that premise. `block::shutdown_all()` then has to wait for the
+  device's own lock, which an interrupt handler holding the kernel lock
+  cannot do. Either the drain hands its in-flight command over to the
+  shutdown path, or the SCI path defers to a context that can wait. Since the
+  power button goes to `init` whenever someone watches it, the interrupt path
+  only remains for the rescue system and smoke runs.
+- *Acceptance.* `audio-preferences` passing repeatedly under TCG, with
+  `drops=0 underruns=0` in the `azalia: stop` line, joins the 4 MB copy as the
+  measure that the slice is done.
+
+**Mitigations that do not replace 5.2.** Both shorten the symptom, not the
+stall:
+
+- *Azalia's recovery margin.* After a late write, Azalia resumes at the
+  minimal safe position (FIFO plus one period, about 21 ms ahead) and never
+  rebuilds the 128 ms initial lead, so after the first underrun any stall
+  over about 21 ms is another one ([AZALIA.md](../../kernel/AZALIA.md#dma-and-timing)).
+  Restoring the full lead on recovery left one underrun per run instead of
+  1-4, but that one became a 108-121 ms gap.
+- *Smaller writeback steps.* They shorten every hold except a device flush,
+  which is the longest one.
+
 ### What the lock carries besides exclusion
 
 The audit a split starts from. Each of these is true today only because one
@@ -795,6 +888,10 @@ disk waits. What it must respect:
 
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
+Done also when `audio-preferences` passes repeatedly under TCG with no HDA
+underrun ([what storage under the lock sounds like](#what-storage-under-the-lock-sounds-like)).
+The power-off path's reliance on the lock is answered in the same slice,
+not after it.
 
 **5.3 — leaf locks.** `physical_memory`, `heap`, and the console with the
 system log each get a lock of their own, still taken under the kernel lock,

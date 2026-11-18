@@ -295,7 +295,8 @@ all its phases have landed; the links to it move with it.
   per process down to the kernel tables, what each raise costs, and the order to do them.
 - [`SMP_ROADMAP.md`](roadmaps/open/SMP_ROADMAP.md) — more than one core: startup, the big
   kernel lock, TLB shootdown and the lock's counters, all done; and phase 5,
-  taking the lock apart, planned with the measurement that says when.
+  taking the lock apart, planned with the measurement that says when,
+  including the audio dropouts storage under the lock causes.
 - [`FRAMEBUFFER_ROADMAP.md`](roadmaps/open/FRAMEBUFFER_ROADMAP.md) — firmware framebuffer
   validation, cache attributes, presentation semantics, emergency output, pixel
   formats, measured performance and the gates for a native display driver.

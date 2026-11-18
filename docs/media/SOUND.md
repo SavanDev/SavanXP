@@ -207,6 +207,11 @@ reading between two measurement windows must not blank a continuous signal.
   restart with different pids/stream ids/ports. Exact captured input and a
   separate restored-volume WAV oracle are required, without NIC. Startup is
   primed while muted; autosaves run during the measured playback/capture interval.
+  It fails today, most often under TCG: the autosaves' writeback stalls
+  `audiod` behind the kernel lock and the HDA stream underruns. The failure is
+  real, not the test's. It is kept as the acceptance measure for the SMP
+  roadmap's slice 5.2
+  ([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)).
 - `audio-preferences-test` rejects malformed/versioned/overflowing settings;
   `audio-preference-io-test` injects write, sync and rename failures into the
   actual worker, including rollback and refusal to acknowledge failed durability.

@@ -147,6 +147,10 @@ The FIFO size is read after format programming, per Intel's
 Controllers whose FIFO exceeds this adapter's six-period lead are refused.
 The lead accommodates scheduling and individual deferred-storage commands;
 catch-up stays bounded to 256 ms rather than expanding the hardware ring.
+The lead is not rebuilt after a late write: the stream goes on about 21 ms
+ahead, so once one stall has caused an underrun, any stall over about 21 ms
+causes another. The stalls themselves come from storage under the kernel lock
+([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)).
 A full queue drops input without blocking in an interrupt-disabled syscall.
 
 The BSP timer polls LPIB under the kernel lock and clears completed periods

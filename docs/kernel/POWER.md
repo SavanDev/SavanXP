@@ -90,7 +90,9 @@ only by the network, the TTY and the PC speaker). So when the handler runs, no
 volume is halfway through a mutation, its mutation lock is free, and the
 storage drivers complete by polling, without needing interrupts.
 **Keep it that way.** A filesystem or block path that sleeps with the lock
-released would make this handler deadlock on the mutation lock.
+released would make this handler deadlock on the mutation lock. The SMP
+roadmap's slice 5.2, which takes the disk wait out of the lock, has to answer
+this first ([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)).
 
 ## The test
 
