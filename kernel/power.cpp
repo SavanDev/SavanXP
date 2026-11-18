@@ -1,5 +1,6 @@
 #include "kernel/power.hpp"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "kernel/acpi.hpp"
@@ -26,7 +27,56 @@ device::Device g_device = {
 
 bool g_ready = false;
 
+// The process the power button tells (POWER_IOC_WATCH_BUTTON), and whether a
+// press is waiting for it to read. Both change only under the big kernel lock:
+// in a system call or in the SCI handler.
+uint32_t g_button_watcher = 0;
+bool g_button_pending = false;
+
+bool watcher_alive() {
+    if (g_button_watcher == 0) {
+        return false;
+    }
+    const process::Process* watcher = process::find(g_button_watcher);
+    return watcher != nullptr && watcher->life == process::Lifecycle::alive;
+}
+
+int power_read(uint64_t user_buffer, size_t count) {
+    const process::Process* caller = process::current();
+    if (caller == nullptr || caller->pid != g_button_watcher) {
+        return -static_cast<int>(SX_EACCES);
+    }
+    if (count < sizeof(savanxp_power_event)) {
+        return -static_cast<int>(SX_EINVAL);
+    }
+    if (!g_button_pending) {
+        return -static_cast<int>(SX_EAGAIN);
+    }
+    const savanxp_power_event event = {.kind = SAVANXP_POWER_EVENT_BUTTON, .reserved = 0};
+    if (!process::copy_to_user(user_buffer, &event, sizeof(event))) {
+        return -static_cast<int>(SX_EINVAL);
+    }
+    g_button_pending = false;
+    return static_cast<int>(sizeof(event));
+}
+
+bool power_can_read() {
+    return g_button_pending;
+}
+
 int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access) {
+    if (request == POWER_IOC_WATCH_BUTTON) {
+        const process::Process* caller = process::current();
+        if ((granted_access & object::access_read) == 0) {
+            return -static_cast<int>(SX_EACCES);
+        }
+        if (caller == nullptr || !cred::acts_as_system(caller->credentials)) {
+            return -static_cast<int>(SX_EPERM);
+        }
+        g_button_watcher = caller->pid;
+        g_button_pending = false;
+        return 0;
+    }
     if ((granted_access & object::access_write) == 0) {
         return -static_cast<int>(SX_EACCES);
     }
@@ -75,7 +125,20 @@ void reboot() {
     acpi::reboot();
 }
 
+void button_pressed() {
+    // Nobody to ask, or the last press was never read: whoever watched is not
+    // answering, and a button that does nothing is worse than an abrupt
+    // power-off.
+    if (!watcher_alive() || g_button_pending) {
+        shutdown();
+    }
+    g_button_pending = true;
+    console::printf("power: power button pressed; telling pid %u\n", g_button_watcher);
+}
+
 void initialize() {
+    g_device.read = power_read;
+    g_device.can_read = power_can_read;
     g_device.ioctl = power_ioctl;
     g_ready = device::register_node("/dev/power", &g_device, true);
 }

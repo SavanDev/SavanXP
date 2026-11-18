@@ -3180,7 +3180,12 @@ static int session_end_request(int32_t handles[2], struct savanxp_shutdown_reply
         sxn_read(handles[1], accepted, sizeof(*accepted)) == (long)sizeof(*accepted);
 }
 
-static void run_session_end_client(void) {
+/* power-button-smoke's mark that the client took its close: written when the
+ * session ends, never flushed, read back on the next boot. */
+#define POWER_BUTTON_ARMED_PATH "/system/native-button-armed.dat"
+#define POWER_BUTTON_CLOSED_PATH "/system/native-button-closed.dat"
+
+static void run_session_end_client(int mark) {
     struct sxnwm_client window;
     long sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
     int declined = 0;
@@ -3197,6 +3202,9 @@ static void run_session_end_client(void) {
         if (sxnwm_close_requested(&window)) {
             if (declined) {
                 (void)sxn_log("nativetest: session-end: the client closes");
+                if (mark && !power_write_file(POWER_BUTTON_CLOSED_PATH, POWER_CHUNK_BYTES, 1)) {
+                    (void)sxn_log("nativetest: power-button: the mark could not be written");
+                }
                 sxn_exit(0);
             }
             declined = 1;
@@ -3252,6 +3260,39 @@ static void run_session_end(void) {
     (void)sxn_close(handles[0]);
     (void)sxn_close(handles[1]);
     sxn_exit(g_failures ? 1 : 0);
+}
+
+/* power-button-smoke (docs/kernel/POWER.md#the-power-button). init runs the
+ * real session and starts this driver in it, on both boots. On the first, the
+ * session-end client (which turns down its first close and takes the second)
+ * is started and the host presses the power button twice: the first press has
+ * to be cancelled by the client, the second has to end the session, the
+ * client's mark included, before the power goes. On the second boot the mark
+ * has to be there. */
+static void run_power_button(void) {
+    char* client_argv[] = {"/bin/nativetest.sxe", "session-end-client", "mark", 0};
+    struct sxn_file_info info;
+    long sleeper;
+
+    if (sxn_query_path(POWER_BUTTON_ARMED_PATH, &info) == 0) {
+        check(sxn_query_path(POWER_BUTTON_CLOSED_PATH, &info) == 0 && info.size == POWER_CHUNK_BYTES);
+        (void)sxn_log(g_failures ? "NATIVE BUTTON FAIL" : "NATIVE BUTTON PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
+    check(session_end_wait_port(SAVANXP_WM_PORT_NAME, 60000ul));
+    check(sxn_spawn_stdio(client_argv[0], client_argv, 3) > 0);
+    check(session_end_wait_port(SESSION_END_CLIENT_PORT, 20000ul));
+    check(power_write_file(POWER_BUTTON_ARMED_PATH, POWER_CHUNK_BYTES, 0));
+    if (g_failures) {
+        (void)sxn_log("NATIVE BUTTON FAIL");
+        sxn_exit(1);
+    }
+    (void)sxn_log("NATIVE BUTTON READY");
+    /* The rest happens to the session around this. */
+    sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    for (;;) {
+        (void)sxn_wait_one(sleeper, -1);
+    }
 }
 
 static void run_power(void) {
@@ -3336,7 +3377,10 @@ int main(int argc, char** argv) {
         run_session_end();
     }
     if (argc > 1 && streq(argv[1], "session-end-client")) {
-        run_session_end_client();
+        run_session_end_client(argc > 2 && streq(argv[2], "mark"));
+    }
+    if (argc > 1 && streq(argv[1], "power-button")) {
+        run_power_button();
     }
     if (argc > 1 && streq(argv[1], "file-user")) {
         char byte;

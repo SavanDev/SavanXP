@@ -887,6 +887,18 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
         ),
     ),
+    "power-button-smoke": _qemu_scenario(
+        "nativebutton",
+        "NATIVE BUTTON PASS",
+        "NATIVE BUTTON FAIL",
+        "The power button ends the real session through init: a declined close cancels it, the next press powers off",
+        300.0,
+        ready="NATIVE BUTTON READY",
+        qmp_callback="tools/power_button_smoke.py",
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
+        ),
+    ),
     "session-end-smoke": _qemu_scenario(
         "nativesessionend",
         "NATIVE SESSION END PASS",

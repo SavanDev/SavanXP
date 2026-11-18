@@ -888,6 +888,10 @@ static volatile long g_sessiond_pid = 0;
 static volatile long g_shell_pid = 0;
 /* The savanxp_shutdown_action under way, or 0. */
 static volatile int g_shutting_down = 0;
+/* /dev/power opened for reading, which the power button's presses come
+ * through once init watches it (docs/kernel/POWER.md#the-power-button), or -1
+ * when the kernel powers off on the button by itself. */
+static long g_button_fd = -1;
 
 /* How long a requester gets to read the last reply and hang up before the
  * power goes, and how long a request may take to arrive after connecting. */
@@ -904,6 +908,14 @@ static void shutdown_reply(int32_t write_handle, int32_t status, uint32_t stage)
 }
 
 static int serve_shutdown_request(struct sxn_port_connection* connection, long port);
+
+/* Takes a press off /dev/power. 1 if it was one. */
+static int take_button_press(void) {
+    struct savanxp_power_event event;
+
+    return g_button_fd >= 0 && savanxp_read((int)g_button_fd, &event, sizeof(event)) == (long)sizeof(event) &&
+        event.kind == SAVANXP_POWER_EVENT_BUTTON;
+}
 
 /* Asks sessiond to end the session and waits for its answer, however long the
  * user takes with "save changes?". Requests that arrive meanwhile are answered
@@ -923,12 +935,18 @@ static int end_session(long port) {
     request.action = SAVANXP_SHUTDOWN_END_SESSION;
     got = sxn_write(handles[0], &request, sizeof(request));
     while (got == (long)sizeof(request)) {
-        int32_t waits[2] = {handles[1], (int32_t)port};
+        int32_t waits[3] = {handles[1], (int32_t)port, (int32_t)g_button_fd};
         struct sxn_port_connection other;
+        long ready = sxn_wait_many(waits, g_button_fd >= 0 ? 3 : 2, -1);
 
-        if (sxn_wait_many(waits, 2, -1) == 0) {
+        if (ready == 0) {
             got = sxn_read(handles[1], &reply, sizeof(reply));
             break;
+        }
+        if (ready == 2 && take_button_press()) {
+            /* As in Windows: the button does not hurry a shutdown already
+             * waiting on the user. */
+            printf("init: the power button was pressed during a shutdown; nothing to add\n");
         }
         while (sxn_port_accept(port, &other) == 0) {
             (void)serve_shutdown_request(&other, port);
@@ -964,12 +982,39 @@ static void power_device(int action) {
            result_error_string(result));
 }
 
+/* Ends the session and stops the services. Returns 1 if the machine should go
+ * down now; -ECANCELED when an application turned its close down. `requester`
+ * is the write handle of whoever asked, or -1 for the power button. */
+static int run_shutdown(int action, long port, int32_t requester) {
+    int status = end_session(port);
+
+    if (status == -SAVANXP_ECANCELED) {
+        printf("init: an application cancelled the %s\n", action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "shutdown");
+        g_shutting_down = 0;
+        if (requester >= 0) {
+            shutdown_reply(requester, status, SAVANXP_SHUTDOWN_STAGE_DONE);
+        }
+        return status;
+    }
+
+    /* The session is over; the services hold nothing the disk still needs. */
+    stop_process(&g_sessiond_pid);
+    stop_process(&g_shell_pid);
+    stop_process(&g_elevationd_pid);
+    stop_process(&g_audiod_pid);
+    printf("init: session ended and services stopped; %s\n",
+           action == SAVANXP_SHUTDOWN_REBOOT ? "restarting" : "powering off");
+    if (requester >= 0) {
+        shutdown_reply(requester, 0, SAVANXP_SHUTDOWN_STAGE_DONE);
+    }
+    return 1;
+}
+
 /* One request, start to end. Returns 1 if the machine should go down now. */
 static int serve_shutdown_request(struct sxn_port_connection* connection, long port) {
     struct savanxp_shutdown_request request;
     int32_t ready = connection->read_handle;
     int action;
-    int status;
 
     if (sxn_wait_many(&ready, 1, INIT_SHUTDOWN_REQUEST_MS) != 0 ||
         sxn_read(connection->read_handle, &request, sizeof(request)) != (long)sizeof(request) ||
@@ -988,59 +1033,85 @@ static int serve_shutdown_request(struct sxn_port_connection* connection, long p
     printf("init: %s requested by pid %u; ending the session\n",
            action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "shutdown", (unsigned)connection->client_pid);
 
-    status = end_session(port);
-    if (status == -SAVANXP_ECANCELED) {
-        printf("init: an application cancelled the %s\n", action == SAVANXP_SHUTDOWN_REBOOT ? "restart" : "shutdown");
-        g_shutting_down = 0;
-        shutdown_reply(connection->write_handle, status, SAVANXP_SHUTDOWN_STAGE_DONE);
+    if (run_shutdown(action, port, connection->write_handle) != 1) {
         return 0;
     }
-
-    /* The session is over; the services hold nothing the disk still needs. */
-    stop_process(&g_sessiond_pid);
-    stop_process(&g_shell_pid);
-    stop_process(&g_elevationd_pid);
-    stop_process(&g_audiod_pid);
-    printf("init: session ended and services stopped; %s\n",
-           action == SAVANXP_SHUTDOWN_REBOOT ? "restarting" : "powering off");
-    shutdown_reply(connection->write_handle, 0, SAVANXP_SHUTDOWN_STAGE_DONE);
     /* The requester may want to say something before the power goes: give it
      * until it hangs up, or a moment. */
     (void)sxn_wait_many(&ready, 1, INIT_SHUTDOWN_GOODBYE_MS);
     return 1;
 }
 
+/* Asks the kernel to bring the power button here instead of powering off at
+ * once. Without it (an older kernel, no /dev/power) the button still powers
+ * off, only without ending the session. */
+static void watch_power_button(void) {
+    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_READ);
+
+    if (fd >= 0 && savanxp_ioctl((int)fd, POWER_IOC_WATCH_BUTTON, 0) == 0) {
+        g_button_fd = fd;
+        return;
+    }
+    if (fd >= 0) {
+        savanxp_close((int)fd);
+    }
+    printf("init: cannot watch the power button; it powers off without ending the session\n");
+}
+
+/* The power did not go. Nothing is left running to go back to, so stay down. */
+static void go_down(int action) {
+    power_device(action);
+    for (;;) {
+        sleep_ms(1000);
+    }
+}
+
 static void* shutdown_service(void* argument) {
     long port = (long)argument;
 
+    /* Here, and not before the thread exists: a press nobody reads would make
+     * the kernel wait for a second one before it powered off. */
+    watch_power_button();
     for (;;) {
         struct sxn_port_connection connection;
+        int32_t waits[2] = {(int32_t)port, (int32_t)g_button_fd};
 
-        (void)sxn_wait_one(port, -1);
+        if (sxn_wait_many(waits, g_button_fd >= 0 ? 2 : 1, -1) == 1) {
+            /* The power button: a shutdown nobody waits on, as Windows makes
+             * of it. A press during one is taken in end_session(). */
+            if (take_button_press() && g_shutting_down == 0) {
+                g_shutting_down = SAVANXP_SHUTDOWN_POWER_OFF;
+                printf("init: shutdown requested by the power button; ending the session\n");
+                if (run_shutdown(SAVANXP_SHUTDOWN_POWER_OFF, port, -1) == 1) {
+                    go_down(SAVANXP_SHUTDOWN_POWER_OFF);
+                }
+            }
+            continue;
+        }
         while (sxn_port_accept(port, &connection) == 0) {
             int go = serve_shutdown_request(&connection, port);
 
             (void)sxn_close(connection.read_handle);
             (void)sxn_close(connection.write_handle);
             if (go) {
-                power_device(g_shutting_down);
-                /* Still here: the power did not go. Nothing is left running
-                 * to go back to, so stay down. */
-                for (;;) {
-                    sleep_ms(1000);
-                }
+                go_down(g_shutting_down);
             }
         }
     }
     return 0;
 }
 
+
 /* Opens init's port before the session starts, so a desktop always finds it. */
 static void start_shutdown_service(void) {
     static pthread_t thread;
     long port = sxn_port_create(SAVANXP_SHUTDOWN_PORT_NAME);
 
-    if (port < 0 || pthread_create(&thread, 0, shutdown_service, (void*)port) != 0) {
+    if (port < 0) {
+        printf("init: cannot serve %s; programs fall back to /dev/power\n", SAVANXP_SHUTDOWN_PORT_NAME);
+        return;
+    }
+    if (pthread_create(&thread, 0, shutdown_service, (void*)port) != 0) {
         printf("init: cannot serve %s; programs fall back to /dev/power\n", SAVANXP_SHUTDOWN_PORT_NAME);
     }
 }
@@ -1076,6 +1147,12 @@ int main(int argc, char** argv) {
         if (strcmp(automation_spec, "nativesessionend") == 0) {
             /* The real session, its shutdown included, driven from inside. */
             static const char* const driver[] = {"/bin/nativetest.sxe", "session-end", 0};
+            run_system(driver);
+        }
+        if (strcmp(automation_spec, "nativebutton") == 0) {
+            /* The real session again, shut down by the power button
+             * (docs/kernel/POWER.md#the-power-button). */
+            static const char* const driver[] = {"/bin/nativetest.sxe", "power-button", 0};
             run_system(driver);
         }
         (void)run_automation_spec(automation_spec);

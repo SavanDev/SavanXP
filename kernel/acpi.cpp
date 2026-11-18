@@ -202,13 +202,14 @@ void sci_interrupt() {
     }
 
     if ((status & kPm1PwrBtnBit) != 0) {
-        // Acknowledge the button and power off the way /dev/power does:
-        // volumes synced and the writeback queue drained before S5.
+        // Acknowledge the button, then let power:: decide: tell init, which
+        // ends the session first, or power off at once when nobody watches.
         out16(g_pm1a_evt_port, kPm1PwrBtnBit);
         if (g_pm1b_evt_port != 0) {
             out16(g_pm1b_evt_port, kPm1PwrBtnBit);
         }
-        power::shutdown(); // does not return
+        power::button_pressed();
+        status = static_cast<uint16_t>(status & ~kPm1PwrBtnBit);
     }
 
     // Otros bits fijos: limpiarlos para no re-disparar la SCI.

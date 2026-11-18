@@ -18,6 +18,10 @@ Cut-off notes:
   Programs answer with `on_close` and `gfx_decline_close`/`sxnwm_decline_close`; new errno `ECANCELED`.
   `session-end-smoke` and `shoot.sh --scenario notepadclose` cover it; see [POWER.md](docs/kernel/POWER.md#ending-the-session).
 
+- **The power button ends the session through `init`, as Shut Down does; an application can still cancel it.**
+  `init` watches it with `POWER_IOC_WATCH_BUTTON` on `/dev/power`. With no watcher, or a press still unread, the kernel
+  powers off at once. `power-button-smoke` covers it; see [POWER.md](docs/kernel/POWER.md#the-power-button).
+
 - **`power-smoke` scenario: the power button with unflushed writes leaves the volume clean, and the data reads back after the next boot.**
   `nativetest power` is the guest half; QMP callbacks now get the run's disk copy (`SAVANXP_SMOKE_DISK_IMAGE`).
 

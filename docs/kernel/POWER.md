@@ -15,8 +15,8 @@ The session half is `init`'s shutdown service
 | request | path |
 | --- | --- |
 | Start menu's Shut Down dialog, Program Manager, Task Manager | `init`'s `shutdown` port (`power_shutdown()`, `power_reboot()` in POSIX; `sxn_request_shutdown()` in SUN), which [ends the session](#ending-the-session) and then opens `/dev/power` |
-| the ACPI power button (QEMU's `system_powerdown`) | the SCI handler, `sci_interrupt()` in `acpi.cpp`, straight to the kernel |
-| anything where `init` does not serve its port (the rescue system, a smoke run) | `power_shutdown()` and `sxn_request_shutdown()` fall back to `/dev/power` |
+| the ACPI power button (QEMU's `system_powerdown`) | the SCI handler, `sci_interrupt()` in `acpi.cpp`, tells `init`, which [ends the session](#the-power-button) as for the Start menu |
+| anything where `init` does not serve its port (the rescue system, a smoke run) | `power_shutdown()` and `sxn_request_shutdown()` fall back to `/dev/power`, and the power button powers off at once |
 
 Any process may ask, as any process may open `/dev/power`. The kernel side of
 all of them ends in the same `power::shutdown()` or `power::reboot()`.
@@ -48,7 +48,8 @@ commits, never their order.
 
 ## Why it may run from an interrupt
 
-The power button calls `power::shutdown()` from the SCI handler. That is safe
+The power button calls `power::shutdown()` from the SCI handler when nobody
+watches it ([below](#the-power-button)). That is safe
 because an external IRQ takes the big kernel lock
 ([`smp.hpp`](../../include/kernel/smp.hpp)), and every filesystem mutation runs
 inside a system call that holds that lock from start to finish. SxFS and the
@@ -142,11 +143,44 @@ request sent meanwhile has to get `-EBUSY`, and the machine powers off after
 Alt+F4 asks, Esc keeps the window and its text, a second Alt+F4 asks again,
 and Discard closes it.
 
+## The power button
+
+A press is a shutdown request like any other, as Windows treats it: the
+session ends first and an application may still cancel it. The SCI handler
+calls `power::button_pressed()`, which does one of two things:
+
+- **Someone watches the button.** `init`'s shutdown thread opens `/dev/power`
+  for reading and calls `POWER_IOC_WATCH_BUTTON`, which only a system process
+  may use. A press is then a `struct savanxp_power_event` waiting on that
+  descriptor (serial: `power: power button pressed; telling pid N`). `init`
+  waits for it beside its port and ends the session as for any request, with
+  nobody to answer (`init: shutdown requested by the power button`). If an
+  application cancels, the machine stays up, as it does for the Start menu. A
+  press during a shutdown already under way changes nothing.
+- **Nobody watches, or the last press is still unread.** The kernel calls
+  `power::shutdown()` at once. That covers the rescue system, smoke runs that
+  do not start the session (`power-smoke`), and an `init` that has stopped
+  answering. A button that does nothing is worse than an abrupt power-off, so
+  pressing twice always powers off unless `init` took the first press.
+
+`init` registers only once its thread runs. A press that comes earlier finds
+no watcher and powers off directly, so no press is ever left unread.
+
+`./build.sh smoke power-button-smoke` presses the button twice during the real
+session, with the `session-end-smoke` window that turns down its first close
+([`tools/power_button_smoke.py`](../../tools/power_button_smoke.py)):
+
+1. The first press has to reach `init`, be cancelled by the window, and leave
+   the machine running.
+2. The second has to close the window, which writes a mark it never flushes,
+   then end the session and go through `power::shutdown()` with the volume
+   clean.
+3. On the next boot `nativetest power-button` finds the mark.
+
+Against a kernel that powers off on the first press, it fails at that press.
+
 ## What it does not do yet
 
-- **The power button skips the session.** It goes straight from the SCI
-  handler to `power::shutdown()`: the volumes are synced, but applications are
-  not asked. Making it ask needs a way for the kernel to tell `init`.
 - **Programs without a window are not told.** Services and background
   programs are ended, not asked: nothing like `SERVICE_CONTROL_SHUTDOWN`
   reaches them.

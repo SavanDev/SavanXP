@@ -198,7 +198,7 @@ push, plus the ones specific to each area:
 | `libsxgui`, the loader, a program that draws | `./build.sh smoke sxgui-smoke` (see below) |
 | The loader, shared libraries | also `dltest`, `sonametest`, `sonametest-newer`, `ldfailtest`, `diamondtest` |
 | SxFS, the disk image, `build.sh`, CMake, the SDK | the persistence check below |
-| Power-off, reboot, `/dev/power`, the writeback queue | `./build.sh smoke power-smoke` |
+| Power-off, reboot, `/dev/power`, the writeback queue | `./build.sh smoke power-smoke`, `./build.sh smoke power-button-smoke` |
 | Ending the session: `init`'s shutdown port, `sessiond`, `windowd`'s close requests, `on_close` | `./build.sh smoke session-end-smoke`, `./tools/shoot.sh --scenario notepadclose` |
 | Win32 subsystem | `win32-hello`, `win32-window`, `win32-dialog` |
 | Linux subsystem | `linux-hello`, `linux-restart` |

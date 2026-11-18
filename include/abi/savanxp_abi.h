@@ -562,6 +562,22 @@ enum savanxp_power_ioctl {
      * identity only (SX_EPERM otherwise): shutting down is the user's, a crash
      * is not. */
     POWER_IOC_PANIC = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 3),
+    /* Makes the caller the one the ACPI power button tells, instead of the
+     * kernel powering off at once (docs/kernel/POWER.md#the-power-button).
+     * System identity and a descriptor opened for reading; the press is then
+     * read from that descriptor as one savanxp_power_event. One watcher at a
+     * time: the last caller wins. */
+    POWER_IOC_WATCH_BUTTON = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 4),
+};
+
+/* What a read of /dev/power returns to the button's watcher. */
+enum savanxp_power_event_kind {
+    SAVANXP_POWER_EVENT_BUTTON = 1,
+};
+
+struct savanxp_power_event {
+    uint32_t kind;  /* enum savanxp_power_event_kind */
+    uint32_t reserved;
 };
 
 /* The system clipboard, exposed as `/dev/clipboard`
