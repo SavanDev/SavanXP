@@ -229,9 +229,11 @@ What landed, and what it settled:
 - The `midi` group is not in the sysroot: `build-user.sh` has no flag that
   links it, so `savanxp/midi.h` stays a header without a library, as it
   already was.
-- **Found while testing, not fixed here:** `sys/time.h` and `sys/select.h`
-  both define `struct timeval`, so a program that includes both does not
-  compile.
+- **Found while testing:** `sys/time.h` and `sys/select.h` both defined
+  `struct timeval`, so a program that included both did not compile.
+  It was fixed right after: `sys/time.h` now takes the type from
+  `sys/select.h`. `sdk-sysroot-test` also compiles all the headers together
+  now, which catches that kind of conflict.
 
 ### Phase 3 — SUN on equal terms
 

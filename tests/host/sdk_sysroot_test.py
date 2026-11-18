@@ -5,7 +5,8 @@ Two checks:
 
 - Every header in the sysroot's include/ compiles on its own with only that
   directory on the include path, and nothing it reads comes from outside it
-  but the compiler's own freestanding headers. A public header that includes one the
+  but the compiler's own freestanding headers. All of them also compile
+  together, so no two define the same thing. A public header that includes one the
   allowlist (subsystems/posix/sdk/v1/public-headers.txt) leaves out fails here.
 - A copy of the sysroot in a temporary directory, away from the repository,
   builds sdk/hello, sdk/gfxhello (--gui), sdk/nativetest (--native) and a
@@ -33,9 +34,8 @@ def run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
 
 
 def check_headers(sysroot: Path, clang: str, scratch: Path) -> int:
-    """Each header alone, in its own translation unit: the property is that a
-    header needs nothing outside the sysroot, not that every pair of headers
-    can be combined."""
+    """Each header alone, in its own translation unit, so a header that needs
+    another without including it is caught; then all of them together."""
     include = sysroot / "include"
     resource = Path(run([clang, "-print-resource-dir"]).stdout.strip()).resolve()
     headers = sorted(path.relative_to(include).as_posix() for path in include.rglob("*.h"))
@@ -61,6 +61,16 @@ def check_headers(sysroot: Path, clang: str, scratch: Path) -> int:
                 outside.add(f"{header} -> {path}")
     if failures:
         raise SystemExit("sysroot headers that do not compile on their own:\n" + "\n".join(failures))
+    # And all of them together, so two headers cannot define the same thing:
+    # sys/time.h and sys/select.h once both defined struct timeval.
+    together = scratch / "probe-all.c"
+    together.write_text("".join(f'#include "{header}"\n' for header in headers), encoding="utf-8")
+    result = subprocess.run(
+        [clang, "-target", "x86_64-unknown-none-elf", "-ffreestanding", "-msse", "-msse2",
+         "-fsyntax-only", "-I", str(include), str(together)],
+        text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit("sysroot headers that conflict when included together:\n" + result.stderr)
     if outside:
         raise SystemExit("sysroot headers read files outside the sysroot:\n  " + "\n  ".join(sorted(outside)))
     return len(headers)

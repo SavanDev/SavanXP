@@ -76,6 +76,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A program can include both `<sys/time.h>` and `<sys/select.h>`.** Each defined `struct timeval`, so including the two
+  failed to compile; `<sys/time.h>` now takes it from `<sys/select.h>`, as POSIX does. `sdk-sysroot-test` now also compiles
+  every SDK header together.
+
 - **A fresh clone builds again: `tools/fat_image.c`, the source of `build/tools/fat-image`, is in the repository.**
   `.gitignore`'s `tools/*` had kept it out since the commit that added it, and every build compiles it.
 
