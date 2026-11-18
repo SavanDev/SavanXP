@@ -50,6 +50,8 @@
 #define EILSEQ 84
 #define ENOBUFS 105
 #define EPROTO 71
+/* dav1d returns it for an AV1 stream with a feature it does not decode. */
+#define ENOPROTOOPT 92
 
 #define errno (*sx_errno_location())
 

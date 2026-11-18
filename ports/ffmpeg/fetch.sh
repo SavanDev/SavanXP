@@ -53,3 +53,35 @@ if [ -f "$SRC/RELEASE" ] && [ "$(cat "$SRC/RELEASE")" != "$FFMPEG_VERSION" ]; th
     exit 1
 fi
 echo "== source: $SRC (release $FFMPEG_VERSION, commit $FFMPEG_COMMIT)"
+
+# ---- dav1d -----------------------------------------------------------------
+DAV1D_TARBALL="dav1d-${DAV1D_VERSION}.tar.xz"
+if [ ! -f "$DAV1D_TARBALL" ]; then
+    echo "== downloading $DAV1D_ARCHIVE_URL"
+    curl -fsSL -o "$DAV1D_TARBALL.part" "$DAV1D_ARCHIVE_URL"
+    mv "$DAV1D_TARBALL.part" "$DAV1D_TARBALL"
+fi
+actual_size="$(wc -c < "$DAV1D_TARBALL" | tr -d ' ')"
+actual_sha="$(sha256sum "$DAV1D_TARBALL" | cut -d' ' -f1)"
+if [ "$actual_size" != "$DAV1D_ARCHIVE_SIZE" ] || [ "$actual_sha" != "$DAV1D_SHA256" ]; then
+    echo "error: $DAV1D_TARBALL does not match UPSTREAM" >&2
+    echo "       expected $DAV1D_ARCHIVE_SIZE bytes, sha256 $DAV1D_SHA256" >&2
+    echo "       got      $actual_size bytes, sha256 $actual_sha" >&2
+    exit 1
+fi
+if [ "${SAVANXP_VERIFY_SIGNATURE:-0}" = 1 ]; then
+    GNUPGHOME="$WORK/gnupg-dav1d"
+    export GNUPGHOME
+    mkdir -p "$GNUPGHOME"
+    chmod 700 "$GNUPGHOME"
+    [ -f "$DAV1D_TARBALL.asc" ] || curl -fsSL -o "$DAV1D_TARBALL.asc" "$DAV1D_SIGNATURE_URL"
+    [ -f "$WORK/videolan-release.asc" ] || curl -fsSL -o "$WORK/videolan-release.asc" "$DAV1D_SIGNATURE_KEY_URL"
+    gpg --batch --import "$WORK/videolan-release.asc" >/dev/null 2>&1
+    gpg --batch --verify "$DAV1D_TARBALL.asc" "$DAV1D_TARBALL"
+    unset GNUPGHOME
+fi
+echo "== dav1d tarball: $(du -h "$DAV1D_TARBALL" | cut -f1)  sha256: $actual_sha"
+if [ ! -f "$DAV1D_SRC/meson.build" ]; then
+    tar xf "$DAV1D_TARBALL"
+fi
+echo "== dav1d source: $DAV1D_SRC (release $DAV1D_VERSION)"

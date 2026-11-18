@@ -944,6 +944,7 @@ char* sx_strerror(int error_number) {
         case ECONNREFUSED: return "connection refused";
         case ETIMEDOUT: return "timed out";
         case ECANCELED: return "operation canceled";
+        case ENOPROTOOPT: return "protocol not available";
         default: return "error";
     }
 }

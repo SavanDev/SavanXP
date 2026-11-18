@@ -14,7 +14,8 @@ The host needs:
 - Git
 - QEMU with OVMF firmware
 - `xorriso` for ISO targets
-- GNU Make for the optional FFmpeg port
+- GNU Make, Meson and `pkg-config` for the FFmpeg port (Meson builds dav1d,
+  its AV1 decoder; `SAVANXP_MESON` and `SAVANXP_PKG_CONFIG` override them)
 
 On Arch Linux, the core set is:
 

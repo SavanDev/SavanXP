@@ -27,6 +27,15 @@ FFMPEG_ARCHIVE_URL=$(metadata archive_url)
 FFMPEG_ARCHIVE_SIZE=$(metadata archive_size)
 FFMPEG_COMMIT=$(metadata commit)
 
+# dav1d, the AV1 decoder FFmpeg's libdav1d wrapper calls. BSD-2-Clause, built
+# by dav1d.sh and linked into libffmpeg.so.0.4.
+DAV1D_VERSION=$(metadata dav1d_version)
+DAV1D_SHA256=$(metadata dav1d_archive_sha256)
+DAV1D_ARCHIVE_URL=$(metadata dav1d_archive_url)
+DAV1D_ARCHIVE_SIZE=$(metadata dav1d_archive_size)
+DAV1D_SIGNATURE_URL=$(metadata dav1d_signature_url)
+DAV1D_SIGNATURE_KEY_URL=$(metadata dav1d_signature_key_url)
+
 # FFmpeg's configure expands flags without quoting, so the work tree must
 # remain free of whitespace.
 #
@@ -49,6 +58,9 @@ BUILD="$WORK/build"
 RUNTIME="$WORK/runtime"
 SYSROOT="$WORK/sysroot"
 OUT="$WORK/out"
+DAV1D_SRC="$WORK/dav1d-${DAV1D_VERSION}"
+DAV1D_BUILD="$WORK/dav1d-build"
+DAV1D_PREFIX="$WORK/dav1d-install"
 
 # FFmpeg uses floating point in the selected decoders, so this port uses the
 # SSE/SSE2 ABI and links the SDK math runtime.

@@ -1,0 +1,9 @@
+# Staged by ports/ffmpeg/install.sh when the port is installed.
+name=dav1d
+license=BSD-2-Clause
+copyright=VideoLAN and dav1d authors
+origin=https://code.videolan.org/videolan/dav1d
+version=1.5.1
+used-in=/lib/libffmpeg.so.0.4 (AV1 decoding)
+provenance=dav1d
+text=ports/ffmpeg/licenses/DAV1D-COPYING.txt

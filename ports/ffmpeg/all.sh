@@ -3,7 +3,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for step in fetch runtime configure make link; do
+for step in fetch runtime dav1d configure make link; do
     echo
     echo "############ $step ############"
     bash "$HERE/$step.sh"

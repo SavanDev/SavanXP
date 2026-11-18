@@ -73,7 +73,7 @@ built independently with `./ports/doomgeneric/build.sh`,
 ## Requirements
 
 On Linux, install Clang/LLVM, CMake, Ninja, GNU Make, Python 3 with Pillow,
-Git, QEMU, OVMF and xorriso. `build.sh` resolves these tools from `PATH` and
+Git, QEMU, OVMF and xorriso, plus Meson and `pkg-config` for the FFmpeg port. `build.sh` resolves these tools from `PATH` and
 fetches the pinned Limine checkout when needed. Distribution package names and
 QEMU backend details are in [Building on Linux](docs/build/BUILD_LINUX.md).
 

@@ -163,6 +163,20 @@ which is why both go into the registry.
 - Local test media is generated under `build/media` and is not a third-party
   repository asset
 
+### dav1d
+
+- Origin: https://code.videolan.org/videolan/dav1d, release `1.5.1`
+- Versioned: no source vendored; `ports/ffmpeg/UPSTREAM` pins the archive
+  (SHA-256 `401813f1f89fa8fd4295805aa5284d9aed9bc7fc1fdbe554af4292f64cbabe21`)
+  and VideoLAN's release signing key
+  `65F7C6B4206BD057A7EB73787180713BE58D1ADC`; no patches
+- License reviewed: BSD-2-Clause. Text in
+  `ports/ffmpeg/licenses/DAV1D-COPYING.txt`
+- Decision: `Adopt`. FFmpeg's own `av1` decoder only drives hardware decoders,
+  so software AV1 needs dav1d
+- Distributed in: `/lib/libffmpeg.so.0.4`, linked in as a static archive by
+  `ports/ffmpeg/link.sh`. Built by `ports/ffmpeg/dav1d.sh` with Meson
+
 ### Celeste Classic (ccleste)
 
 - Origin: https://github.com/lemon32767/ccleste, commit

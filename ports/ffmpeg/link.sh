@@ -41,6 +41,14 @@ ARCHIVES=(
     "$BUILD/libavutil/libavutil.a"
 )
 
+# dav1d goes in as a plain archive, after FFmpeg's: libavcodec's libdav1d
+# wrapper references it, so the linker takes exactly the objects AV1 decoding
+# needs. Its pthread calls resolve against the program, like the rest of libc.
+[ -f "$DAV1D_PREFIX/lib/libdav1d.a" ] || {
+    echo "ffmpeg: missing $DAV1D_PREFIX/lib/libdav1d.a; run dav1d.sh first" >&2
+    exit 1
+}
+
 # The player is NOT built here. It lives in subsystems/posix/userland/mediaplayer/
 # and the tree links it, which is where the window, the controls and the clock
 # are; this port only contributes the engine. This script used to compile it and
@@ -83,6 +91,7 @@ echo "== linkeando libffmpeg.so.0.4"
 # correcto, pero es mejor no construir el archivo en esa forma.
 $LINK_CC -target x86_64-unknown-none-elf -nostdlib -Wl,-shared -fuse-ld=lld \
     -Wl,--whole-archive "${ARCHIVES[@]}" -Wl,--no-whole-archive \
+    "$DAV1D_PREFIX/lib/libdav1d.a" \
     -Wl,--unresolved-symbols=ignore-all \
     -Wl,-soname,libffmpeg.so.0.4 \
     -L"$SAVANXP_MATH_LIBRARY" -Wl,-Bdynamic -Wl,--no-as-needed -l:libmath.so.0.4 -Wl,-Bstatic \
@@ -91,5 +100,6 @@ $LINK_CC -target x86_64-unknown-none-elf -nostdlib -Wl,-shared -fuse-ld=lld \
 
 echo "== libffmpeg.so.0.4: $(du -h libffmpeg.so.0.4 | cut -f1)"
 $SIZE_CMD libffmpeg.so.0.4 | tail -1
+mkdir -p "$OUTPUT_ROOT/external"
 cp "$OUT/libffmpeg.so.0.4" "$OUTPUT_ROOT/external/libffmpeg.so.0.4"
-echo "listo: $OUTPUT_ROOT/external/libffmpeg.so.0.4"
+echo "done: $OUTPUT_ROOT/external/libffmpeg.so.0.4"

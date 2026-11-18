@@ -44,7 +44,7 @@ mkdir -p "$STAGE/lib"
 cp "$LIBRARY" "$STAGE/lib/libffmpeg.so.0.4"
 echo "ffmpeg: instalado /lib/libffmpeg.so.0.4"
 "$PYTHON" "$REPO/tools/stage_licenses.py" stage --root "$REPO" \
-    --out "$STAGE/system/licenses" "$PORT/licenses/ffmpeg.notice"
+    --out "$STAGE/system/licenses" "$PORT/licenses/ffmpeg.notice" "$PORT/licenses/dav1d.notice"
 echo "ffmpeg: staged /system/licenses/ffmpeg"
 
 if ((WITH_TEST_MEDIA)); then

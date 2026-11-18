@@ -9,9 +9,10 @@ is, and how to replace that library, as the GNU LGPL 2.1 asks.
 `/lib/libffmpeg.so.0.4` is FFmpeg `n7.1.1` (commit
 `db69d06eeeab4f46da15030a80d539efb4503ca8`), **unmodified**: `UPSTREAM` records
 `patch_count=0`. Five upstream libraries (libavformat, libavcodec, libavutil,
-libswscale, libswresample) are linked into that one shared library and nothing
-else. It is built LGPL-2.1-or-later only: the configure step refuses a build
-with GPL, version 3 or nonfree parts enabled.
+libswscale, libswresample) are linked into that one shared library, together
+with dav1d 1.5.1, also unmodified, for AV1. It is built LGPL-2.1-or-later only:
+the configure step refuses a build with GPL, version 3 or nonfree parts enabled.
+dav1d is BSD-2-Clause; its notice is `/system/licenses/dav1d/`.
 
 ## Where the source is
 
@@ -27,9 +28,12 @@ with GPL, version 3 or nonfree parts enabled.
   - `fetch.sh` downloads the archive and checks its size, SHA-256 and signature;
   - `env.sh` sets the compiler, linker and SDK sysroot;
   - `runtime.sh` builds the SavanXP runtime archives;
+  - `dav1d.sh` builds dav1d (`dav1d-1.5.1.tar.xz`, pinned in `UPSTREAM`) with
+    Meson;
   - `configure.sh` holds the exact configure arguments and the LGPL guard;
   - `make.sh` runs upstream GNU Make;
-  - `link.sh` links the five archives into `libffmpeg.so.0.4`.
+  - `link.sh` links the five archives and `libdav1d.a` into
+    `libffmpeg.so.0.4`.
 
 To rebuild the library from them:
 

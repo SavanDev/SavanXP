@@ -37,6 +37,23 @@ the library's symbols unrelocated. So the player asks first, with
 which is itself an FFmpeg call and was the one that faulted before the check
 existed. With no motor, the window still opens and says which library is missing.
 
+## AV1
+
+AV1 is decoded by dav1d, built by the port and linked into
+`libffmpeg.so.0.4`; to the player it is the `libdav1d` decoder like any other.
+8- and 10-bit streams are both built. It runs with the player's
+`thread_count = 1`, so dav1d starts no threads of its own, and without assembly,
+like the rest of the library.
+
+Verified by hand (2026-11-18, QEMU with KVM): an AV1 re-encode of `avsync.avi`
+at 8 and at 10 bits passes `--selftest --sync` (6 flashes, 6 beeps, seek on
+the flash), and the first 10 s of a 1080p30 AV1/Opus WebM from YouTube decode
+all 300 frames and seek. That clip opens with 5 s of black, which the selftest's
+flat-frame check reports, as it would for any clip that starts black: the check
+is written for the generated clips. Decoding it took about 9 s for ~450 frames
+including the seek, faster than real time on that host; older real hardware
+has not been measured.
+
 ## What it does with a codec it cannot decode
 
 A stream whose codec no enabled decoder takes is left out **and named**, with
@@ -266,6 +283,6 @@ In the order they unblock each other.
    stream is skipped today).
 6. **Test vectors for the real codecs.** The smoke clips only exercise MJPEG,
    PCM and the resampler, because Python + Pillow is all the host has. H.264,
-   VP9, AAC and Opus are verified by hand with real files until there is an
+   VP9, AV1, AAC and Opus are verified by hand with real files until there is an
    encoder on the host, or pinned public test streams with a license that
    allows redistributing them ([`THIRD_PARTY_ADOPTION.md`](../third-party/THIRD_PARTY_ADOPTION.md)).

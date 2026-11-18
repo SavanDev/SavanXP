@@ -7,6 +7,11 @@ integration; the player itself lives in the tree, not in the port.
 
 The versioned port is the only FFmpeg integration kept in the repository.
 
+AV1 is decoded by [dav1d](https://code.videolan.org/videolan/dav1d) 1.5.1
+(BSD-2-Clause), which `dav1d.sh` builds with Meson and `link.sh` links into the
+same library. FFmpeg's own `av1` decoder only drives hardware decoders, so it is
+not enabled.
+
 ## Upstream and license
 
 [`UPSTREAM`](UPSTREAM) pins the upstream tag, commit, tree, archive, hash, and
@@ -15,8 +20,9 @@ directory rather than vendored into the repository.
 
 FFmpeg's combined library license is LGPL-2.1-or-later for this configuration.
 The exact license texts are [`LICENSE.md`](LICENSE.md) and
-[`COPYING.LGPLv2.1`](COPYING.LGPLv2.1). Static-link relinking material and the
-Media Player adapter remain part of the distributed source package; see
+[`COPYING.LGPLv2.1`](COPYING.LGPLv2.1); dav1d's is
+[`licenses/DAV1D-COPYING.txt`](licenses/DAV1D-COPYING.txt). Where the
+corresponding source is, and how to replace the library, is in
 [`SOURCE.md`](SOURCE.md).
 
 ## Build
@@ -38,15 +44,21 @@ Useful options:
 The pipeline deliberately remains:
 
 ```text
-fetch.sh -> runtime.sh -> configure.sh -> make.sh -> link.sh
+fetch.sh -> runtime.sh -> dav1d.sh -> configure.sh -> make.sh -> link.sh
 ```
+
+`dav1d.sh` writes a Meson cross file from the same compiler, sysroot and runtime
+`configure` uses, builds `libdav1d.a` without assembly and with both 8- and
+16-bit depths, and installs it with its `dav1d.pc` under the work directory,
+where `configure.sh` finds it through `pkg-config` and nothing else.
 
 `configure.sh` keeps the selected demuxers, decoders, parsers, H.264/HEVC
 link dependency, single-threaded/no-assembly profile, and LGPL configuration
 guard. The work directory must not contain whitespace because upstream
 configure expands compiler flags without quoting. Set
-`SAVANXP_VERIFY_SIGNATURE=1` to additionally download and verify the release
-signature with GPG; the archive SHA-256 is always mandatory.
+`SAVANXP_VERIFY_SIGNATURE=1` to additionally download and verify both release
+signatures (FFmpeg's and VideoLAN's for dav1d) with GPG; both archives' SHA-256
+is always mandatory.
 
 The build produces one artifact:
 

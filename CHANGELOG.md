@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The Media Player plays AV1, through dav1d 1.5.1 (BSD-2-Clause) linked into `libffmpeg.so.0.4`.** 8- and 10-bit.
+  The FFmpeg port now needs Meson and `pkg-config` (new `ports/ffmpeg/dav1d.sh`); POSIX gains `ENOPROTOOPT`.
+  Release ISOs carry the FFmpeg port; see [MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md#av1).
+
 - **The Media Player names a codec it cannot decode instead of silently dropping the stream.** An AV1 WebM plays its
   sound and says `av1 video is not supported`; a file with nothing playable is refused naming the codecs. New
   `mediaplayer --selftest --unsupported <codec>`; see [MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md#what-it-does-with-a-codec-it-cannot-decode).
@@ -55,7 +59,7 @@ Cut-off notes:
 
 - **FFmpeg's license notice says where its source is: the `ffmpeg-7.1.1.tar.xz` asset of the release.** `SOURCE.md`
   described a static binary; it now covers the shared library and how to replace it. See
-  [RELEASING.md](docs/build/RELEASING.md#a-release-that-carries-ffmpeg).
+  [RELEASING.md](docs/build/RELEASING.md#ffmpegs-source).
 
 - **A kernel panic is visible on screen even when the desktop was showing its second DISPI buffer or another mode.**
   New `panic-display-front`/`-back`/`-single`/`-released` scenarios (`panictest --display`) check the screenshot.

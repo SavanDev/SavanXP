@@ -48,13 +48,15 @@ export SAVANXP_OUTPUT_ROOT=$PWD/build/release-X.Y.Z
 export SAVANXP_BUILD_DIR=$SAVANXP_OUTPUT_ROOT/linux
 ./build.sh build
 ./ports/doomgeneric/build.sh    # default WAD: ports/doomgeneric/wad/freedoom1.wad
+./ports/ffmpeg/build.sh         # no --with-test-media: the test clips stay out
 ./build.sh iso                  # build/release-X.Y.Z/SavanXP.iso
 ```
 
 The default build type is used (Debug), as for every release so far. The image
-is the plain system plus the Doom port with Freedoom: Phase 1. The FFmpeg port,
-Celeste Classic, the Xeyes runtime and any Windows files stay out, unless the
-release decides to carry FFmpeg ([below](#a-release-that-carries-ffmpeg)).
+is the plain system plus the Doom port with Freedoom: Phase 1 and the FFmpeg
+port, so the Media Player plays from the LiveCD. Celeste Classic, the Xeyes
+runtime and any Windows files stay out. FFmpeg's source goes out with the
+release ([FFmpeg's source](#ffmpegs-source)).
 
 ## 3. Checks before publishing
 
@@ -75,6 +77,8 @@ With the same two variables exported:
   $R/tools/sxfs-cli extract $R/iso-root/boot/disk.img /tmp/isovol /tmp/isovol.owners
   ls -l /tmp/isovol/games/doom      # only freedoom1.wad
   grep doomgeneric /tmp/isovol.owners   # bin/doomgeneric ... 100755
+  ls /tmp/isovol/lib/libffmpeg.so.0.4 /tmp/isovol/system/licenses/{ffmpeg,dav1d}/
+  ls /tmp/isovol/media 2>/dev/null   # nothing: no test clips
   # Nothing of Microsoft's (AGENTS.md): all three must print nothing. A PE's
   # version resource is UTF-16, hence the second grep.
   find /tmp/isovol -iname sol.exe -o -iname cards.dll -o -iname 'program files'
@@ -110,6 +114,9 @@ With the same two variables exported:
 
   It prints `doom: OK`; the captures in `$R/shots/doom` show the level.
 
+- **The Media Player.** `./build.sh smoke ffmpeg-smoke` passes on `master`
+  before the release commit.
+
 A failure here stops the release: the fix goes to `master` with its changelog
 entry under the version being closed, and the release commit is redone on top.
 
@@ -124,12 +131,16 @@ git push origin master vX.Y.Z
 
 ## 5. Assets
 
-Three files, the same every time:
+Four files, the same every time. The FFmpeg archive is the one the build
+fetched, checked against the pin:
 
 ```bash
 cp build/release-X.Y.Z/SavanXP.iso SavanXP-vX.Y.Z.iso
 cp ports/doomgeneric/licenses/FREEDOOM-COPYING.txt FREEDOOM-LICENSE.txt
-sha256sum SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt > SHA256SUMS
+A=build/release-X.Y.Z/ports/ffmpeg/work/ffmpeg-7.1.1.tar.xz
+grep archive_sha256= ports/ffmpeg/UPSTREAM | head -n 1; sha256sum $A   # must match
+cp $A ffmpeg-7.1.1.tar.xz
+sha256sum SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt ffmpeg-7.1.1.tar.xz > SHA256SUMS
 ```
 
 ## 6. Release notes
@@ -146,8 +157,9 @@ The body has this shape, in this order:
    off; the Limine menu entries (`boot/limine.conf`); the volume in RAM, so
    changes do not survive a reboot; which disks the live system sees and
    writes; what the image includes (Doom with `freedoom1.wad`, BSD-3-Clause,
-   license in `FREEDOOM-LICENSE.txt`) and what it leaves out; checksums in
-   `SHA256SUMS`.
+   license in `FREEDOOM-LICENSE.txt`; the Media Player's FFmpeg library,
+   LGPL-2.1, source in `ffmpeg-7.1.1.tar.xz`) and what it leaves out;
+   checksums in `SHA256SUMS`.
 4. `### Added`, `### Changed`, `### Removed`, `### Fixed`, as present: one
    bullet per changelog entry, in changelog order, holding the entry's first
    bold span in bold, with a trailing colon dropped.
@@ -175,67 +187,36 @@ flush()
 EOF
 ```
 
-## A release that carries FFmpeg
+## FFmpeg's source
 
 FFmpeg is LGPL-2.1, and unlike Freedoom's BSD license that asks for more than
 the notice: whoever downloads the library must be able to get its source **from
 the same place**. A link to ffmpeg.org does not do it, because the LGPL 2.1
 does not let the source live on someone else's server, and that archive could
-move. So a release whose image has `/lib/libffmpeg.so.0.4` also publishes the
-pinned FFmpeg archive as one of its assets. The port carries no patches
-(`patch_count=0` in `ports/ffmpeg/UPSTREAM`), so that archive plus the
-scripts in `ports/ffmpeg/` at the tag are the whole corresponding source;
+move. So every release publishes the pinned FFmpeg archive as one of its
+assets. The port carries no patches (`patch_count=0` in
+`ports/ffmpeg/UPSTREAM`), so that archive plus the scripts in `ports/ffmpeg/` at
+the tag are the whole corresponding source;
 [`ports/ffmpeg/SOURCE.md`](../../ports/ffmpeg/SOURCE.md), shipped in the image,
-says so.
+says so. dav1d, linked into the same library, is BSD-2-Clause: its notice in the
+image is all it asks.
 
-Before deciding to carry it: `h264`, `hevc` and `aac` are patent-encumbered
-codecs that some distributions leave out. Narrowing `VIDEO_DECODERS` and
-`AUDIO_DECODERS` in `ports/ffmpeg/configure.sh` is the way to leave them out.
-
-What changes in the steps above, with the same two variables exported:
-
-- **Step 2**, after the Doom port and before `./build.sh iso`:
-
-  ```bash
-  ./ports/ffmpeg/build.sh       # no --with-test-media: test clips stay out
-  ```
-
-- **Step 3**, on the extracted volume:
-
-  ```bash
-  ls /tmp/isovol/lib/libffmpeg.so.0.4 /tmp/isovol/system/licenses/ffmpeg/
-  ls /tmp/isovol/media 2>/dev/null      # nothing: no test clips
-  ```
-
-  and `./build.sh smoke ffmpeg-smoke` passes on `master` before the release
-  commit.
-- **Step 5**, one more asset: the archive the build fetched, checked against
-  the pin.
-
-  ```bash
-  A=$SAVANXP_OUTPUT_ROOT/ports/ffmpeg/work/ffmpeg-7.1.1.tar.xz
-  grep archive_sha256 ports/ffmpeg/UPSTREAM; sha256sum $A   # must match
-  cp $A ffmpeg-7.1.1.tar.xz
-  sha256sum SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt ffmpeg-7.1.1.tar.xz > SHA256SUMS
-  ```
-
-- **Step 6**, the Download paragraph says the image includes the Media
-  Player's FFmpeg library (LGPL-2.1) and that its source is the
-  `ffmpeg-7.1.1.tar.xz` asset.
-- **Step 7**, `ffmpeg-7.1.1.tar.xz` goes on the `gh release create` line, and
-  `gh release view` lists four assets.
+The decoders include `h264`, `hevc` and `aac`, which are patent-encumbered and
+which some distributions leave out. They stay, as Debian and Arch keep them;
+narrowing `VIDEO_DECODERS` and `AUDIO_DECODERS` in `ports/ffmpeg/configure.sh`
+is where that would change.
 
 The archive name follows the version pinned in `UPSTREAM`; when the port moves
-to another FFmpeg release, so do these names and the one in `SOURCE.md`.
+to another FFmpeg release, so do the names below and the one in `SOURCE.md`.
 
 ## 7. Publish
 
 ```bash
 gh release create vX.Y.Z --title "vX.Y.Z: <Name>!" --notes-file notes.md --latest \
-    SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt SHA256SUMS
+    SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt ffmpeg-7.1.1.tar.xz SHA256SUMS
 ```
 
-Then check it: `gh release view vX.Y.Z` lists the three assets, and the
+Then check it: `gh release view vX.Y.Z` lists the four assets, and the
 downloaded `SHA256SUMS` verifies them.
 
 Real-hardware runs of the new ISO are separate and do not gate the release;
