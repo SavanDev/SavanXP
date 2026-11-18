@@ -133,7 +133,7 @@ set(SAVANXP_KERNEL_ARCH_SOURCES
     arch/x86/serial.cpp
     arch/x86/egatext.cpp
     arch/x86/fb32.cpp
-    arch/x86/pit.cpp
+    arch/x86/timer.cpp
     arch/x86/paging.cpp
     arch/x86/cpu.cpp
     arch/x86/syscall.cpp

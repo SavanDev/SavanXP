@@ -2,7 +2,9 @@
 #include "lapic.hpp"
 #include "cpu.hpp"
 #include "paging.hpp"
+#include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/timer.hpp"
 
 namespace i386::lapic {
@@ -44,6 +46,16 @@ bool delivered() {
     } while (timer::monotonic_ms() < deadline);
     return false;
 }
+bool wait_for_rtc_edge() {
+    savanxp_realtime first{}, current{};
+    if (!rtc::read_time(&first) || !first.valid) return false;
+    const uint64_t deadline = timer::monotonic_ms() + 2000;
+    do {
+        if (rtc::read_time(&current) && current.valid && current.second != first.second)
+            return true;
+    } while (timer::monotonic_ms() < deadline);
+    return false;
+}
 }
 
 uint32_t initial_id() {
@@ -63,18 +75,23 @@ bool initialize(uint32_t address) {
     g_physical = address;
     return enable(true);
 }
-bool calibrate_timer() {
-    if (!ready()) return false;
+void calibrate_timer(uint32_t frequency_hz) {
+    constexpr uint32_t kOneShot = 0xffffffffu;
+    constexpr uint32_t kFallbackCount = 50000;
     write(0x3e0, 3); // Divide by 16.
     write(0x320, (1u << 16) | kTimerVector);
-    write(0x380, 0xffffffffu);
-    const uint64_t deadline = timer::monotonic_ns() + 10000000;
-    while (timer::monotonic_ns() < deadline) asm volatile("pause");
-    const uint32_t elapsed = 0xffffffffu - read(0x390);
+    // v0.4.0 measures the APIC countdown between consecutive RTC seconds.
+    uint32_t count = 0;
+    if (wait_for_rtc_edge()) {
+        write(0x380, kOneShot);
+        if (wait_for_rtc_edge()) {
+            const uint32_t remaining = read(0x390);
+            if (remaining) count = (kOneShot - remaining) / frequency_hz;
+        }
+    }
     write(0x380, 0);
-    if (elapsed < 100 || elapsed > 0x7fffffffu) return false;
-    g_timer_count = elapsed; // 10 ms, matching the existing PIT tick.
-    return true;
+    g_timer_count = count ? count : kFallbackCount;
+    console::printf("timer: local APIC %s count=%u\n", count ? "RTC calibration" : "fallback", g_timer_count);
 }
 bool start_timer() {
     if (!g_timer_count) return false;

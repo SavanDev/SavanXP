@@ -21,7 +21,7 @@ from i386_console_iso import make_console_iso
 
 SUCCESS_TOKEN = "I386 BOOT OK"
 PROCESS_TOKEN = "process: private stacks, address spaces and FXSAVE ready"
-SCHEDULER_TOKEN = "scheduler: PIT round-robin, 20 ms quantum"
+SCHEDULER_TOKEN = "scheduler: round-robin, 20 ms quantum"
 FAILURE_TOKEN = "I386 BOOT FAIL"
 PAGING_TOKEN = "paginacion: identidad 0..1 GiB"
 SXFS_TOKEN = "SXFS ROOT OK"
@@ -29,9 +29,8 @@ USER_LOADED_TOKEN = "user: /disk/bin/sysinfo loaded"
 USER_OUTPUT_TOKEN = "sxfs_files:"
 USER_EXIT_TOKEN = "process exited with status 0"
 PS2_TOKEN = "ps2: teclado listo"
-# El PIT se programa en cada arranque (sin disco ni programa de por medio),
-# asi que su token se exige junto al de la paginacion.
-PIT_TOKEN = "pit: canal 0 a 100 Hz"
+# The default QEMU CPU delivers the reference local APIC timer.
+TIMER_TOKEN = "timer: local APIC target_hz=1000"
 # The normal GRUB request supplies the graphical console, required with --expect-key.
 VIDEO_TOKEN = "console: framebuffer 8x16 at "
 # El shell anuncia su arranque: es la senal para la segunda fase de tecleado
@@ -516,8 +515,8 @@ def run_boot(
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
                     raise RuntimeError(f"booted without enabling paging: {PAGING_TOKEN!r} missing")
-                if PIT_TOKEN not in text:
-                    raise RuntimeError(f"booted without the timer: {PIT_TOKEN!r} missing")
+                if TIMER_TOKEN not in text:
+                    raise RuntimeError(f"booted without the timer: {TIMER_TOKEN!r} missing")
                 if shell_commands and not shell_typed:
                     # Segunda fase: los comandos del shell entran cuando el
                     # shell esta esperando stdin, ni un tap antes.
@@ -703,12 +702,10 @@ def main() -> int:
             require += (SXFS_TOKEN,)
         detail = " (SxFS root mounted)" if disk_image is not None else ""
         if args.expect_user:
-            # El programa del MVP imprime su informe y sale; el kernel informa
-            # de la salida. Las dos cosas son el anillo 3 entero: cargar la
-            # imagen, entrar, llamar al sistema y volver por EXIT. Los campos
-            # de timer prueban que system_info responde con el PIT real.
+            # Verify ring-3 startup, system info and exit. The timer fields
+            # identify the interrupt backend running the guest.
             require += (USER_LOADED_TOKEN, USER_OUTPUT_TOKEN, USER_EXIT_TOKEN,
-                        "backend: pit", "frequency_hz: 100")
+                        "backend: local apic", "frequency_hz: 1000")
             detail = " (userland program ran)"
         keys: tuple[tuple[str, int], ...] = ()
         qmp_socket: Path | None = None

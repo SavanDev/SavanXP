@@ -92,9 +92,10 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                     wait_serial(serial, r"MULTITASK PASS.*?savanxp:/\$ ", timeout=timeout)
                 text = serial.read_text(errors="replace")
                 aps = smp - 1
-                required = (f"smp: reported={smp} online={smp} scheduling=1 (xAPIC)",
+                required = ("timer: local APIC target_hz=1000",
+                    f"smp: reported={smp} online={smp} scheduling=1 (xAPIC)",
                     f"smp: private TSS {aps}/{aps}, targeted IPI {2 * aps}/{2 * aps} PASS",
-                    f"smp: scheduling={smp} online={smp} (PIT BSP, local APIC APs)",
+                    f"smp: scheduling={smp} online={smp} (local APIC timers)",
                     *(("smp: lazy kernel TLB PASS",) if smp > 1 else ()))
                 for token in required:
                     if token not in text:

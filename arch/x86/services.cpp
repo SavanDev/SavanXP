@@ -2,7 +2,6 @@
 #include "services.hpp"
 #include "cpu.hpp"
 #include "paging.hpp"
-#include "pit.hpp"
 #include "kernel/ac97.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/audio.hpp"
@@ -10,7 +9,6 @@
 #include "kernel/cpu.hpp"
 #include "kernel/net.hpp"
 #include "kernel/nic.hpp"
-#include "kernel/pci.hpp"
 #include "kernel/power.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/clipboard.hpp"
@@ -18,39 +16,11 @@
 #include "kernel/rtl8139.hpp"
 #include "kernel/virtio_net.hpp"
 #include "kernel/virtio_sound.hpp"
-#include "kernel/timer.hpp"
 #include "kernel/uacpi_glue.hpp"
 
 namespace {
-uint64_t g_tsc_per_us, g_tsc_base;
-uint64_t rdtsc() {
-    uint32_t lo, hi;
-    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (uint64_t(hi) << 32) | lo;
-}
 uint8_t in8(uint16_t port) { uint8_t v; asm volatile("inb %1,%0" : "=a"(v) : "Nd"(port)); return v; }
 void out8(uint16_t port, uint8_t v) { asm volatile("outb %0,%1" :: "a"(v), "Nd"(port)); }
-}
-namespace timer {
-// Same PIT-channel-2 calibration as v0.4.0's uACPI clock. It advances with
-// IF clear, unlike IRQ ticks, so a device syscall can measure its own deadline.
-void calibrate_monotonic() {
-    if (g_tsc_per_us) return;
-    constexpr uint16_t count = 11932;
-    const uint8_t saved = in8(0x61);
-    out8(0x61, (saved & ~2u) | 1u);
-    out8(0x43, 0xb0); out8(0x42, count & 0xff); out8(0x42, count >> 8);
-    const uint64_t start = rdtsc();
-    while (!(in8(0x61) & 0x20)) asm volatile("pause");
-    g_tsc_per_us = (rdtsc() - start) / 10000;
-    if (!g_tsc_per_us) g_tsc_per_us = 1;
-    g_tsc_base = rdtsc(); out8(0x61, saved);
-}
-uint64_t monotonic_ns() { return g_tsc_per_us ? ((rdtsc() - g_tsc_base) * 1000ull) / g_tsc_per_us : 0; }
-uint64_t monotonic_ms() { return monotonic_ns() / 1000000ull; }
-uint64_t ticks() { return i386::pit::ticks(); }
-uint32_t frequency_hz() { return i386::pit::kFrequencyHz; }
-uint32_t tsc_khz() { return g_tsc_per_us * 1000; }
 }
 namespace arch::x86_64 {
 // Retained generic drivers use this historical namespace for the CPU boundary.

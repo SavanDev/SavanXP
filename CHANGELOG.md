@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 schedules at 1000 Hz with the local APIC or PIT fallback.** Uptime
+  and process deadlines use the monotonic clock. `smoke clock-smoke`
+  checks nanosecond reporting and clock behavior through sleep and load.
+
 - **i386 uses firmware AML to route PCI interrupts for the RTL8139.**
   `smoke net-smoke` checks that the adapter delivers an INTx interrupt through
   the IOAPIC as well as exchanging packets.

@@ -10,7 +10,7 @@
 #include "kernel/tty.hpp"
 #include "kernel/vfs.hpp"
 #include "paging.hpp"
-#include "pit.hpp"
+#include "kernel/timer.hpp"
 #include "ps2_32.hpp"
 #include "serial.hpp"
 
@@ -374,7 +374,7 @@ int socket_call(process::Process& task, uint32_t operation, uint32_t fd,
             if (result != kBlocked) return result;
             if (nonblock) return -SAVANXP_EAGAIN;
             const uint32_t timeout = net::socket_recv_timeout_ms(file->socket);
-            task.wake_ms = arg5 ? pit::uptime_ms() + arg5 : timeout ? pit::uptime_ms() + timeout : 0;
+            task.wake_ms = arg5 ? timer::monotonic_ms() + arg5 : timeout ? timer::monotonic_ms() + timeout : 0;
             task.io_fd = fd; task.io_buffer = arg2; task.io_size = arg3;
             task.state = process::State::reading;
             return kBlocked;
@@ -413,7 +413,7 @@ int read(process::Process& task, uint32_t fd, uint32_t buffer, uint32_t count) {
     if (file->open_flags & ::process::open_nonblock) return -SAVANXP_EAGAIN;
     task.io_fd = fd; task.io_buffer = buffer; task.io_size = count;
     const uint32_t timeout = file->socket ? net::socket_recv_timeout_ms(file->socket) : 0;
-    task.wake_ms = timeout ? pit::uptime_ms() + timeout : 0;
+    task.wake_ms = timeout ? timer::monotonic_ms() + timeout : 0;
     task.state = process::State::reading;
     return kBlocked;
 }
@@ -537,7 +537,7 @@ int poll(process::Process& task, uint32_t array, uint32_t count, int32_t timeout
         if (count) paging::copy_to_user(task.directory, array, task.poll_entries, count * sizeof(savanxp_pollfd));
         return ready;
     }
-    task.wake_ms = timeout < 0 ? 0 : pit::uptime_ms() + static_cast<uint32_t>(timeout);
+    task.wake_ms = timeout < 0 ? 0 : timer::monotonic_ms() + static_cast<uint32_t>(timeout);
     task.state = process::State::polling;
     return kBlocked;
 }
@@ -559,7 +559,7 @@ void recheck_poll_waiters() {
         auto& task = *process::at(index);
         if (task.state != process::State::polling) continue;
         const int ready = evaluate_poll(task);
-        if (ready || (task.wake_ms && task.wake_ms <= pit::uptime_ms())) {
+        if (ready || (task.wake_ms && task.wake_ms <= timer::monotonic_ms())) {
             if (task.poll_count) paging::copy_to_user(task.directory, task.poll_buffer, task.poll_entries,
                                                     task.poll_count * sizeof(savanxp_pollfd));
             complete(task, ready);
@@ -602,7 +602,7 @@ static void service_waiters(bool pipes_only) {
             if (pipes_only && file && file->kind != HandleKind::pipe) continue;
             const int result = file ? try_read(task, *file, task.io_buffer, task.io_size) : -SAVANXP_EBADF;
             if (result != kBlocked) complete(task, result);
-            else if (file && file->socket && task.wake_ms && task.wake_ms <= pit::uptime_ms())
+            else if (file && file->socket && task.wake_ms && task.wake_ms <= timer::monotonic_ms())
                 complete(task, -SAVANXP_ETIMEDOUT);
         } else if (task.state == process::State::writing) {
             auto* file = lookup(task, task.io_fd, object::access_write);

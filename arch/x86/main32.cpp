@@ -32,7 +32,6 @@
 #include "paging.hpp"
 #include "services.hpp"
 #include "smp.hpp"
-#include "pit.hpp"
 #include "ps2_32.hpp"
 #include "serial.hpp"
 #include "user32.hpp"
@@ -350,9 +349,6 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::init();
     cpu::initialize();
     serial::write("cpu: gdt de 32 bits con segmentos de usuario y tss, idt con int $0x80\n");
-    /* El PIT con IF=0: se programa y abre IRQ0, pero el primer tick se
-     * entrega cuando el proceso entre en ring 3 (ver pit.hpp). */
-    pit::initialize();
     serial::write("savanxp/i386: arranque multiboot2\n");
     serial::write("firma ");
     serial::write_hex(magic);
@@ -453,7 +449,9 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     mount_root_filesystem();
     device::initialize();
     const uint32_t rsdp_physical = services::initialize_firmware(info_address);
+    timer::adopt_pm_timer();
     i386::smp::initialize(info_address);
+    timer::initialize(1000);
     ioapic::initialize();
     ps2_32::initialize();
     services::initialize(rsdp_physical);

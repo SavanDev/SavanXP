@@ -17,7 +17,6 @@
 #include "kernel/sxfs.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
-#include "pit.hpp"
 #include "ps2_32.hpp"
 #include "process.hpp"
 #include "smp.hpp"
@@ -320,15 +319,14 @@ void handle(ContextFrame& frame) {
             return;
         }
         case SAVANXP_SYS_MONOTONIC_NS: {
-            const uint64_t ns = pit::uptime_ms() * 1000000ull;
+            const uint64_t ns = timer::monotonic_ns();
             frame.eax = static_cast<uint32_t>(ns);
             frame.edx = static_cast<uint32_t>(ns >> 32);
             return;
         }
         case kSysUptimeMs: {
-            /* El SDK devuelve unsigned long: en i386 caben los primeros 49
-             * dias; el wrap completo se documenta antes que esconderse. */
-            frame.eax = static_cast<uint32_t>(pit::uptime_ms());
+            // The i386 SDK returns unsigned long, with wrap after 2^32 ms.
+            frame.eax = static_cast<uint32_t>(timer::monotonic_ms());
             return;
         }
         case kSysSleepMs: {
@@ -389,9 +387,10 @@ void handle(ContextFrame& frame) {
             info.memory_reclaimable_bytes = boot.memory_reclaimable_bytes;
             info.memory_total_pages = memory::total_page_count();
             info.memory_free_bytes = memory::free_page_count() * memory::kPageSize;
-            info.timer_backend = SAVANXP_TIMER_PIT;
-            info.timer_frequency_hz = pit::kFrequencyHz;
-            info.uptime_ms = pit::uptime_ms();
+            info.timer_backend = timer::backend() == timer::Backend::local_apic
+                ? SAVANXP_TIMER_LOCAL_APIC : SAVANXP_TIMER_PIT;
+            info.timer_frequency_hz = timer::frequency_hz();
+            info.uptime_ms = timer::monotonic_ms();
             info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(volume));
             info.sxfs_total_bytes = sxfs::total_bytes(volume);
             info.sxfs_used_bytes = sxfs::used_bytes(volume);
@@ -417,7 +416,7 @@ void handle(ContextFrame& frame) {
              * PIT corre (sysinfo sale con IF=1 desde ring 3, asi que ya hay
              * ticks; el token del test no lo exige, solo lo deja a la vista). */
             serial::write(", uptime ");
-            serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
+            serial::write_dec(static_cast<uint32_t>(timer::monotonic_ms()));
             serial::write(" ms\n");
             process::exit(static_cast<int>(frame.edi));
             return;

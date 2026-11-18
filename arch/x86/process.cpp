@@ -9,7 +9,7 @@
 #include "lapic.hpp"
 #include "kernel/string.hpp"
 #include "paging.hpp"
-#include "pit.hpp"
+#include "kernel/timer.hpp"
 #include "ps2_32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
@@ -21,7 +21,7 @@
 
 namespace i386::process {
 namespace {
-constexpr uint32_t kQuantumTicks = 2;
+constexpr uint32_t kQuantumTicks = 20;
 constexpr uint32_t kStackCanary = 0x51a7c0de;
 Process g_processes[kCapacity];
 struct CpuState {
@@ -75,7 +75,7 @@ uint32_t slot(const Process& task) {
 }
 
 void wake_tasks() {
-    const uint64_t now = pit::uptime_ms();
+    const uint64_t now = timer::monotonic_ms();
     for (auto& task : g_processes) {
         if (task.state == State::sleeping && task.wake_ms <= now) {
             task.state = State::runnable;
@@ -252,13 +252,13 @@ long fork(const ContextFrame& frame) {
     ps2_32::clear_queue();
     smp::lock_kernel();
     smp::start_scheduling();
-    serial::write("scheduler: PIT round-robin, 20 ms quantum\n");
+    serial::write("scheduler: round-robin, 20 ms quantum\n");
     i386_resume(schedule(nullptr));
 }
 
 [[noreturn]] void start_secondary() {
     smp::lock_kernel();
-    (void)lapic::start_timer();
+    (void)timer::start_on_secondary();
     i386_resume(schedule(nullptr));
 }
 
@@ -389,7 +389,7 @@ int replace_image(const char* path, const char* const* argv, uint32_t argc, Cont
 
 void sleep(uint32_t milliseconds) {
     if (milliseconds != 0) {
-        current_slot()->wake_ms = pit::uptime_ms() + milliseconds;
+        current_slot()->wake_ms = timer::monotonic_ms() + milliseconds;
         current_slot()->state = State::sleeping;
     } else {
         yield();

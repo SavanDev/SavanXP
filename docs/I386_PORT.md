@@ -84,7 +84,7 @@ libraries, `sh`/BusyBox and core tools, plus optional diagnostics. `init32`,
 The default disk is `build/disk.img`, the ISO is `build/SavanXP.iso`, and the
 CMake cache is `build/linux-i386`. See [BUILD_CMAKE.md](BUILD_CMAKE.md).
 
-Private process maps/stacks, eager x87/SSE state, PIT preemption and spawn/wait/
+Private process maps/stacks, eager x87/SSE state, timer preemption and spawn/wait/
 exit are implemented. Sixty-four process slots use allocator-backed 4 KiB user pages
 below the supervisor direct map; user faults terminate only their
 process. ELF write permissions, unmapped holes and a stack guard are enforced;
@@ -124,7 +124,7 @@ changes, and record implementation/verification evidence as work lands.
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
    Milestone 4 restores the reference process bound and event/timer/semaphore
-   waits; full signal parity remains outstanding. Milestone 6 restores idle processes
+   waits; the reference's limited signal behavior still needs review. Milestone 6 restores idle processes
    and their CPU accounting. [Contracts and limits](I386_POSIX.md).
 3. **Memory objects and ELF32 shared libraries — completed.**
    Reference section objects/views, growing heaps, private/shared fork and
@@ -162,7 +162,7 @@ changes, and record implementation/verification evidence as work lands.
    sound, GPU, tablet and keyboard drivers are linked on i386. The optional
    `--virtio` profile retains the same desktop and applications;
    [I386_VIRTIO.md](I386_VIRTIO.md) defines its gates and architecture boundary.
-   **6.2 — SMP and interrupt infrastructure in progress.** AP startup, private
+   **6.2 — SMP and interrupt infrastructure verified in QEMU.** AP startup, private
    TSS/stacks, targeted IPIs and the GPU MSI-X boundary are verified in QEMU.
    User processes now run on APs under the reference global lock, with local
    timers, deferred remote termination and lazy kernel-TLB synchronization.
@@ -171,11 +171,20 @@ changes, and record implementation/verification evidence as work lands.
    resume on their original CPU. Same-CPU syscall-return wakeup handoff now
    follows the reference. The port now uses the reference MADT/IOAPIC router
    for PS/2 and the ACPI SCI, with a PIC fallback. The vendored AML interpreter
-   resolves root-bus PCI INTx through `_PRT` and link `_CRS`. The BSP timer and
-   the remaining internal and visual parity review are still open.
+   resolves root-bus PCI INTx through `_PRT` and link `_CRS`. The BSP and APs
+   use the reference 1000 Hz timer with monotonic process deadlines.
    [Contracts and evidence](I386_SMP.md).
    The remaining internal/visual parity review follows. These intermediate
    results do not complete milestone 6 or the v0.4.0 target.
+
+   **Remaining v0.4.0 review.** Port and verify the reference's randomized base
+   for section views and its boot screen, logo, and handoff to the graphical
+   session. Audit the limited v0.4.0 signal behavior. For example, its
+   `kill(0, signal)` targets the caller and its process state records
+   `SIGCHLD`. Full kernel delivery to user handlers and POSIX job control
+   are outside that reference contract. Compare the resulting system
+   feature by feature in QEMU, including power and performance, and record
+   evidence or justified i386 differences before changing the target.
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation

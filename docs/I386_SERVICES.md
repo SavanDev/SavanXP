@@ -26,8 +26,10 @@ interrupt in addition to successful packet exchange.
 The ACPI RSDP comes from Multiboot2 tags 14/15;
 physical ACPI addresses use the supervisor RAM alias, independently of the
 framebuffer's device identity mapping. S5/reset keep the reference fallbacks.
-The device clock copies the reference PIT-channel-2 TSC calibration and works
-with interrupts disabled. User scheduling continues to use PIT channel 0.
+Monotonic time starts with the reference PIT-channel-2 TSC calibration and
+switches to a firmware-declared 32-bit ACPI PM counter when available. It
+advances with interrupts disabled and supplies user uptime and deadlines.
+The local APIC delivers scheduling ticks, with PIT channel 0 as a fallback.
 
 ## Descriptors and parked receives
 

@@ -133,6 +133,8 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     if not sci_route:
                         raise RuntimeError(f"the SCI was not routed through the {controller}")
                     if pic_only:
+                        if "timer: PIT divisor=1193 target_hz=1000" not in boot_log or "backend: pit" not in boot_log:
+                            raise RuntimeError("the fallback did not run on the 1000 Hz PIT")
                         if "ioapic: GSI" in boot_log or "AML namespace loaded for IOAPIC" in boot_log:
                             raise RuntimeError("APIC routing ran without a local APIC")
                         type_shell(qmp, ("echo picinput",))
@@ -181,6 +183,13 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     commands += [("fscheck", "result: clean"),
                                  ("echo live-ramdisk > /disk/live-test.txt", "process exited with status 0"),
                                  ("cat /disk/live-test.txt", "live-ramdisk")]
+                if scenario == "clock-smoke":
+                    boot_log = serial.read_text(errors="replace")
+                    for token in ("backend: local apic", "frequency_hz: 1000"):
+                        if token not in boot_log:
+                            raise RuntimeError(f"missing timer evidence: {token}")
+                    commands += [("timertest", "process exited with status 0"),
+                                 ("clocktest", "CLOCK SMOKE PASS")]
                 if scenario in ("services", "device-smoke", "virtio-services"):
                     commands += [("devtest32 virtio" if virtio else "devtest32", "DEV32 PASS"), ("cliptest", "cliptest: PASS"), ("beep 440 100", "process exited with status 0"), ("fscheck", "result: clean")]
                 if scenario in ("services", "net-smoke", "virtio-services"):
@@ -291,7 +300,7 @@ def main() -> int:
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--disk-image", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--scenario", choices=("services", "net-smoke", "audio-smoke", "audio-record", "tcp-smoke", "media-smoke", "device-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke"), default="services")
+    parser.add_argument("--scenario", choices=("services", "net-smoke", "audio-smoke", "audio-record", "tcp-smoke", "media-smoke", "device-smoke", "clock-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke"), default="services")
     parser.add_argument("--virtio", action="store_true")
     parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()

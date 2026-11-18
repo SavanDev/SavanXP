@@ -45,9 +45,10 @@ all per-CPU idle processes are initialized, with the kernel lock held.
 
 The local xAPIC registers use an uncached shared supervisor MMIO view. The BSP
 owns the single LINT0 ExtINT route for the existing PIC; AP LINT inputs remain
-masked. The BSP calibrates a divide-by-16 local timer against the existing
-monotonic TSC clock. Each scheduling AP starts a periodic 10 ms timer on vector
-65. Vector 66 requests rescheduling; the BSP retains PIT scheduling and uptime. The PIC/PIT driver and its IRQ numbering are unchanged.
+masked. The BSP uses consecutive RTC second boundaries to calibrate the
+divide-by-16 local APIC timer. It and each scheduling AP use the same
+periodic count for 1000 Hz on vector 48. Vector 66 requests rescheduling.
+Without an operational local APIC the BSP starts PIT channel 0 at 1000 Hz.
 External vectors have separate saved-frame stubs and explicit local-APIC EOI;
 vector 255 is a dedicated spurious gate and sends no EOI.
 
@@ -189,7 +190,8 @@ successful targeted IPIs recorded for its own slot and a calibrated local timer.
 missed those checks stays parked even if it later publishes online. It also
 needs an allocated idle process. Unsupported topology or failed readiness
 keeps the BSP path; idle allocation failure parks the affected AP. CPU accounting
-sums per-CPU timer ticks; uptime advances only from BSP PIT ticks.
+sums per-CPU timer ticks. Only BSP ticks advance the system tick count and
+service shared device and process deadlines. Uptime uses the monotonic clock.
 
 ## Reference idle processes and accounting
 
@@ -218,7 +220,7 @@ idle is required and a failing AP remains parked.
 Each timer tick charges exactly the current process and the system total,
 including ticks spent halted inside idle's syscall. Task Manager retains its
 idle-complement usage model and original layout. Its samples enumerate counters
-separately; with 32 CPUs and a 100 Hz native timer, skew could make idle deltas
+separately. At the earlier 100 Hz tick rate, skew could make idle deltas
 exceed the sampled total and display 0% despite measured work. The estimator
 now keeps at least the observed non-idle work and bounds percentages to 100%.
 The raw counters and API layout are unchanged. This is an approximation for
@@ -307,8 +309,9 @@ Both use QEMU disk snapshots and retain serial/QMP artifacts.
 
 These checkpoints cover idle accounting, timer-preemptible kernel waits,
 syscall-return wakeup handoff, I/O APIC routing for PS/2 and SCI, and AML-based
-root-bus PCI INTx. BSP timer parity, ASLR/signals and the performance/visual
-review remain open. v0.4.0 deliberately keeps idle
+root-bus PCI INTx. The native timer follows the reference 1000 Hz setup and
+monotonic deadlines. ASLR, signals and the performance and visual review
+remain open. v0.4.0 deliberately keeps idle
 wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
 not a parity gap. The historical study's earlier wake-IPI suggestions are
 superseded by the pinned-reference review.

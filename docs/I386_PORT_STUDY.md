@@ -1946,9 +1946,74 @@ firmware tables exercised link resources. PCI bridge swizzling, ECAM and
 enabling device AML event methods remain outside the verified scope. This
 closes the reference root-bus PCI interrupt path within milestone 6.2.
 
+## 21. Separating elapsed time from interrupt delivery
+
+The previous i386 BSP ran on PIT IRQ0 at 100 Hz. Uptime, sleeps, timer
+objects and parked I/O deadlines used that delivered tick count.
+`monotonic_ns` merely multiplied tick-based uptime by a million, so it
+reported time in 10 ms steps. Raising the PIT rate alone would reduce those
+steps but keep elapsed time tied to IRQ delivery. An interrupt delayed by
+the global kernel lock, an IF-clear region or emulation would still slow
+the clock.
+
+The v0.4.0 backend programs the local APIC at 1000 Hz on vector 48. The BSP
+measures the divide-by-16 countdown between two CMOS RTC seconds and shares
+the calibrated period with the APs. The port uses the same procedure and
+places a monotonic bound on each RTC wait. The reference fallback count is
+available when RTC calibration fails, and an unavailable local APIC selects
+PIT channel 0 in rate-generator mode. Twenty delivered ticks preserve the
+nominal 20 ms quantum. The BSP alone increments the system tick counter and
+services shared deadlines. Each scheduling CPU charges its own process ticks,
+including time spent in idle.
+
+The early clock still calibrates the TSC against PIT channel 2. When firmware
+advertises a 32-bit ACPI PM counter, the clock preserves its TSC epoch and
+extends that counter with unsigned deltas. The BSP samples it during boot
+and the global kernel lock serializes sampling once APs schedule. As in the
+reference, firmware with a 24-bit counter keeps the TSC. Both elapsed-time
+syscalls now read the monotonic clock. The nanosecond result uses EDX:EAX,
+and the SDK's 32-bit uptime remains milliseconds modulo 2^32. Process
+deadlines use this same source. Timer interrupts still determine when
+the kernel checks those deadlines and how it accounts for CPU time.
+
+The QEMU PC profile used the TSC and calibrated the local APIC to about
+62,498 counts per millisecond. The 1000 Hz fallback also booted and serviced
+the power button with APIC support hidden. The reference `clocktest` was
+added to native staging with an ABI check that brackets each uptime reading
+with two monotonic reads and requires submillisecond resolution. Its
+four-CPU run measured uptime at 99%, 100% and 98% of the RTC while spinning,
+sleeping and running competing workers. Over the same run, `timer-stats`
+showed windows with substantially fewer delivered ticks than elapsed
+milliseconds. This is why the two clocks must remain independent.
+A second run passed the one-shot and periodic timer-object checks and
+measured 91%, 100% and 100% against the second-resolution RTC. The same
+gate rejected the preceding AML kernel's PIT backend.
+
+```sh
+./build.sh build
+./build.sh iso
+./build.sh smoke clock-smoke --smp 4
+./build.sh smoke power-smoke --smp 4
+./build.sh smoke smp --smp 4
+./build.sh smoke kernel-preempt
+./build.sh smoke wakeup
+./build.sh smoke shared-memory
+./build.sh smoke sxgui-smoke --smp 4 --virtio
+./build.sh smoke audio-smoke
+./tools/verify_doom_persistence.sh --wad path/to/doom1.wad
+```
+
+The SMP gates checked per-CPU accounting, private TSS, IPIs and retained
+kernel waits. The 32 MiB library gate, all six SxGUI captures, AC'97
+playback and gain, and the isolated Doom rebuild passed. These runs exercise TSC time with both
+scheduling backends. The PM32 path and failed RTC calibration were outside
+the observed QEMU configuration. The timer work completes the clock and
+interrupt infrastructure checkpoint in emulation. Delivery under host
+contention remains a performance measurement, and the v0.4.0 review
+continues with the remaining internal and visual differences.
+
 ## Continuing the study
 
-Review the wall clock and BSP timer against the pinned reference, then
-trace the remaining internal and visual differences. Keep the reference's
-measured policy distinct from proposed future extensions, and preserve
-evidence when replacing adaptations.
+Review signals, ASLR and the remaining boot and desktop differences against
+the pinned reference. Record performance and power evidence before closing
+the v0.4.0 target.

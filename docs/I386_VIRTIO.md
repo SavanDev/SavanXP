@@ -27,17 +27,16 @@ user mappings or RAM aliases. RAM section mapping still requires allocator
 addresses below the mapped first GiB; device BARs may be anywhere below 4 GiB.
 Out-of-range spans and BAR sizes that cannot fit `size_t` are rejected.
 
-The TSC clock is calibrated before device probing, rather than after graphics
-initialization. This gives the reference GPU's bounded waits a working deadline
-even during boot with IF clear. The PIT remains the scheduling clock.
+The TSC clock is calibrated before device probing. This gives the reference
+GPU's bounded waits a working deadline even during boot with IF clear. The
+local APIC delivers scheduling ticks, with the PIT available as a fallback.
 
 ## Interrupts and deferred work
 
-The native kernel currently uses the legacy PIC. The GPU installs its existing
-INTx handler and acknowledges its ISR byte there; scheduler service boundaries
-run the reference background completion work. Completion and scanout events
-are exported through the same retained object/handle model and native waits.
-Milestone 6.1 initially deferred the reference MSI-X path. The subsequent
+The initial native GPU used its legacy PIC INTx handler and acknowledged
+its ISR byte there. Completion and scanout events use the reference
+object/handle model and native waits. Milestone 6.1 initially deferred the
+reference MSI-X path. The subsequent
 [SMP bring-up](I386_SMP.md) supplies native local-APIC vectors, so the GPU now
 prefers MSI-X and retains INTx as fallback. `devtest32 virtio` requires a
 nonzero GPU IRQ notification count, checking delivery rather than only arming

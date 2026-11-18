@@ -24,6 +24,7 @@ SCENARIOS = {
     "virtio-smoke": "virtio disk I/O, UDP/TCP, captured playback/gain and capture-ring reads",
     "audio-record": "virtio capture-ring completion with a deterministic silent input source",
     "device-smoke": "device permissions, killed audio owner, clipboard and PC speaker",
+    "clock-smoke": "1000 Hz local APIC timer and shared monotonic time under sleep and load",
     "audio-smoke": "audio daemon selftest and captured AC97 PCM",
     "net-smoke": "RTL8139 AML/IOAPIC interrupt delivery, gateway packets and UDP loopback",
     "tcp-smoke": "reference TCP loss, reordering, delayed reads and socket deadlines",

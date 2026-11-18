@@ -29,7 +29,6 @@ Slot g_slots[cpu::kMaxCpus];
 uint32_t g_boot_stacks[256];
 uint32_t g_count = 1, g_reported = 1, g_online = 1;
 bool g_ipi_ok;
-bool g_timer_ok;
 uint32_t g_scheduling_started;
 sync::SpinLock g_kernel_lock;
 volatile uint32_t g_probe_target, g_probe_address, g_probe_sync, g_probe_value;
@@ -182,7 +181,6 @@ void initialize(uint32_t information) {
     cpu::register_external_handler(lapic::kPingVector, ping, true);
     cpu::register_external_handler(lapic::kTimerVector, tick_gate, true);
     cpu::register_external_handler(lapic::kRescheduleVector, tick_gate, true);
-    g_timer_ok = lapic::calibrate_timer();
     if (launch) {
         // Retain every allocated stack even on timeout: a delayed AP must
         // never enter on a stack that has been recycled into another owner.
@@ -229,7 +227,7 @@ void initialize(uint32_t information) {
                         slot.observed_id, unsigned(slot.selector), slot.pings);
     }
     g_ipi_ok = received == expected && selectors == g_online - 1;
-    if (g_ipi_ok && !selftest_tlb()) { g_ipi_ok = false; g_timer_ok = false; }
+    if (g_ipi_ok && !selftest_tlb()) g_ipi_ok = false;
     console::printf("smp: reported=%u online=%u scheduling=1 (xAPIC)\n", g_reported, g_online);
     console::printf("smp: private TSS %u/%u, targeted IPI %u/%u %s\n", selectors,
                     g_online - 1, received, expected, g_ipi_ok ? "PASS" : "FAIL");
@@ -238,7 +236,7 @@ uint32_t cpu_count() { return g_reported; }
 uint32_t online_count() { return g_online; }
 bool ipi_test_passed() { return g_ipi_ok; }
 bool may_schedule(uint32_t index) {
-    return index == 0 || (index < g_count && g_ipi_ok && g_timer_ok && g_slots[index].schedule_ready &&
+    return index == 0 || (index < g_count && g_ipi_ok && timer::backend() == timer::Backend::local_apic && g_slots[index].schedule_ready &&
         __atomic_load_n(&g_slots[index].online, __ATOMIC_ACQUIRE));
 }
 bool can_schedule(uint32_t index) {
@@ -253,7 +251,8 @@ void start_scheduling() {
     __atomic_store_n(&g_scheduling_started, 1u, __ATOMIC_RELEASE);
     for (uint32_t n = 1; n < g_count; ++n)
         if (can_schedule(n)) (void)lapic::send(g_slots[n].lapic_id, (1u << 14) | lapic::kPingVector);
-    console::printf("smp: scheduling=%u online=%u (PIT BSP, local APIC APs)\n", scheduling_count(), g_online);
+    console::printf("smp: scheduling=%u online=%u (%s)\n", scheduling_count(), g_online,
+                    timer::backend() == timer::Backend::local_apic ? "local APIC timers" : "PIT timer");
 }
 void kick(uint32_t index) {
     if (index && can_schedule(index) && index != cpu::index())

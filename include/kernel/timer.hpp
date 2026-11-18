@@ -19,53 +19,22 @@ uint64_t ticks();
 void wait_ticks(uint64_t tick_count);
 process::SavedContext* handle_interrupt(process::SavedContext* context);
 
-// Arranca el timer del APIC local de ESTE core con la misma cuenta que calibro
-// el BSP: los APICs locales de una maquina comparten reloj y divisor, asi que
-// no hace falta volver a calibrar. Lo corre cada AP antes de planificar. false
-// si el backend del BSP no es el APIC local (no hay cuenta que copiar) o si el
-// timer no arranco.
+// Start this AP's local timer with the BSP's calibrated count.
 bool start_on_secondary();
 
-// Reloj monotono por TSC, calibrado por calibrate_monotonic() al principio del
-// arranque (implementado en uacpi_glue.cpp, que es quien lo estreno). A
-// diferencia de ticks(), avanza aunque las interrupciones
-// esten deshabilitadas (IF=0) -- necesario para esperas seguras durante el
-// boot temprano, antes de que el kernel habilite interrupciones globalmente.
-// Devuelve 0 si todavia no se calibro.
+// Independent of IRQ delivery and usable with IF clear. Returns zero
+// until the initial TSC calibration is available.
 uint64_t monotonic_ns();
-
-// Lo mismo en milisegundos, que es la unidad en la que el kernel lleva sus
-// vencimientos. 0 si todavia no se calibro.
 uint64_t monotonic_ms();
 
-// Calibra el reloj de monotonic_ns() contra el PIT, sin interrupciones y sin
-// depender de la ACPI. El arranque la llama temprano para tener reloj desde el
-// principio; el bring-up de uACPI, que es quien la necesitaba, la vuelve a
-// llamar y no hace nada. Cuesta 10 ms y se hace una sola vez.
+// Bootstrap the monotonic clock by timing PIT channel 2 against the TSC.
 void calibrate_monotonic();
 
-// Pasa el reloj de pared del TSC al PM timer de la ACPI, si la maquina lo
-// expone. Se llama despues de acpi::initialize y es idempotente.
-//
-// El TSC cuenta ciclos del procesador REAL. Bajo un hipervisor eso no es el
-// tiempo que ve la maquina virtual: VirtualBox, con el guest ocupado, atrasa su
-// reloj virtual y lo recupera despues, y el TSC se le adelanta -- medido, hasta
-// 5,6x contra el RTC. Todo lo que se dosifica contra ese reloj se desmadra, y el
-// audio es donde mas se nota: el productor cree que paso mas tiempo del que
-// paso, escribe de mas y el driver termina descartando lo que no entra.
-//
-// El PM timer, en cambio, lo mueve el mismo tiempo virtual que a los devices
-// emulados (el DAC entre ellos), asi que productor y consumidor vuelven a estar
-// de acuerdo. Es un contador libre, no una cuenta de interrupciones: no pierde
-// tiempo cuando la maquina haltea, que era el problema del reloj anterior.
-//
-// Sin PM timer (o si es de 24 bits, que da la vuelta cada 4,7 s) el reloj sigue
-// siendo el TSC.
+// Preserve the monotonic epoch while switching to the firmware's 32-bit PM
+// counter. Keep the TSC for absent or 24-bit counters, which wrap in 4.7 s.
 void adopt_pm_timer();
 
-// Frecuencia del TSC en kHz, del mismo calibrado que alimenta monotonic_ns().
-// Es la velocidad que la ventana de propiedades del sistema muestra como reloj
-// del procesador. 0 si todavia no se calibro.
+// Calibrated TSC frequency for the system information API.
 uint32_t tsc_khz();
 
 } // namespace timer

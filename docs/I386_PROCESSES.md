@@ -1,6 +1,6 @@
 # i386 processes and preemptive scheduling
 
-The i386 target supports independent ELF32 processes, PIT-driven preemption,
+The i386 target supports independent ELF32 processes, timer-driven preemption,
 `spawn`, `fork`, `waitpid`, `exit`, `exec`, `kill`, `yield`, blocking I/O and sleeping. This
 extends the [real-hardware route](REAL_HARDWARE.md) after its minimal desktop
 milestone. It does not reuse the x86_64 scheduler or promise that target's full
@@ -20,7 +20,8 @@ Each started CPU has its own architectural 104-byte protected-mode TSS and
 eight-byte GDT descriptor. The I/O bitmap offset lies beyond the TSS limit,
 denying direct user port access. Each scheduling CPU owns its current process
 and pinned idle process; the reference ticket lock serializes kernel entries and is
-released after changing stacks. APs use local timers; the BSP retains the PIT.
+released after changing stacks. All scheduling CPUs use local APIC timers.
+The BSP can fall back to the PIT when the local APIC is unavailable.
 See [I386_SMP.md](I386_SMP.md) for startup, remote termination and TLB rules.
 
 Each process owns a 16 KiB kernel stack, a saved return frame and an aligned
@@ -64,19 +65,23 @@ Debug aggregate temporaries exceeding the stack budget.
 
 ## 2. Scheduler
 
-The PIT remains at 100 Hz. The scheduler rotates runnable processes every two
-ticks, giving a 20 ms quantum in delivered PIT time. A CPU-bound process is
-preempted even without `yield` or `sleep`. Interrupt gates keep kernel critical
+The scheduler rotates runnable processes every twenty ticks at 1000 Hz,
+giving a nominal 20 ms quantum. The local APIC delivers periodic ticks on
+each scheduling CPU. The BSP can fall back to the PIT. A CPU-bound process
+is preempted even without `yield` or `sleep`. Interrupt gates keep kernel critical
 sections atomic. A continuation inside the unlocked interrupt-wait helper can
 be preempted by the timer, including an idle yield or a blocking network call;
 it can resume only on its original CPU. Long critical work can still delay a
 tick, so this is not a real-time scheduling guarantee.
 
+Sleep, timer objects, polling and asynchronous receive deadlines use the
+monotonic clock. The BSP checks those deadlines when it next handles a tick.
+
 Processes move between running, runnable, sleeping, reading, writing, polling, child/object waiting and zombie
 states. Asynchronous waits store their return frame/request and return a
 different frame to assembly. Network connect/send waits can retain a C++
 continuation, saved as a shorter ring-0 frame on the process kernel stack.
-PIT delivery and scheduler boundaries service deadlines, blocked I/O and polling. The keyboard
+Timer delivery and scheduler boundaries service deadlines, blocked I/O and polling. The keyboard
 queue is a shared console stream, not reset by spawning a child. When normal
 tasks are blocked, each CPU runs its own ring-3 idle process. Idle yield halts
 inside the kernel with the global lock released, attributing timer ticks to
@@ -168,7 +173,7 @@ probe keeps distinct general registers, segment selectors, carry/direction
 flags, stack canaries, x87 values/control words, all eight XMM registers and
 MXCSR patterns. It uses uptime queries but never yields or sleeps in the CPU
 loop. The host requires at least 200 ms of overlap and at least three recorded
-PIT preemptions per worker, as well as successful pattern checks. A serial
+timer preemptions per worker, as well as successful pattern checks. A serial
 `MULTITASK PASS` alone is insufficient.
 
 The same run checks specific/any-child waits, argument boundaries and bad
@@ -194,8 +199,8 @@ session, while `sxgui-smoke` verifies actual toolkit glyphs and wheel/scrollbar 
 snapshot of the disk and retains serial logs/screenshots with `--artifacts`.
 
 Process-info accounting records running ticks, including kernel time, while
-the system reports ticks summed across scheduling CPUs. BSP PIT ticks still
-provide uptime; AP timer ticks do not advance wall time. Socket reads/receives park in the native
+the system reports ticks summed across scheduling CPUs. Uptime uses
+monotonic time independent of both tick counters. Socket reads/receives park in the native
 scheduler and copy through the waiting process's address space; killed audio
 owners release their session. The optional native OSABI survives fork and
 changes on successful exec. See [I386_SERVICES.md](I386_SERVICES.md).

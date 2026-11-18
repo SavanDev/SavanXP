@@ -11,7 +11,7 @@ import i386_graphics_test
 import i386_services_test
 import i386_smp_test
 
-SERVICE_SCENARIOS = ("services", "device-smoke", "audio-smoke", "audio-record", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke")
+SERVICE_SCENARIOS = ("services", "device-smoke", "clock-smoke", "audio-smoke", "audio-record", "net-smoke", "tcp-smoke", "media-smoke", "power-smoke", "native-smoke", "storage-smoke", "partition-smoke", "virtio-smoke")
 SCENARIOS = SERVICE_SCENARIOS + ("smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "smoke", "boot", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
 
 

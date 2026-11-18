@@ -3,6 +3,8 @@
 #include "process.hpp"
 #include "paging.hpp"
 #include "lapic.hpp"
+#include "timer32.hpp"
+#include "kernel/timer.hpp"
 #include "kernel/string.hpp"
 
 #include <stdint.h>
@@ -126,14 +128,14 @@ extern "C" ContextFrame* i386_handle_irq(ContextFrame* frame) {
     if (irq < kIrqCount)
         for (auto handler : g_shared_irq_handlers[irq]) if (handler) handler();
     cpu::acknowledge_irq(static_cast<uint8_t>(irq));
-    return irq == 0 ? process::timer(frame) : frame;
+    return irq == 0 && timer::backend() == timer::Backend::pit ? clock32::tick(frame) : frame;
 }
 
 extern "C" ContextFrame* i386_handle_external(ContextFrame* frame) {
     auto& entry = g_external[frame->vector];
     for (uint32_t n = 0; n < entry.count; ++n) entry.handlers[n]();
     if (entry.local_eoi) lapic::acknowledge();
-    if (frame->vector == lapic::kTimerVector) return process::timer(frame);
+    if (frame->vector == lapic::kTimerVector) return clock32::tick(frame);
     if (frame->vector == lapic::kRescheduleVector) {
         serial::write("smp: reschedule IPI received cpu=");
         serial::write_dec(cpu::index()); serial::write("\n");

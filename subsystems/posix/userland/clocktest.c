@@ -203,12 +203,36 @@ static void run_phase(int sleeping, struct phase_result *out)
     out->tsc_ms = tsc_ms_since(tsc_start);
 }
 
+static int check_clock_abi(void)
+{
+    int submillisecond = 0;
+    for (unsigned int i = 0; i < 64; ++i)
+    {
+        const unsigned long long before = monotonic_ns();
+        const unsigned long uptime = uptime_ms();
+        const unsigned long long after = monotonic_ns();
+        const unsigned long first_ms = (unsigned long)(before / 1000000ull);
+        const unsigned long last_ms = (unsigned long)(after / 1000000ull);
+        if (after < before || uptime - first_ms > last_ms - first_ms)
+            return 0;
+        if (before % 1000000ull)
+            submillisecond = 1;
+    }
+    return submillisecond;
+}
+
 int main(void)
 {
     struct phase_result spinning;
     struct phase_result sleeping;
     struct phase_result loaded;
     int failures = 0;
+
+    if (!check_clock_abi())
+    {
+        puts_out("CLOCK SMOKE FAIL uptime and nanoseconds must share a submillisecond clock\n");
+        return 1;
+    }
 
     if (wall_seconds() == 0ul)
     {

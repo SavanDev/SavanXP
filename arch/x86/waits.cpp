@@ -1,7 +1,7 @@
 #include "waits.hpp"
 #include "io.hpp"
 #include "paging.hpp"
-#include "pit.hpp"
+#include "kernel/timer.hpp"
 
 namespace i386::waits {
 namespace {
@@ -54,7 +54,7 @@ int begin(uint32_t address, uint32_t count, uint32_t flags, int32_t timeout, boo
         clear(task);
         return result == io::kBlocked ? -SAVANXP_ETIMEDOUT : result;
     }
-    task.wake_ms = timeout < 0 ? 0 : pit::uptime_ms() + timeout;
+    task.wake_ms = timeout < 0 ? 0 : timer::monotonic_ms() + timeout;
     task.state = process::State::object_wait;
     return io::kBlocked;
 }
@@ -64,7 +64,7 @@ void clear(process::Process& task) {
     task.object_count = 0;
 }
 void service() {
-    const uint64_t now = pit::uptime_ms();
+    const uint64_t now = timer::monotonic_ms();
     object::poll_timers(now, nullptr);
     for (uint32_t slot = 0; slot < process::kCapacity; ++slot) {
         auto& task = *process::at(slot);
@@ -104,7 +104,7 @@ bool syscall(ContextFrame& frame) {
     case SAVANXP_SYS_TIMER_CANCEL: {
         auto* t = object::as_timer(lookup(frame.edi, object::access_modify));
         if (!t) { result = -SAVANXP_EBADF; break; }
-        if (frame.eax == SAVANXP_SYS_TIMER_SET) object::set_timer(t, pit::uptime_ms() + frame.esi, frame.edx);
+        if (frame.eax == SAVANXP_SYS_TIMER_SET) object::set_timer(t, timer::monotonic_ms() + frame.esi, frame.edx);
         else object::cancel_timer(t);
         result = 0;
         break;
