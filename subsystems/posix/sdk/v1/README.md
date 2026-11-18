@@ -1,248 +1,115 @@
-# SDK v1.2
+# SDK 2.0
 
-`subsystems/posix/sdk/v1` es la superficie pública actual para compilar apps externas en `C`
-contra SavanXP. El nivel de contrato vigente dentro de esta carpeta es `SDK
-1.2`.
+This directory is the public surface for building external C programs for
+SavanXP. The contract it carries is **SDK 2.0**; the exact list of what is
+stable, and the versioning rules, are in [`REFERENCE.md`](REFERENCE.md).
 
-## Superficie pública
+The directory keeps its `v1` name for now. The SDK 2.0 roadmap
+([`docs/roadmaps/open/SDK_V2_ROADMAP.md`](../../../../docs/roadmaps/open/SDK_V2_ROADMAP.md))
+replaces it with a sysroot the build generates, which serves POSIX and SUN
+programs alike.
 
-Incluye:
+## Breaking changes since 1.2
 
-- `include/savanxp/libc.h`
-- `include/savanxp/syscall.h`
-- headers estandar en `include/` (`unistd.h`, `fcntl.h`, `poll.h`,
+SDK 1.2 was declared on 2026-03-22. Three changes since then stop a program
+written against it from building or running, which is why this is 2.0 and
+not 1.3:
+
+- **The raw calls in `savanxp/libc.h` carry a `savanxp_` prefix.** `read`,
+  `write`, `open`, `close`, `readdir`, `ioctl`, `socket`, `bind`, `sendto`,
+  `recvfrom`, `connect`, `getpid`, `stat`, `fstat`, `chdir` and `getcwd` are
+  now `savanxp_read` and so on, and still return `-errno`. The standard names
+  live in the standard headers (`<unistd.h>`, `<fcntl.h>`, ...) with the POSIX
+  convention: `-1` and `errno`. To port a 1.2 program, either include the
+  standard headers and check for `-1`, or add the prefix and keep the
+  negative-result checks.
+- **`/dev/fb0` and the `FB_IOC_*` ioctls are gone.** Draw through `gfx_*`.
+  `/dev/gpu0` is the low-level device, and it belongs to `compositord` and
+  diagnostic tools.
+- **`gfx_open` needs the compositor.** It opens the client surface that the
+  desktop hands a program it launches, and fails when there is none. There is
+  no direct full-screen fallback.
+
+## What the SDK contains
+
+- `include/savanxp/libc.h`, `include/savanxp/syscall.h`: the low layer, raw
+  system calls prefixed `savanxp_*` returning `-errno`, plus process,
+  descriptor, graphics and device helpers.
+- Standard headers under `include/`: `unistd.h`, `fcntl.h`, `poll.h`,
   `sys/select.h`, `signal.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`,
-  `sys/stat.h`, `sys/socket.h`, etc.)
-- `runtime/crt0.S`
-- `runtime/libc.c`
-- `runtime/posix.c`
-- `linker.ld`
-- `REFERENCE.md`
-- `include/savanxp/gfx2d.h`, `include/savanxp/sxchrome.h`, `include/savanxp/sxgui.h`:
-  the platform graphics headers (`include/sxgfx/`) plus what is POSIX-only
-- `runtime/gfx.c`, `runtime/gfx_scaled.c`, `runtime/sxgui_app.c`: the POSIX
-  window client, scaled presenter and application frame; the painter, chrome,
-  toolkit and fonts they use are in `system/gfx/`
-- `include/savanxp/audio.h`
-- `runtime/audio.c` (optional with `tools/build-user.sh --audio`)
+  `sys/stat.h`, `sys/socket.h`, `sys/mman.h`, `termios.h`, `pthread.h`,
+  `dlfcn.h` and the rest. They declare the standard name and nothing else:
+  there is no `#define name sx_name`, and the symbol really exists at link
+  time. The `sx_*` functions are the runtime's internal implementation.
+- `include/savanxp/gfx2d.h`, `sxchrome.h`, `sxgui.h`: the platform graphics
+  headers (`include/sxgfx/`) plus what is POSIX-only.
+- `include/savanxp/audio.h`, `midi.h`, `img.h`, `sxe.h`: PCM playback and
+  the mixer, the MIDI synthesizer, image decoding, and SXE resources.
+- `runtime/`: `crt0.S` and the C runtime. `runtime/units.txt` lists every
+  unit by group (`core`, `math`, `gui`, `audio`, `midi`, `gl`, `setjmp`), and
+  every build reads it.
+- `linker.ld`: programs load at `0x400000`.
 
-## ABI pública v1.2
+## ABI rules
 
-Categorías soportadas:
+- System calls go through `int 0x80`.
+- `tools/build-user.sh` produces static `ELF64` images for `x86_64`. The
+  system has a dynamic loader and shared libraries in `/lib`
+  ([SHARED_LIBRARIES.md](../../../../docs/kernel/SHARED_LIBRARIES.md)), but
+  linking an external program against them is not part of the SDK yet: the
+  ports that do it (`doomgeneric`, `ccleste`, FFmpeg) set it up themselves.
+  The roadmap's phase 4 moves it into the SDK.
+- `main(int argc, char** argv)` is supported, with at most
+  `SAVANXP_MAX_ARGC = 15` arguments of up to `SAVANXP_MAX_ARG_LENGTH = 63`
+  bytes.
 
-- syscalls crudos (`savanxp/libc.h`): `savanxp_read`, `savanxp_write`, `savanxp_open`, `savanxp_open_mode`, `savanxp_close`, `savanxp_readdir`, `savanxp_ioctl`, `savanxp_socket`, `savanxp_bind`, `savanxp_sendto`, `savanxp_recvfrom`, `savanxp_connect`
-- syscalls crudos POSIX base: `savanxp_getpid`, `savanxp_stat`, `savanxp_fstat`, `savanxp_chdir`, `savanxp_getcwd`
-- introspeccion del sistema: `system_info`
-- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `fork`, `kill`
-- descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
-- filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
-- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `poll`, `select`, `raise`
-- graphics: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_present_region`, `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`, `gfx_should_close`, `gfx_set_title` (the window title, like SUN's `sxnwm_set_title`)
-- toolkit 2D: `sx_bitmap`, `sx_painter`, `sx_rect_set`, `gfx_present_rects`
-- presentation helper: `sx_scaled_presenter` for centered integer-scaled pixel-art frames
-- optional PCM playback: `savanxp/audio.h` and `sx_audio_mixer` (`-Audio`)
-- mouse: `mouse_open`, `mouse_poll_event`
-- primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
+## Workflow
 
-Nodos de dispositivo expuestos actualmente:
-
-- `/dev/gpu0`
-- `/dev/input0`
-- `/dev/mouse0`
-- `/dev/net0`
-- `/dev/pcspk`
-- `/dev/audio0`
-
-Notas graficas:
-
-- `gfx_*` es el camino grafico soportado para apps normales.
-- `gfx_open` espera la superficie cliente entregada por `desktop`; si la app
-  no fue lanzada como cliente del compositor, falla.
-- `/dev/gpu0` queda como interfaz de bajo nivel para `compositord`, tooling y
-  diagnostico directo; apps graficas normales usan `gfx_*`.
-
-Ioctl groups visibles:
-
-- `NET_IOC_*`
-- `PCSPK_IOC_*`
-- `GPU_IOC_*`
-- `AUDIO_IOC_*`
-
-Errores visibles:
-
-- `SAVANXP_EIO`
-- `SAVANXP_EAGAIN`
-- `SAVANXP_EINVAL`
-- `SAVANXP_EBADF`
-- `SAVANXP_ENOENT`
-- `SAVANXP_ENOMEM`
-- `SAVANXP_EBUSY`
-- `SAVANXP_EEXIST`
-- `SAVANXP_ENODEV`
-- `SAVANXP_ENOTDIR`
-- `SAVANXP_EISDIR`
-- `SAVANXP_ENOSPC`
-- `SAVANXP_EPIPE`
-- `SAVANXP_ENOSYS`
-- `SAVANXP_ENOTEMPTY`
-- `SAVANXP_ENAMETOOLONG`
-- `SAVANXP_ECHILD`
-- `SAVANXP_ETIMEDOUT`
-- `SAVANXP_EXDEV`
-- `SAVANXP_EROFS`
-
-Reglas del ABI:
-
-- El ABI sigue siendo `int 0x80`.
-- Los programas son `ELF64` estáticos para `x86_64`.
-- No hay dynamic linker ni shared libraries.
-- Las syscalls devuelven `>= 0` en éxito y `< 0` en error.
-- `main(int argc, char** argv)` está soportado.
-- `waitpid(SAVANXP_WAIT_ANY, &status)` está soportado.
-- `fork()` clona el espacio de direcciones y descriptores del proceso actual.
-- las señales disponibles en `SDK 1.2` son de accion por defecto (`SIGINT`,
-  `SIGTERM`, `SIGKILL`, `SIGPIPE`, `SIGCHLD`); no hay handlers POSIX
-  completos todavia.
-
-Límites congelados para v1:
-
-- `SAVANXP_MAX_ARGC = 15`
-- `SAVANXP_MAX_ARG_LENGTH = 63`
-- `SAVANXP_PROC_NAME_CAPACITY = 32`
-- `SAVANXP_STDIN_FILENO`, `SAVANXP_STDOUT_FILENO`, `SAVANXP_STDERR_FILENO`
-
-Helpers públicos del runtime:
-
-- errores: `result_is_error`, `result_error_code`, `result_error_string`
-- logging: `puts_err`, `printf_fd`, `eprintf`
-- introspección: `process_state_string`
-- rendering: `struct savanxp_gfx_context`
-
-Capas públicas:
-
-- `savanxp/*` es la capa baja del ABI: syscalls crudos, prefijados `savanxp_*`, que devuelven `-errno` directo.
-- los headers estándar en `subsystems/posix/sdk/v1/include` montan la capa POSIX arriba, con la convención de siempre (`-1` mas `errno`). Declaran el nombre estándar y nada más: no hay `#define nombre sx_nombre`, y el símbolo existe de verdad en el link, asi que compila y linkea código que solo conoce `<stdio.h>` y compañía. Los `sx_*` son la implementación interna del runtime.
-- la libc pública incluye allocator sobre heap fijo del runtime, con `malloc`,
-  `free`, `calloc` y `realloc` reciclables dentro de ese espacio.
-
-Tipos compartidos para dispositivos:
-
-- `struct savanxp_fb_info`
-- `struct savanxp_input_event`
-- `struct savanxp_mouse_event`
-- `struct savanxp_net_info`
-- `struct savanxp_system_info`
-- `enum savanxp_net_status`
-- `enum savanxp_timer_backend`
-- `struct savanxp_net_ping_request`
-- `struct savanxp_net_ping_result`
-- `struct savanxp_pcspk_beep`
-- `struct savanxp_audio_info`
-- `struct savanxp_sockaddr_in`
-
-Sockets v1:
-
-- `socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP)`
-- `bind(fd, &addr)`
-- `sendto(fd, buffer, len, &addr)`
-- `recvfrom(fd, buffer, len, &addr, timeout_ms)`
-- `socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP)`
-- `connect(fd, &addr, timeout_ms)`
-- sockets TCP conectados usan `write(fd, ...)` y `read(fd, ...)`
-- `poll`/`select` cubren sockets, pipes, TTY/input y archivos regulares como
-  `ready` inmediato
-- `fcntl(fd, F_SETFL, O_NONBLOCK)` expone modo no bloqueante para pipes,
-  sockets y entradas compatibles
-- servidor TCP todavia no existe en v1; el alcance actual es cliente minimo
-
-Diagnostico de red v1:
-
-- `savanxp_net_info.last_status` expone la ultima etapa observada por el driver
-- `savanxp_net_info` incluye contadores basicos de TX/RX, ARP y ping timeout
-
-## Flujo recomendado
-
-Compilar e instalar una app externa:
+Build and install an external program:
 
 ```bash
 ./build.sh build
 ./tools/build-user.sh --source sdk/hello --name hello
 ```
 
-Compilar solo el ELF:
+Build only the ELF:
 
 ```bash
 ./tools/build-user.sh --source sdk/multifile --name multifile --no-install
 ```
 
-Compilar e instalar desde un directorio con varias fuentes:
-
-```bash
-./tools/build-user.sh --source sdk/multifile --name multifile
-```
-
-Crear una app nueva desde el template público:
+Start a program from the public template:
 
 ```bash
 ./tools/new-user-app.sh --name myapp
 ./tools/build-user.sh --source sdk/myapp --name myapp
 ```
 
-El tooling:
+The tool:
 
-- acepta un archivo `.c` individual o un directorio
-- compila todas las fuentes `.c` y `.S` del directorio en forma recursiva
-- agrega automáticamente `-I <source>` y `-I <source>/include` si existe
-- usa `subsystems/posix/sdk/v1` como runtime público en vez del árbol interno de `subsystems/posix/userland`
+- takes a single `.c` file or a directory, and compiles every `.c` and `.S`
+  under a directory recursively;
+- adds `-I <source>` and, when it exists, `-I <source>/include`;
+- links the runtime groups the program asks for: `--gui` for the SXGUI
+  toolkit, `--audio` for PCM audio, `--sse` for SSE/SSE2, `libm` and SxGL;
+- builds a SUN program instead with `--native`
+  ([NATIVE_APPS.md](../../../../docs/userland/NATIVE_APPS.md)).
 
-Smoke tests útiles en el estado actual:
-
-- `netinfo`
-- `ping 10.0.2.2`
-- `udptest`
-- `tcpget 104.18.26.120 80 example.com /`
-- `beep 440 200`
-- `audiotest`
-- `gfxdemo`
-- `forktest`
-- `smptest` (con `--smp 4`: procesos corriendo en paralelo, `kill` entre cores)
-- `polltest`
-- `sigtest`
-- `ls /bin`
-- `smoke` via `./build.sh smoke smoke`
-
-Ejemplo externo recomendado para GUI:
+A graphical example:
 
 ```bash
 ./tools/build-user.sh --source sdk/gfxhello --name gfxhello
 ```
 
-Nota de red:
-
-- con `QEMU user-net` la prueba confiable del stack ICMP v1 es `ping 10.0.2.2`
-- un `ping` directo a Internet puede fallar aunque el driver RTL8139 esté bien
-- la IP usada por `tcpget` puede cambiar; el 9 de marzo de 2026 el valor
-  validado para `example.com:80` fue `104.18.26.120`
-
-## Estructura mínima recomendada
-
-Las apps nuevas deberían incluir:
-
-```c
-#include "savanxp/libc.h"
-```
-
-La estructura mínima más cómoda es:
+## Minimal layout
 
 ```text
-miapp/
+myapp/
   main.c
   include/
-    miapp.h
+    myapp.h
   helper.c
 ```
 
-El ejemplo `sdk/template` sirve como punto de partida y `sdk/multifile`
-demuestra compilación con varias unidades de traducción.
-
-Para el detalle de límites y contratos estables, ver `subsystems/posix/sdk/v1/REFERENCE.md`.
+`sdk/template` is the starting point and `sdk/multifile` shows a program with
+several translation units.

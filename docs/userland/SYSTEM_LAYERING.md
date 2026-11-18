@@ -30,13 +30,13 @@ and the platform never grows a dependency on an app.
 
 ```
   ┌─────────────────────────────────────────────────────────────┐
-  │  Apps (C, POSIX SDK v1)                                      │
+  │  Apps (C, POSIX SDK 2.0)                                     │
   │  shell · files · notepad · calculator · task manager · games │
   │  paint with SXGUI-C / SXGFX, talk to windowd over the WM     │
   │  protocol, and to the kernel through the POSIX syscalls      │
   └─────────────────────────────────────────────────────────────┘
                               ▲
-                              │  POSIX SDK v1 (subsystems/posix/sdk/v1)
+                              │  POSIX SDK 2.0 (subsystems/posix/sdk/v1)
                               ▼
   ┌─────────────────────────────────────────────────────────────┐
   │  Native platform (C)                                         │

@@ -1,77 +1,97 @@
-# SDK v1.2 Reference
+# SDK 2.0 Reference
 
-## Stability
+## Versioning
 
-The `subsystems/posix/sdk/v1` folder is the frozen public surface of the
-SavanXP external SDK. The level documented here is `SDK 1.2`.
+The SDK version is `SAVANXP_SDK_VERSION_MAJOR.SAVANXP_SDK_VERSION_MINOR`
+(`include/abi/savanxp_abi.h`), today **2.0**. About and `sdk/statusdemo`
+print it.
 
-Part of the contract:
+- **Minor version: additions.** A new header, function, flag, ioctl,
+  device node or runtime group, or a documented limit that is raised. A
+  program built against 2.n still builds and runs against 2.n+1.
+- **Major version: anything that breaks a program.** A rename, a removal,
+  a changed return convention, a lowered limit, or a call that starts to
+  require something it did not.
+- **The version steps once per release, not once per change.** Like the OS
+  version, `master` carries the version the next release will ship, at most
+  one step above the last released one. Whether it steps is decided by
+  everything that changes until that release. Under that version:
+  - The first change since the release that adds API raises the minor
+    (2.0 → 2.1). Further additions before the release leave it at 2.1.
+  - The first change that breaks a program raises the major (2.0 or 2.1 →
+    3.0). Further changes of either kind before the release leave it at
+    3.0.
+  - A release with no SDK change keeps the number it had.
+- A change that touches the SDK says so in its changelog entry, naming the
+  version it lands in. The release checks the number against those entries
+  ([RELEASING.md](../../../../docs/build/RELEASING.md#1-the-release-commit)).
+- SUN's surface counts the same as POSIX's once the SDK carries it
+  ([SDK_V2_ROADMAP.md](../../../../docs/roadmaps/open/SDK_V2_ROADMAP.md),
+  phase 3).
+- The SDK version is not the soname version: shared libraries are
+  `lib*.so.0.4`, tracking the OS
+  ([SHARED_LIBRARIES.md](../../../../docs/kernel/SHARED_LIBRARIES.md)).
 
-- `include/savanxp/libc.h`
-- `include/savanxp/syscall.h`
-- the standard headers under `include/`
-- `runtime/crt0.S`
-- `runtime/libc.c`
-- `runtime/posix.c`
-- `runtime/pthread.c`
+What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-changes-since-12).
+
+## What the contract covers
+
+- `include/savanxp/*.h` and the standard headers under `include/`
+- the runtime under `runtime/`, as grouped by `runtime/units.txt`
 - `linker.ld`
-- `tools/build-user.sh`
-- `tools/new-user-app.sh`
+- `tools/build-user.sh` and `tools/new-user-app.sh`
 
-## Límites visibles
+## Visible limits
 
 - `SAVANXP_MAX_ARGC = 15`
 - `SAVANXP_MAX_ARG_LENGTH = 63`
 - `SAVANXP_PROC_NAME_CAPACITY = 32`
-- descriptores estándar: `SAVANXP_STDIN_FILENO`, `SAVANXP_STDOUT_FILENO`, `SAVANXP_STDERR_FILENO`
-- `waitpid(SAVANXP_WAIT_ANY, &status)` está soportado
+- standard descriptors: `SAVANXP_STDIN_FILENO`, `SAVANXP_STDOUT_FILENO`,
+  `SAVANXP_STDERR_FILENO`
+- `waitpid(SAVANXP_WAIT_ANY, &status)` is supported
 
-## Convenciones
+## Conventions
 
-- éxito: retorno `>= 0`
-- error: retorno `< 0`
-- para decodificar errores usar: `result_is_error`, `result_error_code`, `result_error_string`
-- para estados de proceso usar: `process_state_string`
-- las syscalls siguen usando `int 0x80`
-- los binarios externos son `ELF64` estáticos para `x86_64`
+- `savanxp/*` calls return `>= 0` on success and `-errno` on failure. Decode
+  them with `result_is_error`, `result_error_code` and `result_error_string`.
+- Standard-header calls return `-1` and set `errno`, as POSIX says.
+- Process states: `process_state_string`.
+- System calls use `int 0x80`.
+- `tools/build-user.sh` produces static `ELF64` images for `x86_64`.
 
-## Syscalls visibles
+## Low-layer calls (`savanxp/libc.h`)
 
-- I/O: `read`, `write`, `open`, `close`, `readdir`, `ioctl`
-- sockets: `socket`, `bind`, `sendto`, `recvfrom`, `connect`
-- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `exit`, `fork`, `kill`
-- descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
+- I/O: `savanxp_read`, `savanxp_write`, `savanxp_open`, `savanxp_open_mode`,
+  `savanxp_close`, `savanxp_readdir`, `savanxp_ioctl`
+- sockets: `savanxp_socket`, `savanxp_bind`, `savanxp_sendto`,
+  `savanxp_recvfrom`, `savanxp_connect`
+- base: `savanxp_getpid`, `savanxp_stat`, `savanxp_fstat`, `savanxp_chdir`,
+  `savanxp_getcwd`
+- processes: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `exit`,
+  `fork`, `kill`
+- descriptors: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
-- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`, `poll`, `select`, `raise`
-- tiempo real: `realtime`, `set_realtime` (fija el RTC en UTC, anios 2000..2099)
-- consistencia: `fscheck` (informe de solo lectura del volumen; ver `docs/fs/SXFS_CHECK.md`)
+- utilities: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`,
+  `system_info`, `poll`, `select`, `raise`
+- real time: `realtime`, `set_realtime` (sets the RTC in UTC, years
+  2000..2099)
+- consistency: `fscheck` (a read-only report of the volume; see
+  `docs/fs/SXFS_CHECK.md`)
 
-## Errores visibles
+## Visible errors
 
-- `SAVANXP_EIO`
-- `SAVANXP_EAGAIN`
-- `SAVANXP_EINVAL`
-- `SAVANXP_EBADF`
-- `SAVANXP_ENOENT`
-- `SAVANXP_ENOMEM`
-- `SAVANXP_EBUSY`
-- `SAVANXP_EEXIST`
-- `SAVANXP_ENODEV`
-- `SAVANXP_ENOTDIR`
-- `SAVANXP_EISDIR`
-- `SAVANXP_ENOSPC`
-- `SAVANXP_EPIPE`
-- `SAVANXP_ENOSYS`
-- `SAVANXP_ENOTEMPTY`
-- `SAVANXP_ENAMETOOLONG`
-- `SAVANXP_ECHILD`
-- `SAVANXP_ETIMEDOUT`
-- `SAVANXP_EXDEV`
-- `SAVANXP_EROFS`
+`SAVANXP_EPERM`, `SAVANXP_EIO`, `SAVANXP_ENOEXEC`, `SAVANXP_EACCES`,
+`SAVANXP_EAGAIN`, `SAVANXP_EINVAL`, `SAVANXP_EBADF`, `SAVANXP_ENOENT`,
+`SAVANXP_ENOMEM`, `SAVANXP_EBUSY`, `SAVANXP_EEXIST`, `SAVANXP_ENODEV`,
+`SAVANXP_ENOTDIR`, `SAVANXP_EISDIR`, `SAVANXP_ENOSPC`, `SAVANXP_EPIPE`,
+`SAVANXP_ENOTTY`, `SAVANXP_ENOSYS`, `SAVANXP_ENOTEMPTY`, `SAVANXP_ECHILD`,
+`SAVANXP_EXDEV`, `SAVANXP_EROFS`, `SAVANXP_ECONNRESET`, `SAVANXP_ETIMEDOUT`,
+`SAVANXP_ECONNREFUSED`, `SAVANXP_EINTR`, `SAVANXP_ECANCELED`,
+`SAVANXP_ENAMETOOLONG`
 
-## Dispositivos v1
+## Devices
 
-Nodos reservados actualmente:
+Device nodes:
 
 - `/dev/gpu0`
 - `/dev/input0`
@@ -84,12 +104,13 @@ Ioctl groups:
 
 - gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`, `GPU_IOC_GET_STATS`, `GPU_IOC_GET_SCANOUTS`, `GPU_IOC_REFRESH_SCANOUTS`, `GPU_IOC_SET_CURSOR`, `GPU_IOC_MOVE_CURSOR`, `GPU_IOC_GET_PRESENT_TIMELINE`, `GPU_IOC_WAIT_PRESENT`
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
-- pc speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
+- PC speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
 - audio: `AUDIO_IOC_GET_INFO`
 
-Tipos compartidos:
+Shared types:
 
-- `struct savanxp_fb_info`
+- `struct savanxp_fb_info` (the surface description inside
+  `struct savanxp_gfx_context`; there is no `/dev/fb0`)
 - `enum savanxp_gpu_backend` (`NONE`, `VIRTIO`, `FRAMEBUFFER`)
 - `struct savanxp_gpu_stats`
 - `struct savanxp_gpu_scanout_state`
@@ -111,135 +132,113 @@ Tipos compartidos:
 - `struct savanxp_audio_info`
 - `struct savanxp_sockaddr_in`
 
-Sockets v1:
+## Sockets
 
-- dominio soportado: `SAVANXP_AF_INET`
-- tipo soportado: `SAVANXP_SOCK_DGRAM`
-- protocolo soportado: `SAVANXP_IPPROTO_UDP`
-- `recvfrom(..., timeout_ms)` usa milisegundos; `0` espera indefinidamente
-- `savanxp_sockaddr_in.ipv4` y `.port` usan orden host
-- cliente TCP minimo soportado:
-- `socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP)`
-- `connect(fd, &addr, timeout_ms)`
-- `write(fd, ...)` para enviar
-- `read(fd, ...)` para recibir hasta EOF o timeout
-- `poll` y `select` cubren sockets, pipes, TTY/input y archivos regulares
-- `fcntl(fd, F_GETFL/F_SETFL)` expone `O_NONBLOCK`
-- servidor TCP, `listen` y `accept` quedan fuera de v1
+- domain: `SAVANXP_AF_INET`
+- UDP: `SAVANXP_SOCK_DGRAM` with `SAVANXP_IPPROTO_UDP`. `recvfrom(...,
+  timeout_ms)` takes milliseconds; `0` waits forever.
+- `savanxp_sockaddr_in.ipv4` and `.port` are in host byte order.
+- A TCP client: `socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM,
+  SAVANXP_IPPROTO_TCP)`, `connect(fd, &addr, timeout_ms)`, then `write` to
+  send and `read` to receive until EOF or timeout.
+- `poll` and `select` cover sockets, pipes, TTY/input and regular files.
+- `fcntl(fd, F_GETFL/F_SETFL)` exposes `O_NONBLOCK`.
+- There is no TCP server: no `listen` and no `accept`.
 
-Diagnostico de red:
+Network diagnostics:
 
-- `savanxp_net_info.last_status` usa `enum savanxp_net_status`
-- `savanxp_net_info` expone `tx_frames`, `rx_frames`, `tx_errors`, `rx_errors`
-- `savanxp_net_info` expone `arp_requests`, `arp_timeouts`, `ping_requests`, `ping_timeouts`
+- `savanxp_net_info.last_status` uses `enum savanxp_net_status`.
+- `savanxp_net_info` exposes `tx_frames`, `rx_frames`, `tx_errors`,
+  `rx_errors`, `arp_requests`, `arp_timeouts`, `ping_requests` and
+  `ping_timeouts`.
 
-## GFX runtime v1
+## Graphics runtime
 
-Helpers públicos expuestos por el runtime:
+Public helpers:
 
-- `gfx_open`
-- `gfx_close`
-- `gfx_acquire`
-- `gfx_release`
-- `gfx_present`
-- `gfx_present_region`
-- `gfx_present_rects`
-- `gfx_poll_event`
-- `gfx_pointer_open`
-- `gfx_poll_pointer`
-- `gfx_should_close`
-- `mouse_open`
-- `mouse_poll_event`
-- `gfx_rgb`
-- `gfx_stride_pixels`
-- `gfx_buffer_pixels`
-- `gfx_buffer_bytes`
-- `gfx_clear`
-- `gfx_pixel`
-- `gfx_hline`
-- `gfx_vline`
-- `gfx_rect`
-- `gfx_frame`
-- `gfx_text_width`
-- `gfx_text_height`
-- `gfx_blit_text`
-- `sx_scaled_presenter` (integer pixel-art scaling, centered layout and row damage)
+- window: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`,
+  `gfx_present`, `gfx_present_region`, `gfx_present_rects`,
+  `gfx_should_close`, `gfx_set_title`
+- input: `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`,
+  `mouse_open`, `mouse_poll_event`
+- software primitives: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`,
+  `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`,
+  `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`,
+  `gfx_blit_text`
+- `sx_scaled_presenter`: integer pixel-art scaling, centered layout and row
+  damage
 
-Contrato actual:
+The contract:
 
-- `gfx_*` es la API soportada para apps graficas normales.
-- `gfx_open` abre solo el modo cliente del compositor usando la convencion
-  heredada por `fork()+exec()` en `fd 3..6`.
-- si esos fds no existen, `gfx_open` falla; el fallback directo legacy ya no
-  es parte del camino normal.
-- `gfx_present` y `gfx_present_region` aceptan 32-bpp desde userland y
-  notifican regiones sucias al compositor.
-- `gfx_poll_event` (teclado) y `gfx_poll_pointer` (puntero, con el fd de
-  `gfx_pointer_open`) leen el canal de eventos del WM, que es uno solo para los
-  dos tipos. `mouse_open`/`mouse_poll_event` leen siempre `/dev/mouse0`, que
-  junto con `/dev/input0` queda para diagnostico de bajo nivel.
-- `gfx_should_close` devuelve 1 cuando el WM pidio cerrar la ventana.
-- bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
-  `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
-- `/dev/gpu0` queda reservado como ABI de bajo nivel para `compositord`,
-  `gputest` y tooling diagnostico (`GPU_IOC_PRESENT*` incluidos).
-- hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas
-  arbitrarias ni rueda en v1
-- el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
+- `gfx_*` is the supported API for graphical programs.
+- `gfx_open` opens only the compositor client mode, using the descriptors
+  `fork()` and `exec()` inherit as `fd 3..6`. Without them it fails; there is
+  no direct full-screen fallback.
+- `gfx_present` and `gfx_present_region` take 32-bpp pixels from the program
+  and report the damaged regions to the compositor.
+- `gfx_poll_event` (keyboard) and `gfx_poll_pointer` (pointer, with the
+  descriptor from `gfx_pointer_open`) read the window manager's event channel,
+  which carries both kinds. `mouse_open` and `mouse_poll_event` always read
+  `/dev/mouse0`, which with `/dev/input0` is for low-level diagnostics.
+- `gfx_should_close` returns 1 once the window manager asked the window to
+  close.
+- Under QEMU the kernel may back `/dev/mouse0` with an absolute
+  `virtio-tablet-pci`, translated to relative motion so the mouse event
+  format does not change.
+- `/dev/gpu0` is the low-level device for `compositord`, `gputest` and
+  diagnostic tools, `GPU_IOC_PRESENT*` included.
+- The back buffer belongs to the program; `gfx_buffer_pixels` and
+  `gfx_buffer_bytes` help validate it.
 - `sx_scaled_presenter` is the path for low-resolution BGRX frames: it scales
   by an integer factor, centers the image, caches the expanded row, and
   presents only the smallest changed source band. `retarget` forces a full
   frame after a resize.
 
-Audio PCM v1.2:
+## PCM audio
 
-- `audio_open` abre `/dev/audio0` para playback; the device also reserves the
-  independent capture direction when the kernel supports it.
+- `audio_open` opens `/dev/audio0` for playback. The device also reserves
+  the independent capture direction when the kernel supports it.
 - `AUDIO_IOC_GET_INFO` exposes the active sample rate, channel count, sample
   width, and period/buffer sizes.
 - `write(fd, pcm, bytes)` accepts interleaved `S16LE stereo` and requires a
   whole number of `frame_bytes`.
-- the optional `savanxp/audio.h` module adds `sx_audio_mixer`: a wall-clock
+- The optional `savanxp/audio.h` module adds `sx_audio_mixer`: a wall-clock
   frame sink with a growable stereo buffer and unsigned-8 mono voices, source
   rate/pitch conversion, and classic volume/separation panning. Link it with
   `./tools/build-user.sh --audio`; the kernel remains a raw PCM transport.
-- the current playback backend is `virtio-sound` over PCI.
-
-## Flujo recomendado
-
-1. Crear una app desde `sdk/template` o con `tools/new-user-app.sh`
-2. Compilar con `tools/build-user.sh`
-3. Instalar en `/bin`
-4. Ejecutar desde la shell por nombre o ruta
 
 ## POSIX layer
 
-Standard headers exposed in `subsystems/posix/sdk/v1/include`:
+Standard headers in `include/`:
 
 - `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
-- `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`
+- `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`, `termios.h`
 - `sys/socket.h`, `sys/mman.h`, `netinet/in.h`, `arpa/inet.h`
-- `pthread.h`, `sched.h`
+- `pthread.h`, `sched.h`, `dlfcn.h`, `syslog.h`
 
-Compatibility convention:
+The layer lives in `runtime/posix.c` (threads in `runtime/pthread.c`) and is
+reached through the standard headers. Its practical limits:
 
-- `savanxp/*` stays as the low layer.
-- the POSIX/libc layer lives in `runtime/posix.c` (threads in
-  `runtime/pthread.c`) and is reached through the standard headers.
-
-Practical limits of the POSIX layer:
-
-- a fixed heap allocator inside the runtime; `free()` recycles blocks and
+- A fixed heap allocator inside the runtime; `free()` recycles blocks and
   `realloc()` frees the old block when it has to move it.
 - `DIR->d_type` is filled from `stat()`, best effort.
-- `setsockopt`/`getsockopt` cover only timeouts and basic client flags.
-- `mmap` / `munmap` cover only anonymous mappings: no file-backed mappings,
+- `setsockopt` and `getsockopt` cover only timeouts and basic client flags.
+- `mmap` and `munmap` cover only anonymous mappings: no file-backed mappings,
   arbitrary offsets or real copy-on-write.
-- `fork()` and `kill()` exist, but signals keep their default action.
-- `select`/`poll` aim for consistent use rather than exhaustive POSIX
+- **Signals keep their default action.** The kernel delivers no signals.
+  `signal`, `sigaction` and `sigprocmask` exist and record what they are
+  given, but no handler is ever called. `sigsuspend` returns `-1` with
+  `EINTR` at once.
+- `termios`: `tcgetattr` reports a fixed canonical mode with echo, and
+  `tcsetattr` is accepted and ignored. There is no job control.
+- `chmod`, `fchmod`, `chown` and `umask` exist.
+- `dlfcn.h` is declared here, but it is implemented by the loader, which only
+  PIE programs carry. A program from `build-user.sh` is static, and using
+  `dlopen` there is a link error.
+- `select` and `poll` aim for consistent use rather than exhaustive POSIX
   compatibility; not every descriptor type has full Unix semantics.
-- threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
+- Threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
   recursive, error-checking), condition variables, once and keys, plus
   `__thread` variables in the executable. No cancellation, read-write locks,
   barriers or process-shared objects, and a shared library cannot have TLS.
@@ -249,18 +248,15 @@ Practical limits of the POSIX layer:
   thread exists. `fork` copies only the calling thread and `exec` ends the
   others. See `docs/roadmaps/done/THREADS_ROADMAP.md`.
 
-## No incluido en v1
+## Not included
 
-- librerías compartidas
-- loader dinámico
-- compatibilidad POSIX completa
-- `listen` / `accept`
-- `mmap` file-backed / `munmap` parcial por rango
-- handlers y masks completos de señales (`sigaction`, `signal`,
-  `sigprocmask`, `sigsuspend`)
-- DNS
-- DHCP
-- `termios` y job control
-- `chmod`, `chown`, `link`, `symlink`, `readlink`, `utime*`
-- audio capture and `mmap`/shared buffers for audio; the optional playback mixer
-  lives in `savanxp/audio.h`
+- linking an external program against shared libraries through
+  `build-user.sh` (roadmap phase 4)
+- full POSIX compatibility
+- `listen` and `accept`
+- file-backed `mmap`, and partial `munmap` by range
+- signal delivery to handlers
+- a resolver API (`getaddrinfo`, `gethostbyname`)
+- job control and a configurable line discipline
+- `link`, `symlink`, `readlink`, `utime*`
+- audio capture and `mmap`/shared buffers for audio

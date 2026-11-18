@@ -34,6 +34,14 @@ version. The release commit changes three things and nothing else:
 - `CMakeLists.txt`: `project(SavanXP VERSION X.Y.Z ...)`.
 - `README.md`: ``Current version: `vX.Y.Z` ``.
 
+It changes no SDK version. `SAVANXP_SDK_VERSION_MAJOR`/`MINOR` in
+`include/abi/savanxp_abi.h` was already stepped by the first change that
+needed it. Before committing, check that the SDK version is at most one step
+above the last release's, and that it matches the `[Unreleased]` entries that
+touch the SDK: a break makes it a major step, additions alone a minor step,
+and no entries keep the number
+([the policy](../../subsystems/posix/sdk/v1/REFERENCE.md#versioning)).
+
 Commit it before building: the image must carry this commit's build number.
 
 ## 2. The release image

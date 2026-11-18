@@ -47,6 +47,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The SDK is 2.0 (`SAVANXP_SDK_VERSION_MAJOR 2`, `MINOR 0`), recording breaks already shipped since 1.2.**
+  The breaks: the `savanxp_` prefix on raw calls, no `/dev/fb0`, and `gfx_open` needing the compositor. Its README
+  and REFERENCE are now in English, with a versioning policy. See [SDK_V2_ROADMAP.md](docs/roadmaps/open/SDK_V2_ROADMAP.md).
+
 - **The tick no longer reads the network card or the PS/2 controller every millisecond when their interrupts work.**
   It checks them every 64 ticks and goes back to polling, with a `nic:` or `ps2:` log line, if those interrupts never
   arrive. Under KVM the tick holds the kernel lock about a third as long. See [NETWORKING.md](docs/net/NETWORKING.md#receive-interrupts-and-the-tick).

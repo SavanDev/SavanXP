@@ -60,7 +60,7 @@ built independently with `./ports/doomgeneric/build.sh`,
   ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).
 - Persistent `SxFS` volume mounted at `/`; FAT volumes (the boot volume at
   `/boot`, and disks or USB sticks Disk Management mounts under `/mnt`).
-- POSIX base and SDK v1 for compiling external applications.
+- POSIX base and SDK 2.0 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
 - USB: xHCI controllers, keyboards, mice and tablets next to the PS/2 and
   virtio ones, USB sticks as disks, hubs, and devices plugged in or pulled
