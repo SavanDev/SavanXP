@@ -5569,6 +5569,101 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
     return 0;
 }
 
+/* A SUN program with an SXGUI window, built outside the tree against the SDK
+ * sysroot (docs/roadmaps/open/SDK_V2_ROADMAP.md, phase 3): sdk/sungui runs on
+ * SUN's application frame, sxngui. Like the native client selftest, it waits
+ * for the marker square in the window's centre, sends 'A', and waits for the
+ * square to turn green and the program to exit. The colours also live in
+ * sdk/sungui/main.c (SUNGUI_MARKER, SUNGUI_GREEN).
+ */
+#define SUNGUI_SELFTEST_MARKER 0x0030A0E0u
+#define SUNGUI_SELFTEST_GREEN 0x0000FF00u
+
+static int windowd_sungui_selftest(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct windowd_client *client = 0;
+    int slot = -1;
+    unsigned long deadline = 0;
+    int iteration = 0;
+    int marker = 0;
+    int green = 0;
+
+    if (session == 0 || dirty == 0)
+    {
+        return 1;
+    }
+
+    slot = find_free_overlay_slot(session);
+    if (!overlay_slot_valid(slot) ||
+        selftest_launch(session, dirty, "/bin/sungui.sxe", 0) != slot)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL sungui: could not start sungui\n");
+        return 1;
+    }
+    client = &session->overlay_clients[slot];
+
+    deadline = uptime_ms() + 60000;
+    for (iteration = 0; iteration < 15000; ++iteration)
+    {
+        service_client_start(dirty, client);
+        {
+            struct sx_rect surface = windowd_client_surface_rect(client);
+            uint32_t stride = session->gfx.info.pitch / 4u;
+            uint32_t *fb = session->compositor.framebuffer;
+            uint32_t sample_x = (uint32_t)(surface.x + surface.width / 2);
+            uint32_t sample_y = (uint32_t)(surface.y + surface.height / 2);
+
+            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL sungui: commit\n");
+                return 1;
+            }
+            if (selftest_composed(client) &&
+                sample_x < session->gfx.info.width && sample_y < session->gfx.info.height)
+            {
+                uint32_t sample = fb[sample_y * stride + sample_x];
+
+                if (!marker && sample == SUNGUI_SELFTEST_MARKER)
+                {
+                    struct savanxp_input_event key;
+
+                    marker = 1;
+                    memset(&key, 0, sizeof(key));
+                    key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+                    key.key = (uint32_t)'A';
+                    key.ascii = (int32_t)'A';
+                    (void)route_key(client, &key);
+                }
+                else if (marker && !green && sample == SUNGUI_SELFTEST_GREEN)
+                {
+                    green = 1;
+                }
+            }
+        }
+        (void)reap_dead_clients(session, dirty);
+        if (green && client->pid <= 0)
+        {
+            break;
+        }
+        if (uptime_ms() >= deadline)
+        {
+            puts_fd(2, marker ? "DESKTOP SMOKE FAIL sungui: the square never turned green\n"
+                              : "DESKTOP SMOKE FAIL sungui: the marker never appeared\n");
+            return 1;
+        }
+        sleep_ms(4);
+    }
+
+    if (!green)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL sungui: the square never turned green\n");
+        return 1;
+    }
+
+    printf("DESKTOP SMOKE sungui ok\n");
+    return 0;
+}
+
 /* Muestra un pixel de la superficie ya compuesta, en coords locales a la
  * ventana. Fuera de rango devuelve un valor imposible (los marcadores del
  * test son opacos, sin alfa). */
@@ -6702,6 +6797,12 @@ static int windowd_selftest(void)
 
     /* Forma nativa interactiva, mismo slot libre despues del reap. */
     if (!failed && windowd_native_widgets_selftest(&session, &dirty) != 0)
+    {
+        failed = 1;
+    }
+
+    /* A SUN program on the sxngui frame, built against the SDK sysroot. */
+    if (!failed && windowd_sungui_selftest(&session, &dirty) != 0)
     {
         failed = 1;
     }

@@ -128,6 +128,13 @@ unit, the path from the repository root. Every build reads it:
 | `ports/ccleste/build.sh` | `core audio math setjmp` |
 | `ports/ffmpeg/runtime.sh` | `core math setjmp` into `libsavanxp.a`, `gui` into `libsxgui.a` |
 
+The SUN runtime has a manifest of the same format, `system/runtime/units.txt`
+(`core`: the heap's page source; `gui`: the application frame and the file
+dialog). CMake links all of it into every NATIVE program
+(`SAVANXP_SUN_RUNTIME_SOURCES`, read by `savanxp_manifest_units`), and
+`tools/make-sdk.sh` prebuilds it into the sysroot as `sun-core` and `sun-gui`.
+`build-user.sh --native` links the first, and adds the second with `--gui`.
+
 The scripts read it through `tools/lib/runtime_units.sh`
 (`savanxp_runtime_units ROOT GROUP...`), which fails on an unknown group;
 CMake re-configures when the manifest changes. Moving or adding a runtime unit

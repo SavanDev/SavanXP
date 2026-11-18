@@ -203,6 +203,7 @@ SCENARIOS: dict[str, Scenario] = {
         prepare=(
             "./tools/build-user.sh --source sdk/nativedemo --name nativedemo --native",
             "./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native",
+            "./tools/build-user.sh --source sdk/sungui --name sungui --native --gui",
         ),
     ),
     # This smoke copies a whole program (390 KB) to get a fixture with .sxmeta,

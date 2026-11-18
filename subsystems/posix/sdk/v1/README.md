@@ -63,7 +63,9 @@ build/sdk/2.0/
                       repository's include/ that public-headers.txt lists
   linker.ld
   lib/nosse/          the runtime prebuilt without SSE: crt0.o and every unit
-                      of the core, gui, audio and setjmp groups, sxn_runtime.o
+                      of the core, gui, audio and setjmp groups, then the SUN
+                      runtime's (system/runtime/units.txt) as sun-core and
+                      sun-gui
   lib/sse/            the same with SSE, plus the math and gl groups
   lib/*/units.txt     each object's group, in link order
   share/sdk/          build-user.sh and the tools it runs, and the system
@@ -137,7 +139,8 @@ The tool:
   toolkit, `--audio` for PCM audio, `--sse` for SSE/SSE2, `libm` and SxGL;
 - with `--heap-mib N`, gives the program an N MiB bootstrap heap arena in
   place of the runtime's default 256 KiB;
-- builds a SUN program instead with `--native`
+- builds a SUN program instead with `--native`, which with `--gui` links
+  SUN's application frame and file dialog
   ([NATIVE_APPS.md](../../../../docs/userland/NATIVE_APPS.md)).
 
 A graphical example:

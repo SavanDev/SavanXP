@@ -50,7 +50,8 @@ Usage: tools/build-user.sh --source PATH --name NAME [options]
 
 Options:
   --sse             compile the external ABI with SSE/SSE2 enabled
-  --gui             link the SXGUI runtime
+  --gui             link the SXGUI runtime (with --native, also SUN's
+                    application frame, sxngui.h, and file dialog)
   --audio           link the PCM audio runtime
   --heap-mib N      set the fixed heap size in MiB
   --no-install      build only
@@ -182,6 +183,24 @@ fi
     exit 1
 }
 
+# The SXE resources come first: a SUN program compiles its presentation in
+# (#include "<name>.sunres.h", docs/userland/SXE_FORMAT.md), as in-tree ones do.
+RESOURCE_ROOT="$OBJ_ROOT/sxe"
+rm -rf "$RESOURCE_ROOT"
+mkdir -p "$RESOURCE_ROOT"
+# The build id is the commit of the program's own sources, when they are in git.
+BUILD_ID=$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || true)
+[[ -n "$BUILD_ID" ]] || BUILD_ID=unknown
+RESOURCE_ARGS=(--program "$NAME")
+((NATIVE == 0)) || RESOURCE_ARGS+=(--native-program "$NAME")
+"$PYTHON" "$TOOLS/gen_sxe_resources.py" \
+    --project-root "$SYSROOT" \
+    --icon-root "$SYSROOT/share/sdk/icons" \
+    --manifest-dir "$SOURCE_ROOT" \
+    --output-dir "$RESOURCE_ROOT" \
+    --build-id "$BUILD_ID" \
+    "${RESOURCE_ARGS[@]}"
+
 # An external program sees the sysroot's include/ and its own sources, never
 # the repository's tree.
 mapfile -t COMMON_FLAGS < <(savanxp_sdk_compile_flags "$SSE")
@@ -189,6 +208,7 @@ COMMON_FLAGS+=(-I "$SOURCE_ROOT" -I "$SYSROOT/include")
 if [[ -d "$SOURCE_ROOT/include" ]]; then
     COMMON_FLAGS+=(-I "$SOURCE_ROOT/include")
 fi
+((NATIVE == 0)) || COMMON_FLAGS+=(-I "$RESOURCE_ROOT")
 
 OBJECTS=()
 compile_c() {
@@ -221,6 +241,11 @@ RUNTIME_GROUPS=(core setjmp)
 ((SSE)) && RUNTIME_GROUPS+=(math gl)
 ((AUDIO)) && RUNTIME_GROUPS+=(audio)
 ((GUI)) && RUNTIME_GROUPS+=(gui)
+# A SUN program adds the SUN runtime (system/runtime/units.txt): its heap page
+# source always, and with --gui its application frame and file dialog, whose
+# strong toolkit host replaces the POSIX frame's weak one.
+((NATIVE)) && RUNTIME_GROUPS+=(sun-core)
+((NATIVE && GUI)) && RUNTIME_GROUPS+=(sun-gui)
 RUNTIME_OBJECTS=()
 while read -r group object; do
     for wanted in "${RUNTIME_GROUPS[@]}"; do
@@ -230,11 +255,6 @@ while read -r group object; do
         fi
     done
 done <"$RUNTIME_LIB/units.txt"
-if ((NATIVE)); then
-    # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
-    # on SXN, replacing the runtime's weak POSIX one.
-    RUNTIME_OBJECTS+=("$RUNTIME_LIB/sxn_runtime.o")
-fi
 if ((HEAP_MIB > 0)); then
     # The runtime's bootstrap arena is weak (runtime/posix.c); this program
     # brings a strong one of the size it asked for.
@@ -252,19 +272,6 @@ fi
     -z max-page-size=0x1000 --build-id=none \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
 
-RESOURCE_ROOT="$OBJ_ROOT/sxe"
-rm -rf "$RESOURCE_ROOT"
-mkdir -p "$RESOURCE_ROOT"
-# The build id is the commit of the program's own sources, when they are in git.
-BUILD_ID=$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || true)
-[[ -n "$BUILD_ID" ]] || BUILD_ID=unknown
-"$PYTHON" "$TOOLS/gen_sxe_resources.py" \
-    --project-root "$SYSROOT" \
-    --icon-root "$SYSROOT/share/sdk/icons" \
-    --manifest-dir "$SOURCE_ROOT" \
-    --output-dir "$RESOURCE_ROOT" \
-    --build-id "$BUILD_ID" \
-    --program "$NAME"
 "$PYTHON" "$TOOLS/stamp_sxe.py" \
     --binary "$RAW_OUTPUT" \
     --name "$NAME" \

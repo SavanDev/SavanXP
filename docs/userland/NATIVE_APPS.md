@@ -120,7 +120,16 @@ runtime (`system/runtime/sxn_runtime.c`, linked into every native target; see
 
 ```bash
 ./tools/build-user.sh --source sdk/myapp --name myapp --native
+./tools/build-user.sh --source sdk/myapp --name myapp --native --gui
 ```
+
+With `--gui` a SUN program also links SUN's application frame
+(`sxn/sxngui.h`), the file dialog (`sxn/sxnfiledlg.h`) and the SXGUI toolkit,
+as an in-tree SUN program does. The SUN runtime's units are listed once, in
+`system/runtime/units.txt`, which CMake and the SDK sysroot both read. Every
+`--native` build gets `<name>.sunres.h` on its include path: the window's
+title, accent and icon from the program's `.sxres`, to pass to
+`sxngui_app_init` or `sxnwm_set_presentation`.
 
 `--native` stamps the OSABI from the neutral ABI header; without it
 the same sources build a POSIX binary instead. A SUN program is
@@ -172,6 +181,9 @@ from the menu, the manifest is the first suspect.
   editable field, two state squares, Esc composes the last frame.
   Scenarios `windowd-smoke` (scripted) and `native-hw-smoke` (real
   keys).
+- `sdk/sungui` — an SXGUI window on SUN's application frame (`--native
+  --gui`), with its presentation from `sungui.sunres.h`: a label, a Close
+  button, and a square that turns green on a key. Scenario `windowd-smoke`.
 
 ## Not there (deliberately)
 

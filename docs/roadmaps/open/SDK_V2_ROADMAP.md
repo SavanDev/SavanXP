@@ -1,6 +1,6 @@
 # SDK 2.0 roadmap
 
-> **Status: phases 0 (2.0 declared), 1 (no internal include paths) and 2 (the sysroot) done; phases 3–5 planned.** This records why the external SDK is
+> **Status: phases 0 (2.0 declared), 1 (no internal include paths), 2 (the sysroot) and 3 (SUN on equal terms) done; phases 4–5 planned.** This records why the external SDK is
 > due a major version, what it depends on today that an SDK should not, and
 > the phases that turn it into one SDK for both POSIX and SUN programs. The
 > measurements below were taken on 2026-11-18 at `9a293bfa`.
@@ -86,7 +86,7 @@ SUN's API lives in `include/sxn/` and its runtime in `system/runtime/`.
 also get `sxngui.c`, `sxnfiledlg.c` and `mime_icon.c`
 (`cmake/UserPrograms.cmake:37`). So an **external** SUN program can use the
 header-inline `sxn.h`, `sxnwm.h` and `sxnwidgets.h`, but not `sxngui.h`, the
-toolkit frame Task Manager is built on. That is a parity gap
+toolkit frame Task Manager is built on (closed in phase 3). That is a parity gap
 (AGENTS.md, rule 7) between in-tree and external programs.
 
 ### Resources
@@ -235,7 +235,7 @@ What landed, and what it settled:
   `sys/select.h`. `sdk-sysroot-test` also compiles all the headers together
   now, which catches that kind of conflict.
 
-### Phase 3 — SUN on equal terms
+### Phase 3 — SUN on equal terms (done)
 
 - `libsxn.a` carries `sxn_runtime.c`, `sxngui.c`, `sxnfiledlg.c` and
   `mime_icon.c`.
@@ -244,6 +244,30 @@ What landed, and what it settled:
   tree, and `nativetest` asserts what it uses.
 - **Acceptance:** `smoke native-test`, `smoke sxgui-smoke`, plus the new
   example in a scenario.
+
+What landed, and where it differs from the plan:
+
+- The SUN runtime's units are listed once, in `system/runtime/units.txt`.
+  CMake reads it for every NATIVE program (`SAVANXP_SUN_RUNTIME_SOURCES`),
+  where it used to name the four files itself. `make-sdk.sh` reads it into
+  the sysroot as the groups `sun-core` (`sxn_runtime.c`) and `sun-gui`
+  (`sxngui.c`, `sxnfiledlg.c`, `mime_icon.c`), as objects like the rest.
+- `--native` links `sun-core`, and `--native --gui` also links `sun-gui`.
+  The POSIX frame (`sxgui_app.c`) is still linked, as it is in-tree, but it
+  is inert. Its toolkit host is weak, and `sxngui.c`'s strong one replaces
+  it, which is the arrangement `sxn/sxngui.h` describes.
+  `sxgui_default_host` in `sdk/sungui` returns `k_sun_host`.
+- Found on the way: an external SUN program had no `<name>.sunres.h`, so it
+  could not publish its title and icon. `build-user.sh --native` now
+  generates it before compiling and puts it on the include path, as CMake
+  does for in-tree SUN programs.
+- `sdk/sungui` is the example. `windowd-smoke` launches it, waits for its
+  marker, sends a key and waits for green and the exit. `sdk-sysroot-test`
+  builds it from a copy of the sysroot. `nativetest` gains nothing: no SUN
+  API was added, only linked, and the windowd selftest is the assertion
+  that the frame works.
+- Every other `--native` build links to the same image as before, apart
+  from the build id in `.sxmeta`.
 
 ### Phase 4 — dynamic linking through the SDK
 

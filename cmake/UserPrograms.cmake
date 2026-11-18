@@ -29,13 +29,10 @@ function(savanxp_program)
     add_executable(${P_NAME} ${P_SOURCES})
     if(P_NATIVE)
         set_property(GLOBAL APPEND PROPERTY SAVANXP_NATIVE_TARGETS ${P_NAME})
-        # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page
-        # source on SXN, replacing the runtime's weak POSIX one; the SXGUI
-        # application frame for SUN (include/sxn/sxngui.h); and the file
-        # dialog (include/sxn/sxnfiledlg.h) with the icons by type it shows.
-        # The linker drops what a program does not call.
-        target_sources(${P_NAME} PRIVATE system/runtime/sxn_runtime.c system/runtime/sxngui.c
-            system/runtime/sxnfiledlg.c system/gfx/mime_icon.c)
+        # The SUN runtime, from its manifest (system/runtime/units.txt): the
+        # heap's page source on SXN, the SXGUI application frame for SUN and
+        # the file dialog. The linker drops what a program does not call.
+        target_sources(${P_NAME} PRIVATE ${SAVANXP_SUN_RUNTIME_SOURCES})
     endif()
     target_sources(${P_NAME} PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
     target_include_directories(${P_NAME} PRIVATE

@@ -9,8 +9,9 @@ Two checks:
   together, so no two define the same thing. A public header that includes one the
   allowlist (subsystems/posix/sdk/v1/public-headers.txt) leaves out fails here.
 - A copy of the sysroot in a temporary directory, away from the repository,
-  builds sdk/hello, sdk/gfxhello (--gui), sdk/nativetest (--native) and a
-  --heap-mib program with its own share/sdk/build-user.sh.
+  builds sdk/hello, sdk/gfxhello (--gui), sdk/nativetest (--native),
+  sdk/sungui (--native --gui, on SUN's application frame) and a --heap-mib
+  program with its own share/sdk/build-user.sh.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     copy = scratch / "sdk"
     shutil.copytree(sysroot, copy)
     sources = scratch / "src"
-    for name in ("hello", "gfxhello", "nativetest"):
+    for name in ("hello", "gfxhello", "nativetest", "sungui"):
         shutil.copytree(root / "sdk" / name, sources / name)
     environment = os.environ.copy()
     environment["SAVANXP_CLANG"] = clang
@@ -91,6 +92,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
         ("hello", ["--source", str(sources / "hello")]),
         ("gfxhello", ["--source", str(sources / "gfxhello"), "--gui"]),
         ("nativetest", ["--source", str(sources / "nativetest"), "--native"]),
+        ("sungui", ["--source", str(sources / "sungui"), "--native", "--gui"]),
         ("hello-heap", ["--source", str(sources / "hello"), "--heap-mib", "2"]),
     ]
     for name, arguments in builds:
@@ -121,7 +123,7 @@ def main() -> int:
         scratch = Path(temporary)
         count = check_headers(sysroot, clang, scratch)
         check_standalone(sysroot, root, clang, linker, scratch)
-    print(f"sdk sysroot: {count} headers self-contained; a copy builds four programs: PASS")
+    print(f"sdk sysroot: {count} headers self-contained; a copy builds five programs: PASS")
     return 0
 
 

@@ -366,8 +366,9 @@ target_compile_options(savanxp_fatfs_objects PRIVATE
 # options carry -ffunction-sections/-fdata-sections and the STATIC profile
 # passes --gc-sections, so whatever is not referenced is dropped at link time.
 # setjmp is left out: only the ports use sx_setjmp.
-function(savanxp_runtime_units out_var)
-    set(manifest "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime/units.txt")
+# savanxp_manifest_units(<out_var> <manifest> <group>...) reads any manifest of
+# that format; the SUN runtime has its own, system/runtime/units.txt.
+function(savanxp_manifest_units out_var manifest)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${manifest}")
     file(STRINGS "${manifest}" lines REGEX "^[a-z]")
     set(units)
@@ -381,7 +382,13 @@ function(savanxp_runtime_units out_var)
     endforeach()
     set(${out_var} ${units} PARENT_SCOPE)
 endfunction()
+function(savanxp_runtime_units out_var)
+    savanxp_manifest_units(units "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime/units.txt" ${ARGN})
+    set(${out_var} ${units} PARENT_SCOPE)
+endfunction()
 savanxp_runtime_units(SAVANXP_USER_RUNTIME_SOURCES core math gui audio midi gl)
+# What every NATIVE program links on top of it (cmake/UserPrograms.cmake).
+savanxp_manifest_units(SAVANXP_SUN_RUNTIME_SOURCES "${CMAKE_SOURCE_DIR}/system/runtime/units.txt" core gui)
 add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime PRIVATE
     "${CMAKE_SOURCE_DIR}/include"

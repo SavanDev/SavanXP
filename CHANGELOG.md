@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **An external SUN program can open an SXGUI window: `build-user.sh --native --gui` links SUN's application frame.**
+  `sxn/sxngui.h` and `sxn/sxnfiledlg.h` come from the SDK sysroot, and every `--native` build gets `<name>.sunres.h`.
+  The SUN runtime is listed once, in `system/runtime/units.txt`. New example `sdk/sungui`, run by `windowd-smoke`; see [NATIVE_APPS.md](docs/userland/NATIVE_APPS.md).
+
 - **The Media Player plays AV1, through dav1d 1.5.1 (BSD-2-Clause) linked into `libffmpeg.so.0.4`.** 8- and 10-bit.
   The FFmpeg port now needs Meson and `pkg-config` (new `ports/ffmpeg/dav1d.sh`); POSIX gains `ENOPROTOOPT`.
   Release ISOs carry the FFmpeg port; see [MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md#av1).

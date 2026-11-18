@@ -114,10 +114,42 @@ printf '%s\n' "$VERSION" >"$TMP/VERSION"
 # Every unit of the groups a variant needs, in manifest order, compiled with
 # the flags build-user.sh gives a program. lib/<variant>/units.txt keeps the
 # order and the group of each object, and build-user.sh links them in it.
+# The SUN runtime's units follow the POSIX ones, their groups prefixed sun-.
 MANIFEST="$SDK_SRC/runtime/units.txt"
-INPUTS+=("$MANIFEST" "$ROOT/system/runtime/sxn_runtime.c")
+SUN_MANIFEST="$ROOT/system/runtime/units.txt"
+INPUTS+=("$MANIFEST" "$SUN_MANIFEST")
 DEPS="$TMP/.deps"
 mkdir -p "$DEPS"
+
+# compile_manifest MANIFEST PREFIX LIB VARIANT GROUP...
+# Compiles the manifest's units in the named groups into LIB, appending
+# "<PREFIX><group> <object>" to LIB/units.txt. Uses the caller's flags array.
+compile_manifest() {
+    local manifest=$1 prefix=$2 lib=$3 variant=$4
+    shift 4
+    local group path name wanted unit object depfile
+    while read -r group path; do
+        wanted=0
+        for name in "$@"; do
+            [[ "$group" == "$name" ]] && { wanted=1; break; }
+        done
+        ((wanted)) || continue
+        unit="$ROOT/$path"
+        object=$(savanxp_runtime_object "$lib" "$unit")
+        [[ ! -e "$object" ]] || {
+            echo "make-sdk.sh: two runtime units compile to $(basename -- "$object")" >&2
+            exit 1
+        }
+        depfile="$DEPS/$variant-$(basename -- "$object" .o).d"
+        case "${unit##*/}" in
+            *.S) "$CC" -c "$unit" -o "$object" "${flags[@]}" -MD -MF "$depfile" ;;
+            math.c) "$CC" -c -x c "$unit" -o "$object" "${flags[@]}" -fno-builtin -MD -MF "$depfile" ;;
+            *) "$CC" -c -x c "$unit" -o "$object" "${flags[@]}" -MD -MF "$depfile" ;;
+        esac
+        printf '%s%s %s\n' "$prefix" "$group" "$(basename -- "$object")" >>"$lib/units.txt"
+    done < <(grep -v '^[[:space:]]*\(#\|$\)' "$manifest")
+}
+
 for sse in 0 1; do
     variant=$(savanxp_sdk_variant "$sse")
     lib="$TMP/lib/$variant"
@@ -126,26 +158,8 @@ for sse in 0 1; do
     flags+=(-I "$SDK_SRC/include" -I "$ROOT/include")
     mapfile -t groups < <(savanxp_sdk_groups "$sse")
     : >"$lib/units.txt"
-    while read -r group path; do
-        wanted=0
-        for name in "${groups[@]}"; do
-            [[ "$group" == "$name" ]] && { wanted=1; break; }
-        done
-        ((wanted)) || continue
-        unit="$ROOT/$path"
-        object=$(savanxp_runtime_object "$lib" "$unit")
-        depfile="$DEPS/$variant-$(basename -- "$object" .o).d"
-        case "${unit##*/}" in
-            *.S) "$CC" -c "$unit" -o "$object" "${flags[@]}" -MD -MF "$depfile" ;;
-            math.c) "$CC" -c -x c "$unit" -o "$object" "${flags[@]}" -fno-builtin -MD -MF "$depfile" ;;
-            *) "$CC" -c -x c "$unit" -o "$object" "${flags[@]}" -MD -MF "$depfile" ;;
-        esac
-        printf '%s %s\n' "$group" "$(basename -- "$object")" >>"$lib/units.txt"
-    done < <(grep -v '^[[:space:]]*\(#\|$\)' "$MANIFEST")
-    # The SUN runtime's heap page source, linked into a --native program in
-    # place of the POSIX one (docs/userland/NATIVE_HEAP.md).
-    "$CC" -c -x c "$ROOT/system/runtime/sxn_runtime.c" -o "$lib/sxn_runtime.o" "${flags[@]}" \
-        -MD -MF "$DEPS/$variant-sxn_runtime.d"
+    compile_manifest "$MANIFEST" "" "$lib" "$variant" "${groups[@]}"
+    compile_manifest "$SUN_MANIFEST" "sun-" "$lib" "$variant" core gui
 done
 
 # --- tools -----------------------------------------------------------------
