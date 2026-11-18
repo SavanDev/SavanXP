@@ -175,7 +175,7 @@ void handle(ContextFrame& frame) {
         case kSysClose:
             frame.eax = io::close(*process::current(), frame.edi); return;
         case SAVANXP_SYS_KILL:
-            frame.eax = process::kill(frame.edi, static_cast<int>(frame.esi)); return;
+            frame.eax = process::kill(static_cast<int>(frame.edi), static_cast<int>(frame.esi)); return;
         case SAVANXP_SYS_DUP:
             frame.eax = io::duplicate(*process::current(), frame.edi); return;
         case SAVANXP_SYS_DUP2:

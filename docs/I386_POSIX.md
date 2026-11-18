@@ -119,9 +119,13 @@ than fit; the regression also fails a later stage after earlier stages start.
 releases that staging image and leaves the original intact. Success switches
 through the supervisor directory, frees the old image, commits the new mappings
 and user frame, and starts with fresh FPU/BSS state. PID, parent, CWD and open
-descriptors survive. Supported kill dispositions terminate with `128 + signal`;
-SIGCHLD is non-terminating. User-installed signal handlers remain a gap; [I386_MEMORY.md](I386_MEMORY.md)
-describes the subsequently restored fork/view model.
+descriptors survive. The v0.4.0 `kill` contract accepts SIGINT, SIGKILL,
+SIGPIPE, SIGTERM and SIGCHLD. PID zero selects the caller and negative PIDs
+return `EINVAL`. Init and idle tasks are protected. Signal state records a
+pending bit and the last signal. The terminating dispositions use
+`128 + signal`; SIGCHLD only records state. Child exit also records SIGCHLD in
+the parent before completing any child wait. A write to a pipe with no reader
+returns `EPIPE`. `smoke posix` runs `sigtest` for the observable behavior.
 
 ## Read-only root and persistent disk
 
@@ -167,8 +171,9 @@ Process-info counters charge the current process on each CPU against the
 aggregate tick total. Each scheduling CPU exports a protected ring-3 idle
 process, making idle/busy usage calculable; [I386_SMP.md](I386_SMP.md) defines
 the accounting and sample limits.
-The 64-process table, 1 GiB managed RAM limit and lack of NX remain. Full signals/
-job control remain later parity work. [I386_SERVICES.md](I386_SERVICES.md) describes
+The 64-process table, 1 GiB managed RAM limit and lack of NX remain. Kernel
+delivery to user handlers and POSIX job control are outside the v0.4.0
+contract. [I386_SERVICES.md](I386_SERVICES.md) describes
 the restored sockets, device dispatch, realtime and filesystem-check calls. The
 reference desktop is covered by [I386_GRAPHICS.md](I386_GRAPHICS.md). Memory sections, growing heaps,
 fork and ELF32 shared libraries were restored in the following milestone; see

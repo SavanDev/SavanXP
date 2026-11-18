@@ -158,6 +158,37 @@ bool matches(const Process& child, const Process& parent, int pid) {
            (pid == SAVANXP_WAIT_ANY || child.pid == static_cast<uint32_t>(pid));
 }
 
+Process* find(uint32_t pid) {
+    for (auto& task : g_processes) {
+        if (task.state != State::unused && task.pid == pid) return &task;
+    }
+    return nullptr;
+}
+
+enum SignalFlags : uint32_t {
+    signal_sigint = 1u << 0,
+    signal_sigkill = 1u << 1,
+    signal_sigpipe = 1u << 2,
+    signal_sigterm = 1u << 3,
+    signal_sigchld = 1u << 4,
+};
+
+uint32_t signal_flag(int signal) {
+    switch (signal) {
+        case SAVANXP_SIGINT: return signal_sigint;
+        case SAVANXP_SIGKILL: return signal_sigkill;
+        case SAVANXP_SIGPIPE: return signal_sigpipe;
+        case SAVANXP_SIGTERM: return signal_sigterm;
+        case SAVANXP_SIGCHLD: return signal_sigchld;
+        default: return 0;
+    }
+}
+
+void record_signal(Process& task, uint32_t flag, int signal) {
+    task.pending_signals |= flag;
+    task.last_signal = static_cast<uint32_t>(signal);
+}
+
 } // namespace
 
 void initialize() {
@@ -451,6 +482,8 @@ static void notify_parent(Process& child) {
 }
 
 static void terminate(Process& child, int status) {
+    if (auto* parent = find(child.parent))
+        record_signal(*parent, signal_sigchld, SAVANXP_SIGCHLD);
     waits::clear(child);
     display::release_session_for(child.pid);
     audio_device::release_session_for(child.pid);
@@ -493,40 +526,43 @@ void exit(int status) {
     terminate(*current_slot(), status);
 }
 
-long kill(uint32_t pid, int signal) {
-    if (signal != SAVANXP_SIGINT && signal != SAVANXP_SIGKILL && signal != SAVANXP_SIGPIPE &&
-        signal != SAVANXP_SIGTERM && signal != SAVANXP_SIGCHLD) return -SAVANXP_EINVAL;
-    for (auto& task : g_processes) {
-        if (task.pid != pid || task.state == State::unused || task.state == State::zombie) continue;
-        if (task.idle || task.pid == g_init_pid) return -SAVANXP_EACCES;
-        if (signal == SAVANXP_SIGCHLD) return 0;
-        if (task.in_syscall) {
-            task.pending_exit = 128 + signal;
+long kill(int pid, int signal) {
+    const uint32_t flag = signal_flag(signal);
+    if (!flag || pid < 0) return -SAVANXP_EINVAL;
+    Process* target = find(pid == 0 ? current_pid() : static_cast<uint32_t>(pid));
+    if (!target) return -SAVANXP_ENOENT;
+    Process& task = *target;
+    if (task.idle || task.pid == g_init_pid) return -SAVANXP_EACCES;
+    record_signal(task, flag, signal);
+    if (signal == SAVANXP_SIGCHLD || task.state == State::zombie) return 0;
+
+    if (task.in_syscall) {
+        if (!task.pending_exit) task.pending_exit = 128 + signal;
+        if (&task != current_slot()) {
             bool owned = false;
             for (const auto& state : g_cpus) if (state.current == &task) owned = true;
-            serial::write("process: kernel kill deferred pid="); serial::write_dec(pid);
+            serial::write("process: kernel kill deferred pid="); serial::write_dec(task.pid);
             serial::write(" cpu="); serial::write_dec(task.cpu);
             serial::write(" suspended="); serial::write_dec(!owned); serial::write("\n");
             smp::kick(task.cpu);
-            return 0;
         }
-        for (uint32_t n = 0; n < cpu::kMaxCpus; ++n) {
-            if (n != cpu::index() && g_cpus[n].current == &task) {
-                task.pending_exit = 128 + signal;
-                serial::write("smp: remote termination requested pid=");
-                serial::write_dec(pid);
-                serial::write(" owner="); serial::write_dec(n);
-                serial::write(" requester="); serial::write_dec(cpu::index());
-                serial::write("\n");
-                smp::kick(n);
-                return 0;
-            }
-        }
-        terminate(task, 128 + signal);
-        if (&task != current_slot()) paging::destroy_process_directory(task.directory);
         return 0;
     }
-    return -SAVANXP_ENOENT;
+    for (uint32_t n = 0; n < cpu::kMaxCpus; ++n) {
+        if (n != cpu::index() && g_cpus[n].current == &task) {
+            if (!task.pending_exit) task.pending_exit = 128 + signal;
+            serial::write("smp: remote termination requested pid=");
+            serial::write_dec(task.pid);
+            serial::write(" owner="); serial::write_dec(n);
+            serial::write(" requester="); serial::write_dec(cpu::index());
+            serial::write("\n");
+            smp::kick(n);
+            return 0;
+        }
+    }
+    terminate(task, 128 + signal);
+    if (&task != current_slot()) paging::destroy_process_directory(task.directory);
+    return 0;
 }
 
 ContextFrame* fault(uint32_t vector) {

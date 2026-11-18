@@ -2051,3 +2051,37 @@ also retained the existing section and loader rollback gates. The desktop
 passed `sxgui-smoke --virtio --smp 4` with the randomized views and the
 isolated Doom persistence check passed after a normal rebuild. This restores
 the reference's section-placement policy within the smaller address space.
+
+## 23. Signals as process bookkeeping and termination
+
+The initial native kill path recognized the five v0.4.0 signal numbers,
+but looked up PID zero as an ordinary PID, reported a negative PID as missing
+and returned from SIGCHLD without updating the process. In the pinned
+`kernel/process.cpp`, `kill_process` resolves zero to the sender, validates the
+signed PID and records a pending bit and the last signal. Child termination
+records the same SIGCHLD state on the parent before waking a waiter. An
+unreaped zombie remains addressable; a signal to it leaves its existing exit
+status intact.
+
+The i386 process slot now carries the same two fields, with fresh slots
+starting clear. Fork starts the child clear and exec preserves the signal
+state of the existing process. The delivery boundary remains the reference
+one: SIGCHLD updates bookkeeping, while the other four signals end the
+target with status `128 + signal`. A terminating self-signal can use the
+syscall return path already responsible for deferred exits. A remote or
+retained ring-0 target still unwinds on its owning CPU. A queued termination
+keeps its first requested exit status even when another signal updates
+`last_signal`. The pinned SDK's user-installed actions are local libc
+state; handler dispatch, process groups and job control require a different
+contract. Broken pipe writes continue to return `EPIPE`.
+
+`./build.sh smoke posix` runs `sigtest` through the normal syscall entry in
+the diagnostic console. It verifies signed PID validation, protected init,
+nonterminating SIGCHLD, self-termination, a remote SIGTERM at the process
+boundary, zombie status and the broken-pipe result.
+`./build.sh smoke smp --smp 4` exercises the IPI and memory reclamation.
+For direct bookkeeping evidence, the process-table address and field offsets
+were taken from the ISO's debug ELF with GDB. QEMU `pmemsave` snapshots of a
+console shell before and after running `true` showed
+`(pending_signals, last_signal)` change from `(0, 0)` to `(16, 17)`. This
+observes the child-exit event independently of an explicit signal syscall.

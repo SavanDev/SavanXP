@@ -134,8 +134,8 @@ heaptest's six live allocations or changing the heap growth algorithm.
 This closes milestone 5, not complete v0.4.0 parity. Milestone 6 covers SMP,
 virtio integration and the remaining reference performance and power
 mechanisms in emulation. AC'97 keeps the reference playback-only
-contract; the separate virtio profile adds capture-ring reads. Full signals/job control, explicit
-idle-process accounting and the reference boot-console/logo still need the
-final version-parity review. Physical-machine bring-up, including laptop
+contract; the separate virtio profile adds capture-ring reads. The reference
+boot-console/logo is part of the final version-parity review.
+Physical-machine bring-up, including laptop
 suspend behavior, begins with the v0.4.2 target and does not block v0.4.0 or
 v0.4.1 parity. The active target remains v0.4.0; see [I386_PORT.md](I386_PORT.md).

@@ -311,6 +311,7 @@ def check_posix(qmp_socket: Path, serial: Path) -> None:
         ("posixtest32 audit", r"POSIX shell cleanup PASS.*?savanxp:/\$ "),
         ("fdtest", r"fdtest: ok.*?savanxp:/\$ "),
         ("waittest", r"waittest: ok.*?savanxp:/\$ "),
+        ("sigtest", r"sigtest: ok.*?savanxp:/\$ "),
         ("pipestress", r"pipestress: ok.*?savanxp:/\$ "),
         ("seektest", r"seektest: ok.*?savanxp:/\$ "),
         ("renametest", r"renametest: ok.*?savanxp:/\$ "),

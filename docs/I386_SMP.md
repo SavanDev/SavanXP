@@ -310,8 +310,8 @@ Both use QEMU disk snapshots and retain serial/QMP artifacts.
 These checkpoints cover idle accounting, timer-preemptible kernel waits,
 syscall-return wakeup handoff, I/O APIC routing for PS/2 and SCI, and AML-based
 root-bus PCI INTx. The native timer follows the reference 1000 Hz setup and
-monotonic deadlines. ASLR, signals and the performance and visual review
-remain open. v0.4.0 deliberately keeps idle
+monotonic deadlines. The performance and visual review remains open.
+v0.4.0 deliberately keeps idle
 wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
 not a parity gap. The historical study's earlier wake-IPI suggestions are
 superseded by the pinned-reference review.

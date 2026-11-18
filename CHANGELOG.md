@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 restores v0.4.0 signal targeting and child-exit bookkeeping.**
+  `kill(0, signal)` targets the caller, and child exit records `SIGCHLD`
+  for its parent.
+
 - **i386 randomizes the starting address of section views on spawn and exec.**
   Fork keeps its parent's mappings and allocation cursor. `smoke shared` checks
   automatic placement and explicit addresses.

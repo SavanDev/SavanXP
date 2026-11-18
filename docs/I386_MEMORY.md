@@ -154,8 +154,8 @@ and repeated partial-image rollback with fd 0 available.
 
 The full smoke includes this workload plus POSIX/shell, CPU/FPU/fault and
 SxGUI glyph/input checks. [I386_GRAPHICS.md](I386_GRAPHICS.md) covers the restored
-reference desktop, 64-process capacity and waitable objects. Complete signal
-APIs and hardware coverage remain later parity work. The subsequent [SDK prerequisite](I386_SDK.md)
+reference desktop, 64-process capacity and waitable objects. [I386_POSIX.md](I386_POSIX.md)
+covers the reference signal contract. The subsequent [SDK prerequisite](I386_SDK.md)
 corrects the inherited integer limits, parsers, aliases and format macros and
 adds static/shared integer-ABI checks to these scenarios. These tests do not
 certify every libc function. Passing memory and loader tests does not

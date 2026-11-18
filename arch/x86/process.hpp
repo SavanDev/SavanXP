@@ -43,6 +43,8 @@ struct alignas(4096) Process {
     char cwd[256], name[32];
     uint32_t preemptions;
     uint64_t cpu_ticks;
+    uint32_t pending_signals;
+    uint32_t last_signal;
     int pending_exit;
     // Retained C++ work stays pinned through syscall-return cleanup.
     bool in_syscall;
@@ -76,6 +78,6 @@ void sleep(uint32_t milliseconds);
 void yield();
 long wait(int pid, uint32_t status);
 void exit(int status);
-long kill(uint32_t pid, int signal);
+long kill(int pid, int signal);
 
 } // namespace i386::process

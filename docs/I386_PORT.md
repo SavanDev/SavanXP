@@ -124,8 +124,8 @@ changes, and record implementation/verification evidence as work lands.
    behavior and failed-pipeline recovery; `tools/verify_posix_persistence.py`
    checks guest writes across a normal rebuild and a cold boot of an isolated disk.
    Milestone 4 restores the reference process bound and event/timer/semaphore
-   waits; the reference's limited signal behavior still needs review. Milestone 6 restores idle processes
-   and their CPU accounting. [Contracts and limits](I386_POSIX.md).
+   waits. Milestone 6 restores idle processes, their CPU accounting and the
+   reference signal contract. [Contracts and limits](I386_POSIX.md).
 3. **Memory objects and ELF32 shared libraries — completed.**
    Reference section objects/views, growing heaps, private/shared fork and
    demand-grown stacks support ELF32 PIE and the embedded dependency loader.
@@ -181,12 +181,11 @@ changes, and record implementation/verification evidence as work lands.
    the i386 section window. Fork preserves the parent's views and cursor.
    [Contracts and evidence](I386_MEMORY.md).
 
-   **Remaining v0.4.0 review.** Port and verify the reference's boot
-   screen, logo, and handoff to the graphical
-   session. Audit the limited v0.4.0 signal behavior. For example, its
-   `kill(0, signal)` targets the caller and its process state records
-   `SIGCHLD`. Full kernel delivery to user handlers and POSIX job control
-   are outside that reference contract. Compare the resulting system
+   **Signals.** Target selection, exit status and `SIGCHLD` bookkeeping
+   follow the limited reference contract. [Contracts and evidence](I386_POSIX.md).
+
+   **Remaining v0.4.0 review.** Port and verify the reference's boot screen,
+   logo, and handoff to the graphical session. Compare the resulting system
    feature by feature in QEMU, including power and performance, and record
    evidence or justified i386 differences before changing the target.
 
