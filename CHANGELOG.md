@@ -102,6 +102,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 routes PS/2 and the ACPI power button through the IOAPIC.** The legacy
+  PIC remains available when APIC routing is unavailable. `smoke power-smoke`
+  checks both paths.
+
 - **i386 hands off the CPU when a syscall wakes a blocked process.** Events,
   semaphores, pipes and polling resume without waiting for the next timer tick;
   `smoke wakeup` checks execution order and resource recovery.

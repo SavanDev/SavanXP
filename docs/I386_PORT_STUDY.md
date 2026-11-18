@@ -1820,8 +1820,70 @@ remain separate parity work. Idle CPUs still find work on their timer boundary,
 as deliberately retained by v0.4.0. No physical-machine test is needed before
 the active target reaches v0.4.2; milestone 6 and v0.4.0 parity remain open.
 
+## 19. Restoring I/O APIC routes for PS/2 and ACPI
+
+The native PIC path was sufficient to type into the shell and receive the
+firmware power button, even after the local APIC enabled SMP and MSI-X. That
+success hid a difference from v0.4.0. The native build omitted
+`kernel/ioapic.cpp`, PS/2 unmasked the PIC before ACPI discovery, and the SCI
+skipped the reference GSI router. The PIC-only boot at `8eb4223f` is the
+baseline for this comparison.
+
+The reference router discovers the I/O APIC's GSI ranges and applies MADT
+source overrides to ISA inputs. PS/2 defaults to active-high edges. The
+FADT's system control interrupt uses an active-low level, which the ACPI
+handler clears by acknowledging PM1 status. A programmed GSI targets the BSP
+and uses a vector from 50 through 63. An additional handler on the same GSI
+shares the original vector and electrical configuration. The native external
+dispatcher runs the chain before sending EOI to the local APIC. These gates
+already existed between the PCI/MSI-X vectors and the SMP IPI vectors.
+
+Keeping the devices on the PIC would preserve the observable input and power
+behavior in QEMU while leaving the routing difference intact. Copying the
+reference router unchanged would add a second ACPI table walk with
+long-mode assumptions about physical addresses and the high-half direct map.
+The port keeps the routing logic and obtains the validated MADT from the
+existing ACPI parser. It checks entry bounds, maps the controller with native
+uncached supervisor pages, and reuses the existing xAPIC dispatcher.
+The BSP installs the routes with interrupts disabled, after ACPI discovery
+and local APIC setup. PS/2 and SCI use the PIC if their APIC route fails.
+Successful routes leave the corresponding PIC inputs masked.
+
+In QEMU's PC profile the driver found one 24-input controller and five ISA
+overrides. GSI 1 and 12 used edge vectors 50 and 51. The SCI used level vector
+52 on GSI 9. The power smoke asserted those route modes and observed shutdown
+from a QMP power-button event. It also verified guest reset and shutdown, then
+hid the local APIC with `qemu32,-apic`. That boot typed a command using the PIC
+keyboard path and shut down in response to a PIC SCI. On four CPUs the PS/2
+desktop smoke checked the editor and taskbar glyphs, pointer, wheel and
+scrollbar. The RTL8139 smoke exchanged IPv4 and UDP traffic with the legacy
+network adapter. The virtio SMP boot reached the desktop with MSI-X armed
+alongside all three I/O APIC routes, and the 32 MiB boot passed the ELF32
+shared-library checks. The real Doom IWAD, executable, configuration and save
+survived the isolated normal rebuild.
+
+```sh
+./build.sh build
+./build.sh iso
+./build.sh smoke power-smoke --smp 4
+./build.sh smoke sxgui-smoke --smp 4
+./build.sh smoke net-smoke --smp 4
+./build.sh smoke smp-boot --smp 4 --virtio
+./build.sh smoke shared-memory
+./tools/verify_doom_persistence.sh --wad path/to/doom1.wad
+```
+
+The tested device wiring uses identity mappings for PS/2. The observed MADT
+overrides establish discovery, while alternate firmware input wiring and
+shared PCI GSIs remain unverified. The BSP still uses the 100 Hz PIT through
+ExtINT, and BIOS-assigned PCI INTx uses the PIC until the reference AML
+`_PRT` and link resolution are available. This closes the PS/2 and SCI routing
+portion of milestone 6.2. The reference BSP timer, AML, and the other
+internal and visual gaps still need review before v0.4.0 parity.
+
 ## Continuing the study
 
-Trace the remaining interrupt-routing and internal/visual parity differences
-against v0.4.0. Keep the reference's measured policy distinct from proposed
-future SMP extensions, and preserve evidence when replacing adaptations.
+Trace the reference AML namespace and PCI interrupt routing, then review the
+remaining timer and internal/visual differences against v0.4.0. Keep the
+reference's measured policy distinct from proposed SMP extensions, and
+preserve evidence when replacing adaptations.

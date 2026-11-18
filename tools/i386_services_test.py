@@ -66,7 +66,7 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
     if scenario == "power-smoke":
         for mode in ("power-reboot", "power-shutdown", "power-button"):
             run(iso, disk, artifacts / mode, mode, timeout, accel, virtio, smp)
-        return 0
+        return run(iso, disk, artifacts / "power-button-pic", "power-button-pic", timeout, accel)
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
     serial.write_text("")
@@ -91,6 +91,9 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
             command[command.index("-audiodev") + 1] = "none,id=audio0"
         command += storage_network_args(disk, virtio=virtio, snapshot=True)
         command += graphics_input_args(virtio)
+        pic_only = scenario == "power-button-pic"
+        if pic_only:
+            command[command.index("-cpu") + 1] = "qemu32,-apic"
         if scenario == "storage-smoke":
             drive = command.index("-drive")
             del command[drive:drive + 2]
@@ -122,10 +125,26 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     if "ata0:" in boot_log or "rtl8139: ready" in boot_log:
                         raise RuntimeError("virtio smoke fell back to a legacy disk/NIC")
                 if scenario.startswith("power-"):
-                    if "acpi: FADT ok" not in serial.read_text():
+                    boot_log = serial.read_text(errors="replace")
+                    if "acpi: FADT ok" not in boot_log:
                         raise RuntimeError("the ACPI tables were not parsed")
+                    controller = "PIC" if pic_only else "IOAPIC"
+                    sci_route = re.search(rf"acpi: SCI GSI (\d+) via {controller}\b", boot_log)
+                    if not sci_route:
+                        raise RuntimeError(f"the SCI was not routed through the {controller}")
+                    if pic_only:
+                        if "ioapic: GSI" in boot_log:
+                            raise RuntimeError("an IOAPIC route was installed without a local APIC")
+                        type_shell(qmp, ("echo picinput",))
+                        wait_serial(serial, r"\r?\npicinput\r?\n", len(boot_log))
+                    else:
+                        routes = ((1, "edge, active-high"), (12, "edge, active-high"),
+                                  (int(sci_route[1]), "level, active-low"))
+                        for gsi, mode in routes:
+                            if not re.search(rf"ioapic: GSI {gsi} -> vector \d+ \({mode}\)", boot_log):
+                                raise RuntimeError(f"missing IOAPIC route for GSI {gsi} ({mode})")
                     offset = len(serial.read_text(errors="replace"))
-                    if scenario == "power-button":
+                    if scenario in ("power-button", "power-button-pic"):
                         with QmpClient(qmp) as client:
                             client.execute("system_powerdown")
                     else:

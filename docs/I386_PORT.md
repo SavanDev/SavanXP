@@ -169,7 +169,9 @@ changes, and record implementation/verification evidence as work lands.
    Per-CPU ring-3 idle processes, dynamic init ownership and idle/busy accounting
    now follow the reference. Retained kernel waits are timer-preemptible and
    resume on their original CPU. Same-CPU syscall-return wakeup handoff now
-   follows the reference; wider interrupt routing and the parity review remain.
+   follows the reference. The port now uses the reference MADT/IOAPIC router
+   for PS/2 and the ACPI SCI, with a PIC fallback. PCI INTx routing through
+   AML `_PRT` and the remaining timer and parity review are still open.
    [Contracts and evidence](I386_SMP.md).
    The remaining internal/visual parity review follows. These intermediate
    results do not complete milestone 6 or the v0.4.0 target.

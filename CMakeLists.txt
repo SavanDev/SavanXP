@@ -162,7 +162,7 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     subsystems/posix/sdk/v1/runtime/div64.c
     kernel/object.cpp kernel/display.cpp kernel/device.cpp kernel/fb_gpu.cpp kernel/gpu_device.cpp
     kernel/pci.cpp kernel/audio.cpp kernel/audio_device.cpp kernel/ac97.cpp
-    kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/power.cpp
+    kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/ioapic.cpp kernel/power.cpp
     kernel/virtio_pci.cpp kernel/virtio_blk.cpp kernel/virtio_net.cpp kernel/virtio_sound.cpp
     kernel/virtio_gpu.cpp kernel/virtio_input.cpp
     kernel/pcspeaker.cpp kernel/clipboard.cpp kernel/serial_dev.cpp kernel/rtc.cpp)

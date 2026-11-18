@@ -8,6 +8,7 @@
 #include "serial.hpp"
 #include "kernel/virtio_input.hpp"
 #include "kernel/input.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/ps2.hpp"
 
 namespace i386 {
@@ -63,11 +64,7 @@ constexpr uint8_t kMouseIrq = 12;
  * config), asi que el teclado habla set 2 y el controlador entrega set 1. */
 constexpr uint8_t kReleaseBit = 0x80;
 
-/* Tablas scancode->ascii copiadas de kernel/ps2.cpp, sin tocar una sola
- * entrada (kNormalEs/kShiftedEs son el layout original; kNormalEn/kShiftedEn
- * es US QWERTY derivado del set 1 canonico). Estan aqui y no incluidas
- * porque kernel/ps2.cpp arrastra console/ioapic/virtio, que en i386 no
- * existen. MVP: normal/shifted, sin AltGr ni locks de teclado. */
+/* Set 1 scancode tables adapted from kernel/ps2.cpp for the native input path. */
 const char kNormalEs[] = {
     0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\'', 0, '\b',
     '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '\'', '+', '\n', 0,
@@ -614,11 +611,13 @@ void initialize() {
     discard_data();
     g_mouse_packet_index = 0;
 
-    cpu::register_irq_handler(kKeyboardIrq, input_irq);
-    cpu::register_irq_handler(kMouseIrq, input_irq);
-    cpu::enable_irq(kKeyboardIrq);
-    if (mouse_ready) {
-        cpu::enable_irq(kMouseIrq);
+    // Leave each PIC input masked when its MADT route is available.
+    constexpr uint8_t input_irqs[] = {kKeyboardIrq, kMouseIrq};
+    for (const uint8_t irq : input_irqs) {
+        if (irq == kMouseIrq && !mouse_ready) continue;
+        if (ioapic::route_legacy_irq(irq, input_irq)) continue;
+        cpu::register_irq_handler(irq, input_irq);
+        cpu::enable_irq(irq);
     }
 
     serial::write("ps2: teclado listo (irq 1, scancodes set 1)\n");

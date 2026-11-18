@@ -5,9 +5,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
-#if !defined(__i386__)
 #include "kernel/ioapic.hpp"
-#endif
 #include "kernel/string.hpp"
 
 namespace {
@@ -504,15 +502,11 @@ bool start_sci() {
     }
     enable_power_button();
 
-    // 4) Rutear la SCI. Por spec ACPI es level-triggered, active-low. Preferir el
-    //    IOAPIC; si no hay, caer al PIC legacy cuando la GSI entra en 0..15.
-#if !defined(__i386__)
-    if (ioapic::ready()) {
-        g_sci_active = ioapic::route_gsi(g_sci_int, ioapic::Polarity::active_low,
-                                         ioapic::Trigger::level, sci_interrupt) != 0;
-    } else
-#endif
-    if (g_sci_int < 16) {
+    // The reference treats the FADT SCI as a level-triggered, active-low GSI.
+    const uint8_t vector = ioapic::route_gsi(g_sci_int, ioapic::Polarity::active_low,
+                                            ioapic::Trigger::level, sci_interrupt);
+    g_sci_active = vector != 0;
+    if (!g_sci_active && g_sci_int < 16) {
         g_sci_active = arch::x86_64::register_irq_handler(
             static_cast<uint8_t>(g_sci_int), sci_interrupt);
         if (g_sci_active) {
@@ -520,9 +514,9 @@ bool start_sci() {
         }
     }
 
-    console::printf("acpi: SCI %s en GSI %u (PWRBTN habilitado)\n",
-                    g_sci_active ? "ruteado" : "no ruteado",
-                    static_cast<unsigned>(g_sci_int));
+    console::printf("acpi: SCI GSI %u via %s (power button enabled)\n",
+                    static_cast<unsigned>(g_sci_int),
+                    vector ? "IOAPIC" : g_sci_active ? "PIC" : "no interrupt route");
     return g_sci_active;
 }
 

@@ -61,8 +61,22 @@ directed message. With four CPUs the log reports three distinct selectors
 The reference virtio GPU can now arm MSI-X vector 49 on the BSP. Its existing
 handler and deferred completion path remain; the PIC INTx fallback is retained
 when a local APIC is unavailable. Device tests require actual IRQ notifications
-in addition to the MSI-X boot marker. IOAPIC/GSI and AML routing are still
-separate work; this does not claim x2APIC initialization or CPU hotplug.
+in addition to the MSI-X boot marker. x2APIC initialization and CPU hotplug
+remain outside the supported native path.
+
+The reference I/O APIC driver takes its MADT from the native ACPI table lookup
+and maps the controller through an uncached supervisor view. It resolves ISA
+overrides for PS/2 and routes the FADT SCI as a level-triggered, active-low GSI.
+Each GSI uses one of vectors 50–63 with local APIC EOI after chained handlers.
+The BSP installs routes before interrupts are enabled. The PIC entries for
+successfully routed devices stay masked. PS/2 and SCI fall back to the PIC if
+their route is unavailable. PIT and BIOS-assigned PCI INTx still use ExtINT.
+
+`smoke power-smoke --smp 4` checks route programming, guest reset and shutdown,
+and shutdown from the QEMU power button. It also boots with local APIC support
+hidden, types a shell command through the PIC keyboard path and repeats the
+power-button check. `smoke sxgui-smoke --smp 4` exercises QEMU PS/2 keystrokes,
+pointer movement and wheel input against the desktop.
 
 ## TSS layout and port permissions
 
@@ -290,10 +304,10 @@ accounting for idles/init/shell/test, preserving the reference capacity of 64. T
 scenario boots the normal desktop, including virtio.
 Both use QEMU disk snapshots and retain serial/QMP artifacts.
 
-These checkpoints restore idle accounting, timer-preemptible kernel waits
-and syscall-return wakeup handoff without claiming complete milestone 6 or
-v0.4.0 parity. IOAPIC/GSI routing, AML behavior, ASLR/signals and the remaining
-performance/visual review are separate work. v0.4.0 deliberately keeps idle
+These checkpoints cover idle accounting, timer-preemptible kernel waits,
+syscall-return wakeup handoff and I/O APIC routing for PS/2 and SCI. AML-based
+PCI INTx, BSP timer parity, ASLR/signals and the performance/visual review
+remain open. v0.4.0 deliberately keeps idle
 wakeups on timer boundaries instead of adding wake IPIs; that policy alone is
 not a parity gap. The historical study's earlier wake-IPI suggestions are
 superseded by the pinned-reference review.

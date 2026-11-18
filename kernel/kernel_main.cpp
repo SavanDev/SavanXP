@@ -170,7 +170,7 @@ namespace
     // IOAPIC despues del Local APIC (lo levanta timer::initialize) y de la ACPI:
     // parsea la MADT y deja el ruteo de GSIs listo para SCI e INTx (_PRT). Si no
     // hay MADT/IOAPIC cae en silencio y el sistema sigue con el PIC legacy.
-    ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
+    ioapic::initialize();
     // Los APs, ya con el APIC local del BSP listo y los GSIs ruteados. Quedan
     // estacionados: nadie planifica sobre ellos todavia (docs/SMP_ROADMAP.md).
     smp::initialize(boot_info);

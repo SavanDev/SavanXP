@@ -15,9 +15,10 @@ PCI DMA allocations use the physical allocator's contiguous-page API and its
 supervisor RAM aliases; they are never passed a virtual address as a bus address.
 
 BIOS assigns PCI INTx lines. The native adapter enables level triggering in the
-PIC ELCR and permits shared handlers, including an ACPI SCI on the same line.
-This is the legacy PIC path; AML/IOAPIC routing remains a milestone 6 parity
-gap. The optional virtio integration is described in [I386_VIRTIO.md](I386_VIRTIO.md).
+PIC ELCR and permits shared handlers. The ACPI SCI now prefers its I/O APIC GSI
+and falls back to the PIC for a legacy line. Routing PCI INTx via AML `_PRT`
+remains a milestone 6 parity gap. See [I/O APIC delivery](I386_SMP.md#local-apic-and-interrupts)
+and [the optional virtio profile](I386_VIRTIO.md).
 The ACPI RSDP comes from Multiboot2 tags 14/15;
 physical ACPI addresses use the supervisor RAM alias, independently of the
 framebuffer's device identity mapping. S5/reset keep the reference fallbacks.
@@ -126,7 +127,7 @@ heaptest's six live allocations or changing the heap growth algorithm.
 
 This closes milestone 5, not complete v0.4.0 parity. Milestone 6 covers SMP,
 virtio integration and the remaining reference performance, power and
-AML/IOAPIC mechanisms in emulation. AC'97 keeps the reference playback-only
+AML mechanisms in emulation. AC'97 keeps the reference playback-only
 contract; the separate virtio profile adds capture-ring reads. Full signals/job control, explicit
 idle-process accounting and the reference boot-console/logo still need the
 final version-parity review. Physical-machine bring-up, including laptop

@@ -260,13 +260,11 @@ void poll_receive() {
     irq_restore(flags);
 }
 
-// Handler de la INTx del rtl8139 (ruteada por _PRT -> IOAPIC). Sirve el device
-// (drena RX + limpia el ISR, desasertando la linea level-triggered) para no
-// generar tormenta. Corre en contexto de IRQ.
+// Drain RX and clear the interrupt status before acknowledging the level-triggered line.
 void irq_handler() {
     g_irq_count = g_irq_count + 1;
     if (g_irq_count == 1) {
-        console::write("rtl8139: primer INTx recibido via IOAPIC (interrupt-driven ok)\n");
+        console::write("rtl8139: first INTx received\n");
     }
     poll_receive();
 }
@@ -380,9 +378,8 @@ bool probe() {
     }
 
     g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-    // Rutear la INTx del NIC via _PRT/IOAPIC (una vez, al detectarlo). El
-    // handler queda registrado; el device recien asertara INTx cuando bring_up
-    // habilite el IMR. Si falla, g_irq_routed=false y se usa polling.
+    // Register the platform's PCI interrupt route at probe time. The device
+    // asserts INTx after bring_up enables the IMR. Poll if routing fails.
     const uint8_t vec = uacpi_glue::route_pci_intx(
         g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler);
     g_irq_routed = (vec != 0);

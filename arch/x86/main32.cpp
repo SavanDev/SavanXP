@@ -7,6 +7,7 @@
 #include "kernel/sxfs.hpp"
 #include "kernel/ramdisk.hpp"
 #include "kernel/pci.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/virtio_blk.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
@@ -349,7 +350,6 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::init();
     cpu::initialize();
     serial::write("cpu: gdt de 32 bits con segmentos de usuario y tss, idt con int $0x80\n");
-    ps2_32::initialize();
     /* El PIT con IF=0: se programa y abre IRQ0, pero el primer tick se
      * entrega cuando el proceso entre en ring 3 (ver pit.hpp). */
     pit::initialize();
@@ -452,8 +452,11 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     pci::initialize();
     mount_root_filesystem();
     device::initialize();
-    services::initialize(info_address);
+    services::initialize_firmware(info_address);
     i386::smp::initialize(info_address);
+    ioapic::initialize();
+    ps2_32::initialize();
+    services::initialize();
     boot::FramebufferInfo framebuffer = {};
     framebuffer.address = reinterpret_cast<void*>(static_cast<uintptr_t>(fb32::address()));
     framebuffer.width = fb32::info().width;

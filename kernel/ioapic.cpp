@@ -1,50 +1,17 @@
-// ioapic.cpp — MADT parse + IOAPIC programming + ruteo de GSIs.
-//
-// ESTADO: ESQUELETO DE EVALUACION. Compila conceptualmente contra lo que ya
-// existe (vm, console, cpu), pero NECESITA UN CAMBIO EN arch/x86_64/cpu_init.cpp
-// (ver bloque "TOCAR EN ARCH" mas abajo) y no esta cableado al build todavia.
-//
-// Modelo de entrega:  dispositivo -> IOAPIC (redirection entry) -> Local APIC
-//                     (x2APIC) -> vector IDT -> dispatch_external_vector ->
-//                     handler -> EOI al Local APIC.
-
+// Route MADT-described inputs through the I/O APIC to the BSP local APIC.
 #include "kernel/ioapic.hpp"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../arch/x86/paging.hpp"
+#include "kernel/acpi.hpp"
 #include "kernel/console.hpp"
-#include "kernel/string.hpp"
-#include "kernel/vmm.hpp"
 
 namespace {
 
-// ---- Igual que acpi.cpp: normaliza phys/virt con el HHDM ----
-uint64_t g_hhdm = 0;
-template <typename T> T* map(uint64_t addr) {
-    return reinterpret_cast<T*>(addr >= g_hhdm ? addr : addr + g_hhdm);
-}
-bool checksum_ok(const void* d, size_t n) {
-    const uint8_t* b = static_cast<const uint8_t*>(d); uint8_t s = 0;
-    for (size_t i = 0; i < n; ++i) s = uint8_t(s + b[i]);
-    return s == 0;
-}
-
-struct [[gnu::packed]] SdtHeader {
-    char signature[4]; uint32_t length; uint8_t revision, checksum;
-    char oem_id[6], oem_table_id[8]; uint32_t oem_revision, creator_id, creator_revision;
-};
-struct [[gnu::packed]] Rsdp {
-    char signature[8]; uint8_t checksum; char oem_id[6];
-    uint8_t revision; uint32_t rsdt_address;
-    uint32_t length; uint64_t xsdt_address; uint8_t extended_checksum, reserved[3];
-};
-
-// ---- MADT (tabla "APIC") ----
-struct [[gnu::packed]] Madt {
-    SdtHeader header; uint32_t local_apic_address; uint32_t flags;
-    // ...seguido de entradas variables (type,len,...)
-};
+// SDT header, local APIC address and flags precede the variable entries.
+constexpr size_t kMadtHeaderSize = 44;
 struct [[gnu::packed]] MadtEntryHeader { uint8_t type, length; };
 struct [[gnu::packed]] MadtIoApic {
     MadtEntryHeader h; uint8_t io_apic_id, reserved;
@@ -57,28 +24,22 @@ struct [[gnu::packed]] MadtIso {
 constexpr uint8_t kMadtIoApic = 1;
 constexpr uint8_t kMadtIso    = 2;
 
-// ---- Estado descubierto ----
-struct IoApic { uint32_t id, gsi_base, gsi_count; volatile uint32_t* regs; };
+struct IoApic { uint32_t gsi_base, gsi_count; volatile uint32_t* regs; };
 struct Iso    { uint8_t source; uint32_t gsi; uint16_t flags; };
-// Una GSI ya ruteada: se recuerda para compartirla en vez de reprogramarla.
+// Keep one redirection entry and vector per shared GSI.
 struct Routed { uint32_t gsi; uint8_t vector; bool active_low; bool level; };
 
 constexpr size_t kMaxIoApics = 4;
 constexpr size_t kMaxIsos    = 16;
-constexpr size_t kMaxRouted  = 16;
+// Vectors 50..63 follow the PCI/MSI-X gates and precede the SMP IPIs.
+constexpr uint8_t kVectorPoolStart = 50;
+constexpr uint8_t kVectorPoolEnd = 64;
 IoApic g_ioapics[kMaxIoApics]; size_t g_ioapic_count = 0;
 Iso    g_isos[kMaxIsos];       size_t g_iso_count = 0;
-Routed g_routed[kMaxRouted];   size_t g_routed_count = 0;
+Routed g_routed[kVectorPoolEnd - kVectorPoolStart]; size_t g_routed_count = 0;
 bool   g_ready = false;
 
-// Pool de vectores para GSIs. Arranca despues del MSI-X (49) y del rango PIC.
-// TOCAR EN ARCH: hoy cpu_init.cpp solo define trampolines vector_NN hasta 49.
-// Para este pool hay que agregar DEFINE_EXTERNAL_ISR(50..63) e incluirlos en
-// initialize_idt(). Es mecanico (~14 lineas de macros).
-uint8_t g_next_vector = 50;
-constexpr uint8_t kVectorPoolEnd = 64;
-
-// ---- Acceso a registros del IOAPIC (IOREGSEL @0x00, IOWIN @0x10) ----
+// Indirect registers: IOREGSEL at 0x00, IOWIN at 0x10.
 uint32_t ioapic_read(IoApic& io, uint32_t reg) {
     io.regs[0] = reg;              // IOREGSEL
     return io.regs[4];             // IOWIN (offset 0x10 / 4)
@@ -98,15 +59,12 @@ Routed* find_routed(uint32_t gsi) {
 IoApic* owner_of_gsi(uint32_t gsi) {
     for (size_t i = 0; i < g_ioapic_count; ++i) {
         IoApic& io = g_ioapics[i];
-        if (gsi >= io.gsi_base && gsi < io.gsi_base + io.gsi_count) return &io;
+        if (gsi >= io.gsi_base && gsi - io.gsi_base < io.gsi_count) return &io;
     }
     return nullptr;
 }
 
-// Escribe una entrada de la redirection table (64 bits = 2 regs de 32).
-// Layout: [7:0] vector, [10:8] delivery mode (0=fixed), [11] dest mode
-// (0=physical), [13] polarity (1=active low), [15] trigger (1=level),
-// [16] mask, [63:56] destino (APIC id fisico).
+// Fixed delivery in physical destination mode. The redirection entry spans two registers.
 void write_redirection(IoApic& io, uint32_t gsi, uint8_t vector,
                        bool active_low, bool level, bool masked, uint8_t dest_apic) {
     const uint32_t index = 0x10 + (gsi - io.gsi_base) * 2;
@@ -114,59 +72,40 @@ void write_redirection(IoApic& io, uint32_t gsi, uint8_t vector,
     if (active_low) low |= (1u << 13);
     if (level)      low |= (1u << 15);
     if (masked)     low |= (1u << 16);
-    const uint32_t high = uint32_t(dest_apic) << 24; // bits [63:56] del qword
+    const uint32_t high = uint32_t(dest_apic) << 24; // Bits [63:56] of the entry.
     ioapic_write(io, index + 1, high);
     ioapic_write(io, index, low);
 }
 
-uint8_t alloc_vector() {
-    if (g_next_vector >= kVectorPoolEnd) return 0;
-    return g_next_vector++;
-}
-
-// ---- Camino de tablas: RSDP -> XSDT/RSDT -> "APIC" ----
-const SdtHeader* find_madt(const Rsdp* rsdp) {
-    const bool use_xsdt = rsdp->revision >= 2 && rsdp->xsdt_address != 0;
-    const SdtHeader* root = use_xsdt ? map<SdtHeader>(rsdp->xsdt_address)
-                                     : map<SdtHeader>(rsdp->rsdt_address);
-    const size_t esz = use_xsdt ? 8 : 4;
-    const size_t n = (root->length - sizeof(SdtHeader)) / esz;
-    const uint8_t* e = reinterpret_cast<const uint8_t*>(root) + sizeof(SdtHeader);
-    for (size_t i = 0; i < n; ++i) {
-        uint64_t phys = 0; memcpy(&phys, e + i * esz, esz);
-        const SdtHeader* t = map<SdtHeader>(phys);
-        if (memcmp(t->signature, "APIC", 4) == 0) return t;
-    }
-    return nullptr;
-}
-
-void parse_madt(const Madt* madt) {
-    const uint8_t* p   = reinterpret_cast<const uint8_t*>(madt) + sizeof(Madt);
-    const uint8_t* end = reinterpret_cast<const uint8_t*>(madt) + madt->header.length;
-    while (p + sizeof(MadtEntryHeader) <= end) {
-        const auto* h = reinterpret_cast<const MadtEntryHeader*>(p);
-        if (h->length == 0) break; // proteccion anti-loop
-        if (h->type == kMadtIoApic && g_ioapic_count < kMaxIoApics) {
-            const auto* e = reinterpret_cast<const MadtIoApic*>(p);
+void parse_madt(const void* table, size_t length) {
+    const auto* bytes = static_cast<const uint8_t*>(table);
+    for (size_t offset = kMadtHeaderSize; length - offset >= sizeof(MadtEntryHeader);) {
+        const auto* h = reinterpret_cast<const MadtEntryHeader*>(bytes + offset);
+        if (h->length < sizeof(*h) || h->length > length - offset) return;
+        if (h->type == kMadtIoApic && h->length >= sizeof(MadtIoApic) &&
+            g_ioapic_count < kMaxIoApics) {
+            const auto* e = reinterpret_cast<const MadtIoApic*>(h);
             void* virt = nullptr;
-            if (vm::map_kernel_mmio(e->io_apic_address, 0x20,
-                    vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable, &virt)) {
-                IoApic& io = g_ioapics[g_ioapic_count++];
-                io.id = e->io_apic_id; io.gsi_base = e->gsi_base;
-                io.regs = reinterpret_cast<volatile uint32_t*>(virt);
-                // VER (reg 0x01) bits [23:16] = max redirection entry (count-1).
+            if (e->io_apic_address && !(e->io_apic_address & 4095u) &&
+                i386::paging::map_kernel_mmio(e->io_apic_address, 0x20, &virt)) {
+                IoApic io{e->gsi_base, 0, static_cast<volatile uint32_t*>(virt)};
+                // Register 1 encodes the last redirection entry in bits 23:16.
                 io.gsi_count = ((ioapic_read(io, 0x01) >> 16) & 0xff) + 1;
+                // The selector is eight bits and redirection entries begin at 0x10.
+                if (io.gsi_count <= 120) g_ioapics[g_ioapic_count++] = io;
+                else i386::paging::unmap_kernel_pages(virt, 1);
             }
-        } else if (h->type == kMadtIso && g_iso_count < kMaxIsos) {
-            const auto* e = reinterpret_cast<const MadtIso*>(p);
-            g_isos[g_iso_count++] = Iso{e->source, e->gsi, e->flags};
+        } else if (h->type == kMadtIso && h->length >= sizeof(MadtIso) &&
+                   g_iso_count < kMaxIsos) {
+            const auto* e = reinterpret_cast<const MadtIso*>(h);
+            if (e->bus == 0 && e->source < 16)
+                g_isos[g_iso_count++] = Iso{e->source, e->gsi, e->flags};
         }
-        p += h->length;
+        offset += h->length;
     }
 }
 
-// Traduce una IRQ ISA a su GSI + polaridad/trigger efectivos aplicando el ISO.
-// Sin override: IRQ ISA = edge / active-high, y GSI == IRQ.
+// ISA defaults to identity routing, active high and edge triggered.
 void resolve_isa(uint8_t irq, uint32_t& gsi, ioapic::Polarity& pol, ioapic::Trigger& trg) {
     gsi = irq; pol = ioapic::Polarity::active_high; trg = ioapic::Trigger::edge;
     for (size_t i = 0; i < g_iso_count; ++i) {
@@ -174,8 +113,8 @@ void resolve_isa(uint8_t irq, uint32_t& gsi, ioapic::Polarity& pol, ioapic::Trig
         gsi = g_isos[i].gsi;
         const uint16_t f = g_isos[i].flags;
         const uint8_t p = f & 0x3, t = (f >> 2) & 0x3;
-        if (p == 0x3) pol = ioapic::Polarity::active_low;   // 1=high, 3=low, 0=bus-default(ISA=high)
-        if (t == 0x3) trg = ioapic::Trigger::level;         // 1=edge, 3=level, 0=bus-default(ISA=edge)
+        if (p == 0x3) pol = ioapic::Polarity::active_low;   // 1=high, 3=low, 0=ISA default
+        if (t == 0x3) trg = ioapic::Trigger::level;         // 1=edge, 3=level, 0=ISA default
         break;
     }
 }
@@ -184,32 +123,19 @@ void resolve_isa(uint8_t irq, uint32_t& gsi, ioapic::Polarity& pol, ioapic::Trig
 
 namespace ioapic {
 
-bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
-    g_hhdm = hhdm_offset;
-    if (!rsdp_addr || !hhdm_offset) return false;
+bool initialize() {
+    if (g_ready) return true;
+    // Every route needs a functioning local APIC to acknowledge delivery.
+    if (!arch::x86_64::local_apic_ready()) return false;
 
-    // El IOAPIC entrega a traves del Local APIC y cada handler ruteado por aca
-    // hace EOI contra el. Sin Local APIC operativo la entrega quedaria a medias:
-    // el handler corre pero el bit del ISR nunca se limpia y el APIC se traba
-    // para siempre a partir de la primera interrupcion. Preferimos no programar
-    // el IOAPIC y dejar que los consumidores caigan al PIC legacy.
-    if (!arch::x86_64::local_apic_ready()) {
-        console::printf("ioapic: sin Local APIC operativo, se mantiene el PIC legacy\n");
-        return false;
-    }
-
-    const Rsdp* rsdp = map<Rsdp>(rsdp_addr);
-    if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
-        console::printf("ioapic: RSDP invalido\n"); return false;
-    }
-    const SdtHeader* madt_hdr = find_madt(rsdp);
-    if (!madt_hdr) { console::printf("ioapic: MADT ausente\n"); return false; }
-
-    parse_madt(reinterpret_cast<const Madt*>(madt_hdr));
-    if (g_ioapic_count == 0) { console::printf("ioapic: sin IOAPIC en MADT\n"); return false; }
+    size_t length = 0;
+    const void* madt = acpi::table("APIC", length);
+    if (!madt || length < kMadtHeaderSize) return false;
+    parse_madt(madt, length);
+    if (g_ioapic_count == 0) return false;
 
     g_ready = true;
-    console::printf("ioapic: %u IOAPIC(s), %u override(s), GSIs base=%u count=%u\n",
+    console::printf("ioapic: %u controller(s), %u ISA override(s), first GSI base=%u count=%u\n",
                     unsigned(g_ioapic_count), unsigned(g_iso_count),
                     unsigned(g_ioapics[0].gsi_base), unsigned(g_ioapics[0].gsi_count));
     return true;
@@ -225,56 +151,50 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
     const bool active_low = pol == Polarity::active_low;
     const bool level = trg == Trigger::level;
 
-    // GSI ya ruteada: es una linea compartida, no una linea nueva. El SCI cae
-    // siempre aca (lo piden acpi::start_sci y el glue de uACPI) y con INTx pasa
-    // lo mismo cuando dos links PCI resuelven a la misma GSI. Reusar el vector y
-    // encadenar el handler; reprogramar la entrada de redireccion con un vector
-    // nuevo dejaria huerfano al handler anterior.
+    // Reuse the vector and retain the original electrical configuration on shared lines.
     if (Routed* existing = find_routed(gsi)) {
         if (existing->active_low != active_low || existing->level != level) {
             console::printf(
-                "ioapic: GSI %u compartida con otra polaridad/trigger, se conserva la original\n",
+                "ioapic: GSI %u requested with different polarity or trigger; keeping original route\n",
                 unsigned(gsi));
         }
         if (!arch::x86_64::register_interrupt_handler(
                 existing->vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
-            console::printf("ioapic: no se pudo encadenar handler en GSI %u\n", unsigned(gsi));
+            console::printf("ioapic: could not chain handler on GSI %u\n", unsigned(gsi));
             return 0;
         }
         return existing->vector;
     }
 
-    if (g_routed_count >= kMaxRouted) {
-        console::printf("ioapic: tabla de GSIs ruteadas llena\n");
+    const uint8_t vector = kVectorPoolStart + g_routed_count;
+    if (vector >= kVectorPoolEnd) {
+        console::write_line("ioapic: vector pool exhausted");
         return 0;
     }
 
-    const uint8_t vector = alloc_vector();
-    if (!vector) { console::printf("ioapic: pool de vectores agotado\n"); return 0; }
-
-    // Registrar el handler con EOI al Local APIC (la entrega pasa por el).
-    // TOCAR EN ARCH: requiere el trampolin vector_NN para `vector` en la IDT.
     if (!arch::x86_64::register_interrupt_handler(
             vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
         return 0;
     }
 
-    // Destino: el BSP, en modo fisico. Con SMP habria que elegir CPU y considerar
-    // destino logico cuando el id de x2APIC no entra en 8 bits.
-    write_redirection(*io, gsi, vector, active_low, level,
-                      /*masked=*/false,
-                      /*dest_apic=*/static_cast<uint8_t>(arch::x86_64::local_apic_id()));
+    // Routes are installed by the BSP during boot with interrupts disabled.
+    write_redirection(*io, gsi, vector, active_low, level, /*masked=*/false,
+                      static_cast<uint8_t>(arch::x86_64::local_apic_id()));
     g_routed[g_routed_count++] = Routed{gsi, vector, active_low, level};
+    console::printf("ioapic: GSI %u -> vector %u (%s, active-%s)\n", unsigned(gsi),
+                    unsigned(vector), level ? "level" : "edge", active_low ? "low" : "high");
     return vector;
 }
 
 uint8_t route_legacy_irq(uint8_t isa_irq, arch::x86_64::IrqHandler handler) {
+    if (isa_irq >= 16) return 0;
     uint32_t gsi; Polarity pol; Trigger trg;
     resolve_isa(isa_irq, gsi, pol, trg);
     return route_gsi(gsi, pol, trg, handler);
 }
 
 void set_gsi_masked(uint32_t gsi, bool masked) {
+    if (!find_routed(gsi)) return;
     IoApic* io = owner_of_gsi(gsi);
     if (!io) return;
     const uint32_t index = 0x10 + (gsi - io->gsi_base) * 2;

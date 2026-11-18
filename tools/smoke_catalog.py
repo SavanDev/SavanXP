@@ -33,7 +33,7 @@ SCENARIOS = {
     "partition-smoke": "ATA disk with an MBR SxFS slice, consistency and guest file I/O",
     "live-desktop": "standalone LiveCD desktop without an ATA disk, including Program Manager glyphs",
     "storage-smoke": "diskless GRUB LiveCD, reference ramdisk, SxFS consistency and guest writes",
-    "power-smoke": "ACPI guest shutdown, cold reboot and firmware power-button SCI",
+    "power-smoke": "ACPI shutdown, cold reboot and firmware power-button SCI via IOAPIC and PIC",
     "media-smoke": "installed FFmpeg audio/video/sync and Ccleste asset/decoder selftests",
     "legacy-cpu": "QMP assertion that qemu32 exposes no long mode or NX",
 }
