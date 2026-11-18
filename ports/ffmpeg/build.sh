@@ -16,7 +16,7 @@ Usage: ./ports/ffmpeg/build.sh [options]
 Options:
   --no-install       Build and stamp without touching build/disk.img.
   --skip-port        Skip FFmpeg compilation and install the existing library.
-  --with-test-media  Generate and install the three deterministic test clips.
+  --with-test-media  Generate and install the five deterministic test clips.
   --no-compact       Disable automatic SxFS compaction during installation.
   --work PATH        Override the whitespace-free FFmpeg work directory.
   -h, --help         Show this help.

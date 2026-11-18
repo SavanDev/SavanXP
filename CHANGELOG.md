@@ -53,6 +53,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **FFmpeg's license notice says where its source is: the `ffmpeg-7.1.1.tar.xz` asset of the release.** `SOURCE.md`
+  described a static binary; it now covers the shared library and how to replace it. See
+  [RELEASING.md](docs/build/RELEASING.md#a-release-that-carries-ffmpeg).
+
 - **A kernel panic is visible on screen even when the desktop was showing its second DISPI buffer or another mode.**
   New `panic-display-front`/`-back`/`-single`/`-released` scenarios (`panictest --display`) check the screenshot.
   FB4 of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
