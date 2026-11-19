@@ -6420,6 +6420,42 @@ int sxgui_textedit_can_redo(const struct sxgui_widget *widget)
         widget->edit_state->done < widget->edit_state->count;
 }
 
+int sxgui_textedit_replace(struct sxgui_widget *widget, int start, int end, const char *text)
+{
+    int length;
+    int count = text != 0 ? (int)strlen(text) : 0;
+    int put;
+
+    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    {
+        return 0;
+    }
+    length = (int)strlen(widget->edit_buffer);
+    start = start < 0 ? 0 : start > length ? length : start;
+    end = end < start ? start : end > length ? length : end;
+    sxgui_edit_begin(widget);
+    sxgui_edit_remove(widget, start, end, 0, start);
+    put = count > 0 ? sxgui_edit_insert(widget, start, text, count, 0) : 0;
+    widget->caret = start + (put > 0 ? put : 0);
+    widget->sel_anchor = -1;
+    sxgui_textedit_reveal_caret(widget);
+    return put == count;
+}
+
+void sxgui_textedit_set_caret(struct sxgui_widget *widget, int position)
+{
+    int length;
+
+    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    {
+        return;
+    }
+    length = (int)strlen(widget->edit_buffer);
+    widget->caret = position < 0 ? 0 : position > length ? length : position;
+    widget->sel_anchor = -1;
+    sxgui_textedit_reveal_caret(widget);
+}
+
 void sxgui_textedit_select_all(struct sxgui_widget *widget)
 {
     if (widget == 0 || widget->edit_buffer == 0 ||

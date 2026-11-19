@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Savan BASIC, the SxBASIC environment.** `/system/sxbide.sxe` (All Programs > Development) opens a project, edits its
+  files with line numbers and colours, sets values in a property grid on a form's text, and runs Start and Make SXE in
+  a child process, opening an error at its line ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md)). New
+  `sxgui_textedit_replace` and `sxgui_textedit_set_caret`. Checked by `smoke sxbide-smoke` and `shoot.sh --scenario sxbide`.
 - **SXGUI text editor documents with undo.** `sxgui_textedit_document` gives an `SXGUI_TEXTEDIT` a buffer the toolkit owns and grows, with
   undo/redo by step (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, `sxgui_textedit_undo`/`redo`); fixed caller buffers behave as before.
   `libsxgui` now also asks the program for `malloc`/`realloc`/`free`.

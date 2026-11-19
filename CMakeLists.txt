@@ -676,7 +676,8 @@ file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png"
-    "${CMAKE_SOURCE_DIR}/system/imgview/*.png")
+    "${CMAKE_SOURCE_DIR}/system/imgview/*.png"
+    "${CMAKE_SOURCE_DIR}/system/sxbide/*.png")
 add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_SXE_ROOT}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"
@@ -700,6 +701,7 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxgldiag"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/webview"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/imgview"
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxbide"
             # The Win32 subsystem's host, whose sources live with the subsystem.
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/win32/host"
             ${SAVANXP_SXE_ARGUMENTS}

@@ -204,6 +204,17 @@ int main(void)
     w->edit_marks = 0;
     w->edit_flags = 0;
 
+    /* A program rewriting part of the document: one step of undo, and the
+     * caret moved where the program says. */
+    CHECK(sxgui_textedit_document(w, "Version = \"1.0\"\nKind = Console") == 0);
+    CHECK(sxgui_textedit_replace(w, 10, 15, "\"2.0\"") == 1);
+    CHECK(strcmp(w->edit_buffer, "Version = \"2.0\"\nKind = Console") == 0 && w->caret == 15 && w->modified);
+    CHECK(sxgui_textedit_undo(w) && strcmp(w->edit_buffer, "Version = \"1.0\"\nKind = Console") == 0);
+    CHECK(sxgui_textedit_redo(w) && strcmp(w->edit_buffer, "Version = \"2.0\"\nKind = Console") == 0);
+    CHECK(sxgui_textedit_replace(w, 15, 99, 0) == 1 && strcmp(w->edit_buffer, "Version = \"2.0\"") == 0);
+    sxgui_textedit_set_caret(w, 1000);
+    CHECK(w->caret == 15 && w->sel_anchor == -1);
+
     sxgui_textedit_release(w);
     CHECK(w->edit_state == 0 && w->edit_buffer == 0);
 

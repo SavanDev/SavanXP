@@ -172,6 +172,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   left out, the limits of this version, and the samples. Console and Windows programs run (`/system/sxbasic.sxe`).
 - [`SXBASIC_IMAGE.md`](userland/SXBASIC_IMAGE.md) — SxBASIC's Make SXE: a made
   executable as the stub plus sections, and the compiled program image.
+- [`SXBASIC_IDE.md`](userland/SXBASIC_IDE.md) — Savan BASIC, SxBASIC's environment
+  (`/system/sxbide.sxe`): the window, the property grid on a form's text, Start and
+  Make SXE in a child process, errors at their line, and its selftest.
 - [`DISK_MANAGEMENT.md`](userland/DISK_MANAGEMENT.md) — Disk Management: the window,
   why storage is reached through calls and not `/dev/disk<n>`, the SxFS GPT type GUID,
   the rules for the operations that write, and its tests.

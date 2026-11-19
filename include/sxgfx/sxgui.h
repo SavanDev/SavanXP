@@ -662,6 +662,14 @@ int sxgui_textedit_undo(struct sxgui_widget *widget);
 int sxgui_textedit_redo(struct sxgui_widget *widget);
 int sxgui_textedit_can_undo(const struct sxgui_widget *widget);
 int sxgui_textedit_can_redo(const struct sxgui_widget *widget);
+/* Replaces the bytes [start, end) with `text` (NULL or "" deletes), as one
+ * step of undo, and leaves the caret after the new text: a program that
+ * rewrites part of the document (an IDE's property grid writing a value
+ * back) without losing the history. 1 if all of `text` went in. */
+int sxgui_textedit_replace(struct sxgui_widget *widget, int start, int end, const char *text);
+/* Moves the caret to a byte offset, drops the selection and scrolls it into
+ * view: going to the line an error names. */
+void sxgui_textedit_set_caret(struct sxgui_widget *widget, int position);
 
 /* Puts the focus on a widget by index (-1 = none). Normally the user moves
  * the focus with Tab or a click, but an app whose content IS a control -- an

@@ -1,0 +1,12 @@
+# SXE resources of Savan BASIC, the SxBASIC development environment
+# (docs/userland/SXBASIC_IDE.md). As a SUN program it also gets them compiled
+# in (sxbide.sunres.h).
+name=Savan BASIC
+description=Write, run and make Savan BASIC programs
+version=system
+vendor=SavanXP
+subsystem=native
+accent=1f3f7f
+icon_file=icon.png,icon-32.png
+ext_open=.sbp
+category=Development

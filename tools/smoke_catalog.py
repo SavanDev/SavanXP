@@ -791,6 +791,12 @@ SCENARIOS: dict[str, Scenario] = {
         "SXBASIC MAKE SMOKE FAIL",
         "SxBASIC Make SXE: the converter sample made into /tmp/Converter.sxe, then run with its selftest",
     ),
+    "sxbide-smoke": _qemu_scenario(
+        "sxbide",
+        "SXBIDE SMOKE PASS",
+        "SXBIDE SMOKE FAIL",
+        "Savan BASIC's environment: the console sample opened, saved as, run, broken at a line, made",
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

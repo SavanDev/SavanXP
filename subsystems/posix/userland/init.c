@@ -63,6 +63,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "sxbmake")) {
         return "SXBASIC MAKE SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "sxbide")) {
+        return "SXBIDE SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "ccleste")) {
         return "CCLESTE SELFTEST";
     }
@@ -241,6 +244,8 @@ static int run_automation_spec(const char* spec) {
     /* Make SXE from inside SavanXP, then the made program run with its selftest. */
     const char* sxbmake_argv[] = {"/system/sxbasic.sxe", "--make-selftest", "/system/sxbasic/selftests/converter-made.txt",
                                   "/system/sxbasic/samples/converter/converter.sbp", "/tmp/Converter.sxe", 0};
+    /* Savan BASIC's environment with no window: open, run, find an error, make. */
+    const char* sxbide_argv[] = {"/system/sxbide.sxe", "--selftest", "/system/sxbasic/selftests/ide.txt", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
@@ -430,6 +435,10 @@ static int run_automation_spec(const char* spec) {
             path = "/system/sxbasic.sxe";
             argv = sxbmake_argv;
             argc = 5;
+        } else if (strcmp(spec, "sxbide") == 0) {
+            path = "/system/sxbide.sxe";
+            argv = sxbide_argv;
+            argc = 3;
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";
             argv = elevtest_argv;

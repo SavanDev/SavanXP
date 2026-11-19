@@ -1196,6 +1196,22 @@ def scenario_sxbasic(s):
     s.shot("sxbasic-reading")
 
 
+def scenario_sxbide(s):
+    """Savan BASIC's environment (docs/userland/SXBASIC_IDE.md) on the greeter
+    sample: the form's code in the editor with its gutter and colours, the
+    property grid on the form's block, then Start (F5) running the program in
+    a window of its own."""
+    s.run("/system/sxbide.sxe /system/sxbasic/samples/greeter/greeter.sbp")
+    image = s.shot("sxbide")
+    # The form is the file shown, so its row is the selected one.
+    if find_text(image, (0, 0, 1280, 770), "greeter.sbp", TEXT, FIELD)[0] is None:
+        raise Failure("Savan BASIC does not list the project's files")
+    if find_text(image, (0, 0, 1280, 770), "Properties - Form MainForm", TEXT, FACE)[0] is None:
+        raise Failure("Savan BASIC's property grid is not on the form's block")
+    s.qmp.tap("f5", pause=8.0)
+    s.shot("sxbide-run")
+
+
 def scenario_system(s):
     """System Properties (all three pages) and Task Manager.
 
@@ -4258,6 +4274,7 @@ SCENARIOS = {
     "files": scenario_files,
     "console": scenario_console,
     "sxbasic": scenario_sxbasic,
+    "sxbide": scenario_sxbide,
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,

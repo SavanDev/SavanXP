@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, phases 0, 1 and 2 done.** SxBASIC is a BASIC language and a visual
+> **Status: open, phases 0 to 4 done.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -259,7 +259,7 @@ Checked by `sxbasic-test` and `sxbasic-make-smoke`. Departures from the plan:
 - The stub finds its own file through `argv[0]`, and is copied with its debug
   sections ([limits](../../userland/SXBASIC_IMAGE.md#limits-of-this-version)).
 
-### Phase 4 — the IDE, code first
+### Phase 4 — the IDE, code first (done)
 
 The environment itself: a menu bar and toolbar, a project explorer, a code editor,
 the property grid, forms edited as text for now, Run (phase 2's stub in a
@@ -269,7 +269,8 @@ from [What is missing](#what-is-missing), each in its own commit with its
 assertion. A selftest opens a sample project, runs it and makes its
 executable.
 
-**Landed so far.** SUN's `sxn_make_directory` and `sxn_rename_path`
+**What landed.** Savan BASIC, `/system/sxbide.sxe`
+([SXBASIC_IDE.md](../../userland/SXBASIC_IDE.md)), and before it SUN's `sxn_make_directory` and `sxn_rename_path`
 (`nativetest`). On `SXGUI_TEXTEDIT`, all six editor options from
 [above](#the-code-editor-is-sxgui_textedit-not-a-new-widget):
 `sxgui_textedit_document` (a buffer the toolkit owns and grows, with undo
@@ -281,7 +282,18 @@ property grid, `SXGUI_PROPGRID` (`struct sxgui_property` rows: text, a list,
 a colour, true/false), checked by `sxgui-propgrid-test`; its missing
 scrollbar and drop-down are in
 [PLATFORM_GRAPHICS.md](../../desktop/PLATFORM_GRAPHICS.md#known-gaps-in-sxgui-c).
-Pending: the IDE.
+With the environment came `sxgui_textedit_replace` and
+`sxgui_textedit_set_caret`, for the grid writing a value back and for going
+to an error's line. Checked by `sxbide-smoke` (the selftest the phase asks
+for, on the console sample) and `tools/shoot.sh --scenario sxbide`.
+Departures from the plan:
+
+- The property grid reads the `Key = value` lines of the block around the
+  caret instead of a model of the form, and lists only what is written.
+- Run and Make SXE start the runner, `sxbasic.sxe`; the environment does
+  not link `libsxbasic`.
+- A command that would lose unsaved changes asks by running only when
+  chosen twice; SXGUI has no Yes/No/Cancel box of its own.
 
 ### Phase 5 — the visual designer
 

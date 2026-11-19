@@ -1,0 +1,27 @@
+# Savan BASIC's environment driven with no window (sxbide --selftest; docs/userland/SXBASIC_IDE.md):
+# open the console sample, save a copy in /tmp, change a property, run it,
+# break it and find the error at its line, then make its executable.
+open /system/sxbasic/samples/hello/hello.sbp
+expect-files hello.sbp Main.bas
+expect-current Main.bas
+save-as /tmp/idetest/hello/hello.sbp
+expect-exists /tmp/idetest/hello/Main.bas
+select hello.sbp
+expect-property Name Hello
+expect-property Kind Console
+set-property Version 1.1
+expect-line 5 Version = "1.1"
+run
+expect-exit 0
+expect-output-file /system/sxbasic/samples/hello/expected-output.txt
+select Main.bas
+goto 8
+insert     Print Undefined|
+run
+expect-exit 1
+expect-error Main.bas 8
+undo
+expect-line 8     Print "Hello from Savan BASIC"
+make
+expect-exit 0
+expect-exists /tmp/idetest/hello/Hello.sxe

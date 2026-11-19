@@ -180,3 +180,7 @@ savanxp_library(NAME libsxbasic SONAME libsxbasic.so.0.4 DEPENDS libsxgui libgfx
     system/sxbasic/core/sxb_exe.c)
 savanxp_system_service(NAME sxbasic LINK_PROFILE PIE DEPENDS libsxbasic ${SAVANXP_SUN_TOOLKIT} libsximg
     SOURCES sxbasic.c)
+# Savan BASIC, the development environment (docs/userland/SXBASIC_IDE.md). It
+# runs and makes projects through sxbasic.sxe in a child process, so it links
+# the toolkit and not libsxbasic.
+savanxp_system_service(NAME sxbide LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES sxbide.c)
