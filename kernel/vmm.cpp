@@ -12,7 +12,7 @@
 /* vmm.hpp no puede incluir physical_memory.hpp (la dependencia va al reves),
  * asi que repite el tamano de pagina. Aca se comprueba que no se separen. */
 static_assert(vm::kPageSizeBytes == memory::kPageSize,
-              "vm::kPageSizeBytes quedo desalineado de memory::kPageSize");
+              "vm::kPageSizeBytes drifted from memory::kPageSize");
 
 namespace {
 

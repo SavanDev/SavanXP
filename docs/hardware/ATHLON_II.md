@@ -55,7 +55,7 @@ The kernel now clears the C1E bits on every core and before every idle halt
 (HW-9), and says what it found: `cpu: AMD erratum 400 range, C1E on halt was
 enabled by the firmware; disabled`. That has only run in QEMU. On the
 machine, leave it idle on the desktop and read `timer-stats:` in Log Viewer:
-`perdido` should stay in single-digit percent. If it does not, turn "C1E
+`lost` should stay in single-digit percent. If it does not, turn "C1E
 support" off in the firmware and compare.
 
 ## Chipset graphics

@@ -608,9 +608,9 @@ void emergency_console() {
 }
 
 void publish_mode(const savanxp_fb_info& info) {
-    console::printf("fb_gpu: modo %ux%u pitch=%u, doble buffer %s\n",
+    console::printf("fb_gpu: mode %ux%u pitch=%u, double buffer %s\n",
         info.width, info.height, info.pitch,
-        g_double_buffered ? "si" : "no (no entra en lo mapeado)");
+        g_double_buffered ? "yes" : "no (does not fit in the mapping)");
     g_fb_info = info;
     g_gpu_info.width = info.width;
     g_gpu_info.height = info.height;
@@ -1145,12 +1145,12 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         // el mapeo viejo.
         console::set_external_framebuffer(g_fb_base, g_fb_info);
     }
-    console::printf("fb_gpu: %ux%u nativo, %u KiB mapeados (%s), mode-setting %s\n",
+    console::printf("fb_gpu: %ux%u native, %u KiB mapped (%s), mode-setting %s\n",
         g_native_info.width,
         g_native_info.height,
         static_cast<uint32_t>(g_mapped_bytes / 1024u),
-        g_aperture_write_combining ? "write-combining" : "tipo del firmware",
-        g_dispi_available ? "por VBE dispi" : "no disponible");
+        g_aperture_write_combining ? "write-combining" : "firmware type",
+        g_dispi_available ? "via VBE dispi" : "unavailable");
 
     memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));
     g_next_present_sequence = 1;

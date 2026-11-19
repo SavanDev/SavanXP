@@ -247,7 +247,7 @@ extern "C" void savanxp_ap_entry(void*) {
     if (!timer::start_on_secondary()) {
         // El BSP ya comprobo el backend antes de crearle el idle; si igual no
         // arranca, este core no puede preemptar a nadie.
-        panic("smp: el timer local de un AP no arranco");
+        panic("smp: an AP's local timer did not start");
     }
     process::run_secondary_core();
 }
@@ -294,12 +294,12 @@ bool initialize(const boot::BootInfo& boot_info) {
     g_cpu_state[0].index = 0;
     g_cpu_state[0].lapic_id = arch::local_apic_id();
     if (arch::read_task_register() != expected_selector(0)) {
-        console::printf("smp: el BSP no tiene cargado el TSS 0\n");
+        console::printf("smp: the BSP does not have TSS 0 loaded\n");
     }
 
     const boot::SmpInfo& info = boot_info.smp;
     if (!info.available || info.cpus == nullptr || info.cpu_entries == 0) {
-        console::printf("smp: el bootloader no reporto MP, un solo core\n");
+        console::printf("smp: the bootloader reported no MP, single core\n");
         return false;
     }
 
@@ -385,7 +385,7 @@ bool initialize(const boot::BootInfo& boot_info) {
     }
 
     console::printf(
-        "smp: %u cores reportados, %u en linea (bsp lapic %u, %s)\n",
+        "smp: %u cores reported, %u online (bsp lapic %u, %s)\n",
         static_cast<unsigned>(g_reported_cpu_count),
         static_cast<unsigned>(g_online),
         static_cast<unsigned>(g_bsp_lapic_id),
@@ -395,7 +395,7 @@ bool initialize(const boot::BootInfo& boot_info) {
     // inesperadamente alto daria la vuelta y reportaria un numero absurdo.
     if (g_online < launched + 1) {
         console::printf(
-            "smp: %u de %u APs no respondieron\n",
+            "smp: %u of %u APs did not respond\n",
             static_cast<unsigned>(launched + 1 - g_online),
             static_cast<unsigned>(launched));
     }
@@ -403,12 +403,12 @@ bool initialize(const boot::BootInfo& boot_info) {
     if (aps_online != 0) {
         if (tss_verified == aps_online) {
             console::printf(
-                "smp: TSS propio en %u/%u APs ok\n",
+                "smp: own TSS on %u/%u APs ok\n",
                 static_cast<unsigned>(tss_verified),
                 static_cast<unsigned>(aps_online));
         } else {
             console::printf(
-                "smp: TSS propio en %u/%u APs -- cpu_index() no identifica al core\n",
+                "smp: own TSS on %u/%u APs -- cpu_index() does not identify the core\n",
                 static_cast<unsigned>(tss_verified),
                 static_cast<unsigned>(aps_online));
         }
@@ -426,7 +426,7 @@ bool selftest_ipi() {
             arch::kIpiPingVector,
             ping_handler,
             arch::InterruptEoi::local_apic)) {
-        console::printf("smp: no se pudo registrar el vector de ping\n");
+        console::printf("smp: could not register the ping vector\n");
         return false;
     }
 
@@ -439,7 +439,7 @@ bool selftest_ipi() {
         }
         if (!arch::send_ipi(slot.lapic_id, arch::kIpiPingVector)) {
             console::printf(
-                "smp: fallo el IPI al lapic %u\n",
+                "smp: IPI to lapic %u failed\n",
                 static_cast<unsigned>(slot.lapic_id));
             continue;
         }
@@ -456,7 +456,7 @@ bool selftest_ipi() {
     const uint64_t received = __atomic_load_n(&g_ping_count, __ATOMIC_ACQUIRE);
     if (received < expected) {
         console::printf(
-            "smp: ping IPI %u/%u -- el ICR no entrega\n",
+            "smp: ping IPI %u/%u -- the ICR does not deliver\n",
             static_cast<unsigned>(received),
             static_cast<unsigned>(expected));
         return false;
@@ -494,7 +494,7 @@ bool selftest_tlb() {
     memory::PageAllocation old_page = {};
     memory::PageAllocation new_page = {};
     if (!memory::allocate_page(old_page) || !memory::allocate_page(new_page)) {
-        console::printf("smp: autotest de TLB sin memoria\n");
+        console::printf("smp: TLB selftest out of memory\n");
         if (old_page.physical_address != 0) {
             (void)memory::free_allocation(old_page);
         }
@@ -520,8 +520,8 @@ bool selftest_tlb() {
 
         ok = retargeted && before == kOldMarker && synced == kNewMarker;
         console::printf(
-            "smp: TLB perezosa %s (antes 0x%x, sin sincronizar 0x%x, sincronizando 0x%x)\n",
-            ok ? "ok" : "FALLA",
+            "smp: lazy TLB %s (before 0x%x, unsynchronized 0x%x, synchronized 0x%x)\n",
+            ok ? "ok" : "FAILED",
             static_cast<unsigned>(before),
             static_cast<unsigned>(stale),
             static_cast<unsigned>(synced));
@@ -588,7 +588,7 @@ void start_scheduling() {
 
     if (g_online > 1) {
         console::printf(
-            "smp: planificando en %u de %u cores\n",
+            "smp: scheduling on %u of %u cores\n",
             static_cast<unsigned>(g_scheduling_count),
             static_cast<unsigned>(g_online));
     }

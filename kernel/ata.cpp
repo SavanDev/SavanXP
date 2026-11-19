@@ -332,7 +332,7 @@ void software_reset(Slot& slot) {
     if (!identify(slot)) {
         const size_t index = static_cast<size_t>(&slot - &g_slots[0]);
         console::printf(
-            "ata: el reset no devolvio el dispositivo %s\n",
+            "ata: the reset did not bring back device %s\n",
             index < kSlotCount ? kSlotNames[index] : "?"
         );
     }

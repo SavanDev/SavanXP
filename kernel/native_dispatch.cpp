@@ -1099,7 +1099,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
     if (!announced) {
         announced = true;
         console::printf(
-            "native: dispatcher activo (pid=%u, syscall=%u)\n",
+            "native: dispatcher active (pid=%u, syscall=%u)\n",
             static_cast<unsigned>(caller->pid),
             static_cast<unsigned>(context->rax)
         );

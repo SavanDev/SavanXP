@@ -1302,7 +1302,7 @@ bool initialize_local_apic() {
                     kApicMmioSize,
                     vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable,
                     &virtual_base)) {
-                console::printf("cpu: no se pudo mapear el APIC local (xAPIC)\n");
+                console::printf("cpu: could not map the local APIC (xAPIC)\n");
                 g_local_apic_ready = false;
                 g_local_apic_x2apic = false;
                 return false;
@@ -1326,7 +1326,7 @@ bool initialize_local_apic() {
 
     g_local_apic_ready = true;
     console::printf(
-        "cpu: APIC local en modo %s (id %u)\n",
+        "cpu: local APIC in %s mode (id %u)\n",
         g_local_apic_x2apic ? "x2APIC" : "xAPIC",
         static_cast<unsigned>(local_apic_id()));
     return true;

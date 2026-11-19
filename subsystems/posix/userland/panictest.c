@@ -104,7 +104,7 @@ static int prepare_display(const char* variant) {
         return fail("no mode fits once but not twice", 0);
     }
     /* Asking for a mode programs it through DISPI with a second buffer when
-     * one fits; the kernel logs "doble buffer si/no". */
+     * one fits; the kernel logs "double buffer yes/no". */
     if ((result = gpu_set_mode((int)gpu_fd, &mode)) < 0) {
         return fail("GPU_IOC_SET_MODE", result);
     }

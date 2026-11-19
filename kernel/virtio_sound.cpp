@@ -637,7 +637,7 @@ void vs_stop() {
     stop_and_release_stream(g_playback);
     reclaim_tx();  // el device devuelve los buffers en vuelo tras STOP/RELEASE
     if (g_tx_drops != 0) {
-        console::printf("virtio-sound: stop con %u periodos descartados\n", static_cast<unsigned>(g_tx_drops));
+        console::printf("virtio-sound: stop with %u dropped periods\n", static_cast<unsigned>(g_tx_drops));
     }
     reset_tx_ring();
 }

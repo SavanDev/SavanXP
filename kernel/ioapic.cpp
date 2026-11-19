@@ -155,7 +155,7 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
     // para siempre a partir de la primera interrupcion. Preferimos no programar
     // el IOAPIC y dejar que los consumidores caigan al PIC legacy.
     if (!arch::local_apic_ready()) {
-        console::printf("ioapic: sin Local APIC operativo, se mantiene el PIC legacy\n");
+        console::printf("ioapic: no working Local APIC, keeping the legacy PIC\n");
         return false;
     }
 
@@ -165,7 +165,7 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
     if (madt == nullptr) { console::printf("ioapic: no MADT\n"); return false; }
 
     parse_madt(*madt);
-    if (g_ioapic_count == 0) { console::printf("ioapic: sin IOAPIC en MADT\n"); return false; }
+    if (g_ioapic_count == 0) { console::printf("ioapic: no IOAPIC in MADT\n"); return false; }
 
     g_ready = true;
     console::printf("ioapic: %u IOAPIC(s), %u override(s), GSIs base=%u count=%u\n",
@@ -192,24 +192,24 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::IrqHandler hand
     if (Routed* existing = find_routed(gsi)) {
         if (existing->active_low != active_low || existing->level != level) {
             console::printf(
-                "ioapic: GSI %u compartida con otra polaridad/trigger, se conserva la original\n",
+                "ioapic: GSI %u shared with another polarity/trigger, keeping the original\n",
                 unsigned(gsi));
         }
         if (!arch::register_interrupt_handler(
                 existing->vector, handler, arch::InterruptEoi::local_apic)) {
-            console::printf("ioapic: no se pudo encadenar handler en GSI %u\n", unsigned(gsi));
+            console::printf("ioapic: could not chain a handler on GSI %u\n", unsigned(gsi));
             return 0;
         }
         return existing->vector;
     }
 
     if (g_routed_count >= kMaxRouted) {
-        console::printf("ioapic: tabla de GSIs ruteadas llena\n");
+        console::printf("ioapic: routed GSI table full\n");
         return 0;
     }
 
     const uint8_t vector = alloc_vector();
-    if (!vector) { console::printf("ioapic: pool de vectores agotado\n"); return 0; }
+    if (!vector) { console::printf("ioapic: vector pool exhausted\n"); return 0; }
 
     // Registrar el handler con EOI al Local APIC (la entrega pasa por el).
     // TOCAR EN ARCH: requiere el trampolin vector_NN para `vector` en la IDT.

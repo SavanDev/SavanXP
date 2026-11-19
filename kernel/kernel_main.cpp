@@ -284,7 +284,7 @@ namespace
         subsystem::dispatcher_for(subsystem::Id::posix) ==
             subsystem::dispatcher_for(subsystem::Id::native))
     {
-        panic("subsystem: registro de dispatch incompleto");
+        panic("subsystem: dispatch registration incomplete");
     }
     boot_screen::show("Loading userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
@@ -304,7 +304,7 @@ namespace
     }
     else
     {
-        console::printf("display: ningun driver reclamo el hardware\n");
+        console::printf("display: no driver claimed the hardware\n");
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
@@ -324,7 +324,7 @@ namespace
     }
     else
     {
-        console::printf("audio: ningun driver reclamo hardware de sonido\n");
+        console::printf("audio: no driver claimed any sound hardware\n");
     }
     audio_device::initialize();
     // NIC: the same priority registry as display and audio. virtio-net wins
@@ -341,7 +341,7 @@ namespace
     }
     else
     {
-        console::write("nic: ningun driver reclamo el hardware\n");
+        console::write("nic: no driver claimed the hardware\n");
     }
     net::initialize();
     // Storage: the same driver registry as display and audio, except that the

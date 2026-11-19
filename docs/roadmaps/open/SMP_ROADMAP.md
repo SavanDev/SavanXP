@@ -136,7 +136,7 @@ What it actually took, against the plan below:
   does not outgrow it. Allocating kernel stacks belongs to phase 1, where the AP
   actually runs something.
 
-**Delivered:** `smp: 4 cores reportados, 4 en linea (bsp lapic 0, x2APIC)` and
+**Delivered:** `smp: 4 cores reported, 4 online (bsp lapic 0, x2APIC)` and
 `smp: ping IPI 3/3 ok` under `./build.sh smoke smoke --smp 4`.
 
 The original plan follows.
@@ -171,7 +171,7 @@ What it actually took, against the plan below:
   exit the VM under KVM on every access, and the current process is
   read dozens of times per syscall. `ltr` is privileged, so user space cannot
   change the answer. Each AP reads its selector back at boot and the BSP checks
-  it: `smp: TSS propio en 3/3 APs ok`.
+  it: `smp: own TSS on 3/3 APs ok`.
 - **`smp::Cpu` holds `current`, `idle` and `resched_pending`.** The 148
   references across `process.cpp` and both dispatchers now go through
   `this_cpu()`. `g_schedule_cursor` stays global on purpose: it is the cursor
@@ -265,7 +265,7 @@ What it actually took, against the plan below:
   one process; `cpu_online` is the number of cores that schedule, which is also
   the number of idle processes. [Details](../../userland/SYSTEM_MONITORING.md#more-than-one-core).
 
-**Delivered:** `smp: planificando en 4 de 4 cores` under
+**Delivered:** `smp: scheduling on 4 of 4 cores` under
 `./build.sh smoke smoke --smp 4`,
 and `smptest` in the smoke suite: it sees a child in `State::running` from
 inside its own syscall — impossible on one core — kills a child spinning on
@@ -355,8 +355,8 @@ What it actually took, against the plan below: **no IPI at all.**
   part true.
 - **Proven at boot, not argued.** `smp::selftest_tlb()` has an AP read a kernel
   page, retargets that page to another physical page on the BSP
-  (`vm::retarget_kernel_page`), and reads again: `smp: TLB perezosa ok (antes
-  0xa1, sin sincronizar 0xa1, sincronizando 0xb2)`. The unsynchronized read
+  (`vm::retarget_kernel_page`), and reads again: `smp: lazy TLB ok (before
+  0xa1, unsynchronized 0xa1, synchronized 0xb2)`. The unsynchronized read
   returning the old byte is the stale translation, observed under the supported
   accelerators; the synchronized one is the fix.
 

@@ -83,14 +83,14 @@ static int check_wakeup_by_pipe(long timeout_ms, const char *label)
 
     if (result != 1 || (ready.revents & SAVANXP_POLLIN) == 0)
     {
-        printf("polltest: %s: poll devolvio %ld revents=%d\n", label, result, (int)ready.revents);
+        printf("polltest: %s: poll returned %ld revents=%d\n", label, result, (int)ready.revents);
         return 1;
     }
     /* Que haya vuelto por el dato y no por el plazo: el hijo tarda 150 ms y el
      * plazo, cuando lo hay, son 5 s. */
     if (elapsed_ms >= 3000ul)
     {
-        printf("polltest: %s: tardo %lu ms, parece el vencimiento y no el dato\n", label, elapsed_ms);
+        printf("polltest: %s: took %lu ms, looks like the timeout and not the data\n", label, elapsed_ms);
         return 1;
     }
     if (savanxp_read(fds[0], &value, 1) != 1 || value != 'x')
@@ -101,7 +101,7 @@ static int check_wakeup_by_pipe(long timeout_ms, const char *label)
     (void)savanxp_waitpid((int)child, &status);
     savanxp_close(fds[0]);
     savanxp_close(fds[1]);
-    printf("polltest: %s ok en %lu ms\n", label, elapsed_ms);
+    printf("polltest: %s ok in %lu ms\n", label, elapsed_ms);
     return 0;
 }
 
@@ -164,33 +164,33 @@ int main(void)
         ready.revents = 0;
         if (savanxp_poll(&ready, 1, POLLTEST_EXPIRY_MS) != 0 || ready.revents != 0)
         {
-            return fail("poll con pipe vacio devolvio algo listo");
+            return fail("poll on an empty pipe returned something ready");
         }
         elapsed_ms = uptime_ms() - start_ms;
         if (elapsed_ms + 50ul < (unsigned long)POLLTEST_EXPIRY_MS)
         {
-            printf("polltest: el vencimiento de %ld ms volvio a los %lu ms\n",
+            printf("polltest: the %ld ms timeout returned after %lu ms\n",
                    POLLTEST_EXPIRY_MS, elapsed_ms);
             return 1;
         }
         if (elapsed_ms > 3000ul)
         {
-            printf("polltest: el vencimiento de %ld ms tardo %lu ms\n", POLLTEST_EXPIRY_MS, elapsed_ms);
+            printf("polltest: the %ld ms timeout took %lu ms\n", POLLTEST_EXPIRY_MS, elapsed_ms);
             return 1;
         }
-        printf("polltest: vencimiento ok en %lu ms\n", elapsed_ms);
+        printf("polltest: timeout ok in %lu ms\n", elapsed_ms);
     }
 
     savanxp_close(fds[0]);
     savanxp_close(fds[1]);
 
-    if (check_wakeup_by_pipe(POLLTEST_LONG_TIMEOUT_MS, "despertar con plazo") != 0)
+    if (check_wakeup_by_pipe(POLLTEST_LONG_TIMEOUT_MS, "wakeup with a timeout") != 0)
     {
         return 1;
     }
     /* Sin plazo es el camino de shell_core, y el unico donde wake_tick queda en
      * cero: si el despertar por dato fallara ahi, el proceso no vuelve nunca. */
-    if (check_wakeup_by_pipe(-1, "despertar sin plazo") != 0)
+    if (check_wakeup_by_pipe(-1, "wakeup without a timeout") != 0)
     {
         return 1;
     }
@@ -225,16 +225,16 @@ int main(void)
 
         if (result != 1 || (timer_ready.revents & SAVANXP_POLLIN) == 0)
         {
-            printf("polltest: el timer devolvio %ld revents=%d\n", result, (int)timer_ready.revents);
+            printf("polltest: the timer returned %ld revents=%d\n", result, (int)timer_ready.revents);
             return 1;
         }
         if (elapsed_ms >= 3000ul)
         {
-            printf("polltest: el timer tardo %lu ms, parece el vencimiento\n", elapsed_ms);
+            printf("polltest: the timer took %lu ms, looks like the timeout\n", elapsed_ms);
             return 1;
         }
         savanxp_close((int)timer);
-        printf("polltest: timer ok en %lu ms\n", elapsed_ms);
+        printf("polltest: timer ok in %lu ms\n", elapsed_ms);
     }
 
     puts_out("polltest: ok\n");

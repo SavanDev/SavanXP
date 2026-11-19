@@ -54,11 +54,11 @@ With the wall clock on the TSC, in VirtualBox, with Doom running
 (`ac97-stats:`, same build, same VM, only the clock changed):
 
 ```
-TSC:      real=17573 ms  audio=7895 ms  descartes=1319   <- half the audio thrown away
-PM timer: real= 4886 ms  audio=4886 ms  descartes=0      <- exact
+TSC:      real=17573 ms  audio=7895 ms  drops=1319   <- half the audio thrown away
+PM timer: real= 4886 ms  audio=4886 ms  drops=0      <- exact
 ```
 
-`descartes` are periods the driver refused because the ring was full: the
+`drops` are periods the driver refused because the ring was full: the
 producer offered roughly three times more audio than the device could take, and
 what did not fit was dropped. That is what a chopped-up sound is.
 
@@ -85,8 +85,8 @@ where it measures 99-101% of real time anyway.
 The boot log says which one is in use:
 
 ```
-timer: reloj de pared por PM timer ACPI (0x4008, 32 bits)
-timer: PM timer ACPI de 24 bits (0x608), el reloj de pared sigue en el TSC
+timer: wall clock from the ACPI PM timer (0x4008, 32 bits)
+timer: 24-bit ACPI PM timer (0x608), the wall clock stays on the TSC
 ```
 
 The TSC is still calibrated and still used: it is the fallback, it is what
@@ -101,7 +101,7 @@ something else -- a clock on its own always looks right.
 | Line | Compares | Read it as |
 | --- | --- | --- |
 | `timer-stats:` | ticks delivered vs. wall clock | interrupts the kernel never got. **Only as good as the wall clock:** with a runaway TSC it reported 52-62% lost where the truth was 2% |
-| `ac97-stats:` | audio accepted vs. wall clock | `real` ≈ `audio` is a healthy feed; `descartes` is audio thrown away because the producer ran ahead |
+| `ac97-stats:` | audio accepted vs. wall clock | `real` ≈ `audio` is a healthy feed; `drops` is audio thrown away because the producer ran ahead |
 | `clock-smoke` | wall clock vs. the RTC, spinning / sleeping / under load | the wall clock itself, against the only reference the guest cannot fake. **The load phase is the one that matters** -- idle, a bad clock looks fine |
 
 The trap worth remembering: when the wall clock is the thing that is broken,

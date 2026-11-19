@@ -240,8 +240,8 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
 
     screenshots: list[Path] = []
     with QmpClient(qmp_path, timeout=5.0) as client:
-        empty = _capture(client, output_dir, "00-sin-ventanas")
-        screenshots.append(output_dir / "00-sin-ventanas.png")
+        empty = _capture(client, output_dir, "00-no-windows")
+        screenshots.append(output_dir / "00-no-windows.png")
         if empty.size != (1280, 800):
             raise TaskbarSmokeError(f"unexpected initial screenshot size: {empty.size}")
         _expect_strip(empty, "session start")

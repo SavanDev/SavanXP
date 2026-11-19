@@ -330,7 +330,7 @@ void account_write() {
         return;
     }
     console::printf(
-        "ac97-stats: real=%u ms periodos=%u audio=%u ms descartes=%u underruns=%u hueco_max=%u ms\n",
+        "ac97-stats: real=%u ms periods=%u audio=%u ms drops=%u underruns=%u max_gap=%u ms\n",
         static_cast<unsigned>(now - g_report_start_ms),
         static_cast<unsigned>(g_submitted),
         static_cast<unsigned>((g_submitted_bytes * 1000ull) / (kSampleRateHz * kFrameBytes)),
@@ -397,7 +397,7 @@ void ac97_stop() {
     }
     halt_engine();
     if (g_underruns != 0 || g_dropped != 0) {
-        console::printf("ac97: stop con %u underruns y %u descartes desde el ultimo reporte\n",
+        console::printf("ac97: stop with %u underruns and %u drops since the last report\n",
                         static_cast<unsigned>(g_underruns), static_cast<unsigned>(g_dropped));
     }
     g_head = 0;
@@ -435,13 +435,13 @@ void initialize() {
         return;
     }
     if (!map_io_bars()) {
-        console::write_line("ac97: BARs de I/O ausentes o invalidos");
+        console::write_line("ac97: I/O BARs missing or invalid");
         return;
     }
 
     enable_pci_io_and_busmaster();
     if (!cold_reset_and_wait_codec()) {
-        console::write_line("ac97: el codec primario no reporto listo");
+        console::write_line("ac97: the primary codec never reported ready");
         return;
     }
     unmute_mixer();
@@ -452,7 +452,7 @@ void initialize() {
     const uint64_t needed_bytes = memory::kPageSize + kRingBytes;
     const uint64_t page_count = (needed_bytes + memory::kPageSize - 1) / memory::kPageSize;
     if (!memory::allocate_contiguous_pages(page_count, g_dma)) {
-        console::write_line("ac97: no se pudo asignar memoria DMA");
+        console::write_line("ac97: could not allocate DMA memory");
         return;
     }
 

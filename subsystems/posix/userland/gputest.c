@@ -317,7 +317,7 @@ static int open_gpu_test_events(int gpu_fd, long* present_event_fd, long* scanou
         return 0;
     }
     if ((properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_ASYNC_PRESENT_EVENTS) == 0) {
-        puts_out("gputest: backend sincrono, se omiten los eventos de present/scanout\n");
+        puts_out("gputest: synchronous backend, skipping the present/scanout events\n");
         return 1;
     }
 

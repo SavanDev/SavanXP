@@ -30,7 +30,7 @@ The normal path is application surfaces in shared memory, composition by
 | Copies | `fb_gpu` copies dirty rectangles from imported surfaces; contiguous rows can use one copy. The x86-64 kernel `memcpy` uses `rep movsq` and a byte tail. |
 | Bochs path | DISPI supplies mode changes, an aperture size and panning. Double buffering tracks the previous damage as well as current damage. Some older comments describe superseded full-copy or front-buffer-only behavior. |
 | Physical GPU fallback | Uses the firmware's fixed mode and visible framebuffer. No generic page flip, vertical blank notification or hardware cursor is exposed. |
-| Cache attributes | Aperture remapping prefers a WC PAT entry on the DISPI path. The firmware alias remains and the alias probe accesses both views. Other hardware is logged as `tipo del firmware`, which does not identify its actual memory type. |
+| Cache attributes | Aperture remapping prefers a WC PAT entry on the DISPI path. The firmware alias remains and the alias probe accesses both views. Other hardware is logged as `firmware type`, which does not identify its actual memory type. |
 | Completion | The framebuffer backend retires presents synchronously; `wait_for_idle` is empty and `flush` checks readiness. There is no monitor refresh completion signal. |
 | Emergency output | Since FB4: `panic()` calls `display::emergency_console()` before drawing. `fb_gpu` reads the mode back from the DISPI registers, pans to the console's buffer and hands the console that geometry. Before FB4, a panic with the second buffer shown drew where nobody looked. |
 
@@ -175,7 +175,7 @@ Resolve the discrepancy between HW-11's historical WC assumption and the
 write-through comment in `kernel/vmm.cpp`. Inspect the current mapping's leaf
 bits, including large-page PAT encoding, PAT entry and relevant MTRR rules.
 Distinguish a requested PAT type from the effective memory type. Log unknown
-or unverified information honestly; `tipo del firmware` is not proof of UC.
+or unverified information honestly; `firmware type` is not proof of UC.
 Check whether all CPUs that can execute display copies use compatible PAT state.
 
 Keep a valid existing WC mapping. If a change is necessary, define ownership

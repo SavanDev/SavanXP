@@ -97,6 +97,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The kernel log is in English.** The `smp:`, `uacpi:`, `timer:`, `ioapic:`, `ac97:`, `fb_gpu:`, `cpu:`, `acpi:` and
+  `process:` lines that were still in Spanish are translated, as are `polltest` and `gputest`. Renamed fields:
+  `ac97-stats` `periods`/`drops`/`max_gap`, `timer-stats` `lost`, `fb_gpu: ... double buffer yes|no`.
 - **The SDK is 2.0 (`SAVANXP_SDK_VERSION_MAJOR 2`, `MINOR 0`), recording breaks already shipped since 1.2.**
   The breaks: the `savanxp_` prefix on raw calls, no `/dev/fb0`, and `gfx_open` needing the compositor. Its README
   and REFERENCE are now in English, with a versioning policy. See [SDK_V2_ROADMAP.md](docs/roadmaps/done/SDK_V2_ROADMAP.md).

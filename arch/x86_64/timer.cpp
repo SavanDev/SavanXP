@@ -66,7 +66,7 @@ namespace
         const uint64_t lost_ms = expected_ms > delivered_ms ? expected_ms - delivered_ms : 0;
 
         console::printf(
-            "timer-stats: real=%llu ms ticks=%llu ms perdido=%llu ms (%llu%%) handler avg=%llu us max=%llu us\n",
+            "timer-stats: real=%llu ms ticks=%llu ms lost=%llu ms (%llu%%) handler avg=%llu us max=%llu us\n",
             (unsigned long long)expected_ms,
             (unsigned long long)delivered_ms,
             (unsigned long long)lost_ms,

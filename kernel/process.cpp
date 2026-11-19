@@ -504,7 +504,7 @@ const char* image_failure_string(process::ImageFailure failure) {
 // que existe no arranca (el errno llega al proceso, pero el detalle no).
 void report_image_failure(const char* what, const char* path, process::ImageFailure failure, size_t image_size) {
     console::printf(
-        "process: %s de '%s' fallo: %s (imagen %u bytes, %u paginas libres)\n",
+        "process: %s of '%s' failed: %s (image %u bytes, %u free pages)\n",
         what,
         path,
         image_failure_string(failure),
@@ -1927,7 +1927,7 @@ bool prepare_exec_image(
             : load_failure == elf::LoadFailure::missing_interpreter ? process::ImageFailure::not_found
             : load_failure == elf::LoadFailure::interpreter_denied ? process::ImageFailure::permission_denied
             : process::ImageFailure::bad_image;
-        console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
+        console::printf("process: elf of '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("exec", path, failure, reported_size);
         return false;
     }
@@ -2096,7 +2096,7 @@ process::Process* create_process_internal(
             : load_failure == elf::LoadFailure::missing_interpreter ? process::ImageFailure::not_found
             : load_failure == elf::LoadFailure::interpreter_denied ? process::ImageFailure::permission_denied
             : process::ImageFailure::bad_image;
-        console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
+        console::printf("process: elf of '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
@@ -2117,7 +2117,7 @@ process::Process* create_process_internal(
     // subsystem: kept as copied, which for POSIX is the parent's cwd.
     process::ensure_subsystem_state(*proc);
     if (proc->subsystem_id == subsystem::Id::native) {
-        console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
+        console::printf("process: pid=%u marked native\n", static_cast<unsigned>(proc->pid));
     }
 
     process::SavedContext* const start = fabricate_initial_context(*thread, load_result.entry_point,
@@ -2769,7 +2769,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
             if (index == 0) {
                 panic("scheduler: unable to create idle task");
             }
-            console::printf("smp: sin idle para el core %u, queda estacionado\n", static_cast<unsigned>(index));
+            console::printf("smp: no idle for core %u, left parked\n", static_cast<unsigned>(index));
             continue;
         }
         idle->cpu = index;

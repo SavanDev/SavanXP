@@ -135,13 +135,13 @@ bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
 
     uacpi_status st = uacpi_initialize(0);
     if (uacpi_unlikely_error(st)) {
-        console::printf("uacpi: initialize fallo: %s\n", uacpi_status_to_string(st));
+        console::printf("uacpi: initialize failed: %s\n", uacpi_status_to_string(st));
         return false;
     }
 
     st = uacpi_namespace_load();
     if (uacpi_unlikely_error(st)) {
-        console::printf("uacpi: namespace_load fallo: %s\n", uacpi_status_to_string(st));
+        console::printf("uacpi: namespace_load failed: %s\n", uacpi_status_to_string(st));
         return false;
     }
 
@@ -151,7 +151,7 @@ bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
     // GPE/SCI de uACPI activo y con interrupciones habilitadas. Aca corremos
     // pre-scheduler con IRQ off; el namespace ya cargado alcanza para consultas
     // (enumeracion, _CRS, _PRT). Ver [[uacpi-ioapic-work]].
-    console::printf("uacpi: namespace cargado (%s), AML interpretado ok\n",
+    console::printf("uacpi: namespace loaded (%s), AML interpreted ok\n",
                     uacpi_status_to_string(st));
 
     // uacpi_initialize apaga TODOS los eventos fijos (initialize_fixed_events en
@@ -220,7 +220,7 @@ uacpi_iteration_decision prt_dump_cb(void* user, uacpi_namespace_node* node, uac
         return UACPI_ITERATION_DECISION_CONTINUE;
     }
 
-    console::printf("uacpi: _PRT con %u entradas, links:\n",
+    console::printf("uacpi: _PRT with %u entries, links:\n",
                     static_cast<unsigned>(prt->num_entries));
     for (uacpi_size i = 0; i < prt->num_entries; ++i) {
         const uacpi_pci_routing_table_entry& e = prt->entries[i];
@@ -249,7 +249,7 @@ uacpi_iteration_decision prt_dump_cb(void* user, uacpi_namespace_node* node, uac
                             irq.triggering == UACPI_TRIGGERING_LEVEL ? "level" : "edge",
                             irq.polarity == UACPI_POLARITY_ACTIVE_LOW ? "low" : "high");
         } else {
-            console::printf("  %s -> (sin IRQ en _CRS)\n", name);
+            console::printf("  %s -> (no IRQ in _CRS)\n", name);
         }
     }
 
@@ -312,7 +312,7 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
         uacpi_find_devices("PNP0A08", route_find_cb, &ctx);
     }
     if (!ctx.found) {
-        console::printf("uacpi: INTx dev %u sin entrada _PRT\n", static_cast<unsigned>(dev));
+        console::printf("uacpi: INTx dev %u has no _PRT entry\n", static_cast<unsigned>(dev));
         return 0;
     }
     // Programar el IOAPIC con la polaridad/trigger que declara el firmware (_CRS).
@@ -325,7 +325,7 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
     const uint8_t vec = ioapic::route_gsi(ctx.result.gsi, pol, trg, handler);
     console::printf("uacpi: INTx dev %u INT%c -> GSI %u %s (vector %u)\n",
                     static_cast<unsigned>(dev), static_cast<char>('A' + ctx.target_pin),
-                    static_cast<unsigned>(ctx.result.gsi), vec ? "ruteado" : "FALLO",
+                    static_cast<unsigned>(ctx.result.gsi), vec ? "routed" : "FAILED",
                     static_cast<unsigned>(vec));
     return vec;
 }
@@ -650,14 +650,14 @@ void adopt_pm_timer() {
         return;
     }
     if (!acpi::ready() || acpi::pm_timer_port() == 0) {
-        console::printf("timer: sin PM timer ACPI, el reloj de pared sigue en el TSC\n");
+        console::printf("timer: no ACPI PM timer, the wall clock stays on the TSC\n");
         return;
     }
     // Con 24 bits el contador da la vuelta cada 4,7 s y no hay forma honesta de
     // saber cuantas dio si nadie lo leyo en ese rato. Mejor el TSC, que podra
     // irse de ritmo pero no pierde tiempo de golpe.
     if (!acpi::pm_timer_is_32bit()) {
-        console::printf("timer: PM timer ACPI de 24 bits (0x%x), el reloj de pared sigue en el TSC\n",
+        console::printf("timer: 24-bit ACPI PM timer (0x%x), the wall clock stays on the TSC\n",
                         static_cast<unsigned>(acpi::pm_timer_port()));
         return;
     }
@@ -666,7 +666,7 @@ void adopt_pm_timer() {
     g_pm_last = acpi::pm_timer_read();
     g_pm_ticks = 0;
     g_pm_port = acpi::pm_timer_port();
-    console::printf("timer: reloj de pared por PM timer ACPI (0x%x, 32 bits)\n",
+    console::printf("timer: wall clock from the ACPI PM timer (0x%x, 32 bits)\n",
                     static_cast<unsigned>(g_pm_port));
 }
 

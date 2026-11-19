@@ -144,7 +144,7 @@ and 6% (idle) of real time to **94% and 100%**.
 still worth watching even though timekeeping no longer depends on it:
 
 ```
-timer-stats: real=2979 ms ticks=2000 ms perdido=979 ms (32%) handler avg=25 us max=1128 us
+timer-stats: real=2979 ms ticks=2000 ms lost=979 ms (32%) handler avg=25 us max=1128 us
 ```
 
 `real` is wall-clock time, `ticks` is what the interrupt counter saw, the difference is
@@ -154,7 +154,7 @@ inside the interrupt — the part that is ours to keep small.
 One more trap worth remembering: a VirtualBox boot was measured reporting
 roughly 6.8x real time, and it was written off as a bad TSC calibration. It was
 not — the TSC runs ahead there whenever the guest is busy, which is also why the
-`perdido` column above read 52-62% where the truth was 2%. A measurement is only
+`lost` column above read 52-62% where the truth was 2%. A measurement is only
 as good as the clock that took it: when a timing number looks absurd, re-run
 `clock-smoke` before believing it, and read [`TIME.md`](../kernel/TIME.md).
 
@@ -250,7 +250,7 @@ misreports the machine:
 
 This is not hypothetical. VirtualBox's default adapter is an Intel PRO/1000
 (`8086:100e`), and SavanXP only has drivers for `rtl8139` and `virtio-net`: a
-freshly created VM boots with `nic: ningun driver reclamo el hardware` and no
+freshly created VM boots with `nic: no driver claimed the hardware` and no
 network. Reporting that as "no adapter" sends whoever reads it to check the VM's
 configuration, which is fine. Both windows say "adapter present, no driver"
 instead, with the PCI id, because the id is the only thing that can be acted on.

@@ -327,9 +327,9 @@ void initialize(const boot::BootInfo& boot_info) {
     console::printf(
         "acpi: FADT ok, PM1a_CNT=0x%x, S5 %s (SLP_TYPa=%u), reset %s\n",
         static_cast<unsigned>(g_pm1a_cnt_port),
-        g_s5_available ? "ok" : "ausente",
+        g_s5_available ? "ok" : "absent",
         static_cast<unsigned>(g_slp_typ_a),
-        g_reset_supported ? "ok" : "ausente");
+        g_reset_supported ? "ok" : "absent");
 }
 
 bool ready() {
@@ -420,8 +420,8 @@ bool start_sci() {
         }
     }
 
-    console::printf("acpi: SCI %s en GSI %u (PWRBTN habilitado)\n",
-                    g_sci_active ? "ruteado" : "no ruteado",
+    console::printf("acpi: SCI %s on GSI %u (PWRBTN enabled)\n",
+                    g_sci_active ? "routed" : "not routed",
                     static_cast<unsigned>(g_sci_int));
     return g_sci_active;
 }

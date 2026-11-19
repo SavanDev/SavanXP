@@ -39,11 +39,11 @@ def main() -> int:
 
     # The buffering panictest asked for must be the one it got, or the
     # variant tests nothing.
-    modes = re.findall(r'fb_gpu: modo (\d+)x(\d+) pitch=\d+, doble buffer (si|no)', serial)
+    modes = re.findall(r'fb_gpu: mode (\d+)x(\d+) pitch=\d+, double buffer (yes|no)', serial)
     if not modes or (int(modes[-1][0]), int(modes[-1][1])) != (width, height):
         print(f'PANIC DISPLAY FAIL no DISPI mode {width}x{height} in the log: {modes}')
         return 1
-    expected_double = 'no' if variant == 'single' else 'si'
+    expected_double = 'no' if variant == 'single' else 'yes'
     if modes[-1][2] != expected_double:
         print(f'PANIC DISPLAY FAIL {variant}: double buffer {modes[-1][2]}, expected {expected_double}')
         return 1

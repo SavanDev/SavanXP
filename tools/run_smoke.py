@@ -170,14 +170,14 @@ def main() -> int:
     parser.add_argument("--ready-token", default="")
     parser.add_argument("--qmp-driver", default="")
     parser.add_argument("--completion", choices=("serial", "host"), default="serial")
-    # El catalogo devuelve "" para los escenarios que no eligen una: se acepta
-    # como vacio y se resuelve abajo, en vez de hacer que cada escenario legado
-    # tenga que nombrar laaccion que ya tenia.
+    # The catalog returns "" for scenarios that do not pick one: it is accepted
+    # as empty and resolved below, instead of making every legacy scenario name
+    # the action it already had.
     parser.add_argument("--host-action", choices=("", "taskbar", "visual"), default="taskbar",
-                        help="que corre el host al completion=host: las aserciones propias de "
-                             "taskbar, o un escenario visual de tools/shoot_session.py")
+                        help="what the host runs on completion=host: the taskbar's own "
+                             "assertions, or a visual scenario from tools/shoot_session.py")
     parser.add_argument("--visual-scenario", default="",
-                        help="escenario de shoot_session.py a correr con --host-action visual")
+                        help="shoot_session.py scenario to run with --host-action visual")
     parser.add_argument("--ready-wait", type=float, default=0.0)
     parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio", "hda", "multi"), default="auto")
     parser.add_argument("--wav-path", type=Path)
