@@ -2986,7 +2986,9 @@ static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
         flags &= ~O_WRONLY;
         flags |= O_RDWR;
     }
-    fd = sx_open(path, flags);
+    /* sx_open reads a mode whenever O_CREAT is set: without one it took
+     * whatever was in the register. 0666 less the umask, as in POSIX. */
+    fd = sx_open(path, flags, 0666);
     if (fd < 0) {
         return 0;
     }

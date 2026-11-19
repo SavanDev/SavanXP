@@ -144,6 +144,11 @@ static void test_stdio_stream(void) {
     }
     check(fprintf(stream, "linea %d\n", 1) > 0, "fprintf");
     check(fclose(stream) == 0, "fclose");
+    {
+        /* A file fopen creates is 0666 less the umask (022 by default). */
+        struct stat info;
+        check(stat(LIBCTEST_PATH, &info) == 0 && (info.st_mode & 0777) == 0644, "fopen w creates 0644");
+    }
 
     stream = fopen(LIBCTEST_PATH, "r");
     check(stream != 0, "fopen r");

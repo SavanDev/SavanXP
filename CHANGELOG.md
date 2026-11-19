@@ -139,6 +139,8 @@ Cut-off notes:
 
 ### Fixed
 
+- **A file a POSIX program creates with `fopen` gets 0666 less the umask.** It got a random mode, often 000, so Doom's
+  config and saves, `mines.ini` and Files' settings could not be read back. Files already damaged keep their mode.
 - **`help` lists every installed command.** `cp`, `date`, `volume`, `ntpsync`, the desktop programs and the `/system`
   tools were missing, and test apps showed in builds without them. `shell-help-test` fails when a registered program
   is left out ([CONSOLE.md](docs/desktop/CONSOLE.md#help)).
