@@ -8,31 +8,223 @@
  * Settings tab also opens Effects to configure window and pointer shadows.
  *
  * This program never draws the real background. It writes the configuration
- * (desktop_wallpaper_write_config) and the desktop, which re-reads it, repaints
- * on its own. The resolution it asks windowd for (gfx_set_display_mode), and
- * saves only once the user keeps it. How the pieces fit is in
+ * (write_wallpaper) and the desktop, which re-reads it, repaints on its own.
+ * The resolution it asks windowd for (sxnwm_set_display_mode), and saves only
+ * once the user keeps it. How the pieces fit is in
  * docs/desktop/DISPLAY_PROPERTIES.md.
+ *
+ * A SUN program (docs/userland/SUN.md). The format of desktop.cfg, the image
+ * decoding and the painting are shared with the POSIX desktop
+ * (sxgfx/wallpaper.h); the files and the memory are this program's own.
  */
 
-#include "libc.h"
-#include "savanxp/sxgui.h"
-
-#include <dirent.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "desktop_wallpaper.h"
-#include "display_settings.h"
+#include "abi/savanxp_abi.h"
+#include "sxgfx/gfx2d.h"
+#include "sxgfx/pixels.h"
+#include "sxgfx/sxgui.h"
+#include "sxgfx/wallpaper.h"
+#include "sxn/sxn.h"
 #include "sxn/sxneffects.h"
+#include "sxn/sxngui.h"
 
-static struct sxgui_app g_app;
+#include "display.sunres.h"
+
+static struct sxngui_app g_app;
+
+/* ---- the user's files ------------------------------------------------------
+ *
+ * The session's profile, as the other SUN settings programs name it
+ * (SXN_POINTER_SETTINGS_PATH, SXN_EFFECTS_PATH): the session belongs to the
+ * user whose profile is /users/user. The desktop, a POSIX program, finds the
+ * same files through savanxp_settings_path. */
+#define DISPLAY_PROFILE_DIR "/users/user"
+#define DISPLAY_SETTINGS_DIR DISPLAY_PROFILE_DIR "/Settings"
+#define DISPLAY_WALLPAPER_PATH DISPLAY_SETTINGS_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME
+/* The saved resolution, one line, "mode=<width>x<height>": the format the
+ * desktop reads when it starts (display_settings_read_mode). */
+#define DISPLAY_MODE_PATH DISPLAY_SETTINGS_DIR "/display.cfg"
+
+/* Reads a whole small file into `text`, NUL-terminated. 0, or -1. */
+static int read_small_file(const char *path, char *text, size_t capacity)
+{
+    long handle = sxn_open_file(path, SXN_FILE_READ);
+    size_t total = 0;
+
+    if (handle < 0)
+    {
+        return -1;
+    }
+    while (total + 1 < capacity)
+    {
+        long result = sxn_read(handle, text + total, (unsigned long)(capacity - 1 - total));
+
+        if (result <= 0)
+        {
+            break;
+        }
+        total += (size_t)result;
+    }
+    (void)sxn_close(handle);
+    text[total] = '\0';
+    return 0;
+}
+
+/* Saves a whole small file in the Settings folder, making the folder the
+ * first time. 0, or the negative status. */
+static long write_settings_file(const char *path, const char *text, size_t length)
+{
+    long result = sxn_write_file(path, text, (unsigned long)length);
+
+    if (result == -SAVANXP_ENOENT && sxn_make_directory(DISPLAY_SETTINGS_DIR) >= 0)
+    {
+        result = sxn_write_file(path, text, (unsigned long)length);
+    }
+    return result;
+}
+
+/* The configuration the desktop shows. The defaults when there is none. A
+ * copy loose in the profile or at the root, from before the Settings folder,
+ * is read where it is, as the desktop reads it; the first save goes to
+ * Settings. */
+static void read_wallpaper_config(struct desktop_wallpaper_config *config)
+{
+    static const char *const paths[] = {
+        (DISPLAY_WALLPAPER_PATH),
+        (DISPLAY_PROFILE_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME),
+        ("/" DESKTOP_WALLPAPER_CONFIG_NAME),
+    };
+    char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
+    size_t index;
+
+    for (index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index)
+    {
+        if (read_small_file(paths[index], text, sizeof(text)) == 0)
+        {
+            desktop_wallpaper_parse_config(config, text);
+            return;
+        }
+    }
+    desktop_wallpaper_default_config(config);
+}
+
+/* ---- images ----------------------------------------------------------------
+ *
+ * The previews' images, decoded as the desktop decodes them: the file read
+ * into a section that is dropped once decoded, the pixels in a section of
+ * their own, off the heap. */
+
+static void *map_section(uint64_t bytes, long *section)
+{
+    long view;
+
+    *section = sxn_section_create(bytes, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    if (*section <= 0)
+    {
+        *section = 0;
+        return 0;
+    }
+    view = sxn_map_view(*section, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    if (view <= 0)
+    {
+        (void)sxn_close(*section);
+        *section = 0;
+        return 0;
+    }
+    return (void *)(uintptr_t)view;
+}
+
+static void unmap_section(void *view, long section)
+{
+    if (view != 0)
+    {
+        (void)sxn_unmap_view((uint64_t)(uintptr_t)view);
+    }
+    if (section > 0)
+    {
+        (void)sxn_close(section);
+    }
+}
+
+static void display_image_unload(struct desktop_wallpaper_image *image)
+{
+    if (image == 0)
+    {
+        return;
+    }
+    unmap_section(image->pixels, image->section);
+    memset(image, 0, sizeof(*image));
+}
+
+/* 0 with the image decoded, or -1 with it empty. Whatever it held before is
+ * released. */
+static int display_image_load(struct desktop_wallpaper_image *image, const char *path)
+{
+    struct sxn_file_info info;
+    unsigned char *data = 0;
+    long data_section = 0;
+    long handle;
+    size_t done = 0;
+    int width = 0;
+    int height = 0;
+    int loaded = 0;
+
+    if (image == 0)
+    {
+        return -1;
+    }
+    display_image_unload(image);
+    if (path == 0 || path[0] != '/' || sxn_query_path(path, &info) < 0 || info.type != SXN_FILE_TYPE_FILE ||
+        info.size == 0 || info.size > DESKTOP_WALLPAPER_MAX_FILE_BYTES)
+    {
+        return -1;
+    }
+    handle = sxn_open_file(path, SXN_FILE_READ);
+    if (handle < 0)
+    {
+        return -1;
+    }
+    data = (unsigned char *)map_section(info.size, &data_section);
+    while (data != 0 && done < info.size)
+    {
+        long result = sxn_read(handle, data + done, (unsigned long)(info.size - done));
+
+        if (result <= 0)
+        {
+            break;
+        }
+        done += (size_t)result;
+    }
+    (void)sxn_close(handle);
+    if (data != 0 && done == info.size &&
+        desktop_wallpaper_image_plan(data, (size_t)info.size, &width, &height) == 0)
+    {
+        size_t count = (size_t)width * (size_t)height;
+
+        image->pixels = (uint32_t *)map_section((uint64_t)count * sizeof(uint32_t), &image->section);
+        loaded = image->pixels != 0 &&
+                 desktop_wallpaper_image_decode(data, (size_t)info.size, image->pixels, count) == 0;
+    }
+    unmap_section(data, data_section);
+    if (!loaded)
+    {
+        display_image_unload(image);
+        return -1;
+    }
+    image->width = width;
+    image->height = height;
+    return 0;
+}
 
 /* ---- layout ---------------------------------------------------------------
  *
  * A fixed layout, as a property sheet has. Everything on a page is placed
  * from the page's rect (sxgui_tabs_page), so the numbers here are the sheet's
  * outer size and the spacing inside it. */
-#define DISPLAY_MARGIN SXGUI_CONTENT_MARGIN
+#define DISPLAY_MARGIN SXGUI_DIALOG_MARGIN
 #define DISPLAY_SHEET_WIDTH 380
 #define DISPLAY_PAGE_HEIGHT 356
 #define DISPLAY_PAGE_PAD 10
@@ -243,8 +435,8 @@ static int add_background(const char *path)
 
 static void scan_backgrounds(void)
 {
-    DIR *directory;
-    struct dirent *item;
+    struct sxn_directory_entry item;
+    long directory;
     int first;
     int index;
 
@@ -252,24 +444,24 @@ static void scan_backgrounds(void)
     (void)add_background("");
     first = g_background_count;
 
-    directory = opendir(DESKTOP_WALLPAPER_DIRECTORY);
-    if (directory != 0)
+    directory = sxn_open_directory(DESKTOP_WALLPAPER_DIRECTORY);
+    if (directory >= 0)
     {
-        while ((item = readdir(directory)) != 0)
+        while (sxn_read_directory(directory, &item) > 0)
         {
             char path[DESKTOP_WALLPAPER_PATH_MAX];
 
-            if (item->d_type == DT_DIR || !has_image_extension(item->d_name))
+            if (item.info.type == SXN_FILE_TYPE_DIRECTORY || !has_image_extension(item.name))
             {
                 continue;
             }
-            if (snprintf(path, sizeof(path), "%s/%s", DESKTOP_WALLPAPER_DIRECTORY, item->d_name) >= (int)sizeof(path))
+            if (snprintf(path, sizeof(path), "%s/%s", DESKTOP_WALLPAPER_DIRECTORY, item.name) >= (int)sizeof(path))
             {
                 continue;
             }
             (void)add_background(path);
         }
-        closedir(directory);
+        (void)sxn_close(directory);
     }
 
     /* Insertion sort by name; a few dozen entries at most. */
@@ -443,21 +635,23 @@ static void build_modes(void)
     struct savanxp_gpu_connector_properties properties;
     struct savanxp_gpu_info info;
     const char *adapter = "the display adapter";
-    long fd = savanxp_open_mode("/dev/gpu0", SAVANXP_OPEN_READ);
+    long device = sxn_open_device("gpu0", SXN_DEVICE_READ);
     int have_properties = 0;
     int index;
 
     memset(&properties, 0, sizeof(properties));
     memset(&info, 0, sizeof(info));
-    if (fd >= 0)
+    if (device >= 0)
     {
-        if (gpu_get_info((int)fd, &info) == 0 && info.width != 0 && info.height != 0)
+        if (sxn_device_control(device, GPU_IOC_GET_INFO, (unsigned long)&info) == 0 &&
+            info.width != 0 && info.height != 0)
         {
             g_screen_width = (int)info.width;
             g_screen_height = (int)info.height;
         }
-        have_properties = gpu_get_connector_properties((int)fd, &properties) == 0;
-        savanxp_close((int)fd);
+        have_properties =
+            sxn_device_control(device, GPU_IOC_GET_CONNECTOR_PROPERTIES, (unsigned long)&properties) == 0;
+        (void)sxn_close(device);
     }
     if (info.backend == SAVANXP_GPU_BACKEND_VIRTIO)
     {
@@ -675,7 +869,7 @@ static void paint_spectrum(struct sx_painter *painter)
     sxgui_draw_sunken_edge(painter, sx_rect_make(band.x - 1, band.y - 1, band.width + 2, band.height + 2));
 }
 
-static void on_paint(struct sxgui_app *app)
+static void on_paint(struct sxngui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
 
@@ -725,13 +919,13 @@ static void sync_controls(void)
     set_widget_enabled(&g_widgets[W_APPLY],
         !desktop_wallpaper_config_equal(&g_pending, &g_saved) || g_pending_mode != g_current_mode ||
         g_effects_pending != g_effects_saved || g_effects_unsaved);
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static void select_background(const char *path)
 {
     copy_text(g_pending.path, sizeof(g_pending.path), path);
-    if (path[0] != '\0' && desktop_wallpaper_image_load(&g_preview, path) == 0)
+    if (path[0] != '\0' && display_image_load(&g_preview, path) == 0)
     {
         /* A pattern tiles, a picture fills the screen; a picture the user
          * centred stays centred. */
@@ -746,17 +940,36 @@ static void select_background(const char *path)
     }
     else
     {
-        desktop_wallpaper_image_unload(&g_preview);
+        display_image_unload(&g_preview);
     }
     sync_controls();
 }
 
 static void write_wallpaper(void)
 {
-    if (!desktop_wallpaper_config_equal(&g_pending, &g_saved) &&
-        desktop_wallpaper_write_config(&g_pending) == 0)
+    char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
+    int length;
+
+    if (desktop_wallpaper_config_equal(&g_pending, &g_saved))
+    {
+        return;
+    }
+    length = desktop_wallpaper_format_config(&g_pending, text, sizeof(text));
+    if (length >= 0 && write_settings_file(DISPLAY_WALLPAPER_PATH, text, (size_t)length) == 0)
     {
         g_saved = g_pending;
+    }
+}
+
+/* A kept resolution, for the desktop to set again when the session starts. */
+static void write_mode(const struct display_mode *mode)
+{
+    char text[48];
+    int length = snprintf(text, sizeof(text), "mode=%ux%u\n", (unsigned int)mode->width, (unsigned int)mode->height);
+
+    if (length > 0 && length < (int)sizeof(text))
+    {
+        (void)write_settings_file(DISPLAY_MODE_PATH, text, (size_t)length);
     }
 }
 
@@ -830,7 +1043,7 @@ static void open_prompt(const char *title, const char *prompt, const char *initi
     g_dialog.initial_focus = D_FIELD;
     g_dialog.default_button = D_OK;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_DIALOG_WIDTH, DISPLAY_DIALOG_HEIGHT);
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static void accept_browse(void)
@@ -842,22 +1055,22 @@ static void accept_browse(void)
     if (g_dialog_text[0] != '/')
     {
         g_dialog_widgets[D_PROMPT].text = "Type the full path, starting with /.";
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
         return;
     }
-    if (desktop_wallpaper_image_load(&probe, g_dialog_text) < 0)
+    if (display_image_load(&probe, g_dialog_text) < 0)
     {
         g_dialog_widgets[D_PROMPT].text = "That file is not an image this system can show.";
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
         return;
     }
-    desktop_wallpaper_image_unload(&probe);
+    display_image_unload(&probe);
 
     row = add_background(g_dialog_text);
     if (row < 0)
     {
         g_dialog_widgets[D_PROMPT].text = "The list is full.";
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
         return;
     }
     refresh_list_widget();
@@ -895,7 +1108,7 @@ static void accept_color(void)
     if (*text != '\0' || digits != 6)
     {
         g_dialog_widgets[D_PROMPT].text = "Six hexadecimal digits, as in 3A6EA5.";
-        sxgui_app_request_repaint(&g_app);
+        sxngui_app_request_repaint(&g_app);
         return;
     }
     sxgui_dialog_end(&g_app.ui, 1);
@@ -908,7 +1121,7 @@ static void accept_color(void)
  * A mode the monitor cannot show must not stick, so a new one is a trial: the
  * dialog asks whether to keep it and goes back to the previous mode unless
  * the answer is Yes within DISPLAY_CONFIRM_SECONDS. Closing the question with
- * Esc is a No. Only a kept mode is saved (display_settings_write_mode). */
+ * Esc is a No. Only a kept mode is saved (write_mode). */
 #define DISPLAY_CONFIRM_SECONDS 15
 #define DISPLAY_CONFIRM_WIDTH 340
 #define DISPLAY_CONFIRM_HEIGHT 96
@@ -950,7 +1163,7 @@ static void show_message(const char *title, const char *text)
     g_dialog.initial_focus = 1;
     g_dialog.default_button = 1;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_CONFIRM_WIDTH, DISPLAY_MESSAGE_HEIGHT);
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static void set_screen_mode(int mode)
@@ -966,18 +1179,18 @@ static void finish_confirm(int keep)
     g_confirm_open = 0;
     if (keep)
     {
-        (void)display_settings_write_mode(g_modes[g_current_mode].width, g_modes[g_current_mode].height);
+        write_mode(&g_modes[g_current_mode]);
     }
     else
     {
-        (void)gfx_set_display_mode(&g_app.gfx, g_modes[g_previous_mode].width, g_modes[g_previous_mode].height);
+        (void)sxnwm_set_display_mode(&g_app.wm, g_modes[g_previous_mode].width, g_modes[g_previous_mode].height);
         set_screen_mode(g_previous_mode);
         g_quit_after_confirm = 0;
     }
     sync_controls();
     if (g_quit_after_confirm)
     {
-        sxgui_app_quit(&g_app, 0);
+        sxngui_app_quit(&g_app, 0);
     }
 }
 
@@ -1001,7 +1214,7 @@ static void on_confirm_no(struct sxgui_widget *widget, void *user)
 
 static void update_countdown(void)
 {
-    unsigned long now = uptime_ms();
+    unsigned long now = sxngui_uptime_ms();
     unsigned long left = now < g_confirm_deadline_ms ? (g_confirm_deadline_ms - now + 999ul) / 1000ul : 0ul;
 
     snprintf(g_countdown_text, sizeof(g_countdown_text), "Reverting in %lu second%s.", left, left == 1ul ? "" : "s");
@@ -1012,7 +1225,7 @@ static void open_confirm(void)
     const int inner = DISPLAY_CONFIRM_WIDTH - SXGUI_DIALOG_MARGIN * 2;
     const int buttons_y = DISPLAY_CONFIRM_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT;
 
-    g_confirm_deadline_ms = uptime_ms() + DISPLAY_CONFIRM_SECONDS * 1000ul;
+    g_confirm_deadline_ms = sxngui_uptime_ms() + DISPLAY_CONFIRM_SECONDS * 1000ul;
     update_countdown();
     g_confirm_widgets[C_QUESTION] = sxgui_label(
         sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN, inner, DISPLAY_ROW),
@@ -1037,12 +1250,12 @@ static void open_confirm(void)
     g_dialog.default_button = C_YES;
     g_confirm_open = 1;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_CONFIRM_WIDTH, DISPLAY_CONFIRM_HEIGHT);
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 /* The countdown, and the question closed by Esc (the toolkit ends a dialog
  * on Esc without a callback). */
-static void on_tick(struct sxgui_app *app)
+static void on_tick(struct sxngui_app *app)
 {
     if (!g_confirm_open)
     {
@@ -1053,7 +1266,7 @@ static void on_tick(struct sxgui_app *app)
         finish_confirm(0);
         return;
     }
-    if (uptime_ms() >= g_confirm_deadline_ms)
+    if (sxngui_uptime_ms() >= g_confirm_deadline_ms)
     {
         g_confirm_open = 0;
         sxgui_dialog_end(&app->ui, 0);
@@ -1061,7 +1274,7 @@ static void on_tick(struct sxgui_app *app)
         return;
     }
     update_countdown();
-    sxgui_app_request_repaint(app);
+    sxngui_app_request_repaint(app);
 }
 
 /* Applies visual effects and wallpaper, then tries a new resolution. With
@@ -1094,12 +1307,12 @@ static void apply_pending(int quit)
         sync_controls();
         if (quit)
         {
-            sxgui_app_quit(&g_app, 0);
+            sxngui_app_quit(&g_app, 0);
         }
         return;
     }
 
-    result = gfx_set_display_mode(&g_app.gfx, mode->width, mode->height);
+    result = sxnwm_set_display_mode(&g_app.wm, mode->width, mode->height);
     if (result < 0)
     {
         g_pending_mode = g_current_mode;
@@ -1176,7 +1389,7 @@ static void show_tab(int tab)
             g_widgets[index].flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
         }
     }
-    sxgui_app_request_repaint(&g_app);
+    sxngui_app_request_repaint(&g_app);
 }
 
 static void on_tab_changed(struct sxgui_widget *widget, void *user)
@@ -1238,7 +1451,7 @@ static void on_cancel(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    sxgui_app_quit(&g_app, 0);
+    sxngui_app_quit(&g_app, 0);
 }
 
 static void on_apply(struct sxgui_widget *widget, void *user)
@@ -1260,7 +1473,7 @@ static void on_resolution_changed(struct sxgui_widget *widget, void *user)
 
 /* Enter is OK, as on any property sheet, unless a dialog or an open drop-down
  * list is the one taking the keys. */
-static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
+static int on_key(struct sxngui_app *app, const struct savanxp_input_event *event)
 {
     if (event->type == SAVANXP_INPUT_EVENT_KEY_DOWN && event->key == SAVANXP_KEY_ENTER &&
         !sxgui_dialog_active(&app->ui) && app->ui.popup_owner < 0)
@@ -1278,7 +1491,7 @@ static void read_screen_size(void)
     struct savanxp_system_info info;
 
     memset(&info, 0, sizeof(info));
-    if (system_info(&info) >= 0 && info.framebuffer_ready != 0 &&
+    if (sxn_system_info(&info) >= 0 && info.framebuffer_ready != 0 &&
         info.framebuffer_width != 0 && info.framebuffer_height != 0)
     {
         g_screen_width = (int)info.framebuffer_width;
@@ -1409,22 +1622,23 @@ int main(void)
     read_screen_size();
     build_modes();
 
-    (void)desktop_wallpaper_read_config(&g_saved);
+    read_wallpaper_config(&g_saved);
     g_pending = g_saved;
     scan_backgrounds();
     /* A wallpaper from elsewhere on the disk joins the list, as one picked
      * with Browse would. */
     (void)add_background(g_pending.path);
-    (void)desktop_wallpaper_image_load(&g_preview, g_pending.path);
+    (void)display_image_load(&g_preview, g_pending.path);
 
     build_widgets();
     refresh_list_widget();
 
-    if (sxgui_app_init(&g_app, "display", g_widgets, W_COUNT) < 0)
+    if (sxngui_app_init(&g_app, &sun_resources, g_widgets, W_COUNT) < 0)
     {
-        return 1;
+        (void)sxn_log("display: no window from windowd");
+        sxn_exit(1);
     }
-    (void)sxgui_app_set_content_size(
+    (void)sxngui_app_set_content_size(
         &g_app,
         DISPLAY_MARGIN * 2 + DISPLAY_SHEET_WIDTH,
         g_widgets[W_OK].rect.y + SXGUI_BUTTON_HEIGHT + DISPLAY_MARGIN);
@@ -1437,5 +1651,6 @@ int main(void)
     show_tab(DISPLAY_TAB_DESKTOP);
     sync_controls();
     sxgui_focus(&g_app.ui, W_BACKGROUND_LIST);
-    return sxgui_app_run(&g_app);
+    sxn_exit(sxngui_app_run(&g_app));
+    return 0;
 }

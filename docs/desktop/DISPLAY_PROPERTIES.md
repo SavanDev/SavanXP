@@ -6,20 +6,25 @@
 > settings?" countdown ([Changing the resolution](#changing-the-resolution)).
 > Colour quality stays at 32 bits, the only depth the system draws. Settings
 > also offers [Effects](#effects) for persistent window and pointer shadows.
+> **A SUN program since 2026-11-19** ([SUN.md](../userland/SUN.md)), with
+> the same look and behaviour it had on POSIX.
 
-Display Properties (`/bin/display`, `subsystems/posix/userland/display.c`) is
+Display Properties (`/system/display.sxe`, `system/display/display.c`) is
 the period's Display control panel with two of its tabs, Desktop and Settings.
 It opens from the desktop's context menu (**Properties**), from Program
 Manager's **Options** menu, or by name.
 
 ## Who does what
 
-Two processes share `subsystems/posix/userland/desktop_wallpaper.c`:
+Two processes, one on each subsystem, share `system/gfx/wallpaper.c`
+(`sxgfx/wallpaper.h`): the format of the configuration, the image decoding
+with its limits, and the painting. It makes no system call; each process reads
+and writes its own files and keeps the pixels in memory of its own.
 
-| Process | Uses | Job |
-|---|---|---|
-| `desktop` | `desktop_wallpaper_init`, `_reload`, `_draw` | Keeps one configuration and one decoded image, and draws the background |
-| `display` | `desktop_wallpaper_read_config`, `_write_config`, `_paint`, `_image_load` | Edits the configuration and paints previews from images of its own |
+| Process | Subsystem | Uses | Job |
+|---|---|---|---|
+| `desktop` | POSIX | `desktop_wallpaper_init`, `_reload`, `_draw` (`subsystems/posix/userland/desktop_wallpaper.c`) | Keeps one configuration and one decoded image, and draws the background |
+| `display` | SUN | `desktop_wallpaper_parse_config`, `_format_config`, `_image_plan`, `_image_decode`, `_paint` | Edits the configuration and paints previews from images of its own |
 
 They never talk to each other. The configuration file is the contract: the
 dialog writes it on Apply or OK, and the desktop re-reads it every 500 ms
@@ -35,8 +40,11 @@ the screen.
 
 ## The configuration
 
-`desktop.cfg` in the user's profile (`savanxp_settings_path`), one `key=value`
-per line:
+`desktop.cfg` in the user's profile, one `key=value` per line. The desktop
+finds it through `savanxp_settings_path`; Display Properties, like the other
+SUN settings programs, names the session's profile directly
+(`/users/user/Settings/desktop.cfg`) and reads an older copy loose in the
+profile or at the root where it is, as the desktop does:
 
 ```
 wallpaper=/system/wallpapers/Clouds.bmp
@@ -103,9 +111,11 @@ patterns: when the user picks an image no larger than 256 pixels on either
 side, the dialog switches the position to Tile; picking a large one while
 Tile is set switches it to Stretch. A centred image stays centred.
 
-**Browse...** asks for the path of a BMP, PNG or JPEG on the disk. The common Open
-dialog ([FILE_DIALOG.md](FILE_DIALOG.md)) is SUN's, and Display Properties is
-still a POSIX program; it gets the dialog when it moves to SUN. The image is checked before it joins the
+**Browse...** asks for the path of a BMP, PNG or JPEG on the disk. Now that
+Display Properties is a SUN program the common Open dialog
+([FILE_DIALOG.md](FILE_DIALOG.md)) is within its reach; it still asks for a
+path, because the move kept its behaviour, and `wallpaper-smoke` and
+`wallpaperjpeg` type that path. The image is checked before it joins the
 list, so the list never shows something the desktop cannot draw.
 
 `./build.sh smoke wallpaper-smoke` and
@@ -146,7 +156,7 @@ or the developer's preferences.
 | `compositord` | Sizes the display section, at start, for the largest mode the session may use, and reports it in the INIT reply (`max_width`, `max_height`, protocol v7). |
 | `windowd` | Serves `SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE` from any main window: sets the mode through `compositord`, makes it the native mode, and lays everything out again. |
 | `desktop` | Its background and taskbar follow the `RESIZED` they get; at start it sets the mode the user kept. |
-| `display` | Lists the modes, asks for one with `gfx_set_display_mode`, and saves it only once the user keeps it. |
+| `display` | Lists the modes, asks for one with `sxnwm_set_display_mode` (the desktop, a POSIX program, uses `gfx_set_display_mode`), and saves it only once the user keeps it. |
 
 ### The session's largest mode
 
@@ -192,8 +202,9 @@ A mode the monitor cannot show must not stick. Apply (or OK) sets the mode
 and asks "Keep these settings?" with a 15-second countdown; Yes saves it,
 No, Esc or the end of the countdown sets the previous mode again. Only a kept
 mode is written: `display.cfg` in the user's profile, one line,
-`mode=<width>x<height>` (`display_settings.c`). The desktop reads it when it
-starts and asks for the mode if the session booted in another.
+`mode=<width>x<height>`. Display Properties writes it; the desktop reads it
+(`display_settings.c`) when it starts and asks for the mode if the session
+booted in another.
 
 It is the user's setting and not the machine's because the desktop, which
 applies it, runs as the user, and a system file would need elevation for

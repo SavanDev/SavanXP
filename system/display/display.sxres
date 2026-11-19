@@ -1,8 +1,10 @@
-# SXE resources of Display Properties. See docs/userland/SXE_FORMAT.md.
+# SXE resources of Display Properties. See docs/userland/SXE_FORMAT.md; as a
+# SUN program it also gets them compiled in (display.sunres.h).
 name=Display Properties
 description=Wallpaper, its position and colour, and the screen's resolution
 version=system
 vendor=SavanXP
+subsystem=native
 accent=3a68be
 icon=app-display
 category=Settings

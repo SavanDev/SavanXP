@@ -3592,6 +3592,29 @@ int main(int argc, char** argv) {
         check(sxnwm_connect_with_launch_flags(0, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
         check(sxnwm_connect_with_launch_flags(&window, ~SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) == -SAVANXP_EINVAL);
     }
+
+    /* A display mode is a window request: bad arguments never reach windowd,
+     * and the request carries the mode and hands back windowd's answer. The
+     * reply is staged in a header of our own, so the session's mode is left
+     * alone; the resolution scenario of tools/shoot.sh drives the real one. */
+    {
+        static struct savanxp_gpu_client_surface_header header;
+        struct sxnwm_client window = {0};
+        check(sxnwm_set_display_mode(0, 1024, 768) == -SAVANXP_EINVAL);
+        check(sxnwm_set_display_mode(&window, 1024, 768) == -SAVANXP_EINVAL);
+        window.header = &header;
+        window.request_fd = -1;
+        check(sxnwm_set_display_mode(&window, 0, 768) == -SAVANXP_EINVAL);
+        check(sxnwm_set_display_mode(&window, 1024, 0) == -SAVANXP_EINVAL);
+        check(header.requests.window_sequence == 0u);
+        header.requests.window_reply_sequence = 2u;
+        header.requests.window_reply_status = -SAVANXP_EIO;
+        check(sxnwm_set_display_mode(&window, 1024, 768) == -SAVANXP_EIO);
+        check(header.requests.window_sequence == 2u &&
+            header.requests.window.action == SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE &&
+            header.requests.window.window_id == 0u && header.requests.window.width == 1024u &&
+            header.requests.window.height == 768u);
+    }
     check(sxn_info(&info) == 0);
     check(info.abi_version == SXN_ABI_VERSION);
     check(info.subsystem_id == 1u);

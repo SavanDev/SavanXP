@@ -617,9 +617,9 @@ static void on_menu_command(int id, void *user)
         snprintf(g_status, sizeof(g_status), "Catalogo actualizado: %d programa(s)", progman_item_count());
         break;
     case PROGMAN_CMD_DISPLAY:
-        if (gfx_desktop_launch_ex(&g_app.gfx, "/bin/display", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+        if (gfx_desktop_launch_ex(&g_app.gfx, "/system/display.sxe", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
         {
-            snprintf(g_status, sizeof(g_status), "Cannot start /bin/display");
+            snprintf(g_status, sizeof(g_status), "Cannot start /system/display.sxe");
         }
         break;
     case PROGMAN_CMD_ABOUT:

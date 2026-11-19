@@ -188,7 +188,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `CreateFileMapping`, `MapViewOfFile` | `sxn_section_create`, `sxn_map_view` | done |
 | `MapViewOfFileEx` (a chosen base) | `sxn_map_view_at` | done (K2 of the Win32 roadmap; consumer: the Win32 loader) |
 | `CreateFileMapping` over a file (`SEC_IMAGE`'s shared text) | `sxn_section_open_range` (read-only, one section per file range system-wide) | done; consumer: the loader shared by SUN and POSIX ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#one-loader-over-sxn)) |
-| Implicitly linked DLLs (the import table, shared text) | `savanxp_program(... NATIVE LINK_PROFILE PIE DEPENDS lib...)`: `DT_NEEDED`, mapped before `main` by the loader POSIX uses too | done: `libmath` (consumer `sunlibtest`) and the toolkit, `libsxgui` and `libgfx2d` (`SAVANXP_SUN_TOOLKIT`: Task Manager, Log Viewer, Sound, Mouse, Disk Management, SxGL Diagnostic) ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#the-toolkit-split-into-neutral-and-host)) |
+| Implicitly linked DLLs (the import table, shared text) | `savanxp_program(... NATIVE LINK_PROFILE PIE DEPENDS lib...)`: `DT_NEEDED`, mapped before `main` by the loader POSIX uses too | done: `libmath` (consumer `sunlibtest`) and the toolkit, `libsxgui` and `libgfx2d` (`SAVANXP_SUN_TOOLKIT`: Task Manager, Log Viewer, Sound, Mouse, Display Properties, Disk Management, SxGL Diagnostic) ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#the-toolkit-split-into-neutral-and-host)) |
 | `ReadFile` / `WriteFile` on pipes and devices | `sxn_read`, `sxn_write`, `sxn_set_nonblocking` | done |
 | `DuplicateHandle`, `CloseHandle` | `sxn_duplicate`, `sxn_close` | done |
 | ALPC ports | `sxn_port_*`, `sxn_pipe_send_handle` | done |
@@ -212,6 +212,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |
+| `ChangeDisplaySettings` | `sxnwm_set_display_mode` (a main window asks `windowd`; saving the mode is the caller's) | done (Display Properties, [DISPLAY_PROPERTIES.md](../desktop/DISPLAY_PROPERTIES.md#changing-the-resolution)); POSIX has `gfx_set_display_mode` |
 | `EnumWindows`, `SetForegroundWindow`, `PostMessage(WM_CLOSE)` | `sxnwm_task_list_open`/`_read`, `sxnwm_task_activate`, `sxnwm_task_close` (same user or the system) | done (Task Manager's Applications) |
 | `comctl32` + a message loop | `sxngui_app_init`, `sxngui_app_run` (`sxn/sxngui.h`) | done (Task Manager) |
 | Event Log (`OpenEventLog`, `ReadEventLog`) | `sxn_log_read` over the kernel's line ring ([SYSTEM_LOG.md](../kernel/SYSTEM_LOG.md)) | done (slice 29, Log Viewer); lines, not typed events |

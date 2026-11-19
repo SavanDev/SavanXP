@@ -119,6 +119,12 @@ savanxp_system_service(NAME sxgldiag LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOL
 # consumer of SXN_SYS_LOG_READ.
 savanxp_system_service(NAME logview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES logview.c)
 
+# Display Properties (docs/desktop/DISPLAY_PROPERTIES.md): the wallpaper and
+# the resolution. It shares desktop.cfg's format, the decoding and the painting
+# with the POSIX desktop through system/gfx/wallpaper.c.
+savanxp_system_service(NAME display LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg SOURCES display.c
+    SHARED_SOURCES system/gfx/wallpaper.c)
+
 # Mouse Properties: native cursor scheme selection and previews.
 savanxp_system_service(NAME mouse LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES mouse.c
     SHARED_SOURCES system/compositord/cursor_catalog.c system/compositord/cursor_cur.c system/compositord/shadow.c

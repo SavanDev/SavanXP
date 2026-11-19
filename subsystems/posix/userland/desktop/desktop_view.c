@@ -883,7 +883,7 @@ void desktop_view_paint(struct sx_painter *painter, const struct savanxp_fb_info
 /* The Command Prompt, as Ctrl+Alt+T opens it (docs/desktop/CONSOLE.md). */
 static const char *k_console_path = "/system/console.sxe";
 /* Display Properties (docs/desktop/DISPLAY_PROPERTIES.md). */
-static const char *k_display_path = "/bin/display";
+static const char *k_display_path = "/system/display.sxe";
 
 static const struct sxgui_menu_item k_background_items[] = {
     {"Arrange Icons", VIEW_CMD_ARRANGE, 0},

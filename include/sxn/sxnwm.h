@@ -640,6 +640,22 @@ static inline long sxnwm_set_fullscreen(struct sxnwm_client* owner, int enabled)
         0, enabled != 0, 0, 0, SAVANXP_WM_WINDOW_ROLE_NORMAL, 0, 0, 0, 2000);
 }
 
+/* windowd may relay the whole desktop before it answers a new display mode. */
+#define SXNWM_DISPLAY_MODE_WAIT_MS 3000l
+
+/* A new display mode for the session, from a main window (Display Properties;
+ * docs/desktop/DISPLAY_PROPERTIES.md#changing-the-resolution). 0 once windowd
+ * set it and laid the desktop out again; -EINVAL below 640x480 or past the
+ * session's largest mode; -EIO when the adapter refused it, and then the
+ * previous mode is back. Saving the mode is the caller's job. */
+static inline long sxnwm_set_display_mode(struct sxnwm_client* owner, uint32_t width, uint32_t height) {
+    if (owner == 0 || owner->header == 0 || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxnwm_window_request_ex(owner, SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE, 0, width, height, 0,
+        SAVANXP_WM_WINDOW_ROLE_NORMAL, 0u, 0, 0, SXNWM_DISPLAY_MODE_WAIT_MS);
+}
+
 /* A dialog's request: no role, no position. */
 static inline long sxnwm_window_request(struct sxnwm_client* owner, uint32_t action, uint32_t window_id,
                                         uint32_t width, uint32_t height, const char* title, long timeout_ms) {

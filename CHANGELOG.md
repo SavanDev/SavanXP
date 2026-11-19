@@ -100,6 +100,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Display Properties is a SUN program**, `/system/display.sxe` from `system/display`; the POSIX `/bin/display` is
+  retired from the image. It looks and behaves as before. SUN gains `sxnwm_set_display_mode` for its resolution trial
+  ([DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md)).
 - **The shipped files left the root of the disk.** Wallpapers are in `/system/wallpapers`, `mimeicon.ini` in `/system`,
   the Web Viewer pages and `system.mp3` in `/system/samples` and Paint's fixture in `/system/selftests`; a saved
   `/wallpapers/...` choice still loads, and the build retires the old copies. `/README` now describes the system and
