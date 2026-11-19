@@ -151,6 +151,9 @@ add_custom_command(OUTPUT "${resource_stamp}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"
         --project-root "${CMAKE_SOURCE_DIR}"
         --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+        # Not recursive: the Media Player is the only program whose manifest
+        # lives in a subdirectory, as in v0.4.0.
+        --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer"
         --build-id "${SAVANXP_BUILD_ID}" --output-dir "${resource_dir}" ${resource_args}
     COMMAND "${CMAKE_COMMAND}" -E touch "${resource_stamp}"
     DEPENDS "${resource_config}" ${resource_manifests} ${resource_assets}

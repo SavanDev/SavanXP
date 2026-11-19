@@ -171,15 +171,16 @@ static void check_libm(void) {
     }
 }
 
-/* Deja un patron conocido en xmm5..xmm8, gira lo suficiente como para comerse
- * varias interrupciones de timer -- y por lo tanto varios cambios de contexto
- * hacia el otro proceso, que esta haciendo lo mismo con otro patron -- y los
- * vuelve a leer.
+/* Loads a known pattern into four XMM registers (xmm5..xmm8 on x86_64,
+ * xmm4..xmm7 on i386), spins long enough to take several timer interrupts --
+ * and so several context switches to the other process, which does the same
+ * with another pattern -- and reads them back.
  *
- * Todo pasa dentro de UN bloque de asm a proposito. Si el compilador pudiera
- * meter mano entre el llenado y la lectura, spillearia esos registros a memoria
- * (en System V los xmm son caller-saved) y la prueba dejaria de mirar lo unico
- * que importa aca: lo que el kernel guarda y restaura con fxsave64/fxrstor64. */
+ * Everything happens inside ONE asm block on purpose. If the compiler could
+ * step in between the load and the read, it would spill those registers to
+ * memory (XMM registers are caller-saved in System V) and the test would stop
+ * looking at the only thing that matters here: what the kernel saves and
+ * restores with FXSAVE/FXRSTOR. */
 static int fpu_registers_survive(uint64_t base, unsigned long spins) {
     uint64_t in0 = base;
     uint64_t in1 = base + 1u;
@@ -195,6 +196,26 @@ static int fpu_registers_survive(uint64_t base, unsigned long spins) {
         return 1;
     }
 
+#if defined(__i386__)
+    /* i386 has eight XMM registers and no 64-bit general registers, so the
+     * pattern travels through memory operands in xmm4..xmm7. */
+    __asm__ volatile(
+        "movq %[i0], %%xmm4\n\t"
+        "movq %[i1], %%xmm5\n\t"
+        "movq %[i2], %%xmm6\n\t"
+        "movq %[i3], %%xmm7\n\t"
+        "1:\n\t"
+        "decl %[n]\n\t"
+        "jnz 1b\n\t"
+        "movq %%xmm4, %[o0]\n\t"
+        "movq %%xmm5, %[o1]\n\t"
+        "movq %%xmm6, %[o2]\n\t"
+        "movq %%xmm7, %[o3]"
+        : [o0] "=m"(out0), [o1] "=m"(out1), [o2] "=m"(out2), [o3] "=m"(out3),
+          [n] "+r"(counter)
+        : [i0] "m"(in0), [i1] "m"(in1), [i2] "m"(in2), [i3] "m"(in3)
+        : "xmm4", "xmm5", "xmm6", "xmm7", "cc", "memory");
+#else
     __asm__ volatile(
         "movq %[i0], %%xmm5\n\t"
         "movq %[i1], %%xmm6\n\t"
@@ -211,6 +232,7 @@ static int fpu_registers_survive(uint64_t base, unsigned long spins) {
           [n] "+r"(counter)
         : [i0] "r"(in0), [i1] "r"(in1), [i2] "r"(in2), [i3] "r"(in3)
         : "xmm5", "xmm6", "xmm7", "xmm8", "cc");
+#endif
 
     if (out0 != in0 || out1 != in1 || out2 != in2 || out3 != in3) {
         printf("  xmm corrupto: base=%x got %x %x %x %x\n",

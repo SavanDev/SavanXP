@@ -163,6 +163,11 @@ Cut-off notes:
 
 ### Fixed
 
+- **The i386 Media Player has its icon, category and file associations again.**
+  Its subdirectory manifest was not stamped, so `.mp3`, `.avi` and `.flac` had no owner.
+
+- **`sdk/floatsmoke` builds for i386.** `float-smoke` checks XMM state with registers that exist in protected mode.
+
 - **Ring-3 port I/O is denied by the i386 TSS.** The `multitest32 fault-io`
   regression verifies that `IN` from port `0x80` terminates only its caller.
 
