@@ -424,6 +424,11 @@ enum sxn_syscall_number {
      * directory or the other way), -EINVAL, -EACCES, -EROFS, -EBUSY (FAT, a
      * file open). MoveFileEx with REPLACE_EXISTING and WRITE_THROUGH. */
     SXN_SYS_RENAME_PATH = 0x1046,
+    /* rdi = struct sxn_identity* (written): who the calling process is, its
+     * real uid (the person), effective uid (0 acts as the system) and gid,
+     * as POSIX's GET_IDENTITY reports them. 0, or -EINVAL for a bad pointer.
+     * OpenProcessToken + GetTokenInformation(TokenUser). */
+    SXN_SYS_QUERY_IDENTITY = 0x1047,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

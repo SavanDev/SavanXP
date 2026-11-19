@@ -41,10 +41,8 @@ the screen.
 ## The configuration
 
 `desktop.cfg` in the user's profile, one `key=value` per line. The desktop
-finds it through `savanxp_settings_path`; Display Properties, like the other
-SUN settings programs, names the session's profile directly
-(`/users/user/Settings/desktop.cfg`) and reads an older copy loose in the
-profile or at the root where it is, as the desktop does:
+finds it through `savanxp_settings_path` and Display Properties through its
+SUN counterpart, `sxn_settings_path`, which follow the same rules:
 
 ```
 wallpaper=/system/wallpapers/Clouds.bmp
@@ -202,7 +200,8 @@ A mode the monitor cannot show must not stick. Apply (or OK) sets the mode
 and asks "Keep these settings?" with a 15-second countdown; Yes saves it,
 No, Esc or the end of the countdown sets the previous mode again. Only a kept
 mode is written: `display.cfg` in the user's profile, one line,
-`mode=<width>x<height>`. Display Properties writes it; the desktop reads it
+`mode=<width>x<height>`. Display Properties writes it (`sxn_settings_path`);
+the desktop reads it
 (`display_settings.c`) when it starts and asks for the mode if the session
 booted in another.
 

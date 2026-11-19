@@ -30,6 +30,7 @@
 #include "sxn/sxn.h"
 #include "sxn/sxneffects.h"
 #include "sxn/sxngui.h"
+#include "sxn/sxnprofile.h"
 
 #include "display.sunres.h"
 
@@ -37,16 +38,12 @@ static struct sxngui_app g_app;
 
 /* ---- the user's files ------------------------------------------------------
  *
- * The session's profile, as the other SUN settings programs name it
- * (SXN_POINTER_SETTINGS_PATH, SXN_EFFECTS_PATH): the session belongs to the
- * user whose profile is /users/user. The desktop, a POSIX program, finds the
- * same files through savanxp_settings_path. */
-#define DISPLAY_PROFILE_DIR "/users/user"
-#define DISPLAY_SETTINGS_DIR DISPLAY_PROFILE_DIR "/Settings"
-#define DISPLAY_WALLPAPER_PATH DISPLAY_SETTINGS_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME
+ * desktop.cfg and display.cfg in the person's profile, found as the desktop
+ * finds them: sxn_settings_path here, savanxp_settings_path there. */
+
 /* The saved resolution, one line, "mode=<width>x<height>": the format the
  * desktop reads when it starts (display_settings_read_mode). */
-#define DISPLAY_MODE_PATH DISPLAY_SETTINGS_DIR "/display.cfg"
+#define DISPLAY_MODE_NAME "display.cfg"
 
 /* Reads a whole small file into `text`, NUL-terminated. 0, or -1. */
 static int read_small_file(const char *path, char *text, size_t capacity)
@@ -73,40 +70,27 @@ static int read_small_file(const char *path, char *text, size_t capacity)
     return 0;
 }
 
-/* Saves a whole small file in the Settings folder, making the folder the
- * first time. 0, or the negative status. */
-static long write_settings_file(const char *path, const char *text, size_t length)
+/* Saves a whole small setting in the person's profile. 0, or the negative
+ * status. */
+static long write_setting(const char *name, const char *text, size_t length)
 {
-    long result = sxn_write_file(path, text, (unsigned long)length);
+    char path[DESKTOP_WALLPAPER_PATH_MAX];
+    long result = sxn_settings_path(name, 1, path, sizeof(path));
 
-    if (result == -SAVANXP_ENOENT && sxn_make_directory(DISPLAY_SETTINGS_DIR) >= 0)
-    {
-        result = sxn_write_file(path, text, (unsigned long)length);
-    }
-    return result;
+    return result < 0 ? result : sxn_write_file(path, text, (unsigned long)length);
 }
 
-/* The configuration the desktop shows. The defaults when there is none. A
- * copy loose in the profile or at the root, from before the Settings folder,
- * is read where it is, as the desktop reads it; the first save goes to
- * Settings. */
+/* The configuration the desktop shows; the defaults when there is none. */
 static void read_wallpaper_config(struct desktop_wallpaper_config *config)
 {
-    static const char *const paths[] = {
-        (DISPLAY_WALLPAPER_PATH),
-        (DISPLAY_PROFILE_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME),
-        ("/" DESKTOP_WALLPAPER_CONFIG_NAME),
-    };
+    char path[DESKTOP_WALLPAPER_PATH_MAX];
     char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
-    size_t index;
 
-    for (index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index)
+    if (sxn_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 0, path, sizeof(path)) == 0 &&
+        read_small_file(path, text, sizeof(text)) == 0)
     {
-        if (read_small_file(paths[index], text, sizeof(text)) == 0)
-        {
-            desktop_wallpaper_parse_config(config, text);
-            return;
-        }
+        desktop_wallpaper_parse_config(config, text);
+        return;
     }
     desktop_wallpaper_default_config(config);
 }
@@ -955,7 +939,7 @@ static void write_wallpaper(void)
         return;
     }
     length = desktop_wallpaper_format_config(&g_pending, text, sizeof(text));
-    if (length >= 0 && write_settings_file(DISPLAY_WALLPAPER_PATH, text, (size_t)length) == 0)
+    if (length >= 0 && write_setting(DESKTOP_WALLPAPER_CONFIG_NAME, text, (size_t)length) == 0)
     {
         g_saved = g_pending;
     }
@@ -969,7 +953,7 @@ static void write_mode(const struct display_mode *mode)
 
     if (length > 0 && length < (int)sizeof(text))
     {
-        (void)write_settings_file(DISPLAY_MODE_PATH, text, (size_t)length);
+        (void)write_setting(DISPLAY_MODE_NAME, text, (size_t)length);
     }
 }
 

@@ -1532,6 +1532,15 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_MAKE_DIRECTORY:
             context->rax = static_cast<uint64_t>(native_make_directory(*caller, context->rdi));
             return context;
+        case SXN_SYS_QUERY_IDENTITY: {
+            const sxn_identity identity = {
+                caller->credentials.uid, caller->credentials.euid, caller->credentials.gid, 0u};
+            context->rax = sx::validate_user_range(context->rdi, sizeof(identity), true) &&
+                    sx::copy_to_user(context->rdi, &identity, sizeof(identity))
+                ? 0u
+                : static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+            return context;
+        }
         case SXN_SYS_RENAME_PATH:
             context->rax = static_cast<uint64_t>(native_rename_path(*caller, context->rdi, context->rsi));
             return context;

@@ -194,6 +194,7 @@ done
 #   libsavanxp.a   core (without crt0), math and setjmp: what every program needs
 #   libm.a         math alone, for builds that add -lm (empty without SSE)
 #   libsxgui.a     gui, libsxaudio.a audio, libsxmidi.a midi, libsxgl.a gl
+#   libsxn.a       sun-core: SUN's profile and settings path (sxnprofile.h)
 #   libsxngui.a    sun-gui: SUN's application frame and file dialog
 #   libdl.a        dlfcn, in the PIE variant
 make_archive() {
@@ -221,6 +222,7 @@ for variant in nosse sse pie; do
     make_archive "$lib" libsxaudio.a audio
     make_archive "$lib" libsxmidi.a midi
     make_archive "$lib" libsxgl.a gl
+    make_archive "$lib" libsxn.a sun-core
     make_archive "$lib" libsxngui.a sun-gui
 done
 make_archive "$TMP/lib/pie" libdl.a dlfcn

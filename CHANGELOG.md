@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
+  the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
+  Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).
+
 - **New Folder in Files and in the Open/Save As dialog.** Files has **New Folder...** in its File menu and the folder's
   context menu; the SUN file dialog has a Create New Folder button beside Up One Level. Both ask for the name, offer the
   first free "New Folder", and show the new folder selected ([FILE_DIALOG.md](docs/desktop/FILE_DIALOG.md)).

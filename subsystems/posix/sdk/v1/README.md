@@ -122,7 +122,8 @@ program. The runtime groups beyond the core are archives a program names:
 `-lsxgui`, `-lsxaudio`, `-lsxmidi`, `-lsxgl`, `-lsxngui`, `-lm`, and `-ldl`
 in the pie profile. What has to be linked whether or not anything references
 it stays a loose object, and sxcc adds it: `crt0.o`, SUN's `sxn_runtime.o`,
-and the loader.
+and the loader. With `--sx-native` it also links `-lsxn`, the rest of SUN's
+core (`sxn/sxnprofile.h`).
 
 For CMake, `share/sdk/savanxp-toolchain.cmake` names sxcc as the compiler.
 `sdk/cmakesmoke` is a complete example:

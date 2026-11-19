@@ -34,6 +34,7 @@ sxn/sxnelevate.h
 sxn/sxnfiledlg.h
 sxn/sxngui.h
 sxn/sxnpointer.h
+sxn/sxnprofile.h
 sxn/sxnwidgets.h
 sxn/sxnwm.h
 wm/wm_protocol.h
