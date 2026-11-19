@@ -2359,6 +2359,7 @@ struct project {
     int module_count;
     int form_count;
     char startup[64];
+    struct sxb_project_info info;
 };
 
 struct project_value {
@@ -2441,15 +2442,18 @@ static int parse_project_value(const char *p, const char *end, struct project_va
 static int valid_version(const char *text)
 {
     int parts = 0, digits = 0;
+    long part = 0;
     for (const char *p = text;; p++) {
         if (*p >= '0' && *p <= '9') {
             digits++;
-            if (digits > 5) return 0;
+            part = part * 10 + (*p - '0');
+            if (digits > 5 || part > 65535) return 0;
             continue;
         }
         if (digits == 0) return 0;
         parts++;
         digits = 0;
+        part = 0;
         if (*p == '\0') break;
         if (*p != '.') return 0;
     }
@@ -2561,18 +2565,42 @@ static int parse_project(const char *file, const char *text, size_t length, stru
             out->module_is_form[out->module_count] = 1;
             out->module_lines[out->module_count++] = line;
             out->form_count++;
-        } else if (KEY("Description") || KEY("Vendor") || KEY("Copyright") || KEY("Category") || KEY("Icon")) {
+        } else if (KEY("Description") || KEY("Vendor") || KEY("Copyright")) {
             WANT('S', "a string");
+            char *field = KEY("Description") ? out->info.description
+                          : KEY("Vendor")    ? out->info.vendor
+                                             : out->info.copyright;
+            snprintf(field, sizeof(out->info.description), "%s", value.text);
+        } else if (KEY("Category")) {
+            WANT('S', "a string");
+            if (strlen(value.text) >= sizeof(out->info.category)) {
+                return project_error(diag, file, line, "a Category is at most %d bytes",
+                                     (int)sizeof(out->info.category) - 1);
+            }
+            snprintf(out->info.category, sizeof(out->info.category), "%s", value.text);
+        } else if (KEY("Icon")) {
+            WANT('S', "a PNG file name in quotes");
+            size_t n = strlen(value.text);
+            if (n < 5 || !sxb_name_equal(value.text + n - 4, 4, ".png") || n >= sizeof(out->info.icons[0])) {
+                return project_error(diag, file, line, "an Icon is a .png file");
+            }
+            if (out->info.icon_count == SXB_MAX_ICONS) {
+                return project_error(diag, file, line, "a project has at most %d icons", SXB_MAX_ICONS);
+            }
+            snprintf(out->info.icons[out->info.icon_count++], sizeof(out->info.icons[0]), "%s", value.text);
         } else if (KEY("Version")) {
             WANT('S', "a string such as \"1.2.3\"");
-            if (!valid_version(value.text)) {
-                return project_error(diag, file, line, "Version is up to four numbers: \"1.2.3\"");
+            if (!valid_version(value.text) || strlen(value.text) >= sizeof(out->info.version)) {
+                return project_error(diag, file, line, "Version is up to four numbers below 65536: \"1.2.3\"");
             }
+            snprintf(out->info.version, sizeof(out->info.version), "%s", value.text);
         } else if (KEY("Accent")) {
             WANT('I', "a colour as &HRRGGBB");
             if (value.number < 0 || value.number > 0xFFFFFF) {
                 return project_error(diag, file, line, "Accent is a colour from &H000000 to &HFFFFFF");
             }
+            out->info.has_accent = 1;
+            out->info.accent = (uint32_t)value.number;
         } else {
             return project_error(diag, file, line, "unknown key \"%.*s\"", key_length, key);
         }
@@ -2868,6 +2896,7 @@ struct sxb_program *sxb_compile_project(const char *project_path, const struct s
     }
     snprintf(prog->name, sizeof(prog->name), "%s", project->name);
     prog->windows = project->windows;
+    prog->info = project->info;
     struct compiler c;
     memset(&c, 0, sizeof(c));
     c.prog = prog;
@@ -2973,6 +3002,11 @@ void sxb_program_free(struct sxb_program *program)
 const char *sxb_program_name(const struct sxb_program *program)
 {
     return program->name;
+}
+
+const struct sxb_project_info *sxb_program_info(const struct sxb_program *program)
+{
+    return &program->info;
 }
 
 int sxb_program_is_windows(const struct sxb_program *program)

@@ -2361,6 +2361,13 @@ static void test_file_listing(void) {
     check(sxn_create_file("/users/native-create-test", 0) == -SAVANXP_EINVAL);
     check(sxn_create_file("/users/native-create-test", 3) == -SAVANXP_EINVAL);
     check(sxn_create_file("/no-such-native-parent/file", SXN_CREATE_NEW) == -SAVANXP_ENOENT);
+    check(sxn_create_file("/users/native-create-test", SXN_CREATE_EXECUTABLE) == -SAVANXP_EINVAL);
+    check(sxn_query_path("/users/native-create-test", &info) == 0 && (info.mode & 0777u) == 0600u);
+    /* What Make EXE writes: a new file its owner can run. */
+    handle = sxn_create_file("/users/native-create-exe", SXN_CREATE_ALWAYS | SXN_CREATE_EXECUTABLE);
+    check(handle >= 0);
+    if (handle >= 0) check(sxn_close(handle) == 0);
+    check(sxn_query_path("/users/native-create-exe", &info) == 0 && (info.mode & 0777u) == 0700u);
 }
 
 /* SXN_SYS_SECTION_OPEN_RANGE (docs/kernel/SECTIONS.md): a section over a range

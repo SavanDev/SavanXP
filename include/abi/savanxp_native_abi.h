@@ -371,9 +371,11 @@ enum sxn_syscall_number {
      * handle that is not a directory, -EINVAL for a size below
      * SXN_DIRECTORY_ENTRY_V1_SIZE. FindNextFile. */
     SXN_SYS_READ_DIRECTORY = 0x103f,
-    /* rdi = absolute path, rsi = SXN_CREATE_NEW or SXN_CREATE_ALWAYS.
+    /* rdi = absolute path, rsi = SXN_CREATE_NEW or SXN_CREATE_ALWAYS, with
+     * SXN_CREATE_EXECUTABLE or not.
      * Opens a regular file for writing from offset 0: a missing one is
-     * created (0600, the parent must exist), an existing one is emptied
+     * created (0600, the parent must exist; 0700 with CREATE_EXECUTABLE, a
+     * program its owner can run), an existing one is emptied
      * (CREATE_ALWAYS, keeping its owner and mode) or refused (CREATE_NEW,
      * -EEXIST). WRITE appends what it is given; FLUSH_FILE makes it durable.
      * A handle, -EISDIR, -EINVAL (a device, a relative path, bad flags),
@@ -476,6 +478,7 @@ struct sxn_directory_entry {
 /* Dispositions for CREATE_FILE. */
 #define SXN_CREATE_NEW 1u     /* fail with -EEXIST if the file exists */
 #define SXN_CREATE_ALWAYS 2u  /* empty an existing file */
+#define SXN_CREATE_EXECUTABLE 0x100u /* or'd in: a new file is 0700, runnable */
 
 /* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */
 #define SXN_STORAGE_MAX_TRANSFER 128u

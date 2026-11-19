@@ -394,6 +394,8 @@ int native_create_file(Process& proc, uint64_t user_path, uint64_t disposition) 
     if (status != sx::kStatusOk) {
         return sx::negative_error(status);
     }
+    const uint32_t mode = (disposition & SXN_CREATE_EXECUTABLE) != 0 ? 0700 : 0600;
+    disposition &= ~static_cast<uint64_t>(SXN_CREATE_EXECUTABLE);
     if (disposition != SXN_CREATE_NEW && disposition != SXN_CREATE_ALWAYS) {
         return sx::negative_error(SX_EINVAL);
     }
@@ -409,7 +411,7 @@ int native_create_file(Process& proc, uint64_t user_path, uint64_t disposition) 
     }
     object::IoObject* file = nullptr;
     const sx_status opened = sx::open_file(proc.credentials, path,
-        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE, 0600, sx::open_accept_file, file);
+        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE, mode, sx::open_accept_file, file);
     if (opened != sx::kStatusOk) {
         return sx::negative_error(opened);
     }

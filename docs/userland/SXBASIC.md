@@ -1,7 +1,9 @@
 # SxBASIC — the Savan BASIC language
 
 > **Status: console and Windows programs run**, through
-> `/system/sxbasic.sxe /path/to/project.sbp [arguments]` (phases 1 and 2 of
+> `/system/sxbasic.sxe /path/to/project.sbp [arguments]`, and
+> `sxbasic --make <project.sbp> <program.sxe>` makes an executable of them
+> ([SXBASIC_IMAGE.md](SXBASIC_IMAGE.md); phases 1 to 3 of
 > [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md)); what this
 > version leaves out of forms is under [Limits of this version](#limits-of-this-version).
 > This is phase 0's text: the language, its
@@ -478,7 +480,10 @@ And how this version behaves where the reference above leaves it open:
 window, driven by a script of what a user would do (type, click, choose a
 menu item, answer a message box) and of what to expect;
 `system/sxbasic/selftests/` holds the samples' scripts, which the
-`sxbasic-greeter-smoke` and `sxbasic-converter-smoke` scenarios run.
+`sxbasic-greeter-smoke` and `sxbasic-converter-smoke` scenarios run. A made
+executable takes the same `--selftest <script>` as its first arguments, and
+the script can check what its window was given: `expect-accent RRGGBB` and
+`expect-icon <x> <y> AARRGGBB`.
 
 ### Events
 
@@ -593,8 +598,8 @@ Left out on purpose, each a decision to revisit with a program that needs it:
   events in the middle of a procedure; the debugger stops at a breakpoint.
   All three need the VM's call stack to be data the VM owns, not the C stack.
 - The bytecode is not a format anyone else reads. What is stable is the
-  source; the section a made executable carries (phase 3) is versioned with
-  the runtime that reads it.
+  source; the section a made executable carries is versioned with the
+  runtime that reads it ([SXBASIC_IMAGE.md](SXBASIC_IMAGE.md)).
 - Names are case-insensitive, so the compiler compares them folded to one
   case and the environment keeps the declared spelling for display.
 

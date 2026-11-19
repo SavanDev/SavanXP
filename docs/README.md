@@ -169,6 +169,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   reference: project, form and module files (`.sbp`, `.sbf`, `.bas`), types,
   statements, errors, forms, controls and their SXGUI widgets, built-ins, what is
   left out, the limits of this version, and the samples. Console and Windows programs run (`/system/sxbasic.sxe`).
+- [`SXBASIC_IMAGE.md`](userland/SXBASIC_IMAGE.md) — SxBASIC's Make SXE: a made
+  executable as the stub plus sections, and the compiled program image.
 - [`DISK_MANAGEMENT.md`](userland/DISK_MANAGEMENT.md) — Disk Management: the window,
   why storage is reached through calls and not `/dev/disk<n>`, the SxFS GPT type GUID,
   the rules for the operations that write, and its tests.

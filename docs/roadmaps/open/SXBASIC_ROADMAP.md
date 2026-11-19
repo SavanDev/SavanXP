@@ -27,7 +27,7 @@ It is three things, the same three Visual Basic was:
    (`Sub OkButton_Click()`), forms and controls as objects with properties.
 2. **A visual designer**: a toolbox, a form to draw controls on, a property
    grid, a code editor, a project explorer.
-3. **Make EXE**: an executable that runs from the desktop like any other
+3. **Make SXE**: an executable that runs from the desktop like any other
    program, with its own icon and title.
 
 It is not a clone of Visual Basic. The dialect borrows the shape of VB
@@ -40,7 +40,7 @@ runtime is not a goal, and neither is its look: SxBASIC is drawn with SXGUI.
 ### It runs on SavanXP only
 
 A version for Windows and Linux would need a third application frame for
-SXGUI on the host, three stubs for Make EXE, and three runtimes kept in step.
+SXGUI on the host, three stubs for Make SXE, and three runtimes kept in step.
 None of that serves the goal. SxBASIC is a SUN program, and so is every
 program it makes (rule 6 of `AGENTS.md`).
 
@@ -231,7 +231,7 @@ Checked by `sxbasic-test` (the VM against a fake forms runtime),
   has one main window and one dialog; the rest is in
   [SXBASIC.md](../../userland/SXBASIC.md#limits-of-this-version).
 
-### Phase 3 — Make EXE
+### Phase 3 — Make SXE (done)
 
 The stub as a fixed system program; a writer in C that copies it and adds the
 project section, `.sxmeta` and `.sxicon`, keeping them non-allocated (the
@@ -241,11 +241,29 @@ it and checks its window title, its icon in the launcher and its behaviour.
 The format of the project section goes in `SXE_FORMAT.md`'s tag space or a
 document of its own.
 
+**What landed.** `libsxbasic.so` carries the compiler, the VM, the forms
+runtime, the program image and the section writer; `sxbasic.sxe` is the
+runner and the stub, and `sxbasic --make` writes a made executable, all
+described in [SXBASIC_IMAGE.md](../../userland/SXBASIC_IMAGE.md), which is
+also the project section's document. The project file's `Description`,
+`Vendor`, `Version`, `Accent`, `Category` and `Icon` now reach `.sxmeta` and
+`.sxicon`. The slice SUN lacked landed with it: `SXN_CREATE_EXECUTABLE`, since
+SUN created every file 0600 and the kernel runs only what is marked runnable.
+Checked by `sxbasic-test` and `sxbasic-make-smoke`. Departures from the plan:
+
+- The scenario checks the window's accent and icon pixels as the stub read
+  them from its own file, not the launcher's: the launcher lists a program by
+  its `CATEGORY` from the directories it scans, and `/tmp` is not one.
+- Icons other than 16x16 and 32x32 scale only by whole factors; the smooth
+  scaling of the build's generator is not in the C writer.
+- The stub finds its own file through `argv[0]`, and is copied with its debug
+  sections ([limits](../../userland/SXBASIC_IMAGE.md#limits-of-this-version)).
+
 ### Phase 4 — the IDE, code first
 
 The environment itself: a menu bar and toolbar, a project explorer, a code editor,
 the property grid, forms edited as text for now, Run (phase 2's stub in a
-child process, its errors shown at the line they came from), Make EXE. This
+child process, its errors shown at the line they came from), Make SXE. This
 phase consumes the SUN file calls and the SXGUI editor and property grid
 from [What is missing](#what-is-missing), each in its own commit with its
 assertion. A selftest opens a sample project, runs it and makes its

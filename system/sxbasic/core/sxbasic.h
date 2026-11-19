@@ -77,10 +77,81 @@ struct sxb_program *sxb_compile_source(const char *name, const char *text, size_
 
 void sxb_program_free(struct sxb_program *program);
 
-/* The project's Name, and whether it is a Windows program (which has forms,
- * and which this core does not run yet). */
+/* The project's Name, and whether it is a Windows program (one with forms). */
 const char *sxb_program_name(const struct sxb_program *program);
 int sxb_program_is_windows(const struct sxb_program *program);
+
+/* What the project file says about the made executable: its .sxmeta and
+ * .sxicon (docs/userland/SXBASIC.md#the-project-file). Empty strings for
+ * keys the project leaves out. */
+#define SXB_MAX_ICONS 4
+struct sxb_project_info {
+    char description[256];
+    char vendor[256];
+    char copyright[256];
+    char category[64];
+    char version[32];
+    int has_accent;
+    uint32_t accent;               /* 0x00RRGGBB */
+    char icons[SXB_MAX_ICONS][128]; /* PNG files, relative to the project file */
+    int icon_count;
+};
+const struct sxb_project_info *sxb_program_info(const struct sxb_program *program);
+
+/* ---- the program image ---------------------------------------------------------
+ *
+ * A compiled program as bytes: what Make SXE puts in a made executable's
+ * .sxbasic section, so the executable runs without compiling
+ * (docs/userland/SXBASIC_IMAGE.md). The project info stays out: it goes into
+ * .sxmeta and .sxicon. */
+
+/* A malloc'd image of `program` in *data. 0, or -1 when out of memory. */
+int sxb_program_save(const struct sxb_program *program, unsigned char **data, size_t *size);
+/* The program in an image. NULL with `diag` filled in when the image is not
+ * one this version reads. */
+struct sxb_program *sxb_program_load(const void *data, size_t size, struct sxb_diagnostic *diag);
+
+/* ---- the made executable --------------------------------------------------------
+ *
+ * Call-free like the rest of the core: the caller reads the stub and writes
+ * the result. */
+
+#define SXB_IMAGE_SECTION ".sxbasic"
+
+/* The section `name` of an ELF64 file held in memory. 1 and its bytes, or 0. */
+int sxb_elf_section(const void *elf, size_t size, const char *name, const unsigned char **data, size_t *length);
+
+struct sxb_elf_add {
+    const char *name;
+    const void *data;
+    size_t size;
+};
+
+/* A copy of the ELF64 file `elf` in a malloc'd *out with these sections added
+ * as non-allocated; a section already there by that name is replaced. 0, or
+ * -1 with `message` when `elf` is not an ELF64 file this can extend. */
+int sxb_elf_add_sections(const void *elf, size_t size, const struct sxb_elf_add *sections, int count,
+                         unsigned char **out, size_t *out_size, char message[128]);
+
+/* The .sxmeta blob for a program with this name and info, in a malloc'd *out.
+ * 0, or -1 with `message`. */
+int sxb_exe_meta(const char *name, const struct sxb_project_info *info, unsigned char **out, size_t *size,
+                 char message[128]);
+
+/* The .sxicon blob for these square BGRA8888 images (sides 16 and 32 at
+ * least), in a malloc'd *out. 0, or -1 with `message`. */
+struct sxb_icon_image {
+    int side;
+    const uint32_t *pixels;
+};
+int sxb_exe_icons(const struct sxb_icon_image *images, int count, unsigned char **out, size_t *size,
+                  char message[128]);
+
+/* Reading a made executable's own presentation back from its sections:
+ * ACCENT from .sxmeta, and a side x side icon from .sxicon copied into
+ * `pixels` (side * side of them). 1 when found. */
+int sxb_exe_meta_accent(const unsigned char *meta, size_t size, uint32_t *accent);
+int sxb_exe_icon(const unsigned char *icons, size_t size, int side, uint32_t *pixels);
 
 enum sxb_status {
     SXB_RUNNING = 0, /* the step budget ran out; call sxb_vm_run again */

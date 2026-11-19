@@ -8,3 +8,7 @@ Startup = MainForm
 Form = "MainForm.sbf"
 Form = "AddForm.sbf"
 Module = "Conversions.bas"
+Accent = &H2E6B9E
+Category = "Accessories"
+Icon = "icon16.png"
+Icon = "icon32.png"

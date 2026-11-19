@@ -160,16 +160,23 @@ savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLK
 savanxp_system_service(NAME imgview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg
     SOURCES imgview.c view.c)
 
-# SxBASIC (docs/userland/SXBASIC.md): the Savan BASIC core -- compiler and
-# virtual machine, call-free, also built for the host test --, the forms
-# runtime over SXGUI, and the runner over both.
-savanxp_system_service(NAME sxbasic LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES
-    sxbasic.c
-    forms.c
-    core/sxb_forms_def.c
-    core/sxb_lex.c
-    core/sxb_parse.c
-    core/sxb_compile.c
-    core/sxb_value.c
-    core/sxb_vm.c
-    core/sxb_builtins.c)
+# SxBASIC (docs/userland/SXBASIC.md). libsxbasic carries the Savan BASIC core
+# -- compiler, virtual machine, program image and Make SXE's writer, call-free
+# and also built for the host test -- and the forms runtime over SXGUI. Like
+# libsximg it asks the program for its C library (snprintf, strtod, the math
+# functions), which lld exports from the program that links it. sxbasic.sxe
+# is the runner and the stub every made executable is a copy of
+# (docs/userland/SXBASIC_IMAGE.md).
+savanxp_library(NAME libsxbasic SONAME libsxbasic.so.0.4 DEPENDS libsxgui libgfx2d SOURCES
+    system/sxbasic/forms.c
+    system/sxbasic/core/sxb_forms_def.c
+    system/sxbasic/core/sxb_lex.c
+    system/sxbasic/core/sxb_parse.c
+    system/sxbasic/core/sxb_compile.c
+    system/sxbasic/core/sxb_value.c
+    system/sxbasic/core/sxb_vm.c
+    system/sxbasic/core/sxb_builtins.c
+    system/sxbasic/core/sxb_image.c
+    system/sxbasic/core/sxb_exe.c)
+savanxp_system_service(NAME sxbasic LINK_PROFILE PIE DEPENDS libsxbasic ${SAVANXP_SUN_TOOLKIT} libsximg
+    SOURCES sxbasic.c)

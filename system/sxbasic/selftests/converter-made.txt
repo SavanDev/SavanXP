@@ -1,0 +1,36 @@
+# The converter sample made into an executable: its accent and icon come from
+# its own .sxmeta and .sxicon, then it behaves as the project does.
+expect-accent 2E6B9E
+expect-icon 7 8 FFC81818
+expect-icon 0 0 00000000
+expect MainForm.AverageLabel.Text No readings yet.
+click MainForm.AddButton
+expect AddForm.Text Add Reading
+type AddForm.CelsiusBox 21.5
+expect AddForm.PreviewLabel.Text 70.7 F
+click AddForm.OkButton
+expect MainForm.ReadingsList.ListCount 1
+expect MainForm.ReadingsList.ListIndex -1
+expect MainForm.AverageLabel.Text Average: 21.5 C
+click MainForm.AddButton
+type AddForm.CelsiusBox abc
+expect AddForm.PreviewLabel.Text 
+click AddForm.OkButton
+expect-message Type a temperature in degrees Celsius.
+answer OK
+type AddForm.CelsiusBox -40
+click AddForm.CancelButton
+expect MainForm.ReadingsList.ListCount 1
+click MainForm.AddButton
+expect AddForm.CelsiusBox.Text 
+type AddForm.CelsiusBox 0
+click AddForm.OkButton
+expect MainForm.AverageLabel.Text Average: 10.8 C
+menu MainForm.FileClear
+expect MainForm.ReadingsList.ListCount 0
+expect MainForm.AverageLabel.Text No readings yet.
+menu MainForm.HelpAbout
+expect-message Temperature Converter|A Savan BASIC sample.
+answer OK
+menu MainForm.FileExit
+expect-ended

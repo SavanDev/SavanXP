@@ -877,8 +877,11 @@ add_executable(savanxp-sxbasic-test
     system/sxbasic/core/sxb_value.c
     system/sxbasic/core/sxb_vm.c
     system/sxbasic/core/sxb_builtins.c
+    system/sxbasic/core/sxb_image.c
+    system/sxbasic/core/sxb_exe.c
     tests/host/sxbasic_test.c)
-target_include_directories(savanxp-sxbasic-test PRIVATE "${CMAKE_SOURCE_DIR}/system/sxbasic/core")
+target_include_directories(savanxp-sxbasic-test PRIVATE "${CMAKE_SOURCE_DIR}/system/sxbasic/core"
+    "${CMAKE_SOURCE_DIR}/include")
 target_compile_options(savanxp-sxbasic-test PRIVATE -O1 -Wall -Wextra)
 if(SAVANXP_HOST_LIBM)
     target_link_libraries(savanxp-sxbasic-test PRIVATE ${SAVANXP_HOST_LIBM})

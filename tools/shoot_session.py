@@ -1174,11 +1174,15 @@ def scenario_console(s):
 
 
 def scenario_sxbasic(s):
-    """SxBASIC's converter sample in a real window: started from the Command
-    Prompt, a ShowModal dialog opened from the keyboard, a reading typed into
-    it, and Enter pressing its Default button."""
+    """SxBASIC's converter sample in a real window: made into an executable
+    from the Command Prompt (Make SXE) and started from there, so its caption
+    shows the accent and icon it read from its own file; then a ShowModal
+    dialog opened from the keyboard, a reading typed into it, and Enter
+    pressing its Default button."""
     s.open_console()
-    s.qmp.type_line("/system/sxbasic.sxe /system/sxbasic/samples/converter/converter.sbp")
+    s.qmp.type_line("/system/sxbasic.sxe --make /system/sxbasic/samples/converter/converter.sbp /tmp/Converter.sxe")
+    s.qmp.tap("ret", pause=6.0)
+    s.qmp.type_line("/tmp/Converter.sxe")
     s.qmp.tap("ret", pause=8.0)
     s.shot("sxbasic-converter")
     s.qmp.tap("tab", pause=0.5)

@@ -785,6 +785,12 @@ SCENARIOS: dict[str, Scenario] = {
         "SXBASIC FORMS SMOKE FAIL",
         "SxBASIC forms: the converter sample, a ShowModal dialog, a message box over it, a list and a menu",
     ),
+    "sxbasic-make-smoke": _qemu_scenario(
+        "sxbmake",
+        "SXBASIC MAKE SMOKE PASS",
+        "SXBASIC MAKE SMOKE FAIL",
+        "SxBASIC Make SXE: the converter sample made into /tmp/Converter.sxe, then run with its selftest",
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

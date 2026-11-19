@@ -283,7 +283,9 @@ call, each with the same `info`, until 0; an entry removed while listing does
 not make the listing skip another. `sxn_create_file(path, SXN_CREATE_NEW or
 SXN_CREATE_ALWAYS)` opens a file for writing from offset 0, created 0600 when
 missing or emptied (keeping its owner and mode); `sxn_write` appends to it and
-`sxn_flush_file` makes it durable. The file dialog
+`sxn_flush_file` makes it durable. With `SXN_CREATE_EXECUTABLE` or'd in, a
+file it creates is 0700, a program its owner can run: SxBASIC's Make SXE
+writes executables that way ([SXBASIC_IMAGE.md](SXBASIC_IMAGE.md)). The file dialog
 ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) and Log Viewer's Save Log... are
 the consumers; `nativetest` covers the contract, including a refused
 `CREATE_ALWAYS` that leaves the file it was refused on intact.

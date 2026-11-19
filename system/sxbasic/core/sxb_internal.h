@@ -283,6 +283,7 @@ struct sxb_program {
     int *form_modules;        /* the module holding each form's code */
     int form_count;
     int startup_form;
+    struct sxb_project_info info; /* not in the image (sxb_image.c) */
 };
 
 /* ---- values -------------------------------------------------------------------- */

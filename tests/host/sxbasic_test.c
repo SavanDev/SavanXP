@@ -86,6 +86,28 @@ static int g_cases;
 
 /* Runs a program; the text is its output, plus "!E<n>@<line>" for an
  * uncaught runtime error, or "!C<line>:<message>" for a compile error. */
+/* Saves `program` as an image and loads it back: every program the tests run
+ * goes through the image Make SXE writes. NULL, counted as a failure, when
+ * the image does not load. */
+static struct sxb_program *reload(struct sxb_program *program)
+{
+    unsigned char *image = NULL;
+    size_t size = 0;
+    struct sxb_diagnostic diag;
+    if (sxb_program_save(program, &image, &size) != 0) {
+        sxb_program_free(program);
+        return NULL;
+    }
+    sxb_program_free(program);
+    struct sxb_program *loaded = sxb_program_load(image, size, &diag);
+    free(image);
+    if (loaded == NULL) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: an image did not load back: %s\n", diag.message);
+    }
+    return loaded;
+}
+
 static const char *run(const char *source, const char *input)
 {
     struct sxb_diagnostic diag;
@@ -97,6 +119,8 @@ static const char *run(const char *source, const char *input)
         snprintf(g_out, sizeof(g_out), "!C%d:%s", diag.line, diag.message);
         return g_out;
     }
+    program = reload(program);
+    if (program == NULL) return "!image";
     struct sxb_vm *vm = sxb_vm_create(program, &g_host, "a b", "/app");
     enum sxb_status status = sxb_vm_run(vm, 0);
     if (status == SXB_ERROR) {
@@ -235,6 +259,9 @@ static int read_text(const char *path, char **text)
 }
 
 static void greeter(const char *samples);
+static void exe(const struct sxb_program *program);
+static const char *g_self;
+static const char *g_made_path;
 
 static void sample(const char *samples)
 {
@@ -249,6 +276,8 @@ static void sample(const char *samples)
         fprintf(stderr, "sxbasic-test: hello.sbp: %s:%d:%d: %s\n", diag.file, diag.line, diag.column, diag.message);
         return;
     }
+    program = reload(program);
+    if (program == NULL) return;
     g_out_length = 0;
     g_out[0] = '\0';
     struct sxb_vm *vm = sxb_vm_create(program, &g_host, "", samples);
@@ -270,6 +299,52 @@ static void sample(const char *samples)
         g_failures++;
         fprintf(stderr, "sxbasic-test: converter.sbp: %s:%d: %s\n", diag.file, diag.line, diag.message);
     }
+    /* Its image loads back to the same program: saved again, the same bytes. */
+    g_cases++;
+    unsigned char *first = NULL, *second = NULL;
+    size_t first_size = 0, second_size = 0;
+    struct sxb_program *loaded = NULL;
+    if (program != NULL && sxb_program_save(program, &first, &first_size) == 0) {
+        loaded = sxb_program_load(first, first_size, &diag);
+    }
+    if (loaded == NULL || sxb_program_save(loaded, &second, &second_size) != 0 || first_size != second_size ||
+        memcmp(first, second, first_size) != 0) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: converter's image does not load back to the same program\n");
+    }
+    /* Cut short or with a byte changed in its header, it does not load, and
+     * loading it reads nothing outside it (ASan). */
+    g_cases++;
+    for (size_t cut = 0; first != NULL && cut < first_size; cut += 1 + cut / 64) {
+        struct sxb_program *broken = sxb_program_load(first, cut, &diag);
+        if (broken != NULL) {
+            g_failures++;
+            fprintf(stderr, "sxbasic-test: an image cut at %zu bytes loaded\n", cut);
+            sxb_program_free(broken);
+            break;
+        }
+    }
+    for (size_t at = 0; first != NULL && at < 16; at++) {
+        first[at] ^= 0x40;
+        struct sxb_program *broken = sxb_program_load(first, first_size, &diag);
+        first[at] ^= 0x40;
+        if (broken != NULL) {
+            g_failures++;
+            fprintf(stderr, "sxbasic-test: an image with byte %zu changed loaded\n", at);
+            sxb_program_free(broken);
+        }
+    }
+    const struct sxb_project_info *info = program ? sxb_program_info(program) : NULL;
+    g_cases++;
+    if (info == NULL || strcmp(info->version, "1.0") != 0 || strcmp(info->category, "Accessories") != 0 ||
+        !info->has_accent || info->accent != 0x2E6B9Eu || info->icon_count != 2) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: converter.sbp's Version, Category, Accent and Icon did not read\n");
+    }
+    free(first);
+    free(second);
+    sxb_program_free(loaded);
+    exe(program);
     sxb_program_free(program);
     greeter(samples);
 }
@@ -339,6 +414,8 @@ static void greeter(const char *samples)
         fprintf(stderr, "sxbasic-test: greeter.sbp: %s:%d: %s\n", diag.file, diag.line, diag.message);
         return;
     }
+    program = reload(program);
+    if (program == NULL) return;
     struct sxb_form_host host = {program, fake_load, fake_unload, fake_get, fake_set, fake_call, fake_message, fake_input};
     struct sxb_vm *vm = sxb_vm_create(program, &g_host, "", samples);
     sxb_vm_set_form_host(vm, &host);
@@ -366,12 +443,93 @@ static void greeter(const char *samples)
     sxb_program_free(program);
 }
 
+/* ---- Make SXE: the sections, added to this test's own executable -------------- */
+
+static unsigned elf_section_count(const unsigned char *elf)
+{
+    return (unsigned)elf[60] | (unsigned)elf[61] << 8;
+}
+
+static void exe(const struct sxb_program *program)
+{
+    char message[128] = "";
+    unsigned char *stub = NULL, *meta = NULL, *icons = NULL, *image = NULL, *made = NULL, *again = NULL;
+    size_t stub_size = 0, meta_size = 0, icons_size = 0, image_size = 0, made_size = 0, again_size = 0;
+    uint32_t small[16 * 16], large[32 * 32], back[32 * 32], accent = 0;
+    for (int i = 0; i < 16 * 16; i++) small[i] = 0xFF000000u | (uint32_t)i;
+    for (int i = 0; i < 32 * 32; i++) large[i] = 0x80000000u | (uint32_t)i * 7u;
+    struct sxb_icon_image images[2] = {{16, small}, {32, large}};
+    const unsigned char *found = NULL;
+    size_t found_size = 0;
+    struct sxb_diagnostic diag;
+    g_cases++;
+    FILE *file = fopen(g_self, "rb");
+    if (file != NULL) {
+        fseek(file, 0, SEEK_END);
+        stub_size = (size_t)ftell(file);
+        fseek(file, 0, SEEK_SET);
+        stub = malloc(stub_size);
+        if (stub == NULL || fread(stub, 1, stub_size, file) != stub_size) stub_size = 0;
+        fclose(file);
+    }
+    int ok = stub_size > 0 && program != NULL && sxb_program_save(program, &image, &image_size) == 0 &&
+             sxb_exe_meta(sxb_program_name(program), sxb_program_info(program), &meta, &meta_size, message) == 0 &&
+             sxb_exe_icons(images, 2, &icons, &icons_size, message) == 0;
+    struct sxb_elf_add sections[3] = {{SXB_IMAGE_SECTION, image, image_size}, {".sxmeta", meta, meta_size},
+                                      {".sxicon", icons, icons_size}};
+    ok = ok && sxb_elf_add_sections(stub, stub_size, sections, 3, &made, &made_size, message) == 0;
+    /* Each section reads back as written; the accent and both icons too. */
+    ok = ok && sxb_elf_section(made, made_size, SXB_IMAGE_SECTION, &found, &found_size) &&
+         found_size == image_size && memcmp(found, image, image_size) == 0;
+    ok = ok && sxb_elf_section(made, made_size, ".sxmeta", &found, &found_size) &&
+         sxb_exe_meta_accent(found, found_size, &accent) && accent == 0x2E6B9Eu;
+    ok = ok && sxb_elf_section(made, made_size, ".sxicon", &found, &found_size) &&
+         sxb_exe_icon(found, found_size, 32, back) && memcmp(back, large, sizeof(large)) == 0 &&
+         sxb_exe_icon(found, found_size, 16, back) && memcmp(back, small, sizeof(small)) == 0 &&
+         !sxb_exe_icon(found, found_size, 48, back);
+    /* The program in the made file loads. */
+    struct sxb_program *loaded = NULL;
+    ok = ok && sxb_elf_section(made, made_size, SXB_IMAGE_SECTION, &found, &found_size) &&
+         (loaded = sxb_program_load(found, found_size, &diag)) != NULL;
+    sxb_program_free(loaded);
+    /* Making again from a made file replaces the sections, not adds them. */
+    sections[1].size = meta_size - 4;
+    ok = ok && sxb_elf_add_sections(made, made_size, sections, 3, &again, &again_size, message) == 0 &&
+         elf_section_count(again) == elf_section_count(made) &&
+         elf_section_count(made) == elf_section_count(stub) + 3 -
+                                        (unsigned)sxb_elf_section(stub, stub_size, SXB_IMAGE_SECTION, &found, &found_size) -
+                                        (unsigned)sxb_elf_section(stub, stub_size, ".sxmeta", &found, &found_size) -
+                                        (unsigned)sxb_elf_section(stub, stub_size, ".sxicon", &found, &found_size) &&
+         sxb_elf_section(again, again_size, ".sxmeta", &found, &found_size) && found_size == meta_size - 4;
+    /* Not an ELF file: refused. */
+    ok = ok && sxb_elf_add_sections(meta, meta_size, sections, 3, &again, &again_size, message) != 0;
+    if (!ok) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: Make SXE against %s failed%s%s\n", g_self, message[0] ? ": " : "", message);
+    } else if (g_made_path != NULL) {
+        /* For a look with llvm-readelf -S. */
+        file = fopen(g_made_path, "wb");
+        if (file != NULL) {
+            fwrite(made, 1, made_size, file);
+            fclose(file);
+        }
+    }
+    free(stub);
+    free(meta);
+    free(icons);
+    free(image);
+    free(made);
+    free(again);
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <samples directory>\n", argv[0]);
+    if (argc != 2 && argc != 3) {
+        fprintf(stderr, "usage: %s <samples directory> [file to write a made executable to]\n", argv[0]);
         return 2;
     }
+    g_self = "/proc/self/exe";
+    g_made_path = argc == 3 ? argv[2] : NULL;
     language();
     builtins();
     errors();

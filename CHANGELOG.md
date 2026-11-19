@@ -16,6 +16,9 @@ Cut-off notes:
   project to bytecode and runs it, its forms as SXGUI windows with events, `ShowModal`, `MsgBox` and `InputBox`
   ([SXBASIC.md](docs/userland/SXBASIC.md)); `--selftest <script>` drives one with no window. Checked by
   `sxbasic-test`, `smoke sxbasic-smoke`, `sxbasic-greeter-smoke` and `sxbasic-converter-smoke`.
+- **SxBASIC Make SXE.** `sxbasic --make <project.sbp> <program.sxe>` makes a program that runs on its own, the stub
+  `sxbasic.sxe` (over the new `libsxbasic.so`) plus `.sxbasic`, `.sxmeta` and `.sxicon` sections
+  ([SXBASIC_IMAGE.md](docs/userland/SXBASIC_IMAGE.md)); SUN gains `SXN_CREATE_EXECUTABLE`. Checked by `sxbasic-make-smoke`.
 
 - **Other build systems build against the SDK: `share/sdk/sxcc` and `share/sdk/savanxp-toolchain.cmake`.**
   `sxcc` is clang with the sysroot's flags, runtime and linker script (`--sx-profile=nosse|sse|pie`, `--sx-native`); the
