@@ -245,6 +245,16 @@ reached through the standard headers. Its practical limits:
 - `termios`: `tcgetattr` reports a fixed canonical mode with echo, and
   `tcsetattr` is accepted and ignored. There is no job control.
 - `chmod`, `fchmod`, `chown` and `umask` exist.
+- `realpath` is lexical: SxFS has no symbolic links and the VFS resolves
+  `.` and `..` by the text of the path, so the result is the canonical name.
+  The path must exist.
+- `freopen` needs a path: changing the mode of the open file (a null path)
+  fails with `EINVAL`. A reopened stdio stream keeps its descriptor number.
+- `strtold` parses with `strtod`'s double precision; `ldexpl` is exact in
+  the extended format. Both, like `strtod`, need `--sse`.
+- `math.h` works with a compiler without the GNU builtins (TCC): the
+  classification macros read the value's bits instead.
+- No record locks: `fcntl` has no `F_SETLK`/`F_SETLKW` and no `struct flock`.
 - `dlfcn.h` is implemented by the loader, which only PIE programs carry
   (`build-user.sh --pie`). In a static program, using `dlopen` is a link
   error.

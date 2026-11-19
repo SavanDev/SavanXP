@@ -342,6 +342,7 @@ int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size);
 void* sx_aligned_alloc(size_t alignment, size_t size);
 void* sx_memalign(size_t alignment, size_t size);
 FILE* sx_fopen(const char* path, const char* mode);
+FILE* sx_freopen(const char* path, const char* mode, FILE* stream);
 int sx_fclose(FILE* stream);
 size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream);
 int sx_fseek(FILE* stream, long offset, int whence);
@@ -1841,6 +1842,12 @@ double sx_atof(const char* text) {
     return sx_strtod(text, 0);
 }
 
+/* The double parser widened: a long double literal gets double precision,
+ * not the extended format's 64-bit mantissa (REFERENCE.md). */
+long double sx_strtold(const char* text, char** endptr) {
+    return (long double)sx_strtod(text, endptr);
+}
+
 #else
 
 /* Sin SSE no hay como leer ni devolver un double: se deja el stub historico
@@ -2323,6 +2330,99 @@ char* sx_getcwd(char* buffer, size_t size) {
         return 0;
     }
     return buffer;
+}
+
+/* realpath's buffer size: <limits.h>'s PATH_MAX, which a caller-supplied
+ * buffer must hold. */
+#define SX_REALPATH_CAPACITY 1024
+
+/* realpath. SxFS has no symbolic links, and the VFS resolves "." and ".."
+ * by the text of the path, so the lexical form of the absolute path is the
+ * canonical name; the path must exist, as POSIX asks. */
+char* sx_realpath(const char* path, char* resolved) {
+    char joined[SX_REALPATH_CAPACITY];
+    char canonical[SX_REALPATH_CAPACITY];
+    size_t joined_length = 0;
+    size_t length = 0;
+    size_t cursor = 0;
+    struct stat info;
+
+    if (path == 0) {
+        errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    if (path[0] == 0) {
+        errno = SAVANXP_ENOENT;
+        return 0;
+    }
+    if (path[0] != '/') {
+        if (sx_getcwd(joined, sizeof(joined)) == 0) {
+            return 0;
+        }
+        joined_length = sx_strlen(joined);
+        if (joined_length + 1 >= sizeof(joined)) {
+            errno = SAVANXP_ENAMETOOLONG;
+            return 0;
+        }
+        joined[joined_length++] = '/';
+    }
+    if (joined_length + sx_strlen(path) >= sizeof(joined)) {
+        errno = SAVANXP_ENAMETOOLONG;
+        return 0;
+    }
+    memcpy(joined + joined_length, path, sx_strlen(path) + 1);
+
+    /* Copy the components across, dropping empty ones and ".", and taking
+     * the last one back off for "..". "/.." is "/". */
+    canonical[0] = '/';
+    length = 1;
+    while (joined[cursor] != 0) {
+        size_t start = 0;
+        size_t size = 0;
+        while (joined[cursor] == '/') {
+            ++cursor;
+        }
+        start = cursor;
+        while (joined[cursor] != 0 && joined[cursor] != '/') {
+            ++cursor;
+        }
+        size = cursor - start;
+        if (size == 0 || (size == 1 && joined[start] == '.')) {
+            continue;
+        }
+        if (size == 2 && joined[start] == '.' && joined[start + 1] == '.') {
+            while (length > 1 && canonical[length - 1] != '/') {
+                --length;
+            }
+            if (length > 1) {
+                --length;
+            }
+            continue;
+        }
+        if (length > 1) {
+            canonical[length++] = '/';
+        }
+        if (length + size >= sizeof(canonical)) {
+            errno = SAVANXP_ENAMETOOLONG;
+            return 0;
+        }
+        memcpy(canonical + length, joined + start, size);
+        length += size;
+    }
+    canonical[length] = 0;
+
+    if (sx_stat(canonical, &info) < 0) {
+        return 0;
+    }
+    if (resolved == 0) {
+        resolved = (char*)sx_malloc(length + 1);
+        if (resolved == 0) {
+            errno = SAVANXP_ENOMEM;
+            return 0;
+        }
+    }
+    memcpy(resolved, canonical, length + 1);
+    return resolved;
 }
 
 pid_t sx_getpid(void) {
@@ -2969,14 +3069,9 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
     return written;
 }
 
-static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
+/* The open(2) flags an fopen mode string asks for. */
+static int sx_fopen_flags(const char* mode) {
     int flags = O_RDONLY;
-    int fd = -1;
-    FILE* stream = 0;
-    if (path == 0 || mode == 0) {
-        errno = SAVANXP_EINVAL;
-        return 0;
-    }
     if (mode[0] == 'w') {
         flags = O_WRONLY | O_CREAT | O_TRUNC;
     } else if (mode[0] == 'a') {
@@ -2986,6 +3081,23 @@ static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
         flags &= ~O_WRONLY;
         flags |= O_RDWR;
     }
+    return flags;
+}
+
+static void sx_set_stream_access(FILE* stream, int flags) {
+    stream->can_read = (flags & O_RDWR) == O_RDWR || (flags & O_WRONLY) == 0;
+    stream->can_write = (flags & O_WRONLY) != 0 || (flags & O_RDWR) == O_RDWR;
+}
+
+static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
+    int flags = O_RDONLY;
+    int fd = -1;
+    FILE* stream = 0;
+    if (path == 0 || mode == 0) {
+        errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    flags = sx_fopen_flags(mode);
     /* sx_open reads a mode whenever O_CREAT is set: without one it took
      * whatever was in the register. 0666 less the umask, as in POSIX. */
     fd = sx_open(path, flags, 0666);
@@ -2999,8 +3111,70 @@ static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
         return 0;
     }
     stream->fd = fd;
-    stream->can_read = (flags & O_RDWR) == O_RDWR || (flags & O_WRONLY) == 0;
-    stream->can_write = (flags & O_WRONLY) != 0 || (flags & O_RDWR) == O_RDWR;
+    sx_set_stream_access(stream, flags);
+    return stream;
+}
+
+static int sx_fclose_unlocked(FILE* stream);
+
+/* freopen with a path: the old descriptor is closed and the stream is
+ * pointed at the new file, keeping its FILE (and so stdin stays stdin). A
+ * stdio stream keeps its descriptor number too, by moving the new descriptor
+ * onto the old one: code that reads fd 0 directly still reads the new file.
+ * A null path (changing the mode of the open file) is not supported. On
+ * failure the stream is closed, as POSIX asks. */
+static FILE* sx_freopen_unlocked(const char* path, const char* mode, FILE* stream) {
+    int flags = O_RDONLY;
+    int fd = -1;
+    int old_fd = -1;
+    if (stream == 0 || mode == 0) {
+        errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    if (path == 0) {
+        (void)sx_fclose_unlocked(stream);
+        errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    if (stream->can_write) {
+        (void)sx_flush_stream(stream);
+    }
+    old_fd = stream->fd;
+    if (old_fd >= 0) {
+        (void)sx_close(old_fd);
+    }
+    flags = sx_fopen_flags(mode);
+    fd = sx_open(path, flags, 0666);
+    if (fd >= 0 && stream->is_stdio && old_fd >= 0 && fd != old_fd) {
+        if (sx_dup2(fd, old_fd) < 0) {
+            const int saved = errno;
+            sx_close(fd);
+            errno = saved;
+            fd = -1;
+        } else {
+            sx_close(fd);
+            fd = old_fd;
+        }
+    }
+    if (fd < 0) {
+        if (stream->is_stdio) {
+            stream->fd = -1;
+            stream->can_read = 0;
+            stream->can_write = 0;
+            stream->error = 1;
+        } else {
+            sx_release_file(stream);
+        }
+        return 0;
+    }
+    stream->fd = fd;
+    stream->eof = 0;
+    stream->error = 0;
+    stream->pushback = -1;
+    stream->write_buffer_used = 0;
+    stream->read_buffer_used = 0;
+    stream->read_buffer_pos = 0;
+    sx_set_stream_access(stream, flags);
     return stream;
 }
 
@@ -5184,6 +5358,14 @@ int sx_fclose(FILE* stream) {
     return result;
 }
 
+FILE* sx_freopen(const char* path, const char* mode, FILE* stream) {
+    FILE* result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_freopen_unlocked(path, mode, stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
 size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
     size_t result;
     sx_lock_acquire(&g_stdio_lock);
@@ -5301,6 +5483,7 @@ __attribute__((weak, alias("sx_sigsuspend"))) int sigsuspend(const sigset_t* mas
 __attribute__((weak, alias("sx_raise"))) int raise(int signal_number);
 __attribute__((weak, alias("sx_strsignal"))) char* strsignal(int signal_number);
 __attribute__((weak, alias("sx_fopen"))) FILE* fopen(const char* path, const char* mode);
+__attribute__((weak, alias("sx_freopen"))) FILE* freopen(const char* path, const char* mode, FILE* stream);
 __attribute__((weak, alias("sx_fclose"))) int fclose(FILE* stream);
 __attribute__((weak, alias("sx_fread"))) size_t fread(void* buffer, size_t size, size_t count, FILE* stream);
 __attribute__((weak, alias("sx_fwrite"))) size_t fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
@@ -5369,6 +5552,7 @@ __attribute__((weak, alias("sx_access"))) int access(const char* path, int mode)
 __attribute__((weak, alias("sx_isatty"))) int isatty(int fd);
 __attribute__((weak, alias("sx_chdir"))) int chdir(const char* path);
 __attribute__((weak, alias("sx_getcwd"))) char* getcwd(char* buffer, size_t size);
+__attribute__((weak, alias("sx_realpath"))) char* realpath(const char* path, char* resolved);
 __attribute__((weak, alias("sx_getpid"))) pid_t getpid(void);
 __attribute__((weak, alias("sx_getppid"))) pid_t getppid(void);
 __attribute__((weak, alias("sx_getpgrp"))) pid_t getpgrp(void);
@@ -5471,6 +5655,7 @@ __attribute__((weak, alias("sx_clock"))) clock_t clock(void);
 #if defined(__SSE2__)
 __attribute__((weak, alias("sx_strtod"))) double strtod(const char* text, char** endptr);
 __attribute__((weak, alias("sx_strtof"))) float strtof(const char* text, char** endptr);
+__attribute__((weak, alias("sx_strtold"))) long double strtold(const char* text, char** endptr);
 __attribute__((weak, alias("sx_difftime"))) double difftime(time_t later, time_t earlier);
 #endif
 __attribute__((weak, alias("sx_sscanf"))) int sscanf(const char* input, const char* format, ...);

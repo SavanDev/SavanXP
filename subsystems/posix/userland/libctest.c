@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <math.h>
 #include <time.h>
 #include <stdio.h>
@@ -338,6 +339,64 @@ static void test_stdio_extra(void) {
     unlink(LIBCTEST_PATH);
 }
 
+#define LIBCTEST_REOPEN_PATH "/tmp/libctest-reopen.txt"
+
+/* freopen keeps the FILE and, for stdin, descriptor 0; realpath gives the
+ * canonical absolute name. A compiler (TCC) uses both: -run reopens stdin, and
+ * #pragma once compares files by their real path. */
+static void test_reopen_and_realpath(void) {
+    char line[64] = {0};
+    char resolved[PATH_MAX] = {0};
+    char saved_cwd[PATH_MAX] = {0};
+    char* allocated = 0;
+    FILE* stream = fopen(LIBCTEST_REOPEN_PATH, "w");
+    int saved_stdin = -1;
+
+    check(stream != 0, "fopen for freopen");
+    if (stream == 0) {
+        return;
+    }
+    check(fputs("first\n", stream) >= 0, "fputs before freopen");
+    check(freopen(LIBCTEST_REOPEN_PATH, "r", stream) == stream, "freopen keeps the FILE");
+    check(fgets(line, sizeof(line), stream) != 0 && strcmp(line, "first\n") == 0,
+          "freopen flushed the writes and reads the file");
+    check(fgetc(stream) == EOF && feof(stream), "end of file after freopen");
+    fclose(stream);
+
+    saved_stdin = dup(0);
+    check(saved_stdin >= 0, "dup stdin");
+    if (saved_stdin >= 0) {
+        check(freopen(LIBCTEST_REOPEN_PATH, "r", stdin) == stdin, "freopen stdin");
+        check(fileno(stdin) == 0, "stdin stays descriptor 0");
+        check(fgetc(stdin) == 'f', "stdin reads the reopened file");
+        check(dup2(saved_stdin, 0) == 0, "stdin restored");
+        close(saved_stdin);
+    }
+
+    check(realpath("/tmp/./libctest-reopen.txt", resolved) == resolved &&
+              strcmp(resolved, LIBCTEST_REOPEN_PATH) == 0,
+          "realpath drops .");
+    allocated = realpath("//tmp/../tmp//libctest-reopen.txt", 0);
+    check(allocated != 0 && strcmp(allocated, LIBCTEST_REOPEN_PATH) == 0,
+          "realpath drops .. and repeated slashes, and allocates");
+    free(allocated);
+    check(realpath("/..", resolved) != 0 && strcmp(resolved, "/") == 0, "realpath of /..");
+    if (getcwd(saved_cwd, sizeof(saved_cwd)) != 0 && chdir("/tmp") == 0) {
+        check(realpath("libctest-reopen.txt", resolved) != 0 &&
+                  strcmp(resolved, LIBCTEST_REOPEN_PATH) == 0,
+              "realpath of a relative path");
+        check(chdir(saved_cwd) == 0, "chdir back");
+    } else {
+        check(0, "getcwd/chdir for relative realpath");
+    }
+    errno = 0;
+    check(realpath("/tmp/libctest-missing", resolved) == 0 && errno == ENOENT,
+          "realpath of a missing path is ENOENT");
+    errno = 0;
+    check(realpath(0, resolved) == 0 && errno == EINVAL, "realpath(NULL) is EINVAL");
+    unlink(LIBCTEST_REOPEN_PATH);
+}
+
 static void test_scan(void) {
     int a = 0;
     int b = 0;
@@ -452,6 +511,10 @@ static void test_float(void) {
     check(strtod("-1.25e2xyz", &end) == -125.0 && end != 0 && *end == 'x',
           "strtod con exponente y sobrante");
     check(sscanf("6.25", "%lf", &parsed) == 1 && parsed == 6.25, "sscanf %lf");
+    check(strtold("-0.75e1z", &end) == -7.5L && end != 0 && *end == 'z', "strtold");
+    check(ldexpl(1.5L, 3) == 12.0L && ldexpl(1.0L, -1) == 0.5L, "ldexpl");
+    check(ldexpl(1.0L, 16383) > 1e4000L, "ldexpl reaches the extended range");
+    check(isinf(ldexpl(1.0L, 16384)), "ldexpl overflows to infinity");
 
     check(sqrt(2.25) == 1.5, "sqrt");
     check(pow(2.0, 10.0) == 1024.0, "pow");
@@ -483,6 +546,7 @@ int main(void) {
     test_files(&ops);
     test_stdio_stream();
     test_stdio_extra();
+    test_reopen_and_realpath();
     test_scan();
     test_time();
     test_float();

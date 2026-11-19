@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The POSIX libc gains `realpath`, `freopen`, `strtold` and `ldexpl`, and `math.h` works without GNU builtins (SDK 2.0).**
+  What a C compiler running on the system (TCC) needs from the libc; `libctest` covers them. Limits are in the
+  [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md).
+
 - **New Folder in Files and in the Open/Save As dialog.** Files has **New Folder...** in its File menu and the folder's
   context menu; the SUN file dialog has a Create New Folder button beside Up One Level. Both ask for the name, offer the
   first free "New Folder", and show the new folder selected ([FILE_DIALOG.md](docs/desktop/FILE_DIALOG.md)).
