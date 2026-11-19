@@ -1595,10 +1595,9 @@ def scenario_wallpaperpng(s):
     s.qmp.click()
     time.sleep(1.5)
     image = s.shot("browse-prompt")
-    expect_text(image, (0, 0, image.size[0], image.size[1]), "Path of a BMP, PNG or JPEG image:", TEXT, FACE,
-                "Browse asks for a BMP, PNG or JPEG")
-    for _ in range(64):
-        s.qmp.tap("backspace", pause=0.04)
+    for text in ("Look in:", "File name:"):
+        expect_text(image, (0, 0, image.size[0], image.size[1]), text, TEXT, FACE,
+                    "Browse opens the Open dialog")
     s.qmp.type_line("/system/selftests/paint-test.png")
     s.qmp.tap("ret", pause=2.0)
     s.shot("browse-accepted")
@@ -1669,9 +1668,8 @@ def scenario_wallpaperjpeg(s):
         image = s.shot("jpeg-before-browse")
         click_label(image, "Browse...")
         image = s.shot("jpeg-browse-prompt")
-        expect_text(image, area(image), "Path of a BMP, PNG or JPEG image:", TEXT, FACE, "Browse includes JPEG")
-        for _ in range(64):
-            s.qmp.tap("backspace", pause=0.04)
+        for text in ("Look in:", "File name:"):
+            expect_text(image, area(image), text, TEXT, FACE, "Browse opens the Open dialog")
         s.qmp.type_line(path)
         s.qmp.tap("ret", pause=2)
         s.qmp.move_to(1000, 100)

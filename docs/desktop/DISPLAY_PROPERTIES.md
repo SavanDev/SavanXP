@@ -109,12 +109,12 @@ patterns: when the user picks an image no larger than 256 pixels on either
 side, the dialog switches the position to Tile; picking a large one while
 Tile is set switches it to Stretch. A centred image stays centred.
 
-**Browse...** asks for the path of a BMP, PNG or JPEG on the disk. Now that
-Display Properties is a SUN program the common Open dialog
-([FILE_DIALOG.md](FILE_DIALOG.md)) is within its reach; it still asks for a
-path, because the move kept its behaviour, and `wallpaper-smoke` and
-`wallpaperjpeg` type that path. The image is checked before it joins the
-list, so the list never shows something the desktop cannot draw.
+**Browse...** opens the common Open dialog ([FILE_DIALOG.md](FILE_DIALOG.md))
+in the current wallpaper's folder, or in the shipped wallpapers' when the
+background is a colour, listing BMP, PNG and JPEG files. `wallpaper-smoke`
+and `wallpaperjpeg` type a full path into its File name field. The image is
+checked before it joins the list, so the list never shows something the
+desktop cannot draw; a file that is not one is refused with a notice.
 
 `./build.sh smoke wallpaper-smoke` and
 `./tools/shoot.sh --scenario wallpaperjpeg --out-dir build/shots-wallpaper`

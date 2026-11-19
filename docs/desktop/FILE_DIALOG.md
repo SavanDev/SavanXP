@@ -5,7 +5,9 @@ every SUN program (the linker drops it from the ones that do not call it).
 It is SavanXP's `GetOpenFileName` and `GetSaveFileName`: one Open dialog and
 one Save As dialog, shaped like Windows 2000's, so that a program asking for
 a file does not draw its own. Log Viewer's **File > Save Log...** is its
-first consumer ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)).
+first consumer ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)); Display
+Properties' **Browse...** opens it too
+([DISPLAY_PROPERTIES.md](DISPLAY_PROPERTIES.md)).
 
 ## The window
 

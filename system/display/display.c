@@ -29,6 +29,7 @@
 #include "sxgfx/wallpaper.h"
 #include "sxn/sxn.h"
 #include "sxn/sxneffects.h"
+#include "sxn/sxnfiledlg.h"
 #include "sxn/sxngui.h"
 #include "sxn/sxnprofile.h"
 
@@ -959,10 +960,10 @@ static void write_mode(const struct display_mode *mode)
 
 /* ---- dialogs ---------------------------------------------------------------
  *
- * Two small ones, each a prompt with a field: the path of an image for
- * Browse, and an RGB value for "Other..." in the colour list. The OK button
- * checks the field and leaves the dialog open, with the reason in its prompt,
- * when the value cannot be used. */
+ * A prompt with a field, for the RGB value of "Other..." in the colour list
+ * (Browse uses the common Open dialog instead). The OK button checks the
+ * field and leaves the dialog open, with the reason in its prompt, when the
+ * value cannot be used. */
 #define DISPLAY_DIALOG_WIDTH 320
 #define DISPLAY_DIALOG_HEIGHT 104
 
@@ -1028,38 +1029,6 @@ static void open_prompt(const char *title, const char *prompt, const char *initi
     g_dialog.default_button = D_OK;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_DIALOG_WIDTH, DISPLAY_DIALOG_HEIGHT);
     sxngui_app_request_repaint(&g_app);
-}
-
-static void accept_browse(void)
-{
-    struct desktop_wallpaper_image probe;
-    int row;
-
-    memset(&probe, 0, sizeof(probe));
-    if (g_dialog_text[0] != '/')
-    {
-        g_dialog_widgets[D_PROMPT].text = "Type the full path, starting with /.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    if (display_image_load(&probe, g_dialog_text) < 0)
-    {
-        g_dialog_widgets[D_PROMPT].text = "That file is not an image this system can show.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    display_image_unload(&probe);
-
-    row = add_background(g_dialog_text);
-    if (row < 0)
-    {
-        g_dialog_widgets[D_PROMPT].text = "The list is full.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    refresh_list_widget();
-    sxgui_dialog_end(&g_app.ui, 1);
-    select_background(g_backgrounds[row].path);
 }
 
 static void accept_color(void)
@@ -1392,11 +1361,69 @@ static void on_background_changed(struct sxgui_widget *widget, void *user)
     }
 }
 
+/* The Open dialog has ended: NULL when it was cancelled. The dialog is closed
+ * by now, so a notice can open in its place. */
+static void on_browse_done(struct sxngui_app *app, const char *path, void *user)
+{
+    struct desktop_wallpaper_image probe;
+    int row;
+
+    (void)app;
+    (void)user;
+    if (path == 0)
+    {
+        return;
+    }
+    memset(&probe, 0, sizeof(probe));
+    if (display_image_load(&probe, path) < 0)
+    {
+        show_message("Browse", "That file is not an image this system can show.");
+        return;
+    }
+    display_image_unload(&probe);
+
+    row = add_background(path);
+    if (row < 0)
+    {
+        show_message("Browse", "The list is full.");
+        return;
+    }
+    refresh_list_widget();
+    select_background(g_backgrounds[row].path);
+}
+
+/* Browse opens the common Open dialog in the current wallpaper's folder, or
+ * in the shipped wallpapers' when there is none. */
 static void on_browse(struct sxgui_widget *widget, void *user)
 {
+    static char directory[DESKTOP_WALLPAPER_PATH_MAX];
+    struct sxn_file_dialog_request request;
+    char *slash;
+
     (void)widget;
     (void)user;
-    open_prompt("Browse", "Path of a BMP, PNG or JPEG image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
+    copy_text(directory, sizeof(directory), DESKTOP_WALLPAPER_DIRECTORY);
+    if (g_pending.path[0] == '/')
+    {
+        copy_text(directory, sizeof(directory), g_pending.path);
+        slash = strrchr(directory, '/');
+        if (slash == directory)
+        {
+            slash[1] = '\0';
+        }
+        else if (slash != 0)
+        {
+            *slash = '\0';
+        }
+    }
+    memset(&request, 0, sizeof(request));
+    request.mode = SXN_FILE_DIALOG_OPEN;
+    request.title = "Browse";
+    request.initial_directory = directory;
+    request.filter_description = "Images (*.bmp;*.png;*.jpg;*.jpeg)";
+    request.filter_patterns = "*.bmp;*.png;*.jpg;*.jpeg";
+    request.on_done = on_browse_done;
+    (void)sxn_file_dialog_begin(&g_app, &request);
 }
 
 static void on_position_changed(struct sxgui_widget *widget, void *user)

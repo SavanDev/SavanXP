@@ -104,6 +104,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Display Properties' Browse... opens the common Open dialog** instead of
+  asking for a typed path ([DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md)).
+
 - **Display Properties is a SUN program**, `/system/display.sxe` from `system/display`; the POSIX `/bin/display` is
   retired from the image. It looks and behaves as before. SUN gains `sxnwm_set_display_mode` for its resolution trial
   ([DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md)).
