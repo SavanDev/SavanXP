@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "kernel/console.hpp"
+#include "kernel/pointer_motion.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
 
@@ -14,6 +15,9 @@ input::Driver g_drivers[kMaxDrivers] = {};
 size_t g_driver_count = 0;
 bool g_keyboard_available = false;
 bool g_pointer_available = false;
+int g_pointer_speed = SAVANXP_POINTER_SPEED_DEFAULT;
+int32_t g_pointer_remainder_x = 0;
+int32_t g_pointer_remainder_y = 0;
 
 } // namespace
 
@@ -98,7 +102,29 @@ void submit_mouse_event(const MouseEvent& event) {
         return;
     }
 
-    ui::handle_mouse_event(event.delta_x, event.delta_y, event.wheel, event.buttons, event.absolute_x, event.absolute_y, event.has_absolute);
+    int32_t delta_x = event.delta_x;
+    int32_t delta_y = event.delta_y;
+    // An absolute pointer's position is the truth and its delta follows from
+    // it; only a relative pointer's counts are the user's to speed up.
+    if (!event.has_absolute) {
+        delta_x = pointer_motion::scale(delta_x, g_pointer_speed, g_pointer_remainder_x);
+        delta_y = pointer_motion::scale(delta_y, g_pointer_speed, g_pointer_remainder_y);
+    }
+    ui::handle_mouse_event(delta_x, delta_y, event.wheel, event.buttons, event.absolute_x, event.absolute_y, event.has_absolute);
+}
+
+bool set_pointer_speed(int speed) {
+    if (!pointer_motion::valid_speed(speed)) {
+        return false;
+    }
+    g_pointer_speed = speed;
+    g_pointer_remainder_x = 0;
+    g_pointer_remainder_y = 0;
+    return true;
+}
+
+int pointer_speed() {
+    return g_pointer_speed;
 }
 
 } // namespace input

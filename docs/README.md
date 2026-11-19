@@ -52,7 +52,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   names SxFS.
 - [`INPUT.md`](kernel/INPUT.md) — the input layer: how drivers register, why
   registration order decides which keyboard and pointer win, and the keyboard
-  core that turns set 1 key positions into keys, text and modifiers.
+  core that turns set 1 key positions into keys, text and modifiers, and the
+  pointer speed applied to relative mice.
 - [`USB_HOST_CONTROLLERS.md`](kernel/USB_HOST_CONTROLLERS.md) — xHCI, EHCI, UHCI and OHCI
   behind one controller table: start order, taking them from the firmware,
   EHCI's companion routing, each one's schedule, and what QEMU cannot test.

@@ -55,6 +55,7 @@ the name of the layer, not a rename of its symbols.
 |---|---|---|---|
 | Base | `include/sxn/sxn.h` | processes, handles, events, waits, sections and views, pipes, devices, ports, the clock | `kernel32` |
 | Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer | `user32` (window + message loop) |
+| Pointer speed | `include/sxn/sxnpointer.h` | read and set the speed the kernel applies to relative mice ([INPUT.md](../kernel/INPUT.md#pointer-speed)) | `SPI_GETMOUSESPEED` / `SPI_SETMOUSESPEED` |
 | Sound | `include/sxn/sxnaudio.h` | PCM streams, master gain/mute, and native `audiod` control snapshots with per-stream gain, mute and levels | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows | `comctl32` + the message loop |

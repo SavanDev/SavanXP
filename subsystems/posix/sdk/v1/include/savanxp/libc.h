@@ -160,6 +160,11 @@ long gpu_release(int fd);
 long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode);
 long input_set_layout(int fd, int layout);
 long input_get_layout(int fd);
+/* Pointer speed, SAVANXP_POINTER_SPEED_MIN..MAX (DEFAULT = one to one), on an
+ * fd of /dev/pointer or /dev/mouse0. Setting needs the fd open for writing.
+ * Negative = -errno. SUN: sxn_pointer_speed / sxn_set_pointer_speed. */
+long input_set_pointer_speed(int fd, int speed);
+long input_get_pointer_speed(int fd);
 long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request);
 long gpu_release_surface(int fd, uint32_t surface_id);
 long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request);

@@ -19,6 +19,10 @@ Cut-off notes:
 - **SxBASIC Make SXE.** `sxbasic --make <project.sbp> <program.sxe>` makes a program that runs on its own, the stub
   `sxbasic.sxe` (over the new `libsxbasic.so`) plus `.sxbasic`, `.sxmeta` and `.sxicon` sections
   ([SXBASIC_IMAGE.md](docs/userland/SXBASIC_IMAGE.md)); SUN gains `SXN_CREATE_EXECUTABLE`. Checked by `sxbasic-make-smoke`.
+- **Mouse Properties sets the pointer speed: a Motion tab with a Slow–Fast slider (1–20, 10 = one to one).** The kernel
+  scales relative mice (PS/2, USB) for every reader; tablets are not scaled. New `/dev/pointer` with
+  `INPUT_IOC_SET/GET_POINTER_SPEED`, `sxn/sxnpointer.h` and POSIX `input_*_pointer_speed`; saved in `mouse.cfg` and applied
+  by `init` at boot ([INPUT.md](docs/kernel/INPUT.md#pointer-speed)).
 - **SUN makes directories and renames.** `sxn_make_directory` (0700) and `sxn_rename_path`, which replaces a file at
   the new path; both are durable when they return, so a save can be written aside and renamed over the old file.
 

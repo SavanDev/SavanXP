@@ -39,6 +39,17 @@ device::Device g_keyboard_control_device = {
     .can_read = nullptr,
 };
 
+// The pointer's settings without its events: the speed ioctls only, for the
+// user's Mouse Properties, which may not open /dev/mouse0.
+device::Device g_pointer_control_device = {
+    .name = "pointer",
+    .read = nullptr,
+    .write = nullptr,
+    .ioctl = nullptr,
+    .close = nullptr,
+    .can_read = nullptr,
+};
+
 device::Device g_mouse_device = {
     .name = "mouse0",
     .read = nullptr,
@@ -162,11 +173,28 @@ bool read_refused(uint32_t reader_pid) {
     return claim_held(reader_pid) && reader_pid != process::current_pid();
 }
 
-int mouse_ioctl(uint64_t request, uint64_t, uint32_t) {
+int pointer_control_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    switch (request) {
+        case INPUT_IOC_SET_POINTER_SPEED:
+            if ((granted_access & object::access_write) == 0) {
+                return negative_error(SX_EACCES);
+            }
+            if (argument > SAVANXP_POINTER_SPEED_MAX || !input::set_pointer_speed(static_cast<int>(argument))) {
+                return negative_error(SX_EINVAL);
+            }
+            return 0;
+        case INPUT_IOC_GET_POINTER_SPEED:
+            return input::pointer_speed();
+        default:
+            return negative_error(SX_ENOSYS);
+    }
+}
+
+int mouse_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (request == INPUT_IOC_CLAIM) {
         return claim_reader(g_mouse_reader_pid);
     }
-    return negative_error(SX_ENOSYS);
+    return pointer_control_ioctl(request, argument, granted_access);
 }
 
 int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
@@ -294,6 +322,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_input_device.ioctl = input_ioctl;
     g_input_device.close = nullptr;
     g_keyboard_control_device.ioctl = keyboard_control_ioctl;
+    g_pointer_control_device.ioctl = pointer_control_ioctl;
     g_mouse_device.read = read_mouse_device;
     g_mouse_device.can_read = mouse_device_can_read;
     g_mouse_device.ioctl = mouse_ioctl;
@@ -306,6 +335,11 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     }
     // The layout is the user's to choose, as on NT; reading keys is not.
     if (!device::register_node("/dev/keyboard", &g_keyboard_control_device, true, 0666)) {
+        return;
+    }
+    // So is the pointer speed. Registered with or without a pointer: a USB
+    // mouse may be plugged in later.
+    if (!device::register_node("/dev/pointer", &g_pointer_control_device, true, 0666)) {
         return;
     }
     if (input::pointer_available()) {

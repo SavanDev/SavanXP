@@ -24,6 +24,11 @@ selected pack; Retrosmart's GPLv3 notice is also identified below the list.
 The panel selects complete packs; editing individual roles and animated ANI
 playback are not part of this interface.
 
+The Motion tab has the pointer speed slider (Slow to Fast, 20 steps). It
+changes the speed live; Apply and OK keep and save it, Cancel puts the previous
+one back. It moves mice, not tablets: see
+[INPUT.md](../kernel/INPUT.md#pointer-speed).
+
 Included schemes:
 
 | ID | Display name | License |

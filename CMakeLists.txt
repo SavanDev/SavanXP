@@ -1131,6 +1131,14 @@ target_compile_options(savanxp-kernel-memory-compare-test PRIVATE -O1 -Wall -Wex
 set_target_properties(savanxp-kernel-memory-compare-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 add_test(NAME kernel-memory-compare-test COMMAND savanxp-kernel-memory-compare-test)
 
+# The relative pointer speed (docs/kernel/INPUT.md#pointer-speed): plain
+# arithmetic, compiled as the kernel compiles it.
+add_executable(savanxp-pointer-motion-test tests/host/pointer_motion_test.cpp)
+target_include_directories(savanxp-pointer-motion-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-pointer-motion-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-pointer-motion-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+add_test(NAME pointer-motion-test COMMAND savanxp-pointer-motion-test)
+
 # The region list of S2a (docs/kernel/MEMORY_REGIONS.md): plain bookkeeping,
 # compiled as the kernel compiles it.
 add_executable(savanxp-region-list-test kernel/region_list.cpp tests/host/region_list_test.cpp)
@@ -1175,7 +1183,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-imgview-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-imgview-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

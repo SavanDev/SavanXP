@@ -57,6 +57,7 @@
 #include "sxn/sxnwm.h"
 #include "sxn/sxnaudio.h"
 #include "sxn/sxncapture.h"
+#include "sxn/sxnpointer.h"
 #include "sxgfx/virgl_protocol.h"
 
 #define SXN_CHILD_STATUS 42
@@ -231,6 +232,40 @@ static void test_system_time(void) {
     check(first > 1704067200ull && first < 4102444800ull);
     check(second >= first && second - first < 5u);
     check(sxn_log("nativetest: system time done") == 0);
+}
+
+/* The pointer speed (sxn/sxnpointer.h, docs/kernel/INPUT.md#pointer-speed):
+ * read and set through /dev/pointer, refused out of range and without write
+ * access, and left as it was found. */
+static void test_pointer_speed(void) {
+    const long original = sxn_pointer_speed();
+    long device;
+
+    check(original >= SAVANXP_POINTER_SPEED_MIN && original <= SAVANXP_POINTER_SPEED_MAX);
+    check(sxn_set_pointer_speed(SAVANXP_POINTER_SPEED_MIN) == 0);
+    check(sxn_pointer_speed() == SAVANXP_POINTER_SPEED_MIN);
+    check(sxn_set_pointer_speed(SAVANXP_POINTER_SPEED_MAX) == 0);
+    check(sxn_pointer_speed() == SAVANXP_POINTER_SPEED_MAX);
+    check(sxn_set_pointer_speed(SAVANXP_POINTER_SPEED_MIN - 1) == -SAVANXP_EINVAL);
+    check(sxn_set_pointer_speed(SAVANXP_POINTER_SPEED_MAX + 1) == -SAVANXP_EINVAL);
+    device = sxn_open_device("pointer", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    check(device >= 0);
+    if (device >= 0) {
+        /* The kernel checks the range too, not only the wrapper. */
+        check(sxn_device_control(device, INPUT_IOC_SET_POINTER_SPEED, SAVANXP_POINTER_SPEED_MAX + 1) == -SAVANXP_EINVAL);
+        check(sxn_device_control(device, INPUT_IOC_SET_POINTER_SPEED, 0) == -SAVANXP_EINVAL);
+        (void)sxn_close(device);
+    }
+    device = sxn_open_device("pointer", SXN_DEVICE_READ);
+    check(device >= 0);
+    if (device >= 0) {
+        check(sxn_device_control(device, INPUT_IOC_SET_POINTER_SPEED, SAVANXP_POINTER_SPEED_DEFAULT) == -SAVANXP_EACCES);
+        check(sxn_device_control(device, INPUT_IOC_GET_POINTER_SPEED, 0) == SAVANXP_POINTER_SPEED_MAX);
+        (void)sxn_close(device);
+    }
+    if (original >= SAVANXP_POINTER_SPEED_MIN && original <= SAVANXP_POINTER_SPEED_MAX)
+        check(sxn_set_pointer_speed((int)original) == 0 && sxn_pointer_speed() == original);
+    check(sxn_log("nativetest: pointer speed done") == 0);
 }
 
 static void test_view_at(void) {
@@ -4231,6 +4266,7 @@ int main(int argc, char** argv) {
     test_view_at();
     test_file_sections();
     test_system_time();
+    test_pointer_speed();
     test_code32();
     test_syscall_trap();
     test_runtime_exit();

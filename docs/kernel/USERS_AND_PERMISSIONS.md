@@ -231,6 +231,8 @@ a user process draws through `windowd` or makes a 3D context of its own), and
 
 - **`/dev/keyboard`** (0666) has the layout ioctls of `/dev/input0` and none
   of its events: how the user's desktop and init set and read the layout.
+- **`/dev/pointer`** (0666) is the same for the mouse: the pointer speed
+  ioctls and no events ([`INPUT.md`](INPUT.md#pointer-speed)).
 - **`/dev/input0` and `/dev/mouse0`: system only, read by `windowd`.** If any
   process can read the keyboard, it can read a password; if any process can
   write input, it can click "Yes" on the elevation prompt. The prompt below is

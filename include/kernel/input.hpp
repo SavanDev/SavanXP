@@ -81,6 +81,10 @@ void reset_pointers();
 
 // What drivers report.
 void submit_mouse_event(const MouseEvent& event);
+// The relative pointer speed, SAVANXP_POINTER_SPEED_MIN..MAX; false and no
+// change out of range. Applied in submit_mouse_event to every relative event.
+bool set_pointer_speed(int speed);
+int pointer_speed();
 
 /* The keyboard core (kernel/keyboard.cpp): modifiers, lock keys, layouts and
  * the translation to SAVANXP_KEY_* and text. Keyboard drivers report physical

@@ -12,7 +12,8 @@ So a smoke never sees the developer's display preferences: this removes them
 from the copy, and the session falls back to its default mode. A scenario
 that wants a specific resolution will write its own display.cfg on top of a
 clean copy. Effects also start from their defaults, so pixel checks do not
-inherit the developer's shadow choices.
+inherit the developer's shadow choices. The pointer speed too: a scenario that
+drives a relative mouse moves it by counts, and a saved speed would scale them.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ DISPLAY_PREFERENCE_PATHS = (
     "users/user/display.cfg",
     "display.cfg",
     "users/user/Settings/effects.cfg",
+    "users/user/Settings/mouse.cfg",
 )
 
 def reset_audio_preferences(sxfs_cli: Path, image: Path) -> None:

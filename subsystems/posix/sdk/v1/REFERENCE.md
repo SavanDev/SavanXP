@@ -105,6 +105,8 @@ Device nodes:
 - `/dev/gpu0`
 - `/dev/input0`
 - `/dev/mouse0`
+- `/dev/pointer` (the pointer speed: `input_get_pointer_speed`,
+  `input_set_pointer_speed`, 1..20, 10 = one to one)
 - `/dev/net0`
 - `/dev/pcspk`
 - `/dev/audio0`
@@ -115,6 +117,7 @@ Ioctl groups:
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
 - PC speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
 - audio: `AUDIO_IOC_GET_INFO`
+- input: `INPUT_IOC_GET_POINTER_SPEED`, `INPUT_IOC_SET_POINTER_SPEED`
 
 Shared types:
 

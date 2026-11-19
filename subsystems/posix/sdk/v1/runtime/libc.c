@@ -744,6 +744,14 @@ long input_get_layout(int fd) {
     return savanxp_ioctl(fd, INPUT_IOC_GET_LAYOUT, 0);
 }
 
+long input_set_pointer_speed(int fd, int speed) {
+    return savanxp_ioctl(fd, INPUT_IOC_SET_POINTER_SPEED, (unsigned long)speed);
+}
+
+long input_get_pointer_speed(int fd) {
+    return savanxp_ioctl(fd, INPUT_IOC_GET_POINTER_SPEED, 0);
+}
+
 long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request) {
     return savanxp_ioctl(fd, GPU_IOC_IMPORT_SECTION, (unsigned long)import_request);
 }

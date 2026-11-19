@@ -4057,6 +4057,31 @@ def scenario_cursor_settings(s):
     expect_text(image,(x,y,x+540,y+510),"Retrosmart (Win-ish Classic)",TEXT,FIELD,"Cancel retained the applied pack")
     click(x+390,y+489)
 
+    # The pointer speed (docs/kernel/INPUT.md#pointer-speed), by keyboard only:
+    # this scenario's mouse is relative, so a speed other than 10 scales the
+    # moves click() makes. Focus order on the Motion tab: tabs, slider, OK,
+    # Cancel, Apply.
+    def motion_tab():
+        x,y,image = open_panel()
+        s.qmp.tap("tab"); s.qmp.tap("right", pause=1.0)
+        image = s.shot("mouse-motion")
+        expect_text(image,(x,y,x+540,y+510),"Pointer speed",TEXT,FACE,"the Motion tab shows the speed slider")
+        s.qmp.tap("tab")
+        return x,y
+
+    def apply_speed(x,y,name):
+        s.qmp.tap("tab"); s.qmp.tap("tab"); s.qmp.tap("tab"); s.qmp.tap("spc", pause=1.0)
+        image = s.shot(name)
+        expect_text(image,(x,y,x+540,y+510),"Pointer speed applied and saved.",TEXT,FACE,"Apply saves the speed")
+        s.qmp.chord("shift","tab"); s.qmp.tap("spc", pause=1.0)
+
+    x,y = motion_tab()
+    s.qmp.tap("end", pause=1.0)
+    image = s.shot("speed-preview")
+    expect_text(image,(x,y,x+540,y+510),"The pointer already moves at this speed. Apply to keep it.",TEXT,FACE,
+                "the slider sets the speed live")
+    apply_speed(x,y,"speed-applied")
+
     with io.open(s.serial, encoding="utf-8", errors="replace") as log:
         boots = log.read().count("handoff: starting /bin/init")
     s.qmp.cmd("set-action", reboot="reset")
@@ -4070,6 +4095,15 @@ def scenario_cursor_settings(s):
     else:
         raise Failure("the cursor persistence test did not reboot")
     time.sleep(35)
+    with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+        if "init: pointer speed 20" not in log.read().split("handoff: starting /bin/init")[-1]:
+            raise Failure("init did not apply the saved pointer speed after the reboot")
+    # Back to one to one (Home is 1, nine steps right is 10) before clicking.
+    x,y = motion_tab()
+    s.qmp.tap("home")
+    for _ in range(9):
+        s.qmp.tap("right")
+    apply_speed(x,y,"speed-restored")
     x,y,image = open_panel()
     expect_text(image,(x,y,x+540,y+510),"Retrosmart (Win-ish Classic)",TEXT,FIELD,"the chosen pack survived reboot")
     click(x+355,y+405)

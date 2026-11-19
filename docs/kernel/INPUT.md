@@ -90,6 +90,42 @@ The layout is a user preference that lives in the core:
 those ioctls and no events: it is 0666, so the user's desktop can choose the
 layout without being able to read keys.
 
+## Pointer speed
+
+The pointer speed is a user preference too, and it also lives in the input
+core (`kernel/input.cpp`): `input::submit_mouse_event` scales each relative
+event before it is queued, so `windowd`, a game that captures the pointer and
+an X11 client all see the same speed. It runs from 1 to 20
+(`SAVANXP_POINTER_SPEED_MIN`/`_MAX`), and 10 (`_DEFAULT`) is one to one. The
+multipliers are the steps of Windows' pointer speed slider without "enhance
+pointer precision": 1/32 at 1, 7/8 at 9, then a quarter more per step up to
+3.5 at 20 (`include/kernel/pointer_motion.hpp`). Each axis carries the
+fraction a scaled event did not move into the next one, so at slow speeds a
+run of single counts still adds up to the right distance. A move in the other
+direction drops that fraction, and changing the speed clears it.
+
+**Only relative pointers are scaled.** A PS/2 or USB mouse reports counts; a
+tablet (`virtio-tablet`, a USB tablet, QEMU's default pointer in most
+scenarios) reports where the pointer is, and scaling its delta would move the
+cursor away from its own position. Its events go through unchanged, so the
+slider does nothing visible under a tablet. To see it work in QEMU, use a
+relative pointer (PS/2 or `usb-mouse`).
+
+`INPUT_IOC_SET_POINTER_SPEED` / `INPUT_IOC_GET_POINTER_SPEED` reach it on
+`/dev/pointer`, which has those ioctls and no events. Like `/dev/keyboard` it
+is 0666, so Mouse Properties can set the speed without reading the mouse;
+setting needs write access, and a speed out of range is `-EINVAL`. The ioctls
+also work on `/dev/mouse0`. SUN wraps them in `sxn/sxnpointer.h`
+(`sxn_pointer_speed`, `sxn_set_pointer_speed`), POSIX in
+`input_get_pointer_speed` / `input_set_pointer_speed`.
+
+Mouse Properties' Motion tab sets the speed while the slider moves, so the
+user feels it before choosing; Apply or OK saves it to
+`/users/user/Settings/mouse.cfg` (the speed in decimal), and Cancel or closing
+the window puts back the speed from before. `init` applies the saved speed at
+boot, before `windowd` starts, as it does with the keyboard layout. A missing
+or broken file leaves the default.
+
 ### Who reads the events
 
 `/dev/input0` and `/dev/mouse0` each have one queue, and a read drains it. So

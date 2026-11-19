@@ -342,7 +342,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "cursor-settings-smoke": _qemu_scenario(
         "", "CURSOR SETTINGS SMOKE PASS", "CURSOR SETTINGS SMOKE FAIL",
-        "Mouse Properties schemes, licenses, live changes, cancel and restart persistence",
+        "Mouse Properties schemes, licenses, pointer speed, live changes, cancel and restart persistence",
         540.0, "handoff: starting /bin/init", "taskbar", completion="host",
         ready_wait=45.0, host_action="visual", visual_scenario="cursor_settings",
         remove_paths=("/users/user/Settings/cursors.cfg",),

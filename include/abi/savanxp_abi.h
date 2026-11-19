@@ -399,6 +399,14 @@ enum savanxp_keyboard_layout {
     SAVANXP_KEYBOARD_LAYOUT_EN = 1,
 };
 
+/* Pointer speed, the Mouse Properties slider: 1 (slowest) to 20 (fastest),
+ * 10 moves the pointer one to one. The kernel scales the deltas of relative
+ * pointers (PS/2, USB mice) for every reader; an absolute pointer (a tablet)
+ * reports a position and is not scaled (docs/kernel/INPUT.md#pointer-speed). */
+#define SAVANXP_POINTER_SPEED_MIN 1
+#define SAVANXP_POINTER_SPEED_DEFAULT 10
+#define SAVANXP_POINTER_SPEED_MAX 20
+
 /* SET_LAYOUT manda el valor de savanxp_keyboard_layout directo como argument
  * (no como puntero: es un escalar de un bit de informacion). GET_LAYOUT
  * devuelve el layout activo como el propio valor de retorno no-negativo del
@@ -413,6 +421,12 @@ enum savanxp_input_ioctl {
      * come from what it reads (docs/kernel/USERS_AND_PERMISSIONS.md). A
      * device nobody claimed reads as before. */
     INPUT_IOC_CLAIM = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 3),
+    /* On /dev/pointer (0666, no events) or /dev/mouse0. SET takes the speed
+     * (SAVANXP_POINTER_SPEED_MIN..MAX) as the argument itself and needs write
+     * access; out of range is -EINVAL. GET returns it as the non-negative
+     * result. */
+    INPUT_IOC_SET_POINTER_SPEED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 4),
+    INPUT_IOC_GET_POINTER_SPEED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 5),
 };
 
 enum savanxp_net_ioctl {

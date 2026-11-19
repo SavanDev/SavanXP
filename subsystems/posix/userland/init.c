@@ -684,6 +684,7 @@ static int run_automation_spec(const char* spec) {
 
 #define KEYBOARD_LAYOUT_CONFIG_NAME "keyboard.cfg"
 #define AUDIO_CONFIG_NAME "audio.cfg"
+#define POINTER_CONFIG_NAME "mouse.cfg"
 
 /* The one user (docs/kernel/USERS_AND_PERMISSIONS.md): its profile, made at
  * boot if missing, the user's own and nobody else's (0700). */
@@ -759,6 +760,49 @@ static void apply_keyboard_layout_preference(void) {
     }
     (void)input_set_layout((int)input_fd, SAVANXP_KEYBOARD_LAYOUT_EN);
     savanxp_close((int)input_fd);
+}
+
+/* The preferred pointer speed (the decimal speed, "10"; Mouse Properties
+ * writes it), set before windowd starts so the first move already uses it.
+ * Through /dev/pointer, which has the speed and none of the events. With no
+ * file or a broken one the speed stays SAVANXP_POINTER_SPEED_DEFAULT. */
+static void apply_pointer_speed_preference(void) {
+    char text[8];
+    long config_fd = open_user_setting(POINTER_CONFIG_NAME);
+    long pointer_fd;
+    long bytes_read;
+    int speed = 0;
+    size_t index = 0;
+
+    if (config_fd < 0) {
+        return;
+    }
+    bytes_read = savanxp_read((int)config_fd, text, sizeof(text) - 1);
+    savanxp_close((int)config_fd);
+    if (bytes_read <= 0) {
+        return;
+    }
+    text[bytes_read] = '\0';
+    while (text[index] >= '0' && text[index] <= '9' && speed <= SAVANXP_POINTER_SPEED_MAX) {
+        speed = speed * 10 + (text[index] - '0');
+        ++index;
+    }
+    while (is_space_char(text[index])) {
+        ++index;
+    }
+    if (index == 0 || text[index] != '\0' ||
+        speed < SAVANXP_POINTER_SPEED_MIN || speed > SAVANXP_POINTER_SPEED_MAX) {
+        return;
+    }
+
+    pointer_fd = savanxp_open_mode("/dev/pointer", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    if (pointer_fd < 0) {
+        return;
+    }
+    if (input_set_pointer_speed((int)pointer_fd, speed) == 0) {
+        printf("init: pointer speed %d\n", speed);
+    }
+    savanxp_close((int)pointer_fd);
 }
 
 /* The preferred volume (keyboard.cfg's pattern with two numbers: "75 0" is
@@ -1331,6 +1375,7 @@ __attribute__((noreturn)) static void run_system(const char* const* driver) {
 
     ensure_user_profile();
     apply_keyboard_layout_preference();
+    apply_pointer_speed_preference();
     apply_audio_preference();
     start_shutdown_service();
 

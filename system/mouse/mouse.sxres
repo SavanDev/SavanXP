@@ -1,5 +1,5 @@
 name=Mouse Properties
-description=Choose the desktop cursor scheme and preview its pointers
+description=Choose the desktop cursor scheme and the pointer speed
 version=system
 vendor=SavanXP
 subsystem=native
