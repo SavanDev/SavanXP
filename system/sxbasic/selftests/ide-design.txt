@@ -1,0 +1,40 @@
+# Savan BASIC's form designer driven with no window (sxbide --selftest; docs/userland/SXBASIC_IDE.md):
+# a new project, its form made bigger, a label and a button drawn, the button's
+# caption set in the grid, moved and resized, a check box drawn and deleted,
+# then a double-click on the button writes its Click handler, which the form
+# run by its own script (ide-design-run.txt) then exercises. Points are in the
+# form's client area; the grid is 8 pixels.
+new /tmp/ide5/Designed.sbp
+expect-files Designed.sbp MainForm.sbf
+expect-current MainForm.sbf
+expect-view object
+expect-selected MainForm
+drag 319 119 399 199
+expect-control MainForm 0 0 400 200
+tool Label
+drag 8 8 104 28
+expect-selected Label1
+expect-control Label1 8 8 96 24
+tool Button
+drag 8 72 88 96
+expect-selected Button1
+expect-control Button1 8 72 80 24
+set-property Text Press me
+expect-property Text Press me
+drag 40 80 64 104
+expect-control Button1 32 96 80 24
+drag 111 119 127 127
+expect-control Button1 32 96 96 32
+tool CheckBox
+drag 160 8 248 32
+expect-selected CheckBox1
+key Delete
+expect-no-control CheckBox1
+expect-selected MainForm
+dblclick 60 110
+expect-view code
+insert Label1.Text = "Pressed"
+run-script /system/sxbasic/selftests/ide-design-run.txt
+expect-exit 0
+view object
+expect-selected MainForm

@@ -1,0 +1,9 @@
+# The form the designer selftest made (ide-design.txt), run by the runner's
+# own --selftest: the drawn button's handler writes the drawn label.
+expect MainForm.Button1.Text Press me
+expect MainForm.Label1.Text Label1
+click MainForm.Button1
+expect MainForm.Label1.Text Pressed
+click MainForm.HelloButton
+expect-message Hello, world!
+answer OK

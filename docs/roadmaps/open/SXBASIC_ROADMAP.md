@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, phases 0 to 4 done.** SxBASIC is a BASIC language and a visual
+> **Status: open, phases 0 to 5 done.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -295,13 +295,27 @@ Departures from the plan:
 - A command that would lose unsaved changes asks by running only when
   chosen twice; SXGUI has no Yes/No/Cancel box of its own.
 
-### Phase 5 — the visual designer
+### Phase 5 — the visual designer (done)
 
 The form drawn instead of written: a toolbox, controls placed by drawing a
 rectangle, selection handles, move and resize, snap to a grid, the property
 grid following the selection, double-clicking a control to open its default
 event in the code editor. A selftest places a button, sets its caption,
 writes a handler and runs the form.
+
+**What landed.** The designer in Savan BASIC
+([SXBASIC_IDE.md](../../userland/SXBASIC_IDE.md#the-form-designer)), and
+SXGUI's design surface it needed: `sxgui_paint_widgets` (widgets painted
+with no context, so inert), `sxgui_paint_grab_handles`, `sxgui_grab_at`,
+`sxgui_grab_resize`, `sxgui_paint_snap_grid` and `sxgui_snap`, checked by
+`sxgui-design-test`. The phase's selftest is `sxbide-design-smoke`, which
+also moves, resizes and deletes; `tools/shoot.sh --scenario sxbide` shows
+the designer. Departures from the plan:
+
+- The text stays the model: the designer reads the form's block on every
+  paint and writes each change into it as one step of undo, so the code
+  view, the property grid and the designer cannot disagree.
+- Menus are still edited as text, and the toolbox lists names, not icons.
 
 ### Phase 6 — the debugger
 

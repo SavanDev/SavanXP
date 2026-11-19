@@ -530,6 +530,44 @@ void sxgui_paint(struct sxgui_context *ctx);
 void sxgui_paint_content(struct sxgui_context *ctx);
 void sxgui_paint_overlay(struct sxgui_context *ctx);
 
+/* ---- design surface --------------------------------------------------------
+ *
+ * What a form designer needs from the toolkit: a form that is being drawn,
+ * not run. Its widgets are painted as they look at run time but with no
+ * context behind them, so nothing hovers, takes the focus or reacts. The
+ * selected one shows eight grab handles; the designer asks which handle is
+ * under the pointer and how a drag on it changes the rectangle. A snap grid
+ * shows as dots under the widgets. Input, selection and what a drag means
+ * stay the program's (an IDE's on_pointer).
+ */
+enum sxgui_grab {
+    SXGUI_GRAB_NONE = 0,
+    SXGUI_GRAB_N,
+    SXGUI_GRAB_NE,
+    SXGUI_GRAB_E,
+    SXGUI_GRAB_SE,
+    SXGUI_GRAB_S,
+    SXGUI_GRAB_SW,
+    SXGUI_GRAB_W,
+    SXGUI_GRAB_NW,
+};
+#define SXGUI_GRAB_SIZE 6 /* a handle's side, centred on the rectangle's edge */
+
+/* Paints `widgets` at their rects, in the painter's origin and clip: push
+ * both to place the form being designed. Hidden widgets are skipped. */
+void sxgui_paint_widgets(struct sx_painter *painter, const struct sxgui_widget *widgets, int count);
+/* The eight handles around `rect`: its corners and the middles of its sides. */
+void sxgui_paint_grab_handles(struct sx_painter *painter, struct sx_rect rect);
+/* The handle of `rect` under (x, y), or SXGUI_GRAB_NONE. */
+int sxgui_grab_at(struct sx_rect rect, int x, int y);
+/* `rect` after dragging handle `grab` by (dx, dy): the edges that handle
+ * holds move, the others stay. Neither side goes below `min_size`. */
+struct sx_rect sxgui_grab_resize(struct sx_rect rect, int grab, int dx, int dy, int min_size);
+/* A dot every `step` pixels across `area`, from its top-left corner. */
+void sxgui_paint_snap_grid(struct sx_painter *painter, struct sx_rect area, int step);
+/* `value` rounded to the nearest multiple of `step` (negative values too). */
+int sxgui_snap(int value, int step);
+
 /* ---- chrome for the app's own content --------------------------------------
  *
  * The two bevels of the 3D scheme, for the app that paints its own content

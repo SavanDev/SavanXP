@@ -246,6 +246,9 @@ static int run_automation_spec(const char* spec) {
                                   "/system/sxbasic/samples/converter/converter.sbp", "/tmp/Converter.sxe", 0};
     /* Savan BASIC's environment with no window: open, run, find an error, make. */
     const char* sxbide_argv[] = {"/system/sxbide.sxe", "--selftest", "/system/sxbasic/selftests/ide.txt", 0};
+    /* Its form designer: draw, move, resize, delete, a handler written and run. */
+    const char* sxbide_design_argv[] = {"/system/sxbide.sxe", "--selftest", "/system/sxbasic/selftests/ide-design.txt",
+                                        0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
@@ -438,6 +441,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "sxbide") == 0) {
             path = "/system/sxbide.sxe";
             argv = sxbide_argv;
+            argc = 3;
+        } else if (strcmp(spec, "sxbide-design") == 0) {
+            path = "/system/sxbide.sxe";
+            argv = sxbide_design_argv;
             argc = 3;
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";

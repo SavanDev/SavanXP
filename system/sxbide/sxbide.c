@@ -6,10 +6,13 @@
  *
  * One window: a menu bar and a toolbar, the project's files on the left with
  * the property grid under them, the code editor, and the output of the last
- * Run or Make SXE under it. Forms are edited as text in this version; the
- * property grid shows the `Key = value` lines of the block the caret is in
- * (the project's, or a form's or control's Begin ... End) and writes a value
- * back into that line.
+ * Run or Make SXE under it. A form opens in the designer: a toolbox, the
+ * form drawn with its controls, which are placed by drawing a rectangle,
+ * moved, resized and deleted there; F7 shows its text instead. Either way the
+ * text is the form: the property grid shows the `Key = value` lines of the
+ * block the caret is in (the project's, or a form's or control's
+ * Begin ... End), the designer selects a control by putting the caret on its
+ * block, and both write what changes back into the text, as one step of undo.
  *
  * Run and Make SXE start /system/sxbasic.sxe as a child process with its
  * output on a pipe, so a program that loops or crashes does not take the
@@ -24,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/sxbasic.h"
+#include "core/sxb_internal.h"
 #include "sxgfx/pixels.h"
 #include "sxn/sxn.h"
 #include "sxn/sxnfiledlg.h"
@@ -76,6 +81,7 @@ enum {
     W_OUTPUT_LABEL,
     W_OUTPUT,
     W_STATUS,
+    W_TOOLBOX,
     W_EDIT, /* one editor per file, IDE_MAX_FILES of them; the current one is shown */
     W_COUNT = W_EDIT + IDE_MAX_FILES,
 };
@@ -96,6 +102,8 @@ enum {
     CMD_START,
     CMD_END,
     CMD_MAKE,
+    CMD_VIEW_CODE,
+    CMD_VIEW_OBJECT,
 };
 
 enum { CHILD_NONE, CHILD_RUN, CHILD_MAKE };
@@ -146,6 +154,11 @@ static int g_mark_line;
 /* A command that would drop unsaved changes runs when chosen twice in a row. */
 static int g_discard_armed;
 static int g_discard_pending;
+
+/* A form shows its designer (1) or its text (0). */
+static int g_object_view[IDE_MAX_FILES];
+/* `--selftest <script>` for the runner, from the IDE's own selftest. */
+static const char *g_child_script;
 
 /* ---- small helpers ------------------------------------------------------------------- */
 
@@ -732,19 +745,14 @@ static void update_title(void)
     (void)sxnwm_set_title(&g_app.wm, title);
 }
 
+static void update_view(void);
+
 static void show_file(int file)
 {
     if (file < 0 || file >= g_file_count) return;
-    for (int i = 0; i < IDE_MAX_FILES; i++) {
-        if (i == file) {
-            editor(i)->flags |= SXGUI_FLAG_VISIBLE;
-        } else {
-            editor(i)->flags &= ~SXGUI_FLAG_VISIBLE;
-        }
-    }
     g_current = file;
     g_widgets[W_FILES].value = file;
-    if (g_ui) sxgui_focus(g_ui, W_EDIT + file);
+    update_view();
     props_sync(1);
     repaint();
 }
@@ -802,6 +810,7 @@ static int add_file(const char *name, int kind)
     edit->edit_colorize = colorize;
     edit->edit_marks = marks;
     edit->edit_user = (void *)(intptr_t)g_file_count;
+    g_object_view[g_file_count] = kind == IDE_FORM;
     return g_file_count++;
 }
 
@@ -991,6 +1000,7 @@ static int goto_location(const char *name, int line)
 {
     int file = find_file(name);
     if (file < 0) return 0;
+    g_object_view[file] = 0;
     show_file(file);
     sxgui_textedit_set_caret(editor(file), line_offset(document(file), line));
     g_mark_file = file;
@@ -1092,7 +1102,7 @@ static int start_child(int kind)
 {
     char name[IDE_VALUE_MAX];
     int32_t pipe[2];
-    char *argv[5];
+    char *argv[6];
     int argc = 0;
     if (g_child_kind != CHILD_NONE || g_file_count == 0) return -1;
     if (save_all() != 0) {
@@ -1101,6 +1111,10 @@ static int start_child(int kind)
     }
     project_name(name, sizeof(name));
     argv[argc++] = (char *)IDE_RUNNER;
+    if (kind == CHILD_RUN && g_child_script != NULL) {
+        argv[argc++] = (char *)"--selftest";
+        argv[argc++] = (char *)g_child_script;
+    }
     if (kind == CHILD_MAKE) {
         snprintf(g_made_path, sizeof(g_made_path), "%s/%s.sxe", g_project_dir, name);
         argv[argc++] = (char *)"--make";
@@ -1153,6 +1167,658 @@ static void end_child(void)
     }
 }
 
+/* ---- the designer ------------------------------------------------------------------------
+ *
+ * A form drawn instead of written. The designer reads the form's block from
+ * the text on every paint (design_parse) and writes what a drag or a Delete
+ * changes back into it, one step of undo each; between the two, the text is
+ * the only model. Its controls are SXGUI widgets painted with no context
+ * behind them (sxgui_paint_widgets), so they look as they will at run time
+ * and do not react. The selected control is the block the caret is in. */
+
+#define IDE_MAX_CONTROLS 64
+#define IDE_GRID 8
+#define IDE_FORM_INSET 12
+#define IDE_FORM_BORDER 4
+#define IDE_FORM_CAPTION 18
+#define IDE_FORM_MIN 64
+#define IDE_TOOLBOX_WIDTH 104
+#define IDE_TRAY_WIDTH 72
+#define IDE_TRAY_HEIGHT 22
+#define IDE_DOUBLE_CLICK_MS 500
+
+struct ide_control {
+    int kind; /* SXB_CTL_* */
+    char name[48];
+    char text[IDE_VALUE_MAX];
+    int begin_line; /* its Begin and End lines, 1-based */
+    int end_line;
+    int depth; /* 1: the form; 2: its controls and menus; 3: a menu's items */
+    int64_t values[SXB_P_COUNT];
+};
+
+static struct ide_control g_controls[IDE_MAX_CONTROLS];
+static int g_control_count;
+static struct sxgui_widget g_design_widgets[IDE_MAX_CONTROLS];
+static int g_design_widget_count;
+static struct sx_rect g_design_area;
+static char g_selected[48];
+
+/* The toolbox: the pointer, then every kind a form holds directly. */
+static const int g_tool_kinds[] = {-1,
+                                   SXB_CTL_LABEL,
+                                   SXB_CTL_BUTTON,
+                                   SXB_CTL_CHECKBOX,
+                                   SXB_CTL_RADIO,
+                                   SXB_CTL_TEXTBOX,
+                                   SXB_CTL_LISTBOX,
+                                   SXB_CTL_COMBOBOX,
+                                   SXB_CTL_GROUPBOX,
+                                   SXB_CTL_SCROLLBAR,
+                                   SXB_CTL_TRACKBAR,
+                                   SXB_CTL_PROGRESS,
+                                   SXB_CTL_TIMER};
+#define IDE_TOOL_COUNT ((int)(sizeof(g_tool_kinds) / sizeof(g_tool_kinds[0])))
+static const char *g_tool_rows[IDE_TOOL_COUNT];
+
+enum { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE, DRAG_FORM, DRAG_DRAW };
+static int g_drag;
+static int g_drag_control;
+static int g_drag_grab;
+static int g_drag_x;
+static int g_drag_y;
+static struct sx_rect g_drag_start;
+static struct sx_rect g_drag_rect;
+static uint32_t g_design_buttons;
+static unsigned long g_last_click_ms;
+static int g_last_click_control = -1;
+
+static int designer_active(void)
+{
+    return g_current >= 0 && g_current < g_file_count && g_files[g_current].kind == IDE_FORM && g_object_view[g_current];
+}
+
+/* A control drawn on the form, as against a timer or a menu. */
+static int placed(const struct ide_control *control)
+{
+    return control->depth == 2 && control->kind != SXB_CTL_TIMER && control->kind != SXB_CTL_MENU &&
+           control->kind != SXB_CTL_MENUITEM;
+}
+
+static struct sx_rect control_rect(const struct ide_control *control)
+{
+    return sx_rect_make((int)control->values[SXB_P_LEFT], (int)control->values[SXB_P_TOP],
+                        (int)control->values[SXB_P_WIDTH], (int)control->values[SXB_P_HEIGHT]);
+}
+
+/* A literal as the form file writes it: True, False, &HFF, 12, -3. */
+static int64_t parse_value(const char *text)
+{
+    int64_t value = 0;
+    int negative = 0, base = 10;
+    if (same_text_nocase(text, (int)strlen(text), "True")) return 1;
+    if (same_text_nocase(text, (int)strlen(text), "False")) return 0;
+    if (*text == '-') {
+        negative = 1;
+        text++;
+    }
+    if (text[0] == '&' && (text[1] == 'H' || text[1] == 'h')) {
+        base = 16;
+        text += 2;
+    }
+    for (; *text; text++) {
+        int digit;
+        if (*text >= '0' && *text <= '9') digit = *text - '0';
+        else if (base == 16 && *text >= 'a' && *text <= 'f') digit = *text - 'a' + 10;
+        else if (base == 16 && *text >= 'A' && *text <= 'F') digit = *text - 'A' + 10;
+        else break;
+        value = value * base + digit;
+    }
+    return negative ? -value : value;
+}
+
+/* The form's block of the current file into g_controls: the form first,
+ * then each Begin inside it in order, with its values (defaults for what the
+ * text leaves out) and its lines. */
+static void design_parse(void)
+{
+    const char *text = document(g_current);
+    int stack[8], depth = 0, line = 0, offset = 0;
+    struct ide_prop prop;
+    g_control_count = 0;
+    while (text[offset] != '\0') {
+        int end = offset, first, last;
+        line++;
+        while (text[end] != '\0' && text[end] != '\n') end++;
+        trim_line(text, offset, end, &first, &last);
+        if (line_is_word(text, first, last, "Begin")) {
+            int p = first + 5;
+            while (p < last && text[p] == ' ') p++;
+            int type = p;
+            while (p < last && is_word_char(text[p])) p++;
+            int kind = sxb_find_control_kind(text + type, p - type);
+            while (p < last && text[p] == ' ') p++;
+            if (depth < 8) {
+                int index = -1;
+                if (g_control_count < IDE_MAX_CONTROLS && kind >= 0 && (depth > 0 || g_control_count == 0)) {
+                    struct sxb_control_def def;
+                    struct ide_control *control = &g_controls[g_control_count];
+                    index = g_control_count++;
+                    sxb_control_defaults(kind, &def);
+                    memcpy(control->values, def.values, sizeof(control->values));
+                    control->kind = kind;
+                    control->depth = depth + 1;
+                    control->begin_line = control->end_line = line;
+                    control->text[0] = '\0';
+                    snprintf(control->name, sizeof(control->name), "%.*s", last - p, text + p);
+                }
+                stack[depth++] = index;
+            }
+        } else if (depth > 0 && last - first == 3 && same_text_nocase(text + first, 3, "End")) {
+            int index = stack[--depth];
+            if (index >= 0) g_controls[index].end_line = line;
+            if (depth == 0) break;
+        } else if (depth > 0 && stack[depth - 1] >= 0 && first < last && text[first] != '\'' &&
+                   parse_property(text, first, last, &prop)) {
+            struct ide_control *control = &g_controls[stack[depth - 1]];
+            int property = sxb_find_property(prop.key, (int)strlen(prop.key));
+            if (property == SXB_P_TEXT) {
+                snprintf(control->text, sizeof(control->text), "%s", prop.value);
+            } else if (property >= 0) {
+                control->values[property] = parse_value(prop.value);
+            }
+        }
+        offset = text[end] ? end + 1 : end;
+    }
+}
+
+static int find_control(const char *name)
+{
+    for (int i = 0; i < g_control_count; i++) {
+        if (same_text_nocase(g_controls[i].name, (int)strlen(g_controls[i].name), name)) return i;
+    }
+    return -1;
+}
+
+/* The placed controls as widgets, the one being dragged where the drag has it. */
+static void design_widgets(void)
+{
+    g_design_widget_count = 0;
+    for (int i = 1; i < g_control_count; i++) {
+        struct ide_control *control = &g_controls[i];
+        const int64_t *v = control->values;
+        struct sx_rect rect = control_rect(control);
+        struct sxgui_widget widget;
+        if (!placed(control)) continue;
+        if ((g_drag == DRAG_MOVE || g_drag == DRAG_RESIZE) && g_drag_control == i) rect = g_drag_rect;
+        switch (control->kind) {
+        case SXB_CTL_LABEL: widget = sxgui_label(rect, control->text); break;
+        case SXB_CTL_BUTTON: widget = sxgui_button(rect, control->text, NULL, NULL); break;
+        case SXB_CTL_CHECKBOX: widget = sxgui_checkbox(rect, control->text, v[SXB_P_VALUE] != 0); break;
+        case SXB_CTL_RADIO: widget = sxgui_radio(rect, control->text, (int)v[SXB_P_GROUP], v[SXB_P_VALUE] != 0); break;
+        case SXB_CTL_TEXTBOX:
+            widget = v[SXB_P_MULTILINE] ? sxgui_textedit(rect, control->text, (int)sizeof(control->text))
+                                        : sxgui_textfield(rect, control->text, (int)sizeof(control->text));
+            break;
+        case SXB_CTL_LISTBOX: widget = sxgui_listbox(rect, NULL, 0); break;
+        case SXB_CTL_COMBOBOX: widget = sxgui_combobox(rect, NULL, 0, 0); break;
+        case SXB_CTL_GROUPBOX: widget = sxgui_groupbox(rect, control->text); break;
+        case SXB_CTL_SCROLLBAR:
+            widget = sxgui_scrollbar(rect, (int)v[SXB_P_MIN], (int)v[SXB_P_MAX], (int)v[SXB_P_LARGECHANGE],
+                                     (int)v[SXB_P_VALUE]);
+            if (v[SXB_P_HORIZONTAL]) widget.flags |= SXGUI_FLAG_HSCROLL;
+            break;
+        case SXB_CTL_TRACKBAR: widget = sxgui_trackbar(rect, (int)v[SXB_P_MIN], (int)v[SXB_P_MAX], (int)v[SXB_P_VALUE]); break;
+        case SXB_CTL_PROGRESS: widget = sxgui_progress(rect, (int)v[SXB_P_MIN], (int)v[SXB_P_MAX], (int)v[SXB_P_VALUE]); break;
+        default: continue;
+        }
+        /* Shown while designed even when Visible = False, as Visual Basic did. */
+        widget.flags |= SXGUI_FLAG_VISIBLE;
+        if (!v[SXB_P_ENABLED]) widget.flags |= SXGUI_FLAG_DISABLED;
+        g_design_widgets[g_design_widget_count++] = widget;
+    }
+}
+
+/* Where the form is drawn, in window coordinates: its frame and its client area. */
+static void design_geometry(struct sx_rect *outer, struct sx_rect *client)
+{
+    int width = g_control_count ? (int)g_controls[0].values[SXB_P_WIDTH] : 0;
+    int height = g_control_count ? (int)g_controls[0].values[SXB_P_HEIGHT] : 0;
+    if (g_drag == DRAG_FORM) {
+        width = g_drag_rect.width;
+        height = g_drag_rect.height;
+    }
+    *outer = sx_rect_make(g_design_area.x + IDE_FORM_INSET, g_design_area.y + IDE_FORM_INSET,
+                          width + 2 * IDE_FORM_BORDER, height + 2 * IDE_FORM_BORDER + IDE_FORM_CAPTION);
+    *client = sx_rect_make(outer->x + IDE_FORM_BORDER, outer->y + IDE_FORM_BORDER + IDE_FORM_CAPTION, width, height);
+}
+
+/* The tray under the form, for what has no place on it (timers). */
+static struct sx_rect tray_rect(struct sx_rect outer, int slot)
+{
+    return sx_rect_make(outer.x + slot * (IDE_TRAY_WIDTH + IDE_GRID), outer.y + outer.height + IDE_FORM_INSET,
+                        IDE_TRAY_WIDTH, IDE_TRAY_HEIGHT);
+}
+
+static int design_selected(void)
+{
+    int index = find_control(g_selected);
+    return index >= 0 ? index : g_control_count > 0 ? 0 : -1;
+}
+
+static void design_select(int index)
+{
+    if (index < 0 || index >= g_control_count) return;
+    snprintf(g_selected, sizeof(g_selected), "%s", g_controls[index].name);
+    sxgui_textedit_set_caret(editor(g_current), line_offset(document(g_current), g_controls[index].begin_line));
+    props_sync(1);
+    repaint();
+}
+
+/* The selection follows the caret: the innermost block it is in. */
+static void design_follow_caret(void)
+{
+    int line = line_of(document(g_current), editor(g_current)->caret), best = 0;
+    design_parse();
+    for (int i = 1; i < g_control_count; i++) {
+        if (g_controls[i].begin_line <= line && line <= g_controls[i].end_line) best = i;
+    }
+    if (g_control_count > 0) snprintf(g_selected, sizeof(g_selected), "%s", g_controls[best].name);
+}
+
+static void update_view(void)
+{
+    int design = designer_active();
+    for (int i = 0; i < IDE_MAX_FILES; i++) {
+        if (i == g_current && !design) {
+            editor(i)->flags |= SXGUI_FLAG_VISIBLE;
+        } else {
+            editor(i)->flags &= ~SXGUI_FLAG_VISIBLE;
+        }
+    }
+    if (design) {
+        g_widgets[W_TOOLBOX].flags |= SXGUI_FLAG_VISIBLE;
+        design_follow_caret();
+    } else {
+        g_widgets[W_TOOLBOX].flags &= ~SXGUI_FLAG_VISIBLE;
+    }
+    g_drag = DRAG_NONE;
+    if (g_ui && g_current >= 0) sxgui_focus(g_ui, design ? -1 : W_EDIT + g_current);
+    repaint();
+}
+
+static int indent_of(const char *text, int line)
+{
+    int offset = line_offset(text, line), indent = 0;
+    while (text[offset + indent] == ' ') indent++;
+    return indent;
+}
+
+/* Sets integer properties of the block starting on `begin_line`, adding the
+ * ones it does not write yet before its End: one step of undo. */
+static void design_set_values(int begin_line, int count, const int *properties, const int *values)
+{
+    const char *text = document(g_current);
+    int start = line_offset(text, begin_line), offset = start, depth = 0, end_offset = -1;
+    int done[4] = {0, 0, 0, 0}, child_indent = indent_of(text, begin_line) + 4;
+    size_t capacity = strlen(text) + 256, used = 0;
+    char *out = malloc(capacity);
+    if (out == NULL || count > 4) {
+        free(out);
+        return;
+    }
+    while (text[offset] != '\0') {
+        int end = offset, first, last, k = count;
+        struct ide_prop prop;
+        while (text[end] != '\0' && text[end] != '\n') end++;
+        int next = text[end] ? end + 1 : end;
+        trim_line(text, offset, end, &first, &last);
+        if (line_is_word(text, first, last, "Begin")) {
+            depth++;
+        } else if (last - first == 3 && same_text_nocase(text + first, 3, "End")) {
+            if (--depth == 0) {
+                end_offset = offset;
+                break;
+            }
+        } else if (depth == 1 && parse_property(text, first, last, &prop)) {
+            for (k = 0; k < count; k++) {
+                if (strcmp(prop.key, sxb_property_name(properties[k])) == 0) break;
+            }
+        }
+        if (k < count) {
+            used += (size_t)snprintf(out + used, capacity - used, "%.*s%s = %d\n", first - offset, text + offset,
+                                     prop.key, values[k]);
+            done[k] = 1;
+        } else {
+            memcpy(out + used, text + offset, (size_t)(next - offset));
+            used += (size_t)(next - offset);
+        }
+        offset = next;
+    }
+    if (end_offset >= 0) {
+        for (int k = 0; k < count; k++) {
+            if (!done[k]) {
+                used += (size_t)snprintf(out + used, capacity - used, "%*s%s = %d\n", child_indent, "",
+                                         sxb_property_name(properties[k]), values[k]);
+            }
+        }
+        out[used] = '\0';
+        (void)sxgui_textedit_replace(editor(g_current), start, end_offset, out);
+        sxgui_textedit_set_caret(editor(g_current), start);
+        props_sync(1);
+    }
+    free(out);
+}
+
+static void design_set_rect(int index, struct sx_rect rect)
+{
+    static const int keys[4] = {SXB_P_LEFT, SXB_P_TOP, SXB_P_WIDTH, SXB_P_HEIGHT};
+    int values[4] = {rect.x, rect.y, rect.width, rect.height};
+    if (index == 0) {
+        design_set_values(g_controls[0].begin_line, 2, keys + 2, values + 2);
+    } else {
+        design_set_values(g_controls[index].begin_line, 4, keys, values);
+    }
+}
+
+/* A new control of `kind` at `rect` (its default size when the rectangle is
+ * a click), named after its kind, at the end of the form's block. */
+static void design_insert(int kind, struct sx_rect rect)
+{
+    char name[48], block[640];
+    const char *kind_name = sxb_control_kind_name(kind);
+    const char *text = document(g_current);
+    struct sxb_control_def def;
+    int used, indent, at;
+    if (g_control_count == 0) return;
+    for (int n = 1;; n++) {
+        snprintf(name, sizeof(name), "%s%d", kind_name, n);
+        if (find_control(name) < 0) break;
+    }
+    sxb_control_defaults(kind, &def);
+    if (rect.width < IDE_GRID || rect.height < IDE_GRID) {
+        rect.width = (int)def.values[SXB_P_WIDTH];
+        rect.height = (int)def.values[SXB_P_HEIGHT];
+    }
+    indent = indent_of(text, g_controls[0].begin_line) + 4;
+    used = snprintf(block, sizeof(block), "%*sBegin %s %s\n", indent, "", kind_name, name);
+    if (kind != SXB_CTL_TEXTBOX && kind != SXB_CTL_COMBOBOX && sxb_property_access(SXB_P_TEXT, kind) == SXB_ACCESS_WRITE) {
+        used += snprintf(block + used, sizeof(block) - (size_t)used, "%*sText = \"%s\"\n", indent + 4, "", name);
+    }
+    if (kind == SXB_CTL_TIMER) {
+        used += snprintf(block + used, sizeof(block) - (size_t)used, "%*sInterval = 1000\n", indent + 4, "");
+    } else {
+        used += snprintf(block + used, sizeof(block) - (size_t)used,
+                         "%*sLeft = %d\n%*sTop = %d\n%*sWidth = %d\n%*sHeight = %d\n", indent + 4, "", rect.x,
+                         indent + 4, "", rect.y, indent + 4, "", rect.width, indent + 4, "", rect.height);
+    }
+    snprintf(block + used, sizeof(block) - (size_t)used, "%*sEnd\n", indent, "");
+    at = line_offset(text, g_controls[0].end_line);
+    (void)sxgui_textedit_replace(editor(g_current), at, at, block);
+    design_parse();
+    design_select(find_control(name));
+}
+
+/* Deletes the selected control's block; the form is selected after. */
+static void design_delete(void)
+{
+    design_parse();
+    int index = design_selected();
+    if (index <= 0) return;
+    const char *text = document(g_current);
+    int start = line_offset(text, g_controls[index].begin_line);
+    int end = line_offset(text, g_controls[index].end_line + 1);
+    (void)sxgui_textedit_replace(editor(g_current), start, end, "");
+    design_parse();
+    design_select(0);
+}
+
+static int default_event(int kind)
+{
+    switch (kind) {
+    case SXB_CTL_FORM: return SXB_EV_LOAD;
+    case SXB_CTL_BUTTON:
+    case SXB_CTL_CHECKBOX:
+    case SXB_CTL_RADIO:
+    case SXB_CTL_LISTBOX:
+    case SXB_CTL_COMBOBOX:
+    case SXB_CTL_MENUITEM: return SXB_EV_CLICK;
+    case SXB_CTL_TEXTBOX:
+    case SXB_CTL_SCROLLBAR:
+    case SXB_CTL_TRACKBAR: return SXB_EV_CHANGE;
+    case SXB_CTL_TIMER: return SXB_EV_TICK;
+    default: return -1;
+    }
+}
+
+/* The next word of [*at, last), skipping blanks; its length. */
+static int next_word(const char *text, int *at, int last, int *start)
+{
+    while (*at < last && (text[*at] == ' ' || text[*at] == '\t')) (*at)++;
+    *start = *at;
+    while (*at < last && is_word_char(text[*at])) (*at)++;
+    return *at - *start;
+}
+
+/* Double-click: the code view at the control's default event, its Sub
+ * written first if the form's code has none (Form_Load for the form). */
+static void design_open_event(int index)
+{
+    struct ide_control *control = &g_controls[index];
+    struct sxgui_widget *edit = editor(g_current);
+    int event = default_event(control->kind), caret;
+    char handler[112], sub[160];
+    g_object_view[g_current] = 0;
+    update_view();
+    if (event < 0) {
+        sxgui_textedit_set_caret(edit, line_offset(document(g_current), control->begin_line));
+        props_sync(1);
+        return;
+    }
+    snprintf(handler, sizeof(handler), "%s_%s", control->kind == SXB_CTL_FORM ? "Form" : control->name,
+             sxb_event_name(event));
+    const char *text = document(g_current);
+    int offset = line_offset(text, g_controls[0].end_line + 1), found = -1;
+    while (text[offset] != '\0' && found < 0) {
+        int end = offset, at = offset, start, length;
+        while (text[end] != '\0' && text[end] != '\n') end++;
+        while ((length = next_word(text, &at, end, &start)) > 0) {
+            if (same_text_nocase(text + start, length, "Sub")) {
+                length = next_word(text, &at, end, &start);
+                if (same_text_nocase(text + start, length, handler)) found = end;
+                break;
+            }
+        }
+        offset = text[end] ? end + 1 : end;
+    }
+    if (found >= 0) {
+        int line = line_of(text, found) + 1;
+        caret = line_offset(text, line) + indent_of(text, line);
+    } else {
+        size_t length = strlen(text);
+        const char *gap = length == 0 ? "" : text[length - 1] != '\n' ? "\n\n" : "\n";
+        int head = snprintf(sub, sizeof(sub), "%sPrivate Sub %s()\n    ", gap, handler);
+        snprintf(sub + head, sizeof(sub) - (size_t)head, "\nEnd Sub\n");
+        (void)sxgui_textedit_replace(edit, (int)length, (int)length, sub);
+        caret = (int)length + head;
+    }
+    sxgui_textedit_set_caret(edit, caret);
+    props_sync(1);
+}
+
+static int point_in(struct sx_rect rect, int x, int y)
+{
+    return x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height;
+}
+
+/* The pointer over the designer: the IDE's on_pointer, before the widgets. */
+static int designer_pointer(const struct savanxp_gui_pointer_event *event)
+{
+    uint32_t was = g_design_buttons;
+    int down = (event->buttons & 1u) != 0, pressed = down && !(was & 1u), released = !down && (was & 1u);
+    struct sx_rect outer, client;
+    g_design_buttons = event->buttons;
+    if (!designer_active()) {
+        g_drag = DRAG_NONE;
+        return 0;
+    }
+    if (g_ui != NULL && g_ui->menubar != NULL && g_ui->menubar->open_menu >= 0) return 0;
+    if (g_drag == DRAG_NONE && !(pressed && point_in(g_design_area, event->x, event->y))) return 0;
+    design_parse();
+    design_geometry(&outer, &client);
+    int x = event->x - client.x, y = event->y - client.y;
+
+    if (pressed) {
+        int tool = g_widgets[W_TOOLBOX].value;
+        int kind = tool > 0 && tool < IDE_TOOL_COUNT ? g_tool_kinds[tool] : -1;
+        int selected = design_selected(), hit = -1, grab, slot = 0;
+        int in_client = x >= 0 && y >= 0 && x < client.width && y < client.height;
+        unsigned long now = sxngui_uptime_ms();
+        /* A double click is two presses in a row on the same control: any
+         * other press between them (a handle, the toolbox) breaks the pair. */
+        int last = g_last_click_control;
+        g_last_click_control = -1;
+        if (g_ui) sxgui_focus(g_ui, -1);
+        g_drag = DRAG_NONE;
+        g_drag_x = x;
+        g_drag_y = y;
+        if (kind == SXB_CTL_TIMER) {
+            design_insert(kind, sx_rect_make(0, 0, 0, 0));
+            g_widgets[W_TOOLBOX].value = 0;
+            return 1;
+        }
+        if (kind >= 0) {
+            if (in_client) {
+                g_drag = DRAG_DRAW;
+                g_drag_start = g_drag_rect = sx_rect_make(sxgui_snap(x, IDE_GRID), sxgui_snap(y, IDE_GRID), 0, 0);
+            }
+            return 1;
+        }
+        if (selected > 0 && placed(&g_controls[selected]) &&
+            (grab = sxgui_grab_at(control_rect(&g_controls[selected]), x, y)) != SXGUI_GRAB_NONE) {
+            g_drag = DRAG_RESIZE;
+            g_drag_grab = grab;
+            g_drag_control = selected;
+            g_drag_start = g_drag_rect = control_rect(&g_controls[selected]);
+            return 1;
+        }
+        grab = selected == 0 ? sxgui_grab_at(sx_rect_make(0, 0, client.width, client.height), x, y) : SXGUI_GRAB_NONE;
+        if (grab == SXGUI_GRAB_E || grab == SXGUI_GRAB_S || grab == SXGUI_GRAB_SE) {
+            g_drag = DRAG_FORM;
+            g_drag_grab = grab;
+            g_drag_start = g_drag_rect = sx_rect_make(0, 0, client.width, client.height);
+            return 1;
+        }
+        for (int i = g_control_count - 1; i > 0 && hit < 0; i--) {
+            if (placed(&g_controls[i]) && point_in(control_rect(&g_controls[i]), x, y)) hit = i;
+        }
+        for (int i = 1; i < g_control_count && hit < 0; i++) {
+            if (g_controls[i].depth == 2 && g_controls[i].kind == SXB_CTL_TIMER &&
+                point_in(tray_rect(outer, slot++), event->x, event->y)) {
+                hit = i;
+            }
+        }
+        if (hit < 0 && (in_client || point_in(outer, event->x, event->y))) hit = 0;
+        if (hit < 0) return 1;
+        if (hit == last && now - g_last_click_ms < IDE_DOUBLE_CLICK_MS) {
+            design_open_event(hit);
+            return 1;
+        }
+        g_last_click_control = hit;
+        g_last_click_ms = now;
+        design_select(hit);
+        if (hit > 0 && placed(&g_controls[hit])) {
+            g_drag = DRAG_MOVE;
+            g_drag_control = hit;
+            g_drag_start = g_drag_rect = control_rect(&g_controls[hit]);
+        }
+        return 1;
+    }
+    if (g_drag == DRAG_NONE) return 0;
+
+    int dx = x - g_drag_x, dy = y - g_drag_y;
+    if (g_drag == DRAG_MOVE && (dx != 0 || dy != 0)) {
+        g_drag_rect.x = sxgui_snap(g_drag_start.x + dx, IDE_GRID);
+        g_drag_rect.y = sxgui_snap(g_drag_start.y + dy, IDE_GRID);
+    } else if (g_drag == DRAG_RESIZE || g_drag == DRAG_FORM) {
+        g_drag_rect = sxgui_grab_resize(g_drag_start, g_drag_grab, sxgui_snap(dx, IDE_GRID), sxgui_snap(dy, IDE_GRID),
+                                        g_drag == DRAG_FORM ? IDE_FORM_MIN : IDE_GRID);
+    } else if (g_drag == DRAG_DRAW) {
+        int x1 = sxgui_snap(x, IDE_GRID), y1 = sxgui_snap(y, IDE_GRID);
+        int x0 = g_drag_start.x, y0 = g_drag_start.y;
+        g_drag_rect = sx_rect_make(x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1, x0 < x1 ? x1 - x0 : x0 - x1,
+                                   y0 < y1 ? y1 - y0 : y0 - y1);
+    }
+    if (released) {
+        int drag = g_drag;
+        struct sx_rect rect = g_drag_rect, start = g_drag_start;
+        int changed = rect.x != start.x || rect.y != start.y || rect.width != start.width || rect.height != start.height;
+        g_drag = DRAG_NONE;
+        if ((drag == DRAG_MOVE || drag == DRAG_RESIZE) && changed) {
+            design_set_rect(g_drag_control, rect);
+        } else if (drag == DRAG_FORM && changed) {
+            design_set_rect(0, rect);
+        } else if (drag == DRAG_DRAW) {
+            int tool = g_widgets[W_TOOLBOX].value;
+            if (tool > 0 && tool < IDE_TOOL_COUNT) design_insert(g_tool_kinds[tool], rect);
+            g_widgets[W_TOOLBOX].value = 0;
+        }
+    }
+    repaint();
+    return 1;
+}
+
+static void designer_paint(void)
+{
+    struct sx_rect outer, client;
+    if (!designer_active() || g_ui == NULL) return;
+    struct sx_painter *painter = &g_ui->painter;
+    design_parse();
+    design_widgets();
+    design_geometry(&outer, &client);
+    int selected = design_selected(), slot = 0;
+    int area_clip = sx_painter_push_clip(painter, g_design_area);
+    sx_painter_fill_rect(painter, g_design_area, SXGUI_COLOR_SHADOW);
+    if (g_control_count > 0) {
+        struct sx_rect caption = sx_rect_make(outer.x + IDE_FORM_BORDER, outer.y + IDE_FORM_BORDER,
+                                              outer.width - 2 * IDE_FORM_BORDER, IDE_FORM_CAPTION - 1);
+        sx_painter_fill_rect(painter, outer, SXGUI_COLOR_FACE);
+        sxgui_draw_raised_edge(painter, outer);
+        sx_painter_fill_rect(painter, caption, 0x000080u);
+        sx_painter_draw_text(painter, caption.x + 4, caption.y + (caption.height - gfx_text_height()) / 2,
+                             g_controls[0].text, 0xFFFFFFu);
+        int client_clip = sx_painter_push_clip(painter, client);
+        sxgui_paint_snap_grid(painter, client, IDE_GRID);
+        if (sx_painter_push_origin(painter, client.x, client.y)) {
+            /* The grid shows where the form is bare: a label has no
+             * background of its own, and at run time there are no dots. */
+            for (int i = 0; i < g_design_widget_count; i++) {
+                sx_painter_fill_rect(painter, g_design_widgets[i].rect, SXGUI_COLOR_FACE);
+            }
+            sxgui_paint_widgets(painter, g_design_widgets, g_design_widget_count);
+            if (g_drag == DRAG_DRAW) sx_painter_draw_frame(painter, g_drag_rect, SXGUI_COLOR_TEXT);
+            if (selected > 0 && placed(&g_controls[selected])) {
+                struct sx_rect rect = control_rect(&g_controls[selected]);
+                if (g_drag == DRAG_MOVE || g_drag == DRAG_RESIZE) rect = g_drag_rect;
+                sxgui_paint_grab_handles(painter, rect);
+            }
+            sx_painter_pop_origin(painter);
+        }
+        if (client_clip) sx_painter_pop_clip(painter);
+        if (selected == 0) sxgui_paint_grab_handles(painter, client);
+        for (int i = 1; i < g_control_count; i++) {
+            if (g_controls[i].depth != 2 || g_controls[i].kind != SXB_CTL_TIMER) continue;
+            struct sx_rect rect = tray_rect(outer, slot++);
+            sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+            sxgui_draw_raised_edge(painter, rect);
+            sx_painter_draw_text(painter, rect.x + 6, rect.y + (rect.height - gfx_text_height()) / 2,
+                                 g_controls[i].name, SXGUI_COLOR_TEXT);
+            if (i == selected) sxgui_paint_grab_handles(painter, rect);
+        }
+    }
+    if (area_clip) sx_painter_pop_clip(painter);
+}
+
 /* ---- commands --------------------------------------------------------------------------- */
 
 static struct sxgui_menu_item g_file_items[] = {
@@ -1175,6 +1841,10 @@ static struct sxgui_menu_item g_edit_items[] = {
     {0, 0, 0},
     {"Select All\tCtrl+A", CMD_SELECT_ALL, 0},
 };
+static struct sxgui_menu_item g_view_items[] = {
+    {"Code\tF7", CMD_VIEW_CODE, 0},
+    {"Object\tShift+F7", CMD_VIEW_OBJECT, 0},
+};
 static struct sxgui_menu_item g_run_items[] = {
     {"Start\tF5", CMD_START, 0},
     {"End", CMD_END, SXGUI_MENU_DISABLED},
@@ -1184,6 +1854,7 @@ static struct sxgui_menu_item g_run_items[] = {
 static const struct sxgui_menu g_menus[] = {
     {"File", g_file_items, (int)(sizeof(g_file_items) / sizeof(g_file_items[0]))},
     {"Edit", g_edit_items, (int)(sizeof(g_edit_items) / sizeof(g_edit_items[0]))},
+    {"View", g_view_items, (int)(sizeof(g_view_items) / sizeof(g_view_items[0]))},
     {"Run", g_run_items, (int)(sizeof(g_run_items) / sizeof(g_run_items[0]))},
 };
 
@@ -1207,6 +1878,9 @@ static void update_commands(void)
     enable(&g_run_items[0], W_TB_START, open && idle);
     enable(&g_run_items[1], W_TB_END, g_child_kind == CHILD_RUN);
     enable(&g_run_items[3], W_TB_MAKE, open && idle);
+    int form = g_current >= 0 && g_files[g_current].kind == IDE_FORM;
+    enable(&g_view_items[0], -1, open);
+    enable(&g_view_items[1], -1, form);
     repaint();
 }
 
@@ -1314,6 +1988,14 @@ static void command(int id)
     case CMD_MAKE:
         (void)start_child(CHILD_MAKE);
         break;
+    case CMD_VIEW_CODE:
+    case CMD_VIEW_OBJECT:
+        if (g_current >= 0 && g_files[g_current].kind == IDE_FORM) {
+            g_object_view[g_current] = id == CMD_VIEW_OBJECT;
+            update_view();
+            props_sync(1);
+        }
+        break;
     default:
         break;
     }
@@ -1356,6 +2038,7 @@ static void on_widget(struct sxgui_widget *widget, void *user)
         } else if (widget->action == SXGUI_ACTION_ACTIVATE) {
             show_file(widget->value);
         }
+        update_commands();
         break;
     case W_PROPS:
         if (widget->action == SXGUI_ACTION_CHANGE) props_changed(widget->value);
@@ -1419,6 +2102,30 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
         command(CMD_START);
         return 1;
     }
+    if (event->key == SAVANXP_KEY_F7) {
+        command((event->modifiers & SAVANXP_KEY_MOD_SHIFT) ? CMD_VIEW_OBJECT : CMD_VIEW_CODE);
+        return 1;
+    }
+    /* The designer has the keyboard while no widget has the focus. */
+    if (designer_active() && g_ui->focus_index < 0) {
+        if (event->key == SAVANXP_KEY_DELETE) {
+            design_delete();
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_ESC) {
+            g_widgets[W_TOOLBOX].value = 0;
+            repaint();
+            return 1;
+        }
+        if (ctrl && (event->ascii == 'z' || event->ascii == 'Z' || event->ascii == 26)) {
+            command(CMD_UNDO);
+            return 1;
+        }
+        if (ctrl && (event->ascii == 'y' || event->ascii == 'Y' || event->ascii == 25)) {
+            command(CMD_REDO);
+            return 1;
+        }
+    }
     if (ctrl && (event->ascii == 's' || event->ascii == 'S' || event->ascii == 19)) {
         command(CMD_SAVE);
         return 1;
@@ -1428,6 +2135,18 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
         return 1;
     }
     return 0;
+}
+
+static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event)
+{
+    (void)app;
+    return designer_pointer(event);
+}
+
+static void on_paint(struct sxngui_app *app)
+{
+    (void)app;
+    designer_paint();
 }
 
 static void on_close(struct sxngui_app *app)
@@ -1469,9 +2188,13 @@ static void layout_size(int width, int height)
     g_widgets[W_PROPS_LABEL].rect = sx_rect_make(x, props_y, left, IDE_LABEL_HEIGHT);
     g_widgets[W_PROPS].rect = sx_rect_make(x, props_y + IDE_LABEL_HEIGHT, left,
                                            status_y - SXGUI_GAP - props_y - IDE_LABEL_HEIGHT);
+    int editor_height = output_y - IDE_LABEL_HEIGHT - SXGUI_GAP - body;
     for (int i = 0; i < IDE_MAX_FILES; i++) {
-        editor(i)->rect = sx_rect_make(right_x, body, right_width, output_y - IDE_LABEL_HEIGHT - SXGUI_GAP - body);
+        editor(i)->rect = sx_rect_make(right_x, body, right_width, editor_height);
     }
+    g_widgets[W_TOOLBOX].rect = sx_rect_make(right_x, body, IDE_TOOLBOX_WIDTH, editor_height);
+    g_design_area = sx_rect_make(right_x + IDE_TOOLBOX_WIDTH + SXGUI_GAP, body,
+                                 right_width - IDE_TOOLBOX_WIDTH - SXGUI_GAP, editor_height);
     g_widgets[W_OUTPUT_LABEL].rect = sx_rect_make(right_x, output_y - IDE_LABEL_HEIGHT, right_width, IDE_LABEL_HEIGHT);
     g_widgets[W_OUTPUT].rect = sx_rect_make(right_x, output_y, right_width, IDE_OUTPUT_HEIGHT);
     g_widgets[W_STATUS].rect = sx_rect_make(0, status_y, width, SXGUI_STATUS_HEIGHT);
@@ -1519,6 +2242,11 @@ static void build_widgets(void)
     g_widgets[W_OUTPUT].on_action = on_widget;
     g_widgets[W_STATUS] = sxgui_label(none, g_status);
     g_widgets[W_STATUS].flags |= SXGUI_FLAG_SUNKEN;
+    g_tool_rows[0] = "Pointer";
+    for (int i = 1; i < IDE_TOOL_COUNT; i++) g_tool_rows[i] = sxb_control_kind_name(g_tool_kinds[i]);
+    g_widgets[W_TOOLBOX] = sxgui_listbox(none, g_tool_rows, IDE_TOOL_COUNT);
+    g_widgets[W_TOOLBOX].value = 0;
+    g_widgets[W_TOOLBOX].flags &= ~SXGUI_FLAG_VISIBLE;
     for (int i = 0; i < IDE_MAX_FILES; i++) {
         g_widgets[W_EDIT + i] = sxgui_textedit(none, NULL, 0);
         g_widgets[W_EDIT + i].flags &= ~SXGUI_FLAG_VISIBLE;
@@ -1542,6 +2270,8 @@ static int run_window(const char *project)
     g_app.on_key = on_key;
     g_app.on_tick = on_tick;
     g_app.on_close = on_close;
+    g_app.on_pointer = on_pointer;
+    g_app.on_paint = on_paint;
     g_app.tick_interval_ms = 100;
     (void)sxngui_app_set_content_size(&g_app, IDE_DEFAULT_WIDTH, IDE_DEFAULT_HEIGHT);
     layout(&g_app);
@@ -1561,6 +2291,9 @@ static void check_failed(int line, const char *what, const char *detail)
     snprintf(text, sizeof(text), "SXBIDE SELFTEST: line %d: %s%s%s\n", line, what, detail ? ": " : "",
              detail ? detail : "");
     put(2, text);
+    /* The scenario's console does not reach the serial log; the system log does. */
+    text[strcspn(text, "\n")] = '\0';
+    (void)sxn_log(text);
     g_failures++;
 }
 
@@ -1585,7 +2318,78 @@ static void run_command(int line, char *command_text)
     else argument = command_text + strlen(command_text);
     const char *name = command_text;
 
-    if (strcmp(name, "open") == 0) {
+    if (strcmp(name, "new") == 0) {
+        if (new_project(argument) != 0) check_failed(line, "new project", g_message);
+    } else if (strcmp(name, "view") == 0) {
+        command(strcmp(argument, "object") == 0 ? CMD_VIEW_OBJECT : CMD_VIEW_CODE);
+    } else if (strcmp(name, "tool") == 0) {
+        int tool = -1;
+        for (int i = 0; i < IDE_TOOL_COUNT; i++) {
+            if (strcmp(g_tool_rows[i], argument) == 0) tool = i;
+        }
+        if (tool < 0) check_failed(line, "no such tool", argument);
+        else g_widgets[W_TOOLBOX].value = tool;
+    } else if (strcmp(name, "drag") == 0 || strcmp(name, "click") == 0 || strcmp(name, "dblclick") == 0) {
+        /* Points in the form's client area, as pointer events in the window. */
+        int x0 = 0, y0 = 0, x1, y1;
+        struct sx_rect outer, client;
+        if (sscanf(argument, "%d %d %d %d", &x0, &y0, &x1, &y1) != (name[0] == 'd' && name[1] == 'r' ? 4 : 2)) {
+            check_failed(line, "bad points", argument);
+        } else if (!designer_active()) {
+            check_failed(line, "the designer is not shown", NULL);
+        } else {
+            design_parse();
+            design_geometry(&outer, &client);
+            if (name[1] != 'r') {
+                x1 = x0;
+                y1 = y0;
+            }
+            for (int times = name[0] == 'd' && name[1] == 'b' ? 2 : 1; times > 0; times--) {
+                struct savanxp_gui_pointer_event press = {client.x + x0, client.y + y0, 0, 1};
+                struct savanxp_gui_pointer_event move = {client.x + x1, client.y + y1, 0, 1};
+                struct savanxp_gui_pointer_event release = {client.x + x1, client.y + y1, 0, 0};
+                (void)designer_pointer(&press);
+                (void)designer_pointer(&move);
+                (void)designer_pointer(&release);
+            }
+        }
+    } else if (strcmp(name, "key") == 0) {
+        struct savanxp_input_event event = {SAVANXP_INPUT_EVENT_KEY_DOWN, 0, 0, 0};
+        event.key = strcmp(argument, "Delete") == 0 ? SAVANXP_KEY_DELETE : strcmp(argument, "Escape") == 0 ? SAVANXP_KEY_ESC : 0;
+        if (event.key == 0 || !on_key(NULL, &event)) check_failed(line, "the key was not taken", argument);
+    } else if (strcmp(name, "run-script") == 0) {
+        g_child_script = argument;
+        if (start_child(CHILD_RUN) != 0) check_failed(line, "cannot start", g_message);
+        wait_child();
+        g_child_script = NULL;
+    } else if (strcmp(name, "expect-view") == 0) {
+        if (designer_active() != (strcmp(argument, "object") == 0)) check_failed(line, "view", designer_active() ? "object" : "code");
+    } else if (strcmp(name, "expect-selected") == 0) {
+        design_parse();
+        int index = design_selected();
+        if (index < 0 || strcmp(g_controls[index].name, argument) != 0) {
+            check_failed(line, "selected", index >= 0 ? g_controls[index].name : "(none)");
+        }
+    } else if (strcmp(name, "expect-control") == 0 || strcmp(name, "expect-no-control") == 0) {
+        char control_name[48];
+        int x = 0, y = 0, w = 0, h = 0;
+        int fields = sscanf(argument, "%47s %d %d %d %d", control_name, &x, &y, &w, &h);
+        design_parse();
+        int index = find_control(control_name);
+        if (name[7] == 'n') {
+            if (index >= 0) check_failed(line, "the control is still there", control_name);
+        } else if (index < 0 || fields != 5) {
+            check_failed(line, "no such control", control_name);
+        } else {
+            struct sx_rect rect = index == 0 ? sx_rect_make(0, 0, (int)g_controls[0].values[SXB_P_WIDTH],
+                                                            (int)g_controls[0].values[SXB_P_HEIGHT])
+                                             : control_rect(&g_controls[index]);
+            if (rect.x != x || rect.y != y || rect.width != w || rect.height != h) {
+                snprintf(detail, sizeof(detail), "%s at %d %d %d %d", control_name, rect.x, rect.y, rect.width, rect.height);
+                check_failed(line, "rectangle", detail);
+            }
+        }
+    } else if (strcmp(name, "open") == 0) {
         if (open_project(argument) != 0) check_failed(line, "cannot open", g_message);
     } else if (strcmp(name, "save-as") == 0) {
         if (save_project_as(argument) != 0) check_failed(line, "save as", g_message);
@@ -1722,6 +2526,7 @@ static int run_selftest(const char *script)
     }
     /* The whole window, once, with what the script left in it. */
     sxgui_paint_content(g_ui);
+    designer_paint();
     free(text);
     free(pixels);
     put(1, g_failures ? "SXBIDE SELFTEST: FAIL\n" : "SXBIDE SELFTEST: all checks passed\n");

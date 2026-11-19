@@ -4141,6 +4141,126 @@ void sxgui_paint_content(struct sxgui_context *ctx)
     }
 }
 
+void sxgui_paint_widgets(struct sx_painter *painter, const struct sxgui_widget *widgets, int count)
+{
+    int index;
+
+    if (painter == 0 || widgets == 0)
+    {
+        return;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        if (sxgui_widget_visible(&widgets[index]))
+        {
+            sxgui_paint_one(painter, &widgets[index], 0);
+        }
+    }
+}
+
+/* The centre of handle `grab` of `rect`. */
+static struct sx_point sxgui_grab_centre(struct sx_rect rect, int grab)
+{
+    struct sx_point point;
+    int left = rect.x;
+    int middle_x = rect.x + rect.width / 2;
+    int right = rect.x + rect.width - 1;
+    int top = rect.y;
+    int middle_y = rect.y + rect.height / 2;
+    int bottom = rect.y + rect.height - 1;
+
+    point.x = grab == SXGUI_GRAB_N || grab == SXGUI_GRAB_S ? middle_x
+        : grab == SXGUI_GRAB_NE || grab == SXGUI_GRAB_E || grab == SXGUI_GRAB_SE ? right : left;
+    point.y = grab == SXGUI_GRAB_E || grab == SXGUI_GRAB_W ? middle_y
+        : grab == SXGUI_GRAB_SE || grab == SXGUI_GRAB_S || grab == SXGUI_GRAB_SW ? bottom : top;
+    return point;
+}
+
+void sxgui_paint_grab_handles(struct sx_painter *painter, struct sx_rect rect)
+{
+    int grab;
+
+    for (grab = SXGUI_GRAB_N; grab <= SXGUI_GRAB_NW; ++grab)
+    {
+        struct sx_point centre = sxgui_grab_centre(rect, grab);
+        struct sx_rect handle = sx_rect_make(centre.x - SXGUI_GRAB_SIZE / 2, centre.y - SXGUI_GRAB_SIZE / 2,
+            SXGUI_GRAB_SIZE, SXGUI_GRAB_SIZE);
+        sx_painter_fill_rect(painter, handle, SXGUI_COLOR_TEXT);
+    }
+}
+
+int sxgui_grab_at(struct sx_rect rect, int x, int y)
+{
+    int grab;
+
+    /* The corners first: on a small rectangle they overlap the middles. */
+    static const int order[8] = {SXGUI_GRAB_NW, SXGUI_GRAB_NE, SXGUI_GRAB_SE, SXGUI_GRAB_SW,
+                                 SXGUI_GRAB_N, SXGUI_GRAB_E, SXGUI_GRAB_S, SXGUI_GRAB_W};
+    for (grab = 0; grab < 8; ++grab)
+    {
+        struct sx_point centre = sxgui_grab_centre(rect, order[grab]);
+        int reach = SXGUI_GRAB_SIZE / 2 + 1;
+        if (x >= centre.x - reach && x <= centre.x + reach && y >= centre.y - reach && y <= centre.y + reach)
+        {
+            return order[grab];
+        }
+    }
+    return SXGUI_GRAB_NONE;
+}
+
+struct sx_rect sxgui_grab_resize(struct sx_rect rect, int grab, int dx, int dy, int min_size)
+{
+    int left = rect.x;
+    int top = rect.y;
+    int right = rect.x + rect.width;
+    int bottom = rect.y + rect.height;
+
+    if (grab == SXGUI_GRAB_NW || grab == SXGUI_GRAB_W || grab == SXGUI_GRAB_SW)
+    {
+        left = left + dx > right - min_size ? right - min_size : left + dx;
+    }
+    if (grab == SXGUI_GRAB_NE || grab == SXGUI_GRAB_E || grab == SXGUI_GRAB_SE)
+    {
+        right = right + dx < left + min_size ? left + min_size : right + dx;
+    }
+    if (grab == SXGUI_GRAB_NW || grab == SXGUI_GRAB_N || grab == SXGUI_GRAB_NE)
+    {
+        top = top + dy > bottom - min_size ? bottom - min_size : top + dy;
+    }
+    if (grab == SXGUI_GRAB_SW || grab == SXGUI_GRAB_S || grab == SXGUI_GRAB_SE)
+    {
+        bottom = bottom + dy < top + min_size ? top + min_size : bottom + dy;
+    }
+    return sx_rect_make(left, top, right - left, bottom - top);
+}
+
+void sxgui_paint_snap_grid(struct sx_painter *painter, struct sx_rect area, int step)
+{
+    int x;
+    int y;
+
+    if (painter == 0 || step <= 0)
+    {
+        return;
+    }
+    for (y = area.y; y < area.y + area.height; y += step)
+    {
+        for (x = area.x; x < area.x + area.width; x += step)
+        {
+            sx_painter_set_pixel(painter, x, y, SXGUI_COLOR_TEXT);
+        }
+    }
+}
+
+int sxgui_snap(int value, int step)
+{
+    if (step <= 0)
+    {
+        return value;
+    }
+    return value >= 0 ? (value + step / 2) / step * step : -((-value + step / 2) / step * step);
+}
+
 void sxgui_paint_overlay(struct sxgui_context *ctx)
 {
     if (ctx == 0 || ctx->widgets == 0)

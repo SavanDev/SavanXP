@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Savan BASIC's form designer.** A form opens drawn: a toolbox, controls placed by dragging, moved, resized and
+  deleted on an 8-pixel grid, the property grid following the selection, and a double-click writing the default event's
+  `Sub` ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md#the-form-designer)); F7 shows the text. SXGUI gains a design
+  surface: `sxgui_paint_widgets`, `sxgui_paint_grab_handles`, `sxgui_grab_at`, `sxgui_grab_resize`,
+  `sxgui_paint_snap_grid`, `sxgui_snap`. Checked by `sxgui-design-test` and `smoke sxbide-design-smoke`.
 - **Savan BASIC, the SxBASIC environment.** `/system/sxbide.sxe` (All Programs > Development) opens a project, edits its
   files with line numbers and colours, sets values in a property grid on a form's text, and runs Start and Make SXE in
   a child process, opening an error at its line ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md)). New

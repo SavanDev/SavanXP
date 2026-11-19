@@ -4,9 +4,10 @@
 ([SXBASIC.md](SXBASIC.md)): open a project, edit its files, run it, find
 its errors at their line and make its executable. It is a SUN program drawn
 with SXGUI, listed in All Programs under Development as **Savan BASIC**, and
-it opens a `.sbp` from Files. This is phase 4 of the
-[roadmap](../roadmaps/open/SXBASIC_ROADMAP.md): forms are edited as text.
-Drawing them is phase 5, and the debugger is phase 6.
+it opens a `.sbp` from Files. It is phases 4 and 5 of the
+[roadmap](../roadmaps/open/SXBASIC_ROADMAP.md): a form is drawn in the
+designer or edited as text, and both are the same text. The debugger is
+phase 6.
 
 ```text
 sxbide [project.sbp]
@@ -19,12 +20,13 @@ One window, the panes inside it, as Visual Basic's docked layout:
 
 - **Menu bar and toolbar.** File (New Project, Open Project, Save, Save All,
   Save Project As, Exit), Edit (Undo, Redo, Cut, Copy, Paste, Select All),
-  Run (Start, End, Make SXE). The toolbar repeats Open, Save All, Start, End
+  View (Code, F7; Object, Shift+F7), Run (Start, End, Make SXE). The toolbar repeats Open, Save All, Start, End
   and Make SXE. F5 starts the program, Ctrl+S saves the file shown, and
   Ctrl+O opens a project.
 - **Project.** The project file, then its forms and modules in the order
   the project lists them. A file with unsaved changes shows ` *` after its
-  name. Choosing one shows it in the editor.
+  name. Choosing one shows it: a form in the
+  [designer](#the-form-designer), the rest in the editor.
 - **Properties.** The property grid (`SXGUI_PROPGRID`) on the block the
   caret is in. See [the property grid](#the-property-grid-on-text).
 - **The code editor.** One `SXGUI_TEXTEDIT` per file, each with its own
@@ -36,6 +38,52 @@ One window, the panes inside it, as Visual Basic's docked layout:
   Double-clicking or pressing Enter on a line that names a file and a line
   goes there.
 - **Status bar.** The caret's line and column, and the last message.
+
+## The form designer
+
+A form opens in the designer; View > Code (F7) shows its text, View >
+Object (Shift+F7) the designer again. The designer replaces the editor in
+its pane:
+
+- **The toolbox** on its left: Pointer, then every control a form holds
+  (the kinds and their defaults come from `libsxbasic`'s tables, the ones
+  the compiler checks against).
+- **The form** on grey, with its caption, its client area at its `Width`
+  and `Height`, a dot every 8 pixels, and its controls painted by SXGUI as
+  they will look at run time but inert (`sxgui_paint_widgets`). A control
+  with `Visible = False` still shows. Timers have no place on a form and
+  sit in a tray under it.
+
+With a control chosen in the toolbox, dragging on the form draws it; a
+click places it at its default size. It is named after its kind with the
+first free number (`Button1`), takes its name as its `Text` where it has
+one, and the toolbox goes back to Pointer. A Timer is placed by clicking
+anywhere, with `Interval = 1000`.
+
+With the Pointer, a click selects the control under it (the form where
+there is none) and dragging moves it; dragging one of the selected
+control's eight handles resizes it, and the selected form resizes from its
+right, bottom and bottom-right handles. Positions and sizes snap to the
+8-pixel grid; a move keeps the control's offset within the cell only when
+it is not moved at all. Delete removes the selected control, Esc puts the
+toolbox back on the Pointer, Ctrl+Z and Ctrl+Y undo and redo, while no
+other pane has the keyboard.
+
+Double-clicking a control opens the code at its default event: `Click`
+for a button, a check box, a radio button, a list and a combo box,
+`Change` for a text box and the bars, `Tick` for a timer, `Form_Load` for
+the form. When the form's code has no such `Sub`, one is added at its end
+with the caret inside.
+
+**The text is the model.** The designer reads the form's block again for
+every paint and keeps nothing else. Selecting a control puts the caret on
+its `Begin` line, which is what puts the [property
+grid](#the-property-grid-on-text) on it; going back to the designer
+selects the block the caret is in. What a drag changes, the designer writes
+into the control's `Left`, `Top`, `Width` and `Height` lines (adding the
+ones the block left out) as one replacement of the block: one step of the
+file's undo. A new control is a block added before the form's `End`, a
+deleted one is its block removed.
 
 ## The property grid on text
 
@@ -132,6 +180,12 @@ the same code the menus call. Start and Make SXE wait for the child.
 | `select <name>`, `goto <line>`, `insert <text>` (`\|` is a line end), `undo` | the explorer and the editor |
 | `set-property <key> <value>` | a value kept in the grid |
 | `run`, `make` | Start or Make SXE, to the child's end |
+| `run-script <script>` | Start with the runner's own `--selftest <script>`, for a Windows program |
+| `new <path>` | New Project |
+| `view code\|object`, `tool <kind>`, `key Delete\|Escape` | the views, the toolbox, the designer's keys |
+| `drag <x0> <y0> <x1> <y1>`, `click <x> <y>`, `dblclick <x> <y>` | pointer events in the designer, at points of the form's client area |
+| `expect-view code\|object`, `expect-selected <name>` | the view shown and the designer's selection |
+| `expect-control <name> <x> <y> <w> <h>`, `expect-no-control <name>` | a control's rectangle as the text has it, or its absence |
 | `expect-files <names...>`, `expect-current <name>` | the explorer |
 | `expect-property <key> <value>`, `expect-line <n> <text>` | the grid and the editor |
 | `expect-exit <code>`, `expect-output-file <path>` | the child's exit code and everything it printed |
@@ -142,7 +196,15 @@ the same code the menus call. Start and Make SXE wait for the child.
 opens the console sample, saves it as `/tmp/idetest/hello/`, and changes
 its `Version` through the grid. It then runs the sample against its
 expected output and breaks a line to find the compile error there. Last, it
-undoes the break and makes `Hello.sxe`. `tools/shoot.sh --scenario sxbide`
+undoes the break and makes `Hello.sxe`.
+`system/sxbasic/selftests/ide-design.txt`, run by `sxbide-design-smoke`,
+is the designer's: a new project, its form made bigger, a label and a
+button drawn, the button's `Text` set in the grid, the button moved and
+resized, a check box drawn and deleted, and a double-click writing the
+button's `Click` handler. It then runs the form with
+`ide-design-run.txt`, which clicks the button and checks what the handler
+wrote. A failed check also goes to the system log, which reaches the
+serial log the scenario reads. `tools/shoot.sh --scenario sxbide`
 shows the window on the greeter sample and starts it.
 
 ## Limits of this version
@@ -161,6 +223,14 @@ shows the window on the greeter sample and starts it.
     input, which is empty when the desktop started it.
   - Its output reaches the Output pane when it prints a line end.
 - **Output pane.** It keeps the last 256 lines.
+- **The designer.**
+  - Menus are edited as text; the designer does not show the form's menu
+    bar.
+  - One control is selected at a time; there is no copy and paste of
+    controls, and no moving them with the arrow keys.
+  - The toolbox names its controls instead of drawing them.
+  - A `GroupBox` does not carry the controls drawn on it when it moves: it
+    does not contain them ([SXBASIC.md](SXBASIC.md)).
 - **Names keep the case they were typed in.** The editor does not yet
   rewrite a name to the case of its declaration, as the
   [reference](SXBASIC.md#lexical-rules) says the environment does.
