@@ -192,7 +192,8 @@ changes, and record implementation/verification evidence as work lands.
    feature in QEMU, including power and performance, and record evidence or
    justified i386 differences before changing the target. The [matched QEMU
    boots](I386_PORT_STUDY.md#25-matched-qemu-boots-for-the-v040-review)
-   establish the reference and i386 comparison environment.
+   establish the reference and i386 comparison environment; the
+   [parity review](I386_PARITY_REVIEW.md) tracks each capability's status.
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation

@@ -26,6 +26,8 @@ i386 support; retained code is not necessarily part of the active build.
   completion criteria, current i386 baseline, milestones and verification.
 - [`I386_PORT_STUDY.md`](I386_PORT_STUDY.md) — evolving technical study of the
   port: problems, mechanisms, decisions, evidence and remaining parity gaps.
+- [`I386_PARITY_REVIEW.md`](I386_PARITY_REVIEW.md) — the feature-by-feature v0.4.0
+  checklist: status per capability, evidence, open comparisons and known gaps.
 
 - [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) — the language layering: native
   POSIX SDK applications and the optional managed-app experiment.
