@@ -222,7 +222,7 @@ int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_i
 /*
  * Like sxe_load_icons, but the file IS the blob: no ELF or sections around it.
  * It is what lets an icon exist in the image without a program carrying it --
- * the file-type catalog in /icons lives that way (see diskfs/mimeicon.ini).
+ * the file-type catalog in /icons lives that way (see diskfs/system/mimeicon.ini).
  *
  * SXE_ABSENT if it does not open or does not parse; SXE_TOO_LARGE if the file
  * does not fit in `capacity`, told apart from ABSENT by reading one byte more

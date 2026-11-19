@@ -65,9 +65,27 @@ def manifest_for(source: Path) -> tuple[str, set[str]]:
 
 SXE_SUFFIX = ".sxe"
 
+# Build-owned files that moved from the root into system/ (docs/fs/DISK_LAYOUT.md):
+# new path -> old path. Installing the new one retires the old copy.
+RELOCATED_FILES = {
+    "system/mimeicon.ini": "mimeicon.ini",
+    "system/samples/welcome.html": "welcome.html",
+    "system/samples/about.html": "about.html",
+    "system/samples/system.mp3": "system.mp3",
+    "system/selftests/paint-test.png": "paint-test.png",
+}
+# The same for whole folders: new prefix -> old prefix, file by file, so a
+# file the user added to the old folder is kept.
+RELOCATED_FOLDERS = {
+    "system/wallpapers/": "wallpapers/",
+}
+# Old folders taken out once the retired files leave them empty. One that still
+# holds a file of the user's stays.
+RETIRED_FOLDERS = ("wallpapers",)
+
 
 def retired_counterparts(produced: set[str]) -> list[str]:
-    """Return obsolete program names and known retired system cursor assets.
+    """Return obsolete program names, retired cursor assets and moved files.
 
     A SUN program is named <name>.sxe on disk and a POSIX one has no extension
     (docs/userland/SXE_FORMAT.md, "SUN programs are named .sxe"). Both are the
@@ -90,6 +108,11 @@ def retired_counterparts(produced: set[str]) -> list[str]:
                        ("normal", "wait", "ibeam", "sizeall", "sizewe", "sizens", "no", "hand", "sizenwse", "sizenesw"))
         retired.update(f"system/cursors/{name}" for name in ("AUTHORS", "LICENSE", "LICENSE-LGPL-2.1.txt"))
     for relative in produced:
+        if relative in RELOCATED_FILES:
+            retired.add(RELOCATED_FILES[relative])
+        for new_prefix, old_prefix in RELOCATED_FOLDERS.items():
+            if relative.startswith(new_prefix):
+                retired.add(old_prefix + relative[len(new_prefix):])
         directory, _, name = relative.rpartition("/")
         if directory == "system" and name.endswith(SXE_SUFFIX):
             # Retire only the old names of the SUN programs being installed.
@@ -111,6 +134,24 @@ def retire_in_image(cli: Path, image: Path, retired: list[str]) -> int:
     if not retired:
         return 0
     return run([str(cli), "rm", "-f", str(image), *retired])
+
+
+def retire_empty_folders(cli: Path, image: Path) -> None:
+    """Remove each RETIRED_FOLDERS entry that is empty; keep one that is not.
+
+    rm refuses a folder with something in it, and that refusal is the answer
+    here, so its message and exit code are not reported.
+    """
+    for folder in RETIRED_FOLDERS:
+        subprocess.run([str(cli), "rm", "-f", str(image), folder], capture_output=True, check=False)
+
+
+def remove_empty_carried_folders(carry_root: Path) -> None:
+    """The compaction's counterpart of retire_empty_folders."""
+    for folder in RETIRED_FOLDERS:
+        path = carry_root / folder
+        if path.is_dir() and not path.is_symlink() and not any(path.iterdir()):
+            path.rmdir()
 
 
 def remove_produced_files(carry_root: Path, produced: set[str]) -> None:
@@ -319,6 +360,7 @@ def compact_image(
         retired = set(retired_counterparts(produced))
         remove_produced_files(carry_root, produced)
         remove_produced_files(carry_root, retired)
+        remove_empty_carried_folders(carry_root)
         carry_manifest, _ = manifest_for(carry_root)
         combined_manifest = carry_manifest + source_manifest + carried_ownership(
             ownership_path, produced | retired
@@ -423,6 +465,7 @@ def sync_image(args: argparse.Namespace, image: Path, source: Path, cli: Path) -
                 if retire_in_image(cli, candidate, retired) != 0:
                     print("sxfs: retiring replaced programs failed; the original image was not modified", file=sys.stderr)
                     return 1
+                retire_empty_folders(cli, candidate)
                 return install_candidate(candidate, image, cli)
             if result != 3:
                 print("sxfs: apply failed; the original image was not modified", file=sys.stderr)

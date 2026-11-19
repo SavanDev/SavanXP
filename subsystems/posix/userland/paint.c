@@ -1928,7 +1928,7 @@ static int paint_selftest(void)
 
     /* The real PNG on the volume (libsximg, through the UI path): the
      * document takes the image's own size, and known pixels come through. */
-    if (paint_load_image("/paint-test.png") != 0)
+    if (paint_load_image("/system/selftests/paint-test.png") != 0)
     {
         free(reference);
         sx_bitmap_destroy(&g_doc);

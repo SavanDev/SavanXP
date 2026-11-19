@@ -1,4 +1,30 @@
-SavanXP persistent disk
+SavanXP
 
-This file lives at the root of the SxFS volume, which is mounted at /.
-If you can read it after boot, the block layer and persistent mount are alive.
+A hobby operating system for x86-64, written from scratch, with a desktop in
+the spirit of Windows 2000 and XP. This is its system disk, mounted at /.
+
+Getting around
+  - The Start menu has the programs; Files opens on your profile.
+  - In the Command Prompt, `help` lists every command with examples.
+  - `sysinfo` describes this machine, `df` shows this disk's space and
+    `fscheck` checks it.
+  - Ctrl+Shift+Esc opens Task Manager.
+
+What lives where
+  /bin            POSIX programs, the system's and the ones you install
+  /lib            shared libraries
+  /icons          the icon catalog
+  /system         the rest of the system: the native programs (*.sxe), the
+                  wallpapers, file associations, cursors, licenses, the
+                  default Start menu and samples to try (/system/samples)
+  /users/<name>   your profile: your files, with your settings in Settings
+  /tmp            scratch space anyone can write to
+  /games, /media  data that installed ports add
+
+Your files belong in your profile. Everything outside it is the system's:
+changing it takes elevation, and the next system update may replace it.
+
+If this disk cannot be mounted, SavanXP starts its rescue system instead,
+which has a README of its own at /rescue/README.
+
+Third-party notices are in /system/licenses.

@@ -1955,7 +1955,7 @@ static void webview_show_welcome(void)
     webview_push_para("", 0, 1, 0, 4);
     webview_push_para("Type a path or an http:// address up there "
                       "and press Go (or Enter). File > Open (F3) works too: try "
-                      "/welcome.html.",
+                      "/system/samples/welcome.html.",
         0, 0, 1, 2);
     webview_push_para("Double-clicking an .html file in Files opens it here.", 0, 0, 1, 1);
     webview_push_para(

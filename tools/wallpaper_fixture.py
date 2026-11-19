@@ -62,12 +62,12 @@ def install_fixtures(cli: Path, image: Path, directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     small = rgb_jpeg(16, 16)
     fixtures = {
-        'wallpapers/00-I5 Photo.JpEg': rgb_jpeg(4097, 17, photo=True),
-        'wallpapers/01-I5 RGB.JPG': small,
+        'system/wallpapers/00-I5 Photo.JpEg': rgb_jpeg(4097, 17, photo=True),
+        'system/wallpapers/01-I5 RGB.JPG': small,
         'i5-picture.png': small,  # Deliberately mislabeled: content selects the decoder.
         'i5-broken.jpg': small[:-2],  # Header is valid; decode must still require EOI.
     }
-    lines = ['mkdir\twallpapers']
+    lines = ['mkdir\tsystem/wallpapers']
     for index, (target, contents) in enumerate(fixtures.items()):
         source = directory / f'{index}.jpg'
         source.write_bytes(contents)

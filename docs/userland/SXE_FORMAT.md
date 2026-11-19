@@ -995,7 +995,7 @@ all build entry points.
    >
    > It meets the constraint above in two ways, and both matter:
    >
-   > - **The mapping is not baked.** It lives in `diskfs/mimeicon.ini`, image
+   > - **The mapping is not baked.** It lives in `diskfs/system/mimeicon.ini`, image
    >   data with the same format and precedence as `assoc.ini`. Adding a type is
    >   one line, not a recompile.
    > - **Neither are the pixels.** The catalog is a set of standalone `.sxicon`

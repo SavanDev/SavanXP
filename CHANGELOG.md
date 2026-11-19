@@ -100,6 +100,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The shipped files left the root of the disk.** Wallpapers are in `/system/wallpapers`, `mimeicon.ini` in `/system`,
+  the Web Viewer pages and `system.mp3` in `/system/samples` and Paint's fixture in `/system/selftests`; a saved
+  `/wallpapers/...` choice still loads, and the build retires the old copies. `/README` now describes the system and
+  its folders ([DISK_LAYOUT.md](docs/fs/DISK_LAYOUT.md)).
 - **The Start menu stays open behind a pinned shortcut's context menu,** as Windows XP's does: Esc or a press on the
   menu closes only the context menu, and Unpin from Start Menu leaves the menu open without the row
   ([START_MENU.md](docs/desktop/START_MENU.md#shortcuts)).

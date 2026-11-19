@@ -364,6 +364,53 @@ def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> N
             raise RuntimeError(f"cursor migration lost persistent data: {relative}")
 
 
+def assert_sync_retires_relocated_files(cli: Path, sync: Path, root: Path) -> None:
+    """Files the build moved from the root into system/ leave the root.
+
+    The old wallpapers folder goes once it is empty, and stays when it still
+    holds a file of the user's (docs/fs/DISK_LAYOUT.md).
+    """
+    source = root / "relocate-source"
+    for relative in ("system/mimeicon.ini", "system/samples/welcome.html", "system/wallpapers/Grid.bmp"):
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_bytes(b"new " + relative.encode() + b"\n")
+
+    for case, user_files in (("empty", ()), ("kept", ("wallpapers/mine.bmp",))):
+        seed = root / f"relocate-seed-{case}"
+        old = ("mimeicon.ini", "welcome.html", "wallpapers/Grid.bmp")
+        (seed / "wallpapers").mkdir(parents=True)
+        for relative in old + user_files:
+            (seed / relative).write_bytes(b"old " + relative.encode() + b"\n")
+        image = root / f"relocate-{case}.img"
+        manifest = root / f"relocate-{case}.manifest"
+        manifest.write_text(
+            "mkdir\twallpapers\n"
+            + "".join(f"file\t{relative}\t{seed / relative}\n" for relative in old + user_files),
+            encoding="utf-8",
+        )
+        run([str(cli), "create", str(image), "8192"], root)
+        run([str(cli), "apply", str(image), str(manifest)], root)
+        run(
+            [sys.executable, str(sync), "--image", str(image), "--source", str(source),
+             "--cli", str(cli), "--sectors", "8192"],
+            root,
+        )
+
+        extracted = root / f"relocate-extracted-{case}"
+        run([str(cli), "extract", str(image), str(extracted)], root)
+        for relative in old:
+            if (extracted / relative).exists():
+                raise RuntimeError(f"the sync kept the moved file at its old path: {relative}")
+        for relative in ("system/mimeicon.ini", "system/samples/welcome.html", "system/wallpapers/Grid.bmp"):
+            if digest(source / relative) != digest(extracted / relative):
+                raise RuntimeError(f"the moved file is missing at its new path: {relative}")
+        for relative in user_files:
+            if digest(seed / relative) != digest(extracted / relative):
+                raise RuntimeError(f"the sync lost a file of the user's: {relative}")
+        if (extracted / "wallpapers").exists() != bool(user_files):
+            raise RuntimeError(f"the old wallpapers folder was handled wrong ({case})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli", required=True, type=Path)
@@ -479,6 +526,7 @@ def main() -> int:
         assert_old_image_is_stamped(cli, root)
         assert_grown_image_stays_sparse_on_ordinary_sync(cli, sync, root)
         assert_sync_retires_renamed_programs(cli, sync, root)
+        assert_sync_retires_relocated_files(cli, sync, root)
 
     print("sxfs compaction regression: PASS")
     return 0

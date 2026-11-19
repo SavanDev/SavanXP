@@ -3,7 +3,7 @@
 #include "libc.h"
 
 /* The POSIX side of mime_icon (sxgfx/mime_icon.h): its file reader, and the
- * mapping from the user's profile. */
+ * mapping from the user's profile, or the system's when the profile has none. */
 
 static long read_with_posix(const char *path, void *buffer, size_t capacity)
 {
@@ -31,11 +31,13 @@ static long read_with_posix(const char *path, void *buffer, size_t capacity)
 int mime_icon_load(void)
 {
     char path[256];
+    struct savanxp_stat info;
 
     mime_icon_set_reader(read_with_posix);
-    if (savanxp_settings_path(MIME_ICON_POLICY_NAME, 0, path, sizeof(path)) != 0)
+    if (savanxp_settings_path(MIME_ICON_POLICY_NAME, 0, path, sizeof(path)) == 0 &&
+        savanxp_stat(path, &info) == 0)
     {
-        return mime_icon_load_file(0);
+        return mime_icon_load_file(path);
     }
-    return mime_icon_load_file(path);
+    return mime_icon_load_file(MIME_ICON_SYSTEM_POLICY);
 }

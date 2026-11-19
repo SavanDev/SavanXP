@@ -437,7 +437,7 @@ static void filesapp_rebuild_labels(void)
     char type_cell[32];
     int index;
 
-    /* One read of /mimeicon.ini per process. It is cheap -- a small ini,
+    /* One read of mimeicon.ini per process. It is cheap -- a small ini,
      * no binaries scanned as in file_assoc -- but repeating it on every
      * directory change adds nothing. */
     if (!g_mime_icons_loaded)

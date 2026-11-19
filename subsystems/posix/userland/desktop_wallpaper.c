@@ -15,6 +15,9 @@
  * 3 /wallpaper.bmp. These are the wallpapers each one became. */
 #define DESKTOP_WALLPAPER_LEGACY_GRADIENT DESKTOP_WALLPAPER_DIRECTORY "/Gradient.bmp"
 #define DESKTOP_WALLPAPER_LEGACY_GRID DESKTOP_WALLPAPER_DIRECTORY "/Grid.bmp"
+/* Where the shipped wallpapers were before they moved under /system. A saved
+ * choice that names one of them is read as its new path. */
+#define DESKTOP_WALLPAPER_OLD_DIRECTORY "/wallpapers/"
 
 static const char *const k_position_names[DESKTOP_WALLPAPER_POSITION_COUNT] = {
     "Center",
@@ -148,7 +151,14 @@ static void parse_line(struct desktop_wallpaper_config *config, char *line)
     {
         /* Only absolute paths: the desktop's working directory is not the
          * dialog's, so a relative one would name two different files. */
-        if (value[0] == '\0' || value[0] == '/')
+        size_t old_length = strlen(DESKTOP_WALLPAPER_OLD_DIRECTORY);
+
+        if (strncmp(value, DESKTOP_WALLPAPER_OLD_DIRECTORY, old_length) == 0)
+        {
+            (void)snprintf(config->path, sizeof(config->path), "%s/%s", DESKTOP_WALLPAPER_DIRECTORY,
+                value + old_length);
+        }
+        else if (value[0] == '\0' || value[0] == '/')
         {
             copy_path(config->path, value);
         }

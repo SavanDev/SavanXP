@@ -15,7 +15,7 @@ first consumer ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)).
   is greyed at `/`.
 - **The list**: Name, Size and Type, folders first and then by name with
   case folded, each with its icon by type (`sxgfx/mime_icon.h`, the mapping
-  in `/mimeicon.ini`). Folders are always listed; files only when they match
+  in `/system/mimeicon.ini`). Folders are always listed; files only when they match
   the filter. A folder holds up to 512 entries in the list; past that the
   dialog says only the first 512 are listed.
 - **File name**: starts with the name the program suggests. Picking a file
@@ -84,8 +84,8 @@ in Windows.
 - **Icons by type** are the same `mime_icon` Files and the desktop use,
   moved to `system/gfx/` so a SUN program links it too. It makes no system
   call itself: each subsystem installs a file reader (`mime_icon_set_reader`).
-  The dialog reads the system's `/mimeicon.ini`; POSIX programs keep reading
-  the profile's copy through `mime_icon_load`.
+  The dialog reads the system's `/system/mimeicon.ini`; POSIX programs read
+  the profile's copy through `mime_icon_load`, and the system's without one.
 - **One dialog at a time.** The toolkit has one modal dialog per window, so
   the Confirm Save As question and the new folder's name are a second
   dialog that replaces the first, and No, Cancel or OK begin the first again

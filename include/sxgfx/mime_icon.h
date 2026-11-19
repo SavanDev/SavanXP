@@ -44,7 +44,7 @@ extern "C" {
 #define MIME_ICON_MAX_ENTRIES 64
 
 #define MIME_ICON_POLICY_NAME "mimeicon.ini" /* in the profile: savanxp_settings_path */
-#define MIME_ICON_SYSTEM_POLICY "/mimeicon.ini" /* the system's, at the root */
+#define MIME_ICON_SYSTEM_POLICY "/system/mimeicon.ini" /* the system's, next to assoc.ini */
 #define MIME_ICON_POLICY_MAX_BYTES 4096
 #define MIME_ICON_DIRECTORY "/icons"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generates the shipped wallpapers (diskfs/wallpapers/*.bmp).
+"""Generates the shipped wallpapers (diskfs/system/wallpapers/*.bmp).
 
-Display Properties lists every BMP in /wallpapers, so adding one here and
+Display Properties lists every BMP in /system/wallpapers, so adding one here and
 running the script is all a new wallpaper takes. Each image is procedural with
 a fixed seed, so the assets are reproducible. The build does NOT run this
 script (the BMPs are committed), so PIL is only needed to regenerate them.
@@ -226,7 +226,7 @@ WALLPAPERS = {
 
 def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    directory = os.path.join(repo_root, "diskfs", "wallpapers")
+    directory = os.path.join(repo_root, "diskfs", "system", "wallpapers")
     os.makedirs(directory, exist_ok=True)
     for name, build in WALLPAPERS.items():
         output = os.path.join(directory, name + ".bmp")

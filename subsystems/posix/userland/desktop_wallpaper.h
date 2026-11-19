@@ -17,7 +17,7 @@
  */
 
 /* The shipped wallpapers. Display lists .bmp, .png, .jpg and .jpeg files. */
-#define DESKTOP_WALLPAPER_DIRECTORY "/wallpapers"
+#define DESKTOP_WALLPAPER_DIRECTORY "/system/wallpapers"
 /* What a fresh profile shows. */
 #define DESKTOP_WALLPAPER_DEFAULT_IMAGE DESKTOP_WALLPAPER_DIRECTORY "/Clouds.bmp"
 #define DESKTOP_WALLPAPER_DEFAULT_COLOR 0x008080u

@@ -410,7 +410,7 @@ musl from `https://musl.libc.org/releases/`, and util-linux (libuuid) from
   but over white it nearly doubles it, and white is exactly the background of
   this use case. It also brings the type coverage our own art does not have,
   and it follows freedesktop's Icon Naming Specification, which is what makes
-  it possible to change source without rewriting `diskfs/mimeicon.ini`
+  it possible to change source without rewriting `diskfs/system/mimeicon.ini`
 - Note: Tango's `devices/` and `places/` icons were **not** adopted. Over the
   gray face they disappear, and those are exactly the ones the desktop would
   need

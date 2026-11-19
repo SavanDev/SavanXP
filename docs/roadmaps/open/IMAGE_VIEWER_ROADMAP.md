@@ -40,7 +40,7 @@ same formats it reads.
 | Open dialog | `sxnfiledlg.h` ([FILE_DIALOG.md](../../desktop/FILE_DIALOG.md)) | File > Open |
 | Fullscreen | SUN windows can ask for it (Media Player's F11) | F11 |
 | Capability to open a type | `.sxe` `ext_open` / `mime_open` ([SXE_FORMAT.md](../../userland/SXE_FORMAT.md)) | declaring `.bmp,.png,.jpg,.jpeg` |
-| Icons by type | `diskfs/mimeicon.ini` already maps `.png`, `.bmp`, `.jpg`, `.jpeg` to `image-x-generic` | nothing to add |
+| Icons by type | `diskfs/system/mimeicon.ini` already maps `.png`, `.bmp`, `.jpg`, `.jpeg` to `image-x-generic` | nothing to add |
 
 ## Decisions
 
@@ -132,12 +132,12 @@ buffer).
 
 The wallpaper tries each decoder's `info` call on the file's bytes and
 decodes with the first that accepts it; Display Properties lists `.bmp` and
-`.png` in `/wallpapers`, and Browse accepts both. The check that keeps the
+`.png` in `/system/wallpapers`, and Browse accepts both. The check that keeps the
 list from showing something the desktop cannot draw is unchanged.
 Transparent pixels come out white (see
 [DISPLAY_PROPERTIES.md](../../desktop/DISPLAY_PROPERTIES.md)). I5 replaces
 the table with the common API and adds JPEG. Verification: `tools/shoot.sh --scenario
-wallpaperpng` picks `/paint-test.png` with Browse and reads the tiled pixels
+wallpaperpng` picks `/system/selftests/paint-test.png` with Browse and reads the tiled pixels
 off the desktop.
 
 ### I3 — The rest of BMP (done)

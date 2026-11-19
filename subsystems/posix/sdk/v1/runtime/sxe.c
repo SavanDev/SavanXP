@@ -1505,7 +1505,7 @@ static void selftest_disk(void)
         "seccion inexistente");
 
     /* A file that is not ELF resolves as absent, not as an error. */
-    expect(sxe_read_section("/wallpapers/Clouds.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
+    expect(sxe_read_section("/system/wallpapers/Clouds.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "file that is not ELF");
 
     /* One open, both sections: the path the Start menu catalog takes. */

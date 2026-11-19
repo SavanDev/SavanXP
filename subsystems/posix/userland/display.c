@@ -122,9 +122,9 @@ static int g_preview_height = 0;
 
 /* ---- the background list -------------------------------------------------
  *
- * "(None)" first, then every BMP, PNG and JPEG in /wallpapers, then whatever the
- * user picked with Browse. The list shows names; the paths are kept beside
- * them. */
+ * "(None)" first, then every BMP, PNG and JPEG in /system/wallpapers, then
+ * whatever the user picked with Browse. The list shows names; the paths are
+ * kept beside them. */
 #define DISPLAY_MAX_BACKGROUNDS 64
 #define DISPLAY_NAME_CAPACITY 64
 
@@ -153,7 +153,7 @@ static int compare_names(const char *left, const char *right)
     return (int)(unsigned char)lower_char(*left) - (int)(unsigned char)lower_char(*right);
 }
 
-/* The extensions listed from /wallpapers. What decides whether the desktop
+/* The extensions listed from /system/wallpapers. What decides whether the desktop
  * can draw a file is its contents (desktop_wallpaper_image_load); the
  * extension only keeps other files out of the list. */
 static int has_image_extension(const char *name)

@@ -1132,7 +1132,7 @@ int sxn_file_dialog_selftest(void)
         "extension");
 
     fd_check(fd_allocate(), "listing memory");
-    fd_check(fd_list("/", "*.ini") == 0, "list the root");
+    fd_check(fd_list("/system", "*.ini") == 0, "list /system");
     for (index = 0; index < g_entry_count; ++index)
     {
         const struct fd_entry *entry = &g_entries[g_order[index]];
@@ -1152,11 +1152,11 @@ int sxn_file_dialog_selftest(void)
             other_files += 1;
         }
     }
-    fd_check(found_ini, "the root lists mimeicon.ini");
+    fd_check(found_ini, "/system lists mimeicon.ini");
     fd_check(other_files == 0, "the filter keeps other files out");
     fd_check(folders_first, "folders come first");
     fd_check(fd_list("/no-such-folder", "*.*") == -SAVANXP_ENOENT, "a missing folder");
-    fd_check(fd_list("/mimeicon.ini", "*.*") == -SAVANXP_ENOTDIR, "a file is not a folder");
+    fd_check(fd_list(MIME_ICON_SYSTEM_POLICY, "*.*") == -SAVANXP_ENOTDIR, "a file is not a folder");
     g_entry_count = 0;
     return g_failures;
 }

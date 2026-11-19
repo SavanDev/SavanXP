@@ -258,7 +258,7 @@ the keyboard's context menu (Shift+F10, Menu key) under the selected icon.
 
 ## Icons by size and their RAM
 
-`mime_icon` resolves a file to an icon name through `/mimeicon.ini` and
+`mime_icon` resolves a file to an icon name through `/system/mimeicon.ini` and
 loads the pixels from `/icons/<name>.sxicon`, which carries both 16x16 and
 32x32. Each size has its own cache of `MIME_ICON_CACHE_ENTRIES` slots with no
 eviction (the catalogue fits by design):

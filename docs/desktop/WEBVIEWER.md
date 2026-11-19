@@ -88,7 +88,8 @@ of neighbouring glyphs overlap: the harness blends against the background
 while the painter blends in sequence (see the scenario comments).
 
 The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
-launches `/system/webview.sxe /welcome.html`, and opens a `file://` URL.
+launches `/system/webview.sxe /system/samples/welcome.html`, and opens a
+`file://` URL.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

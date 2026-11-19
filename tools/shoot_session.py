@@ -988,7 +988,7 @@ def scenario_filestoolbar(s):
     expect_text(image, (0, 0, 1280, 770), "aboutapp", TEXT, FIELD, "Forward goes to /bin again")
     files_click_text(s, image, "Up", "Up is not enabled under the root", toolbar)
     image = s.shot("up")
-    expect_text(image, (0, 0, 1280, 770), "wallpapers", TEXT, FIELD, "Up goes to the root")
+    expect_text(image, (0, 0, 1280, 770), "icons", TEXT, FIELD, "Up goes to the root")
 
     files_click_text(s, image, "Properties", "the toolbar has no Properties", toolbar)
     time.sleep(0.8)
@@ -1566,7 +1566,7 @@ def scenario_imgview(s):
     label(image, "1024 x 768 pixels")
     s.qmp.chord("ctrl", "o")
     time.sleep(1)
-    s.qmp.type_line("/wallpapers/Mountains.bmp")
+    s.qmp.type_line("/system/wallpapers/Mountains.bmp")
     s.qmp.tap("ret", pause=2)
     image = s.shot("imgview-native-design")
     label(image, "Mountains.bmp")
@@ -1578,9 +1578,9 @@ def scenario_imgview(s):
 def scenario_wallpaperpng(s):
     """A PNG as the desktop wallpaper (docs/desktop/DISPLAY_PROPERTIES.md).
 
-    Display Properties' Browse takes /paint-test.png, the 16x16 RGB fixture
-    Paint's selftest reads. An image that small switches the position to
-    Tile, OK writes desktop.cfg, and the desktop picks it up within
+    Display Properties' Browse takes /system/selftests/paint-test.png, the
+    16x16 RGB fixture Paint's selftest reads. An image that small switches the
+    position to Tile, OK writes desktop.cfg, and the desktop picks it up within
     DESKTOP_WALLPAPER_CHECK_MS. The tiles start at the screen's corner, so
     every 16th pixel repeats the fixture's corners: black at (0, 0),
     (147, 179, 165) at (15, 0) and (43, 221, 27) at (0, 15). They are read
@@ -1599,7 +1599,7 @@ def scenario_wallpaperpng(s):
                 "Browse asks for a BMP, PNG or JPEG")
     for _ in range(64):
         s.qmp.tap("backspace", pause=0.04)
-    s.qmp.type_line("/paint-test.png")
+    s.qmp.type_line("/system/selftests/paint-test.png")
     s.qmp.tap("ret", pause=2.0)
     s.shot("browse-accepted")
     s.qmp.tap("ret", pause=4.0)  # OK: writes desktop.cfg and closes
@@ -3031,12 +3031,12 @@ def scenario_webview(s):
     """Web Viewer v0.1: it starts, opens a local file and paints it.
 
     Without arguments it shows its welcome screen (synthetic paragraphs, no
-    parser); F3 opens the dialog, /welcome.html is typed, and what appears was
-    produced by the real parser: the h1 in the title font and a list item in
-    the body's, asserted pixel by pixel against libgfx2d.
+    parser); F3 opens the dialog, /system/samples/welcome.html is typed, and
+    what appears was produced by the real parser: the h1 in the title font and
+    a list item in the body's, asserted pixel by pixel against libgfx2d.
 
-    The slash is typed as Shift+7: the guest's active layout is ES and the
-    qcode is the physical key, so "slash" would type a dash (see type_text).
+    type_line types the slash as Shift+7: the guest's active layout is ES and
+    the qcode is the physical key, so "slash" would type a dash.
     """
     s.open_webview()
     welcome = s.shot("webview-bienvenida")
@@ -3044,10 +3044,7 @@ def scenario_webview(s):
     expect_text(welcome, (0, 0, width, height), "Web Viewer", TEXT, FIELD,
                 "la bienvenida de webviewer", which="title")
     s.qmp.tap("f3", pause=2.0)
-    s.qmp.chord("shift", "7")
-    s.qmp.type_text("welcome")
-    s.qmp.tap("dot", pause=0.3)
-    s.qmp.type_text("html")
+    s.qmp.type_line("/system/samples/welcome.html")
     s.qmp.tap("ret", pause=4.0)
     page = s.shot("webview-pagina")
     width, height = page.size
@@ -3063,10 +3060,7 @@ def scenario_webview(s):
     # pasean por el historial. El foco quedo en la barra al cerrar el dialogo,
     # asi que Ctrl+A la selecciona entera antes de tipear la otra ruta.
     s.qmp.chord("ctrl", "a")
-    s.qmp.chord("shift", "7")
-    s.qmp.type_text("about")
-    s.qmp.tap("dot", pause=0.3)
-    s.qmp.type_text("html")
+    s.qmp.type_line("/system/samples/about.html")
     s.qmp.tap("ret", pause=4.0)
     second = s.shot("webview-segunda")
     width, height = second.size
@@ -3235,12 +3229,12 @@ def scenario_webview_http(s):
                     "SUN reload", which="title", solid_only=True)
         s.qmp.chord("alt", "f4")
         time.sleep(2.0)
-        s.run("/system/webview.sxe /welcome.html")
+        s.run("/system/webview.sxe /system/samples/welcome.html")
         local = s.shot("webview-sun-file-argv")
         expect_text(local, (0, 0, *local.size), "Welcome to SavanXP", TEXT, FIELD,
                     "SUN absolute executable and local-file argument", which="title")
         s.qmp.chord("ctrl", "a")
-        s.qmp.type_line("file:///about.html")
+        s.qmp.type_line("file:///system/samples/about.html")
         s.qmp.tap("ret", pause=4.0)
         file_url = s.shot("webview-sun-file-url")
         expect_text(file_url, (0, 0, *file_url.size), "Going further", TEXT, FIELD,

@@ -265,6 +265,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Filesystem — `fs/`
 
+- [`DISK_LAYOUT.md`](fs/DISK_LAYOUT.md) — what lives where on the system disk: the root's
+  folders, `/system`'s, and how the build retires a file it moved.
 - [`SXFS_CHECK.md`](fs/SXFS_CHECK.md) — checking, recovery and repair: the
   `fscheck` report, looking at a volume without writing to it, journal
   recovery on the host, and `sxfs-cli repair` with what it does and leaves.

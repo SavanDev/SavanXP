@@ -8,8 +8,8 @@ bevels and [icon rules](ICON_STYLE.md).
 
 ## Opening and browsing
 
-`imgview /wallpapers/Mountains.bmp` opens an absolute path. With no argument,
-the window offers **File > Open** (`Ctrl+O`), the common SUN
+`imgview /system/wallpapers/Mountains.bmp` opens an absolute path. With no
+argument, the window offers **File > Open** (`Ctrl+O`), the common SUN
 [Open dialog](FILE_DIALOG.md), filtered to `.bmp`, `.png`, `.jpg` and `.jpeg`
 without regard to case. Cancelling keeps the current image. The argument must
 be absolute; relative names can be entered in the dialog's current folder.

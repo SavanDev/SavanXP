@@ -59,7 +59,7 @@ static struct sx_bitmap g_icons[8];
 static const struct sx_bitmap *g_icon_refs[8];
 static struct sxgui_dialog g_about;
 static struct sxgui_widget g_about_widgets[3];
-static char g_path[IV_PATH], g_folder[IV_PATH] = "/wallpapers";
+static char g_path[IV_PATH], g_folder[IV_PATH] = "/system/wallpapers";
 static char g_previous[SXN_NAME_MAX], g_next[SXN_NAME_MAX];
 static unsigned g_index, g_total;
 static int g_listed;

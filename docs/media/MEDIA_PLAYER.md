@@ -241,7 +241,7 @@ glyphs like the toolkit's text and scrollbar arrows, ochre for the folder, red
 for the mute cross. A disabled icon is drawn with the toolkit's etched relief (the
 silhouette in white, offset one pixel, under the same silhouette in grey), not
 faded, so it matches a disabled label. The names follow the freedesktop Icon
-Naming Specification, like `diskfs/mimeicon.ini`, so the source can change
+Naming Specification, like `diskfs/system/mimeicon.ini`, so the source can change
 without touching the program.
 
 ## What sync is verified, and how
