@@ -54,6 +54,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "cmakesmoke")) {
         return "CMAKE SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "sxbasic")) {
+        return "SXBASIC SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "ccleste")) {
         return "CCLESTE SELFTEST";
     }
@@ -220,6 +223,9 @@ static int run_automation_spec(const char* spec) {
     const char* piesmoke_argv[] = {"/bin/piesmoke", 0};
     /* A program built with CMake and the SDK's toolchain file (sdk/cmakesmoke). */
     const char* cmakesmoke_argv[] = {"/bin/cmakesmoke", 0};
+    /* The SxBASIC console sample against the output it must print (docs/userland/SXBASIC.md). */
+    const char* sxbasic_argv[] = {"/system/sxbasic.sxe", "--expect", "/system/sxbasic/samples/hello/expected-output.txt",
+                                  "/system/sxbasic/samples/hello/hello.sbp", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
@@ -397,6 +403,10 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/cmakesmoke";
             argv = cmakesmoke_argv;
             argc = 1;
+        } else if (strcmp(spec, "sxbasic") == 0) {
+            path = "/system/sxbasic.sxe";
+            argv = sxbasic_argv;
+            argc = 4;
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";
             argv = elevtest_argv;

@@ -1,7 +1,9 @@
 # SxBASIC — the Savan BASIC language
 
-> **Status: specification, nothing implemented.** This is phase 0 of
-> [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md): the language, its
+> **Status: console programs run; forms do not yet.** Phase 1 of
+> [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md) runs a console
+> project with `/system/sxbasic.sxe /path/to/project.sbp [arguments]`; a
+> project with forms is refused until phase 2. This is phase 0's text: the language, its
 > project files and its forms, written before the compiler so the compiler has
 > something to be checked against. Where an implementation phase finds a rule
 > here that cannot work, the rule changes here first. Three sample projects
@@ -358,6 +360,8 @@ End Function
 - Parameters are `ByVal` unless they say `ByRef`: the reverse of VB6, whose
   default changed caller variables nobody meant to change.
 - Arrays are always passed by reference; `ByVal` on an array is an error.
+- An argument for a `ByRef` parameter or an array has to be a variable of
+  exactly the parameter's type, not an element or an expression.
 - `Return value` leaves a `Function` with its result. A function that reaches
   `End Function` returns its type's default, as does `Exit Function`.
   `Return` without a value leaves a `Sub`.
@@ -400,6 +404,7 @@ There is no `On Error`: no `GoTo`, no `Resume Next`.
 | 9 | Index out of range | an array index, `List(i)` of a list box |
 | 11 | Division by zero | `/`, `\`, `Mod` |
 | 13 | Type mismatch | `CInt`, `CDbl`, `CBool` of text that is not one |
+| 28 | Out of stack space | recursion about 4000 calls deep |
 | 53 | File not found | the file procedures |
 | 57 | Input/output error | the file procedures |
 | 70 | Permission denied | the file procedures |

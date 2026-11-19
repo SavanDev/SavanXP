@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, phase 0 done.** SxBASIC is a BASIC language and a visual
+> **Status: open, phases 0 and 1 done.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -182,7 +182,7 @@ dialog). Decisions the reference makes that change the plan above:
   debugger of phase 6 relies on the same thing.
 - `GroupBox` does not contain controls; radio buttons group by number.
 
-### Phase 1 — the core: compiler and virtual machine
+### Phase 1 — the core: compiler and virtual machine (done)
 
 The call-free core: lexer, parser, compiler to bytecode, the virtual machine,
 strings and arrays with their memory managed by the runtime, and runtime
@@ -190,6 +190,15 @@ errors that name the file and line. Host tests in CTest for the language,
 case by case. A console runner in SavanXP, a SUN program, runs a project
 from the command line, with a smoke scenario that runs the console program
 from phase 0 and checks its output.
+
+**What landed.** The core in `system/sxbasic/core/` (lexer, parser, a
+compiler that types every expression, and a stack VM whose frames and Try
+handlers are its own data), `/system/sxbasic.sxe` as the runner,
+`sxbasic-test` (72 cases under CTest, the hello sample included) and
+`smoke sxbasic-smoke`. Forms are refused with the line that names one.
+The runner links statically (868 KiB). The runner's output does not reach the serial
+log when init starts it, so the scenario's verdict is its exit status, which
+is 0 only when the output matched.
 
 ### Phase 2 — forms at run time
 

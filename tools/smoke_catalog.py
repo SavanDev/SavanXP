@@ -767,6 +767,12 @@ SCENARIOS: dict[str, Scenario] = {
         "A program built with CMake and the SDK's toolchain file, through sxcc",
         prepare=("./sdk/cmakesmoke/build.sh",),
     ),
+    "sxbasic-smoke": _qemu_scenario(
+        "sxbasic",
+        "SXBASIC SMOKE PASS",
+        "SXBASIC SMOKE FAIL",
+        "SxBASIC: the console sample compiled and run in the guest, against its expected output",
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

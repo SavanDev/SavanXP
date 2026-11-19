@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SxBASIC runs Savan BASIC console programs.** `/system/sxbasic.sxe <project.sbp>` compiles a project
+  to bytecode and runs it ([SXBASIC.md](docs/userland/SXBASIC.md)); projects with forms are refused
+  until phase 2. Checked by `sxbasic-test` and `smoke sxbasic-smoke`, which runs the hello sample.
+
 - **Other build systems build against the SDK: `share/sdk/sxcc` and `share/sdk/savanxp-toolchain.cmake`.**
   `sxcc` is clang with the sysroot's flags, runtime and linker script (`--sx-profile=nosse|sse|pie`, `--sx-native`); the
   sysroot gains archives for `-l` (`libsavanxp.a`, `libsxgui.a`, ...). The FFmpeg port now builds through it. New example

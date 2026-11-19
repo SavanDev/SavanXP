@@ -867,6 +867,23 @@ target_include_directories(savanxp-imgview-test PRIVATE "${CMAKE_SOURCE_DIR}/sys
 target_compile_options(savanxp-imgview-test PRIVATE -O1 -Wall -Wextra)
 add_test(NAME imgview-view-test COMMAND savanxp-imgview-test)
 
+# The SxBASIC core (docs/userland/SXBASIC.md): programs and what they print,
+# compile and runtime errors, and the console sample against its expected output.
+add_executable(savanxp-sxbasic-test
+    system/sxbasic/core/sxb_lex.c
+    system/sxbasic/core/sxb_parse.c
+    system/sxbasic/core/sxb_compile.c
+    system/sxbasic/core/sxb_value.c
+    system/sxbasic/core/sxb_vm.c
+    system/sxbasic/core/sxb_builtins.c
+    tests/host/sxbasic_test.c)
+target_include_directories(savanxp-sxbasic-test PRIVATE "${CMAKE_SOURCE_DIR}/system/sxbasic/core")
+target_compile_options(savanxp-sxbasic-test PRIVATE -O1 -Wall -Wextra)
+if(SAVANXP_HOST_LIBM)
+    target_link_libraries(savanxp-sxbasic-test PRIVATE ${SAVANXP_HOST_LIBM})
+endif()
+add_test(NAME sxbasic-test COMMAND savanxp-sxbasic-test "${CMAKE_SOURCE_DIR}/system/sxbasic/samples")
+
 # Stage checks include the private decoder; checked-in fixtures are generated
 # from our own samples. Neither the build nor the runtime needs libjpeg.
 add_executable(savanxp-sxjpeg-test tests/host/sxjpeg_test.c)
@@ -1154,7 +1171,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-imgview-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-imgview-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -1411,6 +1428,9 @@ add_custom_target(savanxp_diskfs
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/cursors"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets/desktop/cursors" "${SAVANXP_DISKFS_ROOT}/system/cursors"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/sxbasic/samples"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_SOURCE_DIR}/system/sxbasic/samples" "${SAVANXP_DISKFS_ROOT}/system/sxbasic/samples"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
     ${SAVANXP_WIN32_COPY_COMMANDS}
     ${SAVANXP_LINUX_COPY_COMMANDS}
