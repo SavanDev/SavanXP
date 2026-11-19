@@ -440,6 +440,36 @@ int native_flush_file(Process& proc, uint64_t handle) {
     return 0;
 }
 
+/* What a path call changed is on the disk before it returns, as a whole-file
+ * save is (SXN_SYS_WRITE_FILE). */
+int sync_volume_of(const char* path) {
+    const size_t mount = fs::owner_of(path);
+    if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
+    return 0;
+}
+
+int native_make_directory(Process& proc, uint64_t user_path) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    const int made = process::mkdir_path(proc, path, 0700);
+    return made != 0 ? made : sync_volume_of(path);
+}
+
+int native_rename_path(Process& proc, uint64_t user_old, uint64_t user_new) {
+    vfs::PathBuffer old_path;
+    vfs::PathBuffer new_path;
+    sx_status status = native_absolute_path(proc, user_old, old_path);
+    if (status == sx::kStatusOk) status = native_absolute_path(proc, user_new, new_path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    const int renamed = process::rename_path(proc, old_path, new_path);
+    return renamed != 0 ? renamed : sync_volume_of(new_path);
+}
+
 /* Devices live under /dev; a native process names them without the
  * directory, so it cannot reach anything else through this call. */
 int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
@@ -1498,6 +1528,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_FLUSH_FILE:
             context->rax = static_cast<uint64_t>(native_flush_file(*caller, context->rdi));
+            return context;
+        case SXN_SYS_MAKE_DIRECTORY:
+            context->rax = static_cast<uint64_t>(native_make_directory(*caller, context->rdi));
+            return context;
+        case SXN_SYS_RENAME_PATH:
+            context->rax = static_cast<uint64_t>(native_rename_path(*caller, context->rdi, context->rsi));
             return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));

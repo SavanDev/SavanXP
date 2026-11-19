@@ -516,6 +516,12 @@ int mkdir_path(process::Process& proc, const char* path, uint16_t permissions) {
     if (path == nullptr || *path == '\0') {
         return sx::negative_error(SAVANXP_EINVAL);
     }
+    // vfs::mkdir hands back a directory already there, which the kernel's own
+    // callers want; a program asked for a new one (POSIX mkdir, SUN's
+    // CreateDirectory) and gets EEXIST.
+    if (vfs::resolve(path) != nullptr) {
+        return sx::negative_error(SAVANXP_EEXIST);
+    }
     if (vfs::mkdir(proc.credentials, path, permissions) == nullptr) {
         return sx::negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }

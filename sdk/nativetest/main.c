@@ -2368,6 +2368,24 @@ static void test_file_listing(void) {
     check(handle >= 0);
     if (handle >= 0) check(sxn_close(handle) == 0);
     check(sxn_query_path("/users/native-create-exe", &info) == 0 && (info.mode & 0777u) == 0700u);
+
+    /* A new folder, and a save made safe by a rename over the old file
+     * (what SxBASIC's IDE does on New Project and Save). */
+    result = sxn_make_directory("/users/native-dir-test");
+    check(result == 0 || result == -SAVANXP_EEXIST);
+    check(sxn_query_path("/users/native-dir-test", &info) == 0 && info.type == SXN_FILE_TYPE_DIRECTORY &&
+          (info.mode & 0777u) == 0700u);
+    check(sxn_make_directory("/users/native-dir-test") == -SAVANXP_EEXIST);
+    check(sxn_make_directory("relative") == -SAVANXP_EINVAL);
+    check(sxn_make_directory("/no-such-native-parent/dir") == -SAVANXP_ENOENT);
+    check(sxn_write_file("/users/native-dir-test/old", "old file", 8) == 0);
+    check(sxn_write_file("/users/native-dir-test/new.tmp", "new", 3) == 0);
+    check(sxn_rename_path("/users/native-dir-test/new.tmp", "/users/native-dir-test/old") == 0);
+    check(sxn_query_path("/users/native-dir-test/old", &info) == 0 && info.size == 3u);
+    check(sxn_query_path("/users/native-dir-test/new.tmp", &info) == -SAVANXP_ENOENT);
+    check(sxn_rename_path("/users/native-dir-test/new.tmp", "/users/native-dir-test/x") == -SAVANXP_ENOENT);
+    check(sxn_rename_path("old", "/users/native-dir-test/x") == -SAVANXP_EINVAL);
+    check(sxn_rename_path("/users/native-dir-test/old", "/users/native-dir-test") != 0);
 }
 
 /* SXN_SYS_SECTION_OPEN_RANGE (docs/kernel/SECTIONS.md): a section over a range

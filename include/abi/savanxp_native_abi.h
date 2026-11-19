@@ -412,6 +412,18 @@ enum sxn_syscall_number {
      * or falls outside the file), -ENOMEM. Same call as the POSIX
      * section_open_range. CreateFileMapping over a file. */
     SXN_SYS_SECTION_OPEN_RANGE = 0x1044,
+    /* rdi = absolute path. Makes a directory, 0700 like the files SUN
+     * creates, and syncs its volume. 0, -EEXIST, -ENOENT (no parent),
+     * -EINVAL (a relative path), -EACCES, -EROFS. CreateDirectory. */
+    SXN_SYS_MAKE_DIRECTORY = 0x1045,
+    /* rdi = absolute old path, rsi = absolute new path. Renames a file or a
+     * directory within its volume, replacing a file already at the new
+     * path, and syncs the volume: written whole under a temporary name and
+     * then renamed over the old one, a file is never left half saved. 0,
+     * -ENOENT, -EXDEV (another volume), -EISDIR or -ENOTDIR (a file over a
+     * directory or the other way), -EINVAL, -EACCES, -EROFS, -EBUSY (FAT, a
+     * file open). MoveFileEx with REPLACE_EXISTING and WRITE_THROUGH. */
+    SXN_SYS_RENAME_PATH = 0x1046,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

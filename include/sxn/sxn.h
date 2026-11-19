@@ -162,6 +162,17 @@ static inline long sxn_flush_file(long handle) {
     return sxn_trap(SXN_SYS_FLUSH_FILE, (unsigned long)handle, 0, 0);
 }
 
+/* A new directory, 0700, durable when it returns. */
+static inline long sxn_make_directory(const char* path) {
+    return sxn_trap(SXN_SYS_MAKE_DIRECTORY, (unsigned long)path, 0, 0);
+}
+
+/* Rename within a volume, replacing a file at `new_path`; durable when it
+ * returns. Save to a temporary name, then rename it over the old file. */
+static inline long sxn_rename_path(const char* old_path, const char* new_path) {
+    return sxn_trap(SXN_SYS_RENAME_PATH, (unsigned long)old_path, (unsigned long)new_path, 0);
+}
+
 static inline long sxn_open_device(const char* name, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
 }

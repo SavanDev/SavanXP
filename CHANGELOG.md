@@ -19,6 +19,8 @@ Cut-off notes:
 - **SxBASIC Make SXE.** `sxbasic --make <project.sbp> <program.sxe>` makes a program that runs on its own, the stub
   `sxbasic.sxe` (over the new `libsxbasic.so`) plus `.sxbasic`, `.sxmeta` and `.sxicon` sections
   ([SXBASIC_IMAGE.md](docs/userland/SXBASIC_IMAGE.md)); SUN gains `SXN_CREATE_EXECUTABLE`. Checked by `sxbasic-make-smoke`.
+- **SUN makes directories and renames.** `sxn_make_directory` (0700) and `sxn_rename_path`, which replaces a file at
+  the new path; both are durable when they return, so a save can be written aside and renamed over the old file.
 
 - **Other build systems build against the SDK: `share/sdk/sxcc` and `share/sdk/savanxp-toolchain.cmake`.**
   `sxcc` is clang with the sysroot's flags, runtime and linker script (`--sx-profile=nosse|sse|pie`, `--sx-native`); the
@@ -97,6 +99,8 @@ Cut-off notes:
   DISPI mode changes pass the same check. FB1b of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
 ### Fixed
+
+- POSIX `mkdir` of a directory that already exists fails with `EEXIST` instead of succeeding.
 
 - **A program can include both `<sys/time.h>` and `<sys/select.h>`.** Each defined `struct timeval`, so including the two
   failed to compile; `<sys/time.h>` now takes it from `<sys/select.h>`, as POSIX does. `sdk-sysroot-test` now also compiles

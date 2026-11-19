@@ -53,7 +53,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Durability | `fsync` and `sync` are one whole-system barrier; a deferred write error is the `EIO` of whoever synchronizes next, not of the handle that wrote |
 | Mappings | File-backed sections are private copies of one content generation; no shared writable mapping and no page cache coherent with writes |
 | Large I/O | Internal offsets are `size_t`, but the seek position and transfer counts return through `int`, and the stat ABI carries a 32-bit size |
-| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`), saves a whole file of up to 4096 bytes (`sxn_write_file`), queries a path (`sxn_query_path`), lists a directory (`sxn_open_directory`, `sxn_read_directory`) and streams a new file (`sxn_create_file`, `sxn_write`, `sxn_flush_file`); no seek and no path operations. Native dispatch and POSIX translation open, read, write, seek and close through `sx::` (`kernel/sx_file.cpp`) |
+| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`), saves a whole file of up to 4096 bytes (`sxn_write_file`), queries a path (`sxn_query_path`), lists a directory (`sxn_open_directory`, `sxn_read_directory`), streams a new file (`sxn_create_file`, `sxn_write`, `sxn_flush_file`), makes a directory and renames (`sxn_make_directory`, `sxn_rename_path`); no seek, unlink or rmdir. Native dispatch and POSIX translation open, read, write, seek and close through `sx::` (`kernel/sx_file.cpp`) |
 
 The contract these rows describe is
 [`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract), landed with
@@ -124,9 +124,10 @@ Open/read landed with compositord's cursor catalog as its consumer and the
 whole-file save with the cursor profile; the Win32 plan stores its per-user
 settings through the same save. Metadata queries, streaming create/write and
 directory enumeration landed together with the SUN file dialog and Log
-Viewer's Save Log... as their consumers. What is missing, each slice with a
-consumer of its own: seek, 64-bit positions through the handles, and the path
-operations (mkdir, rename, unlink) a New Folder button would need. The existing
+Viewer's Save Log... as their consumers; `sxn_make_directory` and the
+replacing `sxn_rename_path` with SxBASIC's IDE (New Project, and a safe Save).
+What is missing, each slice with a consumer of its own: seek, 64-bit
+positions through the handles, and unlink and rmdir. The existing
 `cat` is still a planned consumer of sequential reads and `cp` of streaming
 writes: migrate each separately, preserving its command name and
 behavior, rather than adding a new POSIX utility to exercise a missing native

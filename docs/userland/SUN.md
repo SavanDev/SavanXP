@@ -206,6 +206,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, used by Files (POSIX), no SUN program yet |
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
+| `CreateDirectory`, `MoveFileEx` | `sxn_make_directory`, `sxn_rename_path` | done (SxBASIC's IDE: New Project, and Save as a rename over the old file); durable when they return |
 | `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, no New Folder |
 | Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
@@ -260,7 +261,7 @@ none of them a kernel slice: everything they need was already open to SUN.
 A registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
 a native `fork`, and the rest of the file surface below: seek, positioned
-or appending writes, and the path operations (mkdir, rename, unlink)
+or appending writes, and unlink and rmdir
 ([VFS-A](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
 Each one waits for a consumer, by rule 1.
 
@@ -283,7 +284,11 @@ call, each with the same `info`, until 0; an entry removed while listing does
 not make the listing skip another. `sxn_create_file(path, SXN_CREATE_NEW or
 SXN_CREATE_ALWAYS)` opens a file for writing from offset 0, created 0600 when
 missing or emptied (keeping its owner and mode); `sxn_write` appends to it and
-`sxn_flush_file` makes it durable. With `SXN_CREATE_EXECUTABLE` or'd in, a
+`sxn_flush_file` makes it durable. `sxn_make_directory` makes a 0700
+directory and `sxn_rename_path` renames within a volume, replacing a file at
+the new path; both sync the volume before returning, so writing a file whole
+under a temporary name and renaming it over the old one is a save that never
+leaves the file half written. With `SXN_CREATE_EXECUTABLE` or'd in, a
 file it creates is 0700, a program its owner can run: SxBASIC's Make SXE
 writes executables that way ([SXBASIC_IMAGE.md](SXBASIC_IMAGE.md)). The file dialog
 ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) and Log Viewer's Save Log... are
