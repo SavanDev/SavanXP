@@ -326,9 +326,6 @@ void mount_root_filesystem() {
 
 }
 
-/* -fstack-protector-strong viene en el perfil del kernel; en x86_64 estas dos
- * piezas las ponen cpu_init.cpp y panic.cpp. Aqui todavia no hay panic: el
- * fallo se informa por serie y se detiene la maquina. */
 namespace i386 {
 
 namespace boot_state {
@@ -341,6 +338,9 @@ State g_state = {};
 
 [[noreturn]] void panic(const char* message) { halt_with(message); }
 
+/* The kernel profile builds with -fstack-protector-strong. The guard lives
+ * here; cpu::initialize_stack_guard() seeds it as the first step of the boot
+ * entry. A failure is reported over serial and halts the machine. */
 extern "C" uintptr_t __stack_chk_guard = 0;
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
