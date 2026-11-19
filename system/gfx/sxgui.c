@@ -397,7 +397,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
            widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW ||
            widget->kind == SXGUI_TEXTEDIT || widget->kind == SXGUI_TABS ||
-           widget->kind == SXGUI_TRACKBAR || widget->kind == SXGUI_ICONVIEW;
+           widget->kind == SXGUI_TRACKBAR || widget->kind == SXGUI_ICONVIEW ||
+           widget->kind == SXGUI_PROPGRID;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -3540,6 +3541,448 @@ static void sxgui_paint_tabs(struct sx_painter *painter, const struct sxgui_widg
     }
 }
 
+/* ---- property grid ---------------------------------------------------------
+ *
+ * Rows of name and value. A text value is edited in place by lending the
+ * row's buffer to the single-line field's keys (edit_buffer, caret, scroll),
+ * so the grid has no editor of its own. The old text is kept in one buffer
+ * for Esc: only the focused grid edits, and there is one focus.
+ */
+
+#define SXGUI_PROPGRID_SAVED 256
+
+static char g_sxgui_prop_saved[SXGUI_PROPGRID_SAVED];
+static const struct sxgui_widget *g_sxgui_prop_saved_owner;
+
+static int sxgui_textfield_key(struct sxgui_widget *widget, const struct savanxp_input_event *event);
+static void sxgui_propgrid_reveal_caret(struct sxgui_widget *widget);
+
+static struct sx_rect sxgui_propgrid_inner(const struct sxgui_widget *widget)
+{
+    return sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
+}
+
+static int sxgui_propgrid_name_width(const struct sxgui_widget *widget)
+{
+    return sxgui_propgrid_inner(widget).width * 2 / 5;
+}
+
+static int sxgui_propgrid_visible_rows(const struct sxgui_widget *widget)
+{
+    int rows = sxgui_propgrid_inner(widget).height / sxgui_row_height();
+    return rows > 0 ? rows : 1;
+}
+
+static void sxgui_propgrid_reveal(struct sxgui_widget *widget)
+{
+    int visible = sxgui_propgrid_visible_rows(widget);
+    if (widget->value < widget->prop_first)
+    {
+        widget->prop_first = widget->value;
+    }
+    if (widget->value >= widget->prop_first + visible)
+    {
+        widget->prop_first = widget->value - visible + 1;
+    }
+    if (widget->prop_first < 0)
+    {
+        widget->prop_first = 0;
+    }
+}
+
+static struct sxgui_property *sxgui_propgrid_selected(struct sxgui_widget *widget)
+{
+    if (widget->properties == 0 || widget->value < 0 || widget->value >= widget->property_count)
+    {
+        return 0;
+    }
+    return &widget->properties[widget->value];
+}
+
+/* "&HRRGGBB" or "&HRRGGBB&" (more digits keep the low six) -> 0xRRGGBB. */
+static int sxgui_propgrid_parse_color(const char *text, uint32_t *color)
+{
+    uint32_t value = 0;
+    int digits = 0;
+
+    if (text == 0 || text[0] != '&' || (text[1] != 'H' && text[1] != 'h'))
+    {
+        return 0;
+    }
+    for (text += 2; *text != '\0' && *text != '&'; ++text)
+    {
+        int digit;
+        if (*text >= '0' && *text <= '9') digit = *text - '0';
+        else if (*text >= 'a' && *text <= 'f') digit = *text - 'a' + 10;
+        else if (*text >= 'A' && *text <= 'F') digit = *text - 'A' + 10;
+        else return 0;
+        value = (value << 4) | (uint32_t)digit;
+        ++digits;
+    }
+    if (digits == 0 || digits > 8 || (*text == '&' && text[1] != '\0'))
+    {
+        return 0;
+    }
+    *color = value & 0xFFFFFFu;
+    return 1;
+}
+
+static void sxgui_propgrid_begin_edit(struct sxgui_widget *widget, int clear)
+{
+    struct sxgui_property *property = sxgui_propgrid_selected(widget);
+    int length;
+
+    if (property == 0 || property->value == 0 || property->capacity <= 0 ||
+        (property->kind != SXGUI_PROPERTY_TEXT && property->kind != SXGUI_PROPERTY_COLOR))
+    {
+        return;
+    }
+    length = (int)strlen(property->value);
+    g_sxgui_prop_saved_owner = length < SXGUI_PROPGRID_SAVED ? widget : 0;
+    if (g_sxgui_prop_saved_owner != 0)
+    {
+        memcpy(g_sxgui_prop_saved, property->value, (size_t)length + 1);
+    }
+    if (clear)
+    {
+        property->value[0] = '\0';
+    }
+    widget->prop_editing = 1;
+    widget->edit_buffer = property->value;
+    widget->edit_capacity = property->capacity;
+    widget->caret = (int)strlen(property->value);
+    widget->sel_anchor = -1;
+    widget->scroll = 0;
+    sxgui_propgrid_reveal_caret(widget);
+}
+
+/* Ends an edit: keep fires CHANGE when the text differs; otherwise the old
+ * text goes back. */
+static int sxgui_propgrid_end_edit(struct sxgui_widget *widget, int keep)
+{
+    struct sxgui_property *property = sxgui_propgrid_selected(widget);
+    int had_saved = g_sxgui_prop_saved_owner == widget;
+    int changed;
+
+    if (!widget->prop_editing)
+    {
+        return 0;
+    }
+    widget->prop_editing = 0;
+    widget->edit_buffer = 0;
+    widget->edit_capacity = 0;
+    g_sxgui_prop_saved_owner = 0;
+    if (property == 0)
+    {
+        return 1;
+    }
+    changed = !had_saved || strcmp(g_sxgui_prop_saved, property->value) != 0;
+    if (!keep)
+    {
+        if (had_saved)
+        {
+            memcpy(property->value, g_sxgui_prop_saved, strlen(g_sxgui_prop_saved) + 1);
+        }
+        return 1;
+    }
+    if (changed)
+    {
+        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    }
+    return 1;
+}
+
+/* The field's keys scroll for the field's width; the value's cell is
+ * narrower, so the grid puts the caret back in view itself. */
+static void sxgui_propgrid_reveal_caret(struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_propgrid_inner(widget);
+    struct sxgui_property *property = sxgui_propgrid_selected(widget);
+    int width = inner.width - sxgui_propgrid_name_width(widget) - 1 - 2 * SXGUI_TEXT_PAD;
+    int caret_x;
+    uint32_t color;
+
+    if (property == 0 || widget->edit_buffer == 0)
+    {
+        return;
+    }
+    if (property->kind == SXGUI_PROPERTY_COLOR && sxgui_propgrid_parse_color(widget->edit_buffer, &color))
+    {
+        width -= sxgui_row_height() + 2 + SXGUI_TEXT_PAD;
+    }
+    if (width < 1)
+    {
+        width = 1;
+    }
+    caret_x = sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
+    if (caret_x - widget->scroll > width - 1)
+    {
+        widget->scroll = caret_x - (width - 1);
+    }
+    if (caret_x < widget->scroll)
+    {
+        widget->scroll = caret_x;
+    }
+}
+
+/* BOOL flips, LIST steps (back with direction -1), and both fire CHANGE. */
+static int sxgui_propgrid_step(struct sxgui_widget *widget, int direction)
+{
+    struct sxgui_property *property = sxgui_propgrid_selected(widget);
+    const char *next = 0;
+
+    if (property == 0 || property->value == 0)
+    {
+        return 0;
+    }
+    if (property->kind == SXGUI_PROPERTY_BOOL)
+    {
+        next = strcmp(property->value, "True") == 0 ? "False" : "True";
+    }
+    else if (property->kind == SXGUI_PROPERTY_LIST && property->choice_count > 0 && property->choices != 0)
+    {
+        int index;
+        int current = -1;
+        for (index = 0; index < property->choice_count; ++index)
+        {
+            if (strcmp(property->choices[index], property->value) == 0)
+            {
+                current = index;
+                break;
+            }
+        }
+        if (current < 0)
+        {
+            current = direction > 0 ? property->choice_count - 1 : 0;
+        }
+        next = property->choices[(current + direction + property->choice_count) % property->choice_count];
+    }
+    if (next == 0 || (int)strlen(next) >= property->capacity)
+    {
+        return 0;
+    }
+    memcpy(property->value, next, strlen(next) + 1);
+    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    return 1;
+}
+
+/* The selected row's value acts: BOOL/LIST step, TEXT/COLOR start editing. */
+static int sxgui_propgrid_act(struct sxgui_widget *widget, int direction)
+{
+    struct sxgui_property *property = sxgui_propgrid_selected(widget);
+    if (property == 0)
+    {
+        return 0;
+    }
+    if (property->kind == SXGUI_PROPERTY_BOOL || property->kind == SXGUI_PROPERTY_LIST)
+    {
+        return sxgui_propgrid_step(widget, direction);
+    }
+    sxgui_propgrid_begin_edit(widget, 0);
+    return widget->prop_editing;
+}
+
+static int sxgui_propgrid_select(struct sxgui_widget *widget, int row)
+{
+    if (widget->property_count <= 0)
+    {
+        return 0;
+    }
+    row = sxgui_clamp_int(row, 0, widget->property_count - 1);
+    if (row == widget->value)
+    {
+        return 0;
+    }
+    (void)sxgui_propgrid_end_edit(widget, 1);
+    widget->value = row;
+    sxgui_propgrid_reveal(widget);
+    return 1;
+}
+
+static int sxgui_propgrid_press(struct sxgui_widget *widget, const struct savanxp_gui_pointer_event *event)
+{
+    struct sx_rect inner = sxgui_propgrid_inner(widget);
+    int row;
+
+    if (event->y < inner.y || widget->property_count <= 0)
+    {
+        return 0;
+    }
+    row = widget->prop_first + (event->y - inner.y) / sxgui_row_height();
+    if (row >= widget->property_count)
+    {
+        return sxgui_propgrid_end_edit(widget, 1);
+    }
+    if (row != widget->value)
+    {
+        return sxgui_propgrid_select(widget, row);
+    }
+    if (event->x < inner.x + sxgui_propgrid_name_width(widget) || widget->prop_editing)
+    {
+        return 0;
+    }
+    return sxgui_propgrid_act(widget, 1);
+}
+
+static int sxgui_propgrid_key(struct sxgui_widget *widget, const struct savanxp_input_event *event)
+{
+    int visible = sxgui_propgrid_visible_rows(widget);
+    int shift = (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0;
+
+    if (widget->property_count <= 0)
+    {
+        return 0;
+    }
+    if (widget->value < 0 || widget->value >= widget->property_count)
+    {
+        widget->value = 0;
+    }
+    if (widget->prop_editing)
+    {
+        void (*on_action)(struct sxgui_widget *, void *) = widget->on_action;
+        int handled;
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_ENTER:
+            return sxgui_propgrid_end_edit(widget, 1);
+        case SAVANXP_KEY_ESC:
+            return sxgui_propgrid_end_edit(widget, 0);
+        case SAVANXP_KEY_UP:
+        case SAVANXP_KEY_DOWN:
+            (void)sxgui_propgrid_end_edit(widget, 1);
+            return sxgui_propgrid_select(widget, widget->value + (event->key == SAVANXP_KEY_UP ? -1 : 1)) || 1;
+        default:
+            break;
+        }
+        /* The field's keys, without its CHANGE per keystroke: the grid
+         * fires once, when the edit is kept. No selection inside the value
+         * is drawn, so none is kept. */
+        widget->on_action = 0;
+        handled = sxgui_textfield_key(widget, event);
+        widget->on_action = on_action;
+        widget->sel_anchor = -1;
+        sxgui_propgrid_reveal_caret(widget);
+        return handled || (event->ascii >= 32 && event->ascii < 127);
+    }
+    switch (event->key)
+    {
+    case SAVANXP_KEY_UP:
+        return sxgui_propgrid_select(widget, widget->value - 1);
+    case SAVANXP_KEY_DOWN:
+        return sxgui_propgrid_select(widget, widget->value + 1);
+    case SAVANXP_KEY_PAGE_UP:
+        return sxgui_propgrid_select(widget, widget->value - visible);
+    case SAVANXP_KEY_PAGE_DOWN:
+        return sxgui_propgrid_select(widget, widget->value + visible);
+    case SAVANXP_KEY_HOME:
+        return sxgui_propgrid_select(widget, 0);
+    case SAVANXP_KEY_END:
+        return sxgui_propgrid_select(widget, widget->property_count - 1);
+    case SAVANXP_KEY_ENTER:
+    case SAVANXP_KEY_F2:
+        return sxgui_propgrid_act(widget, shift ? -1 : 1);
+    default:
+        break;
+    }
+    if (event->ascii == ' ')
+    {
+        struct sxgui_property *property = sxgui_propgrid_selected(widget);
+        if (property != 0 && (property->kind == SXGUI_PROPERTY_BOOL || property->kind == SXGUI_PROPERTY_LIST))
+        {
+            return sxgui_propgrid_step(widget, shift ? -1 : 1);
+        }
+    }
+    /* Typing on a text value starts an edit that replaces it, as in VB. */
+    if (event->ascii >= 32 && event->ascii < 127 &&
+        (event->modifiers & SAVANXP_KEY_MOD_CTRL) == 0)
+    {
+        sxgui_propgrid_begin_edit(widget, 1);
+        if (widget->prop_editing)
+        {
+            return sxgui_propgrid_key(widget, event);
+        }
+    }
+    return 0;
+}
+
+static void sxgui_paint_propgrid(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_propgrid_inner(widget);
+    int row_height = sxgui_row_height();
+    int name_width = sxgui_propgrid_name_width(widget);
+    int value_x = inner.x + name_width + 1;
+    int row;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+    if (!sx_painter_push_clip(painter, inner))
+    {
+        return;
+    }
+    for (row = widget->prop_first; row < widget->property_count; ++row)
+    {
+        const struct sxgui_property *property = &widget->properties[row];
+        int row_y = inner.y + (row - widget->prop_first) * row_height;
+        int selected = row == widget->value;
+        int text_x = value_x + SXGUI_TEXT_PAD;
+        char empty[1] = {0};
+        char *value = property->value != 0 ? property->value : empty;
+        uint32_t color;
+        struct sx_rect value_rect;
+
+        if (row_y >= inner.y + inner.height)
+        {
+            break;
+        }
+        value_rect = sx_rect_make(value_x, row_y, inner.x + inner.width - value_x, row_height - 1);
+        if (selected)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(inner.x, row_y, name_width, row_height - 1),
+                widget->focused ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE);
+        }
+        if (sx_painter_push_clip(painter, sx_rect_make(inner.x, row_y, name_width - 1, row_height)))
+        {
+            sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD, row_y + 2,
+                property->name != 0 ? property->name : "",
+                selected && widget->focused ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
+            sx_painter_pop_clip(painter);
+        }
+        if (property->kind == SXGUI_PROPERTY_COLOR && sxgui_propgrid_parse_color(value, &color))
+        {
+            struct sx_rect swatch = sx_rect_make(text_x, row_y + 2, row_height + 2, row_height - 5);
+            sx_painter_fill_rect(painter, swatch, color);
+            sx_painter_draw_frame(painter, swatch, SXGUI_COLOR_TEXT);
+            text_x += swatch.width + SXGUI_TEXT_PAD;
+        }
+        if (sx_painter_push_clip(painter, value_rect))
+        {
+            int scroll = selected && widget->prop_editing ? widget->scroll : 0;
+            sx_painter_draw_text(painter, text_x - scroll, row_y + 2, value, SXGUI_COLOR_TEXT);
+            if (selected && widget->prop_editing && widget->focused)
+            {
+                sx_painter_vline(painter,
+                    text_x - scroll + sxgui_text_prefix_width(value, widget->caret),
+                    row_y + 2, gfx_text_height(), SXGUI_COLOR_TEXT);
+            }
+            if (property->kind == SXGUI_PROPERTY_LIST)
+            {
+                /* the drop-down's arrow, though the list steps in place */
+                int ax = value_rect.x + value_rect.width - 9;
+                int ay = row_y + row_height / 2 - 1;
+                sx_painter_hline(painter, ax, ay, 7, SXGUI_COLOR_TEXT);
+                sx_painter_hline(painter, ax + 1, ay + 1, 5, SXGUI_COLOR_TEXT);
+                sx_painter_hline(painter, ax + 2, ay + 2, 3, SXGUI_COLOR_TEXT);
+                sx_painter_hline(painter, ax + 3, ay + 3, 1, SXGUI_COLOR_TEXT);
+            }
+            sx_painter_pop_clip(painter);
+        }
+        sx_painter_hline(painter, inner.x, row_y + row_height - 1, inner.width, SXGUI_COLOR_FACE);
+    }
+    sx_painter_vline(painter, inner.x + name_width, inner.y, inner.height, SXGUI_COLOR_FACE);
+    sx_painter_pop_clip(painter);
+}
+
 static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widget *widget, int combobox_open)
 {
     switch (widget->kind)
@@ -3555,6 +3998,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
         break;
     case SXGUI_LISTBOX:
         sxgui_paint_listbox(painter, widget);
+        break;
+    case SXGUI_PROPGRID:
+        sxgui_paint_propgrid(painter, widget);
         break;
     case SXGUI_ICONVIEW:
         sxgui_paint_iconview(painter, widget);
@@ -4503,6 +4949,9 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 }
                 break;
             }
+            case SXGUI_PROPGRID:
+                changed = sxgui_propgrid_press(widget, event) || changed;
+                break;
             case SXGUI_ICONVIEW:
             {
                 int item;
@@ -4686,6 +5135,172 @@ static int sxgui_focus_step(struct sxgui_context *ctx, int direction)
             sxgui_set_focus(ctx, index);
             return 1;
         }
+    }
+    return 0;
+}
+
+/* The single-line field's keys, on any widget whose edit_buffer, caret and
+ * scroll it may use: the field itself, and the property grid while a text
+ * value is being edited in place. */
+static int sxgui_textfield_key(struct sxgui_widget *widget, const struct savanxp_input_event *event)
+{
+    int length;
+
+    sxgui_textfield_clamp_caret(widget);
+    length = (int)strlen(widget->edit_buffer);
+
+    /* The same machinery as textedit: the selection helpers work on
+     * edit_buffer/caret/sel_anchor and do not know which widget is which. */
+    if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
+        (event->modifiers & SAVANXP_KEY_MOD_ALT_GR) == 0)
+    {
+        int done = 0;
+
+        switch (event->ascii)
+        {
+        case 'c':
+        case 'C':
+            done = sxgui_sel_copy(widget);
+            break;
+        case 'x':
+        case 'X':
+            if (sxgui_sel_copy(widget) && sxgui_sel_delete(widget))
+            {
+                sxgui_textfield_scroll_to_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            }
+            done = 1;
+            break;
+        case 'v':
+        case 'V':
+            if (sxgui_sel_paste(widget, 1))
+            {
+                sxgui_textfield_scroll_to_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            }
+            done = 1;
+            break;
+        case 'a':
+        case 'A':
+            widget->sel_anchor = 0;
+            widget->caret = length;
+            sxgui_textfield_scroll_to_caret(widget);
+            done = 1;
+            break;
+        default:
+            break;
+        }
+        if (done || (event->ascii >= 32 && event->ascii < 127))
+        {
+            return 1;
+        }
+    }
+
+    if (sxgui_sel_active(widget))
+    {
+        int destructive =
+            event->key == SAVANXP_KEY_BACKSPACE ||
+            event->key == SAVANXP_KEY_DELETE ||
+            (event->ascii >= 32 && event->ascii < 127);
+
+        if (destructive)
+        {
+            sxgui_sel_delete(widget);
+            length = (int)strlen(widget->edit_buffer);
+            sxgui_textfield_scroll_to_caret(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            if (event->key == SAVANXP_KEY_BACKSPACE || event->key == SAVANXP_KEY_DELETE)
+            {
+                return 1;
+            }
+        }
+    }
+
+    switch (event->key)
+    {
+    case SAVANXP_KEY_LEFT:
+    case SAVANXP_KEY_RIGHT:
+    case SAVANXP_KEY_HOME:
+    case SAVANXP_KEY_END:
+        sxgui_sel_begin_move(widget, (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0);
+        break;
+    default:
+        sxgui_sel_clear(widget);
+        break;
+    }
+
+    if (event->key == SAVANXP_KEY_LEFT)
+    {
+        if (widget->caret > 0)
+        {
+            widget->caret -= 1;
+            sxgui_textfield_scroll_to_caret(widget);
+            return 1;
+        }
+        return 0;
+    }
+    if (event->key == SAVANXP_KEY_RIGHT)
+    {
+        if (widget->caret < length)
+        {
+            widget->caret += 1;
+            sxgui_textfield_scroll_to_caret(widget);
+            return 1;
+        }
+        return 0;
+    }
+    if (event->key == SAVANXP_KEY_HOME)
+    {
+        widget->caret = 0;
+        sxgui_textfield_scroll_to_caret(widget);
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_END)
+    {
+        widget->caret = length;
+        sxgui_textfield_scroll_to_caret(widget);
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_BACKSPACE)
+    {
+        if (widget->caret > 0)
+        {
+            memmove(
+                widget->edit_buffer + widget->caret - 1,
+                widget->edit_buffer + widget->caret,
+                (size_t)(length - widget->caret + 1));
+            widget->caret -= 1;
+            sxgui_textfield_scroll_to_caret(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
+        }
+        return 0;
+    }
+    if (event->key == SAVANXP_KEY_DELETE)
+    {
+        if (widget->caret < length)
+        {
+            memmove(
+                widget->edit_buffer + widget->caret,
+                widget->edit_buffer + widget->caret + 1,
+                (size_t)(length - widget->caret));
+            sxgui_textfield_scroll_to_caret(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
+        }
+        return 0;
+    }
+    if (event->ascii >= 32 && event->ascii < 127 && length < widget->edit_capacity - 1)
+    {
+        memmove(
+            widget->edit_buffer + widget->caret + 1,
+            widget->edit_buffer + widget->caret,
+            (size_t)(length - widget->caret + 1));
+        widget->edit_buffer[widget->caret] = (char)event->ascii;
+        widget->caret += 1;
+        sxgui_textfield_scroll_to_caret(widget);
+        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+        return 1;
     }
     return 0;
 }
@@ -4891,6 +5506,11 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             return sxgui_radio_select(ctx, ctx->focus_index);
         }
         return 0;
+    }
+
+    if (widget->kind == SXGUI_PROPGRID)
+    {
+        return sxgui_propgrid_key(widget, event);
     }
 
     if (widget->kind == SXGUI_TRACKBAR)
@@ -5190,163 +5810,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
 
     if (widget->kind == SXGUI_TEXTFIELD && widget->edit_buffer != 0 && widget->edit_capacity > 0)
     {
-        sxgui_textfield_clamp_caret(widget);
-        length = (int)strlen(widget->edit_buffer);
-
-        /* The same machinery as textedit: the selection helpers work on
-         * edit_buffer/caret/sel_anchor and do not know which widget is which. */
-        if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
-            (event->modifiers & SAVANXP_KEY_MOD_ALT_GR) == 0)
-        {
-            int done = 0;
-
-            switch (event->ascii)
-            {
-            case 'c':
-            case 'C':
-                done = sxgui_sel_copy(widget);
-                break;
-            case 'x':
-            case 'X':
-                if (sxgui_sel_copy(widget) && sxgui_sel_delete(widget))
-                {
-                    sxgui_textfield_scroll_to_caret(widget);
-                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                }
-                done = 1;
-                break;
-            case 'v':
-            case 'V':
-                if (sxgui_sel_paste(widget, 1))
-                {
-                    sxgui_textfield_scroll_to_caret(widget);
-                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                }
-                done = 1;
-                break;
-            case 'a':
-            case 'A':
-                widget->sel_anchor = 0;
-                widget->caret = length;
-                sxgui_textfield_scroll_to_caret(widget);
-                done = 1;
-                break;
-            default:
-                break;
-            }
-            if (done || (event->ascii >= 32 && event->ascii < 127))
-            {
-                return 1;
-            }
-        }
-
-        if (sxgui_sel_active(widget))
-        {
-            int destructive =
-                event->key == SAVANXP_KEY_BACKSPACE ||
-                event->key == SAVANXP_KEY_DELETE ||
-                (event->ascii >= 32 && event->ascii < 127);
-
-            if (destructive)
-            {
-                sxgui_sel_delete(widget);
-                length = (int)strlen(widget->edit_buffer);
-                sxgui_textfield_scroll_to_caret(widget);
-                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                if (event->key == SAVANXP_KEY_BACKSPACE || event->key == SAVANXP_KEY_DELETE)
-                {
-                    return 1;
-                }
-            }
-        }
-
-        switch (event->key)
-        {
-        case SAVANXP_KEY_LEFT:
-        case SAVANXP_KEY_RIGHT:
-        case SAVANXP_KEY_HOME:
-        case SAVANXP_KEY_END:
-            sxgui_sel_begin_move(widget, (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0);
-            break;
-        default:
-            sxgui_sel_clear(widget);
-            break;
-        }
-
-        if (event->key == SAVANXP_KEY_LEFT)
-        {
-            if (widget->caret > 0)
-            {
-                widget->caret -= 1;
-                sxgui_textfield_scroll_to_caret(widget);
-                return 1;
-            }
-            return 0;
-        }
-        if (event->key == SAVANXP_KEY_RIGHT)
-        {
-            if (widget->caret < length)
-            {
-                widget->caret += 1;
-                sxgui_textfield_scroll_to_caret(widget);
-                return 1;
-            }
-            return 0;
-        }
-        if (event->key == SAVANXP_KEY_HOME)
-        {
-            widget->caret = 0;
-            sxgui_textfield_scroll_to_caret(widget);
-            return 1;
-        }
-        if (event->key == SAVANXP_KEY_END)
-        {
-            widget->caret = length;
-            sxgui_textfield_scroll_to_caret(widget);
-            return 1;
-        }
-        if (event->key == SAVANXP_KEY_BACKSPACE)
-        {
-            if (widget->caret > 0)
-            {
-                memmove(
-                    widget->edit_buffer + widget->caret - 1,
-                    widget->edit_buffer + widget->caret,
-                    (size_t)(length - widget->caret + 1));
-                widget->caret -= 1;
-                sxgui_textfield_scroll_to_caret(widget);
-                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                return 1;
-            }
-            return 0;
-        }
-        if (event->key == SAVANXP_KEY_DELETE)
-        {
-            if (widget->caret < length)
-            {
-                memmove(
-                    widget->edit_buffer + widget->caret,
-                    widget->edit_buffer + widget->caret + 1,
-                    (size_t)(length - widget->caret));
-                sxgui_textfield_scroll_to_caret(widget);
-                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                return 1;
-            }
-            return 0;
-        }
-        if (event->ascii >= 32 && event->ascii < 127 && length < widget->edit_capacity - 1)
-        {
-            memmove(
-                widget->edit_buffer + widget->caret + 1,
-                widget->edit_buffer + widget->caret,
-                (size_t)(length - widget->caret + 1));
-            widget->edit_buffer[widget->caret] = (char)event->ascii;
-            widget->caret += 1;
-            sxgui_textfield_scroll_to_caret(widget);
-            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-            return 1;
-        }
-        return 0;
+        return sxgui_textfield_key(widget, event);
     }
 
     if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0 && widget->edit_capacity > 0)
@@ -5973,6 +6437,24 @@ struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capaci
     widget.edit_buffer = buffer;
     widget.edit_capacity = capacity;
     return widget;
+}
+
+struct sxgui_widget sxgui_propgrid(struct sx_rect rect, struct sxgui_property *properties, int count)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_PROPGRID, rect, 0);
+    widget.properties = properties;
+    widget.property_count = properties != 0 && count > 0 ? count : 0;
+    widget.value = widget.property_count > 0 ? 0 : -1;
+    return widget;
+}
+
+int sxgui_propgrid_commit(struct sxgui_widget *widget)
+{
+    if (widget == 0 || widget->kind != SXGUI_PROPGRID)
+    {
+        return 0;
+    }
+    return sxgui_propgrid_end_edit(widget, 1);
 }
 
 struct sxgui_widget sxgui_trackbar(struct sx_rect rect, int range_min, int range_max, int value)

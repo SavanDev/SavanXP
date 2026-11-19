@@ -90,7 +90,8 @@ enum sxgui_kind {
     SXGUI_TEXTEDIT,
     SXGUI_TABS,
     SXGUI_TRACKBAR,
-    SXGUI_ICONVIEW
+    SXGUI_ICONVIEW,
+    SXGUI_PROPGRID
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -154,6 +155,30 @@ struct sxgui_column {
 /* Gutter marks (edit_marks). */
 #define SXGUI_TEXTEDIT_MARK_BREAKPOINT 0x1u  /* a red dot */
 #define SXGUI_TEXTEDIT_MARK_CURRENT    0x2u  /* a yellow arrow and the line tinted */
+
+/* A row of the property grid. The value is the caller's NUL-terminated
+ * buffer, always held as text, whatever the kind:
+ * - TEXT: edited in place (Enter or F2 or typing starts, Enter keeps, Esc
+ *   puts the old text back);
+ * - BOOL: "True" or "False", flipped by a click, Space or Enter;
+ * - LIST: one of `choices`, stepped through the same way (Shift goes back);
+ * - COLOR: edited as text like TEXT, shown with a swatch when it reads as
+ *   "&HRRGGBB" (VB's form, a trailing '&' allowed). */
+enum sxgui_property_kind {
+    SXGUI_PROPERTY_TEXT = 0,
+    SXGUI_PROPERTY_BOOL,
+    SXGUI_PROPERTY_LIST,
+    SXGUI_PROPERTY_COLOR
+};
+
+struct sxgui_property {
+    const char *name;
+    int kind;
+    char *value;
+    int capacity;
+    const char *const *choices;
+    int choice_count;
+};
 
 /* A coloured run of one line, in bytes from the line's start. */
 struct sxgui_text_span {
@@ -248,6 +273,16 @@ struct sxgui_widget {
         struct sxgui_text_span *spans, int max_spans, void *user);
     unsigned (*edit_marks)(int line_number, void *user);
     void *edit_user;
+
+    /* propgrid: the rows, the caller's. `value` is the selected row and
+     * `prop_first` the first one shown; SXGUI_ACTION_CHANGE fires when a
+     * row's value changed (a flip, a step, an edit kept with Enter), with
+     * `value` naming the row. `prop_editing` is 1 while a value is edited in
+     * place, in edit_buffer/caret/scroll, which then point at that row. */
+    struct sxgui_property *properties;
+    int property_count;
+    int prop_first;
+    int prop_editing;
 };
 
 /* ---- menu bar -------------------------------------------------------------
@@ -597,6 +632,16 @@ int sxgui_tabs_preferred_width(const char *const *labels, int label_count);
  * separated by '\n') and the caller owns it. No word wrap: long lines are
  * clipped to the width and the horizontal scroll follows the caret. */
 struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capacity);
+
+/* Two columns, name and value, for the properties of something: an IDE's
+ * property window. Rows are `struct sxgui_property` above; Up/Down/Home/End
+ * and PgUp/PgDn move the selection, a click on the selected row's value acts
+ * on it. Rows past the bottom scroll with the selection; there is no
+ * scrollbar. sxgui_propgrid_commit keeps an edit in progress (as Enter
+ * would, firing CHANGE) and returns 1 if there was one: call it before
+ * reading the values or replacing the rows. */
+struct sxgui_widget sxgui_propgrid(struct sx_rect rect, struct sxgui_property *properties, int count);
+int sxgui_propgrid_commit(struct sxgui_widget *widget);
 
 /* A document the toolkit owns, instead of the caller's fixed buffer: the
  * buffer grows as the user types or pastes, and every edit is recorded so

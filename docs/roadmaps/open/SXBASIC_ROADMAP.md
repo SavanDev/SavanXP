@@ -276,8 +276,12 @@ executable.
 and redo by step), `edit_flags` (`SXGUI_TEXTEDIT_LINE_NUMBERS`,
 `SXGUI_TEXTEDIT_AUTO_INDENT`), `edit_colorize` (colour by span, asked per
 visible line) and `edit_marks` (breakpoint and current-line marks in the
-gutter), checked by `sxgui-textedit-test` on keys and painted pixels.
-Pending: the property grid, then the IDE.
+gutter), checked by `sxgui-textedit-test` on keys and painted pixels. The
+property grid, `SXGUI_PROPGRID` (`struct sxgui_property` rows: text, a list,
+a colour, true/false), checked by `sxgui-propgrid-test`; its missing
+scrollbar and drop-down are in
+[PLATFORM_GRAPHICS.md](../../desktop/PLATFORM_GRAPHICS.md#known-gaps-in-sxgui-c).
+Pending: the IDE.
 
 ### Phase 5 — the visual designer
 

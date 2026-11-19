@@ -18,6 +18,9 @@ Cut-off notes:
 - **SXGUI text editor code options.** `SXGUI_TEXTEDIT` takes `edit_flags` (`SXGUI_TEXTEDIT_LINE_NUMBERS` gutter,
   `SXGUI_TEXTEDIT_AUTO_INDENT`), `edit_colorize` (colour by span, per visible line) and `edit_marks` (breakpoint and
   current-line marks); all off by default. Loading a document now also scrolls back to its first line.
+- **SXGUI property grid.** `SXGUI_PROPGRID` (`sxgui_propgrid`, `struct sxgui_property`) shows name and value rows and edits
+  them in place: text (Enter keeps, Esc reverts), true/false and list values stepped by click or Space, colours with a
+  swatch; `SXGUI_ACTION_CHANGE` fires per kept value, and `sxgui_propgrid_commit` keeps an edit in progress.
 - **SxBASIC runs Savan BASIC programs, console and Windows.** `/system/sxbasic.sxe <project.sbp>` compiles a
   project to bytecode and runs it, its forms as SXGUI windows with events, `ShowModal`, `MsgBox` and `InputBox`
   ([SXBASIC.md](docs/userland/SXBASIC.md)); `--selftest <script>` drives one with no window. Checked by
