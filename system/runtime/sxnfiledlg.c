@@ -9,7 +9,7 @@
  *
  * The confirmation before replacing a file is a second dialog that replaces
  * this one (the toolkit has one at a time); "No" brings the file dialog back
- * as it was.
+ * as it was. Create New Folder asks for the name the same way.
  */
 
 #include "sxn/sxnfiledlg.h"
@@ -24,7 +24,7 @@
 #include "sxgfx/sxgui.h"
 #include "sxn/sxn.h"
 
-/* The Up button's glyph, shared with Files. */
+/* The Up and Create New Folder glyphs, shared with Files. */
 #include "../gfx/toolbar_glyphs/icons.inc"
 
 #define FD_MAX_ENTRIES 512
@@ -34,6 +34,7 @@
 #define FD_HEIGHT 360
 #define FD_CONFIRM_WIDTH 380
 #define FD_CONFIRM_HEIGHT 112
+#define FD_FOLDER_NAME_CAPACITY 128
 #define FD_LABEL_WIDTH 88
 #define FD_UP_SIZE 28
 #define FD_SIZE_COLUMN 72
@@ -43,6 +44,7 @@ enum {
     FD_LOOK_IN_LABEL,
     FD_FOLDER,
     FD_UP,
+    FD_NEW_FOLDER,
     FD_LIST,
     FD_NAME_LABEL,
     FD_NAME,
@@ -60,6 +62,14 @@ enum {
     FD_CONFIRM_YES,
     FD_CONFIRM_NO,
     FD_CONFIRM_COUNT
+};
+
+enum {
+    FD_NEW_FOLDER_LABEL,
+    FD_NEW_FOLDER_NAME,
+    FD_NEW_FOLDER_OK,
+    FD_NEW_FOLDER_CANCEL,
+    FD_NEW_FOLDER_COUNT
 };
 
 struct fd_entry {
@@ -97,6 +107,9 @@ static struct sxgui_widget g_widgets[FD_WIDGET_COUNT];
 static struct sxgui_dialog g_dialog;
 static struct sxgui_widget g_confirm_widgets[FD_CONFIRM_COUNT];
 static struct sxgui_dialog g_confirm;
+static char g_folder_name[FD_FOLDER_NAME_CAPACITY];
+static struct sxgui_widget g_new_folder_widgets[FD_NEW_FOLDER_COUNT];
+static struct sxgui_dialog g_new_folder;
 static struct sxgui_column g_columns[3] = {
     {"Name", 200, 0},
     {"Size", FD_SIZE_COLUMN, SXGUI_COLUMN_RIGHT},
@@ -105,6 +118,8 @@ static struct sxgui_column g_columns[3] = {
 
 static struct sx_bitmap g_up_bitmap;
 static const struct sx_bitmap *g_up_glyph[1];
+static struct sx_bitmap g_new_folder_bitmap;
+static const struct sx_bitmap *g_new_folder_glyph[1];
 static int g_icons_ready;
 
 /* ---- paths ----------------------------------------------------------------- */
@@ -606,13 +621,13 @@ static void fd_ask_replace(void)
 }
 
 /* The file dialog closed by ESC or its close button is a cancel; the
- * confirmation closed that way is a "No". Every other way it closes clears
- * the watch first. */
+ * confirmation closed that way is a "No", the folder name a Cancel. Every
+ * other way it closes clears the watch first. */
 static void fd_on_closed(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user)
 {
     (void)app;
     (void)user;
-    if (dialog == &g_confirm)
+    if (dialog == &g_confirm || dialog == &g_new_folder)
     {
         fd_reopen();
         return;
@@ -741,6 +756,120 @@ static void fd_accept(void)
     fd_ask_replace();
 }
 
+/* The row showing `name` in the listing, or -1. */
+static int fd_row_named(const char *name)
+{
+    int row;
+
+    for (row = 0; row < g_entry_count; ++row)
+    {
+        if (strcmp(g_entries[g_order[row]].name, name) == 0)
+        {
+            return row;
+        }
+    }
+    return -1;
+}
+
+/* Creates the folder named in the prompt, in the folder shown, and goes back
+ * to the file dialog with it selected; or with the reason it was not. */
+static void fd_create_folder(void)
+{
+    struct sxn_file_info info;
+    char path[SXN_FILE_DIALOG_PATH_MAX];
+    char name[FD_FOLDER_NAME_CAPACITY];
+    char *trimmed = g_folder_name;
+    size_t length;
+    long made;
+
+    while (*trimmed == ' ')
+    {
+        ++trimmed;
+    }
+    length = strlen(trimmed);
+    while (length > 0 && trimmed[length - 1] == ' ')
+    {
+        --length;
+    }
+    snprintf(name, sizeof(name), "%.*s", (int)length, trimmed);
+    if (name[0] == '\0' || strchr(name, '/') != 0 || strchr(name, '*') != 0 || strchr(name, '?') != 0 ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+    {
+        snprintf(g_message, sizeof(g_message), "A folder name cannot be empty or contain / * or ?.");
+    }
+    else if (!fd_join(g_folder, name, path, sizeof(path)))
+    {
+        snprintf(g_message, sizeof(g_message), "The path is too long.");
+    }
+    else if (sxn_query_path(path, &info) == 0)
+    {
+        snprintf(g_message, sizeof(g_message), "%.100s already exists.", name);
+    }
+    else if ((made = sxn_make_directory(path)) < 0)
+    {
+        snprintf(g_message, sizeof(g_message), "%.100s cannot be created: %s.", name,
+            made == -SAVANXP_EROFS ? "the disk is read-only" : fd_error_text(made));
+    }
+    else if (fd_go_to(g_folder))
+    {
+        g_widgets[FD_LIST].value = fd_row_named(name);
+    }
+    fd_reopen();
+}
+
+static void fd_on_new_folder(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    if (widget == &g_new_folder_widgets[FD_NEW_FOLDER_OK])
+    {
+        fd_create_folder();
+        return;
+    }
+    fd_reopen();
+}
+
+/* Asks for the new folder's name, offering the first free "New Folder",
+ * "New Folder (2)", ... as Windows names one. */
+static void fd_ask_folder_name(void)
+{
+    struct sxn_file_info info;
+    char path[SXN_FILE_DIALOG_PATH_MAX];
+    const int width = FD_CONFIRM_WIDTH;
+    const int height = FD_CONFIRM_HEIGHT;
+    int attempt;
+
+    snprintf(g_folder_name, sizeof(g_folder_name), "New Folder");
+    for (attempt = 2; attempt < 100 && fd_join(g_folder, g_folder_name, path, sizeof(path)) &&
+                      sxn_query_path(path, &info) == 0;
+         ++attempt)
+    {
+        snprintf(g_folder_name, sizeof(g_folder_name), "New Folder (%d)", attempt);
+    }
+    g_new_folder_widgets[FD_NEW_FOLDER_LABEL] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, 14, width - SXGUI_DIALOG_MARGIN * 2, 18), "Name of the new folder:");
+    g_new_folder_widgets[FD_NEW_FOLDER_NAME] = sxgui_textfield(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, 36, width - SXGUI_DIALOG_MARGIN * 2, SXGUI_FIELD_HEIGHT), g_folder_name,
+        (int)sizeof(g_folder_name));
+    g_new_folder_widgets[FD_NEW_FOLDER_NAME].caret = (int)strlen(g_folder_name);
+    g_new_folder_widgets[FD_NEW_FOLDER_OK] = sxgui_button(
+        sx_rect_make(width - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH * 2 - SXGUI_GAP,
+            height - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT, SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", fd_on_new_folder, 0);
+    g_new_folder_widgets[FD_NEW_FOLDER_CANCEL] = sxgui_button(
+        sx_rect_make(width - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_WIDTH, height - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+            SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", fd_on_new_folder, 0);
+    memset(&g_new_folder, 0, sizeof(g_new_folder));
+    g_new_folder.title = "New Folder";
+    g_new_folder.widgets = g_new_folder_widgets;
+    g_new_folder.widget_count = FD_NEW_FOLDER_COUNT;
+    g_new_folder.initial_focus = FD_NEW_FOLDER_NAME;
+    g_new_folder.default_button = FD_NEW_FOLDER_OK;
+    sxgui_dialog_begin(&g_app->ui, &g_new_folder, width, height);
+    fd_watch(&g_new_folder);
+    fd_repaint();
+}
+
 static void fd_on_widget(struct sxgui_widget *widget, void *user)
 {
     (void)user;
@@ -762,6 +891,11 @@ static void fd_on_widget(struct sxgui_widget *widget, void *user)
         {
             (void)fd_go_to(parent);
         }
+        return;
+    }
+    if (widget == &g_widgets[FD_NEW_FOLDER])
+    {
+        fd_ask_folder_name();
         return;
     }
     if (widget == &g_widgets[FD_LIST])
@@ -823,6 +957,8 @@ static void fd_prepare_icons(void)
         info.buffer_size = info.pitch * TOOLBAR_GLYPH_SIZE;
         sx_bitmap_wrap(&g_up_bitmap, (uint32_t *)toolbar_glyph_go_up, &info, SX_PIXEL_FORMAT_BGRA8888);
         g_up_glyph[0] = &g_up_bitmap;
+        sx_bitmap_wrap(&g_new_folder_bitmap, (uint32_t *)toolbar_glyph_folder_new, &info, SX_PIXEL_FORMAT_BGRA8888);
+        g_new_folder_glyph[0] = &g_new_folder_bitmap;
     }
     g_icons_ready = 1;
 }
@@ -844,11 +980,16 @@ static void fd_build_widgets(void)
     g_widgets[FD_LOOK_IN_LABEL] = sxgui_label(
         sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + 6, FD_LABEL_WIDTH - 4, 18), save ? "Save in:" : "Look in:");
     g_widgets[FD_FOLDER] = sxgui_label(sx_rect_make(field_x, SXGUI_DIALOG_MARGIN + 2,
-                                           right - FD_UP_SIZE - SXGUI_GAP - field_x, SXGUI_FIELD_HEIGHT),
+                                           right - FD_UP_SIZE * 2 - SXGUI_GAP - field_x, SXGUI_FIELD_HEIGHT),
         g_folder);
     g_widgets[FD_FOLDER].flags |= SXGUI_FLAG_SUNKEN;
-    g_widgets[FD_UP] = sxgui_toolbar_button(sx_rect_make(right - FD_UP_SIZE, SXGUI_DIALOG_MARGIN, FD_UP_SIZE, FD_UP_SIZE),
-        0, g_up_glyph, fd_on_widget, 0);
+    /* Up One Level, then Create New Folder, as Windows 2000 orders them. */
+    g_widgets[FD_UP] = sxgui_toolbar_button(
+        sx_rect_make(right - FD_UP_SIZE * 2, SXGUI_DIALOG_MARGIN, FD_UP_SIZE, FD_UP_SIZE), 0, g_up_glyph, fd_on_widget,
+        0);
+    g_widgets[FD_NEW_FOLDER] = sxgui_toolbar_button(
+        sx_rect_make(right - FD_UP_SIZE, SXGUI_DIALOG_MARGIN, FD_UP_SIZE, FD_UP_SIZE), 0, g_new_folder_glyph,
+        fd_on_widget, 0);
     g_widgets[FD_LIST] = sxgui_listbox(sx_rect_make(SXGUI_DIALOG_MARGIN, list_y, list_width, name_y - SXGUI_GAP - list_y),
         g_row_ptrs, 0);
     g_widgets[FD_LIST].columns = g_columns;

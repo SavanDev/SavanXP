@@ -48,15 +48,16 @@ disagree.
 | Paste | Paste | Edit, folder's context menu | Ctrl+V | the clipboard holds one file or folder |
 | Delete | Delete | File, item's context menu | Delete | an item is selected (not "..") |
 | Rename... | — | File, item's context menu | — | an item is selected (not "..") |
+| New Folder... | — | File, folder's context menu | — | always |
 | Properties | Properties | File, both context menus | Alt+Enter | always |
 | Views | Views (drops down) | View | — | always |
 | Refresh | — | View, folder's context menu | F5 | always |
 
 **History.** Going to a folder (opening one, Up, the address bar) pushes the
 folder left on Back and clears Forward, as a browser does; Back and Forward
-move one folder between the two. Refresh, Rename and Delete reload in place
-and record nothing. Each side keeps `FILESAPP_HISTORY_DEPTH` (16) folders and
-drops the oldest. A folder that no longer exists is dropped when Back or
+move one folder between the two. Refresh, Rename, New Folder and Delete
+reload in place and record nothing. Each side keeps `FILESAPP_HISTORY_DEPTH`
+(16) folders and drops the oldest. A folder that no longer exists is dropped when Back or
 Forward reaches it.
 
 **Address bar.** A text field holding its own copy of the path
@@ -96,7 +97,7 @@ in the Explorer. Buttons that do not fit a narrow window are hidden, not
 squeezed.
 
 The glyphs are embedded rather than shipped as `.sxicon` files, like the
-media player's: nine 20x20 images are about 14 KiB, shared only with the
+media player's: ten 20x20 images are about 16 KiB, shared only with the
 file dialog.
 
 ## Cut, Copy and Paste

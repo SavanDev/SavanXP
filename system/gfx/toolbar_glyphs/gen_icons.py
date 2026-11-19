@@ -9,7 +9,7 @@ silhouette embossed, so each one must read by its shape alone.
 Writes icons/<name>.png (to look at) and icons.inc: one 0xAARRGGBB array per
 glyph, the SX_PIXEL_FORMAT_BGRA8888 layout, converted as
 gen_sxe_resources.py does. They are embedded rather than shipped as .sxicon:
-nine glyphs are ~14 KiB, used by Files' toolbar and the file dialog
+ten glyphs are ~16 KiB, used by Files' toolbar and the file dialog
 (system/runtime/sxnfiledlg.c), as the media player embeds its own
 (subsystems/posix/userland/mediaplayer/gen_icons.py). A program includes
 icons.inc and keeps the glyphs it names; the compiler drops the rest. Both
@@ -60,6 +60,16 @@ def go_up():
     ic.part(ic.poly([(0, 8), (5, 8), (7, 10), (16, 10), (16, 18), (0, 18)]), side_face(FOLDER))
     ic.part(ic.rect(0, 11, 16, 18), top_face(FOLDER))
     ic.part(ic.poly([(14, 0), (19, 5), (16, 5), (16, 13), (12, 13), (12, 5), (9, 5)]), GREEN)
+    return ic.image
+
+
+def folder_new():
+    """Create New Folder: a folder with a yellow spark over its corner."""
+    ic = Icon(SIZE)
+    ic.part(ic.poly([(0, 8), (5, 8), (7, 10), (16, 10), (16, 18), (0, 18)]), side_face(FOLDER))
+    ic.part(ic.rect(0, 11, 16, 18), top_face(FOLDER))
+    spark = ic.poly([(14, 0), (16, 3), (19, 5), (16, 7), (14, 10), (12, 7), (9, 5), (12, 3)])
+    ic.part(spark, YELLOW)
     return ic.image
 
 
@@ -142,6 +152,7 @@ ICONS = [
     ("go-previous", go_previous),
     ("go-next", go_next),
     ("go-up", go_up),
+    ("folder-new", folder_new),
     ("edit-cut", edit_cut),
     ("edit-copy", edit_copy),
     ("edit-paste", edit_paste),

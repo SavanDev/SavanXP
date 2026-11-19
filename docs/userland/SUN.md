@@ -207,8 +207,8 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, used by Files (POSIX), no SUN program yet |
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
-| `CreateDirectory`, `MoveFileEx` | `sxn_make_directory`, `sxn_rename_path` | done (SxBASIC's IDE: New Project, and Save as a rename over the old file); durable when they return |
-| `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, no New Folder |
+| `CreateDirectory`, `MoveFileEx` | `sxn_make_directory`, `sxn_rename_path` | done (SxBASIC's IDE: New Project, and Save as a rename over the old file; the file dialog's Create New Folder); durable when they return |
+| `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, Create New Folder |
 | Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |

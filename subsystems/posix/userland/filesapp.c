@@ -33,6 +33,8 @@
  * its target. A right click on an item opens its context menu: Open, Send To
  * Desktop (a shortcut in the Desktop folder), Cut, Copy, Rename, Delete and
  * Properties (docs/desktop/DESKTOP_ICONS.md#phase-4-context-menus-in-applications).
+ * New Folder, in the File menu and the folder's context menu, asks for a name
+ * and creates the folder in the one shown.
  * Cut, Copy and Paste go through the system clipboard, and a paste runs a
  * piece at a time behind a progress dialog (docs/desktop/FILES.md).
  */
@@ -100,6 +102,7 @@ static void filesapp_build_toolbar_glyphs(void)
 #define FILESAPP_MENU_CUT 15
 #define FILESAPP_MENU_COPY 16
 #define FILESAPP_MENU_PASTE 17
+#define FILESAPP_MENU_NEW_FOLDER 18
 
 /* Back and Forward each remember this many folders; the oldest goes first. */
 #define FILESAPP_HISTORY_DEPTH 16
@@ -175,6 +178,7 @@ static struct sxgui_widget g_about_widgets[4];
 static void filesapp_update_commands(void);
 static void filesapp_ask_delete(void);
 static void filesapp_ask_rename(void);
+static void filesapp_ask_new_folder(void);
 static void filesapp_show_properties(void);
 static void filesapp_cut_selected(void);
 static void filesapp_copy_selected(void);
@@ -769,6 +773,8 @@ static void on_dialog_ok(struct sxgui_widget *widget, void *user)
  */
 
 static struct sxgui_menu_item k_file_items[] = {
+    {"New Folder...", FILESAPP_MENU_NEW_FOLDER, 0},
+    {0, 0, 0},
     {"Open", FILESAPP_MENU_OPEN, 0},
     {0, 0, 0},
     {"Delete", FILESAPP_MENU_DELETE, 0},
@@ -840,9 +846,9 @@ static void filesapp_update_commands(void)
     filesapp_enable_item(&k_edit_items[0], has_selection);
     filesapp_enable_item(&k_edit_items[1], has_selection);
     filesapp_enable_item(&k_edit_items[2], can_paste);
-    filesapp_enable_item(&k_file_items[0], FILESAPP_LIST->value >= 0);
-    filesapp_enable_item(&k_file_items[2], has_selection);
-    filesapp_enable_item(&k_file_items[3], has_selection);
+    filesapp_enable_item(&k_file_items[2], FILESAPP_LIST->value >= 0);
+    filesapp_enable_item(&k_file_items[4], has_selection);
+    filesapp_enable_item(&k_file_items[5], has_selection);
     filesapp_enable_item(&k_go_items[0], g_back_count > 0);
     filesapp_enable_item(&k_go_items[1], g_forward_count > 0);
     filesapp_enable_item(&k_go_items[2], can_go_up);
@@ -1060,6 +1066,9 @@ static void on_menu_command(int id, void *user)
     case FILESAPP_MENU_RENAME:
         filesapp_rename_selected();
         break;
+    case FILESAPP_MENU_NEW_FOLDER:
+        filesapp_ask_new_folder();
+        break;
     case FILESAPP_MENU_PROPERTIES:
         filesapp_show_properties();
         break;
@@ -1107,6 +1116,7 @@ static void on_menu_command(int id, void *user)
 #define FILESAPP_CMD_COPY 29
 #define FILESAPP_CMD_PASTE 30
 #define FILESAPP_CMD_EDIT 31
+#define FILESAPP_CMD_NEW_FOLDER 32
 
 #define FILESAPP_QUESTION_WIDTH 340
 #define FILESAPP_QUESTION_HEIGHT 96
@@ -1142,6 +1152,8 @@ static struct sxgui_menu_item k_folder_items[] = {
     {0, 0, 0},
     {"Paste", FILESAPP_CMD_PASTE, 0},
     {0, 0, 0},
+    {"New Folder...", FILESAPP_CMD_NEW_FOLDER, 0},
+    {0, 0, 0},
     {"Properties", FILESAPP_CMD_PROPERTIES, 0},
 };
 
@@ -1157,6 +1169,9 @@ static struct sxgui_dialog g_question_dialog;
 static struct sxgui_widget g_question_widgets[3];
 static struct sxgui_dialog g_rename_dialog;
 static struct sxgui_widget g_rename_widgets[4];
+static char g_new_folder_buffer[128];
+static struct sxgui_dialog g_new_folder_dialog;
+static struct sxgui_widget g_new_folder_widgets[4];
 static uint32_t g_pointer_buttons = 0;
 
 static int filesapp_subject_path(char *buffer, size_t capacity)
@@ -1293,6 +1308,80 @@ static void filesapp_ask_rename(void)
     g_rename_widgets[1].caret = (int)strlen(g_rename_buffer);
     g_rename_widgets[1].scroll = 0;
     sxgui_dialog_begin(&g_app.ui, &g_rename_dialog, FILESAPP_QUESTION_WIDTH, FILESAPP_RENAME_HEIGHT);
+}
+
+/* ---- new folder ----------------------------------------------------------------
+ *
+ * Asks for the name first, offering the first free "New Folder", "New Folder
+ * (2)", ... as Windows names one, and creates it in the folder shown, which
+ * then shows it selected. Cancel creates nothing.
+ */
+
+static int filesapp_entry_named(const char *name)
+{
+    int index;
+
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        if (strcmp(g_entries[index].name, name) == 0)
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static void on_new_folder_ok(struct sxgui_widget *widget, void *user)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    struct stat info;
+
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    if (g_new_folder_buffer[0] == '\0' || strchr(g_new_folder_buffer, '/') != 0 ||
+        strcmp(g_new_folder_buffer, ".") == 0 || strcmp(g_new_folder_buffer, "..") == 0)
+    {
+        filesapp_set_status("A name cannot be empty or contain '/'.");
+        return;
+    }
+    if (!filesapp_join_path(g_current_path, g_new_folder_buffer, path, sizeof(path)))
+    {
+        filesapp_set_status("The name is too long.");
+        return;
+    }
+    if (stat(path, &info) == 0)
+    {
+        filesapp_set_status("That name is already taken.");
+        return;
+    }
+    if (mkdir(path, 0755) != 0)
+    {
+        filesapp_set_status("Cannot create the folder.");
+        return;
+    }
+    (void)filesapp_load_directory(g_current_path);
+    filesapp_bind_list(filesapp_entry_named(g_new_folder_buffer));
+    filesapp_update_commands();
+    filesapp_set_status("Folder created.");
+}
+
+static void filesapp_ask_new_folder(void)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    struct stat info;
+    int attempt;
+
+    snprintf(g_new_folder_buffer, sizeof(g_new_folder_buffer), "New Folder");
+    for (attempt = 2; attempt < 100 && filesapp_join_path(g_current_path, g_new_folder_buffer, path, sizeof(path)) &&
+                      stat(path, &info) == 0;
+         ++attempt)
+    {
+        snprintf(g_new_folder_buffer, sizeof(g_new_folder_buffer), "New Folder (%d)", attempt);
+    }
+    g_new_folder_widgets[1].caret = (int)strlen(g_new_folder_buffer);
+    g_new_folder_widgets[1].scroll = 0;
+    sxgui_dialog_begin(&g_app.ui, &g_new_folder_dialog, FILESAPP_QUESTION_WIDTH, FILESAPP_RENAME_HEIGHT);
 }
 
 /* ---- properties --------------------------------------------------------------
@@ -2219,6 +2308,9 @@ static void on_context_command(int id, void *user)
     case FILESAPP_CMD_PASTE:
         filesapp_paste();
         break;
+    case FILESAPP_CMD_NEW_FOLDER:
+        filesapp_ask_new_folder();
+        break;
     default:
         break;
     }
@@ -2997,6 +3089,30 @@ int main(int argc, char **argv)
     g_rename_dialog.widget_count = 4;
     g_rename_dialog.initial_focus = 1;
     g_rename_dialog.default_button = 2;
+
+    g_new_folder_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
+                     FILESAPP_QUESTION_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        "Name of the new folder:");
+    g_new_folder_widgets[1] = sxgui_textfield(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW,
+                     FILESAPP_QUESTION_WIDTH - SXGUI_DIALOG_MARGIN * 2, SXGUI_FIELD_HEIGHT),
+        g_new_folder_buffer, (int)sizeof(g_new_folder_buffer));
+    g_new_folder_widgets[2] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 - SXGUI_BUTTON_WIDTH - 4,
+                     FILESAPP_RENAME_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_new_folder_ok, 0);
+    g_new_folder_widgets[3] = sxgui_button(
+        sx_rect_make(FILESAPP_QUESTION_WIDTH / 2 + 4,
+                     FILESAPP_RENAME_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_dialog_cancel, 0);
+    g_new_folder_dialog.title = "New Folder";
+    g_new_folder_dialog.widgets = g_new_folder_widgets;
+    g_new_folder_dialog.widget_count = 4;
+    g_new_folder_dialog.initial_focus = 1;
+    g_new_folder_dialog.default_button = 2;
 
     g_about_dialog.title = "About Files";
     g_about_dialog.widgets = g_about_widgets;

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **New Folder in Files and in the Open/Save As dialog.** Files has **New Folder...** in its File menu and the folder's
+  context menu; the SUN file dialog has a Create New Folder button beside Up One Level. Both ask for the name, offer the
+  first free "New Folder", and show the new folder selected ([FILE_DIALOG.md](docs/desktop/FILE_DIALOG.md)).
 - **Savan BASIC's debugger.** Every Start runs under it: breakpoints (F9 or the gutter), Break, Step Into/Over/Out
   (F8, Shift+F8, Ctrl+Shift+F8), Locals and Watch panes, and a runtime error nothing catches stops at its line before
   the program ends ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md#the-debugger)). New `sxbasic --debug`, the VM's

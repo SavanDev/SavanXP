@@ -10,8 +10,9 @@ first consumer ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)).
 ## The window
 
 - **Save in / Look in**: the folder shown, as a path, with an Up One Level
-  button beside it (the toolbar glyph Files uses, from
-  `system/gfx/toolbar_glyphs/`). Up is greyed at `/`.
+  and a Create New Folder button beside it, in Windows 2000's order (their
+  glyphs are the shared toolbar ones, from `system/gfx/toolbar_glyphs/`). Up
+  is greyed at `/`.
 - **The list**: Name, Size and Type, folders first and then by name with
   case folded, each with its icon by type (`sxgfx/mime_icon.h`, the mapping
   in `/mimeicon.ini`). Folders are always listed; files only when they match
@@ -32,9 +33,13 @@ first consumer ([LOG_VIEWER.md](../userland/LOG_VIEWER.md)).
 - A name typed in the field is relative to the folder shown, or absolute;
   `..` works. A name that is a folder opens that folder and empties the
   field, as in Windows.
+- **Create New Folder** asks for the name, offering the first free *New
+  Folder*, *New Folder (2)*, ..., and makes it in the folder shown with
+  `sxn_make_directory`; the dialog comes back with the new folder selected,
+  or with why it was not made on the bottom line. Cancel or Esc make nothing.
 - **Save**: a name without an extension gets the program's default one
-  (`log` becomes `log.txt`). The folder it goes in has to exist; the dialog
-  creates no folders. A name that exists asks *Confirm Save As: ... already
+  (`log` becomes `log.txt`). The folder it goes in has to exist: a typed
+  path creates no folders. A name that exists asks *Confirm Save As: ... already
   exists. Do you want to replace it?*, with **No** as the default, as every
   confirmation in the system. No brings the Save As dialog back as it was.
 - **Open**: the file has to exist and be a file.
@@ -82,8 +87,9 @@ in Windows.
   The dialog reads the system's `/mimeicon.ini`; POSIX programs keep reading
   the profile's copy through `mime_icon_load`.
 - **One dialog at a time.** The toolkit has one modal dialog per window, so
-  the Confirm Save As question is a second dialog that replaces the first,
-  and No begins the first again with its state.
+  the Confirm Save As question and the new folder's name are a second
+  dialog that replaces the first, and No, Cancel or OK begin the first again
+  with its state.
 - **Knowing it closed.** The toolkit ends a dialog on Esc or its close button
   without telling the program. The SUN frame's `sxngui_app_watch_dialog`
   calls back once the watched dialog is no longer the active one, however it
@@ -96,8 +102,10 @@ in Windows.
 - **One filter.** The toolkit does not support a combobox inside a dialog,
   so there is no type list to pick from; the filter is shown in a sunken
   field. A program with several types passes them as one pattern list.
-- **No New Folder, rename or delete** in the dialog: SUN has no native
-  `mkdir`, rename or unlink yet. Each arrives with a consumer of its own.
+- **No rename or delete** in the dialog. SUN has `sxn_rename_path` but no
+  unlink yet; each arrives with a consumer of its own. New Folder asks for
+  the name in a dialog of its own rather than editing it in the list, as the
+  toolkit's list has no in-place editing.
 - **No icon view and no Places bar** (the Windows XP left column).
 - **Executables get the default icon**: the dialog does not tell a program
   from a document, which Files does by reading the file's header.
