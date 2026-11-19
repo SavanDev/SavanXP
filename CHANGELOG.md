@@ -107,6 +107,8 @@ Cut-off notes:
 
 ### Fixed
 
+- `tools/verify_doom_persistence.sh` (CI) copies every shared library in the SDK's `libraries.txt` into its isolated tree, not just
+  `libsxmidi`, so `make-sdk.sh` no longer stops with "libmath.so.0.4 is not built yet".
 - POSIX `mkdir` of a directory that already exists fails with `EEXIST` instead of succeeding.
 
 - **A program can include both `<sys/time.h>` and `<sys/select.h>`.** Each defined `struct timeval`, so including the two

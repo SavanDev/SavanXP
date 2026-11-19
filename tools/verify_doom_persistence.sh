@@ -71,14 +71,17 @@ mkdir -p "$TEMP/tools" "$TEMP/external" "$TEMP/ports/doomgeneric" "$TEMP/diskfs/
 cp "$SOURCE_ROOT/disk.img" "$TEMP/disk.img"
 cp "$SOURCE_ROOT/tools/sxfs-cli" "$TEMP/tools/sxfs-cli"
 chmod +x "$TEMP/tools/sxfs-cli"
-# El port enlaza contra libsxmidi.so.0.4, que construye el build base. El
-# arbol aislado todavia no corrio, asi que se copia la libreria ya construida;
-# mas tarde el build base la reemplaza con la suya de todos modos.
-[[ -f "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" ]] || {
-    echo "verify-doom: missing $SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4; run ./build.sh build first" >&2
-    exit 1
-}
-cp "$SOURCE_ROOT/diskfs/lib/libsxmidi.so.0.4" "$TEMP/diskfs/lib/libsxmidi.so.0.4"
+# The port is built with the SDK, and make-sdk.sh packs every shared library
+# listed in libraries.txt from the build's diskfs/lib. The isolated tree has
+# not been built yet, so the libraries already built are copied; the base
+# build replaces them with its own later anyway.
+while read -r _ soname _; do
+    [[ -f "$SOURCE_ROOT/diskfs/lib/$soname" ]] || {
+        echo "verify-doom: missing $SOURCE_ROOT/diskfs/lib/$soname; run ./build.sh build first" >&2
+        exit 1
+    }
+    cp "$SOURCE_ROOT/diskfs/lib/$soname" "$TEMP/diskfs/lib/$soname"
+done < <(grep -v '^[[:space:]]*\(#\|$\)' "$ROOT/subsystems/posix/sdk/v1/runtime/libraries.txt")
 
 if [[ -z "$WAD_PATH" ]]; then
     WAD_PATH="$TEMP/freedoom1.wad"
