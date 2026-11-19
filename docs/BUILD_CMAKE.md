@@ -93,6 +93,9 @@ kernel waits, original CPU ownership, x87/SSE state and deferred kill cleanup.
 `smoke hardening` (1–32 CPUs) boots `-cpu max`, the only profile with SMEP
 and RDRAND, and checks SMEP on every CPU plus random stack guards.
 [I386_SMP.md](I386_SMP.md) defines the current boundary.
+Reference init automation scenarios such as `progman-smoke`, `gpu-soak`,
+`kbd-smoke` and the AC'97/virtio audio scenarios boot a disposable ISO with the
+v0.4.0 `/SMOKE` spec; `smoke --list` names every supported scenario.
 `--virtio` selects the reference
 block, network, sound, GPU, tablet and keyboard devices; the default profile
 retains ATA, RTL8139, AC'97, standard VGA and PS/2. Service and graphical smokes

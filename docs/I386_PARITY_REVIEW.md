@@ -41,23 +41,23 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
 | `windowd` compositor, WM protocol v4, 12 windows | Ported | `windowd-smoke` | Damage region and frame statistics against the reference |
-| Program Manager, auto-listed programs | Ported | `desktop`, `live-desktop` | `progman-smoke` scenario and layout capture |
+| Program Manager, auto-listed programs | Ported | `desktop`, `live-desktop`, `progman-smoke` | Layout capture |
 | Taskbar: window list, activation, minimize | Ported | `taskbar` | Capture comparison |
-| Taskbar ES/EN layout selector and popup | Partial | Shared code | Interaction scenario (`kbd-smoke` has no i386 counterpart) |
-| Taskbar volume button, per-app sliders | Partial | `audio-smoke` covers the daemon | `volume-smoke` scenario and capture |
+| Taskbar ES/EN layout selector and popup | Partial | `kbd-smoke` covers the keyboard path | Popup interaction scenario |
+| Taskbar volume button, per-app sliders | Partial | `audio-smoke`, `audiod-smoke`, `volume-smoke` | Popup and slider capture |
 | Task List (Ctrl+Esc), Alt+Tab, Alt+F4 | Gap in evidence | — | Input scenario on both builds |
 | Dialogs as windows, fixed-size windows | Gap in evidence | — | Interaction scenario |
 | SxGUI: selection, clipboard, tabs, wheel/scrollbar | Partial | `sxgui-smoke` (glyphs, wheel) | Selection/Cut/Copy/Paste and tab captures |
-| Files, with per-type icons | Gap in evidence | — | `filesapp-smoke`, `shoot.sh files` |
+| Files, with per-type icons and associations | Ported | `filesapp-smoke` | `shoot.sh files` capture |
 | Notepad | Partial | `sxgui-smoke` editor | Wheel/scrollbar and editing capture |
 | Shell window | Gap in evidence | — | Command with arguments, repaint timing |
 | Calculator (`libmath.so.0.4`) | Ported | `calc-smoke` | Capture comparison |
-| Minesweeper | Gap in evidence | — | `mines-smoke` |
+| Minesweeper | Ported | `mines-smoke` | Capture |
 | Gears | Gap in evidence | — | Capture and frame rate |
-| Add/Remove Programs | Gap in evidence | — | `appwiz-smoke` with Doom restore |
+| Add/Remove Programs | Ported | `appwiz-smoke` with Doom restored | Capture |
 | System Properties | Gap in evidence | — | Capture (edition difference is justified above) |
-| Task Manager: live CPU/memory per process | Partial | `idle` checks accounting | `taskmgr-smoke` and capture |
-| Media Player (FFmpeg) | Ported | `media-smoke` | `mediaplayer-*` scenarios, including the missing-library path |
+| Task Manager: live CPU/memory per process | Ported | `idle`, `taskmgr-smoke` | Capture |
+| Media Player (FFmpeg), icon and file associations | Ported | `media-smoke`, `filesapp-smoke` | `mediaplayer-display`, `-nolib`, `-noport` scenarios |
 | Gfx Demo, widgets demo, diagnostics | Gap in evidence | — | Captures |
 
 ## Ports and external applications
@@ -68,7 +68,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Celeste Classic with music | Ported | `ccleste`, `media-smoke` | Capture and audio comparison |
 | FFmpeg as `libffmpeg.so.0.4` | Ported | `media-smoke` | Load time and decode throughput |
 | Optional Haxe native subsystem | Ported | `native-smoke` | `native-guihost`/`native-sxgui` counterparts |
-| External SDK apps via `build-user.sh` | Ported | `I386_SDK.md` | Static default differs from the reference; record as Justified or restore PIE default |
+| External SDK apps via `build-user.sh` | Ported | `I386_SDK.md` | Static, as in v0.4.0; in-tree programs and ports keep the reference PIE profiles |
 
 ## Shell, POSIX and SDK
 
@@ -77,7 +77,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Reference `sh`, eleven BusyBox applets, pipes, redirection | Ported | `posix` | Transcript comparison |
 | Descriptors, poll, canonical TTY, `exec` | Ported | `posix`, `wakeup` | — beyond transcripts |
 | Signals: limited reference contract, `SIGCHLD` | Ported | [I386_POSIX.md](I386_POSIX.md) | Transcript comparison |
-| libc/libm surface, `%f/%e/%g`, `strtod` | Ported | `smoke` (libctest) | `float-smoke` counterpart |
+| libc/libm surface, `%f/%e/%g`, `strtod`, SSE | Ported | `smoke` (libctest), `float-smoke` | — |
 | 128 arguments / 8 KiB for `spawn`/`exec` | Gap in evidence | — | Explicit limit check |
 | Sockets: UDP, TCP with loss and reordering | Ported | `net-smoke`, `tcp-smoke` | Throughput comparison |
 | Persistence of guest writes across rebuilds | Ported | `verify_posix_persistence.py` | — |
@@ -91,7 +91,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Growing heap, 1 MiB demand stack with guard | Ported | `shared`, `memory` | — |
 | PIE, `PT_INTERP`, embedded loader, 32 libraries | Ported | `shared` | — |
 | Loader diagnostics (`brokentest`, `missingtest`, …) | Ported | `legacy_boot_test.py` | — |
-| SXE stamping and resources | Gap in evidence | — | `sxe-smoke` counterpart |
+| SXE stamping and resources | Ported | `sxe-smoke`, `filesapp-smoke` | — |
 | 64 process slots | Ported | `windowd-smoke`, `smp` | — |
 | RAM allocation limited to the first GiB | Justified | [I386_MEMORY.md](I386_MEMORY.md) | 32-bit direct map; reference QEMU machine uses 1 GiB, so no visible loss |
 
@@ -99,7 +99,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
-| SxFS v2 on ATA, MBR/GPT | Ported | `partition-smoke` | `sxfs-smoke` counterpart |
+| SxFS v2 on ATA, MBR/GPT | Ported | `partition-smoke`, `sxfs-smoke` | — |
 | `fscheck` and host `sxfs-cli check` | Ported | `storage-smoke` | — |
 | `virtio-blk` | Ported | `virtio-smoke` | Throughput comparison |
 | Persistent `/disk/bin` and `/disk/games` across rebuilds | Ported | `verify_doom_persistence.sh` | — |
@@ -109,12 +109,12 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
-| PS/2 keyboard and IntelliMouse wheel | Ported | `sxgui-smoke` | `kbd-smoke` counterpart |
-| virtio keyboard and tablet | Ported | `virtio-smoke` | `pointer-smoke --virtio` counterpart |
-| AC'97 playback, `audiod`, per-app volume | Ported | `audio-smoke` | `ac97-count`/`ac97-stream` feed statistics |
-| virtio-sound playback and capture | Ported | `virtio-smoke`, `audio-record` | `virtio-count`/`virtio-stream` |
+| PS/2 keyboard and IntelliMouse wheel | Ported | `sxgui-smoke`, `kbd-smoke` | — |
+| virtio keyboard and tablet | Ported | `virtio-smoke`, `pointer-smoke --virtio` | — |
+| AC'97 playback, `audiod`, per-app volume | Ported | `audio-smoke`, `audiod-smoke`, `ac97-stream`, `ac97-stream-quiet`, `ac97-count` | Feed statistics against the reference |
+| virtio-sound playback and capture | Ported | `virtio-smoke`, `audio-record`, `virtio-stream`, `virtio-count`, `virtio-record` | — |
 | RTL8139 and virtio-net | Ported | `net-smoke`, `virtio-smoke` | — |
-| Framebuffer GPU and virtio-gpu | Ported | `desktop`, `virtio-smoke` | `gpu-soak` counterpart |
+| Framebuffer GPU and virtio-gpu | Ported | `desktop`, `virtio-smoke`, `gpu-soak`, `cursor-repro` | — |
 | Clipboard, PC speaker, device permissions | Ported | `device-smoke` | — |
 | CMOS clock, ACPI PM timer, `time()` epoch | Ported | `clock-smoke` | Drift comparison |
 
@@ -158,21 +158,21 @@ loader time separate from kernel and desktop time.
 
 ## Reference scenarios without an i386 counterpart
 
-The v0.4.0 catalog has these scenarios that `tools/smoke_catalog.py` does not
-list. Port them, or record why another scenario covers them:
+Most v0.4.0 scenarios now run on i386. Init automation specs boot with the
+reference `/SMOKE` file and host scenarios alias the CTest targets; see
+[study §27](I386_PORT_STUDY.md#27-reference-init-automation-specs-on-i386).
+`mediaplayer-selftest` is covered by `media-smoke`, which runs the same
+`mediaplayer --selftest` command. These remain:
 
-`ac97-count`, `ac97-stream`, `ac97-stream-quiet`, `appwiz-smoke`,
-`audio-test`, `cursor-repro`, `filesapp-smoke`, `float-smoke`, `gfx2d-test`,
-`gpu-soak`, `kbd-smoke`, `mediaplayer-display`, `mediaplayer-nolib`,
-`mediaplayer-noport`, `mediaplayer-selftest`, `mines-smoke`, `native-guihost`,
-`native-sxgui`, `pointer-smoke`, `progman-smoke`, `sxe-smoke`, `sxfs-smoke`,
-`sxmidi-smoke`, `taskmgr-smoke`, `virtio-count`, `virtio-record`,
-`virtio-stream`, `volume-smoke`.
+- `mediaplayer-nolib` and `mediaplayer-noport` remove `libffmpeg.so.0.4` from a
+  disposable disk copy before boot; the i386 harness has no removal step yet.
+- `mediaplayer-display` needs the FFmpeg port's QMP display callback.
+- `native-guihost` and `native-sxgui` build the optional Haxe clients first.
 
 ## Suggested order
 
-1. Port the missing scenarios that guard visible behavior: Program Manager,
-   Files, Task Manager, Add/Remove Programs, volume, keyboard and pointer.
+1. Port the five remaining scenarios above and add interaction scenarios for
+   the Task List, Alt+Tab, Alt+F4, dialogs and the taskbar popups.
 2. Capture both builds with the same input scripts and record the visual
    comparison per application.
 3. Run the performance table and the idle-halt check.

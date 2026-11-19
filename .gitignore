@@ -26,6 +26,7 @@ tools/*
 !tools/run_qemu.py
 !tools/run_smoke.py
 !tools/i386_smp_test.py
+!tools/i386_spec_test.py
 !tools/qmp_client.py
 !tools/taskbar_smoke.py
 !tools/build-user.sh

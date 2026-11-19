@@ -2280,3 +2280,51 @@ some guard must differ from the parent's, and the spawned guards must
 vary. Each sample also execs itself, and the exec must install a new
 guard. With this change the three security rows match the reference. NX
 remains an architectural difference without PAE.
+
+## 27. Reference init automation specs on i386
+
+The parity review listed 28 v0.4.0 smoke scenarios with no i386
+counterpart. Most are init automation specs. The reference runner plants
+`/SMOKE` in the boot root; `init` reads that one line, runs the matching
+selftest instead of starting the desktop and prints `<LABEL> PASS` or
+`<LABEL> FAIL`. The i386 `init` kept this dispatch unchanged, but no i386
+harness used it. Earlier i386 checks typed commands into the console
+shell instead, which proves the program but not the reference path.
+
+`tools/i386_spec_test.py` reproduces the reference path. It extracts the
+CPIO from the GRUB ISO and inserts a newc `SMOKE` entry before the
+trailer, using the same writer as `mkinitramfs.py`. It then replays the
+ISO with only that module replaced. The persistent disk boots as a
+snapshot. Commands, tokens, timeouts and preparation steps come from the
+v0.4.0 catalog. As in the reference runner, driver-specific audio
+scenarios force AC'97 or virtio-sound, a WAV capture must be non-empty,
+and the keyboard and pointer scenarios send their QMP sequences after
+the guest's READY token. The four reference host scenarios alias the
+existing CTest targets. `kbdtest` was in the reference registry but not
+in the i386 build; it now builds as the static test it was.
+
+Two scenarios failed on their first run, and both exposed real
+differences. `filesapp-smoke` found only Notepad's four associations.
+`/bin/mediaplayer` carried a 96-byte `.sxmeta` and no `.sxicon` because
+`gen_sxe_resources.py` searches manifest directories without recursing.
+The Media Player is the only program whose manifest lives in a
+subdirectory. v0.4.0 passes that directory explicitly, with a comment
+warning that the player otherwise loses its category and associations;
+the i386 resource step had dropped the line. Restoring it gives the
+binary its icon and its `ext_open` list. `.mp3`, `.avi` and `.flac` then
+resolve to the launcher again. The desktop and SxGUI captures still pass.
+
+`float-smoke` failed while it was being built. `sdk/floatsmoke` checks
+that XMM state survives preemption with inline assembly that uses
+`xmm8` and moves XMM values into 64-bit general registers. Neither
+exists in protected mode. An `__i386__` branch keeps the same check in
+`xmm4`–`xmm7` and moves the 64-bit patterns through memory operands; the
+x86_64 code is unchanged. The external SDK builder stays static, as in
+v0.4.0.
+
+All 23 newly ported scenarios pass in QEMU: the application selftests,
+`cursor-repro`, `gpu-soak`, the AC'97 and virtio-sound stream, count and
+record scenarios, `kbd-smoke`, `pointer-smoke --virtio` and the host
+aliases. Five reference scenarios remain; the
+[parity review](I386_PARITY_REVIEW.md#reference-scenarios-without-an-i386-counterpart)
+records why.

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **23 more v0.4.0 smoke scenarios run on i386,** booting the reference `/SMOKE`
+  init specs: `progman-smoke`, `filesapp-smoke`, `taskmgr-smoke`, `gpu-soak`,
+  `kbd-smoke`, `pointer-smoke`, the AC'97/virtio audio scenarios and others.
+
 - **i386 displays the v0.4.0 startup logo and animation before the desktop.**
   `smoke boot-screen` checks the artwork, fade, marquee and session handoff.
 

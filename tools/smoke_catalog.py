@@ -39,6 +39,31 @@ SCENARIOS = {
     "power-smoke": "ACPI shutdown, cold reboot and firmware power-button SCI via IOAPIC and PIC",
     "media-smoke": "installed FFmpeg audio/video/sync and Ccleste asset/decoder selftests",
     "legacy-cpu": "QMP assertion that qemu32 exposes no long mode or NX",
+    # v0.4.0 init automation specs, booted with /SMOKE in the CPIO root.
+    "progman-smoke": "reference Program Manager registry selftest, with Doom restored",
+    "appwiz-smoke": "reference Add/Remove Programs catalog selftest, with Doom restored",
+    "taskmgr-smoke": "reference Task Manager process and CPU selftest",
+    "mines-smoke": "reference Minesweeper board and persistent settings selftest",
+    "filesapp-smoke": "reference Files associations and icon selftest",
+    "sxe-smoke": "reference SXE resource parser and metadata selftest",
+    "cursor-repro": "reference windowd cursor presentation regression",
+    "gpu-soak": "reference GPU presentation and mode-switch soak (96 iterations)",
+    "audiod-smoke": "reference audio daemon mixing two loopback clients on AC97, captured to WAV",
+    "volume-smoke": "reference volume CLI sets and persists master volume on AC97",
+    "float-smoke": "external SSE floating-point program built with build-user.sh --sse",
+    "ac97-stream": "reference audiotest --stream on AC97, captured to WAV",
+    "ac97-stream-quiet": "reference audiotest --stream-quiet at master volume 50 on AC97, captured to WAV",
+    "ac97-count": "reference audiotest --stream counter on AC97",
+    "virtio-count": "reference audiotest --stream counter on virtio-sound",
+    "virtio-stream": "reference audiotest --stream on virtio-sound, captured to WAV",
+    "virtio-record": "reference audiotest --record on virtio-sound",
+    "kbd-smoke": "reference kbdtest driven by QMP keys",
+    "pointer-smoke": "reference mousetest driven by QMP virtio-tablet moves and clicks (--virtio)",
+    # v0.4.0 host scenarios, run through the existing CTest targets.
+    "sxfs-smoke": "host SxFS volume test (sxfs-volume-test)",
+    "sxmidi-smoke": "host MIDI synthesizer test (sxmidi-test)",
+    "gfx2d-test": "host GFX2D painter test",
+    "audio-test": "host audio mixer test",
 }
 
 

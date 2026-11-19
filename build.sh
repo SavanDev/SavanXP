@@ -49,7 +49,9 @@ Options:
   --virtio        virtio disk, network, sound, GPU, tablet and keyboard
   --headless      disable the graphical QEMU window
   --legacy        compatibility alias; i386 is already selected
-  --scenario NAME smoke scenario: smp-boot, smp, idle, kernel-preempt, wakeup, hardening, smoke, boot, boot-screen, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, services, device-smoke, clock-smoke, audio-smoke, audio-record, virtio-smoke, net-smoke, tcp-smoke, media-smoke, power-smoke, native-smoke, storage-smoke, partition-smoke, live-desktop, doom, ccleste, legacy-cpu
+  --scenario NAME smoke scenario: smp-boot, smp, idle, kernel-preempt, wakeup, hardening, smoke, boot, boot-screen, processes, memory, posix, shared, shared-memory, desktop, sxgui-smoke, windowd-smoke, taskbar, calc-smoke, services, device-smoke, clock-smoke, audio-smoke, audio-record, virtio-smoke, net-smoke, tcp-smoke, media-smoke, power-smoke, native-smoke, storage-smoke, partition-smoke, live-desktop, doom, ccleste, legacy-cpu,
+                  progman-smoke, appwiz-smoke, taskmgr-smoke, mines-smoke, filesapp-smoke, sxe-smoke, cursor-repro, gpu-soak, audiod-smoke, volume-smoke, float-smoke, sxfs-smoke, sxmidi-smoke, gfx2d-test, audio-test,
+                  ac97-stream, ac97-stream-quiet, ac97-count, virtio-count, virtio-stream, virtio-record, kbd-smoke, pointer-smoke
   --timeout SEC   smoke timeout (default: 360)
   --list          list supported smoke scenarios
 EOF
@@ -76,7 +78,7 @@ if ((LIST)); then
 fi
 if [[ "$COMMAND" == smoke ]]; then
     case "$SCENARIO" in
-        smp-boot|smp|idle|kernel-preempt|wakeup|hardening|smoke|boot|boot-screen|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|services|device-smoke|clock-smoke|audio-smoke|audio-record|net-smoke|tcp-smoke|media-smoke|power-smoke|native-smoke|storage-smoke|partition-smoke|live-desktop|doom|ccleste|legacy-cpu|virtio-smoke) ;;
+        smp-boot|smp|idle|kernel-preempt|wakeup|hardening|smoke|boot|boot-screen|processes|memory|posix|shared|shared-memory|desktop|sxgui-smoke|windowd-smoke|taskbar|calc-smoke|services|device-smoke|clock-smoke|audio-smoke|audio-record|net-smoke|tcp-smoke|media-smoke|power-smoke|native-smoke|storage-smoke|partition-smoke|live-desktop|doom|ccleste|legacy-cpu|virtio-smoke|progman-smoke|appwiz-smoke|taskmgr-smoke|mines-smoke|filesapp-smoke|sxe-smoke|cursor-repro|gpu-soak|audiod-smoke|volume-smoke|float-smoke|sxfs-smoke|sxmidi-smoke|gfx2d-test|audio-test|ac97-stream|ac97-stream-quiet|ac97-count|virtio-count|virtio-stream|virtio-record|kbd-smoke|pointer-smoke) ;;
         *) echo "build.sh: '$SCENARIO' is not ported to i386; use smoke --list (x86_64 scenarios live on master)" >&2; exit 2 ;;
     esac
     INCLUDE_TEST_APPS=ON

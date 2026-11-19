@@ -188,6 +188,10 @@ changes, and record implementation/verification evidence as work lands.
    stack guards; fork inherits the parent's. SMEP is enabled when available
    and every AP must match the BSP. [Evidence](I386_PORT_STUDY.md#26-stack-guards-and-smep).
 
+   **Reference smoke scenarios.** 23 more v0.4.0 scenarios run through the
+   reference `/SMOKE` init specs; restoring them also fixed the Media Player's
+   stamped resources. [Evidence](I386_PORT_STUDY.md#27-reference-init-automation-specs-on-i386).
+
    **Boot and session handoff.** The GRUB framebuffer shows the reference
    splash, including the startup logo, fade, marquee and status. The compositor
    takes ownership at graphics-session acquisition. [Evidence](I386_GRAPHICS.md).
