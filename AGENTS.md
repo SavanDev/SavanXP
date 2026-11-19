@@ -103,6 +103,16 @@
   each side in its own idiom (`sxnwm_set_title` in SUN, `gfx_set_title` in the
   POSIX runtime), not worked around in the program. A planned port to SUN is
   not a reason to leave POSIX without it.
+- **Parity only ever grows.** What a subsystem can do stays, even when
+  nothing in the tree uses it any more: a program moving to SUN does not take
+  its POSIX helpers with it (saving a setting, changing the display mode),
+  and nothing is removed from one side to make the two match. Removing a
+  capability opens the very gap this rule exists to close.
+- A gap may stay open for a while, because a capability lands with the
+  consumer that needs it (the common Open and Save As dialog is SUN's alone
+  today). It is written down as pending in the area's document and closed
+  later in the subsystem that lacks it, never by taking the capability away
+  from the other.
 - When a gap cannot be closed (the platform has no way to do it), say so in
   the subsystem's documentation instead of leaving it to be rediscovered.
 

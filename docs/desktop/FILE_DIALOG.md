@@ -109,6 +109,8 @@ in Windows.
 - **No icon view and no Places bar** (the Windows XP left column).
 - **Executables get the default icon**: the dialog does not tell a program
   from a document, which Files does by reading the file's header.
-- **The POSIX programs cannot use it.** Notepad, Paint and Display
-  Properties keep their own path box until each moves to SUN, in a commit
-  of its own.
+- **POSIX has no common dialog yet: a parity gap, pending.** The dialog is
+  SUN's alone today, so Notepad and Paint keep their own path box. The gap is
+  closed in POSIX, in its own idiom over the POSIX frame (`sxgui_app`), not
+  by waiting for every program to move to SUN
+  ([AGENTS.md](../../AGENTS.md#feature-parity-between-subsystems)).
