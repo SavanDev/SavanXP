@@ -269,6 +269,16 @@ from [What is missing](#what-is-missing), each in its own commit with its
 assertion. A selftest opens a sample project, runs it and makes its
 executable.
 
+**Landed so far.** SUN's `sxn_make_directory` and `sxn_rename_path`
+(`nativetest`). On `SXGUI_TEXTEDIT`, all six editor options from
+[above](#the-code-editor-is-sxgui_textedit-not-a-new-widget):
+`sxgui_textedit_document` (a buffer the toolkit owns and grows, with undo
+and redo by step), `edit_flags` (`SXGUI_TEXTEDIT_LINE_NUMBERS`,
+`SXGUI_TEXTEDIT_AUTO_INDENT`), `edit_colorize` (colour by span, asked per
+visible line) and `edit_marks` (breakpoint and current-line marks in the
+gutter), checked by `sxgui-textedit-test` on keys and painted pixels.
+Pending: the property grid, then the IDE.
+
 ### Phase 5 — the visual designer
 
 The form drawn instead of written: a toolbox, controls placed by drawing a

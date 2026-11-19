@@ -790,7 +790,8 @@ add_test(NAME sxgui-menu-test COMMAND savanxp-sxgui-menu-test)
 # The editor's growable document and undo, driven by keys through the real
 # toolkit (it paints, so it links the painter).
 add_executable(savanxp-sxgui-textedit-test
-    system/gfx/sxgui.c system/gfx/gfx2d.c system/gfx/pixels.c tests/host/sxgui_textedit_test.c)
+    system/gfx/sxgui.c system/gfx/gfx2d.c system/gfx/pixels.c system/gfx/sxchrome.c
+    tests/host/sxgui_textedit_test.c)
 target_include_directories(savanxp-sxgui-textedit-test PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")

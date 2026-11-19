@@ -41,6 +41,22 @@ static void type(const char *text)
 }
 static void ctrl(int letter, unsigned int extra) { key((unsigned)letter, letter, SAVANXP_KEY_MOD_CTRL | extra); }
 
+/* A program's colouring: "Sub" in blue wherever a line starts with it. */
+static int colorize(const char *line, int length, int number, struct sxgui_text_span *spans, int max, void *user)
+{
+    (void)number; (void)user;
+    if (max < 1 || length < 3 || memcmp(line, "Sub", 3) != 0) return 0;
+    spans[0].start = 0;
+    spans[0].length = 3;
+    spans[0].color = 0x0000FFu;
+    return 1;
+}
+static unsigned marks(int line, void *user)
+{
+    (void)user;
+    return line == 1 ? SXGUI_TEXTEDIT_MARK_BREAKPOINT : line == 2 ? SXGUI_TEXTEDIT_MARK_CURRENT : 0u;
+}
+
 int main(void)
 {
     static uint32_t pixels[320 * 200];
@@ -149,6 +165,44 @@ int main(void)
     }
     CHECK(index > 0 && index < 10000);
     CHECK((int)strlen(w->edit_buffer) == 10000 - index);
+
+    /* The code editor's options. AUTO_INDENT: Enter repeats the blanks, and
+     * one undo takes the line break and its indent together. */
+    CHECK(sxgui_textedit_document(w, "Sub Main\n    x = 1\nEnd Sub") == 0);
+    w->edit_flags = SXGUI_TEXTEDIT_LINE_NUMBERS | SXGUI_TEXTEDIT_AUTO_INDENT;
+    w->caret = 18; /* end of "    x = 1" */
+    type("\ny = 2");
+    CHECK(strcmp(w->edit_buffer, "Sub Main\n    x = 1\n    y = 2\nEnd Sub") == 0);
+    ctrl('z', 0);
+    ctrl('z', 0);
+    CHECK(strcmp(w->edit_buffer, "Sub Main\n    x = 1\nEnd Sub") == 0);
+
+    /* Gutter, marks and colour, on the painted pixels: a red breakpoint in
+     * the gutter on line 2, "Sub" in blue on line 1, line 3 tinted as the
+     * current one, and the text pushed right of the gutter. */
+    w->edit_colorize = colorize;
+    w->edit_marks = marks;
+    sxgui_paint_content(&g_ctx);
+    {
+        int blue_y = -1, red_y = -1, red_x = 320, tint_y = -1, text_x = 320, x, y;
+        for (y = 0; y < 180; ++y)
+        {
+            for (x = 0; x < 300; ++x)
+            {
+                uint32_t p = pixels[y * 320 + x] & 0xFFFFFFu;
+                if (p == 0x0000FFu && blue_y < 0) blue_y = y;
+                if (p == 0xC00000u) { if (red_y < 0) red_y = y; if (x < red_x) red_x = x; }
+                if (p == 0xFFFFA0u && tint_y < 0) tint_y = y;
+                if (p == 0x000000u && y > 4 && y < 14 && x > 2 && x < text_x) text_x = x; /* line 1 only: the arrow is black too */
+            }
+        }
+        CHECK(blue_y >= 0 && red_y > blue_y && tint_y > red_y);
+        CHECK(red_x < 16);
+        CHECK(text_x > 30); /* past the marks and three digits of numbers */
+    }
+    w->edit_colorize = 0;
+    w->edit_marks = 0;
+    w->edit_flags = 0;
 
     sxgui_textedit_release(w);
     CHECK(w->edit_state == 0 && w->edit_buffer == 0);

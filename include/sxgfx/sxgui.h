@@ -147,6 +147,21 @@ struct sxgui_column {
 /* Cell separator inside an item with columns. */
 #define SXGUI_COLUMN_SEPARATOR '	'
 
+/* textedit's code-editor options (edit_flags). */
+#define SXGUI_TEXTEDIT_LINE_NUMBERS 0x1  /* a gutter with each line's number */
+#define SXGUI_TEXTEDIT_AUTO_INDENT  0x2  /* Enter repeats the line's leading blanks */
+
+/* Gutter marks (edit_marks). */
+#define SXGUI_TEXTEDIT_MARK_BREAKPOINT 0x1u  /* a red dot */
+#define SXGUI_TEXTEDIT_MARK_CURRENT    0x2u  /* a yellow arrow and the line tinted */
+
+/* A coloured run of one line, in bytes from the line's start. */
+struct sxgui_text_span {
+    int start;
+    int length;
+    uint32_t color;
+};
+
 struct sxgui_widget {
     int kind;
     struct sx_rect rect;
@@ -219,6 +234,20 @@ struct sxgui_widget {
      * undo history -- or NULL while the caller owns a fixed buffer. Set by
      * sxgui_textedit_document, freed by sxgui_textedit_release. */
     struct sxgui_textedit_state *edit_state;
+
+    /* textedit, what a code editor adds; all of it off by default.
+     * edit_flags: SXGUI_TEXTEDIT_LINE_NUMBERS, SXGUI_TEXTEDIT_AUTO_INDENT.
+     * edit_colorize: asked for each visible line as it is painted; it fills
+     * `spans` (in line order, not overlapping) and returns how many. Text no
+     * span covers keeps the default colour. SXGUI never learns the language.
+     * edit_marks: asked for each visible line (0-based); returns
+     * SXGUI_TEXTEDIT_MARK_* bits drawn in the gutter. Setting it shows the
+     * gutter's mark column. Both get edit_user. */
+    int edit_flags;
+    int (*edit_colorize)(const char *line, int length, int line_number,
+        struct sxgui_text_span *spans, int max_spans, void *user);
+    unsigned (*edit_marks)(int line_number, void *user);
+    void *edit_user;
 };
 
 /* ---- menu bar -------------------------------------------------------------

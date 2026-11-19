@@ -15,6 +15,9 @@ Cut-off notes:
 - **SXGUI text editor documents with undo.** `sxgui_textedit_document` gives an `SXGUI_TEXTEDIT` a buffer the toolkit owns and grows, with
   undo/redo by step (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, `sxgui_textedit_undo`/`redo`); fixed caller buffers behave as before.
   `libsxgui` now also asks the program for `malloc`/`realloc`/`free`.
+- **SXGUI text editor code options.** `SXGUI_TEXTEDIT` takes `edit_flags` (`SXGUI_TEXTEDIT_LINE_NUMBERS` gutter,
+  `SXGUI_TEXTEDIT_AUTO_INDENT`), `edit_colorize` (colour by span, per visible line) and `edit_marks` (breakpoint and
+  current-line marks); all off by default. Loading a document now also scrolls back to its first line.
 - **SxBASIC runs Savan BASIC programs, console and Windows.** `/system/sxbasic.sxe <project.sbp>` compiles a
   project to bytecode and runs it, its forms as SXGUI windows with events, `ShowModal`, `MsgBox` and `InputBox`
   ([SXBASIC.md](docs/userland/SXBASIC.md)); `--selftest <script>` drives one with no window. Checked by

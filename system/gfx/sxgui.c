@@ -2955,6 +2955,52 @@ static struct sx_rect sxgui_textedit_inner(const struct sxgui_widget *widget)
     return inner;
 }
 
+/* The gutter, at the left of the text: a column for marks when the program
+ * asks for them, then the line numbers, as wide as the last line's number
+ * (three digits at least, so it does not jump while typing the first lines). */
+#define SXGUI_GUTTER_MARK_WIDTH 14
+
+static int sxgui_textedit_gutter_width(const struct sxgui_widget *widget)
+{
+    int width = 0;
+
+    if (widget->edit_marks != 0)
+    {
+        width += SXGUI_GUTTER_MARK_WIDTH;
+    }
+    if ((widget->edit_flags & SXGUI_TEXTEDIT_LINE_NUMBERS) != 0)
+    {
+        int count = sxgui_textedit_line_count(widget->edit_buffer);
+        int digits = 1;
+        while (count >= 10)
+        {
+            count /= 10;
+            ++digits;
+        }
+        if (digits < 3)
+        {
+            digits = 3;
+        }
+        width += digits * gfx_text_width("0") + 2 * SXGUI_TEXT_PAD;
+    }
+    return width;
+}
+
+/* Where the text goes: the inside minus the scrollbar and the gutter. */
+static struct sx_rect sxgui_textedit_text_area(const struct sxgui_widget *widget)
+{
+    struct sx_rect area = sxgui_textedit_inner(widget);
+    int gutter = sxgui_textedit_gutter_width(widget);
+
+    if (gutter > area.width)
+    {
+        gutter = area.width;
+    }
+    area.x += gutter;
+    area.width -= gutter;
+    return area;
+}
+
 static struct sx_rect sxgui_textedit_scrollbar_rect(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
@@ -3023,7 +3069,7 @@ static void sxgui_textedit_reveal_caret(struct sxgui_widget *widget)
     int line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
     int visible = sxgui_textedit_visible_rows(widget);
     int start = sxgui_textedit_line_start(widget->edit_buffer, line);
-    int inner_width = sxgui_textedit_inner(widget).width - 6;
+    int inner_width = sxgui_textedit_text_area(widget).width - 6;
     int caret_x;
 
     if (line < widget->value)
@@ -3063,7 +3109,7 @@ static void sxgui_textedit_reveal_caret(struct sxgui_widget *widget)
  * differently, releasing the button would move the selection. */
 static int sxgui_textedit_caret_from_point(const struct sxgui_widget *widget, int x, int y)
 {
-    struct sx_rect inner = sxgui_textedit_inner(widget);
+    struct sx_rect inner = sxgui_textedit_text_area(widget);
     int row = widget->value + (y - inner.y) / sxgui_row_height();
     int line_count = sxgui_textedit_line_count(widget->edit_buffer);
     int local_x = x - (inner.x + SXGUI_TEXT_PAD) + widget->scroll;
@@ -3091,9 +3137,57 @@ static int sxgui_textedit_caret_from_point(const struct sxgui_widget *widget, in
     return start + length;
 }
 
+#define SXGUI_TEXTEDIT_MAX_SPANS 64
+#define SXGUI_COLOR_BREAKPOINT   SXCHROME_RGB(192, 0, 0)
+#define SXGUI_COLOR_CURRENT      SXCHROME_RGB(255, 255, 0)
+#define SXGUI_COLOR_CURRENT_LINE SXCHROME_RGB(255, 255, 160)
+
+/* The gutter of one visible line: its marks, then its number right-aligned. */
+static void sxgui_paint_textedit_gutter_row(
+    struct sx_painter *painter, const struct sxgui_widget *widget,
+    struct sx_rect gutter, int row_y, int line, unsigned marks)
+{
+    int row_height = sxgui_row_height();
+
+    if (widget->edit_marks != 0)
+    {
+        int cx = gutter.x + SXGUI_GUTTER_MARK_WIDTH / 2;
+        int cy = row_y + row_height / 2;
+        if ((marks & SXGUI_TEXTEDIT_MARK_BREAKPOINT) != 0)
+        {
+            sx_painter_fill_ellipse(painter, sx_rect_make(cx - 5, cy - 5, 10, 10), SXGUI_COLOR_BREAKPOINT);
+        }
+        if ((marks & SXGUI_TEXTEDIT_MARK_CURRENT) != 0)
+        {
+            struct sx_point arrow[7] = {
+                {cx - 5, cy - 2}, {cx, cy - 2}, {cx, cy - 5}, {cx + 5, cy},
+                {cx, cy + 5}, {cx, cy + 2}, {cx - 5, cy + 2}};
+            sx_painter_fill_polygon(painter, arrow, 7, SXGUI_COLOR_CURRENT);
+            sx_painter_draw_polyline(painter, arrow, 7, 1, SXGUI_COLOR_TEXT);
+        }
+    }
+    if ((widget->edit_flags & SXGUI_TEXTEDIT_LINE_NUMBERS) != 0)
+    {
+        char number[12];
+        int value = line + 1;
+        int at = (int)sizeof(number) - 1;
+        number[at] = '\0';
+        do
+        {
+            number[--at] = (char)('0' + value % 10);
+            value /= 10;
+        } while (value > 0 && at > 0);
+        sx_painter_draw_text(
+            painter,
+            gutter.x + gutter.width - SXGUI_TEXT_PAD - gfx_text_width(number + at),
+            row_y + 2, number + at, SXGUI_COLOR_SHADOW);
+    }
+}
+
 static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_textedit_inner(widget);
+    struct sx_rect inner = sxgui_textedit_text_area(widget);
+    struct sx_rect gutter = sxgui_textedit_inner(widget);
     int row_height = sxgui_row_height();
     int line_count = sxgui_textedit_line_count(widget->edit_buffer);
     int caret_line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
@@ -3101,6 +3195,24 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
 
     sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
     sxgui_draw_sunken(painter, widget->rect);
+
+    gutter.width = inner.x - gutter.x;
+    if (gutter.width > 0 && sx_painter_push_clip(painter, gutter))
+    {
+        sx_painter_fill_rect(painter, gutter, SXGUI_COLOR_FACE);
+        sx_painter_vline(painter, gutter.x + gutter.width - 1, gutter.y, gutter.height, SXGUI_COLOR_SHADOW);
+        for (line = widget->value; line < line_count; ++line)
+        {
+            int row_y = gutter.y + (line - widget->value) * row_height;
+            if (row_y >= gutter.y + gutter.height)
+            {
+                break;
+            }
+            sxgui_paint_textedit_gutter_row(painter, widget, gutter, row_y, line,
+                widget->edit_marks != 0 ? widget->edit_marks(line, widget->edit_user) : 0u);
+        }
+        sx_painter_pop_clip(painter);
+    }
 
     if (!sx_painter_push_clip(painter, inner))
     {
@@ -3124,9 +3236,77 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
         memcpy(text, widget->edit_buffer + start, (size_t)copy);
         text[copy] = 0;
 
-        if (copy > 0)
+        if (widget->edit_marks != 0 &&
+            (widget->edit_marks(line, widget->edit_user) & SXGUI_TEXTEDIT_MARK_CURRENT) != 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(inner.x, row_y, inner.width, row_height),
+                SXGUI_COLOR_CURRENT_LINE);
+        }
+        if (copy > 0 && widget->edit_colorize == 0)
         {
             sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD - widget->scroll, row_y + 2, text, SXGUI_COLOR_TEXT);
+        }
+        else if (copy > 0)
+        {
+            /* Colour by span. Glyphs are blended, so a run drawn again over
+             * the line would leave the first colour at its edges: the line is
+             * drawn in pieces instead, each where the whole line puts it, so
+             * the spacing is the same as without colour. */
+            struct sxgui_text_span spans[SXGUI_TEXTEDIT_MAX_SPANS];
+            int span_count = widget->edit_colorize(
+                widget->edit_buffer + start, length, line, spans, SXGUI_TEXTEDIT_MAX_SPANS, widget->edit_user);
+            int at = 0;
+            int span;
+
+            if (span_count < 0)
+            {
+                span_count = 0;
+            }
+            if (span_count > SXGUI_TEXTEDIT_MAX_SPANS)
+            {
+                span_count = SXGUI_TEXTEDIT_MAX_SPANS;
+            }
+            for (span = 0; span <= span_count && at < copy; ++span)
+            {
+                /* The gap before the span in the default colour, then the
+                 * span; past the last span, the rest of the line. */
+                int from = span < span_count ? spans[span].start : copy;
+                int to = span < span_count ? spans[span].start + spans[span].length : copy;
+                int piece;
+
+                if (from < at)
+                {
+                    from = at;
+                }
+                if (from > copy)
+                {
+                    from = copy;
+                }
+                if (to > copy)
+                {
+                    to = copy;
+                }
+                for (piece = 0; piece < 2; ++piece)
+                {
+                    int piece_from = piece == 0 ? at : from;
+                    int piece_to = piece == 0 ? from : to;
+                    char run[256];
+
+                    if (piece_to <= piece_from)
+                    {
+                        continue;
+                    }
+                    memcpy(run, text + piece_from, (size_t)(piece_to - piece_from));
+                    run[piece_to - piece_from] = '\0';
+                    sx_painter_draw_text(painter,
+                        inner.x + SXGUI_TEXT_PAD - widget->scroll + sxgui_text_prefix_width(text, piece_from),
+                        row_y + 2, run, piece == 0 ? SXGUI_COLOR_TEXT : spans[span].color);
+                }
+                if (to > at)
+                {
+                    at = to;
+                }
+            }
         }
         /* Highlight: the intersection of the selection with this line. The box
          * is painted and only that span is REDRAWN in the inverted colour,
@@ -5409,13 +5589,28 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             }
             if (inserted != 0)
             {
-                char byte = (char)inserted;
-                /* Enter closes the run, so each line undoes on its own. A
-                 * full buffer still consumes the key, so it does not fall
-                 * through to the app's global handler (ESC-to-close...). */
-                if (sxgui_edit_insert(widget, widget->caret, &byte, 1, inserted != '\n') == 1)
+                /* Enter closes the run, so each line undoes on its own. With
+                 * AUTO_INDENT it carries the line's leading blanks (as far as
+                 * the caret) into the new line, in the same step. A full
+                 * buffer still consumes the key, so it does not fall through
+                 * to the app's global handler (ESC-to-close...). */
+                char text[128];
+                int count = 1;
+
+                text[0] = (char)inserted;
+                if (inserted == '\n' && (widget->edit_flags & SXGUI_TEXTEDIT_AUTO_INDENT) != 0)
                 {
-                    widget->caret += 1;
+                    int at = start;
+                    while (at < widget->caret && count < (int)sizeof(text) &&
+                           (widget->edit_buffer[at] == ' ' || widget->edit_buffer[at] == '\t'))
+                    {
+                        text[count++] = widget->edit_buffer[at++];
+                    }
+                }
+                count = sxgui_edit_insert(widget, widget->caret, text, count, inserted != '\n');
+                if (count > 0)
+                {
+                    widget->caret += count;
                     sxgui_textedit_reveal_caret(widget);
                     sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 }
@@ -5708,6 +5903,7 @@ int sxgui_textedit_document(struct sxgui_widget *widget, const char *text)
     widget->caret = 0;
     widget->sel_anchor = -1;
     widget->scroll = 0;
+    widget->value = 0;
     widget->modified = 0;
     return 0;
 }
