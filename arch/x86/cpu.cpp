@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+extern "C" uintptr_t __stack_chk_guard;
+
 #include "serial.hpp"
 #include "syscall.hpp"
 
@@ -90,6 +92,10 @@ uint64_t g_gdt[kEntryCount];
 IdtEntry g_idt[256];
 bool g_rdrand_available;
 uint64_t g_entropy_counter;
+// Established by the BSP; every AP must reproduce it before scheduling.
+bool g_smep;
+
+constexpr uint32_t kCr4Smep = 1u << 20;
 
 static_assert(sizeof(IdtEntry) == 8, "las puertas de IDT de 32 bits ocupan 8 bytes");
 
@@ -251,6 +257,41 @@ extern "C" ContextFrame* i386_report_exception(const uint32_t* frame) {
     cpu::halt_forever();
 }
 
+namespace {
+
+// SMEP exists under 32-bit paging (CPUID.7.0:EBX[7]); CR0.WP is already set
+// with paging. Returns false, leaving CR4 untouched, on processors without it.
+bool enable_smep() {
+    uint32_t maximum, ebx, ecx, edx;
+    asm volatile("cpuid" : "=a"(maximum), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0u), "c"(0u));
+    if (maximum < 7) return false;
+    uint32_t eax;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7u), "c"(0u));
+    if (!(ebx & (1u << 7))) return false;
+    write_cr4(read_cr4() | kCr4Smep);
+    return true;
+}
+
+}
+
+__attribute__((no_stack_protector)) void cpu::initialize_stack_guard() {
+    uint32_t eax, ebx, ecx, edx;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1u), "c"(0u));
+    g_rdrand_available = (ecx & (1u << 30)) != 0;
+    // The kernel guard stays stable for the boot, so frames already holding it
+    // keep comparing against the value they loaded.
+    __stack_chk_guard = process_stack_guard();
+}
+
+bool cpu::stack_guard_from_rdrand() { return g_rdrand_available; }
+
+uint32_t cpu::process_stack_guard() {
+    uint32_t value = random_u32();
+    // The stack-protector ABI keeps the low byte non-zero for string termination.
+    if ((value & 0xffu) == 0) value ^= 0xa5u;
+    return value;
+}
+
 uint32_t cpu::random_u32() {
     for (uint32_t attempt = 0; g_rdrand_available && attempt < 16; ++attempt) {
         uint32_t value;
@@ -327,6 +368,9 @@ void cpu::initialize() {
     outb(0xA1, 0x01);
     outb(0x21, 0xFF); /* mascara: todo cerrado */
     outb(0xA1, 0xFF);
+
+    g_smep = enable_smep();
+    serial::write(g_smep ? "cpu: SMEP enabled\n" : "cpu: SMEP unavailable on this processor\n");
 }
 
 void cpu::initialize_secondary(uint32_t index) {
@@ -338,6 +382,8 @@ void cpu::initialize_secondary(uint32_t index) {
     asm volatile("lgdt %0; lidt %1" :: "m"(gdt), "m"(idt) : "memory");
     const uint16_t selector = kTssSelector + index * 8;
     asm volatile("ltr %0" :: "r"(selector) : "memory");
+    // An AP that cannot match the BSP's SMEP baseline stays offline.
+    if (g_smep && !enable_smep()) halt_forever();
     enable_fpu();
 }
 

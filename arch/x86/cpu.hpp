@@ -34,6 +34,11 @@ void initialize();
 void initialize_secondary(uint32_t index);
 // Called under the kernel lock after CPU initialization.
 uint32_t random_u32();
+// Seeds the kernel __stack_chk_guard; the first call of the boot entry.
+void initialize_stack_guard();
+bool stack_guard_from_rdrand();
+// A fresh user guard for a new image, with a non-zero low byte.
+uint32_t process_stack_guard();
 
 /* esp0/ss0 son la pila de ring 0 que el processor carga cuando un proceso de
  * usuario ejecuta int $0x80. */

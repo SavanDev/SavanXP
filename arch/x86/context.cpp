@@ -34,7 +34,8 @@ void initialize_user_frame(ContextFrame& frame, uint32_t entry, uint32_t stack,
     frame.edi = argc;
     frame.esi = argv;
     frame.ebp = image_base;
-    frame.edx = 0x00c0ffee;
+    // Spawn and exec install a fresh guard; fork copies the parent's memory.
+    frame.edx = cpu::process_stack_guard();
 }
 
 } // namespace i386

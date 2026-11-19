@@ -344,12 +344,16 @@ State g_state = {};
 extern "C" uintptr_t __stack_chk_guard = 0;
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
-    halt_with("savanxp/i386: fallo del canary de pila");
+    halt_with("savanxp/i386: kernel stack canary failure");
 }
 
-extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
+extern "C" [[noreturn]] __attribute__((no_stack_protector))
+void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
+    cpu::initialize_stack_guard();
     serial::init();
     cpu::initialize();
+    serial::write(cpu::stack_guard_from_rdrand() ? "cpu: stack guard from RDRAND\n"
+                                                 : "cpu: stack guard from the TSC fallback\n");
     serial::write("cpu: gdt de 32 bits con segmentos de usuario y tss, idt con int $0x80\n");
     serial::write("savanxp/i386: arranque multiboot2\n");
     serial::write("firma ");

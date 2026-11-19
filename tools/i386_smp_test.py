@@ -14,13 +14,13 @@ from qmp_client import QmpClient
 from run_qemu import build_qemu_args, find_qemu
 
 
-def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float, scheduling: bool = False, idle: bool = False, kernel_preempt: bool = False, wakeup: bool = False) -> int:
-    console = scheduling or idle or kernel_preempt or wakeup
+def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: str, timeout: float, scheduling: bool = False, idle: bool = False, kernel_preempt: bool = False, wakeup: bool = False, hardening: bool = False) -> int:
+    console = scheduling or idle or kernel_preempt or wakeup or hardening
     if kernel_preempt and smp > 8:
         raise ValueError("kernel-preempt supports 1..8 CPUs for its bounded regression workload")
     if console and virtio:
         raise ValueError("smp uses the PS/2 console; validate virtio with sxgui-smoke/virtio-smoke")
-    if smp < 2 and not (idle or kernel_preempt or wakeup):
+    if smp < 2 and not (idle or kernel_preempt or wakeup or hardening):
         raise ValueError("smp-boot requires --smp 2..32 to exercise an AP")
     artifacts.mkdir(parents=True, exist_ok=True)
     serial = artifacts / "serial.log"
@@ -30,12 +30,21 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
         boot_iso = make_console_iso(iso.resolve(), Path(temporary)) if console else iso
         command = build_qemu_args(iso=boot_iso, disk_image=disk, debug_log=artifacts / "debug.log",
             accel=accel, smp=smp, headless=True, virtio=virtio, snapshot=True,
-            serial_path=serial, qmp_path=qmp)
+            serial_path=serial, qmp_path=qmp,
+            # qemu32 has neither SMEP nor RDRAND; max exposes both to i386.
+            cpu="max" if hardening else "qemu32")
         command[0] = find_qemu() or "qemu-system-i386"
         with (artifacts / "qemu.log").open("w") as log:
             guest = subprocess.Popen(command, stdout=log, stderr=log)
             try:
                 wait_serial(serial, r"savanxp:/\$ " if console else "user: /bin/progman loaded", timeout=min(timeout, 90))
+                if hardening:
+                    type_shell(qmp, ("guardtest32",))
+                    wait_serial(serial, r"GUARD32 PASS.*?savanxp:/\$ ", timeout=timeout)
+                    text = serial.read_text(errors="replace")
+                    for token in ("cpu: SMEP enabled", "cpu: stack guard from RDRAND"):
+                        if token not in text:
+                            raise RuntimeError(f"missing hardening evidence: {token}")
                 if wakeup:
                     type_shell(qmp, ("wakeup32",))
                     result = wait_serial(serial, r"WAKEUP (PASS|FAIL).*?savanxp:/\$ ", timeout=timeout)
@@ -128,6 +137,8 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                         raise RuntimeError("hardware TSS limit is not 104 bytes")
                     selector, base = int(tr[1], 16), int(tr[2], 16)
                     selectors.add(selector); tss_bases.add(base)
+                    if hardening and not int(re.search(r"CR4=([0-9a-f]+)", context, re.I)[1], 16) & (1 << 20):
+                        raise RuntimeError("a CPU runs without SMEP while the BSP established it")
                     if selector == 0x28:
                         continue
                     cr0 = int(re.search(r"CR0=([0-9a-f]+)", context, re.I)[1], 16)
@@ -138,7 +149,7 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                     raise RuntimeError("hardware contexts reused a TSS")
                 if "kernel: fatal exception" in text or "BOOT FAIL" in text or (not scheduling and "exception vector" in text):
                     raise RuntimeError("SMP boot contained a process/kernel fault")
-                label = "wakeup handoff" if wakeup else "kernel preemption" if kernel_preempt else "idle accounting" if idle else "scheduling" if scheduling else "startup"
+                label = "hardening" if hardening else "wakeup handoff" if wakeup else "kernel preemption" if kernel_preempt else "idle accounting" if idle else "scheduling" if scheduling else "startup"
                 print(f"i386 SMP {label}: PASS ({smp} CPUs, {aps} private AP TSS, {2 * aps} startup IPIs; {smp} scheduling CPUs)", flush=True)
                 return 0
             finally:

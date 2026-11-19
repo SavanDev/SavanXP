@@ -105,6 +105,10 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 randomizes kernel and per-process stack guards and enables SMEP.**
+  Guards come from RDRAND or the reference TSC fallback; an AP that cannot
+  match the BSP's SMEP stays offline. `smoke hardening` checks it on `-cpu max`.
+
 - **i386 restores v0.4.0 signal targeting and child-exit bookkeeping.**
   `kill(0, signal)` targets the caller, and child exit records `SIGCHLD`
   for its parent.

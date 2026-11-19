@@ -134,9 +134,9 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
-| Random kernel stack canary at boot | **Gap** | `__stack_chk_guard` is fixed at 0 in `arch/x86/main32.cpp` | Seed from RDRAND with the reference fallback |
-| Random per-process user guard | **Gap** | Fixed `0x00c0ffee` in `arch/x86/context.cpp` | Same source as the kernel seed, low byte non-zero |
-| SMEP on supported CPUs | **Gap** | Only `CR0.WP` is set | Set `CR4.SMEP` when CPUID advertises it; APs keep the BSP baseline |
+| Random kernel stack canary at boot | Ported | `smoke hardening` (RDRAND line) | — |
+| Random per-image user guard, inherited by fork | Ported | `guardtest32` in `smoke shared` and `smoke hardening` | — |
+| SMEP on supported CPUs, APs match the BSP | Ported | `smoke hardening` reads CR4 on every CPU | The reference halts SMEP-less APs even without BSP SMEP; i386 follows the documented baseline ([study §26](I386_PORT_STUDY.md#26-stack-guards-and-smep)) |
 | NX and full W^X | Justified | No PAE: 32-bit paging has no NX bit | W^X stays an API rule for views and ELF segments |
 | Ring-3 port I/O denied | Ported | `multitest32 fault-io` | — |
 | Malformed ELF, SxFS and initramfs rejection | Ported | `memory`, `storage-smoke` | — |
@@ -171,11 +171,10 @@ list. Port them, or record why another scenario covers them:
 
 ## Suggested order
 
-1. Close the three security gaps; they are code, not evidence.
-2. Port the missing scenarios that guard visible behavior: Program Manager,
+1. Port the missing scenarios that guard visible behavior: Program Manager,
    Files, Task Manager, Add/Remove Programs, volume, keyboard and pointer.
-3. Capture both builds with the same input scripts and record the visual
+2. Capture both builds with the same input scripts and record the visual
    comparison per application.
-4. Run the performance table and the idle-halt check.
-5. Resolve every Justified (pending) row, then review the table as a whole
+3. Run the performance table and the idle-halt check.
+4. Resolve every Justified (pending) row, then review the table as a whole
    before moving the target to v0.4.1.

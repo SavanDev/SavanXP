@@ -79,8 +79,8 @@ alignment, entry placement and incompatible writable/executable segments, includ
 page-sharing unions. The main PIE's header must be mapped. `PT_INTERP` is copied
 beside argv without overwriting argument strings. Registers retain the established
 i386 entry ABI: EDI argc, ESI argv, EDX native guard, ECX interpreter path, EBP image
-header. The guard still uses the bring-up seed; reference entropy remains a
-security parity gap. The pointer array and guard are four bytes; the call stack is 16-byte aligned.
+header. Spawn and exec draw a fresh guard from RDRAND or the reference TSC fallback;
+fork inherits the parent's. The pointer array and guard are four bytes; the call stack is 16-byte aligned.
 
 SavanXP retains its embedded interpreter design: the kernel maps the executable;
 `crt0` invokes the weak C startup hook; `ldso.c` walks `DT_NEEDED` under `/disk/lib`

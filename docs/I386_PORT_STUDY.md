@@ -2230,3 +2230,53 @@ at 1280x800 and the desktop smoke's `expect_text` check confirmed the
 before and after its runs. This establishes the comparison environment
 and a desktop checkpoint. The feature, visual and performance comparisons
 are still part of the parity review.
+
+## 26. Stack guards and SMEP
+
+The [parity review](I386_PARITY_REVIEW.md) found three security rows
+where i386 still ran bring-up values. The kernel's `__stack_chk_guard`
+stayed zero for the whole boot. Every process received the constant
+`0x00c0ffee` in EDX, so all images shared one guard. SMEP was never set,
+although 32-bit paging supports it. v0.4.0 seeds the kernel guard first
+thing in `_start`, gives every new image a fresh guard and sets
+`CR4.SMEP` when CPUID advertises it.
+
+The port reuses the native sample from section 22: RDRAND when CPUID
+advertises it, otherwise the reference TSC/counter mix. The boot entry
+is now `no_stack_protector` and seeds the guard before serial setup.
+Frames entered with the old zero never return, and later frames compare
+against the stable boot value. A guard with a zero low byte is XORed with
+`0xa5`, as in the reference. `initialize_user_frame` draws the user
+guard for spawn and exec. Fork copies the parent's memory, so the child
+keeps the parent's `__stack_chk_guard` as in v0.4.0.
+
+SMEP uses CPUID leaf 7 (EBX bit 7). `CR0.WP` was already set together
+with paging on the BSP and in the AP trampoline. The kernel image, its
+direct map and the AP trampoline are supervisor pages. The only
+user-accessible mappings are the per-process windows, which the kernel
+reads and writes but never executes. The BSP records whether it enabled
+SMEP and prints `cpu: SMEP enabled` or `cpu: SMEP unavailable on this
+processor`. An AP enables SMEP only when the BSP has it, and halts before
+reporting online if it cannot.
+
+That AP rule follows the baseline in v0.4.0's `KERNEL_SECURITY.md`: the
+BSP continues on older CPUs, and an AP that cannot match it stays
+offline. The tag's code is stricter than that document. Its
+`ap_initialize_cpu` halts any AP without SMEP, even when the BSP also
+lacks it. The BSP then spins up to 200 million times per missing AP.
+`qemu64` has no SMEP, which probably explains why the four-vCPU `qemu64`
+reference run in section 25 stopped after IOAPIC setup. That cause has
+not been confirmed. i386 keeps its `qemu32` SMP profiles working because
+they do not expose SMEP.
+
+`qemu32` exposes neither SMEP nor RDRAND, so the default smokes exercise
+the fallbacks. `./build.sh smoke hardening --smp 4` boots `-cpu max`,
+which exposes both. It requires the SMEP and RDRAND boot lines and reads
+`CR4` from every CPU through QMP; every value had bit 20 set
+(`0x00100610`). It also runs `guardtest32`, which `smoke shared` runs
+under `qemu32` too. The test checks that the guard is non-zero with a
+non-zero low byte and that fork inherits it. Across eight spawned images,
+some guard must differ from the parent's, and the spawned guards must
+vary. Each sample also execs itself, and the exec must install a new
+guard. With this change the three security rows match the reference. NX
+remains an architectural difference without PAE.

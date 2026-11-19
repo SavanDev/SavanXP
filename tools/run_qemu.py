@@ -21,11 +21,12 @@ def build_qemu_args(
     snapshot: bool = False,
     monitor_path: Path | None = None, serial_path: Path | None = None,
     qmp_path: Path | None = None,
+    cpu: str = "qemu32",
 ) -> list[str]:
     if smp < 1 or smp > 32:
         raise ValueError("--smp must be between 1 and 32")
     command = [
-        "qemu-system-i386", "-machine", "pc", "-cpu", "qemu32", "-accel", accel,
+        "qemu-system-i386", "-machine", "pc", "-cpu", cpu, "-accel", accel,
         "-m", "1024M", "-smp", str(smp), "-boot", "d",
         "-drive", f"file={iso},media=cdrom,format=raw,readonly=on,if=ide,index=2",
         "-display", "none" if headless else "gtk",

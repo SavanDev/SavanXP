@@ -184,6 +184,10 @@ changes, and record implementation/verification evidence as work lands.
    **Signals.** Target selection, exit status and `SIGCHLD` bookkeeping
    follow the limited reference contract. [Contracts and evidence](I386_POSIX.md).
 
+   **Stack guards and SMEP.** The kernel and each new image receive random
+   stack guards; fork inherits the parent's. SMEP is enabled when available
+   and every AP must match the BSP. [Evidence](I386_PORT_STUDY.md#26-stack-guards-and-smep).
+
    **Boot and session handoff.** The GRUB framebuffer shows the reference
    splash, including the startup logo, fade, marquee and status. The compositor
    takes ownership at graphics-session acquisition. [Evidence](I386_GRAPHICS.md).

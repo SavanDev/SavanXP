@@ -90,6 +90,8 @@ remote termination and CPU/FPU/memory regressions; `smoke idle` supports
 checks startup and hardware state through QMP. `smp` and `smp-boot` require at
 least two CPUs. `smoke kernel-preempt` supports 1–8 CPUs and checks retained
 kernel waits, original CPU ownership, x87/SSE state and deferred kill cleanup.
+`smoke hardening` (1–32 CPUs) boots `-cpu max`, the only profile with SMEP
+and RDRAND, and checks SMEP on every CPU plus random stack guards.
 [I386_SMP.md](I386_SMP.md) defines the current boundary.
 `--virtio` selects the reference
 block, network, sound, GPU, tablet and keyboard devices; the default profile
