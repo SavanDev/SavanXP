@@ -4,7 +4,7 @@
 > `/system/sxbasic.sxe /path/to/project.sbp [arguments]`, and
 > `sxbasic --make <project.sbp> <program.sxe>` makes an executable of them
 > ([SXBASIC_IMAGE.md](SXBASIC_IMAGE.md); phases 1 to 3 of
-> [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md)); what this
+> [SXBASIC_ROADMAP.md](../roadmaps/done/SXBASIC_ROADMAP.md)); what this
 > version leaves out of forms is under [Limits of this version](#limits-of-this-version).
 > This is phase 0's text: the language, its
 > project files and its forms, written before the compiler so the compiler has

@@ -1216,6 +1216,19 @@ def scenario_sxbide(s):
     s.shot("sxbide-run")
 
 
+def scenario_sxbide_debug(s):
+    """Savan BASIC's debugger on the console sample: Step Into (F8) starts it
+    stopped at its first statement, two more steps go on, and the Locals pane
+    shows Main's variables beside the marked line."""
+    s.run("/system/sxbide.sxe /system/sxbasic/samples/hello/hello.sbp")
+    s.qmp.tap("f8", pause=6.0)
+    s.qmp.tap("f8", pause=2.0)
+    s.qmp.tap("f8", pause=2.0)
+    image = s.shot("sxbide-debug")
+    if find_text(image, (0, 0, 1280, 770), "total = 0", TEXT, FIELD)[0] is None:
+        raise Failure("Savan BASIC's Locals pane does not show Main's variables while stopped")
+
+
 def scenario_system(s):
     """System Properties (all three pages) and Task Manager.
 
@@ -4279,6 +4292,7 @@ SCENARIOS = {
     "console": scenario_console,
     "sxbasic": scenario_sxbasic,
     "sxbide": scenario_sxbide,
+    "sxbide-debug": scenario_sxbide_debug,
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,

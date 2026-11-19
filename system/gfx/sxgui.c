@@ -6562,6 +6562,36 @@ int sxgui_textedit_replace(struct sxgui_widget *widget, int start, int end, cons
     return put == count;
 }
 
+int sxgui_textedit_line_at(const struct sxgui_widget *widget, int x, int y, int *in_marks)
+{
+    struct sx_rect inner;
+    int line;
+
+    if (in_marks != 0)
+    {
+        *in_marks = 0;
+    }
+    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    {
+        return -1;
+    }
+    inner = sxgui_textedit_inner(widget);
+    if (x < inner.x || y < inner.y || x >= inner.x + inner.width || y >= inner.y + inner.height)
+    {
+        return -1;
+    }
+    line = widget->value + (y - inner.y) / sxgui_row_height();
+    if (line >= sxgui_textedit_line_count(widget->edit_buffer))
+    {
+        return -1;
+    }
+    if (in_marks != 0)
+    {
+        *in_marks = widget->edit_marks != 0 && x < inner.x + SXGUI_GUTTER_MARK_WIDTH;
+    }
+    return line;
+}
+
 void sxgui_textedit_set_caret(struct sxgui_widget *widget, int position)
 {
     int length;

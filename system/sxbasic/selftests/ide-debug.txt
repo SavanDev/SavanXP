@@ -1,0 +1,39 @@
+# Savan BASIC's debugger driven with no window (sxbide --selftest; docs/userland/SXBASIC_IDE.md):
+# the console sample stopped at a breakpoint, its variables and a watch read,
+# stepped over, into a function and out of it, run to its end; then a runtime
+# error nothing catches, which stops the program at its line before it ends.
+open /system/sxbasic/samples/hello/hello.sbp
+save-as /tmp/idedbg/hello/hello.sbp
+select Main.bas
+breakpoint Main.bas 15
+start
+expect-stop Main.bas 15
+expect-local total 55
+expect-local i 11
+add-watch total
+expect-watch total 55
+step-over
+expect-stop Main.bas 17
+step-over
+expect-stop Main.bas 18
+step-into
+expect-stop Main.bas 37
+expect-local n 1
+expect-watch total <not in scope>
+step-out
+expect-stop Main.bas 18
+expect-local i 2
+breakpoint Main.bas 15
+continue
+expect-exit 0
+expect-output-file /system/sxbasic/samples/hello/expected-output.txt
+goto 15
+insert     Print 1 \ (total - 55)|
+start
+expect-stop Main.bas 15
+expect-stop-error 11
+expect-local total 55
+continue
+expect-exit 1
+expect-error Main.bas 15
+undo

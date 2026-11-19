@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Savan BASIC's debugger.** Every Start runs under it: breakpoints (F9 or the gutter), Break, Step Into/Over/Out
+  (F8, Shift+F8, Ctrl+Shift+F8), Locals and Watch panes, and a runtime error nothing catches stops at its line before
+  the program ends ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md#the-debugger)). New `sxbasic --debug`, the VM's
+  `struct sxb_debug_host` and `sxgui_textedit_line_at`. Checked by `sxbasic-test` and `smoke sxbide-debug-smoke`.
 - **Savan BASIC's form designer.** A form opens drawn: a toolbox, controls placed by dragging, moved, resized and
   deleted on an 8-pixel grid, the property grid following the selection, and a double-click writing the default event's
   `Sub` ([SXBASIC_IDE.md](docs/userland/SXBASIC_IDE.md#the-form-designer)); F7 shows the text. SXGUI gains a design

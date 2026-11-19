@@ -1,6 +1,6 @@
 # SxBASIC made executables and the program image
 
-> Phase 3 of [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md): Make
+> Phase 3 of [SXBASIC_ROADMAP.md](../roadmaps/done/SXBASIC_ROADMAP.md): Make
 > SXE. The language is in [SXBASIC.md](SXBASIC.md); the sections every `.sxe`
 > carries are in [SXE_FORMAT.md](SXE_FORMAT.md).
 

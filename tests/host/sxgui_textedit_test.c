@@ -199,6 +199,14 @@ int main(void)
         CHECK(blue_y >= 0 && red_y > blue_y && tint_y > red_y);
         CHECK(red_x < 16);
         CHECK(text_x > 30); /* past the marks and three digits of numbers */
+        /* The line under a point, and whether it is on the mark column. */
+        {
+            int in_marks = 0;
+            CHECK(sxgui_textedit_line_at(w, 5, red_y, &in_marks) == 1 && in_marks);
+            CHECK(sxgui_textedit_line_at(w, 60, blue_y, &in_marks) == 0 && !in_marks);
+            CHECK(sxgui_textedit_line_at(w, 60, 179, NULL) == -1);
+            CHECK(sxgui_textedit_line_at(w, 400, blue_y, NULL) == -1);
+        }
     }
     w->edit_colorize = 0;
     w->edit_marks = 0;

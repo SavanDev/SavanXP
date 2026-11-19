@@ -17,7 +17,10 @@
  * Run and Make SXE start /system/sxbasic.sxe as a child process with its
  * output on a pipe, so a program that loops or crashes does not take the
  * environment with it. A compile or runtime error the runner prints names a
- * file and a line; the environment opens that file at that line.
+ * file and a line; the environment opens that file at that line. Start runs
+ * the program under the debugger (sxbasic --debug): breakpoints from the
+ * gutter or F9, stepping, a runtime error stopping where it happened, and the
+ * procedure's variables and a watch list while it is stopped.
  *
  * --selftest drives the same code with no window, from a script of what a
  * user does (sxbide-smoke). */
@@ -71,6 +74,7 @@ enum {
     W_TB_SAVE,
     W_TB_SEP1,
     W_TB_START,
+    W_TB_BREAK,
     W_TB_END,
     W_TB_SEP2,
     W_TB_MAKE,
@@ -80,6 +84,10 @@ enum {
     W_PROPS,
     W_OUTPUT_LABEL,
     W_OUTPUT,
+    W_LOCALS_LABEL,
+    W_LOCALS,
+    W_WATCH_LABEL,
+    W_WATCH,
     W_STATUS,
     W_TOOLBOX,
     W_EDIT, /* one editor per file, IDE_MAX_FILES of them; the current one is shown */
@@ -104,6 +112,13 @@ enum {
     CMD_MAKE,
     CMD_VIEW_CODE,
     CMD_VIEW_OBJECT,
+    CMD_BREAK,
+    CMD_STEP_INTO,
+    CMD_STEP_OVER,
+    CMD_STEP_OUT,
+    CMD_TOGGLE_BREAKPOINT,
+    CMD_ADD_WATCH,
+    CMD_DELETE_WATCH,
 };
 
 enum { CHILD_NONE, CHILD_RUN, CHILD_MAKE };
@@ -159,6 +174,32 @@ static int g_discard_pending;
 static int g_object_view[IDE_MAX_FILES];
 /* `--selftest <script>` for the runner, from the IDE's own selftest. */
 static const char *g_child_script;
+
+/* The debugger (the section below Run and Make SXE). */
+#define IDE_MAX_BREAKS 32
+#define IDE_MAX_WATCHES 16
+#define IDE_MAX_LOCALS 64
+static int g_breaks[IDE_MAX_FILES][IDE_MAX_BREAKS];
+static int g_break_count[IDE_MAX_FILES];
+static char g_watch_names[IDE_MAX_WATCHES][64];
+static char g_watch_text[IDE_MAX_WATCHES][IDE_OUT_WIDTH];
+static const char *g_watch_rows[IDE_MAX_WATCHES];
+static int g_watch_count;
+static char g_locals[IDE_MAX_LOCALS][IDE_OUT_WIDTH];
+static const char *g_locals_rows[IDE_MAX_LOCALS];
+static int g_locals_count;
+static long g_debug_commands = -1; /* the child's handle 3: what the IDE says */
+static long g_debug_reports = -1;  /* the child's handle 4: what it reports */
+static char g_report_buffer[4096];
+static size_t g_report_length;
+static const char *g_start_command = "go";
+static int g_paused;
+static char g_stop_reason[16];
+static char g_stop_file[IDE_NAME_MAX];
+static int g_stop_line;
+static char g_stop_proc[64];
+static int g_stop_error;
+static char g_stop_description[128];
 
 /* ---- small helpers ------------------------------------------------------------------- */
 
@@ -437,10 +478,19 @@ static int colorize(const char *line, int length, int line_number, struct sxgui_
     return count;
 }
 
+static int break_index(int file, int line)
+{
+    for (int i = 0; file >= 0 && file < IDE_MAX_FILES && i < g_break_count[file]; i++) {
+        if (g_breaks[file][i] == line) return i;
+    }
+    return -1;
+}
+
 static unsigned marks(int line_number, void *user)
 {
     int file = (int)(intptr_t)user;
-    return file == g_mark_file && line_number + 1 == g_mark_line ? SXGUI_TEXTEDIT_MARK_CURRENT : 0u;
+    return (file == g_mark_file && line_number + 1 == g_mark_line ? SXGUI_TEXTEDIT_MARK_CURRENT : 0u) |
+           (break_index(file, line_number + 1) >= 0 ? SXGUI_TEXTEDIT_MARK_BREAKPOINT : 0u);
 }
 
 /* ---- the property grid ---------------------------------------------------------------- */
@@ -776,6 +826,7 @@ static void close_project(void)
     g_current = -1;
     g_project_path[0] = g_project_dir[0] = '\0';
     g_mark_file = -1;
+    memset(g_break_count, 0, sizeof(g_break_count));
     g_widgets[W_FILES].item_count = 0;
     props_sync(1);
 }
@@ -1051,6 +1102,7 @@ static void child_bytes(const char *bytes, long count)
 }
 
 static void update_commands(void);
+static void debug_closed(void);
 
 static void child_ended(int status)
 {
@@ -1074,6 +1126,7 @@ static void child_ended(int status)
     }
     g_child_kind = CHILD_NONE;
     g_child_pid = -1;
+    debug_closed();
     if (g_error_seen && !goto_location(g_error_file, g_error_line)) {
         outputf("%s is not a file of this project", g_error_file);
     }
@@ -1104,6 +1157,7 @@ static int start_child(int kind)
     int32_t pipe[2];
     char *argv[6];
     int argc = 0;
+    int32_t commands[2] = {-1, -1}, reports[2] = {-1, -1};
     if (g_child_kind != CHILD_NONE || g_file_count == 0) return -1;
     if (save_all() != 0) {
         set_message("The project could not be saved; nothing was started");
@@ -1111,10 +1165,12 @@ static int start_child(int kind)
     }
     project_name(name, sizeof(name));
     argv[argc++] = (char *)IDE_RUNNER;
+    int debugging = kind == CHILD_RUN && g_child_script == NULL;
     if (kind == CHILD_RUN && g_child_script != NULL) {
         argv[argc++] = (char *)"--selftest";
         argv[argc++] = (char *)g_child_script;
     }
+    if (debugging) argv[argc++] = (char *)"--debug";
     if (kind == CHILD_MAKE) {
         snprintf(g_made_path, sizeof(g_made_path), "%s/%s.sxe", g_project_dir, name);
         argv[argc++] = (char *)"--make";
@@ -1126,18 +1182,47 @@ static int start_child(int kind)
         set_message("Cannot start %s: no pipe for its output", IDE_RUNNER);
         return -1;
     }
+    if (debugging && (sxn_pipe_create(commands) < 0 || sxn_pipe_create(reports) < 0)) {
+        for (int i = 0; i < 2; i++) {
+            if (commands[i] >= 0) (void)sxn_close(commands[i]);
+            if (reports[i] >= 0) (void)sxn_close(reports[i]);
+        }
+        (void)sxn_close(pipe[0]);
+        (void)sxn_close(pipe[1]);
+        set_message("Cannot start %s: no pipe for the debugger", IDE_RUNNER);
+        return -1;
+    }
     struct sxn_spawn_request request;
     sxn_spawn_request_init(&request, IDE_RUNNER, argv, argc);
     request.std_handles[1] = pipe[1];
     request.std_handles[2] = pipe[1];
+    if (debugging) {
+        request.handles[0] = commands[0];
+        request.handles[1] = reports[1];
+        request.handle_count = 2;
+    }
     long pid = sxn_spawn_ex(&request);
     (void)sxn_close(pipe[1]);
+    if (debugging) {
+        (void)sxn_close(commands[0]);
+        (void)sxn_close(reports[1]);
+    }
     if (pid < 0) {
         (void)sxn_close(pipe[0]);
+        if (debugging) {
+            (void)sxn_close(commands[1]);
+            (void)sxn_close(reports[0]);
+        }
         set_message("Cannot start %s (error %ld)", IDE_RUNNER, -pid);
         return -1;
     }
     if (!g_headless) (void)sxn_set_nonblocking(pipe[0], 1);
+    if (debugging) {
+        g_debug_commands = commands[1];
+        g_debug_reports = reports[0];
+        g_report_length = 0;
+        if (!g_headless) (void)sxn_set_nonblocking(reports[0], 1);
+    }
     g_child_pipe = pipe[0];
     g_child_pid = pid;
     g_child_kind = kind;
@@ -1155,6 +1240,22 @@ static int start_child(int kind)
         outputf("Running %s", name);
         set_message("Running %s", name);
     }
+    if (debugging) {
+        /* What the debugger has to know before the first statement runs. */
+        char line[160];
+        for (int f = 0; f < g_file_count; f++) {
+            for (int i = 0; i < g_break_count[f]; i++) {
+                int length = snprintf(line, sizeof(line), "break %d %s\n", g_breaks[f][i], g_files[f].name);
+                (void)sxn_write(g_debug_commands, line, (unsigned long)length);
+            }
+        }
+        for (int i = 0; i < g_watch_count; i++) {
+            int length = snprintf(line, sizeof(line), "watch %s\n", g_watch_names[i]);
+            (void)sxn_write(g_debug_commands, line, (unsigned long)length);
+        }
+        int length = snprintf(line, sizeof(line), "%s\n", g_start_command);
+        (void)sxn_write(g_debug_commands, line, (unsigned long)length);
+    }
     update_commands();
     return 0;
 }
@@ -1165,6 +1266,233 @@ static void end_child(void)
         (void)sxn_terminate(g_child_pid, 1);
         output("Ended by End");
     }
+}
+
+/* ---- the debugger ------------------------------------------------------------------------
+ *
+ * Start runs the program under `sxbasic --debug` with two pipes more: what
+ * the IDE says goes in on the child's handle 3, what it reports comes back on
+ * its handle 4 (the protocol is described in sxbasic.c). Breakpoints are the
+ * IDE's, by file and line, sent before the first statement and whenever they
+ * change. At a stop the child reports where it is, the procedure's variables
+ * and the watched names, and waits for go, step, over or out. */
+
+static int designer_active(void);
+
+static void debug_send(const char *format, ...)
+{
+    char line[300];
+    va_list args;
+    if (g_debug_commands < 0) return;
+    va_start(args, format);
+    int length = vsnprintf(line, sizeof(line) - 1, format, args);
+    va_end(args);
+    if (length < 0) return;
+    if (length > (int)sizeof(line) - 2) length = (int)sizeof(line) - 2;
+    line[length++] = '\n';
+    (void)sxn_write(g_debug_commands, line, (unsigned long)length);
+}
+
+static void toggle_breakpoint(int file, int line)
+{
+    if (file < 0 || file >= g_file_count || g_files[file].kind == IDE_PROJECT || line < 1) return;
+    int at = break_index(file, line);
+    if (at >= 0) {
+        memmove(&g_breaks[file][at], &g_breaks[file][at + 1], sizeof(int) * (size_t)(--g_break_count[file] - at));
+        debug_send("clear %d %s", line, g_files[file].name);
+    } else if (g_break_count[file] < IDE_MAX_BREAKS) {
+        g_breaks[file][g_break_count[file]++] = line;
+        debug_send("break %d %s", line, g_files[file].name);
+    }
+    repaint();
+}
+
+/* The Watch pane without values: what it shows while the program runs. */
+static void watch_reset(void)
+{
+    for (int i = 0; i < g_watch_count; i++) {
+        snprintf(g_watch_text[i], IDE_OUT_WIDTH, "%s", g_watch_names[i]);
+        g_watch_rows[i] = g_watch_text[i];
+    }
+    g_widgets[W_WATCH].item_count = g_watch_count;
+    repaint();
+}
+
+static void add_watch(const char *name)
+{
+    for (int i = 0; i < g_watch_count; i++) {
+        if (same_text_nocase(g_watch_names[i], (int)strlen(g_watch_names[i]), name)) return;
+    }
+    if (g_watch_count == IDE_MAX_WATCHES || name[0] == '\0') return;
+    snprintf(g_watch_names[g_watch_count], sizeof(g_watch_names[0]), "%s", name);
+    snprintf(g_watch_text[g_watch_count], IDE_OUT_WIDTH, "%s", name);
+    g_watch_rows[g_watch_count] = g_watch_text[g_watch_count];
+    g_watch_count++;
+    g_widgets[W_WATCH].item_count = g_watch_count;
+    debug_send("watch %s", name);
+    repaint();
+}
+
+static void delete_watch(int index)
+{
+    if (index < 0 || index >= g_watch_count) return;
+    debug_send("unwatch %s", g_watch_names[index]);
+    g_watch_count--;
+    memmove(g_watch_names[index], g_watch_names[index + 1], sizeof(g_watch_names[0]) * (size_t)(g_watch_count - index));
+    memmove(g_watch_text[index], g_watch_text[index + 1], sizeof(g_watch_text[0]) * (size_t)(g_watch_count - index));
+    for (int i = 0; i < g_watch_count; i++) g_watch_rows[i] = g_watch_text[i];
+    g_widgets[W_WATCH].item_count = g_watch_count;
+    if (g_widgets[W_WATCH].value >= g_watch_count) g_widgets[W_WATCH].value = g_watch_count - 1;
+    repaint();
+}
+
+/* The name at the caret (or the selection) of the code shown, as a watch. */
+static void watch_at_caret(void)
+{
+    char name[64];
+    if (g_current < 0 || designer_active()) return;
+    struct sxgui_widget *edit = editor(g_current);
+    const char *text = document(g_current);
+    int start = edit->caret, end = edit->caret;
+    if (sxgui_textedit_has_selection(edit)) {
+        start = edit->sel_anchor < edit->caret ? edit->sel_anchor : edit->caret;
+        end = edit->sel_anchor < edit->caret ? edit->caret : edit->sel_anchor;
+    } else {
+        while (start > 0 && is_word_char(text[start - 1])) start--;
+        while (is_word_char(text[end])) end++;
+    }
+    while (start < end && (text[start] == ' ' || text[start] == '\t')) start++;
+    while (end > start && (text[end - 1] == ' ' || text[end - 1] == '\t')) end--;
+    if (end <= start || end - start >= (int)sizeof(name) || memchr(text + start, '\n', (size_t)(end - start))) return;
+    snprintf(name, sizeof(name), "%.*s", end - start, text + start);
+    add_watch(name);
+}
+
+/* One line of a report; 1 for the `end` that closes it. */
+static int report_line(char *line)
+{
+    char *field[5];
+    int count = 0;
+    for (char *p = line; count < 5;) {
+        field[count++] = p;
+        p = strchr(p, '\t');
+        if (p == NULL) break;
+        *p++ = '\0';
+    }
+    if (strcmp(field[0], "end") == 0) return 1;
+    if (strcmp(field[0], "stop") == 0 && count == 5) {
+        snprintf(g_stop_reason, sizeof(g_stop_reason), "%s", field[1]);
+        snprintf(g_stop_file, sizeof(g_stop_file), "%s", field[2]);
+        g_stop_line = atoi(field[3]);
+        snprintf(g_stop_proc, sizeof(g_stop_proc), "%s", field[4]);
+        g_stop_error = 0;
+        g_locals_count = 0;
+    } else if (strcmp(field[0], "error") == 0 && count >= 3) {
+        g_stop_error = atoi(field[1]);
+        snprintf(g_stop_description, sizeof(g_stop_description), "%s", field[2]);
+    } else if (strcmp(field[0], "local") == 0 && count >= 3 && g_locals_count < IDE_MAX_LOCALS) {
+        snprintf(g_locals[g_locals_count], IDE_OUT_WIDTH, "%s = %s", field[1], field[2]);
+        g_locals_rows[g_locals_count] = g_locals[g_locals_count];
+        g_locals_count++;
+    } else if (strcmp(field[0], "watch") == 0 && count >= 3) {
+        for (int i = 0; i < g_watch_count; i++) {
+            if (strcmp(g_watch_names[i], field[1]) == 0) {
+                snprintf(g_watch_text[i], IDE_OUT_WIDTH, "%s = %s", field[1], field[2]);
+            }
+        }
+    }
+    return 0;
+}
+
+/* A whole report came: the program waits at a statement. */
+static void report_end(void)
+{
+    g_paused = 1;
+    g_widgets[W_LOCALS].item_count = g_locals_count;
+    g_widgets[W_LOCALS].scroll = 0;
+    g_widgets[W_WATCH].item_count = g_watch_count;
+    if (!goto_location(g_stop_file, g_stop_line)) outputf("Stopped in %s, which is not a file of this project", g_stop_file);
+    if (strcmp(g_stop_reason, "error") == 0) {
+        set_message("Runtime error %d: %s. Continue ends the program", g_stop_error, g_stop_description);
+    } else {
+        set_message("Break in %s, line %d", g_stop_proc, g_stop_line);
+    }
+    update_commands();
+}
+
+/* Reads the child's reports: 1 when one is complete (the program waits), -1
+ * when the channel closed, 0 when nothing more has come. In the selftest the
+ * pipe blocks, so it returns only with a report or at the end. */
+static int poll_reports(void)
+{
+    for (;;) {
+        char *end = memchr(g_report_buffer, '\n', g_report_length);
+        if (end != NULL) {
+            size_t length = (size_t)(end - g_report_buffer);
+            *end = '\0';
+            int done = report_line(g_report_buffer);
+            g_report_length -= length + 1;
+            memmove(g_report_buffer, end + 1, g_report_length);
+            if (done) {
+                report_end();
+                return 1;
+            }
+            continue;
+        }
+        if (g_report_length == sizeof(g_report_buffer)) g_report_length = 0;
+        long n = sxn_read(g_debug_reports, g_report_buffer + g_report_length, sizeof(g_report_buffer) - g_report_length);
+        if (n == -SAVANXP_EAGAIN) return 0;
+        if (n <= 0) {
+            if (n < 0) {
+                char text[96];
+                snprintf(text, sizeof(text), "sxbide: the debugger's reports ended with error %ld", -n);
+                (void)sxn_log(text);
+            }
+            (void)sxn_close(g_debug_reports);
+            g_debug_reports = -1;
+            return -1;
+        }
+        g_report_length += (size_t)n;
+    }
+}
+
+/* Goes on from a stop with go, step, over or out. */
+static void debug_resume(const char *command)
+{
+    if (!g_paused) return;
+    debug_send("%s", command);
+    g_paused = 0;
+    g_mark_file = -1;
+    g_locals_count = 0;
+    g_widgets[W_LOCALS].item_count = 0;
+    watch_reset();
+    set_message("Running");
+    update_commands();
+}
+
+/* Start, Continue and the steps: on from a stop, or a start that stops at
+ * the first statement when it is a step. */
+static void debug_command(const char *command)
+{
+    if (g_paused) {
+        debug_resume(command);
+    } else if (g_child_kind == CHILD_NONE) {
+        g_start_command = strcmp(command, "go") == 0 ? "go" : "step";
+        (void)start_child(CHILD_RUN);
+        g_start_command = "go";
+    }
+}
+
+static void debug_closed(void)
+{
+    if (g_debug_commands >= 0) (void)sxn_close(g_debug_commands);
+    if (g_debug_reports >= 0) (void)sxn_close(g_debug_reports);
+    g_debug_commands = g_debug_reports = -1;
+    g_report_length = 0;
+    g_paused = 0;
+    g_locals_count = 0;
+    g_widgets[W_LOCALS].item_count = 0;
+    watch_reset();
 }
 
 /* ---- the designer ------------------------------------------------------------------------
@@ -1847,7 +2175,16 @@ static struct sxgui_menu_item g_view_items[] = {
 };
 static struct sxgui_menu_item g_run_items[] = {
     {"Start\tF5", CMD_START, 0},
+    {"Break", CMD_BREAK, SXGUI_MENU_DISABLED},
     {"End", CMD_END, SXGUI_MENU_DISABLED},
+    {0, 0, 0},
+    {"Step Into\tF8", CMD_STEP_INTO, 0},
+    {"Step Over\tShift+F8", CMD_STEP_OVER, 0},
+    {"Step Out\tCtrl+Shift+F8", CMD_STEP_OUT, 0},
+    {0, 0, 0},
+    {"Toggle Breakpoint\tF9", CMD_TOGGLE_BREAKPOINT, 0},
+    {"Add Watch\tShift+F9", CMD_ADD_WATCH, 0},
+    {"Delete Watch", CMD_DELETE_WATCH, 0},
     {0, 0, 0},
     {"Make SXE...", CMD_MAKE, 0},
 };
@@ -1875,9 +2212,19 @@ static void update_commands(void)
     enable(&g_file_items[3], W_TB_SAVE, open);
     enable(&g_file_items[4], -1, open);
     enable(&g_file_items[5], -1, open);
-    enable(&g_run_items[0], W_TB_START, open && idle);
-    enable(&g_run_items[1], W_TB_END, g_child_kind == CHILD_RUN);
-    enable(&g_run_items[3], W_TB_MAKE, open && idle);
+    int can_go = (open && idle) || g_paused;
+    enable(&g_run_items[0], W_TB_START, can_go);
+    g_run_items[0].text = g_paused ? "Continue\tF5" : "Start\tF5";
+    g_widgets[W_TB_START].text = g_paused ? "Continue" : "Start";
+    enable(&g_run_items[1], W_TB_BREAK, g_child_kind == CHILD_RUN && g_debug_commands >= 0 && !g_paused);
+    enable(&g_run_items[2], W_TB_END, g_child_kind == CHILD_RUN);
+    enable(&g_run_items[4], -1, can_go);
+    enable(&g_run_items[5], -1, can_go);
+    enable(&g_run_items[6], -1, g_paused);
+    enable(&g_run_items[8], -1, open);
+    enable(&g_run_items[9], -1, open);
+    enable(&g_run_items[10], -1, g_watch_count > 0);
+    enable(&g_run_items[12], W_TB_MAKE, open && idle);
     int form = g_current >= 0 && g_files[g_current].kind == IDE_FORM;
     enable(&g_view_items[0], -1, open);
     enable(&g_view_items[1], -1, form);
@@ -1980,7 +2327,30 @@ static void command(int id)
         if (edit) sxgui_textedit_select_all(edit);
         break;
     case CMD_START:
-        (void)start_child(CHILD_RUN);
+        debug_command("go");
+        break;
+    case CMD_BREAK:
+        if (!g_paused) debug_send("pause");
+        break;
+    case CMD_STEP_INTO:
+        debug_command("step");
+        break;
+    case CMD_STEP_OVER:
+        debug_command("over");
+        break;
+    case CMD_STEP_OUT:
+        if (g_paused) debug_resume("out");
+        break;
+    case CMD_TOGGLE_BREAKPOINT:
+        if (edit && !designer_active()) toggle_breakpoint(g_current, line_of(document(g_current), edit->caret));
+        break;
+    case CMD_ADD_WATCH:
+        watch_at_caret();
+        update_commands();
+        break;
+    case CMD_DELETE_WATCH:
+        delete_watch(g_widgets[W_WATCH].value);
+        update_commands();
         break;
     case CMD_END:
         end_child();
@@ -2024,6 +2394,9 @@ static void on_widget(struct sxgui_widget *widget, void *user)
         break;
     case W_TB_START:
         command(CMD_START);
+        break;
+    case W_TB_BREAK:
+        command(CMD_BREAK);
         break;
     case W_TB_END:
         command(CMD_END);
@@ -2089,6 +2462,7 @@ static void sync_views(void)
 static void on_tick(struct sxngui_app *app)
 {
     (void)app;
+    if (g_debug_reports >= 0) (void)poll_reports();
     if (g_child_kind != CHILD_NONE) poll_child();
     sync_views();
 }
@@ -2100,6 +2474,19 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     int ctrl = (event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0;
     if (event->key == SAVANXP_KEY_F5) {
         command(CMD_START);
+        return 1;
+    }
+    int shift = (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0;
+    if (event->key == SAVANXP_KEY_F8) {
+        command(ctrl && shift ? CMD_STEP_OUT : shift ? CMD_STEP_OVER : CMD_STEP_INTO);
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_F9) {
+        command(shift ? CMD_ADD_WATCH : CMD_TOGGLE_BREAKPOINT);
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_DELETE && g_ui->focus_index == W_WATCH) {
+        command(CMD_DELETE_WATCH);
         return 1;
     }
     if (event->key == SAVANXP_KEY_F7) {
@@ -2137,9 +2524,23 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     return 0;
 }
 
+static uint32_t g_editor_buttons;
+
 static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event)
 {
     (void)app;
+    uint32_t was = g_editor_buttons;
+    g_editor_buttons = event->buttons;
+    /* A press on the code's gutter marks toggles a breakpoint there. */
+    if ((event->buttons & 1u) && !(was & 1u) && g_current >= 0 && !designer_active() &&
+        !(g_ui->menubar != NULL && g_ui->menubar->open_menu >= 0)) {
+        int in_marks = 0;
+        int line = sxgui_textedit_line_at(editor(g_current), event->x, event->y, &in_marks);
+        if (line >= 0 && in_marks) {
+            toggle_breakpoint(g_current, line + 1);
+            return 1;
+        }
+    }
     return designer_pointer(event);
 }
 
@@ -2174,7 +2575,7 @@ static void layout_size(int width, int height)
     int column_height = status_y - SXGUI_GAP - body;
     int files_height = (column_height - 2 * IDE_LABEL_HEIGHT) / 3;
     int output_y = status_y - SXGUI_GAP - IDE_OUTPUT_HEIGHT;
-    static const int toolbar[] = {W_TB_OPEN, W_TB_SAVE, W_TB_SEP1, W_TB_START, W_TB_END, W_TB_SEP2, W_TB_MAKE};
+    static const int toolbar[] = {W_TB_OPEN, W_TB_SAVE, W_TB_SEP1, W_TB_START, W_TB_BREAK, W_TB_END, W_TB_SEP2, W_TB_MAKE};
 
     for (size_t i = 0; i < sizeof(toolbar) / sizeof(toolbar[0]); i++) {
         int separator = toolbar[i] == W_TB_SEP1 || toolbar[i] == W_TB_SEP2;
@@ -2195,8 +2596,18 @@ static void layout_size(int width, int height)
     g_widgets[W_TOOLBOX].rect = sx_rect_make(right_x, body, IDE_TOOLBOX_WIDTH, editor_height);
     g_design_area = sx_rect_make(right_x + IDE_TOOLBOX_WIDTH + SXGUI_GAP, body,
                                  right_width - IDE_TOOLBOX_WIDTH - SXGUI_GAP, editor_height);
-    g_widgets[W_OUTPUT_LABEL].rect = sx_rect_make(right_x, output_y - IDE_LABEL_HEIGHT, right_width, IDE_LABEL_HEIGHT);
-    g_widgets[W_OUTPUT].rect = sx_rect_make(right_x, output_y, right_width, IDE_OUTPUT_HEIGHT);
+    /* Under the code: Output, then the debugger's Locals and Watch. */
+    int output_width = right_width * 46 / 100;
+    int pane_width = (right_width - output_width - 2 * SXGUI_GAP) / 2;
+    int locals_x = right_x + output_width + SXGUI_GAP;
+    int watch_x = locals_x + pane_width + SXGUI_GAP;
+    int watch_width = right_x + right_width - watch_x;
+    g_widgets[W_OUTPUT_LABEL].rect = sx_rect_make(right_x, output_y - IDE_LABEL_HEIGHT, output_width, IDE_LABEL_HEIGHT);
+    g_widgets[W_OUTPUT].rect = sx_rect_make(right_x, output_y, output_width, IDE_OUTPUT_HEIGHT);
+    g_widgets[W_LOCALS_LABEL].rect = sx_rect_make(locals_x, output_y - IDE_LABEL_HEIGHT, pane_width, IDE_LABEL_HEIGHT);
+    g_widgets[W_LOCALS].rect = sx_rect_make(locals_x, output_y, pane_width, IDE_OUTPUT_HEIGHT);
+    g_widgets[W_WATCH_LABEL].rect = sx_rect_make(watch_x, output_y - IDE_LABEL_HEIGHT, watch_width, IDE_LABEL_HEIGHT);
+    g_widgets[W_WATCH].rect = sx_rect_make(watch_x, output_y, watch_width, IDE_OUTPUT_HEIGHT);
     g_widgets[W_STATUS].rect = sx_rect_make(0, status_y, width, SXGUI_STATUS_HEIGHT);
 }
 
@@ -2206,23 +2617,24 @@ static void layout(struct sxngui_app *app)
     repaint();
 }
 
-static struct sx_bitmap g_icons[5];
-static const struct sx_bitmap *g_icon_refs[5];
+#define IDE_TOOLBAR_GLYPHS 6
+static struct sx_bitmap g_icons[IDE_TOOLBAR_GLYPHS];
+static const struct sx_bitmap *g_icon_refs[IDE_TOOLBAR_GLYPHS];
 
 static void build_widgets(void)
 {
-    static const uint32_t *const pixels[] = {ide_glyph_document_open, ide_glyph_document_save,
-                                             ide_glyph_media_playback_start, ide_glyph_media_playback_stop,
-                                             ide_glyph_application_x_executable};
-    static const char *const labels[] = {"Open", "Save", "Start", "End", "Make SXE"};
-    static const int slots[] = {W_TB_OPEN, W_TB_SAVE, W_TB_START, W_TB_END, W_TB_MAKE};
+    static const uint32_t *const pixels[] = {ide_glyph_document_open,        ide_glyph_document_save,
+                                             ide_glyph_media_playback_start, ide_glyph_media_playback_pause,
+                                             ide_glyph_media_playback_stop,  ide_glyph_application_x_executable};
+    static const char *const labels[] = {"Open", "Save", "Start", "Break", "End", "Make SXE"};
+    static const int slots[] = {W_TB_OPEN, W_TB_SAVE, W_TB_START, W_TB_BREAK, W_TB_END, W_TB_MAKE};
     struct savanxp_fb_info info = {0};
     struct sx_rect none = sx_rect_make(0, 0, 0, 0);
     info.width = info.height = 20;
     info.pitch = 80;
     info.bpp = 32;
     info.buffer_size = 1600;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < IDE_TOOLBAR_GLYPHS; i++) {
         sx_bitmap_wrap(&g_icons[i], (uint32_t *)pixels[i], &info, SX_PIXEL_FORMAT_BGRA8888);
         g_icon_refs[i] = &g_icons[i];
         g_widgets[slots[i]] = sxgui_toolbar_button(none, labels[i], &g_icon_refs[i], on_widget, 0);
@@ -2240,6 +2652,12 @@ static void build_widgets(void)
     g_widgets[W_OUTPUT].flags |= SXGUI_FLAG_EMPTY_SELECTION;
     g_widgets[W_OUTPUT].value = -1;
     g_widgets[W_OUTPUT].on_action = on_widget;
+    g_widgets[W_LOCALS_LABEL] = sxgui_label(none, "Locals");
+    g_widgets[W_LOCALS] = sxgui_listbox(none, g_locals_rows, 0);
+    g_widgets[W_LOCALS].flags |= SXGUI_FLAG_EMPTY_SELECTION;
+    g_widgets[W_LOCALS].value = -1;
+    g_widgets[W_WATCH_LABEL] = sxgui_label(none, "Watch");
+    g_widgets[W_WATCH] = sxgui_listbox(none, g_watch_rows, 0);
     g_widgets[W_STATUS] = sxgui_label(none, g_status);
     g_widgets[W_STATUS].flags |= SXGUI_FLAG_SUNKEN;
     g_tool_rows[0] = "Pointer";
@@ -2297,9 +2715,28 @@ static void check_failed(int line, const char *what, const char *detail)
     g_failures++;
 }
 
+/* To the program's end, going on from every stop. */
 static void wait_child(void)
 {
-    while (g_child_kind != CHILD_NONE) poll_child();
+    while (g_child_kind != CHILD_NONE) {
+        if (g_debug_reports >= 0) {
+            if (poll_reports() == 1) debug_resume("go");
+        } else {
+            poll_child();
+        }
+    }
+}
+
+/* To the next stop, or to the program's end. */
+static void wait_stop(void)
+{
+    while (g_child_kind != CHILD_NONE) {
+        if (g_debug_reports >= 0) {
+            if (poll_reports() == 1) return;
+        } else {
+            poll_child();
+        }
+    }
 }
 
 static void line_text(int file, int line, char *out, size_t size)
@@ -2318,7 +2755,59 @@ static void run_command(int line, char *command_text)
     else argument = command_text + strlen(command_text);
     const char *name = command_text;
 
-    if (strcmp(name, "new") == 0) {
+    if (strcmp(name, "breakpoint") == 0) {
+        char file[IDE_NAME_MAX];
+        int at = 0, index;
+        if (sscanf(argument, "%127s %d", file, &at) != 2 || (index = find_file(file)) < 0) {
+            check_failed(line, "no such file or line", argument);
+        } else {
+            toggle_breakpoint(index, at);
+        }
+    } else if (strcmp(name, "start") == 0 || strcmp(name, "continue") == 0 || strncmp(name, "step-", 5) == 0) {
+        const char *debug = name[0] != 's' ? "go" : strcmp(name, "start") == 0 ? "go"
+                          : strcmp(name, "step-into") == 0 ? "step" : strcmp(name, "step-over") == 0 ? "over" : "out";
+        if (name[0] == 'c' && !g_paused) check_failed(line, "not stopped", NULL);
+        if (strcmp(name, "step-out") == 0) debug_resume(debug);
+        else debug_command(debug);
+        wait_stop();
+    } else if (strcmp(name, "add-watch") == 0) {
+        add_watch(argument);
+        /* Stopped, the program reports again with the new watch. */
+        if (g_paused) wait_stop();
+    } else if (strcmp(name, "expect-stop") == 0) {
+        char file[IDE_NAME_MAX];
+        int at = 0;
+        int caret = g_current >= 0 ? line_of(document(g_current), editor(g_current)->caret) : 0;
+        if (sscanf(argument, "%127s %d", file, &at) != 2 || !g_paused || strcmp(g_stop_file, file) != 0 ||
+            g_stop_line != at || g_current < 0 || strcmp(g_files[g_current].name, file) != 0 || caret != at ||
+            g_mark_line != at || g_mark_file != g_current) {
+            snprintf(detail, sizeof(detail), "%s at %s line %d (%s), the caret on line %d", g_paused ? "stopped" : "not stopped",
+                     g_stop_file, g_stop_line, g_stop_reason, caret);
+            check_failed(line, "stop", detail);
+        }
+    } else if (strcmp(name, "expect-stop-error") == 0) {
+        if (!g_paused || strcmp(g_stop_reason, "error") != 0 || g_stop_error != atoi(argument)) {
+            snprintf(detail, sizeof(detail), "%s %d %s", g_stop_reason, g_stop_error, g_stop_description);
+            check_failed(line, "error stop", detail);
+        }
+    } else if (strcmp(name, "expect-local") == 0 || strcmp(name, "expect-watch") == 0) {
+        char wanted[IDE_OUT_WIDTH];
+        char *value = strchr(argument, ' ');
+        int found = 0, locals = name[7] == 'l';
+        if (value) *value++ = '\0';
+        snprintf(wanted, sizeof(wanted), "%s = %s", argument, value ? value : "");
+        for (int i = 0; i < (locals ? g_locals_count : g_watch_count); i++) {
+            if (strcmp(locals ? g_locals[i] : g_watch_text[i], wanted) == 0) found = 1;
+        }
+        if (!found) {
+            /* What the pane shows instead. */
+            size_t used = (size_t)snprintf(detail, sizeof(detail), "%s; the pane has", wanted);
+            for (int i = 0; i < (locals ? g_locals_count : g_watch_count) && used < sizeof(detail); i++) {
+                used += (size_t)snprintf(detail + used, sizeof(detail) - used, " [%s]", locals ? g_locals[i] : g_watch_text[i]);
+            }
+            check_failed(line, locals ? "no such local" : "no such watch", detail);
+        }
+    } else if (strcmp(name, "new") == 0) {
         if (new_project(argument) != 0) check_failed(line, "new project", g_message);
     } else if (strcmp(name, "view") == 0) {
         command(strcmp(argument, "object") == 0 ? CMD_VIEW_OBJECT : CMD_VIEW_CODE);

@@ -261,6 +261,18 @@ struct sxb_proc_info {
     int entry;           /* code offset */
 };
 
+/* A variable as a debugger names it: a procedure's local (its slot in the
+ * frame) or a module's (its global slot). The compiler records them; an
+ * image does not keep them (docs/userland/SXBASIC_IMAGE.md). */
+struct sxb_debug_symbol {
+    char name[64];
+    int type;
+    int slot;
+    int proc;       /* -1 for a module-level variable */
+    int module;
+    int is_public;
+};
+
 struct sxb_program {
     char name[64];
     int windows;
@@ -284,6 +296,12 @@ struct sxb_program {
     int form_count;
     int startup_form;
     struct sxb_project_info info; /* not in the image (sxb_image.c) */
+    /* For the debugger, not in the image either: 1 where a statement's code
+     * starts, and the variables' names. NULL in a program loaded from an image. */
+    uint8_t *statements;
+    struct sxb_debug_symbol *symbols;
+    int symbol_count;
+    int symbol_capacity;
 };
 
 /* ---- values -------------------------------------------------------------------- */

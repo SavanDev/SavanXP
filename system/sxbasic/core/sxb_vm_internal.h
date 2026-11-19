@@ -65,6 +65,12 @@ struct sxb_vm {
     struct sxb_waiting waiting[SXB_MAX_WAITING];
     int waiting_count;
     struct sxb_value scratch; /* Form_Unload's Cancel */
+    /* debugging (sxb_vm_set_debug) */
+    const struct sxb_debug_host *debug;
+    uint8_t *breakpoints; /* per code word, set where a statement on a breakpoint's line starts */
+    int debug_mode;
+    int debug_depth;      /* the frame count when the last step began */
+    int pause_requested;
 };
 
 /* Asks the running procedure to wait for sxb_vm_resume, which will push a

@@ -7,13 +7,16 @@
  *   sxbasic --selftest <script> <project.sbp>
  *   sxbasic --make <project.sbp> <program.sxe>
  *   sxbasic --make-selftest <script> <project.sbp> <program.sxe>
+ *   sxbasic --debug <project.sbp> [arguments...]
  *
  * The second form keeps what a console program prints and compares it with a
  * file: the sxbasic-smoke scenario runs the hello sample that way. The third
  * runs a Windows program with no window, doing what the script says a user
  * does and checking what it says to expect (sxbasic-forms-smoke). The fourth
  * is Make SXE; the fifth makes the executable, then starts it with --selftest
- * and passes on how it ended (sxbasic-make-smoke).
+ * and passes on how it ended (sxbasic-make-smoke). The last runs the project
+ * under Savan BASIC's debugger: its commands come on handle 3 and the reports
+ * go out on handle 4 (docs/userland/SXBASIC_IDE.md#the-debugger).
  *
  * A made executable is this program with the compiled project in its
  * .sxbasic section: started, it finds that section in its own file and runs
@@ -24,6 +27,7 @@
 #include "forms.h"
 #include "sxn/sxngui.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,6 +187,191 @@ static uint64_t host_clock(void *user)
 static const struct sxb_host g_host = {NULL, host_write, host_read_file, host_write_file, host_file_exists,
                                        host_read_line, host_clock};
 
+/* ---- the debugger's channel ------------------------------------------------------
+ *
+ * One line per message. The IDE sends `break <line> <file>`, `clear <line>
+ * <file>`, `watch <name>`, `unwatch <name>` and `pause` at any time, and
+ * `go`, `step`, `over` or `out` to start or to go on from a stop. At each stop
+ * this program sends `stop`, `error` (for an error stop), one `local` per
+ * variable of the procedure, one `watch` per watched name and `end`, fields
+ * separated by tabs. While it runs it reads the channel between slices of
+ * a console program and on each tick of a Windows one. */
+
+#define DEBUG_COMMANDS 3
+#define DEBUG_REPORTS 4
+#define DEBUG_MAX_WATCHES 16
+
+static int g_debugging;
+static struct sxb_vm *g_debug_vm;
+static char g_watches[DEBUG_MAX_WATCHES][64];
+static int g_watch_count;
+static char g_command_buffer[1024];
+static size_t g_command_length;
+
+static void report(const char *format, ...)
+{
+    char line[512];
+    va_list args;
+    va_start(args, format);
+    int length = vsnprintf(line, sizeof(line) - 1, format, args);
+    va_end(args);
+    if (length < 0) return;
+    if (length > (int)sizeof(line) - 2) length = (int)sizeof(line) - 2;
+    line[length++] = '\n';
+    (void)sxn_write(DEBUG_REPORTS, line, (unsigned long)length);
+}
+
+/* The next command into `line`: 1, 0 when none has come yet (only when not
+ * waiting), -1 once the IDE has closed the channel. */
+static int next_command(char *line, size_t size, int wait)
+{
+    for (;;) {
+        char *end = memchr(g_command_buffer, '\n', g_command_length);
+        if (end != NULL) {
+            size_t length = (size_t)(end - g_command_buffer);
+            snprintf(line, size, "%.*s", (int)length, g_command_buffer);
+            g_command_length -= length + 1;
+            memmove(g_command_buffer, end + 1, g_command_length);
+            return 1;
+        }
+        if (g_command_length == sizeof(g_command_buffer)) g_command_length = 0; /* an overlong line goes */
+        (void)sxn_set_nonblocking(DEBUG_COMMANDS, !wait);
+        long n = sxn_read(DEBUG_COMMANDS, g_command_buffer + g_command_length,
+                          sizeof(g_command_buffer) - g_command_length);
+        if (n == -SAVANXP_EAGAIN) return 0;
+        if (n <= 0) {
+            char text[96];
+            snprintf(text, sizeof(text), "sxbasic: the debugger's channel ended (%ld); running on without it", n);
+            (void)sxn_log(text);
+            return -1;
+        }
+        g_command_length += (size_t)n;
+    }
+}
+
+/* Breakpoints, watches and pause; 1 when `line` was one of them. */
+static int debug_setting(struct sxb_vm *vm, char *line)
+{
+    char *argument = strchr(line, ' ');
+    if (argument == NULL) {
+        if (strcmp(line, "pause") != 0) return 0;
+        sxb_vm_pause(vm);
+        return 1;
+    }
+    *argument++ = '\0';
+    if (strcmp(line, "break") == 0 || strcmp(line, "clear") == 0) {
+        char *file = strchr(argument, ' ');
+        if (file != NULL) (void)sxb_vm_set_breakpoint(vm, file + 1, atoi(argument), line[0] == 'b');
+        return 1;
+    }
+    if (strcmp(line, "watch") == 0 || strcmp(line, "unwatch") == 0) {
+        int found = -1;
+        for (int i = 0; i < g_watch_count; i++) {
+            if (strcmp(g_watches[i], argument) == 0) found = i;
+        }
+        if (line[0] == 'w' && found < 0 && g_watch_count < DEBUG_MAX_WATCHES) {
+            snprintf(g_watches[g_watch_count++], sizeof(g_watches[0]), "%s", argument);
+        } else if (line[0] == 'u' && found >= 0) {
+            memmove(g_watches[found], g_watches[found + 1], sizeof(g_watches[0]) * (size_t)(--g_watch_count - found));
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int resume_mode(const char *line)
+{
+    if (strcmp(line, "go") == 0) return SXB_DEBUG_GO;
+    if (strcmp(line, "step") == 0) return SXB_DEBUG_STEP_INTO;
+    if (strcmp(line, "over") == 0) return SXB_DEBUG_STEP_OVER;
+    if (strcmp(line, "out") == 0) return SXB_DEBUG_STEP_OUT;
+    return -1;
+}
+
+/* A value on one line of the channel: no tabs, no line ends. */
+static void flatten(char *text)
+{
+    for (; *text; text++) {
+        if (*text == '\t' || *text == '\n' || *text == '\r') *text = ' ';
+    }
+}
+
+static void debug_report(struct sxb_vm *vm, int reason)
+{
+    static const char *const reasons[] = {"", "breakpoint", "step", "pause", "error"};
+    const char *file, *proc, *name;
+    char value[256];
+    int line;
+    sxb_vm_where(vm, &file, &line, &proc);
+    report("stop\t%s\t%s\t%d\t%s", reasons[reason > 0 && reason <= 4 ? reason : 0], file, line, proc);
+    if (reason == SXB_STOP_ERROR) {
+        const struct sxb_runtime_error *error = sxb_vm_error(vm);
+        report("error\t%d\t%s", error->number, error->description);
+    }
+    for (int i = 0; sxb_vm_local(vm, i, &name, value, sizeof(value)) == 0; i++) {
+        flatten(value);
+        report("local\t%s\t%s", name, value);
+    }
+    for (int i = 0; i < g_watch_count; i++) {
+        if (sxb_vm_watch(vm, g_watches[i], value, sizeof(value)) != 0) snprintf(value, sizeof(value), "<not in scope>");
+        flatten(value);
+        report("watch\t%s\t%s", g_watches[i], value);
+    }
+    report("end");
+}
+
+/* The VM stopped: report, then wait for the IDE to say how to go on. A watch
+ * added or removed meanwhile is reported again. */
+static int debug_stop(void *user, struct sxb_vm *vm, int reason)
+{
+    char line[256];
+    (void)user;
+    debug_report(vm, reason);
+    for (;;) {
+        if (next_command(line, sizeof(line), 1) < 0) {
+            g_debugging = 0;
+            return SXB_DEBUG_GO;
+        }
+        int mode = resume_mode(line);
+        if (mode >= 0) return mode;
+        int is_watch = strncmp(line, "watch ", 6) == 0 || strncmp(line, "unwatch ", 8) == 0;
+        if (debug_setting(vm, line) && is_watch) debug_report(vm, reason);
+    }
+}
+
+static const struct sxb_debug_host g_debug_host = {NULL, debug_stop};
+
+/* While the program runs: settings the IDE sent since the last look. */
+static void debug_poll(void)
+{
+    char line[256];
+    int got;
+    while (g_debugging && (got = next_command(line, sizeof(line), 0)) != 0) {
+        if (got < 0) {
+            g_debugging = 0;
+            break;
+        }
+        (void)debug_setting(g_debug_vm, line);
+    }
+}
+
+/* The settings sent before the start, up to the command that starts it. */
+static void debug_begin(struct sxb_vm *vm)
+{
+    char line[256];
+    int mode = SXB_DEBUG_GO;
+    g_debug_vm = vm;
+    for (;;) {
+        if (next_command(line, sizeof(line), 1) < 0) {
+            g_debugging = 0;
+            return;
+        }
+        if ((mode = resume_mode(line)) >= 0) break;
+        (void)debug_setting(vm, line);
+    }
+    if (sxb_vm_set_debug(vm, &g_debug_host, mode) != 0) g_debugging = 0;
+}
+
 /* ---- Windows programs ----------------------------------------------------------------
  *
  * The forms runtime in a SUN window (sxngui_app), or with --selftest in a
@@ -205,6 +394,7 @@ static struct sxgui_context g_context;
 static void app_tick(struct sxngui_app *app)
 {
     (void)app;
+    debug_poll();
     sxb_forms_tick(g_forms_runtime);
 }
 
@@ -447,7 +637,8 @@ static void usage(void)
            "       sxbasic --expect <expected output> <project.sbp>\n"
            "       sxbasic --selftest <script> <project.sbp>\n"
            "       sxbasic --make <project.sbp> <program.sxe>\n"
-           "       sxbasic --make-selftest <script> <project.sbp> <program.sxe>\n");
+           "       sxbasic --make-selftest <script> <project.sbp> <program.sxe>\n"
+           "       sxbasic --debug <project.sbp> [arguments...]\n");
 }
 
 static void print_diagnostic(const struct sxb_diagnostic *diag)
@@ -472,6 +663,7 @@ static int run_program(struct sxb_program *program, const char *expect, const ch
         put(2, "sxbasic: out of memory\n");
         return 1;
     }
+    if (g_debugging) debug_begin(vm);
     if (sxb_program_is_windows(program)) {
         int windows_code = run_windows(program, vm, script);
         sxb_vm_destroy(vm);
@@ -482,7 +674,13 @@ static int run_program(struct sxb_program *program, const char *expect, const ch
         sxb_vm_destroy(vm);
         return 2;
     }
-    enum sxb_status status = sxb_vm_run(vm, 0);
+    enum sxb_status status;
+    if (g_debugging) {
+        /* In slices, so a pause or a breakpoint set meanwhile is seen. */
+        while ((status = sxb_vm_run(vm, 20000)) == SXB_RUNNING) debug_poll();
+    } else {
+        status = sxb_vm_run(vm, 0);
+    }
     int code = 0;
     if (status == SXB_ERROR) {
         const struct sxb_runtime_error *error = sxb_vm_error(vm);
@@ -759,7 +957,10 @@ int main(int argc, char **argv)
     const char *expect = NULL;
     const char *script = NULL;
     int first = 1;
-    if (argc >= 2 && (strcmp(argv[1], "--expect") == 0 || strcmp(argv[1], "--selftest") == 0)) {
+    if (argc >= 2 && strcmp(argv[1], "--debug") == 0) {
+        g_debugging = 1;
+        first = 2;
+    } else if (argc >= 2 && (strcmp(argv[1], "--expect") == 0 || strcmp(argv[1], "--selftest") == 0)) {
         if (argc != 4) {
             usage();
             sxn_exit(2);

@@ -797,6 +797,12 @@ SCENARIOS: dict[str, Scenario] = {
         "SXBIDE SMOKE FAIL",
         "Savan BASIC's environment: the console sample opened, saved as, run, broken at a line, made",
     ),
+    "sxbide-debug-smoke": _qemu_scenario(
+        "sxbide-debug",
+        "SXBIDE SMOKE PASS",
+        "SXBIDE SMOKE FAIL",
+        "Savan BASIC's debugger: a breakpoint, locals, a watch, step over, into and out, a runtime error stopped at",
+    ),
     "sxbide-design-smoke": _qemu_scenario(
         "sxbide-design",
         "SXBIDE SMOKE PASS",

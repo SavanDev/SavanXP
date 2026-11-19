@@ -1,5 +1,5 @@
 /* SxBASIC, the core: compiler and virtual machine for Savan BASIC
- * (docs/userland/SXBASIC.md, docs/roadmaps/open/SXBASIC_ROADMAP.md).
+ * (docs/userland/SXBASIC.md, docs/roadmaps/done/SXBASIC_ROADMAP.md).
  *
  * The core makes no system call. What it needs from the system (files, the
  * standard streams, the clock) comes through struct sxb_host, so the same
@@ -180,6 +180,52 @@ enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps);
 const struct sxb_runtime_error *sxb_vm_error(const struct sxb_vm *vm);
 
 void sxb_vm_destroy(struct sxb_vm *vm);
+
+/* ---- debugging (docs/userland/SXBASIC_IDE.md#the-debugger) ------------------------
+ *
+ * The VM stops before a statement and calls the debugger's `stop`, which
+ * looks at the program with the calls below and answers how to go on; it may
+ * block (the runner waits there for the IDE). A program loaded from an image
+ * has no statement marks nor names, and cannot be debugged. */
+
+enum sxb_stop_reason {
+    SXB_STOP_BREAKPOINT = 1, /* a statement on a line with a breakpoint */
+    SXB_STOP_STEP,           /* where the last step asked to stop */
+    SXB_STOP_PAUSE,          /* sxb_vm_pause */
+    SXB_STOP_ERROR           /* a runtime error nothing catches: the program ends after it */
+};
+
+enum sxb_debug_mode {
+    SXB_DEBUG_GO = 0,     /* on to the next breakpoint */
+    SXB_DEBUG_STEP_INTO,  /* the next statement, wherever it is */
+    SXB_DEBUG_STEP_OVER,  /* the next statement of this procedure or of a caller */
+    SXB_DEBUG_STEP_OUT    /* the next statement of a caller */
+};
+
+struct sxb_debug_host {
+    void *user;
+    /* Returns an enum sxb_debug_mode. */
+    int (*stop)(void *user, struct sxb_vm *vm, int reason);
+};
+
+/* Debugs from the first statement on, in `mode`. -1 for a program from an image. */
+int sxb_vm_set_debug(struct sxb_vm *vm, const struct sxb_debug_host *debug, int mode);
+/* Sets (on) or clears a breakpoint on the statements starting on `line` of
+ * the module `file` (its name in the project), before or after
+ * sxb_vm_set_debug. How many statements start there: 0 when the line has no
+ * code. */
+int sxb_vm_set_breakpoint(struct sxb_vm *vm, const char *file, int line, int on);
+/* Stops before the next statement that runs. */
+void sxb_vm_pause(struct sxb_vm *vm);
+
+/* Inside `stop`: the module, line and procedure it stopped in. */
+void sxb_vm_where(const struct sxb_vm *vm, const char **file, int *line, const char **proc);
+/* The variables of the procedure it stopped in, by index, and their values
+ * as text (strings quoted, an array as its item count). 0, or -1 past the last. */
+int sxb_vm_local(const struct sxb_vm *vm, int index, const char **name, char *value, size_t size);
+/* A variable by name as that procedure sees it: its own, then its module's,
+ * then the project's Public ones. 0, or -1 when no such name is in scope. */
+int sxb_vm_watch(const struct sxb_vm *vm, const char *name, char *value, size_t size);
 
 /* ---- forms (docs/userland/SXBASIC.md#forms) ----------------------------------------- */
 

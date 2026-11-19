@@ -708,6 +708,10 @@ int sxgui_textedit_replace(struct sxgui_widget *widget, int start, int end, cons
 /* Moves the caret to a byte offset, drops the selection and scrolls it into
  * view: going to the line an error names. */
 void sxgui_textedit_set_caret(struct sxgui_widget *widget, int position);
+/* The 0-based line under (x, y), or -1 past the text or outside the widget;
+ * *in_marks (may be NULL) says whether the point is on the gutter's mark
+ * column, where an IDE toggles a breakpoint. */
+int sxgui_textedit_line_at(const struct sxgui_widget *widget, int x, int y, int *in_marks);
 
 /* Puts the focus on a widget by index (-1 = none). Normally the user moves
  * the focus with Tab or a click, but an app whose content IS a control -- an

@@ -117,6 +117,7 @@ void sxb_vm_destroy(struct sxb_vm *vm)
     free(vm->globals);
     free(vm->arguments);
     free(vm->app_path);
+    free(vm->breakpoints);
     free(vm);
 }
 
@@ -146,7 +147,34 @@ static void dispatch(struct sxb_vm *vm)
     snprintf(vm->error.file, sizeof(vm->error.file), "%s",
              prog->code_length ? prog->module_files[prog->modules[at]] : "");
     vm->error.line = prog->code_length ? prog->lines[at] : 0;
+    /* A debugger sees the program as the error left it, before it ends. */
+    if (vm->debug != NULL) (void)vm->debug->stop(vm->debug->user, vm, SXB_STOP_ERROR);
     vm->status = SXB_ERROR;
+}
+
+/* Before a statement: whether the debugger wants to stop here, and why. */
+static int debug_reason(struct sxb_vm *vm)
+{
+    if (vm->pause_requested) return SXB_STOP_PAUSE;
+    if (vm->breakpoints != NULL && vm->breakpoints[vm->pc]) return SXB_STOP_BREAKPOINT;
+    switch (vm->debug_mode) {
+    case SXB_DEBUG_STEP_INTO: return SXB_STOP_STEP;
+    case SXB_DEBUG_STEP_OVER: return vm->frame_count <= vm->debug_depth ? SXB_STOP_STEP : 0;
+    case SXB_DEBUG_STEP_OUT: return vm->frame_count < vm->debug_depth ? SXB_STOP_STEP : 0;
+    default: return 0;
+    }
+}
+
+/* Called once per statement, just before its first instruction runs: the
+ * statement it stopped before is never checked again. */
+static void debug_check(struct sxb_vm *vm)
+{
+    int reason = debug_reason(vm);
+    if (reason == 0) return;
+    vm->pause_requested = 0;
+    vm->fault_pc = vm->pc;
+    vm->debug_mode = vm->debug->stop(vm->debug->user, vm, reason);
+    vm->debug_depth = vm->frame_count;
 }
 
 static struct sxb_value *cell(struct sxb_vm *vm, uint32_t location)
@@ -248,6 +276,7 @@ static enum sxb_status run(struct sxb_vm *vm, int floor, uint64_t max_steps)
         if (max_steps != 0 && steps++ >= max_steps) {
             break;
         }
+        if (vm->debug != NULL && vm->prog->statements[vm->pc]) debug_check(vm);
         vm->fault_pc = vm->pc;
         uint32_t op = code[vm->pc++];
         struct sxb_value a, b;
@@ -772,4 +801,131 @@ static void form_ops(struct sxb_vm *vm, uint32_t op)
     sxb_value_release(&keep);
     host_result(vm, error, result_type);
     if (error == 0 && result_type != 0) sxb_vm_push_scalar(vm, result_type, &result);
+}
+
+/* ---- debugging ----------------------------------------------------------------- */
+
+int sxb_vm_set_debug(struct sxb_vm *vm, const struct sxb_debug_host *debug, int mode)
+{
+    if (vm->prog->statements == NULL || vm->prog->code_length == 0) return -1;
+    if (vm->breakpoints == NULL) {
+        vm->breakpoints = calloc((size_t)vm->prog->code_length, 1);
+        if (vm->breakpoints == NULL) return -1;
+    }
+    vm->debug = debug;
+    vm->debug_mode = mode;
+    vm->debug_depth = vm->frame_count;
+    return 0;
+}
+
+static int module_named(const struct sxb_program *prog, const char *file)
+{
+    const char *base = strrchr(file, '/');
+    base = base ? base + 1 : file;
+    for (int m = 0; m < prog->module_count; m++) {
+        const char *name = prog->module_files[m];
+        const char *name_base = strrchr(name, '/');
+        if (strcmp(name, file) == 0 || strcmp(name_base ? name_base + 1 : name, base) == 0) return m;
+    }
+    return -1;
+}
+
+int sxb_vm_set_breakpoint(struct sxb_vm *vm, const char *file, int line, int on)
+{
+    const struct sxb_program *prog = vm->prog;
+    int module = module_named(prog, file), count = 0;
+    if (prog->statements == NULL || prog->code_length == 0 || module < 0) return 0;
+    /* Set before sxb_vm_set_debug as well as after. */
+    if (vm->breakpoints == NULL && (vm->breakpoints = calloc((size_t)prog->code_length, 1)) == NULL) return 0;
+    for (int pc = 0; pc < prog->code_length; pc++) {
+        if (prog->statements[pc] && prog->modules[pc] == module && prog->lines[pc] == line) {
+            vm->breakpoints[pc] = (uint8_t)(on != 0);
+            count++;
+        }
+    }
+    return count;
+}
+
+void sxb_vm_pause(struct sxb_vm *vm)
+{
+    vm->pause_requested = 1;
+}
+
+void sxb_vm_where(const struct sxb_vm *vm, const char **file, int *line, const char **proc)
+{
+    const struct sxb_program *prog = vm->prog;
+    int at = vm->fault_pc >= 0 && vm->fault_pc < prog->code_length ? vm->fault_pc : 0;
+    if (file) *file = prog->code_length ? prog->module_files[prog->modules[at]] : "";
+    if (line) *line = prog->code_length ? prog->lines[at] : 0;
+    if (proc) *proc = vm->frame_count > 0 ? prog->procs[vm->frames[vm->frame_count - 1].proc].name : "";
+}
+
+static void format_value(const struct sxb_value *value, int type, char *out, size_t size)
+{
+    char number[32];
+    if (value->kind == SXB_V_REF) value = value->u.ref;
+    if (SXB_TY_IS_ARRAY(type)) {
+        snprintf(out, size, "(%lld items)", value->u.a ? (long long)value->u.a->count : 0LL);
+        return;
+    }
+    switch (type) {
+    case SXB_TY_INT: snprintf(out, size, "%lld", (long long)value->u.i); break;
+    case SXB_TY_DOUBLE:
+        sxb_format_double(value->u.d, number);
+        snprintf(out, size, "%s", number);
+        break;
+    case SXB_TY_BOOL: snprintf(out, size, "%s", value->u.i ? "True" : "False"); break;
+    case SXB_TY_STRING: snprintf(out, size, "\"%s\"", sxb_str_data(value->kind == SXB_V_STRING ? value->u.s : NULL)); break;
+    default: snprintf(out, size, "(%s)", sxb_type_name(type)); break;
+    }
+}
+
+/* The procedure it stopped in, or -1. */
+static int stopped_proc(const struct sxb_vm *vm)
+{
+    return vm->frame_count > 0 ? vm->frames[vm->frame_count - 1].proc : -1;
+}
+
+static const struct sxb_value *local_cell(const struct sxb_vm *vm, const struct sxb_debug_symbol *symbol)
+{
+    int at = vm->frames[vm->frame_count - 1].base + symbol->slot;
+    return at >= 0 && at < vm->sp ? &vm->stack[at] : NULL;
+}
+
+int sxb_vm_local(const struct sxb_vm *vm, int index, const char **name, char *value, size_t size)
+{
+    const struct sxb_program *prog = vm->prog;
+    int proc = stopped_proc(vm);
+    for (int i = 0; i < prog->symbol_count && proc >= 0; i++) {
+        const struct sxb_debug_symbol *symbol = &prog->symbols[i];
+        if (symbol->proc != proc || index-- > 0) continue;
+        const struct sxb_value *cell = local_cell(vm, symbol);
+        if (name) *name = symbol->name;
+        if (cell) format_value(cell, symbol->type, value, size);
+        else snprintf(value, size, "(not yet)");
+        return 0;
+    }
+    return -1;
+}
+
+int sxb_vm_watch(const struct sxb_vm *vm, const char *name, char *value, size_t size)
+{
+    const struct sxb_program *prog = vm->prog;
+    int proc = stopped_proc(vm), length = (int)strlen(name);
+    int module = proc >= 0 ? prog->procs[proc].module : 0;
+    /* Its own variables first, then its module's, then the project's Public ones. */
+    for (int pass = 0; pass < 3; pass++) {
+        for (int i = 0; i < prog->symbol_count; i++) {
+            const struct sxb_debug_symbol *symbol = &prog->symbols[i];
+            if (!sxb_names_equal(symbol->name, (int)strlen(symbol->name), name, length)) continue;
+            if (pass == 0 && (symbol->proc != proc || proc < 0)) continue;
+            if (pass == 1 && (symbol->proc != -1 || symbol->module != module)) continue;
+            if (pass == 2 && (symbol->proc != -1 || !symbol->is_public)) continue;
+            const struct sxb_value *cell = pass == 0 ? local_cell(vm, symbol) : &vm->globals[symbol->slot];
+            if (cell == NULL) continue;
+            format_value(cell, symbol->type, value, size);
+            return 0;
+        }
+    }
+    return -1;
 }

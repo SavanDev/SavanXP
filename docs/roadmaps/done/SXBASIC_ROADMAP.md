@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, phases 0 to 5 done.** SxBASIC is a BASIC language and a visual
+> **Status: done, phases 0 to 6.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -107,7 +107,7 @@ Checked against the tree on 2026-11-18.
 
 | Area | Today | SxBASIC needs | Phase |
 |---|---|---|---|
-| SUN files | open, read, create, append, flush, query a path, list a directory, a 4 KiB whole-file write | `mkdir` for a new project folder, `rename` for a safe save, `unlink`, seek; all listed as missing in [SUN.md](../../userland/SUN.md#not-there-deliberately) and [VFS-A](VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface) | 4 |
+| SUN files | open, read, create, append, flush, query a path, list a directory, a 4 KiB whole-file write | `mkdir` for a new project folder, `rename` for a safe save, `unlink`, seek; all listed as missing in [SUN.md](../../userland/SUN.md#not-there-deliberately) and [VFS-A](../open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface) | 4 |
 | Code editor | `SXGUI_TEXTEDIT`: plain text, caller-owned buffer of fixed capacity, no wrap, no undo | a growable buffer, undo, line numbers, colouring by token, a gutter for breakpoints ([below](#the-code-editor-is-sxgui_textedit-not-a-new-widget)) | 4, 6 |
 | Property grid | `SXGUI_LISTBOX` with columns | a two-column grid that edits a value in place (text, a list, a colour, true/false) | 4 |
 | Designer surface | the app paints after the widgets (`on_paint`) and sees the pointer first (`on_pointer`) | controls drawn but inert, selection handles, drag to move and resize, a snap grid | 5 |
@@ -148,9 +148,9 @@ commit. Only the slice SxBASIC uses lands, not the rest of the other phase.
 
 | Roadmap | What SxBASIC takes from it | Phase here |
 |---|---|---|
-| [VFS_ROADMAP.md](VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface), VFS-A | the SUN path operations (mkdir, rename, unlink) that VFS-A keeps "for a New Folder button", and seek. The kernel already has the replacing rename a safe save needs (VFS-D); SUN only lacks the call | 4 |
-| [SYSTEM_LIMITS_ROADMAP.md](SYSTEM_LIMITS_ROADMAP.md) | none at first: the IDE is one main window with its panes inside it, as Visual Basic's docked layout, so it fits in the 4 owned windows per process and the 12 application windows of the session. A running program with several forms is the first that could hit the 12, and that raise is planned there | 2, 5 |
-| [IMAGE_VIEWER_ROADMAP.md](IMAGE_VIEWER_ROADMAP.md) | the picture control decodes with `libsximg`, for whatever formats it reads by then | 2 |
+| [VFS_ROADMAP.md](../open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface), VFS-A | the SUN path operations (mkdir, rename, unlink) that VFS-A keeps "for a New Folder button", and seek. The kernel already has the replacing rename a safe save needs (VFS-D); SUN only lacks the call | 4 |
+| [SYSTEM_LIMITS_ROADMAP.md](../open/SYSTEM_LIMITS_ROADMAP.md) | none at first: the IDE is one main window with its panes inside it, as Visual Basic's docked layout, so it fits in the 4 owned windows per process and the 12 application windows of the session. A running program with several forms is the first that could hit the 12, and that raise is planned there | 2, 5 |
+| [IMAGE_VIEWER_ROADMAP.md](../open/IMAGE_VIEWER_ROADMAP.md) | the picture control decodes with `libsximg`, for whatever formats it reads by then | 2 |
 | [SXE_FORMAT.md](../../userland/SXE_FORMAT.md) | the project section of a made executable, and a writer for `.sxmeta` and `.sxicon` in C next to the Python generator | 3 |
 
 ## Phases
@@ -317,12 +317,29 @@ the designer. Departures from the plan:
   view, the property grid and the designer cannot disagree.
 - Menus are still edited as text, and the toolbox lists names, not icons.
 
-### Phase 6 — the debugger
+### Phase 6 — the debugger (done)
 
 Breakpoints from the editor's gutter, stop at a runtime error instead of
 ending, step into and over, the current line marked, local variables and a
 watch list. The virtual machine pauses and reports over a channel between the
 IDE and the child process.
+
+**What landed.** The debugger in Savan BASIC
+([SXBASIC_IDE.md](../../userland/SXBASIC_IDE.md#the-debugger)). The core
+gained it call-free: the compiler marks where each statement's code starts
+and records the variables' names, and the VM calls a `struct
+sxb_debug_host` before a statement on a breakpoint, a step or a pause, and
+at a runtime error nothing catches; `sxbasic-test` checks breakpoints, the
+three steps, a pause, an error stop, locals and watches. The runner's
+`--debug` speaks the channel on handles 3 and 4. SXGUI gained
+`sxgui_textedit_line_at`, for a click on the gutter. Checked by
+`sxbide-debug-smoke` and `tools/shoot.sh --scenario sxbide-debug`.
+Departures from the plan:
+
+- Every Start runs under the debugger; there is no separate Start With
+  Debugging.
+- Watches are names, not expressions, and only the procedure stopped in
+  shows its variables (no call stack).
 
 ## Not in this roadmap
 

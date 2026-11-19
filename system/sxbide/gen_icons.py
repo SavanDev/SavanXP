@@ -59,6 +59,14 @@ def media_playback_stop():
     return ic.image
 
 
+def media_playback_pause():
+    """Break: two dark bars."""
+    ic = Icon(SIZE)
+    ic.part(ic.rect(4, 3, 8, 16), NAVY)
+    ic.part(ic.rect(11, 3, 15, 16), NAVY)
+    return ic.image
+
+
 def window(ic, x0, y0, x1, y1, bar):
     """A window: a white client area under a navy caption `bar` pixels tall."""
     ic.part(ic.rect(x0, y0, x1, y1), PAPER)
@@ -93,6 +101,7 @@ GLYPHS = [
     ("document-open", document_open),
     ("document-save", document_save),
     ("media-playback-start", media_playback_start),
+    ("media-playback-pause", media_playback_pause),
     ("media-playback-stop", media_playback_stop),
     ("application-x-executable", application_x_executable),
 ]

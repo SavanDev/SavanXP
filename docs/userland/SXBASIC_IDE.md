@@ -4,10 +4,10 @@
 ([SXBASIC.md](SXBASIC.md)): open a project, edit its files, run it, find
 its errors at their line and make its executable. It is a SUN program drawn
 with SXGUI, listed in All Programs under Development as **Savan BASIC**, and
-it opens a `.sbp` from Files. It is phases 4 and 5 of the
-[roadmap](../roadmaps/open/SXBASIC_ROADMAP.md): a form is drawn in the
-designer or edited as text, and both are the same text. The debugger is
-phase 6.
+it opens a `.sbp` from Files. It is phases 4 to 6 of the
+[roadmap](../roadmaps/done/SXBASIC_ROADMAP.md): a form is drawn in the
+designer or edited as text, both being the same text, and a program runs
+under the [debugger](#the-debugger).
 
 ```text
 sxbide [project.sbp]
@@ -20,9 +20,10 @@ One window, the panes inside it, as Visual Basic's docked layout:
 
 - **Menu bar and toolbar.** File (New Project, Open Project, Save, Save All,
   Save Project As, Exit), Edit (Undo, Redo, Cut, Copy, Paste, Select All),
-  View (Code, F7; Object, Shift+F7), Run (Start, End, Make SXE). The toolbar repeats Open, Save All, Start, End
-  and Make SXE. F5 starts the program, Ctrl+S saves the file shown, and
-  Ctrl+O opens a project.
+  View (Code, F7; Object, Shift+F7), Run (Start or Continue, Break, End,
+  the steps, Toggle Breakpoint, Add and Delete Watch, Make SXE). The
+  toolbar repeats Open, Save All, Start, Break, End and Make SXE. F5 starts
+  the program, Ctrl+S saves the file shown, and Ctrl+O opens a project.
 - **Project.** The project file, then its forms and modules in the order
   the project lists them. A file with unsaved changes shows ` *` after its
   name. Choosing one shows it: a form in the
@@ -37,6 +38,9 @@ One window, the panes inside it, as Visual Basic's docked layout:
   environment's own lines (opened, saved, ended with exit code n).
   Double-clicking or pressing Enter on a line that names a file and a line
   goes there.
+- **Locals and Watch.** Beside Output: while the program is stopped, the
+  variables of the procedure it stopped in, and the watched names with
+  their values.
 - **Status bar.** The caret's line and column, and the last message.
 
 ## The form designer
@@ -120,7 +124,8 @@ takes its default, and adding one means typing its line.
 Start and Make SXE save every changed file. Then they start the runner,
 `/system/sxbasic.sxe`, as a child process:
 
-- Start runs `sxbasic <project.sbp>`.
+- Start runs `sxbasic --debug <project.sbp>`, under the
+  [debugger](#the-debugger).
 - Make SXE runs `sxbasic --make <project.sbp> <folder>/<Name>.sxe`, next to
   the project and named after its `Name`.
 
@@ -128,7 +133,7 @@ The child's standard output and error go to one pipe, which the
 environment reads on its tick without blocking. A program that loops or
 crashes therefore does not take the environment with it. A Windows program
 opens its own window, since `sxngui_app` gives each process one main window
-([roadmap](../roadmaps/open/SXBASIC_ROADMAP.md#run-starts-a-separate-process)).
+([roadmap](../roadmaps/done/SXBASIC_ROADMAP.md#run-starts-a-separate-process)).
 When the pipe ends, the environment waits for the child and prints its exit
 code. End terminates the child with `sxn_terminate`.
 
@@ -147,6 +152,62 @@ run's error. When the child ends, the environment does three things:
 
 A file is matched by the name the project gives it, or by its last path
 component.
+
+## The debugger
+
+Every Start runs under the debugger, as Visual Basic's Run did; with no
+breakpoint set, it never stops and costs a check per statement.
+
+- **Breakpoints.** F9 toggles one on the caret's line, and so does a click
+  on the gutter's mark column; it shows as a red dot. A breakpoint on a line
+  with no statement never stops. Breakpoints are kept by line number: lines
+  added or removed above one do not move it.
+- **Running and stopping.** F5 starts, or continues from a stop. F8 (Step
+  Into) stops at the next statement, in a procedure it calls too; Shift+F8
+  (Step Over) at the next one of this procedure or a caller;
+  Ctrl+Shift+F8 (Step Out) at the next one of a caller. F8 and Shift+F8
+  with nothing running start the program stopped at its first statement.
+  Break stops a running program before its next statement (a Windows
+  program between events, or a console one between slices of 20000
+  instructions).
+- **A stop.** The file opens at the statement about to run, which carries
+  the yellow arrow; the status bar says why and where. Locals lists every
+  variable of that procedure, strings in quotes and arrays as their item
+  count. Watch lists the watched names: Shift+F9 adds the name at the caret
+  (or the selection), Delete in the Watch pane or Run > Delete Watch removes
+  one. A watched name is looked up as the procedure sees it: its own
+  variables, then its module's, then the project's `Public` ones, else it
+  shows `<not in scope>`.
+- **A runtime error nothing catches** stops the program at the statement
+  that raised it, with its number and description in the status bar and the
+  variables as they were; Continue then ends the program.
+
+### The channel
+
+The runner is the one that stops. `sxbasic --debug` gets two pipes more:
+on its handle 3 it reads what the IDE says, on handle 4 it writes what it
+reports, one line each, fields separated by tabs:
+
+| From the IDE | Meaning |
+|---|---|
+| `break <line> <file>`, `clear <line> <file>` | set or clear a breakpoint, any time |
+| `watch <name>`, `unwatch <name>` | add or remove a watched name, any time; at a stop the report comes again |
+| `pause` | stop before the next statement |
+| `go`, `step`, `over`, `out` | start (the first command after the settings), or go on from a stop |
+
+| From the runner, at a stop | Meaning |
+|---|---|
+| `stop <reason> <file> <line> <procedure>` | breakpoint, step, pause or error |
+| `error <number> <description>` | for an error stop |
+| `local <name> <value>`, `watch <name> <value>` | one per variable, one per watched name |
+| `end` | the report is whole; the runner waits for a command |
+
+The VM does the stopping (`sxb_vm_set_debug` and the rest in
+`system/sxbasic/core/sxbasic.h`): the compiler marks the code word where
+each statement starts and records every variable's name and slot, and the
+interpreter calls the debugger's `stop` before a marked word when a
+breakpoint, a step or a pause asks for it. Neither the marks nor the names
+are in a made executable's image, so a made program cannot be debugged.
 
 ## Files
 
@@ -191,6 +252,11 @@ the same code the menus call. Start and Make SXE wait for the child.
 | `expect-exit <code>`, `expect-output-file <path>` | the child's exit code and everything it printed |
 | `expect-error <file> <line>` | the error's file shown, the caret and the mark on its line |
 | `expect-exists <path>` | a file that was written |
+| `breakpoint <file> <line>` | toggles a breakpoint |
+| `start`, `continue`, `step-into`, `step-over`, `step-out` | the debugger's commands, waiting for the next stop or the end |
+| `add-watch <name>` | a watched name |
+| `expect-stop <file> <line>`, `expect-stop-error <number>` | stopped there, shown and marked; stopped at that runtime error |
+| `expect-local <name> <value>`, `expect-watch <name> <value>` | a row of the Locals or the Watch pane |
 
 `system/sxbasic/selftests/ide.txt` is the scenario `sxbide-smoke` runs. It
 opens the console sample, saves it as `/tmp/idetest/hello/`, and changes
@@ -203,9 +269,16 @@ button drawn, the button's `Text` set in the grid, the button moved and
 resized, a check box drawn and deleted, and a double-click writing the
 button's `Click` handler. It then runs the form with
 `ide-design-run.txt`, which clicks the button and checks what the handler
-wrote. A failed check also goes to the system log, which reaches the
-serial log the scenario reads. `tools/shoot.sh --scenario sxbide`
-shows the window on the greeter sample and starts it.
+wrote. `system/sxbasic/selftests/ide-debug.txt`, run by
+`sxbide-debug-smoke`, is the debugger's. It stops the console sample at a
+breakpoint and reads two variables and a watch. It steps over two
+statements, into `FizzBuzz` (where the watch is out of scope) and out of it,
+and runs to the end against the expected output. Then it breaks a line
+with a division by zero nothing catches, which stops the program there
+before it ends. A failed check also goes to the system log, which reaches
+the serial log the scenario reads. `tools/shoot.sh --scenario sxbide`
+shows the window on the greeter sample and starts it; `--scenario
+sxbide-debug` steps into the console sample and checks the Locals pane.
 
 ## Limits of this version
 
@@ -231,6 +304,16 @@ shows the window on the greeter sample and starts it.
   - The toolbox names its controls instead of drawing them.
   - A `GroupBox` does not carry the controls drawn on it when it moves: it
     does not contain them ([SXBASIC.md](SXBASIC.md)).
+- **The debugger.**
+  - Breakpoints do not follow the lines they are on when lines are added or
+    removed above them.
+  - A watch is a variable's name, not an expression, and a control's
+    property cannot be watched.
+  - Only the procedure the program stopped in shows its variables; there
+    is no call stack to choose another.
+  - While stopped, a Windows program's window does not repaint.
+  - There is no Set Next Statement, and no editing and going on: code
+    changed while stopped runs at the next Start.
 - **Names keep the case they were typed in.** The editor does not yet
   rewrite a name to the case of its declaration, as the
   [reference](SXBASIC.md#lexical-rules) says the environment does.

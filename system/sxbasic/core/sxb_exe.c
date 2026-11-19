@@ -1,5 +1,5 @@
 /* Make SXE: a made executable is the stub plus sections
- * (docs/roadmaps/open/SXBASIC_ROADMAP.md#the-runtime-is-a-shared-library-an-executable-is-a-stub-plus-bytecode).
+ * (docs/roadmaps/done/SXBASIC_ROADMAP.md#the-runtime-is-a-shared-library-an-executable-is-a-stub-plus-bytecode).
  *
  * This file writes the sections and adds them to a copy of the stub, the way
  * `llvm-objcopy --add-section` does on the build host, and reads them back.

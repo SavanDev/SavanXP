@@ -160,6 +160,7 @@ struct compiler {
     int loop_depth;
     int try_depth;
     int line;
+    int statement_pending; /* the next word emitted starts a statement */
 };
 
 static void errorf(struct compiler *c, int line, int column, const char *format, ...)
@@ -201,7 +202,9 @@ static int emit(struct compiler *c, uint32_t word)
         if (lines) prog->lines = lines;
         uint16_t *modules = realloc(prog->modules, sizeof(*modules) * (size_t)capacity);
         if (modules) prog->modules = modules;
-        if (!code || !lines || !modules) {
+        uint8_t *statements = realloc(prog->statements, (size_t)capacity);
+        if (statements) prog->statements = statements;
+        if (!code || !lines || !modules || !statements) {
             out_of_memory(c);
             return 0;
         }
@@ -211,6 +214,8 @@ static int emit(struct compiler *c, uint32_t word)
     prog->code[at] = word;
     prog->lines[at] = c->line;
     prog->modules[at] = (uint16_t)(c->module < 0 ? 0 : c->module);
+    prog->statements[at] = (uint8_t)c->statement_pending;
+    c->statement_pending = 0;
     return at;
 }
 
@@ -1945,6 +1950,7 @@ static void gen_print(struct compiler *c, struct sxb_node *node)
 static void gen_statement(struct compiler *c, struct sxb_node *node)
 {
     c->line = node->line;
+    c->statement_pending = 1;
     switch (node->kind) {
     case SXB_N_DIM: gen_dim(c, node); break;
     case SXB_N_CONST: gen_local_const(c, node); break;
@@ -1989,6 +1995,30 @@ static void reset_locals(struct compiler *c)
     c->try_depth = 0;
 }
 
+/* A variable for the debugger (struct sxb_debug_symbol). */
+static void add_symbol(struct compiler *c, const char *name, int length, int type, int slot, int proc, int module,
+                       int is_public)
+{
+    struct sxb_program *prog = c->prog;
+    if (prog->symbol_count == prog->symbol_capacity) {
+        int capacity = prog->symbol_capacity ? prog->symbol_capacity * 2 : 64;
+        struct sxb_debug_symbol *grown = realloc(prog->symbols, sizeof(*grown) * (size_t)capacity);
+        if (grown == NULL) {
+            out_of_memory(c);
+            return;
+        }
+        prog->symbols = grown;
+        prog->symbol_capacity = capacity;
+    }
+    struct sxb_debug_symbol *symbol = &prog->symbols[prog->symbol_count++];
+    snprintf(symbol->name, sizeof(symbol->name), "%.*s", length, name);
+    symbol->type = type;
+    symbol->slot = slot;
+    symbol->proc = proc;
+    symbol->module = module;
+    symbol->is_public = is_public;
+}
+
 static void gen_proc(struct compiler *c, struct sxb_proc_decl *proc)
 {
     struct sxb_proc_info *info = &c->prog->procs[proc->index];
@@ -2011,6 +2041,10 @@ static void gen_proc(struct compiler *c, struct sxb_proc_decl *proc)
     }
     info->param_count = params;
     info->local_count = c->slot_count;
+    for (int i = 0; i < c->local_count; i++) {
+        const struct local_sym *l = &c->locals[i];
+        if (!l->is_const) add_symbol(c, l->name, l->name_length, l->type, l->slot, proc->index, proc->module, 0);
+    }
     reset_locals(c);
     c->proc = NULL;
 }
@@ -2222,6 +2256,10 @@ static int compile_modules(struct compiler *c, int startup_main)
         reset_locals(c);
     }
     prog->proc_count = c->proc_count + 1 + prog->form_count;
+    for (int i = 0; i < c->global_count; i++) {
+        const struct global_sym *g = &c->globals[i];
+        if (!g->is_const) add_symbol(c, g->name, g->name_length, g->type, g->slot, -1, g->module, g->is_public);
+    }
     return c->failed ? -1 : 0;
 }
 
@@ -2990,6 +3028,8 @@ void sxb_program_free(struct sxb_program *program)
     free(program->code);
     free(program->lines);
     free(program->modules);
+    free(program->statements);
+    free(program->symbols);
     free(program->procs);
     free(program->module_files);
     free(program->module_globals);

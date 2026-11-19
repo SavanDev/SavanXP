@@ -522,6 +522,174 @@ static void exe(const struct sxb_program *program)
     free(again);
 }
 
+/* ---- the debugger --------------------------------------------------------------
+ *
+ * A debug host that writes down every stop (why, where, a watch, the first
+ * local) and answers each with the next mode of a plan. */
+
+struct stop_record {
+    int reason;
+    int line;
+    char proc[32];
+    char watch[48];
+    char local[48];
+};
+
+static struct stop_record g_stops[16];
+static int g_stop_count;
+static const int *g_plan;
+static const char *g_watch_name;
+
+static int record_stop(void *user, struct sxb_vm *vm, int reason)
+{
+    (void)user;
+    const char *file, *proc, *name = "";
+    char value[40] = "";
+    int line;
+    if (g_stop_count == 16) return SXB_DEBUG_GO;
+    struct stop_record *r = &g_stops[g_stop_count];
+    sxb_vm_where(vm, &file, &line, &proc);
+    r->reason = reason;
+    r->line = line;
+    snprintf(r->proc, sizeof(r->proc), "%s", proc);
+    if (sxb_vm_watch(vm, g_watch_name, value, sizeof(value)) == 0) snprintf(r->watch, sizeof(r->watch), "%s", value);
+    else snprintf(r->watch, sizeof(r->watch), "-");
+    if (sxb_vm_local(vm, 0, &name, value, sizeof(value)) == 0) snprintf(r->local, sizeof(r->local), "%s=%s", name, value);
+    else r->local[0] = '\0';
+    return g_plan[g_stop_count++];
+}
+
+static const struct sxb_debug_host g_debug_host = {NULL, record_stop};
+
+static void check_stop(int line, int index, int reason, int at, const char *proc, const char *watch, const char *local)
+{
+    g_cases++;
+    const struct stop_record *r = &g_stops[index];
+    if (index >= g_stop_count || r->reason != reason || r->line != at || strcmp(r->proc, proc) != 0 ||
+        strcmp(r->watch, watch) != 0 || (local && strcmp(r->local, local) != 0)) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test:%d: stop %d: expected %d at %d in %s, %s, %s; got %d at %d in %s, %s, %s (%d stops)\n",
+                line, index, reason, at, proc, watch, local ? local : "*", r->reason, r->line, r->proc, r->watch,
+                r->local, g_stop_count);
+    }
+}
+
+#define CHECK_STOP(index, reason, at, proc, watch, local) check_stop(__LINE__, index, reason, at, proc, watch, local)
+
+/* Compiles `source`, debugs it from the start in `mode` (after a pause when
+ * asked) with breakpoints on `breaks` (0-terminated), and runs it to its end. */
+static enum sxb_status debug_run(const char *source, const int *plan, const char *watch, const int *breaks, int mode,
+                                 int pause)
+{
+    struct sxb_diagnostic diag;
+    g_out_length = 0;
+    g_out[0] = '\0';
+    g_stop_count = 0;
+    g_plan = plan;
+    g_watch_name = watch;
+    struct sxb_program *program = sxb_compile_source("Test.bas", source, strlen(source), &diag);
+    if (program == NULL) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: the debugged program does not compile: %d: %s\n", diag.line, diag.message);
+        return SXB_ERROR;
+    }
+    struct sxb_vm *vm = sxb_vm_create(program, &g_host, "", "/app");
+    enum sxb_status status = SXB_ERROR;
+    /* Breakpoints first, as the runner sets them before the start. */
+    for (; *breaks; breaks++) (void)sxb_vm_set_breakpoint(vm, "Test.bas", *breaks, 1);
+    if (sxb_vm_set_debug(vm, &g_debug_host, mode) == 0) {
+        if (pause) sxb_vm_pause(vm);
+        status = sxb_vm_run(vm, 0);
+    } else {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: a compiled program cannot be debugged\n");
+    }
+    sxb_vm_destroy(vm);
+    sxb_program_free(program);
+    return status;
+}
+
+static void debugger(void)
+{
+    static const char *source =
+        "Dim counter As Integer\n"                /* 1 */
+        "\n"                                      /* 2 */
+        "Sub Main()\n"                            /* 3 */
+        "    Dim x As Integer = Twice(3)\n"       /* 4 */
+        "    counter = x + 1\n"                   /* 5 */
+        "    Print counter\n"                     /* 6 */
+        "    Print Twice(counter)\n"              /* 7 */
+        "End Sub\n"                               /* 8 */
+        "\n"                                      /* 9 */
+        "Function Twice(n As Integer) As Integer\n" /* 10 */
+        "    Dim r As Integer = n * 2\n"          /* 11 */
+        "    Return r\n"                          /* 12 */
+        "End Function\n";                         /* 13 */
+    static const int at_four[] = {4, 0};
+    static const int none[] = {0};
+    static const int steps[] = {SXB_DEBUG_STEP_INTO, SXB_DEBUG_STEP_OVER, SXB_DEBUG_STEP_OUT, SXB_DEBUG_STEP_OVER,
+                                SXB_DEBUG_STEP_OVER, SXB_DEBUG_STEP_OVER, SXB_DEBUG_GO};
+    static const int go[] = {SXB_DEBUG_GO, SXB_DEBUG_GO};
+
+    /* A breakpoint, then into a function, over its lines, out of it, and over
+     * a call: the call on line 7 runs without stopping in Twice. */
+    enum sxb_status status = debug_run(source, steps, "counter", at_four, SXB_DEBUG_GO, 0);
+    g_cases++;
+    if (status != SXB_DONE || strcmp(g_out, "7\n14\n") != 0 || g_stop_count != 6) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: debugged run: status %d, %d stops, printed \"%s\"\n", status, g_stop_count, g_out);
+    }
+    CHECK_STOP(0, SXB_STOP_BREAKPOINT, 4, "Main", "0", "x=0");
+    CHECK_STOP(1, SXB_STOP_STEP, 11, "Twice", "0", "n=3");
+    CHECK_STOP(2, SXB_STOP_STEP, 12, "Twice", "0", "n=3");
+    CHECK_STOP(3, SXB_STOP_STEP, 5, "Main", "0", "x=6");
+    CHECK_STOP(4, SXB_STOP_STEP, 6, "Main", "7", NULL);
+    CHECK_STOP(5, SXB_STOP_STEP, 7, "Main", "7", NULL);
+
+    /* A watch sees the procedure's own variables first; a name nothing
+     * declares is not in scope. */
+    (void)debug_run(source, steps, "r", at_four, SXB_DEBUG_GO, 0);
+    CHECK_STOP(0, SXB_STOP_BREAKPOINT, 4, "Main", "-", NULL);
+    CHECK_STOP(2, SXB_STOP_STEP, 12, "Twice", "6", NULL);
+
+    /* Stepping from the start stops at the first statement; a pause too. */
+    (void)debug_run(source, go, "x", none, SXB_DEBUG_STEP_INTO, 0);
+    CHECK_STOP(0, SXB_STOP_STEP, 4, "Main", "0", NULL);
+    (void)debug_run(source, go, "x", none, SXB_DEBUG_GO, 1);
+    CHECK_STOP(0, SXB_STOP_PAUSE, 4, "Main", "0", NULL);
+
+    /* An error nothing catches stops where it happened, and the program then ends. */
+    status = debug_run("Sub Main()\n    Dim z As Integer = 0\n    Print 1 \\ z\nEnd Sub\n", go, "z", none,
+                       SXB_DEBUG_GO, 0);
+    g_cases++;
+    if (status != SXB_ERROR || g_stop_count != 1) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: debugged error: status %d, %d stops\n", status, g_stop_count);
+    }
+    CHECK_STOP(0, SXB_STOP_ERROR, 3, "Main", "0", "z=0");
+
+    /* A breakpoint needs a statement on its line; an image cannot be debugged. */
+    struct sxb_diagnostic diag;
+    struct sxb_program *program = sxb_compile_source("Test.bas", source, strlen(source), &diag);
+    struct sxb_vm *vm = sxb_vm_create(program, &g_host, "", "/app");
+    g_cases++;
+    if (sxb_vm_set_debug(vm, &g_debug_host, SXB_DEBUG_GO) != 0 || sxb_vm_set_breakpoint(vm, "Test.bas", 9, 1) != 0 ||
+        sxb_vm_set_breakpoint(vm, "Test.bas", 12, 1) != 1 || sxb_vm_set_breakpoint(vm, "Other.bas", 12, 1) != 0) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: breakpoints on lines with and without code\n");
+    }
+    sxb_vm_destroy(vm);
+    program = reload(program);
+    vm = sxb_vm_create(program, &g_host, "", "/app");
+    g_cases++;
+    if (sxb_vm_set_debug(vm, &g_debug_host, SXB_DEBUG_GO) != -1) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: a program from an image was debugged\n");
+    }
+    sxb_vm_destroy(vm);
+    sxb_program_free(program);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2 && argc != 3) {
@@ -533,6 +701,7 @@ int main(int argc, char **argv)
     language();
     builtins();
     errors();
+    debugger();
     sample(argv[1]);
     printf("sxbasic-test: %d of %d cases passed\n", g_cases - g_failures, g_cases);
     return g_failures ? 1 : 0;
