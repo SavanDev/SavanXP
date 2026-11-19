@@ -129,6 +129,21 @@ which is how a GUI program started from `cmd` behaves.
 `sh` also stops on end of input, which it never could: reading the kernel tty,
 end of input did not exist.
 
+## `help`
+
+`help` prints every command by category, from text in `shell_print_help()`
+(`shell_core.c`). The text is written by hand, so `shell-help-test`
+(`tests/host/shell_help_test.py`) keeps it honest against CMake:
+
+- every program registered with `savanxp_program` or `savanxp_system_service`
+  that is not a test app is listed, unless the test's `NOT_COMMANDS` gives the
+  reason it is not typed at a prompt (`init`, the desktop services, `audiod`);
+- test apps are listed only inside `#if DESKTOP_INCLUDE_TEST_APPS`, since
+  `--no-test-apps` does not install them;
+- every name listed is a builtin or a registered program.
+
+A new program therefore goes into `help` in the same commit that registers it.
+
 ## Look
 
 - Colours: attribute `07`, light grey (192,192,192) on black, as the default

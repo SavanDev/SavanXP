@@ -1207,6 +1207,10 @@ add_test(NAME cursor-cur-test COMMAND savanxp-cursor-cur-test "${CMAKE_SOURCE_DI
 add_test(NAME license-notices-test COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/stage_licenses.py" check --root "${CMAKE_SOURCE_DIR}")
 
+# The shell's `help` lists every installed command (docs/desktop/CONSOLE.md).
+add_test(NAME shell-help-test COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/host/shell_help_test.py" --root "${CMAKE_SOURCE_DIR}")
+
 add_executable(savanxp-compositor-effects-test
     tests/host/compositor_effects_test.c system/compositord/shadow.c
     system/compositord/cursor_cur.c system/gfx/gfx2d.c)

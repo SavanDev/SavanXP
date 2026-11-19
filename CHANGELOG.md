@@ -129,6 +129,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **`help` lists every installed command.** `cp`, `date`, `volume`, `ntpsync`, the desktop programs and the `/system`
+  tools were missing, and test apps showed in builds without them. `shell-help-test` fails when a registered program
+  is left out ([CONSOLE.md](docs/desktop/CONSOLE.md#help)).
 - `tools/verify_doom_persistence.sh` (CI) copies every shared library in the SDK's `libraries.txt` into its isolated tree, not just
   `libsxmidi`, so `make-sdk.sh` no longer stops with "libmath.so.0.4 is not built yet".
 - POSIX `mkdir` of a directory that already exists fails with `EEXIST` instead of succeeding.

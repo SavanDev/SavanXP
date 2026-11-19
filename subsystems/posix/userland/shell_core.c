@@ -88,21 +88,33 @@ void shell_current_directory(char* buffer, size_t capacity) {
     }
 }
 
+/* Every installed command is listed here: tests/host/shell_help_test.py fails
+ * when a program is registered in CMake and missing from this text, or when a
+ * test-only program is listed outside the DESKTOP_INCLUDE_TEST_APPS block. */
 void shell_print_help(const struct shell_capture_sink* sink) {
     shell_emit_text(sink, 1, SAVANXP_DISPLAY_NAME " shell\n");
     shell_emit_text(sink, 1, "Builtins: help clear exit exec which mkdir cd pwd start\n");
-    shell_emit_text(sink, 1, "Core: sysinfo uname ps ls cat df echo sleep ticker true false\n");
-    shell_emit_text(sink, 1, "Storage: mkdir mv rm rmdir truncate sync fscheck\n");
-    shell_emit_text(sink, 1, "Diagnostics: sysinfo fdtest badptr\n");
-    shell_emit_text(sink, 1, "Network: netinfo ping udptest udpsend udprecv tcpget\n");
-    shell_emit_text(sink, 1, "Graphics/audio: desktop console gfxdemo gputest keytest mousetest beep\n");
+    shell_emit_text(sink, 1, "Files: ls cat cp mv rm mkdir rmdir truncate df sync fscheck\n");
+    shell_emit_text(sink, 1, "System: sysinfo uname ps date sleep echo true false beep\n");
+    shell_emit_text(sink, 1, "Settings: display volume mouse sound\n");
+    shell_emit_text(sink, 1, "Network: netinfo ping tcpget udpsend udprecv ntpsync\n");
+    shell_emit_text(sink, 1, "Programs: desktop notepad calc paint mines filesapp progman\n");
+    shell_emit_text(sink, 1, "          aboutapp appwiz nightwood\n");
+    shell_emit_text(sink, 1, "Tools: console taskmgr logview diskmgmt imgview webview\n");
+    shell_emit_text(sink, 1, "       sxbasic sxbide sxgldiag\n");
+    shell_emit_text(sink, 1, "Subsystems: linux winhost\n");
+#if DESKTOP_INCLUDE_TEST_APPS
+    shell_emit_text(sink, 1, "Test apps: gfxdemo gputest keytest mousetest fdtest badptr\n");
+    shell_emit_text(sink, 1, "           ticker udptest\n");
+#endif
     shell_emit_text(sink, 1, "Examples: sysinfo\n");
     shell_emit_text(sink, 1, "          df\n");
     shell_emit_text(sink, 1, "          cd /rescue\n");
     shell_emit_text(sink, 1, "          pwd\n");
-    shell_emit_text(sink, 1, "          echo \"hola mundo\" | cat\n");
+    shell_emit_text(sink, 1, "          echo \"hello world\" | cat\n");
     shell_emit_text(sink, 1, "          cat < /README\n");
-    shell_emit_text(sink, 1, "          echo hola > /out.txt\n");
+    shell_emit_text(sink, 1, "          cp /README /copy.txt\n");
+    shell_emit_text(sink, 1, "          echo hello > /out.txt\n");
     shell_emit_text(sink, 1, "          cat /missing > /mixed.txt 2>&1\n");
     shell_emit_text(sink, 1, "          fscheck\n");
     shell_emit_text(sink, 1, "          start notepad\n");
