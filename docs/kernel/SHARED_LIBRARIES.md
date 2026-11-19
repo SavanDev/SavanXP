@@ -148,7 +148,7 @@ What each library asks of the program:
 | `libmath` | nothing |
 | `libsxmidi`, `libsximg` | memory functions |
 | `libgfx2d` | `malloc` `free` `memcpy` `memset` |
-| `libsxgui` | `memcpy` `memmove` `memset` `strlen`, and `sxgui_default_host`, weakly |
+| `libsxgui` | `malloc` `realloc` `free` `memcpy` `memmove` `memset` `strlen`, and `sxgui_default_host`, weakly |
 | `libsxgfx` | POSIX calls and libc |
 
 All of those live in the runtime, not in the application, and only `libsxgfx`'s
@@ -994,7 +994,7 @@ none of them.
 | library | carries | `DT_NEEDED` | asks the program for |
 | --- | --- | --- | --- |
 | `libgfx2d` | `pixels.c` (primitives, the three font tables), `gfx2d.c` (the painter), `sxchrome.c` | — | `malloc` `free` `memcpy` `memset` |
-| `libsxgui` | `sxgui.c`, the toolkit core | `libgfx2d` | `memcpy` `memmove` `memset` `strlen`, `sxgui_default_host` |
+| `libsxgui` | `sxgui.c`, the toolkit core | `libgfx2d` | `malloc` `realloc` `free` `memcpy` `memmove` `memset` `strlen`, `sxgui_default_host` |
 | `libsxgfx` | `gfx.c` (POSIX's window client), `gfx_scaled.c` | `libgfx2d` | POSIX calls and libc |
 
 `libgfx2d` and `libsxgui` are neutral: every runtime defines what they ask for.

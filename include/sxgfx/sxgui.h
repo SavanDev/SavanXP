@@ -214,6 +214,11 @@ struct sxgui_widget {
 
     void (*on_action)(struct sxgui_widget *widget, void *user);
     void *user;
+
+    /* textedit: the document the toolkit owns -- the buffer that grows and the
+     * undo history -- or NULL while the caller owns a fixed buffer. Set by
+     * sxgui_textedit_document, freed by sxgui_textedit_release. */
+    struct sxgui_textedit_state *edit_state;
 };
 
 /* ---- menu bar -------------------------------------------------------------
@@ -563,6 +568,26 @@ int sxgui_tabs_preferred_width(const char *const *labels, int label_count);
  * separated by '\n') and the caller owns it. No word wrap: long lines are
  * clipped to the width and the horizontal scroll follows the caret. */
 struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capacity);
+
+/* A document the toolkit owns, instead of the caller's fixed buffer: the
+ * buffer grows as the user types or pastes, and every edit is recorded so
+ * Ctrl+Z undoes it and Ctrl+Y (or Ctrl+Shift+Z) redoes it. `text` (NULL =
+ * empty) is copied in; afterwards `edit_buffer` is the document, NUL
+ * terminated, to read for saving, and it can move on any edit. Calling it
+ * again replaces the text and empties the history, as opening another file
+ * does. Returns 0, or -1 when out of memory, leaving the widget as it was.
+ * A widget with a fixed buffer keeps the old behaviour: no growth, no undo. */
+int sxgui_textedit_document(struct sxgui_widget *widget, const char *text);
+/* Frees what sxgui_textedit_document allocated; the widget is left with no
+ * buffer. */
+void sxgui_textedit_release(struct sxgui_widget *widget);
+/* Undo or redo one step -- a run of typing, a run of deletions, a paste, a
+ * cut -- as the keys do, for an Edit menu. They return 1 if something
+ * changed and mark the widget modified. */
+int sxgui_textedit_undo(struct sxgui_widget *widget);
+int sxgui_textedit_redo(struct sxgui_widget *widget);
+int sxgui_textedit_can_undo(const struct sxgui_widget *widget);
+int sxgui_textedit_can_redo(const struct sxgui_widget *widget);
 
 /* Puts the focus on a widget by index (-1 = none). Normally the user moves
  * the focus with Tab or a click, but an app whose content IS a control -- an

@@ -1,5 +1,6 @@
 #include "sxgfx/sxgui.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static const struct sxgui_host *g_sxgui_host;
@@ -2348,6 +2349,314 @@ static void sxgui_textfield_scroll_to_caret(struct sxgui_widget *widget)
     }
 }
 
+/* ---- textedit's own document: a buffer that grows, and undo ---------------
+ *
+ * Every change to a text widget's buffer goes through sxgui_edit_insert and
+ * sxgui_edit_remove. With no edit_state they behave as before: a fixed buffer,
+ * what does not fit is cut off. With one, the buffer grows and each change is
+ * recorded. The history is a single array: records [0, done) are applied,
+ * [done, count) were undone and can be redone, and any new change drops those.
+ * The records of one user operation share a step, so typing over a selection
+ * (a removal and an insertion) undoes at once. A run of typing or of
+ * deletions extends its last record instead of adding one per key.
+ */
+
+#define SXGUI_UNDO_LIMIT 4096
+
+struct sxgui_undo_record {
+    int step;
+    int insert;     /* 1: `text` was inserted at `pos`; 0: it was removed from there */
+    int pos;
+    int length;
+    char *text;
+};
+
+struct sxgui_textedit_state {
+    char *buffer;
+    int capacity;
+    struct sxgui_undo_record *records;
+    int record_capacity;
+    int count;
+    int done;
+    int step;
+    /* where the caret was left by the last change that a next key may
+     * extend (typing, Backspace, Delete); -1 when the run is closed */
+    int run_caret;
+    int run_insert;
+};
+
+static void sxgui_undo_free_from(struct sxgui_textedit_state *state, int first)
+{
+    int index;
+    for (index = first; index < state->count; ++index)
+    {
+        free(state->records[index].text);
+    }
+    state->count = first;
+    if (state->done > first)
+    {
+        state->done = first;
+    }
+}
+
+/* A new user operation: its records get a step of their own. */
+static void sxgui_edit_begin(struct sxgui_widget *widget)
+{
+    if (widget->edit_state != 0)
+    {
+        widget->edit_state->step += 1;
+    }
+}
+
+/* Makes room for a document of `length` bytes plus its NUL. A fixed buffer
+ * cannot grow, so it only answers whether it fits. */
+static int sxgui_edit_reserve(struct sxgui_widget *widget, int length)
+{
+    struct sxgui_textedit_state *state = widget->edit_state;
+    int capacity;
+    char *grown;
+
+    if (length < widget->edit_capacity)
+    {
+        return 1;
+    }
+    if (state == 0 || length >= 0x40000000)
+    {
+        return 0;
+    }
+    capacity = state->capacity > 0 ? state->capacity : 256;
+    while (capacity <= length)
+    {
+        capacity *= 2;
+    }
+    grown = (char *)realloc(state->buffer, (size_t)capacity);
+    if (grown == 0)
+    {
+        return 0;
+    }
+    state->buffer = grown;
+    state->capacity = capacity;
+    widget->edit_buffer = grown;
+    widget->edit_capacity = capacity;
+    return 1;
+}
+
+/* Records a change, or extends the open run with it. A record that cannot be
+ * allocated empties the history: an undo that skipped a change would undo the
+ * wrong bytes, and no undo at all is the honest failure. */
+static void sxgui_undo_record(
+    struct sxgui_widget *widget, int insert, int pos, const char *text, int length, int merge)
+{
+    struct sxgui_textedit_state *state = widget->edit_state;
+    struct sxgui_undo_record *last;
+    struct sxgui_undo_record *record;
+    char *copy;
+
+    if (state == 0)
+    {
+        return;
+    }
+    sxgui_undo_free_from(state, state->done);
+    last = state->count > 0 ? &state->records[state->count - 1] : 0;
+    if (merge && last != 0 && state->run_caret == widget->caret &&
+        state->run_insert == insert && last->insert == insert &&
+        (insert ? last->pos + last->length == pos
+                : (pos + length == last->pos || pos == last->pos)))
+    {
+        copy = (char *)realloc(last->text, (size_t)(last->length + length));
+        if (copy == 0)
+        {
+            sxgui_undo_free_from(state, 0);
+            return;
+        }
+        if (!insert && pos + length == last->pos)
+        {
+            /* Backspace: the new byte goes before the run. */
+            memmove(copy + length, copy, (size_t)last->length);
+            memcpy(copy, text, (size_t)length);
+            last->pos = pos;
+        }
+        else
+        {
+            memcpy(copy + last->length, text, (size_t)length);
+        }
+        last->text = copy;
+        last->length += length;
+        return;
+    }
+    if (state->count == SXGUI_UNDO_LIMIT)
+    {
+        /* Forget the oldest step, whole. */
+        int drop = 1;
+        int index;
+        while (drop < state->count && state->records[drop].step == state->records[0].step)
+        {
+            ++drop;
+        }
+        for (index = 0; index < drop; ++index)
+        {
+            free(state->records[index].text);
+        }
+        memmove(state->records, state->records + drop,
+            sizeof(*state->records) * (size_t)(state->count - drop));
+        state->count -= drop;
+        state->done = state->count;
+    }
+    if (state->count == state->record_capacity)
+    {
+        int capacity = state->record_capacity > 0 ? state->record_capacity * 2 : 64;
+        struct sxgui_undo_record *grown;
+        if (capacity > SXGUI_UNDO_LIMIT)
+        {
+            capacity = SXGUI_UNDO_LIMIT;
+        }
+        grown = (struct sxgui_undo_record *)realloc(
+            state->records, sizeof(*grown) * (size_t)capacity);
+        if (grown == 0)
+        {
+            sxgui_undo_free_from(state, 0);
+            return;
+        }
+        state->records = grown;
+        state->record_capacity = capacity;
+    }
+    copy = (char *)malloc((size_t)length);
+    if (copy == 0)
+    {
+        sxgui_undo_free_from(state, 0);
+        return;
+    }
+    memcpy(copy, text, (size_t)length);
+    record = &state->records[state->count];
+    record->step = state->step;
+    record->insert = insert;
+    record->pos = pos;
+    record->length = length;
+    record->text = copy;
+    state->count += 1;
+    state->done = state->count;
+}
+
+/* The two changes, without recording. */
+static int sxgui_edit_put(struct sxgui_widget *widget, int at, const char *text, int count)
+{
+    int length = (int)strlen(widget->edit_buffer);
+
+    if (count <= 0)
+    {
+        return 0;
+    }
+    if (!sxgui_edit_reserve(widget, length + count))
+    {
+        if (widget->edit_state != 0)
+        {
+            return 0;
+        }
+        /* A fixed buffer takes what fits: unlike a write to the clipboard,
+         * the user SEES what is left out. */
+        count = widget->edit_capacity - 1 - length;
+        if (count <= 0)
+        {
+            return 0;
+        }
+    }
+    memmove(widget->edit_buffer + at + count, widget->edit_buffer + at, (size_t)(length - at + 1));
+    memcpy(widget->edit_buffer + at, text, (size_t)count);
+    return count;
+}
+
+static void sxgui_edit_cut_out(struct sxgui_widget *widget, int start, int end)
+{
+    int length = (int)strlen(widget->edit_buffer);
+    memmove(widget->edit_buffer + start, widget->edit_buffer + end, (size_t)(length - end + 1));
+}
+
+/* Inserts at `at` and returns how many bytes went in. `merge` lets a typed
+ * key extend the run of typing before it. The caret is the caller's. */
+static int sxgui_edit_insert(struct sxgui_widget *widget, int at, const char *text, int count, int merge)
+{
+    count = sxgui_edit_put(widget, at, text, count);
+    if (count > 0)
+    {
+        sxgui_undo_record(widget, 1, at, widget->edit_buffer + at, count, merge);
+        if (widget->edit_state != 0)
+        {
+            widget->edit_state->run_caret = merge ? at + count : -1;
+            widget->edit_state->run_insert = 1;
+        }
+        widget->modified = 1;
+    }
+    return count;
+}
+
+/* Removes [start, end). `merge` lets Backspace or Delete extend the run of
+ * deletions before it; `caret_after` is where the caller leaves the caret. */
+static void sxgui_edit_remove(struct sxgui_widget *widget, int start, int end, int merge, int caret_after)
+{
+    if (end <= start)
+    {
+        return;
+    }
+    sxgui_undo_record(widget, 0, start, widget->edit_buffer + start, end - start, merge);
+    sxgui_edit_cut_out(widget, start, end);
+    if (widget->edit_state != 0)
+    {
+        widget->edit_state->run_caret = merge ? caret_after : -1;
+        widget->edit_state->run_insert = 0;
+    }
+    widget->modified = 1;
+}
+
+/* Undo (direction -1) or redo (+1) one step. */
+static int sxgui_edit_replay(struct sxgui_widget *widget, int direction)
+{
+    struct sxgui_textedit_state *state;
+    int step;
+    int changed = 0;
+
+    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_state == 0)
+    {
+        return 0;
+    }
+    state = widget->edit_state;
+    if (direction < 0 ? state->done == 0 : state->done == state->count)
+    {
+        return 0;
+    }
+    step = state->records[direction < 0 ? state->done - 1 : state->done].step;
+    while (direction < 0 ? state->done > 0 && state->records[state->done - 1].step == step
+                         : state->done < state->count && state->records[state->done].step == step)
+    {
+        struct sxgui_undo_record *record =
+            &state->records[direction < 0 ? state->done - 1 : state->done];
+        /* An undone insertion is a removal and the other way round. */
+        int put = direction < 0 ? !record->insert : record->insert;
+
+        if (put)
+        {
+            if (sxgui_edit_put(widget, record->pos, record->text, record->length) != record->length)
+            {
+                break; /* out of memory: stop where the document still matches */
+            }
+            widget->caret = record->pos + record->length;
+        }
+        else
+        {
+            sxgui_edit_cut_out(widget, record->pos, record->pos + record->length);
+            widget->caret = record->pos;
+        }
+        state->done += direction;
+        changed = 1;
+    }
+    if (changed)
+    {
+        widget->sel_anchor = -1;
+        widget->modified = 1;
+        state->run_caret = -1;
+    }
+    return changed;
+}
+
 /* ---- text selection (textfield and textedit) --------------------------------------
  *
  * Shared by both text widgets: they work on edit_buffer, caret and sel_anchor,
@@ -2398,7 +2707,6 @@ static int sxgui_sel_delete(struct sxgui_widget *widget)
 {
     int start;
     int end;
-    int length;
 
     if (!sxgui_sel_active(widget))
     {
@@ -2406,14 +2714,9 @@ static int sxgui_sel_delete(struct sxgui_widget *widget)
     }
     start = sxgui_sel_start(widget);
     end = sxgui_sel_end(widget);
-    length = (int)strlen(widget->edit_buffer);
-    memmove(
-        widget->edit_buffer + start,
-        widget->edit_buffer + end,
-        (size_t)(length - end + 1));
+    sxgui_edit_remove(widget, start, end, 0, start);
     widget->caret = start;
     sxgui_sel_clear(widget);
-    widget->modified = 1;
     return 1;
 }
 
@@ -2448,8 +2751,6 @@ static char g_sxgui_paste[SAVANXP_CLIPBOARD_CAPACITY];
 static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
 {
     int pasted;
-    int length;
-    int room;
     int insert;
 
     if (sxgui_clipboard_get(g_sxgui_paste, (int)sizeof(g_sxgui_paste)) <= 0)
@@ -2472,23 +2773,14 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
     }
     (void)sxgui_sel_delete(widget);
 
+    /* A fixed buffer takes what fits; a document grows (sxgui_edit_put). */
     pasted = (int)strlen(g_sxgui_paste);
-    length = (int)strlen(widget->edit_buffer);
-    room = widget->edit_capacity - 1 - length;
-    /* What does not fit is cut off instead of rejecting the whole paste:
-     * unlike a write to the clipboard, here the user SEES what is left. */
-    insert = pasted < room ? pasted : room;
+    insert = sxgui_edit_insert(widget, widget->caret, g_sxgui_paste, pasted, 0);
     if (insert <= 0)
     {
         return 0;
     }
-    memmove(
-        widget->edit_buffer + widget->caret + insert,
-        widget->edit_buffer + widget->caret,
-        (size_t)(length - widget->caret + 1));
-    memcpy(widget->edit_buffer + widget->caret, g_sxgui_paste, (size_t)insert);
     widget->caret += insert;
-    widget->modified = 1;
     sxgui_sel_clear(widget);
     return 1;
 }
@@ -4893,7 +5185,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         {
             widget->caret = length;
         }
-        /* Clipboard shortcuts. AltGr arrives as Ctrl+Alt on several layouts,
+        sxgui_edit_begin(widget);
+        /* Clipboard and undo shortcuts. AltGr arrives as Ctrl+Alt on several layouts,
          * so Ctrl WITHOUT AltGr is required, to avoid swallowing a key the user
          * meant to type. */
         if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
@@ -4932,6 +5225,22 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                 sxgui_textedit_reveal_caret(widget);
                 done = 1;
                 break;
+            case 'z':
+            case 'Z':
+            case 'y':
+            case 'Y':
+            {
+                /* Ctrl+Shift+Z redoes too. */
+                int redo = event->ascii == 'y' || event->ascii == 'Y' ||
+                    (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0;
+                if (sxgui_edit_replay(widget, redo ? 1 : -1))
+                {
+                    sxgui_textedit_reveal_caret(widget);
+                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                }
+                done = 1;
+                break;
+            }
             default:
                 break;
             }
@@ -5066,12 +5375,8 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         case SAVANXP_KEY_BACKSPACE:
             if (widget->caret > 0)
             {
-                memmove(
-                    widget->edit_buffer + widget->caret - 1,
-                    widget->edit_buffer + widget->caret,
-                    (size_t)(length - widget->caret + 1));
+                sxgui_edit_remove(widget, widget->caret - 1, widget->caret, 1, widget->caret - 1);
                 widget->caret -= 1;
-                widget->modified = 1;
                 sxgui_textedit_reveal_caret(widget);
                 sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 return 1;
@@ -5080,11 +5385,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         case SAVANXP_KEY_DELETE:
             if (widget->caret < length)
             {
-                memmove(
-                    widget->edit_buffer + widget->caret,
-                    widget->edit_buffer + widget->caret + 1,
-                    (size_t)(length - widget->caret));
-                widget->modified = 1;
+                sxgui_edit_remove(widget, widget->caret, widget->caret + 1, 1, widget->caret);
                 sxgui_textedit_reveal_caret(widget);
                 sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 return 1;
@@ -5106,23 +5407,18 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             {
                 inserted = event->ascii;
             }
-            if (inserted != 0 && length < widget->edit_capacity - 1)
-            {
-                memmove(
-                    widget->edit_buffer + widget->caret + 1,
-                    widget->edit_buffer + widget->caret,
-                    (size_t)(length - widget->caret + 1));
-                widget->edit_buffer[widget->caret] = (char)inserted;
-                widget->caret += 1;
-                widget->modified = 1;
-                sxgui_textedit_reveal_caret(widget);
-                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
-                return 1;
-            }
             if (inserted != 0)
             {
-                /* Buffer full: consumed anyway, so the key does not fall
-                 * through to the app's global handler (ESC-to-close and so on). */
+                char byte = (char)inserted;
+                /* Enter closes the run, so each line undoes on its own. A
+                 * full buffer still consumes the key, so it does not fall
+                 * through to the app's global handler (ESC-to-close...). */
+                if (sxgui_edit_insert(widget, widget->caret, &byte, 1, inserted != '\n') == 1)
+                {
+                    widget->caret += 1;
+                    sxgui_textedit_reveal_caret(widget);
+                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                }
                 return 1;
             }
         }
@@ -5342,6 +5638,7 @@ int sxgui_textedit_cut(struct sxgui_widget *widget)
     {
         return 0;
     }
+    sxgui_edit_begin(widget);
     return sxgui_sel_delete(widget);
 }
 
@@ -5352,7 +5649,115 @@ int sxgui_textedit_paste(struct sxgui_widget *widget)
     {
         return 0;
     }
+    sxgui_edit_begin(widget);
     return sxgui_sel_paste(widget, widget->kind == SXGUI_TEXTFIELD);
+}
+
+int sxgui_textedit_document(struct sxgui_widget *widget, const char *text)
+{
+    struct sxgui_textedit_state *state;
+    int length;
+    int capacity = 256;
+    char *buffer;
+
+    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT)
+    {
+        return -1;
+    }
+    if (text == 0)
+    {
+        text = "";
+    }
+    length = (int)strlen(text);
+    if (length >= 0x40000000)
+    {
+        return -1;
+    }
+    while (capacity <= length)
+    {
+        capacity *= 2;
+    }
+    buffer = (char *)malloc((size_t)capacity);
+    if (buffer == 0)
+    {
+        return -1;
+    }
+    state = widget->edit_state;
+    if (state == 0)
+    {
+        state = (struct sxgui_textedit_state *)malloc(sizeof(*state));
+        if (state == 0)
+        {
+            free(buffer);
+            return -1;
+        }
+        memset(state, 0, sizeof(*state));
+    }
+    else
+    {
+        sxgui_undo_free_from(state, 0);
+        free(state->buffer);
+    }
+    memcpy(buffer, text, (size_t)length + 1);
+    state->buffer = buffer;
+    state->capacity = capacity;
+    state->run_caret = -1;
+    widget->edit_state = state;
+    widget->edit_buffer = buffer;
+    widget->edit_capacity = capacity;
+    widget->caret = 0;
+    widget->sel_anchor = -1;
+    widget->scroll = 0;
+    widget->modified = 0;
+    return 0;
+}
+
+void sxgui_textedit_release(struct sxgui_widget *widget)
+{
+    if (widget == 0 || widget->edit_state == 0)
+    {
+        return;
+    }
+    sxgui_undo_free_from(widget->edit_state, 0);
+    free(widget->edit_state->records);
+    free(widget->edit_state->buffer);
+    free(widget->edit_state);
+    widget->edit_state = 0;
+    widget->edit_buffer = 0;
+    widget->edit_capacity = 0;
+    widget->caret = 0;
+    widget->sel_anchor = -1;
+}
+
+int sxgui_textedit_undo(struct sxgui_widget *widget)
+{
+    if (!sxgui_edit_replay(widget, -1))
+    {
+        return 0;
+    }
+    sxgui_textedit_reveal_caret(widget);
+    return 1;
+}
+
+int sxgui_textedit_redo(struct sxgui_widget *widget)
+{
+    if (!sxgui_edit_replay(widget, 1))
+    {
+        return 0;
+    }
+    sxgui_textedit_reveal_caret(widget);
+    return 1;
+}
+
+int sxgui_textedit_can_undo(const struct sxgui_widget *widget)
+{
+    return widget != 0 && widget->edit_state != 0 && widget->edit_state->done > 0;
+}
+
+int sxgui_textedit_can_redo(const struct sxgui_widget *widget)
+{
+    return widget != 0 && widget->edit_state != 0 &&
+        widget->edit_state->done < widget->edit_state->count;
 }
 
 void sxgui_textedit_select_all(struct sxgui_widget *widget)
