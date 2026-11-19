@@ -21,7 +21,9 @@
  * same time; the three tray popups share a corner and an id, so at most one of
  * them is open. The context menu shares the Start menu's id the same way, and
  * the Start menu's cascade takes the tray popups' id: it is only open with
- * the Start menu, and a tray popup opened then replaces it. */
+ * the Start menu, and a tray popup opened then replaces it. A pinned
+ * shortcut's context menu takes that id too, so the Start menu stays open
+ * behind it. */
 enum desktop_window_id
 {
     DESKTOP_WINDOW_BACKGROUND = 0,
@@ -39,7 +41,8 @@ enum desktop_popup
     DESKTOP_POPUP_CLOCK = 2,
     DESKTOP_POPUP_KEYBOARD = 3,
     DESKTOP_POPUP_HUNG = 4,
-    /* The background's right-click menu, in the Start menu's window. */
+    /* The background's right-click menu, in the Start menu's window; a
+     * pinned shortcut's, in the tray's window over the open Start menu. */
     DESKTOP_POPUP_CONTEXT_MENU = 5,
     /* A question about an icon (delete it?), in the Start menu's window too. */
     DESKTOP_POPUP_CONFIRM = 6,
@@ -105,6 +108,8 @@ extern const struct desktop_popup_ops desktop_submenu_ops;
 /* desktop_contextmenu.c: shows `menu` at the screen point (x, y); the id of
  * the item chosen goes to `command` once the menu is closed. */
 void desktop_context_menu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
+/* The same, over the open Start menu, which stays open behind it. */
+void desktop_context_menu_over_start_menu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
 /* The open context menu's keys (arrows, Enter, Esc). */
 uint32_t desktop_context_menu_key(const struct savanxp_input_event *event);
 
@@ -166,6 +171,14 @@ int desktop_popup_is_open(enum desktop_popup popup);
  * screen point (x, y), flipped left or up where it would not fit above the
  * taskbar, as Windows places a context menu. */
 void desktop_open_popup_at(enum desktop_popup popup, int x, int y);
+/* Opens this popup at the point as desktop_open_popup_at does, but in the
+ * cascade's window, leaving the Start menu open under it. */
+void desktop_open_popup_over_start_menu(enum desktop_popup popup, int x, int y);
+/* Closes the context menu, wherever it is open. */
+void desktop_close_context_menu(void);
+/* Closes and opens the Start menu again, measured anew (a shortcut was
+ * unpinned). Nothing when it is not open. */
+void desktop_reopen_start_menu(void);
 /* Opens the Start menu's cascade with its top-left corner at the screen point
  * (x, y), moved up or left only as far as it takes to fit above the taskbar.
  * The Start menu stays open. */

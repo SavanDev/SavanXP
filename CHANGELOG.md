@@ -97,6 +97,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The Start menu stays open behind a pinned shortcut's context menu,** as Windows XP's does: Esc or a press on the
+  menu closes only the context menu, and Unpin from Start Menu leaves the menu open without the row
+  ([START_MENU.md](docs/desktop/START_MENU.md#shortcuts)).
 - **The kernel log is in English.** The `smp:`, `uacpi:`, `timer:`, `ioapic:`, `ac97:`, `fb_gpu:`, `cpu:`, `acpi:` and
   `process:` lines that were still in Spanish are translated, as are `polltest` and `gputest`. Renamed fields:
   `ac97-stats` `periods`/`drops`/`max_gap`, `timer-stats` `lost`, `fb_gpu: ... double buffer yes|no`.

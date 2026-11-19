@@ -64,11 +64,15 @@ default the user unpins stays unpinned across boots and rebuilds.
   new shortcut's *Start in*. A shortcut is copied under its
   own name. A target already pinned with the same argument is refused ("It
   is already on the Start menu"), and so is a ninth pin.
-- **Unpinning.** A right click on a shortcut row closes the menu and opens
-  the row's context menu where the pointer is: **Open** and **Unpin from
-  Start Menu**, which deletes the `.sxlnk`. The context menu takes the Start
-  menu's window (see the table below), so the menu cannot stay open behind
-  it as Windows XP's does.
+- **Unpinning.** A right click on a shortcut row opens the row's context
+  menu where the pointer is, over the menu, which stays open behind it with
+  the row lit, as Windows XP's does: **Open** and **Unpin from Start Menu**,
+  which deletes the `.sxlnk`. Open closes the menu as a click on the row
+  does; Unpin leaves it open, measured again without the row. Esc or a press
+  elsewhere on the menu closes only the context menu; a press outside both
+  closes both. The context menu borrows the cascade's window (see the table
+  below), so the right click closes an open cascade, and the menu opens no
+  cascade while the context menu is up.
 
 A row is the file's name without `.sxlnk` and a 16x16 icon: the shortcut's
 `icon=` or its target's, from a program's `.sxicon` or, for a `.exe`, the
@@ -96,7 +100,7 @@ uses all of them:
 |---|---|
 | 1 | Taskbar |
 | 2 | Start menu, context menu, or a shell dialog |
-| 3 | Tray popups, or the Start menu's cascade |
+| 3 | Tray popups, the Start menu's cascade, or a pinned shortcut's context menu |
 | 4 | End Program (not responding) |
 
 The cascade borrows id 3 because a tray popup is never needed while the Start

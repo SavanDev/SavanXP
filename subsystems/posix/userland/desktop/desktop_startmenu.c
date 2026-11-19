@@ -17,9 +17,12 @@
  * when the Start button is clicked again, or on a press outside it (windowd
  * asks, the desktop closes it).
  *
- * A right click on a shortcut closes the menu and opens the shortcut's own
- * context menu where it was, Open and Unpin from Start Menu: the context
- * menu takes the Start menu's window (desktop.h), so both cannot be open.
+ * A right click on a shortcut opens the shortcut's own context menu where it
+ * was, Open and Unpin from Start Menu, over the menu, which stays open with
+ * the row lit, as in Windows XP. It takes the cascade's window (desktop.h),
+ * which the right click closes. While it is open the menu does not follow
+ * the pointer; a press on the menu only closes it. Open closes the menu too;
+ * Unpin opens it again without the row.
  *
  * The cascade (desktop_submenu.c) opens to the right of an entry when the
  * pointer rests on it for STARTMENU_CASCADE_DELAY_MS, or at once when it is
@@ -324,12 +327,9 @@ static int g_hot_shortcut = -1;
 static int g_pressed_shortcut = -1;
 static int g_pending_shortcut = -1;
 static char g_pending_shortcut_path[SHORTCUT_PATH_CAPACITY];
-/* A right click on a shortcut: the one pressed, and whether its context menu
- * opens, at (g_menu_x, g_menu_y) on the screen, once the menu has closed. */
+/* A right click on a shortcut: the one pressed. Its context menu opens on
+ * the release. */
 static int g_right_pressed_shortcut = -1;
-static int g_pending_shortcut_menu = 0;
-static int g_menu_x = 0;
-static int g_menu_y = 0;
 
 #define STARTMENU_CMD_OPEN 1
 #define STARTMENU_CMD_UNPIN 2
@@ -625,20 +625,35 @@ static int startmenu_open(void)
     g_pressed_shortcut = -1;
     g_pending_shortcut = -1;
     g_right_pressed_shortcut = -1;
-    g_pending_shortcut_menu = 0;
     return 0;
 }
 
+/* What the shortcut's context menu chose, once it has closed; 0 when it was
+ * dismissed, which leaves the Start menu as it was. */
 static void shortcut_command(int id)
 {
     if (id == STARTMENU_CMD_OPEN)
     {
+        desktop_close_popups();
         (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
     }
-    else if (id == STARTMENU_CMD_UNPIN && start_pins_unpin(g_pending_shortcut_path) != 0)
+    else if (id == STARTMENU_CMD_UNPIN)
     {
-        desktop_confirm("Start Menu", "Cannot unpin the shortcut.", 0, 0);
+        if (start_pins_unpin(g_pending_shortcut_path) != 0)
+        {
+            /* The message takes the Start menu's window. */
+            desktop_confirm("Start Menu", "Cannot unpin the shortcut.", 0, 0);
+            return;
+        }
+        /* Measured again, without the row. */
+        desktop_reopen_start_menu();
     }
+}
+
+/* The shortcut's context menu is open over the menu. */
+static int shortcut_menu_open(void)
+{
+    return desktop_popup_is_open(DESKTOP_POPUP_CONTEXT_MENU);
 }
 
 static void startmenu_close(void)
@@ -646,8 +661,9 @@ static void startmenu_close(void)
     int action = g_pending_action;
 
     g_pending_action = -1;
-    /* The cascade goes with its menu. */
+    /* The cascade or the shortcut's context menu goes with its menu. */
     desktop_close_submenu();
+    desktop_close_context_menu();
     /* The menu's window is free by now, and the dialog takes it. */
     if (action == STARTMENU_ACTION_SHUTDOWN)
     {
@@ -664,11 +680,6 @@ static void startmenu_close(void)
         g_pending_shortcut = -1;
         (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
     }
-    if (g_pending_shortcut_menu)
-    {
-        g_pending_shortcut_menu = 0;
-        desktop_context_menu(&k_shortcut_menu, shortcut_command, g_menu_x, g_menu_y);
-    }
 }
 
 static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
@@ -682,6 +693,20 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
 
     (void)gfx;
     g_last_buttons = pointer->buttons;
+    /* Under the shortcut's context menu the row it is about stays lit and
+     * nothing else answers; a press only closes the context menu, as in
+     * Windows XP. */
+    if (shortcut_menu_open())
+    {
+        if (down != 0)
+        {
+            desktop_close_context_menu();
+            g_pressed_footer = -1;
+            g_pressed_shortcut = -1;
+            g_right_pressed_shortcut = -1;
+        }
+        return DESKTOP_ACTION_NONE;
+    }
     if (entry != g_hot_entry || footer != g_hot_footer || shortcut != g_hot_shortcut)
     {
         g_hot_entry = entry;
@@ -744,10 +769,11 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
 
             menu_origin(&menu_x, &menu_y);
             memcpy(g_pending_shortcut_path, start_shortcuts_at(shortcut)->path, sizeof(g_pending_shortcut_path));
-            g_menu_x = menu_x + pointer->x;
-            g_menu_y = menu_y + pointer->y;
-            g_pending_shortcut_menu = 1;
-            actions |= DESKTOP_ACTION_CLOSE;
+            /* The context menu takes the cascade's window. */
+            startmenu_apply_cascade(-1);
+            desktop_context_menu_over_start_menu(
+                &k_shortcut_menu, shortcut_command, menu_x + pointer->x, menu_y + pointer->y);
+            actions |= DESKTOP_ACTION_REPAINT;
         }
         g_right_pressed_shortcut = -1;
     }
@@ -758,7 +784,7 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
  * has rested long enough, so it is driven from the desktop loop. */
 static uint32_t startmenu_tick(void)
 {
-    if (g_pending_cascade == g_open_cascade || uptime_ms() < g_cascade_due_ms)
+    if (shortcut_menu_open() || g_pending_cascade == g_open_cascade || uptime_ms() < g_cascade_due_ms)
     {
         return DESKTOP_ACTION_NONE;
     }
@@ -772,6 +798,10 @@ static uint32_t startmenu_tick(void)
 static uint32_t startmenu_pointer_left(void)
 {
     g_pending_cascade = g_open_cascade;
+    if (shortcut_menu_open())
+    {
+        return DESKTOP_ACTION_NONE;
+    }
     if (g_hot_entry != -1 || g_hot_footer != -1 || g_hot_shortcut != -1)
     {
         g_hot_entry = -1;

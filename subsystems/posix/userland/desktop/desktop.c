@@ -22,7 +22,9 @@ _Static_assert(
  *   id 2  Start menu  popup, bottom left above the taskbar; or a context
  *                     menu at the pointer, or an icon's question, centred
  *                     (one at a time: they share the id)
- *   id 3  tray popup  volume, clock or keyboard layout, bottom right
+ *   id 3  tray popup  volume, clock or keyboard layout, bottom right; or
+ *                     the Start menu's cascade, or a pinned shortcut's
+ *                     context menu over the Start menu
  *   id 4  End Program a program asked to close is not responding (centred)
  *
  * One loop serves all of them. Popups open and close as windows of this
@@ -133,6 +135,22 @@ static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
     return &g_tray;
 }
 
+/* The slot `popup` is open in, or the one it would open in: the context
+ * menu opens in either (desktop_open_popup_over_start_menu). */
+static struct desktop_popup_slot *find_slot(enum desktop_popup popup)
+{
+    int index;
+
+    for (index = 0; index < DESKTOP_SLOT_COUNT; ++index)
+    {
+        if (k_slots[index]->open && k_slots[index]->kind == popup)
+        {
+            return k_slots[index];
+        }
+    }
+    return slot_for(popup);
+}
+
 static void close_slot(struct desktop_popup_slot *slot)
 {
     if (!slot->open)
@@ -238,10 +256,17 @@ static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup pop
 
 static void close_context_menu(void)
 {
-    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONTEXT_MENU)
+    struct desktop_popup_slot *slot = find_slot(DESKTOP_POPUP_CONTEXT_MENU);
+
+    if (slot->open && slot->kind == DESKTOP_POPUP_CONTEXT_MENU)
     {
-        close_slot(&g_start_menu);
+        close_slot(slot);
     }
+}
+
+void desktop_close_context_menu(void)
+{
+    close_context_menu();
 }
 
 static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
@@ -285,6 +310,22 @@ void desktop_open_popup_at(enum desktop_popup popup, int x, int y)
     open_slot_at(slot, popup, DESKTOP_PLACE_AT_POINT, x, y);
 }
 
+void desktop_open_popup_over_start_menu(enum desktop_popup popup, int x, int y)
+{
+    /* The cascade's window: the Start menu keeps its own. */
+    close_slot(&g_tray);
+    open_slot_at(&g_tray, popup, DESKTOP_PLACE_AT_POINT, x, y);
+}
+
+void desktop_reopen_start_menu(void)
+{
+    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_START_MENU)
+    {
+        close_slot(&g_start_menu);
+        open_slot(&g_start_menu, DESKTOP_POPUP_START_MENU);
+    }
+}
+
 void desktop_open_submenu(int x, int y)
 {
     close_slot(&g_tray);
@@ -301,7 +342,7 @@ void desktop_close_submenu(void)
 
 void desktop_repaint_popup(enum desktop_popup popup)
 {
-    struct desktop_popup_slot *slot = slot_for(popup);
+    struct desktop_popup_slot *slot = find_slot(popup);
 
     if (slot->open && slot->kind == popup)
     {
@@ -327,7 +368,7 @@ const struct savanxp_gfx_context *desktop_main_window(void)
 
 int desktop_popup_is_open(enum desktop_popup popup)
 {
-    const struct desktop_popup_slot *slot = slot_for(popup);
+    const struct desktop_popup_slot *slot = find_slot(popup);
 
     return slot->open && slot->kind == popup;
 }
@@ -438,9 +479,11 @@ static int handle_hotkey(const struct savanxp_input_event *event)
  * the icons'. */
 static void handle_desktop_key(const struct savanxp_input_event *event)
 {
-    if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONTEXT_MENU)
+    struct desktop_popup_slot *context = find_slot(DESKTOP_POPUP_CONTEXT_MENU);
+
+    if (context->open && context->kind == DESKTOP_POPUP_CONTEXT_MENU)
     {
-        apply_actions(desktop_context_menu_key(event), &g_start_menu);
+        apply_actions(desktop_context_menu_key(event), context);
         return;
     }
     if (g_start_menu.open && g_start_menu.kind == DESKTOP_POPUP_CONFIRM)
