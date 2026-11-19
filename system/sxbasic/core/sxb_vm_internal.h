@@ -14,6 +14,15 @@ struct sxb_frame {
     int proc;
     int return_pc;
     int base;
+    int boundary;        /* an invocation starts here: returning from it ends the run */
+};
+
+#define SXB_MAX_WAITING 16
+
+struct sxb_waiting {
+    int floor;           /* frame count once the waiting invocation returns */
+    int result_type;     /* what sxb_vm_resume pushes, 0 for nothing */
+    int pc;              /* where it goes on */
 };
 
 struct sxb_handler {
@@ -47,7 +56,22 @@ struct sxb_vm {
     char *app_path;
     uint64_t start_ns;
     uint64_t random_state;
+    /* forms */
+    const struct sxb_form_host *forms;
+    int floor;           /* the running invocation's floor */
+    int runs;            /* runs nested in each other through the forms runtime */
+    int suspend_requested;
+    int suspend_type;
+    struct sxb_waiting waiting[SXB_MAX_WAITING];
+    int waiting_count;
+    struct sxb_value scratch; /* Form_Unload's Cancel */
 };
+
+/* Asks the running procedure to wait for sxb_vm_resume, which will push a
+ * value of `result_type` (0 for none). */
+void sxb_vm_request_suspend(struct sxb_vm *vm, int result_type);
+/* Pushes a value crossing from the forms runtime; strings are copied. */
+void sxb_vm_push_scalar(struct sxb_vm *vm, int type, const struct sxb_scalar *value);
 
 /* Raises a runtime error; NULL takes the standard description. */
 void sxb_vm_raise(struct sxb_vm *vm, int number, const char *description);

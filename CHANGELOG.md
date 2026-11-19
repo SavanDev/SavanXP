@@ -12,9 +12,10 @@ Cut-off notes:
 
 ### Added
 
-- **SxBASIC runs Savan BASIC console programs.** `/system/sxbasic.sxe <project.sbp>` compiles a project
-  to bytecode and runs it ([SXBASIC.md](docs/userland/SXBASIC.md)); projects with forms are refused
-  until phase 2. Checked by `sxbasic-test` and `smoke sxbasic-smoke`, which runs the hello sample.
+- **SxBASIC runs Savan BASIC programs, console and Windows.** `/system/sxbasic.sxe <project.sbp>` compiles a
+  project to bytecode and runs it, its forms as SXGUI windows with events, `ShowModal`, `MsgBox` and `InputBox`
+  ([SXBASIC.md](docs/userland/SXBASIC.md)); `--selftest <script>` drives one with no window. Checked by
+  `sxbasic-test`, `smoke sxbasic-smoke`, `sxbasic-greeter-smoke` and `sxbasic-converter-smoke`.
 
 - **Other build systems build against the SDK: `share/sdk/sxcc` and `share/sdk/savanxp-toolchain.cmake`.**
   `sxcc` is clang with the sysroot's flags, runtime and linker script (`--sx-profile=nosse|sse|pie`, `--sx-native`); the

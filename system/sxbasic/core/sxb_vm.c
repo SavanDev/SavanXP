@@ -45,7 +45,7 @@ static void release_range(struct sxb_vm *vm, int from, int to)
     for (int i = from; i < to; i++) sxb_value_release(&vm->stack[i]);
 }
 
-static int enter(struct sxb_vm *vm, int proc, int return_pc)
+static int enter(struct sxb_vm *vm, int proc, int return_pc, int boundary)
 {
     const struct sxb_proc_info *info = &vm->prog->procs[proc];
     if (vm->frame_count == SXB_MAX_FRAMES || vm->sp + info->local_count - info->param_count + 64 > SXB_STACK_VALUES) {
@@ -56,6 +56,7 @@ static int enter(struct sxb_vm *vm, int proc, int return_pc)
     frame->proc = proc;
     frame->return_pc = return_pc;
     frame->base = vm->sp - info->param_count;
+    frame->boundary = boundary;
     for (int i = info->param_count; i < info->local_count; i++) {
         vm->stack[vm->sp].kind = SXB_V_SCALAR;
         vm->stack[vm->sp].u.i = 0;
@@ -99,7 +100,7 @@ struct sxb_vm *sxb_vm_create(const struct sxb_program *program, const struct sxb
     vm->start_ns = host->clock_ns ? host->clock_ns(host->user) : 0;
     vm->random_state = 0x2545F4914F6CDD1Dull;
     vm->status = SXB_RUNNING;
-    enter(vm, program->entry_proc, -1);
+    enter(vm, program->entry_proc, -1, 1);
     return vm;
 }
 
@@ -130,7 +131,7 @@ static void dispatch(struct sxb_vm *vm)
     vm->raised = 0;
     vm->err_number = vm->raise_number;
     snprintf(vm->err_description, sizeof(vm->err_description), "%s", vm->raise_description);
-    if (vm->handler_count > 0) {
+    if (vm->handler_count > 0 && vm->handlers[vm->handler_count - 1].frame >= vm->floor) {
         struct sxb_handler h = vm->handlers[--vm->handler_count];
         release_range(vm, h.sp, vm->sp);
         vm->sp = h.sp;
@@ -227,13 +228,25 @@ static void write_out(struct sxb_vm *vm, const char *text, size_t length)
     if (vm->host->write_out && length) vm->host->write_out(vm->host->user, text, length);
 }
 
-enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps)
+static void form_ops(struct sxb_vm *vm, uint32_t op);
+
+/* Runs until the invocation whose floor is `floor` returns (SXB_IDLE), waits,
+ * the program ends, or the budget runs out. */
+static enum sxb_status run(struct sxb_vm *vm, int floor, uint64_t max_steps)
 {
     const uint32_t *code = vm->prog->code;
     uint64_t steps = 0;
+    int saved_floor = vm->floor;
+    vm->floor = floor;
+    vm->runs++;
+    vm->status = SXB_RUNNING;
     while (vm->status == SXB_RUNNING) {
+        if (vm->frame_count == floor) {
+            vm->status = vm->waiting_count > 0 ? SXB_SUSPENDED : SXB_IDLE;
+            break;
+        }
         if (max_steps != 0 && steps++ >= max_steps) {
-            return SXB_RUNNING;
+            break;
         }
         vm->fault_pc = vm->pc;
         uint32_t op = code[vm->pc++];
@@ -481,7 +494,7 @@ enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps)
         }
         case SXB_OP_CALL: {
             int proc = (int)code[vm->pc++];
-            enter(vm, proc, vm->pc);
+            enter(vm, proc, vm->pc, 0);
             break;
         }
         case SXB_OP_RET:
@@ -560,13 +573,203 @@ enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps)
         case SXB_OP_END:
             vm->status = SXB_DONE;
             break;
+        case SXB_OP_FORMLOAD:
+        case SXB_OP_PGET:
+        case SXB_OP_PSET:
+        case SXB_OP_CALLM:
+        case SXB_OP_UNLOAD:
+            form_ops(vm, op);
+            break;
         default:
             sxb_vm_raise(vm, SXB_ERR_INVALID_ARGUMENT, "the program is damaged (unknown instruction)");
             break;
+        }
+        if (vm->suspend_requested) {
+            vm->suspend_requested = 0;
+            if (vm->runs > 1 || vm->waiting_count == SXB_MAX_WAITING) {
+                sxb_vm_raise(vm, SXB_ERR_INVALID_ARGUMENT,
+                             "ShowModal, MsgBox and InputBox cannot wait inside Form_Load or Form_Unload");
+            } else if (vm->status == SXB_RUNNING) {
+                struct sxb_waiting *w = &vm->waiting[vm->waiting_count++];
+                w->floor = floor;
+                w->result_type = vm->suspend_type;
+                w->pc = vm->pc;
+                vm->status = SXB_SUSPENDED;
+            }
         }
         if (vm->raised) {
             dispatch(vm);
         }
     }
+    vm->runs--;
+    vm->floor = saved_floor;
     return (enum sxb_status)vm->status;
+}
+
+enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps)
+{
+    if (vm->status == SXB_DONE || vm->status == SXB_ERROR) return (enum sxb_status)vm->status;
+    return run(vm, 0, max_steps);
+}
+
+void sxb_vm_set_form_host(struct sxb_vm *vm, const struct sxb_form_host *host)
+{
+    vm->forms = host;
+}
+
+enum sxb_status sxb_vm_invoke(struct sxb_vm *vm, int proc, int *cancel)
+{
+    if (vm->status == SXB_DONE || vm->status == SXB_ERROR) return (enum sxb_status)vm->status;
+    if (proc < 0 || proc >= vm->prog->proc_count) return (enum sxb_status)vm->status;
+    int saved_status = vm->status;
+    int saved_pc = vm->pc;
+    if (cancel != NULL) {
+        vm->scratch.kind = SXB_V_SCALAR;
+        vm->scratch.u.i = *cancel != 0;
+        struct sxb_value *slot = sxb_vm_push_slot(vm);
+        if (slot) {
+            slot->kind = SXB_V_REF;
+            slot->u.ref = &vm->scratch;
+        }
+    }
+    if (vm->raised || enter(vm, proc, saved_pc, 1) != 0) {
+        vm->raised = 0;
+        vm->error.number = SXB_ERR_STACK;
+        snprintf(vm->error.description, sizeof(vm->error.description), "%s", sxb_error_text(SXB_ERR_STACK));
+        vm->status = SXB_ERROR;
+        return SXB_ERROR;
+    }
+    enum sxb_status status = run(vm, vm->frame_count - 1, 0);
+    if (cancel != NULL) *cancel = vm->scratch.u.i != 0;
+    if (status == SXB_IDLE && vm->runs > 0) {
+        /* Back to the instruction that invoked it, which goes on running. */
+        vm->status = saved_status == SXB_RUNNING ? SXB_RUNNING : status;
+    }
+    return status;
+}
+
+enum sxb_status sxb_vm_resume(struct sxb_vm *vm, const struct sxb_scalar *result)
+{
+    if (vm->waiting_count == 0 || vm->runs > 0) return (enum sxb_status)vm->status;
+    struct sxb_waiting w = vm->waiting[--vm->waiting_count];
+    vm->pc = w.pc;
+    if (w.result_type != 0) {
+        struct sxb_scalar none;
+        memset(&none, 0, sizeof(none));
+        sxb_vm_push_scalar(vm, w.result_type, result ? result : &none);
+    }
+    return run(vm, w.floor, 0);
+}
+
+int sxb_vm_waiting(const struct sxb_vm *vm)
+{
+    return vm->waiting_count;
+}
+
+void sxb_vm_request_suspend(struct sxb_vm *vm, int result_type)
+{
+    vm->suspend_requested = 1;
+    vm->suspend_type = result_type;
+}
+
+void sxb_vm_push_scalar(struct sxb_vm *vm, int type, const struct sxb_scalar *value)
+{
+    struct sxb_value *slot = sxb_vm_push_slot(vm);
+    if (slot == NULL) return;
+    switch (type) {
+    case SXB_TY_STRING:
+        slot->kind = SXB_V_STRING;
+        slot->u.s = value->s ? sxb_vm_string(vm, value->s, value->length) : NULL;
+        break;
+    case SXB_TY_DOUBLE:
+        slot->u.d = value->type == SXB_TY_INT ? (double)value->i : value->d;
+        break;
+    case SXB_TY_BOOL:
+        slot->u.i = value->i != 0;
+        break;
+    default:
+        slot->u.i = value->type == SXB_TY_DOUBLE ? (int64_t)value->d : value->i;
+        break;
+    }
+}
+
+void sxb_vm_reset_form(struct sxb_vm *vm, int form)
+{
+    const struct sxb_program *prog = vm->prog;
+    if (form < 0 || form >= prog->form_count) return;
+    int module = prog->form_modules[form];
+    int first = prog->module_globals[module][0];
+    for (int i = 0; i < prog->module_globals[module][1]; i++) sxb_value_release(&vm->globals[first + i]);
+}
+
+/* A value off the stack as a scalar for the forms runtime; strings point
+ * into `keep`, which the caller releases after the call. */
+static void pop_scalar(struct sxb_vm *vm, int type, struct sxb_scalar *out, struct sxb_value *keep)
+{
+    *keep = vm->stack[--vm->sp];
+    memset(out, 0, sizeof(*out));
+    out->type = type;
+    if (type == SXB_TY_STRING) {
+        out->s = sxb_str_data(keep->u.s);
+        out->length = sxb_str_length(keep->u.s);
+    } else if (type == SXB_TY_DOUBLE) {
+        out->d = keep->u.d;
+    } else {
+        out->i = keep->u.i;
+    }
+}
+
+static void host_result(struct sxb_vm *vm, int error, int result_type)
+{
+    if (error == SXB_HOST_SUSPEND) {
+        sxb_vm_request_suspend(vm, result_type);
+    } else if (error > 0) {
+        sxb_vm_raise(vm, error, NULL);
+    }
+}
+
+static void form_ops(struct sxb_vm *vm, uint32_t op)
+{
+    const uint32_t *code = vm->prog->code;
+    const struct sxb_form_host *forms = vm->forms;
+    int form = (int)code[vm->pc++];
+    if (op == SXB_OP_FORMLOAD || op == SXB_OP_UNLOAD) {
+        if (forms == NULL) return;
+        host_result(vm, op == SXB_OP_FORMLOAD ? forms->load(forms->user, form) : forms->unload(forms->user, form), 0);
+        return;
+    }
+    int control = (int)code[vm->pc++];
+    int member = (int)code[vm->pc++];
+    struct sxb_scalar value;
+    struct sxb_value keep;
+    memset(&value, 0, sizeof(value));
+    keep.kind = SXB_V_SCALAR;
+    if (op == SXB_OP_PGET) {
+        int type = (int)code[vm->pc++];
+        int error = forms ? forms->get(forms->user, form, control, member, &value) : SXB_ERR_PROPERTY;
+        if (error > 0) {
+            sxb_vm_raise(vm, error, NULL);
+            return;
+        }
+        sxb_vm_push_scalar(vm, type, &value);
+        return;
+    }
+    if (op == SXB_OP_PSET) {
+        int type = (int)code[vm->pc++];
+        pop_scalar(vm, type, &value, &keep);
+        int error = forms ? forms->set(forms->user, form, control, member, &value) : SXB_ERR_PROPERTY;
+        sxb_value_release(&keep);
+        host_result(vm, error, 0);
+        return;
+    }
+    int argc = (int)code[vm->pc++];
+    int result_type = (int)code[vm->pc++];
+    struct sxb_scalar argument, result;
+    memset(&argument, 0, sizeof(argument));
+    memset(&result, 0, sizeof(result));
+    if (argc == 1) pop_scalar(vm, sxb_method_arg(member), &argument, &keep);
+    int error = forms ? forms->call(forms->user, form, control, member, &argument, argc, &result) : SXB_ERR_PROPERTY;
+    sxb_value_release(&keep);
+    host_result(vm, error, result_type);
+    if (error == 0 && result_type != 0) sxb_vm_push_scalar(vm, result_type, &result);
 }

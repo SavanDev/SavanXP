@@ -979,8 +979,9 @@ int sxb_parse_module(struct sxb_arena *arena, const char *file, struct sxb_token
         if (accept_kw(&p, SXB_KW_PUBLIC)) visibility = 1;
         else if (accept_kw(&p, SXB_KW_PRIVATE)) visibility = 0;
         if (is_kw(&p, SXB_KW_SUB) || is_kw(&p, SXB_KW_FUNCTION)) {
-            /* A module's procedures are Public unless they say Private. */
-            struct sxb_proc_decl *proc = parse_proc(&p, visibility != 0);
+            /* A module's procedures are Public unless they say Private; a
+             * form's are Private unless they say Public. */
+            struct sxb_proc_decl *proc = parse_proc(&p, out->form >= 0 ? visibility == 1 : visibility != 0);
             if (proc == NULL) break;
             if (proc_tail) proc_tail->next = proc; else out->procs = proc;
             proc_tail = proc;

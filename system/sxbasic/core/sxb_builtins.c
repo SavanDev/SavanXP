@@ -4,6 +4,7 @@
 #include "sxb_vm_internal.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -400,6 +401,28 @@ void sxb_builtin(struct sxb_vm *vm, int id, int argc)
     }
     case SXB_BI_DOEVENTS:
         break;
+    case SXB_BI_MSGBOX:
+    case SXB_BI_INPUTBOX: {
+        const struct sxb_form_host *forms = vm->forms;
+        char text[1024], title[256], third[256];
+        snprintf(text, sizeof(text), "%.*s", (int)s_len(&a, 0), s_data(&a, 0));
+        snprintf(title, sizeof(title), "%s", vm->prog->name);
+        third[0] = '\0';
+        int style = 0;
+        if (id == SXB_BI_MSGBOX) {
+            if (argc >= 2) style = (int)a.v[1].u.i;
+            if (argc >= 3) snprintf(title, sizeof(title), "%.*s", (int)s_len(&a, 2), s_data(&a, 2));
+        } else {
+            if (argc >= 2) snprintf(title, sizeof(title), "%.*s", (int)s_len(&a, 1), s_data(&a, 1));
+            if (argc >= 3) snprintf(third, sizeof(third), "%.*s", (int)s_len(&a, 2), s_data(&a, 2));
+        }
+        int error = forms == NULL ? SXB_ERR_INVALID_ARGUMENT
+                    : id == SXB_BI_MSGBOX ? forms->message(forms->user, text, style, title)
+                                          : forms->input(forms->user, text, title, third);
+        if (error == SXB_HOST_SUSPEND) sxb_vm_request_suspend(vm, id == SXB_BI_MSGBOX ? SXB_TY_INT : SXB_TY_STRING);
+        else sxb_vm_raise(vm, error > 0 ? error : SXB_ERR_INVALID_ARGUMENT, NULL);
+        break;
+    }
     default:
         sxb_vm_raise(vm, SXB_ERR_INVALID_ARGUMENT, "the program is damaged (unknown builtin)");
         break;

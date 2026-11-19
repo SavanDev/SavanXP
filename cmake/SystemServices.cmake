@@ -161,10 +161,12 @@ savanxp_system_service(NAME imgview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLK
     SOURCES imgview.c view.c)
 
 # SxBASIC (docs/userland/SXBASIC.md): the Savan BASIC core -- compiler and
-# virtual machine, call-free, also built for the host test -- and the console
-# runner over it.
-savanxp_system_service(NAME sxbasic SOURCES
+# virtual machine, call-free, also built for the host test --, the forms
+# runtime over SXGUI, and the runner over both.
+savanxp_system_service(NAME sxbasic LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES
     sxbasic.c
+    forms.c
+    core/sxb_forms_def.c
     core/sxb_lex.c
     core/sxb_parse.c
     core/sxb_compile.c

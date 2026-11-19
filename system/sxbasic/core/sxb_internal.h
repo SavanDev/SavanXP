@@ -79,7 +79,7 @@ struct sxb_token {
 };
 
 /* Lexes a whole file. 0, or -1 with `diag` filled in. */
-int sxb_lex(struct sxb_arena *arena, const char *file, const char *text, size_t length,
+int sxb_lex(struct sxb_arena *arena, const char *file, const char *text, size_t length, int first_line,
             struct sxb_token **tokens, int *count, struct sxb_diagnostic *diag);
 
 const char *sxb_keyword_name(int keyword);
@@ -175,6 +175,7 @@ struct sxb_global_decl {
 struct sxb_module_ast {
     char name[64];
     char file[128];
+    int form;           /* the form this module's code belongs to, or -1 */
     struct sxb_proc_decl *procs;
     struct sxb_global_decl *globals;
 };
@@ -218,7 +219,12 @@ enum sxb_opcode {
     SXB_OP_FORTESTI, SXB_OP_FORTESTD, /* variable, end, step locations -> Boolean */
     SXB_OP_STEPCHECK,    /* location of the step; error 5 when it is 0 (0.0 has all bits 0 too) */
     SXB_OP_PRINT,        /* newline? ; (string) */
-    SXB_OP_END
+    SXB_OP_END,
+    SXB_OP_FORMLOAD,     /* form */
+    SXB_OP_PGET,         /* form, control (-1 the form), property, type -> value */
+    SXB_OP_PSET,         /* form, control, property, type; (value) */
+    SXB_OP_CALLM,        /* form, control, method, argument count, result type; (arguments, typed by the method) */
+    SXB_OP_UNLOAD        /* form */
 };
 
 /* Builtins the VM implements; the compiler types them (sxb_compile.c). */
@@ -231,7 +237,7 @@ enum sxb_builtin {
     SXB_BI_SIN, SXB_BI_COS, SXB_BI_TAN, SXB_BI_ATN, SXB_BI_EXP, SXB_BI_LOG,
     SXB_BI_RND, SXB_BI_RANDOMIZE,
     SXB_BI_READLINE, SXB_BI_READALLTEXT, SXB_BI_WRITEALLTEXT, SXB_BI_FILEEXISTS, SXB_BI_APPPATH,
-    SXB_BI_COMMAND, SXB_BI_SECONDS, SXB_BI_DOEVENTS,
+    SXB_BI_COMMAND, SXB_BI_SECONDS, SXB_BI_DOEVENTS, SXB_BI_MSGBOX, SXB_BI_INPUTBOX,
     SXB_BI_COUNT
 };
 
@@ -272,6 +278,11 @@ struct sxb_program {
     int module_count;
     int global_count;
     int entry_proc;
+    int (*module_globals)[2]; /* each module's first global and count */
+    struct sxb_form_def *forms;
+    int *form_modules;        /* the module holding each form's code */
+    int form_count;
+    int startup_form;
 };
 
 /* ---- values -------------------------------------------------------------------- */
@@ -301,6 +312,24 @@ struct sxb_array {
     int64_t count;
     struct sxb_value *items;
 };
+
+/* ---- forms: the tables in sxb_forms_def.c ------------------------------------------ */
+
+enum { SXB_ACCESS_NONE = 0, SXB_ACCESS_FILE, SXB_ACCESS_READ, SXB_ACCESS_WRITE };
+
+const char *sxb_method_name(int method);
+const char *sxb_event_name(int event);
+int sxb_find_control_kind(const char *name, int length);
+int sxb_find_property(const char *name, int length);
+int sxb_find_method(const char *name, int length);
+int sxb_find_event(const char *name, int length);
+int sxb_property_type(int property, int kind);
+int sxb_property_access(int property, int kind);
+int sxb_method_applies(int method, int kind);
+int sxb_method_arg(int method);
+int sxb_method_result(int method);
+int sxb_event_applies(int event, int kind);
+void sxb_control_defaults(int kind, struct sxb_control_def *control);
 
 struct sxb_string *sxb_string_new(const char *data, size_t length);
 void sxb_string_release(struct sxb_string *string);

@@ -409,7 +409,8 @@ static int resolve(struct compiler *c, const char *name, int length, struct sym 
         return 1;
     }
     for (int m = 0; m < c->module_count; m++) {
-        if (m != c->module && resolve_in_module(c, name, length, m, 1, out)) return 1;
+        /* A form's Public members are reached through it: FormName.Member. */
+        if (m != c->module && c->modules[m].form < 0 && resolve_in_module(c, name, length, m, 1, out)) return 1;
     }
     for (int i = 0; i < COUNT(builtins); i++) {
         if (sxb_name_equal(name, length, builtins[i].name)) {
@@ -908,9 +909,15 @@ static int gen_builtin(struct compiler *c, struct sxb_node *node, const struct b
         c->line = node->line;
         emit1(c, SXB_OP_UBOUND);
         return SXB_TY_INT;
-    case SPECIAL_DIALOG:
-        ERR(c, node, "%s shows a window, so it needs a Windows program; this is a console program", b->name);
-        return SXB_TY_VOID;
+    case SPECIAL_DIALOG: {
+        static const struct builtin message = {"MsgBox", SXB_BI_MSGBOX, "S?IS", 'I', 0};
+        static const struct builtin input = {"InputBox", SXB_BI_INPUTBOX, "S?SS", 'S', 0};
+        if (!c->prog->windows) {
+            ERR(c, node, "%s shows a window, so it needs a Windows program; this is a console program", b->name);
+            return SXB_TY_VOID;
+        }
+        return gen_builtin(c, node, b->name[0] == 'M' ? &message : &input, args);
+    }
     default:
         break;
     }
@@ -1013,6 +1020,16 @@ static void unknown_name(struct compiler *c, struct sxb_node *node)
 {
     int length;
     const char *name = node_name(node, &length);
+    int form = c->module >= 0 && c->module < c->module_count ? c->modules[c->module].form : -1;
+    if (form >= 0 && node->kind == SXB_N_NAME) {
+        const struct sxb_form_def *def = &c->prog->forms[form];
+        for (int i = 0; i < def->control_count; i++) {
+            if (sxb_name_equal(name, length, def->controls[i].name)) {
+                ERR(c, node, "%.*s is a control: name one of its properties, as in %.*s.Text", length, name, length, name);
+                return;
+            }
+        }
+    }
     ERR(c, node, "nothing named \"%.*s\" is declared", length, name);
 }
 
@@ -1054,6 +1071,247 @@ static int resolve_member(struct compiler *c, struct sxb_node *node, struct sym 
         return 0;
     }
     return 1;
+}
+
+/* ---- forms and controls as objects ----------------------------------------------- */
+
+#define NOT_OBJECT (-100)
+
+struct object {
+    int form;
+    int control; /* -1: the form itself */
+};
+
+static int module_form(struct compiler *c, int module)
+{
+    return module >= 0 && module < c->module_count ? c->modules[module].form : -1;
+}
+
+static int find_control(const struct sxb_form_def *form, const char *name, int length)
+{
+    for (int i = 0; i < form->control_count; i++) {
+        if (sxb_name_equal(name, length, form->controls[i].name)) return i;
+    }
+    return -1;
+}
+
+/* What `node` names when it is a form or one of a form's controls: 1, 0 when
+ * it is something else, -1 after reporting an error. */
+static int object_of(struct compiler *c, struct sxb_node *node, struct object *out)
+{
+    int current = module_form(c, c->module);
+    if (node->kind == SXB_N_ME) {
+        if (current < 0) {
+            ERR(c, node, "Me is the form whose code is running, and this code is not in a form");
+            return -1;
+        }
+        out->form = current;
+        out->control = -1;
+        return 1;
+    }
+    if (node->flags & SXB_F_HAS_PARENS) return 0;
+    if (node->kind == SXB_N_NAME) {
+        for (int i = 0; i < c->local_count; i++) {
+            if (sxb_names_equal(c->locals[i].name, c->locals[i].name_length, node->name, node->name_length)) return 0;
+        }
+        if (current >= 0) {
+            int k = find_control(&c->prog->forms[current], node->name, node->name_length);
+            if (k >= 0) {
+                out->form = current;
+                out->control = k;
+                return 1;
+            }
+        }
+        int module = find_module(c, node->name, node->name_length);
+        if (module >= 0 && c->modules[module].form >= 0) {
+            out->form = c->modules[module].form;
+            out->control = -1;
+            return 1;
+        }
+        return 0;
+    }
+    if (node->kind == SXB_N_MEMBER) {
+        struct object owner;
+        int found = object_of(c, node->a, &owner);
+        if (found <= 0 || owner.control >= 0) return found < 0 ? -1 : 0;
+        int k = find_control(&c->prog->forms[owner.form], node->member, node->member_length);
+        if (k < 0) return 0;
+        out->form = owner.form;
+        out->control = k;
+        return 1;
+    }
+    return 0;
+}
+
+static int object_kind(struct compiler *c, const struct object *o)
+{
+    return o->control < 0 ? SXB_CTL_FORM : c->prog->forms[o->form].controls[o->control].kind;
+}
+
+static const char *object_name(struct compiler *c, const struct object *o)
+{
+    const struct sxb_form_def *form = &c->prog->forms[o->form];
+    return o->control < 0 ? form->name : form->controls[o->control].name;
+}
+
+/* Another form's members load it first, as touching it does in VB. */
+static void emit_form_load(struct compiler *c, int form)
+{
+    if (form != module_form(c, c->module)) emit2(c, SXB_OP_FORMLOAD, (uint32_t)form);
+}
+
+/* `node` is a.member: when `a` is a form or a control, emits the property
+ * read or the method call and returns its type; NOT_OBJECT when `a` is
+ * neither. As a statement, a result is dropped. */
+static int gen_object_member(struct compiler *c, struct sxb_node *node, int as_statement)
+{
+    struct object o;
+    int found = object_of(c, node->a, &o);
+    if (found < 0) return SXB_TY_VOID;
+    if (found == 0) return NOT_OBJECT;
+    int kind = object_kind(c, &o);
+    const char *owner = object_name(c, &o);
+    int property = sxb_find_property(node->member, node->member_length);
+    int method = sxb_find_method(node->member, node->member_length);
+    c->line = node->line;
+    if (property >= 0 && !(node->flags & SXB_F_HAS_PARENS)) {
+        int access = sxb_property_access(property, kind);
+        if (access == SXB_ACCESS_NONE) {
+            ERR(c, node, "a %s has no property %s", sxb_control_kind_name(kind), sxb_property_name(property));
+            return SXB_TY_VOID;
+        }
+        if (access == SXB_ACCESS_FILE) {
+            ERR(c, node, "%s is set in the form file; code can neither read nor change it", sxb_property_name(property));
+            return SXB_TY_VOID;
+        }
+        if (as_statement) {
+            ERR(c, node, "%s.%s is a property; to change it, write %s.%s = ...", owner, sxb_property_name(property),
+                owner, sxb_property_name(property));
+            return SXB_TY_VOID;
+        }
+        int type = sxb_property_type(property, kind);
+        emit(c, SXB_OP_PGET);
+        emit(c, (uint32_t)o.form);
+        emit(c, (uint32_t)o.control);
+        emit(c, (uint32_t)property);
+        emit(c, (uint32_t)type);
+        return type;
+    }
+    if (method >= 0) {
+        if (!sxb_method_applies(method, kind)) {
+            ERR(c, node, "a %s has no method %s", sxb_control_kind_name(kind), sxb_method_name(method));
+            return SXB_TY_VOID;
+        }
+        int result = sxb_method_result(method);
+        if (!as_statement && result == SXB_TY_VOID) {
+            ERR(c, node, "%s gives no value", sxb_method_name(method));
+            return SXB_TY_VOID;
+        }
+        int argument = sxb_method_arg(method);
+        int given = 0;
+        for (struct sxb_node *a = node->args; a; a = a->next) given++;
+        if (given != (argument ? 1 : 0)) {
+            ERR(c, node, "%s takes %d argument%s", sxb_method_name(method), argument ? 1 : 0, argument ? "" : "s");
+            return SXB_TY_VOID;
+        }
+        if (argument) {
+            char what[96];
+            snprintf(what, sizeof(what), "the argument of %s", sxb_method_name(method));
+            gen_expr_as(c, node->args, argument, what);
+        }
+        c->line = node->line;
+        emit(c, SXB_OP_CALLM);
+        emit(c, (uint32_t)o.form);
+        emit(c, (uint32_t)o.control);
+        emit(c, (uint32_t)method);
+        emit(c, (uint32_t)given);
+        emit(c, (uint32_t)result);
+        if (as_statement && result != SXB_TY_VOID) emit1(c, SXB_OP_POP);
+        return result;
+    }
+    if (o.control < 0) {
+        int module = c->prog->form_modules[o.form];
+        struct sym s;
+        memset(&s, 0, sizeof(s));
+        if (resolve_in_module(c, node->member, node->member_length, module, module != c->module, &s)) {
+            emit_form_load(c, o.form);
+            if (!as_statement) return gen_sym_value(c, node, &s);
+            if (s.kind != SYM_PROC) {
+                ERR(c, node, "%s.%.*s is not a procedure", owner, node->member_length, node->member);
+                return SXB_TY_VOID;
+            }
+            int type = gen_call_user(c, node, s.proc, node->args);
+            if (type != SXB_TY_VOID) emit1(c, SXB_OP_POP);
+            return type;
+        }
+    }
+    ERR(c, node, "%s has no property, method%s named \"%.*s\"", owner, o.control < 0 ? " or Public member" : "",
+        node->member_length, node->member);
+    return SXB_TY_VOID;
+}
+
+/* An assignment to a property. 1 when the target was a form's or a
+ * control's member (handled, or reported), 0 when it is something else. */
+static int gen_object_assign(struct compiler *c, struct sxb_node *node)
+{
+    struct sxb_node *target = node->a;
+    struct object o;
+    if (target->kind != SXB_N_MEMBER) {
+        int found = object_of(c, target, &o);
+        if (found == 0) return 0;
+        if (found > 0) ERR(c, target, "%s is not a value: set one of its properties", object_name(c, &o));
+        return 1;
+    }
+    int found = object_of(c, target->a, &o);
+    if (found < 0) return 1;
+    if (found == 0) return 0;
+    int kind = object_kind(c, &o);
+    int property = sxb_find_property(target->member, target->member_length);
+    if (property >= 0 && !(target->flags & SXB_F_HAS_PARENS)) {
+        int access = sxb_property_access(property, kind);
+        if (access == SXB_ACCESS_NONE) {
+            ERR(c, target, "a %s has no property %s", sxb_control_kind_name(kind), sxb_property_name(property));
+        } else if (access == SXB_ACCESS_FILE) {
+            ERR(c, target, "%s is set in the form file; code cannot change it", sxb_property_name(property));
+        } else if (access == SXB_ACCESS_READ) {
+            ERR(c, target, "%s of a %s can be read, not changed", sxb_property_name(property), sxb_control_kind_name(kind));
+        } else {
+            int type = sxb_property_type(property, kind);
+            gen_expr_as(c, node->b, type, "the property's new value");
+            c->line = node->line;
+            emit(c, SXB_OP_PSET);
+            emit(c, (uint32_t)o.form);
+            emit(c, (uint32_t)o.control);
+            emit(c, (uint32_t)property);
+            emit(c, (uint32_t)type);
+        }
+        return 1;
+    }
+    if (o.control < 0) {
+        struct sym s;
+        int module = c->prog->form_modules[o.form];
+        memset(&s, 0, sizeof(s));
+        if (resolve_in_module(c, target->member, target->member_length, module, module != c->module, &s) &&
+            (s.kind == SYM_GLOBAL)) {
+            emit_form_load(c, o.form);
+            return 0; /* a form's Public variable: assigned like any other */
+        }
+    }
+    ERR(c, target, "%s has no property named \"%.*s\" to set", object_name(c, &o), target->member_length,
+        target->member);
+    return 1;
+}
+
+static void gen_unload(struct compiler *c, struct sxb_node *node)
+{
+    struct object o;
+    int found = object_of(c, node->a, &o);
+    if (found < 0) return;
+    if (found == 0 || o.control >= 0) {
+        ERR(c, node->a, "Unload takes a form: Unload Me, or Unload FormName");
+        return;
+    }
+    emit2(c, SXB_OP_UNLOAD, (uint32_t)o.form);
 }
 
 static int gen_expr(struct compiler *c, struct sxb_node *node)
@@ -1098,6 +1356,8 @@ static int gen_expr(struct compiler *c, struct sxb_node *node)
         return gen_sym_value(c, node, &s);
     }
     case SXB_N_MEMBER: {
+        int object_type = gen_object_member(c, node, 0);
+        if (object_type != NOT_OBJECT) return object_type;
         struct sym s;
         if (!resolve_member(c, node, &s)) return SXB_TY_VOID;
         if (s.kind == SYM_ERR) {
@@ -1120,7 +1380,8 @@ static int gen_expr(struct compiler *c, struct sxb_node *node)
         return gen_sym_value(c, node, &s);
     }
     case SXB_N_ME:
-        forms_only(c, node);
+        if (module_form(c, c->module) < 0) forms_only(c, node);
+        else ERR(c, node, "Me is a form: name one of its properties or methods, as in Me.Hide");
         return SXB_TY_VOID;
     case SXB_N_UNARY: {
         if (node->op == SXB_OP_NOT) {
@@ -1254,10 +1515,7 @@ static void gen_assign(struct compiler *c, struct sxb_node *node)
 {
     struct sxb_node *target = node->a;
     struct sym s;
-    if (target->kind == SXB_N_ME || (target->kind == SXB_N_MEMBER && target->a->kind == SXB_N_ME)) {
-        forms_only(c, target);
-        return;
-    }
+    if (gen_object_assign(c, node) || c->failed) return;
     if (target->kind == SXB_N_NAME && (target->flags & SXB_F_HAS_PARENS)) {
         if (!resolve(c, target->name, target->name_length, &s)) {
             unknown_name(c, target);
@@ -1313,10 +1571,12 @@ static void gen_call_statement(struct compiler *c, struct sxb_node *node)
     struct sxb_node *target = node->a;
     struct sym s;
     if (target->kind == SXB_N_ME) {
-        forms_only(c, target);
+        object_of(c, target, &(struct object){0, 0});
+        if (!c->failed) ERR(c, target, "Me is a form: call one of its methods, as in Me.Hide");
         return;
     }
     if (target->kind == SXB_N_MEMBER) {
+        if (gen_object_member(c, target, 1) != NOT_OBJECT || c->failed) return;
         if (!resolve_member(c, target, &s)) return;
         if (s.kind == SYM_ERR) {
             if (!sxb_name_equal(target->member, target->member_length, "Raise")) {
@@ -1701,7 +1961,10 @@ static void gen_statement(struct compiler *c, struct sxb_node *node)
     case SXB_N_REDIM: gen_redim(c, node); break;
     case SXB_N_PRINT: gen_print(c, node); break;
     case SXB_N_END: emit1(c, SXB_OP_END); break;
-    case SXB_N_UNLOAD: forms_only(c, node); break;
+    case SXB_N_UNLOAD:
+        if (!c->prog->windows) forms_only(c, node);
+        else gen_unload(c, node);
+        break;
     default: ERR(c, node, "expected a statement"); break;
     }
 }
@@ -1783,23 +2046,26 @@ static int add_global(struct compiler *c, struct sxb_node *decl, int module, int
 static int check_name(struct compiler *c, const char *name, int length, int module, int is_public, int line,
                       int column)
 {
+    int shared = is_public && c->modules[module].form < 0; /* a module's Public names are the whole project's */
     for (int i = 0; i < c->global_count; i++) {
         struct global_sym *g = &c->globals[i];
         if (!sxb_names_equal(g->name, g->name_length, name, length)) continue;
-        if (g->module == module || (is_public && g->is_public)) goto clash;
+        if (g->module == module || (shared && g->is_public && c->modules[g->module].form < 0)) goto clash;
     }
     for (int i = 0; i < c->proc_count; i++) {
         struct sxb_proc_decl *p = c->procs[i];
         if (!sxb_names_equal(p->name, p->name_length, name, length)) continue;
-        if (p->module == module || (is_public && p->is_public)) goto clash;
+        if (p->module == module || (shared && p->is_public && c->modules[p->module].form < 0)) goto clash;
     }
     return 0;
 clash:
     c->module = module;
     errorf(c, line, column, "\"%.*s\" is already declared%s", length, name,
-           is_public ? " (Public names are shared by every module)" : " in this module");
+           shared ? " (a module's Public names are shared by the whole project)" : " here");
     return -1;
 }
+
+static void bind_handlers(struct compiler *c);
 
 static int compile_modules(struct compiler *c, int startup_main)
 {
@@ -1810,7 +2076,7 @@ static int compile_modules(struct compiler *c, int startup_main)
         for (struct sxb_proc_decl *p = c->modules[m].procs; p; p = p->next) proc_total++;
     }
     c->procs = sxb_arena_alloc(&c->arena, sizeof(*c->procs) * (size_t)(proc_total + 1));
-    prog->procs = calloc((size_t)proc_total + 1u, sizeof(*prog->procs));
+    prog->procs = calloc((size_t)proc_total + 1u + (size_t)prog->form_count, sizeof(*prog->procs));
     if (c->procs == NULL || prog->procs == NULL) {
         out_of_memory(c);
         return -1;
@@ -1832,6 +2098,19 @@ static int compile_modules(struct compiler *c, int startup_main)
         }
     }
     prog->proc_count = c->proc_count + 1;
+    prog->module_globals = calloc((size_t)c->module_count + 1u, sizeof(*prog->module_globals));
+    if (prog->module_globals == NULL) {
+        out_of_memory(c);
+        return -1;
+    }
+    for (int m = 0; m < c->module_count; m++) prog->module_globals[m][0] = -1;
+    for (int i = 0; i < c->global_count; i++) {
+        struct global_sym *g = &c->globals[i];
+        if (g->is_const) continue;
+        if (prog->module_globals[g->module][0] < 0) prog->module_globals[g->module][0] = g->slot;
+        prog->module_globals[g->module][1]++;
+    }
+    bind_handlers(c);
     /* Constants, in the order they are written. */
     for (int i = 0; i < c->global_count && !c->failed; i++) {
         struct global_sym *g = &c->globals[i];
@@ -1878,7 +2157,7 @@ static int compile_modules(struct compiler *c, int startup_main)
     reset_locals(c);
     for (int i = 0; i < c->global_count && !c->failed; i++) {
         struct global_sym *g = &c->globals[i];
-        if (g->is_const) continue;
+        if (g->is_const || c->modules[g->module].form >= 0) continue;
         struct sxb_node *decl = g->decl;
         c->module = g->module;
         c->line = decl->line;
@@ -1897,16 +2176,56 @@ static int compile_modules(struct compiler *c, int startup_main)
         c->module = main_proc->module;
         c->line = main_proc->line;
         emit2(c, SXB_OP_CALL, (uint32_t)main_proc->index);
+    } else if (prog->startup_form >= 0) {
+        c->module = prog->form_modules[prog->startup_form];
+        c->line = 1;
+        emit(c, SXB_OP_CALLM);
+        emit(c, (uint32_t)prog->startup_form);
+        emit(c, (uint32_t)-1);
+        emit(c, SXB_M_SHOW);
+        emit(c, 0);
+        emit(c, SXB_TY_VOID);
     }
-    emit1(c, SXB_OP_END);
+    /* A console program ends here; a Windows one waits for its events. */
+    emit1(c, prog->windows ? SXB_OP_RET : SXB_OP_END);
     entry->local_count = c->slot_count;
     entry->module = 0;
     prog->entry_proc = c->proc_count;
     reset_locals(c);
+    /* Each form's variables start over every time it loads: their initial
+     * values are a procedure of their own, the form's (init). */
+    for (int f = 0; f < prog->form_count && !c->failed; f++) {
+        struct sxb_proc_info *init = &prog->procs[c->proc_count + 1 + f];
+        int module = prog->form_modules[f];
+        snprintf(init->name, sizeof(init->name), "(%s)", prog->forms[f].name);
+        init->module = module;
+        init->entry = here(c);
+        c->module = module;
+        for (int i = 0; i < c->global_count && !c->failed; i++) {
+            struct global_sym *g = &c->globals[i];
+            if (g->is_const || g->module != module) continue;
+            struct sxb_node *decl = g->decl;
+            c->line = decl->line;
+            if (decl->flags & SXB_F_FIXED_SIZE) {
+                gen_expr_as(c, decl->a, SXB_TY_INT, "the array's upper bound");
+                c->line = decl->line;
+                emit2(c, SXB_OP_ANEW, (uint32_t)SXB_TY_BASE(decl->type));
+                emit2(c, SXB_OP_STORE, SXB_LOC_GLOBAL(g->slot));
+            } else if (decl->b != NULL) {
+                gen_expr_as(c, decl->b, decl->type, "the initial value");
+                c->line = decl->line;
+                emit2(c, SXB_OP_STORE, SXB_LOC_GLOBAL(g->slot));
+            }
+        }
+        emit1(c, SXB_OP_RET);
+        init->local_count = c->slot_count;
+        reset_locals(c);
+    }
+    prog->proc_count = c->proc_count + 1 + prog->form_count;
     return c->failed ? -1 : 0;
 }
 
-static int parse_module_text(struct compiler *c, int index, const char *text, size_t length)
+static int parse_module_text(struct compiler *c, int index, const char *text, size_t length, int first_line)
 {
     struct sxb_token *tokens;
     int count;
@@ -1917,7 +2236,7 @@ static int parse_module_text(struct compiler *c, int index, const char *text, si
         out_of_memory(c);
         return -1;
     }
-    if (sxb_lex(&c->arena, module->file, text, length, &tokens, &count, c->diag) != 0) {
+    if (sxb_lex(&c->arena, module->file, text, length, first_line, &tokens, &count, c->diag) != 0) {
         c->failed = 1;
         return -1;
     }
@@ -2016,7 +2335,9 @@ struct sxb_program *sxb_compile_source(const char *name, const char *text, size_
     if (dot) stem = (size_t)(dot - base);
     snprintf(c.modules[0].name, sizeof(c.modules[0].name), "%.*s", (int)(stem < 63 ? stem : 63), base);
     snprintf(prog->name, sizeof(prog->name), "%s", c.modules[0].name);
-    if (parse_module_text(&c, 0, text, length) == 0) {
+    c.modules[0].form = -1;
+    prog->startup_form = -1;
+    if (parse_module_text(&c, 0, text, length, 1) == 0) {
         compile_modules(&c, 1);
     }
     return finish(&c, prog);
@@ -2032,9 +2353,12 @@ struct project {
     int startup_main;
     int has_kind;
     int has_startup;
-    char modules[MAX_MODULES][128];
+    char modules[MAX_MODULES][128]; /* forms and modules, in the project's order */
     int module_lines[MAX_MODULES];
+    int module_is_form[MAX_MODULES];
     int module_count;
+    int form_count;
+    char startup[64];
 };
 
 struct project_value {
@@ -2211,6 +2535,7 @@ static int parse_project(const char *file, const char *text, size_t length, stru
         } else if (KEY("Startup")) {
             WANT('W', "Main or a form's name");
             out->startup_main = sxb_name_equal(value.text, (int)strlen(value.text), "Main");
+            snprintf(out->startup, sizeof(out->startup), "%s", value.text);
             out->has_startup = 1;
         } else if (KEY("Module")) {
             WANT('S', "a file name in quotes");
@@ -2225,9 +2550,17 @@ static int parse_project(const char *file, const char *text, size_t length, stru
             out->module_lines[out->module_count++] = line;
         } else if (KEY("Form")) {
             WANT('S', "a file name in quotes");
-            return project_error(diag, file, line,
-                                 "forms are not supported yet: this SxBASIC runs console programs "
-                                 "(phase 1 of docs/roadmaps/open/SXBASIC_ROADMAP.md)");
+            size_t n = strlen(value.text);
+            if (n < 5 || !sxb_name_equal(value.text + n - 4, 4, ".sbf")) {
+                return project_error(diag, file, line, "a form is a .sbf file");
+            }
+            if (out->module_count == MAX_MODULES) {
+                return project_error(diag, file, line, "a project has at most %d forms and modules", MAX_MODULES);
+            }
+            snprintf(out->modules[out->module_count], sizeof(out->modules[0]), "%s", value.text);
+            out->module_is_form[out->module_count] = 1;
+            out->module_lines[out->module_count++] = line;
+            out->form_count++;
         } else if (KEY("Description") || KEY("Vendor") || KEY("Copyright") || KEY("Category") || KEY("Icon")) {
             WANT('S', "a string");
         } else if (KEY("Version")) {
@@ -2254,8 +2587,252 @@ static int parse_project(const char *file, const char *text, size_t length, stru
     if (!out->windows && !out->startup_main) {
         return project_error(diag, file, 0, "a console program starts at Sub Main: Startup = Main");
     }
-    if (out->module_count == 0) return project_error(diag, file, 0, "the project has no modules");
+    if (!out->windows && out->form_count > 0) {
+        return project_error(diag, file, 0, "a console program has no forms; make it Kind = Windows");
+    }
+    if (out->module_count == 0) return project_error(diag, file, 0, "the project has no forms and no modules");
     return 0;
+}
+
+/* ---- the form file ----------------------------------------------------------------
+ *
+ * "SxBASIC Form 1", a Begin Form block of controls and their properties, then
+ * the form's code, read as a module whose lines keep their numbers. */
+
+static int form_error(struct compiler *c, const char *file, int line, const char *format, ...)
+{
+    if (c->failed) return -1;
+    c->failed = 1;
+    snprintf(c->diag->file, sizeof(c->diag->file), "%s", file);
+    c->diag->line = line;
+    c->diag->column = 0;
+    va_list args;
+    va_start(args, format);
+    vsnprintf(c->diag->message, sizeof(c->diag->message), format, args);
+    va_end(args);
+    return -1;
+}
+
+static int set_form_property(struct compiler *c, const char *file, int line, struct sxb_control_def *control,
+                             const char *key, int key_length, const char *p, const char *end)
+{
+    int property = sxb_find_property(key, key_length);
+    int access = property >= 0 ? sxb_property_access(property, control->kind) : SXB_ACCESS_NONE;
+    if (property < 0 || access == SXB_ACCESS_NONE || property == SXB_P_LISTCOUNT) {
+        return form_error(c, file, line, "a %s has no property %.*s", sxb_control_kind_name(control->kind), key_length, key);
+    }
+    int negative = 0;
+    if (p < end && *p == '-') {
+        negative = 1;
+        p++;
+    }
+    struct project_value value;
+    if (parse_project_value(p, end, &value) != 0) {
+        return form_error(c, file, line, "the value of %.*s is not a string, a number, True or False", key_length, key);
+    }
+    int type = sxb_property_type(property, control->kind);
+    if (type == SXB_TY_STRING) {
+        if (value.kind != 'S' || negative) return form_error(c, file, line, "%.*s takes a string in quotes", key_length, key);
+        snprintf(control->text, sizeof(control->text), "%s", value.text);
+        return 0;
+    }
+    if (type == SXB_TY_BOOL) {
+        int is_true = value.kind == 'W' && sxb_name_equal(value.text, (int)strlen(value.text), "True");
+        int is_false = value.kind == 'W' && sxb_name_equal(value.text, (int)strlen(value.text), "False");
+        if ((!is_true && !is_false) || negative) return form_error(c, file, line, "%.*s is True or False", key_length, key);
+        control->values[property] = is_true;
+        return 0;
+    }
+    if (value.kind != 'I') return form_error(c, file, line, "%.*s takes a whole number", key_length, key);
+    control->values[property] = negative ? -value.number : value.number;
+    return 0;
+}
+
+static int parse_form_text(struct compiler *c, int module_index, int form_index, const char *file, const char *text,
+                           size_t length)
+{
+    struct sxb_form_def *form = &c->prog->forms[form_index];
+    struct sxb_module_ast *module = &c->modules[module_index];
+    const char *p = text, *end = text + length;
+    int line = 0;
+    int depth = 0;           /* 0 before Begin Form, 1 inside it, 2 inside a control, 3 inside a menu's item */
+    int current = -1;        /* the control being filled */
+    int current_menu = -1;
+    int capacity = 0;
+    const char *code = NULL;
+    int code_line = 0;
+    if (length >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB &&
+        (unsigned char)text[2] == 0xBF) {
+        p += 3;
+    }
+    snprintf(module->file, sizeof(module->file), "%s", file);
+    module->form = form_index;
+    while (p < end && code == NULL) {
+        const char *eol = memchr(p, '\n', (size_t)(end - p));
+        const char *line_end = eol ? eol : end;
+        const char *next_line = eol ? eol + 1 : end;
+        line++;
+        if (line_end > p && line_end[-1] == '\r') line_end--;
+        while (p < line_end && (*p == ' ' || *p == '\t')) p++;
+        const char *trimmed_end = line_end;
+        while (trimmed_end > p && (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t')) trimmed_end--;
+        int n = (int)(trimmed_end - p);
+        if (line == 1) {
+            if (!(n == 14 && memcmp(p, "SxBASIC Form 1", 14) == 0)) {
+                return form_error(c, file, line, "a form file starts with \"SxBASIC Form 1\"");
+            }
+            p = next_line;
+            continue;
+        }
+        if (n == 0 || *p == '\'') {
+            p = next_line;
+            continue;
+        }
+        const char *word = p;
+        while (p < trimmed_end && *p != ' ' && *p != '\t' && *p != '=') p++;
+        int word_length = (int)(p - word);
+        while (p < trimmed_end && (*p == ' ' || *p == '\t')) p++;
+        if (sxb_name_equal(word, word_length, "Begin")) {
+            const char *kind_name = p;
+            while (p < trimmed_end && *p != ' ' && *p != '\t') p++;
+            int kind_length = (int)(p - kind_name);
+            while (p < trimmed_end && (*p == ' ' || *p == '\t')) p++;
+            const char *name = p;
+            int name_length = (int)(trimmed_end - p);
+            int kind = sxb_find_control_kind(kind_name, kind_length);
+            if (sxb_name_equal(kind_name, kind_length, "PictureBox")) {
+                return form_error(c, file, line, "PictureBox is not supported yet: SXGUI has no picture widget");
+            }
+            if (kind < 0) return form_error(c, file, line, "there is no control called %.*s", kind_length, kind_name);
+            if (!valid_identifier(name, (size_t)name_length) || is_reserved(name, (size_t)name_length) ||
+                sxb_name_equal(name, name_length, "Form")) {
+                return form_error(c, file, line, "\"%.*s\" cannot name a control: use a letter, then letters, digits and \"_\"",
+                                  name_length, name);
+            }
+            if (depth == 0) {
+                if (kind != SXB_CTL_FORM) return form_error(c, file, line, "the file starts with Begin Form <name>");
+                sxb_control_defaults(SXB_CTL_FORM, &form->form);
+                snprintf(form->name, sizeof(form->name), "%.*s", name_length, name);
+                snprintf(form->form.name, sizeof(form->form.name), "%.*s", name_length, name);
+                snprintf(module->name, sizeof(module->name), "%.*s", name_length, name);
+                depth = 1;
+                p = next_line;
+                continue;
+            }
+            int allowed = (depth == 1 && kind != SXB_CTL_FORM && kind != SXB_CTL_MENUITEM) ||
+                          (depth == 2 && current >= 0 && form->controls[current].kind == SXB_CTL_MENU &&
+                           kind == SXB_CTL_MENUITEM);
+            if (!allowed) {
+                return form_error(c, file, line,
+                                  kind == SXB_CTL_MENUITEM ? "a MenuItem goes inside a Menu"
+                                                           : "controls do not nest: end the one above first");
+            }
+            if (find_control(form, name, name_length) >= 0) {
+                return form_error(c, file, line, "two controls are named %.*s", name_length, name);
+            }
+            if (form->control_count == capacity) {
+                capacity = capacity ? capacity * 2 : 16;
+                struct sxb_control_def *grown = realloc(form->controls, sizeof(*grown) * (size_t)capacity);
+                if (grown == NULL) return form_error(c, file, line, "out of memory");
+                form->controls = grown;
+            }
+            struct sxb_control_def *control = &form->controls[form->control_count];
+            sxb_control_defaults(kind, control);
+            snprintf(control->name, sizeof(control->name), "%.*s", name_length, name);
+            if (kind == SXB_CTL_MENU) current_menu = form->control_count;
+            if (kind == SXB_CTL_MENUITEM) control->menu = current_menu;
+            current = form->control_count++;
+            depth++;
+            p = next_line;
+            continue;
+        }
+        if (sxb_name_equal(word, word_length, "End") && p == trimmed_end) {
+            if (depth == 0) return form_error(c, file, line, "End without a Begin");
+            depth--;
+            if (depth == 1) current = -1;
+            if (depth == 2) current = current_menu;
+            if (depth == 0) {
+                code = next_line;
+                code_line = line + 1;
+            }
+            p = next_line;
+            continue;
+        }
+        if (depth == 0) return form_error(c, file, line, "expected Begin Form <name>");
+        if (p >= trimmed_end || *p != '=') return form_error(c, file, line, "expected \"Property = value\"");
+        p++;
+        while (p < trimmed_end && (*p == ' ' || *p == '\t')) p++;
+        struct sxb_control_def *target = current >= 0 ? &form->controls[current] : &form->form;
+        if (set_form_property(c, file, line, target, word, word_length, p, trimmed_end) != 0) return -1;
+        p = next_line;
+    }
+    if (code == NULL) {
+        return form_error(c, file, line, depth == 0 ? "the file has no Begin Form block" : "the Begin Form block has no End");
+    }
+    if (form->form.values[SXB_P_WIDTH] < 64 || form->form.values[SXB_P_HEIGHT] < 32 ||
+        form->form.values[SXB_P_WIDTH] > 4096 || form->form.values[SXB_P_HEIGHT] > 4096) {
+        return form_error(c, file, 0, "the form's Width and Height are 64 by 32 to 4096 by 4096");
+    }
+    return parse_module_text(c, module_index, code, (size_t)(end - code), code_line);
+}
+
+/* Binds Control_Event procedures to their controls, and refuses a misspelt one. */
+static void bind_handlers(struct compiler *c)
+{
+    struct sxb_program *prog = c->prog;
+    for (int f = 0; f < prog->form_count && !c->failed; f++) {
+        struct sxb_form_def *form = &prog->forms[f];
+        int module = prog->form_modules[f];
+        c->module = module;
+        for (int k = 0; k < form->control_count && !c->failed; k++) {
+            struct sym s;
+            memset(&s, 0, sizeof(s));
+            const char *name = form->controls[k].name;
+            if (resolve_in_module(c, name, (int)strlen(name), module, 0, &s)) {
+                errorf(c, 0, 0, "the control %s has the name of a variable or procedure of its form", name);
+            }
+        }
+        for (int i = 0; i < c->proc_count && !c->failed; i++) {
+            struct sxb_proc_decl *proc = c->procs[i];
+            if (proc->module != module) continue;
+            int split = -1;
+            for (int j = proc->name_length - 1; j > 0; j--) {
+                if (proc->name[j] == '_') {
+                    split = j;
+                    break;
+                }
+            }
+            if (split <= 0) continue;
+            struct sxb_control_def *target = NULL;
+            if (sxb_name_equal(proc->name, split, "Form")) {
+                target = &form->form;
+            } else {
+                int k = find_control(form, proc->name, split);
+                if (k >= 0) target = &form->controls[k];
+            }
+            if (target == NULL) continue;
+            const char *event_name = proc->name + split + 1;
+            int event_length = proc->name_length - split - 1;
+            int event = sxb_find_event(event_name, event_length);
+            if (event < 0 || !sxb_event_applies(event, target->kind)) {
+                errorf(c, proc->line, proc->column, "a %s has no event %.*s, so %.*s would never run",
+                       sxb_control_kind_name(target->kind), event_length, event_name, proc->name_length, proc->name);
+                break;
+            }
+            int params = 0;
+            struct sxb_node *param = proc->params;
+            for (struct sxb_node *q = proc->params; q; q = q->next) params++;
+            if (proc->is_function) {
+                errorf(c, proc->line, proc->column, "an event's procedure is a Sub");
+            } else if (event == SXB_EV_UNLOAD &&
+                       (params != 1 || !(param->flags & SXB_F_BYREF) || param->type != SXB_TY_BOOL)) {
+                errorf(c, proc->line, proc->column, "Form_Unload takes (ByRef Cancel As Boolean)");
+            } else if (event != SXB_EV_UNLOAD && params != 0) {
+                errorf(c, proc->line, proc->column, "%.*s takes no parameters", proc->name_length, proc->name);
+            }
+            target->handlers[event] = proc->index;
+        }
+    }
 }
 
 struct sxb_program *sxb_compile_project(const char *project_path, const struct sxb_host *host,
@@ -2301,12 +2878,22 @@ struct sxb_program *sxb_compile_project(const char *project_path, const struct s
         project_error(diag, file, 0, "out of memory");
         c.failed = 1;
     }
+    prog->startup_form = -1;
+    if (!c.failed && project->form_count > 0) {
+        prog->forms = calloc((size_t)project->form_count, sizeof(*prog->forms));
+        prog->form_modules = calloc((size_t)project->form_count, sizeof(*prog->form_modules));
+        if (prog->forms == NULL || prog->form_modules == NULL) {
+            project_error(diag, file, 0, "out of memory");
+            c.failed = 1;
+        }
+    }
     for (int i = 0; i < project->module_count && !c.failed; i++) {
         const char *relative = project->modules[i];
         const char *base = strrchr(relative, '/');
         base = base ? base + 1 : relative;
         size_t stem = strlen(base) - 4;
-        if (!valid_identifier(base, stem) || is_reserved(base, stem)) {
+        int is_form = project->module_is_form[i];
+        if (!is_form && (!valid_identifier(base, stem) || is_reserved(base, stem))) {
             project_error(diag, file, project->module_lines[i],
                           "a module's file name is its name, so \"%s\" has to be a name: a letter, then letters, "
                           "digits and \"_\"",
@@ -2314,13 +2901,7 @@ struct sxb_program *sxb_compile_project(const char *project_path, const struct s
             c.failed = 1;
             break;
         }
-        for (int j = 0; j < i; j++) {
-            if (sxb_name_equal(base, (int)stem, c.modules[j].name)) {
-                project_error(diag, file, project->module_lines[i], "two modules are named %.*s", (int)stem, base);
-                c.failed = 1;
-            }
-        }
-        if (c.failed) break;
+        c.modules[i].form = -1;
         snprintf(c.modules[i].name, sizeof(c.modules[i].name), "%.*s", (int)stem, base);
         snprintf(c.modules[i].file, sizeof(c.modules[i].file), "%s", relative);
         c.module_count = i + 1;
@@ -2336,8 +2917,32 @@ struct sxb_program *sxb_compile_project(const char *project_path, const struct s
             c.failed = 1;
             break;
         }
-        parse_module_text(&c, i, text, size);
+        if (is_form) {
+            int form = prog->form_count++;
+            prog->form_modules[form] = i;
+            parse_form_text(&c, i, form, relative, text, size);
+        } else {
+            parse_module_text(&c, i, text, size, 1);
+        }
         free(text);
+        for (int j = 0; j < i && !c.failed; j++) {
+            if (sxb_name_equal(c.modules[i].name, (int)strlen(c.modules[i].name), c.modules[j].name)) {
+                project_error(diag, file, project->module_lines[i], "two forms or modules are named %s",
+                              c.modules[i].name);
+                c.failed = 1;
+            }
+        }
+    }
+    if (!c.failed && project->windows && !project->startup_main) {
+        for (int f = 0; f < prog->form_count; f++) {
+            if (sxb_name_equal(project->startup, (int)strlen(project->startup), prog->forms[f].name)) {
+                prog->startup_form = f;
+            }
+        }
+        if (prog->startup_form < 0) {
+            project_error(diag, file, 0, "Startup names %s, and no form is called that", project->startup);
+            c.failed = 1;
+        }
     }
     if (!c.failed) {
         compile_modules(&c, project->startup_main);
@@ -2358,6 +2963,10 @@ void sxb_program_free(struct sxb_program *program)
     free(program->modules);
     free(program->procs);
     free(program->module_files);
+    free(program->module_globals);
+    for (int f = 0; f < program->form_count; f++) free(program->forms[f].controls);
+    free(program->forms);
+    free(program->form_modules);
     free(program);
 }
 
@@ -2369,4 +2978,24 @@ const char *sxb_program_name(const struct sxb_program *program)
 int sxb_program_is_windows(const struct sxb_program *program)
 {
     return program->windows;
+}
+
+int sxb_program_form_count(const struct sxb_program *program)
+{
+    return program->form_count;
+}
+
+const struct sxb_form_def *sxb_program_form(const struct sxb_program *program, int form)
+{
+    return form >= 0 && form < program->form_count ? &program->forms[form] : NULL;
+}
+
+int sxb_program_startup_form(const struct sxb_program *program)
+{
+    return program->startup_form;
+}
+
+int sxb_program_form_init(const struct sxb_program *program, int form)
+{
+    return program->entry_proc + 1 + form;
 }

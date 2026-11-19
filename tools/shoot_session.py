@@ -1173,6 +1173,25 @@ def scenario_console(s):
     s.shot("console-interrupted")
 
 
+def scenario_sxbasic(s):
+    """SxBASIC's converter sample in a real window: started from the Command
+    Prompt, a ShowModal dialog opened from the keyboard, a reading typed into
+    it, and Enter pressing its Default button."""
+    s.open_console()
+    s.qmp.type_line("/system/sxbasic.sxe /system/sxbasic/samples/converter/converter.sbp")
+    s.qmp.tap("ret", pause=8.0)
+    s.shot("sxbasic-converter")
+    s.qmp.tap("tab", pause=0.5)
+    s.qmp.tap("tab", pause=0.5)
+    s.qmp.tap("spc", pause=3.0)
+    s.shot("sxbasic-dialog")
+    s.qmp.type_line("21.5")
+    time.sleep(1.5)
+    s.shot("sxbasic-preview")
+    s.qmp.tap("ret", pause=3.0)
+    s.shot("sxbasic-reading")
+
+
 def scenario_system(s):
     """System Properties (all three pages) and Task Manager.
 
@@ -4200,6 +4219,7 @@ SCENARIOS = {
     "paint": scenario_paint,
     "files": scenario_files,
     "console": scenario_console,
+    "sxbasic": scenario_sxbasic,
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "display": scenario_display,

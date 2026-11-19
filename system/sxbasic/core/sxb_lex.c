@@ -343,7 +343,7 @@ static int lex_operator(struct lexer *lx)
     return 0;
 }
 
-int sxb_lex(struct sxb_arena *arena, const char *file, const char *text, size_t length,
+int sxb_lex(struct sxb_arena *arena, const char *file, const char *text, size_t length, int first_line,
             struct sxb_token **tokens, int *count, struct sxb_diagnostic *diag)
 {
     struct lexer lx;
@@ -352,7 +352,7 @@ int sxb_lex(struct sxb_arena *arena, const char *file, const char *text, size_t 
     lx.file = file;
     lx.text = text;
     lx.length = length;
-    lx.line = 1;
+    lx.line = first_line;
     lx.diag = diag;
     /* A UTF-8 byte order mark at the start is skipped. */
     if (length >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB &&

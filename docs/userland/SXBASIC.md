@@ -1,9 +1,10 @@
 # SxBASIC — the Savan BASIC language
 
-> **Status: console programs run; forms do not yet.** Phase 1 of
-> [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md) runs a console
-> project with `/system/sxbasic.sxe /path/to/project.sbp [arguments]`; a
-> project with forms is refused until phase 2. This is phase 0's text: the language, its
+> **Status: console and Windows programs run**, through
+> `/system/sxbasic.sxe /path/to/project.sbp [arguments]` (phases 1 and 2 of
+> [SXBASIC_ROADMAP.md](../roadmaps/open/SXBASIC_ROADMAP.md)); what this
+> version leaves out of forms is under [Limits of this version](#limits-of-this-version).
+> This is phase 0's text: the language, its
 > project files and its forms, written before the compiler so the compiler has
 > something to be checked against. Where an implementation phase finds a rule
 > here that cannot work, the rule changes here first. Three sample projects
@@ -446,10 +447,38 @@ variables; the next use loads it again, fresh.
 | `Form_Unload(ByRef Cancel As Boolean)` | event | before unloading; `Cancel = True` keeps it open |
 | `Form_Resize` | event | after the user resizes it |
 
-The first form shown is the program's main window; every other form is a
-window owned by it. At most four of those can be open at once
-(`SAVANXP_WM_MAX_OWNED_WINDOWS`, see
-[SYSTEM_LIMITS_ROADMAP.md](../roadmaps/open/SYSTEM_LIMITS_ROADMAP.md)).
+The first form shown is the program's main window; another form shows as a
+dialog over it, with `ShowModal`.
+
+### Limits of this version
+
+What phase 2 left out, each an error 5 (Invalid argument) where code asks
+for it:
+
+- `Show` on a form other than the first one shown: a second form shows with
+  `ShowModal`. SXGUI's application frame has one main window and one dialog.
+- `Hide` on the main form.
+- `ShowModal`, `MsgBox` and `InputBox` inside `Form_Load` or `Form_Unload`:
+  those run inside the statement that loaded or unloaded the form, which
+  cannot wait.
+- One `ShowModal` form at a time. A `MsgBox` or `InputBox` can open over it;
+  the form's dialog comes back when the message closes.
+- `PictureBox`: SXGUI has no picture widget yet, and the form file refuses it.
+
+And how this version behaves where the reference above leaves it open:
+
+- Esc or the close button on a `ShowModal` form presses its `Cancel`
+  button; without one, the form unloads. Either way `ShowModal` returns.
+- Setting a `TextBox`'s `Text` runs its `Change` event, setting a scroll or
+  track bar's `Value` its `Change`, and setting `ListIndex` the list's
+  `Click`, as in VB.
+- A `Timer` ticks at most every 20 ms.
+
+`sxbasic --selftest <script> <project.sbp>` runs a Windows program with no
+window, driven by a script of what a user would do (type, click, choose a
+menu item, answer a message box) and of what to expect;
+`system/sxbasic/selftests/` holds the samples' scripts, which the
+`sxbasic-greeter-smoke` and `sxbasic-converter-smoke` scenarios run.
 
 ### Events
 
@@ -483,7 +512,7 @@ the method `SetFocus`. Colours and fonts are the system's; there are no
 | `ScrollBar` | `Min`, `Max`, `Value`, `LargeChange`; `Horizontal` (file only) | | `Change` | `SXGUI_SCROLLBAR` |
 | `TrackBar` | `Min`, `Max`, `Value` | | `Change` | `SXGUI_TRACKBAR` |
 | `ProgressBar` | `Min`, `Max`, `Value` | | | `SXGUI_PROGRESS` |
-| `PictureBox` | `Picture` (an absolute path) | | `Click` | none yet: phase 2 adds it |
+| `PictureBox` | `Picture` (an absolute path) | | `Click` | none yet: [not in this version](#limits-of-this-version) |
 | `Timer` | `Interval` (milliseconds), `Enabled` | | `Tick` | none: `on_tick` of the application frame |
 
 Notes on the table:

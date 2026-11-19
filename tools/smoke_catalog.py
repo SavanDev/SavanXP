@@ -773,6 +773,18 @@ SCENARIOS: dict[str, Scenario] = {
         "SXBASIC SMOKE FAIL",
         "SxBASIC: the console sample compiled and run in the guest, against its expected output",
     ),
+    "sxbasic-greeter-smoke": _qemu_scenario(
+        "sxbforms-greeter",
+        "SXBASIC FORMS SMOKE PASS",
+        "SXBASIC FORMS SMOKE FAIL",
+        "SxBASIC forms: the greeter sample driven by its selftest script, a message box included",
+    ),
+    "sxbasic-converter-smoke": _qemu_scenario(
+        "sxbforms-converter",
+        "SXBASIC FORMS SMOKE PASS",
+        "SXBASIC FORMS SMOKE FAIL",
+        "SxBASIC forms: the converter sample, a ShowModal dialog, a message box over it, a list and a menu",
+    ),
     "session-smoke": _qemu_scenario(
         "sessiontest",
         "SESSION SMOKE PASS",

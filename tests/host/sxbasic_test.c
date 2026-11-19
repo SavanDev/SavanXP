@@ -234,6 +234,8 @@ static int read_text(const char *path, char **text)
     return 0;
 }
 
+static void greeter(const char *samples);
+
 static void sample(const char *samples)
 {
     char project[1024], expected_path[1024];
@@ -260,15 +262,107 @@ static void sample(const char *samples)
     sxb_vm_destroy(vm);
     sxb_program_free(program);
 
-    /* The Windows samples are refused until forms exist, with the line that names one. */
-    snprintf(project, sizeof(project), "%s/greeter/greeter.sbp", samples);
+    /* The Windows samples compile; greeter runs against a fake forms runtime. */
+    snprintf(project, sizeof(project), "%s/converter/converter.sbp", samples);
     g_cases++;
     program = sxb_compile_project(project, &g_host, &diag);
-    if (program != NULL || strstr(diag.message, "forms are not supported yet") == NULL || diag.line != 8) {
+    if (program == NULL || sxb_program_form_count(program) != 2 || sxb_program_startup_form(program) != 0) {
         g_failures++;
-        fprintf(stderr, "sxbasic-test: greeter.sbp: expected the forms refusal at line 8, got %d: %s\n", diag.line,
-                diag.message);
+        fprintf(stderr, "sxbasic-test: converter.sbp: %s:%d: %s\n", diag.file, diag.line, diag.message);
     }
+    sxb_program_free(program);
+    greeter(samples);
+}
+
+/* ---- a fake forms runtime: what the VM asks of one ----------------------------- */
+
+static char g_name_box[64];
+static char g_result_label[64];
+static char g_message[256];
+static int g_shown;
+
+static int fake_load(void *user, int form) { (void)user; (void)form; return 0; }
+static int fake_unload(void *user, int form) { (void)user; (void)form; return 0; }
+
+static const char *control_name(const struct sxb_program *program, int form, int control)
+{
+    return control < 0 ? "" : sxb_program_form(program, form)->controls[control].name;
+}
+
+static int fake_get(void *user, int form, int control, int property, struct sxb_scalar *out)
+{
+    const char *name = control_name(user, form, control);
+    memset(out, 0, sizeof(*out));
+    out->type = 3;
+    out->s = strcmp(name, "NameBox") == 0 ? g_name_box : g_result_label;
+    out->length = strlen(out->s);
+    return property == SXB_P_TEXT ? 0 : SXB_ERR_PROPERTY;
+}
+
+static int fake_set(void *user, int form, int control, int property, const struct sxb_scalar *value)
+{
+    if (property != SXB_P_TEXT || strcmp(control_name(user, form, control), "ResultLabel") != 0) return SXB_ERR_PROPERTY;
+    snprintf(g_result_label, sizeof(g_result_label), "%.*s", (int)value->length, value->s);
+    return 0;
+}
+
+static int fake_call(void *user, int form, int control, int method, const struct sxb_scalar *args, int argc,
+                     struct sxb_scalar *result)
+{
+    (void)user; (void)form; (void)control; (void)args; (void)argc; (void)result;
+    if (method == SXB_M_SHOW) g_shown = 1;
+    return 0;
+}
+
+static int fake_message(void *user, const char *text, int style, const char *title)
+{
+    (void)user; (void)style; (void)title;
+    snprintf(g_message, sizeof(g_message), "%s", text);
+    return SXB_HOST_SUSPEND;
+}
+
+static int fake_input(void *user, const char *prompt, const char *title, const char *initial)
+{
+    (void)user; (void)prompt; (void)title; (void)initial;
+    return SXB_HOST_SUSPEND;
+}
+
+static void greeter(const char *samples)
+{
+    char project[1024];
+    struct sxb_diagnostic diag;
+    snprintf(project, sizeof(project), "%s/greeter/greeter.sbp", samples);
+    g_cases++;
+    struct sxb_program *program = sxb_compile_project(project, &g_host, &diag);
+    if (program == NULL) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: greeter.sbp: %s:%d: %s\n", diag.file, diag.line, diag.message);
+        return;
+    }
+    struct sxb_form_host host = {program, fake_load, fake_unload, fake_get, fake_set, fake_call, fake_message, fake_input};
+    struct sxb_vm *vm = sxb_vm_create(program, &g_host, "", samples);
+    sxb_vm_set_form_host(vm, &host);
+    const struct sxb_form_def *form = sxb_program_form(program, 0);
+    int click = -1;
+    for (int k = 0; k < form->control_count; k++) {
+        if (strcmp(form->controls[k].name, "GreetButton") == 0) click = form->controls[k].handlers[SXB_EV_CLICK];
+    }
+    enum sxb_status start = sxb_vm_run(vm, 0);
+    enum sxb_status empty = sxb_vm_invoke(vm, click, NULL);       /* MsgBox: waits */
+    int waiting = sxb_vm_waiting(vm);
+    struct sxb_scalar ok = {1, 1, 0, NULL, 0};
+    enum sxb_status resumed = sxb_vm_resume(vm, &ok);
+    snprintf(g_name_box, sizeof(g_name_box), "  Ada ");
+    enum sxb_status named = sxb_vm_invoke(vm, click, NULL);
+    if (start != SXB_IDLE || !g_shown || click < 0 || empty != SXB_SUSPENDED || waiting != 1 ||
+        strcmp(g_message, "Type a name first.") != 0 || resumed != SXB_IDLE || named != SXB_IDLE ||
+        strcmp(g_result_label, "Hello, Ada!") != 0) {
+        g_failures++;
+        fprintf(stderr, "sxbasic-test: greeter: start %d shown %d click %d empty %d waiting %d message \"%s\" "
+                        "resumed %d named %d label \"%s\"\n",
+                start, g_shown, click, empty, waiting, g_message, resumed, named, g_result_label);
+    }
+    sxb_vm_destroy(vm);
     sxb_program_free(program);
 }
 

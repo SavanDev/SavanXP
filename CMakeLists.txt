@@ -870,6 +870,7 @@ add_test(NAME imgview-view-test COMMAND savanxp-imgview-test)
 # The SxBASIC core (docs/userland/SXBASIC.md): programs and what they print,
 # compile and runtime errors, and the console sample against its expected output.
 add_executable(savanxp-sxbasic-test
+    system/sxbasic/core/sxb_forms_def.c
     system/sxbasic/core/sxb_lex.c
     system/sxbasic/core/sxb_parse.c
     system/sxbasic/core/sxb_compile.c
@@ -1431,6 +1432,9 @@ add_custom_target(savanxp_diskfs
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/sxbasic/samples"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/system/sxbasic/samples" "${SAVANXP_DISKFS_ROOT}/system/sxbasic/samples"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/sxbasic/selftests"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_SOURCE_DIR}/system/sxbasic/selftests" "${SAVANXP_DISKFS_ROOT}/system/sxbasic/selftests"
     ${SAVANXP_PROGRAM_COPY_COMMANDS}
     ${SAVANXP_WIN32_COPY_COMMANDS}
     ${SAVANXP_LINUX_COPY_COMMANDS}

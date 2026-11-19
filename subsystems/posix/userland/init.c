@@ -57,6 +57,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "sxbasic")) {
         return "SXBASIC SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "sxbforms")) {
+        return "SXBASIC FORMS SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "ccleste")) {
         return "CCLESTE SELFTEST";
     }
@@ -226,6 +229,12 @@ static int run_automation_spec(const char* spec) {
     /* The SxBASIC console sample against the output it must print (docs/userland/SXBASIC.md). */
     const char* sxbasic_argv[] = {"/system/sxbasic.sxe", "--expect", "/system/sxbasic/samples/hello/expected-output.txt",
                                   "/system/sxbasic/samples/hello/hello.sbp", 0};
+    /* Its Windows samples with no window, driven by their selftest scripts. */
+    const char* sxbforms_greeter_argv[] = {"/system/sxbasic.sxe", "--selftest", "/system/sxbasic/selftests/greeter.txt",
+                                           "/system/sxbasic/samples/greeter/greeter.sbp", 0};
+    const char* sxbforms_converter_argv[] = {"/system/sxbasic.sxe", "--selftest",
+                                             "/system/sxbasic/selftests/converter.txt",
+                                             "/system/sxbasic/samples/converter/converter.sbp", 0};
     const char* nativetest_argv[] = {"/bin/nativetest.sxe", 0};
     const char* nativenetwork_argv[] = {"/bin/nativetest.sxe", "network", 0, 0};
     const char* nativecapture_argv[] = {"/bin/nativetest.sxe", "audio-capture", 0};
@@ -406,6 +415,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "sxbasic") == 0) {
             path = "/system/sxbasic.sxe";
             argv = sxbasic_argv;
+            argc = 4;
+        } else if (strcmp(spec, "sxbforms-greeter") == 0 || strcmp(spec, "sxbforms-converter") == 0) {
+            path = "/system/sxbasic.sxe";
+            argv = spec[9] == 'g' ? sxbforms_greeter_argv : sxbforms_converter_argv;
             argc = 4;
         } else if (strcmp(spec, "elevtest") == 0) {
             path = "/bin/elevtest";

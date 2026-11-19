@@ -1,0 +1,11 @@
+# The greeter sample, as a user would drive it (sxbasic --selftest; docs/userland/SXBASIC.md).
+# Commands: type, click, select, menu, tick, expect, expect-message (| ends a line),
+# answer OK|Cancel|Yes|No [text], expect-ended.
+expect MainForm.Text Greeter
+expect MainForm.ResultLabel.Text 
+click MainForm.GreetButton
+expect-message Type a name first.
+answer OK
+type MainForm.NameBox   Ada  
+click MainForm.GreetButton
+expect MainForm.ResultLabel.Text Hello, Ada!

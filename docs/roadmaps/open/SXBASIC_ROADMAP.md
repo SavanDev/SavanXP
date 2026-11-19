@@ -1,6 +1,6 @@
 # SxBASIC roadmap
 
-> **Status: open, phases 0 and 1 done.** SxBASIC is a BASIC language and a visual
+> **Status: open, phases 0, 1 and 2 done.** SxBASIC is a BASIC language and a visual
 > development environment for it, in the spirit of Visual Basic: draw a form,
 > double-click a button, write what happens on click, press Run, and make an
 > executable. It runs on SavanXP only and makes programs for SavanXP only, as
@@ -200,7 +200,7 @@ The runner links statically (868 KiB). The runner's output does not reach the se
 log when init starts it, so the scenario's verdict is its exit status, which
 is 0 only when the output matched.
 
-### Phase 2 — forms at run time
+### Phase 2 — forms at run time (done)
 
 The forms runtime over SXGUI: a form file becomes a window of SXGUI widgets
 built at start; properties read and written from code (`Label1.Caption =
@@ -209,6 +209,27 @@ built at start; properties read and written from code (`Label1.Caption =
 virtual machine and this runtime become `libsxbasic.so`, and the runner
 becomes the stub. A selftest scenario opens a form, clicks a button through
 the selftest path windowd already uses, and checks the text a handler wrote.
+
+**What landed.** The compiler reads `.sbf` files and checks every property,
+method and event against its control (`sxb_forms_def.c`); a misspelt handler
+is a compile error. The VM invokes event procedures, and one that calls
+`ShowModal`, `MsgBox` or `InputBox` waits on the VM's own stack while the
+dialog's events run above it, then resumes. `system/sxbasic/forms.c` maps
+forms onto SXGUI widgets with no system call; `sxbasic.sxe` puts it in a SUN
+window, or with `--selftest` in a surface of its own driven by a script.
+Checked by `sxbasic-test` (the VM against a fake forms runtime),
+`sxbasic-greeter-smoke` and `sxbasic-converter-smoke`, and
+`tools/shoot.sh --scenario sxbasic` in a real window. Departures from the plan:
+
+- `libsxbasic.so` and the runner as the stub move to phase 3, which is what
+  needs them.
+- The picture control waits for a picture widget in SXGUI.
+- The scenarios drive the program without a window instead of through
+  windowd's selftest, which samples pixels of a known program; the shoot
+  scenario covers the real window.
+- A second form shows only with `ShowModal`, because the application frame
+  has one main window and one dialog; the rest is in
+  [SXBASIC.md](../../userland/SXBASIC.md#limits-of-this-version).
 
 ### Phase 3 — Make EXE
 

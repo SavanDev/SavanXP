@@ -168,7 +168,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SXBASIC.md`](userland/SXBASIC.md) — SxBASIC (Savan BASIC), the language
   reference: project, form and module files (`.sbp`, `.sbf`, `.bas`), types,
   statements, errors, forms, controls and their SXGUI widgets, built-ins, what is
-  left out, and the sample projects. Console programs run (`/system/sxbasic.sxe`); forms do not yet.
+  left out, the limits of this version, and the samples. Console and Windows programs run (`/system/sxbasic.sxe`).
 - [`DISK_MANAGEMENT.md`](userland/DISK_MANAGEMENT.md) — Disk Management: the window,
   why storage is reached through calls and not `/dev/disk<n>`, the SxFS GPT type GUID,
   the rules for the operations that write, and its tests.

@@ -84,8 +84,10 @@ int sxb_program_is_windows(const struct sxb_program *program);
 
 enum sxb_status {
     SXB_RUNNING = 0, /* the step budget ran out; call sxb_vm_run again */
-    SXB_DONE,        /* the program ended */
-    SXB_ERROR        /* a runtime error nothing caught ended it */
+    SXB_DONE,        /* the program ended (End, or Sub Main returned) */
+    SXB_ERROR,       /* a runtime error nothing caught ended it */
+    SXB_IDLE,        /* a Windows program waits for its next event */
+    SXB_SUSPENDED    /* a procedure waits in ShowModal, MsgBox or InputBox */
 };
 
 struct sxb_runtime_error {
@@ -107,6 +109,103 @@ enum sxb_status sxb_vm_run(struct sxb_vm *vm, uint64_t max_steps);
 const struct sxb_runtime_error *sxb_vm_error(const struct sxb_vm *vm);
 
 void sxb_vm_destroy(struct sxb_vm *vm);
+
+/* ---- forms (docs/userland/SXBASIC.md#forms) ----------------------------------------- */
+
+enum sxb_control_kind {
+    SXB_CTL_FORM = 0, SXB_CTL_LABEL, SXB_CTL_BUTTON, SXB_CTL_CHECKBOX, SXB_CTL_RADIO, SXB_CTL_TEXTBOX,
+    SXB_CTL_LISTBOX, SXB_CTL_COMBOBOX, SXB_CTL_GROUPBOX, SXB_CTL_SCROLLBAR, SXB_CTL_TRACKBAR,
+    SXB_CTL_PROGRESS, SXB_CTL_TIMER, SXB_CTL_MENU, SXB_CTL_MENUITEM, SXB_CTL_COUNT
+};
+
+enum sxb_event {
+    SXB_EV_CLICK = 0, SXB_EV_DBLCLICK, SXB_EV_CHANGE, SXB_EV_TICK, SXB_EV_LOAD, SXB_EV_UNLOAD, SXB_EV_RESIZE,
+    SXB_EV_COUNT
+};
+
+enum sxb_property {
+    SXB_P_TEXT = 0, SXB_P_LEFT, SXB_P_TOP, SXB_P_WIDTH, SXB_P_HEIGHT, SXB_P_VISIBLE, SXB_P_ENABLED,
+    SXB_P_VALUE, SXB_P_MIN, SXB_P_MAX, SXB_P_LARGECHANGE, SXB_P_LISTCOUNT, SXB_P_LISTINDEX, SXB_P_INTERVAL,
+    SXB_P_CHECKED, SXB_P_GROUP, SXB_P_MULTILINE, SXB_P_HORIZONTAL, SXB_P_DEFAULT, SXB_P_CANCEL,
+    SXB_P_RESIZABLE, SXB_P_COUNT
+};
+
+enum sxb_method {
+    SXB_M_SHOW = 0, SXB_M_SHOWMODAL, SXB_M_HIDE, SXB_M_SETFOCUS, SXB_M_ADDITEM, SXB_M_REMOVEITEM,
+    SXB_M_CLEAR, SXB_M_LIST, SXB_M_COUNT
+};
+
+/* A control as its form file sets it; `values` holds every property but
+ * Text, in the property's own type (Booleans as 0 and 1). */
+struct sxb_control_def {
+    char name[64];
+    int kind;
+    int menu;                   /* a MenuItem's Menu, as a control index; else -1 */
+    char text[256];
+    int64_t values[SXB_P_COUNT];
+    int handlers[SXB_EV_COUNT]; /* procedure index, -1 for none */
+};
+
+struct sxb_form_def {
+    char name[64];
+    struct sxb_control_def form; /* the form's own properties and events (kind SXB_CTL_FORM) */
+    struct sxb_control_def *controls;
+    int control_count;
+};
+
+int sxb_program_form_count(const struct sxb_program *program);
+const struct sxb_form_def *sxb_program_form(const struct sxb_program *program, int form);
+/* The form a Windows program starts with, or -1 when it starts at Sub Main. */
+int sxb_program_startup_form(const struct sxb_program *program);
+/* The procedure that gives a form's variables their initial values; the
+ * forms runtime invokes it when the form loads, before Form_Load. */
+int sxb_program_form_init(const struct sxb_program *program, int form);
+const char *sxb_property_name(int property);
+const char *sxb_control_kind_name(int kind);
+
+/* A value crossing to the forms runtime. A string belongs to whoever made
+ * it and lives until that side's next call. */
+struct sxb_scalar {
+    int type;           /* 1 Integer, 2 Double, 3 String, 4 Boolean, 0 none */
+    int64_t i;
+    double d;
+    const char *s;
+    size_t length;
+};
+
+/* What a call into the forms runtime returns: 0, an error number to raise, or
+ * SXB_HOST_SUSPEND to make the running procedure wait for sxb_vm_resume. */
+#define SXB_HOST_SUSPEND (-1)
+
+struct sxb_form_host {
+    void *user;
+    int (*load)(void *user, int form);
+    int (*unload)(void *user, int form);
+    /* `control` is -1 for the form itself. */
+    int (*get)(void *user, int form, int control, int property, struct sxb_scalar *out);
+    int (*set)(void *user, int form, int control, int property, const struct sxb_scalar *value);
+    int (*call)(void *user, int form, int control, int method, const struct sxb_scalar *args, int argc,
+                struct sxb_scalar *result);
+    int (*message)(void *user, const char *text, int style, const char *title);
+    int (*input)(void *user, const char *prompt, const char *title, const char *initial);
+};
+
+void sxb_vm_set_form_host(struct sxb_vm *vm, const struct sxb_form_host *host);
+
+/* Runs an event's procedure until it returns (SXB_IDLE), waits
+ * (SXB_SUSPENDED), or the program ends. `cancel`, when not NULL, is the
+ * ByRef Boolean of Form_Unload, read back on return. */
+enum sxb_status sxb_vm_invoke(struct sxb_vm *vm, int proc, int *cancel);
+
+/* Hands the procedure that waits last its result (NULL when it expects
+ * none) and runs it on. */
+enum sxb_status sxb_vm_resume(struct sxb_vm *vm, const struct sxb_scalar *result);
+
+/* How many procedures wait, one inside the other. */
+int sxb_vm_waiting(const struct sxb_vm *vm);
+
+/* An unloaded form's variables go back to their defaults. */
+void sxb_vm_reset_form(struct sxb_vm *vm, int form);
 
 /* The text CStr gives a Double: at most 15 significant digits, '.' as the
  * decimal point, an exponent outside 1E-04..1E+15. `out` holds 32 bytes. */
