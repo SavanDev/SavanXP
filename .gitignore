@@ -26,6 +26,8 @@ ports/*
 !ports/ffmpeg/**
 !ports/ccleste/
 !ports/ccleste/**
+!ports/tinycc/
+!ports/tinycc/**
 ports/doomgeneric/wad/*.wad
 !ports/doomgeneric/wad/
 !ports/doomgeneric/wad/README.md
