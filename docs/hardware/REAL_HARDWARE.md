@@ -143,11 +143,11 @@ as `azalia` and the xHCI quirks were.
 
 | # | Work | Size | Ryzen | Athlon II | Core 2 | Athlon 64 | Pentium 4 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | written; run it | likely | common | some | — |
+| HW-1 | Realtek RTL8111/8168/8101 Ethernet | M | probed on the Ryzen; link owed | likely | common | some | — |
 | HW-2 | USB before xHCI: EHCI, then UHCI and OHCI | L | — | done in QEMU; run it | done in QEMU; run it | done in QEMU; run it | `legacy` has none |
 | HW-3 | PCI IDE: native-mode BARs, bus-master DMA, 48-bit LBA | M | — | unless AHCI is selected | **needed** on ICH7 | **needed** | **needed** |
 | HW-4 | AHCI: every HBA, more than four disks, controller quirks | S | at the limit | useful | useful | on SB600 | — |
-| HW-5 | NVMe | M | written; run it | — | — | — | — |
+| HW-5 | NVMe | M | read-only verified; write test owed | — | — | — | — |
 | HW-6 | HD Audio: the other controllers' PCI quirks, more codecs | S + per codec | done for this board | **needed** | **needed** | on late boards | — |
 | HW-7 | AC'97: bind by controller, not by class; non-Intel controllers | S–M | — | — | on 945 boards | **needed** | **needed** |
 | HW-8 | PS/2 pointer on real pads | S | — | — | laptops | — | **needed** |
@@ -181,8 +181,10 @@ line, the link line, and whether `rx_frames` grows on a live LAN.
 Bring-up is now resumable (`prepare`: chip reset, PHY reset, then up to four
 seconds of link negotiation), and transmit returns without waiting for DMA;
 see [NETWORKING.md](../net/NETWORKING.md#native-setup-and-route-waits).
-Neither path has run on metal.
-The first run should bring the link up both ways, through `NET_IOC_UP` (the
+Neither path has run on metal. On 2026-11-20 the Ryzen's RTL8168H probed
+(`TxConfig 0x5400`) with no cable in the port, so only the probe line is
+verified.
+The first run with a link should bring the link up both ways, through `NET_IOC_UP` (the
 blocking `bring_up`) and through a SUN socket (`prepare` advanced by the
 heartbeat), and report `tx_errors` beside `rx_frames`.
 
@@ -278,9 +280,11 @@ ATI SB600 advertises 64-bit DMA and does not honour it.
 Only the development host has one, and it is the disk the system would be
 installed to. Written as a selective port of OpenBSD `nvme(4)` and run in
 QEMU, with the root on QEMU's controller; see [NVME.md](../kernel/NVME.md).
-Owed: a boot on the Ryzen that reads the Kingston NV1's partition table with
-the disk read-only, then a write test with `nvme-rw` on a partition that can
-be lost. Until both pass, NVMe disks stay read-only by default.
+The read-only boot on the Ryzen passed on 2026-11-20: the Kingston NV1 and
+its four partitions were read with the disk read-only
+([RYZEN5_1600_VEGA56.md](RYZEN5_1600_VEGA56.md#the-third-run-2026-11-20)).
+Owed: a write test with `nvme-rw` on a partition that can be lost. Until it
+passes, NVMe disks stay read-only by default.
 
 ### HW-6 — HD Audio beyond the development host
 

@@ -13,6 +13,7 @@ shared contract and the numbered work packages (HW-n) are in
 | **Verified**, 2026-11-08 | Sound recognizes the microphone, records it and replays it. Doom and Celeste audio, once the ISO carried the rebuilt ports (`22ae69e`) |
 | **Verified**, 2026-11-12 | One boot log captured, v0.4.3 (Build 701) under UEFI: all 12 processors online, the wall clock on the 32-bit PM timer, 1920x1080 from GOP, four SATA disks found and their partition tables read, a USB stick as `usb0` with a partition mounted through Disk Management's elevation prompt. See [The boot log](#the-boot-log-2026-11-12) |
 | **Verified**, 2026-11-13 | A second, 35-minute run of the same build under UEFI: Celeste, Nightwood, the media player and `sxgldiag` (241 fps). Audio played throughout, but the **media player had audible micro-cuts** now and then, and nothing else did. See [The second run](#the-second-run-2026-11-13) |
+| **Verified**, 2026-11-20 | A third run, v0.4.4 (Build 869) under UEFI, booted through **SavanXP (IOMMU on)**: the NVMe driver reads the NV1 read-only and its four partitions; the RTL8168H probes; the tick loses nothing after boot. The firmware published no IVRS, so the IOMMU was not tried. See [The third run](#the-third-run-2026-11-20) |
 | Not working | Ethernet, Wi-Fi, HDMI and DisplayPort audio, anything of the Vega beyond the framebuffer the firmware set |
 | Never exercised on the machine | Writing the SATA disks, USB hubs and hot plug |
 
@@ -35,10 +36,10 @@ the right-hand column is what SavanXP does with each device.
 | Displays | DisplayPort at 1920x1080 and HDMI at 1280x1024, on 2026-11-10 | One output, whichever the firmware lights, at the mode Limine picked |
 | Analog audio | AMD HDA `1022:1457` at `0b:00.3`; Realtek ALC892 `10ec0892`, subsystem `1849:6893` | Playback and capture verified |
 | Display audio | Vega HDA `1002:aaf8` at `09:00.1`; codec `1002:aa01` | Attached as a controller; not an output. Must not displace the analog codec |
-| NVMe | Kingston NV1, `2646:500e` | Driver written (HW-5), not yet run here: read-only unless booted with `nvme-rw` |
+| NVMe | Kingston NV1, `2646:500e`, "KINGSTON SNVS500G", firmware EDFK0N01 | Read-only run verified on 2026-11-20 (HW-5); writing waits for a test with `nvme-rw` |
 | SATA | AMD 400-series AHCI `1022:43c8` at `02:00.1`; AMD FCH AHCI `1022:7901` at `0b:00.2` | All four disks are on the 400-series controller (`02:00.1`), read from Linux on 2026-11-12; the FCH controller has none. SavanXP drives the first HBA, up to four disks, so it sees all of them. A fifth disk, or one on the FCH controller, would be invisible (HW-4) |
 | USB | AMD 400-series xHCI `1022:43d5`; Zeppelin xHCI `1022:145f` | Both verified with HID devices |
-| Ethernet | Realtek RTL8111/8168, `10ec:8168` | No driver (HW-1) |
+| Ethernet | Realtek RTL8111/8168, `10ec:8168` at `05:00.0`, an RTL8168H (`TxConfig 0x5400`) | Probes (HW-1); no cable was plugged in, so link, receive and transmit are unchecked |
 | Wi-Fi | Realtek RTL8188CE, `10ec:8176` | Out of scope |
 | Other | PSP `1022:1456`, SMBus `1022:790b`, LPC `1022:790e` | Unused |
 
@@ -106,6 +107,31 @@ tree). Devices and timers came up as in the first log. New in it:
   (`azalia: DMA polling deadline missed; stream stopped`). It recovered: the
   later streams played and stopped with `drops=0 underruns=0`.
 
+## The third run, 2026-11-20
+
+v0.4.4 (Build 869) under UEFI, through the **SavanXP (IOMMU on)** entry,
+about a minute (`system-log.txt`, not in the tree).
+
+- **No IOMMU from the firmware.** `iommu: none`: there is no IVRS. Linux on
+  the same boot of the board has none either (no `IVRS` in
+  `/sys/firmware/acpi/tables`, nothing in `/sys/class/iommu`). The board's
+  IOMMU setting, enabled in setup, was back to off at the next start.
+- **NVMe, read-only.** `nvme: controller 2646:500e, NVMe 1.3`, then
+  `"KINGSTON SNVS500G", firmware EDFK0N01, 1 namespace(s), mdts 6` and
+  `nvme0 namespace 1, 976773168 sectors, ..., read-only`. Its partition table
+  read as `nvme0p1` to `nvme0p4`, all `(ro)`. This is the first of the two
+  NVMe checks HW-5 owes.
+- **RTL8168.** `rtl8168: 10ec:8168 at 5:0.0, RTL8168H/8111H (TxConfig 0x5400),
+  mmio, pcie, mac a8:a1:59:5d:59:17, polled`, then `rtl8168: no link yet`.
+  No cable was in the port (Linux shows `enp5s0` without carrier too), so
+  link, `rx_frames` and `tx_errors` are still owed.
+- **The tick.** After the first window, which spans the boot, every
+  `timer-stats:` line loses 0 ms but one (99 ms at 22.9 s, while one native
+  syscall held the global lock for 100 ms). The handler averages 16–17 us,
+  at most 62 us.
+- All four SATA disks and the USB stick were found again, with their
+  partition tables.
+
 ## Work for this target
 
 In the order that makes the machine more useful soonest:
@@ -114,10 +140,13 @@ In the order that makes the machine more useful soonest:
    had to stop depending on a network card. Until it lands nothing that uses
    the network can be checked here.
 2. **NVMe (HW-5)**, then setup (HW-12): the path to an installed system on
-   this machine's main disk. The driver is written; what is owed is a boot
-   that reads the NV1 read-only, then a write test with `nvme-rw`
+   this machine's main disk. The read-only boot passed on 2026-11-20; what is
+   owed is a write test with `nvme-rw` on a partition that can be lost
    ([NVME.md](../kernel/NVME.md)).
-3. **The physical audio checks** still owed to the follow-up software, below.
+3. **The IOMMU** ([IOMMU.md](../kernel/IOMMU.md)), once the board publishes
+   an IVRS: a boot without `iommu` for the report, then one through
+   **SavanXP (IOMMU on)** with every device in use.
+4. **The physical audio checks** still owed to the follow-up software, below.
 
 Not planned: mode setting on the Vega (an `amdgpu` port), HDMI and
 DisplayPort audio, Wi-Fi. Page flips and a hardware cursor on the
@@ -243,5 +272,8 @@ QEMU PCM, visual and simulated-fault evidence in the roadmap.
 
 ## Facts still to collect
 
+- Why the board's IOMMU setting does not stay on, and where it lives in
+  setup (AMD CBS, NBIO Common Options, and possibly North Bridge
+  Configuration too).
 - Whether the board has a serial header. With a bracket on one the kernel
   log is on COM1 and no photograph is needed.

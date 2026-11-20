@@ -21,7 +21,9 @@ to the entry's command line in Limine's editor (`E` on the menu).
 `boot/limine-dev.conf`, which only QEMU boots, carries `nvme-rw`, so a QEMU
 machine with its root on NVMe works like any other. `boot/limine.conf`, the
 ISO's, does not. When the driver has written to real drives without
-surprises, the default flips and this section goes.
+surprises, the default flips and this section goes. So far it has read one:
+the Ryzen's NV1, read-only, on 2026-11-20
+([RYZEN5_1600_VEGA56.md](../hardware/RYZEN5_1600_VEGA56.md#the-third-run-2026-11-20)).
 
 ## What QEMU attaches where
 
