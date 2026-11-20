@@ -202,4 +202,14 @@ void reclassify_lock_hold(Door door);
 // syscall no esta preparado para despertarse en otro.
 void wait_for_interrupt();
 
+// Runs `work` with the kernel lock released and interrupts still off, then
+// takes the lock again: for a wait on a device that nothing else on this core
+// needs to end (block::run_writeback_step). With interrupts off nothing else
+// runs on this core meanwhile, so neither an interrupt handler nor another
+// thread here can wait for the lock while a core holding it waits for `work`.
+// What `work` prints is held back until the lock is taken again
+// (console::begin_deferred_output). `work` must touch only state no other
+// core reaches while it runs, and no kernel memory that can be unmapped.
+void run_without_kernel_lock(void (*work)(void*), void* context);
+
 } // namespace smp

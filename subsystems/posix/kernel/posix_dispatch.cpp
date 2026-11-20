@@ -53,6 +53,33 @@ namespace {
 // A path argument: copied from `user` and resolved against the caller's
 // current directory. 0, or the negative error: ENAMETOOLONG for a path or a
 // name past the VFS's limits, EINVAL for one that cannot be read.
+// One piece of disk writeback for an idle core; true if it did something.
+// On an SMP machine an application processor waits for the disk with the
+// kernel lock released, so the other cores go on meanwhile (SMP_ROADMAP.md,
+// slice 5.2). The BSP leaves the queue to them: it waits with interrupts off,
+// and the BSP's tick is the system's clock, its sleepers' wakeups and the
+// polled devices. A machine with one core steps under the lock as before.
+bool idle_writeback_step() {
+    if (smp::online_count() <= 1) {
+        return block::writeback_step();
+    }
+    if (smp::this_cpu().index == 0) {
+        return false;
+    }
+    uint64_t command = 0;
+    switch (block::begin_writeback_step(command)) {
+        case block::BackgroundStep::none:
+            return false;
+        case block::BackgroundStep::finished:
+            return true;
+        case block::BackgroundStep::in_flight:
+            break;
+    }
+    smp::run_without_kernel_lock([](void*) { block::run_writeback_step(); }, nullptr);
+    block::finish_writeback_step(command);
+    return true;
+}
+
 int path_argument(Process& caller, uint64_t user, char* path, char* resolved) {
     sx_status status = sx::copy_user_path_from(caller, user, path, vfs::kMaxPathLength);
     if (status == sx::kStatusOk) {
@@ -230,11 +257,12 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             // Before halting, an idle core moves one bounded piece of the disk
             // writeback queue: that is where deferred writes reach the disk,
             // in time nobody else wanted. One piece per yield, so a process
-            // that becomes runnable gets the core back within one step. USB
-            // hot plug runs here too: enumerating a device takes long waits
-            // that do not belong in the timer tick.
+            // that becomes runnable gets the core back within one step
+            // (idle_writeback_step says which cores, and how). USB hot plug
+            // runs here too: enumerating a device takes long waits that do
+            // not belong in the timer tick.
             if (caller.idle && !has_runnable_non_idle() &&
-                !block::writeback_step() && !usb::service()) {
+                !idle_writeback_step() && !usb::service()) {
                 smp::wait_for_interrupt();
             }
             self.state = State::ready;

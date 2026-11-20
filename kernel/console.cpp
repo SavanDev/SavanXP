@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "arch/x86/io.hpp"
+#include "arch/cpu.hpp"
 #include "kernel/display.hpp"
 #include "kernel/klog.hpp"
 #include "kernel/string.hpp"
@@ -32,6 +33,16 @@ constexpr size_t kMaxColumns = 128;
 constexpr size_t kMaxRows = 64;
 
 bool g_serial_ready = false;
+
+// Output of the one core that runs without the kernel lock (a disk wait,
+// smp::run_without_kernel_lock): the console, the system log and the serial
+// queue have no lock of their own, so its characters wait here until it holds
+// the kernel lock again. kNoCore when no core defers.
+constexpr uint32_t kNoCore = 0xffffffffu;
+uint32_t g_deferring_core = kNoCore;
+char g_deferred[1024];
+size_t g_deferred_length = 0;
+bool g_deferred_lost = false;
 boot::FramebufferInfo g_framebuffer = {};
 boot::FramebufferInfo g_boot_framebuffer = {};
 bool g_console_visible = true;
@@ -536,8 +547,33 @@ void serial_write(const char* text, size_t length) {
     }
 }
 
+void begin_deferred_output() {
+    g_deferred_length = 0;
+    g_deferred_lost = false;
+    __atomic_store_n(&g_deferring_core, arch::cpu_index(), __ATOMIC_RELEASE);
+}
+
+void end_deferred_output() {
+    __atomic_store_n(&g_deferring_core, kNoCore, __ATOMIC_RELEASE);
+    for (size_t index = 0; index < g_deferred_length; ++index) {
+        write_char(g_deferred[index]);
+    }
+    if (g_deferred_lost) {
+        write_line("console: output written without the kernel lock was cut short");
+    }
+    g_deferred_length = 0;
+}
+
 void write_char(char character) {
     if (character == '\r') {
+        return;
+    }
+    if (__atomic_load_n(&g_deferring_core, __ATOMIC_ACQUIRE) == arch::cpu_index()) {
+        if (g_deferred_length < sizeof(g_deferred)) {
+            g_deferred[g_deferred_length++] = character;
+        } else {
+            g_deferred_lost = true;
+        }
         return;
     }
     klog::write_char(character);

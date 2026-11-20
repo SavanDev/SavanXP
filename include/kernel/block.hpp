@@ -152,6 +152,22 @@ void report_health(bool failed);
 // writeback_tick() feeds the clock and, if queued data has waited too long
 // because no CPU went idle, does a step itself.
 bool writeback_step();
+// The same step with its device wait outside the kernel lock, for an idle
+// core of an SMP machine. Under the lock, begin_writeback_step() picks the
+// command; if it says in_flight, the same core calls run_writeback_step()
+// without the lock (the device wait), then finish_writeback_step() under it
+// again. Meanwhile the queue stays consistent and readable, and any path that
+// needs a driver waits for that one command first. See
+// docs/kernel/BLOCK_WRITEBACK.md.
+enum class BackgroundStep {
+    none,      // nothing to do
+    finished,  // done without the device (an ordering point with nothing to flush)
+    in_flight, // run it, then finish it
+};
+// `command` names the command begun, for finish_writeback_step().
+BackgroundStep begin_writeback_step(uint64_t& command);
+void run_writeback_step();
+void finish_writeback_step(uint64_t command);
 void writeback_tick(uint64_t now_ms);
 bool writeback_pending();
 

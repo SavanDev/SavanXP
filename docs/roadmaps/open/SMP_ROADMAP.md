@@ -929,6 +929,30 @@ disk waits. What it must respect:
   ([VIRGL_ROADMAP.md](VIRGL_ROADMAP.md): up to 2 s spinning) and Azalia's
   ([AZALIA_ROADMAP.md](AZALIA_ROADMAP.md), AZ-3).
 
+**State: the first cut landed; acceptance not met yet.** An application
+processor's idle waits for its writeback command with the kernel lock released
+and interrupts off (`smp::run_without_kernel_lock`); the BSP's idle no longer
+steps on an SMP machine. The command is chosen and applied under the lock, the
+queue stays consistent and readable meanwhile, and any path that needs a
+driver under the lock settles the command first
+([BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md#draining)). Power-off
+waits for it the same way ([POWER.md](../../kernel/POWER.md#why-it-may-run-from-an-interrupt)).
+`make_room`, `sync` and reads still wait under the lock.
+
+Measured on 2026-11-20, 2-core TCG, the Ryzen 5 1600 host, `audio-preferences`:
+
+| | Passes | HDA underruns (2 streams) | Holds over 15 ms |
+| --- | --- | --- | --- |
+| Before: every idle steps under the lock | 0 of 5 | 9, in both streams | 37 in the earlier measurement, 34 of them the idle's `YIELD` |
+| After | 4 of 5, then 0 of 5, 0 of 5 in later batches | 6 in 5 runs, none in the first stream | 4-6 per run, none from the idle |
+
+With a temporary probe in `unlock_kernel()` it passed 7 of 7, which says the
+remaining failure is sensitive to timing rather than tied to a long hold.
+The gaps left (23-49 ms) are what the next cut has to explain. The candidate
+is scheduling, not the lock: the AP that waits for the disk has its interrupts
+off, so its own tick, which is what makes an idle core take up a thread woken
+meanwhile, waits for the command too.
+
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
 Done also when `audio-preferences` passes repeatedly under TCG with no HDA

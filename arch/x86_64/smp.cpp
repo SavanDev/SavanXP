@@ -919,6 +919,19 @@ bool kernel_locked_here() {
     return sync::held_by_this_cpu(g_kernel_lock);
 }
 
+void run_without_kernel_lock(void (*work)(void*), void* context) {
+    arch::disable_interrupts();
+    if (!kernel_locked_here()) {
+        work(context);
+        return;
+    }
+    console::begin_deferred_output();
+    unlock_kernel();
+    work(context);
+    lock_kernel(Door::wake);
+    console::end_deferred_output();
+}
+
 void wait_for_interrupt() {
     arch::disable_interrupts();
     const bool held = kernel_locked_here();

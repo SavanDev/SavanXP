@@ -22,6 +22,13 @@ bool present_pixels(const void* pixels, size_t byte_count);
 bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void clear();
 void write_char(char character);
+// Between these two, under the kernel lock at both ends, what THIS core
+// writes is kept (up to 1 KiB) instead of reaching the console, the system log
+// and the serial port, none of which has a lock of its own; the end writes it
+// out. For a core that runs without the kernel lock meanwhile
+// (smp::run_without_kernel_lock).
+void begin_deferred_output();
+void end_deferred_output();
 /* Solo al puerto serie, sin pasar por la consola de texto del framebuffer.
  * Es lo que hace falta para emitir diagnostico mientras hay algo compuesto en
  * pantalla; ver kernel/serial_dev.cpp. */
