@@ -69,7 +69,8 @@ from that state.
 | `noiommu` | Off, whatever else is given: `noiommu` always wins |
 
 The option is opt-in until a target has been verified with it on; it becomes
-the default per target after that. On a VT-d machine the option logs that VT-d
+the default per target after that. The ISO's **SavanXP (IOMMU on)** entry
+passes it. On a VT-d machine the option logs that VT-d
 is not driven yet (M5) and changes nothing.
 
 - **One domain, every device.** The 65536 entries of the device table all

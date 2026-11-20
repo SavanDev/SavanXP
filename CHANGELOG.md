@@ -28,6 +28,8 @@ Cut-off notes:
 - **`iommu` turns on an AMD-Vi register window the firmware left off**, from the unit's PCI capability:
   `iommu: unit 0: firmware left its register window off; turned on at ...`. VirtualBox's EFI is such a firmware
   ([IOMMU.md](docs/kernel/IOMMU.md#virtualboxs-amd-iommu-as-measured-virtualbox-7222)).
+- **ISO boot entry SavanXP (IOMMU on)**: boots with `iommu`, for trying AMD-Vi translation and interrupt remapping on
+  real hardware without editing the entry in Limine ([BUILD_LINUX.md](docs/build/BUILD_LINUX.md)).
 - **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
   the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
   Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).
