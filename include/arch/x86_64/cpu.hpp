@@ -125,6 +125,14 @@ bool initialize_local_apic();
 bool local_apic_ready();
 bool local_apic_x2apic_mode();
 uint32_t local_apic_id();
+// `vector` is pending in this core's IRR: it reached the core and was not
+// taken yet (with IF=0, it stays there).
+bool local_apic_interrupt_pending(uint8_t vector);
+/* Called after the local APIC's EOI of a device vector that arrived
+ * edge-triggered, under the kernel lock. No EOI was broadcast to the I/O
+ * APICs for it: a level-triggered line whose message lost its trigger mode on
+ * the way (QEMU's AMD-Vi interrupt remapping) needs one of its own. */
+void set_edge_eoi_hook(void (*hook)(uint8_t vector));
 bool local_apic_start_oneshot_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value);
 bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value);
 uint32_t local_apic_current_timer_count();

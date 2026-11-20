@@ -1,6 +1,7 @@
 #include "kernel/iommu.hpp"
 
 #include "kernel/acpi.hpp"
+#include "kernel/acpi_tables.hpp"
 #include "kernel/amd_vi.hpp"
 #include "kernel/amd_vi_tables.hpp"
 #include "kernel/console.hpp"
@@ -35,6 +36,65 @@ Report g_report;
 bool g_present = false;
 volatile uint8_t* g_registers[iommu_tables::kMaxUnits] = {};
 uint64_t g_next_drain_ms = 0;
+
+/* M4: the I/O APICs the MADT lists, each matched with the IVRS entry that
+ * names it. Null, with the reason logged, when interrupts cannot all be
+ * remapped: an I/O APIC the IVRS does not name would have its interrupts
+ * looked up under some other device's entry. */
+const amd_vi::InterruptSources* interrupt_sources(const boot::BootInfo& boot_info,
+    amd_vi::InterruptSources& sources) {
+    if (boot::has_option(boot_info.cmdline, "nointremap")) {
+        console::printf("iommu: interrupt remapping left off by the nointremap boot option\n");
+        return nullptr;
+    }
+    if (!g_report.remapping_available) {
+        console::printf("iommu: interrupt remapping stays off: the IVRS names no I/O APIC\n");
+        return nullptr;
+    }
+    const acpi_tables::SdtHeader* madt = acpi::find_table("APIC");
+    if (madt == nullptr) {
+        console::printf("iommu: interrupt remapping stays off: no MADT\n");
+        return nullptr;
+    }
+    sources = {};
+    constexpr uint8_t kMadtIoApic = 1;
+    constexpr uint8_t kMadtIoApicLength = 12;
+    for (const acpi_tables::MadtEntryHeader* entry = acpi_tables::madt_next_entry(*madt, nullptr); entry != nullptr;
+         entry = acpi_tables::madt_next_entry(*madt, entry)) {
+        if (entry->type != kMadtIoApic || entry->length < kMadtIoApicLength) {
+            continue;
+        }
+        const uint8_t id = reinterpret_cast<const uint8_t*>(entry)[2];
+        bool named = false;
+        for (size_t i = 0; i < g_report.scope_count && !named; ++i) {
+            const iommu_tables::Scope& scope = g_report.scopes[i];
+            if (scope.kind == iommu_tables::ScopeKind::ioapic && scope.unit != iommu_tables::kNoUnit &&
+                scope.handle == id) {
+                if (sources.ioapic_count == amd_vi::kMaxIoApics) {
+                    console::printf("iommu: interrupt remapping stays off: more than %u I/O APICs\n",
+                        static_cast<unsigned>(amd_vi::kMaxIoApics));
+                    return nullptr;
+                }
+                sources.ioapic_id[sources.ioapic_count] = id;
+                sources.ioapic_requester[sources.ioapic_count] = scope.first;
+                ++sources.ioapic_count;
+                named = true;
+            }
+        }
+        if (!named) {
+            console::printf("iommu: interrupt remapping stays off: I/O APIC %u is not in the IVRS\n",
+                static_cast<unsigned>(id));
+            return nullptr;
+        }
+    }
+    for (size_t i = 0; i < sources.ioapic_count; ++i) {
+        char device[8];
+        iommu_tables::format_requester_id(sources.ioapic_requester[i], device);
+        console::printf("iommu: I/O APIC %u reaches the unit as %s\n", static_cast<unsigned>(sources.ioapic_id[i]),
+            device);
+    }
+    return &sources;
+}
 
 const char* kind_name(Kind kind) {
     return kind == Kind::amd_vi ? "AMD-Vi" : "VT-d";
@@ -211,7 +271,8 @@ void start(const boot::BootInfo& boot_info) {
         console::printf("iommu: VT-d is not driven yet; translation stays off\n");
         return;
     }
-    amd_vi::start(g_report, g_registers, boot_info);
+    amd_vi::InterruptSources sources = {};
+    amd_vi::start(g_report, g_registers, boot_info, interrupt_sources(boot_info, sources));
 }
 
 bool translating() {
@@ -257,6 +318,18 @@ bool map(const Domain& domain, uint64_t device_address, uint64_t physical, uint6
 
 bool unmap(const Domain& domain, uint64_t device_address, uint64_t bytes) {
     return domain.valid() && amd_vi::unmap(domain.index, device_address, bytes);
+}
+
+bool remapping_interrupts() {
+    return amd_vi::remapping_interrupts();
+}
+
+bool allow_interrupt(const pci::DeviceInfo& device, uint8_t vector, uint32_t apic_id) {
+    return amd_vi::allow_interrupt(requester_id(device), vector, apic_id);
+}
+
+bool allow_ioapic_interrupt(uint8_t ioapic_id, uint8_t vector, uint32_t apic_id) {
+    return amd_vi::allow_ioapic_interrupt(ioapic_id, vector, apic_id);
 }
 
 void tick(uint64_t now_ms) {

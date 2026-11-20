@@ -465,8 +465,10 @@ What it actually took:
   - **An APIC ID above 254 gets no device interrupts.** An IOAPIC entry names
     its destination in 8 bits (255 is broadcast). Logical destination mode, the
     remedy the original plan named, does not help in x2APIC mode, where logical
-    IDs are 32 bits; the remedy is interrupt remapping (VT-d / AMD-Vi), which
-    this kernel does not have. Such cores are skipped.
+    IDs are 32 bits; the remedy is interrupt remapping (VT-d / AMD-Vi) with
+    entries that name 32 bits. AMD-Vi remapping exists now
+    ([IOMMU.md](../../kernel/IOMMU.md#interrupt-remapping-m4)), but with
+    32-bit entries, which name 8 bits as well. Such cores are skipped.
   - **MSI-X stays on the BSP.** virtio-gpu programs its MSI-X entry at boot,
     before the APs schedule; moving it means rewriting that entry afterwards,
     and nothing measured asks for it.

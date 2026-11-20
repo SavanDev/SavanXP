@@ -91,6 +91,19 @@ struct DomainState {
     void* context;
 };
 
+// One remapping table per isolation group given interrupts, keyed by the
+// ID the unit sees for the group; a page each.
+constexpr size_t kMaxInterruptTables = 32;
+struct InterruptTable {
+    uint16_t alias;
+    uint32_t* entries;
+    uint64_t physical;
+};
+// The pass-through bits of a device table entry's third quadword.
+constexpr uint64_t kInterruptPassBits = (7ull << 56) | (3ull << 62);
+// An entry names a destination in 8 bits, and 255 is the broadcast.
+constexpr uint32_t kMaxInterruptDestination = 254;
+
 UnitState g_units[iommu_tables::kMaxUnits];
 size_t g_unit_count = 0;
 bool g_running = false;
@@ -99,6 +112,12 @@ DomainState g_domains[kMaxDomains];
 uint64_t* g_device_table = nullptr;
 // The domain slot each requester ID is in.
 uint8_t g_owner[kDeviceCount];
+bool g_remapping = false;
+uint64_t g_empty_interrupt_table = 0;
+InterruptTable g_interrupt_tables[kMaxInterruptTables];
+size_t g_interrupt_table_count = 0;
+InterruptSources g_interrupt_sources = {};
+uint64_t g_refused_interrupts = 0;
 volatile uint64_t* g_completion = nullptr;
 uint64_t g_completion_physical = 0;
 uint64_t g_completion_sequence = 0;
@@ -253,7 +272,8 @@ bool wait_for_commands(UnitState& unit) {
 
 bool invalidate_devices(UnitState& unit, uint32_t first, uint32_t last) {
     for (uint32_t device = first; device <= last; ++device) {
-        if (!submit(unit, invalidate_device_entry(static_cast<uint16_t>(device)))) {
+        if (!submit(unit, invalidate_device_entry(static_cast<uint16_t>(device))) ||
+            (g_remapping && !submit(unit, invalidate_interrupt_table(static_cast<uint16_t>(device))))) {
             return false;
         }
     }
@@ -302,10 +322,8 @@ void write_entry(uint32_t device, int domain) {
     device_table_entry(g_domains[domain].root, domain_id(domain), entry);
     uint64_t* slot = g_device_table + device * 4;
     // The root and domain ID in the first two quadwords are all that differ
-    // between domains; the invalidation that follows makes the unit reread
-    // the entry.
-    slot[3] = entry[3];
-    slot[2] = entry[2];
+    // between domains; the interrupt half after them is left as it is. The
+    // invalidation that follows makes the unit reread the entry.
     slot[1] = entry[1];
     slot[0] = entry[0];
     g_owner[device] = static_cast<uint8_t>(domain);
@@ -468,6 +486,10 @@ bool start_unit(size_t index, const Report& report, uint64_t device_table_physic
 void log_event(size_t unit, const Event& event) {
     char device[8];
     iommu_tables::format_requester_id(event.device, device);
+    if (is_refused_interrupt(event)) {
+        console::printf("iommu: interrupt from %s refused, address 0x%llx\n", device, event.address);
+        return;
+    }
     if (event.code == kEventIoPageFault) {
         // The domain the kernel put the device in: QEMU leaves the event's
         // own field zero.
@@ -492,7 +514,9 @@ void drain_unit(size_t index) {
         if (event.code == 0) {
             break; // the tail moved before the entry was written; next drain
         }
-        if (event.code == kEventIoPageFault) {
+        if (is_refused_interrupt(event)) {
+            ++g_refused_interrupts;
+        } else if (event.code == kEventIoPageFault) {
             ++g_fault_count;
             g_last_fault_device = event.device;
             g_last_fault_address = event.address;
@@ -505,7 +529,7 @@ void drain_unit(size_t index) {
         }
         memset(slot, 0, sizeof(Command));
         head = static_cast<uint32_t>((head + sizeof(Command)) % kRingBytes);
-        if (event.code == kEventIoPageFault && g_pending_count < sizeof(g_pending) / sizeof(g_pending[0])) {
+        if (event.code == kEventIoPageFault && !is_refused_interrupt(event) && g_pending_count < sizeof(g_pending) / sizeof(g_pending[0])) {
             g_pending[g_pending_count++] = {event.device, g_owner[event.device], (event.flags & kFaultWrite) != 0,
                 event.address};
         }
@@ -527,9 +551,104 @@ void drain_unit(size_t index) {
     }
 }
 
+// ---- interrupt remapping --------------------------------------------------
+
+void set_interrupt_half(uint32_t device, uint64_t table, uint8_t dte_setting) {
+    g_device_table[device * 4 + 2] = interrupt_remapping(table, dte_setting);
+}
+
+// Every device gets the empty table, with the pass-through bits the IVRS
+// asks for it. Before any unit runs.
+// A zeroed page for a remapping table: not counted with the page tables.
+uint64_t allocate_interrupt_table() {
+    memory::PageAllocation page = {};
+    return allocate_zeroed(1, page) ? page.physical_address : 0;
+}
+
+bool prepare_remapping(const Report& report) {
+    g_empty_interrupt_table = allocate_interrupt_table();
+    if (g_empty_interrupt_table == 0) {
+        return false;
+    }
+    for (uint32_t device = 0; device < kDeviceCount; ++device) {
+        set_interrupt_half(device, g_empty_interrupt_table, 0);
+    }
+    for (size_t i = 0; i < report.scope_count; ++i) {
+        const iommu_tables::Scope& scope = report.scopes[i];
+        if (scope.unit == iommu_tables::kNoUnit || scope.dte_setting == 0 ||
+            scope.kind == iommu_tables::ScopeKind::acpi_device) {
+            continue;
+        }
+        for (uint32_t device = scope.first; device <= scope.last; ++device) {
+            set_interrupt_half(device, g_empty_interrupt_table, scope.dte_setting);
+        }
+        if (scope.aliased) {
+            set_interrupt_half(scope.alias, g_empty_interrupt_table, scope.dte_setting);
+        }
+    }
+    g_remapping = true;
+    return true;
+}
+
+bool flush_interrupt_tables(const iommu_tables::Group& group, bool entries_changed) {
+    if (!g_running) {
+        return true; // the units read everything fresh when they start
+    }
+    for (size_t index = 0; index < g_unit_count; ++index) {
+        UnitState& unit = g_units[index];
+        for (size_t i = 0; i < group.range_count; ++i) {
+            for (uint32_t device = group.ranges[i].first; device <= group.ranges[i].last; ++device) {
+                if ((entries_changed && !submit(unit, invalidate_device_entry(static_cast<uint16_t>(device)))) ||
+                    !submit(unit, invalidate_interrupt_table(static_cast<uint16_t>(device)))) {
+                    return false;
+                }
+            }
+        }
+        if (!wait_for_commands(unit)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The group's own table, made on first use: every member's entry then
+ * points at it, keeping its pass-through bits. */
+InterruptTable* interrupt_table_for(uint16_t requester, iommu_tables::Group& group) {
+    if (!iommu_tables::isolation_group(*g_report, requester, group)) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < g_interrupt_table_count; ++i) {
+        if (g_interrupt_tables[i].alias == group.alias) {
+            return &g_interrupt_tables[i];
+        }
+    }
+    if (g_interrupt_table_count == kMaxInterruptTables) {
+        console::printf("iommu: every interrupt remapping table is in use\n");
+        return nullptr;
+    }
+    const uint64_t physical = allocate_interrupt_table();
+    if (physical == 0) {
+        return nullptr;
+    }
+    InterruptTable& table = g_interrupt_tables[g_interrupt_table_count++];
+    table = {group.alias, reinterpret_cast<uint32_t*>(vm::physical_to_virtual(physical)), physical};
+    for (size_t i = 0; i < group.range_count; ++i) {
+        for (uint32_t device = group.ranges[i].first; device <= group.ranges[i].last; ++device) {
+            uint64_t& half = g_device_table[device * 4 + 2];
+            half = interrupt_remapping(physical, 0) | (half & kInterruptPassBits);
+        }
+    }
+    if (!flush_interrupt_tables(group, true)) {
+        console::printf("iommu: a unit did not complete the invalidation\n");
+        return nullptr;
+    }
+    return &table;
+}
+
 } // namespace
 
-bool start(const Report& report, volatile uint8_t* const* registers, const boot::BootInfo& boot_info) {
+bool start(const Report& report, volatile uint8_t* const* registers, const boot::BootInfo& boot_info,
+    const InterruptSources* interrupts) {
     if (g_running || report.kind != iommu_tables::Kind::amd_vi || report.unit_count == 0) {
         return false;
     }
@@ -564,6 +683,21 @@ bool start(const Report& report, volatile uint8_t* const* registers, const boot:
     for (uint32_t device = 0; device < kDeviceCount; ++device) {
         write_entry(device, kIdentityDomain);
     }
+    if (interrupts != nullptr) {
+        if (!prepare_remapping(report)) {
+            console::printf("iommu: no memory for interrupt remapping; staying off\n");
+            return false;
+        }
+        g_interrupt_sources = *interrupts;
+        for (size_t i = 0; i < interrupts->ioapic_count; ++i) {
+            iommu_tables::Group group = {};
+            if (interrupt_table_for(interrupts->ioapic_requester[i], group) == nullptr) {
+                console::printf("iommu: no remapping table for I/O APIC %u; staying off\n",
+                    static_cast<unsigned>(interrupts->ioapic_id[i]));
+                return false;
+            }
+        }
+    }
 
     g_unit_count = report.unit_count;
     for (size_t i = 0; i < g_unit_count; ++i) {
@@ -575,6 +709,7 @@ bool start(const Report& report, volatile uint8_t* const* registers, const boot:
             for (size_t j = 0; j < g_unit_count; ++j) {
                 turn_off(g_units[j]);
             }
+            g_remapping = false;
             console::printf("iommu: staying off\n");
             return false;
         }
@@ -582,6 +717,9 @@ bool start(const Report& report, volatile uint8_t* const* registers, const boot:
     g_running = true;
     console::printf("iommu: AMD-Vi translating, %u unit%s, one identity domain\n",
         static_cast<unsigned>(g_unit_count), g_unit_count == 1 ? "" : "s");
+    if (g_remapping) {
+        console::printf("iommu: interrupts remapped; a device raises only the vectors it was given\n");
+    }
     return true;
 }
 
@@ -764,6 +902,53 @@ bool unmap(int domain, uint64_t device_address, uint64_t bytes) {
 
 uint64_t table_pages() {
     return g_table_pages;
+}
+
+bool remapping_interrupts() {
+    return g_running && g_remapping;
+}
+
+bool allow_interrupt(uint16_t requester, uint8_t vector, uint32_t apic_id) {
+    if (!remapping_interrupts()) {
+        return true;
+    }
+    char name[8];
+    iommu_tables::format_requester_id(requester, name);
+    if (apic_id > kMaxInterruptDestination) {
+        console::printf("iommu: %s: local APIC %u cannot be named by a remapping entry\n", name,
+            static_cast<unsigned>(apic_id));
+        return false;
+    }
+    iommu_tables::Group group = {};
+    InterruptTable* table = interrupt_table_for(requester, group);
+    if (table == nullptr) {
+        console::printf("iommu: %s: no remapping table; vector %u not allowed\n", name, static_cast<unsigned>(vector));
+        return false;
+    }
+    table->entries[vector] = interrupt_table_entry(vector, static_cast<uint8_t>(apic_id));
+    arch::memory_barrier();
+    if (!flush_interrupt_tables(group, false)) {
+        console::printf("iommu: a unit did not complete the invalidation\n");
+        return false;
+    }
+    return true;
+}
+
+bool allow_ioapic_interrupt(uint8_t ioapic_id, uint8_t vector, uint32_t apic_id) {
+    if (!remapping_interrupts()) {
+        return true;
+    }
+    for (size_t i = 0; i < g_interrupt_sources.ioapic_count; ++i) {
+        if (g_interrupt_sources.ioapic_id[i] == ioapic_id) {
+            return allow_interrupt(g_interrupt_sources.ioapic_requester[i], vector, apic_id);
+        }
+    }
+    console::printf("iommu: I/O APIC %u is not one the units remap\n", static_cast<unsigned>(ioapic_id));
+    return false;
+}
+
+uint64_t refused_interrupt_count() {
+    return g_refused_interrupts;
 }
 
 } // namespace amd_vi

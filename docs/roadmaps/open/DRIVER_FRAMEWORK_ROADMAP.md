@@ -1,12 +1,12 @@
 # The driver framework: TKD, IUD and one driver API
 
-Status: **M1 to M3 landed in QEMU, no other phase.** Today every driver is a
+Status: **M1 to M4 landed in QEMU, no other phase.** Today every driver is a
 C++ file linked into the kernel and registered by hand in
 `kernel/kernel_main.cpp`
 ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). The kernel
 reports the IOMMU and, with the `iommu` boot option, turns AMD-Vi on with one
 identity domain, from which a driver can move its device into a domain of
-its own ([IOMMU.md](../../kernel/IOMMU.md)); there is no driver
+its own, and remaps interrupts ([IOMMU.md](../../kernel/IOMMU.md)); there is no driver
 outside the kernel, and no API a driver is written against other than the
 kernel's own internals.
 
@@ -278,6 +278,17 @@ vector on any core, IOMMU domain or not.
 **Done when:** every smoke of M2 passes with remapping on; a function that
 raises an entry it does not own is refused and reported; the SMP smokes keep
 their interrupt distribution.
+
+**State:** done in QEMU but for two things. Every M2 smoke passes with
+remapping on, and QEMU's trace shows the I/O APIC's and virtio's interrupts
+going through the remapping tables; `smoke --smp 4` and `kbd-smoke` keep
+`ioapic::spread`'s distribution. edu's MSI with no entry is refused and one
+with an entry arrives (`iommu-amd-on`), but QEMU does not log the refusal, so
+"reported" is only shown on its standard error until hardware runs it. And
+the entries are 32-bit, so the APIC-ID limit above stays until the 128-bit
+ones (x2APIC and GA support) are used. QEMU also loses a remapped interrupt's
+trigger mode; the kernel's directed EOI for that is in
+[IOMMU.md](../../kernel/IOMMU.md#qemus-amd-iommu-as-measured-qemu-111).
 
 ### M5 — VT-d
 

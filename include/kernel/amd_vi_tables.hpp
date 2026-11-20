@@ -5,7 +5,8 @@
 
 /* The in-memory formats AMD-Vi reads and writes (AMD I/O Virtualization
  * Technology specification, 48882): host I/O page tables, device table
- * entries, commands and event log entries. Phases M2 and M3 of
+ * entries, interrupt remapping tables, commands and event log entries.
+ * Phases M2 to M4 of
  * docs/roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md; docs/kernel/IOMMU.md.
  *
  * Nothing here touches the unit or knows where memory comes from, so the
@@ -65,8 +66,26 @@ bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint6
     uint64_t access = kReadable | kWritable);
 
 /* A valid entry that translates through the table at `root` in `domain`.
- * Interrupts are left untranslated (IV clear) until M4. */
+ * Only the first two quadwords: the interrupt half is set apart, by
+ * interrupt_remapping. */
 void device_table_entry(uint64_t root, uint16_t domain, uint64_t (&entry)[4]);
+
+/* Interrupt remapping (M4). A device's interrupts are looked up in a table of
+ * 32-bit entries indexed by bits 10:0 of the MSI data. The kernel sends every
+ * interrupt with fixed delivery, so the index is the vector: a table of 256
+ * entries, one per vector, leaves the messages devices and I/O APICs send
+ * exactly as they were. */
+constexpr size_t kInterruptTableEntries = 256;
+constexpr uint64_t kInterruptTableBytes = kInterruptTableEntries * sizeof(uint32_t);
+
+/* The third quadword of a device table entry: interrupts remapped through
+ * the table at `table` (64-byte aligned), with the INIT, ExtINT, NMI, LINT0
+ * and LINT1 pass-through bits the IVRS's DTE setting byte asks for. */
+uint64_t interrupt_remapping(uint64_t table, uint8_t dte_setting);
+
+// A remapping table entry: fixed delivery of `vector` to the local APIC
+// `destination`, physical mode.
+uint32_t interrupt_table_entry(uint8_t vector, uint8_t destination);
 
 struct Command {
     uint32_t words[4];
@@ -79,6 +98,8 @@ Command invalidate_device_entry(uint16_t device);
 Command invalidate_domain_pages(uint16_t domain);
 // Every cache the unit has; only when EFR advertises IASup.
 Command invalidate_all();
+// What the unit cached of `device`'s interrupt remapping table.
+Command invalidate_interrupt_table(uint16_t device);
 
 constexpr uint8_t kEventIllegalDeviceTableEntry = 1;
 constexpr uint8_t kEventIoPageFault = 2;
@@ -86,6 +107,11 @@ constexpr uint8_t kEventIoPageFault = 2;
 // (so the fault is a permission one).
 constexpr uint16_t kFaultWrite = 1u << 5;
 constexpr uint16_t kFaultPresent = 1u << 4;
+// The faulting request was an interrupt. QEMU sets it on DMA faults as well.
+constexpr uint16_t kFaultInterrupt = 1u << 3;
+// Where interrupt messages are written.
+constexpr uint64_t kInterruptWindowFirst = 0xfee00000;
+constexpr uint64_t kInterruptWindowLast = 0xfeefffff;
 
 struct Event {
     uint8_t code;     // zero: the unit has not finished writing the entry
@@ -96,6 +122,10 @@ struct Event {
 };
 
 Event decode_event(const uint32_t (&words)[4]);
+
+// An I/O page fault event about an interrupt the unit refused: the interrupt
+// flag and an address in the interrupt window.
+bool is_refused_interrupt(const Event& event);
 const char* event_name(uint8_t code);
 
 } // namespace amd_vi

@@ -206,6 +206,22 @@ void device_table_entry(uint64_t root, uint16_t domain, uint64_t (&entry)[4]) {
     entry[3] = 0;
 }
 
+uint64_t interrupt_remapping(uint64_t table, uint8_t dte_setting) {
+    // IV, IntTabLen = 8 (2^8 entries), IntCtl = 2 (remapped).
+    uint64_t value = 1ull | (8ull << 1) | (table & 0x000fffffffffffc0ull) | (2ull << 60);
+    if ((dte_setting & 0x01) != 0) value |= 1ull << 56; // INITPass
+    if ((dte_setting & 0x02) != 0) value |= 1ull << 57; // EIntPass
+    if ((dte_setting & 0x04) != 0) value |= 1ull << 58; // NMIPass
+    if ((dte_setting & 0x40) != 0) value |= 1ull << 62; // Lint0Pass
+    if ((dte_setting & 0x80) != 0) value |= 1ull << 63; // Lint1Pass
+    return value;
+}
+
+uint32_t interrupt_table_entry(uint8_t vector, uint8_t destination) {
+    // RemapEn, IntType 0 (fixed), DM 0 (physical).
+    return 1u | (static_cast<uint32_t>(destination) << 8) | (static_cast<uint32_t>(vector) << 16);
+}
+
 Command completion_wait(uint64_t store, uint64_t data) {
     Command result = command(0x1);
     result.words[0] = static_cast<uint32_t>(store & 0xfffffff8u) | 0x1u; // S: store when done
@@ -233,6 +249,17 @@ Command invalidate_domain_pages(uint16_t domain) {
 
 Command invalidate_all() {
     return command(0x8);
+}
+
+Command invalidate_interrupt_table(uint16_t device) {
+    Command result = command(0x5);
+    result.words[0] = device;
+    return result;
+}
+
+bool is_refused_interrupt(const Event& event) {
+    return event.code == kEventIoPageFault && (event.flags & kFaultInterrupt) != 0 &&
+        event.address >= kInterruptWindowFirst && event.address <= kInterruptWindowLast;
 }
 
 Event decode_event(const uint32_t (&words)[4]) {

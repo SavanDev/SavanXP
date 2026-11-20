@@ -1,7 +1,7 @@
 /*
  * amd_vi_tables_test.cpp -- the AMD-Vi page tables (the identity domain and
- * the per-device domains' map and unmap), device table entries, commands and
- * events (docs/kernel/IOMMU.md).
+ * the per-device domains' map and unmap), device table entries, interrupt
+ * remapping, commands and events (docs/kernel/IOMMU.md).
  *
  * The tables are built in host memory handed out by a fake allocator, then
  * walked back the way the unit walks them: every address inside a mapped
@@ -298,6 +298,50 @@ void test_blocked() {
     CHECK((entry[0] & amd_vi::kAddressMask) == domain.root && entry[1] == 2);
 }
 
+// Interrupt remapping (M4): the interrupt half of a device table entry, a
+// remapping table entry, the invalidation, and a refused interrupt's event.
+void test_interrupt_remapping() {
+    const uint64_t plain = amd_vi::interrupt_remapping(0x12345400, 0);
+    CHECK((plain & 1) != 0);                              // IV
+    CHECK(((plain >> 1) & 0xf) == 8);                     // 256 entries
+    CHECK((plain & 0x000fffffffffffc0ull) == 0x12345400); // the table
+    CHECK(((plain >> 60) & 3) == 2);                      // IntCtl: remapped
+    CHECK((plain & ((7ull << 56) | (3ull << 62))) == 0);  // nothing passes through
+    // The IVRS's DTE setting: INITPass, EIntPass, NMIPass, Lint0Pass, Lint1Pass.
+    const uint64_t passing = amd_vi::interrupt_remapping(0x12345400, 0xc7);
+    CHECK((passing & ((7ull << 56) | (3ull << 62))) == ((7ull << 56) | (3ull << 62)));
+    CHECK((passing & ~((7ull << 56) | (3ull << 62))) == plain);
+    // SysMgt (bits 4-5 of the setting) is not a pass-through bit.
+    CHECK(amd_vi::interrupt_remapping(0x12345400, 0x30) == plain);
+    // Low bits of a misaligned table never leak into the flags.
+    CHECK(amd_vi::interrupt_remapping(0x1234543f, 0) == plain);
+    CHECK(amd_vi::kInterruptTableBytes == 1024);
+
+    const uint32_t entry = amd_vi::interrupt_table_entry(0x31, 0x02);
+    CHECK((entry & 1) != 0);              // RemapEn
+    CHECK(((entry >> 2) & 7) == 0);       // fixed
+    CHECK((entry & (1u << 6)) == 0);      // physical
+    CHECK((entry & (1u << 7)) == 0);      // not guest mode
+    CHECK(((entry >> 8) & 0xff) == 0x02); // destination
+    CHECK(((entry >> 16) & 0xff) == 0x31);
+    CHECK((entry >> 24) == 0);
+
+    const amd_vi::Command invalidate = amd_vi::invalidate_interrupt_table(0x0028);
+    CHECK(invalidate.words[0] == 0x0028 && invalidate.words[1] == (5u << 28));
+    CHECK(invalidate.words[2] == 0 && invalidate.words[3] == 0);
+
+    // An interrupt refused by hardware; and a DMA fault as QEMU writes it,
+    // with the interrupt flag set but no address, which is not one.
+    const uint32_t refused[4] = {0x0028, (2u << 28) | (static_cast<uint32_t>(amd_vi::kFaultInterrupt) << 16),
+                                 0xfee00000u, 0};
+    CHECK(amd_vi::is_refused_interrupt(amd_vi::decode_event(refused)));
+    const uint32_t dma[4] = {0x0028, (2u << 28) | (0x00au << 16), 0, 0};
+    CHECK(!amd_vi::is_refused_interrupt(amd_vi::decode_event(dma)));
+    const uint32_t outside[4] = {0x0028, (2u << 28) | (static_cast<uint32_t>(amd_vi::kFaultInterrupt) << 16),
+                                 0xfef00000u, 0};
+    CHECK(!amd_vi::is_refused_interrupt(amd_vi::decode_event(outside)));
+}
+
 } // namespace
 
 int main() {
@@ -310,6 +354,7 @@ int main() {
     test_unmap_and_free();
     test_map_out_of_memory();
     test_blocked();
+    test_interrupt_remapping();
     if (g_failures != 0) {
         std::fprintf(stderr, "amd_vi_tables_test: %d failure(s)\n", g_failures);
         return 1;

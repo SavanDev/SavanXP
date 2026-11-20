@@ -10,7 +10,7 @@
 
 #include "arch/cpu.hpp"
 
-/* The M2 and M3 self-test (docs/kernel/IOMMU.md#testing). It drives QEMU's `edu`
+/* The M2 to M4 self-test (docs/kernel/IOMMU.md#testing). It drives QEMU's `edu`
  * teaching device, whose only use here is a DMA engine the kernel can point
  * anywhere: a buffer of 4 KiB inside the device, copied to or from any bus
  * address. Not a driver, and nothing else binds the device. */
@@ -31,6 +31,19 @@ constexpr uint64_t kEduDmaToMemory = 1u << 1;
 constexpr uint64_t kEduBuffer = 0x40000;
 constexpr uint64_t kEduBufferSize = 4096;
 
+constexpr uint32_t kEduInterruptStatus = 0x24;
+constexpr uint32_t kEduRaiseInterrupt = 0x60;
+constexpr uint32_t kEduAcknowledgeInterrupt = 0x64;
+
+constexpr uint8_t kPciCapabilityMsi = 0x05;
+constexpr uint16_t kMsiEnable = 1u << 0;
+constexpr uint16_t kMsi64Bit = 1u << 7;
+// M4: the vector edu's MSI is sent on. 49 is virtio's MSI-X vector, unused on
+// a board without virtio devices, which every board with edu is.
+constexpr uint8_t kEduVector = 49;
+// How long an interrupt the IOMMU must refuse is given to show up anyway.
+constexpr uint64_t kRefusedWaitMs = 200;
+
 constexpr uint16_t kPciCommand = 0x04;
 constexpr uint16_t kPciCommandMemory = 1u << 1;
 constexpr uint16_t kPciCommandBusMaster = 1u << 2;
@@ -49,6 +62,7 @@ constexpr uint64_t kFaultWaitMs = 1000;
 constexpr uint64_t kDeviceWindow = 0xc0000000;
 
 volatile uint8_t* g_edu = nullptr;
+volatile unsigned g_edu_interrupts = 0;
 
 // What the owner of edu's domain was told.
 struct OwnerLog {
@@ -72,6 +86,34 @@ uint64_t read64(uint32_t offset) {
 // the whole register to the 32-bit value.
 void write64(uint32_t offset, uint64_t value) {
     *reinterpret_cast<volatile uint64_t*>(g_edu + offset) = value;
+}
+
+uint32_t read32(uint32_t offset) {
+    return *reinterpret_cast<volatile uint32_t*>(g_edu + offset);
+}
+
+// edu's registers below 0x80 take 4-byte accesses only.
+void write32(uint32_t offset, uint32_t value) {
+    *reinterpret_cast<volatile uint32_t*>(g_edu + offset) = value;
+}
+
+/* Vector 49's handler while the test owns it. The boot runs with interrupts
+ * off, so it usually runs much later, once they are on, and finds nothing. */
+void edu_interrupt() {
+    if (g_edu == nullptr) {
+        return;
+    }
+    const uint32_t status = read32(kEduInterruptStatus);
+    if (status != 0) {
+        g_edu_interrupts = g_edu_interrupts + 1;
+        write32(kEduAcknowledgeInterrupt, status);
+    }
+}
+
+// Whether edu's interrupt reached this core: waiting in the IRR, as it does
+// with interrupts off, or taken already.
+bool interrupt_arrived(unsigned taken_before) {
+    return arch::local_apic_interrupt_pending(kEduVector) || g_edu_interrupts != taken_before;
 }
 
 bool dma(uint64_t source, uint64_t destination, bool to_memory, uint64_t count = kEduBufferSize) {
@@ -244,6 +286,71 @@ const char* own_domain(const memory::PageAllocation& from, const memory::PageAll
     return nullptr;
 }
 
+/* M4: edu's MSI reaches a core only once the IOMMU was given its vector.
+ * QEMU refuses the first one without writing an event (a TODO in its
+ * source); hardware reports it, and the count then says so. */
+const char* interrupts(const pci::DeviceInfo& edu) {
+    if (!amd_vi::remapping_interrupts()) {
+        return "interrupts are not remapped";
+    }
+    uint8_t cap = 0;
+    if (!pci::find_capability(edu, kPciCapabilityMsi, cap)) {
+        return "edu has no MSI capability";
+    }
+    if (arch::local_apic_interrupt_pending(kEduVector)) {
+        return "vector 49 is already pending";
+    }
+    if (!arch::register_interrupt_handler(kEduVector, &edu_interrupt, arch::InterruptEoi::local_apic)) {
+        return "vector 49 cannot be handled";
+    }
+    const uint32_t apic = arch::local_apic_id();
+    const uint16_t control = pci::read_config_u16(edu.bus, edu.slot, edu.function, static_cast<uint8_t>(cap + 2));
+    const uint8_t data_offset = static_cast<uint8_t>(cap + ((control & kMsi64Bit) != 0 ? 0x0c : 0x08));
+    pci::write_config_u32(edu.bus, edu.slot, edu.function, static_cast<uint8_t>(cap + 4),
+        0xfee00000u | ((apic & 0xffu) << 12));
+    if ((control & kMsi64Bit) != 0) {
+        pci::write_config_u32(edu.bus, edu.slot, edu.function, static_cast<uint8_t>(cap + 8), 0);
+    }
+    pci::write_config_u16(edu.bus, edu.slot, edu.function, data_offset, kEduVector);
+    pci::write_config_u16(edu.bus, edu.slot, edu.function, static_cast<uint8_t>(cap + 2),
+        static_cast<uint16_t>(control | kMsiEnable));
+
+    // No entry yet: refused.
+    const uint64_t reported_before = amd_vi::refused_interrupt_count();
+    const unsigned taken_before = g_edu_interrupts;
+    write32(kEduRaiseInterrupt, 1);
+    const uint64_t until = timer::monotonic_ms() + kRefusedWaitMs;
+    while (timer::monotonic_ms() <= until) {
+        if (interrupt_arrived(taken_before)) {
+            return "an interrupt edu was not given reached the core";
+        }
+        arch::cpu_relax();
+    }
+    amd_vi::drain_events();
+    const bool reported = amd_vi::refused_interrupt_count() != reported_before;
+    write32(kEduAcknowledgeInterrupt, read32(kEduInterruptStatus));
+    console::printf("iommu: selftest: an interrupt edu was not given was refused%s\n",
+        reported ? " and reported" : " (QEMU does not report it)");
+
+    // With its entry: delivered.
+    if (!iommu::allow_interrupt(edu, kEduVector, apic)) {
+        return "edu's interrupt entry could not be given";
+    }
+    write32(kEduRaiseInterrupt, 1);
+    const uint64_t deadline = timer::monotonic_ms() + kFaultWaitMs;
+    while (!interrupt_arrived(taken_before)) {
+        if (timer::monotonic_ms() > deadline) {
+            return "the interrupt edu was given did not arrive";
+        }
+        arch::cpu_relax();
+    }
+    write32(kEduAcknowledgeInterrupt, read32(kEduInterruptStatus));
+    pci::write_config_u16(edu.bus, edu.slot, edu.function, static_cast<uint8_t>(cap + 2),
+        static_cast<uint16_t>(control & ~kMsiEnable));
+    console::printf("iommu: selftest: the interrupt edu was given arrived\n");
+    return nullptr;
+}
+
 bool round_trip(const memory::PageAllocation& from, const memory::PageAllocation& to, uint8_t seed) {
     auto* source = static_cast<uint8_t*>(from.virtual_address);
     auto* destination = static_cast<uint8_t*>(to.virtual_address);
@@ -330,6 +437,14 @@ const char* run() {
     // edu is blocked now and can reach neither page.
     memory::free_allocation(from);
     memory::free_allocation(to);
+
+    // Interrupts are remapped apart from DMA: a blocked device's still pass
+    // through the entries it was given.
+    if (amd_vi::remapping_interrupts()) {
+        if (const char* failure = interrupts(edu)) {
+            return failure;
+        }
+    }
     return nullptr;
 }
 

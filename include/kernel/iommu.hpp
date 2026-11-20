@@ -6,10 +6,11 @@
 #include "kernel/iommu_tables.hpp"
 #include "kernel/pci.hpp"
 
-/* The IOMMU layer (docs/kernel/IOMMU.md), phases M1 to M3 of
+/* The IOMMU layer (docs/kernel/IOMMU.md), phases M1 to M4 of
  * docs/roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md: discovery and report, one
- * identity domain for every device, and domains of their own for the drivers
- * that ask. Everything here runs under the kernel lock. */
+ * identity domain for every device, domains of their own for the drivers
+ * that ask, and interrupt remapping. Everything here runs under the kernel
+ * lock. */
 namespace iommu {
 
 /* Reads the IVRS or the DMAR through acpi::find_table, checks it, reads each
@@ -22,9 +23,10 @@ void discover(const boot::BootInfo& boot_info);
 const iommu_tables::Report* report();
 
 /* Phase M2: with the `iommu` boot option, and without `noiommu`, which always
- * wins, turns AMD-Vi translation on with one identity domain. Logs why it
- * stays off otherwise. Call after discover and before any driver starts
- * DMA. */
+ * wins, turns AMD-Vi translation on with one identity domain. Phase M4: and
+ * interrupt remapping, unless `nointremap` or the tables do not name every
+ * I/O APIC. Logs why either stays off. Call after discover, before any
+ * driver starts DMA and before ioapic::initialize. */
 void start(const boot::BootInfo& boot_info);
 
 // Whether devices' DMA goes through the IOMMU.
@@ -89,5 +91,18 @@ bool unmap(const Domain& domain, uint64_t device_address, uint64_t bytes);
 
 // The requester ID the IOMMU sees for a function on segment 0.
 uint16_t requester_id(const pci::DeviceInfo& device);
+
+// ---- interrupt remapping (M4) ---------------------------------------------
+
+/* With remapping on, a device's interrupt reaches a core only through an
+ * entry given here; every other one is refused. Each entry is the vector the
+ * device sends (fixed delivery, MSI data bits 10:0) and the local APIC it is
+ * delivered to. Call before the device or I/O APIC entry can raise it, and
+ * again to move it to another core. True without doing anything when
+ * remapping is off. */
+bool remapping_interrupts();
+bool allow_interrupt(const pci::DeviceInfo& device, uint8_t vector, uint32_t apic_id);
+// For a line of an I/O APIC, by its MADT ID.
+bool allow_ioapic_interrupt(uint8_t ioapic_id, uint8_t vector, uint32_t apic_id);
 
 } // namespace iommu

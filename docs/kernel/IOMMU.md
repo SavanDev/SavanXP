@@ -1,14 +1,15 @@
 # The IOMMU layer
 
-Status: **phases M1 to M3 of
+Status: **phases M1 to M4 of
 [DRIVER_FRAMEWORK_ROADMAP.md](../roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md#m1--discovery-and-report)
 landed, in QEMU.** The kernel reads the firmware's description of the IOMMU
 at boot and says what it found (M1). With the `iommu` boot option it turns
 AMD-Vi on with one identity domain shared by every device, and logs the
 faults the units report (M2). A driver can move its device into a domain of
 its own, where the device reaches only what the driver mapped; the RTL8139
-does (M3). Without the option nothing changes what the hardware does. M4
-(interrupt remapping) is next.
+does (M3). Interrupts are remapped as well: a device or I/O APIC raises only
+the vectors the kernel gave it (M4). Without the option nothing changes what
+the hardware does. M5 (VT-d) is next.
 
 ## Where it lives
 
@@ -21,6 +22,7 @@ does (M3). Without the option nothing changes what the hardware does. M4
 | `include/kernel/iommu.hpp` (`iommu::Domain` and below) | The driver-facing domain API (M3) |
 | `kernel/iommu_selftest.cpp` | `iommu::selftest`, boot option `iommu-selftest`, driving QEMU's `edu` device |
 | `kernel/rtl8139.cpp` | The first driver in a domain of its own; boot option `rtl8139-unmapped-tx` |
+| `kernel/ioapic.cpp`, `kernel/virtio_pci.cpp` | Give the IOMMU each vector before an I/O APIC entry or an MSI-X entry can raise it (M4) |
 | `tests/host/iommu_tables_test.cpp`, `tests/host/amd_vi_tables_test.cpp` | `iommu-tables-test`, `amd-vi-tables-test` |
 | `tools/smoke_catalog.py` | `iommu-amd`, `iommu-intel`, `iommu-none`, `iommu-amd-on`, `iommu-rtl8139-fault` |
 
@@ -81,8 +83,7 @@ is not driven yet (M5) and changes nothing.
   own tables included. What the domain stops is DMA to addresses that are not
   memory, and what it gives is a report when that happens. Isolation is a
   domain of the device's own (below).
-- **Interrupts are untranslated.** The entries leave IV clear, so interrupts
-  pass through as before; remapping is M4.
+- **Interrupts** are remapped too unless `nointremap` is given (M4, below).
 - **Taking a unit over.** Whatever the firmware left running is stopped first
   (the control register written to zero, then a wait for both rings to stop),
   the exclusion range is cleared (the IVMD ranges that asked for one are in the
@@ -152,6 +153,46 @@ The API in `iommu.hpp`, under the kernel lock like the rest:
 - **Domain IDs**: the identity domain is 1, the blocked one 2, drivers' from
   3. The page tables of a driver's domain use 4 KiB leaves only.
 
+## Interrupt remapping (M4)
+
+With `iommu`, AMD-Vi remaps interrupts as well, unless the boot option
+`nointremap` is given or the tables do not allow it. The boot log says which:
+
+```
+iommu: I/O APIC 0 reaches the unit as 00:14.0
+iommu: interrupts remapped; a device raises only the vectors it was given
+```
+
+- **Every device starts with no entry.** Each device table entry points at
+  an empty remapping table, so any interrupt message a device sends is
+  refused until the kernel gives it that vector. Hardware logs a refusal as
+  an I/O page fault with the interrupt flag, which the drain prints as
+  `iommu: interrupt from 00:05.0 refused, address 0xfee00000`.
+- **One table per isolation group, indexed by vector.** AMD-Vi looks an
+  interrupt up by bits 10:0 of its MSI data, and the kernel sends everything
+  with fixed delivery, so that index is the vector. A table of 256 entries
+  leaves every message as it was: I/O APIC redirection entries and MSI
+  messages are programmed exactly as without remapping, and a level line's
+  EOI still names the vector its I/O APIC entry holds.
+- **Who gives entries.** `ioapic::route_gsi` gives the I/O APIC the vector
+  before it unmasks the entry (a refused level interrupt would leave the
+  entry's remote IRR set forever), and `ioapic::spread` moves it to its core.
+  virtio-pci gives its MSI-X vector before it enables MSI-X. Drivers call
+  `iommu::allow_interrupt(device, vector, apic_id)`.
+- **I/O APICs** are found in the MADT and must each be named by an IVHD
+  special entry, which gives the requester ID their interrupts arrive under.
+  One the IVRS does not name keeps remapping off:
+  `iommu: interrupt remapping stays off: I/O APIC 2 is not in the IVRS`.
+- **The pass-through bits** (INIT, ExtINT, NMI, LINT0, LINT1) are what the
+  IVRS's DTE setting byte asks for each device.
+- **Entries are 32 bits**, which name the destination APIC in 8 bits: a core
+  with an APIC ID above 254 still gets no device interrupts. The 128-bit
+  entries that name 32 bits need the unit's x2APIC and guest-virtual-APIC
+  features, which nothing here turns on yet.
+- **Remapping and DMA are separate.** A device in the blocked domain still
+  raises the interrupts it was given; one whose entries should go must have
+  them taken away (not needed by any caller yet).
+
 ### QEMU's amd-iommu, as measured (QEMU 11.1)
 
 - It translates emulated devices' DMA only with `dma-remap=on`
@@ -164,6 +205,18 @@ The API in `iommu.hpp`, under the kernel lock like the rest:
   regardless.
 - It leaves the RW flag of its I/O page fault events clear, so every fault
   it reports reads as a read.
+- It refuses an interrupt without an entry but writes no event for it (a
+  TODO in its source); it prints `failed to remap interrupt from devid 0x28`
+  once on its own standard error instead.
+- It drops the trigger mode of every interrupt it remaps: the message reaches
+  the local APIC as edge-triggered, the APIC broadcasts no EOI, and a
+  level-triggered I/O APIC line keeps its remote IRR set and never interrupts
+  again. The kernel covers this in general: after the local APIC's EOI of a
+  vector that arrived edge-triggered (its TMR bit clear), the I/O APIC
+  entries of level lines on that vector get an EOI of their own, through the
+  I/O APIC's EOI register (version 0x20 and later) or by turning the entry
+  edge-triggered and back. Hardware that keeps the trigger mode never takes
+  that path.
 - It caches a translation by device and page with its permissions, and
   refuses an access the cached permissions forbid without an event. A write
   to a read-only page the device has already read is stopped, but not
@@ -232,7 +285,10 @@ all ones means nothing answers there; the unit is logged with
   read-only page (one edu never touched, see the QEMU notes) and an unmapped
   one must fault and reach the domain's owner; destroying the domain must
   leave edu blocked, faulting with no owner told, with every page table
-  freed. It ends with `iommu: selftest passed`.
+  freed. Then (M4) it programs edu's MSI to vector 49 on this core: raised
+  with no entry, it must not reach the core; once `iommu::allow_interrupt`
+  gave it, it must. The boot runs with interrupts off here, so arrival is read
+  from the local APIC's IRR. It ends with `iommu: selftest passed`.
 - `./build.sh smoke iommu-rtl8139-fault` boots with `iommu
   rtl8139-unmapped-tx`: the RTL8139 in its own domain with transmit buffer 0
   left out of it. The first frame faults; the scenario waits for
@@ -241,7 +297,12 @@ all ones means nothing answers there; the unit is logged with
 - Any other scenario runs with translation on through
   `./build.sh --iommu amd --boot-options iommu smoke NAME` (or
   `SAVANXP_IOMMU=amd SAVANXP_BOOT_OPTIONS=iommu`); its serial log must then
-  hold `AMD-Vi translating` and no I/O page fault.
+  hold `AMD-Vi translating`, `interrupts remapped` and no I/O page fault.
+  Whether interrupts really went through the remapping tables shows in
+  QEMU's own trace: `SAVANXP_QEMU` names a wrapper script that adds
+  `-D FILE -trace amdvi_ir_irte_val -trace 'ioapic_*'`, and every remapped
+  interrupt is one `amdvi_ir_irte_val` line, every level line's EOI one
+  `ioapic_clear_remote_irr`.
 - Under KVM the emulated IOMMU's interrupt remapping needs the split irqchip,
   and `run_qemu.py` adds `kernel-irqchip=split` for it. Only the TCG path has
   been run so far.
@@ -258,6 +319,10 @@ all ones means nothing answers there; the unit is logged with
   firmware did not describe with an alias, and multi-function devices without
   ACS, are not grouped by walking the bus yet.
 - The KVM path (`kernel-irqchip=split`) has not been run.
+- **A refused interrupt being reported** has not been seen: QEMU does not
+  write the event, so the drain's line for it has only run in the host test.
+- **APIC IDs above 254** still get no device interrupts (32-bit entries);
+  128-bit entries are the remedy.
 - The event log is polled. Its interrupt (the unit's MSI) waits for a consumer
   that needs faults faster than 100 ms.
 - The DMAR structures after RMRR (ATSR, RHSA, ANDD, SATC) are length-checked

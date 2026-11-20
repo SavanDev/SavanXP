@@ -22,6 +22,9 @@ Cut-off notes:
 - **Per-device IOMMU domains** (phase M3): `iommu::create_domain`, `map`, `unmap`, `attach` (whole isolation groups
   from the IVRS aliases), `block` and a blocked domain; faults reach the domain's owner. The RTL8139 runs in its own
   domain with `iommu`. New boot option `rtl8139-unmapped-tx` and smoke `iommu-rtl8139-fault` ([IOMMU.md](docs/kernel/IOMMU.md#domains-of-their-own-m3)).
+- **AMD-Vi interrupt remapping** (phase M4): with `iommu`, a device or I/O APIC raises only the vectors the kernel gave
+  it (`iommu::allow_interrupt`); refusals log `iommu: interrupt from bb:dd.f refused`. Boot option `nointremap` turns it off. Level-triggered I/O APIC
+  lines get a directed EOI when their interrupt arrives edge-triggered ([IOMMU.md](docs/kernel/IOMMU.md#interrupt-remapping-m4)).
 - **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
   the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
   Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).
