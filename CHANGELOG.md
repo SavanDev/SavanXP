@@ -122,6 +122,9 @@ Cut-off notes:
 
 ### Changed
 
+- **A thread the timer tick wakes runs at once**: on a free idle core (`smp::kick_free_core`), or in place of the
+  BSP's current thread, instead of after the rest of its 20 ms slice; `audio-preferences` no longer underruns while
+  an AP waits for the disk ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
 - **Disk writeback waits outside the kernel lock** on an SMP machine (slice 5.2, first cut): an application
   processor's idle sends one writeback command with the lock released, so the other cores no longer stop for the disk;
   the BSP leaves the queue to them ([BLOCK_WRITEBACK.md](docs/kernel/BLOCK_WRITEBACK.md#draining)).

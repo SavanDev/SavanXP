@@ -259,7 +259,10 @@ What it actually took, against the plan below:
 - **No reschedule IPI for wakeups.** See
   [the trap below](#known-traps): the same-core handoff stays, and an idle core
   picks up whatever is left in the queue on its own tick, at most 1 ms later.
-  The IPI exists, but only kills use it.
+  The IPI exists, but only kills use it, and since slice 5.2 the BSP's tick:
+  what that tick wakes (sleepers, wait timeouts, timers) goes to a free idle
+  core by IPI, or takes the BSP from its current thread if no core is free.
+  Wakeups from system calls, the RPC case below, are unchanged.
 - **CPU accounting counts every core.** `cpu_ticks_total` is now the ticks that
   found a process running on *any* core, so one tick still increments exactly
   one process; `cpu_online` is the number of cores that schedule, which is also
@@ -948,10 +951,23 @@ Measured on 2026-11-20, 2-core TCG, the Ryzen 5 1600 host, `audio-preferences`:
 
 With a temporary probe in `unlock_kernel()` it passed 7 of 7, which says the
 remaining failure is sensitive to timing rather than tied to a long hold.
-The gaps left (23-49 ms) are what the next cut has to explain. The candidate
-is scheduling, not the lock: the AP that waits for the disk has its interrupts
-off, so its own tick, which is what makes an idle core take up a thread woken
-meanwhile, waits for the command too.
+
+**The second cut is scheduling.** The BSP's tick woke `audiod` from its 10 ms
+sleep and left it in the queue: the AP waiting for the disk could not take
+it (its interrupts, its tick included, are off), and the BSP went on with its
+current thread for the rest of a 20 ms slice. Now a thread the tick wakes goes
+to a free idle core at once (`smp::kick_free_core`, which skips a core in
+`waiting_on_device`), or, with none free, takes the BSP from its current
+thread. Same conditions, 8 runs each:
+
+| | Passes | HDA underruns |
+| --- | --- | --- |
+| First cut only | 0 of 8 | 9, at least one in every run |
+| Tick wakeups preempt the BSP | 2 of 8 | 3 |
+| Free core first, then the BSP | 7 of 8 | 0 |
+
+The one failure left had a 40.6 ms gap in the recording and no underrun
+anywhere in the guest; the scenario is not yet passing "repeatedly".
 
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.

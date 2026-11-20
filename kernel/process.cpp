@@ -746,6 +746,7 @@ void wake_sleepers(uint64_t current_tick) {
         thread.context->rax = 0;
         thread.state = process::State::ready;
         process::detail::reset_time_slice(thread);
+        note_woken(thread);
     }
 }
 
@@ -3287,6 +3288,12 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     }
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
+    // What they woke still counts: a sleeper the tick woke (audiod's 10 ms
+    // sleep) runs now, on a free core if there is one, or here, rather than
+    // after the rest of this core's time slice. With an AP waiting for the
+    // disk and this core busy, that slice was the 20-40 ms audio gap of
+    // SMP_ROADMAP.md, slice 5.2.
+    const bool woke_someone = this_cpu().resched_pending && !smp::kick_free_core();
     this_cpu().resched_pending = false;
 
     if (this_cpu().current->process->exit_requested && (context->cs & 0x3) == 0x3) {
@@ -3308,7 +3315,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         return context;
     }
 
-    if (this_cpu().current->time_slice > 1) {
+    if (this_cpu().current->time_slice > 1 && !woke_someone) {
         this_cpu().current->time_slice -= 1;
         return context;
     }

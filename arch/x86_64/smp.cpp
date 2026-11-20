@@ -926,10 +926,29 @@ void run_without_kernel_lock(void (*work)(void*), void* context) {
         return;
     }
     console::begin_deferred_output();
+    this_cpu().waiting_on_device = true;
     unlock_kernel();
     work(context);
     lock_kernel(Door::wake);
+    this_cpu().waiting_on_device = false;
     console::end_deferred_output();
+}
+
+bool kick_free_core() {
+    const uint32_t self = arch::cpu_index();
+    for (uint32_t index = 0; index < kMaxCpus; ++index) {
+        if (index == self || !can_schedule(index)) {
+            continue;
+        }
+        const Cpu& cpu = g_cpu_state[index];
+        if (cpu.current == nullptr || cpu.current != cpu.idle ||
+            __atomic_load_n(&cpu.waiting_on_device, __ATOMIC_ACQUIRE)) {
+            continue;
+        }
+        kick(index);
+        return true;
+    }
+    return false;
 }
 
 void wait_for_interrupt() {
