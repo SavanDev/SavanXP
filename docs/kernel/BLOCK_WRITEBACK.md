@@ -130,6 +130,10 @@ direct-mapped cache, for the devices that queue their writes.
     the device answers and applies the result itself. That wait is one
     command long, and ends on its own: the core running the command has its
     interrupts off and needs nothing from anyone.
+  - Another idle core that finds a command still running leaves it alone and
+    halts: it is not a path that needs the driver, and settling would be the
+    same wait under the lock. With four cores that wait was 5.6 s of `YIELD`
+    holds during a 4 MB copy.
   - The BSP does not step on an SMP machine: it would wait with interrupts
     off, and its tick is the clock, the sleepers' wakeups and the polled
     devices. A machine with one core steps under the lock, as before.

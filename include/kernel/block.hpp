@@ -160,7 +160,7 @@ bool writeback_step();
 // needs a driver waits for that one command first. See
 // docs/kernel/BLOCK_WRITEBACK.md.
 enum class BackgroundStep {
-    none,      // nothing to do
+    none,      // nothing to do, or another core's command is still running
     finished,  // done without the device (an ordering point with nothing to flush)
     in_flight, // run it, then finish it
 };

@@ -125,9 +125,9 @@ Cut-off notes:
 - **A thread the timer tick wakes runs at once**: on a free idle core (`smp::kick_free_core`), or in place of the
   BSP's current thread, instead of after the rest of its 20 ms slice; `audio-preferences` no longer underruns while
   an AP waits for the disk ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
-- **Disk writeback waits outside the kernel lock** on an SMP machine (slice 5.2, first cut): an application
-  processor's idle sends one writeback command with the lock released, so the other cores no longer stop for the disk;
-  the BSP leaves the queue to them ([BLOCK_WRITEBACK.md](docs/kernel/BLOCK_WRITEBACK.md#draining)).
+- **Disk writeback waits outside the kernel lock** on an SMP machine (slice 5.2, first cut): one application
+  processor's idle at a time sends a writeback command with the lock released, so the other cores no longer stop for
+  the disk; the BSP leaves the queue to the APs ([BLOCK_WRITEBACK.md](docs/kernel/BLOCK_WRITEBACK.md#draining)).
 - **Turning AMD-Vi on queues its invalidations** instead of handing each to the unit: for an IVHD that covers every
   bus, 336 ms drop to 35 ms under QEMU (the Ryzen 5 1600 spent 330 ms there)
   ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).

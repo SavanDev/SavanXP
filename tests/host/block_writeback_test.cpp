@@ -427,6 +427,9 @@ void case_step_outside_the_lock() {
     block::flush(0);
     check(block::begin_writeback_step(command) == block::BackgroundStep::in_flight, "begin: a write in flight");
     check(g_disk.event_count == 0, "nothing reached the disk before it runs");
+    uint64_t other = 0;
+    check(block::begin_writeback_step(other) == block::BackgroundStep::none && g_disk.event_count == 0,
+          "a second idle core leaves it running instead of waiting for it");
     fill(data, 0x52);
     check(block::write_cached(0, 21, 1, data), "a write is queued while the command is in flight");
     block::writeback_tick(50000);

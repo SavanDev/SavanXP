@@ -969,6 +969,39 @@ thread. Same conditions, 8 runs each:
 The one failure left had a 40.6 ms gap in the recording and no underrun
 anywhere in the guest; the scenario is not yet passing "repeatedly".
 
+**The 4 MB copy, measured again** on 2026-11-20 the way the table above was:
+KVM, AHCI, the desktop with a Command Prompt, `cp` of
+`/system/samples/system.mp3` (3.9 MiB) to `/tmp`, on a quiet Ryzen 5 1600
+host. Windows of 2000 ticks; idle, the same machine sits at `held` 5-10% and
+loses no ticks.
+
+| | Copy takes | Windows above idle | `held` | Ticks lost | Longest hold |
+| --- | --- | --- | --- | --- | --- |
+| Before 5.2, 2 cores | about 50 s | all of them | 97-99% | 87% | 2.3 s, the idle's `SAVANXP_SYS_YIELD` |
+| First cuts, 2 cores (2 runs) | 2 s, by `date` | one | 43-48% | 26-31% | 8-51 ms |
+| First cuts, 4 cores, before the fix below | not timed | two | 91%, then 68% | 75%, then 56% | 73 ms, `SAVANXP_SYS_YIELD` |
+| First cuts, 4 cores (2 runs) | 1-2 s | one | 50-53% | 32-36% | 42-47 ms, `SAVANXP_SYS_READ` |
+
+- *The compositor keeps up.* It drew 6 frames a second in the copy's window
+  (the console's output) against 2 at rest, where before it fell to 2 for
+  the length of the copy.
+- *Writeback no longer shows.* The queue the copy leaves drains afterwards
+  with every window at idle levels; `make_room` does not run, since 4 MB is
+  under the 8 MiB budget.
+- *What is left is the copy's own reads.* About 260 `read` calls that miss the
+  cache hold the lock 1.0-1.35 s together. A read that finds another core's
+  writeback command in flight settles it first, spinning under the lock; when
+  that command is a flush, QEMU's `fsync` on the host makes it the 40-70 ms
+  holds. The tick waits behind them with interrupts off, which is the ticks
+  lost.
+- *The fix below.* On four cores a second idle AP's `begin_writeback_step`
+  settled the first one's command under the lock: 5.6 s of `YIELD` holds in
+  an 8 s window. An idle that finds a command running now leaves it to its
+  core.
+- *Not chased:* the BSP tick's forced step ("Age" in
+  [BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md#draining)) still runs
+  under the lock; one run showed a 143 ms tick hold before the copy started.
+
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
 Done also when `audio-preferences` passes repeatedly under TCG with no HDA

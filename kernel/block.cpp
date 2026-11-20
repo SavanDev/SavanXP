@@ -761,6 +761,11 @@ bool writeback_step() {
 }
 
 BackgroundStep begin_writeback_step(uint64_t& command) {
+    // Another core's command still running makes that core the drain; waiting
+    // for it here would wait with the kernel lock held.
+    if (g_in_flight.active && !__atomic_load_n(&g_in_flight.done, __ATOMIC_ACQUIRE)) {
+        return BackgroundStep::none;
+    }
     settle();
     switch (prepare()) {
         case Prepared::nothing:
