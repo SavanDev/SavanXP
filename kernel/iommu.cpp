@@ -5,6 +5,7 @@
 #include "kernel/amd_vi.hpp"
 #include "kernel/amd_vi_tables.hpp"
 #include "kernel/console.hpp"
+#include "kernel/pci.hpp"
 #include "kernel/vmm.hpp"
 
 namespace iommu {
@@ -25,6 +26,17 @@ constexpr uint32_t kVtdGlobalStatus = 0x1c;
 constexpr uint32_t kVtdStatusTranslation = 1u << 31;
 constexpr uint32_t kVtdStatusRemapping = 1u << 25;
 
+// The AMD-Vi capability block in the IOMMU's PCI configuration space
+// (48882, "IOMMU Capability Block"): a Secure Device capability of type 3,
+// whose base address low register at +4 holds the enable bit and bits 31:14.
+constexpr uint8_t kPciCapabilitySecureDevice = 0x0f;
+constexpr uint32_t kAmdCapabilityTypeIommu = 3;
+constexpr uint32_t kAmdBaseEnable = 1u << 0;
+constexpr uint32_t kAmdBaseLowMask = 0xffffc000u;
+// Where capabilities may sit in the legacy 256-byte configuration space.
+constexpr uint16_t kPciCapabilityFirst = 0x40;
+constexpr uint16_t kPciCapabilityLast = 0xf0;
+
 constexpr uint64_t kPageSize = 4096;
 // What is mapped of each unit's registers: AMD-Vi's go up to the status
 // register at 0x2020; VT-d's first page holds every one read here.
@@ -35,6 +47,8 @@ constexpr uint64_t kDrainIntervalMs = 100;
 Report g_report;
 bool g_present = false;
 volatile uint8_t* g_registers[iommu_tables::kMaxUnits] = {};
+// Every window mapped, answering or not, so a second look reuses it.
+void* g_windows[iommu_tables::kMaxUnits] = {};
 uint64_t g_next_drain_ms = 0;
 
 /* M4: the I/O APICs the MADT lists, each matched with the IVRS entry that
@@ -139,9 +153,12 @@ void read_unit_state(const boot::BootInfo& boot_info, Kind kind, size_t index, U
     if (!window_outside_memory(boot_info, unit.register_base, window)) {
         return;
     }
-    void* mapping = nullptr;
-    if (!vm::map_kernel_mmio(unit.register_base, window, vm::kPagePresent, &mapping)) {
-        return;
+    void* mapping = g_windows[index];
+    if (mapping == nullptr) {
+        if (!vm::map_kernel_mmio(unit.register_base, window, vm::kPagePresent, &mapping)) {
+            return;
+        }
+        g_windows[index] = mapping;
     }
     const auto* registers = static_cast<const volatile uint8_t*>(mapping);
     if (kind == Kind::amd_vi) {
@@ -167,6 +184,49 @@ void read_unit_state(const boot::BootInfo& boot_info, Kind kind, size_t index, U
         unit.translation_enabled = (status & kVtdStatusTranslation) != 0;
         unit.remapping_enabled = (status & kVtdStatusRemapping) != 0;
     }
+}
+
+/* An AMD-Vi unit's registers answer only once its PCI capability's base
+ * address register holds the enable bit. Firmware sets it on every board this
+ * was written for; VirtualBox's EFI does not, and there the window reads as
+ * all ones. With the enable bit clear the base is still writable, so it is
+ * written with the address the IVRS gives and turned on. A bit already set,
+ * a base that names another address, or a capability that is not an IOMMU's
+ * leaves the unit alone. Only the iommu boot option gets here: discovery
+ * never writes. */
+bool turn_on_register_window(const boot::BootInfo& boot_info, size_t index, Unit& unit) {
+    if (unit.segment != 0 || unit.capability_offset < kPciCapabilityFirst ||
+        unit.capability_offset > kPciCapabilityLast ||
+        !window_outside_memory(boot_info, unit.register_base, kAmdRegisterWindow)) {
+        return false;
+    }
+    const uint8_t bus = static_cast<uint8_t>(unit.device_id >> 8);
+    const uint8_t slot = static_cast<uint8_t>((unit.device_id >> 3) & 0x1fu);
+    const uint8_t function = static_cast<uint8_t>(unit.device_id & 0x7u);
+    const auto offset = static_cast<uint8_t>(unit.capability_offset);
+    const uint32_t header = pci::read_config_u32(bus, slot, function, offset);
+    if ((header & 0xffu) != kPciCapabilitySecureDevice ||
+        ((header >> 16) & 0x7u) != kAmdCapabilityTypeIommu) {
+        return false;
+    }
+    const uint32_t low = pci::read_config_u32(bus, slot, function, static_cast<uint8_t>(offset + 4));
+    const uint32_t high = pci::read_config_u32(bus, slot, function, static_cast<uint8_t>(offset + 8));
+    if ((low & kAmdBaseEnable) != 0) {
+        return false;
+    }
+    const uint64_t current = (static_cast<uint64_t>(high) << 32) | (low & kAmdBaseLowMask);
+    if (current != 0 && current != unit.register_base) {
+        return false;
+    }
+    pci::write_config_u32(bus, slot, function, static_cast<uint8_t>(offset + 8),
+        static_cast<uint32_t>(unit.register_base >> 32));
+    pci::write_config_u32(bus, slot, function, static_cast<uint8_t>(offset + 4),
+        (static_cast<uint32_t>(unit.register_base) & kAmdBaseLowMask) | kAmdBaseEnable);
+    read_unit_state(boot_info, Kind::amd_vi, index, unit);
+    console::printf("iommu: unit %u: firmware left its register window off; turned on at 0x%llx, %s\n",
+        static_cast<unsigned>(index), unit.register_base,
+        unit.registers_read ? "registers readable" : "still not answering");
+    return unit.registers_read;
 }
 
 void log_unit(size_t index, const Unit& unit) {
@@ -270,6 +330,11 @@ void start(const boot::BootInfo& boot_info) {
     if (g_report.kind != Kind::amd_vi) {
         console::printf("iommu: VT-d is not driven yet; translation stays off\n");
         return;
+    }
+    for (size_t i = 0; i < g_report.unit_count; ++i) {
+        if (!g_report.units[i].registers_read) {
+            (void)turn_on_register_window(boot_info, i, g_report.units[i]);
+        }
     }
     amd_vi::InterruptSources sources = {};
     amd_vi::start(g_report, g_registers, boot_info, interrupt_sources(boot_info, sources));

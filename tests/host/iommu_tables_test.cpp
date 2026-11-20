@@ -189,6 +189,7 @@ void test_ivrs_good() {
     CHECK(unit.source_type == 0x11);
     CHECK(unit.register_base == 0xfeb80000);
     CHECK(unit.device_id == 0x0010);
+    CHECK(unit.capability_offset == 0x40);
     CHECK(unit.has_efr && unit.efr == 0x4a);
     CHECK(!unit.all_devices); // the "all" entry was in the superseded IVHD
     CHECK(!unit.registers_read);

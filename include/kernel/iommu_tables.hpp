@@ -72,6 +72,9 @@ struct Unit {
     uint16_t segment;
     // AMD: the IOMMU's own requester ID. VT-d: zero.
     uint16_t device_id;
+    // AMD: where its capability block sits in that device's PCI configuration
+    // space. VT-d: zero.
+    uint16_t capability_offset;
     // AMD: the IVHD type that described it (0x10, 0x11 or 0x40). VT-d: zero.
     uint8_t source_type;
     // The IVHD or DRHD flags as firmware wrote them.

@@ -141,6 +141,7 @@ const char* parse_ivhd(Report& report, const uint8_t* ivhd, size_t length, bool 
     unit.register_size = kAmdRegisterSize;
     unit.segment = read16(ivhd + 16);
     unit.device_id = read16(ivhd + 4);
+    unit.capability_offset = read16(ivhd + 6);
     unit.source_type = type;
     unit.flags = ivhd[1];
     unit.has_efr = type != kIvhdLegacy;

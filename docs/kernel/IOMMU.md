@@ -222,6 +222,45 @@ iommu: interrupts remapped; a device raises only the vectors it was given
   to a read-only page the device has already read is stopped, but not
   reported. Hardware walks the tables again and reports it.
 
+### VirtualBox's AMD IOMMU, as measured (VirtualBox 7.2.22)
+
+A VM with `--chipset ich9 --iommu amd` has an AMD-Vi unit at `0xfeb80000`,
+PCI 00:00.0 (`1022:c0de`), its I/O APIC as 00:14.0. M1, M2 and M4 run there:
+`AMD-Vi translating`, `interrupts remapped`, the desktop up, the AHCI root disk
+and AC97 audio without a fault, the network online. The self-test and the M3
+scenario do not: VirtualBox has neither `edu` nor an RTL8139.
+
+- **Its EFI leaves the register window off.** The unit's registers answer
+  only once the base address register of its PCI capability holds the enable
+  bit. VirtualBox's BIOS sets it; its EFI does not, so discovery logs
+  `registers not readable`. With `iommu`, the kernel writes the IVRS base into
+  the capability and sets the bit itself, when the bit is clear and the base
+  register is zero or already that address:
+  `iommu: unit 0: firmware left its register window off; turned on at
+  0xfeb80000, registers readable`. Discovery alone never writes.
+- **It keeps the trigger mode** of a remapped interrupt (its source copies
+  the original message and replaces only destination, vector and delivery
+  mode), so the directed EOI that covers QEMU is never taken there.
+- **Its I/O page fault events carry the address and the RW flag**, and its
+  source reports a refused interrupt as an I/O page fault with the interrupt
+  bit. Nothing on that board raises one, so it has not been seen.
+- **Its virtio-net reads and writes device address 0** when the driver sets
+  DRIVER_OK: it reads and rewrites the used ring flags of every queue it has,
+  the control queue included, without checking that the queue was enabled,
+  and a queue the driver never set up sits at 0
+  ([VIRTIO.md](VIRTIO.md#virtualboxs-virtio-net-touches-queues-it-was-not-given)).
+  Under BIOS, page 0 is not memory in the memory map, so the identity domain
+  stops it: `iommu: I/O page fault from 00:03.0 at 0x0, read, domain 1`, then
+  the same for a write. Under EFI, page 0 is usable memory, the identity
+  domain maps it and the access goes through silently. Either way it is
+  harmless here: the kernel never allocates below 1 MiB.
+
+To run it: copy the ISO tree, add `iommu` to the first entry's `cmdline` in
+both `limine.conf` and `boot/limine/limine.conf` (UEFI reads the second), rebuild it
+with the `xorriso` and `limine bios-install` steps of the `iso` target, and
+attach a VDI converted from a copy of `build/disk.img` to an AHCI port. The
+serial port goes to a file (`--uart-mode1 file`).
+
 ## Rules the parsers enforce
 
 Firmware is a hostile input here, as in the rest of the ACPI walk
@@ -257,7 +296,8 @@ Before a unit's registers are read, its base must not lie inside memory the
 memory map gives the kernel (usable, reclaimable, the kernel's own, the
 framebuffer). Only the first page is mapped, uncached. A register that reads
 all ones means nothing answers there; the unit is logged with
-`registers not readable`.
+`registers not readable`. With `iommu`, an AMD-Vi unit in that state gets its
+window turned on from its PCI capability (VirtualBox's EFI, above).
 
 ## Testing
 
@@ -303,6 +343,9 @@ all ones means nothing answers there; the unit is logged with
   `-D FILE -trace amdvi_ir_irte_val -trace 'ioapic_*'`, and every remapped
   interrupt is one `amdvi_ir_irte_val` line, every level line's EOI one
   `ioapic_clear_remote_irr`.
+- VirtualBox, with the steps above, is the second emulator: it reports
+  fault addresses that QEMU zeroes, and it runs devices QEMU's IOMMU never
+  sees, such as its virtio-net.
 - Under KVM the emulated IOMMU's interrupt remapping needs the split irqchip,
   and `run_qemu.py` adds `kernel-irqchip=split` for it. Only the TCG path has
   been run so far.
@@ -321,6 +364,7 @@ all ones means nothing answers there; the unit is logged with
 - The KVM path (`kernel-irqchip=split`) has not been run.
 - **A refused interrupt being reported** has not been seen: QEMU does not
   write the event, so the drain's line for it has only run in the host test.
+  VirtualBox writes it, but has no device the self-test can drive.
 - **APIC IDs above 254** still get no device interrupts (32-bit entries);
   128-bit entries are the remedy.
 - The event log is polled. Its interrupt (the unit's MSI) waits for a consumer

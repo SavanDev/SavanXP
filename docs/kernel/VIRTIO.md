@@ -55,6 +55,22 @@ bug**. A change to `virtio_pci::` or to any virtio driver is only verified once
 it has also brought a queue up under VirtualBox, which is the stricter of the
 two and the one that behaves like real hardware would.
 
+## VirtualBox's virtio-net touches queues it was not given
+
+When the driver sets DRIVER_OK, VirtualBox's virtio-net (7.2.22) walks every
+queue it has, the control queue included, and reads and rewrites the flags of
+its used ring, without checking that the driver enabled the queue. Our driver
+sets up only the receive and transmit queues, so the control queue's addresses
+are still zero: the device reads and writes 2 bytes at physical address 0.
+A reset does not clear queue addresses either.
+
+It is the device's bug, and it is harmless here, because the kernel never
+allocates memory below 1 MiB. It shows up with the IOMMU on
+([IOMMU.md](IOMMU.md#virtualboxs-amd-iommu-as-measured-virtualbox-7222)) as an
+I/O page fault from the card at `0x0`. If page 0 ever becomes memory the kernel
+hands out, the driver has to give every queue it does not use an address of
+its own before DRIVER_OK.
+
 ## A capability never stores a pointer into its own device
 
 `CapabilityView` says *where* a virtio capability lives: the index of its BAR,
