@@ -1,9 +1,10 @@
 # The driver framework: TKD, IUD and one driver API
 
-Status: **planned, no phase landed.** Today every driver is a C++ file linked
-into the kernel and registered by hand in `kernel/kernel_main.cpp`
-([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). There is no
-IOMMU support, no driver outside the kernel, and no API a driver is written
+Status: **M1 landed in QEMU, no other phase.** Today every driver is a C++
+file linked into the kernel and registered by hand in `kernel/kernel_main.cpp`
+([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). The kernel
+reads and reports the IOMMU ([IOMMU.md](../../kernel/IOMMU.md)) but does not
+use it; there is no driver outside the kernel, and no API a driver is written
 against other than the kernel's own internals.
 
 This page is the plan for two kinds of driver over one API, and for the IOMMU
@@ -198,6 +199,10 @@ Read-only; no behavior change.
 report correctly, a machine without one reports `none`, and the malformed
 tables are refused by name. Each verified target's hardware page records what
 it reports with the firmware's IOMMU setting on.
+
+**State:** the QEMU half is done (`iommu-tables-test`, smokes `iommu-amd`,
+`iommu-intel`, `iommu-none`); no hardware page has a report yet
+([IOMMU.md](../../kernel/IOMMU.md#pending)).
 
 ### M2 — AMD-Vi on, one identity domain
 

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **The kernel reports the IOMMU at boot** (phase M1): it reads the IVRS or DMAR and logs `iommu: AMD-Vi, 1 unit, ...`,
+  `iommu: VT-d, ...`, `iommu: none`, or why a malformed table was refused; nothing is enabled yet. New smokes
+  `iommu-amd`, `iommu-intel`, `iommu-none` and `run_qemu.py --iommu` ([IOMMU.md](docs/kernel/IOMMU.md)).
 - **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
   the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
   Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).

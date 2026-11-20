@@ -45,6 +45,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   to the serial port, who each line is attributed to, and who may read it
   (`SXN_SYS_LOG_READ`).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
+- [`IOMMU.md`](kernel/IOMMU.md) — the IOMMU layer: reading the IVRS and DMAR at
+  boot, the rules a table must pass, what the `iommu:` boot log lines say, and
+  what is still pending from phase M1.
 - [`FILESYSTEMS.md`](kernel/FILESYSTEMS.md) — the VFS, the `fs::` registry and
   what a filesystem driver provides: the system disk as the root, `/dev` and
   `/rescue` in memory and the `/disk` alias, the rescue system, how a request

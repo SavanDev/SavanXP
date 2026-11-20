@@ -25,6 +25,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
 #include "kernel/nvme.hpp"
 #include "kernel/nic.hpp"
@@ -238,6 +239,9 @@ namespace
     // maquina lo expone: es el que va al ritmo del tiempo virtual y de los
     // devices emulados, mientras que el TSC va al del host (ver timer.hpp).
     timer::adopt_pm_timer();
+    // Read-only: reports the IOMMU the firmware describes and changes nothing
+    // (docs/kernel/IOMMU.md).
+    iommu::discover(boot_info);
 
     tty::initialize();
     input::initialize();

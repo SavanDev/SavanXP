@@ -21,7 +21,7 @@ from smoke_profile import reset_display_preferences, reset_audio_preferences
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
 from audio_wav import verify_tone, verify_duplex, verify_recording, verify_preferences
-from run_qemu import USB_HOSTS, USB_POINTERS, build_qemu_args, usb_host_devices, find_qemu, prepare_image
+from run_qemu import IOMMUS, USB_HOSTS, USB_POINTERS, build_qemu_args, usb_host_devices, find_qemu, prepare_image
 
 
 def _die_with_parent() -> None:
@@ -237,6 +237,8 @@ def main() -> int:
                         help="Put the USB keyboard and pointer behind a usb-hub.")
     parser.add_argument("--usb-host", choices=USB_HOSTS, default="xhci",
                         help="The USB host controller --usb uses (run_qemu.USB_HOSTS).")
+    parser.add_argument("--iommu", choices=IOMMUS, default="none",
+                        help="Add an emulated AMD or Intel IOMMU (run_qemu.IOMMUS).")
     parser.add_argument("--no-ps2", action="store_true",
                         help="Boot without the 8042 PS/2 controller (i8042=off), so input can "
                              "only arrive through the other devices.")
@@ -421,6 +423,7 @@ def main() -> int:
         usb_pointer=args.usb_pointer,
         usb_hub=args.usb_hub,
         usb_host=args.usb_host,
+        iommu=args.iommu,
     )
     qemu_args[0] = qemu
 
