@@ -96,7 +96,15 @@ is not driven yet (M5) and changes nothing.
   for a unit that covers every device or has no IASup), then the domain's
   pages, then a completion wait. The per-device invalidations are needed by
   QEMU, which moves a device onto its translated address space only when that
-  device's own entry is invalidated; on hardware they are redundant and cheap.
+  device's own entry is invalidated (its `INVALIDATE_IOMMU_ALL` does not); on
+  hardware they are redundant. With remapping on, each device's interrupt
+  table is invalidated as well only where there is no IASup, since
+  `INVALIDATE_IOMMU_ALL` covers interrupt tables.
+- **Commands are queued.** A run of commands is written into the ring and
+  handed over with one tail write; the head is read again only when the ring
+  looks full. With one tail write and one head read per command, the Ryzen's
+  65000 requester IDs took 330 ms of boot; queued, the same count takes 35 ms
+  under QEMU's TCG, which executes every command in software.
 - **Memory.** The device table is 2 MiB, physically contiguous. Each unit gets
   a 4 KiB command ring and a 4 KiB event log (256 entries each). The identity
   domain uses 2 MiB leaves wherever a whole aligned 2 MiB is memory: 15 page
@@ -359,10 +367,8 @@ window turned on from its PCI capability (VirtualBox's EFI, above).
   The other verified targets still owe their M1 report with the firmware's
   IOMMU setting on. M3 on hardware needs a card with a domain-aware driver
   in it; the Ryzen's RTL8168 is not one yet.
-- **Turning translation on costs about 330 ms** on the Ryzen: one
-  `INVALIDATE_DEVTAB_ENTRY` for each of the ~65000 requester IDs its IVHD
-  covers. Only QEMU needs them; a unit with `INVALIDATE_IOMMU_ALL` could do
-  without.
+- **The Ryzen's boot with queued commands** has not been timed yet; before
+  them, turning translation on took 330 ms there.
 - **Isolation groups from the PCI topology.** Only the IVRS's alias entries
   are read. A conventional PCI device behind a PCIe-to-PCI bridge that the
   firmware did not describe with an alias, and multi-function devices without

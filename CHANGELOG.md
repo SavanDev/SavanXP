@@ -122,6 +122,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Turning AMD-Vi on queues its invalidations** instead of handing each to the unit: for an IVHD that covers every
+  bus, 336 ms drop to 35 ms under QEMU (the Ryzen 5 1600 spent 330 ms there)
+  ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).
 - **Display Properties' Browse... opens the common Open dialog** instead of
   asking for a typed path ([DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md)).
 

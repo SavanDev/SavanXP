@@ -79,6 +79,11 @@ struct UnitState {
     uint64_t* command_ring;
     uint64_t command_physical;
     uint32_t command_tail;
+    // The tail the unit has been given, and the last head read from it.
+    // Commands are queued past the published tail and handed over in one
+    // register write; the head is read again only when the ring looks full.
+    uint32_t published_tail;
+    uint32_t known_head;
     uint32_t* event_ring;
     uint64_t event_physical;
     uint64_t control;
@@ -238,19 +243,45 @@ bool build_identity_domain(const Report& report, const boot::BootInfo& boot_info
 
 // ---- commands -------------------------------------------------------------
 
-bool submit(UnitState& unit, const Command& command) {
+// Hands the unit every command queued since the last time.
+void publish(UnitState& unit) {
+    if (unit.published_tail != unit.command_tail) {
+        arch::memory_barrier();
+        write32(unit, kCommandTail, unit.command_tail);
+        unit.published_tail = unit.command_tail;
+    }
+}
+
+/* Writes a command into the ring without telling the unit. Two register
+ * accesses per command made a long run of invalidations cost about 5 us
+ * each (330 ms for the 65536 requester IDs of a Ryzen's IVHD); queued, a
+ * run costs one tail write per call and one head read per ring's worth. */
+bool queue(UnitState& unit, const Command& command) {
     const uint32_t next = static_cast<uint32_t>((unit.command_tail + sizeof(Command)) % kRingBytes);
-    const uint64_t until = deadline();
-    while ((read32(unit, kCommandHead) & kRingPointerMask) == next) {
-        if (past(until)) {
-            return false;
+    if (next == unit.known_head) {
+        unit.known_head = read32(unit, kCommandHead) & kRingPointerMask;
+        if (next == unit.known_head) {
+            publish(unit);
+            const uint64_t until = deadline();
+            while (next == unit.known_head) {
+                if (past(until)) {
+                    return false;
+                }
+                arch::cpu_relax();
+                unit.known_head = read32(unit, kCommandHead) & kRingPointerMask;
+            }
         }
-        arch::cpu_relax();
     }
     memcpy(reinterpret_cast<uint8_t*>(unit.command_ring) + unit.command_tail, &command, sizeof(command));
-    arch::memory_barrier();
     unit.command_tail = next;
-    write32(unit, kCommandTail, next);
+    return true;
+}
+
+bool submit(UnitState& unit, const Command& command) {
+    if (!queue(unit, command)) {
+        return false;
+    }
+    publish(unit);
     return true;
 }
 
@@ -270,37 +301,45 @@ bool wait_for_commands(UnitState& unit) {
     return true;
 }
 
-bool invalidate_devices(UnitState& unit, uint32_t first, uint32_t last) {
+// `interrupt_tables` adds INVALIDATE_INTERRUPT_TABLE for each device too.
+bool invalidate_devices(UnitState& unit, uint32_t first, uint32_t last, bool interrupt_tables) {
     for (uint32_t device = first; device <= last; ++device) {
-        if (!submit(unit, invalidate_device_entry(static_cast<uint16_t>(device))) ||
-            (g_remapping && !submit(unit, invalidate_interrupt_table(static_cast<uint16_t>(device))))) {
+        if (!queue(unit, invalidate_device_entry(static_cast<uint16_t>(device))) ||
+            (interrupt_tables && !queue(unit, invalidate_interrupt_table(static_cast<uint16_t>(device))))) {
             return false;
         }
     }
+    publish(unit);
     return true;
 }
 
+bool invalidate_devices(UnitState& unit, uint32_t first, uint32_t last) {
+    return invalidate_devices(unit, first, last, g_remapping);
+}
+
 /* Whatever the unit cached under the firmware, or before translation was on.
- * INVALIDATE_IOMMU_ALL covers it where EFR advertises it, but the device
- * table entries of the devices behind the unit are invalidated one by one as
- * well: QEMU moves a device onto its translated address space only when its
- * own entry is invalidated, and on hardware the extra commands cost nothing
- * that matters. A unit that covers every device, or one without IASup, gets
- * all 65536. */
+ * INVALIDATE_IOMMU_ALL covers it where EFR advertises it, interrupt tables
+ * included, but the device table entries of the devices behind the unit are
+ * invalidated one by one as well: QEMU moves a device onto its translated
+ * address space only when its own entry is invalidated (its INVALIDATE_ALL
+ * does not). Queued, that costs a few milliseconds on hardware. A unit that
+ * covers every device, or one without IASup, gets all 65536, and without
+ * IASup their interrupt tables too. */
 bool flush_caches(UnitState& unit, const Report& report, const Unit& description, uint64_t extended_features) {
     const bool invalidate_all_supported = (extended_features & kEfrInvalidateAll) != 0;
     if (invalidate_all_supported && !submit(unit, invalidate_all())) {
         return false;
     }
+    const bool interrupt_tables = g_remapping && !invalidate_all_supported;
     if (description.all_devices || !invalidate_all_supported) {
-        if (!invalidate_devices(unit, 0, 0xffff)) {
+        if (!invalidate_devices(unit, 0, 0xffff, interrupt_tables)) {
             return false;
         }
     } else {
         for (uint32_t i = 0; i < description.scope_count; ++i) {
             const iommu_tables::Scope& scope = report.scopes[description.first_scope + i];
-            if (!invalidate_devices(unit, scope.first, scope.last) ||
-                (scope.aliased && !invalidate_devices(unit, scope.alias, scope.alias))) {
+            if (!invalidate_devices(unit, scope.first, scope.last, interrupt_tables) ||
+                (scope.aliased && !invalidate_devices(unit, scope.alias, scope.alias, interrupt_tables))) {
                 return false;
             }
         }
@@ -450,6 +489,8 @@ bool start_unit(size_t index, const Report& report, uint64_t device_table_physic
     unit.command_ring = static_cast<uint64_t*>(command.virtual_address);
     unit.command_physical = command.physical_address;
     unit.command_tail = 0;
+    unit.published_tail = 0;
+    unit.known_head = 0;
     unit.event_ring = static_cast<uint32_t*>(events.virtual_address);
     unit.event_physical = events.physical_address;
 
