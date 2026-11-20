@@ -164,7 +164,10 @@ def build_qemu_args(
 
     iommu adds an emulated AMD or Intel IOMMU (IOMMUS). QEMU wants it before
     any other device, and under KVM its interrupt remapping needs the split
-    irqchip.
+    irqchip. QEMU's amd-iommu translates emulated devices' DMA only with
+    dma-remap=on. The board also gets QEMU's edu device, whose DMA engine the
+    kernel's iommu-selftest points inside and outside the identity domain; its
+    DMA mask is widened so that it does not clip the address that must fault.
     """
     if iommu not in IOMMUS:
         raise SystemExit(f"unknown IOMMU {iommu!r}; expected one of {', '.join(IOMMUS)}")
@@ -208,8 +211,10 @@ def build_qemu_args(
         "-global",
         "isa-debugcon.iobase=0xe9",
     ]
-    if iommu != "none":
-        args_list += ["-device", f"{iommu}-iommu,intremap=on"]
+    if iommu == "amd":
+        args_list += ["-device", "amd-iommu,intremap=on,dma-remap=on"]
+    elif iommu == "intel":
+        args_list += ["-device", "intel-iommu,intremap=on"]
     args_list += ["-netdev", "user,id=net0"] if network else ["-nic", "none"]
     if monitor_path is not None:
         args_list += ["-no-reboot", "-no-shutdown"]
@@ -343,6 +348,9 @@ def build_qemu_args(
     args_list += ["-audiodev", audio1]
     for device in devices:
         args_list += ["-device", device]
+    if iommu != "none":
+        # Last, so that every other device keeps the slot it has without it.
+        args_list += ["-device", "edu,dma_mask=0xffffffffffffffff"]
     if debug:
         args_list += ["-s", "-S"]
     return args_list

@@ -409,7 +409,22 @@ const char* parse_rmrr(Report& report, const uint8_t* rmrr, size_t length) {
     return nullptr;
 }
 
+const char kHexDigits[] = "0123456789abcdef";
+
 } // namespace
+
+void format_requester_id(uint16_t id, char (&out)[8]) {
+    const unsigned bus = id >> 8;
+    const unsigned device = (id >> 3) & 0x1fu;
+    out[0] = kHexDigits[bus >> 4];
+    out[1] = kHexDigits[bus & 0xfu];
+    out[2] = ':';
+    out[3] = kHexDigits[device >> 4];
+    out[4] = kHexDigits[device & 0xfu];
+    out[5] = '.';
+    out[6] = kHexDigits[id & 0x7u];
+    out[7] = '\0';
+}
 
 const char* parse_ivrs(const SdtHeader& table, Report& report) {
     start_report(report, Kind::amd_vi);

@@ -45,6 +45,8 @@ class Scenario:
     usb_host: str = "xhci"
     # An emulated IOMMU on the board (run_qemu.IOMMUS).
     iommu: str = "none"
+    # Extra kernel boot options for the run (CMake SAVANXP_BOOT_OPTIONS).
+    boot_options: str = ""
     # The user's own Windows files the scenario needs, by name, from the
     # folder SAVANXP_WIN32_FIXTURES names: copied into the disposable disk
     # under /system/win/drive_c/tests, or with NAME@DIR under drive_c/DIR,
@@ -86,6 +88,7 @@ def _qemu_scenario(
     usb_hub: bool = False,
     usb_host: str = "xhci",
     iommu: str = "none",
+    boot_options: str = "",
     win32_files: tuple[str, ...] = (),
 ) -> Scenario:
     return Scenario(
@@ -121,6 +124,7 @@ def _qemu_scenario(
         usb_hub=usb_hub,
         usb_host=usb_host,
         iommu=iommu,
+        boot_options=boot_options,
         win32_files=win32_files,
     )
 
@@ -176,6 +180,18 @@ SCENARIOS: dict[str, Scenario] = {
         "Boot log reports QEMU's intel-iommu from the DMAR",
         120.0,
         iommu="intel",
+    ),
+    # M2: AMD-Vi on with one identity domain. The kernel's self-test drives
+    # QEMU's edu device: a DMA inside the domain must arrive, one outside it
+    # must fault and be reported, and DMA must keep working after.
+    "iommu-amd-on": _qemu_scenario(
+        "uname",
+        "iommu: selftest passed",
+        "iommu: selftest failed",
+        "AMD-Vi translating: edu's DMA arrives, a stray one faults and is logged",
+        180.0,
+        iommu="amd",
+        boot_options="iommu iommu-selftest",
     ),
     "iommu-none": _qemu_scenario(
         "uname",
@@ -1327,6 +1343,7 @@ def main() -> int:
             "usb_hub",
             "usb_host",
             "iommu",
+            "boot_options",
             "win32_files",
         ),
         required=False,

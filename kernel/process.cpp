@@ -16,6 +16,7 @@
 #include "kernel/fs.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
@@ -3278,6 +3279,8 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         // The writeback queue's clock, and its drain of last resort when no
         // core has gone idle for a while.
         block::writeback_tick(current_tick);
+        // What the IOMMU logged since the last look: faults, mostly.
+        iommu::tick(current_tick);
         // Sections of views unmapped while another core shared the address
         // space, once every such core has flushed.
         vm::reclaim_deferred_views();

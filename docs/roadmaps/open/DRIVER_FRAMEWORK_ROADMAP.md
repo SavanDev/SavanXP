@@ -1,11 +1,13 @@
 # The driver framework: TKD, IUD and one driver API
 
-Status: **M1 landed in QEMU, no other phase.** Today every driver is a C++
-file linked into the kernel and registered by hand in `kernel/kernel_main.cpp`
+Status: **M1 and M2 landed in QEMU, no other phase.** Today every driver is a
+C++ file linked into the kernel and registered by hand in
+`kernel/kernel_main.cpp`
 ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). The kernel
-reads and reports the IOMMU ([IOMMU.md](../../kernel/IOMMU.md)) but does not
-use it; there is no driver outside the kernel, and no API a driver is written
-against other than the kernel's own internals.
+reports the IOMMU and, with the `iommu` boot option, turns AMD-Vi on with one
+identity domain ([IOMMU.md](../../kernel/IOMMU.md)); there is no driver
+outside the kernel, and no API a driver is written against other than the
+kernel's own internals.
 
 This page is the plan for two kinds of driver over one API, and for the IOMMU
 work that has to come first. It builds on the common device foundation in
@@ -222,6 +224,12 @@ Turn translation on without changing what any driver sees.
 with `amd-iommu` and the option on; a Ryzen run with the firmware's IOMMU
 enabled is recorded on its hardware page; a fault is reported and survived;
 `./tools/verify_doom_persistence.sh` passes.
+
+**State:** done in QEMU. With `--iommu amd --boot-options iommu`, `smoke`
+(AHCI, NVMe and IDE disks), `net-smoke`, `tcp-smoke`, `ac97-stream`,
+`hda-stream`, `usb-kbd-smoke`, `usb-hotplug-smoke` and `diskmgmt-smoke` pass
+with no I/O page fault logged; `iommu-amd-on` reports and survives faults. The
+Ryzen run is still owed ([IOMMU.md](../../kernel/IOMMU.md#pending)).
 
 ### M3 — per-device domains and the `iommu::` API
 

@@ -133,4 +133,7 @@ struct Report {
 const char* parse_ivrs(const acpi_tables::SdtHeader& table, Report& report);
 const char* parse_dmar(const acpi_tables::SdtHeader& table, Report& report);
 
+// "bb:dd.f" for a requester ID, as the boot log prints devices.
+void format_requester_id(uint16_t id, char (&out)[8]);
+
 } // namespace iommu_tables

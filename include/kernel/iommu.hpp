@@ -17,4 +17,23 @@ void discover(const boot::BootInfo& boot_info);
 // What discover found, or nullptr when there is no usable IOMMU.
 const iommu_tables::Report* report();
 
+/* Phase M2: with the `iommu` boot option, and without `noiommu`, which always
+ * wins, turns AMD-Vi translation on with one identity domain. Logs why it
+ * stays off otherwise. Call after discover and before any driver starts
+ * DMA. */
+void start(const boot::BootInfo& boot_info);
+
+// Whether devices' DMA goes through the IOMMU.
+bool translating();
+
+// The BSP's tick: drains the units' event logs into the system log every
+// 100 ms. Under the kernel lock.
+void tick(uint64_t now_ms);
+
+/* Boot option `iommu-selftest`, for QEMU's `edu` device: a DMA through the
+ * identity domain must arrive, one outside it must fault, be logged, and
+ * leave the device and the kernel working. Logs `iommu: selftest passed` or
+ * why it failed. Call after pci::initialize. */
+void selftest();
+
 } // namespace iommu

@@ -239,9 +239,11 @@ namespace
     // maquina lo expone: es el que va al ritmo del tiempo virtual y de los
     // devices emulados, mientras que el TSC va al del host (ver timer.hpp).
     timer::adopt_pm_timer();
-    // Read-only: reports the IOMMU the firmware describes and changes nothing
+    // Reports the IOMMU the firmware describes, then turns translation on
+    // with the iommu boot option, before any driver starts DMA
     // (docs/kernel/IOMMU.md).
     iommu::discover(boot_info);
+    iommu::start(boot_info);
 
     tty::initialize();
     input::initialize();
@@ -264,6 +266,10 @@ namespace
     uacpi_glue::dump_pci_routing();
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
+    if (boot::has_option(boot_info.cmdline, "iommu-selftest"))
+    {
+        iommu::selftest();
+    }
     // USB before input and storage: its class drivers register keyboards,
     // pointers and disks like any other driver (docs/roadmaps/done/USB_ROADMAP.md).
     boot_screen::show("Starting USB");

@@ -1,20 +1,24 @@
 # The IOMMU layer
 
-Status: **phase M1 of
+Status: **phases M1 and M2 of
 [DRIVER_FRAMEWORK_ROADMAP.md](../roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md#m1--discovery-and-report)
-landed: discovery and report only.** The kernel reads the firmware's
-description of the IOMMU at boot, reads each unit's registers without writing
-them, and says what it found. Nothing changes what the hardware does. M2
-(AMD-Vi on, one identity domain) is next.
+landed, in QEMU.** The kernel reads the firmware's description of the IOMMU
+at boot and says what it found (M1). With the `iommu` boot option it turns
+AMD-Vi on with one identity domain shared by every device, and logs the
+faults the units report (M2). Without the option nothing changes what the
+hardware does. M3 (a domain per device) is next.
 
 ## Where it lives
 
 | Code | What |
 | --- | --- |
 | `include/kernel/iommu_tables.hpp`, `kernel/iommu_tables.cpp` | `parse_ivrs` and `parse_dmar`: the two ACPI tables into one `iommu_tables::Report`. No access to the machine, so it runs in the host tests |
-| `include/kernel/iommu.hpp`, `kernel/iommu.cpp` | `iommu::discover`, called in `kernel_main` right after `acpi::initialize`, and `iommu::report()` for the phases that follow |
-| `tests/host/iommu_tables_test.cpp` | `iommu-tables-test` |
-| `tools/smoke_catalog.py` | `iommu-amd`, `iommu-intel`, `iommu-none` |
+| `include/kernel/iommu.hpp`, `kernel/iommu.cpp` | `iommu::discover` and `iommu::start`, called in `kernel_main` right after `acpi::initialize`; `iommu::tick`, from the BSP's tick |
+| `include/kernel/amd_vi_tables.hpp`, `kernel/amd_vi_tables.cpp` | AMD-Vi's memory formats: identity page tables, device table entries, commands, event log entries. No access to the machine |
+| `include/kernel/amd_vi.hpp`, `kernel/amd_vi.cpp` | Taking the units over, the device table, the command and event rings, draining the event log |
+| `kernel/iommu_selftest.cpp` | `iommu::selftest`, boot option `iommu-selftest`, driving QEMU's `edu` device |
+| `tests/host/iommu_tables_test.cpp`, `tests/host/amd_vi_tables_test.cpp` | `iommu-tables-test`, `amd-vi-tables-test` |
+| `tools/smoke_catalog.py` | `iommu-amd`, `iommu-intel`, `iommu-none`, `iommu-amd-on` |
 
 ## What the boot log says
 
@@ -49,6 +53,62 @@ from that state.
   flag and every unit's extended capability bit.
 - **Address width** is IVinfo's physical address size, or the DMAR's host
   address width.
+
+## Translation: one identity domain (M2)
+
+| Boot options | What happens |
+| --- | --- |
+| none | Discovery only: `iommu: translation stays off; boot with the iommu option to turn it on` |
+| `iommu` | AMD-Vi translating: `iommu: AMD-Vi translating, 1 unit, one identity domain` |
+| `noiommu` | Off, whatever else is given: `noiommu` always wins |
+
+The option is opt-in until a target has been verified with it on; it becomes
+the default per target after that. On a VT-d machine the option logs that VT-d
+is not driven yet (M5) and changes nothing.
+
+- **One domain, every device.** The 65536 entries of the device table all
+  point at the same four-level page tables, domain 1. Those tables map, to
+  themselves, every memory map region the kernel or firmware uses as memory
+  (usable, ACPI reclaimable and NVS, bootloader reclaimable, the kernel and its
+  modules) and every reserved range the IVRS lists. Reserved and bad memory,
+  the framebuffer and every MMIO range are not mapped: a DMA there faults.
+  Drivers keep handing physical addresses to their devices unchanged.
+- **This is not isolation.** A device can still reach all of RAM, the IOMMU's
+  own tables included. What the domain stops is DMA to addresses that are not
+  memory, and what it gives is a report when that happens. Isolation is M3.
+- **Interrupts are untranslated.** The entries leave IV clear, so interrupts
+  pass through as before; remapping is M4.
+- **Taking a unit over.** Whatever the firmware left running is stopped first
+  (the control register written to zero, then a wait for both rings to stop),
+  the exclusion range is cleared (the IVMD ranges that asked for one are in the
+  domain instead), the rings and the device table are installed, and only then
+  is translation turned on. The IVHD flags choose HtTunEn, PassPW, ResPassPW
+  and Isoc; Coherent is always on.
+- **Flushing.** `INVALIDATE_IOMMU_ALL` where EFR advertises it, then
+  `INVALIDATE_DEVTAB_ENTRY` for every requester ID the IVHD lists (all 65536
+  for a unit that covers every device or has no IASup), then the domain's
+  pages, then a completion wait. The per-device invalidations are needed by
+  QEMU, which moves a device onto its translated address space only when that
+  device's own entry is invalidated; on hardware they are redundant and cheap.
+- **Memory.** The device table is 2 MiB, physically contiguous. Each unit gets
+  a 4 KiB command ring and a 4 KiB event log (256 entries each). The identity
+  domain uses 2 MiB leaves wherever a whole aligned 2 MiB is memory: 15 page
+  tables for a 1 GiB QEMU machine.
+- **Faults.** The BSP's tick drains every unit's event log each 100 ms, under
+  the kernel lock, and logs at most 16 events per drain, then a count of the
+  rest: `iommu: I/O page fault from 00:05.0 at 0x..., write, domain 1`. An
+  overflowed log is reported, emptied and restarted. No interrupt is used.
+
+### QEMU's amd-iommu, as measured (QEMU 11.1)
+
+- It translates emulated devices' DMA only with `dma-remap=on`
+  (`run_qemu.py --iommu amd` passes it).
+- It writes zero in the address field of its I/O page fault events; its own
+  trace (`-trace amdvi_page_fault`) has the right address.
+- It faults a DMA in 4-byte pieces, so one 4 KiB DMA outside the domain is
+  1024 events, four times what the log holds. With the event log interrupt off
+  it drops the rest without setting the overflow bit, which hardware sets
+  regardless.
 
 ## Rules the parsers enforce
 
@@ -93,10 +153,26 @@ all ones means nothing answers there; the unit is logged with
   access begins: a read one byte past a bad length is a crash, not a pass. It
   covers a QEMU-like IVRS with every entry kind, a DMAR with every structure
   the kernel reads, every prefix of both, and one table per refusal.
+- `amd-vi-tables-test` builds identity tables from a fake allocator and walks
+  them back the way the unit does: every page of a mapped range translates to
+  itself, the pages around it fault, 2 MiB leaves are used, and mapping twice
+  allocates nothing. It also checks the device table entry, the command
+  encodings and an I/O page fault event as QEMU writes it.
 - `./build.sh smoke iommu-amd` and `iommu-intel` boot with QEMU's `amd-iommu`
   or `intel-iommu` (`intremap=on`) and wait for the boot log line;
   `iommu-none` boots the usual board. `tools/run_qemu.py --iommu amd|intel`
   does the same for an interactive run.
+- `./build.sh smoke iommu-amd-on` boots with `iommu iommu-selftest`. The board
+  gets QEMU's `edu` device whenever it has an IOMMU, last, so no other device
+  changes slot; its DMA mask is widened so it reaches any address. The
+  self-test copies a page through edu and back (it must arrive), sends 4 bytes
+  to 64 GiB, outside the domain (one fault, from edu, must be reported), floods
+  the log with a 4 KiB DMA there, checks the next fault is still reported, and
+  copies a page again. It ends with `iommu: selftest passed`.
+- Any other scenario runs with translation on through
+  `./build.sh --iommu amd --boot-options iommu smoke NAME` (or
+  `SAVANXP_IOMMU=amd SAVANXP_BOOT_OPTIONS=iommu`); its serial log must then
+  hold `AMD-Vi translating` and no I/O page fault.
 - Under KVM the emulated IOMMU's interrupt remapping needs the split irqchip,
   and `run_qemu.py` adds `kernel-irqchip=split` for it. Only the TCG path has
   been run so far.
@@ -105,7 +181,11 @@ all ones means nothing answers there; the unit is logged with
 
 - **No real machine has reported yet.** M1 is done when each verified
   target's hardware page records what it reports with the firmware's IOMMU
-  setting on; the Ryzen is the first one that matters.
+  setting on; M2 when the Ryzen boots and runs with `iommu`. The Ryzen is the
+  first one that matters.
+- The KVM path (`kernel-irqchip=split`) has not been run.
+- The event log is polled. Its interrupt (the unit's MSI) waits for a consumer
+  that needs faults faster than 100 ms.
 - The DMAR structures after RMRR (ATSR, RHSA, ANDD, SATC) are length-checked
   and skipped. ANDD names the ACPI devices a scope of type 5 refers to; it is
   read when a consumer needs it.

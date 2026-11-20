@@ -15,6 +15,10 @@ Cut-off notes:
 - **The kernel reports the IOMMU at boot** (phase M1): it reads the IVRS or DMAR and logs `iommu: AMD-Vi, 1 unit, ...`,
   `iommu: VT-d, ...`, `iommu: none`, or why a malformed table was refused; nothing is enabled yet. New smokes
   `iommu-amd`, `iommu-intel`, `iommu-none` and `run_qemu.py --iommu` ([IOMMU.md](docs/kernel/IOMMU.md)).
+- **AMD-Vi translation behind the `iommu` boot option** (phase M2): every device in one identity domain over memory,
+  I/O page faults logged as `iommu: I/O page fault from bb:dd.f ...`; `noiommu` always wins. New `build.sh --iommu`
+  and `--boot-options` (`SAVANXP_IOMMU`, `SAVANXP_BOOT_OPTIONS`), boot option `iommu-selftest` and smoke
+  `iommu-amd-on` ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).
 - **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
   the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
   Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).
