@@ -2,7 +2,7 @@
 
 Status: **phases M1 to M4 of
 [DRIVER_FRAMEWORK_ROADMAP.md](../roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md#m1--discovery-and-report)
-landed, in QEMU.** The kernel reads the firmware's description of the IOMMU
+landed; M1, M2 and M4 verified on the Ryzen 5 1600.** The kernel reads the firmware's description of the IOMMU
 at boot and says what it found (M1). With the `iommu` boot option it turns
 AMD-Vi on with one identity domain shared by every device, and logs the
 faults the units report (M2). A driver can move its device into a domain of
@@ -353,11 +353,16 @@ window turned on from its PCI capability (VirtualBox's EFI, above).
 
 ## Pending
 
-- **No real machine has reported yet.** M1 is done when each verified
-  target's hardware page records what it reports with the firmware's IOMMU
-  setting on; M2 when the Ryzen boots and runs with `iommu`. The Ryzen is the
-  first one that matters. M3 on hardware needs a card with a domain-aware
-  driver in it; the Ryzen's RTL8168 is not one yet.
+- **One real machine has reported.** The Ryzen ran M1, M2 and M4 on
+  2026-11-20 with every device in use and no fault
+  ([RYZEN5_1600_VEGA56.md](../hardware/RYZEN5_1600_VEGA56.md#the-iommu-runs-2026-11-20)).
+  The other verified targets still owe their M1 report with the firmware's
+  IOMMU setting on. M3 on hardware needs a card with a domain-aware driver
+  in it; the Ryzen's RTL8168 is not one yet.
+- **Turning translation on costs about 330 ms** on the Ryzen: one
+  `INVALIDATE_DEVTAB_ENTRY` for each of the ~65000 requester IDs its IVHD
+  covers. Only QEMU needs them; a unit with `INVALIDATE_IOMMU_ALL` could do
+  without.
 - **Isolation groups from the PCI topology.** Only the IVRS's alias entries
   are read. A conventional PCI device behind a PCIe-to-PCI bridge that the
   firmware did not describe with an alias, and multi-function devices without

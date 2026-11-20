@@ -14,6 +14,7 @@ shared contract and the numbered work packages (HW-n) are in
 | **Verified**, 2026-11-12 | One boot log captured, v0.4.3 (Build 701) under UEFI: all 12 processors online, the wall clock on the 32-bit PM timer, 1920x1080 from GOP, four SATA disks found and their partition tables read, a USB stick as `usb0` with a partition mounted through Disk Management's elevation prompt. See [The boot log](#the-boot-log-2026-11-12) |
 | **Verified**, 2026-11-13 | A second, 35-minute run of the same build under UEFI: Celeste, Nightwood, the media player and `sxgldiag` (241 fps). Audio played throughout, but the **media player had audible micro-cuts** now and then, and nothing else did. See [The second run](#the-second-run-2026-11-13) |
 | **Verified**, 2026-11-20 | A third run, v0.4.4 (Build 869) under UEFI, booted through **SavanXP (IOMMU on)**: the NVMe driver reads the NV1 read-only and its four partitions; the RTL8168H probes; the tick loses nothing after boot. The firmware published no IVRS, so the IOMMU was not tried. See [The third run](#the-third-run-2026-11-20) |
+| **Verified**, 2026-11-20 | The IOMMU, with XMP off: discovery reports the AMD-Vi unit, and through **SavanXP (IOMMU on)** translation and interrupt remapping run for three minutes with every device in use and no fault. See [The IOMMU runs](#the-iommu-runs-2026-11-20) |
 | Not working | Ethernet, Wi-Fi, HDMI and DisplayPort audio, anything of the Vega beyond the framebuffer the firmware set |
 | Never exercised on the machine | Writing the SATA disks, USB hubs and hot plug |
 
@@ -136,6 +137,38 @@ about a minute (`system-log.txt`, not in the tree).
 - All four SATA disks and the USB stick were found again, with their
   partition tables.
 
+## The IOMMU runs, 2026-11-20
+
+Same build, with the board's IOMMU enabled and XMP off. The IVRS read under
+Linux beforehand went through the kernel's parser on the host unchanged: one
+unit, the bus `ff` range aliased to `00:14.4`, I/O APICs 13 and 14, no IVMD.
+
+Without `iommu` (M1):
+
+```
+iommu: AMD-Vi, 1 unit, interrupt remapping available, address width 48
+iommu: unit 0 at 0xfeb80000, segment 0, device 00:00.2, IVHD 0x11, 5 device entries, translation off
+```
+
+Through **SavanXP (IOMMU on)** (M2, M4):
+
+```
+iommu: I/O APIC 13 reaches the unit as 00:14.0
+iommu: I/O APIC 14 reaches the unit as 00:00.1
+iommu: identity domain maps 32700 MiB in 54 page tables
+iommu: AMD-Vi translating, 1 unit, one identity domain
+iommu: interrupts remapped; a device raises only the vectors it was given
+```
+
+- About three minutes with the mouse and keyboard (xHCI), Azalia playback,
+  the four SATA disks (a partition mounted through Disk Management), the
+  NVMe read-only and the USB stick. Everything worked, and no
+  `I/O page fault` or `interrupt ... refused` line was logged.
+- Two I/O APICs remapped, the first board to have more than one.
+- The tick lost nothing in most windows; the worst after boot lost 106 ms,
+  as in runs without the IOMMU.
+- Turning translation on took about 330 ms of boot (0.019 s to 0.350 s).
+
 ## Work for this target
 
 In the order that makes the machine more useful soonest:
@@ -147,10 +180,7 @@ In the order that makes the machine more useful soonest:
    this machine's main disk. The read-only boot passed on 2026-11-20; what is
    owed is a write test with `nvme-rw` on a partition that can be lost
    ([NVME.md](../kernel/NVME.md)).
-3. **The IOMMU** ([IOMMU.md](../kernel/IOMMU.md)), once the board publishes
-   an IVRS: a boot without `iommu` for the report, then one through
-   **SavanXP (IOMMU on)** with every device in use.
-4. **The physical audio checks** still owed to the follow-up software, below.
+3. **The physical audio checks** still owed to the follow-up software, below.
 
 Not planned: mode setting on the Vega (an `amdgpu` port), HDMI and
 DisplayPort audio, Wi-Fi. Page flips and a hardware cursor on the

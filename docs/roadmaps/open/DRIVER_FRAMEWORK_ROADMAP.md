@@ -1,6 +1,6 @@
 # The driver framework: TKD, IUD and one driver API
 
-Status: **M1 to M4 landed in QEMU, no other phase.** Today every driver is a
+Status: **M1 to M4 landed in QEMU, M1, M2 and M4 also on the Ryzen; no other phase.** Today every driver is a
 C++ file linked into the kernel and registered by hand in
 `kernel/kernel_main.cpp`
 ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). The kernel
@@ -204,8 +204,9 @@ tables are refused by name. Each verified target's hardware page records what
 it reports with the firmware's IOMMU setting on.
 
 **State:** the QEMU half is done (`iommu-tables-test`, smokes `iommu-amd`,
-`iommu-intel`, `iommu-none`); no hardware page has a report yet
-([IOMMU.md](../../kernel/IOMMU.md#pending)).
+`iommu-intel`, `iommu-none`). The Ryzen's page has its report
+([RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md#the-iommu-runs-2026-11-20));
+the other verified targets still owe theirs.
 
 ### M2 — AMD-Vi on, one identity domain
 
@@ -229,8 +230,10 @@ enabled is recorded on its hardware page; a fault is reported and survived;
 **State:** done in QEMU. With `--iommu amd --boot-options iommu`, `smoke`
 (AHCI, NVMe and IDE disks), `net-smoke`, `tcp-smoke`, `ac97-stream`,
 `hda-stream`, `usb-kbd-smoke`, `usb-hotplug-smoke` and `diskmgmt-smoke` pass
-with no I/O page fault logged; `iommu-amd-on` reports and survives faults. The
-Ryzen run is still owed ([IOMMU.md](../../kernel/IOMMU.md#pending)).
+with no I/O page fault logged; `iommu-amd-on` reports and survives faults. On
+2026-11-20 the Ryzen ran three minutes with `iommu`, every device in use and
+no fault ([RYZEN5_1600_VEGA56.md](../../hardware/RYZEN5_1600_VEGA56.md#the-iommu-runs-2026-11-20)).
+Done; the option stays opt-in until it is made the Ryzen's default.
 
 ### M3 — per-device domains and the `iommu::` API
 
@@ -288,7 +291,9 @@ with an entry arrives (`iommu-amd-on`), but QEMU does not log the refusal, so
 the entries are 32-bit, so the APIC-ID limit above stays until the 128-bit
 ones (x2APIC and GA support) are used. QEMU also loses a remapped interrupt's
 trigger mode; the kernel's directed EOI for that is in
-[IOMMU.md](../../kernel/IOMMU.md#qemus-amd-iommu-as-measured-qemu-111).
+[IOMMU.md](../../kernel/IOMMU.md#qemus-amd-iommu-as-measured-qemu-111). On the Ryzen
+both I/O APICs and every device's interrupts ran remapped with nothing
+refused; a refusal on hardware has still not been provoked.
 
 ### M5 — VT-d
 
