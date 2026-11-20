@@ -411,7 +411,47 @@ const char* parse_rmrr(Report& report, const uint8_t* rmrr, size_t length) {
 
 const char kHexDigits[] = "0123456789abcdef";
 
+bool add_group_range(Group& group, uint16_t first, uint16_t last) {
+    for (size_t i = 0; i < group.range_count; ++i) {
+        if (group.ranges[i].first <= first && last <= group.ranges[i].last) {
+            return true;
+        }
+    }
+    if (group.range_count == kMaxGroupRanges) {
+        return false;
+    }
+    group.ranges[group.range_count++] = {first, last};
+    return true;
+}
+
+// An IVHD device entry with an alias that belongs to a unit.
+bool is_alias_scope(const Scope& scope) {
+    return scope.kind == ScopeKind::devices && scope.unit != kNoUnit && scope.aliased;
+}
+
 } // namespace
+
+bool isolation_group(const Report& report, uint16_t requester, Group& group) {
+    group = {};
+    group.alias = requester;
+    for (size_t i = 0; i < report.scope_count; ++i) {
+        const Scope& scope = report.scopes[i];
+        if (is_alias_scope(scope) && scope.first <= requester && requester <= scope.last) {
+            group.alias = scope.alias;
+            break;
+        }
+    }
+    if (!add_group_range(group, requester, requester) || !add_group_range(group, group.alias, group.alias)) {
+        return false;
+    }
+    for (size_t i = 0; i < report.scope_count; ++i) {
+        const Scope& scope = report.scopes[i];
+        if (is_alias_scope(scope) && scope.alias == group.alias && !add_group_range(group, scope.first, scope.last)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 void format_requester_id(uint16_t id, char (&out)[8]) {
     const unsigned bus = id >> 8;

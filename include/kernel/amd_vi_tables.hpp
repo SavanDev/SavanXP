@@ -5,7 +5,7 @@
 
 /* The in-memory formats AMD-Vi reads and writes (AMD I/O Virtualization
  * Technology specification, 48882): host I/O page tables, device table
- * entries, commands and event log entries. Phase M2 of
+ * entries, commands and event log entries. Phases M2 and M3 of
  * docs/roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md; docs/kernel/IOMMU.md.
  *
  * Nothing here touches the unit or knows where memory comes from, so the
@@ -24,10 +24,12 @@ constexpr uint64_t kPageSize = 4096;
 
 // Where page tables come from. `allocate` returns the physical address of a
 // zeroed 4 KiB table, or 0 when memory ran out; `access` turns a physical
-// address the allocator returned into a pointer.
+// address the allocator returned into a pointer; `release` gives a table
+// back (free_tables only).
 struct TableMemory {
     uint64_t (*allocate)(void* context);
     uint64_t* (*access)(uint64_t physical, void* context);
+    void (*release)(uint64_t physical, void* context);
     void* context;
 };
 
@@ -38,9 +40,29 @@ struct TableMemory {
  * mapped before stays mapped. */
 bool map_identity(const TableMemory& memory, uint64_t root, uint64_t base, uint64_t end);
 
-/* The walk the unit does for a read and write at `address`: true with the
- * physical address when it would be allowed, false when it would fault. */
-bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint64_t& physical);
+/* Maps the `bytes` of device addresses from `device_address` to the
+ * physical pages from `physical`, 4 KiB leaves only, with `access`
+ * (kReadable: the device may read, kWritable: it may write, or both). All
+ * three page aligned, `bytes` non-zero, the range below 2^48. Refused, with
+ * nothing changed, when any page of the range is already mapped. False as
+ * well when `allocate` failed; the pages mapped by this call are then
+ * unmapped again (tables it allocated stay, empty). */
+bool map_pages(const TableMemory& memory, uint64_t root, uint64_t device_address, uint64_t physical,
+    uint64_t bytes, uint64_t access);
+
+/* Clears the 4 KiB leaves of [device_address, device_address + bytes);
+ * returns how many were mapped. Tables stay until free_tables. The unit may
+ * still use the old translations until the domain's pages are invalidated. */
+uint64_t unmap_pages(const TableMemory& memory, uint64_t root, uint64_t device_address, uint64_t bytes);
+
+// Releases every table under `root` and `root` itself; never a leaf's page.
+void free_tables(const TableMemory& memory, uint64_t root);
+
+/* The walk the unit does for an access at `address` that needs `access`
+ * (kReadable, kWritable or both): true with the physical address when it
+ * would be allowed, false when it would fault. */
+bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint64_t& physical,
+    uint64_t access = kReadable | kWritable);
 
 /* A valid entry that translates through the table at `root` in `domain`.
  * Interrupts are left untranslated (IV clear) until M4. */

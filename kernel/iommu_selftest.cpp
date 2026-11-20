@@ -10,7 +10,7 @@
 
 #include "arch/cpu.hpp"
 
-/* The M2 self-test (docs/kernel/IOMMU.md#testing). It drives QEMU's `edu`
+/* The M2 and M3 self-test (docs/kernel/IOMMU.md#testing). It drives QEMU's `edu`
  * teaching device, whose only use here is a DMA engine the kernel can point
  * anywhere: a buffer of 4 KiB inside the device, copied to or from any bus
  * address. Not a driver, and nothing else binds the device. */
@@ -43,7 +43,26 @@ constexpr uint64_t kDmaWaitMs = 2000;
 // a moment to reach the log.
 constexpr uint64_t kFaultWaitMs = 1000;
 
+// M3: edu's own domain maps two pages here. It is not memory on any board
+// the smokes boot (QEMU's PCI hole), so the identity domain does not map it:
+// a DMA there arrives only through the device's own domain.
+constexpr uint64_t kDeviceWindow = 0xc0000000;
+
 volatile uint8_t* g_edu = nullptr;
+
+// What the owner of edu's domain was told.
+struct OwnerLog {
+    unsigned faults;
+    uint16_t device;
+};
+
+OwnerLog g_owner_log = {};
+
+void on_fault(void* context, uint16_t requester, uint64_t, bool) {
+    auto* log = static_cast<OwnerLog*>(context);
+    ++log->faults;
+    log->device = requester;
+}
 
 uint64_t read64(uint32_t offset) {
     return *reinterpret_cast<volatile uint64_t*>(g_edu + offset);
@@ -108,6 +127,120 @@ const char* single_fault(uint16_t requester) {
     if (address != 0 && (address & ~(memory::kPageSize - 1)) != kUnmappedAddress) {
         return "the fault reported names another address";
     }
+    return nullptr;
+}
+
+/* A 4-byte DMA that must fault: logged, counted, and handed to the domain's
+ * owner when `owner_hears`, or to nobody. Which access faulted is not
+ * checked: QEMU 11 leaves the event's RW flag clear, as it leaves the
+ * address zero. */
+const char* expect_fault(uint64_t source, uint64_t destination, bool to_memory, uint16_t requester, bool owner_hears) {
+    const uint64_t before = amd_vi::fault_count();
+    const unsigned heard = g_owner_log.faults;
+    if (!dma(source, destination, to_memory, 4)) {
+        return "the faulting DMA never completed";
+    }
+    if (!wait_for([&] { return amd_vi::fault_count() != before; })) {
+        return "a DMA that must fault was not reported";
+    }
+    if (!owner_hears) {
+        return g_owner_log.faults == heard ? nullptr : "a fault reached an owner that no longer owns the device";
+    }
+    if (g_owner_log.faults == heard) {
+        return "the fault did not reach the domain's owner";
+    }
+    if (g_owner_log.device != requester) {
+        return "the owner was told about another device";
+    }
+    return nullptr;
+}
+
+/* M3: edu in a domain of its own, at device addresses that are not the
+ * physical ones. */
+const char* own_domain(const memory::PageAllocation& from, const memory::PageAllocation& to, uint16_t requester,
+    const pci::DeviceInfo& edu) {
+    const uint64_t tables_before = amd_vi::table_pages();
+    iommu::Domain domain;
+    if (!create_domain(&on_fault, &g_owner_log, domain)) {
+        return "no domain could be created";
+    }
+    // `to` is where the device writes, `from` where it reads. `from` is also
+    // mapped a second time, read-only, at a device address edu never reads:
+    // QEMU keeps a translation it used with its permissions and refuses a
+    // write through it without an event, so the permission fault is checked
+    // on a page it has not cached.
+    const uint64_t write_page = kDeviceWindow;
+    const uint64_t read_page = kDeviceWindow + memory::kPageSize;
+    const uint64_t read_only_page = kDeviceWindow + 2 * memory::kPageSize;
+    if (!map(domain, write_page, to.physical_address, memory::kPageSize, kDeviceWrites) ||
+        !map(domain, read_page, from.physical_address, memory::kPageSize, kDeviceReads) ||
+        !map(domain, read_only_page, from.physical_address, memory::kPageSize, kDeviceReads)) {
+        return "the domain's pages could not be mapped";
+    }
+    if (map(domain, read_page, to.physical_address, memory::kPageSize, kDeviceReads)) {
+        return "a device address was mapped twice";
+    }
+    if (!attach(domain, edu) || amd_vi::domain_of(requester) != domain.index) {
+        return "edu could not be attached to its domain";
+    }
+
+    auto* source = static_cast<uint8_t*>(from.virtual_address);
+    auto* destination = static_cast<uint8_t*>(to.virtual_address);
+    for (size_t i = 0; i < kEduBufferSize; ++i) {
+        source[i] = static_cast<uint8_t>(0x33 + i * 5u);
+    }
+    memset(destination, 0, kEduBufferSize);
+    if (!dma(read_page, kEduBuffer, false) || !dma(kEduBuffer, write_page, true) ||
+        memcmp(source, destination, kEduBufferSize) != 0) {
+        return "a DMA through edu's own domain did not arrive";
+    }
+    console::printf("iommu: selftest: edu in its own domain reached the pages mapped for it\n");
+
+    // The identity domain is gone for edu: its physical pages are not.
+    memset(destination, 0, kEduBufferSize);
+    if (const char* failure = expect_fault(kEduBuffer, to.physical_address, true, requester, true)) {
+        return failure;
+    }
+    // A page mapped for reading only.
+    if (const char* failure = expect_fault(kEduBuffer, read_only_page, true, requester, true)) {
+        return failure;
+    }
+    for (size_t i = 0; i < kEduBufferSize; ++i) {
+        if (source[i] != static_cast<uint8_t>(0x33 + i * 5u)) {
+            return "a write to a read-only page reached memory";
+        }
+    }
+    // A page unmapped is gone once unmap returns.
+    if (!unmap(domain, write_page, memory::kPageSize)) {
+        return "unmap did not complete";
+    }
+    if (const char* failure = expect_fault(kEduBuffer, write_page, true, requester, true)) {
+        return failure;
+    }
+    for (size_t i = 0; i < kEduBufferSize; ++i) {
+        if (destination[i] != 0) {
+            return "a DMA that faulted reached memory";
+        }
+    }
+    console::printf("iommu: selftest: edu's physical pages, a read-only page and an unmapped one faulted, "
+        "and each fault reached the domain's owner\n");
+
+    // Destroying the domain leaves edu blocked: nothing reachable, and no
+    // owner to tell.
+    destroy_domain(domain);
+    if (domain.valid() || amd_vi::domain_of(requester) != amd_vi::kBlockedDomain) {
+        return "destroying the domain did not block edu";
+    }
+    if (const char* failure = expect_fault(read_page, kEduBuffer, false, requester, false)) {
+        return failure;
+    }
+    if (const char* failure = expect_fault(kEduBuffer, to.physical_address, true, requester, false)) {
+        return failure;
+    }
+    if (amd_vi::table_pages() != tables_before) {
+        return "destroying the domain did not free its page tables";
+    }
+    console::printf("iommu: selftest: destroying the domain left edu in the blocked domain\n");
     return nullptr;
 }
 
@@ -190,6 +323,11 @@ const char* run() {
     if (!round_trip(from, to, 0x5a)) {
         return "DMA stopped working after the fault";
     }
+
+    if (const char* failure = own_domain(from, to, requester, edu)) {
+        return failure;
+    }
+    // edu is blocked now and can reach neither page.
     memory::free_allocation(from);
     memory::free_allocation(to);
     return nullptr;

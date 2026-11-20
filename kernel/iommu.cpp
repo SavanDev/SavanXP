@@ -2,6 +2,7 @@
 
 #include "kernel/acpi.hpp"
 #include "kernel/amd_vi.hpp"
+#include "kernel/amd_vi_tables.hpp"
 #include "kernel/console.hpp"
 #include "kernel/vmm.hpp"
 
@@ -215,6 +216,47 @@ void start(const boot::BootInfo& boot_info) {
 
 bool translating() {
     return amd_vi::running();
+}
+
+bool create_domain(FaultHandler handler, void* context, Domain& domain) {
+    domain.index = amd_vi::create_domain(handler, context);
+    return domain.valid();
+}
+
+void destroy_domain(Domain& domain) {
+    if (domain.valid()) {
+        amd_vi::destroy_domain(domain.index);
+    }
+    domain.index = -1;
+}
+
+uint16_t requester_id(const pci::DeviceInfo& device) {
+    return static_cast<uint16_t>((device.bus << 8) | ((device.slot & 0x1f) << 3) | (device.function & 0x7));
+}
+
+bool attach(const Domain& domain, const pci::DeviceInfo& device) {
+    return domain.valid() && amd_vi::attach(domain.index, requester_id(device));
+}
+
+void block(const pci::DeviceInfo& device) {
+    amd_vi::block(requester_id(device));
+}
+
+namespace {
+
+uint64_t unit_access(unsigned access) {
+    return ((access & kDeviceReads) != 0 ? amd_vi::kReadable : 0) |
+        ((access & kDeviceWrites) != 0 ? amd_vi::kWritable : 0);
+}
+
+} // namespace
+
+bool map(const Domain& domain, uint64_t device_address, uint64_t physical, uint64_t bytes, unsigned access) {
+    return domain.valid() && amd_vi::map(domain.index, device_address, physical, bytes, unit_access(access));
+}
+
+bool unmap(const Domain& domain, uint64_t device_address, uint64_t bytes) {
+    return domain.valid() && amd_vi::unmap(domain.index, device_address, bytes);
 }
 
 void tick(uint64_t now_ms) {

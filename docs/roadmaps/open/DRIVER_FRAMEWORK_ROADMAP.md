@@ -1,11 +1,12 @@
 # The driver framework: TKD, IUD and one driver API
 
-Status: **M1 and M2 landed in QEMU, no other phase.** Today every driver is a
+Status: **M1 to M3 landed in QEMU, no other phase.** Today every driver is a
 C++ file linked into the kernel and registered by hand in
 `kernel/kernel_main.cpp`
 ([DRIVERS_ROADMAP.md](DRIVERS_ROADMAP.md#current-implementation)). The kernel
 reports the IOMMU and, with the `iommu` boot option, turns AMD-Vi on with one
-identity domain ([IOMMU.md](../../kernel/IOMMU.md)); there is no driver
+identity domain, from which a driver can move its device into a domain of
+its own ([IOMMU.md](../../kernel/IOMMU.md)); there is no driver
 outside the kernel, and no API a driver is written against other than the
 kernel's own internals.
 
@@ -253,6 +254,15 @@ The piece the framework stands on.
 driver with one of its buffers deliberately left unmapped produces a named
 fault, the kernel stays up and the device ends in the blocked domain; host
 tests cover the page-table and group arithmetic.
+
+**State:** done in QEMU. The RTL8139 runs in a domain of its own at device
+addresses that are not its buffers' physical ones, and `net-smoke` and
+`tcp-smoke` pass with it there; `iommu-rtl8139-fault` leaves a transmit
+buffer unmapped and the card ends blocked with the kernel running;
+`amd-vi-tables-test` and `iommu-tables-test` cover map, unmap, freeing and
+the alias groups; `iommu-amd-on` drives the whole API through edu. Groups
+come from the IVRS's aliases only, and devices no driver moved stay in the
+identity domain until F1 ([IOMMU.md](../../kernel/IOMMU.md#pending)).
 
 ### M4 — interrupt remapping
 

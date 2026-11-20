@@ -47,8 +47,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`IOMMU.md`](kernel/IOMMU.md) — the IOMMU layer: reading the IVRS and DMAR at
   boot, the rules a table must pass, AMD-Vi with one identity domain behind the
-  `iommu` boot option, how faults reach the log, QEMU's quirks, the self-test,
-  and what is still pending.
+  `iommu` boot option, per-device domains and isolation groups, how faults
+  reach the log and the domain's owner, QEMU's quirks, the self-test, and what
+  is still pending.
 - [`FILESYSTEMS.md`](kernel/FILESYSTEMS.md) — the VFS, the `fs::` registry and
   what a filesystem driver provides: the system disk as the root, `/dev` and
   `/rescue` in memory and the `/disk` alias, the rescue system, how a request

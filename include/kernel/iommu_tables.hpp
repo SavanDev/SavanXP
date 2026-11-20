@@ -133,6 +133,30 @@ struct Report {
 const char* parse_ivrs(const acpi_tables::SdtHeader& table, Report& report);
 const char* parse_dmar(const acpi_tables::SdtHeader& table, Report& report);
 
+/* An isolation group (phase M3): the requester IDs the unit cannot tell
+ * apart from one function's, so they share whatever domain it is in. AMD's
+ * alias entries are where the IVRS says so: a device in an aliased range
+ * reaches the unit as the alias, and so does every other device aliased to
+ * it. Without an alias the group is the function alone. */
+constexpr size_t kMaxGroupRanges = 8;
+
+struct GroupRange {
+    uint16_t first;
+    uint16_t last;
+};
+
+struct Group {
+    // The ID the unit sees for the function.
+    uint16_t alias;
+    size_t range_count;
+    GroupRange ranges[kMaxGroupRanges];
+};
+
+/* Fills `group` with every requester ID that shares `requester`'s, the
+ * function itself first. False when that takes more than kMaxGroupRanges
+ * ranges; the group is then not to be attached anywhere. */
+bool isolation_group(const Report& report, uint16_t requester, Group& group);
+
 // "bb:dd.f" for a requester ID, as the boot log prints devices.
 void format_requester_id(uint16_t id, char (&out)[8]);
 

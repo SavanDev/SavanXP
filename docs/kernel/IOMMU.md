@@ -1,12 +1,14 @@
 # The IOMMU layer
 
-Status: **phases M1 and M2 of
+Status: **phases M1 to M3 of
 [DRIVER_FRAMEWORK_ROADMAP.md](../roadmaps/open/DRIVER_FRAMEWORK_ROADMAP.md#m1--discovery-and-report)
 landed, in QEMU.** The kernel reads the firmware's description of the IOMMU
 at boot and says what it found (M1). With the `iommu` boot option it turns
 AMD-Vi on with one identity domain shared by every device, and logs the
-faults the units report (M2). Without the option nothing changes what the
-hardware does. M3 (a domain per device) is next.
+faults the units report (M2). A driver can move its device into a domain of
+its own, where the device reaches only what the driver mapped; the RTL8139
+does (M3). Without the option nothing changes what the hardware does. M4
+(interrupt remapping) is next.
 
 ## Where it lives
 
@@ -15,10 +17,12 @@ hardware does. M3 (a domain per device) is next.
 | `include/kernel/iommu_tables.hpp`, `kernel/iommu_tables.cpp` | `parse_ivrs` and `parse_dmar`: the two ACPI tables into one `iommu_tables::Report`. No access to the machine, so it runs in the host tests |
 | `include/kernel/iommu.hpp`, `kernel/iommu.cpp` | `iommu::discover` and `iommu::start`, called in `kernel_main` right after `acpi::initialize`; `iommu::tick`, from the BSP's tick |
 | `include/kernel/amd_vi_tables.hpp`, `kernel/amd_vi_tables.cpp` | AMD-Vi's memory formats: identity page tables, device table entries, commands, event log entries. No access to the machine |
-| `include/kernel/amd_vi.hpp`, `kernel/amd_vi.cpp` | Taking the units over, the device table, the command and event rings, draining the event log |
+| `include/kernel/amd_vi.hpp`, `kernel/amd_vi.cpp` | Taking the units over, the device table, the command and event rings, draining the event log, the domains |
+| `include/kernel/iommu.hpp` (`iommu::Domain` and below) | The driver-facing domain API (M3) |
 | `kernel/iommu_selftest.cpp` | `iommu::selftest`, boot option `iommu-selftest`, driving QEMU's `edu` device |
+| `kernel/rtl8139.cpp` | The first driver in a domain of its own; boot option `rtl8139-unmapped-tx` |
 | `tests/host/iommu_tables_test.cpp`, `tests/host/amd_vi_tables_test.cpp` | `iommu-tables-test`, `amd-vi-tables-test` |
-| `tools/smoke_catalog.py` | `iommu-amd`, `iommu-intel`, `iommu-none`, `iommu-amd-on` |
+| `tools/smoke_catalog.py` | `iommu-amd`, `iommu-intel`, `iommu-none`, `iommu-amd-on`, `iommu-rtl8139-fault` |
 
 ## What the boot log says
 
@@ -75,7 +79,8 @@ is not driven yet (M5) and changes nothing.
   Drivers keep handing physical addresses to their devices unchanged.
 - **This is not isolation.** A device can still reach all of RAM, the IOMMU's
   own tables included. What the domain stops is DMA to addresses that are not
-  memory, and what it gives is a report when that happens. Isolation is M3.
+  memory, and what it gives is a report when that happens. Isolation is a
+  domain of the device's own (below).
 - **Interrupts are untranslated.** The entries leave IV clear, so interrupts
   pass through as before; remapping is M4.
 - **Taking a unit over.** Whatever the firmware left running is stopped first
@@ -96,8 +101,56 @@ is not driven yet (M5) and changes nothing.
   tables for a 1 GiB QEMU machine.
 - **Faults.** The BSP's tick drains every unit's event log each 100 ms, under
   the kernel lock, and logs at most 16 events per drain, then a count of the
-  rest: `iommu: I/O page fault from 00:05.0 at 0x..., write, domain 1`. An
-  overflowed log is reported, emptied and restarted. No interrupt is used.
+  rest: `iommu: I/O page fault from 00:05.0 at 0x..., write, domain 1`. The
+  domain printed is the one the kernel had put the device in when the event
+  was read. An overflowed log is reported, emptied and restarted. No
+  interrupt is used.
+
+## Domains of their own (M3)
+
+The API in `iommu.hpp`, under the kernel lock like the rest:
+
+| Call | What |
+| --- | --- |
+| `create_domain(handler, context, domain)` | A new domain with nothing mapped. False when translation is off or all 30 are in use; the driver then hands physical addresses to its device, as before |
+| `map(domain, device_address, physical, bytes, access)` | Device addresses to physical pages, all page aligned, with `kDeviceReads` and/or `kDeviceWrites`. Refused when any page of the range is mapped already |
+| `unmap(domain, device_address, bytes)` | Returns once no unit can use the old translation |
+| `attach(domain, pci_device)` | Moves the function's whole isolation group into the domain, or nothing |
+| `block(pci_device)` | Moves the group to the blocked domain |
+| `destroy_domain(domain)` | Every device still in it goes to the blocked domain; then its page tables are freed |
+
+- **Device addresses are the driver's choice.** They need not be the
+  physical ones, and a device that can only address 32 bits can be given low
+  ones for high pages. The RTL8139 puts its buffers at 2 GiB, which is not
+  memory on the QEMU boards: a card left in the identity domain by mistake
+  faults there rather than writing somewhere.
+- **Access is per mapping.** The RTL8139's receive ring is writable by the
+  card only, its transmit buffers readable only.
+- **Isolation groups.** The requester IDs the unit cannot tell apart share a
+  domain. On AMD-Vi they come from the IVRS's alias entries: a device in an
+  aliased range reaches the unit as the alias, and so does every other
+  device aliased to it (`iommu_tables::isolation_group`). Without an alias the
+  group is the function alone. A group is attached whole or not at all, and
+  attaching is refused when a member already is in another driver's domain;
+  leaving the identity or the blocked domain is always allowed.
+- **The blocked domain** has an empty page table: every DMA from a device in
+  it faults and is logged, and nobody else is told. A device leaves a domain
+  of its own only for the blocked one, never back to the identity domain: an
+  unowned, failed or removed function cannot DMA.
+- **Faults reach the owner.** After the drain that read them is logged, each
+  I/O page fault is handed to the fault handler of the domain the device was
+  in, if it is still there. The handler decides what happens; the RTL8139
+  stops the card, clears its bus mastering and blocks it, and the rest of the
+  system carries on without a network.
+- **Domains not yet moved.** Every device a driver has not moved stays in the
+  identity domain of M2. Moving the remaining TKDs, and blocking functions
+  nobody drives, comes with the framework's DMA calls (F1).
+- **Flushing.** Changing a device's domain invalidates its device table
+  entries and every domain it was in or is in now; `map` and `unmap`
+  invalidate the domain's pages (a unit may cache entries it found not
+  present). Each waits for a completion before returning.
+- **Domain IDs**: the identity domain is 1, the blocked one 2, drivers' from
+  3. The page tables of a driver's domain use 4 KiB leaves only.
 
 ### QEMU's amd-iommu, as measured (QEMU 11.1)
 
@@ -109,6 +162,12 @@ is not driven yet (M5) and changes nothing.
   1024 events, four times what the log holds. With the event log interrupt off
   it drops the rest without setting the overflow bit, which hardware sets
   regardless.
+- It leaves the RW flag of its I/O page fault events clear, so every fault
+  it reports reads as a read.
+- It caches a translation by device and page with its permissions, and
+  refuses an access the cached permissions forbid without an event. A write
+  to a read-only page the device has already read is stopped, but not
+  reported. Hardware walks the tables again and reports it.
 
 ## Rules the parsers enforce
 
@@ -168,7 +227,17 @@ all ones means nothing answers there; the unit is logged with
   self-test copies a page through edu and back (it must arrive), sends 4 bytes
   to 64 GiB, outside the domain (one fault, from edu, must be reported), floods
   the log with a 4 KiB DMA there, checks the next fault is still reported, and
-  copies a page again. It ends with `iommu: selftest passed`.
+  copies a page again. Then (M3) it gives edu a domain of its own at 3 GiB:
+  a page copied in and out through it must arrive; edu's physical pages, a
+  read-only page (one edu never touched, see the QEMU notes) and an unmapped
+  one must fault and reach the domain's owner; destroying the domain must
+  leave edu blocked, faulting with no owner told, with every page table
+  freed. It ends with `iommu: selftest passed`.
+- `./build.sh smoke iommu-rtl8139-fault` boots with `iommu
+  rtl8139-unmapped-tx`: the RTL8139 in its own domain with transmit buffer 0
+  left out of it. The first frame faults; the scenario waits for
+  `rtl8139: a DMA read outside the card's domain; the card is stopped and
+  blocked`. netsmoke fails after that, with no network, which is expected.
 - Any other scenario runs with translation on through
   `./build.sh --iommu amd --boot-options iommu smoke NAME` (or
   `SAVANXP_IOMMU=amd SAVANXP_BOOT_OPTIONS=iommu`); its serial log must then
@@ -182,7 +251,12 @@ all ones means nothing answers there; the unit is logged with
 - **No real machine has reported yet.** M1 is done when each verified
   target's hardware page records what it reports with the firmware's IOMMU
   setting on; M2 when the Ryzen boots and runs with `iommu`. The Ryzen is the
-  first one that matters.
+  first one that matters. M3 on hardware needs a card with a domain-aware
+  driver in it; the Ryzen's RTL8168 is not one yet.
+- **Isolation groups from the PCI topology.** Only the IVRS's alias entries
+  are read. A conventional PCI device behind a PCIe-to-PCI bridge that the
+  firmware did not describe with an alias, and multi-function devices without
+  ACS, are not grouped by walking the bus yet.
 - The KVM path (`kernel-irqchip=split`) has not been run.
 - The event log is polled. Its interrupt (the unit's MSI) waits for a consumer
   that needs faults faster than 100 ms.

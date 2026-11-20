@@ -64,7 +64,10 @@ constexpr uint32_t kRingPointerMask = 0x7fff0;
 // pages minus one.
 constexpr uint64_t kDeviceTablePages = 512;
 constexpr uint64_t kDeviceTableSize = kDeviceTablePages - 1;
-constexpr uint16_t kIdentityDomain = 1;
+constexpr uint32_t kDeviceCount = 65536;
+// The first slot a driver can be given; the domain ID is the slot plus one,
+// so identity is domain 1 and blocked domain 2.
+constexpr int kFirstOwnDomain = 2;
 
 constexpr uint64_t kWaitMs = 1000;
 // Events logged per drain; a device faulting in a loop would otherwise fill
@@ -81,10 +84,21 @@ struct UnitState {
     uint64_t control;
 };
 
+struct DomainState {
+    bool used;
+    uint64_t root;
+    FaultHandler handler;
+    void* context;
+};
+
 UnitState g_units[iommu_tables::kMaxUnits];
 size_t g_unit_count = 0;
 bool g_running = false;
-uint64_t g_root = 0;
+const Report* g_report = nullptr;
+DomainState g_domains[kMaxDomains];
+uint64_t* g_device_table = nullptr;
+// The domain slot each requester ID is in.
+uint8_t g_owner[kDeviceCount];
 volatile uint64_t* g_completion = nullptr;
 uint64_t g_completion_physical = 0;
 uint64_t g_completion_sequence = 0;
@@ -142,7 +156,12 @@ uint64_t* access_table(uint64_t physical, void*) {
     return vm::physical_to_virtual(physical);
 }
 
-const TableMemory kTableMemory = {&allocate_table, &access_table, nullptr};
+void release_table(uint64_t physical, void*) {
+    memory::free_pages(physical, 1);
+    --g_table_pages;
+}
+
+const TableMemory kTableMemory = {&allocate_table, &access_table, &release_table, nullptr};
 
 bool allocate_zeroed(uint64_t pages, memory::PageAllocation& allocation) {
     const bool ok = pages == 1 ? memory::allocate_page(allocation)
@@ -169,10 +188,11 @@ bool is_memory(boot::MemoryRegionType type) {
 }
 
 bool build_identity_domain(const Report& report, const boot::BootInfo& boot_info) {
-    g_root = allocate_table(nullptr);
-    if (g_root == 0) {
+    const uint64_t root = allocate_table(nullptr);
+    if (root == 0) {
         return false;
     }
+    g_domains[kIdentityDomain] = {true, root, nullptr, nullptr};
     uint64_t mapped = 0;
     for (size_t i = 0; i < boot_info.memory_map_entries; ++i) {
         const boot::MemoryRegion& region = boot_info.memory_map[i];
@@ -181,14 +201,14 @@ bool build_identity_domain(const Report& report, const boot::BootInfo& boot_info
         }
         const uint64_t base = region.base & ~(kPageSize - 1);
         const uint64_t end = (region.base + region.length + kPageSize - 1) & ~(kPageSize - 1);
-        if (!map_identity(kTableMemory, g_root, base, end)) {
+        if (!map_identity(kTableMemory, root, base, end)) {
             return false;
         }
         mapped += end - base;
     }
     for (size_t i = 0; i < report.reserved_count; ++i) {
         const iommu_tables::ReservedRange& range = report.reserved[i];
-        if (!map_identity(kTableMemory, g_root, range.base, range.end)) {
+        if (!map_identity(kTableMemory, root, range.base, range.end)) {
             return false;
         }
         mapped += range.end - range.base;
@@ -265,10 +285,114 @@ bool flush_caches(UnitState& unit, const Report& report, const Unit& description
             }
         }
     }
-    if (!submit(unit, invalidate_domain_pages(kIdentityDomain))) {
+    if (!submit(unit, invalidate_domain_pages(domain_id(kIdentityDomain)))) {
         return false;
     }
     return wait_for_commands(unit);
+}
+
+// ---- domains --------------------------------------------------------------
+
+bool own_domain(int domain) {
+    return domain >= kFirstOwnDomain && static_cast<size_t>(domain) < kMaxDomains && g_domains[domain].used;
+}
+
+void write_entry(uint32_t device, int domain) {
+    uint64_t entry[4];
+    device_table_entry(g_domains[domain].root, domain_id(domain), entry);
+    uint64_t* slot = g_device_table + device * 4;
+    // The root and domain ID in the first two quadwords are all that differ
+    // between domains; the invalidation that follows makes the unit reread
+    // the entry.
+    slot[3] = entry[3];
+    slot[2] = entry[2];
+    slot[1] = entry[1];
+    slot[0] = entry[0];
+    g_owner[device] = static_cast<uint8_t>(domain);
+}
+
+/* After device table entries changed: every unit rereads them, and drops
+ * what it cached for the domains the devices were in and are in now. */
+bool flush_devices(const iommu_tables::Group& group, const bool (&domains)[kMaxDomains]) {
+    for (size_t index = 0; index < g_unit_count; ++index) {
+        UnitState& unit = g_units[index];
+        for (size_t i = 0; i < group.range_count; ++i) {
+            if (!invalidate_devices(unit, group.ranges[i].first, group.ranges[i].last)) {
+                return false;
+            }
+        }
+        for (size_t domain = 0; domain < kMaxDomains; ++domain) {
+            if (domains[domain] && !submit(unit, invalidate_domain_pages(domain_id(static_cast<int>(domain))))) {
+                return false;
+            }
+        }
+        if (!wait_for_commands(unit)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool flush_domain(int domain) {
+    for (size_t index = 0; index < g_unit_count; ++index) {
+        if (!submit(g_units[index], invalidate_domain_pages(domain_id(domain))) || !wait_for_commands(g_units[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool move_group(const iommu_tables::Group& group, int domain) {
+    bool domains[kMaxDomains] = {};
+    domains[domain] = true;
+    for (size_t i = 0; i < group.range_count; ++i) {
+        for (uint32_t device = group.ranges[i].first; device <= group.ranges[i].last; ++device) {
+            domains[g_owner[device]] = true;
+            write_entry(device, domain);
+        }
+    }
+    if (!flush_devices(group, domains)) {
+        console::printf("iommu: a unit did not complete the invalidation\n");
+        return false;
+    }
+    return true;
+}
+
+uint32_t group_size(const iommu_tables::Group& group) {
+    uint32_t size = 0;
+    for (size_t i = 0; i < group.range_count; ++i) {
+        size += static_cast<uint32_t>(group.ranges[i].last - group.ranges[i].first) + 1;
+    }
+    return size;
+}
+
+/* I/O page faults read in one drain, handed to the domains' owners once the
+ * whole drain is logged: an owner that blocks its device must not change the
+ * domain the rest of the drain is logged with. One ring's worth. */
+struct PendingFault {
+    uint16_t device;
+    uint8_t domain;
+    bool write;
+    uint64_t address;
+};
+
+PendingFault g_pending[kRingBytes / sizeof(Command)];
+size_t g_pending_count = 0;
+
+/* A fault goes to the owner of the domain the device was in when it was
+ * read, if the device is still there: one already moved to the blocked
+ * domain reaches nobody. */
+void deliver_faults() {
+    const size_t count = g_pending_count;
+    g_pending_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const PendingFault& fault = g_pending[i];
+        const int domain = fault.domain;
+        if (g_owner[fault.device] != domain || !own_domain(domain) || g_domains[domain].handler == nullptr) {
+            continue;
+        }
+        g_domains[domain].handler(g_domains[domain].context, fault.device, fault.address, fault.write);
+    }
 }
 
 // ---- bring-up -------------------------------------------------------------
@@ -345,8 +469,10 @@ void log_event(size_t unit, const Event& event) {
     char device[8];
     iommu_tables::format_requester_id(event.device, device);
     if (event.code == kEventIoPageFault) {
+        // The domain the kernel put the device in: QEMU leaves the event's
+        // own field zero.
         console::printf("iommu: I/O page fault from %s at 0x%llx, %s, domain %u\n", device, event.address,
-            (event.flags & kFaultWrite) != 0 ? "write" : "read", static_cast<unsigned>(event.domain));
+            (event.flags & kFaultWrite) != 0 ? "write" : "read", static_cast<unsigned>(domain_id(g_owner[event.device])));
         return;
     }
     console::printf("iommu: unit %u: %s from %s at 0x%llx, flags 0x%x\n", static_cast<unsigned>(unit),
@@ -379,6 +505,10 @@ void drain_unit(size_t index) {
         }
         memset(slot, 0, sizeof(Command));
         head = static_cast<uint32_t>((head + sizeof(Command)) % kRingBytes);
+        if (event.code == kEventIoPageFault && g_pending_count < sizeof(g_pending) / sizeof(g_pending[0])) {
+            g_pending[g_pending_count++] = {event.device, g_owner[event.device], (event.flags & kFaultWrite) != 0,
+                event.address};
+        }
     }
     write32(unit, kEventHead, head);
     if (dropped != 0) {
@@ -410,6 +540,7 @@ bool start(const Report& report, volatile uint8_t* const* registers, const boot:
         }
     }
 
+    g_report = &report;
     memory::PageAllocation device_table = {};
     memory::PageAllocation completion = {};
     if (!allocate_zeroed(kDeviceTablePages, device_table) || !allocate_zeroed(1, completion)) {
@@ -423,11 +554,15 @@ bool start(const Report& report, volatile uint8_t* const* registers, const boot:
         console::printf("iommu: no memory for the identity domain; staying off\n");
         return false;
     }
-    uint64_t entry[4];
-    device_table_entry(g_root, kIdentityDomain, entry);
-    auto* entries = static_cast<uint64_t*>(device_table.virtual_address);
-    for (uint64_t device = 0; device <= 0xffff; ++device) {
-        memcpy(entries + device * 4, entry, sizeof(entry));
+    const uint64_t blocked_root = allocate_table(nullptr);
+    if (blocked_root == 0) {
+        console::printf("iommu: no memory for the blocked domain; staying off\n");
+        return false;
+    }
+    g_domains[kBlockedDomain] = {true, blocked_root, nullptr, nullptr};
+    g_device_table = static_cast<uint64_t*>(device_table.virtual_address);
+    for (uint32_t device = 0; device < kDeviceCount; ++device) {
+        write_entry(device, kIdentityDomain);
     }
 
     g_unit_count = report.unit_count;
@@ -460,6 +595,7 @@ void drain_events() {
     }
     for (size_t i = 0; i < g_unit_count; ++i) {
         drain_unit(i);
+        deliver_faults();
     }
 }
 
@@ -482,7 +618,152 @@ bool last_fault(uint16_t& device, uint64_t& address) {
 
 bool identity_maps(uint64_t address) {
     uint64_t physical = 0;
-    return g_root != 0 && translate(kTableMemory, g_root, address, physical) && physical == address;
+    const uint64_t root = g_domains[kIdentityDomain].root;
+    return root != 0 && translate(kTableMemory, root, address, physical) && physical == address;
+}
+
+int create_domain(FaultHandler handler, void* context) {
+    if (!g_running) {
+        return -1;
+    }
+    for (size_t domain = kFirstOwnDomain; domain < kMaxDomains; ++domain) {
+        if (g_domains[domain].used) {
+            continue;
+        }
+        const uint64_t root = allocate_table(nullptr);
+        if (root == 0) {
+            console::printf("iommu: no memory for a new domain\n");
+            return -1;
+        }
+        g_domains[domain] = {true, root, handler, context};
+        return static_cast<int>(domain);
+    }
+    console::printf("iommu: every domain is in use\n");
+    return -1;
+}
+
+void destroy_domain(int domain) {
+    if (!own_domain(domain)) {
+        return;
+    }
+    unsigned moved = 0;
+    for (uint32_t device = 0; device < kDeviceCount; ++device) {
+        if (g_owner[device] != domain) {
+            continue;
+        }
+        write_entry(device, kBlockedDomain);
+        iommu_tables::Group group = {};
+        group.alias = static_cast<uint16_t>(device);
+        group.range_count = 1;
+        group.ranges[0] = {static_cast<uint16_t>(device), static_cast<uint16_t>(device)};
+        bool domains[kMaxDomains] = {};
+        domains[domain] = true;
+        if (!flush_devices(group, domains)) {
+            // The tables stay, unused, rather than freed under a unit that
+            // may still walk them.
+            console::printf("iommu: a unit did not complete the invalidation; domain %u leaks its tables\n",
+                static_cast<unsigned>(domain_id(domain)));
+            g_domains[domain].handler = nullptr;
+            return;
+        }
+        ++moved;
+    }
+    if (!flush_domain(domain)) {
+        console::printf("iommu: a unit did not complete the invalidation; domain %u leaks its tables\n",
+            static_cast<unsigned>(domain_id(domain)));
+        g_domains[domain].handler = nullptr;
+        return;
+    }
+    free_tables(kTableMemory, g_domains[domain].root);
+    g_domains[domain] = {};
+    if (moved != 0) {
+        console::printf("iommu: domain %u destroyed; %u device%s moved to the blocked domain\n",
+            static_cast<unsigned>(domain_id(domain)), moved, moved == 1 ? "" : "s");
+    }
+}
+
+bool attach(int domain, uint16_t requester) {
+    char name[8];
+    iommu_tables::format_requester_id(requester, name);
+    if (!own_domain(domain)) {
+        return false;
+    }
+    iommu_tables::Group group = {};
+    if (!iommu_tables::isolation_group(*g_report, requester, group)) {
+        console::printf("iommu: %s: its isolation group has too many ranges; not attached\n", name);
+        return false;
+    }
+    for (size_t i = 0; i < group.range_count; ++i) {
+        for (uint32_t device = group.ranges[i].first; device <= group.ranges[i].last; ++device) {
+            const int owner = g_owner[device];
+            if (owner >= kFirstOwnDomain && owner != domain) {
+                char other[8];
+                iommu_tables::format_requester_id(static_cast<uint16_t>(device), other);
+                console::printf("iommu: %s: %s, in its isolation group, belongs to domain %u; not attached\n",
+                    name, other, static_cast<unsigned>(domain_id(owner)));
+                return false;
+            }
+        }
+    }
+    if (!move_group(group, domain)) {
+        return false;
+    }
+    const uint32_t size = group_size(group);
+    if (size > 1) {
+        console::printf("iommu: %s attached to domain %u with its isolation group, %u requester IDs\n", name,
+            static_cast<unsigned>(domain_id(domain)), size);
+    } else {
+        console::printf("iommu: %s attached to domain %u\n", name, static_cast<unsigned>(domain_id(domain)));
+    }
+    return true;
+}
+
+void block(uint16_t requester) {
+    if (!g_running) {
+        return;
+    }
+    char name[8];
+    iommu_tables::format_requester_id(requester, name);
+    iommu_tables::Group group = {};
+    if (!iommu_tables::isolation_group(*g_report, requester, group)) {
+        // At least the function and the ID the unit sees for it.
+        group.range_count = 0;
+        group.ranges[group.range_count++] = {requester, requester};
+        if (group.alias != requester) {
+            group.ranges[group.range_count++] = {group.alias, group.alias};
+        }
+    }
+    move_group(group, kBlockedDomain);
+    console::printf("iommu: %s moved to the blocked domain\n", name);
+}
+
+int domain_of(uint16_t requester) {
+    return g_owner[requester];
+}
+
+uint16_t domain_id(int domain) {
+    return static_cast<uint16_t>(domain + 1);
+}
+
+bool map(int domain, uint64_t device_address, uint64_t physical, uint64_t bytes, uint64_t access) {
+    if (!own_domain(domain) ||
+        !map_pages(kTableMemory, g_domains[domain].root, device_address, physical, bytes, access)) {
+        return false;
+    }
+    // A unit may cache what it found not present (NpCache).
+    return flush_domain(domain);
+}
+
+bool unmap(int domain, uint64_t device_address, uint64_t bytes) {
+    if (!own_domain(domain)) {
+        return false;
+    }
+    unmap_pages(kTableMemory, g_domains[domain].root, device_address, bytes);
+    return flush_domain(domain);
+}
+
+uint64_t table_pages() {
+    return g_table_pages;
 }
 
 } // namespace amd_vi

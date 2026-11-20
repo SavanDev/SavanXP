@@ -19,6 +19,9 @@ Cut-off notes:
   I/O page faults logged as `iommu: I/O page fault from bb:dd.f ...`; `noiommu` always wins. New `build.sh --iommu`
   and `--boot-options` (`SAVANXP_IOMMU`, `SAVANXP_BOOT_OPTIONS`), boot option `iommu-selftest` and smoke
   `iommu-amd-on` ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).
+- **Per-device IOMMU domains** (phase M3): `iommu::create_domain`, `map`, `unmap`, `attach` (whole isolation groups
+  from the IVRS aliases), `block` and a blocked domain; faults reach the domain's owner. The RTL8139 runs in its own
+  domain with `iommu`. New boot option `rtl8139-unmapped-tx` and smoke `iommu-rtl8139-fault` ([IOMMU.md](docs/kernel/IOMMU.md#domains-of-their-own-m3)).
 - **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
   the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
   Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).

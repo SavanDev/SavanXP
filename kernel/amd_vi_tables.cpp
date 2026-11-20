@@ -56,6 +56,64 @@ bool map_level(const TableMemory& memory, uint64_t table_physical, unsigned leve
     return true;
 }
 
+// Whether some leaf, of any size, maps `address`.
+bool any_leaf(const TableMemory& memory, uint64_t root, uint64_t address) {
+    if ((address >> entry_shift(kLevels + 1)) != 0) {
+        return false;
+    }
+    uint64_t table_physical = root;
+    for (unsigned level = kLevels; level >= 1; --level) {
+        const uint64_t entry = memory.access(table_physical, memory.context)[(address >> entry_shift(level)) % kEntriesPerTable];
+        if ((entry & kPresent) == 0) {
+            return false;
+        }
+        if (next_level(entry) == 0) {
+            return true;
+        }
+        table_physical = entry & kAddressMask;
+    }
+    return false;
+}
+
+/* The level-1 entry for `address`, creating the tables on the way when
+ * `create` is set. Nullptr when a table is missing (and not created), memory
+ * ran out, or a larger leaf is in the way. */
+uint64_t* leaf_slot(const TableMemory& memory, uint64_t root, uint64_t address, bool create) {
+    if ((address >> entry_shift(kLevels + 1)) != 0) {
+        return nullptr;
+    }
+    uint64_t table_physical = root;
+    for (unsigned level = kLevels; level > 1; --level) {
+        uint64_t& entry = memory.access(table_physical, memory.context)[(address >> entry_shift(level)) % kEntriesPerTable];
+        if ((entry & kPresent) == 0) {
+            if (!create) {
+                return nullptr;
+            }
+            const uint64_t child = memory.allocate(memory.context);
+            if (child == 0) {
+                return nullptr;
+            }
+            entry = child | (static_cast<uint64_t>(level - 1) << kNextLevelShift) | kPresent | kReadable | kWritable;
+        } else if (next_level(entry) != level - 1) {
+            return nullptr;
+        }
+        table_physical = entry & kAddressMask;
+    }
+    return &memory.access(table_physical, memory.context)[(address >> entry_shift(1)) % kEntriesPerTable];
+}
+
+void free_level(const TableMemory& memory, uint64_t table_physical, unsigned level) {
+    if (level > 1) {
+        uint64_t* table = memory.access(table_physical, memory.context);
+        for (size_t i = 0; i < kEntriesPerTable; ++i) {
+            if ((table[i] & kPresent) != 0 && next_level(table[i]) == level - 1) {
+                free_level(memory, table[i] & kAddressMask, level - 1);
+            }
+        }
+    }
+    memory.release(table_physical, memory.context);
+}
+
 Command command(uint32_t opcode) {
     Command result = {};
     result.words[1] = opcode << 28;
@@ -71,15 +129,15 @@ bool map_identity(const TableMemory& memory, uint64_t root, uint64_t base, uint6
     return map_level(memory, root, kLevels, base, end);
 }
 
-bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint64_t& physical) {
-    if ((address >> entry_shift(kLevels + 1)) != 0) {
+bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint64_t& physical, uint64_t access) {
+    if ((address >> entry_shift(kLevels + 1)) != 0 || access == 0) {
         return false;
     }
     uint64_t table_physical = root;
     for (unsigned level = kLevels; level >= 1; --level) {
         const unsigned shift = entry_shift(level);
         const uint64_t entry = memory.access(table_physical, memory.context)[(address >> shift) % kEntriesPerTable];
-        if ((entry & kPresent) == 0 || (entry & (kReadable | kWritable)) != (kReadable | kWritable)) {
+        if ((entry & kPresent) == 0 || (entry & access) != access) {
             return false;
         }
         const unsigned next = next_level(entry);
@@ -89,11 +147,55 @@ bool translate(const TableMemory& memory, uint64_t root, uint64_t address, uint6
             return true;
         }
         if (next != level - 1) {
-            return false; // a skipped level: never written by map_identity
+            return false; // a skipped level: never written here
         }
         table_physical = entry & kAddressMask;
     }
     return false;
+}
+
+bool map_pages(const TableMemory& memory, uint64_t root, uint64_t device_address, uint64_t physical,
+    uint64_t bytes, uint64_t access) {
+    if (bytes == 0 || ((device_address | physical | bytes) & (kPageSize - 1)) != 0 ||
+        access == 0 || (access & ~(kReadable | kWritable)) != 0) {
+        return false;
+    }
+    const uint64_t end = device_address + bytes;
+    if (end < device_address || ((end - 1) >> entry_shift(kLevels + 1)) != 0 ||
+        physical + bytes < physical || ((physical + bytes - 1) >> 52) != 0) {
+        return false;
+    }
+    for (uint64_t address = device_address; address < end; address += kPageSize) {
+        if (any_leaf(memory, root, address)) {
+            return false;
+        }
+    }
+    for (uint64_t offset = 0; offset < bytes; offset += kPageSize) {
+        uint64_t* slot = leaf_slot(memory, root, device_address + offset, true);
+        if (slot == nullptr) {
+            unmap_pages(memory, root, device_address, offset);
+            return false;
+        }
+        *slot = (physical + offset) | kPresent | access;
+    }
+    return true;
+}
+
+uint64_t unmap_pages(const TableMemory& memory, uint64_t root, uint64_t device_address, uint64_t bytes) {
+    uint64_t cleared = 0;
+    const uint64_t end = device_address + bytes;
+    for (uint64_t address = device_address; address < end && address >= device_address; address += kPageSize) {
+        uint64_t* slot = leaf_slot(memory, root, address, false);
+        if (slot != nullptr && (*slot & kPresent) != 0) {
+            *slot = 0;
+            ++cleared;
+        }
+    }
+    return cleared;
+}
+
+void free_tables(const TableMemory& memory, uint64_t root) {
+    free_level(memory, root, kLevels);
 }
 
 void device_table_entry(uint64_t root, uint16_t domain, uint64_t (&entry)[4]) {

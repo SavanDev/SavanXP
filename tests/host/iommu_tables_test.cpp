@@ -222,6 +222,58 @@ void test_ivrs_legacy_only() {
     CHECK(g_report.reserved_count == 1 && g_report.reserved[0].all_devices);
 }
 
+bool group_has(const iommu_tables::Group& group, uint16_t id) {
+    for (size_t i = 0; i < group.range_count; ++i) {
+        if (group.ranges[i].first <= id && id <= group.ranges[i].last) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Isolation groups from the IVRS's alias entries (phase M3): a PCIe-to-PCI
+// bridge at 03:00.0 whose secondary bus 04 and one more device reach the
+// unit under the bridge's ID.
+void test_isolation_groups() {
+    Bytes bytes = table_start("IVRS", kIvinfo);
+    size_t ivhd = ivhd_begin(bytes, 0x11, 0x0002, 0xfeb80000);
+    entry4(bytes, 0x02, 0x0008);                      // a device of its own
+    entry8(bytes, 0x42, 0x0200, 0, 0x0300, 0);        // 02:00.0 as 03:00.0
+    entry8(bytes, 0x43, 0x0400, 0, 0x0300, 0);        // 04:00.0 -
+    entry4(bytes, 0x04, 0x04ff);                      // 04:1f.7 as 03:00.0
+    ivhd_end(bytes, ivhd);
+    CHECK(iommu_tables::parse_ivrs(place(bytes), g_report) == nullptr);
+
+    iommu_tables::Group group = {};
+    CHECK(iommu_tables::isolation_group(g_report, 0x0008, group));
+    CHECK(group.alias == 0x0008 && group.range_count == 1 && group.ranges[0].first == 0x0008 &&
+          group.ranges[0].last == 0x0008);
+    // A device the table does not name is a group of its own as well.
+    CHECK(iommu_tables::isolation_group(g_report, 0x0010, group));
+    CHECK(group.alias == 0x0010 && group.range_count == 1);
+
+    // From any member, the same set: the bridge, its bus, the other device.
+    for (uint16_t member : {uint16_t{0x0200}, uint16_t{0x0300}, uint16_t{0x0400}, uint16_t{0x0450}, uint16_t{0x04ff}}) {
+        CHECK(iommu_tables::isolation_group(g_report, member, group));
+        CHECK(group.alias == 0x0300);
+        CHECK(group.ranges[0].first == member && group.ranges[0].last == member);
+        CHECK(group_has(group, 0x0200) && group_has(group, 0x0300) && group_has(group, 0x0400) &&
+              group_has(group, 0x04ff));
+        CHECK(!group_has(group, 0x0008) && !group_has(group, 0x0500) && !group_has(group, 0x03ff));
+    }
+
+    // More ranges than a group holds: refused, not cut short.
+    bytes = table_start("IVRS", kIvinfo);
+    ivhd = ivhd_begin(bytes, 0x11, 0x0002, 0xfeb80000);
+    for (uint16_t i = 0; i < iommu_tables::kMaxGroupRanges; ++i) {
+        entry8(bytes, 0x42, static_cast<uint16_t>(0x0500 + 0x10 * i), 0, 0x0300, 0);
+    }
+    ivhd_end(bytes, ivhd);
+    CHECK(iommu_tables::parse_ivrs(place(bytes), g_report) == nullptr);
+    CHECK(!iommu_tables::isolation_group(g_report, 0x0500, group));
+    CHECK(!iommu_tables::isolation_group(g_report, 0x0300, group));
+}
+
 // Every prefix of a good table, each ending at the guard page. A prefix that
 // ends between entries is a smaller valid table; any other must be refused
 // and leave nothing behind. Neither may read past its length.
@@ -556,6 +608,7 @@ int main() {
 
     test_ivrs_good();
     test_ivrs_legacy_only();
+    test_isolation_groups();
     test_ivrs_truncated();
     test_ivrs_refused();
     test_dmar_good();

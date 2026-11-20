@@ -193,6 +193,19 @@ SCENARIOS: dict[str, Scenario] = {
         iommu="amd",
         boot_options="iommu iommu-selftest",
     ),
+    # M3: the RTL8139 in a domain of its own, with transmit buffer 0 left out
+    # of it. The first frame sent faults; the card must be stopped and moved
+    # to the blocked domain, and the kernel carries on (netsmoke then fails
+    # for want of a network, which is expected and not what is checked).
+    "iommu-rtl8139-fault": _qemu_scenario(
+        "netsmoke",
+        "the card is stopped and blocked",
+        "NET SMOKE PASS",
+        "AMD-Vi: a DMA outside the RTL8139's own domain is named, the card blocked",
+        180.0,
+        iommu="amd",
+        boot_options="iommu rtl8139-unmapped-tx",
+    ),
     "iommu-none": _qemu_scenario(
         "uname",
         "iommu: none",
