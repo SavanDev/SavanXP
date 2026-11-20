@@ -115,7 +115,11 @@ about a minute (`system-log.txt`, not in the tree).
 - **No IOMMU from the firmware.** `iommu: none`: there is no IVRS. Linux on
   the same boot of the board has none either (no `IVRS` in
   `/sys/firmware/acpi/tables`, nothing in `/sys/class/iommu`). The board's
-  IOMMU setting, enabled in setup, was back to off at the next start.
+  IOMMU setting, enabled in setup, was back to off at the next start: it
+  conflicts with the memory's XMP profile. With XMP off the setting stays,
+  and Linux then finds the IVRS, an AMD-Vi unit at `00:00.2` (EFR
+  `0xf77ef22294ada`), interrupt remapping, and two I/O APICs (IDs 13 and 14,
+  GSIs 0–23 and 24–55, version 0x21).
 - **NVMe, read-only.** `nvme: controller 2646:500e, NVMe 1.3`, then
   `"KINGSTON SNVS500G", firmware EDFK0N01, 1 namespace(s), mdts 6` and
   `nvme0 namespace 1, 976773168 sectors, ..., read-only`. Its partition table
@@ -272,8 +276,5 @@ QEMU PCM, visual and simulated-fault evidence in the roadmap.
 
 ## Facts still to collect
 
-- Why the board's IOMMU setting does not stay on, and where it lives in
-  setup (AMD CBS, NBIO Common Options, and possibly North Bridge
-  Configuration too).
 - Whether the board has a serial header. With a bracket on one the kernel
   log is on COM1 and no photograph is needed.
