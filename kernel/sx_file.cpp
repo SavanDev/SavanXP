@@ -22,6 +22,9 @@ namespace {
 
 // Largest piece of a write handed to a file in one vfs::write.
 constexpr size_t kFileWriteChunk = 64u * 1024u;
+// Largest piece of a read asked of a file in one vfs::read: one device
+// command on SxFS (128 sectors), where a 256-byte piece was half a sector.
+constexpr size_t kFileReadChunk = 64u * 1024u;
 
 sx_status last_vfs_error(sx_status fallback) {
     const int error = vfs::last_error();
@@ -91,10 +94,19 @@ IoResult read_file(process::Process& proc, object::IoObject& file, uint64_t user
         result.status = SX_EBADF;
         return result;
     }
-    uint8_t scratch[process::detail::kPipeChunkSize];
+    // With the 256-byte stack scratch alone, SxFS read a 4 MB file as some
+    // 8 000 one-sector device commands, each with the kernel lock held. The
+    // heap buffer makes them runs of up to 128 sectors; the stack scratch
+    // serves small reads, and any read when the heap cannot spare a buffer.
+    uint8_t stack_scratch[process::detail::kPipeChunkSize];
+    const size_t heap_size = count <= sizeof(stack_scratch) ? 0 :
+        (count < kFileReadChunk ? count : kFileReadChunk);
+    uint8_t* heap_scratch = heap_size != 0 ? static_cast<uint8_t*>(heap::allocate(heap_size)) : nullptr;
+    uint8_t* scratch = heap_scratch != nullptr ? heap_scratch : stack_scratch;
+    const size_t scratch_size = heap_scratch != nullptr ? heap_size : sizeof(stack_scratch);
     while (result.length < count) {
         const size_t remaining = count - result.length;
-        const size_t step = remaining < sizeof(scratch) ? remaining : sizeof(scratch);
+        const size_t step = remaining < scratch_size ? remaining : scratch_size;
         const size_t consumed = vfs::read(*file.node, file.offset, scratch, step);
         if (consumed == 0) {
             // 0 is the end of the file unless the VFS says it was an error.
@@ -111,6 +123,7 @@ IoResult read_file(process::Process& proc, object::IoObject& file, uint64_t user
             break;
         }
     }
+    heap::free(heap_scratch);
     return result;
 }
 

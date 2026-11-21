@@ -981,6 +981,8 @@ loses no ticks.
 | First cuts, 2 cores (2 runs) | 2 s, by `date` | one | 43-48% | 26-31% | 8-51 ms |
 | First cuts, 4 cores, before the fix below | not timed | two | 91%, then 68% | 75%, then 56% | 73 ms, `SAVANXP_SYS_YIELD` |
 | First cuts, 4 cores (2 runs) | 1-2 s | one | 50-53% | 32-36% | 42-47 ms, `SAVANXP_SYS_READ` |
+| Reads in 64 KiB pieces, 2 cores (2 runs) | under 1 s | one | 13-16% | 1-2% | 5-29 ms, `SAVANXP_SYS_READ` |
+| Reads in 64 KiB pieces, 4 cores (2 runs) | under 1 s | one | 29% | 14-15% | 37-39 ms, `SAVANXP_SYS_READ` |
 
 - *The compositor keeps up.* It drew 6 frames a second in the copy's window
   (the console's output) against 2 at rest, where before it fell to 2 for
@@ -988,12 +990,20 @@ loses no ticks.
 - *Writeback no longer shows.* The queue the copy leaves drains afterwards
   with every window at idle levels; `make_room` does not run, since 4 MB is
   under the 8 MiB budget.
-- *What is left is the copy's own reads.* About 260 `read` calls that miss the
-  cache hold the lock 1.0-1.35 s together. A read that finds another core's
-  writeback command in flight settles it first, spinning under the lock; when
-  that command is a flush, QEMU's `fsync` on the host makes it the 40-70 ms
-  holds. The tick waits behind them with interrupts off, which is the ticks
-  lost.
+- *The copy's reads were one sector at a time.* `sx::read_file` handed the
+  VFS 256 bytes per call from a stack scratch, so SxFS asked the disk for
+  half a sector: a timing probe in `block::read` counted about 7 900
+  one-sector commands of ~100 µs each under KVM, with no time at all spent
+  settling another core's command on two cores. Reads now go through a heap
+  buffer of up to 64 KiB, the way writes already did, and SxFS reads whole
+  runs of up to 128 sectors: the copy's reads held the lock 45-78 ms in all
+  instead of 1.0-1.35 s.
+- *What is left is settling, on four cores.* With idle APs to drain it, the
+  queue the copy fills is written back while the copy still reads; a read
+  that finds a writeback command in flight settles it under the lock, and
+  when that command is a flush, QEMU's `fsync` on the host makes it a
+  30-40 ms hold. The tick waits behind it with interrupts off, which is the
+  ticks lost. Taking reads out of the lock is what answers it.
 - *The fix below.* On four cores a second idle AP's `begin_writeback_step`
   settled the first one's command under the lock: 5.6 s of `YIELD` holds in
   an 8 s window. An idle that finds a command running now leaves it to its

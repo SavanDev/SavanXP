@@ -125,6 +125,9 @@ Cut-off notes:
 - **A thread the timer tick wakes runs at once**: on a free idle core (`smp::kick_free_core`), or in place of the
   BSP's current thread, instead of after the rest of its 20 ms slice; `audio-preferences` no longer underruns while
   an AP waits for the disk ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
+- **Files are read in pieces of up to 64 KiB** instead of 256 bytes, so SxFS asks the disk for whole runs rather
+  than one sector at a time: a 4 MB `cp` takes under a second under KVM and holds the kernel lock 13-29% of its window
+  instead of 43-53% ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
 - **Disk writeback waits outside the kernel lock** on an SMP machine (slice 5.2, first cut): one application
   processor's idle at a time sends a writeback command with the lock released, so the other cores no longer stop for
   the disk; the BSP leaves the queue to the APs ([BLOCK_WRITEBACK.md](docs/kernel/BLOCK_WRITEBACK.md#draining)).

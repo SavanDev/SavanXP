@@ -88,7 +88,10 @@ direct-mapped cache, for the devices that queue their writes.
 - **Small requests only.** A read of up to 8 sectors is answered from the
   cache when it holds all of them, and fills it otherwise. Longer reads are
   bulk file data: they go to the device and leave the cache alone, so a large
-  file does not evict the directory blocks and headers the cache is for.
+  file does not evict the directory blocks and headers the cache is for. That
+  depends on callers asking for whole runs: `sx::read_file` reads files in
+  pieces of up to 64 KiB, where 256-byte pieces made every sector of a file a
+  one-sector miss.
 - **One sector, one copy.** A partition forwards to its disk, so its reads and
   writes use the disk's slots under the disk's LBAs. A sector reached through
   the partition and through the whole disk is the same slot.
