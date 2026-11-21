@@ -28,6 +28,8 @@
 #include "kernel/elf.hpp"
 #include "kernel/console.hpp"
 #include "kernel/process.hpp"
+#include "kernel/random.hpp"
+#include "kernel/random_crypto.hpp"
 #include "kernel/process_detail.hpp"
 #include "kernel/region_list.hpp"
 #include "kernel/rtc.hpp"
@@ -1119,8 +1121,15 @@ int64_t linux_readlink(process::Process& proc, const process::SavedContext* c) {
     return vfs::open(proc.credentials, host, 0, 0) ? -abi::kEINVAL : vfs_failure();
 }
 
+// getrandom(buffer, count, flags) over the kernel generator
+// (docs/kernel/RANDOM.md). GRND_NONBLOCK (1) and GRND_RANDOM (2) change
+// nothing: the pool never blocks once seeded. Before that it returns EAGAIN,
+// which Linux gives a non-blocking caller; only GRND_INSECURE (4), which asks
+// for exactly that, falls back to the CPU's unvetted source. At most 256
+// bytes per call: a short read, as Linux allows.
 int64_t linux_getrandom(process::Process& proc, const process::SavedContext* c) {
-    if (c->rdx != 0) {
+    constexpr uint64_t kGrndInsecure = 4;
+    if ((c->rdx & ~7ull) != 0 || (c->rdx & 6ull) == 6ull) {
         report_unsupported(proc, abi::kSysGetrandom, "getrandom flags");
         return -abi::kEINVAL;
     }
@@ -1128,11 +1137,20 @@ int64_t linux_getrandom(process::Process& proc, const process::SavedContext* c) 
     if (!count) {
         return 0;
     }
-    uint64_t bytes[32];
-    for (uint64_t& word : bytes) {
-        word = arch::random_u64();
+    uint8_t bytes[256];
+    if (random::seeded()) {
+        (void)random::fill(bytes, count);
+    } else if ((c->rdx & kGrndInsecure) != 0) {
+        for (size_t index = 0; index < count; index += 8) {
+            const uint64_t word = arch::random_u64();
+            memcpy(bytes + index, &word, count - index < 8 ? count - index : 8);
+        }
+    } else {
+        return -abi::kEAGAIN;
     }
-    return sx::copy_to_user(c->rdi, bytes, count) ? static_cast<int64_t>(count) : -abi::kEFAULT;
+    const bool copied = sx::copy_to_user(c->rdi, bytes, count);
+    random_crypto::wipe(bytes, sizeof(bytes));
+    return copied ? static_cast<int64_t>(count) : -abi::kEFAULT;
 }
 
 // munmap(address, length).

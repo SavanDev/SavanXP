@@ -377,6 +377,19 @@ enum savanxp_cpu_feature {
     SAVANXP_CPU_FEATURE_HYPERVISOR = 1u << 5,
 };
 
+/* SAVANXP_SYS_RANDOM_STATUS: the kernel generator's state, the same layout
+ * as SUN's struct sxn_random_status (docs/kernel/RANDOM.md). */
+struct savanxp_random_status {
+    uint32_t seeded;
+    uint32_t sources;   /* SAVANXP_RANDOM_SOURCE_* bits */
+    uint32_t pool_bits;
+    uint32_t reseeds;
+};
+#define SAVANXP_RANDOM_SOURCE_VIRTIO_RNG (1u << 0)
+#define SAVANXP_RANDOM_SOURCE_RDSEED (1u << 1)
+#define SAVANXP_RANDOM_SOURCE_RDRAND (1u << 2)
+#define SAVANXP_RANDOM_SOURCE_TIMING (1u << 3)
+
 struct savanxp_realtime {
     uint16_t year;
     uint8_t month;

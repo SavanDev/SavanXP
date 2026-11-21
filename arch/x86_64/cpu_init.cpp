@@ -1012,6 +1012,43 @@ uint64_t random_u64() {
     return random_u64_local();
 }
 
+bool hardware_seed_u64(uint64_t& value) {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+
+    cpuid(0, 0, eax, ebx, ecx, edx);
+    if (eax < 7) {
+        return false;
+    }
+    cpuid(7, 0, eax, ebx, ecx, edx);
+    if ((ebx & (1u << 18)) == 0) {
+        return false;
+    }
+    // RDSEED may run dry under load; Intel's guidance is to retry with a pause.
+    for (uint32_t attempt = 0; attempt < 64; ++attempt) {
+        uint8_t success = 0;
+        asm volatile("rdseed %0; setc %1" : "=r"(value), "=qm"(success));
+        if (success != 0) {
+            return true;
+        }
+        asm volatile("pause");
+    }
+    return false;
+}
+
+bool hardware_random_u64(uint64_t& value) {
+    for (uint32_t attempt = 0; g_rdrand_available && attempt < 16; ++attempt) {
+        uint8_t success = 0;
+        asm volatile("rdrand %0; setc %1" : "=r"(value), "=qm"(success));
+        if (success != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Estado FPU/SSE limpio capturado en el boot; se copia a cada proceso nuevo
  * para que arranque con la FPU en un estado valido (MXCSR con excepciones
  * enmascaradas), en vez de un FXRSTOR sobre bytes en cero. */

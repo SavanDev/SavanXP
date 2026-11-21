@@ -3577,6 +3577,66 @@ cleanup:
     if (delay >= 0) check(sxn_close(delay) == 0);
 }
 
+/* The kernel generator (docs/kernel/RANDOM.md) on a machine with virtio-rng:
+ * seeded, its limits, and output that looks like noise. A statistical check
+ * proves little about a CSPRNG; it catches an output stuck on a pattern, a
+ * zeroed buffer or a copy that skipped bytes. */
+static unsigned char g_random_bytes[SXN_RANDOM_MAX + 1];
+
+static void test_random(void) {
+    struct sxn_random_status status;
+    unsigned counts[256];
+    unsigned char first[32], second[32];
+    unsigned i, round, zero = 0;
+
+    memset(&status, 0, sizeof(status));
+    check(sxn_random_status(&status) == 0);
+    check(status.seeded == 1 && (status.sources & SXN_RANDOM_SOURCE_VIRTIO_RNG) != 0);
+    check(status.reseeds >= 1);
+    check(sxn_random_status((struct sxn_random_status*)1) == -SAVANXP_EINVAL);
+
+    check(sxn_random_bytes(g_random_bytes, 0) == 0);
+    check(sxn_random_bytes(g_random_bytes, SXN_RANDOM_MAX) == (long)SXN_RANDOM_MAX);
+    check(sxn_random_bytes(g_random_bytes, SXN_RANDOM_MAX + 1) == -SAVANXP_EINVAL);
+    check(sxn_random_bytes((void*)1, 16) == -SAVANXP_EINVAL);
+    check(sxn_trap(SXN_SYS_RANDOM_BYTES, (unsigned long)g_random_bytes, 16, 1) == -SAVANXP_EINVAL);
+
+    check(sxn_random_bytes(first, sizeof(first)) == (long)sizeof(first));
+    check(sxn_random_bytes(second, sizeof(second)) == (long)sizeof(second));
+    check(memcmp(first, second, sizeof(first)) != 0);
+
+    /* 64 KiB: every byte value about 256 times. */
+    memset(counts, 0, sizeof(counts));
+    for (round = 0; round < 16; ++round) {
+        memset(g_random_bytes, 0, SXN_RANDOM_MAX);
+        check(sxn_random_bytes(g_random_bytes, SXN_RANDOM_MAX) == (long)SXN_RANDOM_MAX);
+        for (i = 0; i < SXN_RANDOM_MAX; ++i) counts[g_random_bytes[i]] += 1;
+    }
+    for (i = 0; i < 256; ++i) {
+        if (counts[i] < 150 || counts[i] > 370) zero += 1;
+    }
+    check(zero == 0);
+    sxn_log("nativetest: random bytes from a seeded generator");
+}
+
+/* `nativetest random-unseeded`: a machine with no entropy source at all. The
+ * generator must say so and hand out nothing. */
+static void test_random_unseeded(void) {
+    struct sxn_random_status status;
+    unsigned char bytes[16];
+
+    memset(&status, 0, sizeof(status));
+    check(sxn_random_status(&status) == 0);
+    check(status.seeded == 0);
+    check((status.sources & (SXN_RANDOM_SOURCE_VIRTIO_RNG | SXN_RANDOM_SOURCE_RDSEED)) == 0);
+    check(status.pool_bits < 256);
+    memset(bytes, 0xA5, sizeof(bytes));
+    check(sxn_random_bytes(bytes, sizeof(bytes)) == -SAVANXP_EAGAIN);
+    for (unsigned i = 0; i < sizeof(bytes); ++i) check(bytes[i] == 0xA5);
+    check(sxn_random_bytes(bytes, 0) == 0);
+    sxn_log("nativetest: an unseeded generator refuses");
+}
+
 /* LOG_READ: walks the whole system log this process may read. Finds the
  * record whose text contains `marker`, checks the sequences only grow and
  * says whether a kernel line was seen. */
@@ -3918,6 +3978,11 @@ int main(int argc, char** argv) {
     long section_handle;
     long base;
 
+    if (argc > 1 && streq(argv[1], "random-unseeded")) {
+        test_random_unseeded();
+        sxn_log(g_failures ? "NATIVE RANDOM UNSEEDED FAIL" : "NATIVE RANDOM UNSEEDED PASS");
+        sxn_exit(g_failures ? 1 : 0);
+    }
     if (argc > 2 && streq(argv[1], "network") && streq(argv[2], "offline")) {
         test_native_network_offline();
         sxn_log(g_failures ? "NATIVE NETWORK OFFLINE FAIL" : "NATIVE NETWORK OFFLINE PASS");
@@ -4814,6 +4879,7 @@ int main(int argc, char** argv) {
 
     test_files();
     test_file_locks();
+    test_random();
     test_clipboard();
     test_clipboard_changes();
     test_view_at();

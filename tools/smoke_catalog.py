@@ -34,6 +34,9 @@ class Scenario:
     visual_scenario: str = ""
     requires_virtio: bool = False
     no_network: bool = False
+    # No virtio-rng and a CPU without RDRAND or RDSEED: a machine whose kernel
+    # generator can never be seeded (docs/kernel/RANDOM.md).
+    no_rng: bool = False
     no_disk: bool = False
     extra_disk_mib: int = 0
     fat_disk_mib: int = 0
@@ -78,6 +81,7 @@ def _qemu_scenario(
     visual_scenario: str = "",
     requires_virtio: bool = False,
     no_network: bool = False,
+    no_rng: bool = False,
     no_disk: bool = False,
     extra_disk_mib: int = 0,
     fat_disk_mib: int = 0,
@@ -114,6 +118,7 @@ def _qemu_scenario(
         visual_scenario=visual_scenario,
         requires_virtio=requires_virtio,
         no_network=no_network,
+        no_rng=no_rng,
         no_disk=no_disk,
         extra_disk_mib=extra_disk_mib,
         fat_disk_mib=fat_disk_mib,
@@ -914,6 +919,12 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="hda", no_network=True,
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),
+    "random-unseeded": _qemu_scenario(
+        "nativerandom", "NATIVE RANDOM UNSEEDED PASS", "NATIVE RANDOM UNSEEDED FAIL",
+        "The kernel generator with no virtio-rng, RDRAND or RDSEED: unseeded, and it refuses",
+        no_rng=True,
+        prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
+    ),
     "native-network-offline": _qemu_scenario(
         "nativenetwork offline", "NATIVE NETWORK OFFLINE PASS", "NATIVE NETWORK OFFLINE FAIL",
         "SUN socket initialization errors without a network card",
@@ -1356,6 +1367,7 @@ def main() -> int:
             "visual_scenario",
             "requires_virtio",
             "no_network",
+            "no_rng",
             "no_disk",
             "extra_disk_mib",
             "fat_disk_mib",

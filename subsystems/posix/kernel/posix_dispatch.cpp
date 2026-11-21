@@ -25,6 +25,8 @@ static void register_posix_process_state(void) {
 #include <stdint.h>
 
 #include "kernel/heap.hpp"
+#include "kernel/random.hpp"
+#include "kernel/random_crypto.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/sx.hpp"
@@ -595,6 +597,51 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             }
 
             context->rax = 0;
+            return context;
+        }
+        case SAVANXP_SYS_GETRANDOM: {
+            // The kernel generator (docs/kernel/RANDOM.md), as SUN's
+            // RANDOM_BYTES: copied out 256 bytes at a time, -EAGAIN while it
+            // is not seeded. GRND_NONBLOCK (1) and GRND_RANDOM (2) change
+            // nothing: there is one pool and it never blocks.
+            const uint64_t buffer = context->rdi;
+            const uint64_t length = context->rsi;
+            uint8_t chunk[256];
+            uint64_t done = 0;
+            if ((context->rdx & ~3ull) != 0 || length > random::kMaxRequest ||
+                (length != 0 && !vm::is_user_range_accessible(caller.address_space, buffer, length, true))) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            if (length != 0 && !random::seeded()) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EAGAIN));
+                return context;
+            }
+            while (done < length) {
+                const size_t take = length - done < sizeof(chunk) ? static_cast<size_t>(length - done) : sizeof(chunk);
+                if (!random::fill(chunk, take) || !write_to_process_memory(caller, buffer + done, chunk, take)) {
+                    random_crypto::wipe(chunk, sizeof(chunk));
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                    return context;
+                }
+                done += take;
+            }
+            random_crypto::wipe(chunk, sizeof(chunk));
+            context->rax = length;
+            return context;
+        }
+        case SAVANXP_SYS_RANDOM_STATUS: {
+            random::Status status = {};
+            savanxp_random_status value = {};
+            random::status(status);
+            value.seeded = status.seeded ? 1u : 0u;
+            value.sources = status.sources;
+            value.pool_bits = status.pool_bits;
+            value.reseeds = status.reseeds;
+            context->rax = vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(value), true) &&
+                    write_to_process_memory(caller, context->rdi, &value, sizeof(value))
+                ? 0
+                : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
             return context;
         }
         case SAVANXP_SYS_FSYNC:

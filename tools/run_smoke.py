@@ -220,6 +220,8 @@ def main() -> int:
     parser.add_argument("--capture-fixture", action="store_true", help="deterministic ALSA file microphone, never host audio")
     parser.add_argument("--clean-audio-preferences", action="store_true", help="reset audio settings only on the disposable smoke image")
     parser.add_argument("--no-network", action="store_true", help="boot without a NIC")
+    parser.add_argument("--no-rng", action="store_true",
+                        help="boot without virtio-rng and without the CPU's RDRAND and RDSEED")
     parser.add_argument("--no-disk", action="store_true",
                         help="Boot with no disk attached: the rescue system's scenario.")
     parser.add_argument("--extra-disk-mib", type=int, default=0,
@@ -413,6 +415,7 @@ def main() -> int:
         serial_path=log_path,
         qmp_path=qmp_path if (args.qmp_driver or args.qmp_callback) else None,
         network=not args.no_network,
+        rng=not args.no_rng,
         audio_device=args.audio_device,
         capture_fixture=args.capture_fixture,
         wav_path=wav_path,

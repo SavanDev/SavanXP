@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -530,6 +531,27 @@ static void test_float(void) {
     check(strcmp(text, "0.30") == 0, "0.1+0.2 formatea 0.30");
 }
 
+/* getrandom(2) and getentropy(3) over the kernel generator, as a port calls
+ * them (OpenSSL's seed source does). */
+static void test_random(void) {
+    static unsigned char big[5000];
+    unsigned char a[32];
+    unsigned char b[32];
+
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+    check(getentropy(a, sizeof(a)) == 0, "getentropy");
+    check(getentropy(b, sizeof(b)) == 0, "getentropy otra vez");
+    check(memcmp(a, b, sizeof(a)) != 0, "getentropy no repite");
+    errno = 0;
+    check(getentropy(big, 257) == -1 && errno == EINVAL, "getentropy pasado 256 es EINVAL");
+    check(getrandom(big, sizeof(big), 0) == 4096, "getrandom corto en 4096");
+    check(getrandom(big, 16, GRND_NONBLOCK | GRND_RANDOM) == 16, "getrandom con flags conocidas");
+    errno = 0;
+    check(getrandom(big, 16, 0x80) == -1 && errno == EINVAL, "getrandom con flags desconocidas");
+    check(getrandom(big, 0, 0) == 0, "getrandom de cero bytes");
+}
+
 int main(void) {
     const struct file_ops ops = {
         .close = close,
@@ -552,6 +574,7 @@ int main(void) {
     test_float();
     test_error_convention();
     test_directories();
+    test_random();
 
     check(getpid() > 0, "getpid");
     check(strcmp(ops.remove, "campo llamado remove") == 0, "campo remove intacto");

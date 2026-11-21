@@ -119,6 +119,13 @@ enum savanxp_syscall_number {
      * which covers the file, its length and every name. -EBADF for a
      * descriptor that is not a file or a directory, -EIO if a write failed. */
     SAVANXP_SYS_FSYNC = 73,
+    /* getrandom(buffer, length, flags): bytes from the kernel's cryptographic
+     * generator, at most 4096 per call. -EAGAIN while it is not seeded,
+     * whatever the flags: there is no weaker pool to fall back on. Flags:
+     * GRND_NONBLOCK and GRND_RANDOM are accepted and change nothing. */
+    SAVANXP_SYS_GETRANDOM = 74,
+    /* RANDOM_STATUS(struct savanxp_random_status*): the generator's state. */
+    SAVANXP_SYS_RANDOM_STATUS = 75,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,

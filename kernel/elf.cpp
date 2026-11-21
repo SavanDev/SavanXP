@@ -1,4 +1,5 @@
 #include "kernel/elf.hpp"
+#include "kernel/random.hpp"
 
 #include "arch/cpu.hpp"
 #include "kernel/physical_memory.hpp"
@@ -368,7 +369,10 @@ bool build_linux_stack(
         return user_sp;
     };
 
-    const uint64_t random_bytes[2] = {arch::random_u64(), arch::random_u64()};
+    // AT_RANDOM seeds the program's stack canary and its libc's own state:
+    // the kernel generator's bytes once it is seeded (docs/kernel/RANDOM.md).
+    uint64_t random_bytes[2] = {arch::random_u64(), arch::random_u64()};
+    (void)random::fill(random_bytes, sizeof(random_bytes));
     const uint64_t random_address = push(random_bytes, sizeof(random_bytes));
     const uint64_t execfn_address = push(execfn, strlen(execfn) + 1);
     for (int index = envc - 1; index >= 0; --index) {

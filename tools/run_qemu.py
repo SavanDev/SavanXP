@@ -139,6 +139,7 @@ def build_qemu_args(
     usb_hub: bool = False,
     usb_host: str = "xhci",
     iommu: str = "none",
+    rng: bool = True,
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -168,6 +169,10 @@ def build_qemu_args(
     dma-remap=on. The board also gets QEMU's edu device, whose DMA engine the
     kernel's iommu-selftest points inside and outside the identity domain; its
     DMA mask is widened so that it does not clip the address that must fault.
+
+    rng adds virtio-rng-pci, the host's entropy for the kernel generator
+    (docs/kernel/RANDOM.md). Without it the CPU also loses RDRAND and RDSEED,
+    so the guest has no credited source at all and must say so.
     """
     if iommu not in IOMMUS:
         raise SystemExit(f"unknown IOMMU {iommu!r}; expected one of {', '.join(IOMMUS)}")
@@ -187,7 +192,7 @@ def build_qemu_args(
         "-smp",
         str(smp),
         "-cpu",
-        "host" if accel == "kvm" else "max",
+        ("host" if accel == "kvm" else "max") + ("" if rng else ",-rdrand,-rdseed"),
         "-audiodev",
         "none,id=audio0" if headless else "sdl,id=audio0",
         "-display",
@@ -216,6 +221,8 @@ def build_qemu_args(
     elif iommu == "intel":
         args_list += ["-device", "intel-iommu,intremap=on"]
     args_list += ["-netdev", "user,id=net0"] if network else ["-nic", "none"]
+    if rng:
+        args_list += ["-device", "virtio-rng-pci"]
     if monitor_path is not None:
         args_list += ["-no-reboot", "-no-shutdown"]
         args_list += [
@@ -395,6 +402,8 @@ def main() -> int:
     parser.add_argument("--disk-bus", choices=DISK_BUSES,
                         help="disk controller without --virtio (default: SAVANXP_DISK_BUS or ahci)")
     parser.add_argument("--no-network", action="store_true", help="omit every NIC and network backend")
+    parser.add_argument("--no-rng", action="store_true",
+                        help="omit virtio-rng and the CPU's RDRAND and RDSEED")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--qmp-path", type=Path, help="QMP Unix socket path")
@@ -448,6 +457,7 @@ def main() -> int:
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,
         network=not args.no_network,
+        rng=not args.no_rng,
         audio_device=args.audio_device,
         extra_disks=((args.extra_disk.resolve(), "SXBLANK0"),) if args.extra_disk else (),
         usb=args.usb,

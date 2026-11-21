@@ -147,6 +147,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "nativepower")) {
         return "NATIVE POWER";
     }
+    if (spec != 0 && text_contains(spec, "nativerandom")) {
+        return "NATIVE RANDOM UNSEEDED";
+    }
     if (spec != 0 && (text_contains(spec, "nativetest") || text_contains(spec, "nativecapture") || text_contains(spec, "nativedevices") || text_contains(spec, "nativepreferences"))) {
         return "NATIVE TEST";
     }
@@ -261,6 +264,7 @@ static int run_automation_spec(const char* spec) {
     const char* nativedevices_argv[] = {"/bin/nativetest.sxe", "audio-devices", 0};
     const char* nativepreferences_argv[] = {"/bin/nativetest.sxe", "audio-preferences", 0};
     const char* nativepower_argv[] = {"/bin/nativetest.sxe", "power", 0};
+    const char* nativerandom_argv[] = {"/bin/nativetest.sxe", "random-unseeded", 0};
     const char* nightwood_argv[] = {"/system/nightwood.sxe", "--selftest", 0};
     const char* sxgltest_argv[] = {"/system/sxgltest.sxe", 0};
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
@@ -491,6 +495,12 @@ static int run_automation_spec(const char* spec) {
              * (docs/kernel/POWER.md). */
             path = "/bin/nativetest.sxe";
             argv = nativepower_argv;
+            argc = 2;
+        } else if (strcmp(spec, "nativerandom") == 0) {
+            /* A machine with no entropy source: the generator must refuse
+             * (docs/kernel/RANDOM.md). */
+            path = "/bin/nativetest.sxe";
+            argv = nativerandom_argv;
             argc = 2;
         } else if (strcmp(spec, "nativepreferences") == 0) {
             path = "/bin/nativetest.sxe";

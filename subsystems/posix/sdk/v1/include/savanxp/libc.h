@@ -132,6 +132,11 @@ long realtime(struct savanxp_realtime* value);
 long set_realtime(const struct savanxp_realtime* value);
 long savanxp_sync(void);
 long savanxp_fsync(int fd);
+/* The kernel's cryptographic generator (docs/kernel/RANDOM.md): bytes, or
+ * -EAGAIN while it is not seeded; and its state. getrandom(2) and
+ * getentropy(3) are the POSIX faces of the first. */
+long savanxp_getrandom(void* buffer, unsigned long length, unsigned flags);
+long random_status(struct savanxp_random_status* status);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */
 long fscheck(struct savanxp_fscheck_report* report);

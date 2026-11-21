@@ -467,6 +467,14 @@ long savanxp_fsync(int fd) {
     return syscall1(SAVANXP_SYS_FSYNC, (unsigned long)fd);
 }
 
+long savanxp_getrandom(void* buffer, unsigned long length, unsigned flags) {
+    return syscall3(SAVANXP_SYS_GETRANDOM, (unsigned long)buffer, length, (unsigned long)flags);
+}
+
+long random_status(struct savanxp_random_status* status) {
+    return syscall1(SAVANXP_SYS_RANDOM_STATUS, (unsigned long)status);
+}
+
 long fscheck(struct savanxp_fscheck_report* report) {
     return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
 }

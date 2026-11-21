@@ -444,6 +444,39 @@ enum sxn_syscall_number {
      * file locked. 0, -ENOENT (it holds none there), -EBADF, -EINVAL.
      * UnlockFileEx. */
     SXN_SYS_UNLOCK_FILE = 0x1049,
+    /* rdi = buffer (written), rsi = length (at most SXN_RANDOM_MAX), rdx =
+     * flags (0). Fills it from the kernel's cryptographic generator
+     * (docs/kernel/RANDOM.md). Returns the length, -EAGAIN while the
+     * generator is not seeded -- no entropy source has given 256 bits yet,
+     * and on a machine without one it never will -- or -EINVAL for a bad
+     * buffer, a length past the maximum or unknown flags. Nothing weaker is
+     * ever handed out instead. BCryptGenRandom. */
+    SXN_SYS_RANDOM_BYTES = 0x104A,
+    /* rdi = struct sxn_random_status* (written): whether the generator is
+     * seeded, from which sources, and how many times it reseeded. 0, or
+     * -EINVAL for a bad pointer. */
+    SXN_SYS_RANDOM_STATUS = 0x104B,
+};
+
+/* SXN_SYS_RANDOM_BYTES's largest request. */
+#define SXN_RANDOM_MAX 4096u
+
+/* Where the generator's entropy came from (sxn_random_status.sources). Only
+ * VIRTIO_RNG and RDSEED are credited; RDRAND and TIMING are mixed in and
+ * never counted toward the seed. */
+enum sxn_random_source {
+    SXN_RANDOM_SOURCE_VIRTIO_RNG = 1u << 0,
+    SXN_RANDOM_SOURCE_RDSEED = 1u << 1,
+    SXN_RANDOM_SOURCE_RDRAND = 1u << 2,
+    SXN_RANDOM_SOURCE_TIMING = 1u << 3,
+};
+
+/* SXN_SYS_RANDOM_STATUS. The same layout as POSIX's savanxp_random_status. */
+struct sxn_random_status {
+    uint32_t seeded;    /* 1 once 256 credited bits arrived */
+    uint32_t sources;   /* enum sxn_random_source bits */
+    uint32_t pool_bits; /* credited bits waiting for the next reseed */
+    uint32_t reseeds;
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial

@@ -80,6 +80,7 @@ static_assert(sizeof(Message) == 56);
 constexpr int64_t kEPERM = 1;
 constexpr int64_t kENOENT = 2;
 constexpr int64_t kEIO = 5;
+constexpr int64_t kEAGAIN = 11;
 constexpr int64_t kEBADF = 9;
 constexpr int64_t kENOMEM = 12;
 constexpr int64_t kEACCES = 13;

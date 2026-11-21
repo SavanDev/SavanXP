@@ -1,5 +1,17 @@
 #include "libc.h"
 
+/* The kernel generator's state through POSIX (docs/kernel/RANDOM.md): the
+ * smoke machine has virtio-rng, so it must be seeded from it. */
+static int random_is_seeded(void) {
+    struct savanxp_random_status status = {0};
+    if (random_status(&status) != 0 || status.seeded != 1 ||
+        (status.sources & SAVANXP_RANDOM_SOURCE_VIRTIO_RNG) == 0) {
+        puts_out("smoke: the kernel generator is not seeded from virtio-rng\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int run_and_expect(const char* path, const char* const* argv, int argc, int expected_status) {
     int status = -1;
     long pid = spawn(path, argv, argc);
@@ -423,6 +435,7 @@ int main(void) {
         !file_missing("/smoke/tree2") ||
         !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
         !run_and_expect("/bin/libctest", libctest_argv, 1, 0) ||
+        !random_is_seeded() ||
         !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||
         !run_and_expect("/rescue/bin/imagetest", imagetest_argv, 1, 0) ||
         !run_and_expect("/bin/imagetest", imagetest_disk_argv, 1, 0) ||

@@ -27,6 +27,9 @@ int setpgid(pid_t pid, pid_t pgrp);
 pid_t setsid(void);
 int sync(void);
 int fsync(int fd);
+/* Fills buffer with up to 256 cryptographically secure bytes: 0, or -1 with
+ * EINVAL past 256 and EAGAIN while the kernel generator is not seeded. */
+int getentropy(void* buffer, size_t length);
 int fdatasync(int fd);
 int dup(int fd);
 int dup2(int oldfd, int newfd);

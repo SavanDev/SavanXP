@@ -14,6 +14,8 @@
 #include "kernel/object.hpp"
 #include "kernel/net.hpp"
 #include "kernel/process_detail.hpp"
+#include "kernel/random.hpp"
+#include "kernel/random_crypto.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 #include "kernel/storage.hpp"
@@ -478,6 +480,57 @@ int native_lock_file(Thread& self, uint64_t handle, uint64_t offset, uint64_t le
         (flags & SXN_LOCK_EXCLUSIVE) != 0 ? file_lock::Kind::exclusive : file_lock::Kind::shared;
     return file_lock::open_file_lock(self, *file, kind, offset, last, (flags & SXN_LOCK_FAIL_IMMEDIATELY) == 0);
 }
+
+// SXN_SYS_RANDOM_BYTES: the generator's bytes, copied out 256 at a time so
+// no request puts more than that on the kernel stack.
+int64_t native_random_bytes(uint64_t buffer, uint64_t length, uint64_t flags) {
+    uint8_t chunk[256];
+    uint64_t done = 0;
+
+    if (flags != 0 || length > random::kMaxRequest) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (length == 0) {
+        return 0;
+    }
+    if (!sx::validate_user_range(buffer, length, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (!random::seeded()) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    while (done < length) {
+        const size_t take = length - done < sizeof(chunk) ? static_cast<size_t>(length - done) : sizeof(chunk);
+        if (!random::fill(chunk, take) || !sx::copy_to_user(buffer + done, chunk, take)) {
+            random_crypto::wipe(chunk, sizeof(chunk));
+            return sx::negative_error(SX_EINVAL);
+        }
+        done += take;
+    }
+    random_crypto::wipe(chunk, sizeof(chunk));
+    return static_cast<int64_t>(length);
+}
+
+int64_t native_random_status(uint64_t out) {
+    random::Status status = {};
+    sxn_random_status value = {};
+
+    random::status(status);
+    value.seeded = status.seeded ? 1u : 0u;
+    value.sources = status.sources;
+    value.pool_bits = status.pool_bits;
+    value.reseeds = status.reseeds;
+    return sx::validate_user_range(out, sizeof(value), true) && sx::copy_to_user(out, &value, sizeof(value))
+        ? 0
+        : sx::negative_error(SX_EINVAL);
+}
+
+static_assert(static_cast<uint32_t>(random::kSourceVirtioRng) == SXN_RANDOM_SOURCE_VIRTIO_RNG &&
+                  static_cast<uint32_t>(random::kSourceRdseed) == SXN_RANDOM_SOURCE_RDSEED &&
+                  static_cast<uint32_t>(random::kSourceRdrand) == SXN_RANDOM_SOURCE_RDRAND &&
+                  static_cast<uint32_t>(random::kSourceTiming) == SXN_RANDOM_SOURCE_TIMING,
+    "the native ABI names the kernel's sources");
+static_assert(random::kMaxRequest == SXN_RANDOM_MAX, "the native ABI states the kernel's limit");
 
 int native_unlock_file(Process& proc, uint64_t handle, uint64_t offset, uint64_t length) {
     object::IoObject* file = lockable_file(proc, handle);
@@ -1590,6 +1643,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_UNLOCK_FILE:
             context->rax = static_cast<uint64_t>(native_unlock_file(*caller, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_RANDOM_BYTES:
+            context->rax = static_cast<uint64_t>(native_random_bytes(context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_RANDOM_STATUS:
+            context->rax = static_cast<uint64_t>(native_random_status(context->rdi));
             return context;
         case SXN_SYS_MAKE_DIRECTORY:
             context->rax = static_cast<uint64_t>(native_make_directory(*caller, context->rdi));

@@ -45,6 +45,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   to the serial port, who each line is attributed to, and who may read it
   (`SXN_SYS_LOG_READ`).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
+- [`RANDOM.md`](kernel/RANDOM.md) — the kernel's CSPRNG: the BLAKE2s pool and
+  ChaCha20 generator, which sources are credited (virtio-rng, RDSEED), why an
+  unseeded machine refuses, and its SUN, POSIX and Linux faces.
 - [`IOMMU.md`](kernel/IOMMU.md) — the IOMMU layer: reading the IVRS and DMAR at
   boot, the rules a table must pass, AMD-Vi with one identity domain behind the
   `iommu` boot option, per-device domains and isolation groups, interrupt

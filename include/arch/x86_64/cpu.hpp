@@ -31,6 +31,12 @@ void initialize_cpu();
 // advertises it; the TSC fallback exists so old machines still boot, not for
 // cryptography.
 uint64_t random_u64();
+// The CPU's own random sources, for the kernel generator (docs/kernel/
+// RANDOM.md), with no fallback: false when the CPU lacks the instruction or
+// it kept failing. RDSEED gives conditioned entropy; RDRAND, the output of a
+// generator the CPU seeds from it.
+bool hardware_seed_u64(uint64_t& value);
+bool hardware_random_u64(uint64_t& value);
 
 /* --- SMP ---------------------------------------------------------------------
  * Bringing up the application processors, and per-core state.

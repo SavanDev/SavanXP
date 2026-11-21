@@ -27,6 +27,7 @@
 #include "kernel/ioapic.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
+#include "kernel/random.hpp"
 #include "kernel/nvme.hpp"
 #include "kernel/nic.hpp"
 #include "kernel/panic.hpp"
@@ -355,6 +356,9 @@ namespace
         console::write("nic: no driver claimed the hardware\n");
     }
     net::initialize();
+    // The generator after PCI, so virtio-rng can seed it, and before any
+    // process asks it for bytes (docs/kernel/RANDOM.md).
+    random::initialize();
     // Storage: the same driver registry as display and audio, except that the
     // devices of every driver COEXIST, so probe_all runs every enumerate
     // instead of stopping at the first. Priority fixes the device order:

@@ -178,6 +178,18 @@ static inline long sxn_query_identity(struct sxn_identity* out) {
     return sxn_trap(SXN_SYS_QUERY_IDENTITY, (unsigned long)out, 0, 0);
 }
 
+/* Cryptographically secure random bytes (docs/kernel/RANDOM.md): the length
+ * (at most SXN_RANDOM_MAX), -EAGAIN while the kernel generator is not seeded,
+ * -EINVAL. BCryptGenRandom. */
+static inline long sxn_random_bytes(void* buffer, unsigned long length) {
+    return sxn_trap(SXN_SYS_RANDOM_BYTES, (unsigned long)buffer, length, 0);
+}
+
+/* Whether the generator is seeded, and from what. 0 or -EINVAL. */
+static inline long sxn_random_status(struct sxn_random_status* out) {
+    return sxn_trap(SXN_SYS_RANDOM_STATUS, (unsigned long)out, 0, 0);
+}
+
 /* A new directory, 0700, durable when it returns. */
 static inline long sxn_make_directory(const char* path) {
     return sxn_trap(SXN_SYS_MAKE_DIRECTORY, (unsigned long)path, 0, 0);

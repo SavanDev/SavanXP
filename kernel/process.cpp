@@ -19,6 +19,7 @@
 #include "kernel/input.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
+#include "kernel/random.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
@@ -3309,6 +3310,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         const uint64_t current_tick = process::detail::now_ms();
         object::poll_timers(current_tick, process::detail::wake_waiters_for_object);
         net::tick();
+        random::tick(current_tick);
         wake_sleepers(current_tick);
         wake_wait_timeouts(current_tick);
         wake_parked_waiters(current_tick);

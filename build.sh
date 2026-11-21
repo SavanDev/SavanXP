@@ -199,6 +199,7 @@ SMOKE_USB=False
 SMOKE_USB_STICK_MIB=0
 SMOKE_NO_PS2=False
 SMOKE_NO_NETWORK=False
+SMOKE_NO_RNG=False
 SMOKE_CAPTURE_FIXTURE=False
 SMOKE_CLEAN_AUDIO_PREFERENCES=False
 SMOKE_USB_POINTER=mouse
@@ -237,6 +238,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_CAPTURE_FIXTURE=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field capture_fixture)
         SMOKE_CLEAN_AUDIO_PREFERENCES=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field clean_audio_preferences)
         SMOKE_NO_NETWORK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_network)
+        SMOKE_NO_RNG=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_rng)
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
         SMOKE_FAT_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field fat_disk_mib)
@@ -513,6 +515,7 @@ case "$COMMAND" in
         [[ "$SMOKE_CAPTURE_FIXTURE" == True ]] && SMOKE_ARGS+=(--capture-fixture)
         [[ "$SMOKE_CLEAN_AUDIO_PREFERENCES" == True ]] && SMOKE_ARGS+=(--clean-audio-preferences)
         [[ "$SMOKE_NO_NETWORK" == True ]] && SMOKE_ARGS+=(--no-network)
+        [[ "$SMOKE_NO_RNG" == True ]] && SMOKE_ARGS+=(--no-rng)
         [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ "$SMOKE_EXTRA_DISK_MIB" == 0 ]] || SMOKE_ARGS+=(--extra-disk-mib "$SMOKE_EXTRA_DISK_MIB")
         if [[ "$SMOKE_FAT_DISK_MIB" != 0 ]]; then

@@ -877,3 +877,15 @@ File locks ([FILE_LOCKS.md](FILE_LOCKS.md)), owned by the open file:
 ranges, the exact-range unlock, a duplicate as the same owner, the release
 with the last handle, a second thread waiting until the unlock, and the
 refusals.
+
+Random bytes ([RANDOM.md](RANDOM.md)), from the kernel's CSPRNG:
+
+- `SXN_SYS_RANDOM_BYTES` (`0x104A`): rdi = buffer, rsi = length (at most
+  `SXN_RANDOM_MAX`, 4096), rdx = flags (0). The length, `-EAGAIN` while the
+  generator is unseeded, `-EINVAL`. Never a weaker fallback.
+  `BCryptGenRandom`.
+- `SXN_SYS_RANDOM_STATUS` (`0x104B`): rdi = `struct sxn_random_status*`:
+  seeded, `SXN_RANDOM_SOURCE_*`, credited bits waiting, reseeds.
+
+`nativetest` checks both on a seeded machine; `nativetest random-unseeded`
+runs on one with no source (`smoke random-unseeded`).

@@ -2503,6 +2503,33 @@ int sx_sync(void) {
     return 0;
 }
 
+ssize_t sx_getrandom(void* buffer, size_t length, unsigned int flags) {
+    long result;
+    if (length > 4096u) {
+        length = 4096u; /* a short read, as Linux gives past its own limit */
+    }
+    result = savanxp_getrandom(buffer, (unsigned long)length, flags);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+int sx_getentropy(void* buffer, size_t length) {
+    long result;
+    if (length > 256u) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = savanxp_getrandom(buffer, (unsigned long)length, 0);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
+}
+
 int sx_fsync(int fd) {
     long result = savanxp_fsync(fd);
     if (result < 0) {
@@ -5599,6 +5626,8 @@ __attribute__((weak, alias("sx_setpgid"))) int setpgid(pid_t pid, pid_t pgrp);
 __attribute__((weak, alias("sx_setsid"))) pid_t setsid(void);
 __attribute__((weak, alias("sx_sync"))) int sync(void);
 __attribute__((weak, alias("sx_fsync"))) int fsync(int fd);
+__attribute__((weak, alias("sx_getrandom"))) ssize_t getrandom(void* buffer, size_t length, unsigned int flags);
+__attribute__((weak, alias("sx_getentropy"))) int getentropy(void* buffer, size_t length);
 __attribute__((weak, alias("sx_fsync"))) int fdatasync(int fd);
 __attribute__((weak, alias("sx_dup"))) int dup(int fd);
 __attribute__((weak, alias("sx_dup2"))) int dup2(int oldfd, int newfd);

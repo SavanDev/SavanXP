@@ -84,6 +84,8 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   `system_info`, `poll`, `select`, `raise`
 - real time: `realtime`, `set_realtime` (sets the RTC in UTC, years
   2000..2099)
+- randomness: `savanxp_getrandom`, `random_status` (the kernel CSPRNG's bytes
+  and state, `docs/kernel/RANDOM.md`)
 - consistency: `fscheck` (a read-only report of the volume; see
   `docs/fs/SXFS_CHECK.md`)
 
@@ -226,7 +228,7 @@ Standard headers in `include/`:
 - `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
 - `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`, `termios.h`
-- `sys/socket.h`, `sys/mman.h`, `netinet/in.h`, `arpa/inet.h`
+- `sys/socket.h`, `sys/mman.h`, `sys/random.h`, `netinet/in.h`, `arpa/inet.h`
 - `pthread.h`, `sched.h`, `dlfcn.h`, `syslog.h`
 
 The layer lives in `runtime/posix.c` (threads in `runtime/pthread.c`) and is
@@ -238,6 +240,9 @@ reached through the standard headers. Its practical limits:
 - `setsockopt` and `getsockopt` cover only timeouts and basic client flags.
 - `mmap` and `munmap` cover only anonymous mappings: no file-backed mappings,
   arbitrary offsets or real copy-on-write.
+- `getrandom` returns at most 4096 bytes per call and `getentropy` at most
+  256; both fail with `EAGAIN` while the kernel generator is unseeded, and
+  never block.
 - **Signals keep their default action.** The kernel delivers no signals.
   `signal`, `sigaction` and `sigprocmask` exist and record what they are
   given, but no handler is ever called. `sigsuspend` returns `-1` with

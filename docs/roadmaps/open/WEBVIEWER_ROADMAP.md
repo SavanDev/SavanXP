@@ -137,7 +137,14 @@ reclaiming `TIME_WAIT` slots when the socket table is full, landed first.
 
 A system CSPRNG with real entropy, civil-clock validity, and an audited
 shared OpenSSL with its CA store, before `sxnhttp` accepts `https://`: see
-step 5 above.
+step 5 above. In order: N5a, the CSPRNG; N5b, civil-clock validity; N5c, the
+OpenSSL 3.5.3 port (the version the pinned Ladybird's `vcpkg.json` overrides
+to) and its CA store; N5d, TLS in `sxnhttp`, its fixtures and Web Viewer's
+indicator.
+
+**N5a landed 2026-11-21:** the kernel CSPRNG ([RANDOM.md](../../kernel/RANDOM.md)),
+seeded only from virtio-rng or RDSEED and refusing while unseeded, with SUN,
+POSIX and Linux interfaces.
 
 ## N3 implementation checkpoint — 2026-11-21
 
