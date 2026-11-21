@@ -73,10 +73,15 @@ cp -r "$SYSROOT/include" "$TCCDIR/sdk/include"
 # TCC always passes floats in SSE registers: the sse runtime variant.
 cp "$SYSROOT/lib/sse/crt0.o" "$TCCDIR/lib/crt0.o"
 cp "$SYSROOT/lib/sse/libsavanxp.a" "$TCCDIR/lib/libc.a"
+# A SUN program (-o <name>.sxe) adds the SUN runtime's core group.
+cp "$SYSROOT/lib/sse/sxn_runtime.o" "$TCCDIR/lib/sxn_runtime.o"
+cp "$SYSROOT/lib/sse/libsxn.a" "$TCCDIR/lib/libsxn.a"
 
 # --- host cross compiler, then libtcc1.a for SavanXP ----------------------
 CROSS="$WORK/sx-tcc-cross"
-"$HOST_CC" -O1 -w -DTCC_SX_TCCDIR="\"$TCCDIR\"" -I"$SRC" \
+# The SDK headers come after the host's: tcc reads only its contract
+# headers (abi/, sxe/) from there.
+"$HOST_CC" -O1 -w -DTCC_SX_TCCDIR="\"$TCCDIR\"" -I"$SRC" -idirafter "$SYSROOT/include" \
     -o "$CROSS" "$SRC/tcc.c" -lm -ldl -lpthread
 LIB1_OBJ="$WORK/libtcc1"
 rm -rf "$LIB1_OBJ"

@@ -1,7 +1,8 @@
 # TinyCC port
 
-TinyCC (`tcc`) running on SavanXP: a C compiler that builds POSIX programs on
-the system itself, against the same SDK runtime as `tools/build-user.sh`.
+TinyCC (`tcc`) running on SavanXP: a C compiler that builds POSIX and SUN
+programs on the system itself, against the same SDK runtime as
+`tools/build-user.sh`.
 
 ## What gets installed
 
@@ -10,13 +11,18 @@ the system itself, against the same SDK runtime as `tools/build-user.sh`.
 | `/bin/tcc` | the compiler, a static POSIX program built with the SDK's clang |
 | `/system/tcc/include` | TCC's own headers (`stdarg.h`, `stddef.h`, ...) and `stdint.h` from `overlay/` |
 | `/system/tcc/sdk/include` | the SDK headers |
-| `/system/tcc/lib` | `crt0.o` and `libc.a` (the SDK's `sse` runtime), `libtcc1.a`, `runmain.o` |
+| `/system/tcc/lib` | `crt0.o` and `libc.a` (the SDK's `sse` runtime), `sxn_runtime.o` and `libsxn.a` (SUN's `core` group), `libtcc1.a`, `runmain.o` |
 | `/bin/tccsmoke.sxe` | the guest check behind `tinycc-smoke` (`tests/tccsmoke.c`, a SUN program) |
 | `/system/licenses` | `tinycc.notice` |
 
 `tcc hello.c -o hello` needs no options: the output is static, starts at
 `0x400000` with the ELF headers mapped, and carries `EI_OSABI` System V, the
 same shape as a program from `build-user.sh`.
+
+`tcc hello.c -o hello.sxe` builds a SUN program, as `build-user.sh --native`
+would: the `.sxe` name is the switch, the rule `stamp_osabi.py` enforces
+([SXE_FORMAT.md](../../docs/userland/SXE_FORMAT.md), "SUN programs are named
+`.sxe`"). `sxn/sxn.h` is on the default include path.
 
 ## The `SavanXP` target (`patches/0001-savanxp-target.patch`)
 
@@ -30,6 +36,15 @@ same shape as a program from `build-user.sh`.
   (`CONFIG_SAVANXP_RUNMEM`): code executes from a read-execute view and is
   written through a read-write one. W^X holds and no `mprotect` is needed
   ([SECTIONS.md](../../docs/kernel/SECTIONS.md)).
+- An executable whose name ends in `.sxe` is a SUN program. It links
+  `sxn_runtime.o` whole, before `libc.a`, because its strong heap page source
+  replaces the POSIX runtime's weak one; `libsxn.a` brings the rest of SUN's
+  `core` group. The ELF carries `EI_OSABI` `SXN_ELF_OSABI_NATIVE` and a
+  non-allocated `.sxmeta` with `NAME` (the file name without `.sxe`) and
+  `SUBSYSTEM`. `VERSION` and `BUILD_ID` are left out, since `tcc` knows
+  neither, and there is no icon. The numbers come from the SDK's
+  `abi/savanxp_native_abi.h` and `sxe/sxe_format.h`, which `tcc.h` includes
+  before its own macros (`total_bytes`) can collide with their fields.
 - `-run` does not load `libc.a`: that would bring its TLS `errno`, which TCC
   refuses in memory. The program calls the libc `tcc` itself is linked with.
   `runsyms.py` lists every global symbol of `libc.a` into a table linked into
@@ -44,8 +59,8 @@ same shape as a program from `build-user.sh`.
   rounded in every case.
 - TCC limits seen on the SDK samples: no `xmm` clobbers in inline asm, and
   `__ATOMIC_*` only through `<stdatomic.h>`.
-- Programs build against POSIX only: the SUN headers are in the tree, but
-  nothing has checked a SUN program built by `tcc`.
+- A SUN program gets SUN's `core` runtime only: nothing links the `gui`
+  group (`sxngui.h`, the file dialog) or a `.sxres` manifest's presentation.
 - A `-run` program shares `tcc`'s libc state (its `stdout` buffer, its heap,
   its `errno`), as on any static `tcc`.
 
@@ -59,7 +74,9 @@ The scenario runs `build.sh` first (it needs the network for the pinned
 clone), boots, and has `tccsmoke` check, with `/bin/tcc`: `tcc -v`; a
 one-step build of a program with structs, `long long` and floats; `-c` and a
 separate link against `qsort` and `malloc`; `-run` with arguments, `errno`
-and a callback from the libc; and a source refused with `file:line: error:`.
+and a callback from the libc; a SUN program (`-o <name>.sxe`) that must run
+as native, allocate from SUN's heap and write through its handle 1; and a
+source refused with `file:line: error:`.
 
 ## Where it comes from
 

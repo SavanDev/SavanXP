@@ -38,10 +38,26 @@ index 44ea25fa..099215aa 100644
  #ifdef CHAR_IS_UNSIGNED
      s->char_is_unsigned = 1;
 diff --git a/tcc.h b/tcc.h
-index 0840f44f..d50d2db7 100644
+index 0840f44f..0fbc0633 100644
 --- a/tcc.h
 +++ b/tcc.h
-@@ -224,6 +224,8 @@ extern long double strtold (const char *__nptr, char **__endptr);
+@@ -39,6 +39,15 @@
+ #include <setjmp.h>
+ #include <time.h>
+ 
++#if TARGETOS_SavanXP
++/* The SDK's contract headers: the native EI_OSABI byte and the .sxmeta
++   format (docs/userland/SXE_FORMAT.md), read from the SDK so tcc and the
++   SDK cannot disagree on a number. Here, before tcc's own macros
++   (total_bytes, ...) can rename their fields. */
++#include "abi/savanxp_native_abi.h"
++#include "sxe/sxe_format.h"
++#endif
++
+ #ifndef _WIN32
+ # include <unistd.h>
+ # include <sys/time.h>
+@@ -224,6 +233,8 @@ extern long double strtold (const char *__nptr, char **__endptr);
      || defined TARGETOS_NetBSD \
      || defined TARGETOS_FreeBSD_kernel
  # define TARGETOS_BSD 1
@@ -50,7 +66,17 @@ index 0840f44f..d50d2db7 100644
  #elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
  # define TARGETOS_Linux 1 /* for tccdefs_.h */
  #endif
-@@ -977,6 +979,9 @@ struct TCCState {
+@@ -785,6 +796,9 @@ struct TCCState {
+     unsigned char do_bounds_check;
+ #endif
+     unsigned char test_coverage;  /* generate test coverage code */
++#if TARGETOS_SavanXP
++    unsigned char sx_sun; /* the output is a SUN program: -o <name>.sxe */
++#endif
+ 
+     /* use GNU C extensions */
+     unsigned char gnu_ext;
+@@ -977,6 +991,9 @@ struct TCCState {
      const char *run_main; /* entry for tcc_run() */
      void *run_ptr; /* runtime_memory */
      unsigned run_size; /* size of runtime_memory  */
@@ -61,7 +87,7 @@ index 0840f44f..d50d2db7 100644
  #ifdef _WIN64
      void *run_function_table; /* unwind data */
 diff --git a/tccelf.c b/tccelf.c
-index 9e2d1364..ef6379f6 100644
+index 9e2d1364..7511af4d 100644
 --- a/tccelf.c
 +++ b/tccelf.c
 @@ -1791,6 +1791,10 @@ ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
@@ -83,10 +109,19 @@ index 9e2d1364..ef6379f6 100644
  #else
      tcc_add_crt(s1, "crtn.o");
  #endif
-@@ -1861,6 +1866,12 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+@@ -1861,6 +1866,21 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
  #endif
          if (lpthread)
              tcc_add_library(s1, "pthread");
++#if TARGETOS_SavanXP
++        /* A SUN program links the SUN runtime on top of the POSIX one, as
++           build-user.sh --native does: sxn_runtime.o whole (its strong heap
++           page source replaces libc's weak one) and libsxn.a for the rest. */
++        if (s1->sx_sun) {
++            tcc_add_crt(s1, "sxn_runtime.o");
++            tcc_add_library(s1, "sxn");
++        }
++#endif
 +#if TARGETOS_SavanXP && defined CONFIG_TCC_STATIC
 +        /* SavanXP, -run: the program calls the libc this tcc is linked
 +           with, through the symbol table dlsym reads (tccrun.c). Loading
@@ -96,7 +131,7 @@ index 9e2d1364..ef6379f6 100644
          tcc_add_library(s1, "c");
  #ifdef TCC_LIBGCC
          if (!s1->static_link) {
-@@ -1875,6 +1886,9 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+@@ -1875,6 +1895,9 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
  #endif
          if (TCC_LIBTCC1[0]) {
              tcc_add_support(s1, TCC_LIBTCC1);
@@ -106,6 +141,105 @@ index 9e2d1364..ef6379f6 100644
              tcc_add_library(s1, "c");
          }
  #ifndef TCC_TARGET_MACHO
+@@ -2227,6 +2250,10 @@ static int set_sec_sizes(TCCState *s1)
+         } else if ((s->sh_flags & SHF_ALLOC)
+ #ifdef TCC_TARGET_ARM
+                    || s->sh_type == SHT_ARM_ATTRIBUTES
++#endif
++#if TARGETOS_SavanXP
++                   /* a SUN program's .sxmeta is not allocated, and stays */
++                   || (s1->sx_sun && !strcmp(s->name, SXE_SECTION_META))
+ #endif
+                    || s1->do_debug) {
+             s->sh_size = s->data_offset;
+@@ -2707,6 +2734,9 @@ static int tcc_output_elf(TCCState *s1, FILE *f, int phnum, ElfW(Phdr) *phdr)
+     ehdr.e_ident[EI_OSABI] = ELFOSABI_OPENBSD;
+ #elif TARGETOS_NetBSD
+     ehdr.e_ident[EI_OSABI] = ELFOSABI_NETBSD;
++#elif TARGETOS_SavanXP
++    if (s1->sx_sun)
++        ehdr.e_ident[EI_OSABI] = SXN_ELF_OSABI_NATIVE;
+ #elif defined TCC_TARGET_ARM && defined TCC_ARM_EABI
+     ehdr.e_flags = EF_ARM_EABI_VER5;
+     ehdr.e_flags |= s1->float_abi == ARM_HARD_FLOAT
+@@ -3008,6 +3038,64 @@ static void alloc_sec_names(TCCState *s1, int is_obj);
+ 
+ /* Output an elf, coff or binary file */
+ /* XXX: suppress unneeded sections */
++#if TARGETOS_SavanXP
++/* An executable named <name>.sxe is a SUN program, the rule build-user.sh
++   and stamp_osabi.py enforce (docs/userland/SXE_FORMAT.md, "SUN programs are
++   named .sxe"). */
++static int sx_names_sun_program(int file_type, const char *filename)
++{
++    size_t length = strlen(filename), suffix = strlen(SXE_FILE_EXTENSION);
++
++    return file_type == TCC_OUTPUT_EXE
++        && length > suffix
++        && filename[length - suffix - 1] != '/'
++        && !strcmp(filename + length - suffix, SXE_FILE_EXTENSION);
++}
++
++static void sx_put_record(Section *s, unsigned tag, const void *payload,
++                          unsigned length)
++{
++    unsigned padded = (length + SXE_RECORD_ALIGNMENT - 1)
++        & ~(SXE_RECORD_ALIGNMENT - 1);
++    unsigned char *p = section_ptr_add(s, SXE_RECORD_HEADER_BYTES + padded);
++
++    memset(p, 0, SXE_RECORD_HEADER_BYTES + padded);
++    write16le(p, tag);
++    write16le(p + 2, SXE_RECORD_NONE);
++    write32le(p + 4, length);
++    memcpy(p + SXE_RECORD_HEADER_BYTES, payload, length);
++}
++
++/* A SUN program is an SXE image: .sxmeta, not allocated, with the identity
++   every program gets unasked (gen_sxe_resources.py, "default stamping"): its
++   NAME, the file name without .sxe, and SUBSYSTEM, the mirror of EI_OSABI.
++   VERSION and BUILD_ID are left out: tcc knows neither. */
++static void sx_create_sxmeta(TCCState *s1, const char *filename)
++{
++    Section *s = new_section(s1, SXE_SECTION_META, SHT_PROGBITS, 0);
++    const char *name = tcc_basename(filename);
++    unsigned name_length = strlen(name) - strlen(SXE_FILE_EXTENSION);
++    unsigned char subsystem = SXN_ELF_OSABI_NATIVE;
++    unsigned char *header;
++
++    s->sh_addralign = SXE_RECORD_ALIGNMENT;
++    header = section_ptr_add(s, SXE_META_HEADER_BYTES);
++    memset(header, 0, SXE_META_HEADER_BYTES);
++    header[0] = SXE_META_MAGIC0;
++    header[1] = SXE_META_MAGIC1;
++    header[2] = SXE_META_MAGIC2;
++    header[3] = SXE_META_MAGIC3;
++    write16le(header + 4, SXE_META_VERSION);
++    write16le(header + 6, SXE_META_HEADER_BYTES);
++    /* records in tag order, as the generator writes them */
++    sx_put_record(s, SXE_TAG_NAME, name, name_length);
++    sx_put_record(s, SXE_TAG_SUBSYSTEM, &subsystem, 1);
++    header = s->data; /* section_ptr_add may have moved it */
++    write32le(header + 8, s->data_offset);
++    write32le(header + 12, 2);
++}
++#endif
++
+ static int elf_output_file(TCCState *s1, const char *filename)
+ {
+     int i, ret, file_type, *sec_order;
+@@ -3040,6 +3128,12 @@ static int elf_output_file(TCCState *s1, const char *filename)
+     dyninf.note = create_bsd_note_section (s1, ".note.tag", "FreeBSD");
+ #endif
+ 
++#if TARGETOS_SavanXP
++    s1->sx_sun = sx_names_sun_program(file_type, filename);
++    if (s1->sx_sun)
++        sx_create_sxmeta(s1, filename);
++#endif
++
+         /* if linking, also link in runtime libraries (libc, libgcc, etc.) */
+         tcc_add_runtime(s1);
+ 	resolve_common_syms(s1);
 diff --git a/tccpp.c b/tccpp.c
 index 214e9cd4..ceea2379 100644
 --- a/tccpp.c

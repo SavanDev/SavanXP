@@ -2,9 +2,9 @@
  *
  * Writes a few C sources to /tmp, builds them with /bin/tcc, runs what it
  * built and checks the output and the exit status. Covers one-step builds,
- * -c plus a separate link, the SSE float path through printf, -run, and a
- * source that must be refused with a diagnostic. Ends with TINYCC SMOKE PASS or
- * TINYCC SMOKE FAIL on the log. */
+ * -c plus a separate link, the SSE float path through printf, -run, a SUN
+ * program, and a source that must be refused with a diagnostic. Ends with
+ * TINYCC SMOKE PASS or TINYCC SMOKE FAIL on the log. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -189,6 +189,27 @@ static const char kRun[] =
     "    return 5;\n"
     "}\n";
 
+/* A SUN program: -o <name>.sxe. sxn_info proves the kernel runs it as
+ * native, the 4 MiB block comes from SUN's heap page source (a native
+ * process has no POSIX mmap), and the line goes out through its handle 1. */
+static const char kSun[] =
+    "#include <stdio.h>\n"
+    "#include <stdlib.h>\n"
+    "#include <string.h>\n"
+    "#include \"sxn/sxn.h\"\n"
+    "int main(int argc, char** argv) {\n"
+    "    struct sxn_native_info info;\n"
+    "    char line[96];\n"
+    "    char* block = malloc(4u << 20);\n"
+    "    int length;\n"
+    "    if (sxn_info(&info) != 0 || block == 0) return 1;\n"
+    "    strcpy(block + (4u << 20) - 16u, argc > 1 ? argv[1] : \"none\");\n"
+    "    length = snprintf(line, sizeof(line), \"sun %u %s\\n\", info.subsystem_id,\n"
+    "                      block + (4u << 20) - 16u);\n"
+    "    free(block);\n"
+    "    return sxn_write(1, line, (unsigned long)length) == length ? 6 : 2;\n"
+    "}\n";
+
 static const char kBroken[] =
     "int main(void) {\n"
     "    return undeclared_name;\n"
@@ -234,6 +255,15 @@ int main(void) {
     if (write_source("/tmp/tccsmoke-run.c", kRun)) {
         char* argv[] = {"/bin/tcc", "-run", "/tmp/tccsmoke-run.c", "zeta", "alpha"};
         expect_spawn(argv, 5, "run 3 alpha zeta enoent\n", 5, "-run");
+    }
+
+    /* A SUN program, built the same way under a .sxe name. */
+    if (write_source("/tmp/tccsmoke-sun.c", kSun)) {
+        char* argv[] = {"/bin/tcc", "/tmp/tccsmoke-sun.c", "-o", "/tmp/tccsmoke-sun.sxe"};
+        if (compile(argv, 4, "build sun")) {
+            char* run_argv[] = {"/tmp/tccsmoke-sun.sxe", "tcc"};
+            expect_spawn(run_argv, 2, "sun 1 tcc\n", 6, "sun");
+        }
     }
 
     /* A wrong source is refused with a diagnostic naming the line. */

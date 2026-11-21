@@ -368,6 +368,10 @@ How it is held in place:
   native build, CMake and `build-user.sh` alike. It takes the name the program
   will have on disk (`--installed-name`) and fails unless it ends in `.sxe` and
   the ELF carries `.sxmeta`.
+- **`tcc` on the system reads the rule the other way.** An executable named
+  `<name>.sxe` is the only kind it builds as SUN: it links the SUN runtime,
+  writes `EI_OSABI` native and a `.sxmeta` with `NAME` and `SUBSYSTEM`
+  ([ports/tinycc/README.md](../../ports/tinycc/README.md)).
 - **The shell finds the program without the extension.** `sh` and the shell
   core try `<command>` and then `<command>.sxe` in each directory, as `PATHEXT`
   does on Windows: `console` runs `console.sxe`.
