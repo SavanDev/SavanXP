@@ -1,7 +1,8 @@
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/conftest.c b/conftest.c
---- a/conftest.c	2026-11-19 16:44:11.805179661 -0300
-+++ b/conftest.c	2026-11-19 17:07:51.255781526 -0300
-@@ -22,6 +22,7 @@
+diff --git a/conftest.c b/conftest.c
+index a4450d51..9ee6036b 100644
+--- a/conftest.c
++++ b/conftest.c
+@@ -22,6 +22,7 @@ const char *platform_macros[] = {
      "__NetBSD__",           "TARGETOS_NetBSD",
      "__linux__",            "TARGETOS_Linux",
      "__ANDROID__",          "TARGETOS_ANDROID",
@@ -9,9 +10,10 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  
      "__SIZEOF_POINTER__",   "PTR_SIZE",
      "__SIZEOF_LONG__",      "LONG_SIZE",
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/include/tccdefs.h b/include/tccdefs.h
---- a/include/tccdefs.h	2026-11-19 16:44:11.808399365 -0300
-+++ b/include/tccdefs.h	2026-11-19 17:06:44.806300955 -0300
+diff --git a/include/tccdefs.h b/include/tccdefs.h
+index 2655c1dd..6dd1dfce 100644
+--- a/include/tccdefs.h
++++ b/include/tccdefs.h
 @@ -38,7 +38,7 @@
      #define __SIZE_TYPE__ unsigned long
      #define __PTRDIFF_TYPE__ long
@@ -21,10 +23,11 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
      #define __INT64_TYPE__ long
  # else /* APPLE, BSD */
      #define __INT64_TYPE__ long long
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/libtcc.c b/libtcc.c
---- a/libtcc.c	2026-11-19 16:44:11.808740458 -0300
-+++ b/libtcc.c	2026-11-19 17:06:57.436594280 -0300
-@@ -885,6 +885,9 @@
+diff --git a/libtcc.c b/libtcc.c
+index 44ea25fa..099215aa 100644
+--- a/libtcc.c
++++ b/libtcc.c
+@@ -885,6 +885,9 @@ LIBTCCAPI TCCState *tcc_new(void)
      s->warn_discarded_qualifiers = 1;
      s->ms_extensions = 1;
      s->unwind_tables = 1;
@@ -34,10 +37,34 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  
  #ifdef CHAR_IS_UNSIGNED
      s->char_is_unsigned = 1;
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/tccelf.c b/tccelf.c
---- a/tccelf.c	2026-11-19 16:44:11.811179704 -0300
-+++ b/tccelf.c	2026-11-19 17:06:51.403454891 -0300
-@@ -1791,6 +1791,10 @@
+diff --git a/tcc.h b/tcc.h
+index 0840f44f..d50d2db7 100644
+--- a/tcc.h
++++ b/tcc.h
+@@ -224,6 +224,8 @@ extern long double strtold (const char *__nptr, char **__endptr);
+     || defined TARGETOS_NetBSD \
+     || defined TARGETOS_FreeBSD_kernel
+ # define TARGETOS_BSD 1
++#elif defined TARGETOS_SavanXP
++/* SavanXP: not Linux; static executables against the SDK runtime */
+ #elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
+ # define TARGETOS_Linux 1 /* for tccdefs_.h */
+ #endif
+@@ -977,6 +979,9 @@ struct TCCState {
+     const char *run_main; /* entry for tcc_run() */
+     void *run_ptr; /* runtime_memory */
+     unsigned run_size; /* size of runtime_memory  */
++#ifdef CONFIG_SAVANXP_RUNMEM
++    void *run_rw; /* writable view of the same section */
++#endif
+     const char *run_stdin; /* custom stdin file for run_main */
+ #ifdef _WIN64
+     void *run_function_table; /* unwind data */
+diff --git a/tccelf.c b/tccelf.c
+index 9e2d1364..ef6379f6 100644
+--- a/tccelf.c
++++ b/tccelf.c
+@@ -1791,6 +1791,10 @@ ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
          tcc_add_crt(s1, "crtbegin_so.o");
      else
          tcc_add_crt(s1, "crtbegin_dynamic.o");
@@ -48,7 +75,7 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  #else
      if (s1->output_type != TCC_OUTPUT_DLL)
          tcc_add_crt(s1, "crt1.o");
-@@ -1816,6 +1820,7 @@
+@@ -1816,6 +1820,7 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
          tcc_add_crt(s1, "crtend_so.o");
      else
          tcc_add_crt(s1, "crtend_android.o");
@@ -56,32 +83,34 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  #else
      tcc_add_crt(s1, "crtn.o");
  #endif
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/tcc.h b/tcc.h
---- a/tcc.h	2026-11-19 16:44:11.810179697 -0300
-+++ b/tcc.h	2026-11-19 17:06:38.603154746 -0300
-@@ -224,6 +224,8 @@
-     || defined TARGETOS_NetBSD \
-     || defined TARGETOS_FreeBSD_kernel
- # define TARGETOS_BSD 1
-+#elif defined TARGETOS_SavanXP
-+/* SavanXP: not Linux; static executables against the SDK runtime */
- #elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
- # define TARGETOS_Linux 1 /* for tccdefs_.h */
+@@ -1861,6 +1866,12 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
  #endif
-@@ -977,6 +979,9 @@
-     const char *run_main; /* entry for tcc_run() */
-     void *run_ptr; /* runtime_memory */
-     unsigned run_size; /* size of runtime_memory  */
-+#ifdef CONFIG_SAVANXP_RUNMEM
-+    void *run_rw; /* writable view of the same section */
+         if (lpthread)
+             tcc_add_library(s1, "pthread");
++#if TARGETOS_SavanXP && defined CONFIG_TCC_STATIC
++        /* SavanXP, -run: the program calls the libc this tcc is linked
++           with, through the symbol table dlsym reads (tccrun.c). Loading
++           libc.a again would bring its TLS errno, which -run refuses. */
++        if (s1->output_type != TCC_OUTPUT_MEMORY)
 +#endif
-     const char *run_stdin; /* custom stdin file for run_main */
- #ifdef _WIN64
-     void *run_function_table; /* unwind data */
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/tccpp.c b/tccpp.c
---- a/tccpp.c	2026-11-19 16:44:11.815179733 -0300
-+++ b/tccpp.c	2026-11-19 17:06:42.656250439 -0300
-@@ -3559,6 +3559,11 @@
+         tcc_add_library(s1, "c");
+ #ifdef TCC_LIBGCC
+         if (!s1->static_link) {
+@@ -1875,6 +1886,9 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+ #endif
+         if (TCC_LIBTCC1[0]) {
+             tcc_add_support(s1, TCC_LIBTCC1);
++#if TARGETOS_SavanXP && defined CONFIG_TCC_STATIC
++            if (s1->output_type != TCC_OUTPUT_MEMORY) /* as above */
++#endif
+             tcc_add_library(s1, "c");
+         }
+ #ifndef TCC_TARGET_MACHO
+diff --git a/tccpp.c b/tccpp.c
+index 214e9cd4..ceea2379 100644
+--- a/tccpp.c
++++ b/tccpp.c
+@@ -3559,6 +3559,11 @@ static const char * const target_os_defs =
      "__NetBSD__\0"
  # elif TARGETOS_OpenBSD
      "__OpenBSD__\0"
@@ -93,7 +122,7 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  # else
      "__linux__\0"
      "__linux\0"
-@@ -3566,8 +3571,10 @@
+@@ -3566,8 +3571,10 @@ static const char * const target_os_defs =
      "__ANDROID__\0"
  #  endif
  # endif
@@ -104,10 +133,11 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  #endif
      ;
  
-diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=config.h' '--exclude=*.a' '--exclude=tcc' '--exclude=.git' a/tccrun.c b/tccrun.c
---- a/tccrun.c	2026-11-19 16:44:11.815179733 -0300
-+++ b/tccrun.c	2026-11-19 17:04:46.138113711 -0300
-@@ -113,11 +113,42 @@
+diff --git a/tccrun.c b/tccrun.c
+index 1003ea5d..bc6a9716 100644
+--- a/tccrun.c
++++ b/tccrun.c
+@@ -113,11 +113,42 @@ static void win64_del_function_table(void *);
  # define CONFIG_RUNMEM_VIRTUALALLOC 1
  #endif
  
@@ -151,7 +181,7 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
      /* Using mmap instead of malloc */
      void *prw;
      char tmpfname[] = "/tmp/.tccrunXXXXXX";
-@@ -198,7 +229,10 @@
+@@ -198,7 +229,10 @@ ST_FUNC void tcc_run_free(TCCState *s1)
      win64_del_function_table(s1->run_function_table);
  #endif
      size = s1->run_size;
@@ -163,7 +193,7 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
      munmap(ptr, size);
  #elif CONFIG_RUNMEM_VIRTUALALLOC
      VirtualFree(ptr, size, MEM_RELEASE);
-@@ -410,7 +444,7 @@
+@@ -410,7 +444,7 @@ redo:
          if (copy == 2) { /* set permissions */
              if (n == 0) /* no data  */
                  continue;
@@ -172,7 +202,7 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
              if (k == 0) /* SHF_EXECINSTR has its own mapping */
                  continue;
  #endif
-@@ -480,6 +514,10 @@
+@@ -480,6 +514,10 @@ static int protect_pages(void *ptr, unsigned long length, int mode)
      DWORD old;
      if (!VirtualProtect(ptr, length, protect[mode], &old))
          return -1;
@@ -183,3 +213,26 @@ diff -ru '--exclude=*.o' '--exclude=*.exe' '--exclude=tccdefs_.h' '--exclude=con
  #else
      static const unsigned char protect[] = {
          PROT_READ | PROT_EXEC,
+@@ -1571,9 +1609,22 @@ static TCCSyms tcc_syms[] = {
+     { NULL, NULL },
+ };
+ 
++#if TARGETOS_SavanXP
++/* SavanXP: every global symbol of the SDK's libc.a, generated by the port's
++   build (runsyms.py), so a -run program resolves against this tcc's libc. */
++struct sx_runsym { const char *name; void *address; };
++extern const struct sx_runsym sx_runsyms[];
++#endif
++
+ ST_FUNC void *dlsym(void *handle, const char *symbol)
+ {
+     TCCSyms *p;
++#if TARGETOS_SavanXP
++    const struct sx_runsym *q;
++    for (q = sx_runsyms; q->name != NULL; q++)
++        if (!strcmp(q->name, symbol))
++            return q->address;
++#endif
+     p = tcc_syms;
+     while (p->str != NULL) {
+         if (!strcmp(p->str, symbol))

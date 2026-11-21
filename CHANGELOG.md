@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **TinyCC port: a C compiler on the system** (`ports/tinycc/build.sh`). `/bin/tcc hello.c -o hello` builds a static
+  POSIX program in the guest, and `tcc -run` runs one from memory. New smoke `tinycc-smoke`
+  ([ports/tinycc/README.md](ports/tinycc/README.md)).
 - **The POSIX libc gains `realpath`, `freopen`, `strtold` and `ldexpl`, and `math.h` works without GNU builtins (SDK 2.0).**
   What a C compiler running on the system (TCC) needs from the libc; `libctest` covers them. Limits are in the
   [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md).

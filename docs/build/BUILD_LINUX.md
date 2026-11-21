@@ -56,10 +56,13 @@ Ports are independent from the base CMake target and use the same SxFS image:
 ./ports/ffmpeg/build.sh
 ./ports/ffmpeg/smoke.sh
 ./ports/ccleste/build.sh
+./ports/tinycc/build.sh
 ```
 
 `ccleste` downloads its pinned upstream archive and hash-verifies it, then
 installs the game assets from that same archive under `/games/celeste`.
+`tinycc` clones its pinned revision and installs `/bin/tcc` with its tree under
+`/system/tcc` ([ports/tinycc/README.md](../../ports/tinycc/README.md)).
 
 A port installer requires an existing valid image and the `sxfs-cli` produced by
 the base build. It never resets the image.

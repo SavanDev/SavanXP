@@ -1,11 +1,13 @@
-TinyCC (Tiny C Compiler)
-https://repo.or.cz/tinycc.git
-
-Copyright (c) 2001-2004 Fabrice Bellard and the TinyCC contributors.
-
-TinyCC is free software; you can redistribute it and/or modify it under the
-terms of the GNU Lesser General Public License as published by the Free
-Software Foundation; either version 2.1 of the License, or (at your option)
-any later version. The full text is in the upstream COPYING file of the
-pinned revision. Files under lib/ (libtcc1.a) carry the more permissive
-terms stated in RELICENSING upstream.
+# Staged by ports/tinycc/build.sh when the port is installed.
+name=TinyCC (Tiny C Compiler)
+license=LGPL-2.1-or-later
+copyright=Copyright (c) 2001-2004 Fabrice Bellard
+copyright=The TinyCC contributors
+origin=https://repo.or.cz/tinycc.git
+version=commit 0f004a0883c640528d69a006706f867d56c809e5
+used-in=/bin/tcc
+used-in=/system/tcc
+source=ports/tinycc in https://github.com/SavanDev/SavanXP (pinned source, patches and overlay)
+provenance=TinyCC (Tiny C Compiler)
+note=The runtime in /system/tcc/lib/libtcc1.a comes from TinyCC's lib/, under the GPL with the runtime linking exception stated in each file: programs linked with it carry no GPL restriction from it.
+text=ports/tinycc/licenses/TINYCC-COPYING.txt

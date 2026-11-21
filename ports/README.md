@@ -5,7 +5,7 @@ officially. Each port owns its upstream pin, small patches, SavanXP overlay,
 build entry point, and documentation. A port is built independently from the
 base CMake target and installs through the SxFS candidate flow.
 
-The official ports are `doomgeneric`, `ffmpeg` and `ccleste`. FFmpeg
+The official ports are `doomgeneric`, `ffmpeg`, `ccleste` and `tinycc`. FFmpeg
 intentionally keeps its upstream archive outside Git; its `UPSTREAM` pin and
 build recipe make the download reproducible. `ccleste` does the same for a
 different reason: upstream ships no license file, so nothing may be vendored.
@@ -16,6 +16,10 @@ The first official port is `doomgeneric`. Its persistent-data regression is
 `ccleste` is the port with the least upstream delta: the engine compiles
 unpatched and the overlay replaces the SDL frontend entirely, so it carries no
 `patches/` directory.
+
+`tinycc` is the compiler that runs on the system: `/bin/tcc` builds and runs
+POSIX C programs in the guest, `-run` included. Its `tinycc-smoke` scenario
+installs the port before it boots.
 
 ## Port layout
 
