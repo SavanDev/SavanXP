@@ -1012,6 +1012,71 @@ loses no ticks.
   [BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md#draining)) still runs
   under the lock; one run showed a 143 ms tick hold before the copy started.
 
+**Reads outside the lock: built and measured, not merged.** Branch
+`smp-storage-owner` (910fa017) takes reads out the "single owner" way. A read
+of a disk from a system call on an SMP machine waits for the device with the
+lock released, and for that long it owns storage (`block::waiting_unlocked()`).
+The system call doors park every call its subsystem has not declared
+storage-free (`subsystem::register_storage_free`) and restart it from its
+`syscall` when the read ends; the tick and the idle skip their storage work;
+a volume node's last release and a power-button shutdown wait for a safe
+point. The branch's BLOCK_WRITEBACK.md, "Reads outside the kernel lock",
+describes it. The copy, measured as above:
+
+| | `held` | Ticks lost | Longest hold |
+| --- | --- | --- | --- |
+| Reads outside the lock, 2 cores (2 runs) | 13% | 1-3% | 4.2-4.4 ms, `SAVANXP_SYS_WRITE` |
+| Reads outside the lock, 4 cores (2 runs) | 13-15% | 0% | 4.4-4.9 ms, `SAVANXP_SYS_WRITE` |
+
+What the copy still holds the lock for is its writes into the queue, about
+100 ms in each 2 s window.
+
+It is not on master because `audio-preferences` regresses under 2-core TCG.
+Each variant ran in one worktree, interleaved run by run with `b04c1632` in
+another whose path has the same length (see the build-path trap in
+[Known traps](#known-traps)):
+
+| The branch, as | Runs with an HDA underrun | `b04c1632`, same batch |
+| --- | --- | --- |
+| Committed | 6 of 6 | 1 of 6 |
+| Without installing the wait (no read leaves the lock) | 6 of 6 | 0 of 6 |
+| With a partition's read settling first, as before | 2 of 4, 4 of 4 failing | 0 of 5 |
+
+The underruns land at the same two points every time: about 27 KB (140 ms)
+into the first `audiod`'s stream, while it loads its preferences and spawns
+its save worker after claiming the device
+([AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device)), and
+about 141 KB into the second `audiod`'s, during the capture checks. The base's
+rare underruns land anywhere. Since the second row regresses with no read
+leaving the lock, the cause is in a part that should be inert then:
+- the door checks and the safe point;
+- the tick's and the idle's guards;
+- `runnable_here` refusing a thread with no context;
+- a partition's read no longer settling first;
+- two new struct fields;
+- a kernel 2.5 KB larger, with `.bss` 16 KB larger and one page further on.
+
+**Owed before it can merge:**
+1. *Isolate the cause.* Under KVM (`--accel kvm`, 2 cores, 4 interleaved
+   pairs) the branch passed both runs that booted and the base passed 4/4,
+   which fits a failure that needs TCG's timing, though two runs prove little. The branch's other two runs
+   stopped in OVMF before `BdsDxe: loading Boot0002`, with the kernel never
+   loaded. Two stalls in four, both on the branch side, are not explained
+   either. Not run when the work stopped:
+   - a probe of reads of a device that does not defer its writes (only `/boot`
+     here, mounted read-only, which nothing in the scenario should read);
+   - the door, tick and idle changes alone, and the struct fields alone;
+   - a kernel padded to the same size with nothing else changed: TCG's
+     software TLB and translation blocks depend on layout, and two of the rows
+     above being equal is what a layout effect would also show;
+   - more KVM pairs, and where the firmware stalls come from.
+2. *`SXN_SYS_PORT_ACCEPT` and `PORT_ACCEPT_EX` are not storage-free.* `audiod`
+   calls one every turn of its loop, so it parks during every read, though
+   the call touches only handles and pipes.
+3. *The tick's forced step,* above, and the copy's writes.
+4. *`audio-preferences` itself.* Without any of this it fails about one run in
+   three, mostly on a gap of 22-43 ms with no underrun in the guest.
+
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
 Done also when `audio-preferences` passes repeatedly under TCG with no HDA
@@ -1124,6 +1189,13 @@ Two stays the default: it is what the whole suite is verified on.
   idle process per core costs a real process slot each. The machine runs in
   512 MiB, and the boot log puts the usable figure at 368 MiB with another
   46 MiB reclaimable.
+- **Two worktrees of one commit are not one machine.** The binaries carry
+  their absolute build path (debug info, `__FILE__`), so worktrees at paths of
+  different lengths build images whose files differ in size and layout. With
+  identical code, `/mnt/proyectos/sxbase` failed `audio-preferences` 5 of 5
+  times in the batch where `/mnt/proyectos/sxnew` passed 5 of 5. Compare
+  worktrees whose paths have the same length, interleaved run by run, and
+  check the host is idle: TCG turns host load into guest time.
 - **`kMaxProcesses` and the fd budget** are unchanged by SMP, but a scheduler
   that actually runs four processes at once makes the existing ceilings easier
   to hit.

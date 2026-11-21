@@ -179,6 +179,18 @@ daemon waits its turn.
 Pause and close stop sending; the live mixer stream expires on its own.
 Its persisted identity is independent of that transient entry.
 
+**Pending: the daemon starts the stream before it can feed it.**
+`audiod_acquire_device` claims the device with one period of silence, and
+that write starts playback. Only after it does audiod load its preferences
+from disk and spawn its save worker. That startup has the driver's lead
+(128 ms on Azalia) plus that period to finish before the first mixed write.
+Under 2-core TCG it runs out whenever storage is slower, and the stream
+underruns about 140 ms in
+([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice 5.2). Claiming the
+device last, once the mixing loop is about to write, would start the stream
+only when it can be kept fed, the way ALSA holds a stream until its
+`start_threshold` is queued.
+
 ## Preferences and durability
 
 The service owns the single-user profile's saved audio policy. The companion
