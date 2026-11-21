@@ -456,6 +456,36 @@ enum sxn_syscall_number {
      * seeded, from which sources, and how many times it reseeded. 0, or
      * -EINVAL for a bad pointer. */
     SXN_SYS_RANDOM_STATUS = 0x104B,
+    /* rdi = struct sxn_clock_status* (written): whether the date can be
+     * believed -- what certificate dates are checked against -- where it
+     * came from, and why not when it is not (docs/kernel/TIME.md). 0, or
+     * -EINVAL for a bad pointer. */
+    SXN_SYS_CLOCK_STATUS = 0x104C,
+};
+
+/* Where the date came from (sxn_clock_status.source). */
+enum sxn_clock_source {
+    SXN_CLOCK_SOURCE_NONE = 0, /* the machine never gave a date */
+    SXN_CLOCK_SOURCE_RTC = 1,  /* the chip's, read at boot */
+    SXN_CLOCK_SOURCE_SET = 2,  /* set since boot (date, ntpsync) */
+};
+
+/* Why the date is not valid (sxn_clock_status.reason). */
+enum sxn_clock_reason {
+    SXN_CLOCK_OK = 0,
+    SXN_CLOCK_NO_DATE = 1,
+    SXN_CLOCK_BEFORE_FLOOR = 2,  /* earlier than this system's release */
+    SXN_CLOCK_AFTER_CEILING = 3, /* 2100 or later, past what the chip holds */
+};
+
+/* SXN_SYS_CLOCK_STATUS. The same layout as POSIX's savanxp_clock_status. */
+struct sxn_clock_status {
+    uint32_t valid;  /* 1 when reason is SXN_CLOCK_OK */
+    uint32_t source; /* enum sxn_clock_source */
+    uint32_t reason; /* enum sxn_clock_reason */
+    uint32_t reserved;
+    uint64_t now;    /* seconds since 1970 UTC, 0 without a date */
+    uint64_t floor;  /* the earliest valid date, seconds since 1970 UTC */
 };
 
 /* SXN_SYS_RANDOM_BYTES's largest request. */

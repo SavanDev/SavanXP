@@ -238,6 +238,24 @@ static void test_system_time(void) {
     check(sxn_log("nativetest: system time done") == 0);
 }
 
+/* SXN_SYS_CLOCK_STATUS: QEMU's RTC holds the host's date, which is after
+ * this system's release, so the date can be believed and came from the
+ * chip -- nothing in nativetest sets it. The status's date is the system
+ * time's. A bad pointer is refused. */
+static void test_clock_status(void) {
+    struct sxn_clock_status status;
+    const uint64_t now = sxn_system_time();
+
+    memset(&status, 0xA5, sizeof(status));
+    check(sxn_clock_status(&status) == 0);
+    check(status.valid == 1 && status.reason == SXN_CLOCK_OK);
+    check(status.source == SXN_CLOCK_SOURCE_RTC);
+    check(status.floor == 1793491200ull);
+    check(status.now >= status.floor && status.now >= now && status.now - now < 5u);
+    check(sxn_clock_status((struct sxn_clock_status*)1) == -SAVANXP_EINVAL);
+    check(sxn_log("nativetest: the date can be believed") == 0);
+}
+
 /* The pointer speed (sxn/sxnpointer.h, docs/kernel/INPUT.md#pointer-speed):
  * read and set through /dev/pointer, refused out of range and without write
  * access, and left as it was found. */
@@ -4880,6 +4898,7 @@ int main(int argc, char** argv) {
     test_files();
     test_file_locks();
     test_random();
+    test_clock_status();
     test_clipboard();
     test_clipboard_changes();
     test_view_at();

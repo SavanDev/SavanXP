@@ -86,6 +86,8 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   2000..2099)
 - randomness: `savanxp_getrandom`, `random_status` (the kernel CSPRNG's bytes
   and state, `docs/kernel/RANDOM.md`)
+- clock validity: `clock_status` (whether the date can be believed, where it
+  came from and why not, `struct savanxp_clock_status`; `docs/kernel/TIME.md`)
 - consistency: `fscheck` (a read-only report of the volume; see
   `docs/fs/SXFS_CHECK.md`)
 

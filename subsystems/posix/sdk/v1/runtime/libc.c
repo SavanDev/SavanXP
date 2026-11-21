@@ -475,6 +475,10 @@ long random_status(struct savanxp_random_status* status) {
     return syscall1(SAVANXP_SYS_RANDOM_STATUS, (unsigned long)status);
 }
 
+long clock_status(struct savanxp_clock_status* status) {
+    return syscall1(SAVANXP_SYS_CLOCK_STATUS, (unsigned long)status);
+}
+
 long fscheck(struct savanxp_fscheck_report* report) {
     return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
 }

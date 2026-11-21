@@ -644,6 +644,21 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
             return context;
         }
+        case SAVANXP_SYS_CLOCK_STATUS: {
+            rtc::CivilStatus status = {};
+            savanxp_clock_status value = {};
+            rtc::civil_status(status);
+            value.valid = status.valid ? 1u : 0u;
+            value.source = status.source;
+            value.reason = status.reason;
+            value.now = status.now;
+            value.floor = rtc::kCivilFloor;
+            context->rax = vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(value), true) &&
+                    write_to_process_memory(caller, context->rdi, &value, sizeof(value))
+                ? 0
+                : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            return context;
+        }
         case SAVANXP_SYS_FSYNC:
         case SAVANXP_SYS_SYNC: {
             // fsync is the same barrier as sync, asked through a descriptor:

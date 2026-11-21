@@ -390,6 +390,24 @@ struct savanxp_random_status {
 #define SAVANXP_RANDOM_SOURCE_RDRAND (1u << 2)
 #define SAVANXP_RANDOM_SOURCE_TIMING (1u << 3)
 
+/* SAVANXP_SYS_CLOCK_STATUS: whether the date can be believed, the same
+ * layout as SUN's struct sxn_clock_status (docs/kernel/TIME.md). */
+struct savanxp_clock_status {
+    uint32_t valid;
+    uint32_t source; /* SAVANXP_CLOCK_SOURCE_* */
+    uint32_t reason; /* SAVANXP_CLOCK_* */
+    uint32_t reserved;
+    uint64_t now;
+    uint64_t floor;
+};
+#define SAVANXP_CLOCK_SOURCE_NONE 0u
+#define SAVANXP_CLOCK_SOURCE_RTC 1u
+#define SAVANXP_CLOCK_SOURCE_SET 2u
+#define SAVANXP_CLOCK_OK 0u
+#define SAVANXP_CLOCK_NO_DATE 1u
+#define SAVANXP_CLOCK_BEFORE_FLOOR 2u
+#define SAVANXP_CLOCK_AFTER_CEILING 3u
+
 struct savanxp_realtime {
     uint16_t year;
     uint8_t month;

@@ -184,6 +184,33 @@ the applied time, the round trip, and the adjustment in seconds.
 applied, checks a closed port fails instead of hanging or writing garbage,
 and restores the original time.
 
+## Can the date be believed?
+
+A certificate is valid between two dates, so TLS needs to know not only what
+the date is but whether to trust it. A machine whose CMOS battery died boots
+in 2000, or on its firmware's build date; checked against that, every
+certificate looks not yet valid, or an expired one looks fine. `rtc::
+civil_status()` answers, and SUN's `sxn_clock_status` and POSIX's
+`clock_status` carry it out:
+
+- **valid** when the machine gave a date and it lies between the **floor**
+  and the **ceiling**. The floor (`rtc::kCivilFloor`, 2026-11-01 UTC) is a
+  date no correct clock can be earlier than: this system did not exist
+  before it. It moves forward at each release, the way systemd's
+  `TIME_EPOCH` does. The ceiling is 2100-01-01, where the chip's two-digit
+  year ends.
+- **source** says where the date came from: `NONE` (the chip gave nothing),
+  `RTC` (read at boot, unconfirmed) or `SET` (set since boot through
+  `SET_REALTIME`, by `date` or `ntpsync`).
+- **reason** says why not: `NO_DATE`, `BEFORE_FLOOR`, `AFTER_CEILING`.
+
+A date the floor accepts can still be wrong -- the floor catches a dead
+battery, not a clock someone set to last year. An `RTC` source is the chip's
+word alone; `ntpsync` is how to confirm it, and nothing yet runs it at boot.
+QEMU starts its RTC at the host's *local* time (`run_qemu.py`, `-rtc
+base=localtime`), which this UTC-only kernel takes as UTC: hours off, which
+matters only for a certificate issued within those hours.
+
 ## Showing it: the taskbar clock and calendar
 
 The taskbar (`subsystems/posix/userland/desktop/desktop_taskbar.c`) shows a
@@ -201,6 +228,7 @@ press outside closes it; its own clicks drain without action.
 | `clock-smoke` | the wall clock (intervals) | the RTC, spinning / sleeping / under load |
 | `date-smoke` | setting the date | a re-read, a rejection, and a restore |
 | `ntp-smoke` | syncing the date over the network | a host fixture plus a closed port |
+| `native-test`, `date-smoke` | whether the date can be believed | QEMU's RTC; a date set, set before the floor, restored |
 
 A bad wall clock looks like lost interrupts or chopped audio; a bad date
 looks like nothing at all until something stamps a file. That is why the

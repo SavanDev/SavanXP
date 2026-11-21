@@ -532,6 +532,30 @@ static_assert(static_cast<uint32_t>(random::kSourceVirtioRng) == SXN_RANDOM_SOUR
     "the native ABI names the kernel's sources");
 static_assert(random::kMaxRequest == SXN_RANDOM_MAX, "the native ABI states the kernel's limit");
 
+int64_t native_clock_status(uint64_t out) {
+    rtc::CivilStatus status = {};
+    sxn_clock_status value = {};
+
+    rtc::civil_status(status);
+    value.valid = status.valid ? 1u : 0u;
+    value.source = status.source;
+    value.reason = status.reason;
+    value.now = status.now;
+    value.floor = rtc::kCivilFloor;
+    return sx::validate_user_range(out, sizeof(value), true) && sx::copy_to_user(out, &value, sizeof(value))
+        ? 0
+        : sx::negative_error(SX_EINVAL);
+}
+
+static_assert(static_cast<uint32_t>(rtc::kCivilSourceNone) == SXN_CLOCK_SOURCE_NONE &&
+                  static_cast<uint32_t>(rtc::kCivilSourceRtc) == SXN_CLOCK_SOURCE_RTC &&
+                  static_cast<uint32_t>(rtc::kCivilSourceSet) == SXN_CLOCK_SOURCE_SET &&
+                  static_cast<uint32_t>(rtc::kCivilOk) == SXN_CLOCK_OK &&
+                  static_cast<uint32_t>(rtc::kCivilNoDate) == SXN_CLOCK_NO_DATE &&
+                  static_cast<uint32_t>(rtc::kCivilBeforeFloor) == SXN_CLOCK_BEFORE_FLOOR &&
+                  static_cast<uint32_t>(rtc::kCivilAfterCeiling) == SXN_CLOCK_AFTER_CEILING,
+    "the native ABI names the kernel's clock states");
+
 int native_unlock_file(Process& proc, uint64_t handle, uint64_t offset, uint64_t length) {
     object::IoObject* file = lockable_file(proc, handle);
     if (file == nullptr) {
@@ -1649,6 +1673,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_RANDOM_STATUS:
             context->rax = static_cast<uint64_t>(native_random_status(context->rdi));
+            return context;
+        case SXN_SYS_CLOCK_STATUS:
+            context->rax = static_cast<uint64_t>(native_clock_status(context->rdi));
             return context;
         case SXN_SYS_MAKE_DIRECTORY:
             context->rax = static_cast<uint64_t>(native_make_directory(*caller, context->rdi));

@@ -38,6 +38,23 @@ static int matches_target(const struct savanxp_realtime *got,
            (unsigned int)got->second == second + 1u;
 }
 
+/* CLOCK_STATUS against what this test just did to the date. */
+static int clock_is(unsigned int valid, unsigned int source, unsigned int reason, const char *when)
+{
+    struct savanxp_clock_status status;
+
+    memset(&status, 0, sizeof(status));
+    if (clock_status(&status) != 0 || status.valid != valid || status.source != source ||
+        status.reason != reason)
+    {
+        printf("DATE SMOKE FAIL clock status %s: valid=%u source=%u reason=%u, expected %u/%u/%u\n", when,
+               (unsigned int)status.valid, (unsigned int)status.source, (unsigned int)status.reason,
+               valid, source, reason);
+        return 0;
+    }
+    return 1;
+}
+
 int main(void)
 {
     struct savanxp_realtime original;
@@ -50,6 +67,12 @@ int main(void)
     {
         puts_out("DATE SMOKE SKIP sin reloj de tiempo real que ajustar\n");
         return 0;
+    }
+
+    /* The host's date, read from the chip at boot. */
+    if (!clock_is(1u, SAVANXP_CLOCK_SOURCE_RTC, SAVANXP_CLOCK_OK, "at boot"))
+    {
+        failures += 1;
     }
 
     memset(&target, 0, sizeof(target));
@@ -77,6 +100,10 @@ int main(void)
         printf("DATE SMOKE FAIL releido %04u-%02u-%02u %02u:%02u:%02u, esperado 2031-06-15 12:34:30\n",
                (unsigned int)back.year, (unsigned int)back.month, (unsigned int)back.day,
                (unsigned int)back.hour, (unsigned int)back.minute, (unsigned int)back.second);
+        failures += 1;
+    }
+    else if (!clock_is(1u, SAVANXP_CLOCK_SOURCE_SET, SAVANXP_CLOCK_OK, "after setting 2031"))
+    {
         failures += 1;
     }
     else
@@ -107,6 +134,21 @@ int main(void)
         failures += 1;
     }
 
+    /* A date the chip accepts but that is earlier than this system's
+     * release -- what a dead battery leaves -- cannot be believed. */
+    {
+        struct savanxp_realtime stale = target;
+
+        stale.year = 2005u;
+        stale.month = 1u;
+        stale.day = 1u;
+        if (set_realtime(&stale) != 0 ||
+            !clock_is(0u, SAVANXP_CLOCK_SOURCE_SET, SAVANXP_CLOCK_BEFORE_FLOOR, "after setting 2005"))
+        {
+            failures += 1;
+        }
+    }
+
     /* Restaurar la hora que habia, sea cual sea el resultado anterior. */
     status = set_realtime(&original);
     if (status != 0)
@@ -128,6 +170,10 @@ int main(void)
         return 1;
     }
 
+    if (!clock_is(1u, SAVANXP_CLOCK_SOURCE_SET, SAVANXP_CLOCK_OK, "after restoring"))
+    {
+        failures += 1;
+    }
     if (failures != 0)
     {
         printf("DATE SMOKE FAIL %d checks\n", failures);

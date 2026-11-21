@@ -126,6 +126,9 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_GETRANDOM = 74,
     /* RANDOM_STATUS(struct savanxp_random_status*): the generator's state. */
     SAVANXP_SYS_RANDOM_STATUS = 75,
+    /* CLOCK_STATUS(struct savanxp_clock_status*): whether the date can be
+     * believed, where it came from and why not (docs/kernel/TIME.md). */
+    SAVANXP_SYS_CLOCK_STATUS = 76,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,

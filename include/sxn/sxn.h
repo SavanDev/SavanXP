@@ -190,6 +190,12 @@ static inline long sxn_random_status(struct sxn_random_status* out) {
     return sxn_trap(SXN_SYS_RANDOM_STATUS, (unsigned long)out, 0, 0);
 }
 
+/* Whether the date can be believed -- what certificate dates are checked
+ * against -- where it came from, and why not. 0 or -EINVAL. */
+static inline long sxn_clock_status(struct sxn_clock_status* out) {
+    return sxn_trap(SXN_SYS_CLOCK_STATUS, (unsigned long)out, 0, 0);
+}
+
 /* A new directory, 0700, durable when it returns. */
 static inline long sxn_make_directory(const char* path) {
     return sxn_trap(SXN_SYS_MAKE_DIRECTORY, (unsigned long)path, 0, 0);

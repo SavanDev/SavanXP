@@ -137,6 +137,8 @@ long savanxp_fsync(int fd);
  * getentropy(3) are the POSIX faces of the first. */
 long savanxp_getrandom(void* buffer, unsigned long length, unsigned flags);
 long random_status(struct savanxp_random_status* status);
+/* Whether the date can be believed (docs/kernel/TIME.md). 0 or -EINVAL. */
+long clock_status(struct savanxp_clock_status* status);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */
 long fscheck(struct savanxp_fscheck_report* report);

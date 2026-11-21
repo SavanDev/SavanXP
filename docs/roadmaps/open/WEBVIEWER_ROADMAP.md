@@ -146,6 +146,10 @@ indicator.
 seeded only from virtio-rng or RDSEED and refusing while unseeded, with SUN,
 POSIX and Linux interfaces.
 
+**N5b landed 2026-11-21:** clock validity (`sxn_clock_status`,
+`clock_status`; [TIME.md](../../kernel/TIME.md#can-the-date-be-believed)):
+whether the date can be believed, its source, and why not.
+
 ## N3 implementation checkpoint — 2026-11-21
 
 **N3 is complete.** Slow DNS and stalled downloads no longer hold the window:

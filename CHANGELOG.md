@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Clock validity** (N5): SUN `sxn_clock_status` and POSIX `clock_status` say whether the date can be believed -- set,
+  after the release floor (2026-11-01) and before 2100 -- whether it came from the RTC or was set, and why not
+  ([TIME.md](docs/kernel/TIME.md#can-the-date-be-believed)).
 - **A kernel CSPRNG** (N5): BLAKE2s pool and ChaCha20 generator seeded only from credited sources, virtio-rng (new
   driver) or RDSEED; unseeded it refuses with `EAGAIN` and logs `random: not seeded`. SUN `sxn_random_bytes` and
   `sxn_random_status`, POSIX `getrandom`, `getentropy` and `random_status`; Linux `getrandom` and `AT_RANDOM` use it.

@@ -24,4 +24,32 @@ uint64_t epoch_seconds();
 // date.
 uint64_t epoch_ns();
 
+// Whether the date can be believed (docs/kernel/TIME.md, "Is the date
+// right?"): what certificate dates are checked against. A date is valid when
+// the machine gave one and it falls between kCivilFloor and kCivilCeiling.
+enum CivilSource : uint32_t {
+    kCivilSourceNone = 0, // the chip never gave a date
+    kCivilSourceRtc = 1,  // read from the chip at boot, unconfirmed
+    kCivilSourceSet = 2,  // set since boot (SET_REALTIME: date, ntpsync)
+};
+enum CivilReason : uint32_t {
+    kCivilOk = 0,
+    kCivilNoDate = 1,       // no date at all
+    kCivilBeforeFloor = 2,  // earlier than this kernel's release: a dead battery or a reset chip
+    kCivilAfterCeiling = 3, // past what the chip can hold
+};
+// 2026-11-01 00:00:00 UTC: no correct clock reads earlier than the tree was
+// written. Moved forward at each release (docs/kernel/TIME.md).
+constexpr uint64_t kCivilFloor = 1793491200ull;
+// 2100-01-01 00:00:00 UTC: the chip's two-digit year ends at 2099.
+constexpr uint64_t kCivilCeiling = 4102444800ull;
+
+struct CivilStatus {
+    bool valid;
+    uint32_t source; // CivilSource
+    uint32_t reason; // CivilReason
+    uint64_t now;    // seconds since 1970 UTC; 0 when there is no date
+};
+void civil_status(CivilStatus& out);
+
 } // namespace rtc

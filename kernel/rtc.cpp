@@ -171,6 +171,8 @@ uint64_t g_epoch_base = 0;
 uint64_t g_epoch_base_ms = 0;
 // The same instant on the monotonic clock in nanoseconds, for epoch_ns().
 uint64_t g_epoch_base_ns = 0;
+// Someone set the date since boot (civil_status).
+bool g_set_since_boot = false;
 
 // Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
 int64_t days_from_civil(int64_t year, uint32_t month, uint32_t day) {
@@ -296,6 +298,7 @@ bool write_time(const savanxp_realtime& value) {
         write_register(kRegisterWeekday, binary_to_bcd(weekday_for(value.year, value.month, value.day)));
     }
     write_register(kRegisterStatusB, status_b);
+    g_set_since_boot = true;
     return true;
 }
 
@@ -319,6 +322,16 @@ uint64_t epoch_ns() {
         return 0;
     }
     return g_epoch_base * 1000000000ULL + (timer::monotonic_ns() - g_epoch_base_ns);
+}
+
+void civil_status(CivilStatus& out) {
+    out.now = epoch_seconds();
+    out.source = out.now == 0 ? kCivilSourceNone : g_set_since_boot ? kCivilSourceSet : kCivilSourceRtc;
+    out.reason = out.now == 0             ? kCivilNoDate
+                 : out.now < kCivilFloor  ? kCivilBeforeFloor
+                 : out.now >= kCivilCeiling ? kCivilAfterCeiling
+                                            : kCivilOk;
+    out.valid = out.reason == kCivilOk;
 }
 
 } // namespace rtc

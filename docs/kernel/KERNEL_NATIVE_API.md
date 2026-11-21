@@ -889,3 +889,11 @@ Random bytes ([RANDOM.md](RANDOM.md)), from the kernel's CSPRNG:
 
 `nativetest` checks both on a seeded machine; `nativetest random-unseeded`
 runs on one with no source (`smoke random-unseeded`).
+
+- `SXN_SYS_CLOCK_STATUS` (`0x104C`): rdi = `struct sxn_clock_status*`:
+  whether the date can be believed (`valid`), where it came from
+  (`SXN_CLOCK_SOURCE_NONE`/`RTC`/`SET`), why not (`SXN_CLOCK_NO_DATE`,
+  `BEFORE_FLOOR`, `AFTER_CEILING`), the date and the floor. What TLS checks
+  certificate dates against ([TIME.md](TIME.md#can-the-date-be-believed)).
+  `nativetest` checks it on QEMU's RTC; `date-smoke` checks it through POSIX
+  as the date is set, set stale and restored.
