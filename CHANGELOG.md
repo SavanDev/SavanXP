@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **TinyCC port: a C compiler on the system** (`ports/tinycc/build.sh`). `/bin/tcc hello.c -o hello` builds a static
+  POSIX program in the guest, and `tcc -run` runs one from memory. New smoke `tinycc-smoke`
+  ([ports/tinycc/README.md](ports/tinycc/README.md)).
+- **The POSIX libc gains `realpath`, `freopen`, `strtold` and `ldexpl`, and `math.h` works without GNU builtins (SDK 2.0).**
+  What a C compiler running on the system (TCC) needs from the libc; `libctest` covers them. Limits are in the
+  [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md).
 - **The kernel reports the IOMMU at boot** (phase M1): it reads the IVRS or DMAR and logs `iommu: AMD-Vi, 1 unit, ...`,
   `iommu: VT-d, ...`, `iommu: none`, or why a malformed table was refused; nothing is enabled yet. New smokes
   `iommu-amd`, `iommu-intel`, `iommu-none` and `run_qemu.py --iommu` ([IOMMU.md](docs/kernel/IOMMU.md)).

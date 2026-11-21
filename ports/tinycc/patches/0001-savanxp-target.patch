@@ -1,0 +1,238 @@
+diff --git a/conftest.c b/conftest.c
+index a4450d51..9ee6036b 100644
+--- a/conftest.c
++++ b/conftest.c
+@@ -22,6 +22,7 @@ const char *platform_macros[] = {
+     "__NetBSD__",           "TARGETOS_NetBSD",
+     "__linux__",            "TARGETOS_Linux",
+     "__ANDROID__",          "TARGETOS_ANDROID",
++    "__savanxp__",          "TARGETOS_SavanXP",
+ 
+     "__SIZEOF_POINTER__",   "PTR_SIZE",
+     "__SIZEOF_LONG__",      "LONG_SIZE",
+diff --git a/include/tccdefs.h b/include/tccdefs.h
+index 2655c1dd..6dd1dfce 100644
+--- a/include/tccdefs.h
++++ b/include/tccdefs.h
+@@ -38,7 +38,7 @@
+     #define __SIZE_TYPE__ unsigned long
+     #define __PTRDIFF_TYPE__ long
+     #define __LP64__ 1
+-# if defined __linux__
++# if defined __linux__ || defined __savanxp__
+     #define __INT64_TYPE__ long
+ # else /* APPLE, BSD */
+     #define __INT64_TYPE__ long long
+diff --git a/libtcc.c b/libtcc.c
+index 44ea25fa..099215aa 100644
+--- a/libtcc.c
++++ b/libtcc.c
+@@ -885,6 +885,9 @@ LIBTCCAPI TCCState *tcc_new(void)
+     s->warn_discarded_qualifiers = 1;
+     s->ms_extensions = 1;
+     s->unwind_tables = 1;
++#if TARGETOS_SavanXP
++    s->static_link = 1; /* the SDK ships no libc.so for tcc to link */
++#endif
+ 
+ #ifdef CHAR_IS_UNSIGNED
+     s->char_is_unsigned = 1;
+diff --git a/tcc.h b/tcc.h
+index 0840f44f..d50d2db7 100644
+--- a/tcc.h
++++ b/tcc.h
+@@ -224,6 +224,8 @@ extern long double strtold (const char *__nptr, char **__endptr);
+     || defined TARGETOS_NetBSD \
+     || defined TARGETOS_FreeBSD_kernel
+ # define TARGETOS_BSD 1
++#elif defined TARGETOS_SavanXP
++/* SavanXP: not Linux; static executables against the SDK runtime */
+ #elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
+ # define TARGETOS_Linux 1 /* for tccdefs_.h */
+ #endif
+@@ -977,6 +979,9 @@ struct TCCState {
+     const char *run_main; /* entry for tcc_run() */
+     void *run_ptr; /* runtime_memory */
+     unsigned run_size; /* size of runtime_memory  */
++#ifdef CONFIG_SAVANXP_RUNMEM
++    void *run_rw; /* writable view of the same section */
++#endif
+     const char *run_stdin; /* custom stdin file for run_main */
+ #ifdef _WIN64
+     void *run_function_table; /* unwind data */
+diff --git a/tccelf.c b/tccelf.c
+index 9e2d1364..ef6379f6 100644
+--- a/tccelf.c
++++ b/tccelf.c
+@@ -1791,6 +1791,10 @@ ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
+         tcc_add_crt(s1, "crtbegin_so.o");
+     else
+         tcc_add_crt(s1, "crtbegin_dynamic.o");
++#elif TARGETOS_SavanXP
++    /* the SDK's crt0 is the whole startup: no crti/crtn */
++    if (s1->output_type != TCC_OUTPUT_DLL)
++        tcc_add_crt(s1, "crt0.o");
+ #else
+     if (s1->output_type != TCC_OUTPUT_DLL)
+         tcc_add_crt(s1, "crt1.o");
+@@ -1816,6 +1820,7 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
+         tcc_add_crt(s1, "crtend_so.o");
+     else
+         tcc_add_crt(s1, "crtend_android.o");
++#elif TARGETOS_SavanXP
+ #else
+     tcc_add_crt(s1, "crtn.o");
+ #endif
+@@ -1861,6 +1866,12 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+ #endif
+         if (lpthread)
+             tcc_add_library(s1, "pthread");
++#if TARGETOS_SavanXP && defined CONFIG_TCC_STATIC
++        /* SavanXP, -run: the program calls the libc this tcc is linked
++           with, through the symbol table dlsym reads (tccrun.c). Loading
++           libc.a again would bring its TLS errno, which -run refuses. */
++        if (s1->output_type != TCC_OUTPUT_MEMORY)
++#endif
+         tcc_add_library(s1, "c");
+ #ifdef TCC_LIBGCC
+         if (!s1->static_link) {
+@@ -1875,6 +1886,9 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
+ #endif
+         if (TCC_LIBTCC1[0]) {
+             tcc_add_support(s1, TCC_LIBTCC1);
++#if TARGETOS_SavanXP && defined CONFIG_TCC_STATIC
++            if (s1->output_type != TCC_OUTPUT_MEMORY) /* as above */
++#endif
+             tcc_add_library(s1, "c");
+         }
+ #ifndef TCC_TARGET_MACHO
+diff --git a/tccpp.c b/tccpp.c
+index 214e9cd4..ceea2379 100644
+--- a/tccpp.c
++++ b/tccpp.c
+@@ -3559,6 +3559,11 @@ static const char * const target_os_defs =
+     "__NetBSD__\0"
+ # elif TARGETOS_OpenBSD
+     "__OpenBSD__\0"
++# elif TARGETOS_SavanXP
++    /* what the SDK's clang target defines, plus a name for the system */
++    "__savanxp__\0"
++    "__SSE__\0"
++    "__SSE2__\0"
+ # else
+     "__linux__\0"
+     "__linux\0"
+@@ -3566,8 +3571,10 @@ static const char * const target_os_defs =
+     "__ANDROID__\0"
+ #  endif
+ # endif
++# if !TARGETOS_SavanXP
+     "__unix__\0"
+     "__unix\0"
++# endif
+ #endif
+     ;
+ 
+diff --git a/tccrun.c b/tccrun.c
+index 1003ea5d..bc6a9716 100644
+--- a/tccrun.c
++++ b/tccrun.c
+@@ -113,11 +113,42 @@ static void win64_del_function_table(void *);
+ # define CONFIG_RUNMEM_VIRTUALALLOC 1
+ #endif
+ 
++#ifdef CONFIG_SAVANXP_RUNMEM
++/* SavanXP: executable memory exists only as a view of a section, and no view
++   is writable and executable at once. One section, two views: code runs from
++   the read-execute one and is written through the read-write one, the layout
++   CONFIG_SELINUX already gives the relocator. */
++#include <abi/savanxp_abi.h>
++long section_create(unsigned long size, unsigned long flags);
++void *map_view(int handle, unsigned long flags);
++long unmap_view(void *base);
++#define SX_VIEW_FAILED(p) ((unsigned long)(p) >= (unsigned long)-4095L || (p) == NULL)
++#endif
++
+ static int rt_mem(TCCState *s1, int size)
+ {
+     void *ptr;
+     int ptr_diff = 0;
+-#ifdef CONFIG_SELINUX
++#if defined CONFIG_SAVANXP_RUNMEM
++    void *prw;
++    long handle = section_create(size,
++        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_SECTION_EXEC);
++    if (handle < 0)
++	return tcc_error_noabort("tccrun: could not create the code section");
++    ptr = map_view((int)handle, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
++    prw = map_view((int)handle, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
++    close((int)handle);
++    if (SX_VIEW_FAILED(ptr) || SX_VIEW_FAILED(prw)
++        || (char*)prw - (char*)ptr != (int)((char*)prw - (char*)ptr)) {
++        if (!SX_VIEW_FAILED(ptr))
++            unmap_view(ptr);
++        if (!SX_VIEW_FAILED(prw))
++            unmap_view(prw);
++	return tcc_error_noabort("tccrun: could not map memory");
++    }
++    ptr_diff = (char*)prw - (char*)ptr;
++    s1->run_rw = prw;
++#elif defined CONFIG_SELINUX
+     /* Using mmap instead of malloc */
+     void *prw;
+     char tmpfname[] = "/tmp/.tccrunXXXXXX";
+@@ -198,7 +229,10 @@ ST_FUNC void tcc_run_free(TCCState *s1)
+     win64_del_function_table(s1->run_function_table);
+ #endif
+     size = s1->run_size;
+-#ifdef CONFIG_SELINUX
++#if defined CONFIG_SAVANXP_RUNMEM
++    unmap_view(ptr);
++    unmap_view(s1->run_rw);
++#elif defined CONFIG_SELINUX
+     munmap(ptr, size);
+ #elif CONFIG_RUNMEM_VIRTUALALLOC
+     VirtualFree(ptr, size, MEM_RELEASE);
+@@ -410,7 +444,7 @@ redo:
+         if (copy == 2) { /* set permissions */
+             if (n == 0) /* no data  */
+                 continue;
+-#ifdef CONFIG_SELINUX
++#if defined CONFIG_SELINUX || defined CONFIG_SAVANXP_RUNMEM
+             if (k == 0) /* SHF_EXECINSTR has its own mapping */
+                 continue;
+ #endif
+@@ -480,6 +514,10 @@ static int protect_pages(void *ptr, unsigned long length, int mode)
+     DWORD old;
+     if (!VirtualProtect(ptr, length, protect[mode], &old))
+         return -1;
++#elif defined CONFIG_SAVANXP_RUNMEM
++    /* Never reached: the two views already carry their permissions. */
++    (void)ptr, (void)length, (void)mode;
++    return -1;
+ #else
+     static const unsigned char protect[] = {
+         PROT_READ | PROT_EXEC,
+@@ -1571,9 +1609,22 @@ static TCCSyms tcc_syms[] = {
+     { NULL, NULL },
+ };
+ 
++#if TARGETOS_SavanXP
++/* SavanXP: every global symbol of the SDK's libc.a, generated by the port's
++   build (runsyms.py), so a -run program resolves against this tcc's libc. */
++struct sx_runsym { const char *name; void *address; };
++extern const struct sx_runsym sx_runsyms[];
++#endif
++
+ ST_FUNC void *dlsym(void *handle, const char *symbol)
+ {
+     TCCSyms *p;
++#if TARGETOS_SavanXP
++    const struct sx_runsym *q;
++    for (q = sx_runsyms; q->name != NULL; q++)
++        if (!strcmp(q->name, symbol))
++            return q->address;
++#endif
+     p = tcc_syms;
+     while (p->str != NULL) {
+         if (!strcmp(p->str, symbol))

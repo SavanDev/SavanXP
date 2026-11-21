@@ -206,6 +206,23 @@ which is why both go into the registry.
 - Credit for the original game: Maddy Thorson and Noel Berry, per upstream's
   README
 
+### TinyCC (Tiny C Compiler)
+
+- Origin: https://repo.or.cz/tinycc.git, branch `mob`, commit
+  `0f004a0883c640528d69a006706f867d56c809e5`
+- Versioned: no source vendored. `ports/tinycc/UPSTREAM` pins the commit, and
+  `ports/tinycc/build.sh` clones it, checks it out and applies
+  `patches/0001-savanxp-target.patch` and `overlay/`
+- License reviewed: LGPL-2.1-or-later for the compiler (`COPYING`, copied as
+  `ports/tinycc/licenses/TINYCC-COPYING.txt`). The runtime in `lib/` that
+  becomes `libtcc1.a` and `runmain.o` is GPL with a linking exception per
+  file, so programs `tcc` builds carry no GPL obligation from it
+- Decision: `Adopt`. The patch is the SavanXP target, the `-run` memory and
+  symbol table, and nothing else
+- Distributed in: `/bin/tcc` and `/system/tcc` (headers, `libtcc1.a`,
+  `runmain.o`, and copies of the SDK's `crt0.o`, `libc.a` and headers). Built
+  separately with `ports/tinycc/build.sh`, not by the main build
+
 ### Alpine Xlib profile libraries
 
 - Origin: X.Org's [individual library releases](https://www.x.org/releases/individual/lib/)

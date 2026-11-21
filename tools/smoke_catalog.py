@@ -1290,6 +1290,16 @@ SCENARIOS: dict[str, Scenario] = {
         description="FFmpeg Media Player two-phase selftest and display smoke",
         port_command="./ports/ffmpeg/smoke.sh",
     ),
+    # Installs the TinyCC port first (ports/tinycc), so the scenario needs its
+    # source fetch and builds on the host; the guest compiles, links and runs.
+    "tinycc-smoke": _qemu_scenario(
+        "tinycc-selftest",
+        "TINYCC SMOKE PASS",
+        "TINYCC SMOKE FAIL",
+        "TinyCC compiles, links and runs C programs on the system",
+        300.0,
+        prepare=("./ports/tinycc/build.sh",),
+    ),
     "ccleste-selftest": _qemu_scenario(
         "ccleste-selftest",
         "CCLESTE SELFTEST PASS",

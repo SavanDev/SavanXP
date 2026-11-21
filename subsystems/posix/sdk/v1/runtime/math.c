@@ -349,6 +349,23 @@ double ldexp(double x, int n) {
     return y * scale.value;
 }
 
+/* x * 2^n in the extended format, which is the x87's own: fscale does it
+ * exactly, overflow and underflow included. The operands go through memory
+ * and fscale takes none, so the AT&T operand-order trap above cannot apply. */
+long double ldexpl(long double x, int n) {
+    long double result;
+
+    __asm__ volatile(
+        "fildl %2\n\t"
+        "fldt %1\n\t"
+        "fscale\n\t"
+        "fstp %%st(1)\n\t"
+        "fstpt %0"
+        : "=m"(result)
+        : "m"(x), "m"(n));
+    return result;
+}
+
 /* 2^f - 1 para |f| <= 1. Es lo unico que sabe hacer f2xm1. */
 static double sx_exp2m1_kernel(double f) {
     double result;

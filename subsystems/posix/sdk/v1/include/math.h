@@ -23,16 +23,18 @@ double sx_atan(double value);
  * justamente lo que se quiere -- una app sin SSE no puede ni llamarlas, porque
  * clang le pasaria los argumentos por una convencion que math.c no habla. */
 
-#define HUGE_VAL __builtin_huge_val()
-#define HUGE_VALF __builtin_huge_valf()
-#define INFINITY __builtin_inff()
-#define NAN __builtin_nanf("")
-
 #define FP_NAN 0
 #define FP_INFINITE 1
 #define FP_ZERO 2
 #define FP_SUBNORMAL 3
 #define FP_NORMAL 4
+
+#if defined(__GNUC__) || defined(__clang__)
+
+#define HUGE_VAL __builtin_huge_val()
+#define HUGE_VALF __builtin_huge_valf()
+#define INFINITY __builtin_inff()
+#define NAN __builtin_nanf("")
 
 #define fpclassify(x)     __builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, FP_ZERO, x)
 #define isnormal(x) __builtin_isnormal(x)
@@ -46,6 +48,91 @@ double sx_atan(double value);
 #define isinf(x) __builtin_isinf(x)
 #define isfinite(x) __builtin_isfinite(x)
 #define signbit(x) __builtin_signbit(x)
+
+#else
+
+/* A compiler without the GNU builtins (TCC): the classification reads the
+ * bits of the value, by its size, and the constants come from literals the
+ * compiler folds. long double is the x87 extended format, as on every
+ * x86-64 System V target. */
+
+#define INFINITY 1e5000f
+#define NAN (0.0f / 0.0f)
+#define HUGE_VALF INFINITY
+#define HUGE_VAL ((double)INFINITY)
+
+static inline int __sx_fpclassifyf(float value) {
+    union { float f; unsigned int i; } bits = { value };
+    const unsigned int exponent = (bits.i >> 23) & 0xffu;
+    const unsigned int mantissa = bits.i & 0x7fffffu;
+    if (exponent == 0xffu) {
+        return mantissa != 0 ? FP_NAN : FP_INFINITE;
+    }
+    if (exponent == 0) {
+        return mantissa != 0 ? FP_SUBNORMAL : FP_ZERO;
+    }
+    return FP_NORMAL;
+}
+
+static inline int __sx_fpclassify(double value) {
+    union { double f; unsigned long long i; } bits = { value };
+    const unsigned long long exponent = (bits.i >> 52) & 0x7ffu;
+    const unsigned long long mantissa = bits.i & 0xfffffffffffffull;
+    if (exponent == 0x7ffu) {
+        return mantissa != 0 ? FP_NAN : FP_INFINITE;
+    }
+    if (exponent == 0) {
+        return mantissa != 0 ? FP_SUBNORMAL : FP_ZERO;
+    }
+    return FP_NORMAL;
+}
+
+static inline int __sx_fpclassifyl(long double value) {
+    union { long double f; struct { unsigned long long mantissa; unsigned short sign_exponent; } i; } bits;
+    unsigned int exponent;
+    bits.f = value;
+    exponent = bits.i.sign_exponent & 0x7fffu;
+    if (exponent == 0x7fffu) {
+        /* The explicit integer bit is not part of what makes a NaN. */
+        return (bits.i.mantissa << 1) != 0 ? FP_NAN : FP_INFINITE;
+    }
+    if (exponent == 0) {
+        return bits.i.mantissa != 0 ? FP_SUBNORMAL : FP_ZERO;
+    }
+    return FP_NORMAL;
+}
+
+static inline int __sx_signbitf(float value) {
+    union { float f; unsigned int i; } bits = { value };
+    return (int)(bits.i >> 31);
+}
+
+static inline int __sx_signbit(double value) {
+    union { double f; unsigned long long i; } bits = { value };
+    return (int)(bits.i >> 63);
+}
+
+static inline int __sx_signbitl(long double value) {
+    union { long double f; struct { unsigned long long mantissa; unsigned short sign_exponent; } i; } bits;
+    bits.f = value;
+    return bits.i.sign_exponent >> 15;
+}
+
+#define fpclassify(x) (sizeof(x) == sizeof(float) ? __sx_fpclassifyf(x) \
+    : sizeof(x) == sizeof(double) ? __sx_fpclassify(x) : __sx_fpclassifyl(x))
+#define signbit(x) (sizeof(x) == sizeof(float) ? __sx_signbitf(x) \
+    : sizeof(x) == sizeof(double) ? __sx_signbit(x) : __sx_signbitl(x))
+#define isnan(x) (fpclassify(x) == FP_NAN)
+#define isinf(x) (fpclassify(x) == FP_INFINITE)
+#define isfinite(x) (fpclassify(x) >= FP_ZERO)
+#define isnormal(x) (fpclassify(x) == FP_NORMAL)
+#define isunordered(x, y) (isnan(x) || isnan(y))
+#define isgreater(x, y) (!isunordered(x, y) && (x) > (y))
+#define isgreaterequal(x, y) (!isunordered(x, y) && (x) >= (y))
+#define isless(x, y) (!isunordered(x, y) && (x) < (y))
+#define islessequal(x, y) (!isunordered(x, y) && (x) <= (y))
+
+#endif
 
 double fabs(double x);
 double copysign(double x, double y);
@@ -63,6 +150,7 @@ double tan(double x);
 double atan(double x);
 double atan2(double y, double x);
 double ldexp(double x, int n);
+long double ldexpl(long double x, int n);
 double exp(double x);
 double exp2(double x);
 double log(double x);

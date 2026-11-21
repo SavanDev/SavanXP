@@ -18,6 +18,7 @@ extern FILE* stderr;
 
 
 FILE* fopen(const char* path, const char* mode);
+FILE* freopen(const char* path, const char* mode, FILE* stream);
 int fclose(FILE* stream);
 size_t fread(void* buffer, size_t size, size_t count, FILE* stream);
 size_t fwrite(const void* buffer, size_t size, size_t count, FILE* stream);

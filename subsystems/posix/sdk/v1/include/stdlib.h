@@ -46,9 +46,14 @@ int posix_memalign(void** out_pointer, size_t alignment, size_t size);
 void* aligned_alloc(size_t alignment, size_t size);
 void* memalign(size_t alignment, size_t size);
 
-/* Solo existen con -Sse: sin SSE el target no tiene ABI de punto flotante y el
- * link se caeria igual ante cualquier operacion con double. */
+/* The canonical absolute name of an existing path. `resolved` holds PATH_MAX
+ * bytes; when it is null the result is malloc'd and the caller frees it. */
+char* realpath(const char* path, char* resolved);
+
+/* Only with --sse: without SSE the target has no floating-point ABI, and the
+ * link would fail anyway on any operation with a double. */
 #if defined(__SSE2__)
 double strtod(const char* text, char** endptr);
 float strtof(const char* text, char** endptr);
+long double strtold(const char* text, char** endptr);
 #endif
